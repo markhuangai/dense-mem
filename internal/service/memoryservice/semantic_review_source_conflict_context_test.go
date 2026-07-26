@@ -11,7 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-func TestV2SemanticPlacementReviewSourceRejectsStaleConflictContextBeforeProvider(t *testing.T) {
+func TestSemanticPlacementReviewSourceRejectsStaleConflictContextBeforeProvider(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	ingestID := uuid.NewString()
@@ -20,8 +20,8 @@ func TestV2SemanticPlacementReviewSourceRejectsStaleConflictContextBeforeProvide
 	conflictID := uuid.NewString()
 	content := "Dense-Mem uses GraphDB."
 	ledger := &reviewSourceLedgerStub{
-		conflictContextErr: repository.ErrV2ConflictContextStale,
-		placement: &repository.V2CreateIngestResult{
+		conflictContextErr: repository.ErrConflictContextStale,
+		placement: &repository.CreateIngestResult{
 			TeamID:         teamID,
 			OwnerProfileID: ownerID,
 			IngestID:       ingestID,
@@ -48,13 +48,13 @@ func TestV2SemanticPlacementReviewSourceRejectsStaleConflictContextBeforeProvide
 					}},
 				}},
 			},
-			Evidence: []repository.V2EvidenceFragment{{
+			Evidence: []repository.EvidenceFragment{{
 				FragmentID:    uuid.NewString(),
 				EvidenceIndex: 0,
 				Content:       content,
 				ContentHash:   "sha256:current",
 			}},
-			Items: []repository.V2PlacementItem{{
+			Items: []repository.PlacementItem{{
 				PlacementItemID: itemID,
 				EvidenceIndex:   0,
 				Status:          "queued",
@@ -68,7 +68,7 @@ func TestV2SemanticPlacementReviewSourceRejectsStaleConflictContextBeforeProvide
 		ProposalProvider: provider,
 	})
 
-	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -90,7 +90,7 @@ func TestV2SemanticPlacementReviewSourceRejectsStaleConflictContextBeforeProvide
 	}
 }
 
-func TestV2SemanticPlacementReviewSourceRejectsMalformedConflictContextBeforeProvider(t *testing.T) {
+func TestSemanticPlacementReviewSourceRejectsMalformedConflictContextBeforeProvider(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	ingestID := uuid.NewString()
@@ -98,7 +98,7 @@ func TestV2SemanticPlacementReviewSourceRejectsMalformedConflictContextBeforePro
 	itemID := uuid.NewString()
 	content := "Dense-Mem uses GraphDB."
 	ledger := &reviewSourceLedgerStub{
-		placement: &repository.V2CreateIngestResult{
+		placement: &repository.CreateIngestResult{
 			TeamID:         teamID,
 			OwnerProfileID: ownerID,
 			IngestID:       ingestID,
@@ -120,13 +120,13 @@ func TestV2SemanticPlacementReviewSourceRejectsMalformedConflictContextBeforePro
 					}},
 				}},
 			},
-			Evidence: []repository.V2EvidenceFragment{{
+			Evidence: []repository.EvidenceFragment{{
 				FragmentID:    uuid.NewString(),
 				EvidenceIndex: 0,
 				Content:       content,
 				ContentHash:   "sha256:current",
 			}},
-			Items: []repository.V2PlacementItem{{
+			Items: []repository.PlacementItem{{
 				PlacementItemID: itemID,
 				EvidenceIndex:   0,
 				Status:          "queued",
@@ -140,7 +140,7 @@ func TestV2SemanticPlacementReviewSourceRejectsMalformedConflictContextBeforePro
 		ProposalProvider: provider,
 	})
 
-	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,

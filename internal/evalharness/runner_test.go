@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -191,7 +190,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 	var controlPatched bool
 	placementIngests := map[string]bool{}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/control/api/config/evaluation":
 			if r.Method != http.MethodPatch || r.Header.Get("Authorization") != "Bearer control-token" {
@@ -206,7 +205,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			}
 			controlPatched = true
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
-		case "/api/v1/tools/remember":
+		case "tool:remember":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode remember body: %v", err)
@@ -224,7 +223,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 				"status":    "queued",
 				"evidence":  []map[string]any{{"id": id}},
 			})
-		case "/api/v1/tools/get_memory_placement":
+		case "tool:get_memory_placement":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode placement body: %v", err)
@@ -238,7 +237,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"placement": map[string]any{"status": "completed"},
 			})
-		case "/api/v1/tools/eval_list_knowledge_refs":
+		case "tool:eval_list_knowledge_refs":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"items": []map[string]any{
 					{"id": "frag-alpha", "metadata": map[string]any{"source_doc_id": "doc-alpha"}},
@@ -247,7 +246,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 				"next_cursor": "",
 				"has_more":    false,
 			})
-		case "/api/v1/tools/eval_run_recall_case":
+		case "tool:eval_run_recall_case":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode recall body: %v", err)
@@ -319,12 +318,6 @@ func TestRunRejectsInvalidOptionsAndSuite(t *testing.T) {
 			SeedManifestPath:       filepath.Join(dir, "seed_manifest.json"),
 			SuitePath:              filepath.Join(dir, "suite.jsonl"),
 			ResumeSourceDocIDsPath: filepath.Join(dir, "resume.txt"),
-		}},
-		{name: "bad knowledge mapping mode", opts: RunOptions{
-			Mode:                 "validate",
-			SeedManifestPath:     filepath.Join(dir, "seed_manifest.json"),
-			SuitePath:            filepath.Join(dir, "suite.jsonl"),
-			KnowledgeMappingMode: "legacy",
 		}},
 	} {
 		if _, err := Run(context.Background(), tc.opts); err == nil {
@@ -949,8 +942,8 @@ func writeEvalFixture(t *testing.T) string {
 		t.Fatalf("write cases: %v", err)
 	}
 	if err := writeJSONL(filepath.Join(dir, "qrels.jsonl"), []QRel{
-		{CaseID: "case-1", RequiredRefs: []Ref{{Type: "fragment", SourceDocID: "doc-alpha", Grade: 1}}},
-		{CaseID: "case-2", RequiredRefs: []Ref{{Type: "fragment", SourceDocID: "doc-beta", Grade: 1}}},
+		{CaseID: "case-1", RequiredRefs: []Ref{{Type: "source_doc", SourceDocID: "doc-alpha", Grade: 1}}},
+		{CaseID: "case-2", RequiredRefs: []Ref{{Type: "source_doc", SourceDocID: "doc-beta", Grade: 1}}},
 	}); err != nil {
 		t.Fatalf("write qrels: %v", err)
 	}

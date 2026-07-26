@@ -25,7 +25,7 @@ type EmbeddingWorkerService interface {
 }
 
 type EmbeddingWorkerDependencies struct {
-	Search         repository.V2SearchRepository
+	Search         repository.SearchRepository
 	Provider       embedding.EmbeddingProviderInterface
 	Metrics        observability.DiscoverabilityMetrics
 	TeamID         string
@@ -45,7 +45,7 @@ type EmbeddingWorkerResult struct {
 }
 
 type embeddingWorkerService struct {
-	search         repository.V2SearchRepository
+	search         repository.SearchRepository
 	provider       embedding.EmbeddingProviderInterface
 	metrics        observability.DiscoverabilityMetrics
 	teamID         string
@@ -96,7 +96,7 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 	if err != nil {
 		return result, err
 	}
-	jobs, err := s.search.ClaimEmbeddingJobs(ctx, repository.V2ClaimEmbeddingJobsInput{
+	jobs, err := s.search.ClaimEmbeddingJobs(ctx, repository.ClaimEmbeddingJobsInput{
 		TeamID:   s.teamID,
 		WorkerID: s.workerID,
 		Limit:    s.batchSize,
@@ -118,7 +118,7 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 		s.failJobs(ctx, contract, jobs, &result, err, "contract_mismatch", true, 0)
 		return result, err
 	}
-	eligible := make([]repository.V2EmbeddingJob, 0, len(jobs))
+	eligible := make([]repository.EmbeddingJob, 0, len(jobs))
 	texts := make([]string, 0, len(jobs))
 	for _, job := range jobs {
 		if job.EmbeddingContractID != contract.EmbeddingContractID || job.EmbeddingDimensions != contract.EmbeddingDimensions {
@@ -157,7 +157,7 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 			firstErr = errors.Join(firstErr, err)
 			continue
 		}
-		err := s.search.CompleteEmbeddingJob(ctx, repository.V2CompleteEmbeddingJobInput{
+		err := s.search.CompleteEmbeddingJob(ctx, repository.CompleteEmbeddingJobInput{
 			TeamID:           job.TeamID,
 			EmbeddingJobID:   job.EmbeddingJobID,
 			WorkerID:         s.workerID,
@@ -167,10 +167,10 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 		switch {
 		case err == nil:
 			result.Completed++
-		case errors.Is(err, repository.ErrV2SearchStaleVersion), errors.Is(err, repository.ErrV2SearchContractMismatch):
+		case errors.Is(err, repository.ErrSearchStaleVersion), errors.Is(err, repository.ErrSearchContractMismatch):
 			result.Stale++
 			observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, "stale")
-		case errors.Is(err, repository.ErrV2EmbeddingLeaseLost):
+		case errors.Is(err, repository.ErrEmbeddingLeaseLost):
 			result.LeaseLost++
 			observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, "lease_lost")
 		default:
@@ -196,7 +196,7 @@ func (s *embeddingWorkerService) validate() error {
 	return nil
 }
 
-func (s *embeddingWorkerService) validateProvider(contract *repository.V2ActiveSearchContract) error {
+func (s *embeddingWorkerService) validateProvider(contract *repository.ActiveSearchContract) error {
 	if got := s.provider.Dimensions(); got != 0 && got != contract.EmbeddingDimensions {
 		return fmt.Errorf("embedding provider dimensions %d, active contract dimensions %d", got, contract.EmbeddingDimensions)
 	}
@@ -208,8 +208,8 @@ func (s *embeddingWorkerService) validateProvider(contract *repository.V2ActiveS
 
 func (s *embeddingWorkerService) failJobs(
 	ctx context.Context,
-	contract *repository.V2ActiveSearchContract,
-	jobs []repository.V2EmbeddingJob,
+	contract *repository.ActiveSearchContract,
+	jobs []repository.EmbeddingJob,
 	result *EmbeddingWorkerResult,
 	err error,
 	code string,
@@ -223,8 +223,8 @@ func (s *embeddingWorkerService) failJobs(
 
 func (s *embeddingWorkerService) failJob(
 	ctx context.Context,
-	contract *repository.V2ActiveSearchContract,
-	job repository.V2EmbeddingJob,
+	contract *repository.ActiveSearchContract,
+	job repository.EmbeddingJob,
 	result *EmbeddingWorkerResult,
 	err error,
 	code string,
@@ -236,7 +236,7 @@ func (s *embeddingWorkerService) failJob(
 	}
 	failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.failureTimeout)
 	defer cancel()
-	failed, failErr := s.search.FailEmbeddingJob(failureCtx, repository.V2FailEmbeddingJobInput{
+	failed, failErr := s.search.FailEmbeddingJob(failureCtx, repository.FailEmbeddingJobInput{
 		TeamID:           job.TeamID,
 		EmbeddingJobID:   job.EmbeddingJobID,
 		WorkerID:         s.workerID,
@@ -252,7 +252,7 @@ func (s *embeddingWorkerService) failJob(
 		result.Failed++
 	case failErr == nil:
 		result.Retried++
-	case errors.Is(failErr, repository.ErrV2EmbeddingLeaseLost):
+	case errors.Is(failErr, repository.ErrEmbeddingLeaseLost):
 		result.LeaseLost++
 	default:
 		result.Failed++

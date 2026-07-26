@@ -26,7 +26,7 @@ const (
 var ErrRecallAuthContext = errors.New("recall: authenticated actor context is required")
 
 type RecallService interface {
-	Recall(ctx context.Context, req V2RecallRequest) (*V2RecallResult, error)
+	Recall(ctx context.Context, req RecallRequest) (*RecallResult, error)
 }
 
 type RecallDependencies struct {
@@ -38,18 +38,18 @@ type RecallDependencies struct {
 }
 
 type RecallSearchRepository interface {
-	repository.V2RecallRepository
-	GetActiveSearchContract(ctx context.Context) (*repository.V2ActiveSearchContract, error)
+	repository.RecallRepository
+	GetActiveSearchContract(ctx context.Context) (*repository.ActiveSearchContract, error)
 }
 
 type RecallHypothesisRepository interface {
-	RecallV2Hypotheses(ctx context.Context, input repository.V2RecallHypothesesInput) ([]repository.V2HypothesisRecord, error)
-	RefreshV2HypothesisStaleness(ctx context.Context, input repository.V2RefreshHypothesisStalenessInput) (int, error)
+	RecallHypotheses(ctx context.Context, input repository.RecallHypothesesInput) ([]repository.HypothesisRecord, error)
+	RefreshHypothesisStaleness(ctx context.Context, input repository.RefreshHypothesisStalenessInput) (int, error)
 }
 
 type RecallCommunityRepository interface {
-	RecallV2CommunityDiscovery(ctx context.Context, input repository.V2CommunityDiscoveryInput) ([]repository.V2CommunityDiscoveryPath, error)
-	RefreshV2CommunityStaleness(ctx context.Context, input repository.V2CommunityStalenessInput) (int, error)
+	RecallCommunityDiscovery(ctx context.Context, input repository.CommunityDiscoveryInput) ([]repository.CommunityDiscoveryPath, error)
+	RefreshCommunityStaleness(ctx context.Context, input repository.CommunityStalenessInput) (int, error)
 }
 
 type RecallCommunityConfigProvider interface {
@@ -74,7 +74,7 @@ func NewRecallService(deps RecallDependencies) RecallService {
 	}
 }
 
-type V2RecallRequest struct {
+type RecallRequest struct {
 	ContractVersion      string     `json:"contract_version"`
 	Query                string     `json:"query"`
 	Limit                int        `json:"limit,omitempty"`
@@ -85,44 +85,44 @@ type V2RecallRequest struct {
 	ExpandFromEntityIDs  []string   `json:"expand_from_entity_ids,omitempty"`
 }
 
-type V2RecallResult struct {
-	RecallID          string                       `json:"recall_id"`
-	Results           []V2RecallResultItem         `json:"results"`
-	Conflicts         []V2RecallConflictSummary    `json:"conflicts"`
-	DiscoveryPaths    []V2RecallDiscoveryPath      `json:"discovery_paths"`
-	DiscoveryGuidance string                       `json:"discovery_guidance"`
-	RelatedHypotheses []V2RelatedHypothesisSummary `json:"related_hypotheses"`
-	Degradation       *V2RecallDegradationResult   `json:"degradation,omitempty"`
-	SearchState       string                       `json:"search_state"`
+type RecallResult struct {
+	RecallID          string                     `json:"recall_id"`
+	Results           []RecallResultItem         `json:"results"`
+	Conflicts         []RecallConflictSummary    `json:"conflicts"`
+	DiscoveryPaths    []RecallDiscoveryPath      `json:"discovery_paths"`
+	DiscoveryGuidance string                     `json:"discovery_guidance"`
+	RelatedHypotheses []RelatedHypothesisSummary `json:"related_hypotheses"`
+	Degradation       *RecallDegradationResult   `json:"degradation,omitempty"`
+	SearchState       string                     `json:"search_state"`
 }
 
-type V2RecallResultItem struct {
+type RecallResultItem struct {
 	EvidenceID      string   `json:"evidence_id"`
 	RelationshipIDs []string `json:"relationship_ids,omitempty"`
 	Rank            int      `json:"rank"`
 	Context         string   `json:"context,omitempty"`
 }
 
-type V2RecallDiscoveryPath struct {
-	Relationships []V2RecallRelationshipHandle `json:"relationships"`
-	EvidenceIDs   []string                     `json:"evidence_ids"`
+type RecallDiscoveryPath struct {
+	Relationships []RecallRelationshipHandle `json:"relationships"`
+	EvidenceIDs   []string                   `json:"evidence_ids"`
 }
 
-type V2RecallConflictSummary struct {
-	ConflictID          string                     `json:"conflict_id"`
-	Version             int                        `json:"version"`
-	Kind                string                     `json:"kind"`
-	Status              string                     `json:"status"`
-	Question            string                     `json:"question"`
-	ReviewDueAt         *time.Time                 `json:"review_due_at"`
-	EffectiveAt         *time.Time                 `json:"effective_at"`
-	EffectiveTimeBasis  string                     `json:"effective_time_basis,omitempty"`
-	PreferredPositionID string                     `json:"preferred_position_id,omitempty"`
-	Positions           []V2RecallConflictPosition `json:"positions"`
-	PositionsTruncated  bool                       `json:"positions_truncated"`
+type RecallConflictSummary struct {
+	ConflictID          string                   `json:"conflict_id"`
+	Version             int                      `json:"version"`
+	Kind                string                   `json:"kind"`
+	Status              string                   `json:"status"`
+	Question            string                   `json:"question"`
+	ReviewDueAt         *time.Time               `json:"review_due_at"`
+	EffectiveAt         *time.Time               `json:"effective_at"`
+	EffectiveTimeBasis  string                   `json:"effective_time_basis,omitempty"`
+	PreferredPositionID string                   `json:"preferred_position_id,omitempty"`
+	Positions           []RecallConflictPosition `json:"positions"`
+	PositionsTruncated  bool                     `json:"positions_truncated"`
 }
 
-type V2RecallConflictPosition struct {
+type RecallConflictPosition struct {
 	PositionID        string   `json:"position_id"`
 	Disposition       string   `json:"disposition"`
 	RelationshipIDs   []string `json:"relationship_ids"`
@@ -130,20 +130,20 @@ type V2RecallConflictPosition struct {
 	ResultEvidenceIDs []string `json:"result_evidence_ids"`
 }
 
-type V2RecallRelationshipHandle struct {
-	RelationshipID string           `json:"relationship_id"`
-	Subject        V2EntityHandle   `json:"subject"`
-	Predicate      string           `json:"predicate"`
-	Object         V2SemanticObject `json:"object"`
-	Polarity       string           `json:"polarity"`
+type RecallRelationshipHandle struct {
+	RelationshipID string         `json:"relationship_id"`
+	Subject        EntityHandle   `json:"subject"`
+	Predicate      string         `json:"predicate"`
+	Object         SemanticObject `json:"object"`
+	Polarity       string         `json:"polarity"`
 }
 
-type V2EntityHandle struct {
+type EntityHandle struct {
 	EntityID string `json:"entity_id"`
 	Name     string `json:"name"`
 }
 
-type V2SemanticObject struct {
+type SemanticObject struct {
 	EntityID string `json:"entity_id,omitempty"`
 	ValueID  string `json:"value_id,omitempty"`
 	Name     string `json:"name,omitempty"`
@@ -153,7 +153,7 @@ type V2SemanticObject struct {
 	Unit     string `json:"unit,omitempty"`
 }
 
-type V2RelatedHypothesisSummary struct {
+type RelatedHypothesisSummary struct {
 	HypothesisID          string    `json:"hypothesis_id"`
 	SubjectEntityID       string    `json:"subject_entity_id"`
 	PredicateKey          string    `json:"predicate_key"`
@@ -167,37 +167,37 @@ type V2RelatedHypothesisSummary struct {
 	CreatedAt             time.Time `json:"created_at"`
 }
 
-type V2RecallDegradationResult struct {
+type RecallDegradationResult struct {
 	RequiredFailure bool   `json:"required_failure,omitempty"`
 	Optional        bool   `json:"optional,omitempty"`
 	Code            string `json:"code"`
 	Message         string `json:"message"`
 }
 
-func (s *recallService) Recall(ctx context.Context, req V2RecallRequest) (*V2RecallResult, error) {
+func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallResult, error) {
 	if s.search == nil {
 		return nil, errors.New("recall: search repository is required")
 	}
-	if strings.TrimSpace(req.ContractVersion) != domain.V2ContractVersion {
+	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
 		return nil, fmt.Errorf("recall: invalid contract_version %q", req.ContractVersion)
 	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
 		return nil, ErrRecallAuthContext
 	}
-	req = normalizeV2RecallRequest(req)
+	req = normalizeRecallRequest(req)
 	contract, err := s.search.GetActiveSearchContract(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var degradation *V2RecallDegradationResult
+	var degradation *RecallDegradationResult
 	queryEmbedding := []float32(nil)
 	if req.Query != "" {
 		vector, vectorDegradation := s.queryEmbedding(ctx, contract, req.Query)
 		queryEmbedding = vector
 		degradation = vectorDegradation
 	}
-	recalled, err := s.search.RecallEvidence(ctx, repository.V2RecallEvidenceInput{
+	recalled, err := s.search.RecallEvidence(ctx, repository.RecallEvidenceInput{
 		TeamID:               actor.TeamID.String(),
 		Query:                req.Query,
 		QueryEmbedding:       queryEmbedding,
@@ -231,30 +231,30 @@ func (s *recallService) Recall(ctx context.Context, req V2RecallRequest) (*V2Rec
 func (s *recallService) recallCommunityDiscovery(
 	ctx context.Context,
 	teamID string,
-	req V2RecallRequest,
+	req RecallRequest,
 	resultCount int,
-) ([]V2RecallDiscoveryPath, *V2RecallDegradationResult) {
+) ([]RecallDiscoveryPath, *RecallDegradationResult) {
 	if s.communities == nil || s.communityConfig == nil || resultCount >= req.Limit {
-		return []V2RecallDiscoveryPath{}, nil
+		return []RecallDiscoveryPath{}, nil
 	}
 	cfg, err := s.communityConfig.CommunityDetectionRuntimeConfig(ctx)
 	if err != nil {
-		return []V2RecallDiscoveryPath{}, v2CommunityDiscoveryDegradation()
+		return []RecallDiscoveryPath{}, communityDiscoveryDegradation()
 	}
 	if !cfg.Enabled {
-		return []V2RecallDiscoveryPath{}, nil
+		return []RecallDiscoveryPath{}, nil
 	}
-	if _, err := s.communities.RefreshV2CommunityStaleness(ctx, repository.V2CommunityStalenessInput{
+	if _, err := s.communities.RefreshCommunityStaleness(ctx, repository.CommunityStalenessInput{
 		TeamID: teamID,
 		Limit:  200,
 	}); err != nil {
-		return []V2RecallDiscoveryPath{}, v2CommunityDiscoveryDegradation()
+		return []RecallDiscoveryPath{}, communityDiscoveryDegradation()
 	}
 	remaining := req.Limit - resultCount
 	if remaining > defaultCommunityPathLimit {
 		remaining = defaultCommunityPathLimit
 	}
-	records, err := s.communities.RecallV2CommunityDiscovery(ctx, repository.V2CommunityDiscoveryInput{
+	records, err := s.communities.RecallCommunityDiscovery(ctx, repository.CommunityDiscoveryInput{
 		TeamID:               teamID,
 		Query:                req.Query,
 		ValidAt:              req.ValidAt,
@@ -264,13 +264,13 @@ func (s *recallService) recallCommunityDiscovery(
 		Limit:                remaining,
 	})
 	if err != nil {
-		return []V2RecallDiscoveryPath{}, v2CommunityDiscoveryDegradation()
+		return []RecallDiscoveryPath{}, communityDiscoveryDegradation()
 	}
-	return v2CommunityDiscoveryPaths(records), nil
+	return communityDiscoveryPaths(records), nil
 }
 
-func v2CommunityDiscoveryDegradation() *V2RecallDegradationResult {
-	return &V2RecallDegradationResult{
+func communityDiscoveryDegradation() *RecallDegradationResult {
+	return &RecallDegradationResult{
 		Optional: true,
 		Code:     "community_discovery_unavailable",
 		Message:  "community discovery was unavailable; primary evidence recall was used",
@@ -282,49 +282,49 @@ func (s *recallService) recallRelatedHypotheses(
 	teamID string,
 	ownerProfileID string,
 	query string,
-) ([]V2RelatedHypothesisSummary, *V2RecallDegradationResult) {
+) ([]RelatedHypothesisSummary, *RecallDegradationResult) {
 	if s.hypotheses == nil || strings.TrimSpace(query) == "" {
-		return []V2RelatedHypothesisSummary{}, nil
+		return []RelatedHypothesisSummary{}, nil
 	}
-	_, err := s.hypotheses.RefreshV2HypothesisStaleness(ctx, repository.V2RefreshHypothesisStalenessInput{
+	_, err := s.hypotheses.RefreshHypothesisStaleness(ctx, repository.RefreshHypothesisStalenessInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerProfileID,
 		Limit:          200,
 	})
 	if err != nil {
-		return []V2RelatedHypothesisSummary{}, v2RelatedHypothesisDegradation()
+		return []RelatedHypothesisSummary{}, relatedHypothesisDegradation()
 	}
-	records, err := s.hypotheses.RecallV2Hypotheses(ctx, repository.V2RecallHypothesesInput{
+	records, err := s.hypotheses.RecallHypotheses(ctx, repository.RecallHypothesesInput{
 		TeamID: teamID,
 		Query:  query,
 		Limit:  defaultRelatedHypothesisLimit,
 	})
 	if err != nil {
-		return []V2RelatedHypothesisSummary{}, v2RelatedHypothesisDegradation()
+		return []RelatedHypothesisSummary{}, relatedHypothesisDegradation()
 	}
-	return v2RelatedHypothesisSummaries(records), nil
+	return relatedHypothesisSummaries(records), nil
 }
 
-func v2RelatedHypothesisDegradation() *V2RecallDegradationResult {
-	return &V2RecallDegradationResult{
+func relatedHypothesisDegradation() *RecallDegradationResult {
+	return &RecallDegradationResult{
 		Optional: true,
 		Code:     "related_hypotheses_unavailable",
 		Message:  "related hypotheses were unavailable; primary evidence recall was used",
 	}
 }
 
-func v2CommunityDiscoveryPaths(records []repository.V2CommunityDiscoveryPath) []V2RecallDiscoveryPath {
-	out := make([]V2RecallDiscoveryPath, 0, len(records))
+func communityDiscoveryPaths(records []repository.CommunityDiscoveryPath) []RecallDiscoveryPath {
+	out := make([]RecallDiscoveryPath, 0, len(records))
 	for _, record := range records {
-		out = append(out, V2RecallDiscoveryPath{
-			Relationships: []V2RecallRelationshipHandle{{
+		out = append(out, RecallDiscoveryPath{
+			Relationships: []RecallRelationshipHandle{{
 				RelationshipID: record.Relationship.RelationshipID,
-				Subject: V2EntityHandle{
+				Subject: EntityHandle{
 					EntityID: record.Relationship.SubjectEntityID,
 					Name:     record.Relationship.SubjectName,
 				},
 				Predicate: record.Relationship.PredicateKey,
-				Object: V2SemanticObject{
+				Object: SemanticObject{
 					EntityID: record.Relationship.ObjectEntityID,
 					Name:     record.Relationship.ObjectName,
 				},
@@ -338,56 +338,56 @@ func v2CommunityDiscoveryPaths(records []repository.V2CommunityDiscoveryPath) []
 
 func (s *recallService) queryEmbedding(
 	ctx context.Context,
-	contract *repository.V2ActiveSearchContract,
+	contract *repository.ActiveSearchContract,
 	query string,
-) ([]float32, *V2RecallDegradationResult) {
+) ([]float32, *RecallDegradationResult) {
 	if s.provider == nil || !s.provider.IsAvailable() {
-		return nil, &V2RecallDegradationResult{
+		return nil, &RecallDegradationResult{
 			Optional: true,
-			Code:     string(domain.V2ErrorProviderUnavailable),
+			Code:     string(domain.ErrorProviderUnavailable),
 			Message:  "vector recall is unavailable; full-text evidence recall was used",
 		}
 	}
 	if got := s.provider.Dimensions(); got != 0 && got != contract.EmbeddingDimensions {
-		return nil, &V2RecallDegradationResult{
+		return nil, &RecallDegradationResult{
 			Optional: true,
-			Code:     string(domain.V2ErrorProviderMalformed),
+			Code:     string(domain.ErrorProviderMalformed),
 			Message:  "vector recall provider dimensions do not match the active search contract",
 		}
 	}
 	if got := strings.TrimSpace(s.provider.ModelName()); got != "" && got != contract.EmbeddingModel {
-		return nil, &V2RecallDegradationResult{
+		return nil, &RecallDegradationResult{
 			Optional: true,
-			Code:     string(domain.V2ErrorProviderMalformed),
+			Code:     string(domain.ErrorProviderMalformed),
 			Message:  "vector recall provider model does not match the active search contract",
 		}
 	}
 	vector, model, err := s.provider.Embed(ctx, query)
 	if err != nil {
-		return nil, &V2RecallDegradationResult{
+		return nil, &RecallDegradationResult{
 			Optional: true,
-			Code:     string(domain.V2ErrorProviderUnavailable),
+			Code:     string(domain.ErrorProviderUnavailable),
 			Message:  "vector recall provider failed; full-text evidence recall was used",
 		}
 	}
 	if model != "" && model != contract.EmbeddingModel {
-		return nil, &V2RecallDegradationResult{
+		return nil, &RecallDegradationResult{
 			Optional: true,
-			Code:     string(domain.V2ErrorProviderMalformed),
+			Code:     string(domain.ErrorProviderMalformed),
 			Message:  "vector recall provider returned the wrong model",
 		}
 	}
-	if err := validateV2RecallEmbedding(vector, contract.EmbeddingDimensions); err != nil {
-		return nil, &V2RecallDegradationResult{
+	if err := validateRecallEmbedding(vector, contract.EmbeddingDimensions); err != nil {
+		return nil, &RecallDegradationResult{
 			Optional: true,
-			Code:     string(domain.V2ErrorProviderMalformed),
+			Code:     string(domain.ErrorProviderMalformed),
 			Message:  "vector recall provider returned an invalid embedding",
 		}
 	}
 	return vector, nil
 }
 
-func normalizeV2RecallRequest(req V2RecallRequest) V2RecallRequest {
+func normalizeRecallRequest(req RecallRequest) RecallRequest {
 	req.ContractVersion = strings.TrimSpace(req.ContractVersion)
 	req.Query = strings.TrimSpace(req.Query)
 	if req.Limit <= 0 {
@@ -396,13 +396,13 @@ func normalizeV2RecallRequest(req V2RecallRequest) V2RecallRequest {
 	if req.Limit > maxRecallResultLimit {
 		req.Limit = maxRecallResultLimit
 	}
-	req.KnownEvidenceIDs = normalizeV2RecallRequestIDs(req.KnownEvidenceIDs)
-	req.KnownRelationshipIDs = normalizeV2RecallRequestIDs(req.KnownRelationshipIDs)
-	req.ExpandFromEntityIDs = normalizeV2RecallRequestIDs(req.ExpandFromEntityIDs)
+	req.KnownEvidenceIDs = normalizeRecallRequestIDs(req.KnownEvidenceIDs)
+	req.KnownRelationshipIDs = normalizeRecallRequestIDs(req.KnownRelationshipIDs)
+	req.ExpandFromEntityIDs = normalizeRecallRequestIDs(req.ExpandFromEntityIDs)
 	return req
 }
 
-func normalizeV2RecallRequestIDs(values []string) []string {
+func normalizeRecallRequestIDs(values []string) []string {
 	out := make([]string, 0, len(values))
 	seen := map[string]struct{}{}
 	for _, value := range values {
@@ -419,7 +419,7 @@ func normalizeV2RecallRequestIDs(values []string) []string {
 	return out
 }
 
-func validateV2RecallEmbedding(vector []float32, dims int) error {
+func validateRecallEmbedding(vector []float32, dims int) error {
 	if len(vector) != dims {
 		return fmt.Errorf("embedding dimensions %d, expected %d", len(vector), dims)
 	}
@@ -433,43 +433,43 @@ func validateV2RecallEmbedding(vector []float32, dims int) error {
 }
 
 func recallResultFromRepository(
-	recalled *repository.V2RecallEvidenceResult,
-	degradation *V2RecallDegradationResult,
-) *V2RecallResult {
-	searchState := string(domain.V2SearchProjectionCurrent)
-	results := []V2RecallResultItem{}
-	conflicts := []V2RecallConflictSummary{}
+	recalled *repository.RecallEvidenceResult,
+	degradation *RecallDegradationResult,
+) *RecallResult {
+	searchState := string(domain.SearchProjectionCurrent)
+	results := []RecallResultItem{}
+	conflicts := []RecallConflictSummary{}
 	if recalled != nil {
 		searchState = recalled.SearchState
-		results = make([]V2RecallResultItem, 0, len(recalled.Results))
+		results = make([]RecallResultItem, 0, len(recalled.Results))
 		for _, item := range recalled.Results {
-			results = append(results, V2RecallResultItem{
+			results = append(results, RecallResultItem{
 				EvidenceID:      item.EvidenceID,
 				RelationshipIDs: append([]string(nil), item.RelationshipIDs...),
 				Rank:            item.Rank,
 				Context:         item.Context,
 			})
 		}
-		conflicts = v2RecallConflictSummaries(recalled.Conflicts)
+		conflicts = recallConflictSummaries(recalled.Conflicts)
 	}
-	return &V2RecallResult{
+	return &RecallResult{
 		RecallID:          "rec_" + uuid.NewString(),
 		Results:           results,
 		Conflicts:         conflicts,
-		DiscoveryPaths:    []V2RecallDiscoveryPath{},
+		DiscoveryPaths:    []RecallDiscoveryPath{},
 		DiscoveryGuidance: "No additional discovery guidance.",
-		RelatedHypotheses: []V2RelatedHypothesisSummary{},
+		RelatedHypotheses: []RelatedHypothesisSummary{},
 		Degradation:       degradation,
 		SearchState:       searchState,
 	}
 }
 
-func v2RecallConflictSummaries(records []repository.V2RelationshipConflictCaseRecord) []V2RecallConflictSummary {
-	out := make([]V2RecallConflictSummary, 0, len(records))
+func recallConflictSummaries(records []repository.RelationshipConflictCaseRecord) []RecallConflictSummary {
+	out := make([]RecallConflictSummary, 0, len(records))
 	for _, record := range records {
 		reviewDueAt := record.ReviewDueAt
-		positions := v2RecallConflictPositions(record.Positions)
-		summary := V2RecallConflictSummary{
+		positions := recallConflictPositions(record.Positions)
+		summary := RecallConflictSummary{
 			ConflictID:          record.ConflictID,
 			Version:             record.Version,
 			Kind:                record.Kind,
@@ -480,7 +480,7 @@ func v2RecallConflictSummaries(records []repository.V2RelationshipConflictCaseRe
 			EffectiveTimeBasis:  record.EffectiveTimeBasis,
 			PreferredPositionID: record.PreferredPositionID,
 			Positions:           positions,
-			PositionsTruncated:  len(record.Positions) > v2RecallConflictPositionLimit,
+			PositionsTruncated:  len(record.Positions) > recallConflictPositionLimit,
 		}
 		out = append(out, summary)
 	}
@@ -488,40 +488,40 @@ func v2RecallConflictSummaries(records []repository.V2RelationshipConflictCaseRe
 }
 
 const (
-	v2RecallConflictPositionLimit         = 10
-	v2RecallConflictRelationshipIDLimit   = 20
-	v2RecallConflictOwnerProfileIDLimit   = 20
-	v2RecallConflictResultEvidenceIDLimit = 50
+	recallConflictPositionLimit         = 10
+	recallConflictRelationshipIDLimit   = 20
+	recallConflictOwnerProfileIDLimit   = 20
+	recallConflictResultEvidenceIDLimit = 50
 )
 
-func v2RecallConflictPositions(records []repository.V2RelationshipConflictPositionRecord) []V2RecallConflictPosition {
-	if len(records) > v2RecallConflictPositionLimit {
-		records = records[:v2RecallConflictPositionLimit]
+func recallConflictPositions(records []repository.RelationshipConflictPositionRecord) []RecallConflictPosition {
+	if len(records) > recallConflictPositionLimit {
+		records = records[:recallConflictPositionLimit]
 	}
-	out := make([]V2RecallConflictPosition, 0, len(records))
+	out := make([]RecallConflictPosition, 0, len(records))
 	for _, record := range records {
-		out = append(out, V2RecallConflictPosition{
+		out = append(out, RecallConflictPosition{
 			PositionID:        record.PositionID,
 			Disposition:       record.Disposition,
-			RelationshipIDs:   v2LimitStrings(record.RelationshipIDs, v2RecallConflictRelationshipIDLimit),
-			OwnerProfileIDs:   v2LimitStrings(record.OwnerProfileIDs, v2RecallConflictOwnerProfileIDLimit),
-			ResultEvidenceIDs: v2LimitStrings(record.EvidenceIDs, v2RecallConflictResultEvidenceIDLimit),
+			RelationshipIDs:   limitStrings(record.RelationshipIDs, recallConflictRelationshipIDLimit),
+			OwnerProfileIDs:   limitStrings(record.OwnerProfileIDs, recallConflictOwnerProfileIDLimit),
+			ResultEvidenceIDs: limitStrings(record.EvidenceIDs, recallConflictResultEvidenceIDLimit),
 		})
 	}
 	return out
 }
 
-func v2LimitStrings(values []string, limit int) []string {
+func limitStrings(values []string, limit int) []string {
 	if limit >= 0 && len(values) > limit {
 		values = values[:limit]
 	}
 	return append([]string(nil), values...)
 }
 
-func v2RelatedHypothesisSummaries(records []repository.V2HypothesisRecord) []V2RelatedHypothesisSummary {
-	out := make([]V2RelatedHypothesisSummary, 0, len(records))
+func relatedHypothesisSummaries(records []repository.HypothesisRecord) []RelatedHypothesisSummary {
+	out := make([]RelatedHypothesisSummary, 0, len(records))
 	for _, record := range records {
-		out = append(out, V2RelatedHypothesisSummary{
+		out = append(out, RelatedHypothesisSummary{
 			HypothesisID:          record.HypothesisID,
 			SubjectEntityID:       record.SubjectEntityID,
 			PredicateKey:          record.PredicateKey,
@@ -529,8 +529,8 @@ func v2RelatedHypothesisSummaries(records []repository.V2HypothesisRecord) []V2R
 			ObjectValueID:         record.ObjectValueID,
 			Statement:             record.Statement,
 			Status:                record.Status,
-			SourceRelationshipIDs: v2RelatedHypothesisSourceIDs(record.SourceRefs),
-			GeneratorKind:         v2PublicHypothesisGeneratorKind(record.GeneratorKind),
+			SourceRelationshipIDs: relatedHypothesisSourceIDs(record.SourceRefs),
+			GeneratorKind:         publicHypothesisGeneratorKind(record.GeneratorKind),
 			GeneratorVersion:      record.GeneratorVersion,
 			CreatedAt:             record.CreatedAt,
 		})
@@ -538,7 +538,7 @@ func v2RelatedHypothesisSummaries(records []repository.V2HypothesisRecord) []V2R
 	return out
 }
 
-func v2RelatedHypothesisSourceIDs(refs []map[string]any) []string {
+func relatedHypothesisSourceIDs(refs []map[string]any) []string {
 	out := []string{}
 	for _, ref := range refs {
 		id, _ := ref["id"].(string)
@@ -550,7 +550,7 @@ func v2RelatedHypothesisSourceIDs(refs []map[string]any) []string {
 	return out
 }
 
-func v2PublicHypothesisGeneratorKind(kind string) string {
+func publicHypothesisGeneratorKind(kind string) string {
 	switch strings.TrimSpace(kind) {
 	case "provider":
 		return "provider"

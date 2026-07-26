@@ -16,14 +16,14 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-func TestV2MemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
+func TestMemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
 	sourceOwnerID := uuid.New()
 	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
-	semantic := &v2SemanticReaderStub{traces: map[string]*repository.V2RelationshipTraceResult{
+	semantic := &semanticReaderStub{traces: map[string]*repository.RelationshipTraceResult{
 		"rel-uses-postgres": {
-			Relationship: &repository.V2RelationshipTraceRecord{
+			Relationship: &repository.RelationshipTraceRecord{
 				TeamID:           teamID.String(),
 				RelationshipID:   "rel-uses-postgres",
 				OwnerProfileID:   sourceOwnerID.String(),
@@ -35,21 +35,21 @@ func TestV2MemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 				ObjectEntityID:   "entity-postgres",
 				ObjectEntityName: "PostgreSQL",
 				Tier:             "profile",
-				Status:           string(domain.V2RelationshipStatusActive),
+				Status:           string(domain.RelationshipStatusActive),
 				Polarity:         "positive",
 				ScopeKey:         "default",
 				SupportCount:     1,
 				SourceGroupCount: 1,
 				Version:          3,
 			},
-			EvidenceSupports: []repository.V2RelationshipEvidenceSupportRecord{{
+			EvidenceSupports: []repository.RelationshipEvidenceSupportRecord{{
 				FragmentID: "fragment-1",
 				Quote:      "Dense-Mem uses PostgreSQL.",
 				SpanStart:  0,
 				SpanEnd:    27,
 				Metadata:   map[string]any{"support": "primary"},
 			}},
-			EvidenceFragments: []repository.V2TraceEvidenceFragment{{
+			EvidenceFragments: []repository.TraceEvidenceFragment{{
 				FragmentID:       "fragment-1",
 				Content:          "Dense-Mem uses PostgreSQL with pgvector as the durable authority.",
 				ContentHash:      "fragment-hash",
@@ -58,32 +58,32 @@ func TestV2MemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 				SourceRef:        "wiki:Data-Model-And-Storage",
 				SourceKey:        "wiki:data-model",
 				SourceRevisionID: "rev-1",
-				Labels:           []string{"v2", "wiki"},
+				Labels:           []string{"canonical", "wiki"},
 				Metadata:         map[string]any{"page": "Data-Model-And-Storage"},
 			}},
 		},
 	}}
-	remember := &v2RememberStub{result: &memoryservice.V2RememberResult{
-		IngestID:          "ingest-v2",
-		ProcessingState:   string(domain.V2PlacementRunQueued),
+	remember := &rememberStub{result: &memoryservice.RememberResult{
+		IngestID:          "ingest-canonical",
+		ProcessingState:   string(domain.PlacementRunQueued),
 		CheckAfterSeconds: 15,
 		StatusTool:        "get_memory_placement",
 	}}
-	ledger := newV2LedgerStub()
+	ledger := newLedgerStub()
 	svc := NewMemoryPackService(MemoryPackDependencies{
 		Semantic: semantic,
 		Remember: remember,
 		Ledger:   ledger,
 		Now:      func() time.Time { return now },
 	})
-	ctx := authenticatedV2MemoryPackContext(teamID, ownerID, uuid.New())
+	ctx := authenticatedMemoryPackContext(teamID, ownerID, uuid.New())
 
-	exported, err := svc.Export(ctx, V2ExportRequest{
+	exported, err := svc.Export(ctx, ExportRequest{
 		Name:            "Dense-Mem PostgreSQL pack",
 		RelationshipIDs: []string{"rel-uses-postgres"},
 	})
 	if err != nil {
-		t.Fatalf("ExportV2: %v", err)
+		t.Fatalf("Export: %v", err)
 	}
 	if exported.SHA256 == "" || exported.Artifact.ContentSHA256 != exported.SHA256 {
 		t.Fatalf("exported hash = %q artifact hash = %q", exported.SHA256, exported.Artifact.ContentSHA256)
@@ -92,36 +92,36 @@ func TestV2MemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 		t.Fatalf("canonical_json did not include content_sha256: %s", exported.CanonicalJSON)
 	}
 
-	inspected, err := svc.Inspect(ctx, V2InspectRequest{
+	inspected, err := svc.Inspect(ctx, InspectRequest{
 		ArtifactJSON:   exported.CanonicalJSON,
 		ExpectedSHA256: exported.SHA256,
 	})
 	if err != nil {
-		t.Fatalf("InspectV2: %v", err)
+		t.Fatalf("Inspect: %v", err)
 	}
 	if inspected.ArtifactHash != exported.SHA256 || inspected.ItemCount != 1 || inspected.Items[0].Status != "ready" {
 		t.Fatalf("inspect result = %#v", inspected)
 	}
 
-	imported, err := svc.Import(ctx, V2ImportRequest{
+	imported, err := svc.Import(ctx, ImportRequest{
 		ArtifactJSON:   exported.CanonicalJSON,
 		ExpectedSHA256: exported.SHA256,
 		Mode:           ModeReview,
 	})
 	if err != nil {
-		t.Fatalf("ImportV2: %v", err)
+		t.Fatalf("Import: %v", err)
 	}
-	if imported.Status != domain.SkillPackImportStatusApplied || imported.IngestID != "ingest-v2" || imported.AppliedCount != 1 {
+	if imported.Status != domain.SkillPackImportStatusApplied || imported.IngestID != "ingest-canonical" || imported.AppliedCount != 1 {
 		t.Fatalf("import result = %#v", imported)
 	}
 	if remember.calls != 1 {
-		t.Fatalf("RememberV2 calls = %d, want 1", remember.calls)
+		t.Fatalf("Remember calls = %d, want 1", remember.calls)
 	}
 	if len(remember.reqs) != 1 || len(remember.reqs[0].Evidence) != 1 || len(remember.reqs[0].RelationshipHints) != 1 {
 		t.Fatalf("remember request = %#v", remember.reqs)
 	}
 	req := remember.reqs[0]
-	if req.ContractVersion != domain.V2ContractVersion || req.IdempotencyKey != "memory-pack:"+imported.ImportID {
+	if req.ContractVersion != domain.ContractVersion || req.IdempotencyKey != "memory-pack:"+imported.ImportID {
 		t.Fatalf("remember request identity = %#v", req)
 	}
 	metadata := req.Evidence[0].Metadata
@@ -149,31 +149,31 @@ func TestV2MemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 		t.Fatalf("ledger changes = %#v", changes)
 	}
 
-	retried, err := svc.Import(ctx, V2ImportRequest{
+	retried, err := svc.Import(ctx, ImportRequest{
 		ArtifactJSON:   exported.CanonicalJSON,
 		ExpectedSHA256: exported.SHA256,
 		Mode:           ModeReview,
 	})
 	if err != nil {
-		t.Fatalf("ImportV2 retry: %v", err)
+		t.Fatalf("Import retry: %v", err)
 	}
 	if retried.ImportID != imported.ImportID || retried.IngestID != imported.IngestID {
 		t.Fatalf("retry import = %#v want import_id=%s ingest_id=%s", retried, imported.ImportID, imported.IngestID)
 	}
 	if remember.calls != 1 {
-		t.Fatalf("RememberV2 calls after retry = %d, want 1", remember.calls)
+		t.Fatalf("Remember calls after retry = %d, want 1", remember.calls)
 	}
 }
 
-func TestV2MemoryPackFindCandidatesFromSemanticGraph(t *testing.T) {
+func TestMemoryPackFindCandidatesFromSemanticGraph(t *testing.T) {
 	teamID := uuid.New()
-	semantic := &v2SemanticReaderStub{graph: &repository.V2SemanticGraphSnapshot{
-		Nodes: []repository.V2SemanticGraphNode{
+	semantic := &semanticReaderStub{graph: &repository.SemanticGraphSnapshot{
+		Nodes: []repository.SemanticGraphNode{
 			{Key: "entity:dense-mem", Title: "Dense-Mem"},
 			{Key: "value:postgres", Title: "PostgreSQL"},
 		},
-		Edges: []repository.V2SemanticGraphEdge{{
-			RelationshipID:   "relationship-v2",
+		Edges: []repository.SemanticGraphEdge{{
+			RelationshipID:   "relationship-canonical",
 			Source:           "entity:dense-mem",
 			Target:           "value:postgres",
 			Relationship:     "uses",
@@ -184,12 +184,12 @@ func TestV2MemoryPackFindCandidatesFromSemanticGraph(t *testing.T) {
 	}}
 	svc := NewMemoryPackService(MemoryPackDependencies{Semantic: semantic})
 
-	result, err := svc.FindCandidates(authenticatedV2MemoryPackContext(teamID, uuid.New(), uuid.New()), V2FindCandidatesRequest{
+	result, err := svc.FindCandidates(authenticatedMemoryPackContext(teamID, uuid.New(), uuid.New()), FindCandidatesRequest{
 		Query: "postgres",
 		Limit: 3,
 	})
 	if err != nil {
-		t.Fatalf("FindCandidatesV2: %v", err)
+		t.Fatalf("FindCandidates: %v", err)
 	}
 	if semantic.graphInput.TeamID != teamID.String() || semantic.graphInput.Query != "postgres" || semantic.graphInput.Limit != 3 {
 		t.Fatalf("semantic graph input = %#v", semantic.graphInput)
@@ -198,17 +198,17 @@ func TestV2MemoryPackFindCandidatesFromSemanticGraph(t *testing.T) {
 		t.Fatalf("candidates = %#v", result.Candidates)
 	}
 	got := result.Candidates[0]
-	if got.RelationshipID != "relationship-v2" || got.Subject != "Dense-Mem" || got.Object != "PostgreSQL" {
+	if got.RelationshipID != "relationship-canonical" || got.Subject != "Dense-Mem" || got.Object != "PostgreSQL" {
 		t.Fatalf("candidate = %#v", got)
 	}
 }
 
-func TestV2MemoryPackExportValueRelationshipWithoutSupport(t *testing.T) {
+func TestMemoryPackExportValueRelationshipWithoutSupport(t *testing.T) {
 	teamID := uuid.New()
 	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
-	semantic := &v2SemanticReaderStub{traces: map[string]*repository.V2RelationshipTraceResult{
+	semantic := &semanticReaderStub{traces: map[string]*repository.RelationshipTraceResult{
 		"rel-released": {
-			Relationship: &repository.V2RelationshipTraceRecord{
+			Relationship: &repository.RelationshipTraceRecord{
 				TeamID:           teamID.String(),
 				RelationshipID:   "rel-released",
 				SemanticGroupKey: "dense-mem:released:date",
@@ -219,10 +219,10 @@ func TestV2MemoryPackExportValueRelationshipWithoutSupport(t *testing.T) {
 				ObjectValueID:    "value-date",
 				ObjectValue:      "2026-07-17",
 				ObjectValueType:  "date",
-				Status:           string(domain.V2RelationshipStatusActive),
+				Status:           string(domain.RelationshipStatusActive),
 				Version:          1,
 			},
-			EvidenceSupports: []repository.V2RelationshipEvidenceSupportRecord{{
+			EvidenceSupports: []repository.RelationshipEvidenceSupportRecord{{
 				FragmentID: "fragment-ignored",
 				Quote:      "ignored because support is disabled",
 			}},
@@ -234,13 +234,13 @@ func TestV2MemoryPackExportValueRelationshipWithoutSupport(t *testing.T) {
 		Now:      func() time.Time { return now },
 	})
 
-	result, err := svc.Export(authenticatedV2MemoryPackContext(teamID, uuid.New(), uuid.New()), V2ExportRequest{
+	result, err := svc.Export(authenticatedMemoryPackContext(teamID, uuid.New(), uuid.New()), ExportRequest{
 		Name:            "Release pack",
 		RelationshipIDs: []string{"rel-released"},
 		IncludeSupport:  &includeSupport,
 	})
 	if err != nil {
-		t.Fatalf("ExportV2 value relationship: %v", err)
+		t.Fatalf("Export value relationship: %v", err)
 	}
 	if len(result.Omissions) != 1 || len(result.Artifact.EvidenceFragments) != 0 {
 		t.Fatalf("export omissions/fragments = %#v/%#v", result.Omissions, result.Artifact.EvidenceFragments)
@@ -251,11 +251,11 @@ func TestV2MemoryPackExportValueRelationshipWithoutSupport(t *testing.T) {
 	}
 }
 
-func TestV2MemoryPackInspectAcceptsLegacyArtifactAsReviewOnly(t *testing.T) {
+func TestMemoryPackInspectAcceptsLegacyArtifactAsReviewOnly(t *testing.T) {
 	svc := NewMemoryPackService(MemoryPackDependencies{})
-	ctx := authenticatedV2MemoryPackContext(uuid.New(), uuid.New(), uuid.New())
+	ctx := authenticatedMemoryPackContext(uuid.New(), uuid.New(), uuid.New())
 
-	result, err := svc.Inspect(ctx, V2InspectRequest{ArtifactJSON: `{
+	result, err := svc.Inspect(ctx, InspectRequest{ArtifactJSON: `{
 		"schema_version": "dense-mem.memory_pack.v1",
 		"name": "Legacy skill pack",
 		"items": [{
@@ -266,7 +266,7 @@ func TestV2MemoryPackInspectAcceptsLegacyArtifactAsReviewOnly(t *testing.T) {
 		}]
 	}`})
 	if err != nil {
-		t.Fatalf("InspectV2 legacy: %v", err)
+		t.Fatalf("Inspect legacy: %v", err)
 	}
 	if result.Format != MemoryPackFormat || result.ItemCount != 1 {
 		t.Fatalf("legacy inspect result = %#v", result)
@@ -276,81 +276,81 @@ func TestV2MemoryPackInspectAcceptsLegacyArtifactAsReviewOnly(t *testing.T) {
 	}
 }
 
-func TestV2MemoryPackArtifactValidationRejectsMalformedArtifacts(t *testing.T) {
-	validRelationship := V2MemoryPackRelationship{
+func TestMemoryPackArtifactValidationRejectsMalformedArtifacts(t *testing.T) {
+	validRelationship := MemoryPackRelationship{
 		ItemID:           "item-1",
-		Subject:          V2MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+		Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
 		PredicateKey:     "uses",
 		PredicateVersion: 1,
-		Object:           V2MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+		Object:           MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
 	}
-	validArtifact := V2MemoryPackArtifact{
+	validArtifact := MemoryPackArtifact{
 		Format:        MemoryPackFormat,
 		Name:          "Valid pack",
-		Relationships: []V2MemoryPackRelationship{validRelationship},
+		Relationships: []MemoryPackRelationship{validRelationship},
 	}
 	longName := strings.Repeat("x", 257)
 	longDescription := strings.Repeat("x", 1025)
 
 	tests := []struct {
 		name     string
-		mutate   func(V2MemoryPackArtifact) V2MemoryPackArtifact
+		mutate   func(MemoryPackArtifact) MemoryPackArtifact
 		wantText string
 	}{
-		{name: "wrong format", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact { a.Format = "wrong"; return a }, wantText: "format"},
-		{name: "missing name", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact { a.Name = ""; return a }, wantText: "name is required"},
-		{name: "long name", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact { a.Name = longName; return a }, wantText: "name exceeds"},
-		{name: "long description", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact { a.Description = longDescription; return a }, wantText: "description exceeds"},
-		{name: "no relationships", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact { a.Relationships = nil; return a }, wantText: "relationships is required"},
-		{name: "missing item id", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact { a.Relationships[0].ItemID = ""; return a }, wantText: "item_id"},
-		{name: "missing predicate", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact { a.Relationships[0].PredicateKey = ""; return a }, wantText: "predicate_key"},
-		{name: "bad predicate version", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact { a.Relationships[0].PredicateVersion = 0; return a }, wantText: "predicate_version"},
-		{name: "missing subject", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact {
+		{name: "wrong format", mutate: func(a MemoryPackArtifact) MemoryPackArtifact { a.Format = "wrong"; return a }, wantText: "format"},
+		{name: "missing name", mutate: func(a MemoryPackArtifact) MemoryPackArtifact { a.Name = ""; return a }, wantText: "name is required"},
+		{name: "long name", mutate: func(a MemoryPackArtifact) MemoryPackArtifact { a.Name = longName; return a }, wantText: "name exceeds"},
+		{name: "long description", mutate: func(a MemoryPackArtifact) MemoryPackArtifact { a.Description = longDescription; return a }, wantText: "description exceeds"},
+		{name: "no relationships", mutate: func(a MemoryPackArtifact) MemoryPackArtifact { a.Relationships = nil; return a }, wantText: "relationships is required"},
+		{name: "missing item id", mutate: func(a MemoryPackArtifact) MemoryPackArtifact { a.Relationships[0].ItemID = ""; return a }, wantText: "item_id"},
+		{name: "missing predicate", mutate: func(a MemoryPackArtifact) MemoryPackArtifact { a.Relationships[0].PredicateKey = ""; return a }, wantText: "predicate_key"},
+		{name: "bad predicate version", mutate: func(a MemoryPackArtifact) MemoryPackArtifact { a.Relationships[0].PredicateVersion = 0; return a }, wantText: "predicate_version"},
+		{name: "missing subject", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
 			a.Relationships[0].Subject.DisplayName = ""
 			return a
 		}, wantText: "subject ref"},
-		{name: "missing object ref", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact { a.Relationships[0].Object.Ref = ""; return a }, wantText: "object ref"},
-		{name: "missing value payload", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact {
-			a.Relationships[0].Object = V2MemoryPackEndpoint{Ref: "object", Kind: "value", ValueType: "text"}
+		{name: "missing object ref", mutate: func(a MemoryPackArtifact) MemoryPackArtifact { a.Relationships[0].Object.Ref = ""; return a }, wantText: "object ref"},
+		{name: "missing value payload", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
+			a.Relationships[0].Object = MemoryPackEndpoint{Ref: "object", Kind: "value", ValueType: "text"}
 			return a
 		}, wantText: "object value"},
-		{name: "missing object display", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact {
+		{name: "missing object display", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
 			a.Relationships[0].Object.DisplayName = ""
 			return a
 		}, wantText: "object display_name"},
-		{name: "duplicate relationship", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact {
+		{name: "duplicate relationship", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
 			a.Relationships = append(a.Relationships, a.Relationships[0])
 			return a
 		}, wantText: "duplicate item_id"},
-		{name: "missing fragment id", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact {
-			a.EvidenceFragments = []V2MemoryPackEvidenceFragment{{Content: "evidence"}}
+		{name: "missing fragment id", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
+			a.EvidenceFragments = []MemoryPackEvidenceFragment{{Content: "evidence"}}
 			return a
 		}, wantText: "fragment_id"},
-		{name: "empty fragment content", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact {
-			a.EvidenceFragments = []V2MemoryPackEvidenceFragment{{FragmentID: "fragment-1"}}
+		{name: "empty fragment content", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
+			a.EvidenceFragments = []MemoryPackEvidenceFragment{{FragmentID: "fragment-1"}}
 			return a
 		}, wantText: "content is required"},
-		{name: "duplicate fragment", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact {
-			a.EvidenceFragments = []V2MemoryPackEvidenceFragment{
+		{name: "duplicate fragment", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
+			a.EvidenceFragments = []MemoryPackEvidenceFragment{
 				{FragmentID: "fragment-1", Content: "evidence"},
 				{FragmentID: "fragment-1", Content: "evidence"},
 			}
 			return a
 		}, wantText: "duplicate fragment_id"},
-		{name: "support missing relationship", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact {
-			a.EvidenceFragments = []V2MemoryPackEvidenceFragment{{FragmentID: "fragment-1", Content: "evidence"}}
-			a.EvidenceSupports = []V2MemoryPackEvidenceSupport{{RelationshipItemID: "missing", FragmentID: "fragment-1"}}
+		{name: "support missing relationship", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
+			a.EvidenceFragments = []MemoryPackEvidenceFragment{{FragmentID: "fragment-1", Content: "evidence"}}
+			a.EvidenceSupports = []MemoryPackEvidenceSupport{{RelationshipItemID: "missing", FragmentID: "fragment-1"}}
 			return a
 		}, wantText: "relationship item"},
-		{name: "support missing fragment", mutate: func(a V2MemoryPackArtifact) V2MemoryPackArtifact {
-			a.EvidenceFragments = []V2MemoryPackEvidenceFragment{{FragmentID: "fragment-1", Content: "evidence"}}
-			a.EvidenceSupports = []V2MemoryPackEvidenceSupport{{RelationshipItemID: "item-1", FragmentID: "missing"}}
+		{name: "support missing fragment", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
+			a.EvidenceFragments = []MemoryPackEvidenceFragment{{FragmentID: "fragment-1", Content: "evidence"}}
+			a.EvidenceSupports = []MemoryPackEvidenceSupport{{RelationshipItemID: "item-1", FragmentID: "missing"}}
 			return a
 		}, wantText: "fragment"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateV2MemoryPackArtifact(tc.mutate(cloneV2TestArtifact(validArtifact)))
+			err := validateMemoryPackArtifact(tc.mutate(cloneTestArtifact(validArtifact)))
 			if err == nil || !strings.Contains(err.Error(), tc.wantText) {
 				t.Fatalf("validate error = %v, want %q", err, tc.wantText)
 			}
@@ -358,21 +358,21 @@ func TestV2MemoryPackArtifactValidationRejectsMalformedArtifacts(t *testing.T) {
 	}
 }
 
-func TestV2MemoryPackLoadRejectsHashMismatches(t *testing.T) {
-	artifact := V2MemoryPackArtifact{
+func TestMemoryPackLoadRejectsHashMismatches(t *testing.T) {
+	artifact := MemoryPackArtifact{
 		Format:    MemoryPackFormat,
 		PackID:    "pack-hash",
 		Name:      "Hash pack",
 		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		Relationships: []V2MemoryPackRelationship{{
+		Relationships: []MemoryPackRelationship{{
 			ItemID:           "item-1",
-			Subject:          V2MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
 			PredicateKey:     "uses",
 			PredicateVersion: 1,
-			Object:           V2MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+			Object:           MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
 		}},
 	}
-	data := testV2ArtifactJSON(t, artifact)
+	data := testArtifactJSON(t, artifact)
 	svc := NewMemoryPackService(MemoryPackDependencies{})
 
 	_, err := svc.(*memoryPackService).loadArtifact(context.Background(), data, "", strings.Repeat("0", 64))
@@ -391,37 +391,37 @@ func TestV2MemoryPackLoadRejectsHashMismatches(t *testing.T) {
 	}
 }
 
-func TestV2MemoryPackInspectLoadsArtifactFromURL(t *testing.T) {
-	artifact := V2MemoryPackArtifact{
+func TestMemoryPackInspectLoadsArtifactFromURL(t *testing.T) {
+	artifact := MemoryPackArtifact{
 		Format:    MemoryPackFormat,
 		PackID:    "pack-url",
 		Name:      "URL pack",
 		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		Relationships: []V2MemoryPackRelationship{{
+		Relationships: []MemoryPackRelationship{{
 			ItemID:           "item-1",
-			Subject:          V2MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
 			PredicateKey:     "uses",
 			PredicateVersion: 1,
-			Object:           V2MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+			Object:           MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
 		}},
 	}
-	data := testV2ArtifactJSON(t, artifact)
+	data := testArtifactJSON(t, artifact)
 	_, hash, err := canonicalMemoryPackArtifact(artifact)
 	if err != nil {
 		t.Fatalf("canonical artifact: %v", err)
 	}
-	client := v2ArtifactHTTPClientFunc(func(req *http.Request) (*http.Response, error) {
+	client := artifactHTTPClientFunc(func(req *http.Request) (*http.Response, error) {
 		if req.URL.String() != "https://example.com/pack.json" || req.Header.Get("Accept") != "application/json" {
 			t.Fatalf("unexpected request url=%s accept=%s", req.URL.String(), req.Header.Get("Accept"))
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(data))}, nil
 	})
 	result, err := NewMemoryPackService(MemoryPackDependencies{HTTPClient: client}).Inspect(
-		authenticatedV2MemoryPackContext(uuid.New(), uuid.New(), uuid.New()),
-		V2InspectRequest{URL: "https://example.com/pack.json", ExpectedSHA256: hash},
+		authenticatedMemoryPackContext(uuid.New(), uuid.New(), uuid.New()),
+		InspectRequest{URL: "https://example.com/pack.json", ExpectedSHA256: hash},
 	)
 	if err != nil {
-		t.Fatalf("InspectV2 URL: %v", err)
+		t.Fatalf("Inspect URL: %v", err)
 	}
 	if result.SourceURL != "https://example.com/pack.json" || result.ArtifactHash != hash {
 		t.Fatalf("url inspect result = %#v", result)
@@ -429,27 +429,27 @@ func TestV2MemoryPackInspectLoadsArtifactFromURL(t *testing.T) {
 }
 
 func TestMemoryPackServiceValidationErrors(t *testing.T) {
-	ctx := authenticatedV2MemoryPackContext(uuid.New(), uuid.New(), uuid.New())
-	artifactJSON := testV2ArtifactJSON(t, V2MemoryPackArtifact{
+	ctx := authenticatedMemoryPackContext(uuid.New(), uuid.New(), uuid.New())
+	artifactJSON := testArtifactJSON(t, MemoryPackArtifact{
 		Format:    MemoryPackFormat,
 		PackID:    "pack-errors",
 		Name:      "Error pack",
 		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		Relationships: []V2MemoryPackRelationship{{
+		Relationships: []MemoryPackRelationship{{
 			ItemID:           "item-1",
-			Subject:          V2MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
 			PredicateKey:     "uses",
 			PredicateVersion: 1,
-			Object:           V2MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+			Object:           MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
 		}},
 	})
-	inactiveSemantic := &v2SemanticReaderStub{traces: map[string]*repository.V2RelationshipTraceResult{
-		"inactive": {Relationship: &repository.V2RelationshipTraceRecord{
+	inactiveSemantic := &semanticReaderStub{traces: map[string]*repository.RelationshipTraceResult{
+		"inactive": {Relationship: &repository.RelationshipTraceRecord{
 			RelationshipID: "inactive",
 			SubjectName:    "Dense-Mem",
 			PredicateKey:   "uses",
 			ObjectEntityID: "entity-postgres",
-			Status:         string(domain.V2RelationshipStatusNeedsReview),
+			Status:         string(domain.RelationshipStatusNeedsReview),
 		}},
 	}}
 	tests := []struct {
@@ -458,51 +458,51 @@ func TestMemoryPackServiceValidationErrors(t *testing.T) {
 		want string
 	}{
 		{name: "find missing semantic", run: func() error {
-			_, err := NewMemoryPackService(MemoryPackDependencies{}).FindCandidates(ctx, V2FindCandidatesRequest{Query: "postgres"})
+			_, err := NewMemoryPackService(MemoryPackDependencies{}).FindCandidates(ctx, FindCandidatesRequest{Query: "postgres"})
 			return err
 		}, want: "semantic reader"},
 		{name: "find missing query", run: func() error {
-			_, err := NewMemoryPackService(MemoryPackDependencies{Semantic: &v2SemanticReaderStub{}}).FindCandidates(ctx, V2FindCandidatesRequest{})
+			_, err := NewMemoryPackService(MemoryPackDependencies{Semantic: &semanticReaderStub{}}).FindCandidates(ctx, FindCandidatesRequest{})
 			return err
 		}, want: "query is required"},
 		{name: "export missing name", run: func() error {
-			_, err := NewMemoryPackService(MemoryPackDependencies{Semantic: &v2SemanticReaderStub{}}).Export(ctx, V2ExportRequest{RelationshipIDs: []string{"relationship"}})
+			_, err := NewMemoryPackService(MemoryPackDependencies{Semantic: &semanticReaderStub{}}).Export(ctx, ExportRequest{RelationshipIDs: []string{"relationship"}})
 			return err
 		}, want: "name is required"},
 		{name: "export missing relationship ids", run: func() error {
-			_, err := NewMemoryPackService(MemoryPackDependencies{Semantic: &v2SemanticReaderStub{}}).Export(ctx, V2ExportRequest{Name: "Pack"})
+			_, err := NewMemoryPackService(MemoryPackDependencies{Semantic: &semanticReaderStub{}}).Export(ctx, ExportRequest{Name: "Pack"})
 			return err
 		}, want: "relationship_ids"},
 		{name: "export relationship not found", run: func() error {
-			_, err := NewMemoryPackService(MemoryPackDependencies{Semantic: &v2SemanticReaderStub{}}).Export(ctx, V2ExportRequest{Name: "Pack", RelationshipIDs: []string{"missing"}})
+			_, err := NewMemoryPackService(MemoryPackDependencies{Semantic: &semanticReaderStub{}}).Export(ctx, ExportRequest{Name: "Pack", RelationshipIDs: []string{"missing"}})
 			return err
 		}, want: "not found"},
 		{name: "export inactive relationship", run: func() error {
-			_, err := NewMemoryPackService(MemoryPackDependencies{Semantic: inactiveSemantic}).Export(ctx, V2ExportRequest{Name: "Pack", RelationshipIDs: []string{"inactive"}})
+			_, err := NewMemoryPackService(MemoryPackDependencies{Semantic: inactiveSemantic}).Export(ctx, ExportRequest{Name: "Pack", RelationshipIDs: []string{"inactive"}})
 			return err
 		}, want: "not active"},
 		{name: "import invalid mode", run: func() error {
-			_, err := NewMemoryPackService(MemoryPackDependencies{}).Import(ctx, V2ImportRequest{Mode: "force"})
+			_, err := NewMemoryPackService(MemoryPackDependencies{}).Import(ctx, ImportRequest{Mode: "force"})
 			return err
 		}, want: "mode must be review or trusted"},
 		{name: "import missing remember", run: func() error {
-			_, err := NewMemoryPackService(MemoryPackDependencies{}).Import(ctx, V2ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeReview})
+			_, err := NewMemoryPackService(MemoryPackDependencies{}).Import(ctx, ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeReview})
 			return err
 		}, want: "remember service"},
 		{name: "import missing ledger", run: func() error {
-			_, err := NewMemoryPackService(MemoryPackDependencies{Remember: &v2RememberStub{}}).Import(ctx, V2ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeReview})
+			_, err := NewMemoryPackService(MemoryPackDependencies{Remember: &rememberStub{}}).Import(ctx, ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeReview})
 			return err
 		}, want: "import ledger"},
 		{name: "rollback missing ledger", run: func() error {
-			_, err := NewMemoryPackService(MemoryPackDependencies{}).Rollback(ctx, V2RollbackRequest{ImportID: "import-v2"})
+			_, err := NewMemoryPackService(MemoryPackDependencies{}).Rollback(ctx, RollbackRequest{ImportID: "import-canonical"})
 			return err
 		}, want: "import ledger"},
 		{name: "rollback missing import id", run: func() error {
-			_, err := NewMemoryPackService(MemoryPackDependencies{Ledger: newV2LedgerStub()}).Rollback(ctx, V2RollbackRequest{})
+			_, err := NewMemoryPackService(MemoryPackDependencies{Ledger: newLedgerStub()}).Rollback(ctx, RollbackRequest{})
 			return err
 		}, want: "import_id is required"},
 		{name: "rollback missing import", run: func() error {
-			_, err := NewMemoryPackService(MemoryPackDependencies{Ledger: newV2LedgerStub()}).Rollback(ctx, V2RollbackRequest{ImportID: "missing"})
+			_, err := NewMemoryPackService(MemoryPackDependencies{Ledger: newLedgerStub()}).Rollback(ctx, RollbackRequest{ImportID: "missing"})
 			return err
 		}, want: "no rows"},
 	}
@@ -516,18 +516,18 @@ func TestMemoryPackServiceValidationErrors(t *testing.T) {
 	}
 }
 
-func TestV2MemoryPackParseRejectsMalformedJSON(t *testing.T) {
-	valid := []byte(testV2ArtifactJSON(t, V2MemoryPackArtifact{
+func TestMemoryPackParseRejectsMalformedJSON(t *testing.T) {
+	valid := []byte(testArtifactJSON(t, MemoryPackArtifact{
 		Format:    MemoryPackFormat,
 		PackID:    "pack-parse",
 		Name:      "Parse pack",
 		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		Relationships: []V2MemoryPackRelationship{{
+		Relationships: []MemoryPackRelationship{{
 			ItemID:           "item-1",
-			Subject:          V2MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
 			PredicateKey:     "uses",
 			PredicateVersion: 1,
-			Object:           V2MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+			Object:           MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
 		}},
 	}))
 	tests := [][]byte{
@@ -537,92 +537,92 @@ func TestV2MemoryPackParseRejectsMalformedJSON(t *testing.T) {
 		append(valid, []byte("\n{}")...),
 	}
 	for _, data := range tests {
-		if _, _, err := parseV2MemoryPackArtifactJSON(data); err == nil {
-			t.Fatalf("parseV2MemoryPackArtifactJSON(%q) succeeded, want error", string(data))
+		if _, _, err := parseMemoryPackArtifactJSON(data); err == nil {
+			t.Fatalf("parseMemoryPackArtifactJSON(%q) succeeded, want error", string(data))
 		}
 	}
 }
 
-func TestV2MemoryPackImportReviewOnlyAndRecoverableFailures(t *testing.T) {
-	artifactJSON := testV2ArtifactJSON(t, V2MemoryPackArtifact{
+func TestMemoryPackImportReviewOnlyAndRecoverableFailures(t *testing.T) {
+	artifactJSON := testArtifactJSON(t, MemoryPackArtifact{
 		Format:    MemoryPackFormat,
 		PackID:    "pack-review-only",
 		Name:      "Review only pack",
 		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		Relationships: []V2MemoryPackRelationship{{
+		Relationships: []MemoryPackRelationship{{
 			ItemID:           "item-1",
-			Subject:          V2MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
 			PredicateKey:     "uses",
 			PredicateVersion: 1,
-			Object:           V2MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+			Object:           MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
 		}},
 	})
-	ctx := authenticatedV2MemoryPackContext(uuid.New(), uuid.New(), uuid.New())
+	ctx := authenticatedMemoryPackContext(uuid.New(), uuid.New(), uuid.New())
 
-	reviewOnlyRemember := &v2RememberStub{}
+	reviewOnlyRemember := &rememberStub{}
 	reviewOnly, err := NewMemoryPackService(MemoryPackDependencies{
 		Remember: reviewOnlyRemember,
-		Ledger:   newV2LedgerStub(),
-	}).Import(ctx, V2ImportRequest{
+		Ledger:   newLedgerStub(),
+	}).Import(ctx, ImportRequest{
 		ArtifactJSON: artifactJSON,
 		Mode:         ModeReview,
-		ConflictDecisions: []V2ImportItemDecision{{
+		ConflictDecisions: []ImportItemDecision{{
 			ItemID: "item-1",
 			Action: DecisionSkip,
 		}},
 	})
 	if err != nil {
-		t.Fatalf("ImportV2 review-only: %v", err)
+		t.Fatalf("Import review-only: %v", err)
 	}
 	if reviewOnly.Status != domain.SkillPackImportStatusNeedsReview || reviewOnly.SkippedCount != 1 || reviewOnlyRemember.calls != 0 {
 		t.Fatalf("review-only result = %#v calls=%d", reviewOnly, reviewOnlyRemember.calls)
 	}
 
 	rememberFailed, err := NewMemoryPackService(MemoryPackDependencies{
-		Remember: &v2RememberStub{err: errors.New("provider unavailable")},
-		Ledger:   newV2LedgerStub(),
-	}).Import(ctx, V2ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeReview})
+		Remember: &rememberStub{err: errors.New("provider unavailable")},
+		Ledger:   newLedgerStub(),
+	}).Import(ctx, ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeReview})
 	if err != nil {
-		t.Fatalf("ImportV2 remember failure: %v", err)
+		t.Fatalf("Import remember failure: %v", err)
 	}
 	if rememberFailed.Status != domain.SkillPackImportStatusFailed || !strings.Contains(rememberFailed.Error, "provider unavailable") {
 		t.Fatalf("remember failure result = %#v", rememberFailed)
 	}
 
-	ledger := newV2LedgerStub()
+	ledger := newLedgerStub()
 	ledger.appendErr = errors.New("append failed")
 	changeLedgerFailed, err := NewMemoryPackService(MemoryPackDependencies{
-		Remember: &v2RememberStub{},
+		Remember: &rememberStub{},
 		Ledger:   ledger,
-	}).Import(ctx, V2ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeTrusted})
+	}).Import(ctx, ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeTrusted})
 	if err != nil {
-		t.Fatalf("ImportV2 change ledger failure: %v", err)
+		t.Fatalf("Import change ledger failure: %v", err)
 	}
 	if changeLedgerFailed.Status != "change_ledger_failed" || changeLedgerFailed.IngestID == "" {
 		t.Fatalf("change ledger failure result = %#v", changeLedgerFailed)
 	}
 
-	statusLedger := newV2LedgerStub()
+	statusLedger := newLedgerStub()
 	statusLedger.updateErr = errors.New("update failed")
 	statusUpdateFailed, err := NewMemoryPackService(MemoryPackDependencies{
-		Remember: &v2RememberStub{},
+		Remember: &rememberStub{},
 		Ledger:   statusLedger,
-	}).Import(ctx, V2ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeReview})
+	}).Import(ctx, ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeReview})
 	if err != nil {
-		t.Fatalf("ImportV2 status update failure: %v", err)
+		t.Fatalf("Import status update failure: %v", err)
 	}
 	if statusUpdateFailed.Status != "status_update_failed" || !strings.Contains(statusUpdateFailed.Error, "update failed") {
 		t.Fatalf("status update failure result = %#v", statusUpdateFailed)
 	}
 }
 
-func TestV2MemoryPackImportUsesLegacySourceAndValueHints(t *testing.T) {
-	ctx := authenticatedV2MemoryPackContext(uuid.New(), uuid.New(), uuid.New())
-	remember := &v2RememberStub{}
+func TestMemoryPackImportUsesLegacySourceAndValueHints(t *testing.T) {
+	ctx := authenticatedMemoryPackContext(uuid.New(), uuid.New(), uuid.New())
+	remember := &rememberStub{}
 	legacyResult, err := NewMemoryPackService(MemoryPackDependencies{
 		Remember: remember,
-		Ledger:   newV2LedgerStub(),
-	}).Import(ctx, V2ImportRequest{
+		Ledger:   newLedgerStub(),
+	}).Import(ctx, ImportRequest{
 		ArtifactJSON: `{
 			"schema_version": "dense-mem.memory_pack.v1",
 			"name": "Legacy import pack",
@@ -636,32 +636,32 @@ func TestV2MemoryPackImportUsesLegacySourceAndValueHints(t *testing.T) {
 		Mode: ModeReview,
 	})
 	if err != nil {
-		t.Fatalf("ImportV2 legacy source: %v", err)
+		t.Fatalf("Import legacy source: %v", err)
 	}
 	if legacyResult.Status != domain.SkillPackImportStatusApplied || remember.reqs[0].Evidence[0].Source != "legacy" {
 		t.Fatalf("legacy import result=%#v request=%#v", legacyResult, remember.reqs)
 	}
 
-	valueRemember := &v2RememberStub{}
-	valueArtifact := testV2ArtifactJSON(t, V2MemoryPackArtifact{
+	valueRemember := &rememberStub{}
+	valueArtifact := testArtifactJSON(t, MemoryPackArtifact{
 		Format:    MemoryPackFormat,
 		PackID:    "pack-value",
 		Name:      "Value pack",
 		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		Relationships: []V2MemoryPackRelationship{{
+		Relationships: []MemoryPackRelationship{{
 			ItemID:           "item-1",
-			Subject:          V2MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
 			PredicateKey:     "released",
 			PredicateVersion: 1,
-			Object:           V2MemoryPackEndpoint{Ref: "object", Kind: "value", ValueType: "date", Value: "2026-07-17"},
+			Object:           MemoryPackEndpoint{Ref: "object", Kind: "value", ValueType: "date", Value: "2026-07-17"},
 		}},
 	})
 	valueResult, err := NewMemoryPackService(MemoryPackDependencies{
 		Remember: valueRemember,
-		Ledger:   newV2LedgerStub(),
-	}).Import(ctx, V2ImportRequest{ArtifactJSON: valueArtifact, Mode: ModeTrusted})
+		Ledger:   newLedgerStub(),
+	}).Import(ctx, ImportRequest{ArtifactJSON: valueArtifact, Mode: ModeTrusted})
 	if err != nil {
-		t.Fatalf("ImportV2 value hint: %v", err)
+		t.Fatalf("Import value hint: %v", err)
 	}
 	hint := valueRemember.reqs[0].RelationshipHints[0]
 	objectValue, ok := hint["object_value"].(map[string]any)
@@ -673,70 +673,70 @@ func TestV2MemoryPackImportUsesLegacySourceAndValueHints(t *testing.T) {
 	}
 }
 
-func TestV2MemoryPackImportRejectsUnknownSelection(t *testing.T) {
-	artifact := V2MemoryPackArtifact{
+func TestMemoryPackImportRejectsUnknownSelection(t *testing.T) {
+	artifact := MemoryPackArtifact{
 		Format:    MemoryPackFormat,
 		PackID:    "pack-selection",
 		Name:      "Selection pack",
 		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		Relationships: []V2MemoryPackRelationship{{
+		Relationships: []MemoryPackRelationship{{
 			ItemID:           "item-1",
-			Subject:          V2MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
 			PredicateKey:     "uses",
 			PredicateVersion: 1,
-			Object:           V2MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+			Object:           MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
 		}},
 	}
 	data, _, err := canonicalMemoryPackArtifact(artifact)
 	if err != nil {
 		t.Fatalf("canonical artifact: %v", err)
 	}
-	svc := NewMemoryPackService(MemoryPackDependencies{Remember: &v2RememberStub{}, Ledger: newV2LedgerStub()})
-	_, err = svc.Import(authenticatedV2MemoryPackContext(uuid.New(), uuid.New(), uuid.New()), V2ImportRequest{
+	svc := NewMemoryPackService(MemoryPackDependencies{Remember: &rememberStub{}, Ledger: newLedgerStub()})
+	_, err = svc.Import(authenticatedMemoryPackContext(uuid.New(), uuid.New(), uuid.New()), ImportRequest{
 		ArtifactJSON:    string(data),
 		Mode:            ModeReview,
 		SelectedItemIDs: []string{"missing-item"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "missing-item") {
-		t.Fatalf("ImportV2 err = %v, want unknown selected item error", err)
+		t.Fatalf("Import err = %v, want unknown selected item error", err)
 	}
 }
 
-func TestV2MemoryPackImportRejectsInvalidConflictDecision(t *testing.T) {
-	artifactJSON := testV2ArtifactJSON(t, V2MemoryPackArtifact{
+func TestMemoryPackImportRejectsInvalidConflictDecision(t *testing.T) {
+	artifactJSON := testArtifactJSON(t, MemoryPackArtifact{
 		Format:    MemoryPackFormat,
 		PackID:    "pack-invalid-decision",
 		Name:      "Invalid decision pack",
 		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		Relationships: []V2MemoryPackRelationship{{
+		Relationships: []MemoryPackRelationship{{
 			ItemID:           "item-1",
-			Subject:          V2MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
 			PredicateKey:     "uses",
 			PredicateVersion: 1,
-			Object:           V2MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+			Object:           MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
 		}},
 	})
-	_, err := NewMemoryPackService(MemoryPackDependencies{Remember: &v2RememberStub{}, Ledger: newV2LedgerStub()}).Import(
-		authenticatedV2MemoryPackContext(uuid.New(), uuid.New(), uuid.New()),
-		V2ImportRequest{
+	_, err := NewMemoryPackService(MemoryPackDependencies{Remember: &rememberStub{}, Ledger: newLedgerStub()}).Import(
+		authenticatedMemoryPackContext(uuid.New(), uuid.New(), uuid.New()),
+		ImportRequest{
 			ArtifactJSON: artifactJSON,
 			Mode:         ModeReview,
-			ConflictDecisions: []V2ImportItemDecision{{
+			ConflictDecisions: []ImportItemDecision{{
 				ItemID: "item-1",
 				Action: "force",
 			}},
 		},
 	)
 	if err == nil || !strings.Contains(err.Error(), "unsupported conflict decision action") {
-		t.Fatalf("ImportV2 err = %v, want invalid decision action error", err)
+		t.Fatalf("Import err = %v, want invalid decision action error", err)
 	}
 }
 
-func TestV2MemoryPackRollbackBlocksCrossOwnerAndSemanticEffects(t *testing.T) {
+func TestMemoryPackRollbackBlocksCrossOwnerAndSemanticEffects(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
 	otherOwnerID := uuid.New()
-	ledger := newV2LedgerStub()
+	ledger := newLedgerStub()
 	ledger.imports[ledgerKey(teamID.String(), "import-semantic")] = domain.SkillPackImport{
 		ImportID:       "import-semantic",
 		TeamID:         teamID.String(),
@@ -760,12 +760,12 @@ func TestV2MemoryPackRollbackBlocksCrossOwnerAndSemanticEffects(t *testing.T) {
 		ImportID:   "import-staged",
 		TeamID:     teamID.String(),
 		EntityType: "v2_ingest",
-		EntityID:   "ingest-v2",
+		EntityID:   "ingest-canonical",
 		Action:     domain.SkillPackChangeActionLinked,
 	}}
 	svc := NewMemoryPackService(MemoryPackDependencies{Ledger: ledger})
 
-	_, err := svc.Rollback(authenticatedV2MemoryPackContext(teamID, otherOwnerID, uuid.New()), V2RollbackRequest{
+	_, err := svc.Rollback(authenticatedMemoryPackContext(teamID, otherOwnerID, uuid.New()), RollbackRequest{
 		ImportID: "import-semantic",
 		DryRun:   true,
 	})
@@ -773,7 +773,7 @@ func TestV2MemoryPackRollbackBlocksCrossOwnerAndSemanticEffects(t *testing.T) {
 		t.Fatalf("cross-owner rollback err = %v, want owner mismatch", err)
 	}
 
-	blocked, err := svc.Rollback(authenticatedV2MemoryPackContext(teamID, ownerID, uuid.New()), V2RollbackRequest{
+	blocked, err := svc.Rollback(authenticatedMemoryPackContext(teamID, ownerID, uuid.New()), RollbackRequest{
 		ImportID: "import-semantic",
 		DryRun:   true,
 	})
@@ -784,7 +784,7 @@ func TestV2MemoryPackRollbackBlocksCrossOwnerAndSemanticEffects(t *testing.T) {
 		t.Fatalf("blocked rollback = %#v", blocked)
 	}
 
-	safe, err := svc.Rollback(authenticatedV2MemoryPackContext(teamID, ownerID, uuid.New()), V2RollbackRequest{
+	safe, err := svc.Rollback(authenticatedMemoryPackContext(teamID, ownerID, uuid.New()), RollbackRequest{
 		ImportID: "import-staged",
 		DryRun:   true,
 	})
@@ -798,7 +798,7 @@ func TestV2MemoryPackRollbackBlocksCrossOwnerAndSemanticEffects(t *testing.T) {
 		t.Fatalf("safe rollback missing impact token: %#v", safe)
 	}
 
-	rolledBack, err := svc.Rollback(authenticatedV2MemoryPackContext(teamID, ownerID, uuid.New()), V2RollbackRequest{
+	rolledBack, err := svc.Rollback(authenticatedMemoryPackContext(teamID, ownerID, uuid.New()), RollbackRequest{
 		ImportID:    "import-staged",
 		Confirm:     true,
 		ImpactToken: safe.ImpactToken,
@@ -814,10 +814,10 @@ func TestV2MemoryPackRollbackBlocksCrossOwnerAndSemanticEffects(t *testing.T) {
 	}
 }
 
-func TestV2MemoryPackAuthContextRequired(t *testing.T) {
+func TestMemoryPackAuthContextRequired(t *testing.T) {
 	svc := NewMemoryPackService(MemoryPackDependencies{})
-	_, err := svc.Inspect(context.Background(), V2InspectRequest{ArtifactJSON: "{}"})
+	_, err := svc.Inspect(context.Background(), InspectRequest{ArtifactJSON: "{}"})
 	if !errors.Is(err, ErrMemoryPackAuthContext) {
-		t.Fatalf("InspectV2 err = %v, want ErrMemoryPackAuthContext", err)
+		t.Fatalf("Inspect err = %v, want ErrMemoryPackAuthContext", err)
 	}
 }

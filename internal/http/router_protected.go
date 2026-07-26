@@ -4,7 +4,6 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/config"
-	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -109,16 +108,15 @@ func (d *ProtectedDeps) GetPostAuthMiddleware() []echo.MiddlewareFunc {
 func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handlers ProtectedHandlers) {
 	// Create profile authorization service from audit service
 	profileAuthzSvc := middleware.NewProfileAuthorizationService(deps.AuditService)
-	authMW := middleware.AuthMiddlewareWithOptions(deps.APIKeyRepo, deps.AuditService, deps.SecurityService, middleware.AuthOptions{
+	apiKeyAuthMW := middleware.AuthMiddlewareWithOptions(deps.APIKeyRepo, deps.AuditService, deps.SecurityService, middleware.AuthOptions{
 		SSOEntitlementValidator: deps.SSOAuthenticator,
-		SSOSessionAuthenticator: deps.SSOAuthenticator,
 	})
 	usageMW := middleware.UsageMetricsMiddleware(deps.UsageMetrics)
 	rateLimitMW := middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService)
 	lastUsedMW := middleware.LastUsedMiddleware(deps.APIKeyRepo)
 	protectedGroup := func(prefix string) *echo.Group {
 		group := e.Group(prefix)
-		group.Use(authMW)
+		group.Use(apiKeyAuthMW)
 		group.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
 		group.Use(middleware.AuthorizeProfile(profileAuthzSvc))
 		group.Use(deps.PostAuthMiddleware...)
@@ -128,55 +126,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 		return group
 	}
 
-	// Profile handler for profile operations
-	profileHandler := handler.NewProfileHandler(deps.ProfileSvc)
-	var apiKeyHandler *handler.APIKeyHandler
-	if handlers.APIKeySvc != nil {
-		apiKeyHandler = handler.NewAPIKeyHandler(handlers.APIKeySvc)
-	}
-
-	// ====================================
-	// Team-specific routes (with :teamId in path)
-	// ====================================
-	// GET /api/v1/teams/:teamId → same-team
-	// PATCH /api/v1/teams/:teamId → same-team + manager
-	auditHandler := handler.NewAuditHandler(deps.AuditService)
-
-	registerTeamScopedRoutes := func(prefix string, legacyAPIKeyPaths bool) {
-		group := protectedGroup(prefix)
-
-		group.GET("", profileHandler.Get, middleware.RequireScopes("read"))
-		group.PATCH("", profileHandler.Patch, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.UpdateProfileRequest](middleware.UpdateProfileBodyKey))
-
-		// Audit log route (append-only, read endpoint only). The handler does
-		// its own permission check for defense-in-depth.
-		group.GET("/audit-log", auditHandler.Get, middleware.RequireScopes("read"))
-
-		if apiKeyHandler == nil {
-			return
-		}
-		if legacyAPIKeyPaths {
-			group.GET("/api-keys", apiKeyHandler.List, middleware.RequireRole(service.APIKeyRoleManager))
-			group.POST("/api-keys", apiKeyHandler.Create, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
-			group.GET("/api-keys/:keyId", apiKeyHandler.Get, middleware.RequireRole(service.APIKeyRoleManager))
-			group.PATCH("/api-keys/:keyId", apiKeyHandler.Update, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.UpdateAPIKeyRequest](middleware.UpdateAPIKeyBodyKey))
-			group.POST("/api-keys/:keyId/rotate", apiKeyHandler.Rotate, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
-			group.DELETE("/api-keys/:keyId", apiKeyHandler.Delete, middleware.RequireRole(service.APIKeyRoleManager))
-			return
-		}
-		group.GET("/profiles", apiKeyHandler.List, middleware.RequireRole(service.APIKeyRoleManager))
-		group.POST("/profiles", apiKeyHandler.Create, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
-		group.GET("/profiles/:profileId", apiKeyHandler.Get, middleware.RequireRole(service.APIKeyRoleManager))
-		group.PATCH("/profiles/:profileId", apiKeyHandler.Update, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.UpdateAPIKeyRequest](middleware.UpdateAPIKeyBodyKey))
-		group.POST("/profiles/:profileId/rotate", apiKeyHandler.Rotate, middleware.RequireRole(service.APIKeyRoleManager), middleware.BindAndValidate[dto.CreateAPIKeyRequest](middleware.CreateAPIKeyBodyKey))
-		group.DELETE("/profiles/:profileId", apiKeyHandler.Delete, middleware.RequireRole(service.APIKeyRoleManager))
-	}
-
-	registerTeamScopedRoutes("/api/v1/teams/:teamId", false)
-	// Legacy aliases retained so old clients can rotate gradually.
-	registerTeamScopedRoutes("/api/v1/profiles/:profileId", true)
-
-	// MCP Streamable HTTP endpoint.
+	// MCP Streamable HTTP endpoint. External memory integrations use bearer API keys only.
 	mcpGroup := protectedGroup("/mcp")
 	if handlers.MCPPost != nil {
 		mcpGroup.POST("", handlers.MCPPost)
@@ -184,76 +134,11 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	if handlers.MCPGet != nil {
 		mcpGroup.GET("", handlers.MCPGet)
 	}
-
-	// Tool routes
-	toolGroup := protectedGroup("/api/v1/tools")
-
-	if handlers.ToolCatalog != nil {
-		toolGroup.GET("", handlers.ToolCatalog, middleware.RequireScopes("read"))
-	}
-	if handlers.GetTool != nil {
-		toolGroup.GET("/:id", handlers.GetTool, middleware.RequireScopes("read"))
-	}
-	if handlers.ExecuteTool != nil {
-		toolGroup.POST("/:name", handlers.ExecuteTool)
-	}
-
-	// OpenAPI — expose the full runtime contract when available. The AI-safe
-	// variant remains as a fallback for reduced runtimes and tests.
-	openAPIMiddleware := []echo.MiddlewareFunc{authMW}
-	openAPIMiddleware = append(openAPIMiddleware, deps.PostAuthMiddleware...)
-	openAPIMiddleware = append(openAPIMiddleware, lastUsedMW)
-	if handlers.OpenAPIFull != nil {
-		e.GET("/api/v1/openapi.json", handlers.OpenAPIFull, openAPIMiddleware...)
-	} else if handlers.OpenAPIAISafe != nil {
-		e.GET("/api/v1/openapi.json", handlers.OpenAPIAISafe, openAPIMiddleware...)
-	}
-
-	// Recall route — canonical GET /api/v1/recall (AC-55, AC-62)
-	// Middleware: auth -> profile resolution(header) -> profile authorization -> rate limit
-	recallGroup := protectedGroup("/api/v1/recall")
-
-	if handlers.Recall != nil {
-		recallGroup.GET("", handlers.Recall, middleware.RequireScopes("read"))
-	}
-
-	dreamingGroup := protectedGroup("/api/v1/dreaming")
-	if handlers.DreamingStatus != nil {
-		dreamingGroup.GET("/status", handlers.DreamingStatus, middleware.RequireScopes("read"))
-	}
-	if handlers.DreamingRuns != nil {
-		dreamingGroup.GET("/runs", handlers.DreamingRuns, middleware.RequireScopes("read"))
-	}
-
-	dreamGroup := protectedGroup("/api/v1/dreams")
-	if handlers.DreamList != nil {
-		dreamGroup.GET("", handlers.DreamList, middleware.RequireScopes("read"))
-	}
-	if handlers.DreamGet != nil {
-		dreamGroup.GET("/:dreamId", handlers.DreamGet, middleware.RequireScopes("read"))
-	}
 }
 
 // ProtectedHandlers holds handler functions for protected routes.
 // This is provided for later units that implement real handlers.
 type ProtectedHandlers struct {
-	ListProfiles  echo.HandlerFunc
-	CreateProfile echo.HandlerFunc
-	GetProfile    echo.HandlerFunc
-	UpdateProfile echo.HandlerFunc
-	DeleteProfile echo.HandlerFunc
-	GetTool       echo.HandlerFunc
-	ExecuteTool   echo.HandlerFunc
-	ToolCatalog   echo.HandlerFunc
-	OpenAPIAISafe echo.HandlerFunc
-	OpenAPIFull   echo.HandlerFunc
-	MCPPost       echo.HandlerFunc
-	MCPGet        echo.HandlerFunc
-	APIKeySvc     handler.APIKeyServiceInterface // Service for API key routes
-	// Recall handles GET /api/v1/recall?q=...&limit=... (Phase 9 hybrid recall)
-	Recall         echo.HandlerFunc
-	DreamingStatus echo.HandlerFunc
-	DreamingRuns   echo.HandlerFunc
-	DreamList      echo.HandlerFunc
-	DreamGet       echo.HandlerFunc
+	MCPPost echo.HandlerFunc
+	MCPGet  echo.HandlerFunc
 }

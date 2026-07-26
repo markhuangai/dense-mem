@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,8 +13,8 @@ import (
 func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 	dir := writeEvalFixture(t)
 	rememberIDs := map[string]string{
-		"eval:doc-alpha": "frag-alpha",
-		"eval:doc-beta":  "frag-beta",
+		"eval:doc-alpha": "evidence-alpha",
+		"eval:doc-beta":  "evidence-beta",
 	}
 	var rememberCalls int
 	var placementPolls int
@@ -23,12 +22,12 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 	var controlPatched bool
 	exportCalls := map[string]int{}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/control/api/config/evaluation":
 			controlPatched = true
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
-		case "/api/v1/tools/remember":
+		case "tool:remember":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode remember body: %v", err)
@@ -46,12 +45,12 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 				"status":    "queued",
 				"evidence":  []map[string]any{{"id": id}},
 			})
-		case "/api/v1/tools/get_memory_placement":
+		case "tool:get_memory_placement":
 			placementPolls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"placement": map[string]any{"status": "completed"},
 			})
-		case "/api/v1/tools/eval_list_knowledge_refs":
+		case "tool:eval_list_knowledge_refs":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode export body: %v", err)
@@ -59,25 +58,17 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 			kind := input["type"].(string)
 			exportCalls[kind]++
 			switch kind {
-			case "fragment":
+			case "evidence":
 				_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{
-					{"id": "frag-alpha", "metadata": map[string]any{"source_doc_id": "doc-alpha"}},
-					{"id": "frag-beta", "metadata": map[string]any{"source_doc_id": "doc-beta"}},
+					{"id": "evidence-alpha", "metadata": map[string]any{"source_doc_id": "doc-alpha"}},
+					{"id": "evidence-beta", "metadata": map[string]any{"source_doc_id": "doc-beta"}},
 				}})
-			case "claim":
-				_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{
-					{"claim_id": "claim-alpha", "supported_by": []string{"frag-alpha"}},
-					{"claim_id": "claim-beta", "supported_by": []string{"frag-beta"}},
-				}})
-			case "fact":
-				_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{
-					{"fact_id": "fact-alpha", "promoted_from_claim_id": "claim-alpha"},
-					{"fact_id": "fact-beta", "promoted_from_claim_id": "claim-beta"},
-				}})
+			case "entity", "value", "relationship", "hypothesis":
+				_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{}})
 			default:
 				t.Fatalf("unexpected export type %q", kind)
 			}
-		case "/api/v1/tools/eval_run_recall_case":
+		case "tool:eval_run_recall_case":
 			recallCalls++
 			t.Fatalf("import mode should not call recall")
 		default:
@@ -109,7 +100,12 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 	if !controlPatched || rememberCalls != 2 || placementPolls != 2 || recallCalls != 0 {
 		t.Fatalf("control/remember/placement/recall calls = %v/%d/%d/%d", controlPatched, rememberCalls, placementPolls, recallCalls)
 	}
-	if exportCalls["fragment"] != 1 || exportCalls["claim"] != 1 || exportCalls["fact"] != 1 {
+	for _, kind := range []string{"evidence", "entity", "value", "relationship", "hypothesis"} {
+		if exportCalls[kind] != 1 {
+			t.Fatalf("export calls = %#v; want one post-placement export per canonical type", exportCalls)
+		}
+	}
+	if len(exportCalls) != 5 {
 		t.Fatalf("export calls = %#v; want one post-placement export per knowledge type", exportCalls)
 	}
 	for _, name := range []string{"run_config.json", "seed_manifest.json", "suite.jsonl", "summary.json", "knowledge_mapping.json"} {
@@ -121,13 +117,13 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 	if err := readJSONFile(filepath.Join(out, "knowledge_mapping.json"), &mapping); err != nil {
 		t.Fatalf("read knowledge mapping: %v", err)
 	}
-	if mapping.BySourceDocIDAndType["doc-alpha"]["claim"][0].ID != "claim-alpha" ||
-		mapping.BySourceDocIDAndType["doc-alpha"]["fact"][0].ID != "fact-alpha" {
+	if mapping.BySourceDocID["doc-alpha"].ID != "evidence-alpha" ||
+		mapping.BySourceDocIDAndType["doc-alpha"]["evidence"][0].ID != "evidence-alpha" {
 		t.Fatalf("post-placement mapping = %+v", mapping.BySourceDocIDAndType["doc-alpha"])
 	}
 }
 
-func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveFragments(t *testing.T) {
+func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T) {
 	dir := writeEvalFixture(t)
 	resumePath := filepath.Join(dir, "completed_source_doc_ids.txt")
 	if err := os.WriteFile(resumePath, []byte("doc-alpha\ndoc-beta\n"), 0o644); err != nil {
@@ -135,18 +131,18 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveFragments(t *testing.
 	}
 
 	var remembered []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/control/api/config/evaluation":
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
-		case "/api/v1/tools/eval_list_knowledge_refs":
+		case "tool:eval_list_knowledge_refs":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"items": []map[string]any{{
-					"id":       "frag-alpha",
+					"id":       "evidence-alpha",
 					"metadata": map[string]any{"source_doc_id": "doc-alpha"},
 				}},
 			})
-		case "/api/v1/tools/remember":
+		case "tool:remember":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode remember body: %v", err)
@@ -156,9 +152,9 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveFragments(t *testing.
 			remembered = append(remembered, sourceDocID)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ingest_id": "ingest-" + sourceDocID,
-				"evidence":  []map[string]any{{"id": "frag-" + strings.TrimPrefix(sourceDocID, "doc-")}},
+				"evidence":  []map[string]any{{"id": "evidence-" + strings.TrimPrefix(sourceDocID, "doc-")}},
 			})
-		case "/api/v1/tools/get_memory_placement":
+		case "tool:get_memory_placement":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"placement": map[string]any{"status": "completed"},
 			})
@@ -192,7 +188,7 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveFragments(t *testing.
 	if err := readJSONFile(filepath.Join(out, "knowledge_mapping.json"), &mapping); err != nil {
 		t.Fatalf("read knowledge mapping: %v", err)
 	}
-	if mapping.BySourceDocID["doc-alpha"].ID != "frag-alpha" || mapping.BySourceDocID["doc-beta"].ID != "frag-beta" {
+	if mapping.BySourceDocID["doc-alpha"].ID != "evidence-alpha" || mapping.BySourceDocID["doc-beta"].ID != "evidence-beta" {
 		t.Fatalf("knowledge mapping = %+v", mapping.BySourceDocID)
 	}
 	var config RunConfig

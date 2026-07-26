@@ -31,36 +31,36 @@ var (
 )
 
 type RememberService interface {
-	Remember(ctx context.Context, req V2RememberRequest) (*V2RememberResult, error)
-	GetMemoryPlacement(ctx context.Context, req V2GetMemoryPlacementRequest) (*V2PlacementRunResult, error)
+	Remember(ctx context.Context, req RememberRequest) (*RememberResult, error)
+	GetMemoryPlacement(ctx context.Context, req GetMemoryPlacementRequest) (*PlacementRunResult, error)
 }
 
 type RememberDependencies struct {
-	Ledger repository.V2LedgerRepository
+	Ledger repository.LedgerRepository
 }
 
 type rememberService struct {
-	ledger repository.V2LedgerRepository
+	ledger repository.LedgerRepository
 }
 
 func NewRememberService(deps RememberDependencies) RememberService {
 	return &rememberService{ledger: deps.Ledger}
 }
 
-type V2RememberRequest struct {
-	ContractVersion   string                    `json:"contract_version"`
-	Evidence          []V2RememberEvidenceInput `json:"evidence"`
-	EntityHints       []map[string]any          `json:"entity_hints,omitempty"`
-	RelationshipHints []map[string]any          `json:"relationship_hints,omitempty"`
-	IdempotencyKey    string                    `json:"idempotency_key,omitempty"`
+type RememberRequest struct {
+	ContractVersion   string                  `json:"contract_version"`
+	Evidence          []RememberEvidenceInput `json:"evidence"`
+	EntityHints       []map[string]any        `json:"entity_hints,omitempty"`
+	RelationshipHints []map[string]any        `json:"relationship_hints,omitempty"`
+	IdempotencyKey    string                  `json:"idempotency_key,omitempty"`
 }
 
-type V2GetMemoryPlacementRequest struct {
+type GetMemoryPlacementRequest struct {
 	ContractVersion string `json:"contract_version"`
 	IngestID        string `json:"ingest_id"`
 }
 
-type V2RememberEvidenceInput struct {
+type RememberEvidenceInput struct {
 	Content                string         `json:"content"`
 	SourceType             string         `json:"source_type,omitempty"`
 	Source                 string         `json:"source,omitempty"`
@@ -75,7 +75,7 @@ type V2RememberEvidenceInput struct {
 	Metadata               map[string]any `json:"metadata,omitempty"`
 }
 
-type V2RememberResult struct {
+type RememberResult struct {
 	IngestID          string `json:"ingest_id"`
 	ProcessingState   string `json:"processing_state"`
 	CheckAfterSeconds int    `json:"check_after_seconds"`
@@ -83,26 +83,26 @@ type V2RememberResult struct {
 	CorrelationID     string `json:"correlation_id"`
 }
 
-type V2PlacementRunResult struct {
-	IngestID        string                  `json:"ingest_id"`
-	ProcessingState string                  `json:"processing_state"`
-	SearchState     string                  `json:"search_state"`
-	Items           []V2PlacementItemResult `json:"items"`
-	Errors          []V2PlacementError      `json:"errors"`
+type PlacementRunResult struct {
+	IngestID        string                `json:"ingest_id"`
+	ProcessingState string                `json:"processing_state"`
+	SearchState     string                `json:"search_state"`
+	Items           []PlacementItemResult `json:"items"`
+	Errors          []PlacementError      `json:"errors"`
 }
 
-type V2PlacementItemResult struct {
-	ItemID               string                     `json:"item_id"`
-	EvidenceID           string                     `json:"evidence_id"`
-	Version              int                        `json:"version"`
-	EvidenceIndex        int                        `json:"evidence_index"`
-	Category             string                     `json:"category"`
-	SearchState          string                     `json:"search_state"`
-	RelationshipOutcomes []V2RelationshipOutcomeRef `json:"relationship_outcomes"`
-	Errors               []V2PlacementError         `json:"errors"`
+type PlacementItemResult struct {
+	ItemID               string                   `json:"item_id"`
+	EvidenceID           string                   `json:"evidence_id"`
+	Version              int                      `json:"version"`
+	EvidenceIndex        int                      `json:"evidence_index"`
+	Category             string                   `json:"category"`
+	SearchState          string                   `json:"search_state"`
+	RelationshipOutcomes []RelationshipOutcomeRef `json:"relationship_outcomes"`
+	Errors               []PlacementError         `json:"errors"`
 }
 
-type V2RelationshipOutcomeRef struct {
+type RelationshipOutcomeRef struct {
 	ProposalID         string `json:"proposal_id"`
 	ObservationID      string `json:"observation_id"`
 	RelationshipID     string `json:"relationship_id,omitempty"`
@@ -114,16 +114,16 @@ type V2RelationshipOutcomeRef struct {
 	ReviewTask         string `json:"review_task,omitempty"`
 }
 
-type V2PlacementError struct {
+type PlacementError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
-func (s *rememberService) Remember(ctx context.Context, req V2RememberRequest) (*V2RememberResult, error) {
+func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*RememberResult, error) {
 	if s.ledger == nil {
 		return nil, errors.New("remember: ledger repository is required")
 	}
-	if strings.TrimSpace(req.ContractVersion) != domain.V2ContractVersion {
+	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
 		return nil, fmt.Errorf("remember: invalid contract_version %q", req.ContractVersion)
 	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
@@ -140,7 +140,7 @@ func (s *rememberService) Remember(ctx context.Context, req V2RememberRequest) (
 	}
 
 	normalized, status := s.normalizeEvidence(req.Evidence)
-	requestHash, err := v2CanonicalRequestHash(req)
+	requestHash, err := canonicalRequestHash(req)
 	if err != nil {
 		return nil, err
 	}
@@ -160,34 +160,34 @@ func (s *rememberService) Remember(ctx context.Context, req V2RememberRequest) (
 		actorMetadata["auth_method"] = credential.AuthMethod
 	}
 	metadata := map[string]any{
-		"contract_version": domain.V2ContractVersion,
+		"contract_version": domain.ContractVersion,
 		"actor":            actorMetadata,
 	}
-	created, err := s.ledger.CreateIngest(ctx, repository.V2CreateIngestInput{
+	created, err := s.ledger.CreateIngest(ctx, repository.CreateIngestInput{
 		TeamID:         actor.TeamID.String(),
 		OwnerProfileID: actor.ProfileID.String(),
 		IdempotencyKey: strings.TrimSpace(req.IdempotencyKey),
 		RequestHash:    requestHash,
-		SourceSummary:  v2SourceSummary(req.Evidence),
+		SourceSummary:  sourceSummary(req.Evidence),
 		Status:         status,
 		Proposal:       proposal,
 		Metadata:       metadata,
 		Evidence:       normalized,
 	})
 	if err != nil {
-		return nil, translateV2RememberLedgerError(err)
+		return nil, translateRememberLedgerError(err)
 	}
 	return rememberResultFromLedger(created, correlationID), nil
 }
 
 func (s *rememberService) GetMemoryPlacement(
 	ctx context.Context,
-	req V2GetMemoryPlacementRequest,
-) (*V2PlacementRunResult, error) {
+	req GetMemoryPlacementRequest,
+) (*PlacementRunResult, error) {
 	if s.ledger == nil {
 		return nil, errors.New("memory placement: ledger repository is required")
 	}
-	if strings.TrimSpace(req.ContractVersion) != domain.V2ContractVersion {
+	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
 		return nil, fmt.Errorf("memory placement: invalid contract_version %q", req.ContractVersion)
 	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
@@ -198,7 +198,7 @@ func (s *rememberService) GetMemoryPlacement(
 	if ingestID == "" {
 		return nil, errors.New("memory placement: ingest_id is required")
 	}
-	placement, err := s.ledger.GetPlacementRun(ctx, repository.V2GetPlacementRunInput{
+	placement, err := s.ledger.GetPlacementRun(ctx, repository.GetPlacementRunInput{
 		TeamID:         actor.TeamID.String(),
 		OwnerProfileID: actor.ProfileID.String(),
 		IngestID:       ingestID,
@@ -209,15 +209,15 @@ func (s *rememberService) GetMemoryPlacement(
 	return placementRunResultFromLedger(placement), nil
 }
 
-func (s *rememberService) normalizeEvidence(evidence []V2RememberEvidenceInput) ([]repository.V2EvidenceInput, string) {
-	out := make([]repository.V2EvidenceInput, 0, len(evidence))
-	status := string(domain.V2PlacementRunQueued)
+func (s *rememberService) normalizeEvidence(evidence []RememberEvidenceInput) ([]repository.EvidenceInput, string) {
+	out := make([]repository.EvidenceInput, 0, len(evidence))
+	status := string(domain.PlacementRunQueued)
 	hasProcessable := false
 	hasGuarded := false
 	hasQuarantined := false
-	sourceRevisionHashes := v2SourceRevisionContentHashes(evidence)
+	sourceRevisionHashes := sourceRevisionContentHashes(evidence)
 	for _, item := range evidence {
-		scan := scanV2Evidence(item.Content)
+		scan := scanEvidence(item.Content)
 		if scan.Decision == "quarantine" {
 			hasQuarantined = true
 		} else {
@@ -226,35 +226,35 @@ func (s *rememberService) normalizeEvidence(evidence []V2RememberEvidenceInput) 
 				hasGuarded = true
 			}
 		}
-		authority, metadata := v2LedgerAuthorityAndMetadata(item.Authority, item.Metadata)
-		metadata = v2EvidenceProcessingIntentMetadata(metadata, item)
-		out = append(out, repository.V2EvidenceInput{
+		authority, metadata := ledgerAuthorityAndMetadata(item.Authority, item.Metadata)
+		metadata = evidenceProcessingIntentMetadata(metadata, item)
+		out = append(out, repository.EvidenceInput{
 			Content:                       item.Content,
-			SourceType:                    v2EvidenceSourceType(item.SourceType),
+			SourceType:                    evidenceSourceType(item.SourceType),
 			Authority:                     authority,
 			SourceRef:                     strings.TrimSpace(item.Source),
 			SourceKey:                     strings.TrimSpace(item.SourceKey),
 			SourceRevisionToken:           strings.TrimSpace(item.SourceRevision),
 			ExpectedPreviousRevisionToken: strings.TrimSpace(item.PreviousSourceRevision),
-			SourceRevisionContentHash:     sourceRevisionHashes[v2SourceRevisionBatchKey(item)],
-			SourceRevisionEnvelope:        v2SourceRevisionEnvelope(item),
+			SourceRevisionContentHash:     sourceRevisionHashes[sourceRevisionBatchKey(item)],
+			SourceRevisionEnvelope:        sourceRevisionEnvelope(item),
 			Labels:                        append([]string(nil), item.Labels...),
 			Metadata:                      metadata,
 			InitialEvent:                  &scan,
 		})
 	}
 	if hasQuarantined && !hasProcessable {
-		status = string(domain.V2PlacementRunQuarantined)
+		status = string(domain.PlacementRunQuarantined)
 	} else if hasGuarded {
-		status = string(domain.V2PlacementRunGuarded)
+		status = string(domain.PlacementRunGuarded)
 	}
 	return out, status
 }
 
-func v2SourceRevisionContentHashes(evidence []V2RememberEvidenceInput) map[string]string {
+func sourceRevisionContentHashes(evidence []RememberEvidenceInput) map[string]string {
 	groups := make(map[string][]string)
 	for _, item := range evidence {
-		key := v2SourceRevisionBatchKey(item)
+		key := sourceRevisionBatchKey(item)
 		if key == "" {
 			continue
 		}
@@ -262,12 +262,12 @@ func v2SourceRevisionContentHashes(evidence []V2RememberEvidenceInput) map[strin
 	}
 	hashes := make(map[string]string, len(groups))
 	for key, items := range groups {
-		hashes[key] = v2SourceRevisionBatchHash(items)
+		hashes[key] = sourceRevisionBatchHash(items)
 	}
 	return hashes
 }
 
-func v2SourceRevisionBatchKey(item V2RememberEvidenceInput) string {
+func sourceRevisionBatchKey(item RememberEvidenceInput) string {
 	sourceKey := strings.TrimSpace(item.SourceKey)
 	revision := strings.TrimSpace(item.SourceRevision)
 	if sourceKey == "" || revision == "" {
@@ -276,7 +276,7 @@ func v2SourceRevisionBatchKey(item V2RememberEvidenceInput) string {
 	return sourceKey + "\x00" + revision + "\x00" + strings.TrimSpace(item.PreviousSourceRevision)
 }
 
-func v2SourceRevisionBatchHash(contents []string) string {
+func sourceRevisionBatchHash(contents []string) string {
 	h := sha256.New()
 	for _, content := range contents {
 		_, _ = fmt.Fprintf(h, "%d:", len(content))
@@ -286,7 +286,7 @@ func v2SourceRevisionBatchHash(contents []string) string {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
-func v2CanonicalRequestHash(req V2RememberRequest) (string, error) {
+func canonicalRequestHash(req RememberRequest) (string, error) {
 	payload := map[string]any{
 		"contract_version":   req.ContractVersion,
 		"evidence":           req.Evidence,
@@ -302,8 +302,8 @@ func v2CanonicalRequestHash(req V2RememberRequest) (string, error) {
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func rememberResultFromLedger(created *repository.V2CreateIngestResult, correlationID string) *V2RememberResult {
-	return &V2RememberResult{
+func rememberResultFromLedger(created *repository.CreateIngestResult, correlationID string) *RememberResult {
+	return &RememberResult{
 		IngestID:          created.IngestID,
 		ProcessingState:   created.Status,
 		CheckAfterSeconds: rememberCheckAfterSeconds,
@@ -312,9 +312,9 @@ func rememberResultFromLedger(created *repository.V2CreateIngestResult, correlat
 	}
 }
 
-func placementRunResultFromLedger(created *repository.V2CreateIngestResult) *V2PlacementRunResult {
-	items := make([]V2PlacementItemResult, 0, len(created.Items))
-	searchState := string(domain.V2SearchProjectionNotRequired)
+func placementRunResultFromLedger(created *repository.CreateIngestResult) *PlacementRunResult {
+	items := make([]PlacementItemResult, 0, len(created.Items))
+	searchState := string(domain.SearchProjectionNotRequired)
 	for _, item := range created.Items {
 		version := item.Version
 		if version == 0 {
@@ -322,60 +322,60 @@ func placementRunResultFromLedger(created *repository.V2CreateIngestResult) *V2P
 		}
 		itemSearchState := placementItemSearchState(item)
 		searchState = placementCombinedSearchState(searchState, itemSearchState)
-		items = append(items, V2PlacementItemResult{
+		items = append(items, PlacementItemResult{
 			ItemID:               item.PlacementItemID,
 			EvidenceID:           item.FragmentID,
 			Version:              version,
 			EvidenceIndex:        item.EvidenceIndex,
-			Category:             v2PublicPlacementItemCategory(item),
+			Category:             publicPlacementItemCategory(item),
 			SearchState:          itemSearchState,
 			RelationshipOutcomes: placementRelationshipOutcomes(item.Result),
-			Errors:               []V2PlacementError{},
+			Errors:               []PlacementError{},
 		})
 	}
-	return &V2PlacementRunResult{
+	return &PlacementRunResult{
 		IngestID:        created.IngestID,
 		ProcessingState: created.Status,
 		SearchState:     searchState,
 		Items:           items,
-		Errors:          []V2PlacementError{},
+		Errors:          []PlacementError{},
 	}
 }
 
-func v2PublicPlacementItemCategory(item repository.V2PlacementItem) string {
+func publicPlacementItemCategory(item repository.PlacementItem) string {
 	if item.Category == "quarantined" || item.Status == "quarantined" {
-		return string(domain.V2EvidenceQuarantined)
+		return string(domain.EvidenceQuarantined)
 	}
 	if item.Status == "failed" || item.Category == "failed" {
-		return string(domain.V2EvidenceProcessingFailed)
+		return string(domain.EvidenceProcessingFailed)
 	}
-	return string(domain.V2EvidenceProcessed)
+	return string(domain.EvidenceProcessed)
 }
 
 func placementCombinedSearchState(left, right string) string {
-	if left == string(domain.V2SearchProjectionFailed) || right == string(domain.V2SearchProjectionFailed) {
-		return string(domain.V2SearchProjectionFailed)
+	if left == string(domain.SearchProjectionFailed) || right == string(domain.SearchProjectionFailed) {
+		return string(domain.SearchProjectionFailed)
 	}
-	if left == string(domain.V2SearchProjectionPending) || right == string(domain.V2SearchProjectionPending) {
-		return string(domain.V2SearchProjectionPending)
+	if left == string(domain.SearchProjectionPending) || right == string(domain.SearchProjectionPending) {
+		return string(domain.SearchProjectionPending)
 	}
-	if left == string(domain.V2SearchProjectionCurrent) || right == string(domain.V2SearchProjectionCurrent) {
-		return string(domain.V2SearchProjectionCurrent)
+	if left == string(domain.SearchProjectionCurrent) || right == string(domain.SearchProjectionCurrent) {
+		return string(domain.SearchProjectionCurrent)
 	}
-	return string(domain.V2SearchProjectionNotRequired)
+	return string(domain.SearchProjectionNotRequired)
 }
 
-func placementItemSearchState(item repository.V2PlacementItem) string {
-	if state := placementSearchStateFromStates(v2ResultArray(item.Result, "search_document_states")); state != "" {
+func placementItemSearchState(item repository.PlacementItem) string {
+	if state := placementSearchStateFromStates(resultArray(item.Result, "search_document_states")); state != "" {
 		return state
 	}
-	if len(v2ResultArray(item.Result, "embedding_job_ids")) > 0 {
-		return string(domain.V2SearchProjectionPending)
+	if len(resultArray(item.Result, "embedding_job_ids")) > 0 {
+		return string(domain.SearchProjectionPending)
 	}
-	if len(v2ResultArray(item.Result, "search_document_ids")) > 0 {
-		return string(domain.V2SearchProjectionCurrent)
+	if len(resultArray(item.Result, "search_document_ids")) > 0 {
+		return string(domain.SearchProjectionCurrent)
 	}
-	return string(domain.V2SearchProjectionNotRequired)
+	return string(domain.SearchProjectionNotRequired)
 }
 
 func placementSearchStateFromStates(values []any) string {
@@ -386,44 +386,44 @@ func placementSearchStateFromStates(values []any) string {
 	for _, value := range values {
 		state := strings.TrimSpace(fmt.Sprint(value))
 		switch state {
-		case string(domain.V2SearchProjectionFailed):
-			return string(domain.V2SearchProjectionFailed)
-		case string(domain.V2SearchProjectionPending):
-			return string(domain.V2SearchProjectionPending)
-		case string(domain.V2SearchProjectionCurrent):
+		case string(domain.SearchProjectionFailed):
+			return string(domain.SearchProjectionFailed)
+		case string(domain.SearchProjectionPending):
+			return string(domain.SearchProjectionPending)
+		case string(domain.SearchProjectionCurrent):
 			hasCurrent = true
 		}
 	}
 	if hasCurrent {
-		return string(domain.V2SearchProjectionCurrent)
+		return string(domain.SearchProjectionCurrent)
 	}
 	return ""
 }
 
-func placementRelationshipOutcomes(result map[string]any) []V2RelationshipOutcomeRef {
-	values := v2ResultArray(result, "relationship_outcomes")
-	out := make([]V2RelationshipOutcomeRef, 0, len(values))
+func placementRelationshipOutcomes(result map[string]any) []RelationshipOutcomeRef {
+	values := resultArray(result, "relationship_outcomes")
+	out := make([]RelationshipOutcomeRef, 0, len(values))
 	for _, value := range values {
 		fields, ok := value.(map[string]any)
 		if !ok {
 			continue
 		}
-		out = append(out, V2RelationshipOutcomeRef{
-			ProposalID:         v2ResultString(fields, "proposal_id"),
-			ObservationID:      v2ResultString(fields, "observation_id"),
-			RelationshipID:     v2ResultString(fields, "relationship_id"),
-			OwnerProfileID:     v2ResultString(fields, "owner_profile_id"),
-			Tier:               v2ResultString(fields, "tier"),
-			RelationshipStatus: v2ResultString(fields, "relationship_status"),
-			Category:           v2ResultString(fields, "category"),
-			Reason:             v2ResultString(fields, "reason"),
-			ReviewTask:         v2ResultString(fields, "review_task"),
+		out = append(out, RelationshipOutcomeRef{
+			ProposalID:         resultString(fields, "proposal_id"),
+			ObservationID:      resultString(fields, "observation_id"),
+			RelationshipID:     resultString(fields, "relationship_id"),
+			OwnerProfileID:     resultString(fields, "owner_profile_id"),
+			Tier:               resultString(fields, "tier"),
+			RelationshipStatus: resultString(fields, "relationship_status"),
+			Category:           resultString(fields, "category"),
+			Reason:             resultString(fields, "reason"),
+			ReviewTask:         resultString(fields, "review_task"),
 		})
 	}
 	return out
 }
 
-func v2ResultArray(result map[string]any, key string) []any {
+func resultArray(result map[string]any, key string) []any {
 	if len(result) == 0 {
 		return nil
 	}
@@ -447,7 +447,7 @@ func v2ResultArray(result map[string]any, key string) []any {
 	}
 }
 
-func v2ResultString(fields map[string]any, key string) string {
+func resultString(fields map[string]any, key string) string {
 	value, ok := fields[key]
 	if !ok || value == nil {
 		return ""
@@ -458,16 +458,16 @@ func v2ResultString(fields map[string]any, key string) string {
 	return strings.TrimSpace(fmt.Sprint(value))
 }
 
-func translateV2RememberLedgerError(err error) error {
+func translateRememberLedgerError(err error) error {
 	switch {
-	case errors.Is(err, repository.ErrV2IdempotencyConflict), errors.Is(err, repository.ErrV2SourceRevisionConflict):
+	case errors.Is(err, repository.ErrIdempotencyConflict), errors.Is(err, repository.ErrSourceRevisionConflict):
 		return fmt.Errorf("%w: duplicate or stale intake request", ErrRememberConflict)
 	default:
 		return ErrRememberPersistence
 	}
 }
 
-func v2EvidenceSourceType(value string) string {
+func evidenceSourceType(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "conversation"
@@ -475,7 +475,7 @@ func v2EvidenceSourceType(value string) string {
 	return value
 }
 
-func v2LedgerAuthorityAndMetadata(authority string, metadata map[string]any) (string, map[string]any) {
+func ledgerAuthorityAndMetadata(authority string, metadata map[string]any) (string, map[string]any) {
 	out := make(map[string]any, len(metadata)+1)
 	for key, value := range metadata {
 		out[key] = value
@@ -493,7 +493,7 @@ func v2LedgerAuthorityAndMetadata(authority string, metadata map[string]any) (st
 	return authority, out
 }
 
-func v2EvidenceProcessingIntentMetadata(metadata map[string]any, item V2RememberEvidenceInput) map[string]any {
+func evidenceProcessingIntentMetadata(metadata map[string]any, item RememberEvidenceInput) map[string]any {
 	if len(item.SupersedesFragmentIDs) > 0 {
 		metadata["supersedes_fragment_ids"] = append([]string(nil), item.SupersedesFragmentIDs...)
 	}
@@ -506,7 +506,7 @@ func v2EvidenceProcessingIntentMetadata(metadata map[string]any, item V2Remember
 	return metadata
 }
 
-func v2SourceRevisionEnvelope(item V2RememberEvidenceInput) map[string]any {
+func sourceRevisionEnvelope(item RememberEvidenceInput) map[string]any {
 	return map[string]any{
 		"source_type":  item.SourceType,
 		"source":       item.Source,
@@ -515,7 +515,7 @@ func v2SourceRevisionEnvelope(item V2RememberEvidenceInput) map[string]any {
 	}
 }
 
-func v2SourceSummary(evidence []V2RememberEvidenceInput) string {
+func sourceSummary(evidence []RememberEvidenceInput) string {
 	for _, item := range evidence {
 		if value := strings.TrimSpace(item.SourceKey); value != "" {
 			return value
@@ -527,8 +527,8 @@ func v2SourceSummary(evidence []V2RememberEvidenceInput) string {
 	return fmt.Sprintf("remember evidence_count=%d", len(evidence))
 }
 
-func scanV2Evidence(content string) repository.V2SecurityEventDraft {
-	signals := make([]repository.V2SecuritySignalInput, 0, 2)
+func scanEvidence(content string) repository.SecurityEventDraft {
+	signals := make([]repository.SecuritySignalInput, 0, 2)
 	lowerContent := asciiLowerForScan(content)
 	addSignal := func(kind, severity, needle string) {
 		index := strings.Index(lowerContent, needle)
@@ -540,7 +540,7 @@ func scanV2Evidence(content string) repository.V2SecurityEventDraft {
 		if len(quote) > 120 {
 			quote = quote[:120]
 		}
-		signals = append(signals, repository.V2SecuritySignalInput{
+		signals = append(signals, repository.SecuritySignalInput{
 			Kind:      kind,
 			Severity:  severity,
 			SpanStart: index,
@@ -561,7 +561,7 @@ func scanV2Evidence(content string) repository.V2SecurityEventDraft {
 	reason := "deterministic scan passed"
 	for _, signal := range signals {
 		if signal.Severity == "critical" {
-			return repository.V2SecurityEventDraft{
+			return repository.SecurityEventDraft{
 				EventKind:      "deterministic_scan",
 				Decision:       "quarantine",
 				ScanPolicyHash: securityScanPolicyHash,
@@ -572,7 +572,7 @@ func scanV2Evidence(content string) repository.V2SecurityEventDraft {
 		decision = "guarded"
 		reason = "evidence requires guarded placement after deterministic safety scan"
 	}
-	return repository.V2SecurityEventDraft{
+	return repository.SecurityEventDraft{
 		EventKind:      "deterministic_scan",
 		Decision:       decision,
 		ScanPolicyHash: securityScanPolicyHash,

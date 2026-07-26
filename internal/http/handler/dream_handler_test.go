@@ -112,19 +112,19 @@ func TestDreamHandlerRoutes(t *testing.T) {
 	}
 	h := NewDreamHandler(svc)
 	e.Use(injectProfileMiddleware(profileID))
-	e.GET("/api/v1/dreaming/status", h.Status)
-	e.GET("/api/v1/dreaming/runs", h.Runs)
-	e.GET("/api/v1/dreams", h.List)
-	e.GET("/api/v1/dreams/:dreamId", h.Get)
+	e.GET("/ui/api/dreaming/status", h.Status)
+	e.GET("/ui/api/dreaming/runs", h.Runs)
+	e.GET("/ui/api/dreams", h.List)
+	e.GET("/ui/api/dreams/:dreamId", h.Get)
 
 	tests := []struct {
 		path string
 		want string
 	}{
-		{path: "/api/v1/dreaming/status", want: `"pending_count":2`},
-		{path: "/api/v1/dreaming/runs?limit=3", want: `"run_id":"run-1"`},
-		{path: "/api/v1/dreams?limit=4&status=proposed&cursor=next&sort=created_at&direction=asc", want: `"next_cursor":"after-dream-1"`},
-		{path: "/api/v1/dreams/dream-1", want: `"dream_id":"dream-1"`},
+		{path: "/ui/api/dreaming/status", want: `"pending_count":2`},
+		{path: "/ui/api/dreaming/runs?limit=3", want: `"run_id":"run-1"`},
+		{path: "/ui/api/dreams?limit=4&status=proposed&cursor=next&sort=created_at&direction=asc", want: `"next_cursor":"after-dream-1"`},
+		{path: "/ui/api/dreams/dream-1", want: `"dream_id":"dream-1"`},
 	}
 	for _, tt := range tests {
 		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
@@ -143,9 +143,9 @@ func TestDreamHandlerRunsReturnsEmptyArrayForNoRuns(t *testing.T) {
 	e := echo.New()
 	h := NewDreamHandler(&dreamHandlerServiceStub{})
 	e.Use(injectProfileMiddleware(profileID))
-	e.GET("/api/v1/dreaming/runs", h.Runs)
+	e.GET("/ui/api/dreaming/runs", h.Runs)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/dreaming/runs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/dreaming/runs", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -160,8 +160,8 @@ func TestDreamHandlerValidationAndNotFound(t *testing.T) {
 	svc := &dreamHandlerServiceStub{getErr: dreamservice.ErrDreamNotFound}
 	h := NewDreamHandler(svc)
 
-	e.GET("/api/v1/dreaming/status", h.Status)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/dreaming/status", nil)
+	e.GET("/ui/api/dreaming/status", h.Status)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/dreaming/status", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
@@ -169,42 +169,42 @@ func TestDreamHandlerValidationAndNotFound(t *testing.T) {
 	e = echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(injectProfileMiddleware(profileID))
-	e.GET("/api/v1/dreaming/runs", h.Runs)
-	e.GET("/api/v1/dreams", h.List)
-	e.GET("/api/v1/dreams/:dreamId", h.Get)
+	e.GET("/ui/api/dreaming/runs", h.Runs)
+	e.GET("/ui/api/dreams", h.List)
+	e.GET("/ui/api/dreams/:dreamId", h.Get)
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/dreaming/runs?limit=101", nil)
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/dreaming/runs?limit=101", nil)
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Contains(t, rec.Body.String(), "limit must be between 1 and 100")
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/dreams?status=unknown", nil)
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/dreams?status=unknown", nil)
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Contains(t, rec.Body.String(), "status must be one of")
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/dreams?sort=bad", nil)
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/dreams?sort=bad", nil)
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Contains(t, rec.Body.String(), "sort must be updated_at")
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/dreams?direction=sideways", nil)
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/dreams?direction=sideways", nil)
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Contains(t, rec.Body.String(), "direction must be asc or desc")
 
 	svc.listErr = dreamservice.ErrInvalidDreamCursor
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/dreams?cursor=bad", nil)
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/dreams?cursor=bad", nil)
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Contains(t, rec.Body.String(), "invalid cursor")
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/dreams/dream-missing", nil)
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/dreams/dream-missing", nil)
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusNotFound, rec.Code)

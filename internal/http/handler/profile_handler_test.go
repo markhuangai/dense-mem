@@ -145,10 +145,10 @@ func TestProfileHandler_Create_RouteAuthorizationElsewhere(t *testing.T) {
 	})
 
 	// Route-level authorization is enforced by router wiring, not the handler.
-	e.POST("/api/v1/profiles", h.Create, middleware.BindAndValidate[dto.CreateProfileRequest](middleware.CreateProfileBodyKey))
+	e.POST("/ui/api/team/profiles", h.Create, middleware.BindAndValidate[dto.CreateProfileRequest](middleware.CreateProfileBodyKey))
 
 	body := `{"name": "Test Profile", "description": "Test"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/profiles", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/ui/api/team/profiles", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -194,10 +194,10 @@ func TestProfileHandler_Create_201(t *testing.T) {
 		}
 	})
 
-	e.POST("/api/v1/profiles", h.Create, middleware.BindAndValidate[dto.CreateProfileRequest](middleware.CreateProfileBodyKey))
+	e.POST("/ui/api/team/profiles", h.Create, middleware.BindAndValidate[dto.CreateProfileRequest](middleware.CreateProfileBodyKey))
 
 	body := `{"name": "Test Profile", "description": "Test Description"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/profiles", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/ui/api/team/profiles", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -234,9 +234,9 @@ func TestProfileHandler_List_RouteAuthorizationElsewhere(t *testing.T) {
 	})
 
 	// Route-level authorization is enforced by router wiring, not the handler.
-	e.GET("/api/v1/profiles", h.List)
+	e.GET("/ui/api/team/profiles", h.List)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -268,9 +268,9 @@ func TestProfileHandler_List_Pagination(t *testing.T) {
 	}
 	h := NewProfileHandler(mockSvc)
 
-	e.GET("/api/v1/profiles", h.List)
+	e.GET("/ui/api/team/profiles", h.List)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -306,9 +306,9 @@ func TestProfileHandler_Get_SameProfile(t *testing.T) {
 	}
 	h := NewProfileHandler(mockSvc)
 
-	e.GET("/api/v1/profiles/:profileId", h.Get)
+	e.GET("/ui/api/team/profiles/:profileId", h.Get)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String(), nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -326,9 +326,9 @@ func TestProfileHandler_Get_InvalidUUID(t *testing.T) {
 	e := newTestEcho()
 	h := NewProfileHandler(&mockProfileService{})
 
-	e.GET("/api/v1/profiles/:profileId", h.Get)
+	e.GET("/ui/api/team/profiles/:profileId", h.Get)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/not-a-uuid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/not-a-uuid", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -353,9 +353,9 @@ func TestProfileHandler_Get_DeletedProfile_404(t *testing.T) {
 	}
 	h := NewProfileHandler(mockSvc)
 
-	e.GET("/api/v1/profiles/:profileId", h.Get)
+	e.GET("/ui/api/team/profiles/:profileId", h.Get)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String(), nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -390,10 +390,10 @@ func TestProfileHandler_Patch_SameProfile(t *testing.T) {
 	}
 	h := NewProfileHandler(mockSvc)
 
-	e.PATCH("/api/v1/profiles/:profileId", h.Patch, middleware.BindAndValidate[dto.UpdateProfileRequest](middleware.UpdateProfileBodyKey))
+	e.PATCH("/ui/api/team/profiles/:profileId", h.Patch, middleware.BindAndValidate[dto.UpdateProfileRequest](middleware.UpdateProfileBodyKey))
 
 	body := `{"name": "Updated Name"}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/profiles/"+profileID.String(), strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPatch, "/ui/api/team/profiles/"+profileID.String(), strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -430,9 +430,9 @@ func TestProfileHandler_Delete_RouteAuthorizationElsewhere(t *testing.T) {
 	})
 
 	// Route-level authorization is enforced by router wiring.
-	e.DELETE("/api/v1/profiles/:profileId", h.Delete)
+	e.DELETE("/ui/api/team/profiles/:profileId", h.Delete)
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/profiles/"+uuid.New().String(), nil)
+	req := httptest.NewRequest(http.MethodDelete, "/ui/api/team/profiles/"+uuid.New().String(), nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -454,9 +454,9 @@ func TestProfileHandler_Delete_200(t *testing.T) {
 	}
 	h := NewProfileHandler(mockSvc)
 
-	e.DELETE("/api/v1/profiles/:profileId", h.Delete)
+	e.DELETE("/ui/api/team/profiles/:profileId", h.Delete)
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/profiles/"+profileID.String(), nil)
+	req := httptest.NewRequest(http.MethodDelete, "/ui/api/team/profiles/"+profileID.String(), nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -476,7 +476,7 @@ func TestProfileHandler_AdditionalErrorAndActorBranches(t *testing.T) {
 	t.Run("create missing validated body", func(t *testing.T) {
 		e := newTestEcho()
 		h := NewProfileHandler(&mockProfileService{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/profiles", nil)
+		req := httptest.NewRequest(http.MethodPost, "/ui/api/team/profiles", nil)
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 
@@ -498,9 +498,9 @@ func TestProfileHandler_AdditionalErrorAndActorBranches(t *testing.T) {
 			},
 		}
 		h := NewProfileHandler(mockSvc)
-		e.POST("/api/v1/profiles", h.Create, middleware.BindAndValidate[dto.CreateProfileRequest](middleware.CreateProfileBodyKey))
+		e.POST("/ui/api/team/profiles", h.Create, middleware.BindAndValidate[dto.CreateProfileRequest](middleware.CreateProfileBodyKey))
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/profiles", strings.NewReader(`{"name":"Actor Team"}`))
+		req := httptest.NewRequest(http.MethodPost, "/ui/api/team/profiles", strings.NewReader(`{"name":"Actor Team"}`))
 		req.Header.Set("Content-Type", "application/json")
 		req = req.WithContext(middleware.SetPrincipalForTest(req.Context(), &middleware.Principal{KeyID: keyID, Role: "admin"}))
 		rec := httptest.NewRecorder()
@@ -533,8 +533,8 @@ func TestProfileHandler_AdditionalErrorAndActorBranches(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				e := newTestEcho()
 				h := NewProfileHandler(tc.svc)
-				e.GET("/api/v1/profiles", h.List)
-				req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles", nil)
+				e.GET("/ui/api/team/profiles", h.List)
+				req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles", nil)
 				rec := httptest.NewRecorder()
 
 				e.ServeHTTP(rec, req)
@@ -550,9 +550,9 @@ func TestProfileHandler_AdditionalErrorAndActorBranches(t *testing.T) {
 		h := NewProfileHandler(&mockProfileService{getFunc: func(context.Context, uuid.UUID) (*domain.Profile, error) {
 			return nil, nil
 		}})
-		e.GET("/api/v1/profiles/:profileId", h.Get)
+		e.GET("/ui/api/team/profiles/:profileId", h.Get)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String(), nil)
+		req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String(), nil)
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
 
@@ -563,10 +563,10 @@ func TestProfileHandler_AdditionalErrorAndActorBranches(t *testing.T) {
 		e := newTestEcho()
 		profileID := uuid.New()
 		h := NewProfileHandler(&mockProfileService{})
-		req := httptest.NewRequest(http.MethodPatch, "/api/v1/profiles/"+profileID.String(), nil)
+		req := httptest.NewRequest(http.MethodPatch, "/ui/api/team/profiles/"+profileID.String(), nil)
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
-		c.SetPath("/api/v1/profiles/:profileId")
+		c.SetPath("/ui/api/team/profiles/:profileId")
 		c.SetParamNames("profileId")
 		c.SetParamValues(profileID.String())
 		err := h.Patch(c)
@@ -581,8 +581,8 @@ func TestProfileHandler_AdditionalErrorAndActorBranches(t *testing.T) {
 			return &domain.Profile{ID: id, Description: *req.Description, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}, nil
 		}})
 		e = newTestEcho()
-		e.PATCH("/api/v1/profiles/:profileId", h.Patch, middleware.BindAndValidate[dto.UpdateProfileRequest](middleware.UpdateProfileBodyKey))
-		req = httptest.NewRequest(http.MethodPatch, "/api/v1/profiles/"+profileID.String(), strings.NewReader(`{"description":"new desc"}`))
+		e.PATCH("/ui/api/team/profiles/:profileId", h.Patch, middleware.BindAndValidate[dto.UpdateProfileRequest](middleware.UpdateProfileBodyKey))
+		req = httptest.NewRequest(http.MethodPatch, "/ui/api/team/profiles/"+profileID.String(), strings.NewReader(`{"description":"new desc"}`))
 		req.Header.Set("Content-Type", "application/json")
 		rec = httptest.NewRecorder()
 		e.ServeHTTP(rec, req)

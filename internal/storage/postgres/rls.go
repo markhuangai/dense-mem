@@ -55,7 +55,7 @@ func (r *RLS) WithTeamTx(ctx context.Context, db *gorm.DB, teamID string, fn fun
 }
 
 // WithTeamProfileTx executes fn inside one authenticated team/profile
-// transaction. V2 semantic tables use this for owner-scoped mutations where
+// transaction. semantic tables use this for owner-scoped mutations where
 // same-team read visibility must not imply mutation authority.
 func (r *RLS) WithTeamProfileTx(ctx context.Context, db *gorm.DB, teamID string, profileID string, fn func(tx *gorm.DB) error) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

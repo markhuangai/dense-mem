@@ -84,7 +84,7 @@ const metrics = {
     { team_id: team.id, team_name: "Default", key_id: key.id, key_name: "default profile", key_suffix: "abc123", requests: 40, errors: 1, avg_latency_ms: 17, max_latency_ms: 80 },
   ],
   routes: [
-    { route: "/api/v1/fragments/:id", method: "GET", status_class: "2xx", requests: 39, errors: 0, avg_latency_ms: 16, max_latency_ms: 70 },
+    { route: "/ui/api/evidence/:id", method: "GET", status_class: "2xx", requests: 39, errors: 0, avg_latency_ms: 16, max_latency_ms: 70 },
   ],
 };
 

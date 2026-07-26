@@ -141,7 +141,7 @@ func TestProcessTeamConflictReviewCompletesEmptyRun(t *testing.T) {
 	cfg := testConflictReviewConfig(t, "UTC", "04:00", "0")
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	ledger := &conflictReviewLedgerStub{
-		run: &repository.V2ConflictReviewRunRecord{
+		run: &repository.ConflictReviewRunRecord{
 			TeamID:      "00000000-0000-0000-0000-000000000001",
 			ReviewRunID: "00000000-0000-0000-0000-000000000002",
 			Status:      "running",
@@ -173,23 +173,23 @@ func TestProcessTeamConflictReviewCountsMixedOutcomes(t *testing.T) {
 	teamID := "00000000-0000-0000-0000-000000000010"
 	runID := "00000000-0000-0000-0000-000000000011"
 	ledger := &conflictReviewLedgerStub{
-		run: &repository.V2ConflictReviewRunRecord{
+		run: &repository.ConflictReviewRunRecord{
 			TeamID:      teamID,
 			ReviewRunID: runID,
 			Status:      "running",
 			WorkerID:    "worker-b",
 		},
 		claimed: true,
-		claimBatches: [][]repository.V2RelationshipConflictCaseRecord{{
+		claimBatches: [][]repository.RelationshipConflictCaseRecord{{
 			{ConflictID: "00000000-0000-0000-0000-000000000101"},
 			{ConflictID: "00000000-0000-0000-0000-000000000102"},
 			{ConflictID: "00000000-0000-0000-0000-000000000103"},
 			{ConflictID: "00000000-0000-0000-0000-000000000104"},
 		}},
-		reviewResults: map[string]*repository.V2ReviewRelationshipConflictCaseResult{
-			"00000000-0000-0000-0000-000000000101": {Outcome: repository.V2ConflictReviewOutcomeResolve},
-			"00000000-0000-0000-0000-000000000102": {Outcome: repository.V2ConflictReviewOutcomeOverdue},
-			"00000000-0000-0000-0000-000000000103": {Outcome: repository.V2ConflictReviewOutcomeNoop},
+		reviewResults: map[string]*repository.ReviewRelationshipConflictCaseResult{
+			"00000000-0000-0000-0000-000000000101": {Outcome: repository.ConflictReviewOutcomeResolve},
+			"00000000-0000-0000-0000-000000000102": {Outcome: repository.ConflictReviewOutcomeOverdue},
+			"00000000-0000-0000-0000-000000000103": {Outcome: repository.ConflictReviewOutcomeNoop},
 		},
 		reviewErrs: map[string]error{
 			"00000000-0000-0000-0000-000000000104": errors.New("case failed"),
@@ -237,14 +237,14 @@ func testConflictReviewConfig(t *testing.T, timezone string, start string, jitte
 }
 
 type conflictReviewLedgerStub struct {
-	run           *repository.V2ConflictReviewRunRecord
+	run           *repository.ConflictReviewRunRecord
 	claimed       bool
 	reserveErr    error
-	claimBatches  [][]repository.V2RelationshipConflictCaseRecord
+	claimBatches  [][]repository.RelationshipConflictCaseRecord
 	claimErr      error
-	reviewResults map[string]*repository.V2ReviewRelationshipConflictCaseResult
+	reviewResults map[string]*repository.ReviewRelationshipConflictCaseResult
 	reviewErrs    map[string]error
-	completes     []repository.V2ConflictReviewRunCompleteInput
+	completes     []repository.ConflictReviewRunCompleteInput
 	completeErr   error
 }
 
@@ -285,11 +285,11 @@ func (l *conflictReviewLogCapture) With(...observability.LogAttr) observability.
 	return l
 }
 
-func (s *conflictReviewLedgerStub) ReserveV2RelationshipConflictReviewRun(context.Context, repository.V2ConflictReviewRunInput) (*repository.V2ConflictReviewRunRecord, bool, error) {
+func (s *conflictReviewLedgerStub) ReserveRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error) {
 	return s.run, s.claimed, s.reserveErr
 }
 
-func (s *conflictReviewLedgerStub) ClaimV2RelationshipConflictCases(context.Context, repository.V2ClaimRelationshipConflictCasesInput) ([]repository.V2RelationshipConflictCaseRecord, error) {
+func (s *conflictReviewLedgerStub) ClaimRelationshipConflictCases(context.Context, repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error) {
 	if s.claimErr != nil {
 		return nil, s.claimErr
 	}
@@ -301,17 +301,17 @@ func (s *conflictReviewLedgerStub) ClaimV2RelationshipConflictCases(context.Cont
 	return batch, nil
 }
 
-func (s *conflictReviewLedgerStub) ReviewV2RelationshipConflictCase(_ context.Context, input repository.V2ReviewRelationshipConflictCaseInput) (*repository.V2ReviewRelationshipConflictCaseResult, error) {
+func (s *conflictReviewLedgerStub) ReviewRelationshipConflictCase(_ context.Context, input repository.ReviewRelationshipConflictCaseInput) (*repository.ReviewRelationshipConflictCaseResult, error) {
 	if err := s.reviewErrs[input.ConflictID]; err != nil {
 		return nil, err
 	}
 	if result := s.reviewResults[input.ConflictID]; result != nil {
 		return result, nil
 	}
-	return &repository.V2ReviewRelationshipConflictCaseResult{Outcome: repository.V2ConflictReviewOutcomeNoop}, nil
+	return &repository.ReviewRelationshipConflictCaseResult{Outcome: repository.ConflictReviewOutcomeNoop}, nil
 }
 
-func (s *conflictReviewLedgerStub) CompleteV2RelationshipConflictReviewRun(_ context.Context, input repository.V2ConflictReviewRunCompleteInput) error {
+func (s *conflictReviewLedgerStub) CompleteRelationshipConflictReviewRun(_ context.Context, input repository.ConflictReviewRunCompleteInput) error {
 	s.completes = append(s.completes, input)
 	return s.completeErr
 }

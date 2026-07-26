@@ -12,27 +12,27 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-func TestV2SemanticPlacementReviewSourceKeepsProviderPredicateCandidatesRequestLocal(t *testing.T) {
+func TestSemanticPlacementReviewSourceKeepsProviderPredicateCandidatesRequestLocal(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	ingestID := uuid.NewString()
 	runID := uuid.NewString()
 	itemID := uuid.NewString()
 	content := "Dense-Mem has latency of 135ms."
-	ledger := &reviewSourceLedgerStub{placement: &repository.V2CreateIngestResult{
+	ledger := &reviewSourceLedgerStub{placement: &repository.CreateIngestResult{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
 		PlacementRunID: runID,
 		Status:         "processing",
 		Proposal:       map[string]any{},
-		Evidence: []repository.V2EvidenceFragment{{
+		Evidence: []repository.EvidenceFragment{{
 			FragmentID:    uuid.NewString(),
 			EvidenceIndex: 0,
 			Content:       content,
 			ContentHash:   "sha256:current",
 		}},
-		Items: []repository.V2PlacementItem{{
+		Items: []repository.PlacementItem{{
 			PlacementItemID: itemID,
 			EvidenceIndex:   0,
 			Status:          "queued",
@@ -40,24 +40,24 @@ func TestV2SemanticPlacementReviewSourceKeepsProviderPredicateCandidatesRequestL
 	}}
 	catalog := &reviewSourceCatalogStub{
 		predicateOptions:    []string{"has latency"},
-		predicateCandidates: map[string][]repository.V2SemanticReviewPredicateCandidate{},
+		predicateCandidates: map[string][]repository.SemanticReviewPredicateCandidate{},
 	}
 	provider := &reviewSourceProposalProviderStub{
-		proposal: verifier.V2ProviderProposal{
+		proposal: verifier.ProviderProposal{
 			PredicateOptions: []string{"has latency"},
-			EntityProposals: []verifier.V2ProviderEntityProposal{{
+			EntityProposals: []verifier.ProviderEntityProposal{{
 				Ref:        "project_1",
 				Name:       "Dense-Mem",
 				EntityKind: "project",
-				Evidence:   []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString("Dense-Mem")}},
+				Evidence:   []verifier.ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString("Dense-Mem")}},
 			}},
-			RelationshipProposals: []verifier.V2ProviderRelationshipProposal{{
+			RelationshipProposals: []verifier.ProviderRelationshipProposal{{
 				ProposalID:          "rel:latency",
 				SubjectRef:          "project_1",
 				OriginalPredicate:   "has latency",
 				PredicateCandidates: []string{"has latency"},
 				RelationshipKind:    "state",
-				ObjectValue: &verifier.V2SemanticValueObservation{
+				ObjectValue: &verifier.SemanticValueObservation{
 					Ref:     "latency",
 					Type:    "number",
 					Value:   "135",
@@ -66,7 +66,7 @@ func TestV2SemanticPlacementReviewSourceKeepsProviderPredicateCandidatesRequestL
 				},
 				Polarity: "+",
 				Modality: "statement",
-				Evidence: []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString(content)}},
+				Evidence: []verifier.ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString(content)}},
 			}},
 		},
 	}
@@ -76,7 +76,7 @@ func TestV2SemanticPlacementReviewSourceKeepsProviderPredicateCandidatesRequestL
 		ProposalProvider: provider,
 	})
 
-	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -97,7 +97,7 @@ func TestV2SemanticPlacementReviewSourceKeepsProviderPredicateCandidatesRequestL
 	if len(candidates) != 1 || candidates[0].PredicateKey != "has_latency" || candidates[0].RelationshipKind != "state" {
 		t.Fatalf("request-local predicate candidates = %#v", candidates)
 	}
-	prepared, validationErrs := verifier.PrepareV2SemanticReviewRequest(job.Request)
+	prepared, validationErrs := verifier.PrepareSemanticReviewRequest(job.Request)
 	if len(validationErrs) > 0 {
 		t.Fatalf("prepared request validation errors = %#v", validationErrs)
 	}
@@ -106,12 +106,12 @@ func TestV2SemanticPlacementReviewSourceKeepsProviderPredicateCandidatesRequestL
 	}
 }
 
-func TestV2ReviewSourceCanonicalPredicateCandidateRejectsAmbiguousAliases(t *testing.T) {
-	candidate, matched, ambiguous := v2ReviewSourceCanonicalPredicateCandidate([]repository.V2SemanticReviewPredicateResolution{
+func TestReviewSourceCanonicalPredicateCandidateRejectsAmbiguousAliases(t *testing.T) {
+	candidate, matched, ambiguous := reviewSourceCanonicalPredicateCandidate([]repository.SemanticReviewPredicateResolution{
 		{
 			RequestedPredicate: "depends_on",
 			MatchKind:          "alias",
-			Candidate: repository.V2SemanticReviewPredicateCandidate{
+			Candidate: repository.SemanticReviewPredicateCandidate{
 				PredicateKey: "uses",
 				Version:      1,
 			},
@@ -119,7 +119,7 @@ func TestV2ReviewSourceCanonicalPredicateCandidateRejectsAmbiguousAliases(t *tes
 		{
 			RequestedPredicate: "depends_on",
 			MatchKind:          "alias",
-			Candidate: repository.V2SemanticReviewPredicateCandidate{
+			Candidate: repository.SemanticReviewPredicateCandidate{
 				PredicateKey: "requires",
 				Version:      1,
 			},
@@ -131,28 +131,28 @@ func TestV2ReviewSourceCanonicalPredicateCandidateRejectsAmbiguousAliases(t *tes
 	}
 }
 
-func TestV2ReviewSourceCorrectionTargetMatchesByObjectRefOrValue(t *testing.T) {
-	target := v2ReviewSourceCorrectionTarget{
+func TestReviewSourceCorrectionTargetMatchesByObjectRefOrValue(t *testing.T) {
+	target := reviewSourceCorrectionTarget{
 		SubjectRef:     "entity:a",
 		PredicateKey:   "depends_on",
 		ObjectRef:      "entity:b",
 		ObjectValueKey: "ignored",
 	}
-	if !v2ReviewSourceCorrectionTargetMatches(v2ReviewSourceCorrectionTarget{
+	if !reviewSourceCorrectionTargetMatches(reviewSourceCorrectionTarget{
 		SubjectRef:   "entity:a",
 		PredicateKey: "depends_on",
 		ObjectRef:    "entity:b",
 	}, target) {
 		t.Fatal("object ref target did not match")
 	}
-	if v2ReviewSourceCorrectionTargetMatches(v2ReviewSourceCorrectionTarget{
+	if reviewSourceCorrectionTargetMatches(reviewSourceCorrectionTarget{
 		SubjectRef:   "entity:a",
 		PredicateKey: "depends_on",
 		ObjectRef:    "entity:c",
 	}, target) {
 		t.Fatal("different object ref matched")
 	}
-	if v2ReviewSourceCorrectionTargetMatches(v2ReviewSourceCorrectionTarget{
+	if reviewSourceCorrectionTargetMatches(reviewSourceCorrectionTarget{
 		SubjectRef:   "entity:a",
 		PredicateKey: "uses",
 		ObjectRef:    "entity:b",
@@ -160,19 +160,19 @@ func TestV2ReviewSourceCorrectionTargetMatchesByObjectRefOrValue(t *testing.T) {
 		t.Fatal("different predicate matched")
 	}
 
-	valueTarget := v2ReviewSourceCorrectionTarget{
+	valueTarget := reviewSourceCorrectionTarget{
 		SubjectRef:     "entity:a",
 		PredicateKey:   "has_latency",
 		ObjectValueKey: "number\x00135\x00ms",
 	}
-	if !v2ReviewSourceCorrectionTargetMatches(v2ReviewSourceCorrectionTarget{
+	if !reviewSourceCorrectionTargetMatches(reviewSourceCorrectionTarget{
 		SubjectRef:     "entity:a",
 		PredicateKey:   "has_latency",
 		ObjectValueKey: "number\x00135\x00ms",
 	}, valueTarget) {
 		t.Fatal("object value target did not match")
 	}
-	if v2ReviewSourceCorrectionTargetMatches(v2ReviewSourceCorrectionTarget{
+	if reviewSourceCorrectionTargetMatches(reviewSourceCorrectionTarget{
 		SubjectRef:   "entity:a",
 		PredicateKey: "has_latency",
 	}, valueTarget) {
@@ -180,14 +180,14 @@ func TestV2ReviewSourceCorrectionTargetMatchesByObjectRefOrValue(t *testing.T) {
 	}
 }
 
-func TestV2ReviewSourcePredicateHelpersNormalizeFallbackAndBounds(t *testing.T) {
-	if got := v2ReviewSourceAllowedKinds("", "other"); len(got) != 1 || got[0] != "other" {
+func TestReviewSourcePredicateHelpersNormalizeFallbackAndBounds(t *testing.T) {
+	if got := reviewSourceAllowedKinds("", "other"); len(got) != 1 || got[0] != "other" {
 		t.Fatalf("fallback kinds = %#v", got)
 	}
-	if got := v2ReviewSourcePredicateKey("  Uses / Depends On!!! "); got != "uses_depends_on" {
+	if got := reviewSourcePredicateKey("  Uses / Depends On!!! "); got != "uses_depends_on" {
 		t.Fatalf("predicate key = %q", got)
 	}
-	longKey := v2ReviewSourcePredicateKey(strings.Repeat("a", 70) + "!")
+	longKey := reviewSourcePredicateKey(strings.Repeat("a", 70) + "!")
 	if len(longKey) != 64 || strings.HasSuffix(longKey, "_") {
 		t.Fatalf("bounded predicate key = %q len=%d", longKey, len(longKey))
 	}

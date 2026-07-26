@@ -12,7 +12,7 @@ import (
 )
 
 type SemanticPlacementReviewSource interface {
-	BuildSemanticReviewJob(ctx context.Context, run repository.V2PlacementRun) (SemanticReviewJob, error)
+	BuildSemanticReviewJob(ctx context.Context, run repository.PlacementRun) (SemanticReviewJob, error)
 }
 
 type SemanticPlacementWorkerService interface {
@@ -20,7 +20,7 @@ type SemanticPlacementWorkerService interface {
 }
 
 type SemanticPlacementWorkerDependencies struct {
-	Ledger       repository.V2LedgerRepository
+	Ledger       repository.LedgerRepository
 	Review       SemanticReviewService
 	Commit       SemanticCommitService
 	ReviewSource SemanticPlacementReviewSource
@@ -30,7 +30,7 @@ type SemanticPlacementWorkerDependencies struct {
 }
 
 type semanticPlacementWorkerService struct {
-	ledger       repository.V2LedgerRepository
+	ledger       repository.LedgerRepository
 	review       SemanticReviewService
 	commit       SemanticCommitService
 	reviewSource SemanticPlacementReviewSource
@@ -103,13 +103,13 @@ func (s *semanticPlacementWorkerService) ProcessNextSemanticPlacement(ctx contex
 
 func (s *semanticPlacementWorkerService) requeueSemanticPlacement(
 	ctx context.Context,
-	run repository.V2PlacementRun,
+	run repository.PlacementRun,
 	reviewJob SemanticReviewJob,
 	reason string,
 ) error {
 	retryable := SemanticReviewResult{
-		Status: string(domain.V2SemanticReviewRetryable),
-		ValidationErrors: []verifier.V2SemanticValidationError{{
+		Status: string(domain.SemanticReviewRetryable),
+		ValidationErrors: []verifier.SemanticValidationError{{
 			Field:   "semantic_review",
 			Message: reason,
 		}},
@@ -118,7 +118,7 @@ func (s *semanticPlacementWorkerService) requeueSemanticPlacement(
 	return err
 }
 
-func reviewJobWithRunScope(job SemanticReviewJob, run repository.V2PlacementRun) SemanticReviewJob {
+func reviewJobWithRunScope(job SemanticReviewJob, run repository.PlacementRun) SemanticReviewJob {
 	if job.TeamID == "" {
 		job.TeamID = run.TeamID
 	}
@@ -136,7 +136,7 @@ func reviewJobWithRunScope(job SemanticReviewJob, run repository.V2PlacementRun)
 
 func commitJobWithRunScope(
 	reviewJob SemanticReviewJob,
-	run repository.V2PlacementRun,
+	run repository.PlacementRun,
 	workerID string,
 	result SemanticReviewResult,
 ) SemanticCommitJob {

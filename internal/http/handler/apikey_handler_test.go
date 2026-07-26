@@ -121,7 +121,7 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 	t.Run("create returns raw key once and maps request", func(t *testing.T) {
 		scopes := []string{"read"}
 		body := `{"name":"ops key","rate_limit":42,"scopes":["read"],"expires_at":"2026-05-30T13:00:00Z"}`
-		rec, err := runAPIKeyHandlerWithBody(t, http.MethodPost, "/api/v1/teams/"+profileID.String()+"/profiles", "/api/v1/teams/:teamId/profiles", []string{"teamId"}, []string{profileID.String()}, body, h.Create)
+		rec, err := runAPIKeyHandlerWithBody(t, http.MethodPost, "/ui/api/team/profiles", "/ui/api/team/profiles", []string{"teamId"}, []string{profileID.String()}, body, h.Create)
 
 		if err != nil {
 			t.Fatalf("Create error: %v", err)
@@ -148,7 +148,7 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 	})
 
 	t.Run("list returns paginated items", func(t *testing.T) {
-		rec, err := runAPIKeyHandler(t, http.MethodGet, "/api/v1/teams/"+profileID.String()+"/profiles?limit=200&offset=3", "/api/v1/teams/:teamId/profiles", []string{"teamId"}, []string{profileID.String()}, h.List)
+		rec, err := runAPIKeyHandler(t, http.MethodGet, "/ui/api/team/profiles?limit=200&offset=3", "/ui/api/team/profiles", []string{"teamId"}, []string{profileID.String()}, h.List)
 		if err != nil {
 			t.Fatalf("List error: %v", err)
 		}
@@ -165,7 +165,7 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 	})
 
 	t.Run("get returns scoped key", func(t *testing.T) {
-		rec, err := runAPIKeyHandler(t, http.MethodGet, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, h.Get)
+		rec, err := runAPIKeyHandler(t, http.MethodGet, "/ui/api/team/profiles/"+keyID.String(), "/ui/api/team/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, h.Get)
 		if err != nil {
 			t.Fatalf("Get error: %v", err)
 		}
@@ -177,7 +177,7 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 	t.Run("update renames member profile", func(t *testing.T) {
 		updateSvc := &apiKeyHandlerService{key: key}
 		h := NewAPIKeyHandler(updateSvc)
-		rec, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile"}`, h.Update)
+		rec, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/ui/api/team/profiles/"+keyID.String(), "/ui/api/team/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile"}`, h.Update)
 		if err != nil {
 			t.Fatalf("Update error: %v", err)
 		}
@@ -192,7 +192,7 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 	t.Run("update changes member profile scopes", func(t *testing.T) {
 		updateSvc := &apiKeyHandlerService{key: key}
 		h := NewAPIKeyHandler(updateSvc)
-		rec, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"scopes":["read","feedback:read"]}`, h.Update)
+		rec, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/ui/api/team/profiles/"+keyID.String(), "/ui/api/team/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"scopes":["read","feedback:read"]}`, h.Update)
 		if err != nil {
 			t.Fatalf("Update error: %v", err)
 		}
@@ -207,7 +207,7 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 	t.Run("update rejects mixed name and scopes", func(t *testing.T) {
 		updateSvc := &apiKeyHandlerService{key: key}
 		h := NewAPIKeyHandler(updateSvc)
-		_, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile","scopes":["read"]}`, h.Update)
+		_, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/ui/api/team/profiles/"+keyID.String(), "/ui/api/team/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile","scopes":["read"]}`, h.Update)
 		if err == nil || !strings.Contains(err.Error(), "profile name and scopes must be updated separately") {
 			t.Fatalf("Update error = %v; want mixed update rejection", err)
 		}
@@ -221,7 +221,7 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 		managerKey.Role = service.APIKeyRoleManager
 		updateSvc := &apiKeyHandlerService{key: &managerKey}
 		h := NewAPIKeyHandler(updateSvc)
-		_, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile"}`, h.Update)
+		_, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/ui/api/team/profiles/"+keyID.String(), "/ui/api/team/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile"}`, h.Update)
 		if err == nil || !strings.Contains(err.Error(), "manager profiles can only be managed from the control portal") {
 			t.Fatalf("Update error = %v; want manager target rejection", err)
 		}
@@ -234,19 +234,19 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 		missingSvc := &apiKeyHandlerService{}
 		h := NewAPIKeyHandler(missingSvc)
 
-		_, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile"}`, h.Update)
+		_, err := runAPIKeyHandlerWithUpdateBody(t, http.MethodPatch, "/ui/api/team/profiles/"+keyID.String(), "/ui/api/team/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"renamed profile"}`, h.Update)
 		assertAPIKeyHandlerErrorCode(t, err, httperr.NOT_FOUND)
 		if missingSvc.updatedName != "" {
 			t.Fatalf("updated name = %q; want no delegated update", missingSvc.updatedName)
 		}
 
-		_, err = runAPIKeyHandlerWithBody(t, http.MethodPost, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", "/api/v1/teams/:teamId/profiles/:profileId/rotate", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"rotated"}`, h.Rotate)
+		_, err = runAPIKeyHandlerWithBody(t, http.MethodPost, "/ui/api/team/profiles/"+keyID.String()+"/rotate", "/ui/api/team/profiles/:profileId/rotate", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, `{"name":"rotated"}`, h.Rotate)
 		assertAPIKeyHandlerErrorCode(t, err, httperr.NOT_FOUND)
 		if missingSvc.rotateReq.Name != "" {
 			t.Fatalf("rotate request name = %q; want no delegated rotate", missingSvc.rotateReq.Name)
 		}
 
-		_, err = runAPIKeyHandler(t, http.MethodDelete, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, h.Delete)
+		_, err = runAPIKeyHandler(t, http.MethodDelete, "/ui/api/team/profiles/"+keyID.String(), "/ui/api/team/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, h.Delete)
 		assertAPIKeyHandlerErrorCode(t, err, httperr.NOT_FOUND)
 		if missingSvc.deletedKeyID != uuid.Nil {
 			t.Fatalf("deleted key = %s; want no delegated delete", missingSvc.deletedKeyID)
@@ -255,13 +255,13 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 
 	t.Run("rotate rejects scope changes and accepts metadata updates", func(t *testing.T) {
 		withScopes := `{"name":"rotated","scopes":["read"]}`
-		_, err := runAPIKeyHandlerWithBody(t, http.MethodPost, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", "/api/v1/teams/:teamId/profiles/:profileId/rotate", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, withScopes, h.Rotate)
+		_, err := runAPIKeyHandlerWithBody(t, http.MethodPost, "/ui/api/team/profiles/"+keyID.String()+"/rotate", "/ui/api/team/profiles/:profileId/rotate", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, withScopes, h.Rotate)
 		if err == nil || !strings.Contains(err.Error(), "scopes cannot be changed") {
 			t.Fatalf("Rotate error = %v; want scopes rejection", err)
 		}
 
 		body := `{"name":"rotated","rate_limit":7,"expires_at":"2026-05-30T13:00:00Z"}`
-		rec, err := runAPIKeyHandlerWithBody(t, http.MethodPost, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", "/api/v1/teams/:teamId/profiles/:profileId/rotate", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, body, h.Rotate)
+		rec, err := runAPIKeyHandlerWithBody(t, http.MethodPost, "/ui/api/team/profiles/"+keyID.String()+"/rotate", "/ui/api/team/profiles/:profileId/rotate", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, body, h.Rotate)
 		if err != nil {
 			t.Fatalf("Rotate error: %v", err)
 		}
@@ -274,7 +274,7 @@ func TestAPIKeyHandlerCreateListGetRotateDelete(t *testing.T) {
 	})
 
 	t.Run("delete delegates scoped delete", func(t *testing.T) {
-		rec, err := runAPIKeyHandler(t, http.MethodDelete, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String(), "/api/v1/teams/:teamId/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, h.Delete)
+		rec, err := runAPIKeyHandler(t, http.MethodDelete, "/ui/api/team/profiles/"+keyID.String(), "/ui/api/team/profiles/:profileId", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, h.Delete)
 		if err != nil {
 			t.Fatalf("Delete error: %v", err)
 		}
@@ -306,8 +306,8 @@ func TestAPIKeyHandlerValidationErrors(t *testing.T) {
 		{
 			name:       "create missing team id",
 			method:     http.MethodPost,
-			target:     "/api/v1/teams//profiles",
-			path:       "/api/v1/teams/:teamId/profiles",
+			target:     "/ui/api/team/profiles",
+			path:       "/ui/api/team/profiles",
 			paramNames: []string{"teamId"},
 			paramVals:  []string{""},
 			body:       `{"name":"ops"}`,
@@ -317,8 +317,8 @@ func TestAPIKeyHandlerValidationErrors(t *testing.T) {
 		{
 			name:       "get invalid key id",
 			method:     http.MethodGet,
-			target:     "/api/v1/teams/" + profileID + "/profiles/not-a-uuid",
-			path:       "/api/v1/teams/:teamId/profiles/:profileId",
+			target:     "/ui/api/team/profiles/not-a-uuid",
+			path:       "/ui/api/team/profiles/:profileId",
 			paramNames: []string{"teamId", "profileId"},
 			paramVals:  []string{profileID, "not-a-uuid"},
 			handler:    h.Get,
@@ -327,8 +327,8 @@ func TestAPIKeyHandlerValidationErrors(t *testing.T) {
 		{
 			name:       "update invalid team id",
 			method:     http.MethodPatch,
-			target:     "/api/v1/teams/not-a-uuid/profiles/" + keyID,
-			path:       "/api/v1/teams/:teamId/profiles/:profileId",
+			target:     "/ui/api/team/profiles/" + keyID,
+			path:       "/ui/api/team/profiles/:profileId",
 			paramNames: []string{"teamId", "profileId"},
 			paramVals:  []string{"not-a-uuid", keyID},
 			body:       `{"name":"ops"}`,
@@ -338,8 +338,8 @@ func TestAPIKeyHandlerValidationErrors(t *testing.T) {
 		{
 			name:       "update missing body",
 			method:     http.MethodPatch,
-			target:     "/api/v1/teams/" + profileID + "/profiles/" + keyID,
-			path:       "/api/v1/teams/:teamId/profiles/:profileId",
+			target:     "/ui/api/team/profiles/" + keyID,
+			path:       "/ui/api/team/profiles/:profileId",
 			paramNames: []string{"teamId", "profileId"},
 			paramVals:  []string{profileID, keyID},
 			handler:    h.Update,
@@ -348,8 +348,8 @@ func TestAPIKeyHandlerValidationErrors(t *testing.T) {
 		{
 			name:       "delete missing key id",
 			method:     http.MethodDelete,
-			target:     "/api/v1/teams/" + profileID + "/profiles/",
-			path:       "/api/v1/teams/:teamId/profiles/:profileId",
+			target:     "/ui/api/team/profiles/",
+			path:       "/ui/api/team/profiles/:profileId",
 			paramNames: []string{"teamId", "profileId"},
 			paramVals:  []string{profileID, ""},
 			handler:    h.Delete,
@@ -381,7 +381,7 @@ func TestAPIKeyHandlerAdditionalBranches(t *testing.T) {
 
 	t.Run("create missing validated body", func(t *testing.T) {
 		h := NewAPIKeyHandler(&apiKeyHandlerService{key: key, raw: "raw"})
-		_, err := runAPIKeyHandler(t, http.MethodPost, "/api/v1/teams/"+profileID.String()+"/profiles", "/api/v1/teams/:teamId/profiles", []string{"teamId"}, []string{profileID.String()}, h.Create)
+		_, err := runAPIKeyHandler(t, http.MethodPost, "/ui/api/team/profiles", "/ui/api/team/profiles", []string{"teamId"}, []string{profileID.String()}, h.Create)
 		if err == nil || !strings.Contains(err.Error(), "request body not found") {
 			t.Fatalf("Create err = %v; want missing body", err)
 		}
@@ -390,7 +390,7 @@ func TestAPIKeyHandlerAdditionalBranches(t *testing.T) {
 	t.Run("create ignores invalid expires_at parse", func(t *testing.T) {
 		svc := &apiKeyHandlerService{key: key, raw: "raw"}
 		h := NewAPIKeyHandler(svc)
-		rec, err := runAPIKeyHandlerWithBody(t, http.MethodPost, "/api/v1/teams/"+profileID.String()+"/profiles", "/api/v1/teams/:teamId/profiles", []string{"teamId"}, []string{profileID.String()}, `{"name":"ops","expires_at":"not-rfc3339"}`, h.Create)
+		rec, err := runAPIKeyHandlerWithBody(t, http.MethodPost, "/ui/api/team/profiles", "/ui/api/team/profiles", []string{"teamId"}, []string{profileID.String()}, `{"name":"ops","expires_at":"not-rfc3339"}`, h.Create)
 		if err != nil {
 			t.Fatalf("Create error: %v", err)
 		}
@@ -404,7 +404,7 @@ func TestAPIKeyHandlerAdditionalBranches(t *testing.T) {
 
 	t.Run("list count error propagates", func(t *testing.T) {
 		h := NewAPIKeyHandler(&apiKeyHandlerService{keys: []*domain.APIKey{key}, countErr: httperr.New(httperr.INTERNAL_ERROR, "count failed")})
-		_, err := runAPIKeyHandler(t, http.MethodGet, "/api/v1/teams/"+profileID.String()+"/profiles", "/api/v1/teams/:teamId/profiles", []string{"teamId"}, []string{profileID.String()}, h.List)
+		_, err := runAPIKeyHandler(t, http.MethodGet, "/ui/api/team/profiles", "/ui/api/team/profiles", []string{"teamId"}, []string{profileID.String()}, h.List)
 		if err == nil || !strings.Contains(err.Error(), "count failed") {
 			t.Fatalf("List err = %v; want count failed", err)
 		}
@@ -412,7 +412,7 @@ func TestAPIKeyHandlerAdditionalBranches(t *testing.T) {
 
 	t.Run("get accepts keyId param name", func(t *testing.T) {
 		h := NewAPIKeyHandler(&apiKeyHandlerService{key: key})
-		rec, err := runAPIKeyHandler(t, http.MethodGet, "/api/v1/profiles/"+profileID.String()+"/api-keys/"+keyID.String(), "/api/v1/profiles/:profileId/api-keys/:keyId", []string{"profileId", "keyId"}, []string{profileID.String(), keyID.String()}, h.Get)
+		rec, err := runAPIKeyHandler(t, http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/api-keys/"+keyID.String(), "/ui/api/team/profiles/:profileId/api-keys/:keyId", []string{"profileId", "keyId"}, []string{profileID.String(), keyID.String()}, h.Get)
 		if err != nil {
 			t.Fatalf("Get error: %v", err)
 		}
@@ -423,7 +423,7 @@ func TestAPIKeyHandlerAdditionalBranches(t *testing.T) {
 
 	t.Run("rotate missing body", func(t *testing.T) {
 		h := NewAPIKeyHandler(&apiKeyHandlerService{key: key, raw: "raw"})
-		_, err := runAPIKeyHandler(t, http.MethodPost, "/api/v1/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", "/api/v1/teams/:teamId/profiles/:profileId/rotate", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, h.Rotate)
+		_, err := runAPIKeyHandler(t, http.MethodPost, "/ui/api/team/profiles/"+keyID.String()+"/rotate", "/ui/api/team/profiles/:profileId/rotate", []string{"teamId", "profileId"}, []string{profileID.String(), keyID.String()}, h.Rotate)
 		if err == nil || !strings.Contains(err.Error(), "request body not found") {
 			t.Fatalf("Rotate err = %v; want missing body", err)
 		}
@@ -438,8 +438,8 @@ func TestAPIKeyHandlerAdditionalBranches(t *testing.T) {
 			path    string
 			handler echo.HandlerFunc
 		}{
-			{name: "list", method: http.MethodGet, target: "/api/v1/teams/not-a-uuid/profiles", path: "/api/v1/teams/:teamId/profiles", handler: h.List},
-			{name: "delete", method: http.MethodDelete, target: "/api/v1/teams/not-a-uuid/profiles/" + keyID.String(), path: "/api/v1/teams/:teamId/profiles/:profileId", handler: h.Delete},
+			{name: "list", method: http.MethodGet, target: "/ui/api/team/profiles", path: "/ui/api/team/profiles", handler: h.List},
+			{name: "delete", method: http.MethodDelete, target: "/ui/api/team/profiles/" + keyID.String(), path: "/ui/api/team/profiles/:profileId", handler: h.Delete},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {

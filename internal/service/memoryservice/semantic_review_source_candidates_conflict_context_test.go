@@ -6,7 +6,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-func TestV2ReviewSourceProposalWithTrustedConflictContextsCopiesByRefAndShape(t *testing.T) {
+func TestReviewSourceProposalWithTrustedConflictContextsCopiesByRefAndShape(t *testing.T) {
 	stored := map[string]any{
 		"relationship_hints": []map[string]any{
 			{
@@ -34,7 +34,7 @@ func TestV2ReviewSourceProposalWithTrustedConflictContextsCopiesByRefAndShape(t 
 			},
 		},
 	}
-	contexts := v2ReviewSourceConflictContexts(stored)
+	contexts := reviewSourceConflictContexts(stored)
 	if len(contexts) != 2 {
 		t.Fatalf("contexts = %#v", contexts)
 	}
@@ -61,30 +61,30 @@ func TestV2ReviewSourceProposalWithTrustedConflictContextsCopiesByRefAndShape(t 
 		},
 	}
 
-	out, errors := v2ReviewSourceProposalWithTrustedConflictContexts(provider, contexts)
+	out, errors := reviewSourceProposalWithTrustedConflictContexts(provider, contexts)
 	if len(errors) > 0 {
 		t.Fatalf("reattach errors = %#v", errors)
 	}
-	relationships := v2PlacementReviewObjectArray(out, "relationships")
-	first, ok := v2PlacementReviewConflictContext(relationships[0])
+	relationships := placementReviewObjectArray(out, "relationships")
+	first, ok := placementReviewConflictContext(relationships[0])
 	if !ok || first.ConflictID != "00000000-0000-0000-0000-000000000101" || first.ExpectedVersion != 3 {
 		t.Fatalf("first conflict context = %#v ok=%v", first, ok)
 	}
-	second, ok := v2PlacementReviewConflictContext(relationships[1])
+	second, ok := placementReviewConflictContext(relationships[1])
 	if !ok || second.ConflictID != "00000000-0000-0000-0000-000000000102" || second.ExpectedVersion != 4 {
 		t.Fatalf("second conflict context = %#v ok=%v", second, ok)
 	}
 }
 
-func TestV2ReviewSourceProposalWithTrustedConflictContextsOverwritesProviderContext(t *testing.T) {
-	contexts := []v2ReviewSourceConflictContext{
+func TestReviewSourceProposalWithTrustedConflictContextsOverwritesProviderContext(t *testing.T) {
+	contexts := []reviewSourceConflictContext{
 		{
 			Index:        0,
 			Ref:          "rel-postgres",
 			SubjectRef:   "project",
 			PredicateKey: "primary_database",
 			ObjectRef:    "postgres",
-			Context: v2TestConflictContext(
+			Context: testConflictContext(
 				"00000000-0000-0000-0000-000000000101",
 				3,
 			),
@@ -103,26 +103,26 @@ func TestV2ReviewSourceProposalWithTrustedConflictContextsOverwritesProviderCont
 		}},
 	}
 
-	out, errors := v2ReviewSourceProposalWithTrustedConflictContexts(provider, contexts)
+	out, errors := reviewSourceProposalWithTrustedConflictContexts(provider, contexts)
 	if len(errors) > 0 {
 		t.Fatalf("reattach errors = %#v", errors)
 	}
-	relationships := v2PlacementReviewObjectArray(out, "relationships")
-	context, ok := v2PlacementReviewConflictContext(relationships[0])
+	relationships := placementReviewObjectArray(out, "relationships")
+	context, ok := placementReviewConflictContext(relationships[0])
 	if !ok || context.ConflictID != "00000000-0000-0000-0000-000000000101" || context.ExpectedVersion != 3 {
 		t.Fatalf("conflict context = %#v ok=%v", context, ok)
 	}
 }
 
-func TestV2ReviewSourceProposalWithTrustedConflictContextsFailsWhenTrustedContextIsDropped(t *testing.T) {
-	contexts := []v2ReviewSourceConflictContext{
+func TestReviewSourceProposalWithTrustedConflictContextsFailsWhenTrustedContextIsDropped(t *testing.T) {
+	contexts := []reviewSourceConflictContext{
 		{
 			Index:        0,
 			Ref:          "rel-postgres",
 			SubjectRef:   "project",
 			PredicateKey: "primary_database",
 			ObjectRef:    "postgres",
-			Context: v2TestConflictContext(
+			Context: testConflictContext(
 				"00000000-0000-0000-0000-000000000101",
 				3,
 			),
@@ -140,13 +140,13 @@ func TestV2ReviewSourceProposalWithTrustedConflictContextsFailsWhenTrustedContex
 		}},
 	}
 
-	_, errors := v2ReviewSourceProposalWithTrustedConflictContexts(provider, contexts)
+	_, errors := reviewSourceProposalWithTrustedConflictContexts(provider, contexts)
 	if len(errors) != 1 || errors[0].Field != "relationship_hints[0].conflict_context" {
 		t.Fatalf("reattach errors = %#v", errors)
 	}
 }
 
-func TestV2ReviewSourceProposalWithTrustedConflictContextsStripsProviderOnlyContext(t *testing.T) {
+func TestReviewSourceProposalWithTrustedConflictContextsStripsProviderOnlyContext(t *testing.T) {
 	provider := map[string]any{
 		"relationships": []map[string]any{{
 			"proposal_id": "rel-postgres",
@@ -160,18 +160,18 @@ func TestV2ReviewSourceProposalWithTrustedConflictContextsStripsProviderOnlyCont
 		}},
 	}
 
-	out, errors := v2ReviewSourceProposalWithTrustedConflictContexts(provider, nil)
+	out, errors := reviewSourceProposalWithTrustedConflictContexts(provider, nil)
 	if len(errors) > 0 {
 		t.Fatalf("reattach errors = %#v", errors)
 	}
-	relationships := v2PlacementReviewObjectArray(out, "relationships")
+	relationships := placementReviewObjectArray(out, "relationships")
 	if _, ok := relationships[0]["conflict_context"]; ok {
 		t.Fatalf("provider conflict context was retained")
 	}
 }
 
-func TestV2ReviewSourceMatchConflictContextFallbackAndAmbiguity(t *testing.T) {
-	contexts := []v2ReviewSourceConflictContext{
+func TestReviewSourceMatchConflictContextFallbackAndAmbiguity(t *testing.T) {
+	contexts := []reviewSourceConflictContext{
 		{
 			Ref:          "relationship:0",
 			SubjectRef:   "project",
@@ -179,7 +179,7 @@ func TestV2ReviewSourceMatchConflictContextFallbackAndAmbiguity(t *testing.T) {
 			ObjectRef:    "postgres",
 		},
 	}
-	index, ok := v2ReviewSourceMatchConflictContext(map[string]any{
+	index, ok := reviewSourceMatchConflictContext(map[string]any{
 		"subject_ref": "other",
 		"predicate":   "other",
 		"object_ref":  "other",
@@ -188,11 +188,11 @@ func TestV2ReviewSourceMatchConflictContextFallbackAndAmbiguity(t *testing.T) {
 		t.Fatalf("mismatched singleton conflict context matched index=%d ok=%v", index, ok)
 	}
 
-	ambiguous := []v2ReviewSourceConflictContext{
+	ambiguous := []reviewSourceConflictContext{
 		{SubjectRef: "project", PredicateKey: "primary_database", ObjectRef: "postgres"},
 		{SubjectRef: "project", PredicateKey: "primary_database", ObjectRef: "postgres"},
 	}
-	_, ok = v2ReviewSourceMatchConflictContext(map[string]any{
+	_, ok = reviewSourceMatchConflictContext(map[string]any{
 		"subject_ref": "project",
 		"predicate":   "primary_database",
 		"object_ref":  "postgres",
@@ -201,16 +201,16 @@ func TestV2ReviewSourceMatchConflictContextFallbackAndAmbiguity(t *testing.T) {
 		t.Fatalf("ambiguous conflict context matched")
 	}
 
-	if v2ReviewSourceConflictContextMatches(
-		v2ReviewSourceConflictContext{SubjectRef: "project", PredicateKey: "primary_database", ObjectRef: "postgres"},
-		v2ReviewSourceConflictContext{SubjectRef: "project", PredicateKey: "primary_database", ObjectRef: "graphdb"},
+	if reviewSourceConflictContextMatches(
+		reviewSourceConflictContext{SubjectRef: "project", PredicateKey: "primary_database", ObjectRef: "postgres"},
+		reviewSourceConflictContext{SubjectRef: "project", PredicateKey: "primary_database", ObjectRef: "graphdb"},
 	) {
 		t.Fatalf("mismatched object_ref matched")
 	}
 }
 
-func v2TestConflictContext(conflictID string, expectedVersion int) verifier.V2RelationshipConflictContext {
-	return verifier.V2RelationshipConflictContext{
+func testConflictContext(conflictID string, expectedVersion int) verifier.RelationshipConflictContext {
+	return verifier.RelationshipConflictContext{
 		ConflictID:      conflictID,
 		ExpectedVersion: expectedVersion,
 	}

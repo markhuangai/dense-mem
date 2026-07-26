@@ -14,7 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
+func TestSemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	ingestID := uuid.NewString()
@@ -31,7 +31,7 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 	validTo := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
 	validFromText := validFrom.Format(time.RFC3339)
 	validToText := validTo.Format(time.RFC3339)
-	ledger := &reviewSourceLedgerStub{placement: &repository.V2CreateIngestResult{
+	ledger := &reviewSourceLedgerStub{placement: &repository.CreateIngestResult{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -89,18 +89,18 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 				},
 			},
 		},
-		Evidence: []repository.V2EvidenceFragment{
+		Evidence: []repository.EvidenceFragment{
 			{FragmentID: uuid.NewString(), EvidenceIndex: 0, Content: "old evidence", ContentHash: "sha256:old"},
 			{FragmentID: uuid.NewString(), EvidenceIndex: 1, Content: currentContent, ContentHash: "sha256:current", SourceRevisionID: uuid.NewString()},
 		},
-		Items: []repository.V2PlacementItem{
+		Items: []repository.PlacementItem{
 			{PlacementItemID: doneItemID, EvidenceIndex: 0, Status: "completed"},
 			{PlacementItemID: queuedItemID, EvidenceIndex: 1, Status: "queued"},
 		},
 	}}
 	catalog := &reviewSourceCatalogStub{
 		predicateOptions: []string{"uses", "works_on"},
-		entityCandidates: map[string][]repository.V2SemanticReviewEntityCandidate{
+		entityCandidates: map[string][]repository.SemanticReviewEntityCandidate{
 			"Mark": {{
 				TeamID:        teamID,
 				EntityID:      markID,
@@ -109,7 +109,7 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 				Status:        "active",
 			}},
 		},
-		predicateCandidates: map[string][]repository.V2SemanticReviewPredicateCandidate{
+		predicateCandidates: map[string][]repository.SemanticReviewPredicateCandidate{
 			"works_on": {{
 				PredicateKey:        "works_on",
 				Version:             1,
@@ -131,9 +131,9 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 		},
 	}
 	provider := &reviewSourceProposalProviderStub{
-		proposal: verifier.V2ProviderProposal{
+		proposal: verifier.ProviderProposal{
 			PredicateOptions: []string{"uses", "works_on"},
-			EntityProposals: []verifier.V2ProviderEntityProposal{
+			EntityProposals: []verifier.ProviderEntityProposal{
 				{
 					Ref:           "person_1",
 					Name:          "Mark",
@@ -142,13 +142,13 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 					IdentityContext: map[string]any{
 						"github": "markhuangai",
 					},
-					Evidence: []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 1, Start: 0, End: utf8.RuneCountInString("Mark")}},
+					Evidence: []verifier.ProviderEvidenceSpan{{EvidenceIndex: 1, Start: 0, End: utf8.RuneCountInString("Mark")}},
 				},
 				{
 					Ref:        "project_1",
 					Name:       "Dense-Mem",
 					EntityKind: "project",
-					Evidence: []verifier.V2ProviderEvidenceSpan{{
+					Evidence: []verifier.ProviderEvidenceSpan{{
 						EvidenceIndex: 1,
 						Start:         utf8.RuneCountInString("Mark works on "),
 						End:           utf8.RuneCountInString("Mark works on Dense-Mem"),
@@ -158,14 +158,14 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 					Ref:        "db_1",
 					Name:       "PostgreSQL",
 					EntityKind: "project",
-					Evidence: []verifier.V2ProviderEvidenceSpan{{
+					Evidence: []verifier.ProviderEvidenceSpan{{
 						EvidenceIndex: 1,
 						Start:         utf8.RuneCountInString("Mark works on Dense-Mem using "),
 						End:           utf8.RuneCountInString(currentContent),
 					}},
 				},
 			},
-			RelationshipProposals: []verifier.V2ProviderRelationshipProposal{{
+			RelationshipProposals: []verifier.ProviderRelationshipProposal{{
 				ProposalID:        "rel:uses",
 				SubjectRef:        "project_1",
 				OriginalPredicate: "uses",
@@ -178,7 +178,7 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 				Modality:         "statement",
 				ValidFrom:        &validFromText,
 				ValidTo:          &validToText,
-				Evidence: []verifier.V2ProviderEvidenceSpan{{
+				Evidence: []verifier.ProviderEvidenceSpan{{
 					EvidenceIndex: 1,
 					Start:         utf8.RuneCountInString("Mark works on "),
 					End:           utf8.RuneCountInString("Mark works on ") + utf8.RuneCountInString(usesQuote),
@@ -194,7 +194,7 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 				ObjectRef:        "project_1",
 				Polarity:         "+",
 				Modality:         "statement",
-				Evidence: []verifier.V2ProviderEvidenceSpan{{
+				Evidence: []verifier.ProviderEvidenceSpan{{
 					EvidenceIndex: 1,
 					Start:         0,
 					End:           utf8.RuneCountInString(worksQuote),
@@ -209,7 +209,7 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 		CandidateLimit:   3,
 	})
 
-	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -234,7 +234,7 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 	if len(job.Request.EntityMentions) != 3 {
 		t.Fatalf("entity mentions = %#v validation=%#v retryable=%#v", job.Request.EntityMentions, job.ValidationErrors, job.RetryableValidationErrors)
 	}
-	mentionsByRef := map[string]verifier.V2SemanticEntityMention{}
+	mentionsByRef := map[string]verifier.SemanticEntityMention{}
 	for _, mention := range job.Request.EntityMentions {
 		mentionsByRef[mention.Ref] = mention
 	}
@@ -276,7 +276,7 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 	if job.Request.RelationshipObservations[1].Ref != "rel:works" || job.Request.RelationshipObservations[1].Quote != worksQuote {
 		t.Fatalf("works observation = %#v", job.Request.RelationshipObservations[1])
 	}
-	prepared, validationErrs := verifier.PrepareV2SemanticReviewRequest(job.Request)
+	prepared, validationErrs := verifier.PrepareSemanticReviewRequest(job.Request)
 	if len(validationErrs) > 0 {
 		t.Fatalf("prepared request validation errors = %#v", validationErrs)
 	}
@@ -288,7 +288,7 @@ func TestV2SemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 	}
 }
 
-func TestV2SemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T) {
+func TestSemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	ingestID := uuid.NewString()
@@ -297,21 +297,21 @@ func TestV2SemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T)
 	content := "Dense-Mem uses PostgreSQL."
 	validFromText := "2026-07-01T00:00:00Z"
 	validToText := "2026-12-31T00:00:00Z"
-	ledger := &reviewSourceLedgerStub{placement: &repository.V2CreateIngestResult{
+	ledger := &reviewSourceLedgerStub{placement: &repository.CreateIngestResult{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
 		PlacementRunID: runID,
 		Status:         "processing",
 		Proposal:       map[string]any{},
-		Evidence: []repository.V2EvidenceFragment{{
+		Evidence: []repository.EvidenceFragment{{
 			FragmentID:       uuid.NewString(),
 			EvidenceIndex:    0,
 			Content:          content,
 			ContentHash:      "sha256:current",
 			SourceRevisionID: uuid.NewString(),
 		}},
-		Items: []repository.V2PlacementItem{{
+		Items: []repository.PlacementItem{{
 			PlacementItemID: itemID,
 			EvidenceIndex:   0,
 			Status:          "queued",
@@ -319,7 +319,7 @@ func TestV2SemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T)
 	}}
 	catalog := &reviewSourceCatalogStub{
 		predicateOptions: []string{"uses", "works_on"},
-		entityCandidates: map[string][]repository.V2SemanticReviewEntityCandidate{
+		entityCandidates: map[string][]repository.SemanticReviewEntityCandidate{
 			"Dense-Mem": {{
 				TeamID:        teamID,
 				EntityID:      uuid.NewString(),
@@ -328,7 +328,7 @@ func TestV2SemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T)
 				Status:        "active",
 			}},
 		},
-		predicateCandidates: map[string][]repository.V2SemanticReviewPredicateCandidate{
+		predicateCandidates: map[string][]repository.SemanticReviewPredicateCandidate{
 			"uses": {{
 				PredicateKey:        "uses",
 				Version:             1,
@@ -341,24 +341,24 @@ func TestV2SemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T)
 		},
 	}
 	provider := &reviewSourceProposalProviderStub{
-		proposal: verifier.V2ProviderProposal{
+		proposal: verifier.ProviderProposal{
 			PredicateOptions: []string{"uses"},
-			EntityProposals: []verifier.V2ProviderEntityProposal{{
+			EntityProposals: []verifier.ProviderEntityProposal{{
 				Ref:        "project_1",
 				Name:       "Dense-Mem",
 				EntityKind: "project",
-				Evidence:   []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString("Dense-Mem")}},
+				Evidence:   []verifier.ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString("Dense-Mem")}},
 			}, {
 				Ref:        "db_1",
 				Name:       "PostgreSQL",
 				EntityKind: "project",
-				Evidence: []verifier.V2ProviderEvidenceSpan{{
+				Evidence: []verifier.ProviderEvidenceSpan{{
 					EvidenceIndex: 0,
 					Start:         utf8.RuneCountInString("Dense-Mem uses "),
 					End:           utf8.RuneCountInString("Dense-Mem uses PostgreSQL"),
 				}},
 			}},
-			RelationshipProposals: []verifier.V2ProviderRelationshipProposal{{
+			RelationshipProposals: []verifier.ProviderRelationshipProposal{{
 				ProposalID:        "rel:uses",
 				SubjectRef:        "project_1",
 				OriginalPredicate: "uses",
@@ -371,7 +371,7 @@ func TestV2SemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T)
 				Modality:         "statement",
 				ValidFrom:        &validFromText,
 				ValidTo:          &validToText,
-				Evidence: []verifier.V2ProviderEvidenceSpan{{
+				Evidence: []verifier.ProviderEvidenceSpan{{
 					EvidenceIndex: 0,
 					Start:         0,
 					End:           utf8.RuneCountInString(content),
@@ -385,7 +385,7 @@ func TestV2SemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T)
 		ProposalProvider: provider,
 	})
 
-	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -417,19 +417,19 @@ func TestV2SemanticPlacementReviewSourceExtractsWhenProposalAbsent(t *testing.T)
 	if got := job.Request.RelationshipObservations[0].ValidTo; got == nil || got.Format(time.RFC3339) != validToText {
 		t.Fatalf("valid_to = %#v", got)
 	}
-	if _, validationErrs := verifier.PrepareV2SemanticReviewRequest(job.Request); len(validationErrs) > 0 {
+	if _, validationErrs := verifier.PrepareSemanticReviewRequest(job.Request); len(validationErrs) > 0 {
 		t.Fatalf("prepared request validation errors = %#v", validationErrs)
 	}
 }
 
-func TestV2SemanticPlacementReviewSourceRejectsInvalidValidityWindow(t *testing.T) {
+func TestSemanticPlacementReviewSourceRejectsInvalidValidityWindow(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	ingestID := uuid.NewString()
 	runID := uuid.NewString()
 	itemID := uuid.NewString()
 	content := "Dense-Mem used PostgreSQL."
-	ledger := &reviewSourceLedgerStub{placement: &repository.V2CreateIngestResult{
+	ledger := &reviewSourceLedgerStub{placement: &repository.CreateIngestResult{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -454,37 +454,37 @@ func TestV2SemanticPlacementReviewSourceRejectsInvalidValidityWindow(t *testing.
 				}},
 			}},
 		},
-		Evidence: []repository.V2EvidenceFragment{{
+		Evidence: []repository.EvidenceFragment{{
 			FragmentID:    uuid.NewString(),
 			EvidenceIndex: 0,
 			Content:       content,
 			ContentHash:   "sha256:current",
 		}},
-		Items: []repository.V2PlacementItem{{
+		Items: []repository.PlacementItem{{
 			PlacementItemID: itemID,
 			EvidenceIndex:   0,
 			Status:          "queued",
 		}},
 	}}
 	provider := &reviewSourceProposalProviderStub{
-		proposal: verifier.V2ProviderProposal{
+		proposal: verifier.ProviderProposal{
 			PredicateOptions: []string{"uses"},
-			EntityProposals: []verifier.V2ProviderEntityProposal{{
+			EntityProposals: []verifier.ProviderEntityProposal{{
 				Ref:        "project_1",
 				Name:       "Dense-Mem",
 				EntityKind: "project",
-				Evidence:   []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString("Dense-Mem")}},
+				Evidence:   []verifier.ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString("Dense-Mem")}},
 			}, {
 				Ref:        "db_1",
 				Name:       "PostgreSQL",
 				EntityKind: "project",
-				Evidence: []verifier.V2ProviderEvidenceSpan{{
+				Evidence: []verifier.ProviderEvidenceSpan{{
 					EvidenceIndex: 0,
 					Start:         utf8.RuneCountInString("Dense-Mem uses "),
 					End:           utf8.RuneCountInString("Dense-Mem uses PostgreSQL"),
 				}},
 			}},
-			RelationshipProposals: []verifier.V2ProviderRelationshipProposal{{
+			RelationshipProposals: []verifier.ProviderRelationshipProposal{{
 				ProposalID:        "rel:uses",
 				SubjectRef:        "project_1",
 				OriginalPredicate: "uses",
@@ -497,7 +497,7 @@ func TestV2SemanticPlacementReviewSourceRejectsInvalidValidityWindow(t *testing.
 				Modality:         "statement",
 				ValidFrom:        semanticReviewSourceStringPtr("2026-12-31T00:00:00Z"),
 				ValidTo:          semanticReviewSourceStringPtr("2026-07-01T00:00:00Z"),
-				Evidence:         []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString(content)}},
+				Evidence:         []verifier.ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString(content)}},
 			}},
 		},
 	}
@@ -507,7 +507,7 @@ func TestV2SemanticPlacementReviewSourceRejectsInvalidValidityWindow(t *testing.
 		ProposalProvider: provider,
 	})
 
-	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -523,26 +523,26 @@ func TestV2SemanticPlacementReviewSourceRejectsInvalidValidityWindow(t *testing.
 	}
 }
 
-func TestV2SemanticPlacementReviewSourceRequiresProviderWhenProposalAbsent(t *testing.T) {
+func TestSemanticPlacementReviewSourceRequiresProviderWhenProposalAbsent(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	ingestID := uuid.NewString()
 	runID := uuid.NewString()
 	itemID := uuid.NewString()
-	ledger := &reviewSourceLedgerStub{placement: &repository.V2CreateIngestResult{
+	ledger := &reviewSourceLedgerStub{placement: &repository.CreateIngestResult{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
 		PlacementRunID: runID,
 		Status:         "processing",
 		Proposal:       map[string]any{},
-		Evidence: []repository.V2EvidenceFragment{{
+		Evidence: []repository.EvidenceFragment{{
 			FragmentID:    uuid.NewString(),
 			EvidenceIndex: 0,
 			Content:       "Dense-Mem uses PostgreSQL.",
 			ContentHash:   "sha256:current",
 		}},
-		Items: []repository.V2PlacementItem{{
+		Items: []repository.PlacementItem{{
 			PlacementItemID: itemID,
 			EvidenceIndex:   0,
 			Status:          "queued",
@@ -553,7 +553,7 @@ func TestV2SemanticPlacementReviewSourceRequiresProviderWhenProposalAbsent(t *te
 		Catalog: &reviewSourceCatalogStub{},
 	})
 
-	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -569,28 +569,28 @@ func TestV2SemanticPlacementReviewSourceRequiresProviderWhenProposalAbsent(t *te
 	}
 }
 
-func TestV2SemanticPlacementReviewSourceRetriesInvalidProviderProposal(t *testing.T) {
+func TestSemanticPlacementReviewSourceRetriesInvalidProviderProposal(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	ingestID := uuid.NewString()
 	runID := uuid.NewString()
 	itemID := uuid.NewString()
 	content := "Dense-Mem uses PostgreSQL."
-	ledger := &reviewSourceLedgerStub{placement: &repository.V2CreateIngestResult{
+	ledger := &reviewSourceLedgerStub{placement: &repository.CreateIngestResult{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
 		PlacementRunID: runID,
 		Status:         "processing",
 		Proposal:       map[string]any{},
-		Evidence: []repository.V2EvidenceFragment{{
+		Evidence: []repository.EvidenceFragment{{
 			FragmentID:       uuid.NewString(),
 			EvidenceIndex:    0,
 			Content:          content,
 			ContentHash:      "sha256:current",
 			SourceRevisionID: uuid.NewString(),
 		}},
-		Items: []repository.V2PlacementItem{{
+		Items: []repository.PlacementItem{{
 			PlacementItemID: itemID,
 			EvidenceIndex:   0,
 			Status:          "queued",
@@ -598,7 +598,7 @@ func TestV2SemanticPlacementReviewSourceRetriesInvalidProviderProposal(t *testin
 	}}
 	catalog := &reviewSourceCatalogStub{
 		predicateOptions: []string{"uses"},
-		predicateCandidates: map[string][]repository.V2SemanticReviewPredicateCandidate{
+		predicateCandidates: map[string][]repository.SemanticReviewPredicateCandidate{
 			"uses": {{
 				PredicateKey:        "uses",
 				Version:             1,
@@ -610,32 +610,32 @@ func TestV2SemanticPlacementReviewSourceRetriesInvalidProviderProposal(t *testin
 			}},
 		},
 	}
-	invalid := verifier.V2ProviderProposal{
-		EntityProposals: []verifier.V2ProviderEntityProposal{{
+	invalid := verifier.ProviderProposal{
+		EntityProposals: []verifier.ProviderEntityProposal{{
 			Ref:        "project_1",
 			Name:       "Dense-Mem",
 			EntityKind: "project",
-			Evidence:   []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 2, Start: 0, End: 1}},
+			Evidence:   []verifier.ProviderEvidenceSpan{{EvidenceIndex: 2, Start: 0, End: 1}},
 		}},
 	}
-	valid := verifier.V2ProviderProposal{
+	valid := verifier.ProviderProposal{
 		PredicateOptions: []string{"uses"},
-		EntityProposals: []verifier.V2ProviderEntityProposal{{
+		EntityProposals: []verifier.ProviderEntityProposal{{
 			Ref:        "project_1",
 			Name:       "Dense-Mem",
 			EntityKind: "project",
-			Evidence:   []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString("Dense-Mem")}},
+			Evidence:   []verifier.ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString("Dense-Mem")}},
 		}, {
 			Ref:        "db_1",
 			Name:       "PostgreSQL",
 			EntityKind: "project",
-			Evidence: []verifier.V2ProviderEvidenceSpan{{
+			Evidence: []verifier.ProviderEvidenceSpan{{
 				EvidenceIndex: 0,
 				Start:         utf8.RuneCountInString("Dense-Mem uses "),
 				End:           utf8.RuneCountInString("Dense-Mem uses PostgreSQL"),
 			}},
 		}},
-		RelationshipProposals: []verifier.V2ProviderRelationshipProposal{{
+		RelationshipProposals: []verifier.ProviderRelationshipProposal{{
 			ProposalID:        "rel:uses",
 			SubjectRef:        "project_1",
 			OriginalPredicate: "uses",
@@ -646,17 +646,17 @@ func TestV2SemanticPlacementReviewSourceRetriesInvalidProviderProposal(t *testin
 			ObjectRef:        "db_1",
 			Polarity:         "+",
 			Modality:         "statement",
-			Evidence:         []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString(content)}},
+			Evidence:         []verifier.ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString(content)}},
 		}},
 	}
-	provider := &reviewSourceProposalProviderStub{proposals: []verifier.V2ProviderProposal{invalid, valid}}
+	provider := &reviewSourceProposalProviderStub{proposals: []verifier.ProviderProposal{invalid, valid}}
 	source := NewSemanticPlacementReviewSource(SemanticPlacementReviewSourceDependencies{
 		Ledger:           ledger,
 		Catalog:          catalog,
 		ProposalProvider: provider,
 	})
 
-	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -678,28 +678,28 @@ func TestV2SemanticPlacementReviewSourceRetriesInvalidProviderProposal(t *testin
 	}
 }
 
-func TestV2SemanticPlacementReviewSourceRetriesMalformedProviderProposal(t *testing.T) {
+func TestSemanticPlacementReviewSourceRetriesMalformedProviderProposal(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	ingestID := uuid.NewString()
 	runID := uuid.NewString()
 	itemID := uuid.NewString()
 	content := "Dense-Mem uses PostgreSQL."
-	ledger := &reviewSourceLedgerStub{placement: &repository.V2CreateIngestResult{
+	ledger := &reviewSourceLedgerStub{placement: &repository.CreateIngestResult{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
 		PlacementRunID: runID,
 		Status:         "processing",
 		Proposal:       map[string]any{},
-		Evidence: []repository.V2EvidenceFragment{{
+		Evidence: []repository.EvidenceFragment{{
 			FragmentID:       uuid.NewString(),
 			EvidenceIndex:    0,
 			Content:          content,
 			ContentHash:      "sha256:current",
 			SourceRevisionID: uuid.NewString(),
 		}},
-		Items: []repository.V2PlacementItem{{
+		Items: []repository.PlacementItem{{
 			PlacementItemID: itemID,
 			EvidenceIndex:   0,
 			Status:          "queued",
@@ -707,7 +707,7 @@ func TestV2SemanticPlacementReviewSourceRetriesMalformedProviderProposal(t *test
 	}}
 	catalog := &reviewSourceCatalogStub{
 		predicateOptions: []string{"uses"},
-		predicateCandidates: map[string][]repository.V2SemanticReviewPredicateCandidate{
+		predicateCandidates: map[string][]repository.SemanticReviewPredicateCandidate{
 			"uses": {{
 				PredicateKey:        "uses",
 				Version:             1,
@@ -719,24 +719,24 @@ func TestV2SemanticPlacementReviewSourceRetriesMalformedProviderProposal(t *test
 			}},
 		},
 	}
-	valid := verifier.V2ProviderProposal{
+	valid := verifier.ProviderProposal{
 		PredicateOptions: []string{"uses"},
-		EntityProposals: []verifier.V2ProviderEntityProposal{{
+		EntityProposals: []verifier.ProviderEntityProposal{{
 			Ref:        "project_1",
 			Name:       "Dense-Mem",
 			EntityKind: "project",
-			Evidence:   []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString("Dense-Mem")}},
+			Evidence:   []verifier.ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString("Dense-Mem")}},
 		}, {
 			Ref:        "db_1",
 			Name:       "PostgreSQL",
 			EntityKind: "project",
-			Evidence: []verifier.V2ProviderEvidenceSpan{{
+			Evidence: []verifier.ProviderEvidenceSpan{{
 				EvidenceIndex: 0,
 				Start:         utf8.RuneCountInString("Dense-Mem uses "),
 				End:           utf8.RuneCountInString("Dense-Mem uses PostgreSQL"),
 			}},
 		}},
-		RelationshipProposals: []verifier.V2ProviderRelationshipProposal{{
+		RelationshipProposals: []verifier.ProviderRelationshipProposal{{
 			ProposalID:        "rel:uses",
 			SubjectRef:        "project_1",
 			OriginalPredicate: "uses",
@@ -747,7 +747,7 @@ func TestV2SemanticPlacementReviewSourceRetriesMalformedProviderProposal(t *test
 			ObjectRef:        "db_1",
 			Polarity:         "+",
 			Modality:         "statement",
-			Evidence:         []verifier.V2ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString(content)}},
+			Evidence:         []verifier.ProviderEvidenceSpan{{EvidenceIndex: 0, Start: 0, End: utf8.RuneCountInString(content)}},
 		}},
 	}
 	provider := &reviewSourceProposalProviderStub{
@@ -755,7 +755,7 @@ func TestV2SemanticPlacementReviewSourceRetriesMalformedProviderProposal(t *test
 			&verifier.MalformedResponseError{Provider: "stub", Message: "bad structured output"},
 			nil,
 		},
-		proposals: []verifier.V2ProviderProposal{{}, valid},
+		proposals: []verifier.ProviderProposal{{}, valid},
 	}
 	source := NewSemanticPlacementReviewSource(SemanticPlacementReviewSourceDependencies{
 		Ledger:           ledger,
@@ -763,7 +763,7 @@ func TestV2SemanticPlacementReviewSourceRetriesMalformedProviderProposal(t *test
 		ProposalProvider: provider,
 	})
 
-	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -788,26 +788,26 @@ func TestV2SemanticPlacementReviewSourceRetriesMalformedProviderProposal(t *test
 	}
 }
 
-func TestV2SemanticPlacementReviewSourceReturnsRetryableProviderProposalAtLimit(t *testing.T) {
+func TestSemanticPlacementReviewSourceReturnsRetryableProviderProposalAtLimit(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	ingestID := uuid.NewString()
 	runID := uuid.NewString()
 	itemID := uuid.NewString()
-	ledger := &reviewSourceLedgerStub{placement: &repository.V2CreateIngestResult{
+	ledger := &reviewSourceLedgerStub{placement: &repository.CreateIngestResult{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
 		PlacementRunID: runID,
 		Status:         "processing",
 		Proposal:       map[string]any{},
-		Evidence: []repository.V2EvidenceFragment{{
+		Evidence: []repository.EvidenceFragment{{
 			FragmentID:    uuid.NewString(),
 			EvidenceIndex: 0,
 			Content:       "Dense-Mem uses PostgreSQL.",
 			ContentHash:   "sha256:current",
 		}},
-		Items: []repository.V2PlacementItem{{
+		Items: []repository.PlacementItem{{
 			PlacementItemID: itemID,
 			EvidenceIndex:   0,
 			Status:          "queued",
@@ -822,7 +822,7 @@ func TestV2SemanticPlacementReviewSourceReturnsRetryableProviderProposalAtLimit(
 		ProposalProvider: provider,
 	})
 
-	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -847,26 +847,26 @@ func TestV2SemanticPlacementReviewSourceReturnsRetryableProviderProposalAtLimit(
 	}
 }
 
-func TestV2SemanticPlacementReviewSourceClassifiesPredicateCatalogLookupFailure(t *testing.T) {
+func TestSemanticPlacementReviewSourceClassifiesPredicateCatalogLookupFailure(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	ingestID := uuid.NewString()
 	runID := uuid.NewString()
 	itemID := uuid.NewString()
-	ledger := &reviewSourceLedgerStub{placement: &repository.V2CreateIngestResult{
+	ledger := &reviewSourceLedgerStub{placement: &repository.CreateIngestResult{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
 		PlacementRunID: runID,
 		Status:         "processing",
 		Proposal:       map[string]any{},
-		Evidence: []repository.V2EvidenceFragment{{
+		Evidence: []repository.EvidenceFragment{{
 			FragmentID:    uuid.NewString(),
 			EvidenceIndex: 0,
 			Content:       "Dense-Mem uses PostgreSQL.",
 			ContentHash:   "sha256:current",
 		}},
-		Items: []repository.V2PlacementItem{{
+		Items: []repository.PlacementItem{{
 			PlacementItemID: itemID,
 			EvidenceIndex:   0,
 			Status:          "queued",
@@ -881,7 +881,7 @@ func TestV2SemanticPlacementReviewSourceClassifiesPredicateCatalogLookupFailure(
 		ProposalProvider: provider,
 	})
 
-	job, err := source.BuildSemanticReviewJob(context.Background(), repository.V2PlacementRun{
+	job, err := source.BuildSemanticReviewJob(context.Background(), repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -903,7 +903,7 @@ func TestV2SemanticPlacementReviewSourceClassifiesPredicateCatalogLookupFailure(
 	}
 }
 
-func TestV2PlacementReviewSourceHelperCoercions(t *testing.T) {
+func TestPlacementReviewSourceHelperCoercions(t *testing.T) {
 	raw := map[string]any{
 		"object_value": map[string]any{
 			"type":    "number",
@@ -912,12 +912,12 @@ func TestV2PlacementReviewSourceHelperCoercions(t *testing.T) {
 			"unit":    "percent",
 		},
 	}
-	value, ok := v2PlacementReviewObjectValue(raw, "rel:score")
+	value, ok := placementReviewObjectValue(raw, "rel:score")
 	if !ok || value.Ref != "value:rel:score" || value.Type != "number" || value.Value != "42" ||
 		value.Display != "42%" || value.Unit != "percent" {
 		t.Fatalf("object value = %#v, ok=%v", value, ok)
 	}
-	value, ok = v2PlacementReviewObjectValue(map[string]any{
+	value, ok = placementReviewObjectValue(map[string]any{
 		"object_value": map[string]any{
 			"ref":   reviewStringer(" value:explicit "),
 			"type":  "boolean",
@@ -927,11 +927,11 @@ func TestV2PlacementReviewSourceHelperCoercions(t *testing.T) {
 	if !ok || value.Ref != "value:explicit" || value.Value != "true" {
 		t.Fatalf("stringer/bool object value = %#v, ok=%v", value, ok)
 	}
-	if _, ok := v2PlacementReviewObjectValue(map[string]any{"object_value": map[string]any{"type": "date"}}, "rel:missing"); ok {
+	if _, ok := placementReviewObjectValue(map[string]any{"object_value": map[string]any{"type": "date"}}, "rel:missing"); ok {
 		t.Fatal("object value accepted missing value")
 	}
 
-	maps := v2PlacementReviewObjectArray(map[string]any{
+	maps := placementReviewObjectArray(map[string]any{
 		"relationship_hints": []any{
 			map[string]any{"proposal_id": "rel:one"},
 			"ignored",
@@ -940,46 +940,46 @@ func TestV2PlacementReviewSourceHelperCoercions(t *testing.T) {
 	if len(maps) != 1 || maps[0]["proposal_id"] != "rel:one" {
 		t.Fatalf("object array = %#v", maps)
 	}
-	if got := v2PlacementReviewObjectArray(map[string]any{"relationships": []map[string]any{{"proposal_id": "rel:typed"}}}, "relationships"); len(got) != 1 {
+	if got := placementReviewObjectArray(map[string]any{"relationships": []map[string]any{{"proposal_id": "rel:typed"}}}, "relationships"); len(got) != 1 {
 		t.Fatalf("typed object array = %#v", got)
 	}
-	if got := v2PlacementReviewObjectArray(map[string]any{}, "relationships"); got != nil {
+	if got := placementReviewObjectArray(map[string]any{}, "relationships"); got != nil {
 		t.Fatalf("missing object array = %#v", got)
 	}
 
-	if got := v2ReviewAnyString(float64(12.5)); got != "12.5" {
+	if got := reviewAnyString(float64(12.5)); got != "12.5" {
 		t.Fatalf("float string = %q", got)
 	}
-	if got := v2ReviewAnyString(int64(7)); got != "7" {
+	if got := reviewAnyString(int64(7)); got != "7" {
 		t.Fatalf("int64 string = %q", got)
 	}
-	if got := v2ReviewAnyString(struct{}{}); got != "" {
+	if got := reviewAnyString(struct{}{}); got != "" {
 		t.Fatalf("unsupported string = %q", got)
 	}
-	if got, ok := v2ReviewInt(map[string]any{"n": int64(9)}, "n"); !ok || got != 9 {
+	if got, ok := reviewInt(map[string]any{"n": int64(9)}, "n"); !ok || got != 9 {
 		t.Fatalf("int64 coercion = %d, ok=%v", got, ok)
 	}
-	if got, ok := v2ReviewInt(map[string]any{"n": float64(3)}, "n"); !ok || got != 3 {
+	if got, ok := reviewInt(map[string]any{"n": float64(3)}, "n"); !ok || got != 3 {
 		t.Fatalf("float coercion = %d, ok=%v", got, ok)
 	}
-	if _, ok := v2ReviewInt(nil, "n"); ok {
+	if _, ok := reviewInt(nil, "n"); ok {
 		t.Fatal("nil fields produced int")
 	}
 
 	now := time.Date(2026, 7, 19, 22, 0, 0, 123, time.Local)
-	parsed, err := v2ReviewOptionalTime(map[string]any{"at": now}, "at")
+	parsed, err := reviewOptionalTime(map[string]any{"at": now}, "at")
 	if err != nil || parsed == nil || !parsed.Equal(now.UTC()) {
 		t.Fatalf("time value = %#v, err=%v", parsed, err)
 	}
-	parsed, err = v2ReviewOptionalTime(map[string]any{"at": &now}, "at")
+	parsed, err = reviewOptionalTime(map[string]any{"at": &now}, "at")
 	if err != nil || parsed == nil || !parsed.Equal(now.UTC()) {
 		t.Fatalf("time pointer = %#v, err=%v", parsed, err)
 	}
-	parsed, err = v2ReviewOptionalTime(map[string]any{"at": ""}, "at")
+	parsed, err = reviewOptionalTime(map[string]any{"at": ""}, "at")
 	if err != nil || parsed != nil {
 		t.Fatalf("empty time = %#v, err=%v", parsed, err)
 	}
-	if _, err := v2ReviewOptionalTime(map[string]any{"at": 12}, "at"); err == nil {
+	if _, err := reviewOptionalTime(map[string]any{"at": 12}, "at"); err == nil {
 		t.Fatal("numeric time was accepted")
 	}
 }

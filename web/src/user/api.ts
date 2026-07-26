@@ -251,6 +251,9 @@ export type RecallEvidenceContext = {
   relationship_ids?: string[];
   rank?: number;
   context: string;
+  source?: string;
+  source_type?: string;
+  created_at?: string;
 };
 
 export type RecallDiscoveryPath = {
@@ -368,32 +371,32 @@ export class UserApi {
     return payload.data;
   }
 
-  async updateTeam(teamId: string, input: UpdateTeamInput): Promise<UserTeam> {
-    const payload = await this.request<Envelope<UserTeam>>(`/api/v1/teams/${teamId}`, { method: "PATCH", body: input });
+  async updateTeam(input: UpdateTeamInput): Promise<UserTeam> {
+    const payload = await this.request<Envelope<UserTeam>>("/ui/api/team", { method: "PATCH", body: input });
     return payload.data;
   }
 
-  listTeamProfiles(teamId: string): Promise<Page<UserKey>> {
-    return this.request<Page<UserKey>>(`/api/v1/teams/${teamId}/profiles`);
+  listTeamProfiles(): Promise<Page<UserKey>> {
+    return this.request<Page<UserKey>>("/ui/api/team/profiles");
   }
 
-  async createTeamProfile(teamId: string, input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
-    const payload = await this.request<Envelope<CreatedTeamProfile>>(`/api/v1/teams/${teamId}/profiles`, { method: "POST", body: input });
+  async createTeamProfile(input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
+    const payload = await this.request<Envelope<CreatedTeamProfile>>("/ui/api/team/profiles", { method: "POST", body: input });
     return payload.data;
   }
 
-  async updateTeamProfile(teamId: string, profileId: string, input: UpdateTeamProfileInput): Promise<UserKey> {
-    const payload = await this.request<Envelope<UserKey>>(`/api/v1/teams/${teamId}/profiles/${profileId}`, { method: "PATCH", body: input });
+  async updateTeamProfile(profileId: string, input: UpdateTeamProfileInput): Promise<UserKey> {
+    const payload = await this.request<Envelope<UserKey>>(`/ui/api/team/profiles/${profileId}`, { method: "PATCH", body: input });
     return payload.data;
   }
 
-  async rotateTeamProfile(teamId: string, profileId: string, input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
-    const payload = await this.request<Envelope<CreatedTeamProfile>>(`/api/v1/teams/${teamId}/profiles/${profileId}/rotate`, { method: "POST", body: input });
+  async rotateTeamProfile(profileId: string, input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
+    const payload = await this.request<Envelope<CreatedTeamProfile>>(`/ui/api/team/profiles/${profileId}/rotate`, { method: "POST", body: input });
     return payload.data;
   }
 
-  async deleteTeamProfile(teamId: string, profileId: string): Promise<{ status: string }> {
-    const payload = await this.request<Envelope<{ status: string }>>(`/api/v1/teams/${teamId}/profiles/${profileId}`, { method: "DELETE" });
+  async deleteTeamProfile(profileId: string): Promise<{ status: string }> {
+    const payload = await this.request<Envelope<{ status: string }>>(`/ui/api/team/profiles/${profileId}`, { method: "DELETE" });
     return payload.data;
   }
 
@@ -409,11 +412,8 @@ export class UserApi {
 
   async recall(query: string, limit = 10): Promise<RecallHit[]> {
     const params = new URLSearchParams({ query, limit: String(limit) });
-    const payload = await this.request<Envelope<RecallHit[] | RecallPayload>>(`/api/v1/recall?${params.toString()}`);
+    const payload = await this.request<Envelope<RecallPayload>>(`/ui/api/recall?${params.toString()}`);
     const data = payload.data;
-    if (Array.isArray(data)) {
-      return data;
-    }
     if (isRecallPayload(data)) {
       return data.results.map((evidence) => ({
         evidence,
@@ -425,21 +425,7 @@ export class UserApi {
         semantic_rank: evidence.rank,
       }));
     }
-    const legacyPayload = data as unknown as {
-      results: RecallRelationship[];
-      evidences: RecallEvidenceContext[];
-    };
-    const evidencesByID = new Map((legacyPayload.evidences ?? []).map((evidence) => [evidence.evidence_id, evidence]));
-    return (legacyPayload.results ?? []).map((relationship, index) => ({
-      relationship,
-      evidences: (relationship.evidence_ids ?? [])
-        .map((id) => evidencesByID.get(id))
-        .filter((evidence): evidence is RecallEvidenceContext => Boolean(evidence)),
-      tier: relationship.tier,
-      score: 1,
-      final_score: 1,
-      semantic_rank: index + 1,
-    }));
+    return [];
   }
 
   async graph(query: GraphQuery = {}): Promise<GraphSnapshot> {
@@ -480,12 +466,12 @@ export class UserApi {
   }
 
   async dreamingStatus(): Promise<DreamStatus> {
-    const payload = await this.request<Envelope<DreamStatus>>("/api/v1/dreaming/status");
+    const payload = await this.request<Envelope<DreamStatus>>("/ui/api/dreaming/status");
     return payload.data;
   }
 
   async listDreamingRuns(limit = 20): Promise<DreamRun[]> {
-    const payload = await this.request<Envelope<DreamRun[]>>(`/api/v1/dreaming/runs?limit=${limit}`);
+    const payload = await this.request<Envelope<DreamRun[]>>(`/ui/api/dreaming/runs?limit=${limit}`);
     return payload.data;
   }
 
@@ -503,7 +489,7 @@ export class UserApi {
     if (query.direction) {
       params.set("direction", query.direction);
     }
-    const payload = await this.request<Envelope<ListResponse<Dream>>>(`/api/v1/dreams?${params.toString()}`);
+    const payload = await this.request<Envelope<ListResponse<Dream>>>(`/ui/api/dreams?${params.toString()}`);
     return payload.data;
   }
 

@@ -21,7 +21,7 @@ func TestRelationshipIdentityMigrationPreservesValidToCollisionsForReview(t *tes
 	defer cleanup()
 
 	runGooseUpTo(t, ctx, sqlDB, 2026072402)
-	fixture := insertV2RelationshipIdentityCollisionFixture(t, ctx, sqlDB)
+	fixture := insertRelationshipIdentityCollisionFixture(t, ctx, sqlDB)
 
 	runGooseUpTo(t, ctx, sqlDB, 2026072500)
 	runGooseUpTo(t, ctx, sqlDB, 2026072500)
@@ -154,7 +154,7 @@ func TestRelationshipIdentityMigrationRollsBackBeforeAliasesExist(t *testing.T) 
 	assert.False(t, columnExists(t, ctx, sqlDB, "relationship_records", "identity_alias_of_relationship_id"))
 }
 
-type v2RelationshipIdentityCollisionFixture struct {
+type relationshipIdentityCollisionFixture struct {
 	teamID                  string
 	profileID               string
 	subjectEntityID         string
@@ -163,14 +163,14 @@ type v2RelationshipIdentityCollisionFixture struct {
 	aliasRelationshipID     string
 }
 
-func insertV2RelationshipIdentityCollisionFixture(
+func insertRelationshipIdentityCollisionFixture(
 	t *testing.T,
 	ctx context.Context,
 	db *sql.DB,
-) v2RelationshipIdentityCollisionFixture {
+) relationshipIdentityCollisionFixture {
 	t.Helper()
-	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, db)
-	fixture := v2RelationshipIdentityCollisionFixture{
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, db)
+	fixture := relationshipIdentityCollisionFixture{
 		teamID:                  teamID,
 		profileID:               profileID,
 		subjectEntityID:         uuid.NewString(),

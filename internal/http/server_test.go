@@ -160,7 +160,7 @@ func TestReadyReportsOptionalFailureWithoutBlocking(t *testing.T) {
 	cfg := config.Config{}
 	logger := observability.New(slog.LevelInfo)
 	e := NewServer(cfg, logger, HealthConfig{Checks: []HealthCheck{{
-		Name:     "v2_migration_state",
+		Name:     "migration_state",
 		Optional: true,
 		Check: func(ctx context.Context) error {
 			return errors.New("migration pending")
@@ -182,8 +182,8 @@ func TestReadyReportsOptionalFailureWithoutBlocking(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected dependencies to be a map, got %T", response["dependencies"])
 	}
-	if deps["v2_migration_state"] != "degraded" {
-		t.Errorf("expected optional dependency to be degraded, got %v", deps["v2_migration_state"])
+	if deps["migration_state"] != "degraded" {
+		t.Errorf("expected optional dependency to be degraded, got %v", deps["migration_state"])
 	}
 }
 
@@ -283,11 +283,11 @@ func TestNewServerAcceptsHealthChecks(t *testing.T) {
 func TestRequestLoggerOmitsQueryString(t *testing.T) {
 	logger := &captureLogProvider{}
 	e := NewServer(config.Config{}, logger, HealthConfig{})
-	e.GET("/api/v1/recall", func(c echo.Context) error {
+	e.GET("/ui/api/recall", func(c echo.Context) error {
 		return c.String(http.StatusOK, "ok")
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=secret-memory&token=raw-token", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall?query=secret-memory&token=raw-token", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -298,11 +298,11 @@ func TestRequestLoggerOmitsQueryString(t *testing.T) {
 	if logger.msg != "http_request" {
 		t.Fatalf("expected http_request log, got %q", logger.msg)
 	}
-	if got := logAttrValue(logger.attrs, "uri"); got != "/api/v1/recall" {
-		t.Fatalf("uri attr = %q, want %q", got, "/api/v1/recall")
+	if got := logAttrValue(logger.attrs, "uri"); got != "/ui/api/recall" {
+		t.Fatalf("uri attr = %q, want %q", got, "/ui/api/recall")
 	}
-	if got := logAttrValue(logger.attrs, "route"); got != "/api/v1/recall" {
-		t.Fatalf("route attr = %q, want %q", got, "/api/v1/recall")
+	if got := logAttrValue(logger.attrs, "route"); got != "/ui/api/recall" {
+		t.Fatalf("route attr = %q, want %q", got, "/ui/api/recall")
 	}
 	for _, attr := range logger.attrs {
 		value, ok := attr.Value.(string)

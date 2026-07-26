@@ -11,14 +11,14 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func TestScanV2CompatibilityMarkerParsesMetadata(t *testing.T) {
+func TestScanCompatibilityMarkerParsesMetadata(t *testing.T) {
 	now := time.Date(2026, 7, 23, 17, 45, 0, 0, time.UTC)
 	row := authorityScannerStub{
 		values: []any{
 			"marker-1",
-			domain.V2MigrationMarkerKindCutover,
+			domain.MigrationMarkerKindCutover,
 			"dense-mem.v2.1.cutover.v1",
-			domain.V2MigrationMarkerCompatible,
+			domain.MigrationMarkerCompatible,
 			"",
 			"sha256:corpus",
 			"sha256:gates",
@@ -27,17 +27,17 @@ func TestScanV2CompatibilityMarkerParsesMetadata(t *testing.T) {
 		},
 	}
 
-	marker, err := scanV2CompatibilityMarker(row)
+	marker, err := scanCompatibilityMarker(row)
 
 	require.NoError(t, err)
 	require.Equal(t, "marker-1", marker.MarkerID)
-	require.Equal(t, domain.V2MigrationMarkerCompatible, marker.Status)
+	require.Equal(t, domain.MigrationMarkerCompatible, marker.Status)
 	require.Equal(t, true, marker.Metadata["fresh_install"])
 	require.Equal(t, now, marker.CreatedAt)
 }
 
-func TestScanV2CompatibilityMarkerReturnsScannerError(t *testing.T) {
-	_, err := scanV2CompatibilityMarker(authorityScannerStub{err: sql.ErrNoRows})
+func TestScanCompatibilityMarkerReturnsScannerError(t *testing.T) {
+	_, err := scanCompatibilityMarker(authorityScannerStub{err: sql.ErrNoRows})
 
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }

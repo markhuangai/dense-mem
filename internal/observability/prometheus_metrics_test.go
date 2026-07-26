@@ -24,7 +24,7 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 		ProfileName: "Profile A",
 	})
 
-	metrics.ObserveHTTPRequest(ctx, "/api/v1/fragments/:id", "get", http.StatusTeapot, 15*time.Millisecond)
+	metrics.ObserveHTTPRequest(ctx, "/ui/api/evidence/:id", "get", http.StatusTeapot, 15*time.Millisecond)
 	metrics.ObserveEmbeddingLatencyFor(ctx, "embed-model", 123, "ok")
 	metrics.IncEmbeddingErrorFor(ctx, "embed-model", "timeout")
 	metrics.ObserveEmbeddingTokens(ctx, "embed-model", 11, 22)
@@ -51,7 +51,7 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 		`densemem_http_requests_total{`,
 		`team_id="11111111-1111-4111-8111-111111111111"`,
 		`profile_id="22222222-2222-4222-8222-222222222222"`,
-		`route="/api/v1/fragments/:id"`,
+		`route="/ui/api/evidence/:id"`,
 		`method="GET"`,
 		`status_class="4xx"`,
 		`densemem_embedding_tokens_total{`,

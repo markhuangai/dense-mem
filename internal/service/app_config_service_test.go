@@ -388,7 +388,7 @@ func TestAppConfigServiceCachesUntilUpdateTimeChanges(t *testing.T) {
 	assert.Equal(t, 2, repo.updateTimeCalls)
 	assert.Equal(t, 1, repo.listCalls)
 
-	repo.entries[domain.AppConfigUpdateTimeKey] = domain.AppConfigEntry{Key: domain.AppConfigUpdateTimeKey, Value: "v2", UpdatedAt: now}
+	repo.entries[domain.AppConfigUpdateTimeKey] = domain.AppConfigEntry{Key: domain.AppConfigUpdateTimeKey, Value: "canonical", UpdatedAt: now}
 	now = now.Add(5 * time.Second)
 	runtime, err = svc.SSORuntimeConfig(ctx)
 	require.NoError(t, err)
@@ -411,7 +411,7 @@ func TestAppConfigServiceKeepsLastKnownGoodWhenReloadIsInvalid(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 15*time.Second, runtime.HTTPTimeout)
 
-	repo.entries[domain.AppConfigUpdateTimeKey] = domain.AppConfigEntry{Key: domain.AppConfigUpdateTimeKey, Value: "v2", UpdatedAt: now}
+	repo.entries[domain.AppConfigUpdateTimeKey] = domain.AppConfigEntry{Key: domain.AppConfigUpdateTimeKey, Value: "canonical", UpdatedAt: now}
 	repo.entries[domain.AppConfigSSOHTTPTimeoutSeconds] = domain.AppConfigEntry{Key: domain.AppConfigSSOHTTPTimeoutSeconds, Value: "bad", UpdatedAt: now}
 	now = now.Add(5 * time.Second)
 
@@ -433,14 +433,14 @@ func TestAppConfigServiceValidation(t *testing.T) {
 	_, err = svc.UpdateGeneralSettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
-	_, err = svc.UpdateGeneralSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "v2"}, "control", "", "")
+	_, err = svc.UpdateGeneralSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "canonical"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
 	_, err = svc.UpdateGeneralSettings(ctx, map[string]string{domain.AppConfigTimezone: "Nope/Zone"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 	require.ErrorContains(t, err, "APP_TIMEZONE must be a valid IANA timezone or Local")
 
-	_, err = svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "v2"}, "control", "", "")
+	_, err = svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "canonical"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
 	_, err = svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigSSOSessionTTLSeconds: "0"}, "control", "", "")
@@ -455,7 +455,7 @@ func TestAppConfigServiceValidation(t *testing.T) {
 	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
-	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "v2"}, "control", "", "")
+	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "canonical"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
 	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{domain.AppConfigDreamingEnabled: "maybe"}, "control", "", "")
@@ -473,7 +473,7 @@ func TestAppConfigServiceValidation(t *testing.T) {
 	_, err = svc.UpdateCommunityDetectionSettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
-	_, err = svc.UpdateCommunityDetectionSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "v2"}, "control", "", "")
+	_, err = svc.UpdateCommunityDetectionSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "canonical"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
 	_, err = svc.UpdateCommunityDetectionSettings(ctx, map[string]string{domain.AppConfigCommunityDetectionEnabled: "maybe"}, "control", "", "")
@@ -512,7 +512,7 @@ func TestAppConfigServiceValidation(t *testing.T) {
 	_, err = svc.UpdateEvaluationSettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
-	_, err = svc.UpdateEvaluationSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "v2"}, "control", "", "")
+	_, err = svc.UpdateEvaluationSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "canonical"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
 	_, err = svc.UpdateEvaluationSettings(ctx, map[string]string{domain.AppConfigEvaluationModeEnabled: "maybe"}, "control", "", "")
@@ -642,7 +642,7 @@ func TestAppConfigServiceInitialLoadAndRefreshErrors(t *testing.T) {
 	assert.Equal(t, time.Hour, runtime.SessionTTL)
 
 	refreshRepo.getUpdateErr = nil
-	refreshRepo.entries[domain.AppConfigUpdateTimeKey] = domain.AppConfigEntry{Key: domain.AppConfigUpdateTimeKey, Value: "v2", UpdatedAt: now}
+	refreshRepo.entries[domain.AppConfigUpdateTimeKey] = domain.AppConfigEntry{Key: domain.AppConfigUpdateTimeKey, Value: "canonical", UpdatedAt: now}
 	refreshRepo.listErr = errors.New("temporary list failure")
 	now = now.Add(6 * time.Second)
 	runtime, err = svc.SSORuntimeConfig(ctx)

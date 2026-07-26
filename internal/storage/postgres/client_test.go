@@ -182,7 +182,7 @@ func TestMigratorRunDownRejectsPostCutoverCleanup(t *testing.T) {
 	assert.Contains(t, err.Error(), "irreversible migration: post-cutover legacy cleanup")
 }
 
-func TestV2SearchStorageMigrationAllowsIndexGenerationLifecycleOnly(t *testing.T) {
+func TestSearchStorageMigrationAllowsIndexGenerationLifecycleOnly(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
@@ -234,14 +234,14 @@ func TestV2SearchStorageMigrationAllowsIndexGenerationLifecycleOnly(t *testing.T
 	require.NoError(t, tx.Rollback())
 }
 
-func TestV2SemanticLedgerMigrationUpgradesPopulated1703(t *testing.T) {
+func TestSemanticLedgerMigrationUpgradesPopulated1703(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
 	runGooseUpTo(t, ctx, sqlDB, 2026071703)
-	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
-	insertV2MigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "primary")
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	insertMigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "primary")
 
 	m := NewMigratorWithDB(sqlDB)
 	require.NoError(t, m.RunUp(ctx))
@@ -253,13 +253,13 @@ func TestV2SemanticLedgerMigrationUpgradesPopulated1703(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestV2EmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion(t *testing.T) {
+func TestEmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
 	runGooseUpTo(t, ctx, sqlDB, 2026072302)
-	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
 	contractID := uuid.NewString()
 	generationID := uuid.NewString()
 	transientDocumentID := uuid.NewString()
@@ -397,14 +397,14 @@ func TestV2EmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion(t *tes
 	assert.Equal(t, "20", defaultExpression)
 }
 
-func TestV2SemanticLedgerMigrationRejectsLegacyDerivedAuthority(t *testing.T) {
+func TestSemanticLedgerMigrationRejectsLegacyDerivedAuthority(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
 	runGooseUpTo(t, ctx, sqlDB, 2026071703)
-	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
-	insertV2MigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "derived")
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	insertMigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "derived")
 
 	m := NewMigratorWithDB(sqlDB)
 	err := m.RunUp(ctx)
@@ -413,13 +413,13 @@ func TestV2SemanticLedgerMigrationRejectsLegacyDerivedAuthority(t *testing.T) {
 	assert.Contains(t, err.Error(), "derived=1")
 }
 
-func TestV2SemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority(t *testing.T) {
+func TestSemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
 	runGooseUpTo(t, ctx, sqlDB, 2026071704)
-	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO semantic_team_refs (team_id)
@@ -485,7 +485,7 @@ func TestPostCutoverCleanupMigrationWithCompatibleMarkerDropsLegacyTables(t *tes
 	defer cleanup()
 
 	runGooseUpTo(t, ctx, sqlDB, 2026072302)
-	teamID, profileID := insertV2MigrationTeamProfile(t, ctx, sqlDB)
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `CREATE TABLE profiles (id uuid PRIMARY KEY)`); err != nil {
 			return err
@@ -523,7 +523,7 @@ func TestPostCutoverCleanupMigrationBlocksNonemptyDatabaseWithoutMarker(t *testi
 	defer cleanup()
 
 	runGooseUpTo(t, ctx, sqlDB, 2026072302)
-	insertV2MigrationTeamProfile(t, ctx, sqlDB)
+	insertMigrationTeamProfile(t, ctx, sqlDB)
 
 	require.NoError(t, goose.SetDialect("postgres"))
 	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072402)
@@ -867,7 +867,7 @@ func columnExists(t *testing.T, ctx context.Context, db *sql.DB, tableName, colu
 	return exists
 }
 
-func insertV2MigrationTeamProfile(t *testing.T, ctx context.Context, db *sql.DB) (string, string) {
+func insertMigrationTeamProfile(t *testing.T, ctx context.Context, db *sql.DB) (string, string) {
 	t.Helper()
 	teamID := uuid.NewString()
 	profileID := uuid.NewString()
@@ -891,7 +891,7 @@ func insertV2MigrationTeamProfile(t *testing.T, ctx context.Context, db *sql.DB)
 	return teamID, profileID
 }
 
-func insertV2MigrationAuthorityFixture(t *testing.T, ctx context.Context, db *sql.DB, teamID, profileID, authority string) {
+func insertMigrationAuthorityFixture(t *testing.T, ctx context.Context, db *sql.DB, teamID, profileID, authority string) {
 	t.Helper()
 	sourceID := uuid.NewString()
 	sourceRevisionID := uuid.NewString()

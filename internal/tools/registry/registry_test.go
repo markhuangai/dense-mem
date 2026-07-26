@@ -167,7 +167,7 @@ func TestRegistry_List_SortedAlphabetically(t *testing.T) {
 
 // TestToolRegistry_ListReturnsAllRegistered — backpressure test + AC-33.
 // Confirms the registry returns every registered tool through List(), in a stable
-// order, so consumers (catalog/OpenAPI/MCP) see the same set.
+// order for MCP consumers.
 func TestToolRegistry_ListReturnsAllRegistered(t *testing.T) {
 	r := New()
 	names := []string{

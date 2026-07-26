@@ -31,7 +31,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/MCP-Streamable_HTTP-111827?style=flat-square" alt="MCP Streamable HTTP" />
   <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 18" />
-  <img src="https://img.shields.io/badge/OpenAPI-3.0-6BA539?style=flat-square&logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.0" />
   <img src="https://visitor-badge.laobi.icu/badge?page_id=markhuangai.dense-mem&style=flat-square" alt="Visitors" />
 </p>
 
@@ -41,9 +40,10 @@
 
 Dense-Mem gives MCP clients a durable memory layer with provenance, typed claims
 and facts, verification gates, server-side embeddings, recall, team isolation,
-REST/OpenAPI, a user portal with graph inspection, and a token-protected control
-portal. The host LLM owns conversation and judgment; Dense-Mem owns durable
-memory state and returns structured outcomes the host can explain to users.
+an MCP endpoint, a first-party user portal with graph inspection, and a
+token-protected control portal. The host LLM owns conversation and judgment;
+Dense-Mem owns durable memory state and returns structured outcomes the host can
+explain to users.
 
 Under the hood, Dense-Mem is a standalone HTTP MCP memory server. HTTP MCP is
 the v1 supported MCP transport and is served at `/mcp` from the main HTTP
@@ -114,7 +114,7 @@ docker compose exec server /app/provision-team --name "primary-memory"
 ```
 
 The base compose example provisions PostgreSQL with pgvector and the Dense-Mem
-server. Fresh installs leave `NEO4J_*` unset and initialize PostgreSQL V2
+server. Fresh installs leave `NEO4J_*` unset and initialize PostgreSQL
 directly. Cleanup releases reject legacy Neo4j configuration; operators with a
 legacy Neo4j corpus must first run `v2.1.2`, complete the guided migration
 there, remove `NEO4J_*`, and then upgrade. The
@@ -253,7 +253,7 @@ request volume, result count, and latency.
 | Recall | Facts, claims, fragments, contradictions, and clarifications | Text search | Vector similarity | Varies |
 | Graph inspection | User portal graph view plus bounded `trace_memory` lineage | Manual cross-references | Usually external tooling | Varies |
 | Agent boundary | Host LLM judges; Dense-Mem stores and enforces | Blurred | Retrieval only | Often blurred |
-| Operations | Teams, profiles, API keys, audit metadata, REST, OpenAPI, MCP | Minimal | Database operations | Varies |
+| Operations | Teams, profiles, API keys, audit metadata, MCP, browser and control APIs | Minimal | Database operations | Varies |
 
 Redis is optional for single-node deployments and required for multi-instance
 deployments.
@@ -350,12 +350,11 @@ the step-by-step process belongs in the wiki
 
 ## Tool Discoverability
 
-Dense-Mem exposes three discoverability surfaces backed by one registry:
+Dense-Mem exposes MCP discovery from the same runtime registry used by the
+server-side tool executor:
 
 | Surface | Path | Purpose |
 |---------|------|---------|
-| Tool catalog | `GET /api/v1/tools` | Runtime tool discovery |
-| Runtime OpenAPI | `GET /api/v1/openapi.json` | Agents, codegen, integrations |
 | MCP Streamable HTTP | `POST /mcp`, `GET /mcp` | MCP clients over the main HTTP service, including tools and bundled prompts |
 
 The full route list and client examples live in the wiki

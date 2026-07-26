@@ -236,7 +236,7 @@ func WrapRegistry(reg registry.Registry, manager *QuotaManager) (registry.Regist
 
 func (m *QuotaManager) ConsumeTool(ctx context.Context, teamID, toolName string, input map[string]any) error {
 	switch toolName {
-	case registry.V2ToolRemember:
+	case registry.ToolRemember:
 		count, bytes := rememberEvidenceUsage(input)
 		if err := m.ConsumeWrite(ctx, teamID); err != nil {
 			return err
@@ -245,13 +245,13 @@ func (m *QuotaManager) ConsumeTool(ctx context.Context, teamID, toolName string,
 			return err
 		}
 		return m.ConsumeVerifier(ctx, teamID, count)
-	case registry.V2ToolRecallMemory:
+	case registry.ToolRecallMemory:
 		return m.ConsumeRecall(ctx, teamID)
-	case registry.V2ToolResolveMemoryPlacement,
-		registry.V2ToolCorrectEntityResolution,
-		registry.V2ToolResolveDreamFeedback,
-		registry.V2ToolImportMemoryPack,
-		registry.V2ToolRollbackMemoryPackImport:
+	case registry.ToolResolveMemoryPlacement,
+		registry.ToolCorrectEntityResolution,
+		registry.ToolResolveDreamFeedback,
+		registry.ToolImportMemoryPack,
+		registry.ToolRollbackMemoryPackImport:
 		return m.ConsumeWrite(ctx, teamID)
 	default:
 		return nil

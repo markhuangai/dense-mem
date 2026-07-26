@@ -15,13 +15,13 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string, selected map[string]bool, decisions map[string]string) (memoryservice.V2RememberRequest, []V2ImportItemResult) {
+func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string, selected map[string]bool, decisions map[string]string) (memoryservice.RememberRequest, []ImportItemResult) {
 	fragmentByID := MemoryPackFragmentsByID(loaded.artifact)
-	evidence := []memoryservice.V2RememberEvidenceInput{}
+	evidence := []memoryservice.RememberEvidenceInput{}
 	relationshipHints := []map[string]any{}
-	results := make([]V2ImportItemResult, 0, len(loaded.artifact.Relationships))
+	results := make([]ImportItemResult, 0, len(loaded.artifact.Relationships))
 	for _, item := range loaded.artifact.Relationships {
-		result := V2ImportItemResult{
+		result := ImportItemResult{
 			ItemID:               item.ItemID,
 			SourceRelationshipID: item.SourceRelationshipID,
 			EvidenceIndex:        -1,
@@ -42,7 +42,7 @@ func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string
 		result.EvidenceIndex = evidenceIndex
 		result.Status = "staged"
 		content := MemoryPackEvidenceContent(loaded.artifact, item, fragmentByID)
-		evidence = append(evidence, memoryservice.V2RememberEvidenceInput{
+		evidence = append(evidence, memoryservice.RememberEvidenceInput{
 			Content:        content,
 			SourceType:     MemoryPackSourceType,
 			Source:         MemoryPackSourceRef(loaded),
@@ -67,15 +67,15 @@ func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string
 		relationshipHints = append(relationshipHints, MemoryPackRelationshipHint(item, evidenceIndex))
 		results = append(results, result)
 	}
-	return memoryservice.V2RememberRequest{
-		ContractVersion:   domain.V2ContractVersion,
+	return memoryservice.RememberRequest{
+		ContractVersion:   domain.ContractVersion,
 		Evidence:          evidence,
 		RelationshipHints: relationshipHints,
 		IdempotencyKey:    "memory-pack:" + importID,
 	}, results
 }
 
-func (s *memoryPackService) appendImportChanges(ctx context.Context, teamID, importID, ingestID string, items []V2ImportItemResult) error {
+func (s *memoryPackService) appendImportChanges(ctx context.Context, teamID, importID, ingestID string, items []ImportItemResult) error {
 	if ingestID == "" {
 		return nil
 	}
@@ -120,9 +120,9 @@ func (s *memoryPackService) appendImportChanges(ctx context.Context, teamID, imp
 	return nil
 }
 
-func MemoryPackImportSummary(loaded loadedArtifact, mode string, ingestID string, items []V2ImportItemResult) map[string]any {
+func MemoryPackImportSummary(loaded loadedArtifact, mode string, ingestID string, items []ImportItemResult) map[string]any {
 	out := map[string]any{
-		"contract_version": domain.V2ContractVersion,
+		"contract_version": domain.ContractVersion,
 		"artifact_format":  loaded.artifact.Format,
 		"artifact_hash":    loaded.hash,
 		"mode":             mode,
@@ -136,8 +136,8 @@ func MemoryPackImportSummary(loaded loadedArtifact, mode string, ingestID string
 	return out
 }
 
-func importResultFromExisting(record *domain.SkillPackImport, hash string, mode string) *V2ImportResult {
-	result := &V2ImportResult{
+func importResultFromExisting(record *domain.SkillPackImport, hash string, mode string) *ImportResult {
+	result := &ImportResult{
 		ImportID:     record.ImportID,
 		ArtifactHash: hash,
 		Mode:         mode,
@@ -152,7 +152,7 @@ func importResultFromExisting(record *domain.SkillPackImport, hash string, mode 
 	return result
 }
 
-func MemoryPackImportCounts(items []V2ImportItemResult) (int, int) {
+func MemoryPackImportCounts(items []ImportItemResult) (int, int) {
 	applied := 0
 	skipped := 0
 	for _, item := range items {
@@ -165,7 +165,7 @@ func MemoryPackImportCounts(items []V2ImportItemResult) (int, int) {
 	return applied, skipped
 }
 
-func MemoryPackSelectedItemSet(selected []string, items []V2MemoryPackRelationship) map[string]bool {
+func MemoryPackSelectedItemSet(selected []string, items []MemoryPackRelationship) map[string]bool {
 	out := map[string]bool{}
 	if len(selected) == 0 {
 		for _, item := range items {
@@ -179,7 +179,7 @@ func MemoryPackSelectedItemSet(selected []string, items []V2MemoryPackRelationsh
 	return out
 }
 
-func validateMemoryPackImportSelections(artifact V2MemoryPackArtifact, selected []string, decisions []V2ImportItemDecision) error {
+func validateMemoryPackImportSelections(artifact MemoryPackArtifact, selected []string, decisions []ImportItemDecision) error {
 	items := map[string]struct{}{}
 	for _, item := range artifact.Relationships {
 		items[item.ItemID] = struct{}{}
@@ -206,7 +206,7 @@ func validateMemoryPackImportSelections(artifact V2MemoryPackArtifact, selected 
 	return nil
 }
 
-func MemoryPackDecisionSet(decisions []V2ImportItemDecision) map[string]string {
+func MemoryPackDecisionSet(decisions []ImportItemDecision) map[string]string {
 	out := map[string]string{}
 	for _, decision := range decisions {
 		itemID := strings.TrimSpace(decision.ItemID)
@@ -240,7 +240,7 @@ func rollbackImpactToken(record *domain.SkillPackImport, changes []domain.SkillP
 	return hex.EncodeToString(sum[:])
 }
 
-func MemoryPackEvidenceContent(artifact V2MemoryPackArtifact, item V2MemoryPackRelationship, fragments map[string]V2MemoryPackEvidenceFragment) string {
+func MemoryPackEvidenceContent(artifact MemoryPackArtifact, item MemoryPackRelationship, fragments map[string]MemoryPackEvidenceFragment) string {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "Memory pack %q proposes a relationship: %s %s %s.", artifact.Name, item.Subject.DisplayName, item.PredicateKey, MemoryPackEndpointText(item.Object))
 	if item.SourceRelationshipID != "" {
@@ -256,7 +256,7 @@ func MemoryPackEvidenceContent(artifact V2MemoryPackArtifact, item V2MemoryPackR
 	return b.String()
 }
 
-func MemoryPackRelationshipHint(item V2MemoryPackRelationship, evidenceIndex int) map[string]any {
+func MemoryPackRelationshipHint(item MemoryPackRelationship, evidenceIndex int) map[string]any {
 	hint := map[string]any{
 		"ref":                         item.ItemID,
 		"subject_ref":                 item.Subject.Ref,
@@ -285,8 +285,8 @@ func MemoryPackRelationshipHint(item V2MemoryPackRelationship, evidenceIndex int
 	return hint
 }
 
-func MemoryPackFragmentsByID(artifact V2MemoryPackArtifact) map[string]V2MemoryPackEvidenceFragment {
-	out := map[string]V2MemoryPackEvidenceFragment{}
+func MemoryPackFragmentsByID(artifact MemoryPackArtifact) map[string]MemoryPackEvidenceFragment {
+	out := map[string]MemoryPackEvidenceFragment{}
 	for _, fragment := range artifact.EvidenceFragments {
 		out[fragment.FragmentID] = fragment
 	}

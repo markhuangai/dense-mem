@@ -25,7 +25,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/openapi"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
@@ -105,17 +104,17 @@ func RunActiveServer(
 	operationLogRepo := repository.NewOperationLogRepository(pgDB.GetDB(), rlsHelper)
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
 	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
-	semanticRepo := repository.NewV2SemanticRepository(pgDB.GetDB(), rlsHelper)
-	ledgerRepo := repository.NewV2LedgerRepositoryWithRuntimeConfig(
+	semanticRepo := repository.NewSemanticRepository(pgDB.GetDB(), rlsHelper)
+	ledgerRepo := repository.NewLedgerRepositoryWithRuntimeConfig(
 		pgDB.GetDB(),
 		rlsHelper,
 		cfg.GetEmbeddingJobMaxAttempts(),
-		repository.V2ConflictRuntimeConfig{
+		repository.ConflictRuntimeConfig{
 			ReviewTTLDays: cfg.GetConflictReviewTTLDays(),
 			Timezone:      cfg.GetAppTimezone(),
 		},
 	)
-	searchRepo := repository.NewV2SearchRepositoryWithEmbeddingJobMaxAttempts(
+	searchRepo := repository.NewSearchRepositoryWithEmbeddingJobMaxAttempts(
 		pgDB.GetDB(),
 		rlsHelper,
 		cfg.GetEmbeddingJobMaxAttempts(),
@@ -124,7 +123,7 @@ func RunActiveServer(
 	if err := checkActiveAuthority(authority); err != nil {
 		log.Fatalf("active boot blocked: %v", err)
 	}
-	searchContract, err := searchRepo.EnsureActiveSearchContract(startupCtx, repository.V2EnsureActiveSearchContractInput{
+	searchContract, err := searchRepo.EnsureActiveSearchContract(startupCtx, repository.EnsureActiveSearchContractInput{
 		Provider:   "openai",
 		Model:      cfg.GetAIEmbeddingModel(),
 		Dimensions: cfg.GetAIEmbeddingDimensions(),
@@ -255,26 +254,13 @@ func RunActiveServer(
 			log.Fatalf("failed to configure runtime tool registry: %v", err)
 		}
 	}
-	httpRegistry, err := registry.HTTPRegistryView(toolRegistry)
-	if err != nil {
-		log.Fatalf("failed to build active HTTP registry view: %v", err)
-	}
-
-	openAPIGen := openapi.New(httpRegistry, openapi.DefaultRoutes())
 	streamLifecycle := sse.NewStreamLifecycleWithConfig(
 		backend.concurrencyLimiter,
 		sse.NewHeartbeatSenderWithInterval(time.Duration(cfg.GetSSEHeartbeatSeconds())*time.Second),
 		time.Duration(cfg.GetSSEMaxDurationSeconds())*time.Second,
 		backend.streamCleanupRepo,
 	)
-	toolCatalogHandler := handler.NewToolCatalogHandlerWithRuntimeConfig(httpRegistry, appConfigService)
-	toolReadHandler := handler.NewToolReadHandlerWithRuntimeConfig(httpRegistry, appConfigService)
-	toolExecuteHandler := handler.NewToolExecuteHandlerWithRuntimeConfig(httpRegistry, appConfigService)
 	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(toolRegistry, logger, streamLifecycle, appConfigService)
-	openAPIAISafeHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantAISafe)
-	openAPIFullHandler := handler.NewOpenAPIHandler(openAPIGen, openapi.SpecVariantFull)
-	recallHandler := handler.NewRecallHandler(recallSvc)
-	dreamHandler := handler.NewDreamHandler(dreamSvc)
 
 	checks := []http.HealthCheck{
 		{Name: "postgres", Check: func(ctx context.Context) error {
@@ -329,19 +315,8 @@ func RunActiveServer(
 		protectedDeps.PostAuthMiddleware = append(protectedDeps.PostAuthMiddleware, middleware.TelemetryHTTPMiddleware(telemetryHTTPMetrics))
 	}
 	http.RegisterProtectedRoutesWithHandlers(e, protectedDeps, http.ProtectedHandlers{
-		APIKeySvc:      apiKeyService,
-		ToolCatalog:    toolCatalogHandler.Handle,
-		GetTool:        toolReadHandler.Handle,
-		ExecuteTool:    toolExecuteHandler.Handle,
-		MCPPost:        mcpHandler.HandlePost,
-		MCPGet:         mcpHandler.HandleGet,
-		OpenAPIAISafe:  openAPIAISafeHandler.Handle,
-		OpenAPIFull:    openAPIFullHandler.Handle,
-		Recall:         recallHandler.Handle,
-		DreamingStatus: dreamHandler.Status,
-		DreamingRuns:   dreamHandler.Runs,
-		DreamList:      dreamHandler.List,
-		DreamGet:       dreamHandler.Get,
+		MCPPost: mcpHandler.HandlePost,
+		MCPGet:  mcpHandler.HandleGet,
 	})
 	userPortalDeps := http.UserPortalDeps{
 		APIKeyRepo:   apiKeyRepo,
@@ -351,6 +326,8 @@ func RunActiveServer(
 		UsageMetrics: usageMetricsService,
 		Telemetry:    telemetryReader,
 		GraphView:    graphViewSvc,
+		RecallSvc:    recallSvc,
+		DreamSvc:     dreamSvc,
 		AuditSvc:     auditService,
 		SecuritySvc:  securityService,
 		SSOService:   ssoService,
@@ -600,7 +577,7 @@ func processTeamConflictReview(
 		metrics.ObserveMemoryFunnelLatency("conflict_review", time.Since(started).Seconds(), outcome)
 	}()
 	lease := time.Duration(cfg.GetConflictReviewLeaseSeconds()) * time.Second
-	run, claimed, err := ledger.ReserveV2RelationshipConflictReviewRun(ctx, repository.V2ConflictReviewRunInput{
+	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, repository.ConflictReviewRunInput{
 		TeamID:       teamID,
 		WorkerID:     workerID,
 		LocalRunDate: now,
@@ -615,7 +592,7 @@ func processTeamConflictReview(
 		outcome = "skipped"
 		return nil
 	}
-	counts := repository.V2ConflictReviewRunCompleteInput{
+	counts := repository.ConflictReviewRunCompleteInput{
 		TeamID:      teamID,
 		ReviewRunID: run.ReviewRunID,
 		WorkerID:    workerID,
@@ -627,7 +604,7 @@ func processTeamConflictReview(
 		for id := range attempted {
 			excluded = append(excluded, id)
 		}
-		cases, err := ledger.ClaimV2RelationshipConflictCases(ctx, repository.V2ClaimRelationshipConflictCasesInput{
+		cases, err := ledger.ClaimRelationshipConflictCases(ctx, repository.ClaimRelationshipConflictCasesInput{
 			TeamID:              teamID,
 			WorkerID:            workerID,
 			ReviewRunID:         run.ReviewRunID,
@@ -652,7 +629,7 @@ func processTeamConflictReview(
 			}
 			attempted[conflictCase.ConflictID] = struct{}{}
 			counts.ClaimedCases++
-			result, err := ledger.ReviewV2RelationshipConflictCase(ctx, repository.V2ReviewRelationshipConflictCaseInput{
+			result, err := ledger.ReviewRelationshipConflictCase(ctx, repository.ReviewRelationshipConflictCaseInput{
 				TeamID:      teamID,
 				WorkerID:    workerID,
 				ReviewRunID: run.ReviewRunID,
@@ -665,9 +642,9 @@ func processTeamConflictReview(
 				continue
 			}
 			switch result.Outcome {
-			case repository.V2ConflictReviewOutcomeResolve:
+			case repository.ConflictReviewOutcomeResolve:
 				counts.ResolvedCases++
-			case repository.V2ConflictReviewOutcomeOverdue:
+			case repository.ConflictReviewOutcomeOverdue:
 				counts.OverdueCases++
 			default:
 				counts.NoOpCases++
@@ -681,7 +658,7 @@ func processTeamConflictReview(
 	} else if counts.ClaimedCases == 0 && counts.Status == "completed" {
 		outcome = "empty"
 	}
-	if err := ledger.CompleteV2RelationshipConflictReviewRun(ctx, counts); err != nil {
+	if err := ledger.CompleteRelationshipConflictReviewRun(ctx, counts); err != nil {
 		outcome = "error"
 		return err
 	}
@@ -702,10 +679,10 @@ func safeConflictReviewError(err error) string {
 }
 
 type conflictReviewLedger interface {
-	ReserveV2RelationshipConflictReviewRun(context.Context, repository.V2ConflictReviewRunInput) (*repository.V2ConflictReviewRunRecord, bool, error)
-	ClaimV2RelationshipConflictCases(context.Context, repository.V2ClaimRelationshipConflictCasesInput) ([]repository.V2RelationshipConflictCaseRecord, error)
-	ReviewV2RelationshipConflictCase(context.Context, repository.V2ReviewRelationshipConflictCaseInput) (*repository.V2ReviewRelationshipConflictCaseResult, error)
-	CompleteV2RelationshipConflictReviewRun(context.Context, repository.V2ConflictReviewRunCompleteInput) error
+	ReserveRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error)
+	ClaimRelationshipConflictCases(context.Context, repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error)
+	ReviewRelationshipConflictCase(context.Context, repository.ReviewRelationshipConflictCaseInput) (*repository.ReviewRelationshipConflictCaseResult, error)
+	CompleteRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunCompleteInput) error
 }
 
 func conflictReviewDueForTeam(now time.Time, cfg *config.Config, teamID string) bool {
@@ -749,17 +726,17 @@ func conflictReviewLocation(name string) *time.Location {
 func checkActiveAuthority(authority authorityBootstrap) error {
 	if authority.Mode != authorityActive ||
 		authority.Marker == nil ||
-		authority.Marker.Status != domain.V2MigrationMarkerCompatible {
-		return fmt.Errorf("%w: compatible V2 authority marker is required", errAuthorityBlocked)
+		authority.Marker.Status != domain.MigrationMarkerCompatible {
+		return fmt.Errorf("%w: compatible authority marker is required", errAuthorityBlocked)
 	}
 	return nil
 }
 
 func checkSearchReadiness(ctx context.Context, search interface {
-	CheckSearchReadiness(context.Context) (*repository.V2SearchReadiness, error)
+	CheckSearchReadiness(context.Context) (*repository.SearchReadiness, error)
 }) error {
 	if search == nil {
-		return fmt.Errorf("%w: search repository is required", repository.ErrV2SearchContractMismatch)
+		return fmt.Errorf("%w: search repository is required", repository.ErrSearchContractMismatch)
 	}
 	readiness, err := search.CheckSearchReadiness(ctx)
 	if err != nil {
@@ -781,16 +758,16 @@ func checkSearchReadiness(ctx context.Context, search interface {
 	if len(reasons) == 0 {
 		reasons = append(reasons, "search readiness check failed")
 	}
-	return fmt.Errorf("%w: %s", repository.ErrV2SearchContractMismatch, strings.Join(reasons, "; "))
+	return fmt.Errorf("%w: %s", repository.ErrSearchContractMismatch, strings.Join(reasons, "; "))
 }
 
 func startActiveWorkers(
 	ctx context.Context,
 	logger observability.LogProvider,
 	profiles service.ProfileService,
-	ledger *repository.V2LedgerRepositoryImpl,
-	search repository.V2SearchRepository,
-	semantic *repository.V2SemanticRepositoryImpl,
+	ledger *repository.LedgerRepositoryImpl,
+	search repository.SearchRepository,
+	semantic *repository.SemanticRepositoryImpl,
 	embedder *embedding.RetryEmbeddingProvider,
 	reviewer *verifier.OpenAIVerifier,
 	metrics observability.DiscoverabilityMetrics,
@@ -864,8 +841,8 @@ func processActiveWorkerTick(
 	ctx context.Context,
 	logger observability.LogProvider,
 	profiles service.ProfileService,
-	ledger *repository.V2LedgerRepositoryImpl,
-	search repository.V2SearchRepository,
+	ledger *repository.LedgerRepositoryImpl,
+	search repository.SearchRepository,
 	reviewSvc memoryservice.SemanticReviewService,
 	commitSvc memoryservice.SemanticCommitService,
 	reviewSource memoryservice.SemanticPlacementReviewSource,

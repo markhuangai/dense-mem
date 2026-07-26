@@ -12,8 +12,8 @@ import (
 )
 
 func TestClassifyAuthorityActivatesWhenCompatibleMarkerPresent(t *testing.T) {
-	store := &authorityStoreStub{marker: &domain.V2CompatibilityMarker{
-		Status: domain.V2MigrationMarkerCompatible,
+	store := &authorityStoreStub{marker: &domain.CompatibilityMarker{
+		Status: domain.MigrationMarkerCompatible,
 	}}
 
 	bootstrap, err := ClassifyAuthority(context.Background(), store)
@@ -25,13 +25,13 @@ func TestClassifyAuthorityActivatesWhenCompatibleMarkerPresent(t *testing.T) {
 
 func TestClassifyAuthorityFailsClosedForIncompatibleMarker(t *testing.T) {
 	_, err := ClassifyAuthority(context.Background(), &authorityStoreStub{
-		marker: &domain.V2CompatibilityMarker{Status: domain.V2MigrationMarkerCorrupt},
+		marker: &domain.CompatibilityMarker{Status: domain.MigrationMarkerCorrupt},
 	})
 	require.ErrorIs(t, err, errAuthorityBlocked)
 	require.ErrorContains(t, err, "corrupt")
 
 	_, err = ClassifyAuthority(context.Background(), &authorityStoreStub{
-		marker: &domain.V2CompatibilityMarker{Status: domain.V2MigrationMarkerIncompatible},
+		marker: &domain.CompatibilityMarker{Status: domain.MigrationMarkerIncompatible},
 	})
 	require.ErrorIs(t, err, errAuthorityBlocked)
 	require.ErrorContains(t, err, "incompatible")
@@ -40,7 +40,7 @@ func TestClassifyAuthorityFailsClosedForIncompatibleMarker(t *testing.T) {
 func TestClassifyAuthorityFailsClosedWithoutMarker(t *testing.T) {
 	_, err := ClassifyAuthority(context.Background(), &authorityStoreStub{})
 	require.ErrorIs(t, err, errAuthorityBlocked)
-	require.ErrorContains(t, err, "compatible V2 cutover marker")
+	require.ErrorContains(t, err, "compatible cutover marker")
 }
 
 func TestClassifyAuthorityFailsClosedWhenMarkerReadFails(t *testing.T) {
@@ -54,7 +54,7 @@ func TestClassifyAuthorityFailsClosedWhenMarkerReadFails(t *testing.T) {
 
 func TestClassifyAuthorityFailsClosedForUnknownMarkerStatus(t *testing.T) {
 	_, err := ClassifyAuthority(context.Background(), &authorityStoreStub{
-		marker: &domain.V2CompatibilityMarker{Status: "pending"},
+		marker: &domain.CompatibilityMarker{Status: "pending"},
 	})
 
 	require.ErrorIs(t, err, errAuthorityBlocked)
@@ -63,8 +63,8 @@ func TestClassifyAuthorityFailsClosedForUnknownMarkerStatus(t *testing.T) {
 
 func TestEnsureAuthorityCreatesFreshMarkerWhenNoneExists(t *testing.T) {
 	store := &authorityStoreStub{
-		freshMarker: &domain.V2CompatibilityMarker{
-			Status:   domain.V2MigrationMarkerCompatible,
+		freshMarker: &domain.CompatibilityMarker{
+			Status:   domain.MigrationMarkerCompatible,
 			Metadata: map[string]any{"fresh_install": true},
 		},
 	}
@@ -79,30 +79,30 @@ func TestEnsureAuthorityCreatesFreshMarkerWhenNoneExists(t *testing.T) {
 
 func TestEnsureAuthorityFailsWhenFreshMarkerCreationBlocked(t *testing.T) {
 	_, err := EnsureAuthority(context.Background(), &authorityStoreStub{
-		freshErr: repository.ErrFreshV2AuthorityBlocked,
+		freshErr: repository.ErrFreshAuthorityBlocked,
 	})
 
 	require.ErrorIs(t, err, errAuthorityBlocked)
-	require.ErrorIs(t, err, repository.ErrFreshV2AuthorityBlocked)
-	require.ErrorContains(t, err, "create fresh V2 authority marker")
+	require.ErrorIs(t, err, repository.ErrFreshAuthorityBlocked)
+	require.ErrorContains(t, err, "create fresh authority marker")
 }
 
 type authorityStoreStub struct {
-	marker       *domain.V2CompatibilityMarker
+	marker       *domain.CompatibilityMarker
 	markerErr    error
-	freshMarker  *domain.V2CompatibilityMarker
+	freshMarker  *domain.CompatibilityMarker
 	freshErr     error
 	freshCommits int
 }
 
-func (s *authorityStoreStub) GetLatestMarker(context.Context) (*domain.V2CompatibilityMarker, error) {
+func (s *authorityStoreStub) GetLatestMarker(context.Context) (*domain.CompatibilityMarker, error) {
 	if s.markerErr != nil {
 		return nil, s.markerErr
 	}
 	return s.marker, nil
 }
 
-func (s *authorityStoreStub) CommitFreshV2Authority(context.Context, repository.CommitFreshV2AuthorityInput) (*domain.V2CompatibilityMarker, error) {
+func (s *authorityStoreStub) CommitFreshAuthority(context.Context, repository.CommitFreshAuthorityInput) (*domain.CompatibilityMarker, error) {
 	s.freshCommits++
 	if s.freshErr != nil {
 		return nil, s.freshErr

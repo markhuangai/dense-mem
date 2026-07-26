@@ -19,14 +19,12 @@ type RunOptions struct {
 	APIKey                 string
 	ControlURL             string
 	ControlToken           string
-	ToolTransport          string
 	ImportSeed             bool
 	ImportConcurrency      int
 	PlacementTimeout       time.Duration
 	ResumeSourceDocIDsPath string
 	TracesPath             string
 	MappingPath            string
-	KnowledgeMappingMode   string
 	MaxPageSize            int
 	RunID                  string
 	ReleaseGatePolicyPath  string
@@ -44,21 +42,6 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if opts.ReleaseGatePolicyPath != "" && mode != "validate" && mode != "baseline" && mode != "candidate" {
 		return Summary{}, fmt.Errorf("release gate policy requires validate, baseline, or candidate mode")
 	}
-	knowledgeMappingMode, err := normalizeKnowledgeMappingMode(opts.KnowledgeMappingMode)
-	if err != nil {
-		return Summary{}, err
-	}
-	toolTransport := strings.ToLower(strings.TrimSpace(opts.ToolTransport))
-	if toolTransport == "" {
-		toolTransport = "rest"
-	}
-	if toolTransport != "rest" && toolTransport != "mcp" {
-		return Summary{}, fmt.Errorf("unsupported tool transport %q", opts.ToolTransport)
-	}
-	if opts.ReleaseGatePolicyPath != "" && toolTransport != "mcp" {
-		return Summary{}, fmt.Errorf("release gate requires MCP tool transport")
-	}
-	opts.ToolTransport = toolTransport
 	if opts.SeedManifestPath == "" {
 		return Summary{}, fmt.Errorf("seed manifest path is required")
 	}
@@ -126,8 +109,8 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		ReleaseGatePolicyHash:  releaseGatePolicyHash,
 		BaseURL:                opts.BaseURL,
 		ControlURL:             opts.ControlURL,
-		ToolTransport:          opts.ToolTransport,
-		ToolContract:           toolContract(opts.ToolTransport),
+		ToolTransport:          "mcp",
+		ToolContract:           "mcp.tools/call.v1",
 		ImportSeed:             opts.ImportSeed,
 		ImportRoute:            importRoute,
 		ImportConcurrency:      opts.ImportConcurrency,
@@ -135,7 +118,6 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		ResumeSourceDocIDsPath: opts.ResumeSourceDocIDsPath,
 		TracesPath:             opts.TracesPath,
 		MappingPath:            opts.MappingPath,
-		KnowledgeMappingMode:   knowledgeMappingMode,
 	}
 	if mode == "validate" || (releaseGateInput != nil && !releaseGateInput.Passed) {
 		if opts.OutDir != "" {
@@ -181,7 +163,6 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			ControlURL:       opts.ControlURL,
 			ControlToken:     opts.ControlToken,
 			PlacementTimeout: opts.PlacementTimeout,
-			ToolTransport:    opts.ToolTransport,
 		}
 		if err := client.EnableEvaluationMode(ctx, opts.MaxPageSize); err != nil {
 			return Summary{}, err
@@ -199,9 +180,9 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			if err != nil {
 				return Summary{}, fmt.Errorf("resume source document IDs: %w", err)
 			}
-			existing, err := client.ExportFragmentMapping(ctx, opts.MaxPageSize)
+			existing, err := client.ExportEvidenceMapping(ctx, opts.MaxPageSize)
 			if err != nil {
-				return Summary{}, fmt.Errorf("resume fragment mapping: %w", err)
+				return Summary{}, fmt.Errorf("resume evidence mapping: %w", err)
 			}
 			mergeKnowledgeMapping(&mapping, existing)
 			skipSourceDocIDs = completedMappedSourceDocIDs(checkpoint, existing)
@@ -220,7 +201,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 					return Summary{}, err
 				}
 				mergeKnowledgeMapping(&mapping, imported)
-				exported, err := exportKnowledgeMapping(ctx, client, opts.MaxPageSize, knowledgeMappingMode)
+				exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
 				if err != nil {
 					return Summary{}, err
 				}
@@ -240,7 +221,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			}
 		}
 		if !mappingLoadedFromPath && mode != "import" {
-			exported, err := exportKnowledgeMapping(ctx, client, opts.MaxPageSize, knowledgeMappingMode)
+			exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
 			if err != nil {
 				return Summary{}, err
 			}
@@ -323,33 +304,6 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		}
 	}
 	return summary, nil
-}
-
-func normalizeKnowledgeMappingMode(mode string) (string, error) {
-	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode == "" {
-		return "v1", nil
-	}
-	switch mode {
-	case "v1", "v2":
-		return mode, nil
-	default:
-		return "", fmt.Errorf("unsupported knowledge mapping mode %q", mode)
-	}
-}
-
-func exportKnowledgeMapping(ctx context.Context, client *HTTPClient, maxPageSize int, mode string) (KnowledgeMapping, error) {
-	if mode == "v2" {
-		return client.ExportV2KnowledgeMapping(ctx, maxPageSize)
-	}
-	return client.ExportKnowledgeMapping(ctx, maxPageSize)
-}
-
-func toolContract(transport string) string {
-	if transport == "mcp" {
-		return "mcp.tools/call.v1"
-	}
-	return "rest.tools.v1"
 }
 
 func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapping KnowledgeMapping) error {
@@ -658,7 +612,7 @@ func loadSourceDocIDs(path string) (map[string]struct{}, error) {
 func completedMappedSourceDocIDs(checkpoint map[string]struct{}, mapping KnowledgeMapping) map[string]struct{} {
 	out := map[string]struct{}{}
 	for sourceDocID := range checkpoint {
-		if len(mapping.BySourceDocIDAndType[sourceDocID]["fragment"]) > 0 {
+		if len(mapping.BySourceDocIDAndType[sourceDocID]["evidence"]) > 0 {
 			out[sourceDocID] = struct{}{}
 		}
 	}

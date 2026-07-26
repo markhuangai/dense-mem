@@ -8,12 +8,12 @@ import (
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 )
 
-func TestGenerateLocalEval1KV2ProducesValidRememberOnlySeed(t *testing.T) {
+func TestGenerateLocalEval1KProducesValidRememberOnlySeed(t *testing.T) {
 	dir := t.TempDir()
 	seedDir := filepath.Join(dir, "seed")
 	suitePath := filepath.Join(dir, "suite.jsonl")
-	if err := generateLocalEval1KV2(seedDir, suitePath); err != nil {
-		t.Fatalf("generateLocalEval1KV2: %v", err)
+	if err := generateLocalEval1K(seedDir, suitePath); err != nil {
+		t.Fatalf("generateLocalEval1K: %v", err)
 	}
 
 	manifestPath := filepath.Join(seedDir, "seed_manifest.json")

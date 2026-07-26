@@ -9,7 +9,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func TestParseLegacyArtifactConvertsToV2MemoryPack(t *testing.T) {
+func TestParseLegacyArtifactConvertsToMemoryPack(t *testing.T) {
 	pack := validLegacySkillPack()
 	data, err := json.Marshal(pack)
 	if err != nil {
@@ -23,9 +23,9 @@ func TestParseLegacyArtifactConvertsToV2MemoryPack(t *testing.T) {
 		t.Fatalf("parsed legacy pack = %+v", parsed)
 	}
 
-	artifact, legacy, err := parseV2MemoryPackArtifactJSON(data)
+	artifact, legacy, err := parseMemoryPackArtifactJSON(data)
 	if err != nil {
-		t.Fatalf("parseV2MemoryPackArtifactJSON legacy: %v", err)
+		t.Fatalf("parseMemoryPackArtifactJSON legacy: %v", err)
 	}
 	if !legacy {
 		t.Fatal("legacy artifact was not marked legacy")
@@ -36,7 +36,7 @@ func TestParseLegacyArtifactConvertsToV2MemoryPack(t *testing.T) {
 	relationship := artifact.Relationships[0]
 	if relationship.ItemID != "legacy-rel-1" ||
 		relationship.PredicateKey != "uses" ||
-		relationship.Status != string(domain.V2RelationshipStatusNeedsReview) ||
+		relationship.Status != string(domain.RelationshipStatusNeedsReview) ||
 		relationship.Subject.DisplayName != "Dense-Mem" ||
 		relationship.Object.DisplayName != "PostgreSQL" ||
 		len(relationship.SupportFragmentIDs) != 1 {
@@ -195,7 +195,7 @@ func validLegacySkillPack() SkillPack {
 				Source:        "architecture",
 				SourceType:    string(domain.SourceTypeDocument),
 				Authority:     string(domain.AuthorityPrimary),
-				Labels:        []string{"v2"},
+				Labels:        []string{"canonical"},
 				SourceQuality: &quality,
 			}},
 		},

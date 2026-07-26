@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -67,11 +66,11 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 		"eval:doc-location": "frag-location",
 	}
 	var dreamCycleCalled bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/control/api/config/evaluation":
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
-		case "/api/v1/tools/remember":
+		case "tool:remember":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode remember body: %v", err)
@@ -88,11 +87,11 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 				"status":    "queued",
 				"evidence":  []map[string]any{{"id": id}},
 			})
-		case "/api/v1/tools/get_memory_placement":
+		case "tool:get_memory_placement":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"placement": map[string]any{"status": "completed"},
 			})
-		case "/api/v1/tools/eval_run_dream_cycle":
+		case "tool:eval_run_dream_cycle":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode dream cycle body: %v", err)
@@ -113,7 +112,7 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 				t.Fatalf("seed refs = %#v", refs)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": "run-dream"})
-		case "/api/v1/tools/eval_list_knowledge_refs":
+		case "tool:eval_list_knowledge_refs":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode list body: %v", err)
@@ -147,7 +146,7 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 					"has_more":    false,
 				})
 			}
-		case "/api/v1/tools/eval_run_recall_case":
+		case "tool:eval_run_recall_case":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"query": "which hypothesis?",
 				"ranked_refs": []map[string]any{{

@@ -15,37 +15,37 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-type v2SemanticReaderStub struct {
-	graph      *repository.V2SemanticGraphSnapshot
-	graphInput repository.V2SemanticGraphQuery
-	traces     map[string]*repository.V2RelationshipTraceResult
-	traceInput []repository.V2TraceRelationshipInput
+type semanticReaderStub struct {
+	graph      *repository.SemanticGraphSnapshot
+	graphInput repository.SemanticGraphQuery
+	traces     map[string]*repository.RelationshipTraceResult
+	traceInput []repository.TraceRelationshipInput
 }
 
-func (s *v2SemanticReaderStub) SemanticGraph(_ context.Context, input repository.V2SemanticGraphQuery) (*repository.V2SemanticGraphSnapshot, error) {
+func (s *semanticReaderStub) SemanticGraph(_ context.Context, input repository.SemanticGraphQuery) (*repository.SemanticGraphSnapshot, error) {
 	s.graphInput = input
 	if s.graph == nil {
-		return &repository.V2SemanticGraphSnapshot{}, nil
+		return &repository.SemanticGraphSnapshot{}, nil
 	}
 	return s.graph, nil
 }
 
-func (s *v2SemanticReaderStub) TraceRelationship(_ context.Context, input repository.V2TraceRelationshipInput) (*repository.V2RelationshipTraceResult, error) {
+func (s *semanticReaderStub) TraceRelationship(_ context.Context, input repository.TraceRelationshipInput) (*repository.RelationshipTraceResult, error) {
 	s.traceInput = append(s.traceInput, input)
 	if trace, ok := s.traces[input.RelationshipID]; ok {
 		return trace, nil
 	}
-	return &repository.V2RelationshipTraceResult{}, nil
+	return &repository.RelationshipTraceResult{}, nil
 }
 
-type v2RememberStub struct {
+type rememberStub struct {
 	calls  int
-	reqs   []memoryservice.V2RememberRequest
-	result *memoryservice.V2RememberResult
+	reqs   []memoryservice.RememberRequest
+	result *memoryservice.RememberResult
 	err    error
 }
 
-func (s *v2RememberStub) Remember(_ context.Context, req memoryservice.V2RememberRequest) (*memoryservice.V2RememberResult, error) {
+func (s *rememberStub) Remember(_ context.Context, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
 	s.calls++
 	s.reqs = append(s.reqs, req)
 	if s.err != nil {
@@ -54,18 +54,18 @@ func (s *v2RememberStub) Remember(_ context.Context, req memoryservice.V2Remembe
 	if s.result != nil {
 		return s.result, nil
 	}
-	return &memoryservice.V2RememberResult{
-		IngestID:        "ingest-v2",
-		ProcessingState: string(domain.V2PlacementRunQueued),
+	return &memoryservice.RememberResult{
+		IngestID:        "ingest-canonical",
+		ProcessingState: string(domain.PlacementRunQueued),
 		StatusTool:      "get_memory_placement",
 	}, nil
 }
 
-func (s *v2RememberStub) GetMemoryPlacement(_ context.Context, req memoryservice.V2GetMemoryPlacementRequest) (*memoryservice.V2PlacementRunResult, error) {
-	return &memoryservice.V2PlacementRunResult{IngestID: req.IngestID, ProcessingState: string(domain.V2PlacementRunQueued)}, nil
+func (s *rememberStub) GetMemoryPlacement(_ context.Context, req memoryservice.GetMemoryPlacementRequest) (*memoryservice.PlacementRunResult, error) {
+	return &memoryservice.PlacementRunResult{IngestID: req.IngestID, ProcessingState: string(domain.PlacementRunQueued)}, nil
 }
 
-type v2LedgerStub struct {
+type ledgerStub struct {
 	imports   map[string]domain.SkillPackImport
 	changes   map[string][]domain.SkillPackImportChange
 	createErr error
@@ -75,20 +75,20 @@ type v2LedgerStub struct {
 	markErr   error
 }
 
-type v2ArtifactHTTPClientFunc func(*http.Request) (*http.Response, error)
+type artifactHTTPClientFunc func(*http.Request) (*http.Response, error)
 
-func (fn v2ArtifactHTTPClientFunc) Do(req *http.Request) (*http.Response, error) {
+func (fn artifactHTTPClientFunc) Do(req *http.Request) (*http.Response, error) {
 	return fn(req)
 }
 
-func newV2LedgerStub() *v2LedgerStub {
-	return &v2LedgerStub{
+func newLedgerStub() *ledgerStub {
+	return &ledgerStub{
 		imports: map[string]domain.SkillPackImport{},
 		changes: map[string][]domain.SkillPackImportChange{},
 	}
 }
 
-func (s *v2LedgerStub) CreateImport(_ context.Context, record domain.SkillPackImport) error {
+func (s *ledgerStub) CreateImport(_ context.Context, record domain.SkillPackImport) error {
 	if s.createErr != nil {
 		return s.createErr
 	}
@@ -96,7 +96,7 @@ func (s *v2LedgerStub) CreateImport(_ context.Context, record domain.SkillPackIm
 	return nil
 }
 
-func (s *v2LedgerStub) UpdateImportStatus(_ context.Context, teamID, importID, status string, appliedCount, skippedCount int, summary map[string]any) error {
+func (s *ledgerStub) UpdateImportStatus(_ context.Context, teamID, importID, status string, appliedCount, skippedCount int, summary map[string]any) error {
 	if s.updateErr != nil {
 		return s.updateErr
 	}
@@ -116,7 +116,7 @@ func (s *v2LedgerStub) UpdateImportStatus(_ context.Context, teamID, importID, s
 	return nil
 }
 
-func (s *v2LedgerStub) MarkRolledBack(_ context.Context, teamID, importID string) error {
+func (s *ledgerStub) MarkRolledBack(_ context.Context, teamID, importID string) error {
 	if s.markErr != nil {
 		return s.markErr
 	}
@@ -132,7 +132,7 @@ func (s *v2LedgerStub) MarkRolledBack(_ context.Context, teamID, importID string
 	return nil
 }
 
-func (s *v2LedgerStub) GetImport(_ context.Context, teamID, importID string) (*domain.SkillPackImport, error) {
+func (s *ledgerStub) GetImport(_ context.Context, teamID, importID string) (*domain.SkillPackImport, error) {
 	record, ok := s.imports[ledgerKey(teamID, importID)]
 	if !ok {
 		return nil, sql.ErrNoRows
@@ -140,7 +140,7 @@ func (s *v2LedgerStub) GetImport(_ context.Context, teamID, importID string) (*d
 	return &record, nil
 }
 
-func (s *v2LedgerStub) AppendChange(_ context.Context, change domain.SkillPackImportChange) error {
+func (s *ledgerStub) AppendChange(_ context.Context, change domain.SkillPackImportChange) error {
 	if s.appendErr != nil {
 		return s.appendErr
 	}
@@ -149,7 +149,7 @@ func (s *v2LedgerStub) AppendChange(_ context.Context, change domain.SkillPackIm
 	return nil
 }
 
-func (s *v2LedgerStub) ListChanges(_ context.Context, teamID, importID string) ([]domain.SkillPackImportChange, error) {
+func (s *ledgerStub) ListChanges(_ context.Context, teamID, importID string) ([]domain.SkillPackImportChange, error) {
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
@@ -161,7 +161,7 @@ func ledgerKey(teamID, importID string) string {
 	return teamID + "/" + importID
 }
 
-func authenticatedV2MemoryPackContext(teamID, profileID, keyID uuid.UUID) context.Context {
+func authenticatedMemoryPackContext(teamID, profileID, keyID uuid.UUID) context.Context {
 	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
 		TeamID:      teamID,
 		TeamName:    "team",
@@ -175,11 +175,11 @@ func authenticatedV2MemoryPackContext(teamID, profileID, keyID uuid.UUID) contex
 	})
 }
 
-var _ MemoryPackSemanticReader = (*v2SemanticReaderStub)(nil)
-var _ memoryservice.RememberService = (*v2RememberStub)(nil)
-var _ ImportLedger = (*v2LedgerStub)(nil)
+var _ MemoryPackSemanticReader = (*semanticReaderStub)(nil)
+var _ memoryservice.RememberService = (*rememberStub)(nil)
+var _ ImportLedger = (*ledgerStub)(nil)
 
-func testV2ArtifactJSON(t *testing.T, artifact V2MemoryPackArtifact) string {
+func testArtifactJSON(t *testing.T, artifact MemoryPackArtifact) string {
 	t.Helper()
 	_, hash, err := canonicalMemoryPackArtifact(artifact)
 	if err != nil {
@@ -193,9 +193,9 @@ func testV2ArtifactJSON(t *testing.T, artifact V2MemoryPackArtifact) string {
 	return string(data)
 }
 
-func cloneV2TestArtifact(artifact V2MemoryPackArtifact) V2MemoryPackArtifact {
-	artifact.Relationships = append([]V2MemoryPackRelationship(nil), artifact.Relationships...)
-	artifact.EvidenceFragments = append([]V2MemoryPackEvidenceFragment(nil), artifact.EvidenceFragments...)
-	artifact.EvidenceSupports = append([]V2MemoryPackEvidenceSupport(nil), artifact.EvidenceSupports...)
+func cloneTestArtifact(artifact MemoryPackArtifact) MemoryPackArtifact {
+	artifact.Relationships = append([]MemoryPackRelationship(nil), artifact.Relationships...)
+	artifact.EvidenceFragments = append([]MemoryPackEvidenceFragment(nil), artifact.EvidenceFragments...)
+	artifact.EvidenceSupports = append([]MemoryPackEvidenceSupport(nil), artifact.EvidenceSupports...)
 	return artifact
 }

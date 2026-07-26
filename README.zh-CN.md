@@ -31,7 +31,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/MCP-Streamable_HTTP-111827?style=flat-square" alt="MCP Streamable HTTP" />
   <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 18" />
-  <img src="https://img.shields.io/badge/OpenAPI-3.0-6BA539?style=flat-square&logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.0" />
   <img src="https://visitor-badge.laobi.icu/badge?page_id=markhuangai.dense-mem&style=flat-square" alt="Visitors" />
 </p>
 
@@ -40,8 +39,8 @@
 </p>
 
 Dense-Mem 是一层给 MCP 客户端使用的持久记忆服务。它把来源、claims、facts、
-验证流程、服务端 embeddings、recall、团队隔离、REST/OpenAPI 和带 token
-保护的控制门户放在同一个自托管系统里。宿主 LLM 继续负责对话和判断；
+验证流程、服务端 embeddings、recall、团队隔离、MCP endpoint、用户门户和带
+token 保护的控制门户放在同一个自托管系统里。宿主 LLM 继续负责对话和判断；
 Dense-Mem 负责把记忆状态存稳、管住，并返回可以解释给用户的结构化结果。
 
 从部署形态看，Dense-Mem 是一个独立的 HTTP MCP memory server。当前 v1
@@ -219,7 +218,7 @@ investigation records 中。正常生产 recall 流量仍然会贡献请求量�
 | 冲突处理 | 可比较冲突会返回 clarification tasks | 调用方自己发现 | 向量相似不代表语义矛盾 | 通常交给调用方 |
 | Recall | 返回 facts、claims、fragments、contradictions 和 clarifications | 文本搜索 | 向量相似检索 | 取决于实现 |
 | Agent 边界 | 宿主 LLM 做判断；Dense-Mem 做存储和约束 | 边界模糊 | 只负责检索 | 常常边界模糊 |
-| 运维 | Teams、profiles、API keys、审计元数据、REST、OpenAPI、MCP | 很少 | 数据库运维 | 取决于实现 |
+| 运维 | Teams、profiles、API keys、审计元数据、MCP、浏览器和控制 APIs | 很少 | 数据库运维 | 取决于实现 |
 
 单节点部署可以不使用 Redis；多实例部署需要 Redis。
 
@@ -309,12 +308,11 @@ embedding model 和 dimension，避免不同模型或维度的 vectors 被混在
 
 ## Tool Discoverability
 
-Dense-Mem 用同一个 registry 支撑三种 discoverability surface：
+Dense-Mem 从服务端 tool executor 使用的同一个 runtime registry 暴露 MCP
+discovery：
 
 | Surface | Path | Purpose |
 |---------|------|---------|
-| Tool catalog | `GET /api/v1/tools` | 运行时 tool discovery |
-| Runtime OpenAPI | `GET /api/v1/openapi.json` | Agents、codegen、integrations |
 | MCP Streamable HTTP | `POST /mcp`, `GET /mcp` | 主 HTTP 服务上的 MCP clients，包含 tools 和内置 prompts |
 
 完整 route list 和 client examples 在 wiki：

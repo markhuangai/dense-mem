@@ -19,7 +19,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	var placementPolls int
 	var exportCursors []string
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Content-Type") != "application/json" {
 			t.Fatalf("content-type = %q; want application/json", r.Header.Get("Content-Type"))
 		}
@@ -37,7 +37,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			}
 			controlPatched = true
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
-		case "/api/v1/tools/remember":
+		case "tool:remember":
 			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer api-key" {
 				t.Fatalf("remember request = %s auth %q", r.Method, r.Header.Get("Authorization"))
 			}
@@ -65,7 +65,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 				"status":    "queued",
 				"evidence":  []map[string]any{{"id": "fragment-alpha"}},
 			})
-		case "/api/v1/tools/get_memory_placement":
+		case "tool:get_memory_placement":
 			placementPolls++
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -77,7 +77,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"placement": map[string]any{"status": "completed"},
 			})
-		case "/api/v1/tools/eval_list_knowledge_refs":
+		case "tool:eval_list_knowledge_refs":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode export body: %v", err)
@@ -103,7 +103,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 				"next_cursor": "",
 				"has_more":    false,
 			})
-		case "/api/v1/tools/eval_run_recall_case":
+		case "tool:eval_run_recall_case":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode recall body: %v", err)
@@ -162,9 +162,9 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 		t.Fatalf("import mapping/calls/polls = %+v/%d/%d", mapping, rememberCalls, placementPolls)
 	}
 
-	exported, err := client.ExportFragmentMapping(context.Background(), 1)
+	exported, err := client.ExportEvidenceMapping(context.Background(), 1)
 	if err != nil {
-		t.Fatalf("ExportFragmentMapping: %v", err)
+		t.Fatalf("ExportEvidenceMapping: %v", err)
 	}
 	if exported.BySourceDocID["doc-beta"].ID != "fragment-beta" || len(exportCursors) != 2 || exportCursors[1] != "next" {
 		t.Fatalf("export mapping/cursors = %+v/%v", exported, exportCursors)
@@ -191,10 +191,10 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	}
 }
 
-func TestHTTPClientV2KnowledgeMapping(t *testing.T) {
+func TestHTTPClientKnowledgeMapping(t *testing.T) {
 	var requestedTypes []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/tools/eval_list_knowledge_refs" {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "tool:eval_list_knowledge_refs" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		var input map[string]any
@@ -244,9 +244,9 @@ func TestHTTPClientV2KnowledgeMapping(t *testing.T) {
 	defer server.Close()
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
-	mapping, err := client.ExportV2KnowledgeMapping(context.Background(), 50)
+	mapping, err := client.ExportKnowledgeMapping(context.Background(), 50)
 	if err != nil {
-		t.Fatalf("ExportV2KnowledgeMapping: %v", err)
+		t.Fatalf("ExportKnowledgeMapping: %v", err)
 	}
 	if strings.Join(requestedTypes, ",") != "evidence,entity,value,relationship,hypothesis" {
 		t.Fatalf("requested types = %v", requestedTypes)
@@ -256,10 +256,10 @@ func TestHTTPClientV2KnowledgeMapping(t *testing.T) {
 		alphaByType["entity"][0].ID != "entity-alpha" ||
 		alphaByType["relationship"][0].ID != "relationship-alpha" ||
 		alphaByType["hypothesis"][0].ID != "hypothesis-alpha" {
-		t.Fatalf("doc-alpha V2 mapping = %+v", alphaByType)
+		t.Fatalf("doc-alpha mapping = %+v", alphaByType)
 	}
 	if mapping.BySourceDocIDAndType["doc-beta"]["value"][0].ID != "value-beta" {
-		t.Fatalf("doc-beta V2 mapping = %+v", mapping.BySourceDocIDAndType["doc-beta"])
+		t.Fatalf("doc-beta mapping = %+v", mapping.BySourceDocIDAndType["doc-beta"])
 	}
 }
 
@@ -273,19 +273,15 @@ func TestHTTPClientErrors(t *testing.T) {
 		t.Fatalf("missing API key err = %v", err)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nope", http.StatusTeapot)
 	}))
 	defer server.Close()
 
 	client = &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	err := client.CallTool(context.Background(), "remember", map[string]any{}, nil)
-	if err == nil || err.Error() != "POST "+server.URL+"/api/v1/tools/remember returned 418: nope" {
+	if err == nil || err.Error() != "POST "+server.URL+"/mcp returned 418: nope" {
 		t.Fatalf("status error = %v", err)
-	}
-	client.ToolTransport = "smtp"
-	if err := client.CallTool(context.Background(), "remember", map[string]any{}, nil); err == nil || !strings.Contains(err.Error(), "unsupported tool transport") {
-		t.Fatalf("unsupported transport err = %v", err)
 	}
 }
 
@@ -327,7 +323,7 @@ func TestHTTPClientCallsMCPToolsCall(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", ToolTransport: "mcp", Client: server.Client()}
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	trace, err := client.RunRecallCase(context.Background(), Case{CaseID: "case-1", Query: "question"})
 	if err != nil {
 		t.Fatalf("RunRecallCase through MCP: %v", err)
@@ -377,7 +373,7 @@ func TestHTTPClientRejectsInvalidMCPResponses(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(tc.response)
 			}))
 			defer server.Close()
-			client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", ToolTransport: "mcp", Client: server.Client()}
+			client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 			var out map[string]any
 			err := client.CallTool(context.Background(), "remember", map[string]any{}, &out)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -386,7 +382,7 @@ func TestHTTPClientRejectsInvalidMCPResponses(t *testing.T) {
 		})
 	}
 
-	client := &HTTPClient{BaseURL: "http://example.test", APIKey: "api-key", ToolTransport: "mcp"}
+	client := &HTTPClient{BaseURL: "http://example.test", APIKey: "api-key"}
 	if err := client.CallTool(context.Background(), "remember", "not-an-object", nil); err == nil || !strings.Contains(err.Error(), "arguments must be an object") {
 		t.Fatalf("non-object MCP arguments err = %v", err)
 	}
@@ -401,7 +397,7 @@ func TestHTTPClientMCPCallWithoutOutputAcceptsEmptyResult(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", ToolTransport: "mcp", Client: server.Client()}
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	if err := client.CallTool(context.Background(), "eval_run_dream_cycle", struct{}{}, nil); err != nil {
 		t.Fatalf("CallTool without output: %v", err)
 	}
@@ -409,8 +405,8 @@ func TestHTTPClientMCPCallWithoutOutputAcceptsEmptyResult(t *testing.T) {
 
 func TestHTTPClientRunRecallCaseRetriesTransientStatus(t *testing.T) {
 	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/tools/eval_run_recall_case" {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "tool:eval_run_recall_case" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		calls++
@@ -443,7 +439,7 @@ func TestHTTPClientRunRecallCaseRetriesTransientStatus(t *testing.T) {
 }
 
 func TestHTTPClientImportRejectsMissingFragmentID(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"fragment": map[string]any{}})
 	}))
 	defer server.Close()
@@ -455,20 +451,20 @@ func TestHTTPClientImportRejectsMissingFragmentID(t *testing.T) {
 	}
 }
 
-func TestHTTPClientImportCorpusMapsV2PlacementEvidenceID(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestHTTPClientImportCorpusMapsPlacementEvidenceID(t *testing.T) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/tools/remember":
+		case "tool:remember":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ingest_id":        "ingest-v2",
+				"ingest_id":        "ingest-canonical",
 				"processing_state": "queued",
 			})
-		case "/api/v1/tools/get_memory_placement":
+		case "tool:get_memory_placement":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ingest_id":        "ingest-v2",
+				"ingest_id":        "ingest-canonical",
 				"processing_state": "completed",
 				"items": []map[string]any{{
-					"evidence_id": "evidence-v2",
+					"evidence_id": "evidence-canonical",
 				}},
 			})
 		default:
@@ -478,31 +474,31 @@ func TestHTTPClientImportCorpusMapsV2PlacementEvidenceID(t *testing.T) {
 	defer server.Close()
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
-	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-v2", Content: "content"}})
+	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-canonical", Content: "content"}})
 	if err != nil {
 		t.Fatalf("ImportCorpus: %v", err)
 	}
-	ref, ok := mapping.BySourceDocID["doc-v2"]
-	if !ok || ref.Type != "evidence" || ref.ID != "evidence-v2" {
+	ref, ok := mapping.BySourceDocID["doc-canonical"]
+	if !ok || ref.Type != "evidence" || ref.ID != "evidence-canonical" {
 		t.Fatalf("default source mapping = %+v, %v", ref, ok)
 	}
-	if len(mapping.BySourceDocIDAndType["doc-v2"]["fragment"]) != 0 {
-		t.Fatalf("fragment mappings = %+v", mapping.BySourceDocIDAndType["doc-v2"]["fragment"])
+	if len(mapping.BySourceDocIDAndType["doc-canonical"]["fragment"]) != 0 {
+		t.Fatalf("fragment mappings = %+v", mapping.BySourceDocIDAndType["doc-canonical"]["fragment"])
 	}
-	if refs := mapping.BySourceDocIDAndType["doc-v2"]["evidence"]; len(refs) != 1 || refs[0].ID != "evidence-v2" {
+	if refs := mapping.BySourceDocIDAndType["doc-canonical"]["evidence"]; len(refs) != 1 || refs[0].ID != "evidence-canonical" {
 		t.Fatalf("evidence mappings = %+v", refs)
 	}
 }
 
-func TestHTTPClientImportCorpusReportsPlacementFailureCause(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestHTTPClientImportCorpusReportsPlacementResultFailureCause(t *testing.T) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/tools/remember":
+		case "tool:remember":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ingest_id": "ingest-failed",
 				"evidence":  []map[string]any{{"id": "fragment-failed"}},
 			})
-		case "/api/v1/tools/get_memory_placement":
+		case "tool:get_memory_placement":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"placement": map[string]any{
 					"status": "failed",
@@ -522,17 +518,17 @@ func TestHTTPClientImportCorpusReportsPlacementFailureCause(t *testing.T) {
 	}
 }
 
-func TestHTTPClientImportCorpusReportsV2PlacementFailureCause(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestHTTPClientImportCorpusReportsPlacementFailureCause(t *testing.T) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/tools/remember":
+		case "tool:remember":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ingest_id":        "ingest-v2-failed",
+				"ingest_id":        "ingest-canonical-failed",
 				"processing_state": "queued",
 			})
-		case "/api/v1/tools/get_memory_placement":
+		case "tool:get_memory_placement":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ingest_id":        "ingest-v2-failed",
+				"ingest_id":        "ingest-canonical-failed",
 				"processing_state": "failed",
 				"errors": []map[string]any{{
 					"message": "verifier unavailable",
@@ -545,16 +541,16 @@ func TestHTTPClientImportCorpusReportsV2PlacementFailureCause(t *testing.T) {
 	defer server.Close()
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
-	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-v2-failed", Content: "content"}})
-	if err == nil || !strings.Contains(err.Error(), "memory placement ingest-v2-failed failed: verifier unavailable") {
+	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-canonical-failed", Content: "content"}})
+	if err == nil || !strings.Contains(err.Error(), "memory placement ingest-canonical-failed failed: verifier unavailable") {
 		t.Fatalf("ImportCorpus err = %v", err)
 	}
 }
 
-func TestHTTPClientWaitForMemoryPlacementResultWaitsForV2SearchProjection(t *testing.T) {
+func TestHTTPClientWaitForMemoryPlacementResultWaitsForSearchProjection(t *testing.T) {
 	var calls int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/tools/get_memory_placement" {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "tool:get_memory_placement" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		call := atomic.AddInt32(&calls, 1)
@@ -580,16 +576,16 @@ func TestHTTPClientWaitForMemoryPlacementResultWaitsForV2SearchProjection(t *tes
 	}
 }
 
-func TestHTTPClientWaitForMemoryPlacementResultReportsV2SearchFailure(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/tools/get_memory_placement" {
+func TestHTTPClientWaitForMemoryPlacementResultReportsSearchFailure(t *testing.T) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "tool:get_memory_placement" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ingest_id":        "ingest-search-failed",
 			"processing_state": "completed",
 			"items": []map[string]any{{
-				"evidence_id":  "evidence-v2",
+				"evidence_id":  "evidence-canonical",
 				"search_state": "failed",
 				"errors":       []map[string]any{{"message": "embedding failed"}},
 			}},
@@ -605,14 +601,14 @@ func TestHTTPClientWaitForMemoryPlacementResultReportsV2SearchFailure(t *testing
 }
 
 func TestHTTPClientImportCorpusHonorsPlacementTimeout(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/tools/remember":
+		case "tool:remember":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ingest_id": "ingest-slow",
 				"evidence":  []map[string]any{{"id": "fragment-slow"}},
 			})
-		case "/api/v1/tools/get_memory_placement":
+		case "tool:get_memory_placement":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"placement": map[string]any{"status": "processing"},
 			})
@@ -638,7 +634,7 @@ func TestHTTPClientImportCorpusHonorsPlacementTimeout(t *testing.T) {
 func TestHTTPClientImportCorpusWithConcurrency(t *testing.T) {
 	var active int32
 	var maxActive int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		current := atomic.AddInt32(&active, 1)
 		for {
 			seen := atomic.LoadInt32(&maxActive)
@@ -688,7 +684,7 @@ func TestHTTPClientConcurrentFileImportDrainsActiveRequestsAfterError(t *testing
 	docTwoCompleted := make(chan struct{})
 	var started int32
 	var docTwoCanceled int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var input map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Fatalf("decode body: %v", err)
@@ -746,9 +742,9 @@ func TestHTTPClientConcurrentFileImportDrainsActiveRequestsAfterError(t *testing
 	}
 }
 
-func TestHTTPClientExportKnowledgeMappingIncludesClaimsAndFacts(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/tools/eval_list_knowledge_refs" {
+func TestHTTPClientExportKnowledgeMappingIncludesCanonicalRefs(t *testing.T) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "tool:eval_list_knowledge_refs" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		var input map[string]any
@@ -756,20 +752,30 @@ func TestHTTPClientExportKnowledgeMappingIncludesClaimsAndFacts(t *testing.T) {
 			t.Fatalf("decode eval_list_knowledge_refs body: %v", err)
 		}
 		switch input["type"] {
-		case "fragment":
+		case "evidence":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
-				"fragment_id": "fragment-tiered",
-				"metadata":    map[string]any{"source_doc_id": "doc-tiered"},
+				"id":       "evidence-tiered",
+				"metadata": map[string]any{"source_doc_id": "doc-tiered"},
 			}}})
-		case "claim":
+		case "entity":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
-				"claim_id":     "claim-tiered",
-				"supported_by": []string{"fragment-tiered"},
+				"id":       "entity-tiered",
+				"metadata": map[string]any{"source_doc_id": "doc-tiered"},
 			}}})
-		case "fact":
+		case "value":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
-				"fact_id":                "fact-tiered",
-				"promoted_from_claim_id": "claim-tiered",
+				"id":       "value-other",
+				"metadata": map[string]any{"source_doc_id": "doc-other"},
+			}}})
+		case "relationship":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
+				"id":       "relationship-tiered",
+				"metadata": map[string]any{"source_doc_id": "doc-tiered"},
+			}}})
+		case "hypothesis":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
+				"id":          "hypothesis-tiered",
+				"source_refs": []map[string]any{{"type": "evidence", "id": "evidence-tiered"}},
 			}}})
 		default:
 			t.Fatalf("unexpected export type %v", input["type"])
@@ -783,14 +789,20 @@ func TestHTTPClientExportKnowledgeMappingIncludesClaimsAndFacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExportKnowledgeMapping: %v", err)
 	}
-	if mapping.BySourceDocID["doc-tiered"].ID != "fragment-tiered" {
+	if mapping.BySourceDocID["doc-tiered"].ID != "evidence-tiered" {
 		t.Fatalf("default mapping = %+v", mapping.BySourceDocID["doc-tiered"])
 	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["claim"][0].ID != "claim-tiered" {
-		t.Fatalf("claim mapping = %+v", mapping.BySourceDocIDAndType)
+	if mapping.BySourceDocIDAndType["doc-tiered"]["entity"][0].ID != "entity-tiered" {
+		t.Fatalf("entity mapping = %+v", mapping.BySourceDocIDAndType)
 	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["fact"][0].ID != "fact-tiered" {
-		t.Fatalf("fact mapping = %+v", mapping.BySourceDocIDAndType)
+	if mapping.BySourceDocIDAndType["doc-tiered"]["relationship"][0].ID != "relationship-tiered" {
+		t.Fatalf("relationship mapping = %+v", mapping.BySourceDocIDAndType)
+	}
+	if mapping.BySourceDocIDAndType["doc-tiered"]["hypothesis"][0].ID != "hypothesis-tiered" {
+		t.Fatalf("hypothesis mapping = %+v", mapping.BySourceDocIDAndType)
+	}
+	if mapping.BySourceDocIDAndType["doc-other"]["value"][0].ID != "value-other" {
+		t.Fatalf("value mapping = %+v", mapping.BySourceDocIDAndType)
 	}
 }
 

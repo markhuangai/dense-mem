@@ -2,7 +2,7 @@ package dto
 
 import "time"
 
-// RecallRequest represents query parameters for GET /api/v1/recall.
+// RecallRequest represents query parameters for GET /ui/api/recall.
 // The query parameter is the natural-language query; limit caps returned hits.
 type RecallRequest struct {
 	Query                string     `query:"query" validate:"required,max=512"`

@@ -30,7 +30,7 @@ export function TeamManagementPanel({
     setLoading(true);
     setError("");
     try {
-      const page = await api.listTeamProfiles(session.team.id);
+      const page = await api.listTeamProfiles();
       setProfiles(page.data);
     } catch (err) {
       setError(readError(err));
@@ -59,7 +59,7 @@ export function TeamManagementPanel({
     setTeamBusy(true);
     setError("");
     try {
-      onTeamUpdated(await api.updateTeam(session.team.id, { name: trimmedName, description: teamDescription.trim() }));
+      onTeamUpdated(await api.updateTeam({ name: trimmedName, description: teamDescription.trim() }));
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -80,7 +80,7 @@ export function TeamManagementPanel({
     setSavingProfileId(profileId);
     setError("");
     try {
-      const updated = await api.updateTeamProfile(session.team.id, profileId, { name: trimmedName });
+      const updated = await api.updateTeamProfile(profileId, { name: trimmedName });
       setProfiles((current) => current.map((item) => (item.id === profileId ? updated : item)));
     } catch (err) {
       setError(readError(err));
@@ -97,7 +97,7 @@ export function TeamManagementPanel({
     setSavingScopesProfileId(profileId);
     setError("");
     try {
-      const updated = await api.updateTeamProfile(session.team.id, profileId, { scopes });
+      const updated = await api.updateTeamProfile(profileId, { scopes });
       setProfiles((current) => current.map((item) => (item.id === profileId ? updated : item)));
     } catch (err) {
       setError(readError(err));
@@ -117,7 +117,7 @@ export function TeamManagementPanel({
     setRotatingProfileId(profileId);
     setError("");
     try {
-      const rotated = await api.rotateTeamProfile(session.team.id, profileId, {
+      const rotated = await api.rotateTeamProfile(profileId, {
         name: profile.name,
         rate_limit: profile.rate_limit,
         expires_at: profile.expires_at ?? undefined,
@@ -142,7 +142,7 @@ export function TeamManagementPanel({
     setDeletingProfileId(profileId);
     setError("");
     try {
-      await api.deleteTeamProfile(session.team.id, profileId);
+      await api.deleteTeamProfile(profileId);
       await loadProfiles();
     } catch (err) {
       setError(readError(err));
@@ -178,7 +178,7 @@ export function TeamManagementPanel({
           effective={session.team.dreaming_effective}
           disabled={teamBusy}
           onSave={async (config) => {
-            onTeamUpdated(await api.updateTeam(session.team.id, { name: session.team.name, description: session.team.description ?? "", config }));
+            onTeamUpdated(await api.updateTeam({ name: session.team.name, description: session.team.description ?? "", config }));
           }}
         />
       </div>
@@ -198,7 +198,7 @@ export function TeamManagementPanel({
         <ManagedProfileCreateForm
           disabled={loading}
           onCreate={async (input) => {
-            const created = await api.createTeamProfile(session.team.id, input);
+            const created = await api.createTeamProfile(input);
             setCreatedKey(created);
             await loadProfiles();
           }}

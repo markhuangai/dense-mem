@@ -30,11 +30,11 @@ func TestUsageMetricsMiddleware_RecordsAuthenticatedRouteTemplate(t *testing.T) 
 		}
 	})
 	e.Use(UsageMetricsMiddleware(recorder))
-	e.GET("/api/v1/fragments/:id", func(c echo.Context) error {
+	e.GET("/ui/api/evidence/:id", func(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/fragments/abc", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/evidence/abc", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -42,7 +42,7 @@ func TestUsageMetricsMiddleware_RecordsAuthenticatedRouteTemplate(t *testing.T) 
 	require.Len(t, recorder.events, 1)
 	require.Equal(t, teamID, recorder.events[0].TeamID)
 	require.Equal(t, keyID, recorder.events[0].KeyID)
-	require.Equal(t, "/api/v1/fragments/:id", recorder.events[0].Route)
+	require.Equal(t, "/ui/api/evidence/:id", recorder.events[0].Route)
 	require.Equal(t, http.StatusNoContent, recorder.events[0].Status)
 }
 
@@ -59,11 +59,11 @@ func TestUsageMetricsMiddleware_RecordsTypedErrors(t *testing.T) {
 		}
 	})
 	e.Use(UsageMetricsMiddleware(recorder))
-	e.GET("/api/v1/recall", func(c echo.Context) error {
+	e.GET("/ui/api/recall", func(c echo.Context) error {
 		return httperr.New(httperr.VALIDATION_ERROR, "bad query")
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -103,17 +103,17 @@ func TestTelemetryHTTPMiddlewareRecordsRouteTemplate(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(TelemetryHTTPMiddleware(recorder))
-	e.GET("/api/v1/fragments/:id", func(c echo.Context) error {
+	e.GET("/ui/api/evidence/:id", func(c echo.Context) error {
 		return httperr.New(httperr.VALIDATION_ERROR, "bad id")
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/fragments/bad", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/evidence/bad", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	require.Len(t, recorder.events, 1)
-	require.Equal(t, "/api/v1/fragments/:id", recorder.events[0].Route)
+	require.Equal(t, "/ui/api/evidence/:id", recorder.events[0].Route)
 	require.Equal(t, http.MethodGet, recorder.events[0].Method)
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.events[0].Status)
 	require.GreaterOrEqual(t, recorder.events[0].Duration, time.Duration(0))

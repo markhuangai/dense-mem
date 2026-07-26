@@ -16,8 +16,8 @@ import (
 var ErrLifecycleAuthContext = errors.New("memory lifecycle: authenticated actor context is required")
 
 type LifecycleService interface {
-	ResolveMemoryPlacement(ctx context.Context, req V2ResolveMemoryPlacementRequest) (*V2ResolveMemoryPlacementResult, error)
-	CorrectEntityResolution(ctx context.Context, req V2CorrectEntityResolutionRequest) (*V2CorrectEntityResolutionResult, error)
+	ResolveMemoryPlacement(ctx context.Context, req ResolveMemoryPlacementRequest) (*ResolveMemoryPlacementResult, error)
+	CorrectEntityResolution(ctx context.Context, req CorrectEntityResolutionRequest) (*CorrectEntityResolutionResult, error)
 }
 
 type LifecycleDependencies struct {
@@ -26,12 +26,12 @@ type LifecycleDependencies struct {
 }
 
 type LifecycleSemanticRepository interface {
-	RetractRelationship(ctx context.Context, input repository.V2RetractRelationshipInput) (*repository.V2RelationshipTransitionResult, error)
-	CorrectEntityResolution(ctx context.Context, input repository.V2CorrectEntityResolutionInput) (*repository.V2CorrectEntityResolutionResult, error)
+	RetractRelationship(ctx context.Context, input repository.RetractRelationshipInput) (*repository.RelationshipTransitionResult, error)
+	CorrectEntityResolution(ctx context.Context, input repository.CorrectEntityResolutionInput) (*repository.CorrectEntityResolutionResult, error)
 }
 
 type LifecyclePlacementRepository interface {
-	ResolvePlacementReview(ctx context.Context, input repository.V2ResolvePlacementReviewInput) (*repository.V2ResolvePlacementReviewResult, error)
+	ResolvePlacementReview(ctx context.Context, input repository.ResolvePlacementReviewInput) (*repository.ResolvePlacementReviewResult, error)
 }
 
 type lifecycleService struct {
@@ -43,24 +43,24 @@ func NewLifecycleService(deps LifecycleDependencies) LifecycleService {
 	return &lifecycleService{semantic: deps.Semantic, placement: deps.Placement}
 }
 
-type V2ResolveMemoryPlacementRequest struct {
-	ContractVersion      string                    `json:"contract_version"`
-	Action               domain.V2ResolveAction    `json:"action"`
-	IngestID             string                    `json:"ingest_id,omitempty"`
-	PlacementItemID      string                    `json:"placement_item_id,omitempty"`
-	PlacementItemVersion int                       `json:"placement_item_version,omitempty"`
-	ObservationID        string                    `json:"observation_id,omitempty"`
-	RelationshipID       string                    `json:"relationship_id,omitempty"`
-	EntityRef            string                    `json:"entity_ref,omitempty"`
-	CandidateEntityID    string                    `json:"candidate_entity_id,omitempty"`
-	PredicateKey         string                    `json:"predicate_key,omitempty"`
-	PredicateVersion     int                       `json:"predicate_version,omitempty"`
-	Message              string                    `json:"message,omitempty"`
-	Evidence             []V2RememberEvidenceInput `json:"evidence,omitempty"`
-	IdempotencyKey       string                    `json:"idempotency_key,omitempty"`
+type ResolveMemoryPlacementRequest struct {
+	ContractVersion      string                  `json:"contract_version"`
+	Action               domain.ResolveAction    `json:"action"`
+	IngestID             string                  `json:"ingest_id,omitempty"`
+	PlacementItemID      string                  `json:"placement_item_id,omitempty"`
+	PlacementItemVersion int                     `json:"placement_item_version,omitempty"`
+	ObservationID        string                  `json:"observation_id,omitempty"`
+	RelationshipID       string                  `json:"relationship_id,omitempty"`
+	EntityRef            string                  `json:"entity_ref,omitempty"`
+	CandidateEntityID    string                  `json:"candidate_entity_id,omitempty"`
+	PredicateKey         string                  `json:"predicate_key,omitempty"`
+	PredicateVersion     int                     `json:"predicate_version,omitempty"`
+	Message              string                  `json:"message,omitempty"`
+	Evidence             []RememberEvidenceInput `json:"evidence,omitempty"`
+	IdempotencyKey       string                  `json:"idempotency_key,omitempty"`
 }
 
-type V2ResolveMemoryPlacementResult struct {
+type ResolveMemoryPlacementResult struct {
 	DecisionID        string `json:"decision_id,omitempty"`
 	IngestID          string `json:"ingest_id,omitempty"`
 	ProcessingState   string `json:"processing_state"`
@@ -68,19 +68,19 @@ type V2ResolveMemoryPlacementResult struct {
 	CheckAfterSeconds int    `json:"check_after_seconds,omitempty"`
 }
 
-type V2CorrectEntityResolutionRequest struct {
-	ContractVersion     string                          `json:"contract_version"`
-	Operation           domain.V2EntityCorrectionAction `json:"operation"`
-	SourceEntityID      string                          `json:"source_entity_id"`
-	TargetEntityID      string                          `json:"target_entity_id,omitempty"`
-	OwnedObservationIDs []string                        `json:"owned_observation_ids,omitempty"`
-	DryRun              bool                            `json:"dry_run"`
-	ImpactToken         string                          `json:"impact_token,omitempty"`
-	Evidence            []V2RememberEvidenceInput       `json:"evidence,omitempty"`
-	IdempotencyKey      string                          `json:"idempotency_key,omitempty"`
+type CorrectEntityResolutionRequest struct {
+	ContractVersion     string                        `json:"contract_version"`
+	Operation           domain.EntityCorrectionAction `json:"operation"`
+	SourceEntityID      string                        `json:"source_entity_id"`
+	TargetEntityID      string                        `json:"target_entity_id,omitempty"`
+	OwnedObservationIDs []string                      `json:"owned_observation_ids,omitempty"`
+	DryRun              bool                          `json:"dry_run"`
+	ImpactToken         string                        `json:"impact_token,omitempty"`
+	Evidence            []RememberEvidenceInput       `json:"evidence,omitempty"`
+	IdempotencyKey      string                        `json:"idempotency_key,omitempty"`
 }
 
-type V2CorrectEntityResolutionResult struct {
+type CorrectEntityResolutionResult struct {
 	DryRun                          bool             `json:"dry_run"`
 	ImpactToken                     string           `json:"impact_token,omitempty"`
 	SelectedObservationIDs          []string         `json:"selected_observation_ids"`
@@ -92,9 +92,9 @@ type V2CorrectEntityResolutionResult struct {
 
 func (s *lifecycleService) ResolveMemoryPlacement(
 	ctx context.Context,
-	req V2ResolveMemoryPlacementRequest,
-) (*V2ResolveMemoryPlacementResult, error) {
-	if strings.TrimSpace(req.ContractVersion) != domain.V2ContractVersion {
+	req ResolveMemoryPlacementRequest,
+) (*ResolveMemoryPlacementResult, error) {
+	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
 		return nil, fmt.Errorf("memory lifecycle: invalid contract_version %q", req.ContractVersion)
 	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
@@ -105,16 +105,16 @@ func (s *lifecycleService) ResolveMemoryPlacement(
 		return nil, errors.New("memory lifecycle: idempotency_key is required")
 	}
 	switch req.Action {
-	case domain.V2ResolveForget:
+	case domain.ResolveForget:
 		return s.forgetRelationship(ctx, actor, req)
-	case domain.V2ResolveAcknowledge,
-		domain.V2ResolveSelectEntity,
-		domain.V2ResolveConfirmNewEntity,
-		domain.V2ResolveSelectPredicate,
-		domain.V2ResolveAccept,
-		domain.V2ResolveReject,
-		domain.V2ResolveCorrect,
-		domain.V2ResolveReleaseQuarantine:
+	case domain.ResolveAcknowledge,
+		domain.ResolveSelectEntity,
+		domain.ResolveConfirmNewEntity,
+		domain.ResolveSelectPredicate,
+		domain.ResolveAccept,
+		domain.ResolveReject,
+		domain.ResolveCorrect,
+		domain.ResolveReleaseQuarantine:
 		return s.resolvePlacementReview(ctx, actor, req)
 	default:
 		return nil, fmt.Errorf("memory lifecycle: unsupported action %q", req.Action)
@@ -124,16 +124,16 @@ func (s *lifecycleService) ResolveMemoryPlacement(
 func (s *lifecycleService) resolvePlacementReview(
 	ctx context.Context,
 	actor requestctx.ActorProfile,
-	req V2ResolveMemoryPlacementRequest,
-) (*V2ResolveMemoryPlacementResult, error) {
+	req ResolveMemoryPlacementRequest,
+) (*ResolveMemoryPlacementResult, error) {
 	if s.placement == nil {
 		return nil, errors.New("memory lifecycle: placement repository is required")
 	}
 	credential, _ := requestctx.ActorCredentialFromContext(ctx)
-	if req.Action == domain.V2ResolveReleaseQuarantine && !lifecycleCanReleaseQuarantine(credential.Role) {
+	if req.Action == domain.ResolveReleaseQuarantine && !lifecycleCanReleaseQuarantine(credential.Role) {
 		return nil, errors.New("memory lifecycle: manager role is required to release quarantine")
 	}
-	resolved, err := s.placement.ResolvePlacementReview(ctx, repository.V2ResolvePlacementReviewInput{
+	resolved, err := s.placement.ResolvePlacementReview(ctx, repository.ResolvePlacementReviewInput{
 		TeamID:               actor.TeamID.String(),
 		OwnerProfileID:       actor.ProfileID.String(),
 		ActorRole:            credential.Role,
@@ -153,7 +153,7 @@ func (s *lifecycleService) resolvePlacementReview(
 	if err != nil {
 		return nil, err
 	}
-	return &V2ResolveMemoryPlacementResult{
+	return &ResolveMemoryPlacementResult{
 		DecisionID:        resolved.DecisionID,
 		IngestID:          resolved.IngestID,
 		ProcessingState:   resolved.Status,
@@ -165,8 +165,8 @@ func (s *lifecycleService) resolvePlacementReview(
 func (s *lifecycleService) forgetRelationship(
 	ctx context.Context,
 	actor requestctx.ActorProfile,
-	req V2ResolveMemoryPlacementRequest,
-) (*V2ResolveMemoryPlacementResult, error) {
+	req ResolveMemoryPlacementRequest,
+) (*ResolveMemoryPlacementResult, error) {
 	if s.semantic == nil {
 		return nil, errors.New("memory lifecycle: semantic repository is required")
 	}
@@ -181,7 +181,7 @@ func (s *lifecycleService) forgetRelationship(
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("memory lifecycle: evidence is required")
 	}
-	transition, err := s.semantic.RetractRelationship(ctx, repository.V2RetractRelationshipInput{
+	transition, err := s.semantic.RetractRelationship(ctx, repository.RetractRelationshipInput{
 		TeamID:         actor.TeamID.String(),
 		OwnerProfileID: actor.ProfileID.String(),
 		RelationshipID: relationshipID,
@@ -191,28 +191,28 @@ func (s *lifecycleService) forgetRelationship(
 	if err != nil {
 		return nil, err
 	}
-	return &V2ResolveMemoryPlacementResult{
+	return &ResolveMemoryPlacementResult{
 		DecisionID:      transition.TransitionID,
-		ProcessingState: string(domain.V2PlacementRunCompleted),
+		ProcessingState: string(domain.PlacementRunCompleted),
 		ImpactSummary:   fmt.Sprintf("relationship %s retracted from active semantic graph; nodes and append-only history preserved", relationshipID),
 	}, nil
 }
 
 func (s *lifecycleService) CorrectEntityResolution(
 	ctx context.Context,
-	req V2CorrectEntityResolutionRequest,
-) (*V2CorrectEntityResolutionResult, error) {
+	req CorrectEntityResolutionRequest,
+) (*CorrectEntityResolutionResult, error) {
 	if s.semantic == nil {
 		return nil, errors.New("memory lifecycle: semantic repository is required")
 	}
-	if strings.TrimSpace(req.ContractVersion) != domain.V2ContractVersion {
+	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
 		return nil, fmt.Errorf("memory lifecycle: invalid contract_version %q", req.ContractVersion)
 	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
 		return nil, ErrLifecycleAuthContext
 	}
-	result, err := s.semantic.CorrectEntityResolution(ctx, repository.V2CorrectEntityResolutionInput{
+	result, err := s.semantic.CorrectEntityResolution(ctx, repository.CorrectEntityResolutionInput{
 		TeamID:                 actor.TeamID.String(),
 		OwnerProfileID:         actor.ProfileID.String(),
 		Action:                 string(req.Operation),
@@ -227,7 +227,7 @@ func (s *lifecycleService) CorrectEntityResolution(
 	if err != nil {
 		return nil, err
 	}
-	return &V2CorrectEntityResolutionResult{
+	return &CorrectEntityResolutionResult{
 		DryRun:                          result.DryRun,
 		ImpactToken:                     result.PlanToken,
 		SelectedObservationIDs:          result.SelectedObservationIDs,
@@ -238,13 +238,13 @@ func (s *lifecycleService) CorrectEntityResolution(
 	}, nil
 }
 
-func correctionEvidenceFromRequest(evidence []V2RememberEvidenceInput) []repository.V2CorrectionEvidenceInput {
+func correctionEvidenceFromRequest(evidence []RememberEvidenceInput) []repository.CorrectionEvidenceInput {
 	if len(evidence) == 0 {
 		return nil
 	}
-	out := make([]repository.V2CorrectionEvidenceInput, 0, len(evidence))
+	out := make([]repository.CorrectionEvidenceInput, 0, len(evidence))
 	for _, item := range evidence {
-		out = append(out, repository.V2CorrectionEvidenceInput{
+		out = append(out, repository.CorrectionEvidenceInput{
 			Content:     item.Content,
 			SourceType:  item.SourceType,
 			Authority:   item.Authority,
@@ -255,7 +255,7 @@ func correctionEvidenceFromRequest(evidence []V2RememberEvidenceInput) []reposit
 	return out
 }
 
-func correctionEvidenceSourceGroup(item V2RememberEvidenceInput) string {
+func correctionEvidenceSourceGroup(item RememberEvidenceInput) string {
 	if value := strings.TrimSpace(item.SourceGroup); value != "" {
 		return value
 	}
@@ -265,26 +265,26 @@ func correctionEvidenceSourceGroup(item V2RememberEvidenceInput) string {
 	return strings.TrimSpace(item.Source)
 }
 
-func lifecycleEvidenceFromRequest(evidence []V2RememberEvidenceInput) []repository.V2EvidenceInput {
+func lifecycleEvidenceFromRequest(evidence []RememberEvidenceInput) []repository.EvidenceInput {
 	if len(evidence) == 0 {
 		return nil
 	}
-	out := make([]repository.V2EvidenceInput, 0, len(evidence))
-	sourceRevisionHashes := v2SourceRevisionContentHashes(evidence)
+	out := make([]repository.EvidenceInput, 0, len(evidence))
+	sourceRevisionHashes := sourceRevisionContentHashes(evidence)
 	for _, item := range evidence {
-		scan := scanV2Evidence(item.Content)
-		authority, metadata := v2LedgerAuthorityAndMetadata(item.Authority, item.Metadata)
-		metadata = v2EvidenceProcessingIntentMetadata(metadata, item)
-		out = append(out, repository.V2EvidenceInput{
+		scan := scanEvidence(item.Content)
+		authority, metadata := ledgerAuthorityAndMetadata(item.Authority, item.Metadata)
+		metadata = evidenceProcessingIntentMetadata(metadata, item)
+		out = append(out, repository.EvidenceInput{
 			Content:                       item.Content,
-			SourceType:                    v2EvidenceSourceType(item.SourceType),
+			SourceType:                    evidenceSourceType(item.SourceType),
 			Authority:                     authority,
 			SourceRef:                     strings.TrimSpace(item.Source),
 			SourceKey:                     strings.TrimSpace(item.SourceKey),
 			SourceRevisionToken:           strings.TrimSpace(item.SourceRevision),
 			ExpectedPreviousRevisionToken: strings.TrimSpace(item.PreviousSourceRevision),
-			SourceRevisionContentHash:     sourceRevisionHashes[v2SourceRevisionBatchKey(item)],
-			SourceRevisionEnvelope:        v2SourceRevisionEnvelope(item),
+			SourceRevisionContentHash:     sourceRevisionHashes[sourceRevisionBatchKey(item)],
+			SourceRevisionEnvelope:        sourceRevisionEnvelope(item),
 			Labels:                        append([]string(nil), item.Labels...),
 			Metadata:                      metadata,
 			InitialEvent:                  &scan,

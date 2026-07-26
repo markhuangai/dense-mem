@@ -32,8 +32,8 @@ var (
 )
 
 type SemanticStore interface {
-	SemanticGraph(ctx context.Context, input repository.V2SemanticGraphQuery) (*repository.V2SemanticGraphSnapshot, error)
-	SemanticGraphNodeDetail(ctx context.Context, input repository.V2SemanticGraphNodeDetailInput) (*repository.V2SemanticGraphNode, error)
+	SemanticGraph(ctx context.Context, input repository.SemanticGraphQuery) (*repository.SemanticGraphSnapshot, error)
+	SemanticGraphNodeDetail(ctx context.Context, input repository.SemanticGraphNodeDetailInput) (*repository.SemanticGraphNode, error)
 }
 
 type Service interface {
@@ -118,7 +118,7 @@ func (s *semanticService) Graph(ctx context.Context, teamID string, query Query)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := s.store.SemanticGraph(ctx, repository.V2SemanticGraphQuery{
+	snapshot, err := s.store.SemanticGraph(ctx, repository.SemanticGraphQuery{
 		TeamID:     strings.TrimSpace(teamID),
 		Scope:      normalized.scope,
 		Query:      normalized.search,
@@ -146,7 +146,7 @@ func (s *semanticService) NodeDetail(ctx context.Context, teamID string, nodeTyp
 	if normalizedType == "" || normalizedID == "" {
 		return nil, ErrMissingNode
 	}
-	node, err := s.store.SemanticGraphNodeDetail(ctx, repository.V2SemanticGraphNodeDetailInput{
+	node, err := s.store.SemanticGraphNodeDetail(ctx, repository.SemanticGraphNodeDetailInput{
 		TeamID:   strings.TrimSpace(teamID),
 		NodeType: normalizedType,
 		NodeID:   normalizedID,
@@ -229,7 +229,7 @@ func clamp(value, defaultValue, maxValue int) int {
 	return value
 }
 
-func snapshotFromSemantic(snapshot *repository.V2SemanticGraphSnapshot) *Snapshot {
+func snapshotFromSemantic(snapshot *repository.SemanticGraphSnapshot) *Snapshot {
 	if snapshot == nil {
 		return &Snapshot{Nodes: []Node{}, Edges: []Edge{}}
 	}
@@ -264,7 +264,7 @@ func snapshotFromSemantic(snapshot *repository.V2SemanticGraphSnapshot) *Snapsho
 	return out
 }
 
-func nodeFromSemantic(node repository.V2SemanticGraphNode) *Node {
+func nodeFromSemantic(node repository.SemanticGraphNode) *Node {
 	title := truncateText(node.Title, 160)
 	if title == "" {
 		title = node.ID

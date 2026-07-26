@@ -21,7 +21,6 @@ type HTTPClient struct {
 	ControlURL       string
 	ControlToken     string
 	PlacementTimeout time.Duration
-	ToolTransport    string
 	Client           *http.Client
 }
 
@@ -62,14 +61,7 @@ func (c *HTTPClient) CallTool(ctx context.Context, name string, input any, out a
 	if strings.TrimSpace(c.APIKey) == "" {
 		return fmt.Errorf("API key is required")
 	}
-	switch strings.ToLower(strings.TrimSpace(c.ToolTransport)) {
-	case "", "rest":
-		return c.doJSON(ctx, http.MethodPost, endpoint(c.BaseURL, "/api/v1/tools/"+name), c.APIKey, input, out)
-	case "mcp":
-		return c.callMCPTool(ctx, name, input, out)
-	default:
-		return fmt.Errorf("unsupported tool transport %q", c.ToolTransport)
-	}
+	return c.callMCPTool(ctx, name, input, out)
 }
 
 func (c *HTTPClient) callMCPTool(ctx context.Context, name string, input any, out any) error {
@@ -421,7 +413,7 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 	}
 	fragmentID := fragmentIDFromRemember(out)
 	evidenceID := evidenceIDFromRemember(out)
-	if fragmentID == "" && evidenceID != "" && !isV2RememberOutput(out) {
+	if fragmentID == "" && evidenceID != "" && !isRememberOutput(out) {
 		fragmentID = evidenceID
 	}
 	if ingestID := stringValue(out["ingest_id"]); ingestID != "" {
@@ -536,15 +528,11 @@ func (c *HTTPClient) placementTimeout() time.Duration {
 	return 2 * time.Minute
 }
 
-func (c *HTTPClient) ExportFragmentMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
-	return c.exportKnowledgeMapping(ctx, limit, []string{"fragment"})
+func (c *HTTPClient) ExportEvidenceMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
+	return c.exportKnowledgeMapping(ctx, limit, []string{"evidence"})
 }
 
 func (c *HTTPClient) ExportKnowledgeMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
-	return c.exportKnowledgeMapping(ctx, limit, []string{"fragment", "claim", "fact"})
-}
-
-func (c *HTTPClient) ExportV2KnowledgeMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
 	return c.exportKnowledgeMapping(ctx, limit, []string{"evidence", "entity", "value", "relationship", "hypothesis"})
 }
 
@@ -557,8 +545,7 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 		limit = 100
 	}
 	mapping := newKnowledgeMapping()
-	fragmentSourceDocIDs := map[string][]string{}
-	claimSourceDocIDs := map[string][]string{}
+	evidenceSourceDocIDs := map[string][]string{}
 	for _, kind := range kinds {
 		cursor := ""
 		for {
@@ -582,17 +569,13 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 				if kind == "dream" {
 					addDreamSourceRefs(&mapping, id, dreamSourceRefsFromKnowledgeItem(item))
 				}
-				sourceDocIDs := sourceDocIDsFromKnowledgeItem(kind, item, fragmentSourceDocIDs, claimSourceDocIDs)
+				sourceDocIDs := sourceDocIDsFromKnowledgeItem(kind, item, evidenceSourceDocIDs)
 				for _, sourceDocID := range sourceDocIDs {
-					addSourceMapping(&mapping, Ref{Type: kind, ID: id, SourceDocID: sourceDocID}, kind == "fragment")
+					addSourceMapping(&mapping, Ref{Type: kind, ID: id, SourceDocID: sourceDocID}, kind == "evidence")
 				}
 				switch kind {
-				case "fragment":
-					fragmentSourceDocIDs[id] = sourceDocIDs
 				case "evidence":
-					fragmentSourceDocIDs[id] = sourceDocIDs
-				case "claim":
-					claimSourceDocIDs[id] = sourceDocIDs
+					evidenceSourceDocIDs[id] = sourceDocIDs
 				}
 			}
 			if !out.HasMore || out.NextCursor == "" {
@@ -743,12 +726,9 @@ func seedMetadata(item CorpusItem) map[string]any {
 	return out
 }
 
-func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, fragmentSourceDocIDs, claimSourceDocIDs map[string][]string) []string {
+func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, evidenceSourceDocIDs map[string][]string) []string {
 	sourceDocID := firstNonEmpty(
 		nestedString(item, "metadata", "source_doc_id"),
-		nestedStringPath(item, "metadata", "legacy_metadata", "source_doc_id"),
-		nestedString(item, "classification", "source_doc_id"),
-		nestedString(item, "classification", "eval_source_doc_id"),
 		nestedString(item, "payload", "source_doc_id"),
 	)
 	sourceDocIDs := []string{}
@@ -756,19 +736,13 @@ func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, fragmentSou
 		sourceDocIDs = append(sourceDocIDs, sourceDocID)
 	}
 	switch kind {
-	case "claim":
-		for _, fragmentID := range stringsFromAny(item["supported_by"]) {
-			sourceDocIDs = append(sourceDocIDs, fragmentSourceDocIDs[fragmentID]...)
-		}
-	case "fact":
-		sourceDocIDs = append(sourceDocIDs, claimSourceDocIDs[stringValue(item["promoted_from_claim_id"])]...)
 	case "hypothesis":
 		for _, ref := range sourceRefsFromAny(item["source_refs"]) {
-			sourceDocIDs = append(sourceDocIDs, fragmentSourceDocIDs[ref.ID]...)
+			sourceDocIDs = append(sourceDocIDs, evidenceSourceDocIDs[ref.ID]...)
 		}
 		if payloadRefs, ok := nestedValue(item, "payload", "source_refs"); ok {
 			for _, ref := range sourceRefsFromAny(payloadRefs) {
-				sourceDocIDs = append(sourceDocIDs, fragmentSourceDocIDs[ref.ID]...)
+				sourceDocIDs = append(sourceDocIDs, evidenceSourceDocIDs[ref.ID]...)
 			}
 		}
 	}
@@ -850,7 +824,7 @@ func evidenceIDFromRemember(out map[string]any) string {
 	return firstNonEmpty(stringValue(first["evidence_id"]), stringValue(first["id"]), stringValue(first["fragment_id"]))
 }
 
-func isV2RememberOutput(out map[string]any) bool {
+func isRememberOutput(out map[string]any) bool {
 	return stringValue(out["processing_state"]) != "" ||
 		stringValue(out["status_tool"]) != "" ||
 		stringValue(out["correlation_id"]) != ""

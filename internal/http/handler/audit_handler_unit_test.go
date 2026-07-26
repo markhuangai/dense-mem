@@ -64,12 +64,12 @@ func TestAuditHandlerGetReturnsPaginatedAuditEntries(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	handler := NewAuditHandler(svc)
-	e.GET("/api/v1/teams/:teamId/audit-log", func(c echo.Context) error {
+	e.GET("/ui/api/team/audit-log", func(c echo.Context) error {
 		c.Set("principal", &middleware.Principal{TeamID: teamID, Role: "admin"})
 		return handler.Get(c)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/teams/"+teamID.String()+"/audit-log?limit=500&offset=2", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/audit-log?limit=500&offset=2", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -90,11 +90,11 @@ func TestAuditHandlerGetRejectsBadRouteAndPrincipal(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.GET("/audit-log", handler.Get)
-	e.GET("/api/v1/teams/:teamId/audit-log", func(c echo.Context) error {
+	e.GET("/ui/api/team/audit-log", func(c echo.Context) error {
 		c.Set("principal", &middleware.Principal{TeamID: otherTeamID})
 		return handler.Get(c)
 	})
-	e.GET("/api/v1/profiles/:profileId/audit-log", handler.Get)
+	e.GET("/ui/api/team/profiles/:profileId/audit-log", handler.Get)
 
 	req := httptest.NewRequest(http.MethodGet, "/audit-log", nil)
 	rec := httptest.NewRecorder()
@@ -102,13 +102,13 @@ func TestAuditHandlerGetRejectsBadRouteAndPrincipal(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), string(httperr.PROFILE_ID_REQUIRED))
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/profiles/not-a-uuid/audit-log", nil)
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/not-a-uuid/audit-log", nil)
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), string(httperr.INVALID_UUID))
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/teams/"+teamID.String()+"/audit-log", nil)
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+teamID.String()+"/audit-log", nil)
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusForbidden, rec.Code)
@@ -121,9 +121,12 @@ func TestAuditHandlerGetPropagatesServiceErrorAndPureHelpers(t *testing.T) {
 	handler := NewAuditHandler(svc)
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.GET("/api/v1/teams/:teamId/audit-log", handler.Get)
+	e.GET("/ui/api/team/audit-log", func(c echo.Context) error {
+		c.Set("principal", &middleware.Principal{TeamID: teamID, Role: "admin"})
+		return handler.Get(c)
+	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/teams/"+teamID.String()+"/audit-log?limit=-1&offset=-3", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/audit-log?limit=-1&offset=-3", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusInternalServerError, rec.Code)

@@ -12,11 +12,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-func TestV2EmbeddingWorkerRequiresDependenciesAndScope(t *testing.T) {
+func TestEmbeddingWorkerRequiresDependenciesAndScope(t *testing.T) {
 	validDeps := func() EmbeddingWorkerDependencies {
 		return EmbeddingWorkerDependencies{
-			Search:   newV2EmbeddingSearchStub(),
-			Provider: &v2EmbeddingProviderStub{available: true, model: "test-model", dims: 3},
+			Search:   newEmbeddingSearchStub(),
+			Provider: &embeddingProviderStub{available: true, model: "test-model", dims: 3},
 			TeamID:   "team-a",
 			WorkerID: "worker-a",
 		}
@@ -46,11 +46,11 @@ func TestV2EmbeddingWorkerRequiresDependenciesAndScope(t *testing.T) {
 	}
 }
 
-func TestV2EmbeddingWorkerHandlesNoClaimedJobsAndClaimErrors(t *testing.T) {
-	search := newV2EmbeddingSearchStub()
+func TestEmbeddingWorkerHandlesNoClaimedJobsAndClaimErrors(t *testing.T) {
+	search := newEmbeddingSearchStub()
 	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search:    search,
-		Provider:  &v2EmbeddingProviderStub{available: true, model: "test-model", dims: 3},
+		Provider:  &embeddingProviderStub{available: true, model: "test-model", dims: 3},
 		TeamID:    "team-a",
 		WorkerID:  "worker-a",
 		BatchSize: 200,
@@ -77,13 +77,13 @@ func TestV2EmbeddingWorkerHandlesNoClaimedJobsAndClaimErrors(t *testing.T) {
 	}
 }
 
-func TestV2EmbeddingWorkerCompletesValidBatch(t *testing.T) {
-	search := newV2EmbeddingSearchStub()
-	search.jobs = []repository.V2EmbeddingJob{
-		v2EmbeddingJobForTest("job-a", 1),
-		v2EmbeddingJobForTest("job-b", 2),
+func TestEmbeddingWorkerCompletesValidBatch(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{
+		embeddingJobForTest("job-a", 1),
+		embeddingJobForTest("job-b", 2),
 	}
-	provider := &v2EmbeddingProviderStub{
+	provider := &embeddingProviderStub{
 		available: true,
 		model:     "test-model",
 		dims:      3,
@@ -117,16 +117,16 @@ func TestV2EmbeddingWorkerCompletesValidBatch(t *testing.T) {
 	}
 }
 
-func TestV2EmbeddingWorkerFailsProviderCountMismatch(t *testing.T) {
-	search := newV2EmbeddingSearchStub()
-	search.jobs = []repository.V2EmbeddingJob{
-		v2EmbeddingJobForTest("job-a", 1),
-		v2EmbeddingJobForTest("job-b", 1),
+func TestEmbeddingWorkerFailsProviderCountMismatch(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{
+		embeddingJobForTest("job-a", 1),
+		embeddingJobForTest("job-b", 1),
 	}
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search: search,
-		Provider: &v2EmbeddingProviderStub{
+		Provider: &embeddingProviderStub{
 			available: true,
 			model:     "test-model",
 			dims:      3,
@@ -157,16 +157,16 @@ func TestV2EmbeddingWorkerFailsProviderCountMismatch(t *testing.T) {
 	}
 }
 
-func TestV2EmbeddingWorkerRejectsInvalidVectorsWithoutDroppingValidJobs(t *testing.T) {
-	search := newV2EmbeddingSearchStub()
-	search.jobs = []repository.V2EmbeddingJob{
-		v2EmbeddingJobForTest("job-a", 1),
-		v2EmbeddingJobForTest("job-b", 1),
+func TestEmbeddingWorkerRejectsInvalidVectorsWithoutDroppingValidJobs(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{
+		embeddingJobForTest("job-a", 1),
+		embeddingJobForTest("job-b", 1),
 	}
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search: search,
-		Provider: &v2EmbeddingProviderStub{
+		Provider: &embeddingProviderStub{
 			available: true,
 			model:     "test-model",
 			dims:      3,
@@ -198,7 +198,7 @@ func TestV2EmbeddingWorkerRejectsInvalidVectorsWithoutDroppingValidJobs(t *testi
 	}
 }
 
-func TestV2EmbeddingWorkerClassifiesProviderFailures(t *testing.T) {
+func TestEmbeddingWorkerClassifiesProviderFailures(t *testing.T) {
 	tests := []struct {
 		name       string
 		err        error
@@ -244,12 +244,12 @@ func TestV2EmbeddingWorkerClassifiesProviderFailures(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			search := newV2EmbeddingSearchStub()
-			search.jobs = []repository.V2EmbeddingJob{v2EmbeddingJobForTest("job-a", 1)}
+			search := newEmbeddingSearchStub()
+			search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-a", 1)}
 			metrics := observability.NewInMemoryDiscoverabilityMetrics()
 			worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 				Search: search,
-				Provider: &v2EmbeddingProviderStub{
+				Provider: &embeddingProviderStub{
 					available: true,
 					model:     "test-model",
 					dims:      3,
@@ -283,10 +283,10 @@ func TestV2EmbeddingWorkerClassifiesProviderFailures(t *testing.T) {
 	}
 }
 
-func TestV2EmbeddingWorkerFailsContractMismatchBeforeProviderCall(t *testing.T) {
-	search := newV2EmbeddingSearchStub()
-	search.jobs = []repository.V2EmbeddingJob{v2EmbeddingJobForTest("job-a", 1)}
-	provider := &v2EmbeddingProviderStub{
+func TestEmbeddingWorkerFailsContractMismatchBeforeProviderCall(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-a", 1)}
+	provider := &embeddingProviderStub{
 		available: true,
 		model:     "wrong-model",
 		dims:      3,
@@ -316,10 +316,10 @@ func TestV2EmbeddingWorkerFailsContractMismatchBeforeProviderCall(t *testing.T) 
 	}
 }
 
-func TestV2EmbeddingWorkerFailsDimensionMismatchBeforeProviderCall(t *testing.T) {
-	search := newV2EmbeddingSearchStub()
-	search.jobs = []repository.V2EmbeddingJob{v2EmbeddingJobForTest("job-a", 1)}
-	provider := &v2EmbeddingProviderStub{
+func TestEmbeddingWorkerFailsDimensionMismatchBeforeProviderCall(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-a", 1)}
+	provider := &embeddingProviderStub{
 		available: true,
 		model:     "test-model",
 		dims:      4,
@@ -344,12 +344,12 @@ func TestV2EmbeddingWorkerFailsDimensionMismatchBeforeProviderCall(t *testing.T)
 	}
 }
 
-func TestV2EmbeddingWorkerMarksIneligibleJobContractMismatch(t *testing.T) {
-	search := newV2EmbeddingSearchStub()
-	job := v2EmbeddingJobForTest("job-a", 1)
+func TestEmbeddingWorkerMarksIneligibleJobContractMismatch(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	job := embeddingJobForTest("job-a", 1)
 	job.EmbeddingContractID = "old-contract"
-	search.jobs = []repository.V2EmbeddingJob{job}
-	provider := &v2EmbeddingProviderStub{
+	search.jobs = []repository.EmbeddingJob{job}
+	provider := &embeddingProviderStub{
 		available: true,
 		model:     "test-model",
 		dims:      3,
@@ -374,10 +374,10 @@ func TestV2EmbeddingWorkerMarksIneligibleJobContractMismatch(t *testing.T) {
 	}
 }
 
-func TestV2EmbeddingWorkerTreatsUnavailableProviderAsRetryable(t *testing.T) {
-	search := newV2EmbeddingSearchStub()
-	search.jobs = []repository.V2EmbeddingJob{v2EmbeddingJobForTest("job-a", 1)}
-	provider := &v2EmbeddingProviderStub{
+func TestEmbeddingWorkerTreatsUnavailableProviderAsRetryable(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-a", 1)}
+	provider := &embeddingProviderStub{
 		available: false,
 		model:     "test-model",
 		dims:      3,
@@ -407,18 +407,18 @@ func TestV2EmbeddingWorkerTreatsUnavailableProviderAsRetryable(t *testing.T) {
 	}
 }
 
-func TestV2EmbeddingWorkerCountsStaleAndLeaseLostCompletions(t *testing.T) {
-	search := newV2EmbeddingSearchStub()
-	search.jobs = []repository.V2EmbeddingJob{
-		v2EmbeddingJobForTest("job-stale", 1),
-		v2EmbeddingJobForTest("job-lease", 1),
+func TestEmbeddingWorkerCountsStaleAndLeaseLostCompletions(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{
+		embeddingJobForTest("job-stale", 1),
+		embeddingJobForTest("job-lease", 1),
 	}
-	search.completeErrs["job-stale"] = repository.ErrV2SearchStaleVersion
-	search.completeErrs["job-lease"] = repository.ErrV2EmbeddingLeaseLost
+	search.completeErrs["job-stale"] = repository.ErrSearchStaleVersion
+	search.completeErrs["job-lease"] = repository.ErrEmbeddingLeaseLost
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
 		Search: search,
-		Provider: &v2EmbeddingProviderStub{
+		Provider: &embeddingProviderStub{
 			available: true,
 			model:     "test-model",
 			dims:      3,
@@ -447,9 +447,9 @@ func TestV2EmbeddingWorkerCountsStaleAndLeaseLostCompletions(t *testing.T) {
 	}
 }
 
-func newV2EmbeddingSearchStub() *v2EmbeddingSearchStub {
-	return &v2EmbeddingSearchStub{
-		contract: repository.V2ActiveSearchContract{
+func newEmbeddingSearchStub() *embeddingSearchStub {
+	return &embeddingSearchStub{
+		contract: repository.ActiveSearchContract{
 			EmbeddingContractID: "contract-a",
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
@@ -458,8 +458,8 @@ func newV2EmbeddingSearchStub() *v2EmbeddingSearchStub {
 	}
 }
 
-func v2EmbeddingJobForTest(id string, attempts int) repository.V2EmbeddingJob {
-	return repository.V2EmbeddingJob{
+func embeddingJobForTest(id string, attempts int) repository.EmbeddingJob {
+	return repository.EmbeddingJob{
 		TeamID:              "team-a",
 		EmbeddingJobID:      id,
 		SearchDocumentID:    "doc-" + id,
@@ -476,29 +476,29 @@ func v2EmbeddingJobForTest(id string, attempts int) repository.V2EmbeddingJob {
 	}
 }
 
-type v2EmbeddingSearchStub struct {
-	contract       repository.V2ActiveSearchContract
-	jobs           []repository.V2EmbeddingJob
-	completeInputs []repository.V2CompleteEmbeddingJobInput
-	failInputs     []repository.V2FailEmbeddingJobInput
+type embeddingSearchStub struct {
+	contract       repository.ActiveSearchContract
+	jobs           []repository.EmbeddingJob
+	completeInputs []repository.CompleteEmbeddingJobInput
+	failInputs     []repository.FailEmbeddingJobInput
 	completeErrs   map[string]error
 	claimErr       error
 	claimLimit     int
 }
 
-func (s *v2EmbeddingSearchStub) GetActiveSearchContract(context.Context) (*repository.V2ActiveSearchContract, error) {
+func (s *embeddingSearchStub) GetActiveSearchContract(context.Context) (*repository.ActiveSearchContract, error) {
 	return &s.contract, nil
 }
 
-func (s *v2EmbeddingSearchStub) CheckSearchReadiness(context.Context) (*repository.V2SearchReadiness, error) {
-	return &repository.V2SearchReadiness{Ready: true, Contract: &s.contract}, nil
+func (s *embeddingSearchStub) CheckSearchReadiness(context.Context) (*repository.SearchReadiness, error) {
+	return &repository.SearchReadiness{Ready: true, Contract: &s.contract}, nil
 }
 
-func (s *v2EmbeddingSearchStub) UpsertSearchDocument(context.Context, repository.V2UpsertSearchDocumentInput) (*repository.V2SearchDocumentResult, error) {
+func (s *embeddingSearchStub) UpsertSearchDocument(context.Context, repository.UpsertSearchDocumentInput) (*repository.SearchDocumentResult, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (s *v2EmbeddingSearchStub) ClaimEmbeddingJobs(_ context.Context, input repository.V2ClaimEmbeddingJobsInput) ([]repository.V2EmbeddingJob, error) {
+func (s *embeddingSearchStub) ClaimEmbeddingJobs(_ context.Context, input repository.ClaimEmbeddingJobsInput) ([]repository.EmbeddingJob, error) {
 	s.claimLimit = input.Limit
 	if s.claimErr != nil {
 		return nil, s.claimErr
@@ -506,7 +506,7 @@ func (s *v2EmbeddingSearchStub) ClaimEmbeddingJobs(_ context.Context, input repo
 	return s.jobs, nil
 }
 
-func (s *v2EmbeddingSearchStub) CompleteEmbeddingJob(_ context.Context, input repository.V2CompleteEmbeddingJobInput) error {
+func (s *embeddingSearchStub) CompleteEmbeddingJob(_ context.Context, input repository.CompleteEmbeddingJobInput) error {
 	s.completeInputs = append(s.completeInputs, input)
 	if err := s.completeErrs[input.EmbeddingJobID]; err != nil {
 		return err
@@ -514,28 +514,28 @@ func (s *v2EmbeddingSearchStub) CompleteEmbeddingJob(_ context.Context, input re
 	return nil
 }
 
-func (s *v2EmbeddingSearchStub) FailEmbeddingJob(_ context.Context, input repository.V2FailEmbeddingJobInput) (*repository.V2EmbeddingJobFailureResult, error) {
+func (s *embeddingSearchStub) FailEmbeddingJob(_ context.Context, input repository.FailEmbeddingJobInput) (*repository.EmbeddingJobFailureResult, error) {
 	s.failInputs = append(s.failInputs, input)
 	status := "queued"
 	if input.Terminal {
 		status = "failed"
 	}
-	return &repository.V2EmbeddingJobFailureResult{Status: status, Terminal: input.Terminal}, nil
+	return &repository.EmbeddingJobFailureResult{Status: status, Terminal: input.Terminal}, nil
 }
 
-func (s *v2EmbeddingSearchStub) GetEmbeddingQueueStats(context.Context, repository.V2EmbeddingQueueStatsInput) (*repository.V2EmbeddingQueueStats, error) {
-	return &repository.V2EmbeddingQueueStats{}, nil
+func (s *embeddingSearchStub) GetEmbeddingQueueStats(context.Context, repository.EmbeddingQueueStatsInput) (*repository.EmbeddingQueueStats, error) {
+	return &repository.EmbeddingQueueStats{}, nil
 }
 
-func (s *v2EmbeddingSearchStub) SearchFullText(context.Context, repository.V2FullTextSearchInput) ([]repository.V2SearchHit, error) {
+func (s *embeddingSearchStub) SearchFullText(context.Context, repository.FullTextSearchInput) ([]repository.SearchHit, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (s *v2EmbeddingSearchStub) SearchExactVector(context.Context, repository.V2ExactVectorSearchInput) ([]repository.V2SearchHit, error) {
+func (s *embeddingSearchStub) SearchExactVector(context.Context, repository.ExactVectorSearchInput) ([]repository.SearchHit, error) {
 	return nil, errors.New("not implemented")
 }
 
-type v2EmbeddingProviderStub struct {
+type embeddingProviderStub struct {
 	available bool
 	model     string
 	dims      int
@@ -544,11 +544,11 @@ type v2EmbeddingProviderStub struct {
 	gotTexts  []string
 }
 
-func (p *v2EmbeddingProviderStub) Embed(context.Context, string) ([]float32, string, error) {
+func (p *embeddingProviderStub) Embed(context.Context, string) ([]float32, string, error) {
 	return nil, "", errors.New("not implemented")
 }
 
-func (p *v2EmbeddingProviderStub) EmbedBatch(_ context.Context, texts []string) ([][]float32, string, error) {
+func (p *embeddingProviderStub) EmbedBatch(_ context.Context, texts []string) ([][]float32, string, error) {
 	p.gotTexts = append([]string(nil), texts...)
 	if p.err != nil {
 		return nil, "", p.err
@@ -556,17 +556,17 @@ func (p *v2EmbeddingProviderStub) EmbedBatch(_ context.Context, texts []string) 
 	return p.vectors, p.model, nil
 }
 
-func (p *v2EmbeddingProviderStub) ModelName() string {
+func (p *embeddingProviderStub) ModelName() string {
 	return p.model
 }
 
-func (p *v2EmbeddingProviderStub) Dimensions() int {
+func (p *embeddingProviderStub) Dimensions() int {
 	return p.dims
 }
 
-func (p *v2EmbeddingProviderStub) IsAvailable() bool {
+func (p *embeddingProviderStub) IsAvailable() bool {
 	return p.available
 }
 
-var _ repository.V2SearchRepository = (*v2EmbeddingSearchStub)(nil)
-var _ embedding.EmbeddingProviderInterface = (*v2EmbeddingProviderStub)(nil)
+var _ repository.SearchRepository = (*embeddingSearchStub)(nil)
+var _ embedding.EmbeddingProviderInterface = (*embeddingProviderStub)(nil)

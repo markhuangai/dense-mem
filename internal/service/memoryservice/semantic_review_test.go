@@ -15,12 +15,12 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-func TestV2SemanticReviewRetriesCompleteResponseAndDoesNotPersistPartialInvalidAttempt(t *testing.T) {
+func TestSemanticReviewRetriesCompleteResponseAndDoesNotPersistPartialInvalidAttempt(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
 	provider := &semanticReviewProviderStub{
-		responses: []verifier.V2SemanticReviewResponse{
+		responses: []verifier.SemanticReviewResponse{
 			semanticReviewResponse(request.RequestID, false, true),
 			semanticReviewResponse(request.RequestID, false, false),
 		},
@@ -41,9 +41,9 @@ func TestV2SemanticReviewRetriesCompleteResponseAndDoesNotPersistPartialInvalidA
 		MaxAttempts:     2,
 	})
 	if err != nil {
-		t.Fatalf("ReviewV2Semantic returned error: %v", err)
+		t.Fatalf("ReviewSemantic returned error: %v", err)
 	}
-	if result.Status != string(domain.V2SemanticReviewAccepted) || result.Attempts != 2 {
+	if result.Status != string(domain.SemanticReviewAccepted) || result.Attempts != 2 {
 		t.Fatalf("result = %#v", result)
 	}
 	if len(provider.requests) != 2 {
@@ -61,7 +61,7 @@ func TestV2SemanticReviewRetriesCompleteResponseAndDoesNotPersistPartialInvalidA
 	if len(ledger.outcomes) != 3 {
 		t.Fatalf("outcomes = %#v", ledger.outcomes)
 	}
-	if ledger.outcomes[0].Status != "invalid" || ledger.outcomes[1].Status != "valid" || ledger.outcomes[2].Status != string(domain.V2SemanticReviewAccepted) {
+	if ledger.outcomes[0].Status != "invalid" || ledger.outcomes[1].Status != "valid" || ledger.outcomes[2].Status != string(domain.SemanticReviewAccepted) {
 		t.Fatalf("outcome statuses = %#v", ledger.outcomes)
 	}
 	combinedPayload := ledger.combinedPayloadJSON(t)
@@ -70,7 +70,7 @@ func TestV2SemanticReviewRetriesCompleteResponseAndDoesNotPersistPartialInvalidA
 	}
 }
 
-func TestV2SemanticReviewRetriesMalformedProviderResponse(t *testing.T) {
+func TestSemanticReviewRetriesMalformedProviderResponse(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
@@ -79,7 +79,7 @@ func TestV2SemanticReviewRetriesMalformedProviderResponse(t *testing.T) {
 			&verifier.MalformedResponseError{Provider: "stub", Message: "bad structured output"},
 			nil,
 		},
-		responses: []verifier.V2SemanticReviewResponse{
+		responses: []verifier.SemanticReviewResponse{
 			semanticReviewResponse(request.RequestID, false, false),
 		},
 	}
@@ -99,9 +99,9 @@ func TestV2SemanticReviewRetriesMalformedProviderResponse(t *testing.T) {
 		MaxAttempts:     5,
 	})
 	if err != nil {
-		t.Fatalf("ReviewV2Semantic returned error: %v", err)
+		t.Fatalf("ReviewSemantic returned error: %v", err)
 	}
-	if result.Status != string(domain.V2SemanticReviewAccepted) || result.Attempts != 2 {
+	if result.Status != string(domain.SemanticReviewAccepted) || result.Attempts != 2 {
 		t.Fatalf("result = %#v", result)
 	}
 	if len(provider.requests) != 2 {
@@ -118,12 +118,12 @@ func TestV2SemanticReviewRetriesMalformedProviderResponse(t *testing.T) {
 	if len(ledger.outcomes) != 3 {
 		t.Fatalf("outcomes = %#v", ledger.outcomes)
 	}
-	if ledger.outcomes[0].Status != "invalid" || ledger.outcomes[1].Status != "valid" || ledger.outcomes[2].Status != string(domain.V2SemanticReviewAccepted) {
+	if ledger.outcomes[0].Status != "invalid" || ledger.outcomes[1].Status != "valid" || ledger.outcomes[2].Status != string(domain.SemanticReviewAccepted) {
 		t.Fatalf("outcome statuses = %#v", ledger.outcomes)
 	}
 }
 
-func TestV2SemanticReviewReturnsRetryableMalformedProviderResponseAtDefaultLimit(t *testing.T) {
+func TestSemanticReviewReturnsRetryableMalformedProviderResponseAtDefaultLimit(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	provider := &semanticReviewProviderStub{
@@ -141,9 +141,9 @@ func TestV2SemanticReviewReturnsRetryableMalformedProviderResponseAtDefaultLimit
 		Request:         semanticReviewServiceRequest(teamID, ownerID),
 	})
 	if err != nil {
-		t.Fatalf("ReviewV2Semantic returned error: %v", err)
+		t.Fatalf("ReviewSemantic returned error: %v", err)
 	}
-	if result.Status != string(domain.V2SemanticReviewRetryable) || result.Attempts != 5 {
+	if result.Status != string(domain.SemanticReviewRetryable) || result.Attempts != 5 {
 		t.Fatalf("result = %#v", result)
 	}
 	if len(provider.requests) != 5 {
@@ -152,19 +152,19 @@ func TestV2SemanticReviewReturnsRetryableMalformedProviderResponseAtDefaultLimit
 	if len(result.ValidationErrors) != 1 || result.ValidationErrors[0].Field != "provider_response" {
 		t.Fatalf("validation errors = %#v", result.ValidationErrors)
 	}
-	if len(ledger.outcomes) != 6 || ledger.outcomes[len(ledger.outcomes)-1].Status != string(domain.V2SemanticReviewRetryable) {
+	if len(ledger.outcomes) != 6 || ledger.outcomes[len(ledger.outcomes)-1].Status != string(domain.SemanticReviewRetryable) {
 		t.Fatalf("outcomes = %#v", ledger.outcomes)
 	}
 }
 
-func TestV2SemanticReviewForcesJobIdentityOntoProviderRequest(t *testing.T) {
+func TestSemanticReviewForcesJobIdentityOntoProviderRequest(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
 	request.TeamID = uuid.NewString()
 	request.OwnerProfileID = uuid.NewString()
 	provider := &semanticReviewProviderStub{
-		responses: []verifier.V2SemanticReviewResponse{
+		responses: []verifier.SemanticReviewResponse{
 			semanticReviewResponse(request.RequestID, false, false),
 		},
 	}
@@ -180,9 +180,9 @@ func TestV2SemanticReviewForcesJobIdentityOntoProviderRequest(t *testing.T) {
 		Request:         request,
 	})
 	if err != nil {
-		t.Fatalf("ReviewV2Semantic returned error: %v", err)
+		t.Fatalf("ReviewSemantic returned error: %v", err)
 	}
-	if result.Status != string(domain.V2SemanticReviewAccepted) {
+	if result.Status != string(domain.SemanticReviewAccepted) {
 		t.Fatalf("status = %q", result.Status)
 	}
 	if len(provider.requests) != 1 {
@@ -197,7 +197,7 @@ func TestV2SemanticReviewForcesJobIdentityOntoProviderRequest(t *testing.T) {
 	}
 }
 
-func TestV2SemanticReviewQuarantinesSecuritySignalsWithoutSemanticDecisions(t *testing.T) {
+func TestSemanticReviewQuarantinesSecuritySignalsWithoutSemanticDecisions(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
@@ -213,13 +213,13 @@ func TestV2SemanticReviewQuarantinesSecuritySignalsWithoutSemanticDecisions(t *t
 	request.RelationshipObservations[0].Start = 0
 	request.RelationshipObservations[0].End = len([]rune(content))
 	response := semanticReviewResponse(request.RequestID, false, false)
-	response.SecuritySignals = []verifier.V2SemanticSecuritySignal{{
+	response.SecuritySignals = []verifier.SemanticSecuritySignal{{
 		EvidenceID: "ev_1",
 		Kind:       "prompt_secret_extraction",
 		Start:      0,
 		End:        5,
 	}}
-	provider := &semanticReviewProviderStub{responses: []verifier.V2SemanticReviewResponse{response}}
+	provider := &semanticReviewProviderStub{responses: []verifier.SemanticReviewResponse{response}}
 	ledger := &semanticReviewLedgerStub{}
 	svc := NewSemanticReviewService(SemanticReviewDependencies{Provider: provider, Ledger: ledger})
 	placementItemID := uuid.NewString()
@@ -233,9 +233,9 @@ func TestV2SemanticReviewQuarantinesSecuritySignalsWithoutSemanticDecisions(t *t
 		Request:         request,
 	})
 	if err != nil {
-		t.Fatalf("ReviewV2Semantic returned error: %v", err)
+		t.Fatalf("ReviewSemantic returned error: %v", err)
 	}
-	if result.Status != string(domain.V2SemanticReviewQuarantined) {
+	if result.Status != string(domain.SemanticReviewQuarantined) {
 		t.Fatalf("status = %q", result.Status)
 	}
 	if len(result.RelationshipResults) != 0 || len(result.EntityResults) != 0 {
@@ -253,12 +253,12 @@ func TestV2SemanticReviewQuarantinesSecuritySignalsWithoutSemanticDecisions(t *t
 	}
 }
 
-func TestV2SemanticReviewStopsAtRegenerationLimit(t *testing.T) {
+func TestSemanticReviewStopsAtRegenerationLimit(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
 	provider := &semanticReviewProviderStub{
-		responses: []verifier.V2SemanticReviewResponse{
+		responses: []verifier.SemanticReviewResponse{
 			semanticReviewResponse(request.RequestID, false, true),
 		},
 	}
@@ -275,9 +275,9 @@ func TestV2SemanticReviewStopsAtRegenerationLimit(t *testing.T) {
 		MaxAttempts:     1,
 	})
 	if err != nil {
-		t.Fatalf("ReviewV2Semantic returned error: %v", err)
+		t.Fatalf("ReviewSemantic returned error: %v", err)
 	}
-	if result.Status != string(domain.V2SemanticReviewRetryable) || result.Attempts != 1 {
+	if result.Status != string(domain.SemanticReviewRetryable) || result.Attempts != 1 {
 		t.Fatalf("result = %#v", result)
 	}
 	if len(provider.requests) != 1 {
@@ -289,7 +289,7 @@ func TestV2SemanticReviewStopsAtRegenerationLimit(t *testing.T) {
 	}
 }
 
-func TestV2SemanticReviewReturnsRetryableProviderFailure(t *testing.T) {
+func TestSemanticReviewReturnsRetryableProviderFailure(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	provider := &semanticReviewProviderStub{err: &verifier.TimeoutError{Provider: "stub", Message: "secret host timed out"}}
@@ -305,9 +305,9 @@ func TestV2SemanticReviewReturnsRetryableProviderFailure(t *testing.T) {
 		Request:         semanticReviewServiceRequest(teamID, ownerID),
 	})
 	if err != nil {
-		t.Fatalf("ReviewV2Semantic returned error: %v", err)
+		t.Fatalf("ReviewSemantic returned error: %v", err)
 	}
-	if result.Status != string(domain.V2SemanticReviewRetryable) {
+	if result.Status != string(domain.SemanticReviewRetryable) {
 		t.Fatalf("status = %q", result.Status)
 	}
 	if result.FailureStage != semanticFailureStageVerification || result.FailureClass != semanticFailureClassTimeout {
@@ -322,19 +322,19 @@ func TestV2SemanticReviewReturnsRetryableProviderFailure(t *testing.T) {
 	}
 }
 
-func semanticReviewServiceRequest(teamID string, ownerID string) verifier.V2SemanticReviewRequest {
+func semanticReviewServiceRequest(teamID string, ownerID string) verifier.SemanticReviewRequest {
 	content := "Mark works on Dense-Mem."
-	return verifier.V2SemanticReviewRequest{
+	return verifier.SemanticReviewRequest{
 		RequestID:      "verify-service-1",
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
-		Evidence: []verifier.V2SemanticReviewEvidence{{
+		Evidence: []verifier.SemanticReviewEvidence{{
 			EvidenceID:    "ev_1",
 			FragmentID:    uuid.NewString(),
 			EvidenceIndex: 0,
 			Content:       content,
 		}},
-		EntityMentions: []verifier.V2SemanticEntityMention{
+		EntityMentions: []verifier.SemanticEntityMention{
 			{
 				Ref:        "person_1",
 				Surface:    "Mark",
@@ -342,7 +342,7 @@ func semanticReviewServiceRequest(teamID string, ownerID string) verifier.V2Sema
 				EvidenceID: "ev_1",
 				Start:      0,
 				End:        4,
-				Candidates: []verifier.V2SemanticEntityCandidate{
+				Candidates: []verifier.SemanticEntityCandidate{
 					{EntityID: "ent-mark", CanonicalName: "Mark Huang", Kind: "person", TeamID: teamID, Status: "active"},
 					{EntityID: "ent-cross-profile", CanonicalName: "Other Mark", Kind: "person", TeamID: uuid.NewString(), Status: "active"},
 				},
@@ -354,7 +354,7 @@ func semanticReviewServiceRequest(teamID string, ownerID string) verifier.V2Sema
 				EvidenceID: "ev_1",
 				Start:      strings.Index(content, "Dense-Mem"),
 				End:        strings.Index(content, "Dense-Mem") + len("Dense-Mem"),
-				Candidates: []verifier.V2SemanticEntityCandidate{{
+				Candidates: []verifier.SemanticEntityCandidate{{
 					EntityID:      "ent-dense-mem",
 					CanonicalName: "Dense-Mem",
 					Kind:          "project",
@@ -363,7 +363,7 @@ func semanticReviewServiceRequest(teamID string, ownerID string) verifier.V2Sema
 				}},
 			},
 		},
-		RelationshipObservations: []verifier.V2SemanticRelationshipObservation{{
+		RelationshipObservations: []verifier.SemanticRelationshipObservation{{
 			Ref:               "rel_1",
 			SubjectRef:        "person_1",
 			OriginalPredicate: "works on",
@@ -372,7 +372,7 @@ func semanticReviewServiceRequest(teamID string, ownerID string) verifier.V2Sema
 			Quote:             "Mark works on Dense-Mem.",
 			Start:             0,
 			End:               len(content),
-			PredicateCandidates: []verifier.V2SemanticPredicateCandidate{{
+			PredicateCandidates: []verifier.SemanticPredicateCandidate{{
 				PredicateKey:        "works_on",
 				Version:             1,
 				AllowedSubjectKinds: []string{"person"},
@@ -393,38 +393,38 @@ func semanticReviewTestRuneIndex(content string, substring string) int {
 	return len([]rune(content[:index]))
 }
 
-func semanticReviewResponse(requestID string, quarantined bool, omitRelationship bool) verifier.V2SemanticReviewResponse {
+func semanticReviewResponse(requestID string, quarantined bool, omitRelationship bool) verifier.SemanticReviewResponse {
 	markID := "ent-mark"
 	projectID := "ent-dense-mem"
 	predicate := "works_on"
-	resp := verifier.V2SemanticReviewResponse{
+	resp := verifier.SemanticReviewResponse{
 		RequestID:       requestID,
-		SecuritySignals: []verifier.V2SemanticSecuritySignal{},
-		EntityResults: []verifier.V2SemanticEntityResult{
+		SecuritySignals: []verifier.SemanticSecuritySignal{},
+		EntityResults: []verifier.SemanticEntityResult{
 			{Ref: "person_1", Action: "reuse", CandidateEntityID: &markID, Confidence: 0.95, Rationale: "The evidence states the person."},
 			{Ref: "project_1", Action: "reuse", CandidateEntityID: &projectID, Confidence: 0.95, Rationale: "The evidence states the project."},
 		},
-		RelationshipResults: []verifier.V2SemanticRelationshipReviewResult{
+		RelationshipResults: []verifier.SemanticRelationshipReviewResult{
 			{Ref: "rel_1", PredicateStatus: "resolved", PredicateKey: &predicate, EvidenceVerdict: "entailed", Confidence: 0.94, Rationale: "The evidence states the relationship."},
 		},
 	}
 	if omitRelationship {
-		resp.RelationshipResults = []verifier.V2SemanticRelationshipReviewResult{}
+		resp.RelationshipResults = []verifier.SemanticRelationshipReviewResult{}
 	}
 	if quarantined {
-		resp.SecuritySignals = []verifier.V2SemanticSecuritySignal{{EvidenceID: "ev_1", Kind: "prompt_secret_extraction", Start: 0, End: 4}}
+		resp.SecuritySignals = []verifier.SemanticSecuritySignal{{EvidenceID: "ev_1", Kind: "prompt_secret_extraction", Start: 0, End: 4}}
 	}
 	return resp
 }
 
 type semanticReviewProviderStub struct {
-	requests  []verifier.V2SemanticReviewRequest
-	responses []verifier.V2SemanticReviewResponse
+	requests  []verifier.SemanticReviewRequest
+	responses []verifier.SemanticReviewResponse
 	errs      []error
 	err       error
 }
 
-func (s *semanticReviewProviderStub) ReviewSemantic(_ context.Context, req verifier.V2SemanticReviewRequest) (verifier.V2SemanticReviewResponse, error) {
+func (s *semanticReviewProviderStub) ReviewSemantic(_ context.Context, req verifier.SemanticReviewRequest) (verifier.SemanticReviewResponse, error) {
 	s.requests = append(s.requests, req)
 	if len(s.errs) > 0 {
 		index := len(s.requests) - 1
@@ -432,14 +432,14 @@ func (s *semanticReviewProviderStub) ReviewSemantic(_ context.Context, req verif
 			index = len(s.errs) - 1
 		}
 		if s.errs[index] != nil {
-			return verifier.V2SemanticReviewResponse{}, s.errs[index]
+			return verifier.SemanticReviewResponse{}, s.errs[index]
 		}
 	}
 	if s.err != nil {
-		return verifier.V2SemanticReviewResponse{}, s.err
+		return verifier.SemanticReviewResponse{}, s.err
 	}
 	if len(s.responses) == 0 {
-		return verifier.V2SemanticReviewResponse{}, errors.New("missing stub response")
+		return verifier.SemanticReviewResponse{}, errors.New("missing stub response")
 	}
 	response := s.responses[0]
 	s.responses = s.responses[1:]
@@ -451,33 +451,33 @@ func (s *semanticReviewProviderStub) ModelName() string {
 }
 
 type semanticReviewLedgerStub struct {
-	outcomes       []repository.V2PlacementOutcomeInput
-	securityEvents []repository.V2SecurityEventInput
+	outcomes       []repository.PlacementOutcomeInput
+	securityEvents []repository.SecurityEventInput
 }
 
-func (s *semanticReviewLedgerStub) CreateIngest(context.Context, repository.V2CreateIngestInput) (*repository.V2CreateIngestResult, error) {
+func (s *semanticReviewLedgerStub) CreateIngest(context.Context, repository.CreateIngestInput) (*repository.CreateIngestResult, error) {
 	return nil, errors.New("unexpected CreateIngest")
 }
 
-func (s *semanticReviewLedgerStub) GetPlacementRun(context.Context, repository.V2GetPlacementRunInput) (*repository.V2CreateIngestResult, error) {
+func (s *semanticReviewLedgerStub) GetPlacementRun(context.Context, repository.GetPlacementRunInput) (*repository.CreateIngestResult, error) {
 	return nil, errors.New("unexpected GetPlacementRun")
 }
 
-func (s *semanticReviewLedgerStub) AdvanceSourceRevision(context.Context, repository.V2AdvanceSourceRevisionInput) (*repository.V2SourceRevisionResult, error) {
+func (s *semanticReviewLedgerStub) AdvanceSourceRevision(context.Context, repository.AdvanceSourceRevisionInput) (*repository.SourceRevisionResult, error) {
 	return nil, errors.New("unexpected AdvanceSourceRevision")
 }
 
-func (s *semanticReviewLedgerStub) AppendSecurityEvent(_ context.Context, input repository.V2SecurityEventInput) (string, error) {
+func (s *semanticReviewLedgerStub) AppendSecurityEvent(_ context.Context, input repository.SecurityEventInput) (string, error) {
 	s.securityEvents = append(s.securityEvents, input)
 	return uuid.NewString(), nil
 }
 
-func (s *semanticReviewLedgerStub) AppendPlacementOutcome(_ context.Context, input repository.V2PlacementOutcomeInput) (string, error) {
+func (s *semanticReviewLedgerStub) AppendPlacementOutcome(_ context.Context, input repository.PlacementOutcomeInput) (string, error) {
 	s.outcomes = append(s.outcomes, input)
 	return uuid.NewString(), nil
 }
 
-func (s *semanticReviewLedgerStub) ClaimNextPlacementRun(context.Context, string, string, time.Duration) (*repository.V2PlacementRun, error) {
+func (s *semanticReviewLedgerStub) ClaimNextPlacementRun(context.Context, string, string, time.Duration) (*repository.PlacementRun, error) {
 	return nil, errors.New("unexpected ClaimNextPlacementRun")
 }
 

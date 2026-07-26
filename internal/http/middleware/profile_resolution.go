@@ -36,24 +36,15 @@ type ResolvedTeamContext struct {
 	Description string
 }
 
-// TeamIDHeader is the HTTP header for explicit team ID overrides in legacy clients.
-const TeamIDHeader = "X-Team-ID"
-
-// ProfileIDHeader is retained for legacy clients; new callers should use the
-// bearer key's team binding.
-const ProfileIDHeader = "X-Profile-ID"
-
 func isHeaderScopedProfileRoute(path string) bool {
 	headerScopedPrefixes := []string{
 		"/mcp",
-		"/api/v1/tools",
-		"/api/v1/fragments",
-		"/api/v1/claims",
-		"/api/v1/facts",
-		"/api/v1/communities",
-		"/api/v1/recall",
-		"/api/v1/dreaming",
-		"/api/v1/dreams",
+		"/ui/api/recall",
+		"/ui/api/dreaming",
+		"/ui/api/dreams",
+		"/ui/api/evidence",
+		"/ui/api/relationships",
+		"/ui/api/communities",
 	}
 
 	for _, prefix := range headerScopedPrefixes {
@@ -66,12 +57,11 @@ func isHeaderScopedProfileRoute(path string) bool {
 }
 
 // ProfileResolutionMiddleware creates a middleware that resolves and validates
-// team IDs from path parameters, legacy headers, or the authenticated key.
+// team IDs from path parameters or the authenticated key.
 //
-// For profile-scoped routes (/api/v1/profiles/:profileId/*): reads :profileId param
-// For header-scoped routes (/api/v1/tools/*, /api/v1/fragments, etc.): prefers
-// the authenticated principal's profile ID, falling back to X-Profile-ID for
-// legacy clients.
+// For profile-scoped routes (/ui/api/team/profiles/:profileId/*): reads :profileId param
+// For principal-scoped routes (/mcp, /ui/api/recall, /ui/api/dreaming,
+// /ui/api/dreams): uses the authenticated principal's team binding.
 //
 // The middleware:
 // - Validates that a profile ID is provided (returns 400 PROFILE_ID_REQUIRED if missing)
@@ -97,14 +87,9 @@ func ProfileResolutionMiddleware(svc ProfileResolutionServiceInterface) echo.Mid
 				isToolRoute = true
 				if principal != nil && principal.GetTeamID() != uuid.Nil {
 					profileIDStr = principal.GetTeamID().String()
-				} else {
-					profileIDStr = c.Request().Header.Get(TeamIDHeader)
-					if profileIDStr == "" {
-						profileIDStr = c.Request().Header.Get(ProfileIDHeader)
-					}
 				}
-			} else if strings.HasPrefix(path, "/api/v1/teams/") || strings.HasPrefix(path, "/api/v1/profiles/") {
-				// Team route: read from :teamId path param, with legacy :profileId support.
+			} else if strings.HasPrefix(path, "/ui/api/team/profiles/") {
+				// Team-profile route: read from :teamId path param, with :profileId support.
 				isToolRoute = false
 				profileIDStr = c.Param("teamId")
 				if profileIDStr == "" {

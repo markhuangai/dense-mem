@@ -37,7 +37,7 @@ const (
 )
 
 type SemanticReviewProvider interface {
-	ReviewSemantic(ctx context.Context, req verifier.V2SemanticReviewRequest) (verifier.V2SemanticReviewResponse, error)
+	ReviewSemantic(ctx context.Context, req verifier.SemanticReviewRequest) (verifier.SemanticReviewResponse, error)
 	ModelName() string
 }
 
@@ -47,13 +47,13 @@ type SemanticReviewService interface {
 
 type SemanticReviewDependencies struct {
 	Provider    SemanticReviewProvider
-	Ledger      repository.V2LedgerRepository
+	Ledger      repository.LedgerRepository
 	MaxAttempts int
 }
 
 type semanticReviewService struct {
 	provider    SemanticReviewProvider
-	ledger      repository.V2LedgerRepository
+	ledger      repository.LedgerRepository
 	maxAttempts int
 }
 
@@ -63,25 +63,25 @@ type SemanticReviewJob struct {
 	IngestID                  string
 	PlacementRunID            string
 	PlacementItemID           string
-	Request                   verifier.V2SemanticReviewRequest
-	ValidationErrors          []verifier.V2SemanticValidationError
-	RetryableValidationErrors []verifier.V2SemanticValidationError
+	Request                   verifier.SemanticReviewRequest
+	ValidationErrors          []verifier.SemanticValidationError
+	RetryableValidationErrors []verifier.SemanticValidationError
 	FailureStage              string
 	FailureClass              string
 	MaxAttempts               int
 }
 
 type SemanticReviewResult struct {
-	Status              string                                        `json:"status"`
-	Attempts            int                                           `json:"attempts"`
-	EntityResults       []verifier.V2SemanticEntityResult             `json:"entity_results,omitempty"`
-	RelationshipResults []verifier.V2SemanticRelationshipReviewResult `json:"relationship_results,omitempty"`
-	ValidationErrors    []verifier.V2SemanticValidationError          `json:"validation_errors,omitempty"`
-	OutcomeIDs          []string                                      `json:"outcome_ids,omitempty"`
-	ResponseHash        string                                        `json:"response_hash,omitempty"`
-	FailureStage        string                                        `json:"failure_stage,omitempty"`
-	FailureClass        string                                        `json:"failure_class,omitempty"`
-	RetryableExhausted  bool                                          `json:"retryable_exhausted,omitempty"`
+	Status              string                                      `json:"status"`
+	Attempts            int                                         `json:"attempts"`
+	EntityResults       []verifier.SemanticEntityResult             `json:"entity_results,omitempty"`
+	RelationshipResults []verifier.SemanticRelationshipReviewResult `json:"relationship_results,omitempty"`
+	ValidationErrors    []verifier.SemanticValidationError          `json:"validation_errors,omitempty"`
+	OutcomeIDs          []string                                    `json:"outcome_ids,omitempty"`
+	ResponseHash        string                                      `json:"response_hash,omitempty"`
+	FailureStage        string                                      `json:"failure_stage,omitempty"`
+	FailureClass        string                                      `json:"failure_class,omitempty"`
+	RetryableExhausted  bool                                        `json:"retryable_exhausted,omitempty"`
 }
 
 func NewSemanticReviewService(deps SemanticReviewDependencies) SemanticReviewService {
@@ -99,8 +99,8 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 	job = normalizeSemanticReviewJob(job)
 	result := &SemanticReviewResult{}
 	if len(job.ValidationErrors) > 0 {
-		result.Status = string(domain.V2SemanticReviewTerminalFailure)
-		result.ValidationErrors = append([]verifier.V2SemanticValidationError(nil), job.ValidationErrors...)
+		result.Status = string(domain.SemanticReviewTerminalFailure)
+		result.ValidationErrors = append([]verifier.SemanticValidationError(nil), job.ValidationErrors...)
 		result.FailureStage = semanticFailureStageOrDefault(job.FailureStage, semanticFailureStagePreflight)
 		result.FailureClass = semanticFailureClassOrDefault(job.FailureClass, semanticFailureClassValidationFailed)
 		if err := s.appendFinalOutcome(ctx, job, result, "", nil); err != nil {
@@ -109,8 +109,8 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 		return result, nil
 	}
 	if len(job.RetryableValidationErrors) > 0 {
-		result.Status = string(domain.V2SemanticReviewRetryable)
-		result.ValidationErrors = append([]verifier.V2SemanticValidationError(nil), job.RetryableValidationErrors...)
+		result.Status = string(domain.SemanticReviewRetryable)
+		result.ValidationErrors = append([]verifier.SemanticValidationError(nil), job.RetryableValidationErrors...)
 		result.FailureStage = semanticFailureStageOrDefault(job.FailureStage, semanticFailureStagePreflight)
 		result.FailureClass = semanticFailureClassOrDefault(job.FailureClass, semanticFailureClassUnknown)
 		if err := s.appendFinalOutcome(ctx, job, result, "", nil); err != nil {
@@ -121,10 +121,10 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 	if s.provider == nil {
 		return nil, errors.New("semantic review: provider is required")
 	}
-	request, validationErrors := verifier.PrepareV2SemanticReviewRequest(job.Request)
+	request, validationErrors := verifier.PrepareSemanticReviewRequest(job.Request)
 	job.Request = request
 	if len(validationErrors) > 0 {
-		result.Status = string(domain.V2SemanticReviewTerminalFailure)
+		result.Status = string(domain.SemanticReviewTerminalFailure)
 		result.ValidationErrors = validationErrors
 		if err := s.appendFinalOutcome(ctx, job, result, "", nil); err != nil {
 			return nil, err
@@ -149,7 +149,7 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 					return nil, err
 				}
 				if attempt == maxAttempts {
-					result.Status = string(domain.V2SemanticReviewRetryable)
+					result.Status = string(domain.SemanticReviewRetryable)
 					result.FailureStage = semanticFailureStageVerification
 					result.FailureClass = semanticFailureClassMalformedResponse
 					if err := s.appendFinalOutcome(ctx, job, result, "", nil); err != nil {
@@ -161,7 +161,7 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 				previousHash = ""
 				continue
 			}
-			result.Status = string(domain.V2SemanticReviewRetryable)
+			result.Status = string(domain.SemanticReviewRetryable)
 			result.Attempts = attempt
 			result.FailureStage = semanticFailureStageVerification
 			result.FailureClass = semanticProviderFailureClass(err)
@@ -177,7 +177,7 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 		if err != nil {
 			return nil, err
 		}
-		validationErrors = verifier.ValidateV2SemanticReviewResponse(request, response)
+		validationErrors = verifier.ValidateSemanticReviewResponse(request, response)
 		if len(validationErrors) > 0 {
 			result.Attempts = attempt
 			result.ValidationErrors = validationErrors
@@ -185,7 +185,7 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 				return nil, err
 			}
 			if attempt == maxAttempts {
-				result.Status = string(domain.V2SemanticReviewRetryable)
+				result.Status = string(domain.SemanticReviewRetryable)
 				result.ResponseHash = responseHash
 				result.FailureStage = semanticFailureStageVerification
 				result.FailureClass = semanticFailureClassMalformedResponse
@@ -202,7 +202,7 @@ func (s *semanticReviewService) ReviewSemantic(ctx context.Context, job Semantic
 			return nil, err
 		}
 		result = semanticReviewResultFromResponse(response, attempt, responseHash)
-		if result.Status == string(domain.V2SemanticReviewQuarantined) {
+		if result.Status == string(domain.SemanticReviewQuarantined) {
 			if err := s.appendSecurityEvents(ctx, job, request, response, attempt); err != nil {
 				return nil, err
 			}
@@ -239,9 +239,9 @@ func (s *semanticReviewService) maxAttemptsFor(job SemanticReviewJob) int {
 	return maxAttempts
 }
 
-func (s *semanticReviewService) appendAttemptOutcome(ctx context.Context, job SemanticReviewJob, attempt int, status string, responseHash string, validationErrors []string, response *verifier.V2SemanticReviewResponse) error {
+func (s *semanticReviewService) appendAttemptOutcome(ctx context.Context, job SemanticReviewJob, attempt int, status string, responseHash string, validationErrors []string, response *verifier.SemanticReviewResponse) error {
 	payload := semanticAttemptPayload(job.Request, attempt, s.provider.ModelName(), responseHash, validationErrors, response)
-	outcomeID, err := s.ledger.AppendPlacementOutcome(ctx, repository.V2PlacementOutcomeInput{
+	outcomeID, err := s.ledger.AppendPlacementOutcome(ctx, repository.PlacementOutcomeInput{
 		TeamID:          job.TeamID,
 		OwnerProfileID:  job.OwnerProfileID,
 		PlacementRunID:  job.PlacementRunID,
@@ -257,8 +257,8 @@ func (s *semanticReviewService) appendAttemptOutcome(ctx context.Context, job Se
 	return nil
 }
 
-func (s *semanticReviewService) appendFinalOutcome(ctx context.Context, job SemanticReviewJob, result *SemanticReviewResult, responseHash string, response *verifier.V2SemanticReviewResponse) error {
-	input := repository.V2PlacementOutcomeInput{
+func (s *semanticReviewService) appendFinalOutcome(ctx context.Context, job SemanticReviewJob, result *SemanticReviewResult, responseHash string, response *verifier.SemanticReviewResponse) error {
+	input := repository.PlacementOutcomeInput{
 		TeamID:          job.TeamID,
 		OwnerProfileID:  job.OwnerProfileID,
 		PlacementRunID:  job.PlacementRunID,
@@ -275,8 +275,8 @@ func (s *semanticReviewService) appendFinalOutcome(ctx context.Context, job Sema
 	return nil
 }
 
-func (s *semanticReviewService) appendSecurityEvents(ctx context.Context, job SemanticReviewJob, req verifier.V2SemanticReviewRequest, resp verifier.V2SemanticReviewResponse, attempt int) error {
-	evidenceByID := map[string]verifier.V2SemanticReviewEvidence{}
+func (s *semanticReviewService) appendSecurityEvents(ctx context.Context, job SemanticReviewJob, req verifier.SemanticReviewRequest, resp verifier.SemanticReviewResponse, attempt int) error {
+	evidenceByID := map[string]verifier.SemanticReviewEvidence{}
 	for _, evidence := range req.Evidence {
 		evidenceByID[evidence.EvidenceID] = evidence
 	}
@@ -285,21 +285,21 @@ func (s *semanticReviewService) appendSecurityEvents(ctx context.Context, job Se
 		if !ok || evidence.FragmentID == "" {
 			return fmt.Errorf("semantic review: cannot persist security signal for evidence %q", signal.EvidenceID)
 		}
-		quote, err := verifier.V2SemanticEvidenceSpan(evidence.Content, signal.Start, signal.End)
+		quote, err := verifier.SemanticEvidenceSpan(evidence.Content, signal.Start, signal.End)
 		if err != nil {
 			return fmt.Errorf("semantic review: cannot persist security signal span: %w", err)
 		}
-		if _, err := s.ledger.AppendSecurityEvent(ctx, repository.V2SecurityEventInput{
+		if _, err := s.ledger.AppendSecurityEvent(ctx, repository.SecurityEventInput{
 			TeamID:         job.TeamID,
 			OwnerProfileID: job.OwnerProfileID,
 			IngestID:       job.IngestID,
 			FragmentID:     evidence.FragmentID,
-			V2SecurityEventDraft: repository.V2SecurityEventDraft{
+			SecurityEventDraft: repository.SecurityEventDraft{
 				EventKind:      "verifier_signal",
 				Decision:       "quarantine",
 				ScanPolicyHash: securityScanPolicyHash,
 				Reason:         "semantic verifier reported security signal",
-				Signals: []repository.V2SecuritySignalInput{{
+				Signals: []repository.SecuritySignalInput{{
 					Kind:      signal.Kind,
 					Severity:  semanticSignalSeverity(signal.Kind),
 					SpanStart: signal.Start,
@@ -319,16 +319,16 @@ func (s *semanticReviewService) appendSecurityEvents(ctx context.Context, job Se
 	return nil
 }
 
-func semanticReviewResultFromResponse(resp verifier.V2SemanticReviewResponse, attempts int, responseHash string) *SemanticReviewResult {
+func semanticReviewResultFromResponse(resp verifier.SemanticReviewResponse, attempts int, responseHash string) *SemanticReviewResult {
 	result := &SemanticReviewResult{
-		Status:              string(domain.V2SemanticReviewAccepted),
+		Status:              string(domain.SemanticReviewAccepted),
 		Attempts:            attempts,
 		EntityResults:       resp.EntityResults,
 		RelationshipResults: resp.RelationshipResults,
 		ResponseHash:        responseHash,
 	}
 	if len(resp.SecuritySignals) > 0 {
-		result.Status = string(domain.V2SemanticReviewQuarantined)
+		result.Status = string(domain.SemanticReviewQuarantined)
 		result.EntityResults = nil
 		result.RelationshipResults = nil
 		return result
@@ -336,9 +336,9 @@ func semanticReviewResultFromResponse(resp verifier.V2SemanticReviewResponse, at
 	return result
 }
 
-func semanticAttemptPayload(req verifier.V2SemanticReviewRequest, attempt int, model string, responseHash string, validationErrors []string, resp *verifier.V2SemanticReviewResponse) map[string]any {
+func semanticAttemptPayload(req verifier.SemanticReviewRequest, attempt int, model string, responseHash string, validationErrors []string, resp *verifier.SemanticReviewResponse) map[string]any {
 	payload := map[string]any{
-		"contract_version": domain.V2ContractVersion,
+		"contract_version": domain.ContractVersion,
 		"request_id":       req.RequestID,
 		"attempt":          attempt,
 		"model":            model,
@@ -357,9 +357,9 @@ func semanticAttemptPayload(req verifier.V2SemanticReviewRequest, attempt int, m
 	return payload
 }
 
-func semanticFinalPayload(req verifier.V2SemanticReviewRequest, result *SemanticReviewResult, model string, responseHash string, resp *verifier.V2SemanticReviewResponse) map[string]any {
+func semanticFinalPayload(req verifier.SemanticReviewRequest, result *SemanticReviewResult, model string, responseHash string, resp *verifier.SemanticReviewResponse) map[string]any {
 	payload := map[string]any{
-		"contract_version": domain.V2ContractVersion,
+		"contract_version": domain.ContractVersion,
 		"request_id":       req.RequestID,
 		"status":           result.Status,
 		"attempts":         result.Attempts,
@@ -389,7 +389,7 @@ func semanticFinalPayload(req verifier.V2SemanticReviewRequest, result *Semantic
 	return payload
 }
 
-func semanticRequestSummary(req verifier.V2SemanticReviewRequest) map[string]any {
+func semanticRequestSummary(req verifier.SemanticReviewRequest) map[string]any {
 	candidateCount := 0
 	predicateCount := 0
 	evidenceIDs := make([]string, 0, len(req.Evidence))
@@ -412,7 +412,7 @@ func semanticRequestSummary(req verifier.V2SemanticReviewRequest) map[string]any
 	}
 }
 
-func semanticResponseSummary(resp verifier.V2SemanticReviewResponse) map[string]any {
+func semanticResponseSummary(resp verifier.SemanticReviewResponse) map[string]any {
 	return map[string]any{
 		"security_signal_count":     len(resp.SecuritySignals),
 		"entity_result_count":       len(resp.EntityResults),
@@ -420,7 +420,7 @@ func semanticResponseSummary(resp verifier.V2SemanticReviewResponse) map[string]
 	}
 }
 
-func semanticNormalizedResults(resp verifier.V2SemanticReviewResponse) map[string]any {
+func semanticNormalizedResults(resp verifier.SemanticReviewResponse) map[string]any {
 	entities := make([]map[string]any, 0, len(resp.EntityResults))
 	for _, entity := range resp.EntityResults {
 		item := map[string]any{
@@ -452,7 +452,7 @@ func semanticNormalizedResults(resp verifier.V2SemanticReviewResponse) map[strin
 	}
 }
 
-func semanticReviewResponseHash(resp verifier.V2SemanticReviewResponse) (string, error) {
+func semanticReviewResponseHash(resp verifier.SemanticReviewResponse) (string, error) {
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return "", fmt.Errorf("semantic review: response hash: %w", err)
@@ -461,7 +461,7 @@ func semanticReviewResponseHash(resp verifier.V2SemanticReviewResponse) (string,
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func semanticValidationMessages(errs []verifier.V2SemanticValidationError) []string {
+func semanticValidationMessages(errs []verifier.SemanticValidationError) []string {
 	out := make([]string, 0, len(errs))
 	for _, err := range errs {
 		out = append(out, err.Error())
@@ -469,8 +469,8 @@ func semanticValidationMessages(errs []verifier.V2SemanticValidationError) []str
 	return out
 }
 
-func semanticMalformedValidationErrors(field string, err error) []verifier.V2SemanticValidationError {
-	return []verifier.V2SemanticValidationError{{
+func semanticMalformedValidationErrors(field string, err error) []verifier.SemanticValidationError {
+	return []verifier.SemanticValidationError{{
 		Field:   field,
 		Message: semanticMalformedValidationMessage(err),
 	}}

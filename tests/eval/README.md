@@ -56,7 +56,7 @@ tests/eval/
 | `qasper` | QASPER train/dev v0.3 | Paper QA evidence retrieval. |
 | `longmem_oracle` | LongMemEval-S cleaned | Long-memory chat recall over non-abstention oracle rows. |
 
-The V2 release train uses `public_6axis_1k_v1` as the hard deterministic
+The post-cutover evaluation flow uses `public_6axis_1k_v1` as the hard deterministic
 release gate. `public_6axis_5k_v1` is diagnostic only unless a later roadmap
 issue promotes it.
 
@@ -103,7 +103,7 @@ silently evaluating the wrong corpus.
 
 The old relational seed presets depended on typed claims and preloaded facts,
 so they are retired. `cmd/eval-seedgen` retains the content-only
-`local_eval_1k_v2` preset.
+`local_eval_1k` preset.
 
 ## Start the persistent V1 stack
 

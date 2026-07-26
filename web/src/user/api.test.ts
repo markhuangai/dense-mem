@@ -78,7 +78,7 @@ describe("UserApi", () => {
     });
 
     expect(result.next_cursor).toBe("next-dream");
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/dreams?limit=50&status=proposed&cursor=current-dream&sort=last_evaluated_at&direction=desc", expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith("/ui/api/dreams?limit=50&status=proposed&cursor=current-dream&sort=last_evaluated_at&direction=desc", expect.objectContaining({
       headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
     }));
   });
@@ -139,10 +139,10 @@ describe("UserApi", () => {
     );
   });
 
-  it("maps canonical V2 recall payloads to evidence display hits", async () => {
+  it("maps canonical recall payloads to evidence display hits", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: {
-        recall_id: "rec_v2",
+        recall_id: "rec_canonical",
         results: [
           {
             evidence_id: "11111111-1111-4111-8111-111111111111",
@@ -182,7 +182,7 @@ describe("UserApi", () => {
     expect(result[0].semantic_rank).toBe(2);
     expect(result[0].final_score).toBe(0.5);
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/recall?query=postgres&limit=3",
+      "/ui/api/recall?query=postgres&limit=3",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
       }),

@@ -7,10 +7,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-func TestV2PlacementReviewRelationshipSpecsAcceptsProviderRequiredFields(t *testing.T) {
+func TestPlacementReviewRelationshipSpecsAcceptsProviderRequiredFields(t *testing.T) {
 	validFrom := "2026-07-01T00:00:00Z"
 	validTo := "2026-08-01T00:00:00Z"
-	specs, validationErrors := v2PlacementReviewRelationshipSpecs(map[string]any{
+	specs, validationErrors := placementReviewRelationshipSpecs(map[string]any{
 		"relationships": []any{map[string]any{
 			"proposal_id":          "rel:latency",
 			"subject":              "dense-mem",
@@ -23,7 +23,7 @@ func TestV2PlacementReviewRelationshipSpecsAcceptsProviderRequiredFields(t *test
 			"correction_target":    map[string]any{"relationship_id": "relationship-1", "expected_version": 7},
 			"evidence":             []any{map[string]any{"quote": "migration is slow"}},
 		}},
-	}, repository.V2EvidenceFragment{
+	}, repository.EvidenceFragment{
 		EvidenceIndex: 0,
 		Content:       "The production migration is slow today.",
 	}, "evidence-1")
@@ -52,9 +52,9 @@ func TestV2PlacementReviewRelationshipSpecsAcceptsProviderRequiredFields(t *test
 	}
 }
 
-func TestV2PlacementReviewRelationshipSpecsReturnsBoundedValidationErrors(t *testing.T) {
+func TestPlacementReviewRelationshipSpecsReturnsBoundedValidationErrors(t *testing.T) {
 	content := "Mark works on Dense-Mem."
-	specs, validationErrors := v2PlacementReviewRelationshipSpecs(map[string]any{
+	specs, validationErrors := placementReviewRelationshipSpecs(map[string]any{
 		"relationship_hints": []map[string]any{
 			{
 				"subject_ref":       "mark",
@@ -94,7 +94,7 @@ func TestV2PlacementReviewRelationshipSpecsReturnsBoundedValidationErrors(t *tes
 				"conflict_context":     map[string]any{"expected_version": 1},
 			},
 		},
-	}, repository.V2EvidenceFragment{Content: content}, "evidence-1")
+	}, repository.EvidenceFragment{Content: content}, "evidence-1")
 
 	if len(specs) != 0 {
 		t.Fatalf("specs = %#v", specs)
@@ -120,25 +120,25 @@ func TestV2PlacementReviewRelationshipSpecsReturnsBoundedValidationErrors(t *tes
 	}
 }
 
-func TestV2ReviewSpanHelpersUseRuneOffsets(t *testing.T) {
-	start, end, ok := v2ReviewFindSpan("Mark ships 🚀 quickly", "🚀 quickly")
+func TestReviewSpanHelpersUseRuneOffsets(t *testing.T) {
+	start, end, ok := reviewFindSpan("Mark ships 🚀 quickly", "🚀 quickly")
 	if !ok || start != 11 || end != 20 {
 		t.Fatalf("span = %d %d %v", start, end, ok)
 	}
-	if quote := v2ReviewSpanQuote("Mark ships 🚀 quickly", start, end); quote != "🚀 quickly" {
+	if quote := reviewSpanQuote("Mark ships 🚀 quickly", start, end); quote != "🚀 quickly" {
 		t.Fatalf("quote = %q", quote)
 	}
-	if _, _, ok := v2ReviewFindSpan("content", "missing"); ok {
+	if _, _, ok := reviewFindSpan("content", "missing"); ok {
 		t.Fatal("missing quote matched")
 	}
-	if quote := v2ReviewSpanQuote("content", -1, 4); quote != "" {
+	if quote := reviewSpanQuote("content", -1, 4); quote != "" {
 		t.Fatalf("invalid quote = %q", quote)
 	}
 }
 
-func TestV2ReviewOptionalTimeNormalizesPointers(t *testing.T) {
+func TestReviewOptionalTimeNormalizesPointers(t *testing.T) {
 	local := time.Date(2026, 7, 23, 3, 0, 0, 0, time.FixedZone("offset", -7*60*60))
-	parsed, err := v2ReviewOptionalTime(map[string]any{"valid_at": &local}, "valid_at")
+	parsed, err := reviewOptionalTime(map[string]any{"valid_at": &local}, "valid_at")
 	if err != nil {
 		t.Fatalf("optional time: %v", err)
 	}
