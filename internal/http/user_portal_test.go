@@ -638,6 +638,137 @@ func TestUserPortalStaticDoesNotShadowAPI(t *testing.T) {
 	require.NotContains(t, apiRec.Body.String(), "<title>ui</title>")
 }
 
+func TestRegisterUserPortalRegistersCurrentSurface(t *testing.T) {
+	e := echo.New()
+	RegisterUserPortal(e, UserPortalDeps{})
+
+	routes := registeredRoutes(e)
+	for _, route := range []string{
+		"GET /ui/api/team",
+		"PATCH /ui/api/team",
+		"DELETE /ui/api/team",
+		"GET /ui/api/team/profiles",
+		"POST /ui/api/team/profiles",
+		"GET /ui/api/team/profiles/:profileId",
+		"PATCH /ui/api/team/profiles/:profileId",
+		"POST /ui/api/team/profiles/:profileId/rotate",
+		"DELETE /ui/api/team/profiles/:profileId",
+		"GET /ui/api/dreaming/status",
+		"GET /ui/api/dreaming/runs",
+		"GET /ui/api/dreams",
+		"GET /ui/api/dreams/:dreamId",
+	} {
+		require.True(t, routes[route], "route %q not registered", route)
+	}
+}
+
+func TestUserPortalMountedRoutesUseAuthenticatedTeam(t *testing.T) {
+	teamID := uuid.New()
+	managerID := uuid.New()
+	memberID := uuid.New()
+	managerKey, rawKey := userPortalTestKey(t, teamID, managerID, "Manager", []string{"read", "write"})
+	managerKey.Role = service.APIKeyRoleManager
+	memberKey := &domain.APIKey{
+		ID:        memberID,
+		TeamID:    teamID,
+		ProfileID: teamID,
+		Name:      "Member",
+		Label:     "Member",
+		KeySuffix: "member",
+		Scopes:    []string{"read"},
+		Role:      service.APIKeyRoleMember,
+		RateLimit: 120,
+		CreatedAt: time.Now().UTC().Truncate(time.Second),
+	}
+	profiles := &controlProfileSvc{profiles: []*domain.Profile{{
+		ID:          teamID,
+		Name:        "Team",
+		Description: "Current team",
+		CreatedAt:   time.Now().UTC().Truncate(time.Second),
+		UpdatedAt:   time.Now().UTC().Truncate(time.Second),
+	}}}
+	keys := &userPortalKeySvc{keys: []*domain.APIKey{managerKey, memberKey}}
+	dreams := &controlDreamServiceStub{dream: &domain.Dream{ProfileID: teamID.String(), Status: domain.DreamStatusProposed}}
+	e := NewServer(config.Config{
+		HTTPMaxBodyBytes:        1048576,
+		RateLimitPerMinute:      100,
+		FragmentCreateRateLimit: 60,
+		FragmentReadRateLimit:   300,
+		ClaimWriteRateLimit:     60,
+		ClaimReadRateLimit:      300,
+	}, nil, HealthConfig{})
+	RegisterUserPortal(e, UserPortalDeps{
+		APIKeyRepo:   &userPortalAuthRepo{key: managerKey},
+		ProfileSvc:   profiles,
+		APIKeySvc:    keys,
+		RateLimitSvc: service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		DreamSvc:     dreams,
+		Config:       &config.Config{RateLimitPerMinute: 100, FragmentCreateRateLimit: 60, FragmentReadRateLimit: 300, ClaimWriteRateLimit: 60, ClaimReadRateLimit: 300},
+	})
+
+	for _, tt := range []struct {
+		method string
+		path   string
+		want   string
+	}{
+		{method: http.MethodGet, path: "/ui/api/team", want: `"name":"Team"`},
+		{method: http.MethodGet, path: "/ui/api/team/profiles/" + memberID.String(), want: `"name":"Member"`},
+		{method: http.MethodGet, path: "/ui/api/dreams/dream-1", want: `"dream_id":"dream-1"`},
+	} {
+		req := httptest.NewRequest(tt.method, tt.path, nil)
+		req.Header.Set("Authorization", "Bearer "+rawKey)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, tt.path)
+		require.Contains(t, rec.Body.String(), tt.want)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/ui/api/team", nil)
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, teamID, profiles.deleted)
+	require.Equal(t, teamID.String(), dreams.profileID)
+}
+
+func TestUserPortalMissingRouteServicesReturnUnavailable(t *testing.T) {
+	teamID := uuid.New()
+	managerID := uuid.New()
+	authKey, rawKey := userPortalTestKey(t, teamID, managerID, "Manager", []string{"read", "write"})
+	authKey.Role = service.APIKeyRoleManager
+	cfg := &config.Config{
+		HTTPMaxBodyBytes:        1048576,
+		RateLimitPerMinute:      100,
+		FragmentCreateRateLimit: 60,
+		FragmentReadRateLimit:   300,
+		ClaimWriteRateLimit:     60,
+		ClaimReadRateLimit:      300,
+	}
+	e := NewServer(*cfg, nil, HealthConfig{})
+	RegisterUserPortal(e, UserPortalDeps{
+		APIKeyRepo:   &userPortalAuthRepo{key: authKey},
+		RateLimitSvc: service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		Config:       cfg,
+	})
+
+	for _, tt := range []struct {
+		path string
+		want string
+	}{
+		{path: "/ui/api/team", want: "profile service unavailable"},
+		{path: "/ui/api/team/profiles/" + uuid.NewString(), want: "api key service unavailable"},
+		{path: "/ui/api/dreams/dream-1", want: "dream service unavailable"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+		req.Header.Set("Authorization", "Bearer "+rawKey)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code, tt.path)
+		require.Contains(t, rec.Body.String(), tt.want)
+	}
+}
+
 func userPortalTestKey(t *testing.T, teamID, keyID uuid.UUID, name string, scopes []string) (*domain.APIKey, string) {
 	t.Helper()
 	rawKey, err := crypto.GenerateRawKeyForProfile(name)

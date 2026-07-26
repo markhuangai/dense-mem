@@ -111,6 +111,10 @@ func ProfileResolutionMiddleware(svc ProfileResolutionServiceInterface) echo.Mid
 				return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
 			}
 
+			if svc == nil {
+				return httperr.New(httperr.SERVICE_UNAVAILABLE, "profile service unavailable")
+			}
+
 			// Resolve profile through service
 			// The service returns NOT_FOUND for non-existent or soft-deleted profiles
 			profile, err := svc.GetByID(ctx, profileID)

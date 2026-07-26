@@ -8,6 +8,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
@@ -51,23 +52,30 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	profileAuthz := httpmw.NewProfileAuthorizationService(deps.AuditSvc)
 	profileResolutionMW := httpmw.ProfileResolutionMiddleware(deps.ProfileSvc)
 	authorizeProfileMW := httpmw.AuthorizeProfile(profileAuthz)
+	profileSvcMW := userPortalServiceAvailable(deps.ProfileSvc != nil, "profile service unavailable")
+	apiKeySvcMW := userPortalServiceAvailable(deps.APIKeySvc != nil, "api key service unavailable")
+	dreamSvcMW := userPortalServiceAvailable(deps.DreamSvc != nil, "dream service unavailable")
 
-	api.GET("/session", portal.session)
+	api.GET("/session", portal.session, profileSvcMW, apiKeySvcMW)
 	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("write"))
 	api.GET("/graph", portal.graphSnapshot, httpmw.RequireScopes("read"))
 	api.GET("/node-detail", portal.graphNodeDetail, httpmw.RequireScopes("read"))
 	api.GET("/team/audit-log", portal.audit.Get, httpmw.RequireScopes("read"))
-	api.POST("/key/rotate", portal.rotateCurrentKey, httpmw.RequireScopes("write"))
-	api.PATCH("/team", profileHandler.Patch, httpmw.RequireRole(service.APIKeyRoleManager), httpmw.BindAndValidate[dto.UpdateProfileRequest](httpmw.UpdateProfileBodyKey))
-	api.GET("/team/profiles", apiKeyHandler.List, httpmw.RequireRole(service.APIKeyRoleManager))
-	api.POST("/team/profiles", apiKeyHandler.Create, httpmw.RequireRole(service.APIKeyRoleManager), httpmw.BindAndValidate[dto.CreateAPIKeyRequest](httpmw.CreateAPIKeyBodyKey))
-	api.PATCH("/team/profiles/:profileId", apiKeyHandler.Update, httpmw.RequireRole(service.APIKeyRoleManager), httpmw.BindAndValidate[dto.UpdateAPIKeyRequest](httpmw.UpdateAPIKeyBodyKey))
-	api.POST("/team/profiles/:profileId/rotate", apiKeyHandler.Rotate, httpmw.RequireRole(service.APIKeyRoleManager), httpmw.BindAndValidate[dto.CreateAPIKeyRequest](httpmw.CreateAPIKeyBodyKey))
-	api.DELETE("/team/profiles/:profileId", apiKeyHandler.Delete, httpmw.RequireRole(service.APIKeyRoleManager))
-	api.GET("/recall", portal.recall.Handle, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
-	api.GET("/dreaming/status", portal.dreams.Status, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
-	api.GET("/dreaming/runs", portal.dreams.Runs, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
-	api.GET("/dreams", portal.dreams.List, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
+	api.POST("/key/rotate", portal.rotateCurrentKey, httpmw.RequireScopes("write"), apiKeySvcMW)
+	api.GET("/team", profileHandler.Get, httpmw.RequireRole(service.APIKeyRoleManager), profileSvcMW)
+	api.PATCH("/team", profileHandler.Patch, httpmw.RequireRole(service.APIKeyRoleManager), profileSvcMW, httpmw.BindAndValidate[dto.UpdateProfileRequest](httpmw.UpdateProfileBodyKey))
+	api.DELETE("/team", profileHandler.Delete, httpmw.RequireRole(service.APIKeyRoleManager), profileSvcMW)
+	api.GET("/team/profiles", apiKeyHandler.List, httpmw.RequireRole(service.APIKeyRoleManager), apiKeySvcMW)
+	api.POST("/team/profiles", apiKeyHandler.Create, httpmw.RequireRole(service.APIKeyRoleManager), apiKeySvcMW, httpmw.BindAndValidate[dto.CreateAPIKeyRequest](httpmw.CreateAPIKeyBodyKey))
+	api.GET("/team/profiles/:profileId", apiKeyHandler.Get, httpmw.RequireRole(service.APIKeyRoleManager), apiKeySvcMW)
+	api.PATCH("/team/profiles/:profileId", apiKeyHandler.Update, httpmw.RequireRole(service.APIKeyRoleManager), apiKeySvcMW, httpmw.BindAndValidate[dto.UpdateAPIKeyRequest](httpmw.UpdateAPIKeyBodyKey))
+	api.POST("/team/profiles/:profileId/rotate", apiKeyHandler.Rotate, httpmw.RequireRole(service.APIKeyRoleManager), apiKeySvcMW, httpmw.BindAndValidate[dto.CreateAPIKeyRequest](httpmw.CreateAPIKeyBodyKey))
+	api.DELETE("/team/profiles/:profileId", apiKeyHandler.Delete, httpmw.RequireRole(service.APIKeyRoleManager), apiKeySvcMW)
+	api.GET("/recall", portal.recall.Handle, profileSvcMW, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
+	api.GET("/dreaming/status", portal.dreams.Status, dreamSvcMW, profileSvcMW, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
+	api.GET("/dreaming/runs", portal.dreams.Runs, dreamSvcMW, profileSvcMW, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
+	api.GET("/dreams", portal.dreams.List, dreamSvcMW, profileSvcMW, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
+	api.GET("/dreams/:dreamId", portal.dreams.Get, dreamSvcMW, profileSvcMW, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
 	if deps.SSOService != nil {
 		api.POST("/sso/team", portal.switchSSOTeam, httpmw.RequireScopes("read"))
 		api.POST("/sso/key", portal.createSSOKey, httpmw.RequireScopes("read"))
@@ -79,4 +87,15 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		staticDir = defaultUserPortalStaticDir()
 	}
 	registerUserPortalStatic(e, staticDir)
+}
+
+func userPortalServiceAvailable(available bool, message string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if !available {
+				return httperr.New(httperr.SERVICE_UNAVAILABLE, message)
+			}
+			return next(c)
+		}
+	}
 }
