@@ -3,16 +3,17 @@
 Dreaming is Dense-Mem's isolated process for proposing possible Relationships
 between existing semantic nodes. Its durable output is a `Hypothesis`.
 
-A Hypothesis is not evidence, an Entity, a Value, a Relationship, a tier, or a
-SemanticEdge. Dreaming cannot create semantic nodes or predicate definitions.
+A Hypothesis is not evidence, an Entity, a Value, a Relationship, lifecycle
+state, or a SemanticEdge. Dreaming cannot create semantic nodes or predicate
+definitions.
 
 ## Boundary
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Active["Active validated claims<br/>and facts"] --> Cycle["Dream cycle"]
-  Candidate["Eligible pending candidates"] --> Cycle
+  Active["Active supported<br/>Relationships"] --> Cycle["Dream cycle"]
+  Pending["Eligible pending<br/>Relationships"] --> Cycle
   Nodes["Existing Entity / Value IDs"] --> Cycle
   Cycle --> Hypothesis["Hypothesis only"]
   Hypothesis --> Review{"Client review"}
@@ -22,16 +23,16 @@ flowchart LR
   Verify --> Relationship["Relationship lifecycle"]
 ```
 
-Likelihood, confidence, repetition, feedback, or source tier cannot promote a
-Hypothesis. Only new evidence entering `remember` can create or update a
-Relationship.
+Likelihood, confidence, repetition, feedback, source authority, or provenance
+cannot promote a Hypothesis. Only new evidence entering `remember` can create
+or update a Relationship.
 
 ## Eligible Inputs
 
 Dreaming may read:
 
-- compact active `validated_claim` and `fact` Relationships
-- a `candidate/pending_evidence` Relationship only when it has a final
+- compact active Relationships with effective support
+- a `pending_evidence` Relationship only when it has a final
   schema-valid `insufficient` VerificationEvent
 - existing resolved Entity and typed-Value endpoints referenced by those
   Relationships
@@ -42,10 +43,9 @@ multiply dream weight. Dreaming may use only the preferred position of a
 `resolved` Conflict case, with all source Relationship IDs. An `open` or
 `overdue` cross-profile case is excluded rather than used as a guessed premise.
 
-A pending candidate is eligible only when:
+A pending Relationship is eligible only when:
 
 ```text
-tier = candidate
 status = pending_evidence
 subject Entity already exists
 object Entity or Value already exists
@@ -55,8 +55,8 @@ no identity, predicate, scope, or temporal ambiguity is open
 ```
 
 Context retained after an unavailable verifier or invalid provider response is
-not yet an eligible candidate. Dense-Mem keeps that context in the placement
-ledger, but dreaming cannot use it until normal verification produces a valid
+not yet an eligible pending Relationship. Dense-Mem keeps that context in the
+placement ledger, but dreaming cannot use it until normal verification produces a valid
 material `insufficient` outcome. This prevents provider failure text from
 becoming a speculation seed.
 
@@ -84,11 +84,11 @@ existing endpoint IDs:
   "likelihood": 0.68,
   "confidence": 0.61,
   "source_relationship_ids": ["r_recall", "r_embedding_job"],
-  "source_candidate_relationship_ids": ["r_candidate_freshness"],
+  "source_pending_relationship_ids": ["r_pending_freshness"],
   "source_versions": {
     "r_recall": 4,
     "r_embedding_job": 2,
-    "r_candidate_freshness": 1
+    "r_pending_freshness": 1
   },
   "generator_kind": "provider",
   "generator_version": "dream-v2",
@@ -104,7 +104,7 @@ The generator cannot output:
 
 - a new Entity, Value, name, alias, or ID
 - an unknown predicate or registry change
-- a Relationship, support link, verification verdict, tier, or status change
+- a Relationship, support link, verification verdict, or status change
 - evidence text claiming that the Hypothesis proves itself
 - a source ID outside the supplied input set
 
@@ -147,10 +147,10 @@ flowchart TD
 
 The generator receives compact current rows, not full evidence or verifier
 rationales. Source Relationship IDs explain origin but are not confirming
-evidence. A source candidate remains visibly identified as a candidate.
+evidence. A pending source remains visibly identified as pending.
 
-An exact pending candidate may be the target of the Hypothesis. Dreaming still
-does not change that candidate; it only records why the possibility may be
+An exact pending Relationship may be the target of the Hypothesis. Dreaming
+still does not change that Relationship; it only records why the possibility may be
 worth seeking new evidence for.
 
 ## Scheduling And Concurrency
@@ -263,7 +263,7 @@ primary result list.
 A Hypothesis becomes stale when:
 
 - a source Relationship is retracted, superseded, disputed, or hidden
-- a source candidate becomes rejected or its ambiguity reopens
+- a source pending Relationship becomes rejected or its ambiguity reopens
 - a source revision changes and regeneration does not reinforce the idea
 - a retention rule expires it
 - a client marks it stale
@@ -275,12 +275,12 @@ Hypothesis retrieval.
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Candidate pollution | weak insufficient text becomes an active edge through dreaming | Hypothesis-only output; no lifecycle mutation; new evidence must enter `remember` |
+| Pending-state pollution | weak insufficient text becomes an active edge through dreaming | Hypothesis-only output; no lifecycle mutation; new evidence must enter `remember` |
 | Dream invents nodes | generator creates a new “search freshness” Entity to complete an idea | endpoint allowlists, existing-ID validation, and reject any unknown ID |
 | Dream invents predicates | plausible free-form verb becomes durable graph vocabulary | registry allowlist and rejection; only an authorized registry workflow can add predicates |
-| Provider failure becomes a seed | invalid verifier output is treated as an unverified candidate | require a final schema-valid `insufficient` event for candidate eligibility |
+| Provider failure becomes a seed | invalid verifier output is treated as a verified pending Relationship | require a final schema-valid `insufficient` event for pending-input eligibility |
 | Circular evidence | generated statement is submitted as its own proof | require independent user/external evidence and reject Hypothesis/source text as support |
-| Primary recall contamination | Hypothesis is ranked with facts | separate table, response field, query path, and no Relationship tier |
+| Primary recall contamination | Hypothesis is ranked with Evidence | separate table, response field, and query path |
 | Source drift | sources change between generation and persistence | store and compare source IDs/versions in the PostgreSQL transaction |
 | Duplicate cycles | two replicas generate the same window | unique team/window run key, durable lease, and normalized Hypothesis dedupe |
 | Profile copies amplify speculation | A/B/C repeat one source and make a dream appear stronger | semantic grouping plus original source-group dedupe |
@@ -288,11 +288,11 @@ Hypothesis retrieval.
 
 ## Acceptance Invariants
 
-1. dreaming creates no Entity, Value, predicate, Relationship, support, tier,
-   status change, or SemanticEdge
+1. dreaming creates no Entity, Value, predicate, Relationship, support, status
+   change, or SemanticEdge
 2. every endpoint and source ID already exists in the same team
 3. every proposed predicate is registered for the endpoint kinds
-4. pending candidates are eligible only after schema-valid `insufficient`
+4. pending Relationships are eligible only after schema-valid `insufficient`
    verification
 5. primary recall never contains Hypotheses
 6. confirmation without new evidence fails

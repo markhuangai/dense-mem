@@ -54,10 +54,7 @@ stage
 processing_state
 search_state
 verdict
-tier
 relationship_status
-from_tier
-to_tier
 from_status
 to_status
 provider_kind
@@ -70,6 +67,9 @@ conflict_state
 error_code
 coordination_mode
 job_kind
+work_class
+generation_state
+gate_state
 kind
 invariant
 document_kind
@@ -173,15 +173,15 @@ changes by model, prompt revision, or local contract hash.
 densemem_entity_resolution_total{action,outcome}
 densemem_entity_ambiguity_total{reason}
 densemem_entity_corrections_total{kind,outcome}
-densemem_relationship_outcomes_total{tier,relationship_status}
-densemem_relationship_transitions_total{from_tier,to_tier,from_status,to_status}
+densemem_relationship_outcomes_total{relationship_status}
+densemem_relationship_transitions_total{from_status,to_status}
 densemem_relationship_cross_references_total{kind,outcome}
 densemem_relationship_owner_denials_total{operation}
 densemem_predicate_resolution_total{outcome}
 densemem_relationship_support_total{outcome}
 densemem_source_revisions_total{outcome}
 densemem_source_support_revocations_total{outcome}
-densemem_relationship_demotions_total{from_tier,to_tier,reason}
+densemem_relationship_support_loss_total{from_status,to_status,reason}
 densemem_semantic_invariant_failures_total{invariant}
 ```
 
@@ -191,7 +191,7 @@ keep only outcome counts in Prometheus.
 
 Hard alerts:
 
-- active candidate detected
+- active Relationship has no effective support
 - SemanticEdge references unresolved endpoint
 - duplicate canonical active Relationship identity
 - append-only mutation rejected
@@ -227,8 +227,8 @@ winner.
 ## Embedding Jobs And Search Freshness
 
 ```text
-densemem_embedding_jobs{search_state}
-densemem_embedding_oldest_pending_seconds
+densemem_embedding_jobs{search_state,work_class}
+densemem_embedding_oldest_pending_seconds{work_class}
 densemem_embedding_jobs_total{outcome}
 densemem_embedding_duration_seconds{outcome}
 densemem_embedding_source_version_mismatch_total
@@ -238,11 +238,16 @@ densemem_search_index_build_duration_seconds{strategy,outcome}
 densemem_search_index_profile_mismatch_total{reason}
 densemem_search_documents{kind,search_state}
 densemem_search_freshness_seconds{kind}
+densemem_search_projection_generations{kind,generation_state}
+densemem_search_projection_remaining{kind,generation_state}
+densemem_search_projection_batches_total{kind,outcome}
+densemem_relationship_vector_gate{gate_state}
 ```
 
 Search backlog is derived-state lag, not loss of committed knowledge.
 Dashboards show placement completion beside search freshness so operators do
-not conflate them.
+not conflate them. `work_class` is the bounded enum `foreground` or
+`generation`; generation IDs and team IDs remain out of metric labels.
 
 ## Recall Branches
 
@@ -253,6 +258,8 @@ densemem_recall_branch_duration_seconds{branch,outcome}
 densemem_recall_branch_candidates{branch}
 densemem_recall_results{mode}
 densemem_recall_degraded_total{branch,reason}
+densemem_recall_frontier_results{kind}
+densemem_recall_relationship_vector_gate_total{gate_state}
 densemem_recall_adjacency_edges
 densemem_recall_adjacency_stopped_total{reason}
 densemem_recall_deduplicated_total{branch_count}
@@ -387,8 +394,8 @@ must not become metric labels.
 - intake and placement throughput/age
 - stage latency and lease loss
 - reviewer/verifier latency, 429, invalid output, and regeneration
-- Entity actions/ambiguity, Relationship tier/status outcomes
-- source revision activation, support revocation, and automatic tier demotion
+- Entity actions/ambiguity and Relationship status/support outcomes
+- source revision activation, support revocation, and automatic pending-state transition
 - owner-mutation denials and cross-profile correction outcomes
 - review task count/age
 - Conflict case status/age, write-versus-nightly outcomes, overdue escalation,
@@ -398,6 +405,8 @@ must not become metric labels.
 
 - embedding pending/failed age
 - document freshness by kind
+- Relationship projection text progress, generation/foreground queue age, and
+  vector-gate state
 - recall latency/result count/degraded branches
 - exact versus HNSW query latency
 - sampled ANN Recall@K
@@ -435,11 +444,11 @@ must not become metric labels.
 | placement backlog | oldest queued/processing item above SLO |
 | verifier contract regression | invalid/schema regeneration ratio above baseline after model/prompt change |
 | injection anomaly | quarantine/model-signal ratio shifts beyond the evaluated baseline or unauthorized release is nonzero |
-| source revision failure | stale/unowned/fanout outcomes exceed the source-update SLO or demotion reconciliation fails |
+| source revision failure | stale/unowned/fanout outcomes exceed the source-update SLO or support/status reconciliation fails |
 | search backlog | oldest pending or failed document above SLO |
 | vector quality regression | sampled Recall@K below gate |
 | recall latency/error | p95/p99 or error rate above profile SLO |
-| hard semantic invariant | any nonzero active-candidate, duplicate-edge, cross-team, or append-only finding |
+| hard semantic invariant | any active-without-support, duplicate-edge, cross-team, or append-only finding |
 | Redis coordination loss | required backend unavailable |
 | audit failure | append failure nonzero |
 | backup/PITR risk | WAL archive or restore verification stale |
@@ -471,7 +480,9 @@ payloads, and vectors are opt-out by default and should not enter normal logs.
 | ANN regression hidden | latency dashboard improves while relevant results disappear | exact-oracle Recall@K sampling and release alert |
 | Invalid attempts counted as decisions | verifier parse failures inflate semantic verdict counts | separate provider/validation and material-event metrics |
 | Detector details leak through labels | rule ID, evidence span, or source key creates a high-cardinality security metric | expose bounded decision/kind enums only and keep details in authorized audit rows |
-| Source demotion is invisible | a revision removes fact support but operators see only ordinary transition counts | dedicated revision, support-revocation, and demotion counters linked by audit correlation ID in logs |
+| Source support loss is invisible | a revision removes final support but operators see only ordinary transition counts | dedicated revision, support-revocation, and pending-transition counters linked by audit correlation ID in logs |
+| Projection appears complete too early | aggregate pending count falls while one team still has failed generation work | durable per-team generation checks plus bounded aggregate generation-state and oldest-job-class telemetry |
+| Backfill hides foreground starvation | total embedding throughput looks healthy while live writes wait behind release jobs | separate foreground/generation age and count metrics with fairness alerts |
 | Redis over-alerts | intentional one-process mode reports Redis down | explicit coordination-mode metric and topology-aware alert |
 | Metric becomes authority | dashboard count used to correct knowledge | trace PostgreSQL records; metrics are observation only |
 | Profile conflict disappears in aggregation | recall looks healthy while one author's correction is consistently hidden | authored-conflict and clarification measures plus stored recall events |
@@ -495,10 +506,12 @@ payloads, and vectors are opt-out by default and should not enter normal logs.
 10. vector-query concurrency, replica lag, and cluster search-profile parity are
     observable without tenant/profile labels
 11. deterministic scans, model security signals, quarantine releases, source
-    revisions, support revocations, and automatic demotions are separately
+    revisions, support revocations, and automatic pending transitions are separately
     observable with bounded labels
 12. Conflict placement case updates, nightly review, status age, overdue
     escalation, run failure, and lease recovery are observable without
     case/team/profile IDs
 13. telemetry cannot resolve or mutate a Conflict case and never substitutes
     for its durable event history
+14. Relationship text projection, generation/foreground queue fairness, and
+    whole-team vector-gate state are observable without team or generation IDs

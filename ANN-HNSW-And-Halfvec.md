@@ -176,12 +176,13 @@ Use this table before initializing or replacing the embedding contract.
 | High-quality debugging, audit, or release qualification | exact diagnostic mode | removes ANN approximation from the investigation | no | no | bounded authorized candidate set |
 | Latency/cost pressure after quality is acceptable | tune #85 ranking budgets before changing model | avoids provider calls and vector rewrite | no | maybe, if physical HNSW parameters change | saturation and quality comparison |
 | Provider/model upgrade | new embedding contract plus derived index generation | vector meaning changes; old vectors cannot be compared as if they came from the new model | yes | yes | staged backfill, dual-read evaluation, then activation |
+| Relationship semantic renderer change | new Relationship projection generation under the same embedding/index contracts | only Relationship document text changes | Relationships only | no | complete text before serve; whole-team vector gate until current |
 | Ranking/fusion experiment only | #85 ranking contract change | changes branch fusion or rerank order without changing vector meaning | no | no | deterministic 1k comparison and regression slices |
 
 Decision sequence:
 
-1. Choose the embedding contract first: provider, model, dimensions,
-   normalization, document format, and query format.
+1. Choose source-kind projection formats, then the numerical embedding
+   contract: provider, model, dimensions, normalization, and query construction.
 2. Resolve index capability from dimensions and pgvector support. Use `exact`
    for bounded sets, `vector_hnsw` only when the full-precision dimension is
    supported, and `halfvec_hnsw` when ANN needs a half-precision expression.
@@ -214,9 +215,19 @@ provider calls. Dense-Mem persists and reports separate linked records:
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Embed["Embedding contract<br/>what the vector means"] --> Index["Search-index generation<br/>how stored vectors are indexed"]
+  Projection["Source-kind projection<br/>what text is embedded"] --> Embed["Embedding contract<br/>what vector space means"]
+  Embed --> Index["Search-index generation<br/>how stored vectors are indexed"]
   Index --> Rank["Ranking contract (#85)<br/>how a recall searches and fuses"]
 ```
+
+### Source-kind projection
+
+Each `source_kind` owns a `projection_format_version` and deterministic text
+renderer. A Relationship projection change rebuilds Relationship documents and
+vectors only. Its per-team projection generation controls text convergence and
+vector-branch activation; it does not create an embedding contract or HNSW
+generation. See
+[Data Model And Storage](Data-Model-And-Storage#relationship-projection-generation).
 
 ### Embedding contract
 
@@ -226,8 +237,8 @@ The embedding contract owns:
 provider adapter kind and semantic provider identity, excluding credentials
 model identifier
 dimensions
-canonical search-document format version
 input normalization version
+query-construction version
 output normalization declaration and validation
 ```
 
@@ -274,7 +285,8 @@ defaults remain in [Configuration](Configuration#postgresql-search-and-recall).
 
 | Change | Provider calls | Vector rewrite | Index build | Runtime activation |
 | --- | --- | --- | --- | --- |
-| model, dimensions, document format, normalization | yes | yes | yes | contract/generation activation |
+| model, dimensions, query construction, normalization | yes | yes | yes | embedding-contract/index-generation activation |
+| Relationship projection format | Relationships only | Relationships only | no | per-team projection-generation activation |
 | HNSW kind, cast, `m`, `ef_construction` | no | no | yes | generation activation |
 | distance metric | unsupported | unsupported | unsupported | new architecture decision |
 | `ef_search`, iterative scan, scan/candidate budget | no | no | no | #85 ranking-contract activation |
@@ -408,13 +420,13 @@ the candidate step uses the source-specific HNSW index and the rerank step
 performs a bounded exact sort, including when a full-precision HNSW index also
 exists.
 
-The current schema keeps one `semantic_search_documents` table and creates
-separate partial HNSW indexes for `source_type = 'evidence'`,
-`source_type = 'relationship'`, and `source_type = 'entity'`. Evidence vector
-branches return evidence IDs for initial fusion. Relationship and Entity vector
-branches return compact discovery candidates after the evidence budget is set.
-Hydration later reads only the selected evidence IDs and bounded discovery
-paths.
+The current schema keeps one `search_documents` table and creates
+separate partial HNSW indexes for `source_kind = 'evidence'`,
+`source_kind = 'relationship'`, and `source_kind = 'entity'`. Evidence vector
+branches return Evidence IDs for initial fusion. Relationship vector and direct
+Entity expansion branches feed only the independently bounded Relationship
+frontier. Hydration later reads selected Evidence IDs and grouped eligible
+Relationship IDs.
 
 ## Database And Application Boundary
 
@@ -650,3 +662,5 @@ predefined SQL templates.
 12. Index/generation activation is atomic from the application's perspective and
     cannot expose a partially built cluster.
 13. No request value can select arbitrary SQL casts, operator classes, or DDL.
+14. A source-kind projection change rebuilds only that source kind and does not
+    create a numerical embedding contract or physical index generation.

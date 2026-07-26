@@ -78,11 +78,13 @@ host uses `tools/call` when the model selects a tool. Their canonical behavior
 is in
 [Request Lifecycle And Security](Request-Lifecycle-And-Security#mcp-memory-interface).
 
-For contract version 2, verify:
+For contract `dense-mem.v2.3`, verify:
 
 - `remember` takes evidence and optional proposal
 - `get_memory_placement` returns processing and search state
-- `recall_memory` returns ranked evidence contexts plus compact relationship discovery paths
+- `recall_memory` returns ranked Evidence contexts plus separate
+  `related_relationships[]`, `related_communities[]`, `conflicts[]`,
+  `related_hypotheses[]`, `search_states`, and `degradations[]`
 - `trace_memory` takes `relationship_id`
 - retired lifecycle fields are absent
 
@@ -93,10 +95,10 @@ field for short cross-tool guidance:
 
 ```text
 Remember accepts evidence asynchronously. Poll get_memory_placement.
-Default recall returns bounded evidence contexts plus compact relationship
-discovery paths. Trace relationship_id for evidence/history. Pending
-candidates and Hypotheses are not active knowledge. Never guess identity
-review.
+Default recall returns bounded Evidence contexts plus compact Relationship
+discovery results in related_relationships. Trace relationship_id for
+evidence/history. Pending Relationships and Hypotheses are not active
+knowledge. Never guess identity review.
 ```
 
 Tool descriptions still own tool-specific input/output rules. Server

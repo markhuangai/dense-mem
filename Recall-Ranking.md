@@ -1,29 +1,27 @@
 # Recall Ranking
 
 Dense-Mem returns bounded evidence contexts as the primary recall result.
-Relationships remain the durable semantic graph and trace handle, but public
-recall exposes them as compact discovery paths instead of answer-sized result
-items. Verifier decisions and lifecycle history are loaded through trace reads.
-Hypotheses remain a separate result type.
+Relationships are a separate correlation and discovery frontier. Communities
+and Hypotheses are separate derived frontiers and never replace evidence or
+Relationships.
 
-This page is the single source of truth for the target recall path, eligibility,
-read shapes, and degradation contract. Cosine distance, vector query behavior,
-RRF, and post-fusion reranking are defined only in
-[Vector Search And Ranking](Vector-Search-And-Ranking). Public fields are in
-[Technical Reference](Technical-Reference#recall_memory). Relationship
-eligibility is owned by
-[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle).
+This page owns recall eligibility, frontier flow, grouping, and degradation.
+Cosine distance and RRF are defined in
+[Vector Search And Ranking](Vector-Search-And-Ranking). Exact public fields and
+limits are defined in [Technical Reference](Technical-Reference#recall_memory).
+Relationship lifecycle eligibility is defined in
+[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#status-and-effective-support).
 
 ## Read Shapes
 
-| Operation | Primary result | Use |
+| Operation | Primary result | Additional frontiers |
 | --- | --- | --- |
-| `recall_memory(query)` | ranked evidence contexts plus compact Relationship discovery paths | normal answering and graph discovery |
-| `trace_memory(relationship_id)` | one Relationship with evidence and history | explanation, conflict, correction, and high-stakes inspection |
+| `recall_memory(query)` | ranked evidence `results[]` | `related_relationships[]`, `related_communities[]`, `conflicts[]`, and `related_hypotheses[]` |
+| `trace_memory(relationship_id)` | one Relationship with evidence and history | bounded graph, conflict, correction, and supersession context |
 
-Public recall has no client-selected mode. Evidence text appears only in the
-top-level ranked `results[]` array. Relationship paths explain discovery and
-follow-up options; they are not the direct top-K scoring unit.
+The public API has no client-selected ranking mode. Array order is rank. Public
+responses omit raw scores, embedding details, provider attempts, support counts,
+and lifecycle history.
 
 ## Default Pipeline
 
@@ -33,35 +31,36 @@ flowchart LR
   Query["Query, actor, and time scope"] --> Parse["Parse names, exact anchors,<br/>predicate and time hints"]
   Query --> Embed["Create one query embedding"]
 
-  Parse --> Text["PostgreSQL evidence<br/>full-text search"]
-  Embed --> Vector["pgvector evidence search"]
-  Text --> Filter["RLS, current evidence,<br/>time and request filters"]
-  Vector --> Filter
-  Filter --> Fuse["Evidence-ID fusion"]
-  Fuse --> Rerank["Deterministic evidence,<br/>query, anchor, and time rerank"]
-  Rerank --> Limit["Take top K under<br/>the context byte budget"]
-  Limit --> Compact["Evidence contexts"]
+  Parse --> EvidenceText["Evidence full-text"]
+  Embed --> EvidenceVector["Evidence vector"]
+  EvidenceText --> EvidenceFuse["Evidence-ID fusion<br/>and deterministic rerank"]
+  EvidenceVector --> EvidenceFuse
+  EvidenceFuse --> EvidenceGate["Support, conflict, time,<br/>source, and access gates"]
+  EvidenceGate --> Results["results[]"]
 
-  Parse --> Entity["Entity-name search"]
-  Embed --> EntityVector["pgvector Entity and<br/>Relationship search"]
-  Entity --> Frontier["Separate discovery<br/>frontier ranking"]
-  EntityVector --> Frontier
-  Limit --> Frontier
-  Frontier --> Paths["Compact discovery paths"]
+  Parse --> RelationshipText["Relationship full-text"]
+  Embed --> RelationshipVector{"Relationship vector<br/>generation current?"}
+  RelationshipVector -- Yes --> RelationshipFuse["Equal-weight RRF"]
+  RelationshipVector -- No --> RelationshipTextOnly["Lexical-only degradation"]
+  RelationshipText --> RelationshipFuse
+  RelationshipText --> RelationshipTextOnly
+  RelationshipFuse --> RelationshipGate["Status, support, time,<br/>scope, and access gates"]
+  RelationshipTextOnly --> RelationshipGate
+  RelationshipGate --> Group["Collapse semantic_group_key"]
+  Group --> Relationships["related_relationships[]"]
 
-  Compact --> Response["Response"]
-  Paths --> Response
-  Compact --> Hypothesis["Optional related_hypotheses<br/>in a separate field"]
-  Hypothesis --> Response
+  Query --> Community{"Community feature enabled?"}
+  Community -- Yes --> Communities["related_communities[]"]
+  Community -- No --> Empty["empty community frontier"]
+
+  Results --> Response["Recall response"]
+  Relationships --> Response
+  Communities --> Response
+  Empty --> Response
 ```
 
-Initial recall ranks directly searchable evidence candidates. Before hydration,
-each candidate must still prove at least one query-relevant active Relationship
-support path for the requested time view. Relationship, Entity, and adjacency
-candidates form a separate discovery frontier after the evidence budget is
-chosen. Equivalent Relationships remain independently authored and traceable;
-public recall ranks evidence contexts that the client can read and uses
-Relationships as compact follow-up handles.
+Evidence, Relationship, and Community limits are independent. An empty or
+disabled frontier never donates capacity to another frontier.
 
 ## PostgreSQL Read Sequence
 
@@ -80,243 +79,235 @@ sequenceDiagram
   and Exact parsing
     R->>R: Parse names, IDs, predicate hints, and time
   end
-  par Initial evidence branches
-    R->>P: Team-scoped evidence full-text search
-  and Evidence vector branch
-    R->>P: Team-scoped pgvector evidence search
+  par Evidence frontier
+    R->>P: Evidence full-text and vector candidates
+  and Relationship frontier
+    R->>P: Relationship lexical candidates and generation state
+  and Optional derived frontiers
+    R->>P: Communities and Hypotheses when enabled
   end
-  R->>R: Fuse evidence IDs, rerank, and apply Conflict dispositions
-  R->>R: Budget and hydrate evidence context
-  par Discovery branches
-    R->>P: Entity, Relationship, and adjacency candidates
-  and Hypothesis branch
-    R->>P: Related same-team Hypotheses when enabled
-  end
-  R->>R: Select bounded novelty paths after top-K
-  R-->>C: Evidence results, conflicts, discovery paths, and guidance
+  R->>R: Gate and rank evidence
+  R->>R: Fuse or degrade Relationship search
+  R->>R: Hydrate, group, and apply independent limits
+  R-->>C: Results, related frontiers, states, and degradations
 ```
 
-PostgreSQL row-level security and explicit team predicates apply to source,
-search-document, and adjacency queries. The service authorizes hydrated rows
-again before returning them.
+PostgreSQL row-level security and explicit team predicates apply to every
+source, search-document, adjacency, community, and trace read. Hydrated source
+rows are authorized again before return.
 
 ## Eligibility
 
-An evidence fragment enters default recall only when:
+An evidence fragment enters `results[]` only when:
 
 ```text
 team_id = authenticated team
-owner_profile_id = any active profile in that team
-at least one query-relevant Relationship support path is active for the requested valid_at and known_at
-its stable source revision, when present, is current
-evidence is not quarantined, supersession-pending, superseded, retracted, or erased
-request filters and exact anchors match this evidence
+owner_profile_id belongs to an active profile in that team
+at least one query-relevant Relationship support path is active
+the requested valid_at and known_at view includes that path
+the source revision, when stable, is current
+evidence is not quarantined, superseded, retracted, or erased
+request filters and exact anchors match
 ```
 
-Search freshness never decides whether committed evidence is true. Full-text
-and exact branches may use current committed evidence while vector rows are
-still pending. The vector branch requires a current vector whose source,
-document, and embedding-contract versions match.
-
-A Relationship enters discovery paths or trace-near context only when:
+A Relationship enters `related_relationships[]` only when:
 
 ```text
 team_id = authenticated team
-owner_profile_id = any active profile in that team
+owner_profile_id belongs to an active profile in that team
 status = active
-tier IN (validated_claim, fact)
-validity and recorded-time filters match the request
-predicate, endpoint, and scope filters match
+effective_support_count > 0
+validity and recorded-time filters match
+predicate, endpoint, polarity, and scope filters match
+the applicable Conflict disposition does not suppress the path
 ```
 
-`candidate` Relationships are never eligible, even when their
-`status=pending_evidence` record is retained for dreaming or review.
+`pending_evidence`, `needs_review`, `quarantined`, `superseded`, `disputed`,
+`retracted`, and `rejected` Relationships are excluded. Search documents
+provide candidate IDs only; authoritative Relationship rows decide eligibility.
 
-## Conflict Disposition
+## Evidence Frontier
 
-Evidence retrieval remains primary, but final selection maps candidate evidence
-through its query-relevant Relationship support paths and any durable team
-Conflict case:
+Evidence remains the only answer-context frontier. Full-text and vector
+branches return Evidence IDs, fuse under the configured Evidence ranking
+contract, apply exact-anchor and temporal intent, then hydrate only the selected
+bounded contexts.
 
-| Case view at requested `valid_at` / `known_at` | Primary recall behavior |
-| --- | --- |
-| no material case | normal evidence eligibility and ranking |
-| `open` or `overdue` | retain bounded evidence from each material position and return an actionable clarification |
-| `resolved` and current interval applies | retain preferred-position support paths; omit non-preferred current paths and return a compact resolved ref |
-| historical view before change/resolution | reconstruct the position and case state visible at that real-world/system-knowledge time |
-| `dismissed` | apply ordinary lifecycle/eligibility; keep the case in trace only |
+Search freshness never decides whether committed evidence is valid. Full-text
+may use a valid current document while its vector is pending. The vector branch
+requires a vector whose source, document, and embedding-contract versions match.
+Evidence documents and vectors are independent from Relationship projection
+generations.
 
-The resolver filters a support path, not an Evidence fragment. A fragment with
-another unrelated eligible support path remains eligible. The service applies
-disposition before hydration, then backfills from the over-fetched candidate
-pool. Within hard response bounds, an unresolved case reserves at least one
-context per returned position. If all positions cannot fit, `conflicts[]` marks
-the position list truncated and returns trace handles; truncation never implies
-a preferred position.
+## Relationship Discovery
 
-The exact conflict strength policy belongs in
-[Conflicts And Corrections](Conflicts-And-Corrections#deterministic-resolution-policy),
-and its post-fusion ordering belongs in
-[Vector Search And Ranking](Vector-Search-And-Ranking#cross-profile-conflict-reranking).
-`retracted`, `superseded`, `rejected`, `quarantined`, `disputed`, and
-review-held records are also excluded.
+Relationship discovery measures query correlation, not truth, maturity,
+authority, corroboration, or popularity.
 
-Canonical tier and status meanings belong only in
-[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#tier-and-status).
+### Semantic search document
 
-## Retrieval Branches
-
-### Evidence full-text/vector
-
-One compact search document represents each searchable evidence source:
+Every searchable Relationship uses projection format `2`:
 
 ```text
-evidence: exact source text, stable source/revision handles, source group, and provenance
+relationship
+subject: Mark Huang
+predicate: works on
+object: Dense-Mem
+polarity: positive
+scope: dense-mem project
+valid_from: 2026-07-01T00:00:00Z
 ```
 
-Evidence search documents contain source text and provenance fields needed for
-authorized retrieval. They do not contain verifier rationale, Relationship
-tiers, or graph-derived summaries.
+The renderer uses canonical Entity names, registered predicate wording and
+aliases, canonical typed Value display/unit, polarity, supported scope, and
+validity. It omits absent optional lines. IDs, owner/profile identity,
+`semantic_group_key`, support counts, authority, status, and evidence text are
+not embedded. Those fields remain source metadata or hydration gates.
 
-### Relationship and Entity discovery
+### Lexical and vector fusion
 
-Separate compact search documents may represent eligible Relationships and
-Entities for discovery. Relationship documents contain endpoint display names,
-predicate, object/value display, polarity, temporal bounds, owner, semantic
-group, and `relationship_id`. Entity documents contain canonical name, aliases,
-kind, and `entity_id`.
+- Full-text and vector branches retrieve only `source_kind=relationship`.
+- Each branch contributes ordinal rank, not a normalized provider score.
+- Equal-weight RRF fuses the two lists.
+- Deterministic tie-break order is RRF score, best individual branch rank,
+  earliest Relationship creation time, then Relationship UUID.
+- No support count, source count, profile count, authority, conflict count, or
+  community membership changes the score.
+- Array order is the only public rank representation.
 
-Relationship documents do not concatenate evidence content or verifier
-rationales. Entity and Relationship discovery cannot move evidence up or down
-inside initial top-K.
+When the team's Relationship projection generation is not `current`, the
+complete vector branch is disabled. Lexical-only ranking prevents already
+rebuilt documents from receiving an extra RRF contribution while other
+Relationships remain pending.
 
-Search documents are derived PostgreSQL rows. Their source evidence,
-Relationship, or Entity remains authoritative. Vector eligibility additionally
-requires a vector whose source, document, and embedding-contract versions
-match.
+### Direct Entity expansion
 
-### Entity seeds and adjacency
-
-Entity search finds possible endpoints. PostgreSQL then expands only eligible
-Relationships touching those Entity IDs.
+`expand_from_entity_ids` restricts the frontier to eligible Relationships that
+directly touch one supplied Entity. It does not recursively traverse another
+Relationship.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Query["Who works on Dense-Mem?"] --> Seed["Entity seed<br/>Dense-Mem"]
-  Seed --> Incoming["Indexed incoming Relationships"]
-  Seed --> Outgoing["Indexed outgoing Relationships"]
-  Incoming --> Match["Predicate and query match"]
-  Outgoing --> Match
-  Match --> Results["Discovery path candidates"]
+  Query["Who works on Dense-Mem?"] --> Seed["Dense-Mem Entity"]
+  Seed --> Incoming["Direct incoming Relationships"]
+  Seed --> Outgoing["Direct outgoing Relationships"]
+  Incoming --> Gate["Query and eligibility gate"]
+  Outgoing --> Gate
+  Gate --> Group["Semantic grouping"]
 ```
 
-Expansion enforces configured seed, per-Entity fan-out, total-edge, depth,
-time, and byte budgets. It returns supporting evidence IDs plus compact
-relationship paths, and never runs an unbounded recursive traversal.
+Configured seed, per-Entity fan-out, total-edge, time, and byte bounds still
+apply. A future multi-hop feature requires a separate contract.
 
-### Exact anchors
+### Semantic grouping
 
-Server IDs, issue keys, versions, paths, scopes, hashes, and other hard
-identifiers use tested deterministic grammars. If the query contains a hard
-anchor, one candidate must itself satisfy every required anchor. Separate
-results cannot combine partial matches.
+Equivalent cross-profile Relationships remain separate durable records but
+consume one response slot:
 
-An anchor parser must not use a broad “hex-looking word” rule that classifies
-ordinary language as an identifier.
+1. filter and rank eligible authored Relationships;
+2. group by the existing team-wide `semantic_group_key`;
+3. choose the earliest-created eligible Relationship, then lowest UUID, as the
+   representative;
+4. sort remaining eligible IDs by UUID into
+   `equivalent_relationship_ids`;
+5. union authorized supporting Evidence IDs;
+6. apply `relationship_limit` after grouping.
 
-## Filtered `pgvector` Retrieval
+`known_relationship_ids` suppresses the complete semantic group when it
+contains the representative or any equivalent ID. Grouping never merges
+ownership, support, lifecycle, conflict history, or trace.
 
-The initial vector branch searches only evidence search documents under the
-same team/time/contract scope. Discovery may separately search Relationship and
-Entity documents to choose follow-up paths. Exact/HNSW selection, cosine
-calculation, operators, iterative scans, half precision, exact reranking, and
-topology are defined only in
-[ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec). Embedding and distance meaning
-remains in
-[Vector Search And Ranking](Vector-Search-And-Ranking#cosine-similarity-and-distance).
+## Conflict Disposition
 
-## Fusion And Ranking
+Evidence selection and Relationship discovery apply the Conflict case visible
+at the requested `valid_at` and `known_at`:
 
-The active database-backed ranking contract selects RRF or explicit
-branch-priority fusion, then bounded deterministic reranking. The initial
-fusion unit is `(branch, evidence_id)`.
+| Case view | Behavior |
+| --- | --- |
+| no material case | normal eligibility and ranking |
+| `open` or `overdue` | keep bounded material alternatives and return the actionable case |
+| resolved current interval | exclude suppressed current paths; keep the preferred eligible path |
+| historical view | reconstruct the position and case-event state visible then |
+| dismissed | apply ordinary lifecycle eligibility; retain the case in trace |
 
-Final selection applies required hard-anchor matching, query-derived phrase and
-exact signals, active support-path eligibility, bounded support/source-group
-signals, conflict disposition, and temporal intent. Hydration is not a second
-retrieval; it is a bounded `WHERE evidence_id IN (...)` read for already-selected
-and support-eligible evidence. Discovery paths are selected separately from
-bounded Relationship candidates after direct evidence ranking, exclude
-already-returned or caller-supplied known IDs where possible, may point at
-relevant evidence outside `results[]`, and remain follow-up hints rather than
-direct answer context.
+Disposition filters a support path, not the Evidence fragment. Evidence that
+has another unrelated eligible support path remains eligible. Truncation never
+implies a preferred position. The exact resolution policy belongs in
+[Conflicts And Corrections](Conflicts-And-Corrections#deterministic-resolution-policy).
 
-The formula, controls, worked examples, conflict treatment, tie-breaking, and
-optional future model-reranker boundary are defined only in
-[Vector Search And Ranking](Vector-Search-And-Ranking#reciprocal-rank-fusion).
-Score components, ranking/index profile versions, embedding-contract details,
-and branch health remain internal telemetry. The public result contains only
-context and stable trace/discovery handles.
+## Community Frontier
 
-## Evidence Result And Discovery Path
+Communities are optional derived clusters of eligible Relationships. The
+feature remains disabled by default.
+
+When enabled:
+
+- community results use `community_limit`, independent from Evidence and
+  Relationship limits;
+- the frontier returns only current community snapshots built from active,
+  effectively supported Relationships;
+- communities do not replace direct results, add Relationship score, become
+  evidence, or enter the semantic graph;
+- `community_limit=0` disables the frontier for that request.
+
+The canonical record and detection contract belongs in
+[Community And Dreaming](Community-And-Dreaming).
+
+## Recall Response
 
 ```json
 {
+  "recall_id": "rec_01J...",
   "results": [
     {
       "evidence_id": "e1",
       "context": "Mark works on Dense-Mem."
     }
   ],
-  "discovery_paths": [
+  "conflicts": [],
+  "related_relationships": [
     {
-      "relationships": [
-        {
-          "relationship_id": "r1",
-          "subject": {"entity_id": "mark-1", "name": "Mark"},
-          "predicate": "works_on",
-          "object": {"entity_id": "dense-mem", "name": "Dense-Mem"},
-          "polarity": "+"
-        }
-      ],
+      "relationship_id": "r1",
+      "equivalent_relationship_ids": ["r2"],
+      "subject": {"entity_id": "mark-1", "name": "Mark Huang"},
+      "predicate": "works_on",
+      "object": {"entity_id": "dense-mem", "name": "Dense-Mem"},
+      "polarity": "+",
       "evidence_ids": ["e1"]
+    }
+  ],
+  "related_communities": [
+    {
+      "community_id": "community-1",
+      "summary": "Dense-Mem project work and storage choices.",
+      "top_entities": [
+        {"entity_id": "dense-mem", "name": "Dense-Mem"}
+      ],
+      "top_predicates": ["works_on", "uses"],
+      "member_count": 4,
+      "source_count": 3
+    }
+  ],
+  "related_hypotheses": [],
+  "search_states": {
+    "evidence": "current",
+    "relationships": "pending"
+  },
+  "degradations": [
+    {
+      "frontier": "relationships",
+      "code": "relationship_vector_warming",
+      "optional": true,
+      "message": "Relationship vector projection is warming; lexical discovery was used."
     }
   ]
 }
 ```
 
-The result excludes scores, tiers, embedding details, verifier rationale,
-failed provider attempts, and lifecycle transitions. `relationship_id` remains
-the trace handle inside discovery paths; detailed comparisons require trace.
-Direct ranking metrics score only `results[]`, not `discovery_paths[]`.
-
-## Discovery Paths
-
-A response may include bounded `discovery_paths` near the returned evidence or
-requested expansion entities. They are selected for relevance and novelty after
-the direct result budget is set, not as extra ranked answer rows.
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  A["Mark"] ==>|"works_on"| B["Dense-Mem"]
-  B ==>|"uses"| C["PostgreSQL"]
-  B ==>|"uses"| D["Redis"]
-  A ==>|"maintains"| E["Wiki"]
-```
-
-Each path contains at most two compact Relationship edges plus supporting
-evidence IDs. A path may identify relevant evidence not returned in
-`results[]`, but it must not include unseen evidence text. It is a discovery
-hint, not evidence or automatic recursive expansion.
-
-The response tells the client to issue another focused `recall_memory` call
-when a specific part remains uncertain. The client may pass up to 200 UUIDs in
-`known_evidence_ids` and up to 200 UUIDs in `known_relationship_ids` so
-already-seen context does not occupy the next bounded result set. The client may
-also pass specific `expand_from_entity_ids` to ask for adjacent context. These
-fields are request-local and do not mutate memory.
+`relationship_id` is the representative trace handle.
+`equivalent_relationship_ids` excludes the representative. Detailed evidence,
+verification, ownership, comparisons, and history require `trace_memory`.
 
 ## Trace Mode
 
@@ -324,76 +315,42 @@ fields are request-local and do not mutate memory.
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
   Compact["Compact Relationship"] --> Need{"Need support or history?"}
-  Need -- No --> Answer["Use compact result"]
+  Need -- No --> Answer["Use compact discovery result"]
   Need -- Yes --> Trace["trace_memory(relationship_id)"]
   Trace --> PG["RelationshipRecord<br/>accepted evidence spans<br/>VerificationEvents<br/>transitions and conflicts"]
   PG --> Answer
 ```
 
-Trace is appropriate when the user asks why, requests sources, corrects or
-forgets knowledge, encounters conflict/identity uncertainty, or handles a
-high-stakes decision. Trace reads authoritative PostgreSQL history, not Redis
-or search documents.
+Trace reads authoritative PostgreSQL history, never Redis or search-document
+text. Use it for sources, corrections, forget, identity uncertainty, Conflict
+inspection, or high-stakes decisions.
 
 ## Related Hypotheses
 
-Optional Hypothesis retrieval runs after primary ranking.
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  Query["Query"] --> Related["Find matching source-linked Hypotheses"]
-  Primary["Primary Relationships"] --> Related
-  Related --> Filter["Team, status, source-version,<br/>and visibility filters"]
-  Filter --> Separate["Return related_hypotheses"]
-```
-
-Hypotheses never enter the Relationship list, receive a tier weight, or count as
-evidence. See [Dreaming](Dreaming).
-
-## Community Expansion
-
-A community is an optional derived cluster of eligible Relationships for
-discovery. It is unrelated to predicate behavior and does not replace the
-removed `policy_family` field.
-
-When explicitly enabled, community summaries may fill unused result slots only
-after direct ranking. They cannot replace a direct Relationship, become
-evidence, change tier, or become semantic nodes. The canonical boundary is in
-[Community And Dreaming](Community-And-Dreaming).
+Hypotheses are returned only in `related_hypotheses[]`. They never enter
+Evidence or Relationship ranking, count as support, or become graph edges.
+See [Dreaming](Dreaming).
 
 ## Failure, Degradation, And Freshness
 
-Ranking contracts declare which branches are required. An outage cannot silently
-change the contract.
+Required failures fail the request. Optional-frontier failures are explicit:
 
 | Condition | Required behavior |
 | --- | --- |
 | authentication or team context invalid | reject |
-| required query embedding unavailable | return a dependency error |
-| optional vector branch unavailable | omit it and record the degraded branch in internal telemetry |
-| required full-text or Entity branch fails | return the branch error |
-| optional community or Hypothesis lookup fails | omit it and record degradation internally |
-| source Relationship read fails | fail; never reconstruct truth from a search document |
-| a document has `search_state=pending` | exact/full-text/adjacency may use current source state; vector branch uses only version-matched vectors |
-| trace read fails | fail trace; do not synthesize history |
+| required Evidence branch fails | return the branch error |
+| Relationship text projection not converged before startup | remain unready; do not serve incomplete lexical discovery |
+| Relationship generation `embedding` | lexical-only Relationship discovery; state `pending`; emit `relationship_vector_warming` |
+| Relationship generation `failed` | lexical-only Relationship discovery; state `failed`; emit `relationship_vector_failed` |
+| Relationship generation `current` | enable equal-weight lexical/vector RRF |
+| optional Community or Hypothesis lookup fails | return other frontiers and append a bounded degradation |
+| authoritative source hydration fails | fail; never reconstruct knowledge from search text |
+| trace read fails | fail trace; never synthesize history |
 
-Internal telemetry:
-
-```text
-ranking_profile_version
-search_index_profile_version
-degraded_branches[]
-query_embedding_contract_version
-search_freshness:
-  pending_document_count
-  failed_document_count
-  oldest_pending_age_seconds
-```
-
-This reports derived search freshness to operators, not to the public recall
-client, and is not graph projection lag. Eligible SemanticEdges are read
-directly from committed PostgreSQL state.
+`search_states.relationships` describes the team-wide release projection gate,
+not ordinary truth. After generation activation, a newly written individual
+Relationship may be lexically available while its normal vector job is pending
+without reopening the release generation.
 
 ## Recall Feedback And Evaluation
 
@@ -401,64 +358,46 @@ Feedback records query, result IDs, ranks, ranking version, judgment, and actor.
 It does not mutate weights or Relationship state directly. See
 [Recall Feedback](Recall-Feedback).
 
-Ranking changes require matched baseline/candidate data, the same seed and
-provider configuration, direct initial-response Recall@K/MRR/nDCG, separately
-reported frontier/discovery exposure, cross-team leakage checks,
-temporal/exact-anchor/graph/Hypothesis slices, and latency percentiles. Commands
-and release-policy decisions belong in [Evaluation](Evaluation).
+Ranking changes require matched baseline/candidate data, stable seeds and
+providers, Evidence Recall@K/MRR/nDCG, Relationship Recall@5 and grouping
+precision, separate Community exposure, cross-team leakage checks, temporal and
+exact-anchor slices, warm-up/failure cases, and latency percentiles. Release
+policy belongs in [Evaluation](Evaluation).
 
 ## Risks And Mitigations
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Candidate contamination | an insufficient observation appears as a normal edge | database eligibility requires `active` plus `validated_claim/fact` |
-| Tier overwhelms relevance | unrelated fact outranks a direct validated claim | apply bounded tier weight after relevance fusion |
-| Evidence slows fast recall | every result joins verifier history and unbounded support rows | use bounded support-path eligibility for selected candidates, hydrate selected evidence only, and load full history through trace |
-| Search seed leaks stale text | vector/full-text returns A's old fragment after A was superseded | final PostgreSQL hydration requires an active eligible support path and backfills from over-fetch |
-| Filtered ANN misses | the vector branch returns an incomplete authorized candidate set | apply the team-shaped execution and exact-oracle contract in [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
-| Same evidence repeats | several Relationships from one source produce many hits | deduplicate by `(branch, evidence_id)` before fusion |
-| Same meaning from several authors floods results | A, B, and C confirmations consume three top-K slots | rank evidence contexts while retaining author positions and trace handles in discovery/trace |
-| Strong correction hides history | B outranks A and A disappears completely | return bounded conflict refs and retain both in authorized trace/clarification |
-| Conflict filter hides an unrelated fact | one fragment supports both suppressed A and an unrelated eligible Relationship | filter support paths, not fragment IDs, then backfill before hydration |
-| Historical query sees current disposition | a `known_at` query before B arrived uses B's later resolution | reconstruct case events and effective intervals before candidate selection |
-| Stale vector wins | an embedding from before a correction ranks the old meaning | require matching source/document/contract versions |
-| Hypothesis contaminates truth | dream output enters primary results | separate table, response field, eligibility path, and no tier weight |
-| Unbounded traversal | a hub Entity expands millions of Relationships | indexed adjacency plus strict seed, fan-out, depth, edge, time, and byte limits |
+| Pending-state contamination | an insufficient observation appears as a normal edge | hydrate authoritative rows and require active status plus effective support |
+| Correlation becomes truth scoring | source or profile count pushes a weak query match upward | equal-weight lexical/vector RRF only; provenance stays trace metadata |
+| Partial vector bias | early rebuilt rows receive two branch contributions while others receive one | gate the complete team vector branch until atomic generation activation |
+| Equivalent authors flood results | three matching authored records consume three slots | collapse by `semantic_group_key` before top-K and preserve equivalent IDs |
+| Known equivalent repeats | caller excludes one ID but another author copy reappears | suppress the complete semantic group |
+| Search seed leaks stale state | old search text returns after support is revoked | source hydration rechecks status, effective support, time, and conflict disposition |
+| Filtered ANN misses | vector search returns an incomplete authorized set | apply the exact/ANN oracle contract in [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
+| Community crowds direct discovery | a summary consumes Relationship capacity | independent fields and limits; no leftover-slot filling |
+| Unbounded traversal | a hub Entity expands millions of edges | direct one-edge expansion plus indexed fan-out and total bounds |
+| Vector failure hides valid knowledge | terminal embedding state removes a valid lexical document | keep valid format-2 text lexically eligible and emit an explicit degradation |
 
 ## Recall Acceptance Invariants
 
-The recall refactor is incomplete until tests prove:
-
-1. default results contain only current eligible evidence contexts with at least
-   one active query-relevant Relationship support path
-2. each evidence ID contributes at most once per retrieval branch before fusion
-3. public recall returns ranked evidence contexts and compact discovery paths,
-   not verifier history
-4. trace reconstructs accepted evidence and lifecycle lineage
-5. tier cannot bypass query relevance
-6. search hits, stored facts, and graph context never become evidence
-7. candidates, quarantined, disputed, superseded, retracted, and review-held
-   records never enter primary recall
-8. same-name Entity seeds cannot cross tenant or identity boundaries
-9. optional Hypotheses and communities never replace direct evidence results
-10. required-branch failures and optional degradation are explicit
-11. vector results match current source, embedding-contract, and active
-    search-index-profile versions
-12. bounded PostgreSQL adjacency terminates on hubs and cycles
-13. same-team eligible Relationships remain traceable regardless of author
-14. discovery paths identify owner profile when authorship affects meaning,
-    grouping, or conflict
-15. fragments from non-current source revisions never enter default recall or
-    contribute effective Relationship support
-16. cross-profile corroboration or challenge changes ranking only through
-    verified evidence and validated cross-references
-17. a preferred correction never deletes or mutates the lower-ranked author's
-    knowledge
-18. open/overdue cases retain bounded material alternatives and never infer a
-    winner from response truncation
-19. resolved cases omit only non-preferred query-relevant support paths for the
-    applicable current interval
-20. conflict disposition preserves unrelated support from the same Evidence
-    fragment and backfills the requested result budget
-21. historical `valid_at` and `known_at` requests reconstruct the applicable
-    position and case event state
+1. `results[]` contains only eligible Evidence contexts.
+2. Relationship discovery cannot change Evidence rank or budget.
+3. Related Relationships require active status and effective support.
+4. Relationship scoring uses equal-weight lexical/vector RRF and no lifecycle,
+   provenance, authority, or popularity boost.
+5. Equivalent authored Relationships consume one slot and remain traceable.
+6. Known Relationship IDs suppress their complete semantic group.
+7. `expand_from_entity_ids` performs direct one-edge expansion only.
+8. Partial migration never enables partial vector fusion.
+9. Pending or failed Relationship vectors retain lexical discovery and expose
+   public state/degradation.
+10. Evidence documents and vectors are independent from Relationship projection
+    generations.
+11. Communities and Hypotheses remain separate optional frontiers.
+12. Required branch failures and optional degradation are explicit.
+13. Search hits and graph context never become evidence.
+14. Historical `valid_at` and `known_at` reconstruct applicable lifecycle and
+    Conflict state.
+15. Every returned representative and equivalent ID remains authorized and
+    traceable.

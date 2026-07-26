@@ -186,7 +186,7 @@ flowchart LR
   Observation --> Verification["Verification events"]
   Verification --> Current["Profile-owned Relationship current state"]
   Current --> Cross["Cross-profile reference ledger"]
-  Current --> Edge["SemanticEdge read<br/>active validated/fact only"]
+  Current --> Edge["SemanticEdge read<br/>active with effective support"]
   Current --> Trace["Trace with support and history"]
   Current --> Dream["Optional isolated Hypotheses"]
 ```
@@ -199,7 +199,7 @@ flowchart LR
 - Names and aliases are Entity metadata.
 - Evidence, observations, verification, transitions, reviews, and Hypotheses
   are ledger records, not semantic nodes.
-- Candidate Relationships have no active edge and do not enter default recall.
+- Pending Relationships have no active edge and do not enter default recall.
 - A Hypothesis can connect only existing endpoints and cannot change knowledge.
 
 Canonical ownership:
@@ -207,7 +207,7 @@ Canonical ownership:
 | Concern | Canonical page |
 | --- | --- |
 | Entity reuse, create, ambiguity, merge, and split | [Entity Identity And Resolution](Entity-Identity-And-Resolution) |
-| Predicate, Relationship identity, evidence, verification, tier, status, and forget | [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) |
+| Predicate, Relationship identity, evidence, verification, status, effective support, and forget | [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) |
 | PostgreSQL, Redis, transactions, durable storage, jobs, and recovery | [Data Model And Storage](Data-Model-And-Storage) |
 | PostgreSQL tenant keys, table placement, RLS/query locality, and future team sharding | [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema) |
 | pgvector exact/ANN execution, HNSW/halfvec, index load, and search topology | [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
@@ -255,10 +255,11 @@ does not coerce it or commit a valid subset. Full details belong in
 ## Read Boundary
 
 Normal recall searches authorized same-team evidence through PostgreSQL
-full-text and `pgvector`, then uses active `validated_claim`/`fact`
-profile-owned Relationships for conflict-aware discovery and support-path
-disposition. It returns bounded evidence contexts, Conflict status, compact
-authored Relationship paths, and trace handles, not verifier history.
+full-text and `pgvector`. It separately correlation-ranks active, supported,
+profile-owned Relationships and, when enabled, derived Communities. It returns
+bounded Evidence contexts, Relationship groups, Communities, Conflict status,
+Hypotheses, freshness, and trace handles in independent fields and limits—not
+verifier history.
 
 Trace fetches normalized provenance when the caller needs to understand,
 correct, or forget knowledge. Graph visualization uses the same semantic-node
@@ -319,7 +320,7 @@ change relies on it.
 | --- | --- | --- |
 | PostgreSQL graph query is unbounded | a hub Entity causes a recursive query to exhaust memory | partial adjacency indexes and strict seed/fan-out/depth/edge/time budgets |
 | ANN tenant filter loses recall | shared approximate search omits relevant team rows before hydration | enforce the team-shaped execution/topology gates in [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
-| Provider controls truth | verifier returns `tier=fact` or an arbitrary ID and it reaches storage | closed schema excludes writes; allowlist validation and deterministic lifecycle |
+| Provider controls truth | verifier returns lifecycle status or an arbitrary ID and it reaches storage | closed schema excludes writes; allowlist validation and deterministic lifecycle |
 | Big-bang refactor stalls | every package changes before one end-to-end path works | small vertical changes and passing acceptance invariants per change |
 | Redis becomes a hidden database | replicas lose identity or review state after Redis restart | coordination-only ports and restart tests proving PostgreSQL is complete |
 | Conflict workflow becomes a truth edge | a team preference appears as a semantic predicate or closes an unrelated A Relationship | separate non-semantic case/event records, locked case membership, system reviewer transitions, and support-path-only recall disposition |
@@ -331,13 +332,14 @@ change relies on it.
 3. `pgvector` is part of PostgreSQL, not a separate authority.
 4. Redis and process memory contain no canonical memory.
 5. Entity and typed Value are the only semantic nodes.
-6. One active profile-owned `validated_claim` or `fact` Relationship produces
-   at most one SemanticEdge.
-7. Candidates and Hypotheses never enter default recall or active graph reads.
+6. One active profile-owned Relationship with effective support produces at
+   most one SemanticEdge.
+7. Pending Relationships and Hypotheses never enter default recall or active
+   graph reads.
 8. Stored knowledge and search context can inform comparison but never count as
    submitted evidence.
 9. Only deterministic policy after a valid complete verifier response changes
-   tier/status.
+   lifecycle status or effective support.
 10. Required recall failures are visible; optional degradation is reported.
 11. Embedding and search-index versions form explicit linked deployment
     contracts with separate rebuild lifecycles.
@@ -348,3 +350,7 @@ change relies on it.
     owner, author attribution, support, Entity resolution, or source history.
 15. Nightly Conflict review may close losing stale Relationship episodes with
     audited `status=superseded` and `valid_to` transitions.
+16. Relationship projection version is separate from the numerical embedding
+    and physical search-index contracts; its migration cannot re-embed Evidence.
+17. Relationship vector fusion is team-gated until a complete projection
+    generation is current.

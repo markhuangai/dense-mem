@@ -12,7 +12,7 @@ Canonical references:
 - [Entity Identity And Resolution](Entity-Identity-And-Resolution) — `reuse |
   create | ambiguous` decisions
 - [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) —
-  observations, predicates, verification, tier, and status
+  observations, predicates, verification, status, and effective support
 - [Data Model And Storage](Data-Model-And-Storage) — PostgreSQL, `pgvector`,
   transactions, and search jobs
 
@@ -158,7 +158,7 @@ Validation covers:
   exact prior-revision compare-and-set, owned superseded fragments, and bounded
   source-revision fanout
 - rejection of client-selected `team_id`, `owner_profile_id`, client-allocated
-  or forced canonical `entity_id`, tier, status, support, or promotion;
+  or forced canonical `entity_id`, status, support, or lifecycle outcome;
   server-issued candidate hints remain subject to revalidation
 
 Normalization may create lookup keys and a Unicode-normalized scan copy. It
@@ -282,7 +282,7 @@ flowchart TD
 When the intake advances a stable source revision, this transaction also
 appends the revision, advances its current pointer, makes the prior revision
 ineffective team-wide, appends affected support revocations and lifecycle
-transitions, recomputes current tier/status and search intent, and stages the
+transitions, recomputes current status/effective support and search intent, and stages the
 new evidence. It also supersedes outstanding placement and search intent for
 the prior revision. The source owner and exact previous revision must match. A
 stale token, unowned fragment, transaction error, or server-defined hard fanout
@@ -315,7 +315,7 @@ original mention and predicate wording
 ```
 
 It cannot allocate IDs, reuse an Entity, persist a predicate, decide truth, or
-assign tier/status. It should select a supplied predicate label when one fits
+assign lifecycle status/support. It should select a supplied predicate label when one fits
 and may propose a concise novel label when none does. It may emit multiple
 observations for one evidence item, and all valid observations remain visible
 through the placement result.
@@ -488,7 +488,7 @@ fields.
 
 `security_signals` is a security control, not a semantic result array. The
 response cannot contain proposed Entities, predicate definitions, stored
-Relationship selections, tiers, statuses, support counts, conflict decisions, or
+Relationship selections, statuses, support counts, conflict decisions, or
 database mutations. The verifier may only judge whether submitted evidence
 supports the extracted Relationship and temporal bounds.
 
@@ -770,7 +770,7 @@ and the explicit processing failure for retry or operator inspection.
 
 After a valid complete response with no security signals, server code resolves
 refs, loads bounded stored Relationship state, recomputes canonical identities,
-accepts evidence support, and assigns tier/status. The model cannot select a
+accepts evidence support, and computes status/effective support. The model cannot select a
 stored Relationship or perform these writes.
 
 ```mermaid
@@ -787,24 +787,24 @@ flowchart TD
   New --> Lifecycle
   Lifecycle --> Cross{"Related cross-profile<br/>Relationships?"}
   Cross -- Yes --> Link["Append confirmation/challenge/<br/>correction cross-references"]
-  Cross -- No --> Eligible{"active validated claim or fact?"}
+  Cross -- No --> Eligible{"active with<br/>effective support?"}
   Link --> Case["Create/update open team Conflict case<br/>and case membership"]
   Case --> Eligible
   Eligible -- Yes --> Edge["Eligible SemanticEdge"]
   Eligible -- No --> Hidden["No SemanticEdge"]
 ```
 
-Detailed tier/status rules, fact promotion, insufficient candidates, unknown
+Detailed status/effective-support rules, pending Relationships, unknown
 predicates, and source independence belong only in
-[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle).
+[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#status-and-effective-support).
 
 Orchestration invariants:
 
 - stored Relationships are queried after verification as deterministic identity,
   conflict, and lifecycle context; they are never new supporting evidence
-- `insufficient` may create or update a `candidate/pending_evidence` record
+- `insufficient` may create or update a `pending_evidence` record
   only after endpoints and a registered predicate resolve
-- candidates never become active edges or default recall results
+- pending Relationships never become active edges or default recall results
 - a compatible existing key or alias uses its canonical team definition
 - a verifier-selected novel candidate is registered with its Relationship in
   one transaction only after the complete registry, endpoint kinds, and
@@ -889,6 +889,15 @@ order, with the configured dimension. A stale lease, stale attempt, stale source
 version, or stale document version cannot mark a newer search document current.
 Identical unchanged search documents keep their existing vector and do not reset
 to pending.
+
+Relationship writes use the canonical semantic renderer and
+`projection_format_version=2`. The rendered text contains canonical names,
+predicate meaning, typed Value display, polarity, supported scope, and validity;
+it excludes IDs, ownership, support counts, and lifecycle metadata. A changed
+hash increments `document_version` and creates an ordinary foreground embedding
+job. Release-time Relationship projection generations reuse this same renderer
+and worker; cutover and readiness behavior belong in
+[Data Model And Storage](Data-Model-And-Storage#relationship-projection-generation).
 
 Search freshness and PostgreSQL ownership are defined in
 [Data Model And Storage](Data-Model-And-Storage#embedding-contract-search-index-and-freshness).
@@ -993,7 +1002,7 @@ or coordinate workers but never owns queue or result state.
 | Entity ambiguity | preserve observation/review context; create no Entity or dependent active edge |
 | safe novel predicate | append the team definition and Relationship atomically |
 | ambiguous, colliding, or incompatible predicate | preserve observation; create `predicate_needs_review`; create no Relationship |
-| valid `insufficient` verdict | preserve candidate Relationship as `pending_evidence` when schema and endpoints resolve; no active edge |
+| valid `insufficient` verdict | preserve a Relationship as `pending_evidence` when schema and endpoints resolve; no active edge |
 | worker loses lease | stop before semantic commit |
 | transaction failure | expose no partial material decision |
 | embedding failure | preserve authoritative state; expose `search_state=failed` and retry metadata |
@@ -1001,7 +1010,7 @@ or coordinate workers but never owns queue or result state.
 | client correction | append decision/history and recompute only affected current state |
 | source owner/prior revision mismatch | reject the revision and change no source or semantic state |
 | source activation fanout/transaction failure | abort before advancing the source pointer; expose a bounded source-update failure |
-| activated replacement is quarantined | keep old revision ineffective and preserve recomputed lower tiers/statuses |
+| activated replacement is quarantined | keep old revision ineffective and preserve recomputed support-derived statuses |
 
 ## Risks And Mitigations
 
@@ -1010,11 +1019,11 @@ or coordinate workers but never owns queue or result state.
 | Schema accommodation spreads | one provider renames `candidate_entity_id` and app code silently accepts both forms forever | closed server-owned schema, `additionalProperties=false`, full regeneration, and no coercion branch |
 | Partial semantic commit | valid Entity results commit while a Relationship result is missing | validate coverage/dependencies before policy and commit the placement outcome in one transaction |
 | Duplicate Entity | two workers both decide `create` before either sees the other | ordered team/name locks, in-transaction candidate recheck, and stable-ID constraints |
-| Circular verification | a stored fact is treated as evidence and promotes a model inference | keep stored Relationships out of the verifier request and accept support only from exact submitted spans |
+| Circular verification | a stored Relationship is treated as evidence for a model inference | keep stored Relationships out of the verifier request and accept support only from exact submitted spans |
 | Injection false positive | a security guide quotes an override phrase and is quarantined | treat one weak lexical match as guarded, retain exact spans, and permit audited manager release into guarded processing |
 | Injection bypass | obfuscation avoids the deterministic scanner and manipulates a model | keep both models capability-free, require bounded security signals, ground output to exact spans, and let deterministic code own every write |
-| Guard model becomes authority | an injected verifier returns an empty signal array and is treated as proof of safety | model output may only escalate; it cannot clear deterministic findings or authorize tier/status |
-| Candidate pollution | `insufficient` results appear in normal graph recall | enforce `candidate/pending_evidence` and SemanticEdge eligibility in the database query |
+| Guard model becomes authority | an injected verifier returns an empty signal array and is treated as proof of safety | model output may only escalate; it cannot clear deterministic findings or authorize lifecycle status/support |
+| Pending-state pollution | `insufficient` results appear in normal graph recall | enforce `pending_evidence` exclusion and active/effective-support eligibility in the database query |
 | Predicate vocabulary fragments | extractor emits synonyms for an existing team meaning | send bounded relevant vocabulary, canonicalize every proposed key/alias against the complete registry, and review ambiguous collisions |
 | Stale embedding overwrite | an old job writes a vector after a correction | compare source/document/contract versions in the update predicate |
 | Hidden provider outage | invalid output is patched locally and reported as success | bounded full-response regeneration followed by explicit placement failure |

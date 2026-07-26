@@ -165,7 +165,7 @@ and an append-only same-team cross-reference.
 
 Stable Evidence sources have separate immutable ownership. A source revision
 may be advanced only by that source owner with `write` scope and an exact prior
-revision token. The resulting support and tier recomputation may affect every
+revision token. The resulting support and status recomputation may affect every
 same-team profile that adopted that source, but the caller cannot name arbitrary
 Relationships or rewrite their history. System policy follows source/support
 dependencies and appends the resulting events.
@@ -277,7 +277,8 @@ sequenceDiagram
 The runtime advertises supported MCP protocol versions. Do not hardcode one
 protocol date in the manual as timeless.
 
-The negotiated MCP protocol version and Dense-Mem tool contract version 2 are
+The negotiated MCP protocol version and Dense-Mem tool contract
+`dense-mem.v2.3` are
 different versions. The host follows the current `tools/list` schemas and
 server instructions instead of applying a cached input shape from another
 Dense-Mem release.
@@ -356,9 +357,12 @@ weaken the promised global limit.
 
 Readiness includes PostgreSQL migrations/RLS, `pgvector`, the persisted
 embedding contract, active search-index generation/topology parity, required
-provider contracts, placement/embedding backlog policy, and Redis when
-distributed coordination is required. Optional feature outages appear as
-degradation unless deployment policy makes them required.
+provider contracts, complete Relationship text projection, placement/embedding
+backlog policy, and Redis when distributed coordination is required.
+Relationship vector-generation warming is an optional recall degradation after
+text convergence; incomplete Relationship text projection is a readiness
+failure. Optional feature outages appear as degradation unless deployment
+policy makes them required.
 
 Do not use liveness as a readiness gate.
 
@@ -385,7 +389,7 @@ bounded payloads, capability-free providers, required bounded model security
 signals, structured outputs, strict allowlist validation, and independent
 deterministic policy. Provider output can only escalate security handling; it
 cannot clear a deterministic signal, select a stored Relationship or cross-team
-ID, create support, release quarantine, or write tier/status.
+ID, create support, release quarantine, or write lifecycle status/support.
 
 ## Audit
 
@@ -393,7 +397,8 @@ Audit high-value events:
 
 - key/profile/team changes
 - authority changes and review decisions
-- source revision activation, fragment supersession, and resulting demotion
+- source revision activation, fragment supersession, and resulting
+  support/status transitions
 - deterministic/model quarantine and manager release
 - Entity merge/split
 - Relationship retraction/supersession corrections

@@ -43,7 +43,7 @@ every API-key login is exchanged for an HttpOnly session.
 The target user portal provides:
 
 - authenticated team/profile/session display
-- ranked evidence recall with compact Relationship discovery paths
+- ranked Evidence recall with separate compact Relationship and Community frontiers
 - Entity/Value graph exploration
 - Relationship trace with evidence/history panels
 - placement review and correction workflow
@@ -96,7 +96,7 @@ The portal shows:
 - current versus proposed Relationship
 - Entity candidates and discriminator context
 - evidence/source handles
-- tier/status and search state
+- status/effective-support and search state
 - explicit decision effects
 
 Decisions append durable input and re-enter normal processing. The browser never

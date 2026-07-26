@@ -47,8 +47,8 @@ sequenceDiagram
     Host->>DM: resolve_memory_placement
   end
   Host->>DM: recall_memory(query)
-  DM->>PG: Evidence full-text and pgvector search
-  DM-->>Host: Ranked evidence, Conflict cases, and discovery paths
+  DM->>PG: Evidence and Relationship search with optional derived frontiers
+  DM-->>Host: Ranked Evidence plus separate related frontiers and degradations
   opt Cross-profile Conflict needs more evidence
     Host->>User: Present authored positions and exact question
     User-->>Host: Provide new evidence
@@ -71,7 +71,7 @@ profiles disagree       -> preserve each author; use a team Conflict case
 new real identity       -> create one Entity
 new relationship        -> create one Relationship
 actual ambiguity        -> review; do not guess
-insufficient evidence   -> pending candidate; no active edge/default recall
+insufficient evidence   -> pending Relationship; no active edge/default recall
 dream speculation       -> Hypothesis only; no new node
 ```
 
@@ -96,7 +96,7 @@ flowchart LR
 | --- | --- |
 | System boundary | [Architecture](Architecture) |
 | Entity IDs, names, aliases, homonyms, merge/split | [Entity Identity And Resolution](Entity-Identity-And-Resolution) |
-| Predicate, Relationship, evidence, verification, tier/status, forget | [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) |
+| Predicate, Relationship, evidence, verification, status/support, forget | [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) |
 | `remember` process and strict verifier | [Memory Write Pipeline](Write-Pipeline) |
 | PostgreSQL, `pgvector`, Redis, queues, and recovery | [Data Model And Storage](Data-Model-And-Storage) |
 | Tenant keys, composite constraints, RLS, queues, and future team sharding | [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema) |
@@ -139,7 +139,8 @@ flowchart LR
   lifecycle and is readable across its team.
 - A profile corrects another profile by writing its own verified knowledge and
   an immutable cross-reference, never by mutating the target.
-- SemanticEdge is the read shape of an `active validated_claim` or `fact`.
+- SemanticEdge is the read shape of an active Relationship with effective
+  support.
 - Hypothesis is isolated speculation between existing endpoints.
 
 Full definitions exist only in
@@ -163,10 +164,10 @@ Dense-Mem does not:
 
 - use a name as an Entity ID
 - create alias edges or a new Entity for every spelling
-- let an AI select arbitrary database IDs or assign tier/status
+- let an AI select arbitrary database IDs or assign lifecycle status/support
 - treat stored facts, graph context, or search hits as new evidence
 - infer a third fact merely because two facts form a plausible chain
-- expose insufficient candidates in the active graph/default recall
+- expose pending Relationships in the active graph/default recall
 - let dreaming create Entities, Values, predicates, or Relationships
 - erase nodes/history when a Relationship is forgotten
 - store durable memory only in Redis

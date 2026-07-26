@@ -81,9 +81,10 @@ or persisted semantic shape changed. Monitor and resume logic count latest
 placement state per evidence `idempotency_key`, not raw placement-run rows.
 
 Direct Recall@K, MRR, nDCG@K, rank-one rate, and bad-result counts score only
-the initial ranked `results[]`. `discovery_paths` are navigation and trace
-hints, so discovery recall and exposure are secondary metrics and never improve
-the direct top-K score. The AI judge receives only the exact initial response
+the initial ranked `results[]`. `related_relationships[]` and
+`related_communities[]` are separate discovery frontiers, so their recall and
+exposure are secondary metrics and never improve the direct top-K score. The AI
+judge receives only the exact initial response
 and supplied gold data; it cannot follow guidance, recall again, or use outside
 knowledge. Recall latency reports average, p50, and p95.
 
@@ -174,7 +175,7 @@ fact, or generic HTTP memory-tool routes.
 | verification contract | did invalid model output produce zero partial semantic writes? |
 | retrieval quality | did full-text/vector/adjacency return the intended active Relationships? |
 | vector fidelity | how close is filtered HNSW to exact team-filtered search? |
-| temporal/lifecycle | are candidate, conflict, supersession, retraction, and time handled correctly? |
+| temporal/lifecycle | are pending, conflict, supersession, retraction, and time handled correctly? |
 | provenance | can trace reconstruct exact evidence, verification, support, and transitions? |
 | isolation/security | can any actor see or affect another team, and can a profile mutate another profile's knowledge? |
 | performance/scaling | what happens under simultaneous remember/recall/trace/job load? |
@@ -253,9 +254,9 @@ The corpus includes:
 - reviewer and verifier security-signal cases, manager release, and unauthorized
   release
 - stable source revisions, stale prior-revision tokens, explicit fragment
-  supersession, team-wide support revocation, and fact demotion
+  supersession, team-wide support revocation, and pending-state transition
 - hub/cyclic graph shapes
-- candidate inputs eligible/ineligible for dreaming
+- pending Relationship inputs eligible/ineligible for dreaming
 - cross-team near-duplicates designed to catch vector/RLS leaks
 - three writable same-team profiles with corroborating and conflicting
   Relationships, cross-references, and profile-local merge/split corrections
@@ -278,13 +279,13 @@ Every run fails immediately on:
 | Entity identity | one real identity has one canonical ID; homonyms may have separate IDs |
 | semantic node kinds | only Entity and typed Value appear in graph-shaped reads |
 | Relationship identity | repeated same-owner evidence attaches to one episode; another owner remains distinct and grouped; `valid_to` closure does not change identity |
-| edge eligibility | only `active validated_claim/fact` appears as SemanticEdge |
-| candidate isolation | `candidate/pending_evidence` appears in neither default recall nor active graph |
-| Hypothesis isolation | dream output changes no Entity/Value/Relationship/support/tier/status |
+| edge eligibility | only `active` Relationships with effective support appear as SemanticEdges |
+| pending isolation | `pending_evidence` appears in neither default recall nor active graph |
+| Hypothesis isolation | dream output changes no Entity/Value/Relationship/support/status |
 | evidence lineage | every support resolves to an exact immutable span/source group; effective counts match latest support decisions |
-| fact promotion | authority or two genuinely independent accepted sources; stored facts are not new evidence |
+| support activation | one accepted entailed effective support activates the Relationship; additional sources do not add lifecycle or recall-rank classes |
 | source revision | one source lineage remains one independence group; exact prior token required; activation revokes old support team-wide |
-| fact demotion | loss of effective promotion basis demotes the same Relationship automatically |
+| support loss | loss of final effective support moves the same Relationship to `pending_evidence` automatically |
 | injection boundary | deterministic quarantine calls no model; model signals commit no semantic subset; release requires manager plus write |
 | unknown predicate | observation/review only; no Relationship |
 | forget | no active edge; Entity/Value and ledger history remain |
@@ -293,6 +294,8 @@ Every run fails immediately on:
 | profile ownership | same-team eligible knowledge is readable, but ordinary lifecycle/support/merge/split changes affect caller-owned records only |
 | system reviewer boundary | nightly Conflict review may close losing stale Relationship episodes, but cannot edit evidence, support links, owner/author, Entity resolution, or source history |
 | version safety | stale embedding job cannot update a newer document |
+| Relationship projection boundary | format-2 migration changes no Evidence document/vector, numerical embedding contract, or HNSW generation |
+| Relationship vector activation | no team uses partial Relationship vector results; lexical-only mode remains complete until generation activation |
 
 ## Identity Cases
 
@@ -347,21 +350,20 @@ For every invalid attempt assert:
 - a retry contains the original immutable request and validation pointers and
   expects a complete response
 
-## Relationship And Fact Cases
+## Relationship Lifecycle Cases
 
 Required examples:
 
-1. one entailed ordinary source creates/updates an active
-   `validated_claim` under policy
-2. one entailed authoritative user source can produce `fact`
-3. two genuinely independent entailed accepted source groups can produce
-   `fact`
-4. duplicate copies or quoted common origin count once
+1. one accepted entailed support creates or updates an active Relationship
+2. source authority remains provenance and does not create a lifecycle class
+3. a second genuinely independent support improves trace provenance but does
+   not change Relationship status or correlation rank
+4. duplicate copies or quoted common origin remain one provenance source group
 5. `Mark works_on Dense-Mem` and `Dense-Mem uses PostgreSQL` do not automatically
    create `Mark uses PostgreSQL`
 6. a dream may propose that third connection as a Hypothesis using existing
    nodes, but cannot activate it
-7. `insufficient` creates/retains a pending candidate only when endpoints and a
+7. `insufficient` creates/retains a pending Relationship only when endpoints and a
    predicate resolve
 8. same-owner conflict/single-current replacement remains review-held until safe
 9. forget retracts from current reads without erasing trace
@@ -396,7 +398,10 @@ Core metrics:
 | exact-anchor success | all required hard anchors satisfied by one result |
 | judged-bad rate | top-K results explicitly unsafe/irrelevant |
 | trace completeness | expected evidence/verification/transition refs present |
-| candidate/Hypothesis leak count | must be zero in primary results |
+| pending/Hypothesis leak count | must be zero in primary results |
+| Relationship MRR/nDCG | correlation relevance in `related_relationships[]` independent from Evidence rank |
+| semantic-group duplicate count | at most one response item per `semantic_group_key`; must be zero duplicates |
+| Relationship vector-gate parity | lexical-only rollout sees the complete eligible corpus and no partial RRF advantage |
 | cross-team leak count | must be zero |
 | cross-profile placement mutation count | must be zero |
 | reviewer closure accuracy | losing stale Relationship episodes receive the intended `valid_to` and ledger only after nightly resolution |
@@ -408,8 +413,47 @@ Core metrics:
 | conflict historical reconstruction | `valid_at`/`known_at` return the labeled position/event view |
 | p50/p95/p99 latency | overall and per branch |
 
-Report results by tier, time, team size, degree, query type, and search-freshness
+Report results by status, time, team size, degree, query type, and search-freshness
 state. Aggregate scores can hide a small-tenant or homonym failure.
+
+## Relationship Projection Migration
+
+The release fixture starts from a populated pre-upgrade database and executes
+the exact text-first/vector-async sequence from
+[Data Model And Storage](Data-Model-And-Storage#relationship-projection-generation).
+The gate must prove:
+
+1. all old API and worker processes are stopped before schema change;
+2. the preflight snapshot records Relationship counts plus Evidence
+   document/vector counts and hashes;
+3. schema/status cutover makes zero provider calls;
+4. a forced stop after each keyset batch resumes without duplicate documents or
+   duplicate effective jobs;
+5. every eligible Relationship has projection format `2`, and every ineligible
+   Relationship is `not_required`, before readiness opens;
+6. lexical Relationship recall covers early, middle, and late keyset rows as
+   soon as traffic opens;
+7. the complete Relationship vector branch stays disabled while any tagged job
+   is queued, processing, or failed;
+8. foreground jobs and generation jobs both make progress under sustained load;
+9. stale leases, retries, split batches, and old document versions cannot mark
+   a newer document current;
+10. one failed generation job prevents activation without disabling lexical
+    Relationship recall;
+11. the final generation check and `current` transition are atomic, after which
+    lexical/vector RRF becomes available for the complete eligible corpus;
+12. normal post-cutover Relationship writes do not reopen the release
+    generation;
+13. Evidence documents, Evidence vectors, numerical embedding contract,
+    query-construction contract, and active HNSW generation match the preflight
+    snapshot;
+14. restore testing rolls back the database backup and matching application
+    release together; mixed-version startup is rejected.
+
+Compare Relationship MRR/nDCG before vector activation and after full
+activation. The after state may improve correlation quality, but neither state
+may alter Evidence `results[]`, lifecycle eligibility, semantic grouping, or
+Conflict disposition.
 
 ## Exact Versus HNSW Oracle
 
@@ -430,7 +474,7 @@ Datasets vary:
 - small/medium/large teams
 - many small tenants sharing one table
 - one large skewed tenant
-- selective status/tier/time/predicate filters
+- selective status/effective-support/time/predicate filters
 - concurrent inserts/updates and reads
 - pending/stale/current embedding mixtures
 - single-primary, qualified hot-standby, and every advertised team-sharded
@@ -438,7 +482,7 @@ Datasets vary:
 
 Exact filtered search is the quality oracle, not an assumed production path.
 Changing `ef_search`, iterative mode, topology/partitioning, index construction,
-RRF/reranking, or document format requires the applicable execution checks in
+RRF/reranking, or projection format requires the applicable execution checks in
 [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) and fusion checks in
 [Vector Search And Ranking](Vector-Search-And-Ranking), plus a new matched run.
 
@@ -533,10 +577,11 @@ These criteria complement the paired comparison above.
 
 | Gate | Requirement |
 | --- | --- |
-| hard invariant | zero tenant, candidate, Hypothesis, duplicate-edge, append-only, and partial-commit violations |
+| hard invariant | zero tenant, pending-Relationship, Hypothesis, duplicate-edge, append-only, and partial-commit violations |
 | verifier | every negative fixture rejects the whole response |
 | injection | no quarantined semantic/search state, no unauthorized release, and no model signal accepted as a safety clearance |
-| source lifecycle | stale/unowned revision changes nothing; accepted revision atomically revokes old effective support and recomputes tiers |
+| source lifecycle | stale/unowned revision changes nothing; accepted revision atomically revokes old effective support and recomputes statuses |
+| Relationship projection | complete format-2 text before serve; whole-team vector gate until current; zero Evidence/vector/index-contract changes |
 | identity | false merge/split thresholds approved per dataset slice |
 | recall | agreed Recall@K/MRR/nDCG and judged-bad thresholds |
 | vector | HNSW Recall@K versus exact plus latency SLO |
@@ -560,7 +605,8 @@ comparisons are not added to the release evidence set.
 | Cross-profile correction mutates target | B's stronger evidence supersedes A automatically | A/B/C ownership fixtures and target-row version checks |
 | Provider variability hides regression | model change shifts identity/verdict output | record provider, model, prompt revision, and local contract hash; use repeated/paired runs |
 | Security corpus overfits keywords | detector passes benchmark but quarantines ordinary security prose | include quoted/adversarial minimal pairs and measure pass/guarded/quarantine confusion separately |
-| Source fixtures miss shared adoption | revision tests pass for one profile but leave another profile's fact active | use A/B/C adoption fixtures and verify effective support/tier/search state for every dependent owner |
+| Source fixtures miss shared adoption | revision tests pass for one profile but leave another profile's unsupported Relationship active | use A/B/C adoption fixtures and verify effective support/status/search state for every dependent owner |
+| Migration fixture misses partial-vector bias | only a fully completed backfill is tested, so mixed lexical/vector RRF ships unnoticed | pause jobs at several keysets and assert the complete team vector branch remains disabled |
 | Load test corrupts production | evaluation endpoints run on real teams | isolated credentials/database and production feature gate off |
 | Single-node benchmark hides cluster failure | local HNSW passes while a standby is stale or one shard lacks the index | topology manifest plus replica/shard parity, lag, failover, and plan gates |
 
@@ -579,7 +625,7 @@ comparisons are not added to the release evidence set.
     exact/ANN, connection-budget, backup, and failover gates
 10. reviewer/verifier contracts contain bounded security signals but no model
     schema version, stored-knowledge alignment, or stored Relationship IDs
-11. source revision activation, automatic demotion, and stale-token rejection
+11. source revision activation, automatic pending-state transition, and stale-token rejection
     pass with same-team cross-profile adopters
 12. three-profile Conflict cases pass placement-open/nightly-resolve,
     copied-source, missing-time, deadline, stale-version, lease-recovery, and
@@ -587,3 +633,6 @@ comparisons are not added to the release evidence set.
 13. no evaluation can pass with a cross-profile placement mutation, deadline-only
     winner, wrong reviewer closure, or false suppression of an
     unrelated/historical support path
+14. Relationship projection tests prove resumable text convergence, fair
+    asynchronous re-embedding, team-wide vector activation, and unchanged
+    Evidence/embedding/index contracts

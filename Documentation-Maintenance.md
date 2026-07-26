@@ -71,7 +71,7 @@ database version, and feature flags before deciding what shipped.
 | reader navigation and manual status | [Home](Home) |
 | system boundaries, dependency direction, and startup | [Architecture](Architecture) |
 | Entity identity, names, aliases, reuse/create/ambiguity, merge/split | [Entity Identity And Resolution](Entity-Identity-And-Resolution) |
-| Relationship vocabulary, identity, cardinality, tier/status, trace, and SemanticEdge contract | [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) |
+| Relationship vocabulary, identity, cardinality, status/effective support, trace, and SemanticEdge contract | [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) |
 | remember stage order, provider retries, commit order, and review orchestration | [Memory Write Pipeline](Write-Pipeline) |
 | PostgreSQL/pgvector/Redis ownership, graph-shaped/search reads, jobs, and recovery | [Data Model And Storage](Data-Model-And-Storage) |
 | cluster-safe tenant keys, table placement, composite constraints, RLS/query locality, and queue routing | [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema) |
@@ -119,7 +119,7 @@ Examples:
 | recall is fast because it omits verifier history | state that consequence; link to Relationship trace and Recall |
 | aliases do not become edges | state the local effect; link to Entity Identity |
 | vector build follows commit | show only the local consequence; link to Data Model for embedding-job semantics |
-| tier controls ranking | state that ranking consumes tier; link to Relationship Model for tier definition |
+| Relationship correlation rank is independent from lifecycle | state the local consequence; link to Recall Ranking and Vector Search |
 
 ## Design Change Process
 

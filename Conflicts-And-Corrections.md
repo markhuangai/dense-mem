@@ -54,7 +54,7 @@ cross-reference to the other profile's record.
 | Scope ambiguity | “uses PostgreSQL” may mean production or tests | preserve observation and request scope |
 | Current-state conflict | production has competing `deploys_from` values | preserve both histories and ask |
 | Temporal ambiguity | new evidence may describe past rather than current state | request validity context |
-| Insufficient change evidence | weak evidence should not replace a supported current Relationship | retain `candidate/pending_evidence` without an active edge |
+| Insufficient change evidence | weak evidence should not replace a supported current Relationship | retain `pending_evidence` without an active edge |
 | Correction ambiguity | “that is wrong” identifies no Relationship | request `relationship_id` or a disambiguating query |
 | Cross-profile disagreement | profile B supplies stronger evidence against profile A's Relationship | preserve A, create B's eligible Relationship, append a challenge/correction cross-reference, and create/update the team Conflict case |
 
@@ -82,7 +82,7 @@ B: ent_mark_billing -> works_on -> Billing
 
 In the same transaction, Dense-Mem appends `corrects` or `challenges`
 cross-references from B's new Relationships to A's related Relationships and
-opens or updates the durable team Conflict case. A's status, tier, supports,
+opens or updates the durable team Conflict case. A's status, supports,
 validity, and Entity resolutions do not change during B's placement.
 
 ```mermaid
@@ -131,7 +131,7 @@ t2  B owns Relationship B1: production deploys_from release
 ```
 
 At `t2`, B's placement creates B1, the `corrects` cross-reference, and an open
-team Conflict case. A1, A's evidence, support, tier, status, and validity remain
+team Conflict case. A1, A's evidence, support, status, and validity remain
 unchanged during placement. The AI verifier does not decide that a conflict
 exists; server policy detects the incompatible single-current state after B's
 submitted evidence verifies.
@@ -314,7 +314,7 @@ Defaults and bounded overrides belong in
 
 ## Inspect Before Deciding
 
-Use the `relationship_id` from recall discovery paths or from a placement
+Use the `relationship_id` from `related_relationships[]` or from a placement
 `relationship_outcomes[]` entry:
 
 ```json
@@ -331,7 +331,7 @@ Use the `relationship_id` from recall discovery paths or from a placement
 The client presents:
 
 - current subject, predicate, object, polarity, scope, and validity
-- tier, status, current-cardinality behavior, and source count
+- status, effective support, current-cardinality behavior, and source count
 - accepted evidence and material verification events
 - the new conflicting observation and its evidence verdict
 - exact identity, predicate, scope, or temporal ambiguity
@@ -397,9 +397,10 @@ an already registered predicate. See [Dreaming](Dreaming).
 | `forget` | retract the caller-owned selected Relationship from active reads while retaining its ledger |
 | `acknowledge` | mark review consumption; change no semantic state |
 
-`accept` does not bypass verification or directly assign `fact`. Fact promotion
-uses the authority and independent-source rules in
-[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#source-independence-and-fact-promotion).
+`accept` does not bypass verification or directly assign active status. New
+evidence enters normal verification; deterministic support policy decides
+whether the Relationship becomes active. See
+[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#source-independence-and-support-policy).
 
 These client actions mutate only a Relationship owned by the authenticated
 profile. To address another profile's Relationship, the caller submits new
@@ -476,7 +477,7 @@ source globally obsolete. A source owner that can prove stable lineage instead
 uses `source_key`, `source_revision`, and `previous_source_revision`, optionally
 with its own `supersedes_fragment_ids`. Source activation occurs at intake,
 makes the prior revision ineffective for every profile that adopted it, and
-recomputes affected tiers from remaining effective support. The caller cannot
+recomputes affected statuses from remaining effective support. The caller cannot
 mix a profile-local correction with unowned source-fragment retirement.
 
 ## Same-Owner Before And After
@@ -550,7 +551,7 @@ this page owns how the client sees and resolves uncertainty.
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
 | Wrong review target | a decision for one conflict applies to another | require ingest/item/Relationship IDs, idempotency key, and echo an impact summary |
-| Accept bypasses policy | a client click writes an active fact directly | append evidence and route through strict verification and deterministic lifecycle |
+| Accept bypasses policy | a client click writes an active Relationship directly | append evidence and route through strict verification and deterministic lifecycle |
 | Correction erases history | old evidence is edited to match new truth | immutable fragments plus append-only observations, decisions, support, and transitions |
 | Homonym split corrupts history | finance-team Mark causes all Mark edges to move | client-confirmed impact preview and caller-owned observation-ID-level reassignment |
 | Unknown predicate expands vocabulary | verifier invents `dogfoods` as a durable key | registry allowlist and separate authorized vocabulary workflow |

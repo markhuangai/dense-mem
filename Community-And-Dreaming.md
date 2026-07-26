@@ -2,7 +2,7 @@
 
 Community detection groups related same-team Entities from eligible
 Relationships. A community is a derived analytical cluster for discovery—not
-an Entity, Relationship, predicate behavior, tier, or evidence.
+an Entity, Relationship, predicate behavior, lifecycle state, or evidence.
 
 It is unrelated to the retired `policy_family` term. Dreaming is a separate
 Hypothesis process; see [Dreaming](Dreaming).
@@ -12,7 +12,7 @@ Hypothesis process; see [Dreaming](Dreaming).
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  PG[("PostgreSQL active profile-owned<br/>validated/fact Relationships")] --> Group["Collapse equivalent authors;<br/>evaluate conflict sets"]
+  PG[("PostgreSQL active supported<br/>profile-owned Relationships")] --> Group["Collapse equivalent authors;<br/>evaluate conflict sets"]
   Group --> Snapshot["Versioned same-team snapshot"]
   Snapshot --> Estimate{"Within node, edge,<br/>memory and time budgets?"}
   Estimate -- No --> Skip["Record too_large outcome"]
@@ -26,8 +26,8 @@ No graph database or semantic projection is required. A worker reads a bounded
 edge list from PostgreSQL, runs the configured algorithm in isolated analytical
 memory, and discards that working graph after the run.
 
-Inputs include only same-team Relationships that are `active` and tiered
-`validated_claim` or `fact` for the selected time scope. Candidates, evidence,
+Inputs include only same-team Relationships that are `active`, have effective
+support, and match the selected time scope. Pending Relationships, evidence,
 observations, verifier history, reviews, and Hypotheses are excluded.
 
 Equivalent authored Relationships collapse to one analytical edge so several
@@ -129,9 +129,10 @@ acceptable production adapter.
 
 ## Community Discovery
 
-Normal public recall does not expose a `use_communities` flag. Community
-signals may be used only as server-controlled discovery context when the team
-configuration enables them and freshness checks pass.
+Communities use the independent `related_communities[]` recall frontier when
+team configuration enables the feature and freshness checks pass. The feature
+is disabled by default. `community_limit` controls only the bounded response
+count; `community_limit=0` disables the frontier for that request.
 
 There is no public `list_communities` MCP tool. The first-party portal may show
 the same authorized derived read model as an analytical overlay, but that does
@@ -140,22 +141,32 @@ not add a public memory contract.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Direct["Rank direct Relationships"] --> Full{"Top K full?"}
-  Full -- Yes --> Return["Return direct results"]
-  Full -- No --> Enabled{"Server-side community discovery<br/>enabled and current enough?"}
-  Enabled -- No --> Return
-  Enabled -- Yes --> Fill["Fill unused slots with<br/>community discovery clues"]
-  Fill --> Return
+  Query["Recall query"] --> Enabled{"Community feature enabled<br/>and current enough?"}
+  Enabled -- No --> Empty["related_communities=[]"]
+  Enabled -- Yes --> Rank["Rank matching current communities"]
+  Rank --> Limit["Apply independent community_limit"]
+  Limit --> Return["related_communities[]"]
 ```
 
-Community fill cannot replace a direct Relationship, create support, affect
-tier, bypass team/time/status filters, enter `related_hypotheses`, or appear
-without freshness metadata.
+Community results cannot replace or rerank Evidence or Relationships, create
+support, bypass team/time/status filters, enter `related_hypotheses`, or appear
+without freshness checks. Each public item contains exactly:
 
-A clue carries `community_id`, member Entity handles, source run/change
-sequence, and a follow-up recall/trace option. It is never presented as a fact.
-Ranking ownership remains in
-[Recall Ranking](Recall-Ranking#community-expansion).
+```json
+{
+  "community_id": "community-1",
+  "summary": "Dense-Mem project work and storage choices.",
+  "top_entities": [
+    {"entity_id": "dense-mem", "name": "Dense-Mem"}
+  ],
+  "top_predicates": ["works_on", "uses"],
+  "member_count": 4,
+  "source_count": 3
+}
+```
+
+It is never presented as a fact. Ranking ownership remains in
+[Recall Ranking](Recall-Ranking#community-frontier).
 
 ## Scheduling
 
@@ -214,24 +225,24 @@ Metrics belong in [Telemetry](Telemetry).
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Community becomes knowledge | generated summary is quoted as a fact | distinct record/visual style, no support/tier, optional-fill-only response |
+| Community becomes knowledge | generated summary is quoted as a fact | distinct record/visual style, no support/lifecycle state, separate optional response frontier |
 | Cross-team input | a system worker streams another team's edges | explicit team predicate, worker transaction scope, RLS/system-mode audit, and leakage test |
 | Stale cluster | correction commits during a long detection run | source sequence/version recheck before atomic publish |
 | Worker OOM | a large tenant graph is loaded without a cap | count first, stream input, hard nodes/edges/memory/timeout, isolated worker |
 | Algorithm drift | library upgrade silently changes clusters | algorithm/version/config hash and matched evaluation |
 | Duplicate schedule | replicas publish two runs for one window | unique team/window key and PostgreSQL lease |
-| Direct recall displaced | weak community clue takes a direct top-K slot | fill unused slots only |
+| Direct recall displaced | a community consumes an Evidence or Relationship slot | independent limits and separate response arrays |
 | Profile copies distort clusters | three profiles repeat one edge and triple its graph weight | collapse semantic groups and bound weight by independent source groups |
 | Unresolved correction creates false topology | A/B identity disagreement links two unrelated subgraphs | omit unresolved conflict sets and report the omission |
 
 ## Acceptance Invariants
 
-1. detection input contains only same-team active `validated_claim` and `fact`
-   Relationships
-2. evidence, candidates, and Hypotheses never enter the analytical graph
+1. detection input contains only same-team active Relationships with effective
+   support
+2. evidence, pending Relationships, and Hypotheses never enter the analytical graph
 3. persisted analysis records exact source IDs/versions and algorithm version
 4. a source change prevents stale publication or retrieval
-5. community fill never replaces a direct Relationship
+5. a Community never replaces or reranks Evidence or a direct Relationship
 6. unavailable/over-budget analysis produces explicit degradation
 7. retries do not duplicate team/window runs
 8. the working analytical graph is discarded and never becomes semantic state

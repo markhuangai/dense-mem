@@ -129,7 +129,7 @@ Low-cardinality aggregates include:
 | missing context rate | events reporting important missing knowledge |
 | irrelevant result rate | events reporting one or more bad results |
 | search-freshness correlation | quality grouped by bounded pending/failed-vector state |
-| tier usefulness | used/irrelevant rate by validated-claim/fact |
+| Relationship frontier usefulness | used/irrelevant rate by lexical/vector gate state and query class |
 | authored-conflict usefulness | quality when recall preferred, retained, or asked about conflicting profile-owned Relationships |
 | fusion-contract comparison | paired quality by approved ranking-contract version and fusion mode |
 

@@ -5,7 +5,7 @@ as reviewable, versioned JSON artifacts. They are portability packages, not
 database backups and not a path around normal identity resolution or
 verification.
 
-This page owns the current `dense-mem.memory-pack.v2` artifact and workflow.
+This page owns the current `dense-mem.memory-pack.v2.3` artifact and workflow.
 Tool discovery and transport schemas are in
 [Technical Reference](Technical-Reference#memory-packs).
 
@@ -31,7 +31,7 @@ A pack can include:
 - typed Values and predicate keys used by those Relationships
 - temporal/polarity qualifiers
 - optional evidence fragments and accepted support spans
-- source tier/status as provenance, not destination instructions
+- source lifecycle status as provenance, not a destination instruction
 - export team/install identifiers as audit metadata
 - format/schema version, creation time, selection query, and content hash
 
@@ -49,7 +49,7 @@ A pack excludes:
 
 ```json
 {
-  "format": "dense-mem.memory-pack.v2",
+  "format": "dense-mem.memory-pack.v2.3",
   "pack_id": "pack_01J...",
   "name": "dense-mem-architecture",
   "description": "Selected architecture Relationships",
@@ -162,6 +162,10 @@ Inspection validates without writing:
 9. data-classification and provenance policy
 10. expected create/update/review counts
 
+Import accepts only the exact compatible `dense-mem.memory-pack.v2.3` format.
+An older, newer, or unknown required format/extension is rejected before
+mapping or writing; clients must export a compatible artifact.
+
 ```json
 {
   "artifact_json": "{...}",
@@ -184,7 +188,7 @@ network/metadata endpoints.
 Trusted does not mean:
 
 - preserve source IDs
-- copy source tier/status directly
+- copy source lifecycle status directly
 - skip Entity ambiguity
 - skip Relationship verification
 - supersede local knowledge without policy
@@ -200,10 +204,11 @@ Conflict decisions are bounded:
 | `import_for_review` | stage it without permission to replace current knowledge |
 | `map_entity` | map one source Entity ref to a supplied same-team candidate |
 | `confirm_new_entity` | permit resolution with destination discriminator evidence |
-| `accept_source_authority` | apply a configured trusted-source policy; does not force fact |
+| `accept_source_authority` | apply a configured trusted-source policy; does not force active status |
 
-A source `fact` may become a destination candidate, validated claim, fact, or
-review item depending on destination evidence and policy.
+A source active Relationship may become a destination pending Relationship,
+active Relationship, or review item depending on destination evidence and
+policy.
 
 ## Destination Ownership
 
@@ -278,15 +283,16 @@ flowchart TD
   Request["Rollback dry run"] --> Load["Load import ledger"]
   Load --> Later{"Later observations, supports,<br/>merges, or decisions depend on import?"}
   Later -- Yes --> Unsafe["Report blockers and manual plan"]
-  Later -- No --> Impact["Show support revocations,<br/>tier/status/edge changes"]
+  Later -- No --> Impact["Show support revocations,<br/>status/edge changes"]
   Impact --> Confirm{"Explicit confirmation?"}
   Confirm -- No --> Stop["No write"]
   Confirm -- Yes --> Tx["Append rollback transitions,<br/>recompute current state/search jobs"]
 ```
 
-Rollback may lower tier or deactivate a Relationship after imported support is
-revoked from current policy. The original support/import history remains
-traceable. If later evidence independently supports it, the Relationship remains.
+Rollback may move a Relationship to `pending_evidence` after imported support
+is revoked from current policy. The original support/import history remains
+traceable. If later evidence independently supports it, the Relationship
+remains active.
 A Relationship/Entity created by the import can be retired only when no later
 record depends on it.
 
@@ -301,7 +307,7 @@ audit, exact provider metadata, and non-exportable evidence. Use
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
 | Source IDs collide | destination treats source `entity_id` as canonical | artifact-local refs and mandatory destination resolution |
-| Trusted import bypasses truth policy | signed pack copies fact tier directly | signature affects authority only; normal verification/lifecycle remains |
+| Trusted import bypasses truth policy | a signed pack copies active status without destination verification | signature affects authority only; normal verification/lifecycle remains |
 | SSRF through URL import | server fetches cloud metadata/private services | HTTPS policy, IP/redirect validation, size/time limits, and expected hash |
 | Evidence disclosure | pack includes source content caller may not export | per-fragment authorization and explicit omission/failure report |
 | Rollback erases later work | imported Entity gained new Relationships after import | dry-run dependency graph and block unsafe automatic rollback |
@@ -314,7 +320,7 @@ audit, exact provider metadata, and non-exportable evidence. Use
 
 1. source IDs never become destination IDs without resolution
 2. import writes only through the canonical PostgreSQL write pipeline
-3. trusted mode cannot set tier/status directly
+3. trusted mode cannot set lifecycle status directly
 4. pack retries do not duplicate observations or supports
 5. inspection writes nothing
 6. rollback preserves later independent evidence
@@ -322,3 +328,4 @@ audit, exact provider metadata, and non-exportable evidence. Use
 8. no credential, embedding, or Redis state is exportable
 9. ordinary import writes only destination-profile-owned Relationships
 10. rollback cannot mutate another profile's Relationship
+11. incompatible artifact formats are rejected before destination writes

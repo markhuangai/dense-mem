@@ -116,10 +116,10 @@ flowchart LR
 | `entity_correction_events` | append-only merge, split, and reassignment decisions |
 | `relationship_observations` | immutable extracted statements tied to exact evidence spans |
 | `verification_events` | append-only schema-valid verifier judgments |
-| `relationship_records` | one authored Relationship episode's current tier, status, validity, author, and version |
+| `relationship_records` | one authored Relationship episode's current status, effective support, validity, author, and version |
 | `relationship_evidence_supports` | accepted, deduplicated evidence-span and source-group links |
 | `relationship_support_decision_events` | append-only grant/revoke/reinstate decisions controlling effective support |
-| `relationship_transition_events` | append-only tier/status/validity-bound history |
+| `relationship_transition_events` | append-only status/validity-bound history |
 | `relationship_cross_references` | append-only same-team confirmation, challenge, correction, and evidence-adoption links between profile-owned Relationships |
 | `review_tasks` | identity, predicate, same-owner Relationship conflict, correction, and policy decisions needing a client |
 | `relationship_conflict_cases` | current team-scoped status, version, deadline, due/lease metadata, effective time, and preferred-position disposition for material cross-profile Relationship conflicts |
@@ -129,7 +129,8 @@ flowchart LR
 | `hypotheses` | dream output isolated from active knowledge |
 | `search_documents` | rebuildable compact text and vector-ready metadata for authorized retrieval |
 | `embedding_jobs` | durable, leased work to bring a search document to the current embedding contract |
-| `embedding_contracts` | versioned provider/model/dimension/document/normalization meaning for query and document vectors |
+| `embedding_contracts` | versioned provider/model/dimension/normalization/query meaning shared by compatible query and document vectors |
+| `search_projection_generations` | per-team, per-source-kind text projection convergence and vector activation state |
 | `search_index_generations` | versioned pgvector physical index compatibility, build state, and active pointer |
 | `placement_runs` / `placement_items` | observable processing workflow, retry, and failure state |
 
@@ -168,9 +169,9 @@ flowchart LR
 ```
 
 - Entity and typed Value are the only semantic-node kinds.
-- An active `validated_claim` or `fact` Relationship is exposed as one
+- An active Relationship with effective support is exposed as one
   `SemanticEdge`.
-- Candidate Relationships, names, evidence, observations, verification events,
+- Inactive Relationships, names, evidence, observations, verification events,
   reviews, transitions, and Hypotheses are not nodes or active edges.
 - An alias is an `entity_names` row, not a Relationship.
 
@@ -181,10 +182,10 @@ CREATE VIEW semantic_edges AS
 SELECT relationship_id, team_id, owner_profile_id, semantic_group_key,
        subject_entity_id, predicate_key,
        object_entity_id, object_value_id, polarity, valid_from, valid_to,
-       tier, version
+       effective_support_count, version
 FROM relationship_records
 WHERE status = 'active'
-  AND tier IN ('validated_claim', 'fact');
+  AND effective_support_count > 0;
 ```
 
 The migration may implement this as a view, a reusable query, or a
@@ -202,12 +203,12 @@ Representative indexes are:
 CREATE INDEX relationship_active_subject_idx
   ON relationship_records (team_id, subject_entity_id, predicate_key)
   WHERE status = 'active'
-    AND tier IN ('validated_claim', 'fact');
+    AND effective_support_count > 0;
 
 CREATE INDEX relationship_active_object_entity_idx
   ON relationship_records (team_id, object_entity_id, predicate_key)
   WHERE status = 'active'
-    AND tier IN ('validated_claim', 'fact')
+    AND effective_support_count > 0
     AND object_entity_id IS NOT NULL;
 ```
 
@@ -228,7 +229,7 @@ flowchart LR
   Document --> Vector["pgvector exact / ANN"]
   FTS --> Union["Candidate ID union"]
   Vector --> Union
-  Union --> Filter["team, status, tier,<br/>time and access filters"]
+  Union --> Filter["team, status, support,<br/>time and access filters"]
   Filter --> Hydrate["Hydrate source rows"]
   Hydrate --> Rank["Rank and bounded expansion"]
 ```
@@ -244,10 +245,16 @@ HNSW, `halfvec`, and index topology belong only in
 
 ### Embedding contract, search index, and freshness
 
-The embedding provider adapter, model, dimensions, normalization, and document
-format form one versioned embedding contract. Vector rows reference that
-contract and carry a database-enforced matching dimension. A different active
-contract is never compared with those rows.
+The embedding provider adapter, model, dimensions, normalization, and query
+construction form one versioned numerical embedding contract. Vector rows
+reference that contract and carry a database-enforced matching dimension. A
+different active contract is never compared with those rows.
+
+Text projection meaning is versioned separately per `source_kind`.
+`search_documents.projection_format_version` identifies the renderer that
+produced the indexed text. This separation permits a Relationship-only semantic
+text rewrite without changing Evidence text, query construction, vector
+dimensions, distance meaning, or the active HNSW index generation.
 
 A separate search-index generation references the embedding contract and owns
 the cosine operator class, indexed cast, HNSW construction parameters, physical
@@ -262,6 +269,7 @@ Each source aggregate exposes:
 ```text
 search_state: not_required | pending | current | failed
 search_document_version
+projection_format_version
 embedding_contract_version
 ```
 
@@ -306,6 +314,156 @@ transaction. If a batch fails, the worker recursively splits the batch to
 isolate bad or oversized documents instead of retrying every good document
 together. Upserting an unchanged search document must not clear an existing
 current vector or enqueue another embedding job.
+
+### Relationship projection generation
+
+Relationship projection format `2` makes Relationship text semantic instead of
+identifier-heavy:
+
+```text
+relationship
+subject: Mark Huang
+predicate: works on
+object: Dense-Mem
+polarity: positive
+scope: dense-mem project
+valid_from: 2026-07-01T00:00:00Z
+```
+
+The renderer uses canonical Entity names, registered predicate wording and
+aliases, canonical typed Value display and unit, polarity, supported scope, and
+validity. It omits absent optional lines. It does not include database IDs,
+profile or owner identity, `semantic_group_key`, support/source counts,
+authority, lifecycle status, verification rationale, or Evidence text.
+
+Each Relationship search document stores at least:
+
+```text
+team_id
+source_kind = relationship
+source_id = relationship_id
+projection_format_version = 2
+search_text
+search_text_hash
+document_version
+search_state
+embedding_contract_version
+vector
+```
+
+`search_projection_generations` records the release convergence boundary:
+
+```text
+generation_id
+team_id
+source_kind
+projection_format_version
+state: projecting_text | embedding | current | failed
+eligible_count
+projected_count
+current_vector_count
+failed_job_count
+last_projected_relationship_id
+last_error
+started_at
+activated_at
+```
+
+`embedding_jobs.projection_generation_id` is nullable. Release backfill jobs
+carry the generation ID; ordinary Relationship writes after cutover leave it
+null and follow normal foreground freshness rules.
+
+#### Upgrade sequence
+
+The migration is text-first and vector-async:
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TD
+  Stop["Stop all old API and worker nodes"] --> Preflight["Backup and verify counts,<br/>provider and database capacity"]
+  Preflight --> Schema["Apply schema and status cutover<br/>without provider calls"]
+  Schema --> Project["Render every eligible Relationship<br/>in keyset batches of 500"]
+  Project --> Ready{"All Relationship text<br/>format 2 or not_required?"}
+  Ready -- No --> Block["Remain unready and resume<br/>from durable keyset progress"]
+  Ready -- Yes --> Serve["Serve lexical Relationship recall"]
+  Serve --> Embed["Asynchronously embed tagged<br/>Relationship generation jobs"]
+  Embed --> Complete{"Every eligible vector current<br/>and no generation job unresolved?"}
+  Complete -- No --> Lexical["Keep complete Relationship<br/>vector branch disabled"]
+  Complete -- Yes --> Activate["Atomically mark generation current<br/>and enable vector + lexical RRF"]
+```
+
+1. **Exclusive restart.** Stop every node that can write Relationship,
+   search-document, or embedding state. Take a restorable PostgreSQL backup.
+   Record per-team Relationship eligibility counts, Relationship search-state
+   counts, Evidence document/vector counts and hashes, active embedding
+   contract, active search-index generation, and outstanding job counts.
+   Confirm embedding-provider quota and PostgreSQL headroom for the backfill.
+2. **Schema and lifecycle cutover.** Apply the Relationship schema/status
+   migration, add projection-version and generation fields, and create one
+   format-2 Relationship generation per team. This phase makes no embedding
+   provider call and changes no Evidence search document or vector.
+3. **Pre-serve text projection.** A single release migrator holds the
+   application-level projection lock. It scans Relationships with the durable
+   keyset `(team_id, relationship_id)` in batches of `500`.
+   `status=active` plus effective support renders and upserts format `2`; a
+   changed text hash increments `document_version`, sets `search_state=pending`,
+   clears vector eligibility, and inserts or coalesces one generation-tagged
+   embedding job. An ineligible Relationship becomes `not_required`, and stale
+   jobs for its prior document version cannot complete.
+4. **Resume safely.** The generation row stores projected counts and the last
+   completed keyset. Restarting the migrator repeats the last bounded batch
+   safely through hash comparison and job coalescing. Any renderer, constraint,
+   or batch failure records the error and keeps readiness closed.
+5. **Open traffic after text convergence.** Readiness opens only when every
+   Relationship is either a valid format-2 searchable document or
+   `not_required`. The convergence transaction changes generation state to
+   `embedding`. Relationship lexical recall is then complete. Evidence lexical
+   and vector recall remains under its existing freshness rules.
+6. **Drain vectors asynchronously.** Existing embedding workers process the
+   tagged Relationship jobs with their normal leases, retry limits, ordered
+   provider batches, recursive failure isolation, and document-version fence.
+   They use the unchanged provider/model/dimensions/normalization/query
+   contract and write into the existing active vector column and index.
+7. **Activate as one team-wide gate.** A generation becomes `current` only
+   when every eligible format-2 Relationship document has a current vector,
+   every ineligible Relationship is `not_required`, and no tagged job is
+   queued, processing, or failed. The final count check and state transition
+   occur in one transaction. Until then, the entire Relationship vector branch
+   for that team is disabled; recall reports lexical-only degradation.
+
+Foreground Relationship changes can occur after traffic resumes. They create
+ordinary pending jobs and use lexical recall while their individual vectors are
+pending or failed. They do not reopen or redefine the completed release
+generation. A new release projection format requires a new generation.
+
+#### Queue fairness
+
+Release backfill shares the durable queue with normal embedding work. A claim
+reserves at least one available slot for each non-empty class, then fills the
+remaining batch foreground-first. This prevents the generation from starving
+live writes and prevents continuous live writes from blocking convergence.
+Workers immediately claim another batch while backlog remains; the idle poll
+interval applies only when no claimable work exists.
+
+#### Index and maintenance consequence
+
+The Relationship renderer changes document text, not the numerical embedding
+contract or physical search-index contract. The migration therefore creates no
+new HNSW generation and never re-embeds Evidence or Entity documents. Setting a
+Relationship document to `pending` removes its old vector from vector
+eligibility; completing the matching job inserts the replacement under the same
+active contract.
+
+After convergence, run `VACUUM (ANALYZE)` on affected search/job tables.
+`REINDEX CONCURRENTLY` is conditional on measured index bloat or degraded ANN
+quality; it is not a required part of the projection migration.
+
+#### Rollback boundary
+
+The old application and the pre-migration PostgreSQL backup are one rollback
+unit. Do not start old binaries against the migrated schema, start new binaries
+against a restored old schema, or run old and new workers together. A rollback
+restores the backup and the matching application release before traffic opens.
 
 ### Vector storage consequence
 
@@ -391,8 +549,9 @@ A source-revision activation is a separate authoritative transaction. It
 validates immutable source ownership and the exact prior-revision token, appends
 the new revision, advances the current pointer, stages new fragments and their
 scan assessment, revokes supports from the previous revision, recomputes every
-affected Relationship tier/status and transition, supersedes outstanding prior
-revision placement/search intent, and updates current search intent. The new
+affected Relationship status/effective-support state and transition, supersedes
+outstanding prior-revision placement/search intent, and updates current search
+intent. The new
 evidence may remain queued or quarantined after commit; the prior revision is
 already ineffective. Placement and search writes require a matching current
 source revision so an in-flight stale worker cannot restore it.
@@ -572,6 +731,11 @@ drills. Runbook commands belong in
 | Security audit leaks detector internals | public placement or metrics reveal exact rules and attacker payloads | keep detailed signals in authorized audit rows and expose only bounded categories externally |
 | Conflict lease decides truth | a timed-out worker marks B preferred while its lease/version is stale | lease/version predicates, deterministic recomputation, and append event only with the matching current case |
 | Search refresh races disposition | an older vector job makes A primary after B resolves | authoritative Conflict filtering at hydration plus versioned rebuildable refresh work |
+| Partial Relationship vector generation biases RRF | rebuilt Relationships receive both lexical and vector rank while unrebuilt rows receive lexical rank only | disable the complete team Relationship vector branch until the generation activates transactionally |
+| Projection migration re-embeds Evidence | a broad document-format version bump queues every Evidence row and changes primary recall during rollout | keep projection format per source kind; compare Evidence counts/hashes before and after; reject non-Relationship generation jobs |
+| Backfill starves foreground writes | a large generation occupies every embedding claim slot | reserve work-class capacity, fill foreground-first, and alert on age for both classes |
+| Stale worker completes an old projection | an old node writes a vector for an earlier document after format-2 text commits | exclusive restart plus source/document/contract version predicates on completion |
+| Mixed-version rollback corrupts search state | old workers interpret new generation fields or new workers run against restored old schema | treat application release and database backup as one rollback unit and prohibit mixed-version operation |
 
 ## Storage Invariants
 
@@ -581,7 +745,7 @@ drills. Runbook commands belong in
 4. Entity and typed Value are the only semantic-node kinds.
 5. One eligible profile-owned Relationship is returned as at most one
    SemanticEdge.
-6. Candidates and Hypotheses are not active edges.
+6. Inactive Relationships and Hypotheses are not active edges.
 7. Search hits and graph context never count as source evidence.
 8. Append-only evidence and decision history cannot be rewritten by normal
    application code.
@@ -612,3 +776,11 @@ drills. Runbook commands belong in
     cannot resolve from a deadline or provider/model output.
 24. Stale search state cannot bypass the current Conflict disposition applied at
     final support-path hydration.
+25. Relationship projection format is versioned independently from the
+    numerical embedding and physical search-index contracts.
+26. A format-2 Relationship migration changes no Evidence document/vector and
+    creates no HNSW generation.
+27. Relationship lexical recall opens only after complete text convergence;
+    vector RRF opens only after the team generation is transactionally current.
+28. Generation and foreground embedding work share leases, version fences, and
+    starvation-free claim capacity.

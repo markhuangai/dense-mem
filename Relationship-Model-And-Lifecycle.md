@@ -26,8 +26,8 @@ RelationshipObservation -> VerificationEvent -> RelationshipRecord -> SemanticEd
 The semantic layer is the deterministic normalization and lifecycle boundary:
 it resolves verified observations to registered predicates and canonical
 endpoints, computes Relationship identity, applies support/source policy, and
-updates tier/status. It is not a derived-fact logic engine and does not turn
-stored Relationships into new evidence.
+updates status and effective-support state. It is not a derived-knowledge logic
+engine and does not turn stored Relationships into new evidence.
 
 PostgreSQL stores every durable record and serves the SemanticEdge view.
 `pgvector` and PostgreSQL full-text indexes provide retrieval seeds. A graph
@@ -50,8 +50,8 @@ are defined in
 | Current cardinality | Whether one or many current objects may coexist for a subject, predicate, and scope. |
 | Relationship observation | One source-specific extracted statement with exact evidence spans; its Relationship link is nullable until endpoints and predicate resolve. |
 | Verification event | Append-only verifier verdict for one observation. Provider retries are operational telemetry. |
-| Relationship record | Durable authored semantic episode, lifecycle, and current tier/status for one Relationship. |
-| Semantic edge | Read representation of one `active` `validated_claim` or `fact` Relationship. |
+| Relationship record | Durable authored semantic episode, lifecycle, and current status for one Relationship. |
+| Semantic edge | Read representation of one `active` Relationship with effective accepted support. |
 | Semantic group key | Server-derived key that groups equivalent Relationship meaning across profiles without merging ownership or lifecycle. |
 | Conflict set | Derived group of materially incompatible authored positions connected by verified cross-references, competing single-current values, or unresolved Entity alternatives. It is not a new semantic edge or truth record. |
 | Conflict case | Durable team-scoped workflow and recall-disposition record for one material cross-profile Relationship conflict set. It never owns evidence, but the system reviewer may close losing stale Relationship episodes after deterministic resolution. |
@@ -64,7 +64,7 @@ are defined in
 | Evidence support | Immutable link recording that one exact fragment span and source group was accepted for a Relationship at a point in time. |
 | Support decision | Append-only `grant`, `revoke`, or `reinstate` event controlling whether policy currently counts an EvidenceSupport. |
 | Evidence security event | Append-only deterministic scan, model signal, quarantine, or authorized release decision for one fragment. |
-| Lifecycle transition | Append-only record of a tier, status, or validity-bound change. |
+| Lifecycle transition | Append-only record of a status or validity-bound change. |
 | Hypothesis | Dream-generated possibility that cannot become knowledge without new evidence entering `remember`. |
 
 `Node` and `edge` are graph-domain terms, not database requirements. The target
@@ -76,11 +76,11 @@ The subject is an Entity. The object is exactly one Entity or typed Value.
 Entities and Values are team-scoped. Relationship author ownership and ordinary
 lifecycle writes are profile-scoped inside that team.
 
-Evidence, fragments, observations, and verification history are never promoted
-or rewritten. Promotion and demotion change the tier/status of the same
-RelationshipRecord and append lifecycle/support decisions. A fragment may stop
-being effective because it is quarantined, explicitly superseded, or belongs to
-a non-current source revision, while its bytes and provenance remain immutable.
+Evidence, fragments, observations, and verification history are never rewritten.
+Support and lifecycle changes update the status of the same RelationshipRecord
+and append support/lifecycle decisions. A fragment may stop being effective
+because it is quarantined, explicitly superseded, or belongs to a non-current
+source revision, while its bytes and provenance remain immutable.
 
 ## Profile Ownership And Team Visibility
 
@@ -98,10 +98,9 @@ Relationships regardless of owner. A profile with `write` scope may:
 - adopt another profile's exact same-team evidence through normal verification
 - merge or split only the observations and Relationships it owns
 
-It cannot change another profile's tier, status, support, validity, Entity
-resolution, or history. Manager role does not bypass this ordinary ownership
-rule; separate privacy and security quarantine powers remain administrative
-workflows.
+It cannot change another profile's status, support, validity, Entity resolution,
+or history. Manager role does not bypass this ordinary ownership rule; separate
+privacy and security quarantine powers remain administrative workflows.
 
 A system Conflict reviewer may close a losing stale episode by setting its
 current `status=superseded` and `valid_to` after deterministic team-case
@@ -171,12 +170,13 @@ flowchart LR
 
 Repeated evidence from the same owner must not create another Relationship when
 the semantic identity already exists. Accepted evidence attaches to that
-profile's existing record and may change its tier or status. Another profile
-creates its own RelationshipRecord; the team recall layer groups equivalent
-meaning without collapsing authorship.
+profile's existing record and may change its effective support or status.
+Another profile creates its own RelationshipRecord; the team recall layer
+groups equivalent meaning without collapsing authorship.
 
-Candidate records have no SemanticEdge. An eligible active record has exactly
-one graph-shaped edge representation when queried.
+Pending or otherwise inactive records have no SemanticEdge. An eligible active
+record with effective support has exactly one graph-shaped edge representation
+when queried.
 
 ## Relationship Identity
 
@@ -219,9 +219,9 @@ materialized state and appends a transition; it does not create a different
 Relationship identity. A later return to the same semantic state creates a new
 episode with a new `valid_from`.
 
-Tier, status, confidence, evidence count, source count, verifier model,
-recording time, Relationship kind, current cardinality, and `valid_to` are not
-identity fields.
+Status, confidence, evidence count, source count, verifier model, recording
+time, Relationship kind, current cardinality, and `valid_to` are not identity
+fields.
 
 These observations from one profile converge on one Relationship only after
 identity and predicate resolution:
@@ -250,14 +250,13 @@ surfaces must resolve to `works_on`.
   "object_value_id": null,
   "relationship_kind": "state",
   "current_cardinality": "many",
-  "tier": "fact",
   "status": "active",
   "polarity": "+",
   "scope_key": null,
   "valid_from": null,
   "valid_to": null,
   "valid_from_basis": "evidence_time",
-  "support_count": 3,
+  "effective_support_count": 3,
   "source_group_count": 2,
   "version": 4,
   "recorded_at": "2026-07-11T00:00:00Z",
@@ -277,7 +276,7 @@ An edge is returned only when:
 
 ```text
 status = active
-tier IN (validated_claim, fact)
+effective_support_count > 0
 ```
 
 Conceptually:
@@ -286,9 +285,8 @@ Conceptually:
 (Mark:Entity)-[WORKS_ON {
   relationship_id: "r1",
   owner_profile_id: "profile-a",
-  tier: "fact",
   polarity: "+",
-  support_count: 3,
+  effective_support_count: 3,
   source_group_count: 2,
   valid_from: null,
   valid_to: null,
@@ -303,7 +301,7 @@ separate durable record and does not require projection or reconciliation.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Record["RelationshipRecord"] --> Eligible{"active and<br/>validated or fact?"}
+  Record["RelationshipRecord"] --> Eligible{"active with<br/>effective support?"}
   Eligible -- No --> Hidden["No SemanticEdge"]
   Eligible -- Yes --> Edge["Return one SemanticEdge"]
 ```
@@ -393,7 +391,7 @@ flowchart TD
 ```
 
 Extraction providers may suggest labels and `relationship_kind`, but they
-cannot decide the durable key, version, endpoint allowlist, lifecycle, tier, or
+cannot decide the durable key, version, endpoint allowlist, lifecycle status, or
 truth. Exact keys and aliases are rechecked under a team/key transaction lock.
 An existing compatible definition wins. A safe novel candidate receives an
 append-only team definition with the verified endpoint kinds in the same
@@ -430,7 +428,7 @@ A Relationship observation is immutable processing history:
 
 `relationship_id` remains null while an endpoint or predicate is unresolved.
 Once both endpoints and the predicate resolve, an insufficient but
-schema-valid observation may link to a candidate RelationshipRecord with
+schema-valid observation may link to a RelationshipRecord with
 `status=pending_evidence`.
 
 An observation is not current truth. It can be entailed, contradicted,
@@ -448,8 +446,8 @@ correction, source revision, source review, or import rollback invalidates
 current use, Dense-Mem appends a `revoke` event; it does not delete or edit the
 support. A separately authorized reconsideration may append `reinstate`.
 Current support and independent-source counts include only effective links.
-Relationship tier/status, materialized counts, transitions, and search intent
-change atomically with the source or support decision.
+Relationship status, materialized counts, transitions, and search intent change
+atomically with the source or support decision.
 
 ## Verification Events
 
@@ -497,61 +495,69 @@ One successful verification cycle appends at most one material
 VerificationEvent per observation. Explicit later re-verification appends
 another event with its reason and version.
 
-## Tier And Status
+## Status And Effective Support
 
-Tier measures evidence maturity. Status controls participation.
-
-| Dimension | Values |
-| --- | --- |
-| tier | `candidate`, `validated_claim`, `fact` |
-| status | `pending_evidence`, `active`, `needs_review`, `quarantined`, `superseded`, `disputed`, `retracted`, `rejected` |
-
-The invariant is:
+Status controls lifecycle participation:
 
 ```text
-tier = candidate  => status != active
-status = active   => tier IN (validated_claim, fact)
+pending_evidence | active | needs_review | quarantined
+superseded | disputed | retracted | rejected
 ```
 
-A Fragment is evidence, not a tier. A Dream is a Hypothesis, not a tier.
+An EvidenceSupport is effective only when its latest decision is `grant` or
+`reinstate`, the referenced evidence is usable, the source revision is current,
+and the accepted verification verdict entails the Relationship.
 
-The verifier does not assign tier or status. Deterministic application policy
-uses evidence verdict, allowed authority, source independence, conflicts,
-temporal rules, and user decisions.
+The ordinary support-recomputation invariant is:
+
+```text
+effective_support_count > 0  => status = active
+effective_support_count = 0  => status = pending_evidence
+```
+
+Explicit `needs_review`, `quarantined`, `superseded`, `disputed`, `retracted`,
+and `rejected` decisions take precedence and are not cleared by support
+recomputation. A contradicted or insufficient new observation creates no new
+support and does not deactivate an existing Relationship that still has
+effective support.
+
+The verifier does not assign status. Deterministic application policy combines
+the evidence verdict, support usability, identity resolution, conflicts,
+temporal rules, and explicit user/system decisions.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
   Observation["Resolved observation"] --> Verdict{"Evidence verdict"}
-  Verdict -- contradicted --> Rejected["candidate + rejected"]
-  Verdict -- insufficient --> Pending["candidate + pending_evidence<br/>no SemanticEdge"]
+  Verdict -- contradicted --> RejectObservation["Reject observation support;<br/>preserve existing supported state"]
+  Verdict -- insufficient --> Existing{"Existing effective support?"}
+  Existing -- Yes --> Preserve["Preserve active Relationship"]
+  Existing -- No --> Pending["pending_evidence<br/>no SemanticEdge"]
   Verdict -- entailed --> Ambiguous{"Identity, scope, or<br/>same-owner conflict unresolved?"}
-  Ambiguous -- Yes --> Review["candidate + needs_review<br/>no SemanticEdge"]
-  Ambiguous -- No --> Other{"Conflicts with another<br/>profile's Relationship?"}
-  Other -- Yes --> Cross["Append challenge/correction<br/>cross-reference"]
-  Other -- No --> Trusted{"Authorized user evidence or<br/>2 independent accepted sources?"}
-  Cross --> Trusted
-  Trusted -- No --> Claim["validated_claim + active"]
-  Trusted -- Yes --> Fact["fact + active"]
-  Pending --> More["Later new evidence"]
-  Claim --> More
-  More --> Trusted
+  Ambiguous -- Yes --> Review["needs_review<br/>no SemanticEdge"]
+  Ambiguous -- No --> Cross{"Cross-profile conflict?"}
+  Cross -- Yes --> Reference["Append challenge/correction<br/>cross-reference"]
+  Cross -- No --> Support["Grant effective support"]
+  Reference --> Support
+  Support --> Active["active Relationship"]
+  Active --> Lost{"Final effective support removed?"}
+  Lost -- No --> Active
+  Lost -- Yes --> Pending
 ```
 
-Promotion updates the same authored Relationship episode. It does not create a
-second edge for that owner. A cross-profile conflict does not prevent an
-otherwise entailed Relationship from becoming active; both authored positions
-remain active and traceable while the case is open. Nightly Conflict resolution
-may later supersede losing stale episodes and controls which support paths enter
-primary current recall.
+Adding or removing effective support updates the same authored Relationship
+episode. It never creates a second edge for that owner. A cross-profile conflict
+does not prevent an otherwise supported Relationship from becoming active;
+both authored positions remain active and traceable while the case is open.
+Nightly Conflict resolution may later supersede losing stale episodes and
+controls which support paths enter primary current recall.
 
-## Source Independence And Fact Promotion
+## Source Independence And Support Policy
 
-A Relationship becomes a direct fact when:
-
-1. its observation is entailed by allowed authoritative user evidence; or
-2. at least two genuinely independent currently effective accepted source
-   groups entail it.
+One accepted entailed EvidenceSupport is sufficient for ordinary active
+eligibility. Additional independent sources improve provenance, traceability,
+conflict analysis, and evaluation coverage, but do not change lifecycle class
+or add a recall-ranking boost.
 
 `Authority` classifies an allowed source and actor, not the AI verifier. The
 verifier decides whether exact submitted evidence entails the observation; it
@@ -561,7 +567,7 @@ evidence. The server validates both dimensions before lifecycle policy runs.
 `source_type` describes origin only: `conversation`, `document`, `observation`,
 or `manual`. It never establishes authority or independence. In particular,
 `manual` does not mean authoritative. Client `source_group` is a bounded hint;
-the server derives the group that promotion policy counts.
+the server derives the group used by support policy and provenance.
 
 | `source_type` | Typical origin | Why retain it |
 | --- | --- | --- |
@@ -574,27 +580,26 @@ These values may select retention, redaction, export, display, or evaluation
 policy. Authority is a separate actor-and-source authorization decision; a
 manual entry remains non-authoritative unless that separate policy allows it.
 
-For example, one accepted commit authored by Mark may support a
-`validated_claim` that Mark works on Dense-Mem when the verifier finds the
-relationship entailed. A second genuinely independent accepted source may
-promote that same owner's Relationship to `fact`. An allowed direct user
-confirmation may qualify immediately under the authoritative-user rule. Merely
-having two stored facts that make a third statement plausible does not qualify.
+For example, one accepted commit authored by Mark may make Mark's
+`works_on Dense-Mem` Relationship active when the verifier finds the exact
+evidence entailed. A second genuinely independent accepted source adds another
+support path and remains visible in trace, but it does not change the
+Relationship's status or rank merely because the source count increased.
 
 Two fragments are not independent merely because they are separate rows.
 Mirrors, repeated conversation turns, summaries of the same document,
 citations that trace to one origin, and every revision of one stable source
 remain one source group.
 
-Existing facts do not count as independent sources for a new Relationship.
-Another profile's Relationship also does not automatically promote the caller's
-record. The caller must explicitly adopt authorized exact evidence, and the
-original source-group identity remains unchanged.
+Existing Relationships do not count as independent evidence for a new
+Relationship. Another profile's Relationship also does not automatically
+support the caller's record. The caller must explicitly adopt authorized exact
+evidence, and the original source-group identity remains unchanged.
 For example:
 
 ```text
-fact: Mark works_on Dense-Mem
-fact: Dense-Mem uses PostgreSQL
+Relationship: Mark works_on Dense-Mem
+Relationship: Dense-Mem uses PostgreSQL
 
 not entailed: Mark uses PostgreSQL
 ```
@@ -602,9 +607,9 @@ not entailed: Mark uses PostgreSQL
 The third statement may be a useful Hypothesis, but the premises do not
 logically entail it.
 
-The current implementation has no automatic derived-fact rule engine. A future rule engine
-would require registered deterministic rules, exact premise Relationship IDs,
-cycle prevention, and automatic invalidation when a premise changes. AI
+The architecture has no automatic derived-knowledge rule engine. A future rule
+engine would require registered deterministic rules, exact premise Relationship
+IDs, cycle prevention, and automatic invalidation when a premise changes. AI
 reasoning alone remains a Hypothesis.
 
 ### Stable Source Revisions
@@ -622,7 +627,7 @@ supersedes_fragment_ids[]
 canonical source identity to the authenticated team and immutable source owner.
 The first revision omits `previous_source_revision`; every later revision must
 name the exact current token. A mismatch changes no source pointer, support,
-tier, status, or search state.
+status, or search state.
 
 The source owner may explicitly retire its own prior fragments through
 `supersedes_fragment_ids`. It cannot target fragments from another source
@@ -658,17 +663,16 @@ Every affected Relationship that is otherwise lifecycle-eligible is
 reevaluated from effective support. Explicit `retracted`, `rejected`,
 `disputed`, or review holds are not cleared by source recomputation:
 
-| Effective promotion basis | Current result |
+| Effective-support state | Current result |
 | --- | --- |
-| authoritative accepted support or at least two independent accepted source groups | `fact + active` |
-| at least one accepted entailed support | `validated_claim + active` |
-| no accepted entailed support | `candidate + pending_evidence` |
+| at least one accepted entailed support | `active` |
+| no accepted entailed support | `pending_evidence` |
 
-Promotion and demotion update the same Relationship identity and append a
-lifecycle transition. Source activation must discover dependencies through
-indexed support links and stay within a server-defined hard transaction fanout
-bound. A bound breach aborts before the source pointer advances; it cannot leave a
-partially activated revision.
+Support recomputation updates the same Relationship identity and appends a
+lifecycle transition when status changes. Source activation must discover
+dependencies through indexed support links and stay within a server-defined hard
+transaction fanout bound. A bound breach aborts before the source pointer
+advances; it cannot leave a partially activated revision.
 
 Without a stable source identity, Dense-Mem cannot know that similar text is a
 replacement. Unkeyed evidence appends a new observation and never silently
@@ -694,8 +698,8 @@ state. Evidence and history are never deleted merely because a Relationship
 becomes inactive.
 
 State predicates with `current_cardinality=one` may supersede a comparable prior
-active record owned by the same profile only when scope, time, tier, and evidence
-policy permit. A profile never supersedes another profile's record;
+active record owned by the same profile only when scope, time, status, and
+evidence policy permit. A profile never supersedes another profile's record;
 cross-profile disagreement is represented by cross-references and a team
 Conflict case. The system Conflict reviewer may supersede losing stale episodes
 after deterministic case resolution. Events and multi-current state
@@ -705,13 +709,14 @@ Relationships coexist.
 
 Default recall searches:
 
-- active `validated_claim` and `fact` Relationship rows
+- active Relationships with effective support
 - PostgreSQL full-text indexes
 - `pgvector` search documents
 - bounded indexed Relationship expansion
 
-It excludes candidates, observations, verifier rationale, and complete
-transition history. It groups equivalent same-team authored Relationships. An
+It excludes inactive Relationships, observations, verifier rationale, and
+complete transition history. It groups equivalent same-team authored
+Relationships. An
 `open` or `overdue` Conflict case retains bounded material alternatives in
 primary recall and requests clarification. A `resolved` case returns only the
 preferred support paths in primary results for the applicable
@@ -728,9 +733,8 @@ position, owner, and event remains available through authorized trace.
   "subject": "Mark",
   "predicate": "works_on",
   "object": "Dense-Mem",
-  "tier": "fact",
   "polarity": "+",
-  "support_count": 3,
+  "effective_support_count": 3,
   "source_group_count": 2,
   "valid_from": null,
   "valid_to": null,
@@ -748,19 +752,19 @@ lineage.
 flowchart TD
   Query["Recall query"] --> Search["Text/vector seed search"]
   Search --> Rank["Fuse and rerank evidence IDs"]
-  Rank --> Paths["Attach bounded Relationship discovery paths"]
-  Paths --> Trace{"Detailed support needed?"}
+  Rank --> Related["Attach bounded related Relationships"]
+  Related --> Trace{"Detailed support needed?"}
   Trace -- No --> Answer["Answer from evidence context"]
   Trace -- Yes --> History["Trace evidence, verification,<br/>transitions, and conflicts"]
   History --> Answer
 ```
 
-## Candidate And Dream Boundary
+## Pending Relationship And Dream Boundary
 
-An insufficient candidate remains in PostgreSQL so its context is not lost. It
-is excluded from default recall and the SemanticEdge view.
+An insufficient pending Relationship remains in PostgreSQL so its context is
+not lost. It is excluded from default recall and the SemanticEdge view.
 
-Dreaming may use a bounded candidate only when:
+Dreaming may use a bounded pending Relationship only when:
 
 - its endpoints resolve to existing same-team Entity/Value records
 - its predicate is registered
@@ -773,8 +777,8 @@ processing work, but are not dream inputs.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Active["Active validated/fact Relationships"] --> Dream["Dream cycle"]
-  Pending["Eligible pending-evidence candidates"] --> Dream
+  Active["Active supported Relationships"] --> Dream["Dream cycle"]
+  Pending["Eligible pending-evidence Relationships"] --> Dream
   Dream --> Hypothesis["Hypothesis using existing endpoints"]
   Hypothesis --> Feedback{"New user or external evidence?"}
   Feedback -- No --> Keep["Remain isolated"]
@@ -784,8 +788,8 @@ flowchart LR
 ```
 
 A dream cannot create an Entity, Value, RelationshipRecord, predicate, support,
-tier, status, or SemanticEdge. If a Hypothesis mentions a new concept, that
-concept remains text until later evidence enters `remember` and normal Entity
+status, or SemanticEdge. If a Hypothesis mentions a new concept, that concept
+remains text until later evidence enters `remember` and normal Entity
 resolution.
 
 ## Forget And Retraction
@@ -814,13 +818,13 @@ referential and audit integrity.
 | Entity endpoint is ambiguous | Preserve observation/review context; create no dependent Relationship or SemanticEdge. |
 | Novel predicate is safe and unambiguous | Register the team definition and Relationship atomically. |
 | Predicate key/alias is ambiguous, colliding, or kind-incompatible | Preserve observation; return predicate review; create no Relationship or SemanticEdge. |
-| Verdict is insufficient | Preserve candidate Relationship and evidence context; create no SemanticEdge. |
+| Verdict is insufficient | Preserve a `pending_evidence` Relationship and evidence context; create no SemanticEdge. |
 | Search embedding fails | Preserve authoritative Relationship; expose degraded search state and retry the derived embedding job. |
 | Same-owner knowledge conflicts with new evidence | Hold review or apply owner-authorized supersession; never use stored knowledge as self-supporting evidence. |
 | Another profile's knowledge conflicts with new evidence | Preserve both eligible authored records during placement, append a challenge/correction cross-reference, and create/update the team Conflict case in the same transaction. |
-| Source owner or prior revision does not match | Reject the revision update and change no source, support, tier, status, or search state. |
+| Source owner or prior revision does not match | Reject the revision update and change no source, support, status, or search state. |
 | Source activation transaction or fanout bound fails | Abort before advancing the source pointer; expose a bounded source-update failure. |
-| Activated replacement is quarantined or fails placement | Keep the prior revision ineffective and leave affected Relationships at their recomputed lower tier/status. |
+| Activated replacement is quarantined or fails placement | Keep the prior revision ineffective and leave affected Relationships at their recomputed support-derived status. |
 
 ## Risks And Mitigations
 
@@ -830,10 +834,10 @@ referential and audit integrity.
 | Cross-profile placement mutates the target | ownership predicate on placement writes plus immutable cross-reference records |
 | Team recall hides disagreement | open cases return material alternatives; resolved cases return a compact conflict reference and retain all positions in trace |
 | Reviewer closes the wrong authored state | lock case member Relationship IDs/versions, revalidate scope/time/cardinality, and update losing episodes plus case resolution in one transaction |
-| Candidate pollutes normal recall | Candidate cannot be active; eligibility queries permit only validated claims and facts. |
+| Pending Relationship pollutes normal recall | Eligibility requires `status=active` plus effective accepted support. |
 | Evidence/history makes Relationship rows unbounded | Normalize observations, support decisions, verification, and transitions into separate tables. |
-| Revoked support still promotes tier | Materialize effective counts in the support-decision transaction and reconcile them against latest per-support events. |
-| Stored facts circularly promote new facts | Source independence accepts submitted evidence only; graph context never counts as a source. |
+| Revoked support leaves a Relationship active | Materialize effective counts in the support-decision transaction and reconcile them against latest per-support events. |
+| Stored Relationships circularly support new Relationships | Support accepts submitted evidence only; graph context never counts as a source. |
 | Revisions masquerade as independent sources | Bind every revision to one immutable server-derived source group. |
 | Stale source update replaces current evidence | Require source ownership and an exact `previous_source_revision` compare-and-set token. |
 | Compromised source owner invalidates shared evidence | Restrict revision changes to the immutable source owner, append actor/reason audit, and recompute only indexed dependents. |
@@ -850,12 +854,12 @@ The refactor is incomplete until tests prove:
    record
 2. independent accepted evidence adds support without duplicating that owner's
    identity
-3. only active validated claims and facts appear as SemanticEdges
-4. candidate, review, disputed, retracted, superseded, quarantined, and rejected
+3. only active Relationships with effective support appear as SemanticEdges
+4. pending, review, disputed, retracted, superseded, quarantined, and rejected
    records never appear in default recall
-5. promotion changes the same Relationship identity
+5. support changes preserve the same Relationship identity
 6. every EvidenceSupport resolves to one exact Fragment span
-7. stored knowledge alone cannot create support or promote tier
+7. stored knowledge alone cannot create support
 8. normal recall does not load complete evidence or transition history
 9. trace reconstructs evidence, verification, and lifecycle lineage
 10. existing aliases reuse canonical definitions, safe novel predicates register
@@ -868,9 +872,9 @@ The refactor is incomplete until tests prove:
 14. a registry edit cannot silently change the meaning or behavior of an
     existing Relationship
 15. revoking support preserves its link/history and removes it from effective
-    counts and promotion policy
-16. a profile cannot change another profile's Relationship tier, status,
-    validity, support, resolution, or history
+    counts and active-eligibility policy
+16. a profile cannot change another profile's Relationship status, validity,
+    support, resolution, or history
 17. a cross-profile challenge preserves both authored positions and remains
     visible to conflict-aware recall
 18. adopting another profile's evidence preserves the original fragment,
@@ -881,7 +885,8 @@ The refactor is incomplete until tests prove:
 21. an exact prior-revision mismatch changes no current state
 22. advancing a source revision makes the prior revision ineffective team-wide
     and appends every resulting support and lifecycle decision
-23. loss of fact promotion basis demotes the same Relationship automatically
+23. loss of final effective support moves the same Relationship to
+    `pending_evidence` automatically
 24. quarantined replacement evidence does not reactivate the old revision
 25. unkeyed evidence never silently supersedes earlier evidence
 26. team Conflict disposition never changes a member Relationship's owner,

@@ -1,7 +1,7 @@
 # Technical Reference
 
-This page defines public memory contract version 2. The external memory contract
-is discovered and executed through MCP:
+This page defines public memory contract `dense-mem.v2.3`. The external memory
+contract is discovered and executed through MCP:
 
 ```text
 MCP transport:  /mcp
@@ -12,13 +12,13 @@ execution:      tools/call
 ## Contract Principles
 
 1. evidence is required; structured proposals are optional hints
-2. clients cannot choose canonical IDs, predicate definitions, support, tier,
-   status, or verification outcome
+2. clients cannot choose canonical IDs, predicate definitions, support,
+   lifecycle status, or verification outcome
 3. aliases are Entity-name metadata, not Relationships
 4. `relationship_id` is the stable semantic and trace handle
 5. normal recall is compact; evidence/history require evidence or trace reads
 6. processing state and vector-search freshness are separate
-7. candidate Relationships are never active/default recall results
+7. pending Relationships are never active/default recall results
 8. every operation is authorized from the authenticated principal
 9. unknown fields on writes and provider/storage failures are rejected visibly
 10. knowledge is team-readable and profile-authored; cross-profile correction
@@ -41,7 +41,7 @@ The LLM host obtains this catalog with `tools/list` and invokes one entry with
 | `get_memory_placement` | `read` | Poll processing/search state and inspect outcomes or review tasks. |
 | `resolve_memory_placement` | `write` | Supply a client decision, new evidence, correction, rejection, or forget request. |
 | `correct_entity_resolution` | `write` | Dry-run or apply a merge/split limited to caller-owned observations and Relationships. |
-| `recall_memory` | `read` | Retrieve bounded evidence contexts, Conflict status, compact Relationship discovery paths, and server-controlled related Hypotheses. |
+| `recall_memory` | `read` | Retrieve bounded evidence contexts plus separate Relationship, Community, Conflict, and Hypothesis frontiers. |
 | `trace_memory` | `read` | Expand one Relationship into evidence, verification, lifecycle, conflicts, and bounded current graph context. |
 
 ### Dreaming
@@ -316,7 +316,7 @@ from a prior `trace_memory` result:
 Dense-Mem revalidates team, version, visibility, and semantic relatedness after
 verification. A stale, cross-team, or unrelated target rejects the complete
 `remember` request before evidence commits. The target ID can help the server
-derive `corrects` or `challenges`; it cannot set the target's tier, status,
+derive `corrects` or `challenges`; it cannot set the target's status,
 validity, support, or conflict winner.
 
 An `object_value` contains one of `string`, `number`, `boolean`, `date`, or
@@ -331,7 +331,6 @@ owner_profile_id selection
 predicate definition
 relationship_kind
 current_cardinality
-tier
 status
 support or source counts
 verification outcome
@@ -382,9 +381,8 @@ vector-search readiness.
           "observation_id": "obs_1",
           "relationship_id": "r1",
           "owner_profile_id": "profile-a",
-          "tier": "fact",
           "relationship_status": "active",
-          "category": "relationship_fact",
+          "category": "relationship_active",
           "reason": "Entailed authoritative user evidence.",
           "review_task": null,
           "conflict": {
@@ -449,9 +447,8 @@ Relationship outcome categories:
 
 | Category | Consumer behavior |
 | --- | --- |
-| `relationship_fact` | active Relationship at fact tier |
-| `relationship_validated_claim` | active supported Relationship below fact tier |
-| `relationship_pending_evidence` | retained candidate; exclude from normal recall; it may be eligible for dreaming |
+| `relationship_active` | active Relationship with effective accepted support |
+| `relationship_pending_evidence` | retained Relationship without effective support; exclude from normal recall; it may be eligible for dreaming |
 | `relationship_needs_review` | present the exact same-owner Relationship conflict/scope question |
 | `predicate_needs_review` | present original wording and server options; no Relationship exists yet |
 | `relationship_rejected` | do not treat as true |
@@ -519,7 +516,7 @@ Every action that targets a placement item uses the item `version` returned by
 fails closed. Resolution fields are top-level closed-schema properties; there
 is no nested `decision` compatibility shape.
 
-No action writes a graph side channel or directly forces `fact`. Merge, split,
+No action writes a graph side channel or directly forces active status. Merge, split,
 supersede, support changes, and forget target caller-owned records only. A
 correction of another profile enters through caller-owned `remember` evidence
 and produces a cross-reference; it cannot edit the target.
@@ -582,6 +579,8 @@ belong in
 {
   "query": "Which branch does production deploy from?",
   "limit": 10,
+  "relationship_limit": 5,
+  "community_limit": 3,
   "valid_at": null,
   "known_at": null,
   "known_evidence_ids": ["550e8400-e29b-41d4-a716-446655440002"],
@@ -594,13 +593,15 @@ belong in
 | --- | --- | --- |
 | `query` | yes | 1–512 Unicode code points |
 | `limit` | no | 1–50; default 10 |
+| `relationship_limit` | no | 0–20; default 5; `0` disables the Relationship frontier |
+| `community_limit` | no | 0–10; default 3; `0` disables the Community frontier |
 | `valid_at` | no | real-world RFC 3339 time |
 | `known_at` | no | system-knowledge RFC 3339 time |
 | `known_evidence_ids` | no | up to 200 unique evidence UUIDs already seen by the client; suppressed from returned `results[]` |
-| `expand_from_entity_ids` | no | up to 50 unique Entity UUIDs for focused follow-up expansion |
-| `known_relationship_ids` | no | up to 200 unique Relationship UUIDs already seen by the client; used as traversal context and suppressed from returned results |
+| `expand_from_entity_ids` | no | up to 50 unique Entity UUIDs; adds only directly touching eligible Relationships |
+| `known_relationship_ids` | no | up to 200 unique Relationship UUIDs already seen by the client; suppresses the complete semantic group containing any supplied ID |
 
-### Evidence response
+### Response
 
 ```json
 {
@@ -641,28 +642,49 @@ belong in
       "positions_truncated": false
     }
   ],
-  "discovery_paths": [
+  "related_relationships": [
     {
-      "relationships": [
-        {
-          "relationship_id": "r_b_release",
-          "subject": {
-            "entity_id": "ent_production",
-            "name": "production"
-          },
-          "predicate": "deploys_from",
-          "object": {
-            "entity_id": "ent_release",
-            "name": "release"
-          },
-          "polarity": "+"
-        }
-      ],
+      "relationship_id": "r_b_release",
+      "equivalent_relationship_ids": [],
+      "subject": {
+        "entity_id": "ent_production",
+        "name": "production"
+      },
+      "predicate": "deploys_from",
+      "object": {
+        "entity_id": "ent_release",
+        "name": "release"
+      },
+      "polarity": "+",
       "evidence_ids": ["e_b_release"]
     }
   ],
-  "discovery_guidance": "If you are uncertain or have concerns about any specific part, call recall_memory again with a focused query. Pass known_evidence_ids and known_relationship_ids from this response to avoid repeated context, and pass expand_from_entity_ids when you want more context around specific entities. Use trace_memory for supporting evidence or history.",
-  "related_hypotheses": []
+  "related_communities": [
+    {
+      "community_id": "community_release",
+      "summary": "Production deployment branch and release workflow.",
+      "top_entities": [
+        {"entity_id": "ent_production", "name": "production"},
+        {"entity_id": "ent_release", "name": "release"}
+      ],
+      "top_predicates": ["deploys_from"],
+      "member_count": 3,
+      "source_count": 2
+    }
+  ],
+  "related_hypotheses": [],
+  "search_states": {
+    "evidence": "current",
+    "relationships": "pending"
+  },
+  "degradations": [
+    {
+      "frontier": "relationships",
+      "code": "relationship_vector_warming",
+      "optional": true,
+      "message": "Relationship vector projection is warming; lexical discovery was used."
+    }
+  ]
 }
 ```
 
@@ -670,15 +692,41 @@ Recall is evidence-primary. `results[]` is the ranked answer context, bounded
 by the server context budget. There is no `raw_evidence` response field and no
 unfiltered evidence dump. Evidence text is returned only after final hydration
 proves at least one query-relevant active support path remains eligible for the
-requested `valid_at`/`known_at` view. `discovery_paths[]` carries compact,
-separately selected Relationship paths for follow-up discovery near the returned
-evidence or requested expansion entities; it is not extra answer context and does
-not affect direct top-K scoring. `known_evidence_ids` and
-`known_relationship_ids` change only request-local retrieval context and never
-mutate stored state.
+requested `valid_at`/`known_at` view.
+
+`related_relationships[]` is a separate correlation-ranked discovery frontier.
+Each item consumes one `relationship_limit` slot after grouping by
+`semantic_group_key`. `relationship_id` is the deterministic representative;
+`equivalent_relationship_ids` contains the other eligible authored records in
+that group. Subject is always an Entity. Object is an Entity or a typed Value
+with `value_id`, `type`, canonical `value`, and optional `display`/`unit`.
+`evidence_ids` contains authorized support handles; full provenance and history
+require `trace_memory`. Relationship rank never changes Evidence `results[]`.
+
+`related_communities[]` is a separate optional derived frontier. Each item has
+exactly `community_id`, `summary`, bounded `top_entities[]`,
+`top_predicates[]`, `member_count`, and `source_count`. It is empty when the
+feature is disabled or `community_limit=0`. Community membership never changes
+Evidence or Relationship rank.
+
+`search_states` is required. `evidence` reports aggregate Evidence freshness;
+`relationships` reports the team-wide release projection gate. Both use
+`not_required`, `pending`, `current`, or `failed`.
+`degradations[]` is required and may be empty. It contains bounded
+`frontier`, stable `code`, `optional`, and safe `message` fields. During a
+Relationship projection backfill, complete lexical discovery remains available
+after text convergence. `pending` uses `relationship_vector_warming`; `failed`
+uses `relationship_vector_failed`. Both report that the team-wide Relationship
+vector branch is disabled. Ordinary post-activation document freshness remains
+visible on placement/search state and does not reopen this release gate.
+
+`known_evidence_ids`, `known_relationship_ids`, and expansion inputs change
+only request-local retrieval context and never mutate stored state. Array order
+is rank. The public response contains no raw rank score, distance, embedding
+version, projection generation ID, or ranking-contract version.
 
 `conflicts[]` is required and may be empty. It contains at most 20 cases
-material to the query or returned paths. Each case contains at most 10
+material to the query or returned frontiers. Each case contains at most 10
 positions; each position contains at most 20 Relationship IDs, 20 owner profile
 IDs, and 50 evidence IDs that also occur in this response's `results[]`. Status
 is `open`, `overdue`, or `resolved`; disposition is `candidate`, `preferred`, or
@@ -697,19 +745,12 @@ and `known_at` reconstruct the applicable position and case-event state. The
 exact policy belongs in
 [Conflicts And Corrections](Conflicts-And-Corrections#durable-team-conflict-cases).
 
-`subject` is always an Entity. `object` is a tagged union: an Entity with
-`entity_id`/`name` or a typed Value with `value_id`, `type`, canonical `value`,
-and optional `display`/`unit`.
-
 Recall eligibility, branch flow, and degradation belong in
 [Recall Ranking](Recall-Ranking). Cosine distance, RRF, and reranking belong in
 [Vector Search And Ranking](Vector-Search-And-Ranking). Exact/ANN execution and
 index versions belong in [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec).
 Embedding contracts, search-index generation IDs, ranking-contract versions,
-branch scores, and freshness
-diagnostics are internal telemetry. They are intentionally absent from the
-public recall response because a client needs context and stable trace handles,
-not retrieval implementation details.
+branch scores, and projection-generation IDs are internal telemetry.
 
 ## `trace_memory`
 
@@ -768,8 +809,8 @@ position membership with Relationship versions, and append-only case events:
 Events include prior/resulting status, selected position when present, reason,
 policy version, actor profile when client-triggered, system actor when
 reviewer-triggered, effective time basis, referenced versions, and `created_at`.
-Relationship `transitions[]` include prior/resulting tier, status, `valid_from`,
-and `valid_to` when a reviewer closes a stale episode. Trace may include
+Relationship `transitions[]` include prior/resulting status, `valid_from`, and
+`valid_to` when a reviewer closes a stale episode. Trace may include
 dismissed cases and non-preferred evidence that ordinary current recall omits.
 
 Trace reads authoritative normalized history and may add bounded current
@@ -870,7 +911,7 @@ The full lifecycle is in
 | embedding | evidence/search document text or recall query under configured policy |
 | structure reviewer | submitted evidence and optional client proposal |
 | Entity/Relationship verifier | evidence, extracted items, immutable Entity candidate sets, and predicate registry options; no stored Relationships or source policy |
-| dream generator | compact allowed source Relationships/candidates plus existing endpoint and predicate IDs |
+| dream generator | compact allowed active/pending source Relationships plus existing endpoint and predicate IDs |
 
 Providers receive no API keys, password hashes, Redis contents, raw database
 access, unrestricted team graphs, or other-team evidence. Existing knowledge is
@@ -898,8 +939,8 @@ Provider configuration belongs in
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
 | Stale tool discovery | an MCP host caches an older schema and sends removed recall fields | strict `additionalProperties=false` schemas and client refresh guidance |
-| Client controls truth | request sends tier/status/predicate definition and bypasses policy | closed write schemas reject all lifecycle-control fields |
-| Candidate appears confirmed | consumer renders `relationship_pending_evidence` with facts | distinct category, no default recall eligibility, and typed client fixtures |
+| Client controls truth | request sends status/support/predicate definition and bypasses policy | closed write schemas reject all lifecycle-control fields |
+| Pending Relationship appears active | consumer renders `relationship_pending_evidence` with active knowledge | distinct category, no default recall eligibility, and typed client fixtures |
 | Search mistaken for commit | client retries `remember` because a vector is pending | separate intake/processing/search fields and idempotency keys |
 | Alias becomes edge | client proposal creates an alias Relationship | aliases exist only on Entity hints and name storage |
 | Oversized trace | a hub Entity exhausts response or host context | depth, edge, content, time, and character budgets plus `stopped_reason` |
@@ -911,14 +952,14 @@ Provider configuration belongs in
 
 ## Contract Acceptance
 
-Version 2 is incomplete until:
+Contract `dense-mem.v2.3` is incomplete until:
 
 1. generated MCP tool schemas match the committed examples and enums
 2. unknown write fields and forbidden lifecycle fields fail validation
 3. all semantic results use `relationship_id`
-4. candidate categories never claim active status
+4. pending categories never claim active status
 5. default recall contains evidence contexts but no verifier history,
-   candidate Relationship, or Hypothesis in `results[]`
+   pending Relationship, Community, or Hypothesis in `results[]`
 6. trace returns exact spans and lifecycle/correction lineage
 7. processing and search states vary independently
 8. cross-team ID hints fail without revealing existence
@@ -928,11 +969,17 @@ Version 2 is incomplete until:
     feature combination
 12. semantic memory tools are discoverable/callable through MCP and are
     absent from generic HTTP tool discovery, execution, and OpenAPI
-13. `remember` accepts conflict context only on one Relationship proposal and
+13. recall exposes independent Evidence, Relationship, Community, Conflict, and
+    Hypothesis fields with the documented limits and exact item shapes
+14. `known_relationship_ids` suppresses a complete semantic group and direct
+    Entity expansion performs no recursive traversal
+15. Relationship vector warming is explicit in `search_states` and
+    `degradations[]`; no public score or internal generation identifier leaks
+16. `remember` accepts conflict context only on one Relationship proposal and
     rejects stale, cross-team, dismissed, or unrelated cases before commit
-14. `remember` accepts optional correction target only on one Relationship
+17. `remember` accepts optional correction target only on one Relationship
     proposal and rejects stale, cross-team, or unrelated targets before commit
-15. every recall response contains bounded `conflicts[]`; open/overdue and
+18. every recall response contains bounded `conflicts[]`; open/overdue and
     resolved cases follow their specified primary-result behavior
-16. trace reconstructs every authorized Conflict position, version, event, and
+19. trace reconstructs every authorized Conflict position, version, event, and
     non-preferred evidence path

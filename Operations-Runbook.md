@@ -67,7 +67,9 @@ flowchart TD
   RedisOK -- No --> Stop
   RedisOK -- Yes --> Providers["Check required provider contracts"]
   Redis -- No --> Providers
-  Providers --> Workers["Start durable workers"]
+  Providers --> Projection{"Relationship text projection<br/>converged?"}
+  Projection -- No --> Stop
+  Projection -- Yes --> Workers["Start durable workers"]
   Workers --> Ready["Open readiness"]
 ```
 
@@ -81,6 +83,7 @@ Readiness should expose component-level state:
 | embedding | required recall profile cannot embed, or configured contract probe fails |
 | Redis | unreachable when distributed coordination is required |
 | placement/embedding jobs | backlog exceeds the release-defined readiness boundary |
+| Relationship projection | any eligible Relationship lacks format-2 text or any ineligible Relationship is not marked `not_required` |
 | authority state | missing, incompatible, or corrupt PostgreSQL authority metadata |
 
 Do not report a single green dependency flag when write, vector recall, trace,
@@ -242,6 +245,67 @@ During a vector backlog:
 Never copy an older vector onto a newer document or mark `search_state=current`
 without the source/document/contract version predicate succeeding.
 
+### Relationship projection upgrade
+
+Use this release procedure for projection format `2`; the canonical state
+machine and schema are in
+[Data Model And Storage](Data-Model-And-Storage#relationship-projection-generation).
+
+Before migration:
+
+1. stop all API, placement, scheduler, and embedding-worker versions that can
+   write the database;
+2. confirm no old process retains a lease;
+3. take and restore-test the rollback backup;
+4. export per-team eligible/ineligible Relationship counts, Relationship
+   document-state counts, Evidence document/vector counts and hashes,
+   outstanding jobs by source kind, numerical embedding contract, and active
+   search-index generation;
+5. confirm provider quota, database free space, WAL capacity, connection
+   reserve, and expected Relationship-only embedding volume.
+
+During the blocking text phase:
+
+- run only the release migrator under its application projection lock;
+- watch generation state, last projected Relationship ID, projected/eligible
+  counts, batch duration, new tagged jobs, and renderer errors;
+- expect batches of 500 ordered by `(team_id, relationship_id)`;
+- on failure, fix the root cause and resume the same generation—the renderer
+  hash and job-coalescing keys make the repeated boundary batch idempotent;
+- do not open readiness until every eligible Relationship has format-2 text and
+  every ineligible Relationship is `not_required`;
+- compare Evidence counts and hashes with preflight before opening traffic.
+
+After text convergence, traffic may open. `results[]`, Evidence vectors, and
+Relationship lexical discovery remain available. The Relationship vector
+branch stays disabled for the complete affected team and recall reports
+`relationship_vector_warming`.
+
+During asynchronous re-embedding:
+
+- generation jobs contain only `source_kind=relationship` and carry the
+  projection generation ID;
+- ordinary live Relationship writes use untagged foreground jobs;
+- each non-empty class receives reserved claim capacity, with remaining slots
+  filled foreground-first;
+- workers drain immediately while claimable backlog exists;
+- provider retries, batch splitting, leases, and document-version fences remain
+  unchanged;
+- one terminal failed generation job keeps the generation from activating but
+  does not disable lexical Relationship recall.
+
+The generation activates only after a transactional recount proves every
+eligible format-2 Relationship vector is current, every ineligible
+Relationship is `not_required`, and no tagged job is queued, processing, or
+failed. Verify that vector RRF then enables for the complete team, Evidence
+counts/hashes still match preflight, and the embedding/search-index contract IDs
+did not change. Run `VACUUM (ANALYZE)`; reindex concurrently only when measured
+bloat or ANN quality warrants it.
+
+Rollback restores the pre-migration PostgreSQL backup and the matching old
+application release together. Never roll back one without the other or allow
+old and new workers to overlap.
+
 ## Recall Latency Or Quality
 
 Break down the request by branch:
@@ -398,7 +462,7 @@ Restore checks include:
 - no cross-team visibility under representative profiles
 - same-team A/B/C visibility with owner-only mutation enforcement
 - expected Entity/Value/Relationship/evidence/history counts
-- no candidate or Hypothesis in active SemanticEdge reads
+- no pending Relationship or Hypothesis in active SemanticEdge reads
 - exact support/source-group counts on sampled traces
 - embedding dimensions and contract versions
 - vector Recall@K against exact filtered queries
@@ -475,6 +539,9 @@ dumps.
 | Destructive repair loses ledger | direct deletes remove support/transition history | append-only roles, explicit approval/change control, backup, and dry-run impact |
 | Cross-profile repair damages another author | operator retries B's split under a system role and moves A | owner-preserving jobs, selected-observation checks, and three-profile smoke |
 | Conflict backlog is “fixed” by choosing a winner | operator updates `preferred_position_id` directly to clear overdue alerts | append-only/system-owned workflow, supported deterministic retry only, and new evidence through MCP |
+| Projection rollout biases Relationship rank | traffic opens while only some Relationships have replacement vectors | require complete text convergence before serve and whole-team vector activation after transactional recount |
+| Projection rollout changes Evidence | an operator launches a global vector rebuild for a Relationship-only format change | pre/post Evidence hashes and counts, source-kind-tagged generation, and unchanged contract/index IDs |
+| Mixed-version rollback writes incompatible state | old workers resume against the migrated schema | stop/lease audit before migration and restore database plus matching application as one unit |
 
 ## Operational Acceptance
 
@@ -494,3 +561,6 @@ Before production:
 11. Conflict review catch-up, lease recovery, overdue-without-winner, resolved
     support-path filtering, and historical trace/recall are proven without
     mutating either author's Relationship
+12. Relationship projection upgrade proves resumable text convergence,
+    Relationship-only fair re-embedding, whole-team vector activation, and
+    unchanged Evidence/embedding/index state

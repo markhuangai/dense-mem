@@ -17,7 +17,7 @@ in this architecture page.
 | Retired pattern | Current requirement |
 | --- | --- |
 | PostgreSQL control plus a second semantic store | PostgreSQL owns ledger, current semantic state, graph reads, full text, and `pgvector` |
-| claim/fact/fragment services and mixed graph records | Entity, Value, RelationshipObservation, VerificationEvent, profile-authored RelationshipRecord, Support, CrossReference, Transition, Hypothesis |
+| mixed semantic-object services and graph records | Entity, Value, RelationshipObservation, VerificationEvent, profile-authored RelationshipRecord, Support, CrossReference, Transition, Hypothesis |
 | graph-store startup/bootstrap | server requires PostgreSQL + `pgvector` |
 | verifier exposes alternate claim-decision vocabulary | one closed response with bounded `security_signals`, `entity_results`, and `relationship_results`; no model schema-version field or stored-Relationship context |
 | graph-specific adapters define behavior | repository ports expose bounded semantic-edge/search/trace operations |
@@ -89,7 +89,7 @@ Forbidden dependencies:
 - domain packages importing HTTP, PostgreSQL, Redis, or provider SDKs
 - PostgreSQL repositories calling model providers
 - Redis interfaces accepting Entity, Relationship, evidence, or review records
-- transport or provider adapters assigning tier/status
+- transport or provider adapters assigning lifecycle status/support
 - recall reconstructing truth from search-document text
 - compatibility types leaking into canonical domain APIs
 
@@ -102,7 +102,7 @@ Forbidden dependencies:
 - Every tenant-owned table, key, hot lookup, queue, and idempotency key carries
   `team_id`.
 - Reviewer output is an immutable proposal; deterministic server policy owns
-  identity, lifecycle, tier, status, and durable commit.
+  identity, lifecycle, status, effective support, and durable commit.
 - Recall and trace use team-scoped PostgreSQL full-text, vector, and adjacency
   paths.
 - Dreaming and community analysis consume eligible current state and cannot
@@ -170,7 +170,7 @@ the relevant uniqueness constraints.
 
 | Layer | Must prove |
 | --- | --- |
-| pure domain | owner-scoped Relationship identity, lifecycle transitions, source independence/currentness, automatic demotion, cross-profile references, predicate behavior, no candidate activation |
+| pure domain | owner-scoped Relationship identity, lifecycle transitions, source independence/currentness, automatic pending-state transition, cross-profile references, predicate behavior, no pending-state activation |
 | JSON contract | closed schemas, conditionals, bounds, exact enums, bounded security signals, and no removed/unknown fields |
 | PostgreSQL integration | migrations, RLS, constraints, atomic source activation, append-only security/support history, queues/leases, partial indexes, vector operators |
 | repository/service integration | actual transactions, concurrent create recheck, idempotency, current-state/transition consistency |
@@ -202,12 +202,13 @@ real PostgreSQL/`pgvector` instance and actual service logic.
 - repeated same-owner evidence attaches to one Relationship
 - another profile's equivalent/correcting evidence creates its own Relationship
   and cross-reference
-- `insufficient` produces `candidate/pending_evidence` and no SemanticEdge
-- authoritative entailed evidence can promote under policy
-- two genuinely independent accepted sources can promote
-- two stored facts do not automatically prove a third Relationship
+- `insufficient` produces `pending_evidence` and no SemanticEdge
+- one accepted entailed effective support activates the Relationship
+- additional independent accepted sources improve provenance but do not change
+  lifecycle class or correlation rank
+- two stored Relationships do not automatically prove a third Relationship
 - advancing a stable source revision revokes prior effective support team-wide
-  and automatically demotes the same affected Relationships
+  and moves unsupported affected Relationships to `pending_evidence`
 - a stale/unowned revision or fanout-bound failure changes no source pointer or
   semantic state
 - a quarantined or later failed replacement never reactivates the prior revision
@@ -258,18 +259,21 @@ and creates no `VerificationEvent` or other semantic subset.
 
 ### Recall/search
 
-- candidates/Hypotheses never enter primary results
+- pending Relationships/Hypotheses never enter primary results
 - exact filtered search is the quality oracle
 - HNSW meets Recall@K and latency gates at representative tenant skew
 - 3,072-dimensional full-precision storage creates the halfvec HNSW expression
   index and exact-reranks candidates without returning vectors to the service
 - source/document/contract version mismatch excludes a vector
-- one Relationship from three branches appears once
+- one Relationship from lexical/vector/adjacency candidates appears once
 - equivalent authored positions group without losing author handles
 - one qualifying cross-profile correction supplies resolved primary paths plus
   conflict refs, or unresolved policy returns alternatives/clarification
 - hub/cycle traversal stops at configured bounds
 - compact recall reads no evidence/verification history
+- incomplete Relationship projection text fails readiness
+- incomplete Relationship vector generation uses complete lexical-only
+  discovery and reports degradation
 
 ### Conflict case and nightly review
 
@@ -280,7 +284,7 @@ case/event rows and recall/trace behavior, not that a mocked resolver method was
 called.
 
 - B's placement creates B-owned knowledge, a cross-reference, and an open case;
-  A's Relationship row/version/tier/status/support/validity remains unchanged
+  A's Relationship row/version/status/support/validity remains unchanged
   until nightly review
 - weak B, missing required effective time, two qualifying positions, or copied
   evidence from one source group remains `open` or becomes `overdue`
@@ -359,6 +363,7 @@ Measure at representative team sizes and concurrency:
 | adjacency | seed/degree/depth distributions, stopped reason, p95/p99 |
 | trace | joins/bytes versus support/history size |
 | embedding jobs | throughput, oldest age, stale-job ratio |
+| Relationship projection | text-batch resume, foreground/generation fairness, vector-gate activation, and Evidence hash parity |
 | Conflict resolver/job | preference/overdue accuracy, false-suppression rate, case age, throughput, lease recovery, and current/historical recall parity |
 
 Do not approve a graph/vector change on a synthetic single-tenant latency
@@ -367,10 +372,10 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 ## Review Checklist
 
 - domain term has one canonical owner in the wiki
-- no active candidate or Hypothesis path
+- no active pending Relationship or Hypothesis path
 - verifier response remains closed and atomic
 - scanner decisions and model signals can only restrict semantic processing
-- source currentness, support revocation, tier demotion, and search intent commit
+- source currentness, support revocation, status transition, and search intent commit
   atomically
 - RLS/team predicate applies before ID leaves adapter
 - tenant-owned keys/FKs/joins and worker claims include the same `team_id`
@@ -392,7 +397,8 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 | ANN benchmark is misleading | global unfiltered test passes while small tenants lose results | tenant-filtered exact baseline under representative skew/concurrency |
 | Cross-profile tests collapse to one actor | ownership bugs pass because every fixture uses one profile | mandatory A/B/C read, correct, split, adopt, and forget integration cases |
 | Scanner fixtures test keywords only | ordinary security documentation is quarantined while obfuscated control text passes | quoted/adversarial minimal pairs plus pass/guarded/quarantine confusion and bypass gates |
-| Source revision test checks only the pointer | pointer advances while adopted facts and search state remain stale | real A/B/C dependency fixtures and transaction-state assertions for support, tier/status, transitions, and search intent |
+| Source revision test checks only the pointer | pointer advances while adopted Relationships and search state remain stale | real A/B/C dependency fixtures and transaction-state assertions for support, status, transitions, and search intent |
+| Projection migration test starts only from empty data | resumability, Evidence isolation, and partial-vector bias are never exercised | populated pre-upgrade fixture, forced batch/job failures, hash parity, and whole-team gate assertions |
 
 ## Completion Criteria
 
@@ -407,3 +413,6 @@ The implementation is release-ready only when:
 6. PostgreSQL backup/PITR and vector rebuild are proven
 7. MCP discovery/execution, first-party portal, and evaluation fixtures agree
    on current contract semantics where their bounded use cases overlap
+8. populated-database migration tests prove Relationship-only re-embedding,
+   resumable text convergence, fair queue drain, whole-team vector activation,
+   and unchanged Evidence/index contracts

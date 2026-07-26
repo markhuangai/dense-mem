@@ -355,6 +355,8 @@ CREATE TABLE search_documents (
   embedding_contract_id uuid NOT NULL,
   embedding_dimensions integer NOT NULL,
   source_version bigint NOT NULL,
+  projection_format_version integer NOT NULL,
+  search_text_hash text NOT NULL,
   document_version bigint NOT NULL,
   search_state text NOT NULL,
   embedding vector,
@@ -385,15 +387,32 @@ UNIQUE (
   source_kind,
   source_id,
   source_version,
+  document_version,
   embedding_contract_id
 )
 ```
+
+Relationship release projection state is team-owned:
+
+```sql
+PRIMARY KEY (team_id, projection_generation_id)
+UNIQUE (team_id, source_kind, projection_format_version)
+```
+
+A generation-tagged embedding job uses a nullable composite foreign key
+`(team_id, projection_generation_id)`. It cannot point at another team's
+generation. Foreground and generation job classes share the same team-local
+queue, leases, and version fences.
 
 An embedding worker never needs to scan or lock every team's queue in one
 transaction. The worker first picks a ready team, then claims a bounded batch
 for that team with `FOR UPDATE SKIP LOCKED`. A provider batch never mixes
 teams, which keeps request accounting, failure isolation, and future team-shard
 routing tenant-local.
+
+Within one team, claims reserve capacity for each non-empty foreground or
+generation class, then fill remaining capacity foreground-first. This
+starvation-free class policy does not require a global cross-team ordering.
 
 ## Index Contract
 
@@ -626,6 +645,9 @@ or retry a write against another placement.
     team-leading keys/FKs and cannot reference another team's Relationship.
 17. Nightly Conflict review reserves and claims one team at a time with durable
     lease/version predicates; no global semantic-row scan is a supported path.
+18. Projection generations and tagged embedding jobs use composite team keys;
+    foreground and generation work make bounded progress without cross-team
+    batches.
 
 ## Primary References
 

@@ -120,15 +120,18 @@ move semantic authority to Redis, a model provider, or a secondary graph store.
 | `AI_API_EMBEDDING_DIMENSIONS` | `3072` | required expected vector dimensions; requested from capable providers and always response-validated |
 | `AI_API_EMBEDDING_TIMEOUT_SECONDS` | `30` | request timeout |
 | `AI_API_EMBEDDING_MAX_CONCURRENCY` | `8` | process-wide concurrency |
-| `SEARCH_DOCUMENT_FORMAT_VERSION` | required | canonical text-builder version |
 | `EMBEDDING_NORMALIZATION_VERSION` | required | canonical preprocessing version |
 
-Provider adapter, model, dimensions, normalization, and document format are one
-persisted embedding contract. Dense-Mem does not infer dimensions from a model
-name. The first database initialization records the configured model/dimensions;
-later mismatches fail startup until a deliberate vector rebuild or reset workflow
-replaces the stored contract. Mixed vectors fail readiness or remain excluded by
-version checks.
+Provider adapter, model, dimensions, normalization, and query construction are
+one persisted numerical embedding contract. Projection format is separately
+versioned per `source_kind`; changing the Relationship renderer does not change
+Evidence text/vectors or the numerical contract. Dense-Mem does not infer
+dimensions from a model name. The first database initialization records the
+configured model/dimensions; later mismatches fail startup until a deliberate
+vector rebuild or reset workflow replaces the stored contract. Mixed vectors
+fail readiness or remain excluded by version checks. Relationship projection
+format `2` is owned by the release and persisted per search document; it is not
+an operator-selected environment setting.
 The adapter sends a dimensions request only when the configured provider/model
 supports it, but every response must have exactly the configured length.
 `AI_API_URL` must point at an endpoint that implements OpenAI-compatible
@@ -244,7 +247,11 @@ whole-provider/configuration failure.
 Worker count must fit database and provider capacity. `AI_API_EMBEDDING_MAX_CONCURRENCY`
 is the process-wide provider request cap; `EMBEDDING_BATCH_SIZE` controls request
 width. PostgreSQL owns queue, lease, attempt, and result state. Redis may reduce
-wake-up latency only.
+wake-up latency only. Workers claim again immediately while backlog remains;
+`EMBEDDING_JOB_POLL_SECONDS` applies only when no work is claimable.
+The release projection uses fixed keyset batches of 500. When both work classes
+are non-empty, the claim policy reserves one slot for each class and fills the
+remaining batch foreground-first; this fairness rule is not a runtime knob.
 
 ## PostgreSQL Search And Recall
 
@@ -264,22 +271,23 @@ same complete contract shape atomically instead of mutating individual fields.
 | `RECALL_BRANCH_LIMIT_MAX` | `200` | maximum per-branch candidate pool |
 | `RECALL_DETERMINISTIC_RERANK_ENABLED` | `true` | apply bounded query/support/temporal reranking |
 | `RECALL_MAX_ENTITY_SEEDS` | `20` | Entity search seeds |
-| `RECALL_DISCOVERY_RELATIONSHIPS_PER_EVIDENCE` | `2` | compact discovery-path relationships loaded during hydration |
-| `RECALL_MAX_GRAPH_DEPTH` | `1` initially | hard adjacency depth for default recall |
-| `RECALL_MAX_EDGES` | `100` | hard expanded Relationship cap before evidence mapping |
+| `RECALL_RELATIONSHIP_RRF_K` | `60` | fixed equal-weight full-text/vector Relationship fusion constant |
+| `RECALL_RELATIONSHIP_BRANCH_LIMIT_MULTIPLIER` | `6` | Relationship branch over-fetch before eligibility and semantic grouping |
+| `RECALL_MAX_GRAPH_DEPTH` | `1` | direct Entity-to-Relationship expansion only |
+| `RECALL_MAX_EDGES` | `100` | hard expanded Relationship cap before eligibility and semantic grouping |
 | `RECALL_GRAPH_TIMEOUT_MILLISECONDS` | `500` | adjacency-branch budget |
-| `RECALL_REQUIRED_BRANCH_PROFILE` | `relationship_v2` | versioned branch policy |
+| `RECALL_REQUIRED_BRANCH_PROFILE` | `relationship_v2.3` | versioned branch policy |
 | `PGVECTOR_EXACT_FILTERED_MAX_ROWS` | `5000` | use exact distance below this authorized set size |
 | `PGVECTOR_HNSW_EF_SEARCH` | `100` | base approximate search breadth |
 | `PGVECTOR_HNSW_ITERATIVE_SCAN` | `strict_order` | filtered approximate scan behavior |
 | `PGVECTOR_HNSW_MAX_SCAN_TUPLES` | `20000` | bounded iterative-scan work |
 | `PGVECTOR_HNSW_SCAN_MEM_MULTIPLIER` | `1` | bounded iterative-scan memory as a multiple of transaction-local `work_mem` |
 
-There is no candidate tier weight because candidates are ineligible for normal
-recall. Disabling RRF selects the complete branch-priority contract; it never
-mixes raw text/vector scores or chooses an implicit order. Relationship, Entity,
-and adjacency branches are discovery branches and do not contribute to initial
-evidence fusion. Ranking-contract changes require paired evaluation, including
+There is no Relationship lifecycle, support, source, authority, profile, or
+popularity weight. Disabling RRF changes only the Evidence branch-priority
+contract; Relationship full-text/vector fusion remains equal-weight RRF.
+Relationship and direct Entity-adjacency branches do not contribute to Evidence
+fusion. Ranking-contract changes require paired evaluation, including
 approximate Recall@K against exact filtered search. The algorithm is defined in
 [Vector Search And Ranking](Vector-Search-And-Ranking#runtime-control).
 
@@ -379,7 +387,7 @@ Never enable evaluation mode for production teams.
 | `DREAMING_GENERATOR_KIND` | `deterministic` | `deterministic` or `provider` |
 | `DREAMING_GENERATOR_MODEL` | empty | required for provider kind |
 | `DREAMING_MAX_ACTIVE_RELATIONSHIPS` | `100` | active-source cap |
-| `DREAMING_MAX_PENDING_CANDIDATES` | `25` | eligible insufficient-candidate cap |
+| `DREAMING_MAX_PENDING_RELATIONSHIPS` | `25` | eligible insufficient-Relationship cap |
 | `DREAMING_MAX_OUTPUTS` | `5` | Hypotheses per cycle, 1–50 |
 | `DREAMING_MAX_CONCURRENCY` | `1` | concurrent team cycles |
 

@@ -1,9 +1,9 @@
 # Using Dense-Mem
 
-Dense-Mem exposes its external memory tools through MCP. Contract V2 accepts
-evidence, optionally accepts structured hints, and processes semantic placement
-asynchronously. The user and control portals are first-party product
-interfaces, not alternative memory automation contracts.
+Dense-Mem exposes its external memory tools through MCP. Contract
+`dense-mem.v2.3` accepts evidence, optionally accepts structured hints, and
+processes semantic placement asynchronously. The user and control portals are
+first-party product interfaces, not alternative memory automation contracts.
 
 This is the user workflow. Exact fields and limits belong in
 [Technical Reference](Technical-Reference).
@@ -28,7 +28,7 @@ sequenceDiagram
     Host->>DM: resolve_memory_placement(...)
   end
   Host->>DM: recall_memory(query)
-  DM-->>Host: Ranked evidence contexts and discovery paths
+  DM-->>Host: Ranked Evidence plus separate related frontiers
   opt support/history needed
     Host->>DM: trace_memory(relationship_id)
     DM-->>Host: Evidence and decision history
@@ -79,7 +79,7 @@ Do not:
 - use a name as `entity_id` or invent server IDs
 - claim source independence when items share an origin
 - send a sentence as one Entity
-- set predicate definitions, tier, status, promotion, or lifecycle behavior
+- set predicate definitions, lifecycle status, support, or lifecycle behavior
 - model an alias as an edge
 - omit known discriminators for a name such as `Mark`
 
@@ -164,7 +164,7 @@ entity_id           opaque identifier for that Entity
 Entity node         graph-shaped view of the Entity record
 Predicate           registered meaning such as works_on
 Relationship        one profile's canonical subject-predicate-object lifecycle
-SemanticEdge        active validated/fact Relationship as a graph read
+SemanticEdge        active supported Relationship as a graph read
 Cross-reference     same-team confirmation/challenge/correction link; not an edge
 Observation         what one evidence submission expressed
 VerificationEvent  final schema-valid verifier judgment
@@ -211,13 +211,13 @@ Poll `get_memory_placement` and inspect:
 
 - processing: `queued`, `processing`, `awaiting_review`, `completed`, `failed`
 - vector search: `not_required`, `pending`, `current`, `failed`
-- per-item category, reason, IDs, tier/status, and review task
+- per-item category, reason, IDs, status, and review task
 
 Important categories:
 
 | Category | What the client does |
 | --- | --- |
-| `relationship_fact` / `relationship_validated_claim` | may use in normal recall according to relevance |
+| `relationship_active` | may use in normal recall according to relevance |
 | `relationship_pending_evidence` | do not present as known; excluded from default recall |
 | `identity_needs_review` | present supplied candidates and discriminator question |
 | `predicate_needs_review` | show original wording and server-supplied registry options |
@@ -262,6 +262,8 @@ an edge directly. See
 {
   "query": "Dense-Mem database architecture",
   "limit": 10,
+  "relationship_limit": 5,
+  "community_limit": 3,
   "known_evidence_ids": [],
   "known_relationship_ids": [],
   "expand_from_entity_ids": []
@@ -269,21 +271,24 @@ an edge directly. See
 ```
 
 Default recall returns same-team active-supported evidence contexts in
-`results[]`. Relationships remain the durable semantic graph but appear only as
-compact `discovery_paths[]` for trace and follow-up. Recall excludes verifier
-history and pending candidates from primary results. Server policy may include
-matching Hypotheses in `related_hypotheses`. Required `conflicts[]` is empty
+`results[]`. Relationships remain the durable semantic graph and appear in the
+separate correlation-ranked `related_relationships[]` frontier. When enabled,
+derived clusters appear only in `related_communities[]`. Recall excludes
+verifier history and pending Relationships from primary results. Server policy
+may include matching Hypotheses in `related_hypotheses`. Required `conflicts[]` is empty
 when no material disagreement applies. An open/overdue case returns bounded
 alternatives and a question; a resolved case returns preferred current evidence
 plus a compact status/trace reference. Recall has no `raw_evidence` field:
 evidence text enters `results[]` only after final support-path eligibility.
 
-Use bounded `discovery_paths` for discovery; do not recursively fetch every
-neighbor. If one part remains uncertain, make a narrower recall and pass the
+Use bounded `related_relationships[]` for discovery; Entity expansion touches
+direct Relationships only and does not recursively fetch every neighbor. If one
+part remains uncertain, make a narrower recall and pass the
 evidence UUIDs already seen in `known_evidence_ids` plus Relationship UUIDs
 already seen in `known_relationship_ids` to expose different context,
-optionally with `expand_from_entity_ids` for specific anchors. The returned
-`discovery_guidance` states this behavior. See [Recall Ranking](Recall-Ranking).
+optionally with `expand_from_entity_ids` for specific anchors. Use
+`search_states` and `degradations[]` to distinguish lexical-only Relationship
+discovery while vectors warm. See [Recall Ranking](Recall-Ranking).
 
 ## Trace Evidence
 
@@ -326,7 +331,9 @@ a dry-run impact preview. It cannot move another profile's observations. See
 
 ## Communities And Dreams
 
-Community fill is an opt-in discovery aid that fills unused slots only.
+Community discovery is disabled by default and uses its own bounded
+`related_communities[]` frontier. It never consumes or reranks Evidence or
+Relationship slots.
 
 Dreams are Hypotheses between existing endpoints using registered predicates.
 They appear separately. Confirming one requires new independent evidence
@@ -353,7 +360,7 @@ Use read-only keys for automation that must never mutate memory.
 
 | Failure mode | Mitigation |
 | --- | --- |
-| client treats pending candidate as a fact | use typed categories and default recall only |
+| client treats a pending Relationship as active knowledge | use typed categories and default recall only |
 | client guesses which Mark | present server candidates and collect discriminator evidence |
 | client assumes vector pending means write failed | distinguish processing from search state and trace by ID |
 | client promotes a dream from plausibility | require independent evidence through normal `remember` |

@@ -13,30 +13,28 @@ and defaults remain in
 
 Full-text search and vector search return different score scales. A PostgreSQL
 text rank is not numerically comparable to a cosine similarity. Dense-Mem
-therefore combines stable evidence rank positions, then applies bounded
-knowledge-aware reranking. Entity lookup, Relationship search, and adjacency
-expansion use the same ranking primitives only for the separate discovery
-frontier.
+therefore fuses stable rank positions. Evidence and Relationship candidates use
+separate frontiers and limits; one cannot promote an item in the other.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Query["Recall query"] --> FTS["Full-text ranked IDs"]
-  Query --> Vector["Vector-distance ranked IDs"]
-  FTS --> Fusion["RRF or configured<br/>branch-priority fusion"]
-  Vector --> Fusion
-  Fusion --> Group["Deduplicate evidence IDs"]
-  Group --> Rerank["Deterministic evidence,<br/>query, anchor, and time rerank"]
-  Rerank --> Limit["Stable top K evidence"]
+  Query["Recall query"] --> EvidenceText["Evidence full-text IDs"]
+  Query --> EvidenceVector["Evidence vector IDs"]
+  EvidenceText --> EvidenceFusion["Evidence ranking contract"]
+  EvidenceVector --> EvidenceFusion
+  EvidenceFusion --> EvidenceRerank["Evidence anchor, time,<br/>support-path rerank"]
+  EvidenceRerank --> Results["results[]"]
 
-  Query --> Entity["Entity and Relationship<br/>ranked IDs"]
-  Entity --> Adj["Bounded adjacency"]
-  Limit --> Frontier["Separate discovery<br/>frontier rank"]
-  Adj --> Frontier
-  Frontier --> Paths["Compact paths"]
+  Query --> RelationshipText["Relationship full-text IDs"]
+  Query --> RelationshipVector["Relationship vector IDs"]
+  RelationshipText --> RelationshipRRF["Equal-weight RRF"]
+  RelationshipVector --> RelationshipRRF
+  RelationshipRRF --> Group["Semantic grouping"]
+  Group --> Relationships["related_relationships[]"]
 ```
 
-Hard authorization, status/tier eligibility, validity, and required exact
+Hard authorization, status/effective-support eligibility, validity, and required exact
 anchors run before or during candidate hydration. Reranking cannot restore a
 candidate rejected by a hard gate.
 
@@ -50,11 +48,19 @@ query vector q    = [q1, q2, ... qn]
 document vector d = [d1, d2, ... dn]
 ```
 
-Provider adapter, model, dimensions, text normalization, document format, and
-vector normalization form one persisted embedding contract. Query and document
-vectors must use the same contract version. Mixed versions are excluded, not
-compared approximately. The active search-index generation references that
-contract and carries its compatible cosine pgvector operator class.
+Provider adapter, model, dimensions, text normalization, query construction,
+and vector normalization form one persisted numerical embedding contract.
+Query and document vectors must use the same contract version. Mixed versions
+are excluded, not compared approximately. The active search-index generation
+references that contract and carries its compatible cosine pgvector operator
+class.
+
+Each `source_kind` has a separate text
+`projection_format_version`. Changing Relationship projection text therefore
+re-embeds Relationships only; it does not change the numerical embedding
+contract, Evidence documents or vectors, query construction, or the active
+HNSW generation. The format-2 migration belongs in
+[Data Model And Storage](Data-Model-And-Storage#relationship-projection-generation).
 
 The vector represents model-defined semantic position. Individual dimensions
 do not have stable human-readable meanings and must not be exposed as an
@@ -118,10 +124,10 @@ creates another contract and requires a vector rebuild.
 
 ## Vector Candidate Boundary
 
-The initial target search contract uses cosine distance. Lower distance is
-nearer, and diagnostic cosine similarity is `1 - distance`. PostgreSQL returns
-an ordered, authorized list of candidate IDs and exact diagnostic distances;
-it does not decide tier, truth, conflict, or final recall order.
+The target search contract uses cosine distance. Lower distance is nearer, and
+diagnostic cosine similarity is `1 - distance`. PostgreSQL returns an ordered,
+authorized list of candidate IDs and exact diagnostic distances; it does not
+decide lifecycle status, truth, conflict, or final recall order.
 
 The matching pgvector operators, exact/ANN routing, HNSW and `halfvec` strategy,
 candidate exact rerank, dimension limits, and database-load controls are defined
@@ -130,21 +136,22 @@ resulting candidate list.
 
 ## Candidate Lists
 
-Each enabled initial retrieval branch returns ordered, authorized evidence IDs
-and branch metadata:
+Each enabled retrieval branch returns ordered, authorized source IDs and branch
+metadata:
 
 ```text
 branch name
-evidence_id
+source_kind
+source_id
 rank starting at 1
 optional diagnostic raw score or distance
 source/search-document version
-optional relationship_id path hints
 ```
 
-Relationship and Entity branches return compact path candidates for discovery
-ranking after the evidence budget is fixed. They do not map back into the
-initial evidence fusion score.
+Evidence branches return Evidence IDs. Relationship branches return
+Relationship IDs from projection-format-2 documents. Direct Entity adjacency
+may add Relationship candidates to the Relationship frontier, but no
+Relationship or Entity signal maps back into the Evidence fusion score.
 
 Raw scores remain diagnostics. Fusion consumes branch rank because:
 
@@ -155,23 +162,30 @@ Raw scores remain diagnostics. Fusion consumes branch rank because:
 
 ## Reciprocal Rank Fusion
 
-When RRF is enabled, one candidate's base score is:
+For a configured Evidence RRF branch and for the fixed Relationship fusion, one
+candidate's base score is:
 
 ```text
 rrf_score(candidate) =
   sum(branch_weight / (rrf_k + rank_in_branch))
 ```
 
-Only one `(branch, evidence_id)` entry contributes per branch. `rrf_k` controls
-how strongly the first few positions dominate; branch weights control the
-relative importance of retrieval paths. Both belong to one versioned ranking
-contract.
+Only one `(branch, source_id)` entry contributes per branch. `rrf_k` controls
+how strongly the first few positions dominate. Evidence branch weights belong
+to the versioned Evidence ranking contract.
+
+Relationship discovery always uses equal weight for its full-text and vector
+branches. It has no lifecycle, support, source, authority, profile,
+corroboration, community, or popularity multiplier. Stable ties resolve by RRF
+score, best individual branch rank, earliest Relationship creation time, then
+Relationship UUID.
 
 ### Worked RRF example
 
-This illustrative example uses `rrf_k = 60` and equal branch weights:
+This illustrative example uses `rrf_k = 60` and equal branch weights. It applies
+equally to two Evidence candidates or two Relationship candidates:
 
-| Evidence | Full-text rank | Vector rank |
+| Candidate | Full-text rank | Vector rank |
 | --- | ---: | ---: |
 | A | 1 | 4 |
 | B | 3 | 2 |
@@ -185,14 +199,14 @@ B = 1/(60+3) + 1/(60+2)
 ```
 
 A ranks above B by a small margin because the full-text branch placed it first.
-This does not make A truer; it makes A the stronger direct evidence retrieval
-candidate before deterministic reranking.
+This does not make A truer; it makes A the stronger correlation candidate under
+the two retrieval branches.
 
 ### RRF disabled
 
-The control portal may disable RRF through a versioned runtime ranking contract.
-The system then uses the contract's explicit deterministic branch order, for example
-exact anchor, full text, then vector, with stable first-seen
+The control portal may disable Evidence RRF through a versioned runtime ranking
+contract. The system then uses the contract's explicit deterministic Evidence
+branch order, for example exact anchor, full text, then vector, with stable first-seen
 deduplication. The resulting global position is `priority_rank`, starting at
 one, and its numeric base is `priority_score = 1 / (1 + priority_rank)`. This
 score reflects only the configured ordinal list; it never averages
@@ -200,12 +214,14 @@ incomparable raw scores or chooses an implicit fallback.
 
 A contract that disables RRF without a valid branch order is rejected. Fusion
 mode and ranking-contract version remain internal telemetry, not public recall
-fields.
+fields. This switch does not disable or reweight the fixed Relationship RRF
+contract.
 
-## Deterministic Post-Fusion Reranking
+## Evidence Post-Fusion Reranking
 
-RRF measures retrieval agreement. Post-fusion reranking applies bounded
-query-derived and support signals before selected evidence is hydrated:
+Evidence RRF measures retrieval agreement. Evidence post-fusion reranking
+applies bounded query-derived and support-path signals before selected Evidence
+is hydrated:
 
 ```text
 final_score =
@@ -233,12 +249,17 @@ the active versioned profile.
 The current contract uses deterministic reranking. A future cross-encoder or
 LLM reranker must be a separate optional stage with its own model/schema,
 latency/cost budget, failure behavior, and offline evaluation. It cannot change
-tier, status, evidence, or provenance.
+lifecycle status, effective support, evidence, or provenance.
+
+Relationship discovery does not use this post-fusion formula. After
+equal-weight RRF, it applies only hard eligibility, Conflict disposition,
+deterministic semantic grouping, and `relationship_limit`. This keeps
+correlation rank independent from truth and provenance.
 
 ## Cross-Profile Conflict Reranking
 
 Relationships are profile-owned and team-readable. Recall ranking is
-evidence-first, but discovery paths and trace keep authored Relationship
+evidence-first, but related Relationships and trace keep authored Relationship
 positions visible without merging authors or lifecycle.
 
 Material conflict sets are then formed from verified `challenges`/`corrects`
@@ -260,7 +281,7 @@ For equivalent positions in discovery or trace:
 For conflicting positions:
 
 - retain every material eligible alternative in a conflict set
-- use each position's exact evidence, tier, temporal applicability, source
+- use each position's exact evidence, lifecycle eligibility, temporal applicability, source
   independence, and correction/confirmation cross-references
 - resolve only in nightly review, when exactly one temporally applicable position
   meets the pre-TTL strong quorum or post-TTL automatic floor
@@ -284,11 +305,11 @@ flowchart TD
 A profile's correction cannot down-rank another profile merely by labeling it
 wrong. Its challenge contributes only after normal evidence verification and
 cross-reference validation. Several profiles copying one source remain one
-source group. Tier, verified cross-references, and applicable recency may order
-otherwise eligible evidence within the bounded conflict view; none can substitute
-for the automatic-resolution floor, and recency cannot break a tie between two
-qualifying positions. The floor, deadline, time basis, and new-conflict-episode
-behavior are defined in
+source group. Verified cross-references, source independence, and applicable
+recency may order otherwise eligible evidence within the bounded conflict view;
+none can substitute for the automatic-resolution floor, and recency cannot
+break a tie between two qualifying positions. The floor, deadline, time basis,
+and new-conflict-episode behavior are defined in
 [Conflicts And Corrections](Conflicts-And-Corrections#deterministic-resolution-policy).
 
 Conflict disposition is applied after branch fusion and before final evidence
@@ -313,8 +334,9 @@ The contract contains:
 
 ```text
 fusion mode: rrf | branch_priority
-RRF enabled state, k, and branch weights
-branch enablement, priority, and over-fetch
+Evidence RRF enabled state, k, and branch weights
+Evidence branch enablement, priority, and over-fetch
+Relationship RRF k and lexical/vector over-fetch with fixed equal weights
 exact-filtered versus HNSW thresholds and scan budgets
 deterministic rerank enabled state and bounded factor weights
 cross-profile qualification and clarification policy
@@ -342,6 +364,10 @@ The active ranking contract declares required and optional branches:
 | RRF disabled | use the explicit branch-priority contract |
 | deterministic reranker fails invariant validation | fail; do not return unreranked results silently |
 | optional future model reranker fails | use the declared deterministic fallback and report degradation, or fail when configured required |
+| Relationship text projection incomplete at startup | fail readiness; incomplete lexical Relationship recall is not served |
+| Relationship generation is `embedding` | disable the complete team Relationship vector branch, use lexical Relationship ranking, and return `relationship_vector_warming` degradation |
+| Relationship generation is `failed` | keep lexical Relationship ranking, keep the complete vector branch disabled, and return `relationship_vector_failed` degradation |
+| one foreground Relationship vector is pending after generation activation | keep that document lexical-eligible and vector-ineligible under its individual `search_state` |
 
 ## Evaluation
 
@@ -353,6 +379,8 @@ corpora before activation. Required measurements include:
 - hard-anchor success and false-positive rate
 - profile-conflict preference accuracy and clarification rate
 - same-source duplicate resistance
+- Relationship correlation MRR/nDCG without lifecycle or provenance weighting
+- parity between complete lexical-only Relationship ranking and vector-gated rollout
 - p50/p95/p99 latency, database work, and provider cost
 - approximate HNSW Recall@K against the exact cosine-distance oracle
 
@@ -368,10 +396,11 @@ The evaluation procedure and release gates belong in [Evaluation](Evaluation).
 | RRF toggle changes behavior silently | portal disables RRF and replicas choose different fallbacks | atomic versioned ranking contract, explicit branch order, and internal telemetry |
 | Majority overrides evidence | copied weak memory from several profiles outranks one primary source | source-group dedupe, bounded corroboration, and evidence-aware conflict rerank |
 | Challenge censors another author | unsupported "wrong" link removes A from recall | placement cannot mutate the target; retain conflict refs and require verified challenge evidence plus nightly resolution |
-| Resolved case hides unrelated support | a fragment supporting A and another current fact is removed globally | apply disposition to the relevant Relationship support path and backfill from over-fetch |
+| Resolved case hides unrelated support | a fragment supporting A and another current Relationship is removed globally | apply disposition to the relevant Relationship support path and backfill from over-fetch |
 | Current winner rewrites history | B's resolved position is returned for a `valid_at` before the change or `known_at` before B arrived | evaluate case events and effective intervals bitemporally before hydration |
 | ANN filter loses team results | HNSW selects global neighbors before tenant filtering | exact path for bounded sets, iterative scans, over-fetch, and exact Recall@K gate |
-| Rerank hides relevant claim | a high tier multiplier overwhelms query relevance | bounded factors and relevance/evaluation invariants |
+| Relationship truth leaks into correlation rank | source count or lifecycle metadata moves a weak semantic match above a closer match | fixed equal-weight lexical/vector RRF and hard prohibition on Relationship post-fusion boosts |
+| Partial projection biases Relationship RRF | already rebuilt rows receive a vector contribution while other rows cannot | gate the entire team Relationship vector branch on a current projection generation |
 
 ## Acceptance Invariants
 
@@ -382,8 +411,8 @@ The evaluation procedure and release gates belong in [Evaluation](Evaluation).
 4. RRF uses stable one-based ranks, versioned weights, and deterministic ties
 5. disabling RRF activates one explicit branch-priority contract
 6. control-portal ranking changes are atomic, audited, and versioned
-7. reranking cannot restore an unauthorized, inactive, temporally invalid, or
-   candidate source row
+7. reranking cannot restore an unauthorized, inactive, unsupported, or
+   temporally invalid source row
 8. same-source copies do not gain independent-source or cross-profile boosts
 9. material conflicting authored positions remain traceable and visible
 10. zero or multiple qualifying conflict positions produce clarification rather
@@ -399,3 +428,9 @@ The evaluation procedure and release gates belong in [Evaluation](Evaluation).
     another eligible support path
 16. public results omit ranking-contract and embedding-contract versions; those
     values remain internal telemetry and evaluation metadata
+17. Relationship lexical/vector fusion uses equal weights and no lifecycle,
+    support, source, authority, profile, or popularity boost
+18. Relationship vector fusion is disabled for the complete team until its
+    projection generation is current
+19. Relationship projection changes do not change the numerical embedding
+    contract, Evidence vectors, or HNSW generation

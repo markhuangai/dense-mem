@@ -1,7 +1,7 @@
 # Quick Start
 
-This is the local PostgreSQL setup and contract-v2 smoke test. Use a pinned
-release that advertises contract version 2.
+This is the local PostgreSQL setup and `dense-mem.v2.3` smoke test. Use a
+pinned release that advertises that contract.
 
 ## Local Shape
 
@@ -37,7 +37,7 @@ cp .env.example .env
 ```
 
 Verify the release tag, artifact checksum/signature, and release notes. Stop if
-the release does not advertise contract v2 and PostgreSQL authority.
+the release does not advertise `dense-mem.v2.3` and PostgreSQL authority.
 
 ### Upgrading an existing installation
 
@@ -52,6 +52,13 @@ or later, or to an installation whose `2.1.1` migration already completed.
 source before 2.1.1 -> run 2.1.1 migration -> current release
 fresh install 2.2.0+ -----------------------> current release
 ```
+
+The V2.3 Relationship projection upgrade is an exclusive restart: complete the
+blocking format-2 text projection before traffic, then allow
+Relationship-only vectors to warm asynchronously behind the team-wide vector
+gate. Follow
+[Relationship projection upgrade](Operations-Runbook#relationship-projection-upgrade);
+do not run mixed-version API or worker processes.
 
 ## 2. Configure Required Values
 
@@ -114,10 +121,12 @@ export DENSE_MEM_API_KEY="dm_..."
 Follow [MCP Clients](MCP-Clients) and connect the LLM host. The host initializes
 the server and calls `tools/list`; verify:
 
-- contract version 2
+- contract `dense-mem.v2.3`
 - `remember` accepts evidence plus optional hints
 - `get_memory_placement` returns processing and search state
-- `recall_memory` returns ranked evidence contexts, required `conflicts[]`, and compact Relationship discovery paths
+- `recall_memory` returns ranked Evidence contexts plus
+  `related_relationships[]`, `related_communities[]`, `conflicts[]`,
+  `related_hypotheses[]`, `search_states`, and `degradations[]`
 - `trace_memory` accepts `relationship_id`
 - the tool list matches key scopes
 
@@ -154,8 +163,8 @@ flowchart LR
 
 Valid outcomes:
 
-- active `validated_claim` or `fact`
-- `candidate/pending_evidence` retained but excluded from active/default recall
+- `relationship_active` with effective support
+- `relationship_pending_evidence` retained but excluded from active/default recall
 - owner-scoped review for identity, predicate, same-owner conflict, scope, or time
 - an open team Conflict case for a material cross-profile disagreement; placement
   may still complete while that case awaits nightly review
@@ -172,8 +181,8 @@ Ask:
 What do you remember about my explanation preferences?
 ```
 
-Default recall returns ranked evidence contexts plus compact Relationship
-discovery paths. Then ask:
+Default recall returns ranked Evidence contexts plus separate compact
+Relationship discovery results. Then ask:
 
 ```text
 Trace that preference Relationship and show its supporting evidence.
@@ -221,7 +230,7 @@ The smoke passes when:
 - eligible SemanticEdges are readable without another graph database
 - Redis is absent and one-process coordination is intentional
 - restart preserves memory
-- normal recall excludes candidates/evidence/history/Hypotheses
+- normal recall excludes pending Relationships, verifier history, and Hypotheses
 - trace returns exact provenance
 - portal graph shows only Entity/Value nodes and eligible SemanticEdges
 - pending/failed vector work does not change semantic truth
