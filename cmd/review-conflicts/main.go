@@ -61,7 +61,7 @@ const (
 	reviewConflictMaxAttempts     = 20
 	reviewConflictMinTimeoutSecs  = 1
 	reviewConflictMaxTimeoutSecs  = 86400
-	reviewConflictDefaultTimeout  = 300
+	reviewConflictDefaultTimeout  = 360
 )
 
 func (c postgresConfig) GetPostgresDSN() string {
@@ -260,6 +260,9 @@ func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	}
 	if err := validateCLIIntRange("--timeout-seconds", cfg.timeoutSecs, reviewConflictMinTimeoutSecs, reviewConflictMaxTimeoutSecs); err != nil {
 		return cliConfig{}, err
+	}
+	if cfg.timeoutSecs <= cfg.leaseSeconds {
+		return cliConfig{}, errors.New("--timeout-seconds must be greater than --lease-seconds")
 	}
 	return cfg, nil
 }

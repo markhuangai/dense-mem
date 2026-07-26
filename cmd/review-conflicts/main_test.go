@@ -46,8 +46,8 @@ func TestParseCLIDefaultsTimezoneToLocal(t *testing.T) {
 	if cfg.timeoutSecs != reviewConflictDefaultTimeout {
 		t.Fatalf("timeoutSecs = %d, want %d", cfg.timeoutSecs, reviewConflictDefaultTimeout)
 	}
-	if cfg.timeoutSecs < cfg.leaseSeconds {
-		t.Fatalf("timeoutSecs = %d, want at least leaseSeconds %d", cfg.timeoutSecs, cfg.leaseSeconds)
+	if cfg.timeoutSecs <= cfg.leaseSeconds {
+		t.Fatalf("timeoutSecs = %d, want greater than leaseSeconds %d", cfg.timeoutSecs, cfg.leaseSeconds)
 	}
 }
 
@@ -109,6 +109,16 @@ func TestParseCLIRejectsOutOfRangeConflictReviewFlags(t *testing.T) {
 			name: "timeout too high",
 			args: []string{"--timeout-seconds", "86401"},
 			want: "--timeout-seconds must be between 1 and 86400",
+		},
+		{
+			name: "timeout equals lease",
+			args: []string{"--lease-seconds", "300", "--timeout-seconds", "300"},
+			want: "--timeout-seconds must be greater than --lease-seconds",
+		},
+		{
+			name: "timeout below lease",
+			args: []string{"--lease-seconds", "301", "--timeout-seconds", "300"},
+			want: "--timeout-seconds must be greater than --lease-seconds",
 		},
 	}
 	for _, tt := range tests {
