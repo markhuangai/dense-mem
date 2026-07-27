@@ -340,6 +340,13 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 		return h.currentSSOSession(c)
 	}
 
+	if h.profiles == nil {
+		return userPortalSessionResponse{}, httperr.New(httperr.SERVICE_UNAVAILABLE, "profile service unavailable")
+	}
+	if h.keys == nil {
+		return userPortalSessionResponse{}, httperr.New(httperr.SERVICE_UNAVAILABLE, "api key service unavailable")
+	}
+
 	teamID := principal.GetTeamID()
 	keyID := principal.GetKeyID()
 	team, err := h.profiles.Get(ctx, teamID)

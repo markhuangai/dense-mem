@@ -56,7 +56,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	apiKeySvcMW := userPortalServiceAvailable(deps.APIKeySvc != nil, "api key service unavailable")
 	dreamSvcMW := userPortalServiceAvailable(deps.DreamSvc != nil, "dream service unavailable")
 
-	api.GET("/session", portal.session, profileSvcMW, apiKeySvcMW)
+	api.GET("/session", portal.session)
 	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("write"))
 	api.GET("/graph", portal.graphSnapshot, httpmw.RequireScopes("read"))
 	api.GET("/node-detail", portal.graphNodeDetail, httpmw.RequireScopes("read"))

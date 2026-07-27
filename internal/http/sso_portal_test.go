@@ -447,6 +447,14 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 	require.Equal(t, nethttp.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"Enterprise IdP"`)
 
+	req = httptest.NewRequest(nethttp.MethodGet, "/ui/api/session", nil)
+	req.AddCookie(&nethttp.Cookie{Name: service.SSOSessionCookieName, Value: sessionToken})
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, nethttp.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"auth_method":"sso"`)
+	require.Contains(t, rec.Body.String(), `"name":"Team One"`)
+
 	req = httptest.NewRequest(nethttp.MethodPost, "/ui/api/sso/logout", nil)
 	csrfToken := "csrf-token"
 	req.AddCookie(&nethttp.Cookie{Name: service.SSOSessionCookieName, Value: sessionToken})

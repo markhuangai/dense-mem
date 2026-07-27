@@ -816,6 +816,7 @@ func TestUserPortalMissingRouteServicesReturnUnavailable(t *testing.T) {
 		path string
 		want string
 	}{
+		{path: "/ui/api/session", want: "profile service unavailable"},
 		{path: "/ui/api/team", want: "profile service unavailable"},
 		{path: "/ui/api/team/profiles/" + uuid.NewString(), want: "api key service unavailable"},
 		{path: "/ui/api/dreams/dream-1", want: "dream service unavailable"},
