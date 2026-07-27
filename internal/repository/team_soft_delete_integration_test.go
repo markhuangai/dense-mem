@@ -175,3 +175,51 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	err = ssoRepo.UpdateMapping(ctx, mapping)
 	require.ErrorIs(t, err, ErrTeamInactive)
 }
+
+func TestActiveTeamMutationGuardSerializesWithTeamDelete(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "team-delete-lock-guard")
+	release := make(chan struct{})
+	locked := make(chan error, 1)
+	done := make(chan error, 1)
+
+	go func() {
+		done <- rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+			err := ensureActiveTeamForMutation(ctx, tx, teamID)
+			locked <- err
+			if err != nil {
+				return err
+			}
+			<-release
+			return nil
+		})
+	}()
+
+	require.NoError(t, <-locked)
+	releaseClosed := false
+	defer func() {
+		if !releaseClosed {
+			close(release)
+		}
+	}()
+
+	err := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`SET LOCAL lock_timeout = '100ms'`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE teams
+			SET status = 'deleted',
+			    deleted_at = now(),
+			    updated_at = now()
+			WHERE id = ?::uuid
+		`, teamID).Error
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "lock timeout")
+	close(release)
+	releaseClosed = true
+	require.NoError(t, <-done)
+}

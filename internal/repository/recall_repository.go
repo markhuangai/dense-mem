@@ -327,6 +327,13 @@ func recallANNCandidateLimit(contract *ActiveSearchContract, limit int) int {
 	return candidateLimit
 }
 
+func recallEventAt(validAt, knownAt *time.Time) *time.Time {
+	if knownAt != nil {
+		return knownAt
+	}
+	return validAt
+}
+
 func searchRecallEntityExpansion(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -334,6 +341,7 @@ func searchRecallEntityExpansion(
 	contract *ActiveSearchContract,
 	limit int,
 ) ([]SearchHit, error) {
+	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	rows, err := tx.WithContext(ctx).Raw(`
 			WITH latest_support_decision AS (
 				SELECT DISTINCT ON (team_id, support_id)
@@ -396,7 +404,7 @@ func searchRecallEntityExpansion(
 		                  AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
 		          )
 		      )
-		  )
+			  )
 		  AND (?::timestamptz IS NOT NULL OR relationship.support_count > 0)
 		  AND quarantine.quarantine_id IS NULL
 		  AND (
@@ -423,13 +431,13 @@ func searchRecallEntityExpansion(
 		         document.embedding_contract_id, document.search_state
 		ORDER BY max(relationship.updated_at) DESC, document.search_document_id ASC
 		LIMIT ?
-		`, input.TeamID, input.KnownAt, input.KnownAt,
+		`, input.TeamID, eventAt, eventAt,
 		contract.EmbeddingContractID,
-		input.KnownAt, input.KnownAt,
+		eventAt, eventAt,
 		input.TeamID,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
-		input.KnownAt,
+		eventAt,
 		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
@@ -449,6 +457,7 @@ func hydrateRecallEvidence(
 	contract *ActiveSearchContract,
 	evidenceIDs []string,
 ) (map[string]RecallEvidenceHit, error) {
+	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH requested AS (
 			SELECT unnest(?::uuid[]) AS fragment_id
@@ -571,12 +580,12 @@ func hydrateRecallEvidence(
 		       END AS search_state
 		FROM eligible
 		GROUP BY evidence_id
-		`, pq.Array(evidenceIDs), input.TeamID, input.KnownAt, input.KnownAt,
+		`, pq.Array(evidenceIDs), input.TeamID, eventAt, eventAt,
 		input.TeamID, contract.EmbeddingContractID,
-		input.KnownAt, input.KnownAt,
+		eventAt, eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
-		input.KnownAt,
+		eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),

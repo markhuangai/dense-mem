@@ -138,7 +138,7 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 	var eligibleCount, currentCount, pendingCount, failedCount int64
 	err := tx.WithContext(ctx).Raw(`
 		WITH latest_generation AS (
-		    SELECT generation.state
+		    SELECT generation.state, generation.projection_generation_id
 		    FROM search_projection_generations AS generation
 		    WHERE generation.team_id = ?::uuid
 		      AND generation.source_kind = 'relationship'
@@ -167,7 +167,7 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.embedding_dimensions = ?
 		 AND document.projection_format_version = 2
-		 AND document.projection_generation_id IS NULL
+		 AND ((SELECT projection_generation_id FROM latest_generation) IS NULL OR document.projection_generation_id IS NULL OR document.projection_generation_id = (SELECT projection_generation_id FROM latest_generation))
 	`, teamID, teamID, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Row().Scan(
 		&latestState,
 		&eligibleCount,
@@ -203,6 +203,7 @@ func searchRecallRelationshipFullText(
 	contract *ActiveSearchContract,
 	limit int,
 ) ([]SearchHit, error) {
+	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT document.team_id::text, document.search_document_id::text, document.source_kind,
 		       document.source_id::text, document.source_version, document.document_version,
@@ -214,11 +215,11 @@ func searchRecallRelationshipFullText(
 		  AND document.source_kind = 'relationship'
 		  AND document.embedding_contract_id = ?::uuid
 		  AND document.projection_format_version = 2
-		  AND document.search_state IN ('pending', 'current')
+		  AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
 		  AND document.search_tsv @@ plainto_tsquery('simple', ?)
 		ORDER BY text_rank DESC, document.updated_at DESC, document.search_document_id ASC
 		LIMIT ?
-	`, input.Query, input.TeamID, contract.EmbeddingContractID, input.Query, limit).Rows()
+	`, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.Query, limit).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -477,6 +478,7 @@ func searchRecallRelationshipEntityExpansion(
 	contract *ActiveSearchContract,
 	limit int,
 ) ([]SearchHit, error) {
+	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT document.team_id::text, document.search_document_id::text, document.source_kind,
 		       document.source_id::text, document.source_version, document.document_version,
@@ -490,7 +492,7 @@ func searchRecallRelationshipEntityExpansion(
 		 AND document.source_id = relationship.relationship_id
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.projection_format_version = 2
-		 AND document.search_state IN ('pending', 'current')
+		 AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
 		LEFT JOIN LATERAL (
 		    SELECT transition.to_status AS status
 		    FROM relationship_transition_events AS transition
@@ -538,12 +540,12 @@ func searchRecallRelationshipEntityExpansion(
 		  )
 		ORDER BY relationship.updated_at DESC, relationship.relationship_id ASC
 		LIMIT ?
-	`, contract.EmbeddingContractID,
-		input.KnownAt, input.KnownAt,
+	`, contract.EmbeddingContractID, eventAt,
+		eventAt, eventAt,
 		input.TeamID,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
-		input.KnownAt,
+		eventAt,
 		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
@@ -563,6 +565,7 @@ func hydrateRecallRelationships(
 	contract *ActiveSearchContract,
 	relationshipIDs []string,
 ) (map[string]RecallRelationshipHit, error) {
+	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH requested AS (
 			SELECT unnest(?::uuid[]) AS relationship_id
@@ -605,7 +608,7 @@ func hydrateRecallRelationships(
 		     AND document.source_id = relationship.relationship_id
 		     AND document.embedding_contract_id = ?::uuid
 		     AND document.projection_format_version = 2
-		     AND document.search_state IN ('pending', 'current')
+		     AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
 		    LEFT JOIN LATERAL (
 		        SELECT transition.to_status AS status
 		        FROM relationship_transition_events AS transition
@@ -661,11 +664,11 @@ func hydrateRecallRelationships(
 		 AND value_record.value_id = relationship.object_value_id
 		`, pq.Array(relationshipIDs), input.TeamID,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
-		input.TeamID, contract.EmbeddingContractID,
-		input.KnownAt, input.KnownAt,
+		input.TeamID, contract.EmbeddingContractID, eventAt,
+		eventAt, eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
-		input.KnownAt,
+		eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt).Rows()
 	if err != nil {
@@ -720,6 +723,7 @@ func hydrateRecallRelationshipEvidenceIDs(ctx context.Context, tx *gorm.DB, inpu
 	if len(hits) == 0 {
 		return nil
 	}
+	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	relationshipIDs := make([]string, 0, len(hits))
 	for relationshipID := range hits {
 		relationshipIDs = append(relationshipIDs, relationshipID)
@@ -767,7 +771,7 @@ func hydrateRecallRelationshipEvidenceIDs(ctx context.Context, tx *gorm.DB, inpu
 		       array_agg(fragment_id ORDER BY created_at ASC, fragment_id ASC)::text[] AS evidence_ids
 		FROM effective_support
 		GROUP BY relationship_id
-	`, pq.Array(relationshipIDs), input.TeamID, input.KnownAt, input.KnownAt, input.TeamID, input.KnownAt, input.KnownAt).Rows()
+	`, pq.Array(relationshipIDs), input.TeamID, eventAt, eventAt, input.TeamID, eventAt, eventAt).Rows()
 	if err != nil {
 		return err
 	}
@@ -789,6 +793,7 @@ func hydrateRecallRelationshipEquivalents(ctx context.Context, tx *gorm.DB, inpu
 	if len(hits) == 0 {
 		return nil
 	}
+	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	relationshipIDs := make([]string, 0, len(hits))
 	for relationshipID := range hits {
 		relationshipIDs = append(relationshipIDs, relationshipID)
@@ -889,11 +894,11 @@ func hydrateRecallRelationshipEquivalents(ctx context.Context, tx *gorm.DB, inpu
 		       array_agg(equivalent_id ORDER BY equivalent_id ASC)::text[] AS equivalent_ids
 		FROM equivalents
 		GROUP BY representative_id
-	`, pq.Array(relationshipIDs), input.TeamID, input.TeamID,
-		input.KnownAt, input.KnownAt,
+		`, pq.Array(relationshipIDs), input.TeamID, input.TeamID,
+		eventAt, eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
-		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
+		eventAt, eventAt, eventAt, eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt).Rows()
 	if err != nil {

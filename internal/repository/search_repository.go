@@ -194,7 +194,7 @@ func (r *SearchRepositoryImpl) CheckSearchReadiness(ctx context.Context) (*Searc
 			})
 		}
 	}
-	incompleteRelationships, err := r.relationshipProjectionTextIncomplete(ctx)
+	incompleteRelationships, err := r.relationshipProjectionTextIncomplete(ctx, contract)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func (r *SearchRepositoryImpl) CheckSearchReadiness(ctx context.Context) (*Searc
 	return readiness, nil
 }
 
-func (r *SearchRepositoryImpl) relationshipProjectionTextIncomplete(ctx context.Context) (bool, error) {
+func (r *SearchRepositoryImpl) relationshipProjectionTextIncomplete(ctx context.Context, contract *ActiveSearchContract) (bool, error) {
 	var incomplete bool
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		return tx.WithContext(ctx).Raw(`
@@ -224,12 +224,14 @@ func (r *SearchRepositoryImpl) relationshipProjectionTextIncomplete(ctx context.
 			          WHERE document.team_id = relationship.team_id
 			            AND document.source_kind = 'relationship'
 			            AND document.source_id = relationship.relationship_id
+			            AND document.embedding_contract_id = ?::uuid
+			            AND document.embedding_dimensions = ?
 			            AND document.projection_format_version = 2
 			            AND document.search_state IN ('pending', 'current')
 			      )
 			    LIMIT 1
 			)
-		`).Scan(&incomplete).Error
+			`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&incomplete).Error
 	})
 	if err != nil {
 		return false, fmt.Errorf("search: relationship projection readiness: %w", err)

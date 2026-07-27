@@ -476,7 +476,7 @@ func ensureActiveTeamForMutation(ctx context.Context, tx *gorm.DB, teamID string
 		WHERE id = ?::uuid
 		  AND status = 'active'
 		  AND deleted_at IS NULL
-		FOR KEY SHARE
+		FOR UPDATE
 	`, teamID).Row()
 	var id string
 	if err := row.Scan(&id); err != nil {

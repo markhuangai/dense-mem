@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -295,6 +296,79 @@ func TestRecallRelationshipsOmitsVectorWhenOnlyStaleContractDocumentsAreCurrent(
 	require.Empty(t, recall.Results)
 }
 
+func TestRecallRelationshipsUsesCurrentGenerationVectors(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "recall-relationships-current-generation-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-relationships-current-generation-owner")
+	insertSearchTestContract(t, adminDB, rls, "recall-rel-current-generation", 3, "exact", "")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	searchRepo := NewSearchRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Mika")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense Mem")
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"relationship recall current generation", "Mika works on Dense Mem.")
+	decision := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        ingest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: "recall:relationship-current-generation",
+			SpanStart:      0,
+			SpanEnd:        len("Mika works on Dense Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+	generationID := uuid.NewString()
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO search_projection_generations (
+			    team_id, projection_generation_id, source_kind, generation,
+			    projection_format_version, state, eligible_count, projected_count,
+			    current_vector_count, failed_job_count, completed_at, activated_at
+			) VALUES (
+			    ?::uuid, ?::uuid, 'relationship', 1,
+			    2, 'current', 1, 1,
+			    1, 0, now(), now()
+			)
+		`, teamID, generationID).Error
+	}))
+	doc, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:                 teamID,
+		OwnerProfileID:         ownerID,
+		SourceKind:             "relationship",
+		SourceID:               decision.Relationship.RelationshipID,
+		SourceVersion:          int64(decision.Relationship.Version),
+		ProjectionGenerationID: generationID,
+		DocumentText:           "relationship\nsubject: Mika\npredicate: works on\nobject: Dense Mem\npolarity: positive",
+	})
+	require.NoError(t, err)
+	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+		doc.SearchDocumentID: {1, 0, 0},
+	})
+
+	recall, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID:         teamID,
+		Query:          "unmatchedtoken",
+		QueryEmbedding: []float32{1, 0, 0},
+		Limit:          5,
+	})
+	require.NoError(t, err)
+	require.False(t, recall.VectorOmitted)
+	require.Equal(t, string(domain.SearchProjectionCurrent), recall.SearchState)
+	require.Len(t, recall.Results, 1)
+	assert.Equal(t, decision.Relationship.RelationshipID, recall.Results[0].RelationshipID)
+	assert.Equal(t, []string{ingest.Evidence[0].FragmentID}, recall.Results[0].EvidenceIDs)
+}
+
 func TestRecallRelationshipsReturnsEquivalentRelationshipIDs(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -505,7 +579,7 @@ func TestRecallRelationshipsHydratesHistoricallySupportedAtKnownAt(t *testing.T)
 	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
 		doc.SearchDocumentID: {1, 0, 0},
 	})
-	knownAt := time.Now().UTC()
+	knownAt := databaseNowForTest(t, adminDB, rls)
 	time.Sleep(10 * time.Millisecond)
 	revoke, err := semanticRepo.ApplyRelationshipSupportDecision(ctx, ApplyRelationshipSupportDecisionInput{
 		TeamID:         teamID,
@@ -538,6 +612,17 @@ func TestRecallRelationshipsHydratesHistoricallySupportedAtKnownAt(t *testing.T)
 	require.Len(t, historical.Results, 1)
 	assert.Equal(t, decision.Relationship.RelationshipID, historical.Results[0].RelationshipID)
 	assert.Equal(t, []string{ingest.Evidence[0].FragmentID}, historical.Results[0].EvidenceIDs)
+
+	validHistorical, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID:  teamID,
+		Query:   "Sam Dense Mem",
+		ValidAt: &knownAt,
+		Limit:   5,
+	})
+	require.NoError(t, err)
+	require.Len(t, validHistorical.Results, 1)
+	assert.Equal(t, decision.Relationship.RelationshipID, validHistorical.Results[0].RelationshipID)
+	assert.Equal(t, []string{ingest.Evidence[0].FragmentID}, validHistorical.Results[0].EvidenceIDs)
 }
 
 func TestRecallEvidenceExcludesStaleSupportSourceRevision(t *testing.T) {
@@ -710,7 +795,7 @@ func TestRecallEvidenceHydratesHistoricallySupportedRelationshipAtKnownAt(t *tes
 	require.NotNil(t, decision.Relationship)
 	require.NotEmpty(t, decision.SupportID)
 
-	knownAt := time.Now().UTC()
+	knownAt := databaseNowForTest(t, adminDB, rls)
 	time.Sleep(10 * time.Millisecond)
 	revoke, err := semanticRepo.ApplyRelationshipSupportDecision(ctx, ApplyRelationshipSupportDecisionInput{
 		TeamID:         teamID,
@@ -727,7 +812,9 @@ func TestRecallEvidenceHydratesHistoricallySupportedRelationshipAtKnownAt(t *tes
 
 	assertRecallEvidenceRelationships(t, ctx, searchRepo, teamID, ingest.Evidence[0].FragmentID, nil)
 	assertRecallEvidenceRelationshipsAt(t, ctx, searchRepo, teamID, ingest.Evidence[0].FragmentID,
-		[]string{decision.Relationship.RelationshipID}, &knownAt)
+		[]string{decision.Relationship.RelationshipID}, &knownAt, nil)
+	assertRecallEvidenceRelationshipsAt(t, ctx, searchRepo, teamID, ingest.Evidence[0].FragmentID,
+		[]string{decision.Relationship.RelationshipID}, nil, &knownAt)
 }
 
 func upsertRecallEvidenceSearchDocumentForTest(
@@ -760,7 +847,7 @@ func assertRecallEvidenceRelationships(
 	evidenceID string,
 	wantRelationshipIDs []string,
 ) {
-	assertRecallEvidenceRelationshipsAt(t, ctx, repo, teamID, evidenceID, wantRelationshipIDs, nil)
+	assertRecallEvidenceRelationshipsAt(t, ctx, repo, teamID, evidenceID, wantRelationshipIDs, nil, nil)
 }
 
 func assertRecallEvidenceRelationshipsAt(
@@ -771,16 +858,34 @@ func assertRecallEvidenceRelationshipsAt(
 	evidenceID string,
 	wantRelationshipIDs []string,
 	knownAt *time.Time,
+	validAt *time.Time,
 ) {
 	t.Helper()
 	recall, err := repo.RecallEvidence(ctx, RecallEvidenceInput{
 		TeamID:  teamID,
 		Query:   "Dense Mem",
 		KnownAt: knownAt,
+		ValidAt: validAt,
 		Limit:   5,
 	})
 	require.NoError(t, err)
 	require.Len(t, recall.Results, 1)
 	require.Equal(t, evidenceID, recall.Results[0].EvidenceID)
 	assert.ElementsMatch(t, wantRelationshipIDs, recall.Results[0].RelationshipIDs)
+}
+
+func databaseNowForTest(
+	t *testing.T,
+	db *gorm.DB,
+	rls interface {
+		WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
+	},
+) time.Time {
+	t.Helper()
+	var now time.Time
+	err := rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT now()`).Row().Scan(&now)
+	})
+	require.NoError(t, err)
+	return now.UTC()
 }
