@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -54,6 +55,7 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 		Limit:  cfg.MaxOutputs * 4,
 	})
 	if err != nil {
+		err = translateDreamRepositoryError(err)
 		result.CompletedAt = s.now().UTC()
 		result.Status = "error"
 		result.Error = err.Error()
@@ -72,6 +74,7 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 		SourceSnapshot: dreamInputSnapshot(inputs),
 	})
 	if err != nil {
+		err = translateDreamRepositoryError(err)
 		result.CompletedAt = s.now().UTC()
 		result.Status = "error"
 		result.Error = err.Error()
@@ -91,6 +94,7 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 	result.Status = "completed"
 	completeStatus := "completed"
 	if runErr != nil {
+		runErr = translateDreamRepositoryError(runErr)
 		result.Status = "error"
 		result.Error = runErr.Error()
 		completeStatus = "failed"
@@ -105,11 +109,19 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 		RejectedHypotheses: rejected,
 		Error:              result.Error,
 	}); err != nil && runErr == nil {
+		err = translateDreamRepositoryError(err)
 		result.Status = "error"
 		result.Error = err.Error()
 		return result, err
 	}
 	return result, runErr
+}
+
+func translateDreamRepositoryError(err error) error {
+	if errors.Is(err, repository.ErrTeamInactive) {
+		return httperr.New(httperr.NOT_FOUND, "team not found")
+	}
+	return err
 }
 
 func (s *service) persistHypotheses(
@@ -724,11 +736,11 @@ func dreamActor(ctx context.Context) (string, string, error) {
 func dreamInputSnapshot(inputs []repository.DreamInput) []map[string]any {
 	out := make([]map[string]any, 0, len(inputs))
 	for _, input := range inputs {
-			out = append(out, map[string]any{
-				"relationship_id": input.RelationshipID,
-				"version":         input.Version,
-				"status":          input.Status,
-			})
+		out = append(out, map[string]any{
+			"relationship_id": input.RelationshipID,
+			"version":         input.Version,
+			"status":          input.Status,
+		})
 	}
 	return out
 }

@@ -375,6 +375,49 @@ func TestRecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom(t *testing.T) 
 	require.Equal(t, 3, communities.recallInput.Limit)
 }
 
+func TestRecallSkipsCommunityDiscoveryWhenPrimaryResultsFillLimit(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	evidenceID := uuid.NewString()
+	search := &recallSearchStub{
+		contract: &repository.ActiveSearchContract{
+			EmbeddingContractID: uuid.NewString(),
+			EmbeddingDimensions: 3,
+			EmbeddingModel:      "test-model",
+		},
+		result: &repository.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results: []repository.RecallEvidenceHit{{
+				TeamID:     teamID.String(),
+				EvidenceID: evidenceID,
+				Context:    "PostgreSQL is used.",
+				SourceType: "document",
+				CreatedAt:  time.Now().UTC(),
+			}},
+		},
+	}
+	communities := &recallCommunityStub{}
+	svc := NewRecallService(RecallDependencies{
+		Search:          search,
+		Provider:        &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}},
+		Communities:     communities,
+		CommunityConfig: recallCommunityConfigStub{enabled: true},
+	})
+
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ContractVersion: domain.ContractVersion,
+		Query:           "PostgreSQL",
+		Limit:           1,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Results, 1)
+	require.Empty(t, result.DiscoveryPaths)
+	require.Empty(t, communities.refreshInput.TeamID)
+	require.Empty(t, communities.recallInput.TeamID)
+}
+
 func TestRecallReturnsRelatedRelationshipsAndVectorDegradation(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()

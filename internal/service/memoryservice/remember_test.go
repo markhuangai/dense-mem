@@ -13,6 +13,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -418,6 +419,26 @@ func TestRememberTranslatesLedgerConflictErrors(t *testing.T) {
 	require.ErrorIs(t, err, ErrRememberConflict)
 	require.NotErrorIs(t, err, repository.ErrIdempotencyConflict)
 	require.NotContains(t, err.Error(), "leaked detail")
+}
+
+func TestRememberTranslatesInactiveTeam(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	ledger := &rememberLedgerStub{
+		err: repository.ErrTeamInactive,
+	}
+	svc := NewRememberService(RememberDependencies{Ledger: ledger})
+
+	_, err := svc.Remember(authenticatedRememberContext(teamID, profileID, keyID), RememberRequest{
+		ContractVersion: domain.ContractVersion,
+		Evidence:        []RememberEvidenceInput{{Content: "evidence"}},
+	})
+
+	var apiErr *httperr.APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, httperr.NOT_FOUND, apiErr.Code)
+	require.NotErrorIs(t, err, repository.ErrTeamInactive)
 }
 
 func TestRememberTranslatesLedgerPersistenceErrors(t *testing.T) {

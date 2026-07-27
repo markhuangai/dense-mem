@@ -13,6 +13,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -461,6 +462,8 @@ func translateRememberLedgerError(err error) error {
 	switch {
 	case errors.Is(err, repository.ErrIdempotencyConflict), errors.Is(err, repository.ErrSourceRevisionConflict):
 		return fmt.Errorf("%w: duplicate or stale intake request", ErrRememberConflict)
+	case errors.Is(err, repository.ErrTeamInactive):
+		return httperr.New(httperr.NOT_FOUND, "team not found")
 	default:
 		return ErrRememberPersistence
 	}

@@ -250,7 +250,10 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallR
 	if relationshipDegradation != nil {
 		result.Degradations = append(result.Degradations, *relationshipDegradation)
 	}
-	paths, communityDegradation := s.recallCommunityDiscovery(ctx, actor.TeamID.String(), req)
+	paths, communityDegradation := []RecallDiscoveryPath{}, (*RecallDegradationResult)(nil)
+	if len(result.Results) < req.Limit {
+		paths, communityDegradation = s.recallCommunityDiscovery(ctx, actor.TeamID.String(), req)
+	}
 	result.RelatedCommunities = paths
 	result.DiscoveryPaths = paths
 	result.DiscoveryGuidance = "No additional discovery guidance."

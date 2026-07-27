@@ -142,6 +142,7 @@ func searchRecallFullText(
 	contract *ActiveSearchContract,
 	limit int,
 ) ([]SearchHit, error) {
+	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
 		       source_version, document_version, embedding_contract_id::text,
@@ -152,11 +153,11 @@ func searchRecallFullText(
 		WHERE team_id = ?::uuid
 		  AND source_kind = 'evidence'
 		  AND embedding_contract_id = ?::uuid
-		  AND search_state IN ('pending', 'current')
+		  AND (search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND search_state IN ('not_required', 'failed')))
 		  AND search_tsv @@ plainto_tsquery('simple', ?)
 		ORDER BY text_rank DESC, updated_at DESC, search_document_id ASC
 		LIMIT ?
-	`, input.Query, input.TeamID, contract.EmbeddingContractID, input.Query, limit).Rows()
+	`, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.Query, limit).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -370,11 +371,11 @@ func searchRecallEntityExpansion(
 		 AND latest.support_id = support.support_id
 		 AND latest.decision IN ('grant', 'reinstate')
 		JOIN search_documents AS document
-		  ON document.team_id = support.team_id
-		 AND document.source_kind = 'evidence'
-		 AND document.source_id = support.fragment_id
-		 AND document.embedding_contract_id = ?::uuid
-		 AND document.search_state IN ('pending', 'current')
+			  ON document.team_id = support.team_id
+			 AND document.source_kind = 'evidence'
+			 AND document.source_id = support.fragment_id
+			 AND document.embedding_contract_id = ?::uuid
+			 AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
 			LEFT JOIN evidence_quarantines AS quarantine
 			  ON quarantine.team_id = support.team_id
 			 AND quarantine.fragment_id = support.fragment_id
@@ -432,7 +433,7 @@ func searchRecallEntityExpansion(
 		ORDER BY max(relationship.updated_at) DESC, document.search_document_id ASC
 		LIMIT ?
 		`, input.TeamID, eventAt, eventAt,
-		contract.EmbeddingContractID,
+		contract.EmbeddingContractID, eventAt,
 		eventAt, eventAt,
 		input.TeamID,
 		input.ValidAt, input.ValidAt, input.ValidAt,
@@ -487,7 +488,7 @@ func hydrateRecallEvidence(
 			 AND document.source_kind = 'evidence'
 			 AND document.source_id = fragment.fragment_id
 			 AND document.embedding_contract_id = ?::uuid
-			 AND document.search_state IN ('pending', 'current')
+			 AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
 			LEFT JOIN evidence_quarantines AS quarantine
 			  ON quarantine.team_id = fragment.team_id
 			 AND quarantine.fragment_id = fragment.fragment_id
@@ -581,7 +582,7 @@ func hydrateRecallEvidence(
 		FROM eligible
 		GROUP BY evidence_id
 		`, pq.Array(evidenceIDs), input.TeamID, eventAt, eventAt,
-		input.TeamID, contract.EmbeddingContractID,
+		input.TeamID, contract.EmbeddingContractID, eventAt,
 		eventAt, eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
