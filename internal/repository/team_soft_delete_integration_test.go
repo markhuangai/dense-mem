@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T) {
@@ -18,6 +20,8 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "team-delete-tombstone")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner-delete-tombstone")
+	otherTeamID := createLedgerTeam(t, adminDB, rls, "team-delete-transfer-target")
+	insertSearchTestContract(t, adminDB, rls, "team-delete-search-read", 3, "exact", "")
 	ssoProfileID := uuid.NewString()
 	err := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
@@ -45,6 +49,46 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	})
 	require.NoError(t, err)
 	require.NotNil(t, created)
+	searchRepo := NewSearchRepository(appDB, rls)
+	searchDoc, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "evidence",
+		SourceID:       created.Evidence[0].FragmentID,
+		SourceVersion:  1,
+		DocumentText:   "Team deletion preserves accepted evidence provenance.",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, searchDoc.SearchDocumentID)
+	ssoRepo := NewSSORepository(appDB, rls)
+	provider := &domain.SSOProvider{
+		Name:         "team delete oidc",
+		Kind:         domain.SSOProviderKindGenericOIDC,
+		IssuerURL:    "https://idp.example.test",
+		ClientID:     "client",
+		GroupsScopes: []string{},
+		Enabled:      true,
+	}
+	require.NoError(t, ssoRepo.CreateProvider(ctx, provider))
+	mapping := &domain.SSOGroupMapping{
+		ID:         uuid.New(),
+		ProviderID: provider.ID,
+		TeamID:     uuid.MustParse(teamID),
+		GroupID:    "group-delete",
+		GroupName:  "Delete Team Group",
+		Scopes:     []string{"read"},
+		Role:       "member",
+		Enabled:    true,
+	}
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO sso_group_mappings (
+			    id, provider_id, team_id, group_id, group_name, scopes, role, enabled
+			) VALUES (
+			    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?::text[], ?, true
+			)
+		`, mapping.ID, mapping.ProviderID, mapping.TeamID, mapping.GroupID, mapping.GroupName, pq.Array(mapping.Scopes), mapping.Role).Error
+	}))
 
 	profileRepo := NewProfileRepository(appDB, rls)
 	require.NoError(t, profileRepo.SoftDelete(ctx, uuid.MustParse(teamID)))
@@ -109,4 +153,17 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	claimed, err := ledger.ClaimNextPlacementRun(ctx, teamID, "worker-deleted-team", time.Minute)
 	require.ErrorIs(t, err, ErrTeamInactive)
 	require.Nil(t, claimed)
+
+	hits, err := searchRepo.SearchFullText(ctx, FullTextSearchInput{
+		TeamID: teamID,
+		Query:  "provenance",
+		Limit:  5,
+	})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, searchDoc.SearchDocumentID, hits[0].SearchDocumentID)
+
+	mapping.TeamID = uuid.MustParse(otherTeamID)
+	err = ssoRepo.UpdateMapping(ctx, mapping)
+	require.ErrorIs(t, err, ErrTeamInactive)
 }

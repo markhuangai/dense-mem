@@ -23,7 +23,7 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 		return nil, err
 	}
 	jobs := []EmbeddingJob{}
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	err := r.withActiveTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		if err := markStaleEmbeddingJobs(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
@@ -127,7 +127,7 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 	if err != nil {
 		return err
 	}
-	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	err = r.withActiveTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var dims int
 		var contractID, sourceKind, projectionGenerationID string
 		err := tx.WithContext(ctx).Raw(`
@@ -222,7 +222,7 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 		return nil, err
 	}
 	var result *EmbeddingJobFailureResult
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	err := r.withActiveTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var attempts, maxAttempts int
 		var sourceKind, projectionGenerationID string
 		err := tx.WithContext(ctx).Raw(`
@@ -437,59 +437,91 @@ func markEmbeddingJobTerminal(ctx context.Context, tx *gorm.DB, input CompleteEm
 
 func refreshRelationshipProjectionGeneration(ctx context.Context, tx *gorm.DB, teamID string, projectionGenerationID string) error {
 	return tx.WithContext(ctx).Exec(`
-		WITH counts AS (
-			SELECT generation.team_id,
-			       generation.projection_generation_id,
-			       count(DISTINCT document.search_document_id) AS projected_count,
-			       count(DISTINCT document.search_document_id) FILTER (
+		WITH generation_row AS (
+			SELECT team_id, projection_generation_id, projection_format_version, state
+			FROM search_projection_generations
+			WHERE team_id = ?::uuid
+			  AND projection_generation_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND projection_format_version = 2
+		),
+		eligible AS (
+			SELECT count(*) AS eligible_count
+			FROM relationship_records AS relationship
+			JOIN generation_row AS generation
+			  ON generation.team_id = relationship.team_id
+			WHERE relationship.identity_alias_of_relationship_id IS NULL
+			  AND relationship.status = 'active'
+			  AND relationship.support_count > 0
+		),
+		documents AS (
+			SELECT count(document.search_document_id) AS projected_count,
+			       count(document.search_document_id) FILTER (
 			           WHERE document.search_state = 'current'
 			             AND document.embedding IS NOT NULL
-			       ) AS current_vector_count,
-			       count(DISTINCT job.embedding_job_id) FILTER (
-			           WHERE job.status IN ('queued', 'processing')
-			       ) AS unresolved_job_count,
-			       count(DISTINCT job.embedding_job_id) FILTER (
-			           WHERE job.status = 'failed'
-			       ) AS failed_job_count
-			FROM search_projection_generations AS generation
+			       ) AS current_vector_count
+			FROM generation_row AS generation
 			LEFT JOIN search_documents AS document
 			  ON document.team_id = generation.team_id
 			 AND document.source_kind = 'relationship'
 			 AND document.projection_format_version = generation.projection_format_version
 			 AND document.projection_generation_id = generation.projection_generation_id
+		),
+		jobs AS (
+			SELECT count(job.embedding_job_id) FILTER (
+			           WHERE job.status IN ('queued', 'processing')
+			       ) AS unresolved_job_count,
+			       count(job.embedding_job_id) FILTER (
+			           WHERE job.status = 'failed'
+			       ) AS failed_job_count
+			FROM generation_row AS generation
 			LEFT JOIN embedding_jobs AS job
 			  ON job.team_id = generation.team_id
 			 AND job.source_kind = 'relationship'
 			 AND job.projection_format_version = generation.projection_format_version
 			 AND job.projection_generation_id = generation.projection_generation_id
-			WHERE generation.team_id = ?::uuid
-			  AND generation.projection_generation_id = ?::uuid
-			  AND generation.source_kind = 'relationship'
-			  AND generation.projection_format_version = 2
-			GROUP BY generation.team_id, generation.projection_generation_id
+		),
+		counts AS (
+			SELECT generation.team_id,
+			       generation.projection_generation_id,
+			       eligible.eligible_count,
+			       documents.projected_count,
+			       documents.current_vector_count,
+			       jobs.unresolved_job_count,
+			       jobs.failed_job_count
+			FROM generation_row AS generation
+			CROSS JOIN eligible
+			CROSS JOIN documents
+			CROSS JOIN jobs
 		)
 		UPDATE search_projection_generations AS generation
-		SET projected_count = counts.projected_count,
+		SET eligible_count = CASE
+		        WHEN generation.state = 'current' THEN generation.eligible_count
+		        ELSE counts.eligible_count
+		    END,
+		    projected_count = counts.projected_count,
 		    current_vector_count = counts.current_vector_count,
 		    failed_job_count = counts.failed_job_count,
 		    state = CASE
+		        WHEN generation.state = 'current' THEN generation.state
 		        WHEN counts.failed_job_count > 0 THEN 'failed'
-		        WHEN generation.eligible_count = counts.projected_count
+		        WHEN counts.eligible_count = counts.projected_count
 		         AND counts.projected_count = counts.current_vector_count
 		         AND counts.unresolved_job_count = 0
 		            THEN 'current'
-		        WHEN generation.state = 'projecting_text' THEN 'embedding'
+		        WHEN generation.state IN ('projecting_text', 'failed') THEN 'embedding'
 		        ELSE generation.state
 		    END,
 		    completed_at = CASE
-		        WHEN generation.eligible_count = counts.projected_count
+		        WHEN counts.eligible_count = counts.projected_count
 		         AND counts.unresolved_job_count = 0
 		            THEN COALESCE(generation.completed_at, now())
 		        ELSE generation.completed_at
 		    END,
 		    activated_at = CASE
 		        WHEN counts.failed_job_count = 0
-		         AND generation.eligible_count = counts.projected_count
+		         AND generation.state <> 'current'
+		         AND counts.eligible_count = counts.projected_count
 		         AND counts.projected_count = counts.current_vector_count
 		         AND counts.unresolved_job_count = 0
 		            THEN COALESCE(generation.activated_at, now())

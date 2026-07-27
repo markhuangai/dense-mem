@@ -271,6 +271,7 @@ active_contract AS (
       AND contract.lifecycle_state = 'active'
       AND contract.distance_metric = 'cosine'
     ORDER BY contract.version DESC, generation.generation DESC, generation.created_at DESC
+    LIMIT 1
 ),
 upserted AS (
     INSERT INTO search_documents (
@@ -360,15 +361,15 @@ queued_jobs AS (
 projected_counts AS (
     SELECT generation.team_id,
            generation.projection_generation_id,
-           count(document.search_document_id) AS projected_count,
-           count(document.search_document_id) FILTER (WHERE document.search_state = 'current') AS current_vector_count,
-           max(document.source_id::text)::uuid AS last_projected_source_id
+           count(upserted.search_document_id) AS projected_count,
+           count(upserted.search_document_id) FILTER (WHERE upserted.search_state = 'current') AS current_vector_count,
+           max(upserted.source_id::text)::uuid AS last_projected_source_id
     FROM search_projection_generations AS generation
-    LEFT JOIN search_documents AS document
-      ON document.team_id = generation.team_id
-     AND document.source_kind = 'relationship'
-     AND document.projection_format_version = 2
-     AND document.projection_generation_id = generation.projection_generation_id
+    LEFT JOIN upserted
+      ON upserted.team_id = generation.team_id
+     AND upserted.source_kind = 'relationship'
+     AND upserted.projection_format_version = 2
+     AND upserted.projection_generation_id = generation.projection_generation_id
     WHERE generation.source_kind = 'relationship'
       AND generation.projection_format_version = 2
       AND generation.state = 'projecting_text'
@@ -456,6 +457,40 @@ ALTER TABLE relationship_records
     DROP CONSTRAINT IF EXISTS relationship_records_tier_check,
     DROP COLUMN IF EXISTS tier;
 
+DO $$
+DECLARE
+    duplicate_count BIGINT;
+BEGIN
+    SELECT count(*)
+    INTO duplicate_count
+    FROM (
+        SELECT team_id,
+               owner_profile_id,
+               subject_entity_id,
+               predicate_key,
+               polarity,
+               valid_from,
+               scope_key
+        FROM relationship_records
+        WHERE identity_alias_of_relationship_id IS NULL
+          AND current_cardinality = 'one'
+          AND status = 'active'
+          AND support_count > 0
+        GROUP BY team_id,
+                 owner_profile_id,
+                 subject_entity_id,
+                 predicate_key,
+                 polarity,
+                 valid_from,
+                 scope_key
+        HAVING count(*) > 1
+    ) AS duplicates;
+
+    IF duplicate_count > 0 THEN
+        RAISE EXCEPTION 'cannot create relationship_records_active_one_current_canonical_unique: % duplicate active supported one-cardinality canonical groups exist', duplicate_count;
+    END IF;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS relationship_records_active_one_current_canonical_unique
     ON relationship_records (
         team_id, owner_profile_id, subject_entity_id, predicate_key,
@@ -540,9 +575,7 @@ SET tier = CASE
         WHEN status = 'pending_evidence' THEN 'candidate'
         WHEN status = 'active' THEN 'validated_claim'
         ELSE 'validated_claim'
-    END
-WHERE tier IS NULL
-   OR tier = '';
+    END;
 
 DO $$
 BEGIN

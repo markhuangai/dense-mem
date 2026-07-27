@@ -196,13 +196,14 @@ func placementRelationshipSearchText(ctx context.Context, tx *gorm.DB, relations
 	err := tx.WithContext(ctx).Raw(`
 		SELECT
 		    COALESCE(NULLIF(subject_name.display_name, ''), relationship.subject_entity_id::text) AS subject_name,
-		    COALESCE(
-		        NULLIF(object_name.display_name, ''),
-		        NULLIF(value_record.display, ''),
-		        value_record.canonical_value,
-		        relationship.object_entity_id::text,
-		        relationship.object_value_id::text
-		    ) AS object_name,
+			    COALESCE(
+			        NULLIF(object_name.display_name, ''),
+			        NULLIF(value_record.display, ''),
+			        NULLIF(value_record.canonical_value, ''),
+			        relationship.object_entity_id::text,
+			        relationship.object_value_id::text,
+			        ''
+			    ) AS object_name,
 		    COALESCE(value_record.value_type, '') AS object_value_type,
 		    COALESCE(value_record.canonical_value, '') AS object_value,
 		    COALESCE(value_record.unit, '') AS object_unit
@@ -231,7 +232,7 @@ func placementRelationshipSearchText(ctx context.Context, tx *gorm.DB, relations
 		&names.ObjectUnit,
 	)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("render relationship projection names: %w", err)
 	}
 	return relationshipProjectionText(relationship, names), nil
 }

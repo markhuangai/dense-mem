@@ -234,6 +234,7 @@ export type RecallObject = {
 
 export type RecallRelationship = {
   relationship_id: string;
+  tier?: string;
   equivalent_relationship_ids?: string[];
   subject?: RecallEntity;
   predicate?: string;
@@ -428,7 +429,16 @@ export class UserApi {
     const data = payload.data;
     if (isRecallPayload(data)) {
       const communityPaths = data.related_communities ?? data.discovery_paths ?? [];
-      return data.results.map((evidence) => ({
+      const relationshipHits = (data.related_relationships ?? []).map((relationship, index) => ({
+        relationship,
+        relationships: [relationship],
+        evidences: [],
+        discovery_paths: communityPaths,
+        related_hypotheses: data.related_hypotheses ?? [],
+        semantic_rank: index + 1,
+        final_score: relationship.search_state === "current" ? 1 : undefined,
+      }));
+      const evidenceHits = data.results.map((evidence) => ({
         evidence,
         evidences: [evidence],
         relationships: relationshipsForEvidence(communityPaths, evidence.evidence_id),
@@ -437,6 +447,7 @@ export class UserApi {
         final_score: evidence.rank ? 1 / evidence.rank : undefined,
         semantic_rank: evidence.rank,
       }));
+      return [...evidenceHits, ...relationshipHits];
     }
     if (Array.isArray(data)) {
       return data as RecallHit[];
@@ -444,12 +455,13 @@ export class UserApi {
     if (isLegacyRecallPayload(data)) {
       const evidencesByID = new Map(data.evidences.map((evidence) => [evidence.evidence_id, evidence]));
       return data.results.map((relationship, index) => ({
+        tier: relationship.tier,
         relationship,
         relationships: [relationship],
-	        evidences: (relationship.evidence_ids ?? [])
-	          .map((id) => evidencesByID.get(id))
-	          .filter((evidence): evidence is RecallEvidenceContext => Boolean(evidence)),
-	        score: 1,
+        evidences: (relationship.evidence_ids ?? [])
+          .map((id) => evidencesByID.get(id))
+          .filter((evidence): evidence is RecallEvidenceContext => Boolean(evidence)),
+        score: 1,
         final_score: 1,
         semantic_rank: index + 1,
       }));

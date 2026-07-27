@@ -275,5 +275,6 @@ type RecallRelationshipHit struct {
 	SearchState      string
 	SupportCount     int
 	SourceGroupCount int
+	EvidenceIDs       []string
 	CreatedAt        time.Time
 }

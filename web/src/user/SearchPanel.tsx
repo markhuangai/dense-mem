@@ -616,6 +616,13 @@ function recallResultStatus(item: RecallDisplayItem): RecallResultStatus | null 
     return null;
   }
   if (item && isRelationship(item)) {
+    const searchState = item.search_state?.toLowerCase() ?? "";
+    if (searchState === "pending") {
+      return "provisional";
+    }
+    if (searchState === "failed") {
+      return "disputed";
+    }
     return "verified";
   }
   const raw = item?.status?.toLowerCase() ?? "";

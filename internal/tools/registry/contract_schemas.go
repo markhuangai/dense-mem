@@ -516,7 +516,7 @@ func recallSearchStatesSchema() map[string]any {
 
 func recallDegradationSchema() map[string]any {
 	return closedObject(
-		[]string{"code", "message"},
+		[]string{"frontier", "code", "message"},
 		map[string]any{
 			"frontier":         schemaEnum([]string{"evidence", "relationships", "communities", "hypotheses"}),
 			"required_failure": map[string]any{"type": "boolean"},

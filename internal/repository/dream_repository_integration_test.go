@@ -21,6 +21,7 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 	semanticRepo := NewSemanticRepository(appDB, rls)
 
 	mark := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Mark Huang")
+	alex := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Alex")
 	denseMem := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
 	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
 
@@ -56,6 +57,33 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 	})
 	require.NotNil(t, active.Relationship)
 
+	unsupportedIngest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"dream unsupported active source", "Alex works on PostgreSQL.")
+	unsupported := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        unsupportedIngest.IngestID,
+		SubjectEntityID: alex.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  postgres.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     unsupportedIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:dream-unsupported",
+			SpanStart:      0,
+			SpanEnd:        len("Alex works on PostgreSQL."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, unsupported.Relationship)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_records
+			SET support_count = 0
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+		`, teamID, unsupported.Relationship.RelationshipID).Error
+	}))
+
 	run, err := semanticRepo.ClaimDreamCycle(ctx, DreamCycleClaimInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
@@ -78,6 +106,7 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 	require.Len(t, inputs, 2)
 	assertDreamInput(t, inputs, candidate.Relationship.RelationshipID, "pending_evidence")
 	assertDreamInput(t, inputs, active.Relationship.RelationshipID, "active")
+	assertDreamInputMissing(t, inputs, unsupported.Relationship.RelationshipID)
 
 	proposal := UpsertHypothesisInput{
 		TeamID:           teamID,
@@ -189,4 +218,13 @@ func assertDreamInput(t *testing.T, inputs []DreamInput, relationshipID, status 
 		}
 	}
 	t.Fatalf("missing dream input %s in %+v", relationshipID, inputs)
+}
+
+func assertDreamInputMissing(t *testing.T, inputs []DreamInput, relationshipID string) {
+	t.Helper()
+	for _, input := range inputs {
+		if input.RelationshipID == relationshipID {
+			t.Fatalf("unexpected dream input %s in %+v", relationshipID, inputs)
+		}
+	}
 }

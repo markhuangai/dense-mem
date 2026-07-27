@@ -757,10 +757,5 @@ func (r *SemanticRepositoryImpl) withTeamTx(ctx context.Context, teamID string, 
 	if r.rls == nil {
 		return errors.New("semantic: rls helper is required")
 	}
-	return r.rls.WithTeamTx(ctx, r.db, teamID, func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
-			return err
-		}
-		return fn(tx)
-	})
+	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
 }

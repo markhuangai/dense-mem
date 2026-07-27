@@ -249,6 +249,61 @@ func searchRecallRelationshipExactVector(
 	if len(input.QueryEmbedding) != contract.EmbeddingDimensions {
 		return nil, fmt.Errorf("%w: contract dimensions %d, query dimensions %d", ErrSearchContractMismatch, contract.EmbeddingDimensions, len(input.QueryEmbedding))
 	}
+	if contract.IndexStrategy != string(domain.VectorIndexExact) && !contract.AllowExactFallback {
+		return nil, fmt.Errorf("%w: active search contract does not allow exact vector search", ErrSearchContractMismatch)
+	}
+	if contract.ExactMaxRows > 0 {
+		var candidateCount int64
+		if err := tx.WithContext(ctx).Raw(`
+			WITH generation_count AS (
+			    SELECT count(*) AS value
+			    FROM search_projection_generations
+			    WHERE team_id = ?::uuid
+			      AND source_kind = 'relationship'
+			      AND projection_format_version = 2
+			),
+			current_generation AS (
+			    SELECT choice.projection_generation_id
+			    FROM (
+			        SELECT projection_generation_id, 0 AS priority, generation
+			        FROM search_projection_generations
+			        WHERE team_id = ?::uuid
+			          AND source_kind = 'relationship'
+			          AND projection_format_version = 2
+			          AND state = 'current'
+			        UNION ALL
+			        SELECT NULL::uuid, 1 AS priority, 0 AS generation
+			        FROM generation_count
+			        WHERE value = 0
+			    ) AS choice
+			    ORDER BY choice.priority ASC, choice.generation DESC
+			    LIMIT 1
+			)
+			SELECT count(*)
+			FROM (
+			    SELECT document.search_document_id
+			    FROM current_generation
+			    JOIN search_documents AS document
+			      ON document.team_id = ?::uuid
+			     AND document.source_kind = 'relationship'
+			     AND document.embedding_contract_id = ?::uuid
+			     AND document.embedding_dimensions = ?
+			     AND document.projection_format_version = 2
+			     AND (
+			         document.projection_generation_id IS NULL
+			         OR document.projection_generation_id = current_generation.projection_generation_id
+			     )
+			     AND document.search_state = 'current'
+			     AND document.embedding IS NOT NULL
+			    LIMIT ?
+			) AS exact_candidates
+		`, input.TeamID, input.TeamID, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions, contract.ExactMaxRows+1).Scan(&candidateCount).Error; err != nil {
+			return nil, err
+		}
+		if candidateCount > int64(contract.ExactMaxRows) {
+			return nil, fmt.Errorf("%w: exact vector candidates %d exceed contract max %d", ErrSearchContractMismatch, candidateCount, contract.ExactMaxRows)
+		}
+	}
 	vectorLiteral, err := vectorLiteral(input.QueryEmbedding)
 	if err != nil {
 		return nil, err
@@ -431,7 +486,20 @@ func searchRecallRelationshipEntityExpansion(
 		 AND document.search_state IN ('pending', 'current')
 		WHERE relationship.team_id = ?::uuid
 		  AND relationship.identity_alias_of_relationship_id IS NULL
-		  AND relationship.status = 'active'
+		  AND (
+		      relationship.status = 'active'
+		      OR (
+		          relationship.status = 'superseded'
+		          AND (
+		              (?::timestamptz IS NOT NULL
+		               AND (relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
+		               AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
+		              OR (?::timestamptz IS NOT NULL
+		                  AND relationship.created_at <= ?::timestamptz
+		                  AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
+		          )
+		      )
+		  )
 		  AND relationship.support_count > 0
 		  AND (
 		      relationship.subject_entity_id = ANY(?::uuid[])
@@ -454,6 +522,8 @@ func searchRecallRelationshipEntityExpansion(
 		ORDER BY relationship.updated_at DESC, relationship.relationship_id ASC
 		LIMIT ?
 	`, contract.EmbeddingContractID, input.TeamID,
+		input.ValidAt, input.ValidAt, input.ValidAt,
+		input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
@@ -519,7 +589,20 @@ func hydrateRecallRelationships(
 		    LEFT JOIN known_groups
 		      ON known_groups.semantic_group_key = relationship.semantic_group_key
 		    WHERE relationship.identity_alias_of_relationship_id IS NULL
-		      AND relationship.status = 'active'
+		      AND (
+		          relationship.status = 'active'
+		          OR (
+		              relationship.status = 'superseded'
+		              AND (
+		                  (?::timestamptz IS NOT NULL
+		                   AND (relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
+		                   AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
+		                  OR (?::timestamptz IS NOT NULL
+		                      AND relationship.created_at <= ?::timestamptz
+		                      AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
+		              )
+		          )
+		      )
 		      AND relationship.support_count > 0
 		      AND known_groups.semantic_group_key IS NULL
 		      AND (
@@ -546,9 +629,11 @@ func hydrateRecallRelationships(
 		LEFT JOIN value_records AS value_record
 		  ON value_record.team_id = relationship.team_id
 		 AND value_record.value_id = relationship.object_value_id
-	`, pq.Array(relationshipIDs), input.TeamID,
+		`, pq.Array(relationshipIDs), input.TeamID,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
 		input.TeamID, contract.EmbeddingContractID,
+		input.ValidAt, input.ValidAt, input.ValidAt,
+		input.KnownAt, input.KnownAt, input.KnownAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt).Rows()
 	if err != nil {
@@ -582,7 +667,82 @@ func hydrateRecallRelationships(
 		}
 		out[hit.RelationshipID] = hit
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := hydrateRecallRelationshipEvidenceIDs(ctx, tx, input, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func hydrateRecallRelationshipEvidenceIDs(ctx context.Context, tx *gorm.DB, input RecallRelationshipsInput, hits map[string]RecallRelationshipHit) error {
+	if len(hits) == 0 {
+		return nil
+	}
+	relationshipIDs := make([]string, 0, len(hits))
+	for relationshipID := range hits {
+		relationshipIDs = append(relationshipIDs, relationshipID)
+	}
+	sort.Strings(relationshipIDs)
+	rows, err := tx.WithContext(ctx).Raw(`
+		WITH requested AS (
+		    SELECT unnest(?::uuid[]) AS relationship_id
+		),
+		latest AS (
+		    SELECT DISTINCT ON (team_id, support_id)
+		           team_id, support_id, decision
+		    FROM relationship_support_decision_events
+		    WHERE team_id = ?::uuid
+		      AND (?::timestamptz IS NULL OR created_at <= ?::timestamptz)
+		    ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
+		),
+		effective_support AS (
+		    SELECT support.relationship_id::text,
+		           support.fragment_id::text,
+		           support.created_at
+		    FROM requested
+		    JOIN relationship_evidence_supports AS support
+		      ON support.team_id = ?::uuid
+		     AND support.relationship_id = requested.relationship_id
+		    JOIN latest
+		      ON latest.team_id = support.team_id
+		     AND latest.support_id = support.support_id
+		     AND latest.decision IN ('grant', 'reinstate')
+		    LEFT JOIN evidence_quarantines AS quarantine
+		      ON quarantine.team_id = support.team_id
+		     AND quarantine.fragment_id = support.fragment_id
+		     AND quarantine.status = 'active'
+		    LEFT JOIN evidence_sources AS source
+		      ON source.team_id = support.team_id
+		     AND source.source_id = support.source_id
+		    WHERE quarantine.quarantine_id IS NULL
+		      AND (?::timestamptz IS NULL OR support.created_at <= ?::timestamptz)
+		      AND (
+		          support.source_id IS NULL
+		          OR source.current_revision_id = support.source_revision_id
+		      )
+		)
+		SELECT relationship_id,
+		       array_agg(fragment_id ORDER BY created_at ASC, fragment_id ASC)::text[] AS evidence_ids
+		FROM effective_support
+		GROUP BY relationship_id
+	`, pq.Array(relationshipIDs), input.TeamID, input.KnownAt, input.KnownAt, input.TeamID, input.KnownAt, input.KnownAt).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var relationshipID string
+		var evidenceIDs []string
+		if err := rows.Scan(&relationshipID, pq.Array(&evidenceIDs)); err != nil {
+			return err
+		}
+		hit := hits[relationshipID]
+		hit.EvidenceIDs = evidenceIDs
+		hits[relationshipID] = hit
+	}
+	return rows.Err()
 }
 
 func normalizeRecallRelationshipsInput(input RecallRelationshipsInput) RecallRelationshipsInput {

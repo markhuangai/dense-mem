@@ -366,13 +366,14 @@ func searchRecallEntityExpansion(
 		 AND document.source_id = support.fragment_id
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.search_state IN ('pending', 'current')
-		LEFT JOIN evidence_quarantines AS quarantine
-		  ON quarantine.team_id = support.team_id
-		 AND quarantine.fragment_id = support.fragment_id
-		 AND quarantine.status = 'active'
-		WHERE relationship.team_id = ?::uuid
-		  AND (
-		      relationship.status = 'active'
+			LEFT JOIN evidence_quarantines AS quarantine
+			  ON quarantine.team_id = support.team_id
+			 AND quarantine.fragment_id = support.fragment_id
+			 AND quarantine.status = 'active'
+			WHERE relationship.team_id = ?::uuid
+			  AND relationship.identity_alias_of_relationship_id IS NULL
+			  AND (
+			      relationship.status = 'active'
 		      OR (
 		          relationship.status = 'superseded'
 		          AND (

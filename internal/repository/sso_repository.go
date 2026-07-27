@@ -251,6 +251,23 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 	now := time.Now().UTC()
 	mapping.UpdatedAt = now
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		var currentTeamID string
+		err := tx.Raw(`
+			SELECT team_id::text
+			FROM sso_group_mappings
+			WHERE id = $1
+			  AND provider_id = $2
+			FOR UPDATE
+		`, mapping.ID, mapping.ProviderID).Row().Scan(&currentTeamID)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return gorm.ErrRecordNotFound
+			}
+			return err
+		}
+		if err := ensureActiveTeamForMutation(ctx, tx, currentTeamID); err != nil {
+			return err
+		}
 		if err := ensureActiveTeamForMutation(ctx, tx, mapping.TeamID.String()); err != nil {
 			return err
 		}

@@ -184,8 +184,15 @@ placement_counts() {
       JOIN evidence_fragments AS fragment
         ON fragment.team_id = run.team_id
        AND fragment.ingest_id = run.ingest_id
+      LEFT JOIN evidence_sources AS source
+        ON source.team_id = fragment.team_id
+       AND source.source_id = fragment.source_id
       WHERE run.team_id = :'team_id'::uuid
         AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+        AND (
+          fragment.source_id IS NULL
+          OR source.current_revision_id = fragment.source_revision_id
+        )
     ), ranked AS (
       SELECT status,
              row_number() OVER (
@@ -224,8 +231,15 @@ write_resume_files() {
       JOIN evidence_fragments AS fragment
         ON fragment.team_id = run.team_id
        AND fragment.ingest_id = run.ingest_id
+      LEFT JOIN evidence_sources AS source
+        ON source.team_id = fragment.team_id
+       AND source.source_id = fragment.source_id
       WHERE run.team_id = :'team_id'::uuid
         AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+        AND (
+          fragment.source_id IS NULL
+          OR source.current_revision_id = fragment.source_revision_id
+        )
     ), ranked AS (
       SELECT source_doc_id,
              status,
@@ -250,8 +264,15 @@ write_resume_files() {
       JOIN evidence_fragments AS fragment
         ON fragment.team_id = run.team_id
        AND fragment.ingest_id = run.ingest_id
+      LEFT JOIN evidence_sources AS source
+        ON source.team_id = fragment.team_id
+       AND source.source_id = fragment.source_id
       WHERE run.team_id = :'team_id'::uuid
         AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+        AND (
+          fragment.source_id IS NULL
+          OR source.current_revision_id = fragment.source_revision_id
+        )
     ), ranked AS (
       SELECT source_doc_id,
              status,
@@ -284,8 +305,15 @@ write_placement_summary() {
       JOIN evidence_fragments AS fragment
         ON fragment.team_id = run.team_id
        AND fragment.ingest_id = run.ingest_id
+      LEFT JOIN evidence_sources AS source
+        ON source.team_id = fragment.team_id
+       AND source.source_id = fragment.source_id
       WHERE run.team_id = :'team_id'::uuid
         AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+        AND (
+          fragment.source_id IS NULL
+          OR source.current_revision_id = fragment.source_revision_id
+        )
     ), ranked AS (
       SELECT placement_run_id, ingest_id, status,
              row_number() OVER (

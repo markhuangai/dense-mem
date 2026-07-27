@@ -350,7 +350,9 @@ func (s *recallService) recallRelatedRelationships(
 		state = recalled.SearchState
 	}
 	var degradation *RecallDegradationResult
-	if recalled != nil && recalled.VectorOmitted {
+	if strings.TrimSpace(req.Query) != "" && len(queryEmbedding) == 0 {
+		degradation = relationshipVectorDegradation(string(domain.SearchProjectionPending))
+	} else if recalled != nil && recalled.VectorOmitted {
 		degradation = relationshipVectorDegradation(state)
 	}
 	return relatedRelationshipSummaries(recalled), state, degradation
@@ -447,7 +449,7 @@ func relatedRelationshipSummaries(recalled *repository.RecallRelationshipsResult
 			Predicate:   record.PredicateKey,
 			Object:      recallRelationshipObject(record),
 			Polarity:    record.Polarity,
-			EvidenceIDs: []string{},
+			EvidenceIDs: append([]string(nil), record.EvidenceIDs...),
 			SearchState: record.SearchState,
 		})
 	}

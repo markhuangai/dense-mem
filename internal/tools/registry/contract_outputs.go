@@ -76,8 +76,8 @@ func recallContractOutput(res *memoryservice.RecallResult) map[string]any {
 			"related_communities":   []any{},
 			"related_hypotheses":    []any{},
 			"search_states": map[string]any{
-				"evidence":      "",
-				"relationships": "",
+				"evidence":      string(domain.SearchProjectionCurrent),
+				"relationships": string(domain.SearchProjectionCurrent),
 			},
 			"degradations": []any{},
 		}
