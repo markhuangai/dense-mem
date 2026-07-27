@@ -167,7 +167,7 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.embedding_dimensions = ?
 		 AND document.projection_format_version = 2
-		 AND ((SELECT projection_generation_id FROM latest_generation) IS NULL OR document.projection_generation_id IS NULL OR document.projection_generation_id = (SELECT projection_generation_id FROM latest_generation))
+		 AND (document.projection_generation_id IS NULL OR document.projection_generation_id = (SELECT projection_generation_id FROM latest_generation))
 	`, teamID, teamID, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Row().Scan(
 		&latestState,
 		&eligibleCount,
@@ -512,7 +512,7 @@ func searchRecallRelationshipEntityExpansion(
 		  )
 		ORDER BY relationship.updated_at DESC, relationship.relationship_id ASC
 		LIMIT ?
-	`, input.TeamID, input.TeamID, input.TeamID, contract.EmbeddingContractID, eventAt,
+	`, input.TeamID, input.TeamID, contract.EmbeddingContractID, eventAt,
 		eventAt, eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
@@ -637,7 +637,7 @@ func hydrateRecallRelationships(
 		LEFT JOIN value_records AS value_record
 		  ON value_record.team_id = relationship.team_id
 		 AND value_record.value_id = relationship.object_value_id
-		`, pq.Array(relationshipIDs), input.TeamID, input.TeamID, input.TeamID,
+			`, pq.Array(relationshipIDs), input.TeamID, input.TeamID,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
 		input.TeamID, contract.EmbeddingContractID, eventAt,
 		eventAt, eventAt,

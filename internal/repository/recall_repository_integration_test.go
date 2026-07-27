@@ -984,8 +984,11 @@ func insertRelationshipProjectionGenerationForTest(
 			) VALUES (
 			    ?::uuid, ?::uuid, 'relationship', ?,
 			    2, ?, 1, 1,
-			    1, 0, now(), now()
+			    CASE WHEN ? = 'current' THEN 1 ELSE 0 END,
+			    CASE WHEN ? = 'failed' THEN 1 ELSE 0 END,
+			    CASE WHEN ? IN ('current', 'failed') THEN now() ELSE NULL END,
+			    CASE WHEN ? = 'current' THEN now() ELSE NULL END
 			)
-		`, teamID, generationID, generation, state).Error
+		`, teamID, generationID, generation, state, state, state, state, state).Error
 	}))
 }

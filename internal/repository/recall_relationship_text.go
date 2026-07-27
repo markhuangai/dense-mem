@@ -32,7 +32,7 @@ func searchRecallRelationshipFullText(
 		WHERE document.search_tsv @@ plainto_tsquery('simple', ?)
 		ORDER BY text_rank DESC, document.updated_at DESC, document.search_document_id ASC
 		LIMIT ?
-	`, input.TeamID, input.TeamID, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.Query, limit).Rows()
+	`, input.TeamID, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.Query, limit).Rows()
 	if err != nil {
 		return nil, err
 	}

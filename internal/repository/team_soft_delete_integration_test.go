@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -182,6 +183,13 @@ func TestActiveTeamMutationGuardSerializesWithTeamDelete(t *testing.T) {
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "team-delete-lock-guard")
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	closeRelease := func() {
+		releaseOnce.Do(func() {
+			close(release)
+		})
+	}
+	t.Cleanup(closeRelease)
 	locked := make(chan error, 1)
 	done := make(chan error, 1)
 
@@ -198,12 +206,6 @@ func TestActiveTeamMutationGuardSerializesWithTeamDelete(t *testing.T) {
 	}()
 
 	require.NoError(t, <-locked)
-	releaseClosed := false
-	defer func() {
-		if !releaseClosed {
-			close(release)
-		}
-	}()
 
 	err := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Exec(`SET LOCAL lock_timeout = '100ms'`).Error; err != nil {
@@ -219,7 +221,6 @@ func TestActiveTeamMutationGuardSerializesWithTeamDelete(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "lock timeout")
-	close(release)
-	releaseClosed = true
+	closeRelease()
 	require.NoError(t, <-done)
 }
