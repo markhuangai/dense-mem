@@ -441,7 +441,7 @@ func relatedRelationshipSummaries(recalled *repository.RecallRelationshipsResult
 	for _, record := range recalled.Results {
 		out = append(out, RelatedRelationshipSummary{
 			RelationshipID:            record.RelationshipID,
-			EquivalentRelationshipIDs: []string{},
+			EquivalentRelationshipIDs: append([]string(nil), record.EquivalentRelationshipIDs...),
 			Subject: EntityHandle{
 				EntityID: record.SubjectEntityID,
 				Name:     record.SubjectName,

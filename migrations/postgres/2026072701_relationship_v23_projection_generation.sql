@@ -502,6 +502,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS relationship_records_active_one_current_canoni
       AND status = 'active'
       AND support_count > 0;
 
+CREATE INDEX IF NOT EXISTS relationship_records_active_supported_team_idx
+    ON relationship_records(team_id)
+    WHERE identity_alias_of_relationship_id IS NULL
+      AND status = 'active'
+      AND support_count > 0;
+
 CREATE INDEX IF NOT EXISTS relationship_records_active_subject_idx
     ON relationship_records(team_id, subject_entity_id, predicate_key)
     WHERE identity_alias_of_relationship_id IS NULL
@@ -565,136 +571,9 @@ SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 
-DROP VIEW IF EXISTS semantic_edges;
-
-ALTER TABLE relationship_records
-    ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'validated_claim';
-
-UPDATE relationship_records
-SET tier = CASE
-        WHEN status = 'pending_evidence' THEN 'candidate'
-        WHEN status = 'active' THEN 'validated_claim'
-        ELSE 'validated_claim'
-    END;
-
 DO $$
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conrelid = 'relationship_records'::regclass
-          AND conname = 'relationship_records_tier_check'
-    ) THEN
-        ALTER TABLE relationship_records
-            ADD CONSTRAINT relationship_records_tier_check
-            CHECK (tier IN ('candidate', 'validated_claim', 'fact'));
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conrelid = 'relationship_records'::regclass
-          AND conname = 'relationship_records_active_tier_check'
-    ) THEN
-        ALTER TABLE relationship_records
-            ADD CONSTRAINT relationship_records_active_tier_check
-            CHECK (
-                (tier = 'candidate' AND status <> 'active')
-                OR (status = 'active' AND tier IN ('validated_claim', 'fact'))
-                OR (tier <> 'candidate' AND status <> 'active')
-            );
-    END IF;
+    RAISE EXCEPTION 'irreversible migration: V2.3 removes relationship tier history and reprojects relationship search documents';
 END $$;
-
-ALTER TABLE relationship_transition_events
-    ADD COLUMN IF NOT EXISTS from_tier TEXT NULL,
-    ADD COLUMN IF NOT EXISTS to_tier TEXT NOT NULL DEFAULT 'validated_claim';
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conrelid = 'relationship_transition_events'::regclass
-          AND conname = 'relationship_transitions_tier_check'
-    ) THEN
-        ALTER TABLE relationship_transition_events
-            ADD CONSTRAINT relationship_transitions_tier_check
-            CHECK (
-                (from_tier IS NULL OR from_tier IN ('candidate', 'validated_claim', 'fact'))
-                AND to_tier IN ('candidate', 'validated_claim', 'fact')
-            );
-    END IF;
-END $$;
-
-CREATE UNIQUE INDEX IF NOT EXISTS relationship_records_active_one_current_unique
-    ON relationship_records (
-        team_id, owner_profile_id, subject_entity_id, predicate_key,
-        polarity, valid_from, valid_to, scope_key
-    )
-    NULLS NOT DISTINCT
-    WHERE current_cardinality = 'one'
-      AND status = 'active'
-      AND tier IN ('validated_claim', 'fact');
-
-CREATE INDEX IF NOT EXISTS relationship_records_active_subject_idx
-    ON relationship_records(team_id, subject_entity_id, predicate_key)
-    WHERE status = 'active' AND tier IN ('validated_claim', 'fact');
-
-CREATE INDEX IF NOT EXISTS relationship_records_active_object_entity_idx
-    ON relationship_records(team_id, object_entity_id, predicate_key)
-    WHERE status = 'active' AND tier IN ('validated_claim', 'fact') AND object_entity_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS relationship_records_active_object_value_idx
-    ON relationship_records(team_id, object_value_id, predicate_key)
-    WHERE status = 'active' AND tier IN ('validated_claim', 'fact') AND object_value_id IS NOT NULL;
-
-CREATE VIEW semantic_edges
-WITH (security_invoker = true) AS
-SELECT relationship_id,
-       team_id,
-       owner_profile_id,
-       semantic_group_key,
-       subject_entity_id,
-       predicate_key,
-       predicate_version,
-       object_entity_id,
-       object_value_id,
-       relationship_kind,
-       current_cardinality,
-       polarity,
-       scope_key,
-       valid_from,
-       valid_to,
-       tier,
-       support_count,
-       source_group_count,
-       version
-FROM relationship_records
-WHERE status = 'active'
-  AND tier IN ('validated_claim', 'fact');
-
-ALTER TABLE embedding_jobs
-    DROP CONSTRAINT IF EXISTS embedding_jobs_projection_generation_fk,
-    DROP CONSTRAINT IF EXISTS embedding_jobs_projection_format_check,
-    DROP COLUMN IF EXISTS projection_generation_id,
-    DROP COLUMN IF EXISTS projection_format_version;
-
-ALTER TABLE search_documents
-    DROP CONSTRAINT IF EXISTS search_documents_projection_generation_fk,
-    DROP CONSTRAINT IF EXISTS search_documents_projection_format_check,
-    DROP COLUMN IF EXISTS projection_generation_id,
-    DROP COLUMN IF EXISTS projection_format_version;
-
-DROP TABLE IF EXISTS search_projection_generations;
-
-UPDATE app_config
-SET value = regexp_replace(
-        to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
-        '\.?0+Z$',
-        'Z'
-    ),
-    updated_at = clock_timestamp()
-WHERE key = 'update_time';
 
 -- +goose StatementEnd

@@ -252,6 +252,9 @@ func searchRecallRelationshipExactVector(
 	if contract.IndexStrategy != string(domain.VectorIndexExact) && !contract.AllowExactFallback {
 		return nil, fmt.Errorf("%w: active search contract does not allow exact vector search", ErrSearchContractMismatch)
 	}
+	if contract.DistanceMetric != string(domain.VectorDistanceCosine) {
+		return nil, fmt.Errorf("%w: exact vector search supports %s distance only", ErrSearchContractMismatch, domain.VectorDistanceCosine)
+	}
 	if contract.ExactMaxRows > 0 {
 		var candidateCount int64
 		if err := tx.WithContext(ctx).Raw(`
@@ -484,12 +487,22 @@ func searchRecallRelationshipEntityExpansion(
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.projection_format_version = 2
 		 AND document.search_state IN ('pending', 'current')
+		LEFT JOIN LATERAL (
+		    SELECT transition.to_status AS status
+		    FROM relationship_transition_events AS transition
+		    WHERE ?::timestamptz IS NOT NULL
+		      AND transition.team_id = relationship.team_id
+		      AND transition.relationship_id = relationship.relationship_id
+		      AND transition.created_at <= ?::timestamptz
+		    ORDER BY transition.created_at DESC, transition.transition_id DESC
+		    LIMIT 1
+		) AS known_status ON TRUE
 		WHERE relationship.team_id = ?::uuid
 		  AND relationship.identity_alias_of_relationship_id IS NULL
 		  AND (
-		      relationship.status = 'active'
+		      COALESCE(known_status.status, relationship.status) = 'active'
 		      OR (
-		          relationship.status = 'superseded'
+		          COALESCE(known_status.status, relationship.status) = 'superseded'
 		          AND (
 		              (?::timestamptz IS NOT NULL
 		               AND (relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
@@ -500,7 +513,7 @@ func searchRecallRelationshipEntityExpansion(
 		          )
 		      )
 		  )
-		  AND relationship.support_count > 0
+		  AND (?::timestamptz IS NOT NULL OR relationship.support_count > 0)
 		  AND (
 		      relationship.subject_entity_id = ANY(?::uuid[])
 		      OR relationship.object_entity_id = ANY(?::uuid[])
@@ -521,9 +534,12 @@ func searchRecallRelationshipEntityExpansion(
 		  )
 		ORDER BY relationship.updated_at DESC, relationship.relationship_id ASC
 		LIMIT ?
-	`, contract.EmbeddingContractID, input.TeamID,
+	`, contract.EmbeddingContractID,
+		input.KnownAt, input.KnownAt,
+		input.TeamID,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
+		input.KnownAt,
 		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
@@ -586,13 +602,23 @@ func hydrateRecallRelationships(
 		     AND document.embedding_contract_id = ?::uuid
 		     AND document.projection_format_version = 2
 		     AND document.search_state IN ('pending', 'current')
+		    LEFT JOIN LATERAL (
+		        SELECT transition.to_status AS status
+		        FROM relationship_transition_events AS transition
+		        WHERE ?::timestamptz IS NOT NULL
+		          AND transition.team_id = relationship.team_id
+		          AND transition.relationship_id = relationship.relationship_id
+		          AND transition.created_at <= ?::timestamptz
+		        ORDER BY transition.created_at DESC, transition.transition_id DESC
+		        LIMIT 1
+		    ) AS known_status ON TRUE
 		    LEFT JOIN known_groups
 		      ON known_groups.semantic_group_key = relationship.semantic_group_key
 		    WHERE relationship.identity_alias_of_relationship_id IS NULL
 		      AND (
-		          relationship.status = 'active'
+		          COALESCE(known_status.status, relationship.status) = 'active'
 		          OR (
-		              relationship.status = 'superseded'
+		              COALESCE(known_status.status, relationship.status) = 'superseded'
 		              AND (
 		                  (?::timestamptz IS NOT NULL
 		                   AND (relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
@@ -603,7 +629,7 @@ func hydrateRecallRelationships(
 		              )
 		          )
 		      )
-		      AND relationship.support_count > 0
+		      AND (?::timestamptz IS NOT NULL OR relationship.support_count > 0)
 		      AND known_groups.semantic_group_key IS NULL
 		      AND (
 		          ?::timestamptz IS NULL
@@ -632,8 +658,10 @@ func hydrateRecallRelationships(
 		`, pq.Array(relationshipIDs), input.TeamID,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
 		input.TeamID, contract.EmbeddingContractID,
+		input.KnownAt, input.KnownAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
+		input.KnownAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt).Rows()
 	if err != nil {
@@ -671,6 +699,14 @@ func hydrateRecallRelationships(
 		return nil, err
 	}
 	if err := hydrateRecallRelationshipEvidenceIDs(ctx, tx, input, out); err != nil {
+		return nil, err
+	}
+	for relationshipID, hit := range out {
+		if len(hit.EvidenceIDs) == 0 {
+			delete(out, relationshipID)
+		}
+	}
+	if err := hydrateRecallRelationshipEquivalents(ctx, tx, input, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -740,6 +776,134 @@ func hydrateRecallRelationshipEvidenceIDs(ctx context.Context, tx *gorm.DB, inpu
 		}
 		hit := hits[relationshipID]
 		hit.EvidenceIDs = evidenceIDs
+		hits[relationshipID] = hit
+	}
+	return rows.Err()
+}
+
+func hydrateRecallRelationshipEquivalents(ctx context.Context, tx *gorm.DB, input RecallRelationshipsInput, hits map[string]RecallRelationshipHit) error {
+	if len(hits) == 0 {
+		return nil
+	}
+	relationshipIDs := make([]string, 0, len(hits))
+	for relationshipID := range hits {
+		relationshipIDs = append(relationshipIDs, relationshipID)
+	}
+	sort.Strings(relationshipIDs)
+	rows, err := tx.WithContext(ctx).Raw(`
+		WITH requested AS (
+		    SELECT unnest(?::uuid[]) AS relationship_id
+		),
+		selected AS (
+		    SELECT relationship.relationship_id,
+		           relationship.semantic_group_key
+		    FROM requested
+		    JOIN relationship_records AS relationship
+		      ON relationship.team_id = ?::uuid
+		     AND relationship.relationship_id = requested.relationship_id
+		    WHERE COALESCE(relationship.semantic_group_key, '') <> ''
+		),
+		equivalents AS (
+		    SELECT selected.relationship_id::text AS representative_id,
+		           candidate.relationship_id::text AS equivalent_id
+		    FROM selected
+		    JOIN relationship_records AS candidate
+		      ON candidate.team_id = ?::uuid
+		     AND candidate.semantic_group_key = selected.semantic_group_key
+		    LEFT JOIN LATERAL (
+		        SELECT transition.to_status AS status
+		        FROM relationship_transition_events AS transition
+		        WHERE ?::timestamptz IS NOT NULL
+		          AND transition.team_id = candidate.team_id
+		          AND transition.relationship_id = candidate.relationship_id
+		          AND transition.created_at <= ?::timestamptz
+		        ORDER BY transition.created_at DESC, transition.transition_id DESC
+		        LIMIT 1
+		    ) AS known_status ON TRUE
+		    WHERE candidate.relationship_id <> selected.relationship_id
+		      AND candidate.identity_alias_of_relationship_id IS NULL
+		      AND (
+		          COALESCE(known_status.status, candidate.status) = 'active'
+		          OR (
+		              COALESCE(known_status.status, candidate.status) = 'superseded'
+		              AND (
+		                  (?::timestamptz IS NOT NULL
+		                   AND (candidate.valid_from IS NULL OR candidate.valid_from <= ?::timestamptz)
+		                   AND (candidate.valid_to IS NULL OR candidate.valid_to > ?::timestamptz))
+		                  OR (?::timestamptz IS NOT NULL
+		                      AND candidate.created_at <= ?::timestamptz
+		                      AND (candidate.recorded_to IS NULL OR candidate.recorded_to > ?::timestamptz))
+		              )
+		          )
+		      )
+		      AND (
+		          (?::timestamptz IS NULL AND candidate.support_count > 0)
+		          OR (
+		              ?::timestamptz IS NOT NULL
+		              AND EXISTS (
+		                  SELECT 1
+		                  FROM relationship_evidence_supports AS support
+		                  JOIN LATERAL (
+		                      SELECT decision.decision
+		                      FROM relationship_support_decision_events AS decision
+		                      WHERE decision.team_id = support.team_id
+		                        AND decision.support_id = support.support_id
+		                        AND decision.created_at <= ?::timestamptz
+		                      ORDER BY decision.created_at DESC, decision.support_decision_id DESC
+		                      LIMIT 1
+		                  ) AS latest ON latest.decision IN ('grant', 'reinstate')
+		                  LEFT JOIN evidence_quarantines AS quarantine
+		                    ON quarantine.team_id = support.team_id
+		                   AND quarantine.fragment_id = support.fragment_id
+		                   AND quarantine.status = 'active'
+		                  LEFT JOIN evidence_sources AS source
+		                    ON source.team_id = support.team_id
+		                   AND source.source_id = support.source_id
+		                  WHERE support.team_id = candidate.team_id
+		                    AND support.relationship_id = candidate.relationship_id
+		                    AND support.created_at <= ?::timestamptz
+		                    AND quarantine.quarantine_id IS NULL
+		                    AND (
+		                        support.source_id IS NULL
+		                        OR source.current_revision_id = support.source_revision_id
+		                    )
+		              )
+		          )
+		      )
+		      AND (
+		          ?::timestamptz IS NULL
+		          OR ((candidate.valid_from IS NULL OR candidate.valid_from <= ?::timestamptz)
+		              AND (candidate.valid_to IS NULL OR candidate.valid_to > ?::timestamptz))
+		      )
+		      AND (
+		          ?::timestamptz IS NULL
+		          OR (candidate.created_at <= ?::timestamptz
+		              AND (candidate.recorded_to IS NULL OR candidate.recorded_to > ?::timestamptz))
+		      )
+		)
+		SELECT representative_id,
+		       array_agg(equivalent_id ORDER BY equivalent_id ASC)::text[] AS equivalent_ids
+		FROM equivalents
+		GROUP BY representative_id
+	`, pq.Array(relationshipIDs), input.TeamID, input.TeamID,
+		input.KnownAt, input.KnownAt,
+		input.ValidAt, input.ValidAt, input.ValidAt,
+		input.KnownAt, input.KnownAt, input.KnownAt,
+		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
+		input.ValidAt, input.ValidAt, input.ValidAt,
+		input.KnownAt, input.KnownAt, input.KnownAt).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var relationshipID string
+		var equivalentIDs []string
+		if err := rows.Scan(&relationshipID, pq.Array(&equivalentIDs)); err != nil {
+			return err
+		}
+		hit := hits[relationshipID]
+		hit.EquivalentRelationshipIDs = equivalentIDs
 		hits[relationshipID] = hit
 	}
 	return rows.Err()

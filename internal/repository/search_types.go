@@ -256,25 +256,26 @@ type RecallEvidenceHit struct {
 }
 
 type RecallRelationshipHit struct {
-	TeamID           string
-	RelationshipID   string
-	SemanticGroupKey string
-	SubjectEntityID  string
-	SubjectName      string
-	PredicateKey     string
-	ObjectEntityID   string
-	ObjectValueID    string
-	ObjectName       string
-	ObjectValueType  string
-	ObjectValue      string
-	Polarity         string
-	ScopeKey         string
-	ValidFrom        *time.Time
-	Score            float64
-	Rank             int
-	SearchState      string
-	SupportCount     int
-	SourceGroupCount int
-	EvidenceIDs       []string
-	CreatedAt        time.Time
+	TeamID                    string
+	RelationshipID            string
+	SemanticGroupKey          string
+	SubjectEntityID           string
+	SubjectName               string
+	PredicateKey              string
+	ObjectEntityID            string
+	ObjectValueID             string
+	ObjectName                string
+	ObjectValueType           string
+	ObjectValue               string
+	Polarity                  string
+	ScopeKey                  string
+	ValidFrom                 *time.Time
+	Score                     float64
+	Rank                      int
+	SearchState               string
+	SupportCount              int
+	SourceGroupCount          int
+	EvidenceIDs               []string
+	EquivalentRelationshipIDs []string
+	CreatedAt                 time.Time
 }

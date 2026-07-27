@@ -237,6 +237,104 @@ func TestRecallRelationshipsUsesNullGenerationVectorsForPostCutoverTeam(t *testi
 	}
 }
 
+func TestRecallRelationshipsReturnsEquivalentRelationshipIDs(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "recall-relationships-equivalent-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-relationships-equivalent-owner")
+	otherOwnerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-relationships-equivalent-other-owner")
+	insertSearchTestContract(t, adminDB, rls, "recall-rel-equivalent", 3, "exact", "")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	searchRepo := NewSearchRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Morgan")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense Mem")
+	firstIngest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"relationship recall equivalent first", "Morgan works on Dense Mem.")
+	first := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        firstIngest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     firstIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "recall:relationship-equivalent-first",
+			SpanStart:      0,
+			SpanEnd:        len("Morgan works on Dense Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, first.Relationship)
+	secondIngest := createSemanticIngest(t, ctx, ledgerRepo, teamID, otherOwnerID,
+		"relationship recall equivalent second", "Morgan works on Dense Mem.")
+	second := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  otherOwnerID,
+		IngestID:        secondIngest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     secondIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "recall:relationship-equivalent-second",
+			SpanStart:      0,
+			SpanEnd:        len("Morgan works on Dense Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, second.Relationship)
+	require.Equal(t, first.Relationship.SemanticGroupKey, second.Relationship.SemanticGroupKey)
+	require.NotEqual(t, first.Relationship.RelationshipID, second.Relationship.RelationshipID)
+
+	firstDoc, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "relationship",
+		SourceID:       first.Relationship.RelationshipID,
+		SourceVersion:  int64(first.Relationship.Version),
+		DocumentText:   "relationship\nsubject: Morgan\npredicate: works on\nobject: Dense Mem\npolarity: positive",
+	})
+	require.NoError(t, err)
+	secondDoc, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:         teamID,
+		OwnerProfileID: otherOwnerID,
+		SourceKind:     "relationship",
+		SourceID:       second.Relationship.RelationshipID,
+		SourceVersion:  int64(second.Relationship.Version),
+		DocumentText:   "relationship\nsubject: Morgan\npredicate: works on\nobject: Dense Mem\npolarity: positive",
+	})
+	require.NoError(t, err)
+	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+		firstDoc.SearchDocumentID:  {1, 0, 0},
+		secondDoc.SearchDocumentID: {1, 0, 0},
+	})
+
+	recalled, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID:         teamID,
+		Query:          "unmatchedtoken",
+		QueryEmbedding: []float32{1, 0, 0},
+		Limit:          5,
+	})
+	require.NoError(t, err)
+	require.Len(t, recalled.Results, 1)
+	resultIDs := map[string]struct{}{
+		first.Relationship.RelationshipID:  {},
+		second.Relationship.RelationshipID: {},
+	}
+	_, ok := resultIDs[recalled.Results[0].RelationshipID]
+	require.True(t, ok)
+	require.Len(t, recalled.Results[0].EquivalentRelationshipIDs, 1)
+	if recalled.Results[0].RelationshipID == first.Relationship.RelationshipID {
+		assert.Equal(t, []string{second.Relationship.RelationshipID}, recalled.Results[0].EquivalentRelationshipIDs)
+	} else {
+		assert.Equal(t, []string{first.Relationship.RelationshipID}, recalled.Results[0].EquivalentRelationshipIDs)
+	}
+}
+
 func TestRecallRelationshipsHydratesHistoricallySupersededAtKnownAt(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -303,6 +401,85 @@ func TestRecallRelationshipsHydratesHistoricallySupersededAtKnownAt(t *testing.T
 	require.Len(t, recalled.Results, 1)
 	assert.Equal(t, decision.Relationship.RelationshipID, recalled.Results[0].RelationshipID)
 	assert.Equal(t, []string{ingest.Evidence[0].FragmentID}, recalled.Results[0].EvidenceIDs)
+}
+
+func TestRecallRelationshipsHydratesHistoricallySupportedAtKnownAt(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "recall-relationships-support-history-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-relationships-support-history-owner")
+	insertSearchTestContract(t, adminDB, rls, "recall-rel-support-history", 3, "exact", "")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	searchRepo := NewSearchRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Sam")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense Mem")
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"relationship recall support history", "Sam works on Dense Mem.")
+	decision := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        ingest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: "recall:relationship-support-history",
+			SpanStart:      0,
+			SpanEnd:        len("Sam works on Dense Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+	require.NotEmpty(t, decision.SupportID)
+	doc, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "relationship",
+		SourceID:       decision.Relationship.RelationshipID,
+		SourceVersion:  int64(decision.Relationship.Version),
+		DocumentText:   "relationship\nsubject: Sam\npredicate: works on\nobject: Dense Mem\npolarity: positive",
+	})
+	require.NoError(t, err)
+	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+		doc.SearchDocumentID: {1, 0, 0},
+	})
+	knownAt := time.Now().UTC()
+	time.Sleep(10 * time.Millisecond)
+	revoke, err := semanticRepo.ApplyRelationshipSupportDecision(ctx, ApplyRelationshipSupportDecisionInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		RelationshipID: decision.Relationship.RelationshipID,
+		SupportID:      decision.SupportID,
+		Decision:       "revoke",
+		Reason:         "test_support_history",
+		IdempotencyKey: "recall-relationship-support-history-revoke",
+	})
+	require.NoError(t, err)
+	require.Equal(t, string(domain.RelationshipStatusPendingEvidence), revoke.ToStatus)
+	require.Zero(t, revoke.SupportCount)
+
+	current, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID: teamID,
+		Query:  "Sam Dense Mem",
+		Limit:  5,
+	})
+	require.NoError(t, err)
+	require.Empty(t, current.Results)
+
+	historical, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID:  teamID,
+		Query:   "Sam Dense Mem",
+		KnownAt: &knownAt,
+		Limit:   5,
+	})
+	require.NoError(t, err)
+	require.Len(t, historical.Results, 1)
+	assert.Equal(t, decision.Relationship.RelationshipID, historical.Results[0].RelationshipID)
+	assert.Equal(t, []string{ingest.Evidence[0].FragmentID}, historical.Results[0].EvidenceIDs)
 }
 
 func TestRecallEvidenceExcludesStaleSupportSourceRevision(t *testing.T) {

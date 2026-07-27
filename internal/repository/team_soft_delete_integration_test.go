@@ -60,6 +60,10 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, searchDoc.SearchDocumentID)
+	apiKeyRepo := NewAPIKeyRepository(appDB, rls)
+	apiRows, err := apiKeyRepo.UpdateNameForProfile(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID), "owner-before-delete")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, apiRows)
 	ssoRepo := NewSSORepository(appDB, rls)
 	provider := &domain.SSOProvider{
 		Name:         "team delete oidc",
@@ -153,6 +157,10 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	claimed, err := ledger.ClaimNextPlacementRun(ctx, teamID, "worker-deleted-team", time.Minute)
 	require.ErrorIs(t, err, ErrTeamInactive)
 	require.Nil(t, claimed)
+
+	apiRows, err = apiKeyRepo.UpdateScopesForProfile(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID), []string{"read"})
+	require.ErrorIs(t, err, ErrTeamInactive)
+	require.Zero(t, apiRows)
 
 	hits, err := searchRepo.SearchFullText(ctx, FullTextSearchInput{
 		TeamID: teamID,

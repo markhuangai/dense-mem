@@ -401,14 +401,15 @@ func TestRecallReturnsRelatedRelationshipsAndVectorDegradation(t *testing.T) {
 			VectorOmitted: true,
 			Results: []repository.RecallRelationshipHit{
 				{
-					RelationshipID:  entityRelationshipID,
-					SubjectEntityID: subjectID,
-					SubjectName:     "Dense-Mem",
-					PredicateKey:    "uses",
-					ObjectEntityID:  objectEntityID,
-					ObjectName:      "PostgreSQL",
-					Polarity:        "+",
-					SearchState:     string(domain.SearchProjectionPending),
+					RelationshipID:            entityRelationshipID,
+					EquivalentRelationshipIDs: []string{uuid.NewString()},
+					SubjectEntityID:           subjectID,
+					SubjectName:               "Dense-Mem",
+					PredicateKey:              "uses",
+					ObjectEntityID:            objectEntityID,
+					ObjectName:                "PostgreSQL",
+					Polarity:                  "+",
+					SearchState:               string(domain.SearchProjectionPending),
 				},
 				{
 					RelationshipID:  valueRelationshipID,
@@ -437,6 +438,7 @@ func TestRecallReturnsRelatedRelationshipsAndVectorDegradation(t *testing.T) {
 	require.Equal(t, string(domain.SearchProjectionPending), result.SearchStates.Relationships)
 	require.Len(t, result.RelatedRelationships, 2)
 	require.Equal(t, entityRelationshipID, result.RelatedRelationships[0].RelationshipID)
+	require.Equal(t, search.relationshipResult.Results[0].EquivalentRelationshipIDs, result.RelatedRelationships[0].EquivalentRelationshipIDs)
 	require.Equal(t, objectEntityID, result.RelatedRelationships[0].Object.EntityID)
 	require.Equal(t, "PostgreSQL", result.RelatedRelationships[0].Object.Name)
 	require.Equal(t, valueRelationshipID, result.RelatedRelationships[1].RelationshipID)
@@ -477,6 +479,32 @@ func TestRecallSkipsRelatedRelationshipsWhenLimitIsZero(t *testing.T) {
 	require.False(t, search.relationshipCalled)
 	require.Empty(t, result.RelatedRelationships)
 	require.Equal(t, string(domain.SearchProjectionNotRequired), result.SearchStates.Relationships)
+}
+
+func TestRecallRestoresDefaultResultLimit(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	search := &recallSearchStub{
+		contract: &repository.ActiveSearchContract{
+			EmbeddingContractID: uuid.NewString(),
+			EmbeddingDimensions: 3,
+			EmbeddingModel:      "test-model",
+		},
+		result: &repository.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results:     []repository.RecallEvidenceHit{},
+		},
+	}
+	svc := NewRecallService(RecallDependencies{Search: search})
+
+	_, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ContractVersion: domain.ContractVersion,
+		Query:           "limits",
+		Limit:           0,
+	})
+	require.NoError(t, err)
+	require.Equal(t, defaultRecallResultLimit, search.input.Limit)
 }
 
 func TestRecallAddsOptionalFrontierDegradations(t *testing.T) {

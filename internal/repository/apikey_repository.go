@@ -308,18 +308,19 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 // Returns the number of rows affected (0 means the id/profile combination did not match).
 func (r *APIKeyRepositoryImpl) RevokeForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error) {
 	now := time.Now().UTC()
+	teamID := profileID
 
 	// Profile-scoped revoke; UPDATE must satisfy api_keys_self_access.
 	var rowsAffected int64
-	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, profileID.String()); err != nil {
+	err := r.rls.WithProfileTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
 			return err
 		}
 		res := tx.Exec(`
 			UPDATE team_profiles
 			SET revoked_at = $1, updated_at = $1
 			WHERE id = $2 AND team_id = $3 AND auth_source = 'api_key' AND revoked_at IS NULL
-		`, now, id, profileID)
+		`, now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -336,15 +337,16 @@ func (r *APIKeyRepositoryImpl) RevokeForProfile(ctx context.Context, profileID, 
 
 // DeleteForProfile hard-deletes an API key only when it belongs to profileID.
 func (r *APIKeyRepositoryImpl) DeleteForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error) {
+	teamID := profileID
 	var rowsAffected int64
-	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, profileID.String()); err != nil {
+	err := r.rls.WithProfileTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
 			return err
 		}
 		res := tx.Exec(`
 			DELETE FROM team_profiles
 			WHERE id = $1 AND team_id = $2 AND auth_source = 'api_key'
-		`, id, profileID)
+		`, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -362,9 +364,10 @@ func (r *APIKeyRepositoryImpl) DeleteForProfile(ctx context.Context, profileID, 
 // UpdateNameForProfile renames a team profile without changing its API key.
 func (r *APIKeyRepositoryImpl) UpdateNameForProfile(ctx context.Context, profileID, id uuid.UUID, name string) (int64, error) {
 	now := time.Now().UTC()
+	teamID := profileID
 	var rowsAffected int64
-	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, profileID.String()); err != nil {
+	err := r.rls.WithProfileTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
 			return err
 		}
 		res := tx.Exec(`
@@ -372,7 +375,7 @@ func (r *APIKeyRepositoryImpl) UpdateNameForProfile(ctx context.Context, profile
 			SET name = $1,
 			    updated_at = $2
 			WHERE id = $3 AND team_id = $4 AND auth_source = 'api_key'
-		`, name, now, id, profileID)
+		`, name, now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -388,9 +391,10 @@ func (r *APIKeyRepositoryImpl) UpdateNameForProfile(ctx context.Context, profile
 // UpdateRoleForProfile changes a team profile role and scopes without changing key material.
 func (r *APIKeyRepositoryImpl) UpdateRoleForProfile(ctx context.Context, profileID, id uuid.UUID, role string, scopes []string) (int64, error) {
 	now := time.Now().UTC()
+	teamID := profileID
 	var rowsAffected int64
-	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, profileID.String()); err != nil {
+	err := r.rls.WithProfileTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
 			return err
 		}
 		res := tx.Exec(`
@@ -399,7 +403,7 @@ func (r *APIKeyRepositoryImpl) UpdateRoleForProfile(ctx context.Context, profile
 			    scopes = $2,
 			    updated_at = $3
 			WHERE id = $4 AND team_id = $5 AND auth_source = 'api_key'
-		`, role, pq.Array(scopes), now, id, profileID)
+		`, role, pq.Array(scopes), now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -415,9 +419,10 @@ func (r *APIKeyRepositoryImpl) UpdateRoleForProfile(ctx context.Context, profile
 // UpdateScopesForProfile changes team profile scopes without changing key material.
 func (r *APIKeyRepositoryImpl) UpdateScopesForProfile(ctx context.Context, profileID, id uuid.UUID, scopes []string) (int64, error) {
 	now := time.Now().UTC()
+	teamID := profileID
 	var rowsAffected int64
-	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, profileID.String()); err != nil {
+	err := r.rls.WithProfileTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
 			return err
 		}
 		res := tx.Exec(`
@@ -425,7 +430,7 @@ func (r *APIKeyRepositoryImpl) UpdateScopesForProfile(ctx context.Context, profi
 			SET scopes = $1,
 			    updated_at = $2
 			WHERE id = $3 AND team_id = $4 AND auth_source = 'api_key'
-		`, pq.Array(scopes), now, id, profileID)
+		`, pq.Array(scopes), now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -442,9 +447,10 @@ func (r *APIKeyRepositoryImpl) UpdateScopesForProfile(ctx context.Context, profi
 // changing the profile identity.
 func (r *APIKeyRepositoryImpl) RotateForProfile(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error) {
 	now := time.Now().UTC()
+	teamID := profileID
 	var rowsAffected int64
-	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, profileID.String()); err != nil {
+	err := r.rls.WithProfileTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
 			return err
 		}
 		res := tx.Exec(`
@@ -457,7 +463,7 @@ func (r *APIKeyRepositoryImpl) RotateForProfile(ctx context.Context, profileID, 
 			    last_used_at = NULL,
 			    updated_at = $5
 			WHERE id = $6 AND team_id = $7 AND auth_source = 'api_key'
-		`, keyHash, keyPrefix, keySuffix, expiresAt, now, id, profileID)
+		`, keyHash, keyPrefix, keySuffix, expiresAt, now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}

@@ -623,6 +623,10 @@ function recallResultStatus(item: RecallDisplayItem): RecallResultStatus | null 
     if (searchState === "failed") {
       return "disputed";
     }
+    const tier = item.tier?.toLowerCase() ?? "";
+    if (tier.includes("candidate") || tier.includes("pending") || tier.includes("provisional") || tier.includes("raw")) {
+      return "provisional";
+    }
     return "verified";
   }
   const raw = item?.status?.toLowerCase() ?? "";
