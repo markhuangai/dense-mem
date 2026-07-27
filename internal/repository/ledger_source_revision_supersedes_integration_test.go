@@ -60,4 +60,43 @@ func TestLedgerCreateIngestAllowsPerEvidenceSupersedesInSourceRevisionBatch(t *t
 	})
 	require.NoError(t, err)
 	require.Len(t, second.Evidence, 2)
+
+	replayed, err := repo.CreateIngest(ctx, CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		Evidence: []EvidenceInput{
+			{
+				Content:                       "First idempotent source revision replay fragment.",
+				SourceKey:                     "doc://per-evidence",
+				SourceRevisionToken:           "rev-2",
+				ExpectedPreviousRevisionToken: "rev-1",
+				SourceRevisionContentHash:     "sha256:rev2",
+				SupersedesFragmentIDs:         []string{first.Evidence[0].FragmentID},
+			},
+			{
+				Content:                       "Second idempotent source revision replay fragment.",
+				SourceKey:                     "doc://per-evidence",
+				SourceRevisionToken:           "rev-2",
+				ExpectedPreviousRevisionToken: "rev-1",
+				SourceRevisionContentHash:     "sha256:rev2",
+				SupersedesFragmentIDs:         []string{first.Evidence[1].FragmentID},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, replayed.Evidence, 2)
+
+	_, err = repo.CreateIngest(ctx, CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		Evidence: []EvidenceInput{{
+			Content:                       "Idempotent source revision replay with invalid supersession.",
+			SourceKey:                     "doc://per-evidence",
+			SourceRevisionToken:           "rev-2",
+			ExpectedPreviousRevisionToken: "rev-1",
+			SourceRevisionContentHash:     "sha256:rev2",
+			SupersedesFragmentIDs:         []string{second.Evidence[0].FragmentID},
+		}},
+	})
+	require.ErrorIs(t, err, ErrSourceRevisionConflict)
 }

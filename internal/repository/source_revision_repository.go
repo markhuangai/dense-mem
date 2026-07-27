@@ -208,11 +208,22 @@ func advanceSourceRevisionInTx(
 		if hash != input.ContentHash {
 			return nil, fmt.Errorf("%w: source revision %q already recorded with a different content hash", ErrSourceRevisionConflict, input.RevisionToken)
 		}
+		supersededRevisionID, err := selectSourceRevisionSupersededRevisionID(ctx, tx, input.TeamID, currentRevisionID)
+		if err != nil {
+			return nil, err
+		}
+		if len(input.SupersedesFragmentIDs) > 0 {
+			if err := validateSupersededFragments(ctx, tx, input, sourceID, supersededRevisionID); err != nil {
+				return nil, err
+			}
+		}
 		result := SourceRevisionResult{
-			TeamID:           input.TeamID,
-			SourceID:         sourceID,
-			SourceRevisionID: currentRevisionID,
-			RevisionToken:    input.RevisionToken,
+			TeamID:                       input.TeamID,
+			SourceID:                     sourceID,
+			SourceRevisionID:             currentRevisionID,
+			RevisionToken:                input.RevisionToken,
+			SupersededSourceRevisionID:   supersededRevisionID,
+			SupersededSourceRevisionSeen: supersededRevisionID != "",
 		}
 		if cache != nil {
 			cache[cacheKey] = result
@@ -457,6 +468,21 @@ func selectSourceRevisionContentHash(ctx context.Context, tx *gorm.DB, teamID, r
 		return "", err
 	}
 	return hash, nil
+}
+
+func selectSourceRevisionSupersededRevisionID(ctx context.Context, tx *gorm.DB, teamID, revisionID string) (string, error) {
+	var supersededRevisionID sql.NullString
+	err := tx.WithContext(ctx).Raw(`
+		SELECT supersedes_revision_id::text
+		FROM evidence_source_revisions
+		WHERE team_id = ?::uuid
+		  AND source_revision_id = ?::uuid
+		LIMIT 1
+	`, teamID, revisionID).Row().Scan(&supersededRevisionID)
+	if err != nil {
+		return "", err
+	}
+	return supersededRevisionID.String, nil
 }
 
 func sourceKindForEvidence(sourceType string) string {

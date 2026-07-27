@@ -212,9 +212,36 @@ func (r *SearchRepositoryImpl) relationshipProjectionTextIncomplete(ctx context.
 	var incomplete bool
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		return tx.WithContext(ctx).Raw(`
+			WITH activated_generation AS (
+			    SELECT DISTINCT ON (team_id)
+			           team_id, projection_generation_id
+			    FROM search_projection_generations
+			    WHERE source_kind = 'relationship'
+			      AND projection_format_version = 2
+			      AND state = 'current'
+			      AND activated_at IS NOT NULL
+			    ORDER BY team_id, generation DESC, created_at DESC
+			),
+			latest_generation AS (
+			    SELECT DISTINCT ON (team_id)
+			           team_id, projection_generation_id
+			    FROM search_projection_generations
+			    WHERE source_kind = 'relationship'
+			      AND projection_format_version = 2
+			    ORDER BY team_id, generation DESC, created_at DESC
+			),
+			selected_generation AS (
+			    SELECT COALESCE(activated.team_id, latest.team_id) AS team_id,
+			           COALESCE(activated.projection_generation_id, latest.projection_generation_id) AS projection_generation_id
+			    FROM activated_generation AS activated
+			    FULL JOIN latest_generation AS latest
+			      ON latest.team_id = activated.team_id
+			)
 			SELECT EXISTS (
 			    SELECT 1
 			    FROM relationship_records AS relationship
+			    LEFT JOIN selected_generation AS generation
+			      ON generation.team_id = relationship.team_id
 			    WHERE relationship.identity_alias_of_relationship_id IS NULL
 			      AND relationship.status = 'active'
 			      AND relationship.support_count > 0
@@ -228,6 +255,16 @@ func (r *SearchRepositoryImpl) relationshipProjectionTextIncomplete(ctx context.
 			            AND document.embedding_dimensions = ?
 			            AND document.projection_format_version = 2
 			            AND document.search_state IN ('pending', 'current')
+			            AND (
+			                document.projection_generation_id = generation.projection_generation_id
+			                OR (
+			                    document.projection_generation_id IS NULL
+			                    AND (
+			                        generation.projection_generation_id IS NULL
+			                        OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = generation.projection_generation_id::text
+			                    )
+			                )
+			            )
 			      )
 			    LIMIT 1
 			)
@@ -382,25 +419,33 @@ func (r *SearchRepositoryImpl) SearchFullText(ctx context.Context, input FullTex
 	hits := []SearchHit{}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		sourceFilter := ""
-		args := []any{input.Query, input.TeamID, input.Query}
+		args := []any{input.TeamID, input.Query, input.TeamID, input.Query}
 		if input.SourceKind != "" {
-			sourceFilter = "AND source_kind = ?"
+			sourceFilter = "AND document.source_kind = ?"
 			args = append(args, input.SourceKind)
 		}
 		args = append(args, input.Limit)
 		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
-			       source_version, document_version, embedding_contract_id::text,
-			       search_state,
+			WITH `+recallRelationshipGenerationScopeSQL+`
+			SELECT document.team_id::text, document.search_document_id::text, document.source_kind, document.source_id::text,
+			       document.source_version, document.document_version, document.embedding_contract_id::text,
+			       document.search_state,
 			       0::double precision AS distance,
-			       ts_rank_cd(search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
-			FROM search_documents
-			WHERE team_id = ?::uuid
-			  AND search_state IN ('pending', 'current')
-			  AND search_tsv @@ plainto_tsquery('simple', ?)
-			  AND (source_kind <> 'relationship' OR projection_format_version = 2)
+			       ts_rank_cd(document.search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
+			FROM recall_relationship_generation AS generation
+			JOIN search_documents AS document
+			  ON document.team_id = ?::uuid
+			WHERE document.search_state IN ('pending', 'current')
+			  AND document.search_tsv @@ plainto_tsquery('simple', ?)
+			  AND (
+			      document.source_kind <> 'relationship'
+			      OR (
+			          document.projection_format_version = 2
+			          AND `+recallRelationshipGenerationDocumentSQL+`
+			      )
+			  )
 			  `+sourceFilter+`
-			ORDER BY text_rank DESC, updated_at DESC, search_document_id ASC
+			ORDER BY text_rank DESC, document.updated_at DESC, document.search_document_id ASC
 			LIMIT ?
 		`, args...).Rows()
 		if err != nil {

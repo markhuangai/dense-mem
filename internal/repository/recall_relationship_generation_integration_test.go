@@ -160,6 +160,15 @@ func TestRecallRelationshipsFullTextFencesGenerationAndKeepsForegroundRows(t *te
 	require.NoError(t, err)
 	require.Empty(t, stale.Results)
 
+	staleFullText, err := searchRepo.SearchFullText(ctx, FullTextSearchInput{
+		TeamID:     teamID,
+		Query:      "stale generation marker",
+		SourceKind: "relationship",
+		Limit:      5,
+	})
+	require.NoError(t, err)
+	require.Empty(t, staleFullText)
+
 	_, err = searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
@@ -197,4 +206,91 @@ func TestRecallRelationshipsFullTextFencesGenerationAndKeepsForegroundRows(t *te
 	require.NoError(t, err)
 	require.Len(t, fresh.Results, 1)
 	assert.Equal(t, decision.Relationship.RelationshipID, fresh.Results[0].RelationshipID)
+
+	freshFullText, err := searchRepo.SearchFullText(ctx, FullTextSearchInput{
+		TeamID:     teamID,
+		Query:      "fresh foreground marker",
+		SourceKind: "relationship",
+		Limit:      5,
+	})
+	require.NoError(t, err)
+	require.Len(t, freshFullText, 1)
+	assert.Equal(t, decision.Relationship.RelationshipID, freshFullText[0].SourceID)
+}
+
+func TestSearchReadinessRejectsStaleRelationshipProjectionGeneration(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-readiness-generation-fence-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-readiness-generation-fence-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-readiness-generation-fence", 3, "exact", "")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	repo := NewSearchRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Noel")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense Mem")
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"search readiness generation fence", "Noel works on Dense Mem.")
+	decision := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        ingest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: "search:readiness-generation-fence",
+			SpanStart:      0,
+			SpanEnd:        len("Noel works on Dense Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+
+	staleGenerationID := uuid.NewString()
+	currentGenerationID := uuid.NewString()
+	insertRelationshipProjectionGenerationForTest(t, appDB, rls, teamID, staleGenerationID, 1, "failed")
+	insertRelationshipProjectionGenerationForTest(t, appDB, rls, teamID, currentGenerationID, 2, "current")
+	_, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:                 teamID,
+		OwnerProfileID:         ownerID,
+		SourceKind:             "relationship",
+		SourceID:               decision.Relationship.RelationshipID,
+		SourceVersion:          int64(decision.Relationship.Version),
+		ProjectionGenerationID: staleGenerationID,
+		DocumentText:           "relationship\nsubject: Noel\npredicate: stale projection\nobject: Dense Mem",
+	})
+	require.NoError(t, err)
+
+	readiness, err := repo.CheckSearchReadiness(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, searchReadinessReasonCodes(readiness), "relationship_projection_text_incomplete")
+
+	_, err = repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "relationship",
+		SourceID:       decision.Relationship.RelationshipID,
+		SourceVersion:  int64(decision.Relationship.Version),
+		DocumentText:   "relationship\nsubject: Noel\npredicate: foreground projection\nobject: Dense Mem",
+		Metadata: map[string]any{
+			relationshipForegroundRecallGenerationMetadataKey: currentGenerationID,
+		},
+	})
+	require.NoError(t, err)
+
+	readiness, err = repo.CheckSearchReadiness(ctx)
+	require.NoError(t, err)
+	assert.NotContains(t, searchReadinessReasonCodes(readiness), "relationship_projection_text_incomplete")
+}
+
+func searchReadinessReasonCodes(readiness *SearchReadiness) []string {
+	codes := make([]string, 0, len(readiness.Reasons))
+	for _, reason := range readiness.Reasons {
+		codes = append(codes, reason.Code)
+	}
+	return codes
 }
