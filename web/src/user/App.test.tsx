@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
+import { recallPayloadForHits } from "./App.test-helpers";
 import { GraphNode, GraphSnapshot, RecallHit, UserKey, UserSession } from "./api";
 
 vi.mock("react-force-graph-2d", async () => {
@@ -248,21 +249,18 @@ describe("UserPortalApp", () => {
     expect(screen.queryByRole("button", { name: /more actions/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add to collection" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create claim" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Fact");
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Evidence");
 
-    const claimResult = within(resultList).getByText("uses: Dense-Mem").closest("[role='option']");
+    const claimResult = within(resultList).getAllByText("Alice uses: Dense-Mem")[0]?.closest("[role='option']");
     expect(claimResult).not.toBeNull();
     await userEvent.click(claimResult as HTMLElement);
-    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Claim");
-    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Tier claim");
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Evidence");
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Alice uses: Dense-Mem");
 
-    await userEvent.click(screen.getByRole("checkbox", { name: /claim/i }));
-    expect(screen.getByRole("listbox", { name: "Recall result list" })).not.toHaveTextContent("uses: Dense-Mem");
-    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Fact");
-
-    await userEvent.click(screen.getByRole("checkbox", { name: /fact/i }));
-    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Fragment");
-    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
+    await userEvent.click(screen.getByRole("checkbox", { name: /evidence/i }));
+    expect(screen.getByText("No recall results")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: /evidence/i }));
+    expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice uses: Dense-Mem");
 
     await userEvent.click(screen.getByRole("tab", { name: "Recall" }));
     expect(screen.getByLabelText("Inspector")).toHaveTextContent("Final score");
@@ -386,7 +384,7 @@ describe("UserPortalApp", () => {
     expect(await screen.findByTestId("force-graph")).toHaveTextContent("Alice works_on project-x");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=local&types=fact%2Cclaim%2Cfragment%2Cdream&anchor_type=fact&anchor_id=fact-1&depth=2&limit=48",
+        "/ui/api/graph?scope=local&types=fact%2Cclaim%2Cfragment%2Cdream&anchor_type=entity&anchor_id=entity-alice&depth=2&limit=48",
         expect.any(Object),
       );
     });
@@ -496,7 +494,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /create member profile/i }));
     expect(await screen.findByDisplayValue("dm_member_plaintext")).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining(`/api/v1/teams/${baseSession.team.id}/profiles`),
+      expect.stringContaining("/ui/api/team/profiles"),
       expect.objectContaining({ method: "POST", body: expect.not.stringContaining("role") }),
     ));
     expect(fetchMock.mock.calls.map(([, init]) => String(init?.body ?? ""))).toContainEqual(expect.stringContaining(`"scopes":["read","write","feedback:read"]`));
@@ -507,7 +505,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /save profile Reader/i }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining(`/api/v1/teams/${baseSession.team.id}/profiles/${memberProfile.id}`),
+        expect.stringContaining(`/ui/api/team/profiles/${memberProfile.id}`),
         expect.objectContaining({
           method: "PATCH",
           body: expect.stringContaining(`"name":"Reader Updated"`),
@@ -519,7 +517,7 @@ describe("UserPortalApp", () => {
     expect(memberRow).not.toBeNull();
     await userEvent.click(within(memberRow as HTMLElement).getByLabelText("Recall feedback"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining(`/api/v1/teams/${baseSession.team.id}/profiles/${memberProfile.id}`),
+      expect.stringContaining(`/ui/api/team/profiles/${memberProfile.id}`),
       expect.objectContaining({ method: "PATCH", body: expect.stringContaining(`"scopes":["read","feedback:read"]`) }),
     ));
 
@@ -527,7 +525,7 @@ describe("UserPortalApp", () => {
     expect(await screen.findByDisplayValue("dm_member_rotated")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining(`/api/v1/teams/${baseSession.team.id}/profiles/${memberProfile.id}/rotate`),
+        expect.stringContaining(`/ui/api/team/profiles/${memberProfile.id}/rotate`),
         expect.objectContaining({ method: "POST" }),
       );
     });
@@ -535,7 +533,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /delete profile Reader Updated/i }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining(`/api/v1/teams/${baseSession.team.id}/profiles/${memberProfile.id}`),
+        expect.stringContaining(`/ui/api/team/profiles/${memberProfile.id}`),
         expect.objectContaining({ method: "DELETE" }),
       );
     });
@@ -578,11 +576,11 @@ describe("UserPortalApp", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining(`/api/v1/teams/${baseSession.team.id}`),
+        expect.stringContaining("/ui/api/team"),
         expect.objectContaining({ method: "PATCH" }),
       );
     });
-    const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith(`/api/v1/teams/${baseSession.team.id}`) && init?.method === "PATCH");
+    const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/ui/api/team") && init?.method === "PATCH");
     const body = JSON.parse(String(patchCall?.[1]?.body));
     expect(body.config.retention).toBe("long");
     expect(body.config.dreaming).toMatchObject({
@@ -808,15 +806,15 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
     if (url.startsWith("/ui/api/graph") && method === "GET") {
       return jsonResponse({ data: optionValue(options.graphSnapshot ?? overviewGraph, graphCallCount++) });
     }
-    if (url === `/api/v1/teams/${currentTeam.id}` && method === "PATCH") {
+    if (url === "/ui/api/team" && method === "PATCH") {
       const body = JSON.parse(String(init?.body));
       currentTeam = { ...currentTeam, name: body.name ?? currentTeam.name, description: body.description ?? currentTeam.description, config: body.config ?? currentTeam.config };
       return jsonResponse({ data: currentTeam });
     }
-    if (url === `/api/v1/teams/${currentTeam.id}/profiles` && method === "GET") {
+    if (url === "/ui/api/team/profiles" && method === "GET") {
       return jsonResponse({ data: currentProfiles, pagination: { limit: 20, offset: 0, total: currentProfiles.length } });
     }
-    if (url === `/api/v1/teams/${currentTeam.id}/profiles` && method === "POST") {
+    if (url === "/ui/api/team/profiles" && method === "POST") {
       const body = JSON.parse(String(init?.body));
       const created: UserKey = {
         ...memberProfile,
@@ -829,29 +827,29 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
       currentProfiles = [created, ...currentProfiles];
       return jsonResponse({ data: { api_key: "dm_member_plaintext", key: created } }, 201);
     }
-    if (url.includes(`/api/v1/teams/${currentTeam.id}/profiles/`) && url.endsWith("/rotate") && method === "POST") {
+    if (url.includes("/ui/api/team/profiles/") && url.endsWith("/rotate") && method === "POST") {
       const rotated = { ...(currentProfiles.find((profile) => url.includes(profile.id)) ?? memberProfile), key_suffix: "rot789" };
       currentProfiles = currentProfiles.map((profile) => (profile.id === rotated.id ? rotated : profile));
       return jsonResponse({ data: { api_key: "dm_member_rotated", key: rotated } });
     }
-    if (url.includes(`/api/v1/teams/${currentTeam.id}/profiles/`) && method === "PATCH") {
+    if (url.includes("/ui/api/team/profiles/") && method === "PATCH") {
       const body = JSON.parse(String(init?.body));
       const current = currentProfiles.find((profile) => url.endsWith(`/profiles/${profile.id}`)) ?? memberProfile;
       const updated = { ...current, name: body.name ?? current.name, scopes: body.scopes ?? current.scopes };
       currentProfiles = currentProfiles.map((profile) => (profile.id === updated.id ? updated : profile));
       return jsonResponse({ data: updated });
     }
-    if (url.includes(`/api/v1/teams/${currentTeam.id}/profiles/`) && method === "DELETE") {
+    if (url.includes("/ui/api/team/profiles/") && method === "DELETE") {
       currentProfiles = currentProfiles.filter((profile) => !url.endsWith(`/profiles/${profile.id}`));
       return jsonResponse({ data: { status: "deleted" } });
     }
-    if (url.startsWith("/api/v1/recall")) {
+    if (url.startsWith("/ui/api/recall")) {
       const configuredHits = options.recallHits ?? [];
       const hits = isRecallSequence(configuredHits)
         ? configuredHits[Math.min(recallCallCount, configuredHits.length - 1)] ?? []
         : configuredHits;
       recallCallCount += 1;
-      return jsonResponse({ data: hits });
+      return jsonResponse({ data: recallPayloadForHits(hits) });
     }
     return jsonResponse({ message: "not found" }, 404);
   });
@@ -968,7 +966,7 @@ function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: 
       }
       return jsonResponse({ data: { status: "signed_out" } });
     }
-    if (url.startsWith("/api/v1/recall")) {
+    if (url.startsWith("/ui/api/recall")) {
       return jsonResponse({ data: [] });
     }
     return jsonResponse({ message: "not found" }, 404);

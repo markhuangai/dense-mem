@@ -14,7 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-func TestV2RecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
+func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
@@ -22,32 +22,36 @@ func TestV2RecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	relationshipID := uuid.NewString()
 	conflictID := uuid.NewString()
 	positionID := uuid.NewString()
+	evidenceCreatedAt := time.Date(2026, 7, 20, 10, 30, 0, 0, time.UTC)
 	reviewDueAt := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
-	search := &v2RecallSearchStub{
-		contract: &repository.V2ActiveSearchContract{
+	search := &recallSearchStub{
+		contract: &repository.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.V2RecallEvidenceResult{
-			SearchState: string(domain.V2SearchProjectionCurrent),
-			Results: []repository.V2RecallEvidenceHit{{
+		result: &repository.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results: []repository.RecallEvidenceHit{{
 				EvidenceID:      evidenceID,
 				RelationshipIDs: []string{relationshipID},
 				Rank:            1,
 				Score:           0.99,
 				Context:         "Dense-Mem uses PostgreSQL for durable memory.",
+				Source:          "wiki:target-architecture",
+				SourceType:      "document",
+				CreatedAt:       evidenceCreatedAt,
 			}},
-			Conflicts: []repository.V2RelationshipConflictCaseRecord{{
+			Conflicts: []repository.RelationshipConflictCaseRecord{{
 				ConflictID:          conflictID,
 				Version:             1,
 				Kind:                "cross_profile_current_state",
 				Status:              "open",
 				Question:            "Which database is current?",
 				ReviewDueAt:         reviewDueAt,
-				PolicyVersion:       domain.V2ConflictPolicyVersion,
+				PolicyVersion:       domain.ConflictPolicyVersion,
 				PreferredPositionID: "",
-				Positions: []repository.V2RelationshipConflictPositionRecord{{
+				Positions: []repository.RelationshipConflictPositionRecord{{
 					PositionID:        positionID,
 					Disposition:       "candidate",
 					RelationshipIDs:   []string{relationshipID},
@@ -58,7 +62,7 @@ func TestV2RecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 			}},
 		},
 	}
-	provider := &v2RecallProviderStub{
+	provider := &recallProviderStub{
 		available: true,
 		model:     "test-model",
 		dims:      3,
@@ -66,8 +70,8 @@ func TestV2RecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	}
 	svc := NewRecallService(RecallDependencies{Search: search, Provider: provider})
 
-	result, err := svc.Recall(authenticatedV2RememberContext(teamID, profileID, keyID), V2RecallRequest{
-		ContractVersion: domain.V2ContractVersion,
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ContractVersion: domain.ContractVersion,
 		Query:           "PostgreSQL memory",
 		Limit:           2,
 	})
@@ -75,6 +79,9 @@ func TestV2RecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	require.Len(t, result.Results, 1)
 	require.Nil(t, result.Degradation)
 	require.Equal(t, evidenceID, result.Results[0].EvidenceID)
+	require.Equal(t, "wiki:target-architecture", result.Results[0].Source)
+	require.Equal(t, "document", result.Results[0].SourceType)
+	require.Equal(t, &evidenceCreatedAt, result.Results[0].CreatedAt)
 	require.Len(t, result.Conflicts, 1)
 	require.Equal(t, conflictID, result.Conflicts[0].ConflictID)
 	require.Equal(t, &reviewDueAt, result.Conflicts[0].ReviewDueAt)
@@ -87,10 +94,10 @@ func TestV2RecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	require.Equal(t, "PostgreSQL memory", provider.query)
 }
 
-func TestV2RecallConflictSummariesEnforcePositionBounds(t *testing.T) {
-	records := make([]repository.V2RelationshipConflictPositionRecord, 0, 11)
+func TestRecallConflictSummariesEnforcePositionBounds(t *testing.T) {
+	records := make([]repository.RelationshipConflictPositionRecord, 0, 11)
 	for i := 0; i < 11; i++ {
-		records = append(records, repository.V2RelationshipConflictPositionRecord{
+		records = append(records, repository.RelationshipConflictPositionRecord{
 			PositionID:      uuid.NewString(),
 			Disposition:     "candidate",
 			RelationshipIDs: make([]string, 21),
@@ -98,7 +105,7 @@ func TestV2RecallConflictSummariesEnforcePositionBounds(t *testing.T) {
 			EvidenceIDs:     make([]string, 51),
 		})
 	}
-	summaries := v2RecallConflictSummaries([]repository.V2RelationshipConflictCaseRecord{{
+	summaries := recallConflictSummaries([]repository.RelationshipConflictCaseRecord{{
 		ConflictID:  uuid.NewString(),
 		Version:     1,
 		Kind:        "cross_profile_current_state",
@@ -116,30 +123,30 @@ func TestV2RecallConflictSummariesEnforcePositionBounds(t *testing.T) {
 	require.Len(t, summaries[0].Positions[0].ResultEvidenceIDs, 50)
 }
 
-func TestV2RecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
+func TestRecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
 	evidenceID := uuid.NewString()
 	hypothesisID := uuid.NewString()
 	sourceRelationshipID := uuid.NewString()
-	search := &v2RecallSearchStub{
-		contract: &repository.V2ActiveSearchContract{
+	search := &recallSearchStub{
+		contract: &repository.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.V2RecallEvidenceResult{
-			SearchState: string(domain.V2SearchProjectionCurrent),
-			Results: []repository.V2RecallEvidenceHit{{
+		result: &repository.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results: []repository.RecallEvidenceHit{{
 				EvidenceID: evidenceID,
 				Rank:       1,
 				Context:    "Dense-Mem uses PostgreSQL for durable memory.",
 			}},
 		},
 	}
-	hypotheses := &v2RecallHypothesisStub{
-		records: []repository.V2HypothesisRecord{{
+	hypotheses := &recallHypothesisStub{
+		records: []repository.HypothesisRecord{{
 			HypothesisID:    hypothesisID,
 			SubjectEntityID: uuid.NewString(),
 			PredicateKey:    "benefits_from",
@@ -156,8 +163,8 @@ func TestV2RecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 	}
 	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses})
 
-	result, err := svc.Recall(authenticatedV2RememberContext(teamID, profileID, keyID), V2RecallRequest{
-		ContractVersion: domain.V2ContractVersion,
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ContractVersion: domain.ContractVersion,
 		Query:           "PostgreSQL memory",
 	})
 	require.NoError(t, err)
@@ -173,71 +180,71 @@ func TestV2RecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 	require.Equal(t, "PostgreSQL memory", hypotheses.recallInput.Query)
 }
 
-func TestV2RecallProviderFailureIsOptionalDegradation(t *testing.T) {
+func TestRecallProviderFailureIsOptionalDegradation(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
-	search := &v2RecallSearchStub{
-		contract: &repository.V2ActiveSearchContract{
+	search := &recallSearchStub{
+		contract: &repository.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.V2RecallEvidenceResult{
-			SearchState: string(domain.V2SearchProjectionPending),
-			Results:     []repository.V2RecallEvidenceHit{},
+		result: &repository.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionPending),
+			Results:     []repository.RecallEvidenceHit{},
 		},
 	}
-	provider := &v2RecallProviderStub{available: false}
+	provider := &recallProviderStub{available: false}
 	svc := NewRecallService(RecallDependencies{Search: search, Provider: provider})
 
-	result, err := svc.Recall(authenticatedV2RememberContext(teamID, profileID, keyID), V2RecallRequest{
-		ContractVersion: domain.V2ContractVersion,
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ContractVersion: domain.ContractVersion,
 		Query:           "PostgreSQL memory",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result.Degradation)
 	require.True(t, result.Degradation.Optional)
-	require.Equal(t, string(domain.V2ErrorProviderUnavailable), result.Degradation.Code)
+	require.Equal(t, string(domain.ErrorProviderUnavailable), result.Degradation.Code)
 	require.Empty(t, search.input.QueryEmbedding)
-	require.Equal(t, string(domain.V2SearchProjectionPending), result.SearchState)
+	require.Equal(t, string(domain.SearchProjectionPending), result.SearchState)
 }
 
-func TestV2RecallProviderMalformedBranchesAreOptionalDegradation(t *testing.T) {
+func TestRecallProviderMalformedBranchesAreOptionalDegradation(t *testing.T) {
 	tests := []struct {
 		name     string
-		provider *v2RecallProviderStub
+		provider *recallProviderStub
 		wantCode string
 	}{
 		{
 			name:     "configured dimensions mismatch",
-			provider: &v2RecallProviderStub{available: true, model: "test-model", dims: 4, vector: []float32{1, 0, 0}},
-			wantCode: string(domain.V2ErrorProviderMalformed),
+			provider: &recallProviderStub{available: true, model: "test-model", dims: 4, vector: []float32{1, 0, 0}},
+			wantCode: string(domain.ErrorProviderMalformed),
 		},
 		{
 			name:     "configured model mismatch",
-			provider: &v2RecallProviderStub{available: true, model: "other-model", dims: 3, vector: []float32{1, 0, 0}},
-			wantCode: string(domain.V2ErrorProviderMalformed),
+			provider: &recallProviderStub{available: true, model: "other-model", dims: 3, vector: []float32{1, 0, 0}},
+			wantCode: string(domain.ErrorProviderMalformed),
 		},
 		{
 			name:     "embed failure",
-			provider: &v2RecallProviderStub{available: true, model: "test-model", dims: 3, err: errors.New("provider failed")},
-			wantCode: string(domain.V2ErrorProviderUnavailable),
+			provider: &recallProviderStub{available: true, model: "test-model", dims: 3, err: errors.New("provider failed")},
+			wantCode: string(domain.ErrorProviderUnavailable),
 		},
 		{
 			name:     "returned vector length mismatch",
-			provider: &v2RecallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0}},
-			wantCode: string(domain.V2ErrorProviderMalformed),
+			provider: &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0}},
+			wantCode: string(domain.ErrorProviderMalformed),
 		},
 		{
 			name:     "returned non finite vector",
-			provider: &v2RecallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{float32(math.NaN()), 0, 0}},
-			wantCode: string(domain.V2ErrorProviderMalformed),
+			provider: &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{float32(math.NaN()), 0, 0}},
+			wantCode: string(domain.ErrorProviderMalformed),
 		},
 		{
 			name:     "returned model mismatch",
-			provider: &v2RecallProviderStub{available: true, model: "configured-model", dims: 3, vector: []float32{1, 0, 0}, returnedModel: "other-model"},
-			wantCode: string(domain.V2ErrorProviderMalformed),
+			provider: &recallProviderStub{available: true, model: "configured-model", dims: 3, vector: []float32{1, 0, 0}, returnedModel: "other-model"},
+			wantCode: string(domain.ErrorProviderMalformed),
 		},
 	}
 	for _, tt := range tests {
@@ -245,15 +252,15 @@ func TestV2RecallProviderMalformedBranchesAreOptionalDegradation(t *testing.T) {
 			teamID := uuid.New()
 			profileID := uuid.New()
 			keyID := uuid.New()
-			search := &v2RecallSearchStub{
-				contract: &repository.V2ActiveSearchContract{
+			search := &recallSearchStub{
+				contract: &repository.ActiveSearchContract{
 					EmbeddingContractID: uuid.NewString(),
 					EmbeddingDimensions: 3,
 					EmbeddingModel:      "test-model",
 				},
-				result: &repository.V2RecallEvidenceResult{
-					SearchState: string(domain.V2SearchProjectionCurrent),
-					Results:     []repository.V2RecallEvidenceHit{},
+				result: &repository.RecallEvidenceResult{
+					SearchState: string(domain.SearchProjectionCurrent),
+					Results:     []repository.RecallEvidenceHit{},
 				},
 			}
 			if tt.name == "returned model mismatch" {
@@ -261,8 +268,8 @@ func TestV2RecallProviderMalformedBranchesAreOptionalDegradation(t *testing.T) {
 			}
 			svc := NewRecallService(RecallDependencies{Search: search, Provider: tt.provider})
 
-			result, err := svc.Recall(authenticatedV2RememberContext(teamID, profileID, keyID), V2RecallRequest{
-				ContractVersion: domain.V2ContractVersion,
+			result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+				ContractVersion: domain.ContractVersion,
 				Query:           "PostgreSQL memory",
 			})
 			require.NoError(t, err)
@@ -274,28 +281,28 @@ func TestV2RecallProviderMalformedBranchesAreOptionalDegradation(t *testing.T) {
 	}
 }
 
-func TestV2RecallNormalizesIDs(t *testing.T) {
+func TestRecallNormalizesIDs(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
 	entityID := uuid.NewString()
 	evidenceID := uuid.NewString()
 	relationshipID := uuid.NewString()
-	search := &v2RecallSearchStub{
-		contract: &repository.V2ActiveSearchContract{
+	search := &recallSearchStub{
+		contract: &repository.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.V2RecallEvidenceResult{
-			SearchState: string(domain.V2SearchProjectionCurrent),
-			Results:     []repository.V2RecallEvidenceHit{},
+		result: &repository.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results:     []repository.RecallEvidenceHit{},
 		},
 	}
 	svc := NewRecallService(RecallDependencies{Search: search})
 
-	result, err := svc.Recall(authenticatedV2RememberContext(teamID, profileID, keyID), V2RecallRequest{
-		ContractVersion:      domain.V2ContractVersion,
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ContractVersion:      domain.ContractVersion,
 		Query:                " ",
 		KnownEvidenceIDs:     []string{" " + evidenceID + " ", evidenceID},
 		KnownRelationshipIDs: []string{relationshipID, relationshipID},
@@ -309,7 +316,7 @@ func TestV2RecallNormalizesIDs(t *testing.T) {
 	require.Empty(t, search.input.Query)
 }
 
-func TestV2RecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom(t *testing.T) {
+func TestRecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
@@ -317,21 +324,21 @@ func TestV2RecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom(t *testing.T
 	evidenceID := uuid.NewString()
 	subjectID := uuid.NewString()
 	objectID := uuid.NewString()
-	search := &v2RecallSearchStub{
-		contract: &repository.V2ActiveSearchContract{
+	search := &recallSearchStub{
+		contract: &repository.ActiveSearchContract{
 			EmbeddingContractID: uuid.NewString(),
 			EmbeddingDimensions: 3,
 			EmbeddingModel:      "test-model",
 		},
-		result: &repository.V2RecallEvidenceResult{
-			SearchState: string(domain.V2SearchProjectionCurrent),
-			Results:     []repository.V2RecallEvidenceHit{},
+		result: &repository.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results:     []repository.RecallEvidenceHit{},
 		},
 	}
-	communities := &v2RecallCommunityStub{
-		paths: []repository.V2CommunityDiscoveryPath{{
+	communities := &recallCommunityStub{
+		paths: []repository.CommunityDiscoveryPath{{
 			CommunityID: uuid.NewString(),
-			Relationship: repository.V2CommunityDiscoveryRelationship{
+			Relationship: repository.CommunityDiscoveryRelationship{
 				RelationshipID:  relationshipID,
 				SubjectEntityID: subjectID,
 				SubjectName:     "Dense-Mem",
@@ -345,13 +352,13 @@ func TestV2RecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom(t *testing.T
 	}
 	svc := NewRecallService(RecallDependencies{
 		Search:          search,
-		Provider:        &v2RecallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}},
+		Provider:        &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}},
 		Communities:     communities,
-		CommunityConfig: v2RecallCommunityConfigStub{enabled: true},
+		CommunityConfig: recallCommunityConfigStub{enabled: true},
 	})
 
-	result, err := svc.Recall(authenticatedV2RememberContext(teamID, profileID, keyID), V2RecallRequest{
-		ContractVersion: domain.V2ContractVersion,
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ContractVersion: domain.ContractVersion,
 		Query:           "PostgreSQL",
 		Limit:           3,
 	})
@@ -368,55 +375,55 @@ func TestV2RecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom(t *testing.T
 	require.Equal(t, 3, communities.recallInput.Limit)
 }
 
-func TestV2RecallRequiresAuthenticatedActor(t *testing.T) {
-	svc := NewRecallService(RecallDependencies{Search: &v2RecallSearchStub{}})
-	_, err := svc.Recall(context.Background(), V2RecallRequest{
-		ContractVersion: domain.V2ContractVersion,
+func TestRecallRequiresAuthenticatedActor(t *testing.T) {
+	svc := NewRecallService(RecallDependencies{Search: &recallSearchStub{}})
+	_, err := svc.Recall(context.Background(), RecallRequest{
+		ContractVersion: domain.ContractVersion,
 		Query:           "PostgreSQL memory",
 	})
 	require.ErrorIs(t, err, ErrRecallAuthContext)
 }
 
-func TestV2RecallRejectsInvalidContractAndMissingSearch(t *testing.T) {
+func TestRecallRejectsInvalidContractAndMissingSearch(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
-	ctx := authenticatedV2RememberContext(teamID, profileID, keyID)
+	ctx := authenticatedRememberContext(teamID, profileID, keyID)
 
-	_, err := NewRecallService(RecallDependencies{}).Recall(ctx, V2RecallRequest{
-		ContractVersion: domain.V2ContractVersion,
+	_, err := NewRecallService(RecallDependencies{}).Recall(ctx, RecallRequest{
+		ContractVersion: domain.ContractVersion,
 		Query:           "PostgreSQL memory",
 	})
 	require.ErrorContains(t, err, "search repository is required")
 
-	_, err = NewRecallService(RecallDependencies{Search: &v2RecallSearchStub{}}).Recall(ctx, V2RecallRequest{
+	_, err = NewRecallService(RecallDependencies{Search: &recallSearchStub{}}).Recall(ctx, RecallRequest{
 		ContractVersion: "wrong",
 		Query:           "PostgreSQL memory",
 	})
 	require.ErrorContains(t, err, "invalid contract_version")
 }
 
-func TestValidateV2RecallEmbeddingRejectsInvalidVectors(t *testing.T) {
-	require.NoError(t, validateV2RecallEmbedding([]float32{1, 0, 0}, 3))
-	require.Error(t, validateV2RecallEmbedding([]float32{1, 0}, 3))
-	require.Error(t, validateV2RecallEmbedding([]float32{float32(math.Inf(1)), 0, 0}, 3))
+func TestValidateRecallEmbeddingRejectsInvalidVectors(t *testing.T) {
+	require.NoError(t, validateRecallEmbedding([]float32{1, 0, 0}, 3))
+	require.Error(t, validateRecallEmbedding([]float32{1, 0}, 3))
+	require.Error(t, validateRecallEmbedding([]float32{float32(math.Inf(1)), 0, 0}, 3))
 }
 
-type v2RecallSearchStub struct {
-	contract *repository.V2ActiveSearchContract
-	input    repository.V2RecallEvidenceInput
-	result   *repository.V2RecallEvidenceResult
+type recallSearchStub struct {
+	contract *repository.ActiveSearchContract
+	input    repository.RecallEvidenceInput
+	result   *repository.RecallEvidenceResult
 	err      error
 }
 
-func (s *v2RecallSearchStub) GetActiveSearchContract(context.Context) (*repository.V2ActiveSearchContract, error) {
+func (s *recallSearchStub) GetActiveSearchContract(context.Context) (*repository.ActiveSearchContract, error) {
 	if s.contract == nil {
 		return nil, errors.New("missing contract")
 	}
 	return s.contract, nil
 }
 
-func (s *v2RecallSearchStub) RecallEvidence(_ context.Context, input repository.V2RecallEvidenceInput) (*repository.V2RecallEvidenceResult, error) {
+func (s *recallSearchStub) RecallEvidence(_ context.Context, input repository.RecallEvidenceInput) (*repository.RecallEvidenceResult, error) {
 	s.input = input
 	if s.err != nil {
 		return nil, s.err
@@ -424,14 +431,14 @@ func (s *v2RecallSearchStub) RecallEvidence(_ context.Context, input repository.
 	return s.result, nil
 }
 
-type v2RecallHypothesisStub struct {
-	refreshInput repository.V2RefreshHypothesisStalenessInput
-	recallInput  repository.V2RecallHypothesesInput
-	records      []repository.V2HypothesisRecord
+type recallHypothesisStub struct {
+	refreshInput repository.RefreshHypothesisStalenessInput
+	recallInput  repository.RecallHypothesesInput
+	records      []repository.HypothesisRecord
 	err          error
 }
 
-func (s *v2RecallHypothesisStub) RefreshV2HypothesisStaleness(_ context.Context, input repository.V2RefreshHypothesisStalenessInput) (int, error) {
+func (s *recallHypothesisStub) RefreshHypothesisStaleness(_ context.Context, input repository.RefreshHypothesisStalenessInput) (int, error) {
 	s.refreshInput = input
 	if s.err != nil {
 		return 0, s.err
@@ -439,7 +446,7 @@ func (s *v2RecallHypothesisStub) RefreshV2HypothesisStaleness(_ context.Context,
 	return 0, nil
 }
 
-func (s *v2RecallHypothesisStub) RecallV2Hypotheses(_ context.Context, input repository.V2RecallHypothesesInput) ([]repository.V2HypothesisRecord, error) {
+func (s *recallHypothesisStub) RecallHypotheses(_ context.Context, input repository.RecallHypothesesInput) ([]repository.HypothesisRecord, error) {
 	s.recallInput = input
 	if s.err != nil {
 		return nil, s.err
@@ -447,14 +454,14 @@ func (s *v2RecallHypothesisStub) RecallV2Hypotheses(_ context.Context, input rep
 	return s.records, nil
 }
 
-type v2RecallCommunityStub struct {
-	refreshInput repository.V2CommunityStalenessInput
-	recallInput  repository.V2CommunityDiscoveryInput
-	paths        []repository.V2CommunityDiscoveryPath
+type recallCommunityStub struct {
+	refreshInput repository.CommunityStalenessInput
+	recallInput  repository.CommunityDiscoveryInput
+	paths        []repository.CommunityDiscoveryPath
 	err          error
 }
 
-func (s *v2RecallCommunityStub) RefreshV2CommunityStaleness(_ context.Context, input repository.V2CommunityStalenessInput) (int, error) {
+func (s *recallCommunityStub) RefreshCommunityStaleness(_ context.Context, input repository.CommunityStalenessInput) (int, error) {
 	s.refreshInput = input
 	if s.err != nil {
 		return 0, s.err
@@ -462,7 +469,7 @@ func (s *v2RecallCommunityStub) RefreshV2CommunityStaleness(_ context.Context, i
 	return 0, nil
 }
 
-func (s *v2RecallCommunityStub) RecallV2CommunityDiscovery(_ context.Context, input repository.V2CommunityDiscoveryInput) ([]repository.V2CommunityDiscoveryPath, error) {
+func (s *recallCommunityStub) RecallCommunityDiscovery(_ context.Context, input repository.CommunityDiscoveryInput) ([]repository.CommunityDiscoveryPath, error) {
 	s.recallInput = input
 	if s.err != nil {
 		return nil, s.err
@@ -470,19 +477,19 @@ func (s *v2RecallCommunityStub) RecallV2CommunityDiscovery(_ context.Context, in
 	return s.paths, nil
 }
 
-type v2RecallCommunityConfigStub struct {
+type recallCommunityConfigStub struct {
 	enabled bool
 	err     error
 }
 
-func (s v2RecallCommunityConfigStub) CommunityDetectionRuntimeConfig(context.Context) (domain.CommunityDetectionRuntimeConfig, error) {
+func (s recallCommunityConfigStub) CommunityDetectionRuntimeConfig(context.Context) (domain.CommunityDetectionRuntimeConfig, error) {
 	if s.err != nil {
 		return domain.CommunityDetectionRuntimeConfig{}, s.err
 	}
 	return domain.CommunityDetectionRuntimeConfig{Enabled: s.enabled}, nil
 }
 
-type v2RecallProviderStub struct {
+type recallProviderStub struct {
 	available     bool
 	model         string
 	dims          int
@@ -492,7 +499,7 @@ type v2RecallProviderStub struct {
 	returnedModel string
 }
 
-func (s *v2RecallProviderStub) Embed(_ context.Context, text string) ([]float32, string, error) {
+func (s *recallProviderStub) Embed(_ context.Context, text string) ([]float32, string, error) {
 	s.query = text
 	if s.err != nil {
 		return nil, "", s.err
@@ -504,12 +511,12 @@ func (s *v2RecallProviderStub) Embed(_ context.Context, text string) ([]float32,
 	return append([]float32(nil), s.vector...), model, nil
 }
 
-func (s *v2RecallProviderStub) EmbedBatch(context.Context, []string) ([][]float32, string, error) {
+func (s *recallProviderStub) EmbedBatch(context.Context, []string) ([][]float32, string, error) {
 	return nil, "", errors.New("unexpected EmbedBatch")
 }
 
-func (s *v2RecallProviderStub) ModelName() string { return s.model }
+func (s *recallProviderStub) ModelName() string { return s.model }
 
-func (s *v2RecallProviderStub) Dimensions() int { return s.dims }
+func (s *recallProviderStub) Dimensions() int { return s.dims }
 
-func (s *v2RecallProviderStub) IsAvailable() bool { return s.available }
+func (s *recallProviderStub) IsAvailable() bool { return s.available }

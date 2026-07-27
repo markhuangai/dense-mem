@@ -13,7 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.T) {
+func TestSemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	targetID := uuid.NewString()
@@ -27,18 +27,18 @@ func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.
 	request.RelationshipObservations[0].ValidFrom = &validFrom
 	request.RelationshipObservations[0].ValidTo = &validTo
 	request.RelationshipObservations[0].Polarity = "-"
-	request.RelationshipObservations[0].CorrectionTarget = &verifier.V2RelationshipCorrectionTarget{
+	request.RelationshipObservations[0].CorrectionTarget = &verifier.RelationshipCorrectionTarget{
 		RelationshipID:  targetID,
 		ExpectedVersion: 3,
 	}
-	request.RelationshipObservations[0].ConflictContext = &verifier.V2RelationshipConflictContext{
+	request.RelationshipObservations[0].ConflictContext = &verifier.RelationshipConflictContext{
 		ConflictID:      conflictID,
 		ExpectedVersion: 5,
 	}
 	response := semanticReviewResponse(request.RequestID, false, false)
 	result := semanticReviewResultFromResponse(response, 1, "sha256:semantic-response")
 	result.OutcomeIDs = []string{uuid.NewString()}
-	commitRepo := &v2SemanticCommitRepoStub{}
+	commitRepo := &semanticCommitRepoStub{}
 	svc := NewSemanticCommitService(SemanticCommitDependencies{PlacementCommit: commitRepo})
 
 	_, err := svc.CommitSemantic(context.Background(), SemanticCommitJob{
@@ -61,7 +61,7 @@ func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.
 	if got.TeamID != teamID || got.OwnerProfileID != ownerID || got.WorkerID != "worker-commit" || got.ExpectedAttempts != 2 {
 		t.Fatalf("commit scope = %#v", got)
 	}
-	if got.Status != string(domain.V2SemanticReviewAccepted) || got.Category != "validated_claim" {
+	if got.Status != string(domain.SemanticReviewAccepted) || got.Category != "validated_claim" {
 		t.Fatalf("commit status/category = %q/%q", got.Status, got.Category)
 	}
 	if len(got.EntityResolutions) != 2 {
@@ -115,11 +115,11 @@ func TestV2SemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.
 	}
 }
 
-func TestV2SemanticCommitRejectsNonAcceptedReview(t *testing.T) {
+func TestSemanticCommitRejectsNonAcceptedReview(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
-	commitRepo := &v2SemanticCommitRepoStub{}
+	commitRepo := &semanticCommitRepoStub{}
 	svc := NewSemanticCommitService(SemanticCommitDependencies{PlacementCommit: commitRepo})
 
 	_, err := svc.CommitSemantic(context.Background(), SemanticCommitJob{
@@ -131,7 +131,7 @@ func TestV2SemanticCommitRejectsNonAcceptedReview(t *testing.T) {
 		WorkerID:        "worker-commit",
 		Request:         request,
 		Result: SemanticReviewResult{
-			Status: string(domain.V2SemanticReviewReviewRequired),
+			Status: string(domain.SemanticReviewReviewRequired),
 		},
 	})
 	if !errors.Is(err, ErrSemanticCommitNotAccepted) {
@@ -142,11 +142,11 @@ func TestV2SemanticCommitRejectsNonAcceptedReview(t *testing.T) {
 	}
 }
 
-func TestV2SemanticPlacementCompletionClosesReviewRequiredWithoutSemanticCommit(t *testing.T) {
+func TestSemanticPlacementCompletionClosesReviewRequiredWithoutSemanticCommit(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
-	commitRepo := &v2SemanticCommitRepoStub{}
+	commitRepo := &semanticCommitRepoStub{}
 	svc := NewSemanticCommitService(SemanticCommitDependencies{PlacementCommit: commitRepo})
 
 	completed, err := svc.CompleteSemanticPlacement(context.Background(), SemanticCommitJob{
@@ -159,7 +159,7 @@ func TestV2SemanticPlacementCompletionClosesReviewRequiredWithoutSemanticCommit(
 		ExpectedAttempts: 1,
 		Request:          request,
 		Result: SemanticReviewResult{
-			Status:       string(domain.V2SemanticReviewReviewRequired),
+			Status:       string(domain.SemanticReviewReviewRequired),
 			ResponseHash: "sha256:review-required",
 			OutcomeIDs:   []string{uuid.NewString()},
 		},
@@ -168,7 +168,7 @@ func TestV2SemanticPlacementCompletionClosesReviewRequiredWithoutSemanticCommit(
 	if err != nil {
 		t.Fatalf("CompleteSemanticPlacement returned error: %v", err)
 	}
-	if completed.Status != string(domain.V2SemanticReviewReviewRequired) || completed.Terminal == nil || completed.SemanticCommit != nil {
+	if completed.Status != string(domain.SemanticReviewReviewRequired) || completed.Terminal == nil || completed.SemanticCommit != nil {
 		t.Fatalf("completed = %#v", completed)
 	}
 	if commitRepo.called {
@@ -177,17 +177,17 @@ func TestV2SemanticPlacementCompletionClosesReviewRequiredWithoutSemanticCommit(
 	if !commitRepo.terminalCalled {
 		t.Fatal("terminal repository path was not called")
 	}
-	if commitRepo.terminalInput.Category != "candidate" || commitRepo.terminalInput.Status != string(domain.V2SemanticReviewReviewRequired) {
+	if commitRepo.terminalInput.Category != "candidate" || commitRepo.terminalInput.Status != string(domain.SemanticReviewReviewRequired) {
 		t.Fatalf("terminal input = %#v", commitRepo.terminalInput)
 	}
 }
 
-func TestV2SemanticPlacementCompletionCommitsAcceptedReview(t *testing.T) {
+func TestSemanticPlacementCompletionCommitsAcceptedReview(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
 	result := semanticReviewResultFromResponse(semanticReviewResponse(request.RequestID, false, false), 1, "sha256:accepted")
-	commitRepo := &v2SemanticCommitRepoStub{}
+	commitRepo := &semanticCommitRepoStub{}
 	svc := NewSemanticCommitService(SemanticCommitDependencies{PlacementCommit: commitRepo})
 
 	completed, err := svc.CompleteSemanticPlacement(context.Background(), SemanticCommitJob{
@@ -204,7 +204,7 @@ func TestV2SemanticPlacementCompletionCommitsAcceptedReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteSemanticPlacement returned error: %v", err)
 	}
-	if completed.Status != string(domain.V2SemanticReviewAccepted) || completed.SemanticCommit == nil || completed.Terminal != nil {
+	if completed.Status != string(domain.SemanticReviewAccepted) || completed.SemanticCommit == nil || completed.Terminal != nil {
 		t.Fatalf("completed = %#v", completed)
 	}
 	if !commitRepo.called || commitRepo.terminalCalled {
@@ -212,10 +212,10 @@ func TestV2SemanticPlacementCompletionCommitsAcceptedReview(t *testing.T) {
 	}
 }
 
-func TestV2SemanticPlacementCompletionRequeuesRetryableReview(t *testing.T) {
+func TestSemanticPlacementCompletionRequeuesRetryableReview(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
-	commitRepo := &v2SemanticCommitRepoStub{}
+	commitRepo := &semanticCommitRepoStub{}
 	svc := NewSemanticCommitService(SemanticCommitDependencies{PlacementCommit: commitRepo})
 
 	completed, err := svc.CompleteSemanticPlacement(context.Background(), SemanticCommitJob{
@@ -227,12 +227,12 @@ func TestV2SemanticPlacementCompletionRequeuesRetryableReview(t *testing.T) {
 		WorkerID:         "worker-commit",
 		ExpectedAttempts: 2,
 		MaxAttempts:      3,
-		Result:           SemanticReviewResult{Status: string(domain.V2SemanticReviewRetryable)},
+		Result:           SemanticReviewResult{Status: string(domain.SemanticReviewRetryable)},
 	})
 	if err != nil {
 		t.Fatalf("CompleteSemanticPlacement returned error: %v", err)
 	}
-	if completed.Status != string(domain.V2SemanticReviewRetryable) || completed.SemanticCommit != nil || completed.Terminal != nil {
+	if completed.Status != string(domain.SemanticReviewRetryable) || completed.SemanticCommit != nil || completed.Terminal != nil {
 		t.Fatalf("completed = %#v", completed)
 	}
 	if commitRepo.called || commitRepo.terminalCalled || !commitRepo.retryCalled {
@@ -243,11 +243,11 @@ func TestV2SemanticPlacementCompletionRequeuesRetryableReview(t *testing.T) {
 	}
 }
 
-func TestV2SemanticPlacementCompletionClosesRetryableWhenPlacementAttemptsExhausted(t *testing.T) {
+func TestSemanticPlacementCompletionClosesRetryableWhenPlacementAttemptsExhausted(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
-	commitRepo := &v2SemanticCommitRepoStub{}
+	commitRepo := &semanticCommitRepoStub{}
 	svc := NewSemanticCommitService(SemanticCommitDependencies{PlacementCommit: commitRepo})
 
 	completed, err := svc.CompleteSemanticPlacement(context.Background(), SemanticCommitJob{
@@ -261,7 +261,7 @@ func TestV2SemanticPlacementCompletionClosesRetryableWhenPlacementAttemptsExhaus
 		MaxAttempts:      3,
 		Request:          request,
 		Result: SemanticReviewResult{
-			Status:       string(domain.V2SemanticReviewRetryable),
+			Status:       string(domain.SemanticReviewRetryable),
 			ResponseHash: "sha256:retryable",
 			OutcomeIDs:   []string{uuid.NewString()},
 			FailureStage: semanticFailureStageVerification,
@@ -272,13 +272,13 @@ func TestV2SemanticPlacementCompletionClosesRetryableWhenPlacementAttemptsExhaus
 	if err != nil {
 		t.Fatalf("CompleteSemanticPlacement returned error: %v", err)
 	}
-	if completed.Status != string(domain.V2SemanticReviewTerminalFailure) || completed.Terminal == nil || completed.SemanticCommit != nil {
+	if completed.Status != string(domain.SemanticReviewTerminalFailure) || completed.Terminal == nil || completed.SemanticCommit != nil {
 		t.Fatalf("completed = %#v", completed)
 	}
 	if commitRepo.called || !commitRepo.terminalCalled || commitRepo.retryCalled {
 		t.Fatalf("repository paths called = semantic:%v terminal:%v retry:%v", commitRepo.called, commitRepo.terminalCalled, commitRepo.retryCalled)
 	}
-	if commitRepo.terminalInput.Status != string(domain.V2SemanticReviewTerminalFailure) || commitRepo.terminalInput.Category != "failed" {
+	if commitRepo.terminalInput.Status != string(domain.SemanticReviewTerminalFailure) || commitRepo.terminalInput.Category != "failed" {
 		t.Fatalf("terminal input = %#v", commitRepo.terminalInput)
 	}
 	if commitRepo.terminalInput.Payload["placement_attempts"] != 3 || commitRepo.terminalInput.Payload["max_attempts"] != 3 {
@@ -295,28 +295,28 @@ func TestV2SemanticPlacementCompletionClosesRetryableWhenPlacementAttemptsExhaus
 	}
 }
 
-func TestV2SemanticPlacementCompletionMapsTerminalCategories(t *testing.T) {
+func TestSemanticPlacementCompletionMapsTerminalCategories(t *testing.T) {
 	tests := []struct {
 		status   string
 		category string
 	}{
-		{status: string(domain.V2SemanticReviewRejected), category: "candidate"},
-		{status: string(domain.V2SemanticReviewQuarantined), category: "quarantined"},
-		{status: string(domain.V2SemanticReviewTerminalFailure), category: "failed"},
+		{status: string(domain.SemanticReviewRejected), category: "candidate"},
+		{status: string(domain.SemanticReviewQuarantined), category: "quarantined"},
+		{status: string(domain.SemanticReviewTerminalFailure), category: "failed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.status, func(t *testing.T) {
-			commitRepo := &v2SemanticCommitRepoStub{}
+			commitRepo := &semanticCommitRepoStub{}
 			svc := NewSemanticCommitService(SemanticCommitDependencies{PlacementCommit: commitRepo})
 
 			completed, err := svc.CompleteSemanticPlacement(context.Background(), SemanticCommitJob{
-				TeamID:          " team-v2 ",
-				OwnerProfileID:  " owner-v2 ",
-				IngestID:        " ingest-v2 ",
-				PlacementRunID:  " run-v2 ",
-				PlacementItemID: " item-v2 ",
-				WorkerID:        " worker-v2 ",
-				Result:          SemanticReviewResult{Status: tt.status, ResponseHash: " hash-v2 "},
+				TeamID:          " team-canonical ",
+				OwnerProfileID:  " owner-canonical ",
+				IngestID:        " ingest-canonical ",
+				PlacementRunID:  " run-canonical ",
+				PlacementItemID: " item-canonical ",
+				WorkerID:        " worker-canonical ",
+				Result:          SemanticReviewResult{Status: tt.status, ResponseHash: " hash-canonical "},
 			})
 			if err != nil {
 				t.Fatalf("CompleteSemanticPlacement returned error: %v", err)
@@ -324,22 +324,22 @@ func TestV2SemanticPlacementCompletionMapsTerminalCategories(t *testing.T) {
 			if completed.Status != tt.status || completed.Terminal == nil {
 				t.Fatalf("completed = %#v", completed)
 			}
-			if commitRepo.terminalInput.Category != tt.category || v2TerminalResponseHash(commitRepo.terminalInput) != "hash-v2" {
+			if commitRepo.terminalInput.Category != tt.category || terminalResponseHash(commitRepo.terminalInput) != "hash-canonical" {
 				t.Fatalf("terminal input = %#v", commitRepo.terminalInput)
 			}
-			if commitRepo.terminalInput.TeamID != "team-v2" || commitRepo.terminalInput.WorkerID != "worker-v2" {
+			if commitRepo.terminalInput.TeamID != "team-canonical" || commitRepo.terminalInput.WorkerID != "worker-canonical" {
 				t.Fatalf("normalized terminal scope = %#v", commitRepo.terminalInput)
 			}
 		})
 	}
 }
 
-func TestV2SemanticCommitMapsObjectValueRelationship(t *testing.T) {
+func TestSemanticCommitMapsObjectValueRelationship(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
 	request.RelationshipObservations[0].ObjectRef = ""
-	request.RelationshipObservations[0].ObjectValue = &verifier.V2SemanticValueObservation{
+	request.RelationshipObservations[0].ObjectValue = &verifier.SemanticValueObservation{
 		Ref:     "release_date",
 		Type:    "date",
 		Value:   "2026-07-17",
@@ -347,7 +347,7 @@ func TestV2SemanticCommitMapsObjectValueRelationship(t *testing.T) {
 		Unit:    "calendar_day",
 	}
 	result := semanticReviewResultFromResponse(semanticReviewResponse(request.RequestID, false, false), 1, "sha256:value")
-	commitRepo := &v2SemanticCommitRepoStub{}
+	commitRepo := &semanticCommitRepoStub{}
 	svc := NewSemanticCommitService(SemanticCommitDependencies{PlacementCommit: commitRepo})
 
 	_, err := svc.CommitSemantic(context.Background(), SemanticCommitJob{
@@ -379,7 +379,7 @@ func TestV2SemanticCommitMapsObjectValueRelationship(t *testing.T) {
 	}
 }
 
-func TestV2SemanticCommitRejectsMismatchedReviewRefsBeforeRepositoryCall(t *testing.T) {
+func TestSemanticCommitRejectsMismatchedReviewRefsBeforeRepositoryCall(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	tests := []struct {
@@ -404,7 +404,7 @@ func TestV2SemanticCommitRejectsMismatchedReviewRefsBeforeRepositoryCall(t *test
 			request := semanticReviewServiceRequest(teamID, ownerID)
 			result := semanticReviewResultFromResponse(semanticReviewResponse(request.RequestID, false, false), 1, "sha256:bad-ref")
 			tt.mutate(result)
-			commitRepo := &v2SemanticCommitRepoStub{}
+			commitRepo := &semanticCommitRepoStub{}
 			svc := NewSemanticCommitService(SemanticCommitDependencies{PlacementCommit: commitRepo})
 
 			_, err := svc.CommitSemantic(context.Background(), SemanticCommitJob{
@@ -427,7 +427,7 @@ func TestV2SemanticCommitRejectsMismatchedReviewRefsBeforeRepositoryCall(t *test
 	}
 }
 
-func TestV2SemanticCommitMapsUnresolvedPredicateToRelationshipReview(t *testing.T) {
+func TestSemanticCommitMapsUnresolvedPredicateToRelationshipReview(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
@@ -435,7 +435,7 @@ func TestV2SemanticCommitMapsUnresolvedPredicateToRelationshipReview(t *testing.
 	result := semanticReviewResultFromResponse(semanticReviewResponse(request.RequestID, false, false), 1, "sha256:unresolved-predicate")
 	result.RelationshipResults[0].PredicateStatus = "ambiguous"
 	result.RelationshipResults[0].PredicateKey = nil
-	commitRepo := &v2SemanticCommitRepoStub{}
+	commitRepo := &semanticCommitRepoStub{}
 	svc := NewSemanticCommitService(SemanticCommitDependencies{PlacementCommit: commitRepo})
 
 	_, err := svc.CommitSemantic(context.Background(), SemanticCommitJob{
@@ -479,12 +479,12 @@ func TestV2SemanticCommitMapsUnresolvedPredicateToRelationshipReview(t *testing.
 		review.Support.Quote != request.RelationshipObservations[0].Quote {
 		t.Fatalf("relationship review support = %#v", review.Support)
 	}
-	if review.Payload["predicate_policy_version"] != domain.V2PredicatePolicyVersion {
+	if review.Payload["predicate_policy_version"] != domain.PredicatePolicyVersion {
 		t.Fatalf("relationship review payload = %#v", review.Payload)
 	}
 }
 
-func TestV2SemanticCommitRequiresPlacementRepository(t *testing.T) {
+func TestSemanticCommitRequiresPlacementRepository(t *testing.T) {
 	svc := NewSemanticCommitService(SemanticCommitDependencies{})
 	if _, err := svc.CommitSemantic(context.Background(), SemanticCommitJob{}); err == nil {
 		t.Fatal("CommitSemantic returned nil error")
@@ -494,43 +494,43 @@ func TestV2SemanticCommitRequiresPlacementRepository(t *testing.T) {
 	}
 }
 
-type v2SemanticCommitRepoStub struct {
+type semanticCommitRepoStub struct {
 	called         bool
 	terminalCalled bool
 	retryCalled    bool
-	input          repository.V2CommitPlacementSemanticInput
-	terminalInput  repository.V2CompletePlacementReviewInput
-	retryInput     repository.V2RequeuePlacementReviewInput
+	input          repository.CommitPlacementSemanticInput
+	terminalInput  repository.CompletePlacementReviewInput
+	retryInput     repository.RequeuePlacementReviewInput
 }
 
-func (s *v2SemanticCommitRepoStub) CommitPlacementSemanticResult(
+func (s *semanticCommitRepoStub) CommitPlacementSemanticResult(
 	_ context.Context,
-	input repository.V2CommitPlacementSemanticInput,
-) (*repository.V2CommitPlacementSemanticResult, error) {
+	input repository.CommitPlacementSemanticInput,
+) (*repository.CommitPlacementSemanticResult, error) {
 	s.called = true
 	s.input = input
-	return &repository.V2CommitPlacementSemanticResult{Status: input.Status, OutcomeID: uuid.NewString()}, nil
+	return &repository.CommitPlacementSemanticResult{Status: input.Status, OutcomeID: uuid.NewString()}, nil
 }
 
-func (s *v2SemanticCommitRepoStub) CompletePlacementReviewResult(
+func (s *semanticCommitRepoStub) CompletePlacementReviewResult(
 	_ context.Context,
-	input repository.V2CompletePlacementReviewInput,
-) (*repository.V2CompletePlacementReviewResult, error) {
+	input repository.CompletePlacementReviewInput,
+) (*repository.CompletePlacementReviewResult, error) {
 	s.terminalCalled = true
 	s.terminalInput = input
-	return &repository.V2CompletePlacementReviewResult{Status: input.Status, OutcomeID: uuid.NewString()}, nil
+	return &repository.CompletePlacementReviewResult{Status: input.Status, OutcomeID: uuid.NewString()}, nil
 }
 
-func (s *v2SemanticCommitRepoStub) RequeuePlacementReviewResult(
+func (s *semanticCommitRepoStub) RequeuePlacementReviewResult(
 	_ context.Context,
-	input repository.V2RequeuePlacementReviewInput,
-) (*repository.V2RequeuePlacementReviewResult, error) {
+	input repository.RequeuePlacementReviewInput,
+) (*repository.RequeuePlacementReviewResult, error) {
 	s.retryCalled = true
 	s.retryInput = input
-	return &repository.V2RequeuePlacementReviewResult{Status: string(domain.V2SemanticReviewRetryable)}, nil
+	return &repository.RequeuePlacementReviewResult{Status: string(domain.SemanticReviewRetryable)}, nil
 }
 
-func v2TerminalResponseHash(input repository.V2CompletePlacementReviewInput) string {
+func terminalResponseHash(input repository.CompletePlacementReviewInput) string {
 	value, _ := input.Payload["response_hash"].(string)
 	return value
 }

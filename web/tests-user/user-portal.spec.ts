@@ -518,11 +518,11 @@ async function mockUserApi(
     });
   });
 
-  await page.route("**/api/v1/teams/**/profiles**", async (route) => {
+  await page.route("**/ui/api/team/profiles**", async (route) => {
     if (state.canManageTeam) {
       const request = route.request();
       const url = new URL(request.url());
-      if (url.pathname === `/api/v1/teams/${currentTeam.id}/profiles` && request.method() === "GET") {
+      if (url.pathname === "/ui/api/team/profiles" && request.method() === "GET") {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -538,7 +538,7 @@ async function mockUserApi(
     await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "profile list must not be called" }) });
   });
 
-  await page.route("**/api/v1/teams/*", async (route) => {
+  await page.route("**/ui/api/team", async (route) => {
     if (!state.canManageTeam) {
       calls.disallowedProfileCalls.push(route.request().url());
       await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "team management must not be called" }) });
@@ -547,7 +547,7 @@ async function mockUserApi(
 
     const request = route.request();
     const url = new URL(request.url());
-    if (url.pathname === `/api/v1/teams/${currentTeam.id}` && request.method() === "PATCH") {
+    if (url.pathname === "/ui/api/team" && request.method() === "PATCH") {
       const body = JSON.parse(request.postData() ?? "{}") as Partial<typeof team>;
       currentTeam = {
         ...currentTeam,
@@ -626,7 +626,7 @@ async function mockUserApi(
     });
   });
 
-  await page.route("**/api/v1/recall**", async (route) => {
+  await page.route("**/ui/api/recall**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

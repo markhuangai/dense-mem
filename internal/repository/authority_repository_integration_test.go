@@ -11,20 +11,20 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func TestAuthorityRepositoryCommitsFreshV2AuthorityOnlyWhenApplicationDataEmpty(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+func TestAuthorityRepositoryCommitsFreshAuthorityOnlyWhenApplicationDataEmpty(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
 	repo := NewAuthorityRepository(appDB, rls)
 	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 
-	marker, err := repo.CommitFreshV2Authority(ctx, CommitFreshV2AuthorityInput{
+	marker, err := repo.CommitFreshAuthority(ctx, CommitFreshAuthorityInput{
 		MarkerVersion: "dense-mem.v2.1.cutover.v1",
 		Metadata:      map[string]any{"source": "startup"},
 		Now:           now,
 	})
 	require.NoError(t, err)
-	require.Equal(t, domain.V2MigrationMarkerCompatible, marker.Status)
+	require.Equal(t, domain.MigrationMarkerCompatible, marker.Status)
 	require.Empty(t, marker.RunID)
 	require.Equal(t, true, marker.Metadata["fresh_install"])
 
@@ -43,23 +43,23 @@ func TestAuthorityRepositoryCommitsFreshV2AuthorityOnlyWhenApplicationDataEmpty(
 	require.EqualValues(t, 1, systemVisible)
 }
 
-func TestAuthorityRepositoryBlocksFreshV2AuthorityWhenApplicationDataExists(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+func TestAuthorityRepositoryBlocksFreshAuthorityWhenApplicationDataExists(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
 	repo := NewAuthorityRepository(appDB, rls)
-	createV2LedgerTeam(t, adminDB, rls, "fresh-block-team")
+	createLedgerTeam(t, adminDB, rls, "fresh-block-team")
 
-	_, err := repo.CommitFreshV2Authority(ctx, CommitFreshV2AuthorityInput{
+	_, err := repo.CommitFreshAuthority(ctx, CommitFreshAuthorityInput{
 		MarkerVersion: "dense-mem.v2.1.cutover.v1",
 		Now:           time.Date(2026, 7, 23, 12, 30, 0, 0, time.UTC),
 	})
-	require.ErrorIs(t, err, ErrFreshV2AuthorityBlocked)
+	require.ErrorIs(t, err, ErrFreshAuthorityBlocked)
 	require.Contains(t, err.Error(), "teams")
 }
 
 func TestAuthorityRepositoryRetainsMigrationAuditReadOnly(t *testing.T) {
-	_, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
 

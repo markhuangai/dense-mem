@@ -12,7 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-func TestV2SemanticPlacementWorkerClaimsReviewsAndCompletesAcceptedRun(t *testing.T) {
+func TestSemanticPlacementWorkerClaimsReviewsAndCompletesAcceptedRun(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	placementRunID := uuid.NewString()
@@ -20,7 +20,7 @@ func TestV2SemanticPlacementWorkerClaimsReviewsAndCompletesAcceptedRun(t *testin
 	ingestID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
 	reviewResult := semanticReviewResultFromResponse(semanticReviewResponse(request.RequestID, false, false), 1, "sha256:worker-review")
-	ledger := &placementWorkerLedgerStub{run: &repository.V2PlacementRun{
+	ledger := &placementWorkerLedgerStub{run: &repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       ingestID,
@@ -41,7 +41,7 @@ func TestV2SemanticPlacementWorkerClaimsReviewsAndCompletesAcceptedRun(t *testin
 		Commit:       commit,
 		ReviewSource: reviewSource,
 		TeamID:       teamID,
-		WorkerID:     "worker-v2",
+		WorkerID:     "worker-canonical",
 		Lease:        45 * time.Second,
 	})
 
@@ -52,18 +52,18 @@ func TestV2SemanticPlacementWorkerClaimsReviewsAndCompletesAcceptedRun(t *testin
 	if !processed {
 		t.Fatal("processed = false")
 	}
-	if ledger.claimTeamID != teamID || ledger.claimWorkerID != "worker-v2" || ledger.claimLease != 45*time.Second {
+	if ledger.claimTeamID != teamID || ledger.claimWorkerID != "worker-canonical" || ledger.claimLease != 45*time.Second {
 		t.Fatalf("claim = team %q worker %q lease %s", ledger.claimTeamID, ledger.claimWorkerID, ledger.claimLease)
 	}
 	if review.job.TeamID != teamID || review.job.OwnerProfileID != ownerID || review.job.IngestID != ingestID || review.job.PlacementRunID != placementRunID {
 		t.Fatalf("review job scope = %#v", review.job)
 	}
-	if commit.job.WorkerID != "worker-v2" || commit.job.ExpectedAttempts != 3 || commit.job.MaxAttempts != 5 || commit.job.PlacementItemID != placementItemID {
+	if commit.job.WorkerID != "worker-canonical" || commit.job.ExpectedAttempts != 3 || commit.job.MaxAttempts != 5 || commit.job.PlacementItemID != placementItemID {
 		t.Fatalf("commit job = %#v", commit.job)
 	}
 }
 
-func TestV2SemanticPlacementWorkerReturnsFalseWhenNoRunClaimed(t *testing.T) {
+func TestSemanticPlacementWorkerReturnsFalseWhenNoRunClaimed(t *testing.T) {
 	teamID := uuid.NewString()
 	ledger := &placementWorkerLedgerStub{}
 	worker := NewSemanticPlacementWorkerService(SemanticPlacementWorkerDependencies{
@@ -72,7 +72,7 @@ func TestV2SemanticPlacementWorkerReturnsFalseWhenNoRunClaimed(t *testing.T) {
 		Commit:       &placementWorkerCommitStub{},
 		ReviewSource: &placementWorkerReviewSourceStub{},
 		TeamID:       teamID,
-		WorkerID:     "worker-v2",
+		WorkerID:     "worker-canonical",
 	})
 
 	processed, err := worker.ProcessNextSemanticPlacement(context.Background())
@@ -87,15 +87,15 @@ func TestV2SemanticPlacementWorkerReturnsFalseWhenNoRunClaimed(t *testing.T) {
 	}
 }
 
-func TestV2SemanticPlacementWorkerRequiresDependenciesAndScope(t *testing.T) {
+func TestSemanticPlacementWorkerRequiresDependenciesAndScope(t *testing.T) {
 	validDeps := func() SemanticPlacementWorkerDependencies {
 		return SemanticPlacementWorkerDependencies{
 			Ledger:       &placementWorkerLedgerStub{},
 			Review:       &placementWorkerReviewStub{},
 			Commit:       &placementWorkerCommitStub{},
 			ReviewSource: &placementWorkerReviewSourceStub{},
-			TeamID:       "team-v2",
-			WorkerID:     "worker-v2",
+			TeamID:       "team-canonical",
+			WorkerID:     "worker-canonical",
 		}
 	}
 	tests := []struct {
@@ -163,11 +163,11 @@ func TestV2SemanticPlacementWorkerRequiresDependenciesAndScope(t *testing.T) {
 	}
 }
 
-func TestV2SemanticPlacementWorkerPropagatesProcessingErrors(t *testing.T) {
+func TestSemanticPlacementWorkerPropagatesProcessingErrors(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
 	placementItemID := uuid.NewString()
-	run := &repository.V2PlacementRun{
+	run := &repository.PlacementRun{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IngestID:       uuid.NewString(),
@@ -256,7 +256,7 @@ func TestV2SemanticPlacementWorkerPropagatesProcessingErrors(t *testing.T) {
 				Commit:       tt.commit,
 				ReviewSource: tt.reviewSource,
 				TeamID:       teamID,
-				WorkerID:     "worker-v2",
+				WorkerID:     "worker-canonical",
 			})
 
 			processed, err := worker.ProcessNextSemanticPlacement(context.Background())
@@ -286,34 +286,34 @@ func TestV2SemanticPlacementWorkerPropagatesProcessingErrors(t *testing.T) {
 }
 
 type placementWorkerLedgerStub struct {
-	run           *repository.V2PlacementRun
+	run           *repository.PlacementRun
 	claimErr      error
 	claimTeamID   string
 	claimWorkerID string
 	claimLease    time.Duration
 }
 
-func (s *placementWorkerLedgerStub) CreateIngest(context.Context, repository.V2CreateIngestInput) (*repository.V2CreateIngestResult, error) {
+func (s *placementWorkerLedgerStub) CreateIngest(context.Context, repository.CreateIngestInput) (*repository.CreateIngestResult, error) {
 	return nil, errors.New("unexpected CreateIngest")
 }
 
-func (s *placementWorkerLedgerStub) GetPlacementRun(context.Context, repository.V2GetPlacementRunInput) (*repository.V2CreateIngestResult, error) {
+func (s *placementWorkerLedgerStub) GetPlacementRun(context.Context, repository.GetPlacementRunInput) (*repository.CreateIngestResult, error) {
 	return nil, errors.New("unexpected GetPlacementRun")
 }
 
-func (s *placementWorkerLedgerStub) AdvanceSourceRevision(context.Context, repository.V2AdvanceSourceRevisionInput) (*repository.V2SourceRevisionResult, error) {
+func (s *placementWorkerLedgerStub) AdvanceSourceRevision(context.Context, repository.AdvanceSourceRevisionInput) (*repository.SourceRevisionResult, error) {
 	return nil, errors.New("unexpected AdvanceSourceRevision")
 }
 
-func (s *placementWorkerLedgerStub) AppendSecurityEvent(context.Context, repository.V2SecurityEventInput) (string, error) {
+func (s *placementWorkerLedgerStub) AppendSecurityEvent(context.Context, repository.SecurityEventInput) (string, error) {
 	return "", errors.New("unexpected AppendSecurityEvent")
 }
 
-func (s *placementWorkerLedgerStub) AppendPlacementOutcome(context.Context, repository.V2PlacementOutcomeInput) (string, error) {
+func (s *placementWorkerLedgerStub) AppendPlacementOutcome(context.Context, repository.PlacementOutcomeInput) (string, error) {
 	return "", errors.New("unexpected AppendPlacementOutcome")
 }
 
-func (s *placementWorkerLedgerStub) ClaimNextPlacementRun(_ context.Context, teamID string, workerID string, lease time.Duration) (*repository.V2PlacementRun, error) {
+func (s *placementWorkerLedgerStub) ClaimNextPlacementRun(_ context.Context, teamID string, workerID string, lease time.Duration) (*repository.PlacementRun, error) {
 	s.claimTeamID = teamID
 	s.claimWorkerID = workerID
 	s.claimLease = lease
@@ -332,7 +332,7 @@ type placementWorkerReviewSourceStub struct {
 	job SemanticReviewJob
 }
 
-func (s *placementWorkerReviewSourceStub) BuildSemanticReviewJob(context.Context, repository.V2PlacementRun) (SemanticReviewJob, error) {
+func (s *placementWorkerReviewSourceStub) BuildSemanticReviewJob(context.Context, repository.PlacementRun) (SemanticReviewJob, error) {
 	if s.err != nil {
 		return SemanticReviewJob{}, s.err
 	}
@@ -366,7 +366,7 @@ type placementWorkerCommitStub struct {
 	job  SemanticCommitJob
 }
 
-func (s *placementWorkerCommitStub) CommitSemantic(context.Context, SemanticCommitJob) (*repository.V2CommitPlacementSemanticResult, error) {
+func (s *placementWorkerCommitStub) CommitSemantic(context.Context, SemanticCommitJob) (*repository.CommitPlacementSemanticResult, error) {
 	return nil, errors.New("unexpected CommitSemantic")
 }
 

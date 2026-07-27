@@ -10,88 +10,88 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-type v2ReviewSourceCorrectionTarget struct {
+type reviewSourceCorrectionTarget struct {
 	Ref            string
 	SubjectRef     string
 	PredicateKey   string
 	ObjectRef      string
 	ObjectValueKey string
-	Target         verifier.V2RelationshipCorrectionTarget
+	Target         verifier.RelationshipCorrectionTarget
 }
 
-type v2ReviewSourceConflictContext struct {
+type reviewSourceConflictContext struct {
 	Index          int
 	Ref            string
 	SubjectRef     string
 	PredicateKey   string
 	ObjectRef      string
 	ObjectValueKey string
-	Context        verifier.V2RelationshipConflictContext
+	Context        verifier.RelationshipConflictContext
 }
 
-func v2ReviewSourceCorrectionTargets(proposal map[string]any) []v2ReviewSourceCorrectionTarget {
-	relationships := v2PlacementReviewObjectArray(proposal, "relationship_hints", "relationships")
-	out := make([]v2ReviewSourceCorrectionTarget, 0, len(relationships))
+func reviewSourceCorrectionTargets(proposal map[string]any) []reviewSourceCorrectionTarget {
+	relationships := placementReviewObjectArray(proposal, "relationship_hints", "relationships")
+	out := make([]reviewSourceCorrectionTarget, 0, len(relationships))
 	for i, raw := range relationships {
-		target, ok := v2PlacementReviewCorrectionTarget(raw)
+		target, ok := placementReviewCorrectionTarget(raw)
 		if !ok {
 			continue
 		}
-		objectRef := v2ReviewString(raw, "object_ref")
+		objectRef := reviewString(raw, "object_ref")
 		if objectRef == "" && raw["object_value"] == nil {
-			objectRef = v2ReviewString(raw, "object")
+			objectRef = reviewString(raw, "object")
 		}
-		out = append(out, v2ReviewSourceCorrectionTarget{
-			Ref:            v2ReviewFirstNonEmpty(v2ReviewString(raw, "proposal_id"), v2ReviewString(raw, "ref"), v2ReviewString(raw, "legacy_id"), fmt.Sprintf("relationship:%d", i)),
-			SubjectRef:     v2ReviewFirstNonEmpty(v2ReviewString(raw, "subject_ref"), v2ReviewString(raw, "subject")),
-			PredicateKey:   v2ReviewSourcePredicateKey(v2ReviewString(raw, "predicate")),
+		out = append(out, reviewSourceCorrectionTarget{
+			Ref:            reviewFirstNonEmpty(reviewString(raw, "proposal_id"), reviewString(raw, "ref"), reviewString(raw, "legacy_id"), fmt.Sprintf("relationship:%d", i)),
+			SubjectRef:     reviewFirstNonEmpty(reviewString(raw, "subject_ref"), reviewString(raw, "subject")),
+			PredicateKey:   reviewSourcePredicateKey(reviewString(raw, "predicate")),
 			ObjectRef:      objectRef,
-			ObjectValueKey: v2ReviewSourceObjectValueKey(raw),
+			ObjectValueKey: reviewSourceObjectValueKey(raw),
 			Target:         target,
 		})
 	}
 	return out
 }
 
-func v2ReviewSourceConflictContexts(proposal map[string]any) []v2ReviewSourceConflictContext {
-	relationships := v2PlacementReviewObjectArray(proposal, "relationship_hints", "relationships")
-	out := make([]v2ReviewSourceConflictContext, 0, len(relationships))
+func reviewSourceConflictContexts(proposal map[string]any) []reviewSourceConflictContext {
+	relationships := placementReviewObjectArray(proposal, "relationship_hints", "relationships")
+	out := make([]reviewSourceConflictContext, 0, len(relationships))
 	for i, raw := range relationships {
-		context, ok := v2PlacementReviewConflictContext(raw)
+		context, ok := placementReviewConflictContext(raw)
 		if !ok {
 			continue
 		}
-		objectRef := v2ReviewString(raw, "object_ref")
+		objectRef := reviewString(raw, "object_ref")
 		if objectRef == "" && raw["object_value"] == nil {
-			objectRef = v2ReviewString(raw, "object")
+			objectRef = reviewString(raw, "object")
 		}
-		out = append(out, v2ReviewSourceConflictContext{
+		out = append(out, reviewSourceConflictContext{
 			Index:          i,
-			Ref:            v2ReviewFirstNonEmpty(v2ReviewString(raw, "proposal_id"), v2ReviewString(raw, "ref"), v2ReviewString(raw, "legacy_id"), fmt.Sprintf("relationship:%d", i)),
-			SubjectRef:     v2ReviewFirstNonEmpty(v2ReviewString(raw, "subject_ref"), v2ReviewString(raw, "subject")),
-			PredicateKey:   v2ReviewSourcePredicateKey(v2ReviewString(raw, "predicate")),
+			Ref:            reviewFirstNonEmpty(reviewString(raw, "proposal_id"), reviewString(raw, "ref"), reviewString(raw, "legacy_id"), fmt.Sprintf("relationship:%d", i)),
+			SubjectRef:     reviewFirstNonEmpty(reviewString(raw, "subject_ref"), reviewString(raw, "subject")),
+			PredicateKey:   reviewSourcePredicateKey(reviewString(raw, "predicate")),
 			ObjectRef:      objectRef,
-			ObjectValueKey: v2ReviewSourceObjectValueKey(raw),
+			ObjectValueKey: reviewSourceObjectValueKey(raw),
 			Context:        context,
 		})
 	}
 	return out
 }
 
-func v2ReviewSourceProposalWithTrustedCorrectionTargets(
+func reviewSourceProposalWithTrustedCorrectionTargets(
 	proposal map[string]any,
-	targets []v2ReviewSourceCorrectionTarget,
+	targets []reviewSourceCorrectionTarget,
 ) map[string]any {
 	if len(targets) == 0 {
 		return proposal
 	}
-	relationships := v2PlacementReviewObjectArray(proposal, "relationship_hints", "relationships")
+	relationships := placementReviewObjectArray(proposal, "relationship_hints", "relationships")
 	used := map[int]struct{}{}
 	for _, raw := range relationships {
-		if _, ok := v2PlacementReviewCorrectionTarget(raw); ok {
+		if _, ok := placementReviewCorrectionTarget(raw); ok {
 			continue
 		}
-		index, ok := v2ReviewSourceMatchCorrectionTarget(raw, targets, used, len(relationships))
+		index, ok := reviewSourceMatchCorrectionTarget(raw, targets, used, len(relationships))
 		if !ok {
 			continue
 		}
@@ -105,18 +105,18 @@ func v2ReviewSourceProposalWithTrustedCorrectionTargets(
 	return proposal
 }
 
-func v2ReviewSourceProposalWithTrustedConflictContexts(
+func reviewSourceProposalWithTrustedConflictContexts(
 	proposal map[string]any,
-	contexts []v2ReviewSourceConflictContext,
-) (map[string]any, []verifier.V2SemanticValidationError) {
-	relationships := v2PlacementReviewObjectArray(proposal, "relationship_hints", "relationships")
+	contexts []reviewSourceConflictContext,
+) (map[string]any, []verifier.SemanticValidationError) {
+	relationships := placementReviewObjectArray(proposal, "relationship_hints", "relationships")
 	used := map[int]struct{}{}
 	for _, raw := range relationships {
 		delete(raw, "conflict_context")
 		if len(contexts) == 0 {
 			continue
 		}
-		index, ok := v2ReviewSourceMatchConflictContext(raw, contexts, used, len(relationships))
+		index, ok := reviewSourceMatchConflictContext(raw, contexts, used, len(relationships))
 		if !ok {
 			continue
 		}
@@ -130,12 +130,12 @@ func v2ReviewSourceProposalWithTrustedConflictContexts(
 	if len(used) == len(contexts) {
 		return proposal, nil
 	}
-	errors := make([]verifier.V2SemanticValidationError, 0, len(contexts)-len(used))
+	errors := make([]verifier.SemanticValidationError, 0, len(contexts)-len(used))
 	for i, context := range contexts {
 		if _, ok := used[i]; ok {
 			continue
 		}
-		errors = append(errors, verifier.V2SemanticValidationError{
+		errors = append(errors, verifier.SemanticValidationError{
 			Field:   fmt.Sprintf("relationship_hints[%d].conflict_context", context.Index),
 			Message: "could not be reattached after provider proposal rewrite",
 		})
@@ -143,13 +143,13 @@ func v2ReviewSourceProposalWithTrustedConflictContexts(
 	return proposal, errors
 }
 
-func v2ReviewSourceMatchConflictContext(
+func reviewSourceMatchConflictContext(
 	raw map[string]any,
-	contexts []v2ReviewSourceConflictContext,
+	contexts []reviewSourceConflictContext,
 	used map[int]struct{},
 	relationshipCount int,
 ) (int, bool) {
-	ref := v2ReviewFirstNonEmpty(v2ReviewString(raw, "proposal_id"), v2ReviewString(raw, "ref"), v2ReviewString(raw, "legacy_id"))
+	ref := reviewFirstNonEmpty(reviewString(raw, "proposal_id"), reviewString(raw, "ref"), reviewString(raw, "legacy_id"))
 	if ref != "" {
 		for i, context := range contexts {
 			if _, exists := used[i]; exists {
@@ -160,18 +160,18 @@ func v2ReviewSourceMatchConflictContext(
 			}
 		}
 	}
-	probe := v2ReviewSourceConflictContext{
-		SubjectRef:     v2ReviewFirstNonEmpty(v2ReviewString(raw, "subject_ref"), v2ReviewString(raw, "subject")),
-		PredicateKey:   v2ReviewSourcePredicateKey(v2ReviewString(raw, "predicate")),
-		ObjectRef:      v2ReviewFirstNonEmpty(v2ReviewString(raw, "object_ref"), v2ReviewString(raw, "object")),
-		ObjectValueKey: v2ReviewSourceObjectValueKey(raw),
+	probe := reviewSourceConflictContext{
+		SubjectRef:     reviewFirstNonEmpty(reviewString(raw, "subject_ref"), reviewString(raw, "subject")),
+		PredicateKey:   reviewSourcePredicateKey(reviewString(raw, "predicate")),
+		ObjectRef:      reviewFirstNonEmpty(reviewString(raw, "object_ref"), reviewString(raw, "object")),
+		ObjectValueKey: reviewSourceObjectValueKey(raw),
 	}
 	matches := make([]int, 0, 1)
 	for i, context := range contexts {
 		if _, exists := used[i]; exists {
 			continue
 		}
-		if v2ReviewSourceConflictContextMatches(probe, context) {
+		if reviewSourceConflictContextMatches(probe, context) {
 			matches = append(matches, i)
 		}
 	}
@@ -181,7 +181,7 @@ func v2ReviewSourceMatchConflictContext(
 	return 0, false
 }
 
-func v2ReviewSourceConflictContextMatches(probe v2ReviewSourceConflictContext, context v2ReviewSourceConflictContext) bool {
+func reviewSourceConflictContextMatches(probe reviewSourceConflictContext, context reviewSourceConflictContext) bool {
 	if probe.SubjectRef == "" || context.SubjectRef == "" || probe.SubjectRef != context.SubjectRef {
 		return false
 	}
@@ -194,13 +194,13 @@ func v2ReviewSourceConflictContextMatches(probe v2ReviewSourceConflictContext, c
 	return probe.ObjectValueKey != "" && probe.ObjectValueKey == context.ObjectValueKey
 }
 
-func v2ReviewSourceMatchCorrectionTarget(
+func reviewSourceMatchCorrectionTarget(
 	raw map[string]any,
-	targets []v2ReviewSourceCorrectionTarget,
+	targets []reviewSourceCorrectionTarget,
 	used map[int]struct{},
 	relationshipCount int,
 ) (int, bool) {
-	ref := v2ReviewFirstNonEmpty(v2ReviewString(raw, "proposal_id"), v2ReviewString(raw, "ref"), v2ReviewString(raw, "legacy_id"))
+	ref := reviewFirstNonEmpty(reviewString(raw, "proposal_id"), reviewString(raw, "ref"), reviewString(raw, "legacy_id"))
 	if ref != "" {
 		for i, target := range targets {
 			if _, exists := used[i]; exists {
@@ -211,18 +211,18 @@ func v2ReviewSourceMatchCorrectionTarget(
 			}
 		}
 	}
-	probe := v2ReviewSourceCorrectionTarget{
-		SubjectRef:     v2ReviewFirstNonEmpty(v2ReviewString(raw, "subject_ref"), v2ReviewString(raw, "subject")),
-		PredicateKey:   v2ReviewSourcePredicateKey(v2ReviewString(raw, "predicate")),
-		ObjectRef:      v2ReviewFirstNonEmpty(v2ReviewString(raw, "object_ref"), v2ReviewString(raw, "object")),
-		ObjectValueKey: v2ReviewSourceObjectValueKey(raw),
+	probe := reviewSourceCorrectionTarget{
+		SubjectRef:     reviewFirstNonEmpty(reviewString(raw, "subject_ref"), reviewString(raw, "subject")),
+		PredicateKey:   reviewSourcePredicateKey(reviewString(raw, "predicate")),
+		ObjectRef:      reviewFirstNonEmpty(reviewString(raw, "object_ref"), reviewString(raw, "object")),
+		ObjectValueKey: reviewSourceObjectValueKey(raw),
 	}
 	matches := make([]int, 0, 1)
 	for i, target := range targets {
 		if _, exists := used[i]; exists {
 			continue
 		}
-		if v2ReviewSourceCorrectionTargetMatches(probe, target) {
+		if reviewSourceCorrectionTargetMatches(probe, target) {
 			matches = append(matches, i)
 		}
 	}
@@ -239,7 +239,7 @@ func v2ReviewSourceMatchCorrectionTarget(
 	return 0, false
 }
 
-func v2ReviewSourceCorrectionTargetMatches(probe v2ReviewSourceCorrectionTarget, target v2ReviewSourceCorrectionTarget) bool {
+func reviewSourceCorrectionTargetMatches(probe reviewSourceCorrectionTarget, target reviewSourceCorrectionTarget) bool {
 	if probe.SubjectRef == "" || target.SubjectRef == "" || probe.SubjectRef != target.SubjectRef {
 		return false
 	}
@@ -252,8 +252,8 @@ func v2ReviewSourceCorrectionTargetMatches(probe v2ReviewSourceCorrectionTarget,
 	return probe.ObjectValueKey != "" && probe.ObjectValueKey == target.ObjectValueKey
 }
 
-func v2ReviewSourceObjectValueKey(raw map[string]any) string {
-	value, ok := v2PlacementReviewObjectValue(raw, "match")
+func reviewSourceObjectValueKey(raw map[string]any) string {
+	value, ok := placementReviewObjectValue(raw, "match")
 	if !ok {
 		return ""
 	}
@@ -264,23 +264,23 @@ func v2ReviewSourceObjectValueKey(raw map[string]any) string {
 	}, "\x00")
 }
 
-func v2ReviewSourceRequestLocalPredicateCandidate(
+func reviewSourceRequestLocalPredicateCandidate(
 	predicate string,
-	relationship v2PlacementReviewRelationshipSpec,
+	relationship placementReviewRelationshipSpec,
 	kindByRef map[string]string,
-) repository.V2SemanticReviewPredicateCandidate {
-	return repository.V2SemanticReviewPredicateCandidate{
-		PredicateKey:        v2ReviewSourcePredicateKey(predicate),
+) repository.SemanticReviewPredicateCandidate {
+	return repository.SemanticReviewPredicateCandidate{
+		PredicateKey:        reviewSourcePredicateKey(predicate),
 		Version:             1,
-		AllowedSubjectKinds: v2ReviewSourceAllowedKinds(kindByRef[relationship.SubjectRef], string(domain.V2EntityKindOther)),
-		AllowedObjectKinds:  v2ReviewSourceAllowedKinds(v2ReviewSourceRelationshipObjectKind(relationship, kindByRef), string(domain.V2EntityKindOther)),
+		AllowedSubjectKinds: reviewSourceAllowedKinds(kindByRef[relationship.SubjectRef], string(domain.EntityKindOther)),
+		AllowedObjectKinds:  reviewSourceAllowedKinds(reviewSourceRelationshipObjectKind(relationship, kindByRef), string(domain.EntityKindOther)),
 		RelationshipKind:    relationship.RelationshipKind,
-		CurrentCardinality:  string(domain.V2CurrentCardinalityMany),
-		LifecycleState:      string(domain.V2PredicateLifecycleActive),
+		CurrentCardinality:  string(domain.CurrentCardinalityMany),
+		LifecycleState:      string(domain.PredicateLifecycleActive),
 	}
 }
 
-func v2ReviewSourcePredicateLabels(relationship v2PlacementReviewRelationshipSpec) []string {
+func reviewSourcePredicateLabels(relationship placementReviewRelationshipSpec) []string {
 	labels := make([]string, 0, len(relationship.PredicateCandidates)+1)
 	seen := map[string]struct{}{}
 	appendLabel := func(label string) {
@@ -301,10 +301,10 @@ func v2ReviewSourcePredicateLabels(relationship v2PlacementReviewRelationshipSpe
 	return labels
 }
 
-func v2ReviewSourcePredicateResolutionsByLabel(
-	resolutions []repository.V2SemanticReviewPredicateResolution,
-) map[string][]repository.V2SemanticReviewPredicateResolution {
-	out := make(map[string][]repository.V2SemanticReviewPredicateResolution)
+func reviewSourcePredicateResolutionsByLabel(
+	resolutions []repository.SemanticReviewPredicateResolution,
+) map[string][]repository.SemanticReviewPredicateResolution {
+	out := make(map[string][]repository.SemanticReviewPredicateResolution)
 	for _, resolution := range resolutions {
 		label := strings.TrimSpace(resolution.RequestedPredicate)
 		if label != "" {
@@ -314,15 +314,15 @@ func v2ReviewSourcePredicateResolutionsByLabel(
 	return out
 }
 
-func v2ReviewSourceCanonicalPredicateCandidate(
-	resolutions []repository.V2SemanticReviewPredicateResolution,
-) (repository.V2SemanticReviewPredicateCandidate, bool, bool) {
+func reviewSourceCanonicalPredicateCandidate(
+	resolutions []repository.SemanticReviewPredicateResolution,
+) (repository.SemanticReviewPredicateCandidate, bool, bool) {
 	for _, resolution := range resolutions {
 		if resolution.MatchKind == "key" {
 			return resolution.Candidate, true, false
 		}
 	}
-	byKey := map[string]repository.V2SemanticReviewPredicateCandidate{}
+	byKey := map[string]repository.SemanticReviewPredicateCandidate{}
 	for _, resolution := range resolutions {
 		key := strings.TrimSpace(resolution.Candidate.PredicateKey)
 		if key != "" {
@@ -330,18 +330,18 @@ func v2ReviewSourceCanonicalPredicateCandidate(
 		}
 	}
 	if len(byKey) == 0 {
-		return repository.V2SemanticReviewPredicateCandidate{}, false, false
+		return repository.SemanticReviewPredicateCandidate{}, false, false
 	}
 	if len(byKey) > 1 {
-		return repository.V2SemanticReviewPredicateCandidate{}, false, true
+		return repository.SemanticReviewPredicateCandidate{}, false, true
 	}
 	for _, candidate := range byKey {
 		return candidate, true, false
 	}
-	return repository.V2SemanticReviewPredicateCandidate{}, false, false
+	return repository.SemanticReviewPredicateCandidate{}, false, false
 }
 
-func v2ReviewSourceAllowedKinds(value string, fallback string) []string {
+func reviewSourceAllowedKinds(value string, fallback string) []string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		value = fallback
@@ -349,7 +349,7 @@ func v2ReviewSourceAllowedKinds(value string, fallback string) []string {
 	return []string{value}
 }
 
-func v2ReviewSourcePredicateKey(value string) string {
+func reviewSourcePredicateKey(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	out := make([]rune, 0, len(value))
 	lastUnderscore := false

@@ -19,7 +19,7 @@ func TestBuildActiveDreamToolsInvokeAndValidate(t *testing.T) {
 		t.Fatal("list_dreams not registered")
 	}
 	statusEnums := listTool.InputSchema["properties"].(map[string]any)["status"].(map[string]any)["enum"].([]string)
-	for _, status := range domain.V2HypothesisStatuses() {
+	for _, status := range domain.HypothesisStatuses() {
 		if !containsString(statusEnums, status) {
 			t.Fatalf("list_dreams status enum missing %q: %v", status, statusEnums)
 		}
@@ -27,16 +27,16 @@ func TestBuildActiveDreamToolsInvokeAndValidate(t *testing.T) {
 	if containsString(statusEnums, "promoted") {
 		t.Fatalf("list_dreams status enum contains legacy promoted status: %v", statusEnums)
 	}
-	ctx := v2ContractInvokeContext("read", "write")
+	ctx := contractInvokeContext("read", "write")
 	listOut, err := listTool.Invoke(ctx, "profile-dream", map[string]any{
 		"limit":  float64(3),
-		"status": string(domain.V2HypothesisReinforced),
+		"status": string(domain.HypothesisReinforced),
 	})
 	if err != nil {
 		t.Fatalf("list_dreams Invoke: %v", err)
 	}
 	listed := listOut["dreams"].([]map[string]any)
-	if len(listed) != 1 || dreams.lastListOpts.Limit != 3 || dreams.lastListOpts.Status != string(domain.V2HypothesisReinforced) {
+	if len(listed) != 1 || dreams.lastListOpts.Limit != 3 || dreams.lastListOpts.Status != string(domain.HypothesisReinforced) {
 		t.Fatalf("list_dreams output = %v opts = %+v", listOut, dreams.lastListOpts)
 	}
 

@@ -99,7 +99,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("connect postgres: %w", err)
 	}
 	defer pgClient.Close()
-	out, reviewErr := reviewTeamConflicts(ctx, repository.NewV2LedgerRepository(pgClient.GetDB(), postgres.NewRLS()), cfg, now)
+	out, reviewErr := reviewTeamConflicts(ctx, repository.NewLedgerRepository(pgClient.GetDB(), postgres.NewRLS()), cfg, now)
 	if reviewErr != nil && out.TeamID == "" {
 		return reviewErr
 	}
@@ -113,12 +113,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 func reviewTeamConflicts(
 	ctx context.Context,
-	ledger *repository.V2LedgerRepositoryImpl,
+	ledger *repository.LedgerRepositoryImpl,
 	cfg cliConfig,
 	now time.Time,
 ) (reviewOutput, error) {
 	lease := time.Duration(cfg.leaseSeconds) * time.Second
-	run, claimed, err := ledger.ReserveV2RelationshipConflictReviewRun(ctx, repository.V2ConflictReviewRunInput{
+	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, repository.ConflictReviewRunInput{
 		TeamID:       cfg.teamID,
 		WorkerID:     cfg.workerID,
 		LocalRunDate: now,
@@ -135,7 +135,7 @@ func reviewTeamConflicts(
 	if run == nil || !claimed || run.Status == "completed" {
 		return out, nil
 	}
-	counts := repository.V2ConflictReviewRunCompleteInput{
+	counts := repository.ConflictReviewRunCompleteInput{
 		TeamID:      cfg.teamID,
 		ReviewRunID: run.ReviewRunID,
 		WorkerID:    cfg.workerID,
@@ -147,7 +147,7 @@ func reviewTeamConflicts(
 		for id := range attempted {
 			excluded = append(excluded, id)
 		}
-		cases, err := ledger.ClaimV2RelationshipConflictCases(ctx, repository.V2ClaimRelationshipConflictCasesInput{
+		cases, err := ledger.ClaimRelationshipConflictCases(ctx, repository.ClaimRelationshipConflictCasesInput{
 			TeamID:              cfg.teamID,
 			WorkerID:            cfg.workerID,
 			ReviewRunID:         run.ReviewRunID,
@@ -171,7 +171,7 @@ func reviewTeamConflicts(
 			}
 			attempted[conflictCase.ConflictID] = struct{}{}
 			counts.ClaimedCases++
-			result, err := ledger.ReviewV2RelationshipConflictCase(ctx, repository.V2ReviewRelationshipConflictCaseInput{
+			result, err := ledger.ReviewRelationshipConflictCase(ctx, repository.ReviewRelationshipConflictCaseInput{
 				TeamID:      cfg.teamID,
 				WorkerID:    cfg.workerID,
 				ReviewRunID: run.ReviewRunID,
@@ -191,9 +191,9 @@ func reviewTeamConflicts(
 				UpdatedRelationships: append([]string(nil), result.UpdatedRelationships...),
 			})
 			switch result.Outcome {
-			case repository.V2ConflictReviewOutcomeResolve:
+			case repository.ConflictReviewOutcomeResolve:
 				counts.ResolvedCases++
-			case repository.V2ConflictReviewOutcomeOverdue:
+			case repository.ConflictReviewOutcomeOverdue:
 				counts.OverdueCases++
 			default:
 				counts.NoOpCases++
@@ -204,7 +204,7 @@ func reviewTeamConflicts(
 		counts.Status = "failed"
 		counts.LastError = "one or more conflict cases failed"
 	}
-	if err := ledger.CompleteV2RelationshipConflictReviewRun(ctx, counts); err != nil {
+	if err := ledger.CompleteRelationshipConflictReviewRun(ctx, counts); err != nil {
 		return reviewOutput{}, err
 	}
 	out.Status = counts.Status

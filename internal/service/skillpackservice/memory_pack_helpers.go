@@ -21,7 +21,7 @@ func memoryPackActor(ctx context.Context) (requestctx.ActorProfile, error) {
 	return actor, nil
 }
 
-func MemoryPackEndpointText(endpoint V2MemoryPackEndpoint) string {
+func MemoryPackEndpointText(endpoint MemoryPackEndpoint) string {
 	if endpoint.Kind == "value" {
 		return endpoint.Value
 	}
@@ -37,8 +37,8 @@ func MemoryPackSupportedPredicate(predicate string) bool {
 	}
 }
 
-func memoryPackGraphNodes(nodes []repository.V2SemanticGraphNode) map[string]repository.V2SemanticGraphNode {
-	out := map[string]repository.V2SemanticGraphNode{}
+func memoryPackGraphNodes(nodes []repository.SemanticGraphNode) map[string]repository.SemanticGraphNode {
+	out := map[string]repository.SemanticGraphNode{}
 	for _, node := range nodes {
 		out[node.Key] = node
 	}
@@ -46,12 +46,12 @@ func memoryPackGraphNodes(nodes []repository.V2SemanticGraphNode) map[string]rep
 }
 
 func memoryPackCandidateFromEdge(
-	edge repository.V2SemanticGraphEdge,
-	nodes map[string]repository.V2SemanticGraphNode,
-) V2MemoryPackCandidate {
+	edge repository.SemanticGraphEdge,
+	nodes map[string]repository.SemanticGraphNode,
+) MemoryPackCandidate {
 	subject := nodes[edge.Source]
 	object := nodes[edge.Target]
-	candidate := V2MemoryPackCandidate{
+	candidate := MemoryPackCandidate{
 		RelationshipID:   edge.RelationshipID,
 		PredicateKey:     edge.Relationship,
 		SubjectEntityID:  subject.ID,
@@ -71,7 +71,7 @@ func memoryPackCandidateFromEdge(
 	return candidate
 }
 
-func MemoryPackSortedKeys(values map[string]V2MemoryPackEvidenceFragment) []string {
+func MemoryPackSortedKeys(values map[string]MemoryPackEvidenceFragment) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

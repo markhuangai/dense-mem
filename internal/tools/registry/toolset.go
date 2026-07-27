@@ -29,9 +29,9 @@ type Dependencies struct {
 	Remember          memoryservice.RememberService
 	Recall            memoryservice.RecallService
 	Lifecycle         memoryservice.LifecycleService
-	Evaluation        repository.V2EvaluationRepository
+	Evaluation        repository.EvaluationRepository
 	EvaluationEnabled bool
-	Communities       repository.V2CommunityRepository
+	Communities       repository.CommunityRepository
 	MemoryPack        skillpackservice.MemoryPackService
 	Dreams            dreamservice.Service
 }

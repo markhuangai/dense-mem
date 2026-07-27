@@ -40,7 +40,7 @@ func TestScanRecallFeedbackEventReadsFeedbackComment(t *testing.T) {
 	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("[]"), []byte(`[{"type":"fragment","id":"fragment-1","rank":1}]`), []byte(`[{"dream_id":"dream-1","used":true,"quality":"medium","contradicted":false,"feedback_comment":"plausible but weak"}]`))
 	got, err := scanRecallFeedbackEvent(rows)
 	require.NoError(t, err)
-	require.Equal(t, "v2", got.ContractVersion)
+	require.Equal(t, "canonical", got.ContractVersion)
 	require.Equal(t, "current", got.SearchState)
 	require.Equal(t, map[string]any{"code": "vector_unavailable"}, got.Degradation)
 	require.Equal(t, map[string]any{"result_schema": "v2.evidence_relationship_refs.v1"}, got.SnapshotMetadata)
@@ -125,7 +125,7 @@ func recallFeedbackEventRows(t *testing.T, toolArgs []byte, resultRefs []byte, i
 		resultRefs,
 		0,
 		"captured",
-		"v2",
+		"canonical",
 		"",
 		"",
 		"",

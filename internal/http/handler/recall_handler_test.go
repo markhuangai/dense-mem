@@ -19,14 +19,14 @@ import (
 )
 
 type recallDataEnvelope struct {
-	Data memoryservice.V2RecallResult `json:"data"`
+	Data memoryservice.RecallResult `json:"data"`
 }
 
 type stubRecallService struct {
-	recallFunc func(ctx context.Context, req memoryservice.V2RecallRequest) (*memoryservice.V2RecallResult, error)
+	recallFunc func(ctx context.Context, req memoryservice.RecallRequest) (*memoryservice.RecallResult, error)
 }
 
-func (s *stubRecallService) Recall(ctx context.Context, req memoryservice.V2RecallRequest) (*memoryservice.V2RecallResult, error) {
+func (s *stubRecallService) Recall(ctx context.Context, req memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
 	if s.recallFunc != nil {
 		return s.recallFunc(ctx, req)
 	}
@@ -35,32 +35,32 @@ func (s *stubRecallService) Recall(ctx context.Context, req memoryservice.V2Reca
 
 var _ memoryservice.RecallService = (*stubRecallService)(nil)
 
-func TestRecallHandlerRoutesHTTPToV2Recall(t *testing.T) {
+func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	e := echo.New()
 	teamID := uuid.New()
 	profileID := uuid.New()
-	var captured memoryservice.V2RecallRequest
+	var captured memoryservice.RecallRequest
 	var capturedActor requestctx.ActorProfile
 	svc := &stubRecallService{
-		recallFunc: func(ctx context.Context, req memoryservice.V2RecallRequest) (*memoryservice.V2RecallResult, error) {
+		recallFunc: func(ctx context.Context, req memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
 			captured = req
 			actor, ok := requestctx.ActorProfileFromContext(ctx)
 			if !ok {
 				t.Fatal("actor context missing")
 			}
 			capturedActor = actor
-			return &memoryservice.V2RecallResult{
-				RecallID:    "rec_v2",
-				SearchState: string(domain.V2SearchProjectionCurrent),
-				Results: []memoryservice.V2RecallResultItem{{
+			return &memoryservice.RecallResult{
+				RecallID:    "rec_canonical",
+				SearchState: string(domain.SearchProjectionCurrent),
+				Results: []memoryservice.RecallResultItem{{
 					EvidenceID:      "ev-1",
 					RelationshipIDs: []string{"rel-1"},
 					Rank:            2,
 					Context:         "Dense-Mem uses PostgreSQL as the durable authority.",
 				}},
-				DiscoveryPaths: []memoryservice.V2RecallDiscoveryPath{{
+				DiscoveryPaths: []memoryservice.RecallDiscoveryPath{{
 					EvidenceIDs: []string{"ev-1"},
-					Relationships: []memoryservice.V2RecallRelationshipHandle{{
+					Relationships: []memoryservice.RecallRelationshipHandle{{
 						RelationshipID: "rel-1",
 						Predicate:      "uses",
 					}},
@@ -72,17 +72,17 @@ func TestRecallHandlerRoutesHTTPToV2Recall(t *testing.T) {
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(injectProfileMiddleware(teamID))
 	e.Use(injectActorMiddleware(teamID, profileID))
-	e.GET("/api/v1/recall", h.Handle)
+	e.GET("/ui/api/recall", h.Handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=postgres&limit=3&known_evidence_ids=11111111-1111-4111-8111-111111111111&known_relationship_ids=22222222-2222-4222-8222-222222222222&expand_from_entity_ids=33333333-3333-4333-8333-333333333333", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall?query=postgres&limit=3&known_evidence_ids=11111111-1111-4111-8111-111111111111&known_relationship_ids=22222222-2222-4222-8222-222222222222&expand_from_entity_ids=33333333-3333-4333-8333-333333333333", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
 	}
-	if captured.ContractVersion != domain.V2ContractVersion {
-		t.Fatalf("contract_version = %q; want %q", captured.ContractVersion, domain.V2ContractVersion)
+	if captured.ContractVersion != domain.ContractVersion {
+		t.Fatalf("contract_version = %q; want %q", captured.ContractVersion, domain.ContractVersion)
 	}
 	if captured.Query != "postgres" || captured.Limit != 3 {
 		t.Fatalf("captured request = %#v", captured)
@@ -104,8 +104,8 @@ func TestRecallHandlerRoutesHTTPToV2Recall(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v. body=%s", err, rec.Body.String())
 	}
-	if resp.Data.RecallID != "rec_v2" {
-		t.Fatalf("recall_id = %q; want rec_v2", resp.Data.RecallID)
+	if resp.Data.RecallID != "rec_canonical" {
+		t.Fatalf("recall_id = %q; want rec_canonical", resp.Data.RecallID)
 	}
 	if len(resp.Data.Results) != 1 {
 		t.Fatalf("result count = %d; want 1. body=%s", len(resp.Data.Results), rec.Body.String())
@@ -129,9 +129,9 @@ func TestRecallHandlerRequiresTeamContext(t *testing.T) {
 	e := echo.New()
 	h := NewRecallHandler(&stubRecallService{})
 	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.GET("/api/v1/recall", h.Handle)
+	e.GET("/ui/api/recall", h.Handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=postgres", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall?query=postgres", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -147,16 +147,16 @@ func TestRecallHandlerMapsAuthContextError(t *testing.T) {
 	e := echo.New()
 	teamID := uuid.New()
 	svc := &stubRecallService{
-		recallFunc: func(context.Context, memoryservice.V2RecallRequest) (*memoryservice.V2RecallResult, error) {
+		recallFunc: func(context.Context, memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
 			return nil, memoryservice.ErrRecallAuthContext
 		},
 	}
 	h := NewRecallHandler(svc)
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(injectProfileMiddleware(teamID))
-	e.GET("/api/v1/recall", h.Handle)
+	e.GET("/ui/api/recall", h.Handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=postgres", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall?query=postgres", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -170,9 +170,9 @@ func TestRecallHandlerMapsRequiredDegradation(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	svc := &stubRecallService{
-		recallFunc: func(context.Context, memoryservice.V2RecallRequest) (*memoryservice.V2RecallResult, error) {
-			return &memoryservice.V2RecallResult{
-				Degradation: &memoryservice.V2RecallDegradationResult{
+		recallFunc: func(context.Context, memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
+			return &memoryservice.RecallResult{
+				Degradation: &memoryservice.RecallDegradationResult{
 					RequiredFailure: true,
 					Message:         "search unavailable",
 				},
@@ -183,9 +183,9 @@ func TestRecallHandlerMapsRequiredDegradation(t *testing.T) {
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(injectProfileMiddleware(teamID))
 	e.Use(injectActorMiddleware(teamID, profileID))
-	e.GET("/api/v1/recall", h.Handle)
+	e.GET("/ui/api/recall", h.Handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=postgres", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall?query=postgres", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -199,9 +199,9 @@ func TestRecallHandlerMapsEmptyRequiredDegradationMessage(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	svc := &stubRecallService{
-		recallFunc: func(context.Context, memoryservice.V2RecallRequest) (*memoryservice.V2RecallResult, error) {
-			return &memoryservice.V2RecallResult{
-				Degradation: &memoryservice.V2RecallDegradationResult{
+		recallFunc: func(context.Context, memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
+			return &memoryservice.RecallResult{
+				Degradation: &memoryservice.RecallDegradationResult{
 					RequiredFailure: true,
 				},
 			}, nil
@@ -211,9 +211,9 @@ func TestRecallHandlerMapsEmptyRequiredDegradationMessage(t *testing.T) {
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(injectProfileMiddleware(teamID))
 	e.Use(injectActorMiddleware(teamID, profileID))
-	e.GET("/api/v1/recall", h.Handle)
+	e.GET("/ui/api/recall", h.Handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=postgres", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall?query=postgres", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -230,7 +230,7 @@ func TestRecallHandlerMapsGenericError(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	svc := &stubRecallService{
-		recallFunc: func(context.Context, memoryservice.V2RecallRequest) (*memoryservice.V2RecallResult, error) {
+		recallFunc: func(context.Context, memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
 			return nil, errors.New("database details must not leak")
 		},
 	}
@@ -238,9 +238,9 @@ func TestRecallHandlerMapsGenericError(t *testing.T) {
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(injectProfileMiddleware(teamID))
 	e.Use(injectActorMiddleware(teamID, profileID))
-	e.GET("/api/v1/recall", h.Handle)
+	e.GET("/ui/api/recall", h.Handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/recall?query=postgres", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall?query=postgres", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 

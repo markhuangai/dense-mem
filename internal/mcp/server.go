@@ -337,8 +337,8 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	if registry.IsEvaluationTool(tool.Name) && registry.HasTenantOverrideArgs(args) {
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: "evaluation tools do not accept team_id or profile_id"}
 	}
-	if registry.IsV2ContractTool(tool) {
-		if err := registry.ValidateV2ContractInput(tool, args, s.validationScopes(tool)); err != nil {
+	if registry.IsContractTool(tool) {
+		if err := registry.ValidateContractInput(tool, args, s.validationScopes(tool)); err != nil {
 			return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
 		}
 	} else {

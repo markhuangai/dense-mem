@@ -14,16 +14,16 @@ import (
 var ErrSemanticCommitNotAccepted = errors.New("semantic commit requires an accepted review result")
 
 type SemanticCommitService interface {
-	CommitSemantic(ctx context.Context, job SemanticCommitJob) (*repository.V2CommitPlacementSemanticResult, error)
+	CommitSemantic(ctx context.Context, job SemanticCommitJob) (*repository.CommitPlacementSemanticResult, error)
 	CompleteSemanticPlacement(ctx context.Context, job SemanticCommitJob) (*SemanticPlacementCompletionResult, error)
 }
 
 type SemanticCommitDependencies struct {
-	PlacementCommit repository.V2PlacementCommitRepository
+	PlacementCommit repository.PlacementCommitRepository
 }
 
 type semanticCommitService struct {
-	placementCommit repository.V2PlacementCommitRepository
+	placementCommit repository.PlacementCommitRepository
 }
 
 type SemanticCommitJob struct {
@@ -35,7 +35,7 @@ type SemanticCommitJob struct {
 	WorkerID         string
 	ExpectedAttempts int
 	MaxAttempts      int
-	Request          verifier.V2SemanticReviewRequest
+	Request          verifier.SemanticReviewRequest
 	Result           SemanticReviewResult
 	ReviewModel      string
 	PromoteToFact    bool
@@ -43,8 +43,8 @@ type SemanticCommitJob struct {
 
 type SemanticPlacementCompletionResult struct {
 	Status         string
-	SemanticCommit *repository.V2CommitPlacementSemanticResult
-	Terminal       *repository.V2CompletePlacementReviewResult
+	SemanticCommit *repository.CommitPlacementSemanticResult
+	Terminal       *repository.CompletePlacementReviewResult
 }
 
 func NewSemanticCommitService(deps SemanticCommitDependencies) SemanticCommitService {
@@ -54,12 +54,12 @@ func NewSemanticCommitService(deps SemanticCommitDependencies) SemanticCommitSer
 func (s *semanticCommitService) CommitSemantic(
 	ctx context.Context,
 	job SemanticCommitJob,
-) (*repository.V2CommitPlacementSemanticResult, error) {
+) (*repository.CommitPlacementSemanticResult, error) {
 	if s.placementCommit == nil {
 		return nil, errors.New("semantic commit: placement commit repository is required")
 	}
 	job = normalizeSemanticCommitJob(job)
-	if job.Result.Status != string(domain.V2SemanticReviewAccepted) {
+	if job.Result.Status != string(domain.SemanticReviewAccepted) {
 		return nil, ErrSemanticCommitNotAccepted
 	}
 	input, err := semanticCommitInputFromReview(job)
@@ -77,17 +77,17 @@ func (s *semanticCommitService) CompleteSemanticPlacement(
 		return nil, errors.New("semantic commit: placement commit repository is required")
 	}
 	job = normalizeSemanticCommitJob(job)
-	if job.Result.Status == string(domain.V2SemanticReviewAccepted) {
+	if job.Result.Status == string(domain.SemanticReviewAccepted) {
 		committed, err := s.CommitSemantic(ctx, job)
 		if err != nil {
 			return nil, err
 		}
 		return &SemanticPlacementCompletionResult{Status: committed.Status, SemanticCommit: committed}, nil
 	}
-	if job.Result.Status == string(domain.V2SemanticReviewRetryable) {
+	if job.Result.Status == string(domain.SemanticReviewRetryable) {
 		if semanticRetryAttemptsExhausted(job) {
 			exhausted := exhaustedRetryableSemanticCommitJob(job)
-			input, err := v2TerminalReviewInputFromResult(exhausted)
+			input, err := terminalReviewInputFromResult(exhausted)
 			if err != nil {
 				return nil, err
 			}
@@ -97,7 +97,7 @@ func (s *semanticCommitService) CompleteSemanticPlacement(
 			}
 			return &SemanticPlacementCompletionResult{Status: terminal.Status, Terminal: terminal}, nil
 		}
-		input, err := v2RetryableReviewInputFromResult(job)
+		input, err := retryableReviewInputFromResult(job)
 		if err != nil {
 			return nil, err
 		}
@@ -107,7 +107,7 @@ func (s *semanticCommitService) CompleteSemanticPlacement(
 		}
 		return &SemanticPlacementCompletionResult{Status: requeued.Status}, nil
 	}
-	input, err := v2TerminalReviewInputFromResult(job)
+	input, err := terminalReviewInputFromResult(job)
 	if err != nil {
 		return nil, err
 	}
@@ -144,22 +144,22 @@ func semanticRetryAttemptsExhausted(job SemanticCommitJob) bool {
 }
 
 func exhaustedRetryableSemanticCommitJob(job SemanticCommitJob) SemanticCommitJob {
-	job.Result.Status = string(domain.V2SemanticReviewTerminalFailure)
+	job.Result.Status = string(domain.SemanticReviewTerminalFailure)
 	job.Result.FailureStage = semanticFailureStageOrDefault(job.Result.FailureStage, semanticFailureStageUnknown)
 	job.Result.FailureClass = semanticFailureClassOrDefault(job.Result.FailureClass, semanticFailureClassUnknown)
 	job.Result.RetryableExhausted = true
-	job.Result.ValidationErrors = append(job.Result.ValidationErrors, verifier.V2SemanticValidationError{
+	job.Result.ValidationErrors = append(job.Result.ValidationErrors, verifier.SemanticValidationError{
 		Field:   "placement_attempts",
 		Message: "retryable semantic review exhausted placement attempts",
 	})
 	return job
 }
 
-func v2RetryableReviewInputFromResult(job SemanticCommitJob) (repository.V2RequeuePlacementReviewInput, error) {
-	if job.Result.Status != string(domain.V2SemanticReviewRetryable) {
-		return repository.V2RequeuePlacementReviewInput{}, fmt.Errorf("semantic commit: unsupported retryable status %q", job.Result.Status)
+func retryableReviewInputFromResult(job SemanticCommitJob) (repository.RequeuePlacementReviewInput, error) {
+	if job.Result.Status != string(domain.SemanticReviewRetryable) {
+		return repository.RequeuePlacementReviewInput{}, fmt.Errorf("semantic commit: unsupported retryable status %q", job.Result.Status)
 	}
-	return repository.V2RequeuePlacementReviewInput{
+	return repository.RequeuePlacementReviewInput{
 		TeamID:           job.TeamID,
 		OwnerProfileID:   job.OwnerProfileID,
 		IngestID:         job.IngestID,
@@ -170,20 +170,20 @@ func v2RetryableReviewInputFromResult(job SemanticCommitJob) (repository.V2Reque
 	}, nil
 }
 
-func v2TerminalReviewInputFromResult(job SemanticCommitJob) (repository.V2CompletePlacementReviewInput, error) {
+func terminalReviewInputFromResult(job SemanticCommitJob) (repository.CompletePlacementReviewInput, error) {
 	switch job.Result.Status {
-	case string(domain.V2SemanticReviewReviewRequired),
-		string(domain.V2SemanticReviewRejected),
-		string(domain.V2SemanticReviewQuarantined),
-		string(domain.V2SemanticReviewTerminalFailure):
+	case string(domain.SemanticReviewReviewRequired),
+		string(domain.SemanticReviewRejected),
+		string(domain.SemanticReviewQuarantined),
+		string(domain.SemanticReviewTerminalFailure):
 	default:
-		return repository.V2CompletePlacementReviewInput{}, fmt.Errorf("semantic commit: unsupported terminal status %q", job.Result.Status)
+		return repository.CompletePlacementReviewInput{}, fmt.Errorf("semantic commit: unsupported terminal status %q", job.Result.Status)
 	}
 	category := "candidate"
-	if job.Result.Status == string(domain.V2SemanticReviewQuarantined) {
+	if job.Result.Status == string(domain.SemanticReviewQuarantined) {
 		category = "quarantined"
 	}
-	if job.Result.Status == string(domain.V2SemanticReviewTerminalFailure) {
+	if job.Result.Status == string(domain.SemanticReviewTerminalFailure) {
 		category = "failed"
 	}
 	payload := map[string]any{
@@ -204,7 +204,7 @@ func v2TerminalReviewInputFromResult(job SemanticCommitJob) (repository.V2Comple
 	if job.Result.RetryableExhausted {
 		payload["retryable_exhausted"] = true
 	}
-	return repository.V2CompletePlacementReviewInput{
+	return repository.CompletePlacementReviewInput{
 		TeamID:           job.TeamID,
 		OwnerProfileID:   job.OwnerProfileID,
 		IngestID:         job.IngestID,
@@ -218,27 +218,27 @@ func v2TerminalReviewInputFromResult(job SemanticCommitJob) (repository.V2Comple
 	}, nil
 }
 
-func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPlacementSemanticInput, error) {
-	mentionsByRef := make(map[string]verifier.V2SemanticEntityMention, len(job.Request.EntityMentions))
+func semanticCommitInputFromReview(job SemanticCommitJob) (repository.CommitPlacementSemanticInput, error) {
+	mentionsByRef := make(map[string]verifier.SemanticEntityMention, len(job.Request.EntityMentions))
 	for _, mention := range job.Request.EntityMentions {
 		mentionsByRef[mention.Ref] = mention
 	}
-	evidenceByID := make(map[string]verifier.V2SemanticReviewEvidence, len(job.Request.Evidence))
+	evidenceByID := make(map[string]verifier.SemanticReviewEvidence, len(job.Request.Evidence))
 	for _, evidence := range job.Request.Evidence {
 		evidenceByID[evidence.EvidenceID] = evidence
 	}
-	observationsByRef := make(map[string]verifier.V2SemanticRelationshipObservation, len(job.Request.RelationshipObservations))
+	observationsByRef := make(map[string]verifier.SemanticRelationshipObservation, len(job.Request.RelationshipObservations))
 	for _, observation := range job.Request.RelationshipObservations {
 		observationsByRef[observation.Ref] = observation
 	}
 
-	entities := make([]repository.V2PlacementEntityResolutionInput, 0, len(job.Result.EntityResults))
+	entities := make([]repository.PlacementEntityResolutionInput, 0, len(job.Result.EntityResults))
 	for _, result := range job.Result.EntityResults {
 		mention, ok := mentionsByRef[result.Ref]
 		if !ok {
-			return repository.V2CommitPlacementSemanticInput{}, fmt.Errorf("semantic commit: unknown entity result ref %q", result.Ref)
+			return repository.CommitPlacementSemanticInput{}, fmt.Errorf("semantic commit: unknown entity result ref %q", result.Ref)
 		}
-		resolution := repository.V2PlacementEntityResolutionInput{
+		resolution := repository.PlacementEntityResolutionInput{
 			MentionRef:      result.Ref,
 			Action:          result.Action,
 			EntityKind:      mention.Kind,
@@ -259,20 +259,20 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPl
 		entities = append(entities, resolution)
 	}
 
-	relationships := make([]repository.V2PlacementRelationshipDecisionInput, 0, len(job.Result.RelationshipResults))
-	relationshipReviews := make([]repository.V2PlacementRelationshipReviewInput, 0)
+	relationships := make([]repository.PlacementRelationshipDecisionInput, 0, len(job.Result.RelationshipResults))
+	relationshipReviews := make([]repository.PlacementRelationshipReviewInput, 0)
 	for _, result := range job.Result.RelationshipResults {
 		observation, ok := observationsByRef[result.Ref]
 		if !ok {
-			return repository.V2CommitPlacementSemanticInput{}, fmt.Errorf("semantic commit: unknown relationship result ref %q", result.Ref)
+			return repository.CommitPlacementSemanticInput{}, fmt.Errorf("semantic commit: unknown relationship result ref %q", result.Ref)
 		}
 		if result.PredicateStatus != "resolved" || result.PredicateKey == nil {
 			confidence := result.Confidence
-			support, err := v2SemanticPlacementSupport(observation, evidenceByID)
+			support, err := semanticPlacementSupport(observation, evidenceByID)
 			if err != nil {
-				return repository.V2CommitPlacementSemanticInput{}, err
+				return repository.CommitPlacementSemanticInput{}, err
 			}
-			review := repository.V2PlacementRelationshipReviewInput{
+			review := repository.PlacementRelationshipReviewInput{
 				Ref:               result.Ref,
 				SubjectRef:        observation.SubjectRef,
 				OriginalPredicate: observation.OriginalPredicate,
@@ -287,11 +287,11 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPl
 				Support:           support,
 				Reason:            "predicate_needs_review",
 				Payload: map[string]any{
-					"predicate_policy_version": domain.V2PredicatePolicyVersion,
+					"predicate_policy_version": domain.PredicatePolicyVersion,
 				},
 			}
 			if observation.ObjectValue != nil {
-				review.ObjectValue = &repository.V2PlacementValueInput{
+				review.ObjectValue = &repository.PlacementValueInput{
 					Ref:            observation.ObjectValue.Ref,
 					ValueType:      observation.ObjectValue.Type,
 					CanonicalValue: observation.ObjectValue.Value,
@@ -303,17 +303,17 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPl
 			relationshipReviews = append(relationshipReviews, review)
 			continue
 		}
-		predicateCandidate, err := v2SemanticSelectedPredicateCandidate(observation, *result.PredicateKey)
+		predicateCandidate, err := semanticSelectedPredicateCandidate(observation, *result.PredicateKey)
 		if err != nil {
-			return repository.V2CommitPlacementSemanticInput{}, err
+			return repository.CommitPlacementSemanticInput{}, err
 		}
-		relationship := repository.V2PlacementRelationshipDecisionInput{
+		relationship := repository.PlacementRelationshipDecisionInput{
 			Ref:               result.Ref,
 			SubjectRef:        observation.SubjectRef,
 			OriginalPredicate: observation.OriginalPredicate,
 			PredicateKey:      *result.PredicateKey,
 			PredicateVersion:  predicateCandidate.Version,
-			PredicateCandidate: &repository.V2PlacementPredicateCandidateInput{
+			PredicateCandidate: &repository.PlacementPredicateCandidateInput{
 				PredicateKey:     predicateCandidate.PredicateKey,
 				PredicateVersion: predicateCandidate.Version,
 				RelationshipKind: predicateCandidate.RelationshipKind,
@@ -337,19 +337,19 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPl
 			},
 		}
 		if observation.CorrectionTarget != nil {
-			relationship.CorrectionTarget = &repository.V2PlacementCorrectionTargetInput{
+			relationship.CorrectionTarget = &repository.PlacementCorrectionTargetInput{
 				RelationshipID:  observation.CorrectionTarget.RelationshipID,
 				ExpectedVersion: observation.CorrectionTarget.ExpectedVersion,
 			}
 		}
 		if observation.ConflictContext != nil {
-			relationship.ConflictContext = &repository.V2PlacementConflictContextInput{
+			relationship.ConflictContext = &repository.PlacementConflictContextInput{
 				ConflictID:      observation.ConflictContext.ConflictID,
 				ExpectedVersion: observation.ConflictContext.ExpectedVersion,
 			}
 		}
 		if observation.ObjectValue != nil {
-			relationship.ObjectValue = &repository.V2PlacementValueInput{
+			relationship.ObjectValue = &repository.PlacementValueInput{
 				Ref:            observation.ObjectValue.Ref,
 				ValueType:      observation.ObjectValue.Type,
 				CanonicalValue: observation.ObjectValue.Value,
@@ -358,9 +358,9 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPl
 			}
 			relationship.ObjectRef = ""
 		}
-		relationship.Support, err = v2SemanticPlacementSupport(observation, evidenceByID)
+		relationship.Support, err = semanticPlacementSupport(observation, evidenceByID)
 		if err != nil {
-			return repository.V2CommitPlacementSemanticInput{}, err
+			return repository.CommitPlacementSemanticInput{}, err
 		}
 		relationships = append(relationships, relationship)
 	}
@@ -369,7 +369,7 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPl
 	if job.PromoteToFact {
 		category = "fact"
 	}
-	return repository.V2CommitPlacementSemanticInput{
+	return repository.CommitPlacementSemanticInput{
 		TeamID:                   job.TeamID,
 		OwnerProfileID:           job.OwnerProfileID,
 		IngestID:                 job.IngestID,
@@ -391,18 +391,18 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.V2CommitPl
 	}, nil
 }
 
-func v2SemanticPlacementSupport(
-	observation verifier.V2SemanticRelationshipObservation,
-	evidenceByID map[string]verifier.V2SemanticReviewEvidence,
-) (*repository.V2EvidenceSupportInput, error) {
+func semanticPlacementSupport(
+	observation verifier.SemanticRelationshipObservation,
+	evidenceByID map[string]verifier.SemanticReviewEvidence,
+) (*repository.EvidenceSupportInput, error) {
 	evidence, ok := evidenceByID[observation.EvidenceID]
 	if !ok {
 		return nil, fmt.Errorf(
-			"v2 semantic commit: unknown relationship evidence_id %q",
+			"semantic commit: unknown relationship evidence_id %q",
 			observation.EvidenceID,
 		)
 	}
-	return &repository.V2EvidenceSupportInput{
+	return &repository.EvidenceSupportInput{
 		FragmentID:       evidence.FragmentID,
 		SourceGroupKey:   "semantic_review:" + evidence.EvidenceID,
 		SourceID:         evidence.SourceID,
@@ -414,12 +414,12 @@ func v2SemanticPlacementSupport(
 	}, nil
 }
 
-func v2SemanticSelectedPredicateCandidate(
-	observation verifier.V2SemanticRelationshipObservation,
+func semanticSelectedPredicateCandidate(
+	observation verifier.SemanticRelationshipObservation,
 	predicateKey string,
-) (verifier.V2SemanticPredicateCandidate, error) {
+) (verifier.SemanticPredicateCandidate, error) {
 	predicateKey = strings.TrimSpace(predicateKey)
-	var selected *verifier.V2SemanticPredicateCandidate
+	var selected *verifier.SemanticPredicateCandidate
 	for i := range observation.PredicateCandidates {
 		candidate := observation.PredicateCandidates[i]
 		if strings.TrimSpace(candidate.PredicateKey) != predicateKey {
@@ -427,16 +427,16 @@ func v2SemanticSelectedPredicateCandidate(
 		}
 		if selected != nil && (selected.Version != candidate.Version ||
 			selected.RelationshipKind != candidate.RelationshipKind) {
-			return verifier.V2SemanticPredicateCandidate{}, fmt.Errorf(
-				"v2 semantic commit: predicate %q has ambiguous candidate definitions",
+			return verifier.SemanticPredicateCandidate{}, fmt.Errorf(
+				"semantic commit: predicate %q has ambiguous candidate definitions",
 				predicateKey,
 			)
 		}
 		selected = &candidate
 	}
 	if selected == nil {
-		return verifier.V2SemanticPredicateCandidate{}, fmt.Errorf(
-			"v2 semantic commit: predicate %q is outside relationship candidate set",
+		return verifier.SemanticPredicateCandidate{}, fmt.Errorf(
+			"semantic commit: predicate %q is outside relationship candidate set",
 			predicateKey,
 		)
 	}

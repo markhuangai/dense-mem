@@ -89,9 +89,9 @@ func TestAuditHandler_Get_SameProfile(t *testing.T) {
 				}
 			})
 
-			e.GET("/api/v1/profiles/:profileId/audit-log", h.Get)
+			e.GET("/ui/api/team/profiles/:profileId/audit-log", h.Get)
 
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String()+"/audit-log", nil)
+			req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/audit-log", nil)
 			rec := httptest.NewRecorder()
 
 			e.ServeHTTP(rec, req)
@@ -109,8 +109,7 @@ func TestAuditHandler_Get_SameProfile(t *testing.T) {
 }
 
 // TestAuditHandler_Get_TeamRouteUsesTeamID verifies the canonical
-// /api/v1/teams/:teamId/audit-log route reads teamId and authorizes using
-// Principal.TeamID, not the team-profile key ID.
+// /ui/api/team/audit-log route uses Principal.TeamID, not the team-profile key ID.
 func TestAuditHandler_Get_TeamRouteUsesTeamID(t *testing.T) {
 	e := newTestEcho()
 	teamID := uuid.New()
@@ -139,9 +138,9 @@ func TestAuditHandler_Get_TeamRouteUsesTeamID(t *testing.T) {
 		}
 	})
 
-	e.GET("/api/v1/teams/:teamId/audit-log", h.Get)
+	e.GET("/ui/api/team/audit-log", h.Get)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/teams/"+teamID.String()+"/audit-log", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/audit-log", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -178,9 +177,9 @@ func TestAuditHandler_Get_DefaultPagination(t *testing.T) {
 		}
 	})
 
-	e.GET("/api/v1/profiles/:profileId/audit-log", h.Get)
+	e.GET("/ui/api/team/profiles/:profileId/audit-log", h.Get)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String()+"/audit-log", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/audit-log", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -222,10 +221,10 @@ func TestAuditHandler_Get_MaxLimit(t *testing.T) {
 		}
 	})
 
-	e.GET("/api/v1/profiles/:profileId/audit-log", h.Get)
+	e.GET("/ui/api/team/profiles/:profileId/audit-log", h.Get)
 
 	// Request limit=500, should be clamped to 100
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String()+"/audit-log?limit=500", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/audit-log?limit=500", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -268,9 +267,9 @@ func TestAuditHandler_Get_DifferentProfile_Forbidden(t *testing.T) {
 		}
 	})
 
-	e.GET("/api/v1/profiles/:profileId/audit-log", h.Get)
+	e.GET("/ui/api/team/profiles/:profileId/audit-log", h.Get)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+targetProfileID.String()+"/audit-log", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+targetProfileID.String()+"/audit-log", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -309,28 +308,28 @@ func TestAuditHandler_NoUpdateDelete(t *testing.T) {
 	})
 
 	// Only register the GET endpoint - audit log is append-only
-	e.GET("/api/v1/profiles/:profileId/audit-log", h.Get)
+	e.GET("/ui/api/team/profiles/:profileId/audit-log", h.Get)
 
 	// Verify PUT returns 405 (method not allowed - no update route)
-	reqPUT := httptest.NewRequest(http.MethodPut, "/api/v1/profiles/"+profileID.String()+"/audit-log", nil)
+	reqPUT := httptest.NewRequest(http.MethodPut, "/ui/api/team/profiles/"+profileID.String()+"/audit-log", nil)
 	recPUT := httptest.NewRecorder()
 	e.ServeHTTP(recPUT, reqPUT)
 	assert.Equal(t, http.StatusMethodNotAllowed, recPUT.Code, "PUT should return 405 - no update route")
 
 	// Verify POST returns 405 (method not allowed - no create route)
-	reqPOST := httptest.NewRequest(http.MethodPost, "/api/v1/profiles/"+profileID.String()+"/audit-log", nil)
+	reqPOST := httptest.NewRequest(http.MethodPost, "/ui/api/team/profiles/"+profileID.String()+"/audit-log", nil)
 	recPOST := httptest.NewRecorder()
 	e.ServeHTTP(recPOST, reqPOST)
 	assert.Equal(t, http.StatusMethodNotAllowed, recPOST.Code, "POST should return 405 - no create route")
 
 	// Verify DELETE returns 405 (method not allowed - no delete route)
-	reqDELETE := httptest.NewRequest(http.MethodDelete, "/api/v1/profiles/"+profileID.String()+"/audit-log", nil)
+	reqDELETE := httptest.NewRequest(http.MethodDelete, "/ui/api/team/profiles/"+profileID.String()+"/audit-log", nil)
 	recDELETE := httptest.NewRecorder()
 	e.ServeHTTP(recDELETE, reqDELETE)
 	assert.Equal(t, http.StatusMethodNotAllowed, recDELETE.Code, "DELETE should return 405 - no delete route")
 
 	// Verify PATCH returns 405 (method not allowed - no update route)
-	reqPATCH := httptest.NewRequest(http.MethodPatch, "/api/v1/profiles/"+profileID.String()+"/audit-log", nil)
+	reqPATCH := httptest.NewRequest(http.MethodPatch, "/ui/api/team/profiles/"+profileID.String()+"/audit-log", nil)
 	recPATCH := httptest.NewRecorder()
 	e.ServeHTTP(recPATCH, reqPATCH)
 	assert.Equal(t, http.StatusMethodNotAllowed, recPATCH.Code, "PATCH should return 405 - no update route")
@@ -341,9 +340,9 @@ func TestAuditHandler_Get_InvalidUUID(t *testing.T) {
 	e := newTestEcho()
 	h := NewAuditHandler(&mockAuditService{})
 
-	e.GET("/api/v1/profiles/:profileId/audit-log", h.Get)
+	e.GET("/ui/api/team/profiles/:profileId/audit-log", h.Get)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/not-a-uuid/audit-log", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/not-a-uuid/audit-log", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)

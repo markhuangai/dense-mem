@@ -27,11 +27,11 @@ func TestRateLimitService_BuildsKeyWithoutKeyBuilder(t *testing.T) {
 	now := time.Unix(1700000065, 0).UTC() // window start = 1700000040
 	svc := newRateLimitServiceWithClock(store, func() time.Time { return now })
 
-	allowed, remaining, resetAt, err := svc.Check(context.Background(), "profile-1", "/api/v1/search", 10)
+	allowed, remaining, resetAt, err := svc.Check(context.Background(), "profile-1", "/mcp/search", 10)
 	require.NoError(t, err)
 	assert.True(t, allowed)
 	assert.Equal(t, 9, remaining)
-	assert.Equal(t, "profile:profile-1:ratelimit:/api/v1/search:1700000040", store.lastKey)
+	assert.Equal(t, "profile:profile-1:ratelimit:/mcp/search:1700000040", store.lastKey)
 	assert.Equal(t, time.Unix(1700000100, 0).UTC(), resetAt)
 	assert.Equal(t, int64(70), store.lastTTL)
 }

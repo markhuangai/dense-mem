@@ -172,7 +172,7 @@ func TestRecallFeedbackEventServiceRejectsUnsnapshottedOrUnreturnedFeedbackRefs(
 		Used:            true,
 		AnswerSupported: false,
 		Quality:         "low",
-		FeedbackComment: "feedback-only rows must not accept V2 judgments",
+		FeedbackComment: "feedback-only rows must not accept judgments",
 	})
 	require.ErrorContains(t, err, "snapshot is required")
 

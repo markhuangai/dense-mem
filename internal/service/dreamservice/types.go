@@ -50,7 +50,7 @@ type Generator interface {
 
 type Dependencies struct {
 	Remember  memoryservice.RememberService
-	Store     repository.V2DreamRepository
+	Store     repository.DreamRepository
 	AppConfig AppConfig
 	Profiles  ProfileService
 	Locker    CycleLocker
@@ -108,19 +108,19 @@ type ListOptions struct {
 }
 
 type ResolveFeedbackRequest struct {
-	DreamID           string                                  `json:"dream_id"`
-	Decision          string                                  `json:"decision"`
-	Feedback          string                                  `json:"feedback,omitempty"`
-	Evidence          []memoryservice.V2RememberEvidenceInput `json:"evidence,omitempty"`
-	EntityHints       []map[string]any                        `json:"entity_hints,omitempty"`
-	RelationshipHints []map[string]any                        `json:"relationship_hints,omitempty"`
-	IdempotencyKey    string                                  `json:"idempotency_key,omitempty"`
+	DreamID           string                                `json:"dream_id"`
+	Decision          string                                `json:"decision"`
+	Feedback          string                                `json:"feedback,omitempty"`
+	Evidence          []memoryservice.RememberEvidenceInput `json:"evidence,omitempty"`
+	EntityHints       []map[string]any                      `json:"entity_hints,omitempty"`
+	RelationshipHints []map[string]any                      `json:"relationship_hints,omitempty"`
+	IdempotencyKey    string                                `json:"idempotency_key,omitempty"`
 }
 
 type ResolveFeedbackResult struct {
-	Dream   *domain.Dream                   `json:"dream"`
-	Memory  *memoryservice.V2RememberResult `json:"memory,omitempty"`
-	Deleted bool                            `json:"deleted,omitempty"`
+	Dream   *domain.Dream                 `json:"dream"`
+	Memory  *memoryservice.RememberResult `json:"memory,omitempty"`
+	Deleted bool                          `json:"deleted,omitempty"`
 }
 
 type StatusResult struct {

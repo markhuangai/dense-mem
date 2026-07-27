@@ -16,9 +16,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-var ErrFreshV2AuthorityBlocked = errors.New("authority repository: fresh V2 authority blocked")
+var ErrFreshAuthorityBlocked = errors.New("authority repository: fresh authority blocked")
 
-type CommitFreshV2AuthorityInput struct {
+type CommitFreshAuthorityInput struct {
 	MarkerVersion string
 	Metadata      map[string]any
 	Now           time.Time
@@ -97,8 +97,8 @@ var freshAuthorityApplicationTables = []string{
 	"v2_migration_operator_actions",
 }
 
-func (r *AuthorityRepository) GetLatestMarker(ctx context.Context) (*domain.V2CompatibilityMarker, error) {
-	var out *domain.V2CompatibilityMarker
+func (r *AuthorityRepository) GetLatestMarker(ctx context.Context) (*domain.CompatibilityMarker, error) {
+	var out *domain.CompatibilityMarker
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		row := tx.Raw(`
 			SELECT marker_id::text, marker_kind, version, status,
@@ -108,8 +108,8 @@ func (r *AuthorityRepository) GetLatestMarker(ctx context.Context) (*domain.V2Co
 			WHERE marker_kind = ?
 			ORDER BY created_at DESC, marker_id DESC
 			LIMIT 1
-		`, domain.V2MigrationMarkerKindCutover).Row()
-		record, err := scanV2CompatibilityMarker(row)
+		`, domain.MigrationMarkerKindCutover).Row()
+		record, err := scanCompatibilityMarker(row)
 		if err != nil {
 			return err
 		}
@@ -125,10 +125,10 @@ func (r *AuthorityRepository) GetLatestMarker(ctx context.Context) (*domain.V2Co
 	return out, nil
 }
 
-func (r *AuthorityRepository) CommitFreshV2Authority(
+func (r *AuthorityRepository) CommitFreshAuthority(
 	ctx context.Context,
-	input CommitFreshV2AuthorityInput,
-) (*domain.V2CompatibilityMarker, error) {
+	input CommitFreshAuthorityInput,
+) (*domain.CompatibilityMarker, error) {
 	now := input.Now.UTC()
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -141,25 +141,25 @@ func (r *AuthorityRepository) CommitFreshV2Authority(
 	if err != nil {
 		return nil, err
 	}
-	var out *domain.V2CompatibilityMarker
+	var out *domain.CompatibilityMarker
 	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		var existingMarkerCount int
 		if err := tx.Raw(`
 			SELECT count(*)::int
 			FROM v2_compatibility_markers
 			WHERE marker_kind = ?
-		`, domain.V2MigrationMarkerKindCutover).Scan(&existingMarkerCount).Error; err != nil {
+		`, domain.MigrationMarkerKindCutover).Scan(&existingMarkerCount).Error; err != nil {
 			return err
 		}
 		if existingMarkerCount > 0 {
-			return fmt.Errorf("%w: cutover marker already exists", ErrFreshV2AuthorityBlocked)
+			return fmt.Errorf("%w: cutover marker already exists", ErrFreshAuthorityBlocked)
 		}
 		nonempty, err := freshAuthorityNonemptyTables(tx)
 		if err != nil {
 			return err
 		}
 		if len(nonempty) > 0 {
-			return fmt.Errorf("%w: nonempty application tables: %s", ErrFreshV2AuthorityBlocked, strings.Join(nonempty, ", "))
+			return fmt.Errorf("%w: nonempty application tables: %s", ErrFreshAuthorityBlocked, strings.Join(nonempty, ", "))
 		}
 		row := tx.Raw(`
 			INSERT INTO v2_compatibility_markers (
@@ -171,9 +171,9 @@ func (r *AuthorityRepository) CommitFreshV2Authority(
 			RETURNING marker_id::text, marker_kind, version, status,
 			          COALESCE(run_id::text, ''), corpus_hash, gate_report_hash,
 			          metadata::text, created_at
-		`, uuid.NewString(), domain.V2MigrationMarkerKindCutover, input.MarkerVersion,
-			domain.V2MigrationMarkerCompatible, string(metadataJSON), now).Row()
-		marker, err := scanV2CompatibilityMarker(row)
+		`, uuid.NewString(), domain.MigrationMarkerKindCutover, input.MarkerVersion,
+			domain.MigrationMarkerCompatible, string(metadataJSON), now).Row()
+		marker, err := scanCompatibilityMarker(row)
 		if err != nil {
 			return err
 		}
@@ -181,7 +181,7 @@ func (r *AuthorityRepository) CommitFreshV2Authority(
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, ErrFreshV2AuthorityBlocked) {
+		if errors.Is(err, ErrFreshAuthorityBlocked) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("authority repository: commit fresh authority: %w", err)
@@ -229,8 +229,8 @@ type authorityRowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanV2CompatibilityMarker(row authorityRowScanner) (*domain.V2CompatibilityMarker, error) {
-	var record domain.V2CompatibilityMarker
+func scanCompatibilityMarker(row authorityRowScanner) (*domain.CompatibilityMarker, error) {
+	var record domain.CompatibilityMarker
 	var metadataJSON string
 	if err := row.Scan(
 		&record.MarkerID,

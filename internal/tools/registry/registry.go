@@ -1,9 +1,8 @@
 // Package registry is the single source of truth for the dense-mem tool catalog.
 //
 // Every AI-exposed verb is registered once here with its name, description,
-// JSON Schemas, required scopes, and a bound invoker. HTTP handlers, the
-// catalog endpoint (Unit 21), the OpenAPI generator (Unit 23), and the MCP
-// server (Unit 24) all read from this registry instead of duplicating schemas.
+// JSON Schemas, required scopes, and a bound invoker. MCP handlers read from
+// this registry instead of duplicating schemas.
 package registry
 
 import (
@@ -129,8 +128,8 @@ func (r *inMemoryRegistry) Get(name string) (Tool, bool) {
 	return t, ok
 }
 
-// List returns all registered tools sorted alphabetically by Name so the output
-// is deterministic for the catalog endpoint, OpenAPI spec, and MCP tool list.
+// List returns all registered tools sorted alphabetically by Name so the MCP
+// tool list is deterministic.
 func (r *inMemoryRegistry) List() []Tool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

@@ -11,7 +11,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 )
 
-const presetLocalEval1KV2 = "local_eval_1k_v2"
+const (
+	presetLocalEval1K     = "local_eval_1k"
+	seedIdentityLocalEval = "local_eval_1k_v2"
+)
 
 type generatedCase struct {
 	Case          evalharness.Case
@@ -58,9 +61,9 @@ type categorySpec struct {
 }
 
 func main() {
-	preset := flag.String("preset", presetLocalEval1KV2, "seed preset to generate")
-	outDir := flag.String("out", filepath.Join("tests", "eval", "seeds", presetLocalEval1KV2), "seed output directory")
-	suitePath := flag.String("suite", filepath.Join("tests", "eval", "suites", presetLocalEval1KV2+".jsonl"), "suite JSONL output path")
+	preset := flag.String("preset", presetLocalEval1K, "seed preset to generate")
+	outDir := flag.String("out", filepath.Join("tests", "eval", "seeds", presetLocalEval1K), "seed output directory")
+	suitePath := flag.String("suite", filepath.Join("tests", "eval", "suites", presetLocalEval1K+".jsonl"), "suite JSONL output path")
 	flag.Parse()
 	outProvided := false
 	suiteProvided := false
@@ -79,22 +82,29 @@ func main() {
 		*suitePath = filepath.Join("tests", "eval", "suites", *preset+".jsonl")
 	}
 
-	switch *preset {
-	case presetLocalEval1KV2:
-		if err := generateLocalEval1KV2(*outDir, *suitePath); err != nil {
-			exitf("generate seed: %v", err)
-		}
-	default:
-		exitf("unsupported preset %q", *preset)
+	if err := generatePreset(*preset, *outDir, *suitePath); err != nil {
+		exitf("%v", err)
 	}
 	fmt.Printf("generated %s in %s and %s\n", *preset, *outDir, *suitePath)
 }
 
-func generateLocalEval1KV2(outDir, suitePath string) error {
-	generated := buildLocalEval1KV2()
+func generatePreset(preset, outDir, suitePath string) error {
+	switch preset {
+	case presetLocalEval1K, seedIdentityLocalEval:
+		if err := generateLocalEval1K(outDir, suitePath); err != nil {
+			return fmt.Errorf("generate seed: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported preset %q", preset)
+	}
+}
+
+func generateLocalEval1K(outDir, suitePath string) error {
+	generated := buildLocalEval1K()
 	manifest := evalharness.SeedManifest{
 		SchemaVersion:     evalharness.SeedSchemaVersion,
-		SeedID:            presetLocalEval1KV2,
+		SeedID:            seedIdentityLocalEval,
 		Description:       "Deterministic 1k local eval seed for recall ranking and misleading-memory regressions.",
 		GeneratedAt:       "2026-06-28T00:00:00Z",
 		CorpusFile:        "corpus.jsonl",
@@ -167,7 +177,7 @@ func generateLocalEval1KV2(outDir, suitePath string) error {
 	return writeJSONL(suitePath, suite)
 }
 
-func buildLocalEval1KV2() []generatedCase {
+func buildLocalEval1K() []generatedCase {
 	out := make([]generatedCase, 0, 1000)
 	for i := 1; i <= 100; i++ {
 		out = append(out, buildCase(sanityScenario(i), i, false, "sanity", "sanity_case"))
@@ -183,7 +193,7 @@ func buildLocalEval1KV2() []generatedCase {
 }
 
 func buildCase(s scenario, globalIndex int, adversarial bool, category, transform string) generatedCase {
-	caseID := fmt.Sprintf("%s_%04d", presetLocalEval1KV2, globalIndex)
+	caseID := fmt.Sprintf("%s_%04d", seedIdentityLocalEval, globalIndex)
 	requiredDocID := caseID + "_required"
 	badDocIDs := []string{caseID + "_negative_01", caseID + "_negative_02", caseID + "_negative_03"}
 	slices := []string{"sanity"}
@@ -253,7 +263,7 @@ func corpusItem(sourceDocID, title, content, category, role string, quality floa
 		SourceDocID:   sourceDocID,
 		Title:         title,
 		Content:       content,
-		SourceDataset: presetLocalEval1KV2,
+		SourceDataset: seedIdentityLocalEval,
 		SourceType:    "synthetic",
 		Authority:     role,
 		SourceQuality: quality,

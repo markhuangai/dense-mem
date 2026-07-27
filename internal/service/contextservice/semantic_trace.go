@@ -15,7 +15,7 @@ import (
 var ErrTraceAuthContext = errors.New("trace: authenticated actor context is required")
 
 type SemanticTraceStore interface {
-	TraceRelationship(ctx context.Context, input repository.V2TraceRelationshipInput) (*repository.V2RelationshipTraceResult, error)
+	TraceRelationship(ctx context.Context, input repository.TraceRelationshipInput) (*repository.RelationshipTraceResult, error)
 }
 
 type semanticTraceService struct {
@@ -29,24 +29,24 @@ func NewSemantic(store SemanticTraceStore) Service {
 }
 
 type SemanticTrace struct {
-	Relationship           *repository.V2RelationshipTraceRecord            `json:"relationship,omitempty"`
-	Observations           []repository.V2RelationshipObservationRecord     `json:"observations,omitempty"`
-	EvidenceSupports       []repository.V2RelationshipEvidenceSupportRecord `json:"evidence_supports,omitempty"`
-	SupportDecisionEvents  []repository.V2RelationshipSupportDecisionEvent  `json:"support_decision_events,omitempty"`
-	EvidenceFragments      []repository.V2TraceEvidenceFragment             `json:"evidence_fragments,omitempty"`
-	VerificationEvents     []repository.V2RelationshipVerificationEvent     `json:"verification_events,omitempty"`
-	Transitions            []repository.V2RelationshipTransitionEvent       `json:"transitions,omitempty"`
-	Conflicts              []repository.V2RelationshipConflictCaseRecord    `json:"conflicts,omitempty"`
-	CrossProfileReferences []repository.V2RelationshipCrossReferenceRecord  `json:"cross_profile_references,omitempty"`
-	IdentityCorrections    []repository.V2EntityCorrectionEventRecord       `json:"identity_corrections,omitempty"`
-	SupersessionLineage    []repository.V2RelationshipTraceRecord           `json:"supersession_lineage,omitempty"`
-	SearchDocuments        []repository.V2TraceSearchDocument               `json:"search_documents,omitempty"`
-	EmbeddingJobs          []repository.V2TraceEmbeddingJob                 `json:"embedding_jobs,omitempty"`
-	SemanticNodes          []repository.V2SemanticGraphNode                 `json:"semantic_nodes,omitempty"`
-	SemanticEdges          []repository.V2SemanticGraphEdge                 `json:"semantic_edges,omitempty"`
-	VisitedEntityIDs       []string                                         `json:"visited_entity_ids,omitempty"`
-	StoppedReason          string                                           `json:"stopped_reason,omitempty"`
-	Truncated              bool                                             `json:"truncated,omitempty"`
+	Relationship           *repository.RelationshipTraceRecord            `json:"relationship,omitempty"`
+	Observations           []repository.RelationshipObservationRecord     `json:"observations,omitempty"`
+	EvidenceSupports       []repository.RelationshipEvidenceSupportRecord `json:"evidence_supports,omitempty"`
+	SupportDecisionEvents  []repository.RelationshipSupportDecisionEvent  `json:"support_decision_events,omitempty"`
+	EvidenceFragments      []repository.TraceEvidenceFragment             `json:"evidence_fragments,omitempty"`
+	VerificationEvents     []repository.RelationshipVerificationEvent     `json:"verification_events,omitempty"`
+	Transitions            []repository.RelationshipTransitionEvent       `json:"transitions,omitempty"`
+	Conflicts              []repository.RelationshipConflictCaseRecord    `json:"conflicts,omitempty"`
+	CrossProfileReferences []repository.RelationshipCrossReferenceRecord  `json:"cross_profile_references,omitempty"`
+	IdentityCorrections    []repository.EntityCorrectionEventRecord       `json:"identity_corrections,omitempty"`
+	SupersessionLineage    []repository.RelationshipTraceRecord           `json:"supersession_lineage,omitempty"`
+	SearchDocuments        []repository.TraceSearchDocument               `json:"search_documents,omitempty"`
+	EmbeddingJobs          []repository.TraceEmbeddingJob                 `json:"embedding_jobs,omitempty"`
+	SemanticNodes          []repository.SemanticGraphNode                 `json:"semantic_nodes,omitempty"`
+	SemanticEdges          []repository.SemanticGraphEdge                 `json:"semantic_edges,omitempty"`
+	VisitedEntityIDs       []string                                       `json:"visited_entity_ids,omitempty"`
+	StoppedReason          string                                         `json:"stopped_reason,omitempty"`
+	Truncated              bool                                           `json:"truncated,omitempty"`
 }
 
 func (s *semanticTraceService) Trace(ctx context.Context, _ string, req TraceRequest) (*TraceResult, error) {
@@ -65,7 +65,7 @@ func (s *semanticTraceService) Trace(ctx context.Context, _ string, req TraceReq
 		return nil, errors.New("trace: relationship_id is required")
 	}
 
-	trace, err := s.store.TraceRelationship(ctx, repository.V2TraceRelationshipInput{
+	trace, err := s.store.TraceRelationship(ctx, repository.TraceRelationshipInput{
 		TeamID:                  actor.TeamID.String(),
 		RelationshipID:          relationshipID,
 		IncludeEvidenceContent:  req.IncludeEvidenceContent,
@@ -91,7 +91,7 @@ func (s *semanticTraceService) Assemble(context.Context, string, AssembleRequest
 	return nil, errors.New("context assemble: not implemented")
 }
 
-func semanticTraceFromRepository(trace *repository.V2RelationshipTraceResult) *SemanticTrace {
+func semanticTraceFromRepository(trace *repository.RelationshipTraceResult) *SemanticTrace {
 	if trace == nil {
 		return &SemanticTrace{}
 	}

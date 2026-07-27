@@ -13,7 +13,7 @@ import (
 )
 
 func TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback(t *testing.T) {
-	_, appDB, rls, cleanup := setupV2LedgerRepositoryDB(t)
+	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -55,11 +55,11 @@ func TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback(t *testing.T
 		ToolName:                  "recall_memory",
 		Query:                     "postgres memory",
 		ToolArgs:                  map[string]any{"input": map[string]any{"query": "postgres memory"}},
-		ContractVersion:           domain.V2ContractVersion,
+		ContractVersion:           domain.ContractVersion,
 		RankingProfileVersion:     "ranking-v1",
 		EmbeddingContractVersion:  "embedding-v1",
 		SearchIndexProfileVersion: "search-v1",
-		SearchState:               string(domain.V2SearchProjectionCurrent),
+		SearchState:               string(domain.SearchProjectionCurrent),
 		Degradation:               map[string]any{"vector": "unavailable"},
 		SnapshotMetadata:          map[string]any{"result_schema": "v2.evidence_relationship_refs.v1"},
 		ResultRefs: []domain.RecallFeedbackResultRef{{
@@ -67,7 +67,7 @@ func TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback(t *testing.T
 			ID:             "00000000-0000-0000-0000-00000000e001",
 			Rank:           1,
 			Tier:           "evidence",
-			StatusAtRecall: string(domain.V2SearchProjectionCurrent),
+			StatusAtRecall: string(domain.SearchProjectionCurrent),
 		}},
 	})
 	require.NoError(t, err)
@@ -93,8 +93,8 @@ func TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback(t *testing.T
 	got, err := repo.Get(ctx, recallID)
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	require.Equal(t, domain.V2ContractVersion, got.ContractVersion)
-	require.Equal(t, string(domain.V2SearchProjectionCurrent), got.SearchState)
+	require.Equal(t, domain.ContractVersion, got.ContractVersion)
+	require.Equal(t, string(domain.SearchProjectionCurrent), got.SearchState)
 	require.Equal(t, map[string]any{"vector": "unavailable"}, got.Degradation)
 	require.Equal(t, map[string]any{"result_schema": "v2.evidence_relationship_refs.v1"}, got.SnapshotMetadata)
 	require.Len(t, got.ResultRefs, 1)

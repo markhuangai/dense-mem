@@ -80,7 +80,7 @@ func TestEvaluationDreamTools(t *testing.T) {
 		"max_outputs":        float64(7),
 		"seed_dreams": []any{map[string]any{
 			"hypothesis":       " Dense-Mem uses PostgreSQL ",
-			"what_if":          " v2 authority ",
+			"what_if":          " authority ",
 			"possible_outcome": " cleaner runtime ",
 			"rationale":        " architecture decision ",
 			"likelihood":       0.7,
@@ -217,7 +217,7 @@ func TestEvaluationRecallFeedbackEventTools(t *testing.T) {
 }
 
 func evaluationToolContext(teamID string) context.Context {
-	ctx := v2ContractInvokeContext("read", "write", "feedback:read")
+	ctx := contractInvokeContext("read", "write", "feedback:read")
 	return requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
 		TeamID:   uuid.MustParse(teamID),
 		TeamName: "Eval Team",

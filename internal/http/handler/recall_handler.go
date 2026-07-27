@@ -21,7 +21,7 @@ type RecallHandlerInterface interface {
 	Handle(c echo.Context) error
 }
 
-// RecallHandler serves GET /api/v1/recall from the active recall pipeline.
+// RecallHandler serves GET /ui/api/recall from the active recall pipeline.
 type RecallHandler struct {
 	svc memoryservice.RecallService
 }
@@ -50,8 +50,8 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	result, err := h.svc.Recall(ctx, memoryservice.V2RecallRequest{
-		ContractVersion: domain.V2ContractVersion,
+	result, err := h.svc.Recall(ctx, memoryservice.RecallRequest{
+		ContractVersion: domain.ContractVersion,
 		Query:           req.Query,
 		Limit:           req.Limit,
 		ValidAt:         req.ValidAt,
@@ -86,22 +86,22 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 	return response.SuccessOK(c, recallHTTPResult(result))
 }
 
-func recallHTTPResult(result *memoryservice.V2RecallResult) memoryservice.V2RecallResult {
+func recallHTTPResult(result *memoryservice.RecallResult) memoryservice.RecallResult {
 	if result == nil {
-		result = &memoryservice.V2RecallResult{}
+		result = &memoryservice.RecallResult{}
 	}
 	out := *result
 	if out.Results == nil {
-		out.Results = []memoryservice.V2RecallResultItem{}
+		out.Results = []memoryservice.RecallResultItem{}
 	}
 	if out.Conflicts == nil {
-		out.Conflicts = []memoryservice.V2RecallConflictSummary{}
+		out.Conflicts = []memoryservice.RecallConflictSummary{}
 	}
 	if out.DiscoveryPaths == nil {
-		out.DiscoveryPaths = []memoryservice.V2RecallDiscoveryPath{}
+		out.DiscoveryPaths = []memoryservice.RecallDiscoveryPath{}
 	}
 	if out.RelatedHypotheses == nil {
-		out.RelatedHypotheses = []memoryservice.V2RelatedHypothesisSummary{}
+		out.RelatedHypotheses = []memoryservice.RelatedHypothesisSummary{}
 	}
 	if strings.TrimSpace(out.DiscoveryGuidance) == "" {
 		out.DiscoveryGuidance = "No additional discovery guidance."

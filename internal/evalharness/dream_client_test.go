@@ -4,21 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 )
 
 func TestHTTPClientRunsDreamCycleAndExportsDreamMapping(t *testing.T) {
 	var runInput map[string]any
 	var listInput map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/tools/eval_run_dream_cycle":
+		case "tool:eval_run_dream_cycle":
 			if err := json.NewDecoder(r.Body).Decode(&runInput); err != nil {
 				t.Fatalf("decode run dream cycle input: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": "run-1"})
-		case "/api/v1/tools/eval_list_knowledge_refs":
+		case "tool:eval_list_knowledge_refs":
 			if err := json.NewDecoder(r.Body).Decode(&listInput); err != nil {
 				t.Fatalf("decode list dreams input: %v", err)
 			}

@@ -49,7 +49,7 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 		result.Status = "completed"
 		return result, nil
 	}
-	inputs, err := s.deps.Store.ListV2DreamInputs(ctx, repository.V2DreamInputListInput{
+	inputs, err := s.deps.Store.ListDreamInputs(ctx, repository.DreamInputListInput{
 		TeamID: teamID,
 		Limit:  cfg.MaxOutputs * 4,
 	})
@@ -63,7 +63,7 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 	if req.Manual {
 		windowKey = "manual:" + uuid.NewString()
 	}
-	claimed, err := s.deps.Store.ClaimV2DreamCycle(ctx, repository.V2DreamCycleClaimInput{
+	claimed, err := s.deps.Store.ClaimDreamCycle(ctx, repository.DreamCycleClaimInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		RunDate:        runDate,
@@ -95,7 +95,7 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 		result.Error = runErr.Error()
 		completeStatus = "failed"
 	}
-	if err := s.deps.Store.CompleteV2DreamCycle(ctx, repository.V2DreamCycleCompleteInput{
+	if err := s.deps.Store.CompleteDreamCycle(ctx, repository.DreamCycleCompleteInput{
 		TeamID:             teamID,
 		OwnerProfileID:     ownerID,
 		RunID:              claimed.RunID,
@@ -117,18 +117,18 @@ func (s *service) persistHypotheses(
 	teamID string,
 	ownerID string,
 	runID string,
-	inputs []repository.V2DreamInput,
+	inputs []repository.DreamInput,
 	seeds []SeedDream,
 	maxOutputs int,
 ) (int, int, error) {
 	if maxOutputs <= 0 {
 		maxOutputs = DefaultMaxOutputs
 	}
-	byID := make(map[string]repository.V2DreamInput, len(inputs))
+	byID := make(map[string]repository.DreamInput, len(inputs))
 	for _, input := range inputs {
 		byID[input.RelationshipID] = input
 	}
-	proposals := []repository.V2UpsertHypothesisInput{}
+	proposals := []repository.UpsertHypothesisInput{}
 	generatedRejected := 0
 	generatedAttempted := false
 	if len(seeds) > 0 {
@@ -149,10 +149,10 @@ func (s *service) persistHypotheses(
 		proposal.TeamID = teamID
 		proposal.OwnerProfileID = ownerID
 		proposal.RunID = runID
-		record, inserted, err := s.deps.Store.UpsertV2Hypothesis(ctx, proposal)
+		record, inserted, err := s.deps.Store.UpsertHypothesis(ctx, proposal)
 		if err != nil {
-			if errors.Is(err, repository.ErrV2DreamExactRelationshipExists) ||
-				errors.Is(err, repository.ErrV2DreamSourceStale) {
+			if errors.Is(err, repository.ErrDreamExactRelationshipExists) ||
+				errors.Is(err, repository.ErrDreamSourceStale) {
 				rejected++
 				continue
 			}
@@ -168,10 +168,10 @@ func (s *service) persistHypotheses(
 func (s *service) generateDreamProposals(
 	ctx context.Context,
 	ownerID string,
-	inputs []repository.V2DreamInput,
-	byID map[string]repository.V2DreamInput,
+	inputs []repository.DreamInput,
+	byID map[string]repository.DreamInput,
 	maxOutputs int,
-) ([]repository.V2UpsertHypothesisInput, int, bool, error) {
+) ([]repository.UpsertHypothesisInput, int, bool, error) {
 	if len(inputs) == 0 || s.deps.Generator == nil {
 		return nil, 0, false, nil
 	}
@@ -189,7 +189,7 @@ func (s *service) generateDreamProposals(
 	return proposals, rejected, len(generated) > 0, nil
 }
 
-func dreamGeneratorInputs(inputs []repository.V2DreamInput) []DreamInput {
+func dreamGeneratorInputs(inputs []repository.DreamInput) []DreamInput {
 	out := make([]DreamInput, 0, len(inputs))
 	for _, input := range inputs {
 		out = append(out, DreamInput{
@@ -204,8 +204,8 @@ func dreamGeneratorInputs(inputs []repository.V2DreamInput) []DreamInput {
 	return out
 }
 
-func dreamProposalsFromCandidates(inputs []repository.V2DreamInput, maxOutputs int) []repository.V2UpsertHypothesisInput {
-	out := make([]repository.V2UpsertHypothesisInput, 0, maxOutputs)
+func dreamProposalsFromCandidates(inputs []repository.DreamInput, maxOutputs int) []repository.UpsertHypothesisInput {
+	out := make([]repository.UpsertHypothesisInput, 0, maxOutputs)
 	for _, input := range inputs {
 		if input.Tier != "candidate" || input.Status != "pending_evidence" {
 			continue
@@ -226,11 +226,11 @@ func dreamProposalsFromCandidates(inputs []repository.V2DreamInput, maxOutputs i
 
 func dreamProposalsFromGenerated(
 	generated []GeneratedDream,
-	inputs map[string]repository.V2DreamInput,
+	inputs map[string]repository.DreamInput,
 	maxOutputs int,
 	generatorModel string,
-) ([]repository.V2UpsertHypothesisInput, int) {
-	out := make([]repository.V2UpsertHypothesisInput, 0, maxOutputs)
+) ([]repository.UpsertHypothesisInput, int) {
+	out := make([]repository.UpsertHypothesisInput, 0, maxOutputs)
 	rejected := 0
 	allowed := buildDreamEndpointAllowlist(inputs)
 	for _, item := range generated {
@@ -255,7 +255,7 @@ func dreamProposalsFromGenerated(
 		proposal.Payload["possible_outcome"] = strings.TrimSpace(item.PossibleOutcome)
 		proposal.GeneratorKind = "provider"
 		proposal.GeneratorVersion = firstNonEmpty(generatorModel, "dream-v2.provider")
-		if !applyV2GeneratedTarget(&proposal, item, allowed) {
+		if !applyGeneratedTarget(&proposal, item, allowed) {
 			rejected++
 			continue
 		}
@@ -270,10 +270,10 @@ func dreamProposalsFromGenerated(
 
 func dreamProposalsFromSeeds(
 	seeds []SeedDream,
-	inputs map[string]repository.V2DreamInput,
+	inputs map[string]repository.DreamInput,
 	maxOutputs int,
-) []repository.V2UpsertHypothesisInput {
-	out := make([]repository.V2UpsertHypothesisInput, 0, maxOutputs)
+) []repository.UpsertHypothesisInput {
+	out := make([]repository.UpsertHypothesisInput, 0, maxOutputs)
 	for _, seed := range seeds {
 		statement := strings.TrimSpace(seed.Hypothesis)
 		if statement == "" {
@@ -297,11 +297,11 @@ func dreamProposalsFromSeeds(
 	return out
 }
 
-func dreamProposalFromInput(input repository.V2DreamInput, statement string) repository.V2UpsertHypothesisInput {
-	return dreamProposalFromSources([]repository.V2DreamInput{input}, statement)
+func dreamProposalFromInput(input repository.DreamInput, statement string) repository.UpsertHypothesisInput {
+	return dreamProposalFromSources([]repository.DreamInput{input}, statement)
 }
 
-func dreamProposalFromSources(sources []repository.V2DreamInput, statement string) repository.V2UpsertHypothesisInput {
+func dreamProposalFromSources(sources []repository.DreamInput, statement string) repository.UpsertHypothesisInput {
 	input := sources[0]
 	sourceRefs := make([]map[string]any, 0, len(sources))
 	sourceVersions := make(map[string]int, len(sources))
@@ -329,7 +329,7 @@ func dreamProposalFromSources(sources []repository.V2DreamInput, statement strin
 		"source_tiers":    sourceTiers,
 		"source_statuses": sourceStatuses,
 	}
-	proposal := repository.V2UpsertHypothesisInput{
+	proposal := repository.UpsertHypothesisInput{
 		Statement:             strings.TrimSpace(statement),
 		Rationale:             "Eligible pending relationship needs independent evidence before semantic commitment.",
 		SubjectEntityID:       input.SubjectEntityID,
@@ -348,7 +348,7 @@ func dreamProposalFromSources(sources []repository.V2DreamInput, statement strin
 	return proposal
 }
 
-func dreamSourceType(input repository.V2DreamInput) string {
+func dreamSourceType(input repository.DreamInput) string {
 	switch input.Tier {
 	case "candidate":
 		return "candidate_relationship"
@@ -361,7 +361,7 @@ func dreamSourceType(input repository.V2DreamInput) string {
 	}
 }
 
-func preferredDreamTargetSource(sources []repository.V2DreamInput) repository.V2DreamInput {
+func preferredDreamTargetSource(sources []repository.DreamInput) repository.DreamInput {
 	for _, source := range sources {
 		if source.Tier == "candidate" && source.Status == "pending_evidence" {
 			return source
@@ -372,9 +372,9 @@ func preferredDreamTargetSource(sources []repository.V2DreamInput) repository.V2
 
 func dreamInputsFromRefs(
 	refs []domain.DreamSourceRef,
-	inputs map[string]repository.V2DreamInput,
-) ([]repository.V2DreamInput, bool) {
-	out := make([]repository.V2DreamInput, 0, len(refs))
+	inputs map[string]repository.DreamInput,
+) ([]repository.DreamInput, bool) {
+	out := make([]repository.DreamInput, 0, len(refs))
 	seen := map[string]struct{}{}
 	for _, ref := range refs {
 		switch ref.Type {
@@ -400,7 +400,7 @@ type dreamEndpointSet struct {
 	values   map[string]struct{}
 }
 
-func buildDreamEndpointAllowlist(inputs map[string]repository.V2DreamInput) dreamEndpointSet {
+func buildDreamEndpointAllowlist(inputs map[string]repository.DreamInput) dreamEndpointSet {
 	allowed := dreamEndpointSet{
 		entities: map[string]struct{}{},
 		values:   map[string]struct{}{},
@@ -419,8 +419,8 @@ func buildDreamEndpointAllowlist(inputs map[string]repository.V2DreamInput) drea
 	return allowed
 }
 
-func applyV2GeneratedTarget(
-	proposal *repository.V2UpsertHypothesisInput,
+func applyGeneratedTarget(
+	proposal *repository.UpsertHypothesisInput,
 	item GeneratedDream,
 	allowed dreamEndpointSet,
 ) bool {
@@ -460,7 +460,7 @@ func applyV2GeneratedTarget(
 		(proposal.ObjectEntityID != "") != (proposal.ObjectValueID != "")
 }
 
-func firstDreamSeedSource(refs []domain.DreamSourceRef, inputs map[string]repository.V2DreamInput) (repository.V2DreamInput, bool) {
+func firstDreamSeedSource(refs []domain.DreamSourceRef, inputs map[string]repository.DreamInput) (repository.DreamInput, bool) {
 	for _, ref := range refs {
 		switch ref.Type {
 		case "relationship", "candidate_relationship", "fact", "claim":
@@ -469,7 +469,7 @@ func firstDreamSeedSource(refs []domain.DreamSourceRef, inputs map[string]reposi
 			}
 		}
 	}
-	return repository.V2DreamInput{}, false
+	return repository.DreamInput{}, false
 }
 
 func (s *service) listDreams(ctx context.Context, opts ListOptions) ([]*domain.Dream, string, error) {
@@ -480,7 +480,7 @@ func (s *service) listDreams(ctx context.Context, opts ListOptions) ([]*domain.D
 	if err := s.refreshDreamStaleness(ctx, teamID, ownerID); err != nil {
 		return nil, "", err
 	}
-	records, next, err := s.deps.Store.ListV2Hypotheses(ctx, repository.V2ListHypothesesInput{
+	records, next, err := s.deps.Store.ListHypotheses(ctx, repository.ListHypothesesInput{
 		TeamID: teamID,
 		Status: opts.Status,
 		Limit:  opts.Limit,
@@ -500,12 +500,12 @@ func (s *service) getDream(ctx context.Context, dreamID string) (*domain.Dream, 
 	if err := s.refreshDreamStaleness(ctx, teamID, ownerID); err != nil {
 		return nil, err
 	}
-	record, err := s.deps.Store.GetV2Hypothesis(ctx, repository.V2GetHypothesisInput{
+	record, err := s.deps.Store.GetHypothesis(ctx, repository.GetHypothesisInput{
 		TeamID:       teamID,
 		HypothesisID: dreamID,
 	})
 	if err != nil {
-		if errors.Is(err, repository.ErrV2DreamHypothesisNotFound) {
+		if errors.Is(err, repository.ErrDreamHypothesisNotFound) {
 			return nil, ErrDreamNotFound
 		}
 		return nil, err
@@ -518,7 +518,7 @@ func (s *service) listRuns(ctx context.Context, limit int) ([]*RunCycleResult, e
 	if err != nil {
 		return nil, err
 	}
-	latest, err := s.deps.Store.LatestV2DreamCycle(ctx, teamID, ownerID)
+	latest, err := s.deps.Store.LatestDreamCycle(ctx, teamID, ownerID)
 	if err != nil || latest == nil {
 		return nil, err
 	}
@@ -533,7 +533,7 @@ func (s *service) recallDreams(ctx context.Context, query string, limit int) ([]
 	if err := s.refreshDreamStaleness(ctx, teamID, ownerID); err != nil {
 		return nil, err
 	}
-	records, err := s.deps.Store.RecallV2Hypotheses(ctx, repository.V2RecallHypothesesInput{
+	records, err := s.deps.Store.RecallHypotheses(ctx, repository.RecallHypothesesInput{
 		TeamID: teamID,
 		Query:  query,
 		Limit:  limit,
@@ -554,13 +554,13 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 		return nil, fmt.Errorf("resolve dream feedback: dream_id is required")
 	}
 	decision := strings.TrimSpace(req.Decision)
-	record, err := s.deps.Store.GetV2Hypothesis(ctx, repository.V2GetHypothesisInput{
+	record, err := s.deps.Store.GetHypothesis(ctx, repository.GetHypothesisInput{
 		TeamID:       teamID,
 		HypothesisID: dreamID,
 	})
 	if err != nil {
 		s.recordDreamFeedback(ctx, decision, nil, "error")
-		if errors.Is(err, repository.ErrV2DreamHypothesisNotFound) {
+		if errors.Is(err, repository.ErrDreamHypothesisNotFound) {
 			return nil, ErrDreamNotFound
 		}
 		return nil, err
@@ -568,7 +568,7 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 	dream := dreamRecord(record)
 	switch decision {
 	case "reject":
-		updated, err := s.deps.Store.UpdateV2HypothesisStatus(ctx, repository.V2UpdateHypothesisStatusInput{
+		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
 			TeamID:            teamID,
 			OwnerProfileID:    ownerID,
 			HypothesisID:      dreamID,
@@ -577,7 +577,7 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 		})
 		return s.feedbackResult(ctx, decision, dream, updated, nil, err)
 	case "stale":
-		updated, err := s.deps.Store.UpdateV2HypothesisStatus(ctx, repository.V2UpdateHypothesisStatusInput{
+		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
 			TeamID:            teamID,
 			OwnerProfileID:    ownerID,
 			HypothesisID:      dreamID,
@@ -586,7 +586,7 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 		})
 		return s.feedbackResult(ctx, decision, dream, updated, nil, err)
 	case "reinforce":
-		updated, err := s.deps.Store.UpdateV2HypothesisStatus(ctx, repository.V2UpdateHypothesisStatusInput{
+		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
 			TeamID:            teamID,
 			OwnerProfileID:    ownerID,
 			HypothesisID:      dreamID,
@@ -607,8 +607,8 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-		remember, err := s.deps.Remember.Remember(ctx, memoryservice.V2RememberRequest{
-			ContractVersion:   domain.V2ContractVersion,
+		remember, err := s.deps.Remember.Remember(ctx, memoryservice.RememberRequest{
+			ContractVersion:   domain.ContractVersion,
 			Evidence:          evidence,
 			EntityHints:       req.EntityHints,
 			RelationshipHints: req.RelationshipHints,
@@ -618,7 +618,7 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-		updated, err := s.deps.Store.SubmitV2Hypothesis(ctx, repository.V2SubmitHypothesisInput{
+		updated, err := s.deps.Store.SubmitHypothesis(ctx, repository.SubmitHypothesisInput{
 			TeamID:            teamID,
 			OwnerProfileID:    ownerID,
 			HypothesisID:      dreamID,
@@ -636,8 +636,8 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-		remember, err := s.deps.Remember.Remember(ctx, memoryservice.V2RememberRequest{
-			ContractVersion:   domain.V2ContractVersion,
+		remember, err := s.deps.Remember.Remember(ctx, memoryservice.RememberRequest{
+			ContractVersion:   domain.ContractVersion,
 			Evidence:          evidence,
 			EntityHints:       req.EntityHints,
 			RelationshipHints: req.RelationshipHints,
@@ -647,7 +647,7 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-		updated, err := s.deps.Store.UpdateV2HypothesisStatus(ctx, repository.V2UpdateHypothesisStatusInput{
+		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
 			TeamID:            teamID,
 			OwnerProfileID:    ownerID,
 			HypothesisID:      dreamID,
@@ -665,13 +665,13 @@ func (s *service) feedbackResult(
 	ctx context.Context,
 	decision string,
 	original *domain.Dream,
-	updated *repository.V2HypothesisRecord,
-	remember *memoryservice.V2RememberResult,
+	updated *repository.HypothesisRecord,
+	remember *memoryservice.RememberResult,
 	err error,
 ) (*ResolveFeedbackResult, error) {
 	if err != nil {
 		s.recordDreamFeedback(ctx, decision, original, "error")
-		if errors.Is(err, repository.ErrV2DreamHypothesisNotFound) {
+		if errors.Is(err, repository.ErrDreamHypothesisNotFound) {
 			return nil, ErrDreamNotFound
 		}
 		return nil, err
@@ -692,7 +692,7 @@ func (s *service) status(ctx context.Context) (*StatusResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	pending, _, err := s.deps.Store.ListV2Hypotheses(ctx, repository.V2ListHypothesesInput{
+	pending, _, err := s.deps.Store.ListHypotheses(ctx, repository.ListHypothesesInput{
 		TeamID: teamID,
 		Status: string(domain.DreamStatusProposed),
 		Limit:  100,
@@ -700,7 +700,7 @@ func (s *service) status(ctx context.Context) (*StatusResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	latest, err := s.deps.Store.LatestV2DreamCycle(ctx, teamID, ownerID)
+	latest, err := s.deps.Store.LatestDreamCycle(ctx, teamID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -712,7 +712,7 @@ func (s *service) status(ctx context.Context) (*StatusResult, error) {
 }
 
 func (s *service) refreshDreamStaleness(ctx context.Context, teamID string, ownerID string) error {
-	_, err := s.deps.Store.RefreshV2HypothesisStaleness(ctx, repository.V2RefreshHypothesisStalenessInput{
+	_, err := s.deps.Store.RefreshHypothesisStaleness(ctx, repository.RefreshHypothesisStalenessInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		Limit:          200,
@@ -728,7 +728,7 @@ func dreamActor(ctx context.Context) (string, string, error) {
 	return actor.TeamID.String(), actor.ProfileID.String(), nil
 }
 
-func dreamInputSnapshot(inputs []repository.V2DreamInput) []map[string]any {
+func dreamInputSnapshot(inputs []repository.DreamInput) []map[string]any {
 	out := make([]map[string]any, 0, len(inputs))
 	for _, input := range inputs {
 		out = append(out, map[string]any{
@@ -741,7 +741,7 @@ func dreamInputSnapshot(inputs []repository.V2DreamInput) []map[string]any {
 	return out
 }
 
-func candidateInputCount(inputs []repository.V2DreamInput) int {
+func candidateInputCount(inputs []repository.DreamInput) int {
 	count := 0
 	for _, input := range inputs {
 		if input.Tier == "candidate" && input.Status == "pending_evidence" {
@@ -751,7 +751,7 @@ func candidateInputCount(inputs []repository.V2DreamInput) int {
 	return count
 }
 
-func dreamRecords(records []repository.V2HypothesisRecord) []*domain.Dream {
+func dreamRecords(records []repository.HypothesisRecord) []*domain.Dream {
 	out := make([]*domain.Dream, 0, len(records))
 	for i := range records {
 		out = append(out, dreamRecord(&records[i]))
@@ -759,7 +759,7 @@ func dreamRecords(records []repository.V2HypothesisRecord) []*domain.Dream {
 	return out
 }
 
-func dreamRecord(record *repository.V2HypothesisRecord) *domain.Dream {
+func dreamRecord(record *repository.HypothesisRecord) *domain.Dream {
 	if record == nil {
 		return nil
 	}
@@ -818,7 +818,7 @@ func copyDreamSourceVersions(in map[string]int) map[string]int {
 	return out
 }
 
-func cycleRunResult(run *repository.V2DreamCycleRun) *RunCycleResult {
+func cycleRunResult(run *repository.DreamCycleRun) *RunCycleResult {
 	if run == nil {
 		return nil
 	}
@@ -853,7 +853,7 @@ func dreamSourceRefs(values []map[string]any) []domain.DreamSourceRef {
 	return out
 }
 
-func hypothesisContentHash(input repository.V2UpsertHypothesisInput) string {
+func hypothesisContentHash(input repository.UpsertHypothesisInput) string {
 	sources := make([]string, 0, len(input.SourceVersions))
 	for id, version := range input.SourceVersions {
 		sources = append(sources, fmt.Sprintf("%s:%d", id, version))
@@ -874,12 +874,12 @@ func hypothesisContentHash(input repository.V2UpsertHypothesisInput) string {
 
 func dreamSubmissionEvidence(
 	req ResolveFeedbackRequest,
-	record *repository.V2HypothesisRecord,
-) ([]memoryservice.V2RememberEvidenceInput, error) {
+	record *repository.HypothesisRecord,
+) ([]memoryservice.RememberEvidenceInput, error) {
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("resolve dream feedback: independent evidence is required")
 	}
-	out := make([]memoryservice.V2RememberEvidenceInput, 0, len(req.Evidence))
+	out := make([]memoryservice.RememberEvidenceInput, 0, len(req.Evidence))
 	for i, item := range req.Evidence {
 		item.Content = strings.TrimSpace(item.Content)
 		if item.Content == "" {

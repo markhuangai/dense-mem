@@ -25,7 +25,7 @@ func NewMemoryPackService(deps MemoryPackDependencies) MemoryPackService {
 	return &memoryPackService{deps: deps, retain: retain, now: now}
 }
 
-func (s *memoryPackService) FindCandidates(ctx context.Context, req V2FindCandidatesRequest) (*V2FindCandidatesResult, error) {
+func (s *memoryPackService) FindCandidates(ctx context.Context, req FindCandidatesRequest) (*FindCandidatesResult, error) {
 	actor, err := memoryPackActor(ctx)
 	if err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func (s *memoryPackService) FindCandidates(ctx context.Context, req V2FindCandid
 		return nil, errors.New("memory pack candidates: query is required")
 	}
 	limit := clampLimit(req.Limit, 20, 100)
-	graph, err := s.deps.Semantic.SemanticGraph(ctx, repository.V2SemanticGraphQuery{
+	graph, err := s.deps.Semantic.SemanticGraph(ctx, repository.SemanticGraphQuery{
 		TeamID: actor.TeamID.String(),
 		Query:  query,
 		Types:  []string{"entity", "value"},
@@ -48,7 +48,7 @@ func (s *memoryPackService) FindCandidates(ctx context.Context, req V2FindCandid
 		return nil, err
 	}
 	nodes := memoryPackGraphNodes(graph.Nodes)
-	out := &V2FindCandidatesResult{Candidates: []V2MemoryPackCandidate{}}
+	out := &FindCandidatesResult{Candidates: []MemoryPackCandidate{}}
 	for _, edge := range graph.Edges {
 		if len(out.Candidates) >= limit {
 			break
@@ -58,7 +58,7 @@ func (s *memoryPackService) FindCandidates(ctx context.Context, req V2FindCandid
 	return out, nil
 }
 
-func (s *memoryPackService) Export(ctx context.Context, req V2ExportRequest) (*V2ExportResult, error) {
+func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*ExportResult, error) {
 	actor, err := memoryPackActor(ctx)
 	if err != nil {
 		return nil, err
@@ -75,22 +75,22 @@ func (s *memoryPackService) Export(ctx context.Context, req V2ExportRequest) (*V
 	}
 	includeSupport := req.IncludeSupport == nil || *req.IncludeSupport
 	now := s.now().UTC()
-	artifact := V2MemoryPackArtifact{
+	artifact := MemoryPackArtifact{
 		Format:      MemoryPackFormat,
 		PackID:      "pack_" + memoryPackShortHash(strings.Join(relationshipIDs, "\x00")+now.Format(time.RFC3339Nano)),
 		Name:        strings.TrimSpace(req.Name),
 		Description: strings.TrimSpace(req.Description),
 		CreatedAt:   now.Format(time.RFC3339Nano),
-		Source: V2MemoryPackSource{
+		Source: MemoryPackSource{
 			TeamID:     actor.TeamID.String(),
 			ExportedBy: actor.ProfileID.String(),
 		},
-		Relationships: []V2MemoryPackRelationship{},
+		Relationships: []MemoryPackRelationship{},
 	}
-	fragments := map[string]V2MemoryPackEvidenceFragment{}
-	supports := []V2MemoryPackEvidenceSupport{}
+	fragments := map[string]MemoryPackEvidenceFragment{}
+	supports := []MemoryPackEvidenceSupport{}
 	for _, relationshipID := range relationshipIDs {
-		trace, err := s.deps.Semantic.TraceRelationship(ctx, repository.V2TraceRelationshipInput{
+		trace, err := s.deps.Semantic.TraceRelationship(ctx, repository.TraceRelationshipInput{
 			TeamID:                  actor.TeamID.String(),
 			RelationshipID:          relationshipID,
 			IncludeEvidenceContent:  boolPtr(includeSupport),
@@ -103,7 +103,7 @@ func (s *memoryPackService) Export(ctx context.Context, req V2ExportRequest) (*V
 		if trace.Relationship == nil {
 			return nil, fmt.Errorf("memory pack export: relationship %s not found", relationshipID)
 		}
-		if trace.Relationship.Status != string(domain.V2RelationshipStatusActive) {
+		if trace.Relationship.Status != string(domain.RelationshipStatusActive) {
 			return nil, fmt.Errorf("memory pack export: relationship %s is not active", relationshipID)
 		}
 		item := memoryPackRelationshipFromTrace(trace.Relationship)
@@ -112,7 +112,7 @@ func (s *memoryPackService) Export(ctx context.Context, req V2ExportRequest) (*V
 				if support.FragmentID != "" {
 					item.SupportFragmentIDs = append(item.SupportFragmentIDs, support.FragmentID)
 				}
-				supports = append(supports, V2MemoryPackEvidenceSupport{
+				supports = append(supports, MemoryPackEvidenceSupport{
 					RelationshipItemID: item.ItemID,
 					FragmentID:         support.FragmentID,
 					Quote:              support.Quote,
@@ -125,7 +125,7 @@ func (s *memoryPackService) Export(ctx context.Context, req V2ExportRequest) (*V
 				if fragment.FragmentID == "" {
 					continue
 				}
-				fragments[fragment.FragmentID] = V2MemoryPackEvidenceFragment{
+				fragments[fragment.FragmentID] = MemoryPackEvidenceFragment{
 					FragmentID:       fragment.FragmentID,
 					Content:          fragment.Content,
 					ContentHash:      fragment.ContentHash,
@@ -157,7 +157,7 @@ func (s *memoryPackService) Export(ctx context.Context, req V2ExportRequest) (*V
 	if err != nil {
 		return nil, err
 	}
-	return &V2ExportResult{
+	return &ExportResult{
 		Artifact:      artifact,
 		CanonicalJSON: string(canonicalWithHash),
 		SHA256:        hash,
@@ -168,7 +168,7 @@ func (s *memoryPackService) Export(ctx context.Context, req V2ExportRequest) (*V
 	}, nil
 }
 
-func (s *memoryPackService) Inspect(ctx context.Context, req V2InspectRequest) (*V2InspectResult, error) {
+func (s *memoryPackService) Inspect(ctx context.Context, req InspectRequest) (*InspectResult, error) {
 	if _, err := memoryPackActor(ctx); err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func (s *memoryPackService) Inspect(ctx context.Context, req V2InspectRequest) (
 	return inspectMemoryPack(loaded.artifact, loaded.hash, loaded.source), nil
 }
 
-func (s *memoryPackService) Import(ctx context.Context, req V2ImportRequest) (*V2ImportResult, error) {
+func (s *memoryPackService) Import(ctx context.Context, req ImportRequest) (*ImportResult, error) {
 	actor, err := memoryPackActor(ctx)
 	if err != nil {
 		return nil, err
@@ -224,7 +224,7 @@ func (s *memoryPackService) Import(ctx context.Context, req V2ImportRequest) (*V
 		CreatedAt:          now,
 		UpdatedAt:          now,
 		Summary: map[string]any{
-			"contract_version": domain.V2ContractVersion,
+			"contract_version": domain.ContractVersion,
 			"artifact_format":  loaded.artifact.Format,
 			"owner_profile_id": actor.ProfileID.String(),
 		},
@@ -240,7 +240,7 @@ func (s *memoryPackService) Import(ctx context.Context, req V2ImportRequest) (*V
 		if err := s.deps.Ledger.UpdateImportStatus(ctx, actor.TeamID.String(), importID, status, 0, len(loaded.artifact.Relationships), summary); err != nil {
 			return nil, err
 		}
-		return &V2ImportResult{
+		return &ImportResult{
 			ImportID:     importID,
 			ArtifactHash: loaded.hash,
 			Mode:         req.Mode,
@@ -255,7 +255,7 @@ func (s *memoryPackService) Import(ctx context.Context, req V2ImportRequest) (*V
 		summary := MemoryPackImportSummary(loaded, req.Mode, "", itemResults)
 		summary["error"] = err.Error()
 		_ = s.deps.Ledger.UpdateImportStatus(ctx, actor.TeamID.String(), importID, status, 0, len(itemResults), summary)
-		return &V2ImportResult{ImportID: importID, ArtifactHash: loaded.hash, Mode: req.Mode, Status: status, Error: err.Error(), Items: itemResults}, nil
+		return &ImportResult{ImportID: importID, ArtifactHash: loaded.hash, Mode: req.Mode, Status: status, Error: err.Error(), Items: itemResults}, nil
 	}
 	applied, skipped := MemoryPackImportCounts(itemResults)
 	summary := MemoryPackImportSummary(loaded, req.Mode, remember.IngestID, itemResults)
@@ -264,7 +264,7 @@ func (s *memoryPackService) Import(ctx context.Context, req V2ImportRequest) (*V
 		status = domain.SkillPackImportStatusNeedsReview
 	}
 	if err := s.deps.Ledger.UpdateImportStatus(ctx, actor.TeamID.String(), importID, status, applied, skipped, summary); err != nil {
-		return &V2ImportResult{
+		return &ImportResult{
 			ImportID:     importID,
 			ArtifactHash: loaded.hash,
 			Mode:         req.Mode,
@@ -275,7 +275,7 @@ func (s *memoryPackService) Import(ctx context.Context, req V2ImportRequest) (*V
 		}, nil
 	}
 	if err := s.appendImportChanges(ctx, actor.TeamID.String(), importID, remember.IngestID, itemResults); err != nil {
-		return &V2ImportResult{
+		return &ImportResult{
 			ImportID:     importID,
 			ArtifactHash: loaded.hash,
 			Mode:         req.Mode,
@@ -285,7 +285,7 @@ func (s *memoryPackService) Import(ctx context.Context, req V2ImportRequest) (*V
 			Items:        itemResults,
 		}, nil
 	}
-	return &V2ImportResult{
+	return &ImportResult{
 		ImportID:          importID,
 		ArtifactHash:      loaded.hash,
 		Mode:              req.Mode,
@@ -300,7 +300,7 @@ func (s *memoryPackService) Import(ctx context.Context, req V2ImportRequest) (*V
 	}, nil
 }
 
-func (s *memoryPackService) Rollback(ctx context.Context, req V2RollbackRequest) (*V2RollbackResult, error) {
+func (s *memoryPackService) Rollback(ctx context.Context, req RollbackRequest) (*RollbackResult, error) {
 	actor, err := memoryPackActor(ctx)
 	if err != nil {
 		return nil, err
@@ -325,10 +325,10 @@ func (s *memoryPackService) Rollback(ctx context.Context, req V2RollbackRequest)
 	}
 	conflicts := rollbackConflicts(record, changes)
 	if len(conflicts) > 0 {
-		return &V2RollbackResult{ImportID: importID, Status: "blocked", DryRun: true, Conflicts: conflicts}, nil
+		return &RollbackResult{ImportID: importID, Status: "blocked", DryRun: true, Conflicts: conflicts}, nil
 	}
 	impactToken := rollbackImpactToken(record, changes)
-	result := &V2RollbackResult{
+	result := &RollbackResult{
 		ImportID:      importID,
 		Status:        "safe",
 		DryRun:        true,

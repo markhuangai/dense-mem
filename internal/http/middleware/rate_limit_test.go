@@ -111,12 +111,12 @@ func runRateLimitMiddlewareContract(t *testing.T, name string, svc service.RateL
 	principalProfileID := uuid.New()
 	principal := &Principal{KeyID: uuid.New(), ProfileID: &principalProfileID, Role: "standard"}
 
-	e.GET("/api/v1/profiles/:id", func(c echo.Context) error {
+	e.GET("/ui/api/team/profiles/:id", func(c echo.Context) error {
 		return c.NoContent(http.StatusOK)
 	})
 
 	for i := 0; i < 3; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+principalProfileID.String(), nil)
+		req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+principalProfileID.String(), nil)
 		req = req.WithContext(SetPrincipalForTest(req.Context(), principal))
 		rec := httptest.NewRecorder()
 
@@ -232,12 +232,12 @@ func TestSelectRateLimit_FragmentTiers(t *testing.T) {
 		path   string
 		want   int
 	}{
-		{"fragment create POST uses write tier", "standard", "POST", "/api/v1/profiles/:id/fragments", 60},
-		{"fragment delete DELETE uses write tier", "standard", "DELETE", "/api/v1/profiles/:id/fragments/:fragmentId", 60},
-		{"fragment list GET uses read tier", "standard", "GET", "/api/v1/profiles/:id/fragments", 300},
-		{"fragment read GET uses read tier", "standard", "GET", "/api/v1/profiles/:id/fragments/:fragmentId", 300},
-		{"non-fragment standard uses default tier", "standard", "GET", "/api/v1/profiles/:id", 100},
-		{"fragment write stricter than read", "standard", "POST", "/api/v1/profiles/:id/fragments", 60},
+		{"fragment create POST uses write tier", "standard", "POST", "/ui/api/team/profiles/:id/fragments", 60},
+		{"fragment delete DELETE uses write tier", "standard", "DELETE", "/ui/api/team/profiles/:id/fragments/:fragmentId", 60},
+		{"fragment list GET uses read tier", "standard", "GET", "/ui/api/team/profiles/:id/fragments", 300},
+		{"fragment read GET uses read tier", "standard", "GET", "/ui/api/team/profiles/:id/fragments/:fragmentId", 300},
+		{"non-fragment standard uses default tier", "standard", "GET", "/ui/api/team/profiles/:id", 100},
+		{"fragment write stricter than read", "standard", "POST", "/ui/api/team/profiles/:id/fragments", 60},
 	}
 
 	for _, tc := range cases {
@@ -273,10 +273,10 @@ func TestSelectRateLimit_ClaimTiers(t *testing.T) {
 		path   string
 		want   int
 	}{
-		{"claim create POST uses write tier", "standard", "POST", "/api/v1/claims", 40},
-		{"claim delete DELETE uses write tier", "standard", "DELETE", "/api/v1/claims/:id", 40},
-		{"claim list GET uses read tier", "standard", "GET", "/api/v1/claims", 200},
-		{"claim read GET uses read tier", "standard", "GET", "/api/v1/claims/:id", 200},
+		{"claim create POST uses write tier", "standard", "POST", "/ui/api/team/profiles/:id/claims", 40},
+		{"claim delete DELETE uses write tier", "standard", "DELETE", "/ui/api/team/profiles/:id/claims/:claimId", 40},
+		{"claim list GET uses read tier", "standard", "GET", "/ui/api/team/profiles/:id/claims", 200},
+		{"claim read GET uses read tier", "standard", "GET", "/ui/api/team/profiles/:id/claims/:claimId", 200},
 	}
 
 	for _, tc := range cases {
@@ -318,22 +318,22 @@ func TestRateLimitMiddleware_EnforcesStricterFragmentWriteTier(t *testing.T) {
 	profileID := uuid.New()
 	principal := &Principal{KeyID: uuid.New(), ProfileID: &profileID, Role: "standard"}
 
-	e.POST("/api/v1/profiles/:id/fragments", func(c echo.Context) error {
+	e.POST("/ui/api/team/profiles/:id/fragments", func(c echo.Context) error {
 		return c.NoContent(http.StatusCreated)
 	})
-	e.GET("/api/v1/profiles/:id/fragments", func(c echo.Context) error {
+	e.GET("/ui/api/team/profiles/:id/fragments", func(c echo.Context) error {
 		return c.NoContent(http.StatusOK)
 	})
 
 	post := func() int {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/profiles/"+profileID.String()+"/fragments", nil)
+		req := httptest.NewRequest(http.MethodPost, "/ui/api/team/profiles/"+profileID.String()+"/fragments", nil)
 		req = req.WithContext(SetPrincipalForTest(req.Context(), principal))
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
 		return rec.Code
 	}
 	get := func() int {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String()+"/fragments", nil)
+		req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/fragments", nil)
 		req = req.WithContext(SetPrincipalForTest(req.Context(), principal))
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
@@ -368,11 +368,11 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		e := echo.New()
 		limiter := &stubRateLimitService{allowed: true}
 		e.Use(RateLimitMiddleware(limiter, cfg, nil))
-		e.GET("/api/v1/other", func(c echo.Context) error {
+		e.GET("/ui/api/other", func(c echo.Context) error {
 			return c.NoContent(http.StatusNoContent)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/other", nil)
+		req := httptest.NewRequest(http.MethodGet, "/ui/api/other", nil)
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
 
@@ -384,11 +384,11 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		e := echo.New()
 		e.HTTPErrorHandler = httperr.ErrorHandler
 		e.Use(RateLimitMiddleware(&stubRateLimitService{allowed: true}, cfg, nil))
-		e.GET("/api/v1/other", func(c echo.Context) error {
+		e.GET("/ui/api/other", func(c echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/other", nil)
+		req := httptest.NewRequest(http.MethodGet, "/ui/api/other", nil)
 		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{KeyID: uuid.New()}))
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
@@ -400,12 +400,12 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		e := echo.New()
 		limiter := &stubRateLimitService{err: errors.New("store down")}
 		e.Use(RateLimitMiddleware(limiter, cfg, nil))
-		e.GET("/api/v1/other", func(c echo.Context) error {
+		e.GET("/ui/api/other", func(c echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 
 		profileID := uuid.New()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/other", nil)
+		req := httptest.NewRequest(http.MethodGet, "/ui/api/other", nil)
 		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{
 			KeyID:     uuid.New(),
 			ProfileID: &profileID,
@@ -421,13 +421,13 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		e := echo.New()
 		limiter := &stubRateLimitService{allowed: true, remaining: 4}
 		e.Use(RateLimitMiddleware(limiter, cfg, nil))
-		e.GET("/api/v1/profiles/:id/fragments", func(c echo.Context) error {
+		e.GET("/ui/api/team/profiles/:id/fragments", func(c echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 
 		profileID := uuid.New()
 		keyID := uuid.New()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String()+"/fragments", nil)
+		req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/fragments", nil)
 		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{
 			KeyID:     keyID,
 			ProfileID: &profileID,
@@ -452,12 +452,12 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		}
 		e.Use(CorrelationIDMiddleware())
 		e.Use(RateLimitMiddleware(limiter, cfg, &mockAuditService{}))
-		e.DELETE("/api/v1/profiles/:id/claims/:claim_id", func(c echo.Context) error {
+		e.DELETE("/ui/api/team/profiles/:id/claims/:claim_id", func(c echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 
 		profileID := uuid.New()
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/profiles/"+profileID.String()+"/claims/claim-1", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/ui/api/team/profiles/"+profileID.String()+"/claims/claim-1", nil)
 		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{
 			KeyID:     uuid.New(),
 			ProfileID: &profileID,

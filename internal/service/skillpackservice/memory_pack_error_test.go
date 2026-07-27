@@ -14,55 +14,55 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-func TestV2MemoryPackLoadRejectsMissingUnsafeAndFailedURLSources(t *testing.T) {
-	ctx := authenticatedV2MemoryPackContext(uuid.New(), uuid.New(), uuid.New())
+func TestMemoryPackLoadRejectsMissingUnsafeAndFailedURLSources(t *testing.T) {
+	ctx := authenticatedMemoryPackContext(uuid.New(), uuid.New(), uuid.New())
 	largeArtifact := strings.Repeat("x", maxArtifactBytes+1)
 	tests := []struct {
 		name   string
 		svc    MemoryPackService
-		req    V2InspectRequest
+		req    InspectRequest
 		want   string
 		target error
 	}{
 		{
 			name: "missing source",
 			svc:  NewMemoryPackService(MemoryPackDependencies{}),
-			req:  V2InspectRequest{},
+			req:  InspectRequest{},
 			want: "artifact_json or url is required",
 		},
 		{
 			name:   "unsafe url",
 			svc:    NewMemoryPackService(MemoryPackDependencies{}),
-			req:    V2InspectRequest{URL: "http://example.com/pack.json"},
+			req:    InspectRequest{URL: "http://example.com/pack.json"},
 			target: ErrUnsafeURL,
 		},
 		{
 			name: "client error",
 			svc: NewMemoryPackService(MemoryPackDependencies{
-				HTTPClient: v2ArtifactHTTPClientFunc(func(*http.Request) (*http.Response, error) {
+				HTTPClient: artifactHTTPClientFunc(func(*http.Request) (*http.Response, error) {
 					return nil, errors.New("network down")
 				}),
 			}),
-			req:  V2InspectRequest{URL: "https://example.com/pack.json"},
+			req:  InspectRequest{URL: "https://example.com/pack.json"},
 			want: "network down",
 		},
 		{
 			name: "bad status",
 			svc: NewMemoryPackService(MemoryPackDependencies{
-				HTTPClient: v2ArtifactHTTPClientFunc(func(*http.Request) (*http.Response, error) {
+				HTTPClient: artifactHTTPClientFunc(func(*http.Request) (*http.Response, error) {
 					return &http.Response{
 						StatusCode: http.StatusServiceUnavailable,
 						Body:       io.NopCloser(strings.NewReader("unavailable")),
 					}, nil
 				}),
 			}),
-			req:  V2InspectRequest{URL: "https://example.com/pack.json"},
+			req:  InspectRequest{URL: "https://example.com/pack.json"},
 			want: "status 503",
 		},
 		{
 			name: "too large inline artifact",
 			svc:  NewMemoryPackService(MemoryPackDependencies{}),
-			req:  V2InspectRequest{ArtifactJSON: largeArtifact},
+			req:  InspectRequest{ArtifactJSON: largeArtifact},
 			want: "artifact exceeds",
 		},
 	}
@@ -82,53 +82,53 @@ func TestV2MemoryPackLoadRejectsMissingUnsafeAndFailedURLSources(t *testing.T) {
 	}
 }
 
-func TestV2MemoryPackImportSelectedSubsetUsesDestinationOwnerAndSourceProvenance(t *testing.T) {
+func TestMemoryPackImportSelectedSubsetUsesDestinationOwnerAndSourceProvenance(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
-	artifactJSON := testV2ArtifactJSON(t, V2MemoryPackArtifact{
+	artifactJSON := testArtifactJSON(t, MemoryPackArtifact{
 		Format:    MemoryPackFormat,
 		PackID:    "pack-subset",
 		Name:      "Subset pack",
 		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		Source:    V2MemoryPackSource{InstallationID: "source-installation"},
-		Relationships: []V2MemoryPackRelationship{
+		Source:    MemoryPackSource{InstallationID: "source-installation"},
+		Relationships: []MemoryPackRelationship{
 			{
 				ItemID:           "item-1",
-				Subject:          V2MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+				Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
 				PredicateKey:     "uses",
 				PredicateVersion: 1,
-				Object:           V2MemoryPackEndpoint{Ref: "object-1", Kind: "entity", DisplayName: "GraphDB"},
+				Object:           MemoryPackEndpoint{Ref: "object-1", Kind: "entity", DisplayName: "GraphDB"},
 			},
 			{
 				ItemID:           "item-2",
-				Subject:          V2MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+				Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
 				PredicateKey:     "uses",
 				PredicateVersion: 1,
-				Object:           V2MemoryPackEndpoint{Ref: "object-2", Kind: "entity", DisplayName: "PostgreSQL"},
+				Object:           MemoryPackEndpoint{Ref: "object-2", Kind: "entity", DisplayName: "PostgreSQL"},
 			},
 		},
 	})
-	remember := &v2RememberStub{result: &memoryservice.V2RememberResult{
+	remember := &rememberStub{result: &memoryservice.RememberResult{
 		IngestID:        "ingest-subset",
-		ProcessingState: string(domain.V2PlacementRunQueued),
+		ProcessingState: string(domain.PlacementRunQueued),
 	}}
 	result, err := NewMemoryPackService(MemoryPackDependencies{
 		Remember: remember,
-		Ledger:   newV2LedgerStub(),
+		Ledger:   newLedgerStub(),
 	}).Import(
-		authenticatedV2MemoryPackContext(teamID, ownerID, uuid.New()),
-		V2ImportRequest{
+		authenticatedMemoryPackContext(teamID, ownerID, uuid.New()),
+		ImportRequest{
 			ArtifactJSON:    artifactJSON,
 			Mode:            ModeReview,
 			SelectedItemIDs: []string{"item-2"},
-			ConflictDecisions: []V2ImportItemDecision{{
+			ConflictDecisions: []ImportItemDecision{{
 				ItemID: "item-2",
 				Action: "import_for_review",
 			}},
 		},
 	)
 	if err != nil {
-		t.Fatalf("ImportV2 selected subset: %v", err)
+		t.Fatalf("Import selected subset: %v", err)
 	}
 	if result.AppliedCount != 1 || result.SkippedCount != 1 {
 		t.Fatalf("subset import counts = %#v", result)
@@ -145,28 +145,28 @@ func TestV2MemoryPackImportSelectedSubsetUsesDestinationOwnerAndSourceProvenance
 	}
 }
 
-func TestV2MemoryPackLedgerHardFailuresRemainVisible(t *testing.T) {
-	ctx := authenticatedV2MemoryPackContext(uuid.New(), uuid.New(), uuid.New())
-	artifactJSON := testV2ArtifactJSON(t, V2MemoryPackArtifact{
+func TestMemoryPackLedgerHardFailuresRemainVisible(t *testing.T) {
+	ctx := authenticatedMemoryPackContext(uuid.New(), uuid.New(), uuid.New())
+	artifactJSON := testArtifactJSON(t, MemoryPackArtifact{
 		Format:    MemoryPackFormat,
 		PackID:    "pack-ledger-failure",
 		Name:      "Ledger failure pack",
 		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		Relationships: []V2MemoryPackRelationship{{
+		Relationships: []MemoryPackRelationship{{
 			ItemID:           "item-1",
-			Subject:          V2MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
 			PredicateKey:     "uses",
 			PredicateVersion: 1,
-			Object:           V2MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+			Object:           MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
 		}},
 	})
 
-	createLedger := newV2LedgerStub()
+	createLedger := newLedgerStub()
 	createLedger.createErr = errors.New("create failed")
 	_, err := NewMemoryPackService(MemoryPackDependencies{
-		Remember: &v2RememberStub{},
+		Remember: &rememberStub{},
 		Ledger:   createLedger,
-	}).Import(ctx, V2ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeReview})
+	}).Import(ctx, ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeReview})
 	if err == nil || !strings.Contains(err.Error(), "create failed") {
 		t.Fatalf("create import err = %v, want create failed", err)
 	}
@@ -174,7 +174,7 @@ func TestV2MemoryPackLedgerHardFailuresRemainVisible(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
 	importID := "import-ledger-failure"
-	listLedger := newV2LedgerStub()
+	listLedger := newLedgerStub()
 	listLedger.listErr = errors.New("list failed")
 	listLedger.imports[ledgerKey(teamID.String(), importID)] = domain.SkillPackImport{
 		ImportID:       importID,
@@ -183,14 +183,14 @@ func TestV2MemoryPackLedgerHardFailuresRemainVisible(t *testing.T) {
 		Status:         domain.SkillPackImportStatusApplied,
 	}
 	_, err = NewMemoryPackService(MemoryPackDependencies{Ledger: listLedger}).Rollback(
-		authenticatedV2MemoryPackContext(teamID, ownerID, uuid.New()),
-		V2RollbackRequest{ImportID: importID, Confirm: true},
+		authenticatedMemoryPackContext(teamID, ownerID, uuid.New()),
+		RollbackRequest{ImportID: importID, Confirm: true},
 	)
 	if err == nil || !strings.Contains(err.Error(), "list failed") {
 		t.Fatalf("list changes err = %v, want list failed", err)
 	}
 
-	markLedger := newV2LedgerStub()
+	markLedger := newLedgerStub()
 	markLedger.markErr = errors.New("mark failed")
 	markLedger.imports[ledgerKey(teamID.String(), importID)] = domain.SkillPackImport{
 		ImportID:       importID,
@@ -200,22 +200,22 @@ func TestV2MemoryPackLedgerHardFailuresRemainVisible(t *testing.T) {
 	}
 	markSvc := NewMemoryPackService(MemoryPackDependencies{Ledger: markLedger})
 	dryRun, err := markSvc.Rollback(
-		authenticatedV2MemoryPackContext(teamID, ownerID, uuid.New()),
-		V2RollbackRequest{ImportID: importID, DryRun: true},
+		authenticatedMemoryPackContext(teamID, ownerID, uuid.New()),
+		RollbackRequest{ImportID: importID, DryRun: true},
 	)
 	if err != nil {
 		t.Fatalf("mark rollback dry run: %v", err)
 	}
 	_, err = markSvc.Rollback(
-		authenticatedV2MemoryPackContext(teamID, ownerID, uuid.New()),
-		V2RollbackRequest{ImportID: importID, Confirm: true, ImpactToken: dryRun.ImpactToken},
+		authenticatedMemoryPackContext(teamID, ownerID, uuid.New()),
+		RollbackRequest{ImportID: importID, Confirm: true, ImpactToken: dryRun.ImpactToken},
 	)
 	if err == nil || !strings.Contains(err.Error(), "mark failed") {
 		t.Fatalf("mark rollback err = %v, want mark failed", err)
 	}
 }
 
-func TestV2MemoryPackExistingImportUsesSummaryIngestFallback(t *testing.T) {
+func TestMemoryPackExistingImportUsesSummaryIngestFallback(t *testing.T) {
 	record := &domain.SkillPackImport{
 		ImportID:     "import-existing",
 		Status:       domain.SkillPackImportStatusApplied,

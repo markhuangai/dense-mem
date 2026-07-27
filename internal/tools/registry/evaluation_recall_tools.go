@@ -40,13 +40,13 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 			if err := auditEvaluationTool(ctx, deps, "eval_run_recall_case", limit, false, map[string]any{"case_id": input["case_id"]}); err != nil {
 				return nil, err
 			}
-			return evalRunV2RecallCase(ctx, deps, input)
+			return evalRunRecallCase(ctx, deps, input)
 		},
 	}
 }
 
-func evalRunV2RecallCase(ctx context.Context, deps Dependencies, input map[string]any) (map[string]any, error) {
-	req, err := evalV2RecallRequest(input)
+func evalRunRecallCase(ctx context.Context, deps Dependencies, input map[string]any) (map[string]any, error) {
+	req, err := evalRecallRequest(input)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func evalRunV2RecallCase(ctx context.Context, deps Dependencies, input map[strin
 	if err != nil {
 		return nil, err
 	}
-	ranked := v2RecallResultRefs(result)
+	ranked := recallResultRefs(result)
 	out := map[string]any{
 		"case_id":     input["case_id"],
 		"query":       req.Query,
@@ -83,12 +83,12 @@ func evalRunV2RecallCase(ctx context.Context, deps Dependencies, input map[strin
 	return out, nil
 }
 
-func evalV2RecallRequest(input map[string]any) (memoryservice.V2RecallRequest, error) {
-	var req memoryservice.V2RecallRequest
+func evalRecallRequest(input map[string]any) (memoryservice.RecallRequest, error) {
+	var req memoryservice.RecallRequest
 	if err := remapInput(input, &req); err != nil {
 		return req, err
 	}
-	req.ContractVersion = domain.V2ContractVersion
+	req.ContractVersion = domain.ContractVersion
 	req.Query = stringInput(input["query"])
 	req.Limit = intInputOrDefault(input["limit"], defaultRecallCaseLimit)
 	if validAt, err := optionalTime(input["valid_at"]); err != nil {
@@ -104,7 +104,7 @@ func evalV2RecallRequest(input map[string]any) (memoryservice.V2RecallRequest, e
 	return req, nil
 }
 
-func v2RecallResultRefs(result *memoryservice.V2RecallResult) []map[string]any {
+func recallResultRefs(result *memoryservice.RecallResult) []map[string]any {
 	if result == nil {
 		return []map[string]any{}
 	}

@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-var ErrInvariantScanRemoved = errors.New("legacy graph invariant scan was removed after V2 cutover")
+var ErrInvariantScanRemoved = errors.New("legacy graph invariant scan was removed after cutover")
 
 // InvariantFinding represents a single relationship isolation violation.
 type InvariantFinding struct {

@@ -30,7 +30,7 @@ func (s *memoryPackService) loadArtifact(ctx context.Context, artifactJSON, rawU
 	if err != nil {
 		return loadedArtifact{}, err
 	}
-	artifact, legacy, err := parseV2MemoryPackArtifactJSON(data)
+	artifact, legacy, err := parseMemoryPackArtifactJSON(data)
 	if err != nil {
 		return loadedArtifact{}, err
 	}
@@ -47,48 +47,48 @@ func (s *memoryPackService) loadArtifact(ctx context.Context, artifactJSON, rawU
 	return loadedArtifact{artifact: artifact, hash: hash, source: sourceURL, legacy: legacy}, nil
 }
 
-func parseV2MemoryPackArtifactJSON(data []byte) (V2MemoryPackArtifact, bool, error) {
+func parseMemoryPackArtifactJSON(data []byte) (MemoryPackArtifact, bool, error) {
 	if len(data) == 0 {
-		return V2MemoryPackArtifact{}, false, fmt.Errorf("%w: empty artifact", ErrInvalidArtifact)
+		return MemoryPackArtifact{}, false, fmt.Errorf("%w: empty artifact", ErrInvalidArtifact)
 	}
 	if len(data) > maxArtifactBytes {
-		return V2MemoryPackArtifact{}, false, fmt.Errorf("%w: artifact exceeds %d bytes", ErrInvalidArtifact, maxArtifactBytes)
+		return MemoryPackArtifact{}, false, fmt.Errorf("%w: artifact exceeds %d bytes", ErrInvalidArtifact, maxArtifactBytes)
 	}
 	var probe struct {
 		Format        string `json:"format"`
 		SchemaVersion string `json:"schema_version"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
-		return V2MemoryPackArtifact{}, false, fmt.Errorf("%w: %v", ErrInvalidArtifact, err)
+		return MemoryPackArtifact{}, false, fmt.Errorf("%w: %v", ErrInvalidArtifact, err)
 	}
 	if probe.Format == MemoryPackFormat {
 		dec := json.NewDecoder(bytes.NewReader(data))
 		dec.DisallowUnknownFields()
-		var artifact V2MemoryPackArtifact
+		var artifact MemoryPackArtifact
 		if err := dec.Decode(&artifact); err != nil {
-			return V2MemoryPackArtifact{}, false, fmt.Errorf("%w: %v", ErrInvalidArtifact, err)
+			return MemoryPackArtifact{}, false, fmt.Errorf("%w: %v", ErrInvalidArtifact, err)
 		}
 		if err := ensureSingleJSONValue(dec); err != nil {
-			return V2MemoryPackArtifact{}, false, err
+			return MemoryPackArtifact{}, false, err
 		}
-		if err := validateV2MemoryPackArtifact(artifact); err != nil {
-			return V2MemoryPackArtifact{}, false, err
+		if err := validateMemoryPackArtifact(artifact); err != nil {
+			return MemoryPackArtifact{}, false, err
 		}
-		return normalizeV2MemoryPackArtifact(artifact), false, nil
+		return normalizeMemoryPackArtifact(artifact), false, nil
 	}
 	if probe.SchemaVersion == SchemaVersion || probe.SchemaVersion == LegacySchemaVersion {
 		pack, err := parseArtifactJSON(data)
 		if err != nil {
-			return V2MemoryPackArtifact{}, false, err
+			return MemoryPackArtifact{}, false, err
 		}
 		return MemoryPackFromLegacy(pack), true, nil
 	}
-	return V2MemoryPackArtifact{}, false, fmt.Errorf("%w: format must be %q", ErrInvalidArtifact, MemoryPackFormat)
+	return MemoryPackArtifact{}, false, fmt.Errorf("%w: format must be %q", ErrInvalidArtifact, MemoryPackFormat)
 }
 
-func canonicalMemoryPackArtifact(artifact V2MemoryPackArtifact) ([]byte, string, error) {
-	artifact = normalizeV2MemoryPackArtifact(artifact)
-	if err := validateV2MemoryPackArtifact(artifact); err != nil {
+func canonicalMemoryPackArtifact(artifact MemoryPackArtifact) ([]byte, string, error) {
+	artifact = normalizeMemoryPackArtifact(artifact)
+	if err := validateMemoryPackArtifact(artifact); err != nil {
 		return nil, "", err
 	}
 	hashable := artifact
@@ -101,9 +101,9 @@ func canonicalMemoryPackArtifact(artifact V2MemoryPackArtifact) ([]byte, string,
 	return data, hex.EncodeToString(sum[:]), nil
 }
 
-func marshalMemoryPackArtifact(artifact V2MemoryPackArtifact) ([]byte, error) {
-	artifact = normalizeV2MemoryPackArtifact(artifact)
-	if err := validateV2MemoryPackArtifact(artifact); err != nil {
+func marshalMemoryPackArtifact(artifact MemoryPackArtifact) ([]byte, error) {
+	artifact = normalizeMemoryPackArtifact(artifact)
+	if err := validateMemoryPackArtifact(artifact); err != nil {
 		return nil, err
 	}
 	data, err := json.Marshal(artifact)
@@ -113,7 +113,7 @@ func marshalMemoryPackArtifact(artifact V2MemoryPackArtifact) ([]byte, error) {
 	return data, nil
 }
 
-func validateV2MemoryPackArtifact(artifact V2MemoryPackArtifact) error {
+func validateMemoryPackArtifact(artifact MemoryPackArtifact) error {
 	if artifact.Format != MemoryPackFormat {
 		return fmt.Errorf("%w: format must be %q", ErrInvalidArtifact, MemoryPackFormat)
 	}
@@ -131,7 +131,7 @@ func validateV2MemoryPackArtifact(artifact V2MemoryPackArtifact) error {
 	}
 	seen := map[string]struct{}{}
 	for i, item := range artifact.Relationships {
-		if err := validateV2MemoryPackRelationship(item); err != nil {
+		if err := validateMemoryPackRelationship(item); err != nil {
 			return fmt.Errorf("%w: relationships[%d]: %v", ErrInvalidArtifact, i, err)
 		}
 		if _, exists := seen[item.ItemID]; exists {
@@ -164,7 +164,7 @@ func validateV2MemoryPackArtifact(artifact V2MemoryPackArtifact) error {
 	return nil
 }
 
-func validateV2MemoryPackRelationship(item V2MemoryPackRelationship) error {
+func validateMemoryPackRelationship(item MemoryPackRelationship) error {
 	if strings.TrimSpace(item.ItemID) == "" {
 		return errors.New("item_id is required")
 	}
@@ -190,7 +190,7 @@ func validateV2MemoryPackRelationship(item V2MemoryPackRelationship) error {
 	return nil
 }
 
-func normalizeV2MemoryPackArtifact(artifact V2MemoryPackArtifact) V2MemoryPackArtifact {
+func normalizeMemoryPackArtifact(artifact MemoryPackArtifact) MemoryPackArtifact {
 	artifact.Format = strings.TrimSpace(artifact.Format)
 	artifact.PackID = strings.TrimSpace(artifact.PackID)
 	artifact.Name = strings.TrimSpace(artifact.Name)
@@ -203,8 +203,8 @@ func normalizeV2MemoryPackArtifact(artifact V2MemoryPackArtifact) V2MemoryPackAr
 		item.SourceRelationshipID = strings.TrimSpace(item.SourceRelationshipID)
 		item.SourceOwnerProfileID = strings.TrimSpace(item.SourceOwnerProfileID)
 		item.PredicateKey = strings.TrimSpace(item.PredicateKey)
-		item.Subject = normalizeV2MemoryPackEndpoint(item.Subject)
-		item.Object = normalizeV2MemoryPackEndpoint(item.Object)
+		item.Subject = normalizeMemoryPackEndpoint(item.Subject)
+		item.Object = normalizeMemoryPackEndpoint(item.Object)
 		item.SupportFragmentIDs = uniqueStrings(item.SupportFragmentIDs)
 	}
 	for i := range artifact.EvidenceFragments {
@@ -219,7 +219,7 @@ func normalizeV2MemoryPackArtifact(artifact V2MemoryPackArtifact) V2MemoryPackAr
 	return artifact
 }
 
-func normalizeV2MemoryPackEndpoint(endpoint V2MemoryPackEndpoint) V2MemoryPackEndpoint {
+func normalizeMemoryPackEndpoint(endpoint MemoryPackEndpoint) MemoryPackEndpoint {
 	endpoint.Ref = strings.TrimSpace(endpoint.Ref)
 	endpoint.Kind = strings.TrimSpace(endpoint.Kind)
 	if endpoint.Kind == "" {
@@ -232,16 +232,16 @@ func normalizeV2MemoryPackEndpoint(endpoint V2MemoryPackEndpoint) V2MemoryPackEn
 	return endpoint
 }
 
-func inspectMemoryPack(artifact V2MemoryPackArtifact, hash string, sourceURL string) *V2InspectResult {
-	result := &V2InspectResult{
+func inspectMemoryPack(artifact MemoryPackArtifact, hash string, sourceURL string) *InspectResult {
+	result := &InspectResult{
 		ArtifactHash: hash,
 		Format:       artifact.Format,
 		Name:         artifact.Name,
 		Description:  artifact.Description,
 		ItemCount:    len(artifact.Relationships),
 		SourceURL:    sourceURL,
-		Items:        make([]V2InspectItem, 0, len(artifact.Relationships)),
-		SupportSummary: V2SupportSummary{
+		Items:        make([]InspectItem, 0, len(artifact.Relationships)),
+		SupportSummary: SupportSummary{
 			FragmentCount: len(artifact.EvidenceFragments),
 			SupportCount:  len(artifact.EvidenceSupports),
 		},
@@ -251,7 +251,7 @@ func inspectMemoryPack(artifact V2MemoryPackArtifact, hash string, sourceURL str
 		fragments[fragment.FragmentID] = struct{}{}
 	}
 	for _, item := range artifact.Relationships {
-		inspected := V2InspectItem{
+		inspected := InspectItem{
 			ItemID:               item.ItemID,
 			SourceRelationshipID: item.SourceRelationshipID,
 			Status:               "ready",
@@ -263,10 +263,10 @@ func inspectMemoryPack(artifact V2MemoryPackArtifact, hash string, sourceURL str
 		if !MemoryPackSupportedPredicate(item.PredicateKey) {
 			inspected.Status = "needs_review"
 			inspected.Severity = "medium"
-			inspected.Message = "predicate requires V2 placement review"
-			result.DecisionsRequired = append(result.DecisionsRequired, V2ConflictPrompt{
+			inspected.Message = "predicate requires placement review"
+			result.DecisionsRequired = append(result.DecisionsRequired, ConflictPrompt{
 				ItemID:         item.ItemID,
-				Reason:         "predicate is not registered in the destination V2 predicate set",
+				Reason:         "predicate is not registered in the destination predicate set",
 				AllowedActions: []string{"skip", "import_for_review"},
 			})
 		}
@@ -282,19 +282,19 @@ func inspectMemoryPack(artifact V2MemoryPackArtifact, hash string, sourceURL str
 	return result
 }
 
-func memoryPackRelationshipFromTrace(record *repository.V2RelationshipTraceRecord) V2MemoryPackRelationship {
+func memoryPackRelationshipFromTrace(record *repository.RelationshipTraceRecord) MemoryPackRelationship {
 	itemID := record.RelationshipID
 	if itemID == "" {
 		itemID = "rel_" + memoryPackShortHash(record.SemanticGroupKey)
 	}
-	object := V2MemoryPackEndpoint{
+	object := MemoryPackEndpoint{
 		Ref:         "object",
 		Kind:        "entity",
 		SourceID:    record.ObjectEntityID,
 		DisplayName: record.ObjectEntityName,
 	}
 	if record.ObjectValueID != "" {
-		object = V2MemoryPackEndpoint{
+		object = MemoryPackEndpoint{
 			Ref:       "object",
 			Kind:      "value",
 			SourceID:  record.ObjectValueID,
@@ -302,12 +302,12 @@ func memoryPackRelationshipFromTrace(record *repository.V2RelationshipTraceRecor
 			Value:     record.ObjectValue,
 		}
 	}
-	return V2MemoryPackRelationship{
+	return MemoryPackRelationship{
 		ItemID:                    itemID,
 		SourceRelationshipID:      record.RelationshipID,
 		SourceRelationshipVersion: record.Version,
 		SourceOwnerProfileID:      record.OwnerProfileID,
-		Subject: V2MemoryPackEndpoint{
+		Subject: MemoryPackEndpoint{
 			Ref:         "subject",
 			Kind:        "entity",
 			SourceID:    record.SubjectEntityID,
@@ -323,18 +323,18 @@ func memoryPackRelationshipFromTrace(record *repository.V2RelationshipTraceRecor
 	}
 }
 
-func MemoryPackFromLegacy(pack SkillPack) V2MemoryPackArtifact {
+func MemoryPackFromLegacy(pack SkillPack) MemoryPackArtifact {
 	createdAt := time.Now().UTC().Format(time.RFC3339Nano)
 	if pack.ExportedAt != nil {
 		createdAt = pack.ExportedAt.UTC().Format(time.RFC3339Nano)
 	}
-	artifact := V2MemoryPackArtifact{
+	artifact := MemoryPackArtifact{
 		Format:              MemoryPackFormat,
 		PackID:              "legacy_" + memoryPackShortHash(pack.Name),
 		Name:                pack.Name,
 		Description:         pack.Description,
 		CreatedAt:           createdAt,
-		Source:              V2MemoryPackSource{InstallationID: "legacy"},
+		Source:              MemoryPackSource{InstallationID: "legacy"},
 		LegacySchemaVersion: pack.SchemaVersion,
 	}
 	for i, item := range pack.Items {
@@ -342,22 +342,22 @@ func MemoryPackFromLegacy(pack SkillPack) V2MemoryPackArtifact {
 		if itemID == "" {
 			itemID = fmt.Sprintf("legacy-item-%d", i)
 		}
-		relationship := V2MemoryPackRelationship{
+		relationship := MemoryPackRelationship{
 			ItemID:               itemID,
 			SourceRelationshipID: item.SourceID,
-			Subject: V2MemoryPackEndpoint{
+			Subject: MemoryPackEndpoint{
 				Ref:         fmt.Sprintf("legacy-subject-%d", i),
 				Kind:        "entity",
 				DisplayName: item.Subject,
 			},
 			PredicateKey:     item.Predicate,
 			PredicateVersion: 1,
-			Object: V2MemoryPackEndpoint{
+			Object: MemoryPackEndpoint{
 				Ref:         fmt.Sprintf("legacy-object-%d", i),
 				Kind:        "entity",
 				DisplayName: item.Object,
 			},
-			Status:             string(domain.V2RelationshipStatusNeedsReview),
+			Status:             string(domain.RelationshipStatusNeedsReview),
 			SupportFragmentIDs: append([]string(nil), item.SupportFragmentIDs...),
 			Metadata: map[string]any{
 				"legacy_source_kind": item.SourceKind,
@@ -368,7 +368,7 @@ func MemoryPackFromLegacy(pack SkillPack) V2MemoryPackArtifact {
 	}
 	if pack.Support != nil {
 		for _, fragment := range pack.Support.Fragments {
-			artifact.EvidenceFragments = append(artifact.EvidenceFragments, V2MemoryPackEvidenceFragment{
+			artifact.EvidenceFragments = append(artifact.EvidenceFragments, MemoryPackEvidenceFragment{
 				FragmentID: fragment.FragmentID,
 				Content:    fragment.Content,
 				SourceType: fragment.SourceType,
@@ -378,5 +378,5 @@ func MemoryPackFromLegacy(pack SkillPack) V2MemoryPackArtifact {
 			})
 		}
 	}
-	return normalizeV2MemoryPackArtifact(artifact)
+	return normalizeMemoryPackArtifact(artifact)
 }

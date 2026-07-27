@@ -22,13 +22,13 @@ const (
 
 type authorityBootstrap struct {
 	Mode             authorityMode
-	Marker           *domain.V2CompatibilityMarker
+	Marker           *domain.CompatibilityMarker
 	ReadinessMessage string
 }
 
 type authorityBootstrapStore interface {
-	GetLatestMarker(ctx context.Context) (*domain.V2CompatibilityMarker, error)
-	CommitFreshV2Authority(ctx context.Context, input repository.CommitFreshV2AuthorityInput) (*domain.V2CompatibilityMarker, error)
+	GetLatestMarker(ctx context.Context) (*domain.CompatibilityMarker, error)
+	CommitFreshAuthority(ctx context.Context, input repository.CommitFreshAuthorityInput) (*domain.CompatibilityMarker, error)
 }
 
 func ClassifyAuthority(ctx context.Context, store authorityBootstrapStore) (authorityBootstrap, error) {
@@ -51,30 +51,30 @@ func EnsureAuthority(ctx context.Context, store authorityBootstrapStore) (author
 		return authorityBootstrap{}, fmt.Errorf("%w: read compatibility marker: %w", errAuthorityBlocked, err)
 	}
 	if marker == nil {
-		marker, err = store.CommitFreshV2Authority(ctx, repository.CommitFreshV2AuthorityInput{
+		marker, err = store.CommitFreshAuthority(ctx, repository.CommitFreshAuthorityInput{
 			MarkerVersion: cutoverMarkerVersion,
 			Now:           time.Now().UTC(),
 			Metadata:      map[string]any{"created_by": "server_boot"},
 		})
 		if err != nil {
-			return authorityBootstrap{}, fmt.Errorf("%w: create fresh V2 authority marker: %w", errAuthorityBlocked, err)
+			return authorityBootstrap{}, fmt.Errorf("%w: create fresh authority marker: %w", errAuthorityBlocked, err)
 		}
 	}
 	return classifyAuthorityMarker(marker)
 }
 
-func classifyAuthorityMarker(marker *domain.V2CompatibilityMarker) (authorityBootstrap, error) {
+func classifyAuthorityMarker(marker *domain.CompatibilityMarker) (authorityBootstrap, error) {
 	if marker == nil {
-		return authorityBootstrap{}, fmt.Errorf("%w: compatible V2 cutover marker is required before startup", errAuthorityBlocked)
+		return authorityBootstrap{}, fmt.Errorf("%w: compatible cutover marker is required before startup", errAuthorityBlocked)
 	}
 	switch marker.Status {
-	case domain.V2MigrationMarkerCompatible:
+	case domain.MigrationMarkerCompatible:
 		return authorityBootstrap{
 			Mode:             authorityActive,
 			Marker:           marker,
-			ReadinessMessage: "compatible V2 authority marker present",
+			ReadinessMessage: "compatible authority marker present",
 		}, nil
-	case domain.V2MigrationMarkerIncompatible, domain.V2MigrationMarkerCorrupt:
+	case domain.MigrationMarkerIncompatible, domain.MigrationMarkerCorrupt:
 		return authorityBootstrap{}, fmt.Errorf("%w: compatibility marker status %s", errAuthorityBlocked, marker.Status)
 	default:
 		return authorityBootstrap{}, fmt.Errorf("%w: unknown compatibility marker status %s", errAuthorityBlocked, marker.Status)

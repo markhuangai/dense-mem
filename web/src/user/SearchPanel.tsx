@@ -701,7 +701,7 @@ function itemRawDate(item: RecallDisplayItem): string {
     return "";
   }
   if (isEvidence(item)) {
-    return "";
+    return item.created_at ?? "";
   }
   if (isRelationship(item)) {
     return item.valid_from ?? item.valid_to ?? "";
@@ -742,7 +742,7 @@ function sourceLabel(item: RecallDisplayItem): string {
     return "unknown";
   }
   if (isEvidence(item)) {
-    return "evidence";
+    return item.source || item.source_type || "evidence";
   }
   if (isRelationship(item)) {
     return "relationship graph";

@@ -60,11 +60,6 @@ export POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-15432}"
 export REDIS_PORT="${REDIS_PORT:-16380}"
 export PROMETHEUS_PORT="${PROMETHEUS_PORT:-19090}"
 export PROMETHEUS_CONTAINER_NAME="${PROMETHEUS_CONTAINER_NAME:-densemem-eval-v1-prometheus}"
-export DENSE_MEM_EVAL_TOOL_TRANSPORT="${DENSE_MEM_EVAL_TOOL_TRANSPORT:-mcp}"
-if [[ "${DENSE_MEM_EVAL_TOOL_TRANSPORT}" != "mcp" ]]; then
-  echo "the release gate requires DENSE_MEM_EVAL_TOOL_TRANSPORT=mcp" >&2
-  exit 2
-fi
 
 compose() {
   docker compose -p densemem_eval_full -f docker-compose.yml -f tests/eval/docker-compose.eval.yml "$@"
@@ -470,7 +465,6 @@ prepare_identity() {
     --arg release_gate_policy_sha256 "${RELEASE_GATE_POLICY_HASH}" \
     --arg runner_sha256 "${RUNNER_HASH}" \
     --arg server_image_id "${SERVER_IMAGE_ID}" \
-    --arg tool_transport "${DENSE_MEM_EVAL_TOOL_TRANSPORT}" \
     '{
       seed_id: $seed_id,
       seed_hash: $seed_hash,
@@ -484,7 +478,7 @@ prepare_identity() {
       release_gate_policy_sha256: $release_gate_policy_sha256,
       runner_sha256: $runner_sha256,
       server_image_id: $server_image_id,
-      tool_transport: $tool_transport,
+      tool_transport: "mcp",
       tool_contract: "mcp.tools/call.v1",
       import_route: "remember"
     }' > "${candidate}"

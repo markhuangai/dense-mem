@@ -51,14 +51,14 @@ func TestProfileResolution_PathParam_Valid(t *testing.T) {
 	}
 
 	var capturedProfileID uuid.UUID
-	e.GET("/api/v1/profiles/:profileId/test", func(c echo.Context) error {
+	e.GET("/ui/api/team/profiles/:profileId/test", func(c echo.Context) error {
 		id, ok := GetResolvedProfileID(c.Request().Context())
 		require.True(t, ok, "profile ID should be in context")
 		capturedProfileID = id
 		return c.String(http.StatusOK, "ok")
 	}, ProfileResolutionMiddleware(mockSvc))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String()+"/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/test", nil)
 	req.Header.Set("Authorization", "Bearer testprefix12345678901234567890")
 	rec := httptest.NewRecorder()
 
@@ -77,12 +77,12 @@ func TestProfileResolution_PathParam_InvalidUUID(t *testing.T) {
 	mockSvc := &mockProfileResolutionService{}
 
 	handlerCalled := false
-	e.GET("/api/v1/profiles/:profileId/test", func(c echo.Context) error {
+	e.GET("/ui/api/team/profiles/:profileId/test", func(c echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	}, ProfileResolutionMiddleware(mockSvc))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/not-a-uuid/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/not-a-uuid/test", nil)
 	req.Header.Set("Authorization", "Bearer testprefix12345678901234567890")
 	rec := httptest.NewRecorder()
 
@@ -93,15 +93,15 @@ func TestProfileResolution_PathParam_InvalidUUID(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "INVALID_UUID")
 }
 
-// TestProfileResolution_Header_Valid tests that a valid profile ID in the X-Profile-ID header
-// is correctly resolved and stored in context for tool routes.
-func TestProfileResolution_Header_Valid(t *testing.T) {
+// TestProfileResolution_PrincipalScoped_Valid tests that principal-scoped
+// routes resolve the authenticated principal's team binding.
+func TestProfileResolution_PrincipalScoped_Valid(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 
-	profileID := uuid.New()
+	teamID := uuid.New()
 	profile := &domain.Profile{
-		ID:        profileID,
+		ID:        teamID,
 		Name:      "test-profile",
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
@@ -109,37 +109,41 @@ func TestProfileResolution_Header_Valid(t *testing.T) {
 
 	mockSvc := &mockProfileResolutionService{
 		getFunc: func(ctx context.Context, id uuid.UUID) (*domain.Profile, error) {
-			assert.Equal(t, profileID, id)
+			assert.Equal(t, teamID, id)
 			return profile, nil
 		},
 	}
 
 	var capturedProfileID uuid.UUID
-	e.POST("/api/v1/tools/some-tool", func(c echo.Context) error {
+	e.GET("/ui/api/recall", func(c echo.Context) error {
 		id, ok := GetResolvedProfileID(c.Request().Context())
 		require.True(t, ok, "profile ID should be in context")
 		capturedProfileID = id
 		return c.String(http.StatusOK, "ok")
+	}, func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			principal := &Principal{TeamID: teamID}
+			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
 	}, ProfileResolutionMiddleware(mockSvc))
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/some-tool", nil)
-	req.Header.Set(ProfileIDHeader, profileID.String())
-	req.Header.Set("Authorization", "Bearer testprefix12345678901234567890")
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, profileID, capturedProfileID)
+	assert.Equal(t, teamID, capturedProfileID)
 }
 
 func TestProfileResolution_HeaderScopedCanonicalRoutes(t *testing.T) {
 	routes := []string{
-		"/api/v1/fragments",
-		"/api/v1/claims",
-		"/api/v1/facts",
-		"/api/v1/communities",
-		"/api/v1/recall",
+		"/mcp",
+		"/ui/api/recall",
+		"/ui/api/dreaming/status",
+		"/ui/api/dreams",
 	}
 
 	for _, route := range routes {
@@ -147,9 +151,9 @@ func TestProfileResolution_HeaderScopedCanonicalRoutes(t *testing.T) {
 			e := echo.New()
 			e.HTTPErrorHandler = httperr.ErrorHandler
 
-			profileID := uuid.New()
+			teamID := uuid.New()
 			profile := &domain.Profile{
-				ID:        profileID,
+				ID:        teamID,
 				Name:      "test-profile",
 				CreatedAt: time.Now().UTC(),
 				UpdatedAt: time.Now().UTC(),
@@ -157,27 +161,33 @@ func TestProfileResolution_HeaderScopedCanonicalRoutes(t *testing.T) {
 
 			mockSvc := &mockProfileResolutionService{
 				getFunc: func(ctx context.Context, id uuid.UUID) (*domain.Profile, error) {
-					assert.Equal(t, profileID, id)
+					assert.Equal(t, teamID, id)
 					return profile, nil
 				},
 			}
 
 			var capturedProfileID uuid.UUID
-			e.POST(route, func(c echo.Context) error {
+			e.GET(route, func(c echo.Context) error {
 				id, ok := GetResolvedProfileID(c.Request().Context())
 				require.True(t, ok, "profile ID should be in context")
 				capturedProfileID = id
 				return c.String(http.StatusOK, "ok")
+			}, func(next echo.HandlerFunc) echo.HandlerFunc {
+				return func(c echo.Context) error {
+					principal := &Principal{TeamID: teamID}
+					ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
+					c.SetRequest(c.Request().WithContext(ctx))
+					return next(c)
+				}
 			}, ProfileResolutionMiddleware(mockSvc))
 
-			req := httptest.NewRequest(http.MethodPost, route, nil)
-			req.Header.Set(ProfileIDHeader, profileID.String())
+			req := httptest.NewRequest(http.MethodGet, route, nil)
 			rec := httptest.NewRecorder()
 
 			e.ServeHTTP(rec, req)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
-			assert.Equal(t, profileID, capturedProfileID)
+			assert.Equal(t, teamID, capturedProfileID)
 		})
 	}
 }
@@ -187,13 +197,13 @@ func TestHeaderScopedProfileRouteRequiresPathBoundary(t *testing.T) {
 		path string
 		want bool
 	}{
-		{path: "/api/v1/dreaming", want: true},
-		{path: "/api/v1/dreaming/status", want: true},
-		{path: "/api/v1/dreaming-extra", want: false},
-		{path: "/api/v1/dreams", want: true},
-		{path: "/api/v1/dreams/dream-1", want: true},
-		{path: "/api/v1/dreams-extra", want: false},
-		{path: "/api/v1/recallXYZ", want: false},
+		{path: "/ui/api/dreaming", want: true},
+		{path: "/ui/api/dreaming/status", want: true},
+		{path: "/ui/api/dreaming-extra", want: false},
+		{path: "/ui/api/dreams", want: true},
+		{path: "/ui/api/dreams/dream-1", want: true},
+		{path: "/ui/api/dreams-extra", want: false},
+		{path: "/ui/api/recallXYZ", want: false},
 	}
 
 	for _, tt := range tests {
@@ -207,9 +217,9 @@ func TestProfileResolution_HeaderScoped_UsesPrincipalProfile(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 
-	profileID := uuid.New()
+	teamID := uuid.New()
 	profile := &domain.Profile{
-		ID:        profileID,
+		ID:        teamID,
 		Name:      "test-profile",
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
@@ -217,43 +227,43 @@ func TestProfileResolution_HeaderScoped_UsesPrincipalProfile(t *testing.T) {
 
 	mockSvc := &mockProfileResolutionService{
 		getFunc: func(ctx context.Context, id uuid.UUID) (*domain.Profile, error) {
-			assert.Equal(t, profileID, id)
+			assert.Equal(t, teamID, id)
 			return profile, nil
 		},
 	}
 
 	var capturedProfileID uuid.UUID
-	e.POST("/api/v1/tools/some-tool", func(c echo.Context) error {
+	e.POST("/mcp", func(c echo.Context) error {
 		id, ok := GetResolvedProfileID(c.Request().Context())
 		require.True(t, ok, "profile ID should be in context")
 		capturedProfileID = id
 		return c.String(http.StatusOK, "ok")
 	}, func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			principal := &Principal{ProfileID: &profileID}
+			principal := &Principal{TeamID: teamID}
 			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
 	}, ProfileResolutionMiddleware(mockSvc))
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/some-tool", nil)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, profileID, capturedProfileID)
+	assert.Equal(t, teamID, capturedProfileID)
 }
 
-func TestProfileResolution_HeaderScoped_PrincipalOverridesLegacyHeader(t *testing.T) {
+func TestProfileResolution_PrincipalScoped_IgnoresOverrideHeaders(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 
-	principalProfileID := uuid.New()
-	legacyHeaderProfileID := uuid.New()
+	principalTeamID := uuid.New()
+	headerTeamID := uuid.New()
 	profile := &domain.Profile{
-		ID:        principalProfileID,
+		ID:        principalTeamID,
 		Name:      "test-profile",
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
@@ -261,27 +271,28 @@ func TestProfileResolution_HeaderScoped_PrincipalOverridesLegacyHeader(t *testin
 
 	mockSvc := &mockProfileResolutionService{
 		getFunc: func(ctx context.Context, id uuid.UUID) (*domain.Profile, error) {
-			assert.Equal(t, principalProfileID, id)
+			assert.Equal(t, principalTeamID, id)
 			return profile, nil
 		},
 	}
 
-	e.POST("/api/v1/tools/some-tool", func(c echo.Context) error {
+	e.POST("/mcp", func(c echo.Context) error {
 		id, ok := GetResolvedProfileID(c.Request().Context())
 		require.True(t, ok, "profile ID should be in context")
-		assert.Equal(t, principalProfileID, id)
+		assert.Equal(t, principalTeamID, id)
 		return c.String(http.StatusOK, "ok")
 	}, func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			principal := &Principal{ProfileID: &principalProfileID}
+			principal := &Principal{TeamID: principalTeamID}
 			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
 	}, ProfileResolutionMiddleware(mockSvc))
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/some-tool", nil)
-	req.Header.Set(ProfileIDHeader, legacyHeaderProfileID.String())
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("X-Team-ID", headerTeamID.String())
+	req.Header.Set("X-Profile-ID", headerTeamID.String())
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -289,22 +300,21 @@ func TestProfileResolution_HeaderScoped_PrincipalOverridesLegacyHeader(t *testin
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-// TestProfileResolution_Header_Missing tests that a missing X-Profile-ID header
-// on tool routes returns a 400 PROFILE_ID_REQUIRED error.
-func TestProfileResolution_Header_Missing(t *testing.T) {
+// TestProfileResolution_PrincipalScoped_MissingPrincipal tests that principal
+// scoped routes fail closed when no authenticated team binding exists.
+func TestProfileResolution_PrincipalScoped_MissingPrincipal(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 
 	mockSvc := &mockProfileResolutionService{}
 
 	handlerCalled := false
-	e.POST("/api/v1/tools/some-tool", func(c echo.Context) error {
+	e.POST("/mcp", func(c echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	}, ProfileResolutionMiddleware(mockSvc))
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/some-tool", nil)
-	req.Header.Set("Authorization", "Bearer testprefix12345678901234567890")
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -330,12 +340,12 @@ func TestProfileResolution_DeletedProfile_Returns404(t *testing.T) {
 	}
 
 	handlerCalled := false
-	e.GET("/api/v1/profiles/:profileId/test", func(c echo.Context) error {
+	e.GET("/ui/api/team/profiles/:profileId/test", func(c echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	}, ProfileResolutionMiddleware(mockSvc))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String()+"/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/test", nil)
 	req.Header.Set("Authorization", "Bearer testprefix12345678901234567890")
 	rec := httptest.NewRecorder()
 
@@ -372,14 +382,14 @@ func TestProfileResolution_StoresInContext(t *testing.T) {
 	var found bool
 	var teamFound bool
 
-	e.GET("/api/v1/profiles/:profileId/test", func(c echo.Context) error {
+	e.GET("/ui/api/team/profiles/:profileId/test", func(c echo.Context) error {
 		ctx := c.Request().Context()
 		capturedID, found = GetResolvedProfileID(ctx)
 		capturedTeam, teamFound = GetResolvedTeamContext(ctx)
 		return c.String(http.StatusOK, "ok")
 	}, ProfileResolutionMiddleware(mockSvc))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String()+"/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/test", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -411,12 +421,12 @@ func TestProfileResolution_ProfileNotFound(t *testing.T) {
 	}
 
 	handlerCalled := false
-	e.GET("/api/v1/profiles/:profileId/test", func(c echo.Context) error {
+	e.GET("/ui/api/team/profiles/:profileId/test", func(c echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	}, ProfileResolutionMiddleware(mockSvc))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String()+"/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/test", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -427,7 +437,7 @@ func TestProfileResolution_ProfileNotFound(t *testing.T) {
 }
 
 // TestProfileResolution_NonProfileRoute_PassesThrough tests that routes outside
-// /api/v1/profiles/ and /api/v1/tools pass through without modification.
+// /ui/api/team/profiles/ and /mcp/tools pass through without modification.
 func TestProfileResolution_NonProfileRoute_PassesThrough(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
@@ -435,7 +445,7 @@ func TestProfileResolution_NonProfileRoute_PassesThrough(t *testing.T) {
 	mockSvc := &mockProfileResolutionService{}
 
 	handlerCalled := false
-	e.GET("/api/v1/health", func(c echo.Context) error {
+	e.GET("/ui/api/health", func(c echo.Context) error {
 		handlerCalled = true
 		// Verify no profile ID in context
 		_, found := GetResolvedProfileID(c.Request().Context())
@@ -443,7 +453,7 @@ func TestProfileResolution_NonProfileRoute_PassesThrough(t *testing.T) {
 		return c.String(http.StatusOK, "ok")
 	}, ProfileResolutionMiddleware(mockSvc))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/health", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -466,12 +476,12 @@ func TestProfileResolution_ServiceError(t *testing.T) {
 	}
 
 	handlerCalled := false
-	e.GET("/api/v1/profiles/:profileId/test", func(c echo.Context) error {
+	e.GET("/ui/api/team/profiles/:profileId/test", func(c echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	}, ProfileResolutionMiddleware(mockSvc))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/"+profileID.String()+"/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/test", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)

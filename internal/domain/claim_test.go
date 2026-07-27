@@ -48,7 +48,7 @@ func TestClaim(t *testing.T) {
 			// Provenance
 			ExtractionModel:   "gpt-4",
 			ExtractionVersion: "1.0",
-			VerifierModel:     "nli-v2",
+			VerifierModel:     "nli-canonical",
 			PipelineRunID:     "run-42",
 			// Idempotency
 			ContentHash:    "sha256:abc123",
@@ -96,7 +96,7 @@ func TestClaim(t *testing.T) {
 		// Provenance
 		require.Equal(t, "gpt-4", c.ExtractionModel)
 		require.Equal(t, "1.0", c.ExtractionVersion)
-		require.Equal(t, "nli-v2", c.VerifierModel)
+		require.Equal(t, "nli-canonical", c.VerifierModel)
 		require.Equal(t, "run-42", c.PipelineRunID)
 
 		// Idempotency

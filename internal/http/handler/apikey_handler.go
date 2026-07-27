@@ -64,7 +64,7 @@ type CreateAPIKeyResponse struct {
 	Key    dto.APIKeyResponse `json:"key"`
 }
 
-// Create handles POST /api/v1/teams/:teamId/profiles.
+// Create handles POST /ui/api/team/profiles.
 // Requires manager role.
 // Returns 201 with the created key and plaintext api_key.
 func (h *APIKeyHandler) Create(c echo.Context) error {
@@ -129,7 +129,7 @@ func (h *APIKeyHandler) Create(c echo.Context) error {
 	})
 }
 
-// List handles GET /api/v1/teams/:teamId/profiles.
+// List handles GET /ui/api/team/profiles.
 // Requires manager role.
 // Returns 200 with paginated list of API keys (never includes key_hash or plaintext).
 func (h *APIKeyHandler) List(c echo.Context) error {
@@ -178,7 +178,7 @@ func (h *APIKeyHandler) List(c echo.Context) error {
 	})
 }
 
-// Get handles GET /api/v1/teams/:teamId/profiles/:profileId.
+// Get handles GET /ui/api/team/profiles/:profileId.
 // Requires manager role.
 // Returns 200 with the API key data (never includes key_hash or plaintext).
 // Scoped to the profileId in the path — returns NOT_FOUND for cross-profile ids.
@@ -217,7 +217,7 @@ func (h *APIKeyHandler) Get(c echo.Context) error {
 	return response.SuccessOK(c, toAPIKeyResponse(key))
 }
 
-// Update handles PATCH /api/v1/teams/:teamId/profiles/:profileId.
+// Update handles PATCH /ui/api/team/profiles/:profileId.
 // Requires manager role and can only update member profiles.
 func (h *APIKeyHandler) Update(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -278,7 +278,7 @@ func (h *APIKeyHandler) Update(c echo.Context) error {
 	return response.SuccessOK(c, toAPIKeyResponse(key))
 }
 
-// Rotate handles POST /api/v1/teams/:teamId/profiles/:profileId/rotate.
+// Rotate handles POST /ui/api/team/profiles/:profileId/rotate.
 // Requires manager role and can only rotate member profiles.
 func (h *APIKeyHandler) Rotate(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -344,7 +344,7 @@ func (h *APIKeyHandler) Rotate(c echo.Context) error {
 	})
 }
 
-// Delete handles DELETE /api/v1/teams/:teamId/profiles/:profileId.
+// Delete handles DELETE /ui/api/team/profiles/:profileId.
 // Requires manager role and can only delete member profiles.
 // Returns 200 with { "status": "deleted" }.
 // Scoped to the profileId in the path — returns NOT_FOUND for cross-profile ids.
@@ -414,7 +414,10 @@ func teamIDParam(c echo.Context) string {
 	if v := c.Param("teamId"); v != "" {
 		return v
 	}
-	return c.Param("profileId")
+	if principal := middleware.GetPrincipal(c.Request().Context()); principal != nil && principal.GetTeamID() != uuid.Nil {
+		return principal.GetTeamID().String()
+	}
+	return ""
 }
 
 func teamProfileIDParam(c echo.Context) string {

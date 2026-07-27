@@ -64,7 +64,7 @@ type Pagination struct {
 	Total  int64 `json:"total"`
 }
 
-// Create handles POST /api/v1/profiles.
+// Create handles POST /ui/api/team/profiles.
 // Returns 201 with the created profile.
 func (h *ProfileHandler) Create(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -103,7 +103,7 @@ func (h *ProfileHandler) Create(c echo.Context) error {
 	return response.SuccessCreated(c, toProfileResponse(profile))
 }
 
-// List handles GET /api/v1/profiles.
+// List handles GET /ui/api/team/profiles.
 // Returns 200 with paginated list of profiles.
 func (h *ProfileHandler) List(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -140,7 +140,7 @@ func (h *ProfileHandler) List(c echo.Context) error {
 	})
 }
 
-// Get handles GET /api/v1/teams/:teamId.
+// Get handles GET /ui/api/team.
 // Returns 200 with the team data.
 func (h *ProfileHandler) Get(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -171,7 +171,7 @@ func (h *ProfileHandler) Get(c echo.Context) error {
 	return response.SuccessOK(c, toProfileResponse(profile))
 }
 
-// Patch handles PATCH /api/v1/teams/:teamId.
+// Patch handles PATCH /ui/api/team.
 // Returns 200 with the updated team data.
 func (h *ProfileHandler) Patch(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -228,7 +228,7 @@ func (h *ProfileHandler) Patch(c echo.Context) error {
 	return response.SuccessOK(c, toProfileResponse(profile))
 }
 
-// Delete handles DELETE /api/v1/teams/:teamId.
+// Delete handles DELETE /ui/api/team.
 // Returns 200 with { "status": "deleted" }.
 func (h *ProfileHandler) Delete(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -268,7 +268,13 @@ func teamPathIDParam(c echo.Context) string {
 	if v := c.Param("teamId"); v != "" {
 		return v
 	}
-	return c.Param("profileId")
+	if v := c.Param("profileId"); v != "" {
+		return v
+	}
+	if principal := middleware.GetPrincipal(c.Request().Context()); principal != nil && principal.GetTeamID() != uuid.Nil {
+		return principal.GetTeamID().String()
+	}
+	return ""
 }
 
 // toProfileResponse converts a domain.Team to dto.ProfileResponse.

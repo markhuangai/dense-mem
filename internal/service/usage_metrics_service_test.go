@@ -25,7 +25,7 @@ func TestUsageMetricsService_PersistsUsageAcrossServiceInstances(t *testing.T) {
 		TeamID:    teamID,
 		KeyID:     keyID,
 		Method:    "GET",
-		Route:     "/api/v1/fragments/:id",
+		Route:     "/ui/api/evidence/:id",
 		Status:    200,
 		Latency:   15 * time.Millisecond,
 	})
@@ -34,7 +34,7 @@ func TestUsageMetricsService_PersistsUsageAcrossServiceInstances(t *testing.T) {
 		TeamID:    teamID,
 		KeyID:     keyID,
 		Method:    "GET",
-		Route:     "/api/v1/fragments/:id",
+		Route:     "/ui/api/evidence/:id",
 		Status:    503,
 		Latency:   25 * time.Millisecond,
 	})
@@ -63,7 +63,7 @@ func TestUsageMetricsService_PrunesExpiredBuckets(t *testing.T) {
 		BucketStart:  time.Now().UTC().AddDate(0, 0, -UsageMetricsRetentionDays-1).Truncate(time.Minute),
 		TeamID:       uuid.New(),
 		KeyID:        uuid.New(),
-		Route:        "/api/v1/recall",
+		Route:        "/ui/api/recall",
 		Method:       "GET",
 		StatusClass:  2,
 		RequestCount: 1,

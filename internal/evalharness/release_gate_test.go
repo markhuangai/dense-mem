@@ -28,18 +28,8 @@ func TestRunValidateChecksReleaseGateInputBeforeLiveWork(t *testing.T) {
 		Mode:                  "validate",
 		SeedManifestPath:      manifestPath,
 		SuitePath:             suitePath,
-		ReleaseGatePolicyPath: policyPath,
-	}); err == nil || !strings.Contains(err.Error(), "requires MCP tool transport") {
-		t.Fatalf("Run release gate over REST err = %v", err)
-	}
-
-	if _, err := Run(context.Background(), RunOptions{
-		Mode:                  "validate",
-		SeedManifestPath:      manifestPath,
-		SuitePath:             suitePath,
 		OutDir:                out,
 		ReleaseGatePolicyPath: policyPath,
-		ToolTransport:         "mcp",
 	}); err != nil {
 		t.Fatalf("Run validate with approved input: %v", err)
 	}
@@ -68,7 +58,6 @@ func TestRunValidateChecksReleaseGateInputBeforeLiveWork(t *testing.T) {
 		SuitePath:             suitePath,
 		OutDir:                filepath.Join(dir, "rejected"),
 		ReleaseGatePolicyPath: policyPath,
-		ToolTransport:         "mcp",
 	})
 	if err == nil || !strings.Contains(err.Error(), "release gate input check failed") || !strings.Contains(err.Error(), "seed_hash") {
 		t.Fatalf("Run validate unapproved seed err = %v", err)

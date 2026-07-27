@@ -25,6 +25,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
 // UserPortalDeps holds the dependencies for the API-key user portal.
@@ -36,6 +37,8 @@ type UserPortalDeps struct {
 	UsageMetrics    service.UsageMetricsRecorder
 	Telemetry       service.TelemetryReader
 	GraphView       graphview.Service
+	RecallSvc       memoryservice.RecallService
+	DreamSvc        dreamservice.Service
 	AuditSvc        service.AuditService
 	SecuritySvc     httpmw.SecurityBanService
 	SSOService      *service.SSOService
@@ -45,60 +48,14 @@ type UserPortalDeps struct {
 	ExtraMiddleware []echo.MiddlewareFunc
 }
 
-// RegisterUserPortal registers the API-key user portal under /ui on the main API server.
-func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
-	portal := &userPortalHandler{
-		profiles:  deps.ProfileSvc,
-		keys:      deps.APIKeySvc,
-		telemetry: deps.Telemetry,
-		graph:     deps.GraphView,
-		sso:       deps.SSOService,
-		appConfig: deps.AppConfig,
-	}
-
-	if deps.SSOService != nil {
-		ssoAPI := e.Group("/ui/api/sso")
-		ssoAPI.Use(publicSSORateLimitMiddleware(deps.RateLimitSvc, deps.Config))
-		ssoAPI.GET("/providers", portal.ssoProviders)
-		ssoAPI.GET("/start/:providerId", portal.startSSO)
-		ssoAPI.GET("/callback", portal.completeSSO)
-		ssoAPI.POST("/logout", portal.logoutSSO)
-	}
-
-	api := e.Group("/ui/api")
-	authOpts := httpmw.AuthOptions{}
-	if deps.SSOService != nil {
-		authOpts.SSOEntitlementValidator = deps.SSOService
-		authOpts.SSOSessionAuthenticator = deps.SSOService
-	}
-	api.Use(httpmw.AuthMiddlewareWithOptions(deps.APIKeyRepo, deps.AuditSvc, deps.SecuritySvc, authOpts))
-	api.Use(deps.ExtraMiddleware...)
-	api.Use(httpmw.UsageMetricsMiddleware(deps.UsageMetrics))
-	api.Use(httpmw.RateLimitMiddleware(deps.RateLimitSvc, deps.Config, deps.AuditSvc))
-	api.Use(httpmw.LastUsedMiddleware(deps.APIKeyRepo))
-	api.GET("/session", portal.session)
-	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("write"))
-	api.GET("/graph", portal.graphSnapshot, httpmw.RequireScopes("read"))
-	api.GET("/node-detail", portal.graphNodeDetail, httpmw.RequireScopes("read"))
-	api.POST("/key/rotate", portal.rotateCurrentKey, httpmw.RequireScopes("write"))
-	if deps.SSOService != nil {
-		api.POST("/sso/team", portal.switchSSOTeam, httpmw.RequireScopes("read"))
-		api.POST("/sso/key", portal.createSSOKey, httpmw.RequireScopes("read"))
-		api.POST("/sso/key/rotate", portal.rotateSSOKey, httpmw.RequireScopes("read"))
-	}
-
-	staticDir := strings.TrimSpace(deps.UserStaticDir)
-	if staticDir == "" {
-		staticDir = defaultUserPortalStaticDir()
-	}
-	registerUserPortalStatic(e, staticDir)
-}
-
 type userPortalHandler struct {
 	profiles  handler.ProfileServiceInterface
 	keys      handler.APIKeyServiceInterface
 	telemetry service.TelemetryReader
 	graph     graphview.Service
+	recall    *handler.RecallHandler
+	dreams    *handler.DreamHandler
+	audit     *handler.AuditHandler
 	sso       *service.SSOService
 	appConfig service.AppConfigService
 }
@@ -381,6 +338,13 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 	}
 	if principal.AuthMethod == "sso_session" {
 		return h.currentSSOSession(c)
+	}
+
+	if h.profiles == nil {
+		return userPortalSessionResponse{}, httperr.New(httperr.SERVICE_UNAVAILABLE, "profile service unavailable")
+	}
+	if h.keys == nil {
+		return userPortalSessionResponse{}, httperr.New(httperr.SERVICE_UNAVAILABLE, "api key service unavailable")
 	}
 
 	teamID := principal.GetTeamID()

@@ -12,7 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-func TestV2ReadPathErrorBranches(t *testing.T) {
+func TestReadPathErrorBranches(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
 	hypothesisID := uuid.NewString()
@@ -26,7 +26,7 @@ func TestV2ReadPathErrorBranches(t *testing.T) {
 	require.ErrorContains(t, err, "list failed")
 
 	_, err = New(Dependencies{
-		Store:     &dreamRepositoryStub{getErr: repository.ErrV2DreamHypothesisNotFound},
+		Store:     &dreamRepositoryStub{getErr: repository.ErrDreamHypothesisNotFound},
 		AppConfig: cfg,
 	}).Get(ctx, "ignored-profile", hypothesisID)
 	require.ErrorIs(t, err, ErrDreamNotFound)
@@ -56,11 +56,11 @@ func TestV2ReadPathErrorBranches(t *testing.T) {
 	require.ErrorContains(t, err, "status latest failed")
 }
 
-func TestV2GeneratedProposalTargetValidationEdges(t *testing.T) {
+func TestGeneratedProposalTargetValidationEdges(t *testing.T) {
 	sourceID := uuid.NewString()
 	subjectID := uuid.NewString()
 	objectValueID := uuid.NewString()
-	inputs := map[string]repository.V2DreamInput{
+	inputs := map[string]repository.DreamInput{
 		sourceID: {
 			RelationshipID:   sourceID,
 			Version:          1,
