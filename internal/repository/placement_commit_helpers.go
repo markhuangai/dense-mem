@@ -647,6 +647,14 @@ func upsertPlacementRelationshipSearchDocument(
 	if err != nil {
 		return nil, err
 	}
+	previousGenerationID, err := relationshipSearchDocumentProjectionGenerationID(ctx, tx, commit.TeamID, relationship.RelationshipID)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := relationshipForegroundSearchMetadata(ctx, tx, commit.TeamID)
+	if err != nil {
+		return nil, err
+	}
 	input := normalizeUpsertSearchDocumentInput(UpsertSearchDocumentInput{
 		TeamID:           commit.TeamID,
 		OwnerProfileID:   commit.OwnerProfileID,
@@ -655,11 +663,19 @@ func upsertPlacementRelationshipSearchDocument(
 		SourceVersion:    int64(relationship.Version),
 		ProjectionFormat: 2,
 		DocumentText:     text,
+		Metadata:         metadata,
 	})
 	if err := validateUpsertSearchDocumentInput(input); err != nil {
 		return nil, err
 	}
-	return upsertSearchDocumentInTx(ctx, tx, input, contract, embeddingJobMaxAttempts)
+	result, err := upsertSearchDocumentInTx(ctx, tx, input, contract, embeddingJobMaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	if err := refreshPreviousRelationshipProjectionGeneration(ctx, tx, commit.TeamID, previousGenerationID); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func placementCommitPayload(base map[string]any, result *CommitPlacementSemanticResult) map[string]any {

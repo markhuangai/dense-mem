@@ -28,10 +28,12 @@ type AdvanceSourceRevisionInput struct {
 }
 
 type SourceRevisionResult struct {
-	TeamID           string
-	SourceID         string
-	SourceRevisionID string
-	RevisionToken    string
+	TeamID                       string
+	SourceID                     string
+	SourceRevisionID             string
+	RevisionToken                string
+	SupersededSourceRevisionID   string
+	SupersededSourceRevisionSeen bool
 }
 
 func (r *LedgerRepositoryImpl) AdvanceSourceRevision(ctx context.Context, input AdvanceSourceRevisionInput) (*SourceRevisionResult, error) {
@@ -183,6 +185,14 @@ func advanceSourceRevisionInTx(
 	cacheKey := input.SourceKey + "\x00" + input.RevisionToken
 	if cache != nil {
 		if cached, ok := cache[cacheKey]; ok {
+			if len(input.SupersedesFragmentIDs) > 0 {
+				if !cached.SupersededSourceRevisionSeen || cached.SupersededSourceRevisionID == "" {
+					return nil, fmt.Errorf("%w: superseded fragments require an existing previous revision", ErrSourceRevisionConflict)
+				}
+				if err := validateSupersededFragments(ctx, tx, input, cached.SourceID, cached.SupersededSourceRevisionID); err != nil {
+					return nil, err
+				}
+			}
 			return &cached, nil
 		}
 	}
@@ -243,10 +253,12 @@ func advanceSourceRevisionInTx(
 		return nil, err
 	}
 	advanced := SourceRevisionResult{
-		TeamID:           input.TeamID,
-		SourceID:         sourceID,
-		SourceRevisionID: revisionID,
-		RevisionToken:    input.RevisionToken,
+		TeamID:                       input.TeamID,
+		SourceID:                     sourceID,
+		SourceRevisionID:             revisionID,
+		RevisionToken:                input.RevisionToken,
+		SupersededSourceRevisionID:   currentRevisionID,
+		SupersededSourceRevisionSeen: true,
 	}
 	if cache != nil {
 		cache[cacheKey] = advanced

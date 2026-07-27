@@ -30,9 +30,6 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 		if err := failExpiredMaxAttemptEmbeddingJobs(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
-		if err := refreshRelationshipProjectionGenerationsForTeam(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH claimed AS (
 				SELECT job.team_id, job.embedding_job_id
@@ -127,6 +124,7 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 	if err != nil {
 		return err
 	}
+	var terminalErr error
 	err = r.withActiveTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var dims int
 		var contractID, sourceKind, projectionGenerationID string
@@ -164,7 +162,8 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobStale), "active search contract changed before embedding completion"); err != nil {
 				return err
 			}
-			return ErrSearchContractMismatch
+			terminalErr = ErrSearchContractMismatch
+			return nil
 		}
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE search_documents AS document
@@ -195,7 +194,8 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobStale), "source or document version changed before embedding completion"); err != nil {
 				return err
 			}
-			return ErrSearchStaleVersion
+			terminalErr = ErrSearchStaleVersion
+			return nil
 		}
 		if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobCompleted), ""); err != nil {
 			return err
@@ -209,6 +209,9 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 	})
 	if err != nil {
 		return fmt.Errorf("search: complete embedding job: %w", err)
+	}
+	if terminalErr != nil {
+		return fmt.Errorf("search: complete embedding job: %w", terminalErr)
 	}
 	return nil
 }
@@ -536,38 +539,6 @@ func refreshRelationshipProjectionGeneration(ctx context.Context, tx *gorm.DB, t
 		WHERE generation.team_id = counts.team_id
 		  AND generation.projection_generation_id = counts.projection_generation_id
 	`, teamID, projectionGenerationID).Error
-}
-
-func refreshRelationshipProjectionGenerationsForTeam(ctx context.Context, tx *gorm.DB, teamID string) error {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT projection_generation_id::text
-		FROM search_projection_generations
-		WHERE team_id = ?::uuid
-		  AND source_kind = 'relationship'
-		  AND projection_format_version = 2
-		  AND state IN ('projecting_text', 'embedding')
-	`, teamID).Rows()
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	generationIDs := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return err
-		}
-		generationIDs = append(generationIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, id := range generationIDs {
-		if err := refreshRelationshipProjectionGeneration(ctx, tx, teamID, id); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func markStaleEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) error {

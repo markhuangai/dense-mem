@@ -1,5 +1,7 @@
 package repository
 
+const relationshipForegroundRecallGenerationMetadataKey = "relationship_foreground_recall_generation_id"
+
 const recallRelationshipGenerationScopeSQL = `
 		recall_relationship_generation_team AS (
 		    SELECT ?::uuid AS team_id
@@ -50,7 +52,7 @@ const recallRelationshipGenerationDocumentSQL = `(
 		        document.projection_generation_id IS NULL
 		        AND (
 		            generation.projection_generation_id IS NULL
-		            OR document.updated_at >= COALESCE(generation.activated_at, generation.created_at)
+		            OR COALESCE(document.metadata->>'` + relationshipForegroundRecallGenerationMetadataKey + `', '') = generation.projection_generation_id::text
 		        )
 		    )
 		)`

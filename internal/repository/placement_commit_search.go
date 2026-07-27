@@ -288,6 +288,81 @@ func relationshipSearchEligible(relationship *RelationshipRecord) bool {
 		relationship.SupportCount > 0
 }
 
+func relationshipSearchDocumentProjectionGenerationID(ctx context.Context, tx *gorm.DB, teamID string, relationshipID string) (string, error) {
+	var projectionGenerationID sql.NullString
+	err := tx.WithContext(ctx).Raw(`
+		SELECT projection_generation_id::text
+		FROM search_documents
+		WHERE team_id = ?::uuid
+		  AND source_kind = 'relationship'
+		  AND source_id = ?::uuid
+		LIMIT 1
+	`, teamID, relationshipID).Row().Scan(&projectionGenerationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return projectionGenerationID.String, nil
+}
+
+func relationshipForegroundRecallGenerationID(ctx context.Context, tx *gorm.DB, teamID string) (string, error) {
+	var projectionGenerationID sql.NullString
+	err := tx.WithContext(ctx).Raw(`
+		WITH activated AS (
+		    SELECT projection_generation_id, generation, created_at
+		    FROM search_projection_generations
+		    WHERE team_id = ?::uuid
+		      AND source_kind = 'relationship'
+		      AND projection_format_version = 2
+		      AND state = 'current'
+		      AND activated_at IS NOT NULL
+		    ORDER BY generation DESC, created_at DESC
+		    LIMIT 1
+		),
+		selected AS (
+		    SELECT projection_generation_id, 0 AS priority, generation, created_at
+		    FROM activated
+		    UNION ALL
+		    SELECT projection_generation_id, 1 AS priority, generation, created_at
+		    FROM search_projection_generations
+		    WHERE team_id = ?::uuid
+		      AND source_kind = 'relationship'
+		      AND projection_format_version = 2
+		      AND NOT EXISTS (SELECT 1 FROM activated)
+		)
+		SELECT projection_generation_id::text
+		FROM selected
+		ORDER BY priority ASC, generation DESC, created_at DESC
+		LIMIT 1
+	`, teamID, teamID).Row().Scan(&projectionGenerationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return projectionGenerationID.String, nil
+}
+
+func relationshipForegroundSearchMetadata(ctx context.Context, tx *gorm.DB, teamID string) (map[string]any, error) {
+	projectionGenerationID, err := relationshipForegroundRecallGenerationID(ctx, tx, teamID)
+	if err != nil || projectionGenerationID == "" {
+		return nil, err
+	}
+	return map[string]any{
+		relationshipForegroundRecallGenerationMetadataKey: projectionGenerationID,
+	}, nil
+}
+
+func refreshPreviousRelationshipProjectionGeneration(ctx context.Context, tx *gorm.DB, teamID string, projectionGenerationID string) error {
+	if strings.TrimSpace(projectionGenerationID) == "" {
+		return nil
+	}
+	return refreshRelationshipProjectionGeneration(ctx, tx, teamID, projectionGenerationID)
+}
+
 func markRelationshipSearchDocumentNotRequired(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -296,6 +371,10 @@ func markRelationshipSearchDocumentNotRequired(
 ) (*SearchDocumentResult, error) {
 	if relationship == nil || relationship.RelationshipID == "" {
 		return nil, nil
+	}
+	previousGenerationID, err := relationshipSearchDocumentProjectionGenerationID(ctx, tx, commit.TeamID, relationship.RelationshipID)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH updated AS (
@@ -346,7 +425,13 @@ func markRelationshipSearchDocumentNotRequired(
 	); err != nil {
 		return nil, err
 	}
-	return &loaded, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := refreshPreviousRelationshipProjectionGeneration(ctx, tx, commit.TeamID, previousGenerationID); err != nil {
+		return nil, err
+	}
+	return &loaded, nil
 }
 
 func upsertPlacementEvidenceSearchDocument(

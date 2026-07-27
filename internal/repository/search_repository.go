@@ -485,10 +485,13 @@ func (r *SearchRepositoryImpl) SearchExactVector(ctx context.Context, input Exac
 					                AND generation.source_kind = 'relationship'
 					                AND generation.projection_format_version = search_documents.projection_format_version
 					                AND generation.state = 'current'
-					                AND (
-					                    search_documents.projection_generation_id IS NULL
-					                    OR generation.projection_generation_id = search_documents.projection_generation_id
-					                )
+				                AND (
+				                    generation.projection_generation_id = search_documents.projection_generation_id
+				                    OR (
+				                        search_documents.projection_generation_id IS NULL
+				                        AND COALESCE(search_documents.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = generation.projection_generation_id::text
+				                    )
+				                )
 					              )
 					          )
 				      )
@@ -534,10 +537,13 @@ func (r *SearchRepositoryImpl) SearchExactVector(ctx context.Context, input Exac
 						                AND generation.source_kind = 'relationship'
 						                AND generation.projection_format_version = search_documents.projection_format_version
 						                AND generation.state = 'current'
-						                AND (
-						                    search_documents.projection_generation_id IS NULL
-						                    OR generation.projection_generation_id = search_documents.projection_generation_id
-						                )
+				                AND (
+				                    generation.projection_generation_id = search_documents.projection_generation_id
+				                    OR (
+				                        search_documents.projection_generation_id IS NULL
+				                        AND COALESCE(search_documents.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = generation.projection_generation_id::text
+				                    )
+				                )
 						              )
 						          )
 					      )

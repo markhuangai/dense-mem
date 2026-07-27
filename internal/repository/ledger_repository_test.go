@@ -82,7 +82,7 @@ func TestLedgerAdvanceSourceRevisionValidationUsesCanonicalAuthority(t *testing.
 	assert.Contains(t, err.Error(), "authority is unsupported")
 }
 
-func TestLedgerCreateIngestValidationRejectsMixedSourceRevisionSupersedes(t *testing.T) {
+func TestLedgerCreateIngestValidationAllowsPerEvidenceSourceRevisionSupersedes(t *testing.T) {
 	input := validCreateIngestInput()
 	input.Evidence = []EvidenceInput{
 		{
@@ -105,8 +105,7 @@ func TestLedgerCreateIngestValidationRejectsMixedSourceRevisionSupersedes(t *tes
 
 	err := validateCreateIngestInput(normalizeCreateIngestInput(input))
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "supersedes_fragment_ids must match earlier item")
+	require.NoError(t, err)
 }
 
 func TestLedgerCreateIngestFailsClosedWithoutDependencies(t *testing.T) {

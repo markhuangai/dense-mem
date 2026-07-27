@@ -213,7 +213,6 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 		evidence := make([]EvidenceFragment, 0, len(input.Evidence))
 		items := make([]PlacementItem, 0, len(input.Evidence))
 		sources := make(map[string]SourceRevisionResult)
-		supersedesByBatch := sourceRevisionSupersedesByBatch(input.Evidence)
 		for i, item := range input.Evidence {
 			var source *SourceRevisionResult
 			if item.SourceKey != "" {
@@ -227,7 +226,7 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 					ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
 					ContentHash:                   item.SourceRevisionContentHash,
 					Envelope:                      item.SourceRevisionEnvelope,
-					SupersedesFragmentIDs:         supersedesByBatch[sourceRevisionBatchKey(item)],
+					SupersedesFragmentIDs:         item.SupersedesFragmentIDs,
 				}, sources)
 				if err != nil {
 					return err

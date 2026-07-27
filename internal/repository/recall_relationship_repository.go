@@ -166,8 +166,17 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 		 AND document.source_id = eligible.relationship_id
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.embedding_dimensions = ?
-		 AND document.projection_format_version = 2
-		 AND (document.projection_generation_id IS NULL OR document.projection_generation_id = (SELECT projection_generation_id FROM latest_generation))
+			 AND document.projection_format_version = 2
+			 AND (
+			     document.projection_generation_id = (SELECT projection_generation_id FROM latest_generation)
+			     OR (
+			         document.projection_generation_id IS NULL
+			         AND (
+			             (SELECT projection_generation_id FROM latest_generation) IS NULL
+			             OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = (SELECT projection_generation_id::text FROM latest_generation)
+			         )
+			     )
+			 )
 	`, teamID, teamID, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Row().Scan(
 		&latestState,
 		&eligibleCount,
@@ -265,11 +274,17 @@ func searchRecallRelationshipExactVector(
 			     AND document.source_kind = 'relationship'
 			     AND document.embedding_contract_id = ?::uuid
 			     AND document.embedding_dimensions = ?
-			     AND document.projection_format_version = 2
-			     AND (
-			         document.projection_generation_id IS NULL
-			         OR document.projection_generation_id = current_generation.projection_generation_id
-			     )
+				     AND document.projection_format_version = 2
+				     AND (
+				         document.projection_generation_id = current_generation.projection_generation_id
+				         OR (
+				             document.projection_generation_id IS NULL
+				             AND (
+				                 current_generation.projection_generation_id IS NULL
+				                 OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = current_generation.projection_generation_id::text
+				             )
+				         )
+				     )
 			     AND document.search_state = 'current'
 			     AND document.embedding IS NOT NULL
 			    LIMIT ?
@@ -320,12 +335,18 @@ func searchRecallRelationshipExactVector(
 		  ON document.team_id = ?::uuid
 		 AND document.source_kind = 'relationship'
 		 AND document.embedding_contract_id = ?::uuid
-		 AND document.embedding_dimensions = ?
-		 AND document.projection_format_version = 2
-		 AND (
-		     document.projection_generation_id IS NULL
-		     OR document.projection_generation_id = current_generation.projection_generation_id
-		 )
+			 AND document.embedding_dimensions = ?
+			 AND document.projection_format_version = 2
+			 AND (
+			     document.projection_generation_id = current_generation.projection_generation_id
+			     OR (
+			         document.projection_generation_id IS NULL
+			         AND (
+			             current_generation.projection_generation_id IS NULL
+			             OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = current_generation.projection_generation_id::text
+			         )
+			     )
+			 )
 		 AND document.search_state = 'current'
 		 AND document.embedding IS NOT NULL
 		ORDER BY document.embedding <=> ?::vector ASC, document.search_document_id ASC
@@ -394,12 +415,18 @@ func searchRecallRelationshipANNVector(
 			  ON document.team_id = ?::uuid
 			 AND document.source_kind = 'relationship'
 			 AND document.embedding_contract_id = %s::uuid
-			 AND document.embedding_dimensions = %d
-			 AND document.projection_format_version = 2
-			 AND (
-			     document.projection_generation_id IS NULL
-			     OR document.projection_generation_id = current_generation.projection_generation_id
-			 )
+				 AND document.embedding_dimensions = %d
+				 AND document.projection_format_version = 2
+				 AND (
+				     document.projection_generation_id = current_generation.projection_generation_id
+				     OR (
+				         document.projection_generation_id IS NULL
+				         AND (
+				             current_generation.projection_generation_id IS NULL
+				             OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = current_generation.projection_generation_id::text
+				         )
+				     )
+				 )
 			 AND document.search_state = 'current'
 			 AND document.embedding IS NOT NULL
 			ORDER BY %s ASC, document.search_document_id ASC
