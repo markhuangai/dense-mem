@@ -234,14 +234,15 @@ export type RecallObject = {
 
 export type RecallRelationship = {
   relationship_id: string;
+  equivalent_relationship_ids?: string[];
   subject?: RecallEntity;
   predicate?: string;
   object?: RecallObject;
-  tier?: string;
   polarity?: string;
   valid_from?: string;
   valid_to?: string;
   evidence_ids?: string[];
+  search_state?: string;
   corroborating_relationship_ids?: string[];
   conflicting_relationship_ids?: string[];
 };
@@ -265,10 +266,16 @@ export type RecallPayload = {
   recall_id?: string;
   results: RecallEvidenceContext[];
   conflicts?: unknown[];
-  discovery_paths: RecallDiscoveryPath[];
-  discovery_guidance: string;
+  related_relationships?: RecallRelationship[];
+  related_communities?: RecallDiscoveryPath[];
+  discovery_paths?: RecallDiscoveryPath[];
+  discovery_guidance?: string;
   related_hypotheses?: unknown[];
-  search_state?: string;
+  search_states?: {
+    evidence?: string;
+    relationships?: string;
+  };
+  degradations?: unknown[];
 };
 
 type LegacyRecallPayload = {
@@ -420,11 +427,12 @@ export class UserApi {
     const payload = await this.request<Envelope<unknown>>(`/ui/api/recall?${params.toString()}`);
     const data = payload.data;
     if (isRecallPayload(data)) {
+      const communityPaths = data.related_communities ?? data.discovery_paths ?? [];
       return data.results.map((evidence) => ({
         evidence,
         evidences: [evidence],
-        relationships: relationshipsForEvidence(data.discovery_paths, evidence.evidence_id),
-        discovery_paths: data.discovery_paths,
+        relationships: relationshipsForEvidence(communityPaths, evidence.evidence_id),
+        discovery_paths: communityPaths,
         related_hypotheses: data.related_hypotheses ?? [],
         final_score: evidence.rank ? 1 / evidence.rank : undefined,
         semantic_rank: evidence.rank,
@@ -438,11 +446,10 @@ export class UserApi {
       return data.results.map((relationship, index) => ({
         relationship,
         relationships: [relationship],
-        evidences: (relationship.evidence_ids ?? [])
-          .map((id) => evidencesByID.get(id))
-          .filter((evidence): evidence is RecallEvidenceContext => Boolean(evidence)),
-        tier: relationship.tier,
-        score: 1,
+	        evidences: (relationship.evidence_ids ?? [])
+	          .map((id) => evidencesByID.get(id))
+	          .filter((evidence): evidence is RecallEvidenceContext => Boolean(evidence)),
+	        score: 1,
         final_score: 1,
         semantic_rank: index + 1,
       }));
@@ -531,7 +538,11 @@ export class UserApi {
 }
 
 function isRecallPayload(value: RecallPayload | unknown): value is RecallPayload {
-  return Boolean(value && typeof value === "object" && "discovery_paths" in value && "results" in value);
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const payload = value as Partial<RecallPayload> & { evidences?: unknown };
+  return Array.isArray(payload.results) && !Array.isArray(payload.evidences);
 }
 
 function isLegacyRecallPayload(value: unknown): value is LegacyRecallPayload {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -192,7 +193,7 @@ func TestMCP_ToolListCarriesContractVersionMetadata(t *testing.T) {
 	if err := json.Unmarshal(response.Result, &result); err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Tools) != 1 || result.Tools[0].InputSchema["x-contract-version"] != "dense-mem.v2.1" {
+	if len(result.Tools) != 1 || result.Tools[0].InputSchema["x-contract-version"] != domain.ContractVersion {
 		t.Fatalf("tools/list contract metadata = %#v", result.Tools)
 	}
 }

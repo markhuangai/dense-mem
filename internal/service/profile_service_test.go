@@ -38,7 +38,7 @@ func TestProfileServiceCreate(t *testing.T) {
 
 	sqlDB, _ := db.DB()
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
-	sqlDB.Exec("DELETE FROM profiles WHERE name LIKE 'Test %'")
+	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
 	repo := repository.NewProfileRepository(db, postgres.NewRLS())
 	auditService := NewAuditService(db)
@@ -62,7 +62,7 @@ func TestProfileServiceCreate(t *testing.T) {
 	assert.NotZero(t, profile.UpdatedAt, "UpdatedAt should be set")
 
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id = $1", profile.ID.String())
-	sqlDB.Exec("DELETE FROM profiles WHERE id = $1", profile.ID.String())
+	sqlDB.Exec("DELETE FROM teams WHERE id = $1", profile.ID.String())
 }
 
 // TestProfileServiceCreateDuplicateName verifies conflict on case-insensitive duplicate.
@@ -88,7 +88,7 @@ func TestProfileServiceCreateDuplicateName(t *testing.T) {
 
 	sqlDB, _ := db.DB()
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
-	sqlDB.Exec("DELETE FROM profiles WHERE name LIKE 'Test %'")
+	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
 	repo := repository.NewProfileRepository(db, postgres.NewRLS())
 	auditService := NewAuditService(db)
@@ -116,7 +116,7 @@ func TestProfileServiceCreateDuplicateName(t *testing.T) {
 	assert.Equal(t, httperr.CONFLICT, apiErr.Code, "Error code should be CONFLICT")
 
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id = $1", profile1.ID.String())
-	sqlDB.Exec("DELETE FROM profiles WHERE id = $1", profile1.ID.String())
+	sqlDB.Exec("DELETE FROM teams WHERE id = $1", profile1.ID.String())
 }
 
 // TestProfileServiceGet verifies fetch by ID, deleted profiles return 404.
@@ -142,7 +142,7 @@ func TestProfileServiceGet(t *testing.T) {
 
 	sqlDB, _ := db.DB()
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
-	sqlDB.Exec("DELETE FROM profiles WHERE name LIKE 'Test %'")
+	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
 	repo := repository.NewProfileRepository(db, postgres.NewRLS())
 	auditService := NewAuditService(db)
@@ -170,7 +170,7 @@ func TestProfileServiceGet(t *testing.T) {
 	assert.Equal(t, httperr.NOT_FOUND, apiErr.Code, "Error code should be NOT_FOUND")
 
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id = $1", profile.ID.String())
-	sqlDB.Exec("DELETE FROM profiles WHERE id = $1", profile.ID.String())
+	sqlDB.Exec("DELETE FROM teams WHERE id = $1", profile.ID.String())
 }
 
 // TestProfileServiceList verifies pagination, max limit=100, sort order, excludes deleted.
@@ -196,7 +196,7 @@ func TestProfileServiceList(t *testing.T) {
 
 	sqlDB, _ := db.DB()
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
-	sqlDB.Exec("DELETE FROM profiles WHERE name LIKE 'Test %'")
+	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
 	repo := repository.NewProfileRepository(db, postgres.NewRLS())
 	auditService := NewAuditService(db)
@@ -231,7 +231,7 @@ func TestProfileServiceList(t *testing.T) {
 
 	for _, id := range createdIDs {
 		sqlDB.Exec("DELETE FROM audit_log WHERE entity_id = $1", id.String())
-		sqlDB.Exec("DELETE FROM profiles WHERE id = $1", id.String())
+		sqlDB.Exec("DELETE FROM teams WHERE id = $1", id.String())
 	}
 }
 
@@ -258,7 +258,7 @@ func TestProfileServiceUpdate(t *testing.T) {
 
 	sqlDB, _ := db.DB()
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
-	sqlDB.Exec("DELETE FROM profiles WHERE name LIKE 'Test %'")
+	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
 	repo := repository.NewProfileRepository(db, postgres.NewRLS())
 	auditService := NewAuditService(db)
@@ -296,10 +296,10 @@ func TestProfileServiceUpdate(t *testing.T) {
 	assert.GreaterOrEqual(t, auditCount, 1, "Audit log should have UPDATE entry")
 
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id = $1", profile.ID.String())
-	sqlDB.Exec("DELETE FROM profiles WHERE id = $1", profile.ID.String())
+	sqlDB.Exec("DELETE FROM teams WHERE id = $1", profile.ID.String())
 }
 
-// TestProfileServiceDelete verifies hard delete and audit emission.
+// TestProfileServiceDelete verifies tombstone delete and audit emission.
 func TestProfileServiceDelete(t *testing.T) {
 	ctx := context.Background()
 
@@ -322,7 +322,7 @@ func TestProfileServiceDelete(t *testing.T) {
 
 	sqlDB, _ := db.DB()
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
-	sqlDB.Exec("DELETE FROM profiles WHERE name LIKE 'Test %'")
+	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
 	repo := repository.NewProfileRepository(db, postgres.NewRLS())
 	auditService := NewAuditService(db)
@@ -346,6 +346,17 @@ func TestProfileServiceDelete(t *testing.T) {
 	require.True(t, ok, "Error should be APIError")
 	assert.Equal(t, httperr.NOT_FOUND, apiErr.Code, "Error code should be NOT_FOUND")
 
+	var status string
+	var deleted bool
+	err = sqlDB.QueryRowContext(ctx, `
+		SELECT status, deleted_at IS NOT NULL
+		FROM teams
+		WHERE id = $1
+	`, profile.ID).Scan(&status, &deleted)
+	require.NoError(t, err, "Should query tombstoned team")
+	assert.Equal(t, "deleted", status)
+	assert.True(t, deleted)
+
 	var auditCount int
 	err = sqlDB.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM audit_log 
@@ -355,12 +366,12 @@ func TestProfileServiceDelete(t *testing.T) {
 	assert.GreaterOrEqual(t, auditCount, 1, "Audit log should have DELETE entry")
 
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id = $1", profile.ID.String())
-	sqlDB.Exec("DELETE FROM profiles WHERE id = $1", profile.ID.String())
+	sqlDB.Exec("DELETE FROM teams WHERE id = $1", profile.ID.String())
 }
 
-// TestProfileServiceDeleteRemovesActiveKeys verifies profile deletion removes
-// profile-bound API keys instead of requiring a separate revoke step.
-func TestProfileServiceDeleteRemovesActiveKeys(t *testing.T) {
+// TestProfileServiceDeleteRevokesActiveKeys verifies team deletion revokes
+// profile-bound API keys without deleting team profile rows.
+func TestProfileServiceDeleteRevokesActiveKeys(t *testing.T) {
 	ctx := context.Background()
 
 	dsn, cleanup := skipIfNoPostgres(t, ctx)
@@ -382,8 +393,7 @@ func TestProfileServiceDeleteRemovesActiveKeys(t *testing.T) {
 
 	sqlDB, _ := db.DB()
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id LIKE 'test-%'")
-	sqlDB.Exec("DELETE FROM api_keys WHERE key_prefix LIKE 'test%'")
-	sqlDB.Exec("DELETE FROM profiles WHERE name LIKE 'Test %'")
+	sqlDB.Exec("DELETE FROM teams WHERE name LIKE 'Test %'")
 
 	repo := repository.NewProfileRepository(db, postgres.NewRLS())
 	auditService := NewAuditService(db)
@@ -400,8 +410,8 @@ func TestProfileServiceDeleteRemovesActiveKeys(t *testing.T) {
 
 	// Create an active API key for this profile
 	_, err = sqlDB.ExecContext(ctx, `
-		INSERT INTO api_keys (id, team_id, key_hash, key_prefix, label, scopes, expires_at, revoked_at, created_at, updated_at)
-		VALUES (gen_random_uuid(), $1, 'testhash', 'testprefix', 'Test Key', ARRAY['read'], NULL, NULL, NOW(), NOW())
+		INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, name, scopes, expires_at, revoked_at, created_at, updated_at, auth_source)
+		VALUES (gen_random_uuid(), $1, 'testhash', 'testprofiledeletekey', 'Test Key', ARRAY['read'], NULL, NULL, NOW(), NOW(), 'api_key')
 	`, profile.ID)
 	require.NoError(t, err, "Should create API key")
 
@@ -411,22 +421,31 @@ func TestProfileServiceDeleteRemovesActiveKeys(t *testing.T) {
 	var keyCount int
 	err = sqlDB.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM api_keys
+		FROM team_profiles
 		WHERE team_id = $1
 	`, profile.ID).Scan(&keyCount)
 	require.NoError(t, err, "Should query API keys")
-	assert.Equal(t, 0, keyCount, "profile API keys should be deleted")
+	assert.Equal(t, 1, keyCount, "team profile rows should be preserved")
+
+	var revokedCount int
+	err = sqlDB.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM team_profiles
+		WHERE team_id = $1 AND revoked_at IS NOT NULL
+	`, profile.ID).Scan(&revokedCount)
+	require.NoError(t, err, "Should query revoked API keys")
+	assert.Equal(t, 1, revokedCount, "profile API keys should be revoked")
 
 	var profileCount int
 	err = sqlDB.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM profiles
+		FROM teams
 		WHERE id = $1
 	`, profile.ID).Scan(&profileCount)
 	require.NoError(t, err, "Should query profiles")
-	assert.Equal(t, 0, profileCount, "profile row should be deleted")
+	assert.Equal(t, 1, profileCount, "team row should be preserved")
 
-	sqlDB.Exec("DELETE FROM api_keys WHERE team_id = $1", profile.ID)
+	sqlDB.Exec("DELETE FROM team_profiles WHERE team_id = $1", profile.ID)
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id = $1", profile.ID.String())
-	sqlDB.Exec("DELETE FROM profiles WHERE id = $1", profile.ID.String())
+	sqlDB.Exec("DELETE FROM teams WHERE id = $1", profile.ID.String())
 }

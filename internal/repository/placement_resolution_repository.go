@@ -384,6 +384,7 @@ func appendPlacementResolutionEvidence(
 		return nil, err
 	}
 	sources := make(map[string]SourceRevisionResult)
+	supersedesByBatch := sourceRevisionSupersedesByBatch(normalized.Evidence)
 	fragmentIDs := make([]string, 0, len(normalized.Evidence))
 	for i, item := range normalized.Evidence {
 		var source *SourceRevisionResult
@@ -398,6 +399,7 @@ func appendPlacementResolutionEvidence(
 				ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
 				ContentHash:                   item.SourceRevisionContentHash,
 				Envelope:                      item.SourceRevisionEnvelope,
+				SupersedesFragmentIDs:         supersedesByBatch[sourceRevisionBatchKey(item)],
 			}, sources)
 			if err != nil {
 				return nil, err

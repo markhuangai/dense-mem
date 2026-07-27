@@ -565,9 +565,9 @@ func applyRelationshipDecisionInTx(
 	if err := validateRelationshipEndpointKinds(ctx, tx, input, predicate); err != nil {
 		return nil, err
 	}
-	tier, status := tierStatusForVerdict(input.EvidenceVerdict, input.PromoteToFact)
+	status := statusForVerdict(input.EvidenceVerdict)
 	groupKey := semanticGroupKey(input)
-	recordState, err := upsertRelationshipRecord(ctx, tx, input, predicate, tier, status, groupKey)
+	recordState, err := upsertRelationshipRecord(ctx, tx, input, predicate, status, groupKey)
 	if err != nil {
 		return nil, err
 	}
@@ -597,9 +597,7 @@ func applyRelationshipDecisionInTx(
 			TeamID:              input.TeamID,
 			OwnerProfileID:      input.OwnerProfileID,
 			RelationshipID:      recordState.Record.RelationshipID,
-			FromTier:            recordState.FromTier,
 			FromStatus:          recordState.FromStatus,
-			ToTier:              tier,
 			ToStatus:            status,
 			Reason:              "verifier_decision",
 			VerificationEventID: verificationID,
@@ -638,17 +636,25 @@ func upsertPlacementRelationshipSearchDocument(
 	relationship *RelationshipRecord,
 	embeddingJobMaxAttempts int,
 ) (*SearchDocumentResult, error) {
+	if !relationshipSearchEligible(relationship) {
+		return markRelationshipSearchDocumentNotRequired(ctx, tx, commit, relationship)
+	}
 	contract, err := loadActiveSearchContractInTx(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
+	text, err := placementRelationshipSearchText(ctx, tx, relationship)
+	if err != nil {
+		return nil, err
+	}
 	input := normalizeUpsertSearchDocumentInput(UpsertSearchDocumentInput{
-		TeamID:         commit.TeamID,
-		OwnerProfileID: commit.OwnerProfileID,
-		SourceKind:     "relationship",
-		SourceID:       relationship.RelationshipID,
-		SourceVersion:  int64(relationship.Version),
-		DocumentText:   placementRelationshipSearchText(relationship),
+		TeamID:           commit.TeamID,
+		OwnerProfileID:   commit.OwnerProfileID,
+		SourceKind:       "relationship",
+		SourceID:         relationship.RelationshipID,
+		SourceVersion:    int64(relationship.Version),
+		ProjectionFormat: 2,
+		DocumentText:     text,
 	})
 	if err := validateUpsertSearchDocumentInput(input); err != nil {
 		return nil, err
@@ -709,10 +715,7 @@ func relationshipOutcomeCategory(result *RelationshipDecisionResult) string {
 	case string(domain.RelationshipStatusRejected):
 		return string(domain.OutcomeRelationshipRejected)
 	}
-	if result.Relationship.Tier == string(domain.RelationshipTierFact) {
-		return string(domain.OutcomeRelationshipFact)
-	}
-	return string(domain.OutcomeRelationshipValidatedClaim)
+	return string(domain.OutcomeRelationshipAccepted)
 }
 
 func relationshipOutcomeReason(decision ApplyRelationshipDecisionInput, result *RelationshipDecisionResult) string {
@@ -750,7 +753,6 @@ func placementRelationshipOutcomePayload(results []RelationshipDecisionResult) [
 			if result.Relationship.OwnerProfileID != "" {
 				item["owner_profile_id"] = result.Relationship.OwnerProfileID
 			}
-			item["tier"] = result.Relationship.Tier
 			item["relationship_status"] = result.Relationship.Status
 		}
 		if result.ReviewTaskID != "" {

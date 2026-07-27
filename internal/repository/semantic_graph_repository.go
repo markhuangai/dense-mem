@@ -117,11 +117,10 @@ func loadSemanticLocalGraphRows(
 func semanticGraphEdgesSQL(extraWhere string) string {
 	searchText := semanticGraphSearchTextSQL()
 	return `
-		SELECT e.relationship_id::text,
-		       e.owner_profile_id::text,
-		       e.predicate_key,
-		       e.tier,
-		       e.support_count,
+			SELECT e.relationship_id::text,
+			       e.owner_profile_id::text,
+			       e.predicate_key,
+			       e.support_count,
 		       e.source_group_count,
 		       ('entity:' || e.subject_entity_id::text) AS source_key,
 		       e.subject_entity_id::text AS source_id,
@@ -231,7 +230,7 @@ func scanSemanticGraphRows(rows *sql.Rows, types []string) ([]semanticGraphEdgeR
 	out := []semanticGraphEdgeRow{}
 	for rows.Next() {
 		var (
-			edgeID, ownerID, predicate, tier                                        string
+			edgeID, ownerID, predicate                                              string
 			supportCount, sourceGroupCount                                          int
 			sourceKey, sourceID, sourceTitle, sourceBody, sourceStatus, sourceOwner string
 			targetKey, targetID, targetType, targetTitle, targetBody, targetStatus  string
@@ -239,7 +238,7 @@ func scanSemanticGraphRows(rows *sql.Rows, types []string) ([]semanticGraphEdgeR
 			sourceRecordedAt, targetRecordedAt                                      time.Time
 		)
 		if err := rows.Scan(
-			&edgeID, &ownerID, &predicate, &tier, &supportCount, &sourceGroupCount,
+			&edgeID, &ownerID, &predicate, &supportCount, &sourceGroupCount,
 			&sourceKey, &sourceID, &sourceTitle, &sourceBody, &sourceStatus,
 			&sourceOwner, &sourceRecordedAt, &targetKey, &targetID, &targetType,
 			&targetTitle, &targetBody, &targetStatus, &targetOwner, &targetRecordedAt,
@@ -280,7 +279,6 @@ func scanSemanticGraphRows(rows *sql.Rows, types []string) ([]semanticGraphEdgeR
 				Relationship:     predicate,
 				Directed:         true,
 				OwnerProfileID:   ownerID,
-				Tier:             tier,
 				SupportCount:     supportCount,
 				SourceGroupCount: sourceGroupCount,
 			},

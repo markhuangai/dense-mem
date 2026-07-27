@@ -6,7 +6,7 @@ import (
 )
 
 func TestContractEnums(t *testing.T) {
-	if ContractVersion != "dense-mem.v2.1" {
+	if ContractVersion != "dense-mem.v2.3" {
 		t.Fatalf("ContractVersion = %q", ContractVersion)
 	}
 	for _, action := range []string{
@@ -55,8 +55,7 @@ func TestContractEnums(t *testing.T) {
 		}
 	}
 	for _, category := range []string{
-		"relationship_fact",
-		"relationship_validated_claim",
+		"relationship_accepted",
 		"relationship_pending_evidence",
 		"relationship_needs_review",
 		"predicate_needs_review",
@@ -70,11 +69,6 @@ func TestContractEnums(t *testing.T) {
 	for _, status := range []string{"accepted", "review_required", "quarantined", "rejected", "retryable", "terminal_failure"} {
 		if !slices.Contains(SemanticReviewStatuses(), status) {
 			t.Fatalf("SemanticReviewStatuses missing %s", status)
-		}
-	}
-	for _, tier := range []string{"candidate", "validated_claim", "fact"} {
-		if !slices.Contains(RelationshipTiers(), tier) {
-			t.Fatalf("RelationshipTiers missing %s", tier)
 		}
 	}
 	for _, status := range []string{"active", "pending_evidence", "disputed", "retracted"} {

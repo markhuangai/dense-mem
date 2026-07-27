@@ -157,7 +157,7 @@ func (s *stubMemoryPackService) FindCandidates(_ context.Context, req skillpacks
 func (s *stubMemoryPackService) Export(_ context.Context, req skillpackservice.ExportRequest) (*skillpackservice.ExportResult, error) {
 	s.exportReq = req
 	return &skillpackservice.ExportResult{
-		CanonicalJSON: `{"format":"dense-mem.memory-pack.v2"}`,
+		CanonicalJSON: `{"format":"` + skillpackservice.MemoryPackFormat + `"}`,
 		SHA256:        testMemoryPackHash,
 		ItemCount:     1,
 		Filename:      "postgresql-pack.memory-pack.json",

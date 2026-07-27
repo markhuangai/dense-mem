@@ -20,13 +20,13 @@ func TestFetchArtifactValidatesURLAndReadsBoundedBody(t *testing.T) {
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(`{"format":"dense-mem.memory-pack.v2"}`)),
+			Body:       io.NopCloser(strings.NewReader(`{"format":"` + MemoryPackFormat + `"}`)),
 		}, nil
 	}), "https://example.com/pack.json")
 	if err != nil {
 		t.Fatalf("fetchArtifact: %v", err)
 	}
-	if !called || string(data) != `{"format":"dense-mem.memory-pack.v2"}` {
+	if !called || string(data) != `{"format":"`+MemoryPackFormat+`"}` {
 		t.Fatalf("called/data = %v/%q", called, string(data))
 	}
 

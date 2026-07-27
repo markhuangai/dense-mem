@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -88,42 +89,63 @@ func upsertSearchDocumentInTx(
 		WITH upserted AS (
 			INSERT INTO search_documents (
 			    team_id, owner_profile_id, source_kind, source_id, source_version,
+			    projection_format_version, projection_generation_id,
 			    document_version, embedding_contract_id, embedding_dimensions,
 			    search_state, document_text, document_hash, metadata
 			) VALUES (
-			    ?::uuid, ?::uuid, ?, ?::uuid, ?, 1, ?::uuid, ?,
+			    ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, 1, ?::uuid, ?,
 			    'pending', ?, ?, ?::jsonb
 			)
 			ON CONFLICT (team_id, source_kind, source_id, embedding_contract_id)
 			DO UPDATE SET
 			    owner_profile_id = EXCLUDED.owner_profile_id,
 			    source_version = EXCLUDED.source_version,
+			    projection_format_version = EXCLUDED.projection_format_version,
+			    projection_generation_id = EXCLUDED.projection_generation_id,
 			    document_version = CASE
 			        WHEN search_documents.document_hash = EXCLUDED.document_hash
+			         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
 			        THEN search_documents.document_version
 			        ELSE search_documents.document_version + 1
 			    END,
 			    search_state = CASE
 			        WHEN search_documents.document_hash = EXCLUDED.document_hash
+			         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
 			         AND search_documents.search_state = 'current'
 			        THEN 'current'
 			        ELSE 'pending'
 			    END,
 			    document_text = EXCLUDED.document_text,
 			    document_hash = EXCLUDED.document_hash,
+			    embedding = CASE
+			        WHEN search_documents.document_hash = EXCLUDED.document_hash
+			         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+			        THEN search_documents.embedding
+			        ELSE NULL
+			    END,
+			    embedding_updated_at = CASE
+			        WHEN search_documents.document_hash = EXCLUDED.document_hash
+			         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+			        THEN search_documents.embedding_updated_at
+			        ELSE NULL
+			    END,
 			    embedding_error = CASE
 			        WHEN search_documents.document_hash = EXCLUDED.document_hash
+			         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
 			        THEN search_documents.embedding_error
 			        ELSE ''
 			    END,
 			    metadata = EXCLUDED.metadata,
 			    updated_at = now()
 			RETURNING team_id::text, search_document_id::text, owner_profile_id::text,
-			          source_kind, source_id::text, source_version, document_version,
+			          source_kind, source_id::text, source_version,
+			          projection_format_version, COALESCE(projection_generation_id::text, ''),
+			          document_version,
 			          embedding_contract_id::text, embedding_dimensions, search_state
 		)
 		SELECT * FROM upserted
 	`, input.TeamID, input.OwnerProfileID, input.SourceKind, input.SourceID, input.SourceVersion,
+		input.ProjectionFormat, input.ProjectionGenerationID,
 		contract.EmbeddingContractID, contract.EmbeddingDimensions, input.DocumentText,
 		input.DocumentHash, string(metadata)).Rows()
 	if err != nil {
@@ -141,6 +163,8 @@ func upsertSearchDocumentInTx(
 		&loaded.SourceKind,
 		&loaded.SourceID,
 		&loaded.SourceVersion,
+		&loaded.ProjectionFormat,
+		&loaded.ProjectionGenerationID,
 		&loaded.DocumentVersion,
 		&loaded.EmbeddingContractID,
 		&loaded.EmbeddingDimensions,
@@ -164,16 +188,164 @@ func upsertSearchDocumentInTx(
 	return &loaded, nil
 }
 
-func placementRelationshipSearchText(relationship *RelationshipRecord) string {
-	parts := []string{
-		"relationship",
-		relationship.PredicateKey,
-		relationship.SubjectEntityID,
-		relationship.ObjectEntityID,
-		relationship.ObjectValueID,
-		relationship.SemanticGroupKey,
+func placementRelationshipSearchText(ctx context.Context, tx *gorm.DB, relationship *RelationshipRecord) (string, error) {
+	if relationship == nil {
+		return "", errors.New("relationship is required")
 	}
-	return strings.Join(parts, " ")
+	var names relationshipProjectionNames
+	err := tx.WithContext(ctx).Raw(`
+		SELECT
+		    COALESCE(NULLIF(subject_name.display_name, ''), relationship.subject_entity_id::text) AS subject_name,
+		    COALESCE(
+		        NULLIF(object_name.display_name, ''),
+		        NULLIF(value_record.display, ''),
+		        value_record.canonical_value,
+		        relationship.object_entity_id::text,
+		        relationship.object_value_id::text
+		    ) AS object_name,
+		    COALESCE(value_record.value_type, '') AS object_value_type,
+		    COALESCE(value_record.canonical_value, '') AS object_value,
+		    COALESCE(value_record.unit, '') AS object_unit
+		FROM relationship_records AS relationship
+		LEFT JOIN entity_names AS subject_name
+		  ON subject_name.team_id = relationship.team_id
+		 AND subject_name.entity_id = relationship.subject_entity_id
+		 AND subject_name.name_kind = 'canonical'
+		 AND subject_name.valid_to IS NULL
+		LEFT JOIN entity_names AS object_name
+		  ON object_name.team_id = relationship.team_id
+		 AND object_name.entity_id = relationship.object_entity_id
+		 AND object_name.name_kind = 'canonical'
+		 AND object_name.valid_to IS NULL
+		LEFT JOIN value_records AS value_record
+		  ON value_record.team_id = relationship.team_id
+		 AND value_record.value_id = relationship.object_value_id
+		WHERE relationship.team_id = ?::uuid
+		  AND relationship.relationship_id = ?::uuid
+		LIMIT 1
+	`, relationship.TeamID, relationship.RelationshipID).Row().Scan(
+		&names.SubjectName,
+		&names.ObjectName,
+		&names.ObjectValueType,
+		&names.ObjectValue,
+		&names.ObjectUnit,
+	)
+	if err != nil {
+		return "", err
+	}
+	return relationshipProjectionText(relationship, names), nil
+}
+
+type relationshipProjectionNames struct {
+	SubjectName     string
+	ObjectName      string
+	ObjectValueType string
+	ObjectValue     string
+	ObjectUnit      string
+}
+
+func relationshipProjectionText(relationship *RelationshipRecord, names relationshipProjectionNames) string {
+	lines := []string{
+		"relationship",
+		"subject: " + firstNonEmpty(names.SubjectName, relationship.SubjectEntityID),
+		"predicate: " + strings.ReplaceAll(relationship.PredicateKey, "_", " "),
+		"object: " + firstNonEmpty(names.ObjectName, names.ObjectValue, relationship.ObjectEntityID, relationship.ObjectValueID),
+		"polarity: " + relationshipProjectionPolarity(relationship.Polarity),
+	}
+	if scope := strings.TrimSpace(relationship.ScopeKey); scope != "" {
+		lines = append(lines, "scope: "+scope)
+	}
+	if relationship.ValidFrom != nil {
+		lines = append(lines, "valid_from: "+relationship.ValidFrom.UTC().Format(time.RFC3339Nano))
+	}
+	if relationship.ValidTo != nil {
+		lines = append(lines, "valid_to: "+relationship.ValidTo.UTC().Format(time.RFC3339Nano))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func relationshipProjectionPolarity(value string) string {
+	if strings.TrimSpace(value) == "-" {
+		return "negative"
+	}
+	return "positive"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func relationshipSearchEligible(relationship *RelationshipRecord) bool {
+	return relationship != nil &&
+		relationship.IdentityAliasOfID == "" &&
+		relationship.Status == "active" &&
+		relationship.SupportCount > 0
+}
+
+func markRelationshipSearchDocumentNotRequired(
+	ctx context.Context,
+	tx *gorm.DB,
+	commit CommitPlacementSemanticInput,
+	relationship *RelationshipRecord,
+) (*SearchDocumentResult, error) {
+	if relationship == nil || relationship.RelationshipID == "" {
+		return nil, nil
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		WITH updated AS (
+			UPDATE search_documents
+			SET source_version = GREATEST(source_version, ?),
+			    projection_format_version = 2,
+			    projection_generation_id = NULL,
+			    search_state = 'not_required',
+			    embedding = NULL,
+			    embedding_updated_at = NULL,
+			    embedding_error = '',
+			    updated_at = now()
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+			RETURNING team_id::text, search_document_id::text, owner_profile_id::text,
+			          source_kind, source_id::text, source_version,
+			          projection_format_version, COALESCE(projection_generation_id::text, ''),
+			          document_version, embedding_contract_id::text, embedding_dimensions,
+			          search_state
+		)
+		SELECT *
+		FROM updated
+		ORDER BY search_document_id
+		LIMIT 1
+	`, int64(relationship.Version), commit.TeamID, relationship.RelationshipID).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	loaded := SearchDocumentResult{}
+	if err := rows.Scan(
+		&loaded.TeamID,
+		&loaded.SearchDocumentID,
+		&loaded.OwnerProfileID,
+		&loaded.SourceKind,
+		&loaded.SourceID,
+		&loaded.SourceVersion,
+		&loaded.ProjectionFormat,
+		&loaded.ProjectionGenerationID,
+		&loaded.DocumentVersion,
+		&loaded.EmbeddingContractID,
+		&loaded.EmbeddingDimensions,
+		&loaded.SearchState,
+	); err != nil {
+		return nil, err
+	}
+	return &loaded, rows.Err()
 }
 
 func upsertPlacementEvidenceSearchDocument(

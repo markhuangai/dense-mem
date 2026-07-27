@@ -17,10 +17,13 @@ import (
 )
 
 const (
-	defaultRecallResultLimit      = 10
-	maxRecallResultLimit          = 50
-	defaultRelatedHypothesisLimit = 5
-	defaultCommunityPathLimit     = 5
+	defaultRecallResultLimit        = 10
+	maxRecallResultLimit            = 50
+	defaultRelatedHypothesisLimit   = 5
+	defaultRelatedRelationshipLimit = 5
+	maxRelatedRelationshipLimit     = 20
+	defaultCommunityPathLimit       = 3
+	maxCommunityPathLimit           = 10
 )
 
 var ErrRecallAuthContext = errors.New("recall: authenticated actor context is required")
@@ -78,6 +81,8 @@ type RecallRequest struct {
 	ContractVersion      string     `json:"contract_version"`
 	Query                string     `json:"query"`
 	Limit                int        `json:"limit,omitempty"`
+	RelationshipLimit    *int       `json:"relationship_limit,omitempty"`
+	CommunityLimit       *int       `json:"community_limit,omitempty"`
 	ValidAt              *time.Time `json:"valid_at,omitempty"`
 	KnownAt              *time.Time `json:"known_at,omitempty"`
 	KnownEvidenceIDs     []string   `json:"known_evidence_ids,omitempty"`
@@ -86,14 +91,19 @@ type RecallRequest struct {
 }
 
 type RecallResult struct {
-	RecallID          string                     `json:"recall_id"`
-	Results           []RecallResultItem         `json:"results"`
-	Conflicts         []RecallConflictSummary    `json:"conflicts"`
-	DiscoveryPaths    []RecallDiscoveryPath      `json:"discovery_paths"`
-	DiscoveryGuidance string                     `json:"discovery_guidance"`
-	RelatedHypotheses []RelatedHypothesisSummary `json:"related_hypotheses"`
-	Degradation       *RecallDegradationResult   `json:"degradation,omitempty"`
-	SearchState       string                     `json:"search_state"`
+	RecallID             string                       `json:"recall_id"`
+	Results              []RecallResultItem           `json:"results"`
+	Conflicts            []RecallConflictSummary      `json:"conflicts"`
+	RelatedRelationships []RelatedRelationshipSummary `json:"related_relationships"`
+	RelatedCommunities   []RecallDiscoveryPath        `json:"related_communities"`
+	RelatedHypotheses    []RelatedHypothesisSummary   `json:"related_hypotheses"`
+	SearchStates         RecallSearchStates           `json:"search_states"`
+	Degradations         []RecallDegradationResult    `json:"degradations"`
+
+	DiscoveryPaths    []RecallDiscoveryPath    `json:"-"`
+	DiscoveryGuidance string                   `json:"-"`
+	Degradation       *RecallDegradationResult `json:"-"`
+	SearchState       string                   `json:"-"`
 }
 
 type RecallResultItem struct {
@@ -141,6 +151,17 @@ type RecallRelationshipHandle struct {
 	Polarity       string         `json:"polarity"`
 }
 
+type RelatedRelationshipSummary struct {
+	RelationshipID            string         `json:"relationship_id"`
+	EquivalentRelationshipIDs []string       `json:"equivalent_relationship_ids"`
+	Subject                   EntityHandle   `json:"subject"`
+	Predicate                 string         `json:"predicate"`
+	Object                    SemanticObject `json:"object"`
+	Polarity                  string         `json:"polarity"`
+	EvidenceIDs               []string       `json:"evidence_ids"`
+	SearchState               string         `json:"search_state,omitempty"`
+}
+
 type EntityHandle struct {
 	EntityID string `json:"entity_id"`
 	Name     string `json:"name"`
@@ -171,10 +192,16 @@ type RelatedHypothesisSummary struct {
 }
 
 type RecallDegradationResult struct {
+	Frontier        string `json:"frontier,omitempty"`
 	RequiredFailure bool   `json:"required_failure,omitempty"`
 	Optional        bool   `json:"optional,omitempty"`
 	Code            string `json:"code"`
 	Message         string `json:"message"`
+}
+
+type RecallSearchStates struct {
+	Evidence      string `json:"evidence"`
+	Relationships string `json:"relationships"`
 }
 
 func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallResult, error) {
@@ -193,12 +220,14 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallR
 	if err != nil {
 		return nil, err
 	}
-	var degradation *RecallDegradationResult
+	degradations := []RecallDegradationResult{}
 	queryEmbedding := []float32(nil)
 	if req.Query != "" {
 		vector, vectorDegradation := s.queryEmbedding(ctx, contract, req.Query)
 		queryEmbedding = vector
-		degradation = vectorDegradation
+		if vectorDegradation != nil {
+			degradations = append(degradations, *vectorDegradation)
+		}
 	}
 	recalled, err := s.search.RecallEvidence(ctx, repository.RecallEvidenceInput{
 		TeamID:               actor.TeamID.String(),
@@ -214,19 +243,30 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallR
 	if err != nil {
 		return nil, err
 	}
-	result := recallResultFromRepository(recalled, degradation)
-	paths, communityDegradation := s.recallCommunityDiscovery(ctx, actor.TeamID.String(), req, len(result.Results))
+	result := recallResultFromRepository(recalled, degradations)
+	relationships, relationshipState, relationshipDegradation := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req, queryEmbedding)
+	result.RelatedRelationships = relationships
+	result.SearchStates.Relationships = relationshipState
+	if relationshipDegradation != nil {
+		result.Degradations = append(result.Degradations, *relationshipDegradation)
+	}
+	paths, communityDegradation := s.recallCommunityDiscovery(ctx, actor.TeamID.String(), req)
+	result.RelatedCommunities = paths
 	result.DiscoveryPaths = paths
+	result.DiscoveryGuidance = "No additional discovery guidance."
 	if len(paths) > 0 {
 		result.DiscoveryGuidance = "Community discovery found derived relationship paths; verify details with trace_memory before using them as support."
 	}
-	if result.Degradation == nil && communityDegradation != nil {
-		result.Degradation = communityDegradation
+	if communityDegradation != nil {
+		result.Degradations = append(result.Degradations, *communityDegradation)
 	}
 	related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.ProfileID.String(), req.Query)
 	result.RelatedHypotheses = related
-	if result.Degradation == nil && relatedDegradation != nil {
-		result.Degradation = relatedDegradation
+	if relatedDegradation != nil {
+		result.Degradations = append(result.Degradations, *relatedDegradation)
+	}
+	if len(result.Degradations) > 0 {
+		result.Degradation = &result.Degradations[0]
 	}
 	return result, nil
 }
@@ -235,9 +275,9 @@ func (s *recallService) recallCommunityDiscovery(
 	ctx context.Context,
 	teamID string,
 	req RecallRequest,
-	resultCount int,
 ) ([]RecallDiscoveryPath, *RecallDegradationResult) {
-	if s.communities == nil || s.communityConfig == nil || resultCount >= req.Limit {
+	communityLimit := recallOptionalLimitValue(req.CommunityLimit)
+	if s.communities == nil || s.communityConfig == nil || communityLimit <= 0 {
 		return []RecallDiscoveryPath{}, nil
 	}
 	cfg, err := s.communityConfig.CommunityDetectionRuntimeConfig(ctx)
@@ -253,10 +293,6 @@ func (s *recallService) recallCommunityDiscovery(
 	}); err != nil {
 		return []RecallDiscoveryPath{}, communityDiscoveryDegradation()
 	}
-	remaining := req.Limit - resultCount
-	if remaining > defaultCommunityPathLimit {
-		remaining = defaultCommunityPathLimit
-	}
 	records, err := s.communities.RecallCommunityDiscovery(ctx, repository.CommunityDiscoveryInput{
 		TeamID:               teamID,
 		Query:                req.Query,
@@ -264,7 +300,7 @@ func (s *recallService) recallCommunityDiscovery(
 		KnownAt:              req.KnownAt,
 		KnownRelationshipIDs: req.KnownRelationshipIDs,
 		ExpandFromEntityIDs:  req.ExpandFromEntityIDs,
-		Limit:                remaining,
+		Limit:                communityLimit,
 	})
 	if err != nil {
 		return []RecallDiscoveryPath{}, communityDiscoveryDegradation()
@@ -274,9 +310,64 @@ func (s *recallService) recallCommunityDiscovery(
 
 func communityDiscoveryDegradation() *RecallDegradationResult {
 	return &RecallDegradationResult{
+		Frontier: "communities",
 		Optional: true,
 		Code:     "community_discovery_unavailable",
 		Message:  "community discovery was unavailable; primary evidence recall was used",
+	}
+}
+
+func (s *recallService) recallRelatedRelationships(
+	ctx context.Context,
+	teamID string,
+	req RecallRequest,
+	queryEmbedding []float32,
+) ([]RelatedRelationshipSummary, string, *RecallDegradationResult) {
+	relationshipLimit := recallOptionalLimitValue(req.RelationshipLimit)
+	if relationshipLimit <= 0 {
+		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionNotRequired), nil
+	}
+	recalled, err := s.search.RecallRelationships(ctx, repository.RecallRelationshipsInput{
+		TeamID:               teamID,
+		Query:                req.Query,
+		QueryEmbedding:       queryEmbedding,
+		Limit:                relationshipLimit,
+		ValidAt:              req.ValidAt,
+		KnownAt:              req.KnownAt,
+		KnownRelationshipIDs: req.KnownRelationshipIDs,
+		ExpandFromEntityIDs:  req.ExpandFromEntityIDs,
+	})
+	if err != nil {
+		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionFailed), &RecallDegradationResult{
+			Frontier: "relationships",
+			Optional: true,
+			Code:     "relationship_discovery_unavailable",
+			Message:  "relationship discovery was unavailable; primary evidence recall was used",
+		}
+	}
+	state := string(domain.SearchProjectionCurrent)
+	if recalled != nil && recalled.SearchState != "" {
+		state = recalled.SearchState
+	}
+	var degradation *RecallDegradationResult
+	if recalled != nil && recalled.VectorOmitted {
+		degradation = relationshipVectorDegradation(state)
+	}
+	return relatedRelationshipSummaries(recalled), state, degradation
+}
+
+func relationshipVectorDegradation(state string) *RecallDegradationResult {
+	code := "relationship_vector_warming"
+	message := "Relationship vector projection is warming; lexical discovery was used."
+	if state == string(domain.SearchProjectionFailed) {
+		code = "relationship_vector_failed"
+		message = "Relationship vector projection failed; lexical discovery was used."
+	}
+	return &RecallDegradationResult{
+		Frontier: "relationships",
+		Optional: true,
+		Code:     code,
+		Message:  message,
 	}
 }
 
@@ -310,6 +401,7 @@ func (s *recallService) recallRelatedHypotheses(
 
 func relatedHypothesisDegradation() *RecallDegradationResult {
 	return &RecallDegradationResult{
+		Frontier: "hypotheses",
 		Optional: true,
 		Code:     "related_hypotheses_unavailable",
 		Message:  "related hypotheses were unavailable; primary evidence recall was used",
@@ -339,6 +431,44 @@ func communityDiscoveryPaths(records []repository.CommunityDiscoveryPath) []Reca
 	return out
 }
 
+func relatedRelationshipSummaries(recalled *repository.RecallRelationshipsResult) []RelatedRelationshipSummary {
+	if recalled == nil {
+		return []RelatedRelationshipSummary{}
+	}
+	out := make([]RelatedRelationshipSummary, 0, len(recalled.Results))
+	for _, record := range recalled.Results {
+		out = append(out, RelatedRelationshipSummary{
+			RelationshipID:            record.RelationshipID,
+			EquivalentRelationshipIDs: []string{},
+			Subject: EntityHandle{
+				EntityID: record.SubjectEntityID,
+				Name:     record.SubjectName,
+			},
+			Predicate:   record.PredicateKey,
+			Object:      recallRelationshipObject(record),
+			Polarity:    record.Polarity,
+			EvidenceIDs: []string{},
+			SearchState: record.SearchState,
+		})
+	}
+	return out
+}
+
+func recallRelationshipObject(record repository.RecallRelationshipHit) SemanticObject {
+	if record.ObjectEntityID != "" {
+		return SemanticObject{
+			EntityID: record.ObjectEntityID,
+			Name:     record.ObjectName,
+		}
+	}
+	return SemanticObject{
+		ValueID: record.ObjectValueID,
+		Type:    record.ObjectValueType,
+		Value:   record.ObjectValue,
+		Display: record.ObjectName,
+	}
+}
+
 func (s *recallService) queryEmbedding(
 	ctx context.Context,
 	contract *repository.ActiveSearchContract,
@@ -346,6 +476,7 @@ func (s *recallService) queryEmbedding(
 ) ([]float32, *RecallDegradationResult) {
 	if s.provider == nil || !s.provider.IsAvailable() {
 		return nil, &RecallDegradationResult{
+			Frontier: "evidence",
 			Optional: true,
 			Code:     string(domain.ErrorProviderUnavailable),
 			Message:  "vector recall is unavailable; full-text evidence recall was used",
@@ -353,6 +484,7 @@ func (s *recallService) queryEmbedding(
 	}
 	if got := s.provider.Dimensions(); got != 0 && got != contract.EmbeddingDimensions {
 		return nil, &RecallDegradationResult{
+			Frontier: "evidence",
 			Optional: true,
 			Code:     string(domain.ErrorProviderMalformed),
 			Message:  "vector recall provider dimensions do not match the active search contract",
@@ -360,6 +492,7 @@ func (s *recallService) queryEmbedding(
 	}
 	if got := strings.TrimSpace(s.provider.ModelName()); got != "" && got != contract.EmbeddingModel {
 		return nil, &RecallDegradationResult{
+			Frontier: "evidence",
 			Optional: true,
 			Code:     string(domain.ErrorProviderMalformed),
 			Message:  "vector recall provider model does not match the active search contract",
@@ -368,6 +501,7 @@ func (s *recallService) queryEmbedding(
 	vector, model, err := s.provider.Embed(ctx, query)
 	if err != nil {
 		return nil, &RecallDegradationResult{
+			Frontier: "evidence",
 			Optional: true,
 			Code:     string(domain.ErrorProviderUnavailable),
 			Message:  "vector recall provider failed; full-text evidence recall was used",
@@ -375,6 +509,7 @@ func (s *recallService) queryEmbedding(
 	}
 	if model != "" && model != contract.EmbeddingModel {
 		return nil, &RecallDegradationResult{
+			Frontier: "evidence",
 			Optional: true,
 			Code:     string(domain.ErrorProviderMalformed),
 			Message:  "vector recall provider returned the wrong model",
@@ -382,6 +517,7 @@ func (s *recallService) queryEmbedding(
 	}
 	if err := validateRecallEmbedding(vector, contract.EmbeddingDimensions); err != nil {
 		return nil, &RecallDegradationResult{
+			Frontier: "evidence",
 			Optional: true,
 			Code:     string(domain.ErrorProviderMalformed),
 			Message:  "vector recall provider returned an invalid embedding",
@@ -399,10 +535,34 @@ func normalizeRecallRequest(req RecallRequest) RecallRequest {
 	if req.Limit > maxRecallResultLimit {
 		req.Limit = maxRecallResultLimit
 	}
+	req.RelationshipLimit = normalizeRecallOptionalLimit(req.RelationshipLimit, defaultRelatedRelationshipLimit, maxRelatedRelationshipLimit)
+	req.CommunityLimit = normalizeRecallOptionalLimit(req.CommunityLimit, defaultCommunityPathLimit, maxCommunityPathLimit)
 	req.KnownEvidenceIDs = normalizeRecallRequestIDs(req.KnownEvidenceIDs)
 	req.KnownRelationshipIDs = normalizeRecallRequestIDs(req.KnownRelationshipIDs)
 	req.ExpandFromEntityIDs = normalizeRecallRequestIDs(req.ExpandFromEntityIDs)
 	return req
+}
+
+func normalizeRecallOptionalLimit(value *int, defaultValue int, maxValue int) *int {
+	if value == nil {
+		normalized := defaultValue
+		return &normalized
+	}
+	normalized := *value
+	if normalized < 0 {
+		normalized = 0
+	}
+	if normalized > maxValue {
+		normalized = maxValue
+	}
+	return &normalized
+}
+
+func recallOptionalLimitValue(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func normalizeRecallRequestIDs(values []string) []string {
@@ -437,7 +597,7 @@ func validateRecallEmbedding(vector []float32, dims int) error {
 
 func recallResultFromRepository(
 	recalled *repository.RecallEvidenceResult,
-	degradation *RecallDegradationResult,
+	degradations []RecallDegradationResult,
 ) *RecallResult {
 	searchState := string(domain.SearchProjectionCurrent)
 	results := []RecallResultItem{}
@@ -458,16 +618,26 @@ func recallResultFromRepository(
 		}
 		conflicts = recallConflictSummaries(recalled.Conflicts)
 	}
-	return &RecallResult{
-		RecallID:          "rec_" + uuid.NewString(),
-		Results:           results,
-		Conflicts:         conflicts,
+	result := &RecallResult{
+		RecallID:             "rec_" + uuid.NewString(),
+		Results:              results,
+		Conflicts:            conflicts,
+		RelatedRelationships: []RelatedRelationshipSummary{},
+		RelatedCommunities:   []RecallDiscoveryPath{},
+		RelatedHypotheses:    []RelatedHypothesisSummary{},
+		SearchStates: RecallSearchStates{
+			Evidence:      searchState,
+			Relationships: string(domain.SearchProjectionCurrent),
+		},
+		Degradations:      append([]RecallDegradationResult(nil), degradations...),
 		DiscoveryPaths:    []RecallDiscoveryPath{},
 		DiscoveryGuidance: "No additional discovery guidance.",
-		RelatedHypotheses: []RelatedHypothesisSummary{},
-		Degradation:       degradation,
 		SearchState:       searchState,
 	}
+	if len(result.Degradations) > 0 {
+		result.Degradation = &result.Degradations[0]
+	}
+	return result
 }
 
 func recallCreatedAt(value time.Time) *time.Time {

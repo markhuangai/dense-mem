@@ -152,7 +152,8 @@ describe("UserApi", () => {
           },
         ],
         conflicts: [],
-        discovery_paths: [
+        related_relationships: [],
+        related_communities: [
           {
             evidence_ids: ["11111111-1111-4111-8111-111111111111"],
             relationships: [
@@ -166,9 +167,9 @@ describe("UserApi", () => {
             ],
           },
         ],
-        discovery_guidance: "No additional discovery guidance.",
         related_hypotheses: [],
-        search_state: "current",
+        search_states: { evidence: "current", relationships: "current" },
+        degradations: [],
       },
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);

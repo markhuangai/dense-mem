@@ -19,6 +19,7 @@ type SearchRepository interface {
 
 type RecallRepository interface {
 	RecallEvidence(ctx context.Context, input RecallEvidenceInput) (*RecallEvidenceResult, error)
+	RecallRelationships(ctx context.Context, input RecallRelationshipsInput) (*RecallRelationshipsResult, error)
 }
 
 type ActiveSearchContract struct {
@@ -71,29 +72,33 @@ type EnsureActiveSearchContractResult struct {
 }
 
 type UpsertSearchDocumentInput struct {
-	TeamID              string
-	OwnerProfileID      string
-	SourceKind          string
-	SourceID            string
-	SourceVersion       int64
-	DocumentText        string
-	DocumentHash        string
-	EmbeddingContractID string
-	Metadata            map[string]any
+	TeamID                 string
+	OwnerProfileID         string
+	SourceKind             string
+	SourceID               string
+	SourceVersion          int64
+	ProjectionFormat       int
+	ProjectionGenerationID string
+	DocumentText           string
+	DocumentHash           string
+	EmbeddingContractID    string
+	Metadata               map[string]any
 }
 
 type SearchDocumentResult struct {
-	TeamID              string
-	SearchDocumentID    string
-	OwnerProfileID      string
-	SourceKind          string
-	SourceID            string
-	SourceVersion       int64
-	DocumentVersion     int64
-	EmbeddingContractID string
-	EmbeddingDimensions int
-	SearchState         string
-	QueuedJobID         string
+	TeamID                 string
+	SearchDocumentID       string
+	OwnerProfileID         string
+	SourceKind             string
+	SourceID               string
+	SourceVersion          int64
+	ProjectionFormat       int
+	ProjectionGenerationID string
+	DocumentVersion        int64
+	EmbeddingContractID    string
+	EmbeddingDimensions    int
+	SearchState            string
+	QueuedJobID            string
 }
 
 type ClaimEmbeddingJobsInput struct {
@@ -104,20 +109,22 @@ type ClaimEmbeddingJobsInput struct {
 }
 
 type EmbeddingJob struct {
-	TeamID              string
-	EmbeddingJobID      string
-	SearchDocumentID    string
-	OwnerProfileID      string
-	SourceKind          string
-	SourceID            string
-	SourceVersion       int64
-	DocumentVersion     int64
-	EmbeddingContractID string
-	EmbeddingDimensions int
-	Status              string
-	Attempts            int
-	LeaseUntil          *time.Time
-	DocumentText        string
+	TeamID                 string
+	EmbeddingJobID         string
+	SearchDocumentID       string
+	OwnerProfileID         string
+	SourceKind             string
+	SourceID               string
+	SourceVersion          int64
+	ProjectionFormat       int
+	ProjectionGenerationID string
+	DocumentVersion        int64
+	EmbeddingContractID    string
+	EmbeddingDimensions    int
+	Status                 string
+	Attempts               int
+	LeaseUntil             *time.Time
+	DocumentText           string
 }
 
 type CompleteEmbeddingJobInput struct {
@@ -210,11 +217,29 @@ type RecallEvidenceInput struct {
 	ExpandFromEntityIDs  []string
 }
 
+type RecallRelationshipsInput struct {
+	TeamID               string
+	Query                string
+	QueryEmbedding       []float32
+	Limit                int
+	ValidAt              *time.Time
+	KnownAt              *time.Time
+	KnownRelationshipIDs []string
+	ExpandFromEntityIDs  []string
+}
+
 type RecallEvidenceResult struct {
 	TeamID      string
 	SearchState string
 	Results     []RecallEvidenceHit
 	Conflicts   []RelationshipConflictCaseRecord
+}
+
+type RecallRelationshipsResult struct {
+	TeamID        string
+	SearchState   string
+	VectorOmitted bool
+	Results       []RecallRelationshipHit
 }
 
 type RecallEvidenceHit struct {
@@ -228,4 +253,27 @@ type RecallEvidenceHit struct {
 	Rank            int
 	Score           float64
 	SearchState     string
+}
+
+type RecallRelationshipHit struct {
+	TeamID           string
+	RelationshipID   string
+	SemanticGroupKey string
+	SubjectEntityID  string
+	SubjectName      string
+	PredicateKey     string
+	ObjectEntityID   string
+	ObjectValueID    string
+	ObjectName       string
+	ObjectValueType  string
+	ObjectValue      string
+	Polarity         string
+	ScopeKey         string
+	ValidFrom        *time.Time
+	Score            float64
+	Rank             int
+	SearchState      string
+	SupportCount     int
+	SourceGroupCount int
+	CreatedAt        time.Time
 }

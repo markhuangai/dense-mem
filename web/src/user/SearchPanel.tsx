@@ -616,7 +616,7 @@ function recallResultStatus(item: RecallDisplayItem): RecallResultStatus | null 
     return null;
   }
   if (item && isRelationship(item)) {
-    return item.tier === "candidate" ? "provisional" : "verified";
+    return "verified";
   }
   const raw = item?.status?.toLowerCase() ?? "";
   if (raw.includes("disputed") || raw.includes("contradicted") || raw.includes("rejected") || raw.includes("invalid")) {

@@ -64,7 +64,6 @@ func TestGeneratedProposalTargetValidationEdges(t *testing.T) {
 		sourceID: {
 			RelationshipID:   sourceID,
 			Version:          1,
-			Tier:             "fact",
 			Status:           "active",
 			SubjectEntityID:  subjectID,
 			PredicateKey:     "uses",

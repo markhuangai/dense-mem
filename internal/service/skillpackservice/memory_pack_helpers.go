@@ -58,7 +58,6 @@ func memoryPackCandidateFromEdge(
 		Subject:          subject.Title,
 		Object:           object.Title,
 		Polarity:         "+",
-		Tier:             edge.Tier,
 		SupportCount:     edge.SupportCount,
 		SourceGroupCount: edge.SourceGroupCount,
 	}

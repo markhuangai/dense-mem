@@ -76,8 +76,8 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, inputs, 2)
-	assertDreamInput(t, inputs, candidate.Relationship.RelationshipID, "candidate", "pending_evidence")
-	assertDreamInput(t, inputs, active.Relationship.RelationshipID, "validated_claim", "active")
+	assertDreamInput(t, inputs, candidate.Relationship.RelationshipID, "pending_evidence")
+	assertDreamInput(t, inputs, active.Relationship.RelationshipID, "active")
 
 	proposal := UpsertHypothesisInput{
 		TeamID:           teamID,
@@ -100,7 +100,7 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 		ContentHash:           "sha256:dream-candidate-postgres",
 		GeneratorKind:         "test",
 		GeneratorVersion:      "test-dream",
-		Payload:               map[string]any{"source_tier": "candidate"},
+		Payload:               map[string]any{"source_status": "pending_evidence"},
 	}
 	record, inserted, err := semanticRepo.UpsertHypothesis(ctx, proposal)
 	require.NoError(t, err)
@@ -173,18 +173,17 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 		ContentHash:           "sha256:dream-exact-active",
 		GeneratorKind:         "test",
 		GeneratorVersion:      "test-dream",
-		Payload:               map[string]any{"source_tier": "validated_claim"},
+		Payload:               map[string]any{"source_status": "active"},
 	}
 	_, _, err = semanticRepo.UpsertHypothesis(ctx, exactActive)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrDreamExactRelationshipExists), err)
 }
 
-func assertDreamInput(t *testing.T, inputs []DreamInput, relationshipID, tier, status string) {
+func assertDreamInput(t *testing.T, inputs []DreamInput, relationshipID, status string) {
 	t.Helper()
 	for _, input := range inputs {
 		if input.RelationshipID == relationshipID {
-			assert.Equal(t, tier, input.Tier)
 			assert.Equal(t, status, input.Status)
 			return
 		}

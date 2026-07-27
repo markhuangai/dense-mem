@@ -30,6 +30,9 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 		if err := failExpiredMaxAttemptEmbeddingJobs(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
+		if err := refreshRelationshipProjectionGenerationsForTeam(ctx, tx, input.TeamID); err != nil {
+			return err
+		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH claimed AS (
 				SELECT job.team_id, job.embedding_job_id
@@ -38,6 +41,8 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 				  ON document.team_id = job.team_id
 				 AND document.search_document_id = job.search_document_id
 				 AND document.source_version = job.source_version
+				 AND document.projection_format_version = job.projection_format_version
+				 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
 				 AND document.document_version = job.document_version
 				 AND document.embedding_contract_id = job.embedding_contract_id
 				 AND document.embedding_dimensions = job.embedding_dimensions
@@ -63,9 +68,10 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 				WHERE job.team_id = claimed.team_id
 				  AND job.embedding_job_id = claimed.embedding_job_id
 				RETURNING job.team_id::text, job.embedding_job_id::text,
-				          job.search_document_id::text, job.owner_profile_id::text,
-				          job.source_kind, job.source_id::text, job.source_version,
-				          job.document_version, job.embedding_contract_id::text,
+					          job.search_document_id::text, job.owner_profile_id::text,
+					          job.source_kind, job.source_id::text, job.source_version,
+					          job.projection_format_version, COALESCE(job.projection_generation_id::text, ''),
+					          job.document_version, job.embedding_contract_id::text,
 				          job.embedding_dimensions, job.status, job.attempts,
 				          job.lease_until
 			)
@@ -90,6 +96,8 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 				&job.SourceKind,
 				&job.SourceID,
 				&job.SourceVersion,
+				&job.ProjectionFormat,
+				&job.ProjectionGenerationID,
 				&job.DocumentVersion,
 				&job.EmbeddingContractID,
 				&job.EmbeddingDimensions,
@@ -121,18 +129,24 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 	}
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var dims int
-		var contractID string
+		var contractID, sourceKind, projectionGenerationID string
 		err := tx.WithContext(ctx).Raw(`
-			SELECT embedding_dimensions, embedding_contract_id::text
-			FROM embedding_jobs
-			WHERE team_id = ?::uuid
-			  AND embedding_job_id = ?::uuid
+				SELECT embedding_dimensions, embedding_contract_id::text,
+				       source_kind, COALESCE(projection_generation_id::text, '')
+				FROM embedding_jobs
+				WHERE team_id = ?::uuid
+				  AND embedding_job_id = ?::uuid
 			  AND worker_id = ?
 			  AND status = 'processing'
 			  AND attempts = ?
 			  AND lease_until > clock_timestamp()
-			FOR UPDATE
-		`, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Row().Scan(&dims, &contractID)
+				FOR UPDATE
+			`, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Row().Scan(
+			&dims,
+			&contractID,
+			&sourceKind,
+			&projectionGenerationID,
+		)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
@@ -164,11 +178,13 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			  AND job.embedding_job_id = ?::uuid
 			  AND job.worker_id = ?
 			  AND job.status = 'processing'
-			  AND job.attempts = ?
-			  AND document.team_id = job.team_id
-			  AND document.search_document_id = job.search_document_id
-			  AND document.source_version = job.source_version
-			  AND document.document_version = job.document_version
+				  AND job.attempts = ?
+				  AND document.team_id = job.team_id
+				  AND document.search_document_id = job.search_document_id
+				  AND document.source_version = job.source_version
+				  AND document.projection_format_version = job.projection_format_version
+				  AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+				  AND document.document_version = job.document_version
 			  AND document.embedding_contract_id = job.embedding_contract_id
 			  AND document.embedding_dimensions = job.embedding_dimensions
 		`, vectorLiteral, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts)
@@ -183,6 +199,11 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 		}
 		if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobCompleted), ""); err != nil {
 			return err
+		}
+		if sourceKind == "relationship" && projectionGenerationID != "" {
+			if err := refreshRelationshipProjectionGeneration(ctx, tx, input.TeamID, projectionGenerationID); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -203,17 +224,23 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 	var result *EmbeddingJobFailureResult
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var attempts, maxAttempts int
+		var sourceKind, projectionGenerationID string
 		err := tx.WithContext(ctx).Raw(`
-			SELECT attempts, max_attempts
-			FROM embedding_jobs
-			WHERE team_id = ?::uuid
-			  AND embedding_job_id = ?::uuid
+				SELECT attempts, max_attempts, source_kind, COALESCE(projection_generation_id::text, '')
+				FROM embedding_jobs
+				WHERE team_id = ?::uuid
+				  AND embedding_job_id = ?::uuid
 			  AND worker_id = ?
 			  AND status = 'processing'
-			  AND attempts = ?
-			  AND lease_until > clock_timestamp()
-			FOR UPDATE
-		`, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Row().Scan(&attempts, &maxAttempts)
+				AND attempts = ?
+				AND lease_until > clock_timestamp()
+				FOR UPDATE
+			`, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Row().Scan(
+			&attempts,
+			&maxAttempts,
+			&sourceKind,
+			&projectionGenerationID,
+		)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrEmbeddingLeaseLost
 		}
@@ -232,6 +259,11 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 				ExpectedAttempts: input.ExpectedAttempts,
 			}, string(domain.EmbeddingJobStale), "source or document version changed before embedding failure"); err != nil {
 				return err
+			}
+			if sourceKind == "relationship" && projectionGenerationID != "" {
+				if err := refreshRelationshipProjectionGeneration(ctx, tx, input.TeamID, projectionGenerationID); err != nil {
+					return err
+				}
 			}
 			result = &EmbeddingJobFailureResult{
 				Status:      string(domain.EmbeddingJobStale),
@@ -292,6 +324,11 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 		}
 		if err := updateSearchDocumentAfterEmbeddingFailure(ctx, tx, input, status); err != nil {
 			return err
+		}
+		if sourceKind == "relationship" && projectionGenerationID != "" {
+			if err := refreshRelationshipProjectionGeneration(ctx, tx, input.TeamID, projectionGenerationID); err != nil {
+				return err
+			}
 		}
 		result = &EmbeddingJobFailureResult{
 			Status:      status,
@@ -398,6 +435,109 @@ func markEmbeddingJobTerminal(ctx context.Context, tx *gorm.DB, input CompleteEm
 	`, status, message, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Error
 }
 
+func refreshRelationshipProjectionGeneration(ctx context.Context, tx *gorm.DB, teamID string, projectionGenerationID string) error {
+	return tx.WithContext(ctx).Exec(`
+		WITH counts AS (
+			SELECT generation.team_id,
+			       generation.projection_generation_id,
+			       count(DISTINCT document.search_document_id) AS projected_count,
+			       count(DISTINCT document.search_document_id) FILTER (
+			           WHERE document.search_state = 'current'
+			             AND document.embedding IS NOT NULL
+			       ) AS current_vector_count,
+			       count(DISTINCT job.embedding_job_id) FILTER (
+			           WHERE job.status IN ('queued', 'processing')
+			       ) AS unresolved_job_count,
+			       count(DISTINCT job.embedding_job_id) FILTER (
+			           WHERE job.status = 'failed'
+			       ) AS failed_job_count
+			FROM search_projection_generations AS generation
+			LEFT JOIN search_documents AS document
+			  ON document.team_id = generation.team_id
+			 AND document.source_kind = 'relationship'
+			 AND document.projection_format_version = generation.projection_format_version
+			 AND document.projection_generation_id = generation.projection_generation_id
+			LEFT JOIN embedding_jobs AS job
+			  ON job.team_id = generation.team_id
+			 AND job.source_kind = 'relationship'
+			 AND job.projection_format_version = generation.projection_format_version
+			 AND job.projection_generation_id = generation.projection_generation_id
+			WHERE generation.team_id = ?::uuid
+			  AND generation.projection_generation_id = ?::uuid
+			  AND generation.source_kind = 'relationship'
+			  AND generation.projection_format_version = 2
+			GROUP BY generation.team_id, generation.projection_generation_id
+		)
+		UPDATE search_projection_generations AS generation
+		SET projected_count = counts.projected_count,
+		    current_vector_count = counts.current_vector_count,
+		    failed_job_count = counts.failed_job_count,
+		    state = CASE
+		        WHEN counts.failed_job_count > 0 THEN 'failed'
+		        WHEN generation.eligible_count = counts.projected_count
+		         AND counts.projected_count = counts.current_vector_count
+		         AND counts.unresolved_job_count = 0
+		            THEN 'current'
+		        WHEN generation.state = 'projecting_text' THEN 'embedding'
+		        ELSE generation.state
+		    END,
+		    completed_at = CASE
+		        WHEN generation.eligible_count = counts.projected_count
+		         AND counts.unresolved_job_count = 0
+		            THEN COALESCE(generation.completed_at, now())
+		        ELSE generation.completed_at
+		    END,
+		    activated_at = CASE
+		        WHEN counts.failed_job_count = 0
+		         AND generation.eligible_count = counts.projected_count
+		         AND counts.projected_count = counts.current_vector_count
+		         AND counts.unresolved_job_count = 0
+		            THEN COALESCE(generation.activated_at, now())
+		        ELSE generation.activated_at
+		    END,
+		    last_error = CASE
+		        WHEN counts.failed_job_count > 0 THEN 'relationship projection generation has failed embedding jobs'
+		        ELSE ''
+		    END,
+		    updated_at = now()
+		FROM counts
+		WHERE generation.team_id = counts.team_id
+		  AND generation.projection_generation_id = counts.projection_generation_id
+	`, teamID, projectionGenerationID).Error
+}
+
+func refreshRelationshipProjectionGenerationsForTeam(ctx context.Context, tx *gorm.DB, teamID string) error {
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT projection_generation_id::text
+		FROM search_projection_generations
+		WHERE team_id = ?::uuid
+		  AND source_kind = 'relationship'
+		  AND projection_format_version = 2
+		  AND state IN ('projecting_text', 'embedding')
+	`, teamID).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	generationIDs := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		generationIDs = append(generationIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range generationIDs {
+		if err := refreshRelationshipProjectionGeneration(ctx, tx, teamID, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func markStaleEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) error {
 	return tx.WithContext(ctx).Exec(`
 		UPDATE embedding_jobs AS job
@@ -413,9 +553,11 @@ func markStaleEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) err
 		      SELECT 1
 		      FROM search_documents AS document
 		      WHERE document.team_id = job.team_id
-		        AND document.search_document_id = job.search_document_id
-		        AND document.source_version = job.source_version
-		        AND document.document_version = job.document_version
+			        AND document.search_document_id = job.search_document_id
+			        AND document.source_version = job.source_version
+			        AND document.projection_format_version = job.projection_format_version
+			        AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+			        AND document.document_version = job.document_version
 		        AND document.embedding_contract_id = job.embedding_contract_id
 		        AND document.embedding_dimensions = job.embedding_dimensions
 		  )
@@ -448,9 +590,11 @@ func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID
 		  AND job.status = 'failed'
 		  AND job.error = ?
 		  AND document.team_id = job.team_id
-		  AND document.search_document_id = job.search_document_id
-		  AND document.source_version = job.source_version
-		  AND document.document_version = job.document_version
+			  AND document.search_document_id = job.search_document_id
+			  AND document.source_version = job.source_version
+			  AND document.projection_format_version = job.projection_format_version
+			  AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+			  AND document.document_version = job.document_version
 		  AND document.embedding_contract_id = job.embedding_contract_id
 		  AND document.embedding_dimensions = job.embedding_dimensions
 	`, embeddingJobAttemptsExhaustedMessage, teamID, embeddingJobAttemptsExhaustedMessage).Error
@@ -482,9 +626,11 @@ func embeddingJobDocumentCurrent(ctx context.Context, tx *gorm.DB, teamID string
 		    FROM embedding_jobs AS job
 		    JOIN search_documents AS document
 		      ON document.team_id = job.team_id
-		     AND document.search_document_id = job.search_document_id
-		     AND document.source_version = job.source_version
-		     AND document.document_version = job.document_version
+			     AND document.search_document_id = job.search_document_id
+			     AND document.source_version = job.source_version
+			     AND document.projection_format_version = job.projection_format_version
+			     AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+			     AND document.document_version = job.document_version
 		     AND document.embedding_contract_id = job.embedding_contract_id
 		     AND document.embedding_dimensions = job.embedding_dimensions
 		    WHERE job.team_id = ?::uuid
@@ -508,9 +654,11 @@ func updateSearchDocumentAfterEmbeddingFailure(ctx context.Context, tx *gorm.DB,
 		WHERE job.team_id = ?::uuid
 		  AND job.embedding_job_id = ?::uuid
 		  AND document.team_id = job.team_id
-		  AND document.search_document_id = job.search_document_id
-		  AND document.source_version = job.source_version
-		  AND document.document_version = job.document_version
+			  AND document.search_document_id = job.search_document_id
+			  AND document.source_version = job.source_version
+			  AND document.projection_format_version = job.projection_format_version
+			  AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+			  AND document.document_version = job.document_version
 		  AND document.embedding_contract_id = job.embedding_contract_id
 		  AND document.embedding_dimensions = job.embedding_dimensions
 	`, searchState, input.Error, input.TeamID, input.EmbeddingJobID).Error

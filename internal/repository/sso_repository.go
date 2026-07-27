@@ -233,6 +233,9 @@ func (r *SSORepositoryImpl) CreateMapping(ctx context.Context, mapping *domain.S
 	mapping.CreatedAt = now
 	mapping.UpdatedAt = now
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, mapping.TeamID.String()); err != nil {
+			return err
+		}
 		return tx.Exec(`
 			INSERT INTO sso_group_mappings (id, provider_id, team_id, group_id, group_name, scopes, role, enabled, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
@@ -248,6 +251,9 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 	now := time.Now().UTC()
 	mapping.UpdatedAt = now
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, mapping.TeamID.String()); err != nil {
+			return err
+		}
 		res := tx.Exec(`
 			UPDATE sso_group_mappings
 			SET team_id = $1,
@@ -383,6 +389,9 @@ func (r *SSORepositoryImpl) UpsertTeamProfileForMapping(ctx context.Context, ide
 	now := time.Now().UTC()
 	var key *domain.APIKey
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, mapping.TeamID.String()); err != nil {
+			return err
+		}
 		rows, err := tx.Raw(`
 			INSERT INTO team_profiles (
 				id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit,

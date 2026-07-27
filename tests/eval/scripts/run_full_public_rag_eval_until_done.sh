@@ -201,6 +201,7 @@ placement_counts() {
     )
     SELECT count(*),
            count(*) FILTER (WHERE status = 'completed'),
+           count(*) FILTER (WHERE status = 'awaiting_review'),
            count(*) FILTER (WHERE status = 'failed'),
            count(*) FILTER (WHERE status = 'queued'),
            count(*) FILTER (WHERE status = 'processing'),
@@ -236,7 +237,7 @@ write_resume_files() {
     )
     SELECT source_doc_id
     FROM ranked
-    WHERE row_num = 1 AND status = 'completed'
+    WHERE row_num = 1 AND status IN ('completed', 'awaiting_review')
     ORDER BY source_doc_id;
   " > "${completed_tmp}"
   psql_eval "
@@ -297,6 +298,8 @@ write_placement_summary() {
     ), latest_stats AS (
       SELECT count(*) AS total,
              count(*) FILTER (WHERE status = 'completed') AS completed,
+             count(*) FILTER (WHERE status = 'awaiting_review') AS awaiting_review,
+             count(*) FILTER (WHERE status IN ('completed', 'awaiting_review')) AS terminal,
              count(*) FILTER (WHERE status = 'failed') AS failed,
              count(*) FILTER (WHERE status = 'queued') AS queued,
              count(*) FILTER (WHERE status = 'processing') AS processing
@@ -351,9 +354,15 @@ write_placement_summary() {
       'latest_runs', jsonb_build_object(
         'total', latest_stats.total,
         'completed', latest_stats.completed,
+        'awaiting_review', latest_stats.awaiting_review,
+        'terminal', latest_stats.terminal,
         'failed', latest_stats.failed,
         'queued', latest_stats.queued,
-        'processing', latest_stats.processing
+        'processing', latest_stats.processing,
+        'review_burden_rate', CASE
+          WHEN latest_stats.total = 0 THEN 0
+          ELSE round(latest_stats.awaiting_review::numeric / latest_stats.total, 6)
+        END
       ),
       'placement_items', jsonb_build_object(
         'total', item_stats.total,
@@ -379,8 +388,8 @@ write_placement_summary() {
 }
 
 write_status() {
-  local phase="$1" fragments="$2" latest="$3" completed="$4" failed="$5" queued="$6" processing="$7" attempts="$8"
-  local import_pid="${9:-}" rate_per_minute="${10:-}" eta_seconds="${11:-}"
+  local phase="$1" fragments="$2" latest="$3" completed="$4" awaiting_review="$5" failed="$6" queued="$7" processing="$8" attempts="$9"
+  local import_pid="${10:-}" rate_per_minute="${11:-}" eta_seconds="${12:-}"
   local tmp
   tmp="$(mktemp "${STATUS_JSON}.tmp.XXXXXX")"
   jq -n \
@@ -389,6 +398,7 @@ write_status() {
     --arg fragments "${fragments}" \
     --arg latest "${latest}" \
     --arg completed "${completed}" \
+    --arg awaiting_review "${awaiting_review}" \
     --arg failed "${failed}" \
     --arg queued "${queued}" \
     --arg processing "${processing}" \
@@ -410,11 +420,13 @@ write_status() {
       fragments: ($fragments | tonumber),
       latest_placements: ($latest | tonumber),
       completed: ($completed | tonumber),
+      awaiting_review: ($awaiting_review | tonumber),
+      terminal: (($completed | tonumber) + ($awaiting_review | tonumber)),
       failed: ($failed | tonumber),
       queued: ($queued | tonumber),
       processing: ($processing | tonumber),
       historical_attempts: ($attempts | tonumber),
-      percent_complete: (($completed | tonumber) / ($target | tonumber) * 100),
+      percent_complete: ((($completed | tonumber) + ($awaiting_review | tonumber)) / ($target | tonumber) * 100),
       rate_per_minute: ($rate_per_minute | nullable_number),
       eta_seconds: ($eta_seconds | nullable_number),
       import_pid: $import_pid,
@@ -492,9 +504,9 @@ prepare_identity() {
     return 0
   fi
 
-  local snapshot latest completed failed queued processing attempts fragments
+  local snapshot latest completed awaiting_review failed queued processing attempts fragments
   snapshot="$(placement_counts)"
-  IFS='|' read -r latest completed failed queued processing attempts <<< "${snapshot}"
+  IFS='|' read -r latest completed awaiting_review failed queued processing attempts <<< "${snapshot}"
   fragments="$(count_fragments)"
   if [[ "${latest}" != "0" || "${fragments}" != "0" ]]; then
     echo "eval runtime already contains data but has no dataset identity; refusing to adopt it" >&2
@@ -656,9 +668,9 @@ main() {
   printf '%s\n' "$$" > "${MONITOR_DIR}/monitor.pid"
   log "monitor_started target=${TARGET} seed_hash=${SEED_HASH}"
 
-  local restarts=0 count_failures=0 previous_completed="" previous_epoch=""
+  local restarts=0 count_failures=0 previous_terminal="" previous_epoch=""
   while true; do
-    local now_epoch snapshot latest completed failed queued processing attempts fragments
+    local now_epoch snapshot latest completed awaiting_review failed queued processing attempts fragments terminal pending
     now_epoch="$(date +%s)"
     if ! snapshot="$(placement_counts)" || ! fragments="$(count_fragments)"; then
       count_failures=$((count_failures + 1))
@@ -670,42 +682,44 @@ main() {
       sleep "${SLEEP_SECONDS}"
       continue
     fi
-    IFS='|' read -r latest completed failed queued processing attempts <<< "${snapshot}"
-    for value in "${latest}" "${completed}" "${failed}" "${queued}" "${processing}" "${attempts}" "${fragments}"; do
+    IFS='|' read -r latest completed awaiting_review failed queued processing attempts <<< "${snapshot}"
+    for value in "${latest}" "${completed}" "${awaiting_review}" "${failed}" "${queued}" "${processing}" "${attempts}" "${fragments}"; do
       if ! [[ "${value}" =~ ^[0-9]+$ ]]; then
         log "non_numeric_monitor_count value=${value}"
         return 1
       fi
     done
+    terminal=$((completed + awaiting_review))
+    pending=$((queued + processing))
     count_failures=0
 
     write_resume_files
     write_placement_summary
 
     local rate_per_minute="" eta_seconds=""
-    if [[ -n "${previous_completed}" && -n "${previous_epoch}" && "${now_epoch}" -gt "${previous_epoch}" && "${completed}" -ge "${previous_completed}" ]]; then
-      local delta_count=$((completed - previous_completed))
+    if [[ -n "${previous_terminal}" && -n "${previous_epoch}" && "${now_epoch}" -gt "${previous_epoch}" && "${terminal}" -ge "${previous_terminal}" ]]; then
+      local delta_count=$((terminal - previous_terminal))
       local delta_seconds=$((now_epoch - previous_epoch))
       if [[ "${delta_count}" -gt 0 ]]; then
         rate_per_minute="$(awk -v c="${delta_count}" -v s="${delta_seconds}" 'BEGIN { printf "%.2f", c * 60 / s }')"
-        eta_seconds="$(awk -v remaining="$((TARGET - completed))" -v c="${delta_count}" -v s="${delta_seconds}" 'BEGIN { if (c > 0) printf "%.0f", remaining * s / c }')"
+        eta_seconds="$(awk -v remaining="$((TARGET - terminal))" -v c="${delta_count}" -v s="${delta_seconds}" 'BEGIN { if (c > 0) printf "%.0f", remaining * s / c }')"
       fi
     fi
-    previous_completed="${completed}"
+    previous_terminal="${terminal}"
     previous_epoch="${now_epoch}"
 
     if [[ "${latest}" -gt "${TARGET}" || "${fragments}" -gt "${TARGET}" ]]; then
       log "dataset_count_exceeds_target latest=${latest}/${TARGET} fragments=${fragments}/${TARGET}; refusing_eval"
-      write_status "failed" "${fragments}" "${latest}" "${completed}" "${failed}" "${queued}" "${processing}" "${attempts}" "$(live_import_pid || true)" "${rate_per_minute}" "${eta_seconds}"
+      write_status "failed" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${failed}" "${queued}" "${processing}" "${attempts}" "$(live_import_pid || true)" "${rate_per_minute}" "${eta_seconds}"
       return 1
     fi
 
     local pid=""
     pid="$(live_import_pid || true)"
-    if [[ "${latest}" == "${TARGET}" && "${completed}" == "${TARGET}" && "${failed}" == "0" && "${queued}" == "0" && "${processing}" == "0" && "${fragments}" == "${TARGET}" ]]; then
+    if [[ "${latest}" == "${TARGET}" && "${terminal}" == "${TARGET}" && "${failed}" == "0" && "${queued}" == "0" && "${processing}" == "0" && "${fragments}" == "${TARGET}" ]]; then
       if [[ -n "${pid}" ]]; then
-        log "import_finalizing pid=${pid} completed=${completed}/${TARGET}"
-        write_status "import_finalizing" "${fragments}" "${latest}" "${completed}" "${failed}" "${queued}" "${processing}" "${attempts}" "${pid}" "${rate_per_minute}" "0"
+        log "import_finalizing pid=${pid} terminal=${terminal}/${TARGET} completed=${completed} awaiting_review=${awaiting_review}"
+        write_status "import_finalizing" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${failed}" "${queued}" "${processing}" "${attempts}" "${pid}" "${rate_per_minute}" "0"
         sleep "${SLEEP_SECONDS}"
         continue
       fi
@@ -720,32 +734,32 @@ main() {
         sleep "${SLEEP_SECONDS}"
         continue
       fi
-      log "full_import_verified placements=${completed}/${TARGET} fragments=${fragments}/${TARGET} attempts=${attempts}"
-      write_status "full_import_verified" "${fragments}" "${latest}" "${completed}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "0"
+      log "full_import_verified terminal=${terminal}/${TARGET} completed=${completed} awaiting_review=${awaiting_review} fragments=${fragments}/${TARGET} attempts=${attempts}"
+      write_status "full_import_verified" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "0"
       if ! run_baseline; then
-        write_status "failed" "${fragments}" "${latest}" "${completed}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "0"
+        write_status "failed" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "0"
         return 1
       fi
-      write_status "done" "${fragments}" "${latest}" "${completed}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "0"
+      write_status "done" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "0"
       log "done"
       return 0
     fi
 
     if [[ -n "${pid}" ]]; then
-      log "import_running pid=${pid} completed=${completed}/${TARGET} failed=${failed} pending=$((queued + processing)) fragments=${fragments}"
-      write_status "import_running" "${fragments}" "${latest}" "${completed}" "${failed}" "${queued}" "${processing}" "${attempts}" "${pid}" "${rate_per_minute}" "${eta_seconds}"
-    elif [[ $((queued + processing)) -gt 0 ]]; then
-      log "placement_worker_draining completed=${completed}/${TARGET} queued=${queued} processing=${processing}; import_not_restarted"
-      write_status "placement_worker_draining" "${fragments}" "${latest}" "${completed}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
+      log "import_running pid=${pid} terminal=${terminal}/${TARGET} completed=${completed} awaiting_review=${awaiting_review} failed=${failed} pending=${pending} fragments=${fragments}"
+      write_status "import_running" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${failed}" "${queued}" "${processing}" "${attempts}" "${pid}" "${rate_per_minute}" "${eta_seconds}"
+    elif [[ "${pending}" -gt 0 ]]; then
+      log "placement_worker_draining terminal=${terminal}/${TARGET} completed=${completed} awaiting_review=${awaiting_review} queued=${queued} processing=${processing}; import_not_restarted"
+      write_status "placement_worker_draining" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
     else
       if [[ "${restarts}" -ge "${MAX_IMPORT_RESTARTS}" ]]; then
-        log "max_import_restarts_reached restarts=${restarts} completed=${completed}/${TARGET}"
-        write_status "failed" "${fragments}" "${latest}" "${completed}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
+        log "max_import_restarts_reached restarts=${restarts} terminal=${terminal}/${TARGET}"
+        write_status "failed" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
         return 1
       fi
       restarts=$((restarts + 1))
-      log "import_not_running restart=${restarts} completed=${completed}/${TARGET} failed=${failed} unseen=$((TARGET - latest))"
-      write_status "import_restarting" "${fragments}" "${latest}" "${completed}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
+      log "import_not_running restart=${restarts} terminal=${terminal}/${TARGET} completed=${completed} awaiting_review=${awaiting_review} failed=${failed} unseen=$((TARGET - latest))"
+      write_status "import_restarting" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
       start_import
     fi
     sleep "${SLEEP_SECONDS}"

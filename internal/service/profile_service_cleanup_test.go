@@ -24,7 +24,7 @@ func TestProfileServiceDelete_CallsStatePurger(t *testing.T) {
 
 	id := uuid.New()
 	repo.On("GetByID", ctx, id).Return(&domain.Profile{ID: id, Name: "p"}, nil)
-	repo.On("HardDelete", ctx, id).Return(nil)
+	repo.On("SoftDelete", ctx, id).Return(nil)
 	purger.On("PurgeProfileState", ctx, id.String()).Return(nil)
 	audit.On("Append", mock.Anything, mock.MatchedBy(func(entry AuditLogEntry) bool {
 		return entry.Operation == "DELETE" &&
@@ -54,7 +54,7 @@ func TestProfileServiceDelete_NilPurgerIsSafe(t *testing.T) {
 
 	id := uuid.New()
 	repo.On("GetByID", ctx, id).Return(&domain.Profile{ID: id, Name: "p"}, nil)
-	repo.On("HardDelete", ctx, id).Return(nil)
+	repo.On("SoftDelete", ctx, id).Return(nil)
 	audit.On("Append", mock.Anything, mock.AnythingOfType("service.AuditLogEntry")).Return(nil)
 
 	// purger is nil — this must not panic
@@ -66,9 +66,9 @@ func TestProfileServiceDelete_NilPurgerIsSafe(t *testing.T) {
 	audit.AssertExpectations(t)
 }
 
-// TestProfileServiceDelete_CallsDataPurger proves profile deletion purges
-// profile-owned non-Postgres state after deleting the profile row.
-func TestProfileServiceDelete_CallsDataPurger(t *testing.T) {
+// TestProfileServiceDelete_DoesNotPurgePostgresData proves team tombstone
+// deletion does not invoke the durable-data purge hook.
+func TestProfileServiceDelete_DoesNotPurgePostgresData(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -78,20 +78,19 @@ func TestProfileServiceDelete_CallsDataPurger(t *testing.T) {
 
 	id := uuid.New()
 	repo.On("GetByID", ctx, id).Return(&domain.Profile{ID: id, Name: "p"}, nil)
-	repo.On("HardDelete", ctx, id).Return(nil)
+	repo.On("SoftDelete", ctx, id).Return(nil)
 	audit.On("Append", mock.Anything, mock.AnythingOfType("service.AuditLogEntry")).Return(nil)
-	dataPurger.On("PurgeProfileData", ctx, id.String()).Return(nil).Once()
 
 	svc := NewProfileServiceWithDataPurger(repo, audit, nil, dataPurger)
 	err := svc.Delete(ctx, id, nil, "system", "127.0.0.1", "corr-3")
 	require.NoError(t, err)
 
-	dataPurger.AssertCalled(t, "PurgeProfileData", ctx, id.String())
+	dataPurger.AssertNotCalled(t, "PurgeProfileData", mock.Anything, mock.Anything)
 	repo.AssertExpectations(t)
 	audit.AssertExpectations(t)
 }
 
-func TestProfileServiceDelete_DoesNotPurgeDataWhenHardDeleteFails(t *testing.T) {
+func TestProfileServiceDelete_DoesNotPurgeDataWhenSoftDeleteFails(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -101,7 +100,7 @@ func TestProfileServiceDelete_DoesNotPurgeDataWhenHardDeleteFails(t *testing.T) 
 
 	id := uuid.New()
 	repo.On("GetByID", ctx, id).Return(&domain.Profile{ID: id, Name: "p"}, nil)
-	repo.On("HardDelete", ctx, id).Return(errors.New("blocked by database"))
+	repo.On("SoftDelete", ctx, id).Return(errors.New("blocked by database"))
 
 	svc := NewProfileServiceWithDataPurger(repo, audit, nil, dataPurger)
 	err := svc.Delete(ctx, id, nil, "system", "127.0.0.1", "corr-4")

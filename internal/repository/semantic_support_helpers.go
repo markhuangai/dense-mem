@@ -18,7 +18,7 @@ func supersedeOneCardinalityRelationships(
 ) error {
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH selected AS (
-			SELECT relationship_id, tier, status
+			SELECT relationship_id, status
 			FROM relationship_records
 			WHERE team_id = ?::uuid
 			  AND owner_profile_id = ?::uuid
@@ -34,7 +34,7 @@ func supersedeOneCardinalityRelationships(
 			      OR (predicate_version = ? AND current_cardinality = 'one')
 			  )
 			  AND status = 'active'
-			  AND tier IN ('validated_claim', 'fact')
+			  AND support_count > 0
 			FOR UPDATE
 		),
 		updated AS (
@@ -46,9 +46,9 @@ func supersedeOneCardinalityRelationships(
 			FROM selected
 			WHERE relationship.team_id = ?::uuid
 			  AND relationship.relationship_id = selected.relationship_id
-			RETURNING selected.relationship_id::text, selected.tier, selected.status
+			RETURNING selected.relationship_id::text, selected.status
 		)
-		SELECT relationship_id, tier, status
+		SELECT relationship_id, status
 		FROM updated
 	`, input.TeamID, input.OwnerProfileID, input.SubjectEntityID, input.PredicateKey,
 		input.Polarity, timeArg(input.ValidFrom), input.ScopeKey,
@@ -58,19 +58,17 @@ func supersedeOneCardinalityRelationships(
 	}
 	type supersededRelationship struct {
 		relationshipID string
-		tier           string
 		status         string
 	}
 	var superseded []supersededRelationship
 	for rows.Next() {
-		var relationshipID, tier, status string
-		if err := rows.Scan(&relationshipID, &tier, &status); err != nil {
+		var relationshipID, status string
+		if err := rows.Scan(&relationshipID, &status); err != nil {
 			_ = rows.Close()
 			return err
 		}
 		superseded = append(superseded, supersededRelationship{
 			relationshipID: relationshipID,
-			tier:           tier,
 			status:         status,
 		})
 	}
@@ -86,9 +84,7 @@ func supersedeOneCardinalityRelationships(
 			TeamID:         input.TeamID,
 			OwnerProfileID: input.OwnerProfileID,
 			RelationshipID: item.relationshipID,
-			FromTier:       item.tier,
 			FromStatus:     item.status,
-			ToTier:         item.tier,
 			ToStatus:       string(domain.RelationshipStatusSuperseded),
 			Reason:         "one_cardinality_replaced",
 		}); err != nil {
@@ -422,27 +418,25 @@ func recomputeRelationshipFromEffectiveSupport(
 	if err != nil {
 		return nil, err
 	}
-	nextTier, nextStatus := tierStatusForEffectiveSupport(before.Tier, before.Status, counts.SupportCount, counts.SourceGroupCount, counts.HasAuthoritative)
+	nextStatus := statusForEffectiveSupport(before.Status, counts.SupportCount)
 	versionBump := `
 		CASE
 			WHEN support_count <> ?
 			  OR source_group_count <> ?
-			  OR tier <> ?
 			  OR status <> ?
 			THEN 1 ELSE 0 END`
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE relationship_records
 		SET support_count = ?,
 		    source_group_count = ?,
-		    tier = ?,
 		    status = ?,
 		    version = version + `+versionBump+`,
 		    updated_at = now()
 		WHERE team_id = ?::uuid
 		  AND relationship_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
-	`, counts.SupportCount, counts.SourceGroupCount, nextTier, nextStatus,
-		counts.SupportCount, counts.SourceGroupCount, nextTier, nextStatus,
+	`, counts.SupportCount, counts.SourceGroupCount, nextStatus,
+		counts.SupportCount, counts.SourceGroupCount, nextStatus,
 		teamID, relationshipID, before.OwnerProfileID)
 	if result.Error != nil {
 		return nil, result.Error
@@ -459,16 +453,14 @@ func recomputeRelationshipFromEffectiveSupport(
 		After:             after,
 		SupportDecisionID: supportDecisionID,
 	}
-	if before.Tier == after.Tier && before.Status == after.Status {
+	if before.Status == after.Status {
 		return out, nil
 	}
 	transitionID, err := insertRelationshipTransition(ctx, tx, transitionInput{
 		TeamID:            teamID,
 		OwnerProfileID:    before.OwnerProfileID,
 		RelationshipID:    relationshipID,
-		FromTier:          before.Tier,
 		FromStatus:        before.Status,
-		ToTier:            after.Tier,
 		ToStatus:          after.Status,
 		Reason:            reason,
 		SupportDecisionID: supportDecisionID,
@@ -531,17 +523,14 @@ func effectiveRelationshipSupportCounts(ctx context.Context, tx *gorm.DB, teamID
 	return counts, nil
 }
 
-func tierStatusForEffectiveSupport(currentTier, currentStatus string, supportCount, sourceGroupCount int, authoritative bool) (string, string) {
+func statusForEffectiveSupport(currentStatus string, supportCount int) string {
 	if !relationshipStatusAllowsSupportRecompute(currentStatus) {
-		return currentTier, currentStatus
+		return currentStatus
 	}
 	if supportCount == 0 {
-		return string(domain.RelationshipTierCandidate), string(domain.RelationshipStatusPendingEvidence)
+		return string(domain.RelationshipStatusPendingEvidence)
 	}
-	if authoritative || sourceGroupCount >= 2 {
-		return string(domain.RelationshipTierFact), string(domain.RelationshipStatusActive)
-	}
-	return string(domain.RelationshipTierValidatedClaim), string(domain.RelationshipStatusActive)
+	return string(domain.RelationshipStatusActive)
 }
 
 func relationshipStatusAllowsSupportRecompute(status string) bool {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -241,8 +242,8 @@ func (s *ProfileServiceImpl) Update(ctx context.Context, id uuid.UUID, req Updat
 }
 
 // PROFILE_HAS_ACTIVE_KEYS is kept for backward-compat with callers referencing the const.
-// Profile deletion no longer blocks on active keys; current deletion removes
-// profile-owned API keys as part of the hard-delete path.
+// Team deletion no longer blocks on active keys; current deletion revokes
+// profile-owned API keys as part of the tombstone path.
 const PROFILE_HAS_ACTIVE_KEYS = string(httperr.PROFILE_HAS_ACTIVE_KEYS)
 
 // ProfileHasActiveKeysError represents a 409 conflict when profile has active keys.
@@ -256,8 +257,8 @@ func (e *ProfileHasActiveKeysError) Error() string {
 	return fmt.Sprintf("profile %s has active keys and cannot be deleted", e.ProfileID.String())
 }
 
-// Delete hard-deletes a profile and profile-owned database rows.
-// audit_log remains append-only and stores historical entity IDs without live FKs.
+// Delete tombstones a team and revokes its active API keys.
+// Knowledge, profile, and audit rows remain available for historical trace.
 func (s *ProfileServiceImpl) Delete(ctx context.Context, id uuid.UUID, actorKeyID *string, actorRole, clientIP, correlationID string) error {
 	// Get the existing profile
 	existing, err := s.repo.GetByID(ctx, id)
@@ -278,8 +279,10 @@ func (s *ProfileServiceImpl) Delete(ctx context.Context, id uuid.UUID, actorKeyI
 		"status":      "active",
 	}
 
-	// Delete Postgres profile-owned rows. audit_log is not deleted or mutated.
-	if err := s.repo.HardDelete(ctx, id); err != nil {
+	if err := s.repo.SoftDelete(ctx, id); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return httperr.New(httperr.NOT_FOUND, fmt.Sprintf("profile with id '%s' not found", id.String()))
+		}
 		return fmt.Errorf("failed to delete profile: %w", err)
 	}
 
@@ -304,12 +307,6 @@ func (s *ProfileServiceImpl) Delete(ctx context.Context, id uuid.UUID, actorKeyI
 		if err := s.statePurger.PurgeProfileState(ctx, id.String()); err != nil {
 			// Log but don't fail the operation
 			s.logger.Warn("profile_state_purge_failed", slog.String("error", err.Error()), slog.String("team_id", id.String()))
-		}
-	}
-
-	if s.dataPurger != nil {
-		if err := s.dataPurger.PurgeProfileData(ctx, id.String()); err != nil {
-			return fmt.Errorf("profile row deleted but failed to purge profile data: %w", err)
 		}
 	}
 

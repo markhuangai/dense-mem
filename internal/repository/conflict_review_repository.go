@@ -421,7 +421,6 @@ func updateConflictPositionDispositions(
 type conflictSuppressedRelationship struct {
 	RelationshipID string
 	OwnerProfileID string
-	FromTier       string
 	FromStatus     string
 }
 
@@ -460,13 +459,12 @@ func suppressConflictLosingRelationships(
 			  AND relationship.relationship_id = losers.relationship_id
 			  AND relationship.owner_profile_id = losers.owner_profile_id
 			  AND relationship.status = 'active'
-			  AND relationship.tier IN ('validated_claim', 'fact')
+			  AND relationship.support_count > 0
 			RETURNING relationship.relationship_id::text,
 			          relationship.owner_profile_id::text,
-			          relationship.tier,
 			          'active'::text AS from_status
 		)
-		SELECT relationship_id, owner_profile_id, tier, from_status
+		SELECT relationship_id, owner_profile_id, from_status
 		FROM updated
 	`, input.TeamID, input.ConflictID, preferredPositionID,
 		effectiveAt, effectiveAt, effectiveAt, effectiveAt, input.TeamID).Rows()
@@ -476,7 +474,7 @@ func suppressConflictLosingRelationships(
 	suppressed := []conflictSuppressedRelationship{}
 	for rows.Next() {
 		var item conflictSuppressedRelationship
-		if err := rows.Scan(&item.RelationshipID, &item.OwnerProfileID, &item.FromTier, &item.FromStatus); err != nil {
+		if err := rows.Scan(&item.RelationshipID, &item.OwnerProfileID, &item.FromStatus); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -506,9 +504,7 @@ func suppressConflictLosingRelationships(
 			TeamID:         input.TeamID,
 			OwnerProfileID: item.OwnerProfileID,
 			RelationshipID: item.RelationshipID,
-			FromTier:       item.FromTier,
 			FromStatus:     item.FromStatus,
-			ToTier:         item.FromTier,
 			ToStatus:       string(domain.RelationshipStatusSuperseded),
 			Reason:         "conflict_resolved",
 			IdempotencyKey: "conflict:" + input.ConflictID + ":relationship:" + item.RelationshipID + ":superseded",

@@ -52,13 +52,22 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 			return &memoryservice.RecallResult{
 				RecallID:    "rec_canonical",
 				SearchState: string(domain.SearchProjectionCurrent),
+				SearchStates: memoryservice.RecallSearchStates{
+					Evidence:      string(domain.SearchProjectionCurrent),
+					Relationships: string(domain.SearchProjectionCurrent),
+				},
 				Results: []memoryservice.RecallResultItem{{
 					EvidenceID:      "ev-1",
 					RelationshipIDs: []string{"rel-1"},
 					Rank:            2,
 					Context:         "Dense-Mem uses PostgreSQL as the durable authority.",
 				}},
-				DiscoveryPaths: []memoryservice.RecallDiscoveryPath{{
+				RelatedRelationships: []memoryservice.RelatedRelationshipSummary{{
+					RelationshipID: "rel-1",
+					Predicate:      "uses",
+					EvidenceIDs:    []string{"ev-1"},
+				}},
+				RelatedCommunities: []memoryservice.RecallDiscoveryPath{{
 					EvidenceIDs: []string{"ev-1"},
 					Relationships: []memoryservice.RecallRelationshipHandle{{
 						RelationshipID: "rel-1",
@@ -117,11 +126,14 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	if len(item.RelationshipIDs) != 1 || item.RelationshipIDs[0] != "rel-1" {
 		t.Fatalf("relationship_ids = %#v; want rel-1", item.RelationshipIDs)
 	}
-	if len(resp.Data.DiscoveryPaths) != 1 || len(resp.Data.DiscoveryPaths[0].Relationships) != 1 {
-		t.Fatalf("discovery_paths = %#v; want one relationship path", resp.Data.DiscoveryPaths)
+	if len(resp.Data.RelatedRelationships) != 1 || resp.Data.RelatedRelationships[0].RelationshipID != "rel-1" {
+		t.Fatalf("related_relationships = %#v; want rel-1", resp.Data.RelatedRelationships)
 	}
-	if resp.Data.DiscoveryGuidance != "No additional discovery guidance." {
-		t.Fatalf("discovery_guidance = %q; want fallback guidance", resp.Data.DiscoveryGuidance)
+	if len(resp.Data.RelatedCommunities) != 1 || len(resp.Data.RelatedCommunities[0].Relationships) != 1 {
+		t.Fatalf("related_communities = %#v; want one relationship path", resp.Data.RelatedCommunities)
+	}
+	if resp.Data.SearchStates.Evidence != string(domain.SearchProjectionCurrent) || resp.Data.SearchStates.Relationships != string(domain.SearchProjectionCurrent) {
+		t.Fatalf("search_states = %#v; want current states", resp.Data.SearchStates)
 	}
 }
 

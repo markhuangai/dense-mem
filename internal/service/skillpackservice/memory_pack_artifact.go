@@ -318,7 +318,6 @@ func memoryPackRelationshipFromTrace(record *repository.RelationshipTraceRecord)
 		Object:           object,
 		Polarity:         record.Polarity,
 		ScopeKey:         record.ScopeKey,
-		Tier:             record.Tier,
 		Status:           record.Status,
 	}
 }

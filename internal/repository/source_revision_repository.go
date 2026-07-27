@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -23,6 +24,7 @@ type AdvanceSourceRevisionInput struct {
 	ExpectedPreviousRevisionToken string
 	ContentHash                   string
 	Envelope                      map[string]any
+	SupersedesFragmentIDs         []string
 }
 
 type SourceRevisionResult struct {
@@ -67,6 +69,7 @@ func normalizeAdvanceSourceRevisionInput(input AdvanceSourceRevisionInput) Advan
 	input.RevisionToken = strings.TrimSpace(input.RevisionToken)
 	input.ExpectedPreviousRevisionToken = strings.TrimSpace(input.ExpectedPreviousRevisionToken)
 	input.ContentHash = strings.TrimSpace(input.ContentHash)
+	input.SupersedesFragmentIDs = normalizeUUIDStringList(input.SupersedesFragmentIDs)
 	return input
 }
 
@@ -88,6 +91,17 @@ func validateAdvanceSourceRevisionInput(input AdvanceSourceRevisionInput) error 
 	}
 	if !domain.Authority(input.Authority).IsValid() {
 		return fmt.Errorf("authority is unsupported: %q", input.Authority)
+	}
+	if len(input.SupersedesFragmentIDs) > 50 {
+		return errors.New("supersedes_fragment_ids exceeds maximum 50")
+	}
+	if len(input.SupersedesFragmentIDs) > 0 && input.ExpectedPreviousRevisionToken == "" {
+		return errors.New("supersedes_fragment_ids requires expected previous revision")
+	}
+	for _, fragmentID := range input.SupersedesFragmentIDs {
+		if _, err := uuid.Parse(fragmentID); err != nil {
+			return fmt.Errorf("supersedes_fragment_ids contains invalid UUID %q: %w", fragmentID, err)
+		}
 	}
 	return nil
 }
@@ -198,6 +212,9 @@ func advanceSourceRevisionInTx(
 	if currentToken != input.ExpectedPreviousRevisionToken {
 		return nil, fmt.Errorf("%w: expected %q, got %q", ErrSourceRevisionConflict, input.ExpectedPreviousRevisionToken, currentToken)
 	}
+	if err := validateSupersededFragments(ctx, tx, input, sourceID, currentRevisionID); err != nil {
+		return nil, err
+	}
 	supportsToRevoke, err := loadEffectiveSourceRevisionSupports(ctx, tx, input.TeamID, sourceID, currentRevisionID)
 	if err != nil {
 		return nil, err
@@ -235,6 +252,41 @@ func advanceSourceRevisionInTx(
 		cache[cacheKey] = advanced
 	}
 	return &advanced, nil
+}
+
+func validateSupersededFragments(
+	ctx context.Context,
+	tx *gorm.DB,
+	input AdvanceSourceRevisionInput,
+	sourceID string,
+	previousRevisionID string,
+) error {
+	if len(input.SupersedesFragmentIDs) == 0 {
+		return nil
+	}
+	if previousRevisionID == "" {
+		return fmt.Errorf("%w: superseded fragments require an existing previous revision", ErrSourceRevisionConflict)
+	}
+	var matched int
+	if err := tx.WithContext(ctx).Raw(`
+		WITH requested AS (
+			SELECT DISTINCT unnest(?::uuid[]) AS fragment_id
+		)
+		SELECT COUNT(fragment.fragment_id)::int
+		FROM requested
+		JOIN evidence_fragments AS fragment
+		  ON fragment.team_id = ?::uuid
+		 AND fragment.owner_profile_id = ?::uuid
+		 AND fragment.source_id = ?::uuid
+		 AND fragment.source_revision_id = ?::uuid
+		 AND fragment.fragment_id = requested.fragment_id
+	`, pq.Array(input.SupersedesFragmentIDs), input.TeamID, input.OwnerProfileID, sourceID, previousRevisionID).Scan(&matched).Error; err != nil {
+		return err
+	}
+	if matched != len(input.SupersedesFragmentIDs) {
+		return fmt.Errorf("%w: supersedes_fragment_ids must reference fragments from the exact previous source revision", ErrSourceRevisionConflict)
+	}
+	return nil
 }
 
 type sourceRevisionSupportInvalidation struct {

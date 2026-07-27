@@ -375,6 +375,152 @@ func TestRecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom(t *testing.T) 
 	require.Equal(t, 3, communities.recallInput.Limit)
 }
 
+func TestRecallReturnsRelatedRelationshipsAndVectorDegradation(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	entityRelationshipID := uuid.NewString()
+	valueRelationshipID := uuid.NewString()
+	subjectID := uuid.NewString()
+	objectEntityID := uuid.NewString()
+	objectValueID := uuid.NewString()
+	relationshipLimit := 2
+	search := &recallSearchStub{
+		contract: &repository.ActiveSearchContract{
+			EmbeddingContractID: uuid.NewString(),
+			EmbeddingDimensions: 3,
+			EmbeddingModel:      "test-model",
+		},
+		result: &repository.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results:     []repository.RecallEvidenceHit{},
+		},
+		relationshipResult: &repository.RecallRelationshipsResult{
+			TeamID:        teamID.String(),
+			SearchState:   string(domain.SearchProjectionPending),
+			VectorOmitted: true,
+			Results: []repository.RecallRelationshipHit{
+				{
+					RelationshipID:  entityRelationshipID,
+					SubjectEntityID: subjectID,
+					SubjectName:     "Dense-Mem",
+					PredicateKey:    "uses",
+					ObjectEntityID:  objectEntityID,
+					ObjectName:      "PostgreSQL",
+					Polarity:        "+",
+					SearchState:     string(domain.SearchProjectionPending),
+				},
+				{
+					RelationshipID:  valueRelationshipID,
+					SubjectEntityID: subjectID,
+					SubjectName:     "Dense-Mem",
+					PredicateKey:    "has_release",
+					ObjectValueID:   objectValueID,
+					ObjectValueType: "string",
+					ObjectValue:     "v2.3",
+					ObjectName:      "v2.3",
+					Polarity:        "+",
+					SearchState:     string(domain.SearchProjectionCurrent),
+				},
+			},
+		},
+	}
+	provider := &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}}
+	svc := NewRecallService(RecallDependencies{Search: search, Provider: provider})
+
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ContractVersion:   domain.ContractVersion,
+		Query:             "Dense-Mem PostgreSQL",
+		RelationshipLimit: &relationshipLimit,
+	})
+	require.NoError(t, err)
+	require.Equal(t, string(domain.SearchProjectionPending), result.SearchStates.Relationships)
+	require.Len(t, result.RelatedRelationships, 2)
+	require.Equal(t, entityRelationshipID, result.RelatedRelationships[0].RelationshipID)
+	require.Equal(t, objectEntityID, result.RelatedRelationships[0].Object.EntityID)
+	require.Equal(t, "PostgreSQL", result.RelatedRelationships[0].Object.Name)
+	require.Equal(t, valueRelationshipID, result.RelatedRelationships[1].RelationshipID)
+	require.Equal(t, objectValueID, result.RelatedRelationships[1].Object.ValueID)
+	require.Equal(t, "string", result.RelatedRelationships[1].Object.Type)
+	require.Equal(t, "v2.3", result.RelatedRelationships[1].Object.Value)
+	require.Len(t, result.Degradations, 1)
+	require.Equal(t, "relationships", result.Degradations[0].Frontier)
+	require.Equal(t, "relationship_vector_warming", result.Degradations[0].Code)
+	require.Equal(t, []float32{1, 0, 0}, search.relationshipInput.QueryEmbedding)
+	require.Equal(t, relationshipLimit, search.relationshipInput.Limit)
+}
+
+func TestRecallSkipsRelatedRelationshipsWhenLimitIsZero(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	relationshipLimit := 0
+	search := &recallSearchStub{
+		contract: &repository.ActiveSearchContract{
+			EmbeddingContractID: uuid.NewString(),
+			EmbeddingDimensions: 3,
+			EmbeddingModel:      "test-model",
+		},
+		result: &repository.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results:     []repository.RecallEvidenceHit{},
+		},
+	}
+	svc := NewRecallService(RecallDependencies{Search: search})
+
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ContractVersion:   domain.ContractVersion,
+		Query:             "PostgreSQL",
+		RelationshipLimit: &relationshipLimit,
+	})
+	require.NoError(t, err)
+	require.False(t, search.relationshipCalled)
+	require.Empty(t, result.RelatedRelationships)
+	require.Equal(t, string(domain.SearchProjectionNotRequired), result.SearchStates.Relationships)
+}
+
+func TestRecallAddsOptionalFrontierDegradations(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	search := &recallSearchStub{
+		contract: &repository.ActiveSearchContract{
+			EmbeddingContractID: uuid.NewString(),
+			EmbeddingDimensions: 3,
+			EmbeddingModel:      "test-model",
+		},
+		result: &repository.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results:     []repository.RecallEvidenceHit{},
+		},
+		relationshipErr: errors.New("relationship recall failed"),
+	}
+	communities := &recallCommunityStub{}
+	hypotheses := &recallHypothesisStub{err: errors.New("hypotheses failed")}
+	svc := NewRecallService(RecallDependencies{
+		Search:          search,
+		Provider:        &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}},
+		Communities:     communities,
+		CommunityConfig: recallCommunityConfigStub{err: errors.New("community config failed")},
+		Hypotheses:      hypotheses,
+	})
+
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ContractVersion: domain.ContractVersion,
+		Query:           "PostgreSQL",
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Degradations, 3)
+	require.Equal(t, "relationships", result.Degradations[0].Frontier)
+	require.Equal(t, "relationship_discovery_unavailable", result.Degradations[0].Code)
+	require.Equal(t, "communities", result.Degradations[1].Frontier)
+	require.Equal(t, "community_discovery_unavailable", result.Degradations[1].Code)
+	require.Equal(t, "hypotheses", result.Degradations[2].Frontier)
+	require.Equal(t, "related_hypotheses_unavailable", result.Degradations[2].Code)
+	require.Equal(t, string(domain.SearchProjectionFailed), result.SearchStates.Relationships)
+	require.Equal(t, &result.Degradations[0], result.Degradation)
+}
+
 func TestRecallRequiresAuthenticatedActor(t *testing.T) {
 	svc := NewRecallService(RecallDependencies{Search: &recallSearchStub{}})
 	_, err := svc.Recall(context.Background(), RecallRequest{
@@ -410,10 +556,14 @@ func TestValidateRecallEmbeddingRejectsInvalidVectors(t *testing.T) {
 }
 
 type recallSearchStub struct {
-	contract *repository.ActiveSearchContract
-	input    repository.RecallEvidenceInput
-	result   *repository.RecallEvidenceResult
-	err      error
+	contract           *repository.ActiveSearchContract
+	input              repository.RecallEvidenceInput
+	relationshipInput  repository.RecallRelationshipsInput
+	result             *repository.RecallEvidenceResult
+	relationshipResult *repository.RecallRelationshipsResult
+	relationshipCalled bool
+	err                error
+	relationshipErr    error
 }
 
 func (s *recallSearchStub) GetActiveSearchContract(context.Context) (*repository.ActiveSearchContract, error) {
@@ -429,6 +579,22 @@ func (s *recallSearchStub) RecallEvidence(_ context.Context, input repository.Re
 		return nil, s.err
 	}
 	return s.result, nil
+}
+
+func (s *recallSearchStub) RecallRelationships(_ context.Context, input repository.RecallRelationshipsInput) (*repository.RecallRelationshipsResult, error) {
+	s.relationshipCalled = true
+	s.relationshipInput = input
+	if s.relationshipErr != nil {
+		return nil, s.relationshipErr
+	}
+	if s.relationshipResult != nil {
+		return s.relationshipResult, nil
+	}
+	return &repository.RecallRelationshipsResult{
+		TeamID:      input.TeamID,
+		SearchState: string(domain.SearchProjectionCurrent),
+		Results:     []repository.RecallRelationshipHit{},
+	}, nil
 }
 
 type recallHypothesisStub struct {

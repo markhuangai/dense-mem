@@ -285,6 +285,7 @@ func lifecycleEvidenceFromRequest(evidence []RememberEvidenceInput) []repository
 			ExpectedPreviousRevisionToken: strings.TrimSpace(item.PreviousSourceRevision),
 			SourceRevisionContentHash:     sourceRevisionHashes[sourceRevisionBatchKey(item)],
 			SourceRevisionEnvelope:        sourceRevisionEnvelope(item),
+			SupersedesFragmentIDs:         append([]string(nil), item.SupersedesFragmentIDs...),
 			Labels:                        append([]string(nil), item.Labels...),
 			Metadata:                      metadata,
 			InitialEvent:                  &scan,

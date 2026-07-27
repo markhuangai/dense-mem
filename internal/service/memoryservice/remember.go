@@ -107,7 +107,6 @@ type RelationshipOutcomeRef struct {
 	ObservationID      string `json:"observation_id"`
 	RelationshipID     string `json:"relationship_id,omitempty"`
 	OwnerProfileID     string `json:"owner_profile_id"`
-	Tier               string `json:"tier,omitempty"`
 	RelationshipStatus string `json:"relationship_status,omitempty"`
 	Category           string `json:"category"`
 	Reason             string `json:"reason"`
@@ -238,6 +237,7 @@ func (s *rememberService) normalizeEvidence(evidence []RememberEvidenceInput) ([
 			ExpectedPreviousRevisionToken: strings.TrimSpace(item.PreviousSourceRevision),
 			SourceRevisionContentHash:     sourceRevisionHashes[sourceRevisionBatchKey(item)],
 			SourceRevisionEnvelope:        sourceRevisionEnvelope(item),
+			SupersedesFragmentIDs:         append([]string(nil), item.SupersedesFragmentIDs...),
 			Labels:                        append([]string(nil), item.Labels...),
 			Metadata:                      metadata,
 			InitialEvent:                  &scan,
@@ -413,7 +413,6 @@ func placementRelationshipOutcomes(result map[string]any) []RelationshipOutcomeR
 			ObservationID:      resultString(fields, "observation_id"),
 			RelationshipID:     resultString(fields, "relationship_id"),
 			OwnerProfileID:     resultString(fields, "owner_profile_id"),
-			Tier:               resultString(fields, "tier"),
 			RelationshipStatus: resultString(fields, "relationship_status"),
 			Category:           resultString(fields, "category"),
 			Reason:             resultString(fields, "reason"),
@@ -482,7 +481,7 @@ func ledgerAuthorityAndMetadata(authority string, metadata map[string]any) (stri
 	}
 	authority = strings.TrimSpace(authority)
 	if authority != "" {
-		out["v2_contract_authority"] = authority
+		out["contract_authority"] = authority
 	}
 	if authority == "" {
 		return string(domain.AuthorityPrimary), out
@@ -501,7 +500,7 @@ func evidenceProcessingIntentMetadata(metadata map[string]any, item RememberEvid
 		metadata["evidence_idempotency_key"] = value
 	}
 	if value := strings.TrimSpace(item.SourceGroup); value != "" {
-		metadata["v2_contract_source_group"] = value
+		metadata["contract_source_group"] = value
 	}
 	return metadata
 }

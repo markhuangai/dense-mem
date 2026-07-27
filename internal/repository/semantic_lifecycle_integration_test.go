@@ -40,8 +40,9 @@ func TestSemanticSupportDecisionsRecomputeEffectiveState(t *testing.T) {
 	})
 	require.NotNil(t, first.Relationship)
 	require.NotEmpty(t, first.SupportID)
-	assert.Equal(t, "validated_claim", first.Relationship.Tier)
 	assert.Equal(t, "active", first.Relationship.Status)
+	assert.Equal(t, 1, first.Relationship.SupportCount)
+	assert.Equal(t, 1, first.Relationship.SourceGroupCount)
 
 	secondIngest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerA,
 		"support second source", "A second source confirms Jamie works on Dense-Mem.")
@@ -63,7 +64,6 @@ func TestSemanticSupportDecisionsRecomputeEffectiveState(t *testing.T) {
 	require.NotNil(t, second.Relationship)
 	require.NotEmpty(t, second.SupportID)
 	assert.Equal(t, first.Relationship.RelationshipID, second.Relationship.RelationshipID)
-	assert.Equal(t, "fact", second.Relationship.Tier)
 	assert.Equal(t, "active", second.Relationship.Status)
 	assert.Equal(t, 2, second.Relationship.SupportCount)
 	assert.Equal(t, 2, second.Relationship.SourceGroupCount)
@@ -78,8 +78,6 @@ func TestSemanticSupportDecisionsRecomputeEffectiveState(t *testing.T) {
 		IdempotencyKey: "revoke-first-support",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "fact", revokeFirst.FromTier)
-	assert.Equal(t, "validated_claim", revokeFirst.ToTier)
 	assert.Equal(t, "active", revokeFirst.ToStatus)
 	assert.Equal(t, 1, revokeFirst.SupportCount)
 	assert.Equal(t, 1, revokeFirst.SourceGroupCount)
@@ -130,8 +128,6 @@ func TestSemanticSupportDecisionsRecomputeEffectiveState(t *testing.T) {
 		IdempotencyKey: "revoke-second-support",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "validated_claim", revokeSecond.FromTier)
-	assert.Equal(t, "candidate", revokeSecond.ToTier)
 	assert.Equal(t, "pending_evidence", revokeSecond.ToStatus)
 	assert.Equal(t, 0, revokeSecond.SupportCount)
 
@@ -149,8 +145,6 @@ func TestSemanticSupportDecisionsRecomputeEffectiveState(t *testing.T) {
 		IdempotencyKey: "reinstate-first-support",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "candidate", reinstateFirst.FromTier)
-	assert.Equal(t, "validated_claim", reinstateFirst.ToTier)
 	assert.Equal(t, "active", reinstateFirst.ToStatus)
 	assert.Equal(t, 1, reinstateFirst.SupportCount)
 
@@ -167,8 +161,8 @@ func TestSemanticSupportDecisionsRecomputeEffectiveState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, trace.EvidenceSupports, 2)
 	assert.Len(t, trace.SupportDecisionEvents, 5)
-	assert.Equal(t, "validated_claim", trace.Relationship.Tier)
 	assert.Equal(t, "active", trace.Relationship.Status)
+	assert.Equal(t, 1, trace.Relationship.SupportCount)
 }
 
 func TestSourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships(t *testing.T) {
@@ -219,8 +213,8 @@ func TestSourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships(t 
 	})
 	require.NotNil(t, decision.Relationship)
 	require.NotEmpty(t, decision.SupportID)
-	assert.Equal(t, "validated_claim", decision.Relationship.Tier)
 	assert.Equal(t, "active", decision.Relationship.Status)
+	assert.Equal(t, 1, decision.Relationship.SupportCount)
 
 	_, err = ledgerRepo.CreateIngest(ctx, CreateIngestInput{
 		TeamID:         teamID,
@@ -244,7 +238,6 @@ func TestSourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships(t 
 		MaxEvents:      20,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "validated_claim", trace.Relationship.Tier)
 	assert.Equal(t, "active", trace.Relationship.Status)
 	assert.Len(t, trace.SupportDecisionEvents, 1)
 
@@ -273,7 +266,6 @@ func TestSourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships(t 
 		MaxEvents:      20,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "candidate", trace.Relationship.Tier)
 	assert.Equal(t, "pending_evidence", trace.Relationship.Status)
 	assert.Equal(t, 0, trace.Relationship.SupportCount)
 	require.Len(t, trace.SupportDecisionEvents, 2)

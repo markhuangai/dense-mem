@@ -69,12 +69,17 @@ func rememberIngestIdempotencyKey(evidence []memoryservice.RememberEvidenceInput
 func recallContractOutput(res *memoryservice.RecallResult) map[string]any {
 	if res == nil {
 		return map[string]any{
-			"recall_id":          "",
-			"results":            []any{},
-			"conflicts":          []any{},
-			"discovery_paths":    []any{},
-			"discovery_guidance": "",
-			"related_hypotheses": []any{},
+			"recall_id":             "",
+			"results":               []any{},
+			"conflicts":             []any{},
+			"related_relationships": []any{},
+			"related_communities":   []any{},
+			"related_hypotheses":    []any{},
+			"search_states": map[string]any{
+				"evidence":      "",
+				"relationships": "",
+			},
+			"degradations": []any{},
 		}
 	}
 	results := make([]map[string]any, 0, len(res.Results))
@@ -84,9 +89,13 @@ func recallContractOutput(res *memoryservice.RecallResult) map[string]any {
 			"context":     item.Context,
 		})
 	}
-	discoveryPaths := res.DiscoveryPaths
-	if discoveryPaths == nil {
-		discoveryPaths = []memoryservice.RecallDiscoveryPath{}
+	relatedRelationships := res.RelatedRelationships
+	if relatedRelationships == nil {
+		relatedRelationships = []memoryservice.RelatedRelationshipSummary{}
+	}
+	relatedCommunities := res.RelatedCommunities
+	if relatedCommunities == nil {
+		relatedCommunities = []memoryservice.RecallDiscoveryPath{}
 	}
 	conflicts := res.Conflicts
 	if conflicts == nil {
@@ -96,17 +105,32 @@ func recallContractOutput(res *memoryservice.RecallResult) map[string]any {
 	if relatedHypotheses == nil {
 		relatedHypotheses = []memoryservice.RelatedHypothesisSummary{}
 	}
-	guidance := strings.TrimSpace(res.DiscoveryGuidance)
-	if guidance == "" {
-		guidance = "No additional discovery guidance."
+	degradations := res.Degradations
+	if degradations == nil {
+		degradations = []memoryservice.RecallDegradationResult{}
+	}
+	searchStates := map[string]any{
+		"evidence":      res.SearchStates.Evidence,
+		"relationships": res.SearchStates.Relationships,
+	}
+	if strings.TrimSpace(res.SearchStates.Evidence) == "" {
+		searchStates["evidence"] = res.SearchState
+	}
+	if strings.TrimSpace(searchStates["evidence"].(string)) == "" {
+		searchStates["evidence"] = string(domain.SearchProjectionCurrent)
+	}
+	if strings.TrimSpace(searchStates["relationships"].(string)) == "" {
+		searchStates["relationships"] = string(domain.SearchProjectionCurrent)
 	}
 	return map[string]any{
-		"recall_id":          res.RecallID,
-		"results":            results,
-		"conflicts":          conflicts,
-		"discovery_paths":    discoveryPaths,
-		"discovery_guidance": guidance,
-		"related_hypotheses": relatedHypotheses,
+		"recall_id":             res.RecallID,
+		"results":               results,
+		"conflicts":             conflicts,
+		"related_relationships": relatedRelationships,
+		"related_communities":   relatedCommunities,
+		"related_hypotheses":    relatedHypotheses,
+		"search_states":         searchStates,
+		"degradations":          degradations,
 	}
 }
 
@@ -164,7 +188,6 @@ func traceRelationshipRecordOutput(record repository.RelationshipTraceRecord) ma
 	putNullableString(out, "object_entity_id", record.ObjectEntityID)
 	putNullableString(out, "object_value_id", record.ObjectValueID)
 	putString(out, "polarity", record.Polarity)
-	putString(out, "tier", record.Tier)
 	putString(out, "relationship_status", record.Status)
 	putInt(out, "version", record.Version)
 	putNullableTime(out, "valid_from", record.ValidFrom)
@@ -274,11 +297,9 @@ func traceTransitionOutputs(records []repository.RelationshipTransitionEvent) []
 		item := map[string]any{
 			"transition_id":   record.TransitionID,
 			"relationship_id": record.RelationshipID,
-			"to_tier":         record.ToTier,
 			"to_status":       record.ToStatus,
 			"reason":          record.Reason,
 		}
-		putNullableString(item, "from_tier", record.FromTier)
 		putNullableString(item, "from_status", record.FromStatus)
 		putRequiredTime(item, "created_at", record.CreatedAt)
 		out = append(out, item)

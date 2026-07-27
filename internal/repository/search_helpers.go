@@ -21,6 +21,10 @@ func normalizeUpsertSearchDocumentInput(input UpsertSearchDocumentInput) UpsertS
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
 	input.SourceKind = strings.TrimSpace(input.SourceKind)
 	input.SourceID = strings.TrimSpace(input.SourceID)
+	if input.ProjectionFormat <= 0 {
+		input.ProjectionFormat = defaultProjectionFormat(input.SourceKind)
+	}
+	input.ProjectionGenerationID = strings.TrimSpace(input.ProjectionGenerationID)
 	input.DocumentText = strings.TrimSpace(input.DocumentText)
 	input.DocumentHash = strings.TrimSpace(input.DocumentHash)
 	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
@@ -46,6 +50,17 @@ func validateUpsertSearchDocumentInput(input UpsertSearchDocumentInput) error {
 	}
 	if input.SourceVersion < 1 {
 		return errors.New("source_version must be greater than zero")
+	}
+	if input.ProjectionFormat < 1 {
+		return errors.New("projection_format_version must be greater than zero")
+	}
+	if input.SourceKind == "relationship" && input.ProjectionFormat != 2 {
+		return errors.New("relationship projection_format_version must be 2")
+	}
+	if input.ProjectionGenerationID != "" {
+		if _, err := uuid.Parse(input.ProjectionGenerationID); err != nil {
+			return fmt.Errorf("projection_generation_id is invalid: %w", err)
+		}
 	}
 	if input.DocumentText == "" {
 		return errors.New("document_text is required")
@@ -174,6 +189,13 @@ func validateExactVectorSearchInput(input ExactVectorSearchInput) error {
 
 func validSearchSourceKind(kind string) bool {
 	return kind == "evidence" || kind == "relationship" || kind == "entity"
+}
+
+func defaultProjectionFormat(sourceKind string) int {
+	if sourceKind == "relationship" {
+		return 2
+	}
+	return 1
 }
 
 func marshalSearchJSON(value map[string]any) ([]byte, error) {

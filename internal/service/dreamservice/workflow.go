@@ -207,7 +207,7 @@ func dreamGeneratorInputs(inputs []repository.DreamInput) []DreamInput {
 func dreamProposalsFromCandidates(inputs []repository.DreamInput, maxOutputs int) []repository.UpsertHypothesisInput {
 	out := make([]repository.UpsertHypothesisInput, 0, maxOutputs)
 	for _, input := range inputs {
-		if input.Tier != "candidate" || input.Status != "pending_evidence" {
+		if input.Status != "pending_evidence" {
 			continue
 		}
 		proposal := dreamProposalFromInput(input, fmt.Sprintf(
@@ -307,7 +307,6 @@ func dreamProposalFromSources(sources []repository.DreamInput, statement string)
 	sourceVersions := make(map[string]int, len(sources))
 	sourceOwnerProfileIDs := make([]string, 0, len(sources))
 	seenOwners := map[string]struct{}{}
-	sourceTiers := make([]string, 0, len(sources))
 	sourceStatuses := make([]string, 0, len(sources))
 	for _, source := range sources {
 		sourceRefs = append(sourceRefs, map[string]any{
@@ -321,12 +320,10 @@ func dreamProposalFromSources(sources []repository.DreamInput, statement string)
 				sourceOwnerProfileIDs = append(sourceOwnerProfileIDs, source.OwnerProfileID)
 			}
 		}
-		sourceTiers = append(sourceTiers, source.Tier)
 		sourceStatuses = append(sourceStatuses, source.Status)
 	}
 	input = preferredDreamTargetSource(sources)
 	payload := map[string]any{
-		"source_tiers":    sourceTiers,
 		"source_statuses": sourceStatuses,
 	}
 	proposal := repository.UpsertHypothesisInput{
@@ -349,13 +346,9 @@ func dreamProposalFromSources(sources []repository.DreamInput, statement string)
 }
 
 func dreamSourceType(input repository.DreamInput) string {
-	switch input.Tier {
-	case "candidate":
+	switch input.Status {
+	case "pending_evidence":
 		return "candidate_relationship"
-	case "fact":
-		return "fact"
-	case "validated_claim":
-		return "claim"
 	default:
 		return "relationship"
 	}
@@ -363,7 +356,7 @@ func dreamSourceType(input repository.DreamInput) string {
 
 func preferredDreamTargetSource(sources []repository.DreamInput) repository.DreamInput {
 	for _, source := range sources {
-		if source.Tier == "candidate" && source.Status == "pending_evidence" {
+		if source.Status == "pending_evidence" {
 			return source
 		}
 	}
@@ -731,12 +724,11 @@ func dreamActor(ctx context.Context) (string, string, error) {
 func dreamInputSnapshot(inputs []repository.DreamInput) []map[string]any {
 	out := make([]map[string]any, 0, len(inputs))
 	for _, input := range inputs {
-		out = append(out, map[string]any{
-			"relationship_id": input.RelationshipID,
-			"version":         input.Version,
-			"tier":            input.Tier,
-			"status":          input.Status,
-		})
+			out = append(out, map[string]any{
+				"relationship_id": input.RelationshipID,
+				"version":         input.Version,
+				"status":          input.Status,
+			})
 	}
 	return out
 }
@@ -744,7 +736,7 @@ func dreamInputSnapshot(inputs []repository.DreamInput) []map[string]any {
 func candidateInputCount(inputs []repository.DreamInput) int {
 	count := 0
 	for _, input := range inputs {
-		if input.Tier == "candidate" && input.Status == "pending_evidence" {
+		if input.Status == "pending_evidence" {
 			count++
 		}
 	}

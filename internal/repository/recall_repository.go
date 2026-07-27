@@ -17,12 +17,14 @@ import (
 )
 
 const (
-	defaultRecallLimit      = 10
-	maxRecallLimit          = 50
-	recallOverfetchMultiple = 6
-	recallOverfetchFloor    = 60
-	recallOverfetchCap      = 200
-	recallRRFConstant       = 60
+	defaultRecallLimit             = 10
+	maxRecallLimit                 = 50
+	defaultRelationshipRecallLimit = 5
+	maxRelationshipRecallLimit     = 20
+	recallOverfetchMultiple        = 6
+	recallOverfetchFloor           = 60
+	recallOverfetchCap             = 200
+	recallRRFConstant              = 60
 )
 
 var _ RecallRepository = (*SearchRepositoryImpl)(nil)
@@ -383,7 +385,7 @@ func searchRecallEntityExpansion(
 		          )
 		      )
 		  )
-		  AND relationship.tier IN ('validated_claim', 'fact')
+		  AND relationship.support_count > 0
 		  AND quarantine.quarantine_id IS NULL
 		  AND (
 		      relationship.subject_entity_id = ANY(?::uuid[])
@@ -495,7 +497,7 @@ func hydrateRecallEvidence(
 			         )
 			     )
 			 )
-			 AND relationship.tier IN ('validated_claim', 'fact')
+			 AND relationship.support_count > 0
 			 AND (
 			     support.source_id IS NULL
 			     OR support_source.current_revision_id = support.source_revision_id

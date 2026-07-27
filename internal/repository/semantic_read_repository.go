@@ -297,7 +297,7 @@ func loadTraceRelationship(
 		       COALESCE(r.object_value_id::text, ''),
 		       COALESCE(NULLIF(value.display, ''), value.canonical_value, ''),
 		       COALESCE(value.value_type, ''),
-		       r.relationship_kind, r.current_cardinality, r.tier, r.status,
+		       r.relationship_kind, r.current_cardinality, r.status,
 		       r.polarity, COALESCE(r.scope_key, ''), r.valid_from, r.valid_to,
 		       COALESCE(r.identity_alias_of_relationship_id::text, ''),
 		       r.support_count, r.source_group_count, r.version,
@@ -348,7 +348,7 @@ func loadTraceRelationship(
 		&record.SubjectKind, &record.PredicateKey, &record.PredicateVersion,
 		&record.ObjectEntityID, &record.ObjectEntityName, &record.ObjectEntityKind,
 		&record.ObjectValueID, &record.ObjectValue, &record.ObjectValueType,
-		&record.RelationshipKind, &record.CurrentCardinality, &record.Tier, &record.Status,
+		&record.RelationshipKind, &record.CurrentCardinality, &record.Status,
 		&record.Polarity, &record.ScopeKey, &validFrom, &validTo,
 		&record.IdentityAliasOfID,
 		&record.SupportCount, &record.SourceGroupCount, &record.Version,
@@ -586,7 +586,7 @@ func loadTraceTransitions(
 ) ([]RelationshipTransitionEvent, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT transition_id::text, relationship_id::text, owner_profile_id::text,
-		       COALESCE(from_tier, ''), COALESCE(from_status, ''), to_tier, to_status,
+		       COALESCE(from_status, ''), to_status,
 		       reason, COALESCE(verification_event_id::text, ''),
 		       COALESCE(support_decision_id::text, ''), metadata::text, created_at
 		FROM relationship_transition_events
@@ -602,12 +602,11 @@ func loadTraceTransitions(
 	var out []RelationshipTransitionEvent
 	for rows.Next() {
 		var row RelationshipTransitionEvent
-		var metadataJSON string
-		if err := rows.Scan(
-			&row.TransitionID, &row.RelationshipID, &row.OwnerProfileID,
-			&row.FromTier, &row.FromStatus, &row.ToTier, &row.ToStatus,
-			&row.Reason, &row.VerificationEventID, &row.SupportDecisionID,
-			&metadataJSON, &row.CreatedAt,
+			var metadataJSON string
+			if err := rows.Scan(
+				&row.TransitionID, &row.RelationshipID, &row.OwnerProfileID,
+				&row.FromStatus, &row.ToStatus, &row.Reason, &row.VerificationEventID, &row.SupportDecisionID,
+				&metadataJSON, &row.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

@@ -192,10 +192,9 @@ func traceRelationshipSchema() map[string]any {
 			"predicate_key":       schemaString("Registered predicate key.", 128),
 			"predicate_version":   map[string]any{"type": "integer", "minimum": 1},
 			"object_entity_id":    nullableString("Object Entity ID.", 128),
-			"object_value_id":     nullableString("Object Value ID.", 128),
-			"polarity":            schemaEnum([]string{"+", "-"}),
-			"tier":                schemaEnum(domain.RelationshipTiers()),
-			"relationship_status": schemaEnum(domain.RelationshipStatuses()),
+				"object_value_id":     nullableString("Object Value ID.", 128),
+				"polarity":            schemaEnum([]string{"+", "-"}),
+				"relationship_status": schemaEnum(domain.RelationshipStatuses()),
 			"version":             map[string]any{"type": "integer", "minimum": 1},
 			"valid_from":          nullableDateTime("Real-world validity start."),
 			"valid_to":            nullableDateTime("Real-world validity end."),
@@ -289,13 +288,11 @@ func traceVerificationSchema() map[string]any {
 
 func traceTransitionSchema() map[string]any {
 	return closedObject(
-		[]string{"transition_id", "relationship_id", "to_tier", "to_status", "reason", "created_at"},
+		[]string{"transition_id", "relationship_id", "to_status", "reason", "created_at"},
 		map[string]any{
 			"transition_id":   schemaString("Lifecycle transition ID.", 128),
 			"relationship_id": schemaString("Relationship ID.", 128),
-			"from_tier":       nullableString("Prior Relationship tier.", 64),
 			"from_status":     nullableString("Prior Relationship status.", 64),
-			"to_tier":         schemaEnum(domain.RelationshipTiers()),
 			"to_status":       schemaEnum(domain.RelationshipStatuses()),
 			"reason":          schemaString("Bounded transition reason.", 1000),
 			"created_at":      map[string]any{"type": "string", "format": "date-time"},

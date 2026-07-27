@@ -1,7 +1,7 @@
 package domain
 
 const (
-	ContractVersion        = "dense-mem.v2.1"
+	ContractVersion        = "dense-mem.v2.3"
 	PredicatePolicyVersion = "open_vocabulary_v1"
 	ConflictPolicyVersion  = "cross_profile_conflict_v1"
 	FeatureGate            = "memory"
@@ -47,18 +47,6 @@ const (
 	ValueTypeBoolean  ValueType = "boolean"
 	ValueTypeDate     ValueType = "date"
 	ValueTypeDateTime ValueType = "date_time"
-)
-
-type RelationshipTier string
-
-const (
-	RelationshipTierCandidate       RelationshipTier = "candidate"
-	RelationshipTierFact            RelationshipTier = "fact"
-	RelationshipTierValidatedClaim  RelationshipTier = "validated_claim"
-	RelationshipTierPendingEvidence RelationshipTier = "pending_evidence"
-	RelationshipTierNeedsReview     RelationshipTier = "needs_review"
-	RelationshipTierPredicateReview RelationshipTier = "predicate_needs_review"
-	RelationshipTierIdentityReview  RelationshipTier = "identity_needs_review"
 )
 
 type RelationshipStatus string
@@ -242,8 +230,7 @@ const (
 type RelationshipOutcomeCategory string
 
 const (
-	OutcomeRelationshipFact            RelationshipOutcomeCategory = "relationship_fact"
-	OutcomeRelationshipValidatedClaim  RelationshipOutcomeCategory = "relationship_validated_claim"
+	OutcomeRelationshipAccepted        RelationshipOutcomeCategory = "relationship_accepted"
 	OutcomeRelationshipPendingEvidence RelationshipOutcomeCategory = "relationship_pending_evidence"
 	OutcomeRelationshipNeedsReview     RelationshipOutcomeCategory = "relationship_needs_review"
 	OutcomePredicateNeedsReview        RelationshipOutcomeCategory = "predicate_needs_review"
@@ -314,18 +301,6 @@ func RelationshipKinds() []string {
 	return []string{
 		string(RelationshipKindState),
 		string(RelationshipKindEvent),
-	}
-}
-
-func RelationshipTiers() []string {
-	return []string{
-		string(RelationshipTierCandidate),
-		string(RelationshipTierFact),
-		string(RelationshipTierValidatedClaim),
-		string(RelationshipTierPendingEvidence),
-		string(RelationshipTierNeedsReview),
-		string(RelationshipTierPredicateReview),
-		string(RelationshipTierIdentityReview),
 	}
 }
 
@@ -409,8 +384,7 @@ func EntityCorrectionActions() []string {
 
 func RelationshipOutcomeCategories() []string {
 	return []string{
-		string(OutcomeRelationshipFact),
-		string(OutcomeRelationshipValidatedClaim),
+		string(OutcomeRelationshipAccepted),
 		string(OutcomeRelationshipPendingEvidence),
 		string(OutcomeRelationshipNeedsReview),
 		string(OutcomePredicateNeedsReview),

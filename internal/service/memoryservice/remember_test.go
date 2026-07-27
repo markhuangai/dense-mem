@@ -148,10 +148,10 @@ func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T)
 	if input.Evidence[0].Authority != "authoritative" {
 		t.Fatalf("authority = %q", input.Evidence[0].Authority)
 	}
-	if input.Evidence[0].Metadata["v2_contract_authority"] != "authoritative" {
+	if input.Evidence[0].Metadata["contract_authority"] != "authoritative" {
 		t.Fatalf("metadata = %#v", input.Evidence[0].Metadata)
 	}
-	require.Equal(t, "wiki:target-architecture", input.Evidence[0].Metadata["v2_contract_source_group"])
+	require.Equal(t, "wiki:target-architecture", input.Evidence[0].Metadata["contract_source_group"])
 	require.Equal(t, "wiki:target-architecture", input.Evidence[0].SourceRevisionEnvelope["source_group"])
 	if input.Evidence[0].SourceRevisionToken != "rev-1" {
 		t.Fatalf("source revision = %q", input.Evidence[0].SourceRevisionToken)
@@ -263,9 +263,8 @@ func TestGetMemoryPlacementUsesAuthenticatedOwnerAndReturnsCurrentVersion(t *tes
 						"observation_id":      "obs-1",
 						"relationship_id":     "rel-1",
 						"owner_profile_id":    profileID.String(),
-						"tier":                string(domain.RelationshipTierFact),
 						"relationship_status": string(domain.RelationshipStatusActive),
-						"category":            string(domain.OutcomeRelationshipFact),
+						"category":            string(domain.OutcomeRelationshipAccepted),
 						"reason":              "accepted",
 					}},
 				},
@@ -292,9 +291,8 @@ func TestGetMemoryPlacementUsesAuthenticatedOwnerAndReturnsCurrentVersion(t *tes
 		ObservationID:      "obs-1",
 		RelationshipID:     "rel-1",
 		OwnerProfileID:     profileID.String(),
-		Tier:               string(domain.RelationshipTierFact),
 		RelationshipStatus: string(domain.RelationshipStatusActive),
-		Category:           string(domain.OutcomeRelationshipFact),
+		Category:           string(domain.OutcomeRelationshipAccepted),
 		Reason:             "accepted",
 	}}, result.Items[0].RelationshipOutcomes)
 	require.Equal(t, teamID.String(), ledger.placementInput.TeamID)

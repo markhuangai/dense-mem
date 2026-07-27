@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestRecallEvidenceHydratesSupportDecisionEligibility(t *testing.T) {
@@ -108,6 +110,91 @@ func TestRecallEvidenceHydratesEvidenceProvenance(t *testing.T) {
 	require.Equal(t, "wiki:recall-provenance", recall.Results[0].Source)
 	require.Equal(t, "document", recall.Results[0].SourceType)
 	require.False(t, recall.Results[0].CreatedAt.IsZero())
+}
+
+func TestRecallRelationshipsUsesNullGenerationVectorsForPostCutoverTeam(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "recall-relationships-null-generation-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-relationships-null-generation-owner")
+	insertSearchTestContract(t, adminDB, rls, "recall-rel-null-generation", 3, "exact", "")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	searchRepo := NewSearchRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Kai")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense Mem")
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"relationship recall null generation", "Kai works on Dense Mem.")
+	decision := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        ingest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: "recall:relationship-null-generation",
+			SpanStart:      0,
+			SpanEnd:        len("Kai works on Dense Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+
+	doc, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "relationship",
+		SourceID:       decision.Relationship.RelationshipID,
+		SourceVersion:  int64(decision.Relationship.Version),
+		DocumentText:   "relationship\nsubject: Kai\npredicate: works on\nobject: Dense Mem\npolarity: positive",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, doc.ProjectionFormat)
+	require.Empty(t, doc.ProjectionGenerationID)
+
+	var generationCount int64
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_projection_generations
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+		`, teamID).Scan(&generationCount).Error
+	})
+	require.NoError(t, err)
+	require.Zero(t, generationCount)
+
+	pendingRecall, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID:         teamID,
+		Query:          "unmatchedtoken",
+		QueryEmbedding: []float32{1, 0, 0},
+		Limit:          5,
+	})
+	require.NoError(t, err)
+	require.True(t, pendingRecall.VectorOmitted)
+	require.Equal(t, string(domain.SearchProjectionPending), pendingRecall.SearchState)
+	require.Empty(t, pendingRecall.Results)
+
+	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+		doc.SearchDocumentID: {1, 0, 0},
+	})
+
+	currentRecall, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID:         teamID,
+		Query:          "unmatchedtoken",
+		QueryEmbedding: []float32{1, 0, 0},
+		Limit:          5,
+	})
+	require.NoError(t, err)
+	require.False(t, currentRecall.VectorOmitted)
+	require.Equal(t, string(domain.SearchProjectionCurrent), currentRecall.SearchState)
+	require.Len(t, currentRecall.Results, 1)
+	require.Equal(t, decision.Relationship.RelationshipID, currentRecall.Results[0].RelationshipID)
+	require.Equal(t, 1, currentRecall.Results[0].Rank)
 }
 
 func TestRecallEvidenceExcludesStaleSupportSourceRevision(t *testing.T) {

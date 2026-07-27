@@ -30,7 +30,6 @@ type relationshipRecordState struct {
 	Created         bool
 	Changed         bool
 	ValidToConflict bool
-	FromTier        string
 	FromStatus      string
 }
 
@@ -39,9 +38,7 @@ type transitionInput struct {
 	OwnerProfileID      string
 	RelationshipID      string
 	IdempotencyKey      string
-	FromTier            string
 	FromStatus          string
-	ToTier              string
 	ToStatus            string
 	Reason              string
 	VerificationEventID string
@@ -621,7 +618,6 @@ func upsertRelationshipRecord(
 	tx *gorm.DB,
 	input ApplyRelationshipDecisionInput,
 	predicate *predicateDefinition,
-	tier string,
 	status string,
 	semanticGroupKey string,
 ) (*relationshipRecordState, error) {
@@ -653,11 +649,11 @@ func upsertRelationshipRecord(
 		INSERT INTO relationship_records (
 		    team_id, owner_profile_id, semantic_group_key, subject_entity_id,
 		    predicate_key, predicate_version, object_entity_id, object_value_id,
-		    relationship_kind, current_cardinality, tier, status, polarity,
+		    relationship_kind, current_cardinality, status, polarity,
 		    scope_key, valid_from, valid_to, metadata
 		) VALUES (
 		    ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid,
-		    ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?::jsonb
+		    ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?::jsonb
 		)
 		ON CONFLICT (
 		    team_id, owner_profile_id, subject_entity_id, predicate_key,
@@ -667,15 +663,15 @@ func upsertRelationshipRecord(
 		DO NOTHING
 		RETURNING team_id::text, relationship_id::text, owner_profile_id::text,
 		          semantic_group_key, subject_entity_id::text, predicate_key,
-		          predicate_version, COALESCE(object_entity_id::text, ''),
-		          COALESCE(object_value_id::text, ''), relationship_kind,
-		          current_cardinality, tier, status, polarity, COALESCE(scope_key, ''),
-		          valid_from, valid_to,
-		          COALESCE(identity_alias_of_relationship_id::text, ''),
-		          support_count, source_group_count, version
+		       predicate_version, COALESCE(object_entity_id::text, ''),
+		       COALESCE(object_value_id::text, ''), relationship_kind,
+		       current_cardinality, status, polarity, COALESCE(scope_key, ''),
+		       valid_from, valid_to,
+		       COALESCE(identity_alias_of_relationship_id::text, ''),
+		       support_count, source_group_count, version
 	`, input.TeamID, input.OwnerProfileID, semanticGroupKey, input.SubjectEntityID,
 		input.PredicateKey, input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
-		predicate.RelationshipKind, predicate.CurrentCardinality, tier, status, input.Polarity,
+		predicate.RelationshipKind, predicate.CurrentCardinality, status, input.Polarity,
 		input.ScopeKey, timeArg(input.ValidFrom), timeArg(input.ValidTo), string(metadata)).Rows()
 	if err != nil {
 		return nil, err
@@ -703,18 +699,15 @@ func upsertRelationshipRecord(
 	}
 	state := &relationshipRecordState{Record: existing}
 	if existing.PredicateVersion != input.PredicateVersion ||
-		existing.Tier != tier ||
 		existing.Status != status ||
 		existing.RelationshipKind != predicate.RelationshipKind ||
 		existing.CurrentCardinality != predicate.CurrentCardinality ||
 		existing.SemanticGroupKey != semanticGroupKey {
 		state.Changed = true
-		state.FromTier = existing.Tier
 		state.FromStatus = existing.Status
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE relationship_records
 			SET predicate_version = ?,
-			    tier = ?,
 			    status = ?,
 			    recorded_to = CASE WHEN ? = 'active' THEN NULL ELSE recorded_to END,
 			    relationship_kind = ?,
@@ -723,9 +716,9 @@ func upsertRelationshipRecord(
 			    version = version + 1,
 			    updated_at = now()
 			WHERE team_id = ?::uuid
-			  AND relationship_id = ?::uuid
-			  AND owner_profile_id = ?::uuid
-		`, input.PredicateVersion, tier, status, status, predicate.RelationshipKind, predicate.CurrentCardinality,
+			AND relationship_id = ?::uuid
+			AND owner_profile_id = ?::uuid
+		`, input.PredicateVersion, status, status, predicate.RelationshipKind, predicate.CurrentCardinality,
 			semanticGroupKey, input.TeamID, existing.RelationshipID, input.OwnerProfileID)
 		if result.Error != nil {
 			return nil, result.Error
@@ -748,7 +741,7 @@ func selectRelationshipByIdentity(ctx context.Context, tx *gorm.DB, input ApplyR
 		       semantic_group_key, subject_entity_id::text, predicate_key,
 		       predicate_version, COALESCE(object_entity_id::text, ''),
 		       COALESCE(object_value_id::text, ''), relationship_kind,
-		       current_cardinality, tier, status, polarity, COALESCE(scope_key, ''),
+		       current_cardinality, status, polarity, COALESCE(scope_key, ''),
 		       valid_from, valid_to,
 		       COALESCE(identity_alias_of_relationship_id::text, ''),
 		       support_count, source_group_count, version
@@ -799,7 +792,7 @@ func loadRelationshipRecordWithLock(ctx context.Context, tx *gorm.DB, teamID, re
 		       semantic_group_key, subject_entity_id::text, predicate_key,
 		       predicate_version, COALESCE(object_entity_id::text, ''),
 		       COALESCE(object_value_id::text, ''), relationship_kind,
-		       current_cardinality, tier, status, polarity, COALESCE(scope_key, ''),
+		       current_cardinality, status, polarity, COALESCE(scope_key, ''),
 		       valid_from, valid_to,
 		       COALESCE(identity_alias_of_relationship_id::text, ''),
 		       support_count, source_group_count, version
@@ -830,8 +823,8 @@ func scanRelationshipRows(rows *sql.Rows) (*RelationshipRecord, error) {
 	if err := rows.Scan(&loaded.TeamID, &loaded.RelationshipID, &loaded.OwnerProfileID,
 		&loaded.SemanticGroupKey, &loaded.SubjectEntityID, &loaded.PredicateKey,
 		&loaded.PredicateVersion, &loaded.ObjectEntityID, &loaded.ObjectValueID,
-		&loaded.RelationshipKind, &loaded.CurrentCardinality, &loaded.Tier,
-		&loaded.Status, &loaded.Polarity, &loaded.ScopeKey, &loaded.ValidFrom,
+		&loaded.RelationshipKind, &loaded.CurrentCardinality, &loaded.Status,
+		&loaded.Polarity, &loaded.ScopeKey, &loaded.ValidFrom,
 		&loaded.ValidTo, &loaded.IdentityAliasOfID, &loaded.SupportCount,
 		&loaded.SourceGroupCount, &loaded.Version); err != nil {
 		return nil, err
@@ -843,19 +836,19 @@ func insertRelationshipTransition(ctx context.Context, tx *gorm.DB, input transi
 	var transitionID string
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO relationship_transition_events (
-		    team_id, relationship_id, owner_profile_id, from_tier, from_status,
-		    to_tier, to_status, reason, verification_event_id, support_decision_id,
+		    team_id, relationship_id, owner_profile_id, from_status,
+		    to_status, reason, verification_event_id, support_decision_id,
 		    idempotency_key
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, ''), NULLIF(?, ''),
-		    ?, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?
+		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, ''),
+		    ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?
 		)
 		ON CONFLICT (team_id, owner_profile_id, idempotency_key)
 		WHERE idempotency_key <> ''
 		DO NOTHING
 		RETURNING transition_id::text
-	`, input.TeamID, input.RelationshipID, input.OwnerProfileID, input.FromTier,
-		input.FromStatus, input.ToTier, input.ToStatus, input.Reason,
+	`, input.TeamID, input.RelationshipID, input.OwnerProfileID,
+		input.FromStatus, input.ToStatus, input.Reason,
 		input.VerificationEventID, input.SupportDecisionID, input.IdempotencyKey).Rows()
 	if err != nil {
 		return "", err
@@ -907,17 +900,14 @@ func relationshipTransitionIdempotencyKey(verificationEventID string, supportDec
 	return ""
 }
 
-func tierStatusForVerdict(verdict string, promoteToFact bool) (string, string) {
+func statusForVerdict(verdict string) string {
 	switch verdict {
 	case string(domain.VerificationContradicted):
-		return string(domain.RelationshipTierCandidate), string(domain.RelationshipStatusRejected)
+		return string(domain.RelationshipStatusRejected)
 	case string(domain.VerificationInsufficient):
-		return string(domain.RelationshipTierCandidate), string(domain.RelationshipStatusPendingEvidence)
+		return string(domain.RelationshipStatusPendingEvidence)
 	default:
-		if promoteToFact {
-			return string(domain.RelationshipTierFact), string(domain.RelationshipStatusActive)
-		}
-		return string(domain.RelationshipTierValidatedClaim), string(domain.RelationshipStatusActive)
+		return string(domain.RelationshipStatusActive)
 	}
 }
 

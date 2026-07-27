@@ -21,7 +21,7 @@ type unitProfileRepo struct {
 	listErr       error
 	countErr      error
 	updateErr     error
-	hardDeleteErr error
+	softDeleteErr error
 	nameExists    bool
 	nameExistsErr error
 	created       *domain.Profile
@@ -72,15 +72,15 @@ func (r *unitProfileRepo) Update(_ context.Context, profile *domain.Profile) err
 	return nil
 }
 
-func (r *unitProfileRepo) SoftDelete(context.Context, uuid.UUID) error { return nil }
-
-func (r *unitProfileRepo) HardDelete(_ context.Context, id uuid.UUID) error {
-	if r.hardDeleteErr != nil {
-		return r.hardDeleteErr
+func (r *unitProfileRepo) SoftDelete(_ context.Context, id uuid.UUID) error {
+	if r.softDeleteErr != nil {
+		return r.softDeleteErr
 	}
 	r.deletedID = id
 	return nil
 }
+
+func (r *unitProfileRepo) HardDelete(context.Context, uuid.UUID) error { return nil }
 
 func (r *unitProfileRepo) CountActiveKeys(context.Context, uuid.UUID) (int64, error) { return 0, nil }
 
@@ -203,14 +203,14 @@ func TestProfileServiceUpdateDeleteSuccessAndFailureBranches(t *testing.T) {
 	err = svc.Delete(ctx, id, nil, "system", "127.0.0.1", "corr")
 	require.NoError(t, err)
 	require.Equal(t, id, repo.deletedID)
-	require.Equal(t, id.String(), dataPurger.profileID)
+	require.Empty(t, dataPurger.profileID)
 
 	repo = &unitProfileRepo{profile: nil}
 	svc = NewProfileService(repo, new(MockAuditService), nil)
 	err = svc.Delete(ctx, id, nil, "system", "127.0.0.1", "corr")
 	require.Error(t, err)
 
-	repo = &unitProfileRepo{profile: existing, hardDeleteErr: errors.New("delete failed")}
+	repo = &unitProfileRepo{profile: existing, softDeleteErr: errors.New("delete failed")}
 	svc = NewProfileService(repo, new(MockAuditService), nil)
 	err = svc.Delete(ctx, id, nil, "system", "127.0.0.1", "corr")
 	require.ErrorContains(t, err, "failed to delete profile")
@@ -221,7 +221,8 @@ func TestProfileServiceUpdateDeleteSuccessAndFailureBranches(t *testing.T) {
 	audit.On("Append", ctx, mock.AnythingOfType("service.AuditLogEntry")).Return(nil)
 	svc = NewProfileServiceWithDataPurger(repo, audit, nil, dataPurger)
 	err = svc.Delete(ctx, id, nil, "system", "127.0.0.1", "corr")
-	require.ErrorContains(t, err, "failed to purge profile data")
+	require.NoError(t, err)
+	require.Empty(t, dataPurger.profileID)
 }
 
 func TestProfileHasActiveKeysError(t *testing.T) {
