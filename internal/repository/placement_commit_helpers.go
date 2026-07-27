@@ -647,7 +647,13 @@ func upsertPlacementRelationshipSearchDocument(
 	if err != nil {
 		return nil, err
 	}
-	previousGenerationID, err := relationshipSearchDocumentProjectionGenerationID(ctx, tx, commit.TeamID, relationship.RelationshipID)
+	previousGenerationID, err := relationshipSearchDocumentProjectionGenerationID(
+		ctx,
+		tx,
+		commit.TeamID,
+		relationship.RelationshipID,
+		contract.EmbeddingContractID,
+	)
 	if err != nil {
 		return nil, err
 	}

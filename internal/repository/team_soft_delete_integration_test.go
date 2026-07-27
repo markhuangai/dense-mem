@@ -224,3 +224,85 @@ func TestActiveTeamMutationGuardSerializesWithTeamDelete(t *testing.T) {
 	closeRelease()
 	require.NoError(t, <-done)
 }
+
+func TestTombstonedTeamTerminalizesClaimedEmbeddingJobsWithoutUpdatingDocuments(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "team-delete-terminal-embedding")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner-delete-terminal-embedding")
+	insertSearchTestContract(t, adminDB, rls, "team-delete-terminal-embedding", 3, "exact", "")
+	searchRepo := NewSearchRepository(appDB, rls)
+
+	for _, sourceID := range []string{uuid.NewString(), uuid.NewString()} {
+		_, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+			TeamID:         teamID,
+			OwnerProfileID: ownerID,
+			SourceKind:     "evidence",
+			SourceID:       sourceID,
+			SourceVersion:  1,
+			DocumentText:   "A claimed job must become terminal after team deletion.",
+		})
+		require.NoError(t, err)
+	}
+
+	const workerID = "worker-delete-terminal-embedding"
+	jobs, err := searchRepo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: workerID,
+		Limit:    2,
+		Lease:    time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+
+	profileRepo := NewProfileRepository(appDB, rls)
+	require.NoError(t, profileRepo.SoftDelete(ctx, uuid.MustParse(teamID)))
+
+	err = searchRepo.CompleteEmbeddingJob(ctx, CompleteEmbeddingJobInput{
+		TeamID:           teamID,
+		EmbeddingJobID:   jobs[0].EmbeddingJobID,
+		WorkerID:         workerID,
+		ExpectedAttempts: jobs[0].Attempts,
+		Embedding:        []float32{1, 0, 0},
+	})
+	require.ErrorIs(t, err, ErrTeamInactive)
+
+	failed, err := searchRepo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
+		TeamID:           teamID,
+		EmbeddingJobID:   jobs[1].EmbeddingJobID,
+		WorkerID:         workerID,
+		ExpectedAttempts: jobs[1].Attempts,
+		Error:            "team deleted",
+		Terminal:         true,
+	})
+	require.Nil(t, failed)
+	require.ErrorIs(t, err, ErrTeamInactive)
+
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var terminalJobs, unchangedDocuments int64
+		if err := tx.Raw(`
+			SELECT COUNT(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND status = 'stale'
+			  AND completed_at IS NOT NULL
+			  AND lease_until IS NULL
+		`, teamID).Scan(&terminalJobs).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND search_state = 'pending'
+			  AND embedding IS NULL
+		`, teamID).Scan(&unchangedDocuments).Error; err != nil {
+			return err
+		}
+		assert.Equal(t, int64(2), terminalJobs)
+		assert.Equal(t, int64(2), unchangedDocuments)
+		return nil
+	})
+	require.NoError(t, err)
+}

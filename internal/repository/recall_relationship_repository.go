@@ -137,16 +137,15 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 	var latestState string
 	var eligibleCount, currentCount, pendingCount, failedCount int64
 	err := tx.WithContext(ctx).Raw(`
-		WITH latest_generation AS (
-		    SELECT generation.state, generation.projection_generation_id
-		    FROM search_projection_generations AS generation
-		    WHERE generation.team_id = ?::uuid
-		      AND generation.source_kind = 'relationship'
-		      AND generation.projection_format_version = 2
-		    ORDER BY generation.generation DESC, generation.created_at DESC
-		    LIMIT 1
-		),
-		eligible AS (
+	WITH `+recallRelationshipGenerationScopeSQL+`,
+	selected_generation AS (
+	    SELECT generation.state, scope.projection_generation_id
+	    FROM recall_relationship_generation AS scope
+	    LEFT JOIN search_projection_generations AS generation
+	      ON generation.team_id = ?::uuid
+	     AND generation.projection_generation_id = scope.projection_generation_id
+	),
+	eligible AS (
 		    SELECT relationship.relationship_id
 		    FROM relationship_records AS relationship
 		    WHERE relationship.team_id = ?::uuid
@@ -154,7 +153,7 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 		      AND relationship.status = 'active'
 		      AND relationship.support_count > 0
 		)
-		SELECT COALESCE((SELECT state FROM latest_generation), '') AS latest_state,
+	SELECT COALESCE((SELECT state FROM selected_generation), '') AS latest_state,
 		       COUNT(eligible.relationship_id) AS eligible_count,
 		       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'current') AS current_count,
 		       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'pending') AS pending_count,
@@ -168,16 +167,16 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 		 AND document.embedding_dimensions = ?
 			 AND document.projection_format_version = 2
 			 AND (
-			     document.projection_generation_id = (SELECT projection_generation_id FROM latest_generation)
-			     OR (
-			         document.projection_generation_id IS NULL
-			         AND (
-			             (SELECT projection_generation_id FROM latest_generation) IS NULL
-			             OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = (SELECT projection_generation_id::text FROM latest_generation)
-			         )
-			     )
-			 )
-	`, teamID, teamID, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Row().Scan(
+	             document.projection_generation_id = (SELECT projection_generation_id FROM selected_generation)
+	             OR (
+	                 document.projection_generation_id IS NULL
+	                 AND (
+	                     (SELECT projection_generation_id FROM selected_generation) IS NULL
+	                     OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = (SELECT projection_generation_id::text FROM selected_generation)
+	                 )
+	             )
+	         )
+	`, teamID, teamID, teamID, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Row().Scan(
 		&latestState,
 		&eligibleCount,
 		&currentCount,

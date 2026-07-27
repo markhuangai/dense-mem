@@ -288,7 +288,13 @@ func relationshipSearchEligible(relationship *RelationshipRecord) bool {
 		relationship.SupportCount > 0
 }
 
-func relationshipSearchDocumentProjectionGenerationID(ctx context.Context, tx *gorm.DB, teamID string, relationshipID string) (string, error) {
+func relationshipSearchDocumentProjectionGenerationID(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	relationshipID string,
+	embeddingContractID string,
+) (string, error) {
 	var projectionGenerationID sql.NullString
 	err := tx.WithContext(ctx).Raw(`
 		SELECT projection_generation_id::text
@@ -296,8 +302,9 @@ func relationshipSearchDocumentProjectionGenerationID(ctx context.Context, tx *g
 		WHERE team_id = ?::uuid
 		  AND source_kind = 'relationship'
 		  AND source_id = ?::uuid
+		  AND embedding_contract_id = ?::uuid
 		LIMIT 1
-	`, teamID, relationshipID).Row().Scan(&projectionGenerationID)
+	`, teamID, relationshipID, embeddingContractID).Row().Scan(&projectionGenerationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -372,7 +379,17 @@ func markRelationshipSearchDocumentNotRequired(
 	if relationship == nil || relationship.RelationshipID == "" {
 		return nil, nil
 	}
-	previousGenerationID, err := relationshipSearchDocumentProjectionGenerationID(ctx, tx, commit.TeamID, relationship.RelationshipID)
+	contract, err := loadActiveSearchContractInTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	previousGenerationID, err := relationshipSearchDocumentProjectionGenerationID(
+		ctx,
+		tx,
+		commit.TeamID,
+		relationship.RelationshipID,
+		contract.EmbeddingContractID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -390,6 +407,7 @@ func markRelationshipSearchDocumentNotRequired(
 			WHERE team_id = ?::uuid
 			  AND source_kind = 'relationship'
 			  AND source_id = ?::uuid
+			  AND embedding_contract_id = ?::uuid
 			RETURNING team_id::text, search_document_id::text, owner_profile_id::text,
 			          source_kind, source_id::text, source_version,
 			          projection_format_version, COALESCE(projection_generation_id::text, ''),
@@ -400,7 +418,7 @@ func markRelationshipSearchDocumentNotRequired(
 		FROM updated
 		ORDER BY search_document_id
 		LIMIT 1
-	`, int64(relationship.Version), commit.TeamID, relationship.RelationshipID).Rows()
+	`, int64(relationship.Version), commit.TeamID, relationship.RelationshipID, contract.EmbeddingContractID).Rows()
 	if err != nil {
 		return nil, err
 	}

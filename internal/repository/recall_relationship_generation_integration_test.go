@@ -106,6 +106,70 @@ func TestRecallRelationshipsKeepsLastActivatedGenerationDuringUnactivatedProject
 	assert.Equal(t, "pending", unactivatedRecall.SearchState)
 }
 
+func TestRecallRelationshipsUsesActivatedGenerationWhenNewestGenerationFailed(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "recall-relationships-failed-generation-fallback-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-relationships-failed-generation-fallback-owner")
+	insertSearchTestContract(t, adminDB, rls, "recall-rel-failed-generation-fallback", 3, "exact", "")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	searchRepo := NewSearchRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Nia")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense Mem")
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"recall failed generation fallback", "Nia works on Dense Mem.")
+	decision := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        ingest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: "recall:failed-generation-fallback",
+			SpanStart:      0,
+			SpanEnd:        len("Nia works on Dense Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+
+	activatedGenerationID := uuid.NewString()
+	insertRelationshipProjectionGenerationForTest(t, appDB, rls, teamID, activatedGenerationID, 1, "current")
+	document, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:                 teamID,
+		OwnerProfileID:         ownerID,
+		SourceKind:             "relationship",
+		SourceID:               decision.Relationship.RelationshipID,
+		SourceVersion:          int64(decision.Relationship.Version),
+		ProjectionGenerationID: activatedGenerationID,
+		DocumentText:           "relationship\nsubject: Nia\npredicate: activated fallback marker\nobject: Dense Mem",
+	})
+	require.NoError(t, err)
+	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+		document.SearchDocumentID: {1, 0, 0},
+	})
+
+	failedGenerationID := uuid.NewString()
+	insertRelationshipProjectionGenerationForTest(t, appDB, rls, teamID, failedGenerationID, 2, "failed")
+
+	recall, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID:         teamID,
+		Query:          "unmatched fallback query",
+		QueryEmbedding: []float32{1, 0, 0},
+		Limit:          5,
+	})
+	require.NoError(t, err)
+	require.False(t, recall.VectorOmitted)
+	require.Equal(t, "current", recall.SearchState)
+	require.Len(t, recall.Results, 1)
+	assert.Equal(t, decision.Relationship.RelationshipID, recall.Results[0].RelationshipID)
+}
+
 func TestRecallRelationshipsFullTextFencesGenerationAndKeepsForegroundRows(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

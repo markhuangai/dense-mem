@@ -125,10 +125,21 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 		return err
 	}
 	var terminalErr error
-	err = r.withActiveTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		active, err := embeddingJobFinalizationTeamActive(ctx, tx, input.TeamID)
+		if err != nil {
+			return err
+		}
+		if !active {
+			if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobStale), "team deleted before embedding finalization"); err != nil {
+				return err
+			}
+			terminalErr = ErrTeamInactive
+			return nil
+		}
 		var dims int
 		var contractID, sourceKind, projectionGenerationID string
-		err := tx.WithContext(ctx).Raw(`
+		err = tx.WithContext(ctx).Raw(`
 				SELECT embedding_dimensions, embedding_contract_id::text,
 				       source_kind, COALESCE(projection_generation_id::text, '')
 				FROM embedding_jobs
@@ -154,7 +165,7 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 		if dims != len(input.Embedding) {
 			return fmt.Errorf("%w: job dimensions %d, vector dimensions %d", ErrSearchContractMismatch, dims, len(input.Embedding))
 		}
-		active, err := embeddingContractHasActiveSearchGeneration(ctx, tx, contractID, dims)
+		active, err = embeddingContractHasActiveSearchGeneration(ctx, tx, contractID, dims)
 		if err != nil {
 			return err
 		}
@@ -225,10 +236,27 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 		return nil, err
 	}
 	var result *EmbeddingJobFailureResult
-	err := r.withActiveTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	var terminalErr error
+	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		active, err := embeddingJobFinalizationTeamActive(ctx, tx, input.TeamID)
+		if err != nil {
+			return err
+		}
+		if !active {
+			if err := markEmbeddingJobTerminal(ctx, tx, CompleteEmbeddingJobInput{
+				TeamID:           input.TeamID,
+				EmbeddingJobID:   input.EmbeddingJobID,
+				WorkerID:         input.WorkerID,
+				ExpectedAttempts: input.ExpectedAttempts,
+			}, string(domain.EmbeddingJobStale), "team deleted before embedding finalization"); err != nil {
+				return err
+			}
+			terminalErr = ErrTeamInactive
+			return nil
+		}
 		var attempts, maxAttempts int
 		var sourceKind, projectionGenerationID string
-		err := tx.WithContext(ctx).Raw(`
+		err = tx.WithContext(ctx).Raw(`
 				SELECT attempts, max_attempts, source_kind, COALESCE(projection_generation_id::text, '')
 				FROM embedding_jobs
 				WHERE team_id = ?::uuid
@@ -345,6 +373,9 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 	if err != nil {
 		return nil, fmt.Errorf("search: fail embedding job: %w", err)
 	}
+	if terminalErr != nil {
+		return nil, fmt.Errorf("search: fail embedding job: %w", terminalErr)
+	}
 	return result, nil
 }
 
@@ -438,6 +469,23 @@ func markEmbeddingJobTerminal(ctx context.Context, tx *gorm.DB, input CompleteEm
 	`, status, message, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Error
 }
 
+func embeddingJobFinalizationTeamActive(ctx context.Context, tx *gorm.DB, teamID string) (bool, error) {
+	var active bool
+	err := tx.WithContext(ctx).Raw(`
+		SELECT status = 'active' AND deleted_at IS NULL
+		FROM teams
+		WHERE id = ?::uuid
+		FOR UPDATE
+	`, teamID).Row().Scan(&active)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return active, nil
+}
+
 func refreshRelationshipProjectionGeneration(ctx context.Context, tx *gorm.DB, teamID string, projectionGenerationID string) error {
 	return tx.WithContext(ctx).Exec(`
 		WITH generation_row AS (
@@ -447,15 +495,6 @@ func refreshRelationshipProjectionGeneration(ctx context.Context, tx *gorm.DB, t
 			  AND projection_generation_id = ?::uuid
 			  AND source_kind = 'relationship'
 			  AND projection_format_version = 2
-		),
-		eligible AS (
-			SELECT count(*) AS eligible_count
-			FROM relationship_records AS relationship
-			JOIN generation_row AS generation
-			  ON generation.team_id = relationship.team_id
-			WHERE relationship.identity_alias_of_relationship_id IS NULL
-			  AND relationship.status = 'active'
-			  AND relationship.support_count > 0
 		),
 		documents AS (
 			SELECT count(document.search_document_id) AS projected_count,
@@ -487,13 +526,12 @@ func refreshRelationshipProjectionGeneration(ctx context.Context, tx *gorm.DB, t
 		counts AS (
 			SELECT generation.team_id,
 			       generation.projection_generation_id,
-			       eligible.eligible_count,
+			       documents.projected_count AS eligible_count,
 			       documents.projected_count,
 			       documents.current_vector_count,
 			       jobs.unresolved_job_count,
 			       jobs.failed_job_count
 			FROM generation_row AS generation
-			CROSS JOIN eligible
 			CROSS JOIN documents
 			CROSS JOIN jobs
 		)

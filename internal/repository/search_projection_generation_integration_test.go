@@ -2,8 +2,8 @@ package repository
 
 import (
 	"context"
-	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestRelationshipProjectionGenerationRefreshRecomputesEligibleAndClearsFailedState(t *testing.T) {
+func TestRelationshipProjectionGenerationRefreshUsesTaggedMembershipAndClearsFailedState(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -43,6 +43,31 @@ func TestRelationshipProjectionGenerationRefreshRecomputesEligibleAndClearsFaile
 		},
 	})
 	require.NotNil(t, first.Relationship)
+
+	generationID := uuid.NewString()
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO search_projection_generations (
+			    team_id, projection_generation_id, source_kind, generation,
+			    projection_format_version, state, eligible_count, projected_count,
+			    current_vector_count, failed_job_count, last_error
+			) VALUES (
+			    ?::uuid, ?::uuid, 'relationship', 1, 2,
+			    'failed', 1, 0, 0, 1, 'stale failed state'
+			)
+		`, teamID, generationID).Error
+	}))
+
+	doc, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:                 teamID,
+		OwnerProfileID:         ownerID,
+		SourceKind:             "relationship",
+		SourceID:               first.Relationship.RelationshipID,
+		SourceVersion:          int64(first.Relationship.Version),
+		ProjectionGenerationID: generationID,
+		DocumentText:           "relationship\nsubject: Avery\npredicate: works on\nobject: Dense Mem\npolarity: positive",
+	})
+	require.NoError(t, err)
 	secondIngest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
 		"relationship projection refresh second", "Bailey works on Dense Mem.")
 	second := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
@@ -61,50 +86,38 @@ func TestRelationshipProjectionGenerationRefreshRecomputesEligibleAndClearsFaile
 		},
 	})
 	require.NotNil(t, second.Relationship)
-
-	generationID := uuid.NewString()
-	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO search_projection_generations (
-			    team_id, projection_generation_id, source_kind, generation,
-			    projection_format_version, state, eligible_count, projected_count,
-			    current_vector_count, failed_job_count, last_error
-			) VALUES (
-			    ?::uuid, ?::uuid, 'relationship', 1, 2,
-			    'failed', 2, 0, 0, 1, 'stale failed state'
-			)
-		`, teamID, generationID).Error
-	}))
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		res := tx.Exec(`
-			UPDATE relationship_records
-			SET support_count = 0,
-			    updated_at = now()
-			WHERE team_id = ?::uuid
-			  AND relationship_id = ?::uuid
-		`, teamID, second.Relationship.RelationshipID)
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected != 1 {
-			return fmt.Errorf("expected to detach one relationship from generation eligibility, got %d", res.RowsAffected)
-		}
-		return nil
-	}))
-
-	doc, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
-		TeamID:                 teamID,
-		OwnerProfileID:         ownerID,
-		SourceKind:             "relationship",
-		SourceID:               first.Relationship.RelationshipID,
-		SourceVersion:          int64(first.Relationship.Version),
-		ProjectionGenerationID: generationID,
-		DocumentText:           "relationship\nsubject: Avery\npredicate: works on\nobject: Dense Mem\npolarity: positive",
+	foregroundDoc, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "relationship",
+		SourceID:       second.Relationship.RelationshipID,
+		SourceVersion:  int64(second.Relationship.Version),
+		DocumentText:   "relationship\nsubject: Bailey\npredicate: works on\nobject: Dense Mem\npolarity: positive",
 	})
 	require.NoError(t, err)
-	completeSearchJobsForTest(t, repo, teamID, map[string][]float32{
-		doc.SearchDocumentID: {1, 0, 0},
+	assert.Empty(t, foregroundDoc.ProjectionGenerationID)
+
+	const workerID = "relationship-generation-refresh-worker"
+	jobs, err := repo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{
+		TeamID:   teamID,
+		WorkerID: workerID,
+		Limit:    2,
+		Lease:    time.Minute,
 	})
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+	for _, job := range jobs {
+		if job.SearchDocumentID != doc.SearchDocumentID {
+			continue
+		}
+		require.NoError(t, repo.CompleteEmbeddingJob(ctx, CompleteEmbeddingJobInput{
+			TeamID:           teamID,
+			EmbeddingJobID:   job.EmbeddingJobID,
+			WorkerID:         workerID,
+			ExpectedAttempts: job.Attempts,
+			Embedding:        []float32{1, 0, 0},
+		}))
+	}
 
 	var state string
 	var eligibleCount, projectedCount, currentVectorCount, failedJobCount int64
@@ -132,4 +145,100 @@ func TestRelationshipProjectionGenerationRefreshRecomputesEligibleAndClearsFaile
 	assert.EqualValues(t, 1, currentVectorCount)
 	assert.EqualValues(t, 0, failedJobCount)
 	assert.Empty(t, lastError)
+}
+
+func TestPlacementRelationshipSearchUpdateOnlyTouchesActiveContractDocument(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "placement-active-contract-document-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "placement-active-contract-document-owner")
+	oldContractID := insertSearchTestContract(t, adminDB, rls, "placement-old-contract-document", 3, "exact", "")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	searchRepo := NewSearchRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Omar")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense Mem")
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"placement active contract document", "Omar works on Dense Mem.")
+	decision := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        ingest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: "placement:active-contract-document",
+			SpanStart:      0,
+			SpanEnd:        len("Omar works on Dense Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+	_, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "relationship",
+		SourceID:       decision.Relationship.RelationshipID,
+		SourceVersion:  int64(decision.Relationship.Version),
+		DocumentText:   "relationship\nsubject: Omar\npredicate: old contract marker\nobject: Dense Mem",
+	})
+	require.NoError(t, err)
+
+	activeContractID := insertSearchTestContract(t, adminDB, rls, "placement-active-contract-document", 3, "exact", "")
+	_, err = searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "relationship",
+		SourceID:       decision.Relationship.RelationshipID,
+		SourceVersion:  int64(decision.Relationship.Version),
+		DocumentText:   "relationship\nsubject: Omar\npredicate: active contract marker\nobject: Dense Mem",
+	})
+	require.NoError(t, err)
+
+	inactive := *decision.Relationship
+	inactive.Status = "pending_evidence"
+	inactive.SupportCount = 0
+	inactive.Version++
+	var updated *SearchDocumentResult
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		var err error
+		updated, err = upsertPlacementRelationshipSearchDocument(ctx, tx, CommitPlacementSemanticInput{
+			TeamID:         teamID,
+			OwnerProfileID: ownerID,
+		}, &inactive, 20)
+		return err
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.Equal(t, activeContractID, updated.EmbeddingContractID)
+
+	states := map[string]string{}
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		rows, err := tx.Raw(`
+			SELECT embedding_contract_id::text, search_state
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+		`, teamID, decision.Relationship.RelationshipID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var contractID, state string
+			if err := rows.Scan(&contractID, &state); err != nil {
+				return err
+			}
+			states[contractID] = state
+		}
+		return rows.Err()
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "pending", states[oldContractID])
+	assert.Equal(t, "not_required", states[activeContractID])
 }
