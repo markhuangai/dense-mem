@@ -335,13 +335,14 @@ func searchRecallEntityExpansion(
 	limit int,
 ) ([]SearchHit, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
-		WITH latest_support_decision AS (
-			SELECT DISTINCT ON (team_id, support_id)
-			       team_id, support_id, decision
-			FROM relationship_support_decision_events
-			WHERE team_id = ?::uuid
-			ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
-		)
+			WITH latest_support_decision AS (
+				SELECT DISTINCT ON (team_id, support_id)
+				       team_id, support_id, decision
+				FROM relationship_support_decision_events
+				WHERE team_id = ?::uuid
+				  AND (?::timestamptz IS NULL OR created_at <= ?::timestamptz)
+				ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
+			)
 		SELECT document.team_id::text,
 		       document.search_document_id::text,
 		       document.source_kind,
@@ -370,12 +371,22 @@ func searchRecallEntityExpansion(
 			  ON quarantine.team_id = support.team_id
 			 AND quarantine.fragment_id = support.fragment_id
 			 AND quarantine.status = 'active'
+			LEFT JOIN LATERAL (
+			    SELECT transition.to_status AS status
+			    FROM relationship_transition_events AS transition
+			    WHERE ?::timestamptz IS NOT NULL
+			      AND transition.team_id = relationship.team_id
+			      AND transition.relationship_id = relationship.relationship_id
+			      AND transition.created_at <= ?::timestamptz
+			    ORDER BY transition.created_at DESC, transition.transition_id DESC
+			    LIMIT 1
+			) AS known_status ON TRUE
 			WHERE relationship.team_id = ?::uuid
 			  AND relationship.identity_alias_of_relationship_id IS NULL
 			  AND (
-			      relationship.status = 'active'
+			      COALESCE(known_status.status, relationship.status) = 'active'
 		      OR (
-		          relationship.status = 'superseded'
+		          COALESCE(known_status.status, relationship.status) = 'superseded'
 		          AND (
 		              (?::timestamptz IS NOT NULL
 		               AND (relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
@@ -386,7 +397,7 @@ func searchRecallEntityExpansion(
 		          )
 		      )
 		  )
-		  AND relationship.support_count > 0
+		  AND (?::timestamptz IS NOT NULL OR relationship.support_count > 0)
 		  AND quarantine.quarantine_id IS NULL
 		  AND (
 		      relationship.subject_entity_id = ANY(?::uuid[])
@@ -412,9 +423,13 @@ func searchRecallEntityExpansion(
 		         document.embedding_contract_id, document.search_state
 		ORDER BY max(relationship.updated_at) DESC, document.search_document_id ASC
 		LIMIT ?
-	`, input.TeamID, contract.EmbeddingContractID, input.TeamID,
+		`, input.TeamID, input.KnownAt, input.KnownAt,
+		contract.EmbeddingContractID,
+		input.KnownAt, input.KnownAt,
+		input.TeamID,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
+		input.KnownAt,
 		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
@@ -438,13 +453,14 @@ func hydrateRecallEvidence(
 		WITH requested AS (
 			SELECT unnest(?::uuid[]) AS fragment_id
 		),
-		latest_support_decision AS (
-			SELECT DISTINCT ON (team_id, support_id)
-			       team_id, support_id, decision
-			FROM relationship_support_decision_events
-			WHERE team_id = ?::uuid
-			ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
-			),
+			latest_support_decision AS (
+				SELECT DISTINCT ON (team_id, support_id)
+				       team_id, support_id, decision
+				FROM relationship_support_decision_events
+				WHERE team_id = ?::uuid
+				  AND (?::timestamptz IS NULL OR created_at <= ?::timestamptz)
+				ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
+				),
 			eligible AS (
 				SELECT fragment.fragment_id::text AS evidence_id,
 				       fragment.content AS context,
@@ -477,48 +493,63 @@ func hydrateRecallEvidence(
 			  ON latest.team_id = support.team_id
 			 AND latest.support_id = support.support_id
 			 AND latest.decision IN ('grant', 'reinstate')
-			LEFT JOIN evidence_sources AS support_source
-			  ON support_source.team_id = support.team_id
-			 AND support_source.source_id = support.source_id
-			LEFT JOIN relationship_records AS relationship
-			  ON relationship.team_id = support.team_id
-			 AND relationship.relationship_id = support.relationship_id
-			 AND latest.support_id IS NOT NULL
-			 AND (
-			     relationship.status = 'active'
-			     OR (
-			         relationship.status = 'superseded'
-			         AND (
-			             (?::timestamptz IS NOT NULL
-			              AND (relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
-			              AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
-			             OR (?::timestamptz IS NOT NULL
-			                 AND relationship.created_at <= ?::timestamptz
-			                 AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
-			         )
-			     )
-			 )
-			 AND relationship.support_count > 0
-			 AND (
-			     support.source_id IS NULL
-			     OR support_source.current_revision_id = support.source_revision_id
-			 )
-			 AND (
-			     ?::timestamptz IS NULL
-			     OR ((relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
-			         AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
-			 )
-			 AND (
-			     ?::timestamptz IS NULL
-			     OR (relationship.created_at <= ?::timestamptz
-			         AND support.created_at <= ?::timestamptz
-			         AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
-			 )
-			 AND (
-			     cardinality(?::uuid[]) = 0
-			     OR relationship.relationship_id <> ALL(?::uuid[])
-			 )
-			WHERE quarantine.quarantine_id IS NULL
+				LEFT JOIN evidence_sources AS support_source
+				  ON support_source.team_id = support.team_id
+				 AND support_source.source_id = support.source_id
+				LEFT JOIN LATERAL (
+				    SELECT relationship.relationship_id
+				    FROM relationship_records AS relationship
+				    LEFT JOIN LATERAL (
+				        SELECT transition.to_status AS status
+				        FROM relationship_transition_events AS transition
+				        WHERE ?::timestamptz IS NOT NULL
+				          AND transition.team_id = relationship.team_id
+				          AND transition.relationship_id = relationship.relationship_id
+				          AND transition.created_at <= ?::timestamptz
+				        ORDER BY transition.created_at DESC, transition.transition_id DESC
+				        LIMIT 1
+				    ) AS known_status ON TRUE
+				    WHERE relationship.team_id = support.team_id
+				      AND relationship.relationship_id = support.relationship_id
+				      AND latest.support_id IS NOT NULL
+				      AND relationship.identity_alias_of_relationship_id IS NULL
+				      AND (
+				          COALESCE(known_status.status, relationship.status) = 'active'
+				          OR (
+				              COALESCE(known_status.status, relationship.status) = 'superseded'
+				              AND (
+				                  (?::timestamptz IS NOT NULL
+				                   AND (relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
+				                   AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
+				                  OR (?::timestamptz IS NOT NULL
+				                      AND relationship.created_at <= ?::timestamptz
+				                      AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
+				              )
+				          )
+				      )
+				      AND (?::timestamptz IS NOT NULL OR relationship.support_count > 0)
+				      AND (
+				          support.source_id IS NULL
+				          OR support_source.current_revision_id = support.source_revision_id
+				      )
+				      AND (
+				          ?::timestamptz IS NULL
+				          OR ((relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
+				              AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
+				      )
+				      AND (
+				          ?::timestamptz IS NULL
+				          OR (relationship.created_at <= ?::timestamptz
+				              AND support.created_at <= ?::timestamptz
+				              AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
+				      )
+				      AND (
+				          cardinality(?::uuid[]) = 0
+				          OR relationship.relationship_id <> ALL(?::uuid[])
+				      )
+				    LIMIT 1
+				) AS relationship ON TRUE
+				WHERE quarantine.quarantine_id IS NULL
 			  AND (
 			      fragment.source_id IS NULL
 			      OR fragment_source.current_revision_id = fragment.source_revision_id
@@ -540,9 +571,12 @@ func hydrateRecallEvidence(
 		       END AS search_state
 		FROM eligible
 		GROUP BY evidence_id
-	`, pq.Array(evidenceIDs), input.TeamID, input.TeamID, contract.EmbeddingContractID,
+		`, pq.Array(evidenceIDs), input.TeamID, input.KnownAt, input.KnownAt,
+		input.TeamID, contract.EmbeddingContractID,
+		input.KnownAt, input.KnownAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
+		input.KnownAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),

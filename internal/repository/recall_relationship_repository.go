@@ -29,7 +29,7 @@ func (r *SearchRepositoryImpl) RecallRelationships(ctx context.Context, input Re
 	vectorState := string(domain.SearchProjectionPending)
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
-		vectorState, err = relationshipProjectionSearchState(ctx, tx, input.TeamID)
+		vectorState, err = relationshipProjectionSearchState(ctx, tx, input.TeamID, contract)
 		if err != nil {
 			return err
 		}
@@ -133,7 +133,7 @@ type relationshipRecallCandidate struct {
 	SearchState    string
 }
 
-func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID string) (string, error) {
+func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID string, contract *ActiveSearchContract) (string, error) {
 	var latestState string
 	var eligibleCount, currentCount, pendingCount, failedCount int64
 	err := tx.WithContext(ctx).Raw(`
@@ -160,13 +160,15 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 		       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'pending') AS pending_count,
 		       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'failed') AS failed_count
 		FROM eligible
-		LEFT JOIN search_documents AS document
+		 LEFT JOIN search_documents AS document
 		  ON document.team_id = ?::uuid
 		 AND document.source_kind = 'relationship'
 		 AND document.source_id = eligible.relationship_id
+		 AND document.embedding_contract_id = ?::uuid
+		 AND document.embedding_dimensions = ?
 		 AND document.projection_format_version = 2
 		 AND document.projection_generation_id IS NULL
-	`, teamID, teamID, teamID).Row().Scan(
+	`, teamID, teamID, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Row().Scan(
 		&latestState,
 		&eligibleCount,
 		&currentCount,
@@ -178,7 +180,9 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 	}
 	switch latestState {
 	case "current":
-		return string(domain.SearchProjectionCurrent), nil
+		if eligibleCount == 0 || currentCount == eligibleCount {
+			return string(domain.SearchProjectionCurrent), nil
+		}
 	case "failed":
 		return string(domain.SearchProjectionFailed), nil
 	case "":
