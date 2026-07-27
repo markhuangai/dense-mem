@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -40,6 +41,94 @@ func TestSearchRepositoryFailsClosedWithoutDependencies(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rls helper is required")
+}
+
+func TestEnsureActiveSearchContractAcceptsLegacyPhysicalIndexName(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	input := normalizeEnsureActiveSearchContractInput(EnsureActiveSearchContractInput{
+		Provider:   "openai",
+		Model:      "text-embedding-3-small",
+		Dimensions: 3,
+	})
+	contractID := uuid.NewString()
+	spec := deriveSearchGenerationSpec(contractID, input)
+	spec.SearchIndexGenerationID = uuid.NewString()
+	spec.Generation = 1
+	spec.PhysicalIndexName = "v2_" + spec.PhysicalIndexName
+	spec.ActivationState = "active"
+	defer func() {
+		err := adminDB.Exec(
+			"DROP INDEX IF EXISTS " + pq.QuoteIdentifier(spec.PhysicalIndexName),
+		).Error
+		assert.NoError(t, err)
+	}()
+
+	err := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO embedding_contracts (
+			    embedding_contract_id, contract_key, version, provider, model,
+			    dimensions, distance_metric, vector_normalization,
+			    document_format_version, query_format_version, lifecycle_state
+			) VALUES (
+			    ?::uuid, ?, 1, ?, ?, ?, 'cosine', ?, ?, ?, 'active'
+			)
+		`, contractID, embeddingContractKey(input), input.Provider, input.Model,
+			input.Dimensions, input.VectorNormalization,
+			input.DocumentFormatVersion, input.QueryFormatVersion).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO search_index_generations (
+			    search_index_generation_id, generation, embedding_contract_id,
+			    embedding_dimensions, ann_strategy, operator_class,
+			    indexed_expression, physical_index_name, hnsw_m,
+			    hnsw_ef_construction, query_ef_search, exact_max_rows,
+			    candidate_limit, allow_exact_fallback, activation_state,
+			    activated_at
+			) VALUES (
+			    ?::uuid, ?, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			    'active', now()
+			)
+		`, spec.SearchIndexGenerationID, spec.Generation, spec.EmbeddingContractID,
+			spec.EmbeddingDimensions, spec.AnnStrategy, spec.OperatorClass,
+			spec.IndexedExpression, spec.PhysicalIndexName, spec.HNSWM,
+			spec.HNSWEFConstruction, spec.QueryEFSearch, spec.ExactMaxRows,
+			spec.CandidateLimit, spec.AllowExactFallback).Error
+	})
+	require.NoError(t, err)
+
+	repo := NewSearchRepository(adminDB, rls)
+	require.NoError(t, repo.createSearchPhysicalIndex(ctx, spec))
+
+	result, err := repo.EnsureActiveSearchContract(ctx, input)
+	require.NoError(t, err)
+	require.NotNil(t, result.Contract)
+	assert.Equal(t, contractID, result.Contract.EmbeddingContractID)
+	assert.Equal(t, spec.SearchIndexGenerationID, result.Contract.SearchIndexGenerationID)
+	assert.Equal(t, spec.PhysicalIndexName, result.Contract.PhysicalIndexName)
+	assert.False(t, result.CreatedContract)
+	assert.False(t, result.CreatedGeneration)
+	assert.False(t, result.CreatedPhysicalIndex)
+
+	var generationCount int64
+	require.NoError(t, adminDB.Model(&struct{}{}).
+		Table("search_index_generations").
+		Where("embedding_contract_id = ?::uuid", contractID).
+		Count(&generationCount).Error)
+	assert.EqualValues(t, 1, generationCount)
+
+	canonicalName := derivedSearchIndexName(contractID, input.Dimensions, spec.AnnStrategy)
+	var physicalIndexNames []string
+	require.NoError(t, adminDB.Raw(`
+		SELECT indexname
+		FROM pg_indexes
+		WHERE schemaname = current_schema()
+		  AND indexname IN (?, ?)
+		ORDER BY indexname
+	`, spec.PhysicalIndexName, canonicalName).Scan(&physicalIndexNames).Error)
+	assert.Equal(t, []string{spec.PhysicalIndexName}, physicalIndexNames)
 }
 
 func TestSearchRepositoryPersistsConfiguredEmbeddingJobMaxAttempts(t *testing.T) {

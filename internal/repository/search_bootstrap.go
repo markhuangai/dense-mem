@@ -215,16 +215,19 @@ func validateActiveContractMatchesConfig(contract *ActiveSearchContract, input E
 	if contract.IndexStrategy != expected.AnnStrategy ||
 		contract.OperatorClass != expected.OperatorClass ||
 		contract.IndexedExpression != expected.IndexedExpression ||
-		contract.PhysicalIndexName != expected.PhysicalIndexName {
+		!searchPhysicalIndexNameMatchesSpec(contract.PhysicalIndexName, expected) {
 		return fmt.Errorf(
-			"%w: active search generation %s/%s/%s, configured generation %s/%s/%s",
+			"%w: active search generation strategy=%q operator_class=%q indexed_expression=%q physical_index_name=%q, "+
+				"configured generation strategy=%q operator_class=%q indexed_expression=%q physical_index_name=%q",
 			ErrSearchContractMismatch,
 			contract.IndexStrategy,
 			contract.OperatorClass,
 			contract.IndexedExpression,
+			contract.PhysicalIndexName,
 			expected.AnnStrategy,
 			expected.OperatorClass,
 			expected.IndexedExpression,
+			expected.PhysicalIndexName,
 		)
 	}
 	return nil
@@ -426,12 +429,17 @@ func validateSearchGenerationMatchesSpec(
 	if generation.AnnStrategy != spec.AnnStrategy ||
 		generation.OperatorClass != spec.OperatorClass ||
 		generation.IndexedExpression != spec.IndexedExpression ||
-		generation.PhysicalIndexName != spec.PhysicalIndexName ||
+		!searchPhysicalIndexNameMatchesSpec(generation.PhysicalIndexName, spec) ||
 		generation.EmbeddingDimensions != spec.EmbeddingDimensions ||
 		generation.ExactMaxRows != spec.ExactMaxRows ||
 		generation.CandidateLimit != spec.CandidateLimit ||
 		generation.AllowExactFallback != spec.AllowExactFallback {
-		return fmt.Errorf("%w: existing search generation does not match configured embedding contract", ErrSearchContractMismatch)
+		return fmt.Errorf(
+			"%w: existing search generation physical_index_name=%q does not match configured embedding contract physical_index_name=%q",
+			ErrSearchContractMismatch,
+			generation.PhysicalIndexName,
+			spec.PhysicalIndexName,
+		)
 	}
 	return nil
 }
@@ -663,6 +671,24 @@ func derivedSearchIndexName(contractID string, dimensions int, strategy string) 
 	}
 	strategy = strings.TrimSuffix(strategy, "_hnsw")
 	return fmt.Sprintf("search_%s_%d_%s_hnsw_idx", compact, dimensions, strategy)
+}
+
+func searchPhysicalIndexNameMatchesSpec(
+	physicalIndexName string,
+	spec searchIndexGenerationDefinition,
+) bool {
+	if physicalIndexName == spec.PhysicalIndexName {
+		return true
+	}
+	if spec.PhysicalIndexName == "" {
+		return false
+	}
+	legacyName := "v2_" + derivedSearchIndexName(
+		spec.EmbeddingContractID,
+		spec.EmbeddingDimensions,
+		spec.AnnStrategy,
+	)
+	return physicalIndexName == legacyName
 }
 
 func (r *SearchRepositoryImpl) sqlDB() (*sql.DB, error) {
