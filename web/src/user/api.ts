@@ -1,5 +1,5 @@
 import type { TelemetrySnapshot, UserTelemetryQuery } from "../telemetry/types";
-import { requestJson } from "../http";
+import { ApiError, requestJson } from "../http";
 export { ApiError } from "../http";
 
 export type UserTeam = {
@@ -271,6 +271,11 @@ export type RecallPayload = {
   search_state?: string;
 };
 
+type LegacyRecallPayload = {
+  results: RecallRelationship[];
+  evidences: RecallEvidenceContext[];
+};
+
 export type GraphNodeType = "fact" | "claim" | "fragment" | "dream" | "entity" | "value";
 
 export type GraphNode = {
@@ -412,7 +417,7 @@ export class UserApi {
 
   async recall(query: string, limit = 10): Promise<RecallHit[]> {
     const params = new URLSearchParams({ query, limit: String(limit) });
-    const payload = await this.request<Envelope<RecallPayload>>(`/ui/api/recall?${params.toString()}`);
+    const payload = await this.request<Envelope<unknown>>(`/ui/api/recall?${params.toString()}`);
     const data = payload.data;
     if (isRecallPayload(data)) {
       return data.results.map((evidence) => ({
@@ -425,7 +430,24 @@ export class UserApi {
         semantic_rank: evidence.rank,
       }));
     }
-    return [];
+    if (Array.isArray(data)) {
+      return data as RecallHit[];
+    }
+    if (isLegacyRecallPayload(data)) {
+      const evidencesByID = new Map(data.evidences.map((evidence) => [evidence.evidence_id, evidence]));
+      return data.results.map((relationship, index) => ({
+        relationship,
+        relationships: [relationship],
+        evidences: (relationship.evidence_ids ?? [])
+          .map((id) => evidencesByID.get(id))
+          .filter((evidence): evidence is RecallEvidenceContext => Boolean(evidence)),
+        tier: relationship.tier,
+        score: 1,
+        final_score: 1,
+        semantic_rank: index + 1,
+      }));
+    }
+    throw new ApiError(500, "Unexpected recall response format");
   }
 
   async graph(query: GraphQuery = {}): Promise<GraphSnapshot> {
@@ -510,6 +532,15 @@ export class UserApi {
 
 function isRecallPayload(value: RecallPayload | unknown): value is RecallPayload {
   return Boolean(value && typeof value === "object" && "discovery_paths" in value && "results" in value);
+}
+
+function isLegacyRecallPayload(value: unknown): value is LegacyRecallPayload {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    Array.isArray((value as Partial<LegacyRecallPayload>).results) &&
+    Array.isArray((value as Partial<LegacyRecallPayload>).evidences),
+  );
 }
 
 function relationshipsForEvidence(paths: RecallDiscoveryPath[], evidenceID: string): RecallRelationship[] {

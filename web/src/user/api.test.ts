@@ -189,6 +189,78 @@ describe("UserApi", () => {
     );
   });
 
+  it("keeps legacy recall hit array compatibility", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: [
+        {
+          tier: "1",
+          score: 0.94,
+          semantic_rank: 1,
+          final_score: 0.94,
+          fact: {
+            fact_id: "fact-1",
+            subject: "Dense-Mem",
+            predicate: "uses",
+            object: "PostgreSQL",
+            status: "active",
+            truth_score: 0.99,
+            recorded_at: "2026-05-01T12:00:00Z",
+          },
+        },
+      ],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new UserApi("dm_key").recall("postgres", 3);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].fact?.fact_id).toBe("fact-1");
+    expect(result[0].semantic_rank).toBe(1);
+  });
+
+  it("keeps legacy relationship and evidence recall compatibility", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        results: [
+          {
+            relationship_id: "relationship-1",
+            subject: { name: "Dense-Mem" },
+            predicate: "uses",
+            object: { name: "PostgreSQL" },
+            tier: "fact",
+            evidence_ids: ["evidence-1"],
+          },
+        ],
+        evidences: [
+          {
+            evidence_id: "evidence-1",
+            context: "Dense-Mem uses PostgreSQL.",
+            source: "legacy",
+          },
+        ],
+      },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new UserApi("dm_key").recall("postgres", 3);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].relationship?.relationship_id).toBe("relationship-1");
+    expect(result[0].evidences?.[0].evidence_id).toBe("evidence-1");
+    expect(result[0].semantic_rank).toBe(1);
+  });
+
+  it("throws a typed error for unknown successful recall payloads", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: { unexpected: true },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new UserApi("dm_key").recall("postgres", 3)).rejects.toMatchObject(
+      new ApiError(500, "Unexpected recall response format"),
+    );
+  });
+
   it("throws ApiError with server message", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: "invalid api key" }), { status: 401 })));
 
