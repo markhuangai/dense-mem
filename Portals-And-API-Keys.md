@@ -202,6 +202,13 @@ Profile deletion must fail or become deactivation when durable records still
 reference the actor. Do not cascade-delete knowledge/audit because a credential
 is removed.
 
+Team deletion is a soft tombstone: the team row is marked deleted, active
+team-profile credentials are revoked, and future writes/jobs for that team are
+rejected. Existing knowledge, support history, source lineage, conflicts, and
+audit rows remain durable. There is no active restore/re-enable workflow in the
+current contract; a future restore policy would need explicit authorization and
+fresh entitlement/key issuance.
+
 ## SSO-Owned Keys
 
 An SSO-owned key is usable only while its external entitlement remains valid.
@@ -231,6 +238,7 @@ valid. Manual rotation cannot sever that ownership silently.
 | Key rotation outage | old key revoked before clients switch | create-test-switch-observe-revoke sequence |
 | SSO entitlement drift | removed user keeps a local personal key | periodic/request-time entitlement revalidation |
 | Profile deletion erases audit | cascading FK removes actor history | deactivate/tombstone actor and preserve durable references |
+| Team deletion erases knowledge | delete path cascades team-owned semantic rows | tombstone team, revoke credentials, and preserve durable knowledge/audit |
 
 ## Acceptance Invariants
 
@@ -242,5 +250,7 @@ valid. Manual rotation cannot sever that ownership silently.
 5. role and scopes remain independent
 6. raw API keys are returned once and never stored reversibly
 7. credential deletion preserves knowledge and audit history
-8. external memory automation uses MCP; portal handlers remain first-party UI
+8. team deletion tombstones the team and revokes credentials without deleting
+   knowledge or audit rows
+9. external memory automation uses MCP; portal handlers remain first-party UI
    implementation details
