@@ -83,7 +83,7 @@ ai:
         from_bundle: CODEX_AI_BASE_URL
       model: gpt-5.4-mini
       reasoning:
-        effort: medium
+        effort: high
         summary: concise
     local_proxy:
       adapter: claude-code-sdk
