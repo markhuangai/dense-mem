@@ -196,37 +196,6 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 	return string(domain.SearchProjectionPending), nil
 }
 
-func searchRecallRelationshipFullText(
-	ctx context.Context,
-	tx *gorm.DB,
-	input RecallRelationshipsInput,
-	contract *ActiveSearchContract,
-	limit int,
-) ([]SearchHit, error) {
-	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT document.team_id::text, document.search_document_id::text, document.source_kind,
-		       document.source_id::text, document.source_version, document.document_version,
-		       document.embedding_contract_id::text, document.search_state,
-		       0::double precision AS distance,
-		       ts_rank_cd(document.search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
-		FROM search_documents AS document
-		WHERE document.team_id = ?::uuid
-		  AND document.source_kind = 'relationship'
-		  AND document.embedding_contract_id = ?::uuid
-		  AND document.projection_format_version = 2
-		  AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
-		  AND document.search_tsv @@ plainto_tsquery('simple', ?)
-		ORDER BY text_rank DESC, document.updated_at DESC, document.search_document_id ASC
-		LIMIT ?
-	`, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.Query, limit).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanSearchHits(rows)
-}
-
 func searchRecallRelationshipVector(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -480,18 +449,22 @@ func searchRecallRelationshipEntityExpansion(
 ) ([]SearchHit, error) {
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	rows, err := tx.WithContext(ctx).Raw(`
+		WITH `+recallRelationshipGenerationScopeSQL+`
 		SELECT document.team_id::text, document.search_document_id::text, document.source_kind,
 		       document.source_id::text, document.source_version, document.document_version,
 		       document.embedding_contract_id::text, document.search_state,
 		       0::double precision AS distance,
 		       0::double precision AS text_rank
-		FROM relationship_records AS relationship
+		FROM recall_relationship_generation AS generation
+		JOIN relationship_records AS relationship
+		  ON relationship.team_id = ?::uuid
 		JOIN search_documents AS document
 		  ON document.team_id = relationship.team_id
 		 AND document.source_kind = 'relationship'
 		 AND document.source_id = relationship.relationship_id
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.projection_format_version = 2
+		 AND `+recallRelationshipGenerationDocumentSQL+`
 		 AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
 		LEFT JOIN LATERAL (
 		    SELECT transition.to_status AS status
@@ -503,8 +476,7 @@ func searchRecallRelationshipEntityExpansion(
 		    ORDER BY transition.created_at DESC, transition.transition_id DESC
 		    LIMIT 1
 		) AS known_status ON TRUE
-		WHERE relationship.team_id = ?::uuid
-		  AND relationship.identity_alias_of_relationship_id IS NULL
+		WHERE relationship.identity_alias_of_relationship_id IS NULL
 		  AND (
 		      COALESCE(known_status.status, relationship.status) = 'active'
 		      OR (
@@ -540,9 +512,8 @@ func searchRecallRelationshipEntityExpansion(
 		  )
 		ORDER BY relationship.updated_at DESC, relationship.relationship_id ASC
 		LIMIT ?
-	`, contract.EmbeddingContractID, eventAt,
+	`, input.TeamID, input.TeamID, input.TeamID, contract.EmbeddingContractID, eventAt,
 		eventAt, eventAt,
-		input.TeamID,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
 		eventAt,
@@ -570,6 +541,7 @@ func hydrateRecallRelationships(
 		WITH requested AS (
 			SELECT unnest(?::uuid[]) AS relationship_id
 		),
+		`+recallRelationshipGenerationScopeSQL+`,
 		known_groups AS (
 			SELECT DISTINCT relationship.semantic_group_key
 			FROM relationship_records AS relationship
@@ -602,12 +574,15 @@ func hydrateRecallRelationships(
 		    JOIN relationship_records AS relationship
 		      ON relationship.team_id = ?::uuid
 		     AND relationship.relationship_id = requested.relationship_id
+		    JOIN recall_relationship_generation AS generation
+		      ON TRUE
 		    JOIN search_documents AS document
 		      ON document.team_id = relationship.team_id
 		     AND document.source_kind = 'relationship'
 		     AND document.source_id = relationship.relationship_id
 		     AND document.embedding_contract_id = ?::uuid
 		     AND document.projection_format_version = 2
+		     AND `+recallRelationshipGenerationDocumentSQL+`
 		     AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
 		    LEFT JOIN LATERAL (
 		        SELECT transition.to_status AS status
@@ -662,7 +637,7 @@ func hydrateRecallRelationships(
 		LEFT JOIN value_records AS value_record
 		  ON value_record.team_id = relationship.team_id
 		 AND value_record.value_id = relationship.object_value_id
-		`, pq.Array(relationshipIDs), input.TeamID,
+		`, pq.Array(relationshipIDs), input.TeamID, input.TeamID, input.TeamID,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
 		input.TeamID, contract.EmbeddingContractID, eventAt,
 		eventAt, eventAt,

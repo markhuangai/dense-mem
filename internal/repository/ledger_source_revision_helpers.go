@@ -2,6 +2,7 @@ package repository
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -25,24 +26,23 @@ func sourceRevisionBatchKey(item EvidenceInput) string {
 
 func sourceRevisionSupersedesByBatch(evidence []EvidenceInput) map[string][]string {
 	out := map[string][]string{}
-	seen := map[string]map[string]struct{}{}
 	for _, item := range evidence {
 		key := sourceRevisionBatchKey(item)
 		if key == "" {
 			continue
 		}
-		if seen[key] == nil {
-			seen[key] = map[string]struct{}{}
+		if _, ok := out[key]; ok {
+			continue
 		}
-		for _, id := range item.SupersedesFragmentIDs {
-			if _, ok := seen[key][id]; ok {
-				continue
-			}
-			seen[key][id] = struct{}{}
-			out[key] = append(out[key], id)
-		}
+		out[key] = append([]string(nil), item.SupersedesFragmentIDs...)
 	}
 	return out
+}
+
+func sourceRevisionSupersedesKey(values []string) string {
+	normalized := normalizeUUIDStringList(values)
+	sort.Strings(normalized)
+	return strings.Join(normalized, "\x00")
 }
 
 func normalizeUUIDStringList(values []string) []string {
@@ -64,6 +64,7 @@ func normalizeUUIDStringList(values []string) []string {
 
 func validateSourceRevisionBatch(evidence []EvidenceInput) error {
 	seen := make(map[string]sourceRevisionBatch)
+	supersedesSeen := make(map[string]string)
 	supersedes := sourceRevisionSupersedesByBatch(evidence)
 	for i, item := range evidence {
 		if item.SourceKey == "" {
@@ -74,14 +75,21 @@ func validateSourceRevisionBatch(evidence []EvidenceInput) error {
 			ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
 			SourceRevisionContentHash:     item.SourceRevisionContentHash,
 		}
+		key := sourceRevisionBatchKey(item)
+		supersedesKey := sourceRevisionSupersedesKey(item.SupersedesFragmentIDs)
 		previous, ok := seen[item.SourceKey]
 		if !ok {
 			seen[item.SourceKey] = current
+			supersedesSeen[key] = supersedesKey
 			continue
 		}
 		if previous != current {
 			return fmt.Errorf("evidence[%d].source_key %q revision fields must match earlier item in request", i, item.SourceKey)
 		}
+		if previousSupersedes, ok := supersedesSeen[key]; ok && previousSupersedes != supersedesKey {
+			return fmt.Errorf("evidence[%d].source_key %q supersedes_fragment_ids must match earlier item in source revision batch", i, item.SourceKey)
+		}
+		supersedesSeen[key] = supersedesKey
 	}
 	for key, ids := range supersedes {
 		if len(ids) > 50 {
