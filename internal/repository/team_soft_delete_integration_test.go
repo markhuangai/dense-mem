@@ -225,7 +225,7 @@ func TestActiveTeamMutationGuardSerializesWithTeamDelete(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
-func TestTombstonedTeamTerminalizesClaimedEmbeddingJobsWithoutUpdatingDocuments(t *testing.T) {
+func TestTombstonedTeamTerminalizesEmbeddingJobsWithoutUpdatingDocuments(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -234,7 +234,7 @@ func TestTombstonedTeamTerminalizesClaimedEmbeddingJobsWithoutUpdatingDocuments(
 	insertSearchTestContract(t, adminDB, rls, "team-delete-terminal-embedding", 3, "exact", "")
 	searchRepo := NewSearchRepository(appDB, rls)
 
-	for _, sourceID := range []string{uuid.NewString(), uuid.NewString()} {
+	for _, sourceID := range []string{uuid.NewString(), uuid.NewString(), uuid.NewString()} {
 		_, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
 			TeamID:         teamID,
 			OwnerProfileID: ownerID,
@@ -280,7 +280,7 @@ func TestTombstonedTeamTerminalizesClaimedEmbeddingJobsWithoutUpdatingDocuments(
 	require.ErrorIs(t, err, ErrTeamInactive)
 
 	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		var terminalJobs, unchangedDocuments int64
+		var terminalJobs, pendingJobs, unchangedDocuments int64
 		if err := tx.Raw(`
 			SELECT COUNT(*)
 			FROM embedding_jobs
@@ -293,6 +293,14 @@ func TestTombstonedTeamTerminalizesClaimedEmbeddingJobsWithoutUpdatingDocuments(
 		}
 		if err := tx.Raw(`
 			SELECT COUNT(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND status IN ('queued', 'processing')
+		`, teamID).Scan(&pendingJobs).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT COUNT(*)
 			FROM search_documents
 			WHERE team_id = ?::uuid
 			  AND search_state = 'pending'
@@ -300,8 +308,9 @@ func TestTombstonedTeamTerminalizesClaimedEmbeddingJobsWithoutUpdatingDocuments(
 		`, teamID).Scan(&unchangedDocuments).Error; err != nil {
 			return err
 		}
-		assert.Equal(t, int64(2), terminalJobs)
-		assert.Equal(t, int64(2), unchangedDocuments)
+		assert.Equal(t, int64(3), terminalJobs)
+		assert.Zero(t, pendingJobs)
+		assert.Equal(t, int64(3), unchangedDocuments)
 		return nil
 	})
 	require.NoError(t, err)

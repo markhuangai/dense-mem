@@ -302,6 +302,19 @@ func (r *ProfileRepositoryImpl) SoftDelete(ctx context.Context, id uuid.UUID) er
 		`, now, id).Error; err != nil {
 			return err
 		}
+		if err := tx.Exec(`
+			UPDATE embedding_jobs
+			SET status = 'stale',
+			    error = 'team deleted before embedding processing',
+			    completed_at = $1,
+			    lease_until = NULL,
+			    worker_id = '',
+			    updated_at = $1
+			WHERE team_id = $2
+			  AND status IN ('queued', 'processing')
+		`, now, id).Error; err != nil {
+			return err
+		}
 		return tx.Exec(`
 			UPDATE team_profiles
 			SET revoked_at = $1, updated_at = $1

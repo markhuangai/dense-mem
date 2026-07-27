@@ -210,6 +210,43 @@ func TestRecallProviderFailureIsOptionalDegradation(t *testing.T) {
 	require.Equal(t, string(domain.SearchProjectionPending), result.SearchState)
 }
 
+func TestRecallProviderFailureReportsFailedRelationshipProjection(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	search := &recallSearchStub{
+		contract: &repository.ActiveSearchContract{
+			EmbeddingContractID: uuid.NewString(),
+			EmbeddingDimensions: 3,
+			EmbeddingModel:      "test-model",
+		},
+		result: &repository.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Results:     []repository.RecallEvidenceHit{},
+		},
+		relationshipResult: &repository.RecallRelationshipsResult{
+			TeamID:      teamID.String(),
+			SearchState: string(domain.SearchProjectionFailed),
+			Results:     []repository.RecallRelationshipHit{},
+		},
+	}
+	svc := NewRecallService(RecallDependencies{
+		Search:   search,
+		Provider: &recallProviderStub{available: false},
+	})
+
+	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
+		ContractVersion: domain.ContractVersion,
+		Query:           "PostgreSQL memory",
+	})
+	require.NoError(t, err)
+	require.Equal(t, string(domain.SearchProjectionFailed), result.SearchStates.Relationships)
+	require.Len(t, result.Degradations, 2)
+	require.Equal(t, string(domain.ErrorProviderUnavailable), result.Degradations[0].Code)
+	require.Equal(t, "relationship_vector_failed", result.Degradations[1].Code)
+	require.Empty(t, search.relationshipInput.QueryEmbedding)
+}
+
 func TestRecallProviderMalformedBranchesAreOptionalDegradation(t *testing.T) {
 	tests := []struct {
 		name     string

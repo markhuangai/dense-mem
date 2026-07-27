@@ -354,7 +354,7 @@ func (s *recallService) recallRelatedRelationships(
 	}
 	var degradation *RecallDegradationResult
 	if strings.TrimSpace(req.Query) != "" && len(queryEmbedding) == 0 {
-		degradation = relationshipVectorDegradation(string(domain.SearchProjectionPending))
+		degradation = relationshipVectorDegradation(state)
 	} else if recalled != nil && recalled.VectorOmitted {
 		degradation = relationshipVectorDegradation(state)
 	}
