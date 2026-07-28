@@ -205,6 +205,44 @@ func TestActiveTeamWorkerPoolListsTeamsOnceBeforeIdlePoll(t *testing.T) {
 	}
 }
 
+func TestActiveTeamWorkerPoolKeepsClaimedTeamHotAfterWorkerError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	profiles := &activeWorkerProfileListStub{
+		team: &domain.Profile{ID: uuid.MustParse("47e94a49-f8b5-493e-ae0a-4e1ff52e5b28")},
+	}
+	workCalls := make(chan int, 2)
+	var calls atomic.Int32
+	go runActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
+		name:         "test",
+		baseWorkerID: "worker",
+		count:        1,
+		pollInterval: 5 * time.Second,
+		profiles:     profiles,
+		logger:       observability.New(slog.LevelError),
+		workerError:  errors.New("test worker failed"),
+		work: func(context.Context, string, string) (bool, error) {
+			call := int(calls.Add(1))
+			workCalls <- call
+			if call == 1 {
+				return true, errors.New("claimed work failed")
+			}
+			return false, nil
+		},
+	})
+
+	for want := 1; want <= 2; want++ {
+		select {
+		case got := <-workCalls:
+			if got != want {
+				t.Fatalf("work call = %d, want %d", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for work call %d before the poll interval", want)
+		}
+	}
+}
+
 type activeWorkerProfileListStub struct {
 	team  *domain.Profile
 	calls atomic.Int64

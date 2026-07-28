@@ -116,7 +116,7 @@ func runActiveTeamWorkerPool(ctx context.Context, cfg activeTeamWorkerPoolConfig
 			return
 		case result := <-results:
 			availableWorkers++
-			dispatcher.complete(result.teamID, result.worked && result.err == nil, time.Now())
+			dispatcher.complete(result.teamID, result.worked, time.Now())
 			if result.err != nil && ctx.Err() == nil {
 				cfg.logger.Error(
 					"active team worker failed",
