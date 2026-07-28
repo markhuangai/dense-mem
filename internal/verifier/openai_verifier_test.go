@@ -52,6 +52,72 @@ func TestOpenAIVerifierAdapterHelpers(t *testing.T) {
 	require.Equal(t, "relationships[0].predicate: is required; duplicate response", summary)
 }
 
+func TestOpenAIVerifierAssessSemanticUsesOneBoundedStructuredRequest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var raw map[string]json.RawMessage
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&raw))
+		if _, exists := raw["max_tokens"]; exists {
+			t.Fatal("assessor request included max_tokens")
+		}
+		if _, exists := raw["max_completion_tokens"]; exists {
+			t.Fatal("assessor request included max_completion_tokens")
+		}
+		var request openAIVerifierRequest
+		require.NoError(t, json.Unmarshal(mustMarshalJSON(t, raw), &request))
+		assert.Equal(t, "assessor-model", request.Model)
+		assert.Equal(t, SemanticAssessmentSchemaName, request.ResponseFormat.JSONSchema.Name)
+		assert.Contains(t, request.Messages[0].Content, "integrated structure and support assessor")
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &payload))
+		assert.NotContains(t, payload, "team_id")
+		assert.NotContains(t, payload, "owner_profile_id")
+
+		content, err := json.Marshal(semanticAssessmentTestResponse())
+		require.NoError(t, err)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
+			"usage":   map[string]any{"prompt_tokens": 200, "completion_tokens": 100, "total_tokens": 300},
+		}))
+	}))
+	defer srv.Close()
+
+	cfg := newTestVerifierConfig(srv.URL, "sk-test", "assessor-model")
+	cfg.AIReviewerModel = ""
+	v := NewOpenAIVerifier(cfg, srv.Client())
+	req, _ := semanticAssessmentTestRequest(t)
+	response, err := v.AssessSemantic(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, "assess-1", response.RequestID)
+	require.Len(t, response.RelationshipResults, 1)
+	assert.Equal(t, "entailed", response.RelationshipResults[0].EvidenceVerdict)
+}
+
+func TestOpenAIVerifierAssessSemanticRejectsProviderOutputOverAcceptanceCap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		content, err := json.Marshal(semanticAssessmentTestResponse())
+		require.NoError(t, err)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
+			"usage":   map[string]any{"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+		}))
+	}))
+	defer srv.Close()
+
+	cfg := newTestVerifierConfig(srv.URL, "sk-test", "assessor-model")
+	cfg.AIVerifierMaxOutputTokens = 1
+	v := NewOpenAIVerifier(cfg, srv.Client())
+	req, _ := semanticAssessmentTestRequest(t)
+	_, err := v.AssessSemantic(context.Background(), req)
+	assert.ErrorIs(t, err, ErrVerifierMalformedResponse)
+}
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	require.NoError(t, err)
+	return data
+}
+
 // verifierSuccessHandler returns an HTTP handler that always replies with a
 // valid verification result carrying the given verdict, confidence, and rationale.
 func verifierSuccessHandler(verdict string, confidence float64, rationale string) http.HandlerFunc {
