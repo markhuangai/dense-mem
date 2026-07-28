@@ -123,7 +123,9 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 		},
 	}
 	startURL := app.URL + "/ui/api/sso/start/" + provider.ID.String() + "?redirect=" + url.QueryEscape("/ui/knowledge")
-	startResponse, err := client.Get(startURL)
+	startRequest, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, startURL, nil)
+	require.NoError(t, err)
+	startResponse, err := client.Do(startRequest)
 	require.NoError(t, err)
 	authorizationURL := integrationRedirectLocation(t, startResponse, nethttp.StatusFound)
 	parsedAuthorizationURL, err := url.Parse(authorizationURL)
@@ -135,7 +137,9 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 
 	callbackURL := app.URL + "/ui/api/sso/callback?code=integration-code&state=" +
 		url.QueryEscape(parsedAuthorizationURL.Query().Get("state"))
-	callbackResponse, err := client.Get(callbackURL)
+	callbackRequest, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodGet, callbackURL, nil)
+	require.NoError(t, err)
+	callbackResponse, err := client.Do(callbackRequest)
 	require.NoError(t, err)
 	cookies := callbackResponse.Cookies()
 	require.Equal(t, "/ui/knowledge", integrationRedirectLocation(t, callbackResponse, nethttp.StatusFound))

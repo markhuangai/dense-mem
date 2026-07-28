@@ -222,7 +222,7 @@ func RunActiveServer(
 	controlDreamSvc := dreamservice.NewControl(dreamservice.ControlDependencies{
 		Store:     semanticRepo,
 		AppConfig: appConfigService,
-		Profiles:  profileService,
+		Teams:     profileService,
 	})
 	graphViewSvc := graphview.NewSemantic(semanticRepo)
 	memoryPackSvc := skillpackservice.NewMemoryPackService(skillpackservice.MemoryPackDependencies{

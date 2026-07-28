@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
@@ -189,7 +190,7 @@ func (h *controlPortalHandler) refreshTeamDreams(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": controlDreamRefreshResponse{UpdatedCount: updated}})
+	return response.SuccessOK(c, controlDreamRefreshResponse{UpdatedCount: updated})
 }
 
 func controlOperationLogsFilter(c echo.Context) (domain.OperationLogFilter, error) {
@@ -303,9 +304,9 @@ func controlDreamListOptions(c echo.Context) (dreamservice.ListOptions, error) {
 	}
 	sort := strings.TrimSpace(c.QueryParam("sort"))
 	switch sort {
-	case "", dreamservice.DreamSortUpdatedAt, dreamservice.DreamSortCreatedAt, dreamservice.DreamSortLastEvaluatedAt:
+	case "", dreamservice.DreamSortUpdatedAt, dreamservice.DreamSortCreatedAt:
 	default:
-		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "sort must be updated_at, created_at, or last_evaluated_at")
+		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "sort must be updated_at or created_at")
 	}
 	direction := strings.TrimSpace(c.QueryParam("direction"))
 	switch direction {

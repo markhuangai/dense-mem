@@ -234,6 +234,9 @@ func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 		`, archivedTeamID).Error
 	}))
 
+	_, err = repo.UpsertTeamProfileForMapping(ctx, identity, archivedMapping, "archived-profile")
+	require.ErrorIs(t, err, ErrTeamInactive)
+
 	mappings, err := repo.ListMappingsForGroups(ctx, provider.ID, []string{"shared-group"})
 	require.NoError(t, err)
 	require.Len(t, mappings, 1)

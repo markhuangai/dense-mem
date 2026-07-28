@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
@@ -29,12 +30,40 @@ func TestControlServiceReadsTeamDreamsWithoutActorContext(t *testing.T) {
 		pending: 1,
 		updated: 2,
 	}
-	svc := NewControl(ControlDependencies{Store: store})
+	teams := &dreamControlTeamConfigStub{team: &domain.Team{
+		ID: uuid.MustParse(teamID),
+		Config: map[string]any{
+			"dreaming": map[string]any{"enabled": false},
+		},
+	}}
+	svc := NewControl(ControlDependencies{
+		Store: store,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{
+			Enabled:           true,
+			StartTimeLocal:    "03:00",
+			Timezone:          "UTC",
+			ReflectEnabled:    true,
+			ReevaluateEnabled: true,
+			DreamEnabled:      true,
+			MaxOutputs:        5,
+		}},
+		Teams: teams,
+	})
 
-	dreams, _, err := svc.List(context.Background(), teamID, ListOptions{Limit: 20})
+	dreams, _, err := svc.List(context.Background(), teamID, ListOptions{
+		Limit:     20,
+		Sort:      DreamSortCreatedAt,
+		Direction: DreamDirectionAsc,
+	})
 	require.NoError(t, err)
 	require.Len(t, dreams, 2)
 	assert.ElementsMatch(t, []string{ownerA, ownerB}, []string{dreams[0].ProfileID, dreams[1].ProfileID})
+	assert.Equal(t, repository.ListHypothesesInput{
+		TeamID:    teamID,
+		Limit:     20,
+		Sort:      DreamSortCreatedAt,
+		Direction: DreamDirectionAsc,
+	}, store.listInput)
 
 	dream, err := svc.Get(context.Background(), teamID, store.records[0].HypothesisID)
 	require.NoError(t, err)
@@ -51,6 +80,9 @@ func TestControlServiceReadsTeamDreamsWithoutActorContext(t *testing.T) {
 	assert.Equal(t, 1, status.PendingCount)
 	require.NotNil(t, status.LatestRun)
 	assert.Equal(t, store.runs[0].RunID, status.LatestRun.RunID)
+	assert.False(t, status.EffectiveConfig.Enabled)
+	assert.Equal(t, "team", status.EffectiveConfig.Source)
+	assert.Equal(t, uuid.MustParse(teamID), teams.requestedID)
 
 	updated, err := svc.Refresh(context.Background(), teamID, ControlActor{
 		Source:        "control_portal:authorization-bearer",
@@ -102,10 +134,12 @@ type dreamControlRepositoryStub struct {
 	runs         []repository.DreamCycleRun
 	pending      int
 	updated      int
+	listInput    repository.ListHypothesesInput
 	refreshInput repository.RefreshTeamHypothesisStalenessInput
 }
 
-func (s *dreamControlRepositoryStub) ListHypotheses(context.Context, repository.ListHypothesesInput) ([]repository.HypothesisRecord, string, error) {
+func (s *dreamControlRepositoryStub) ListHypotheses(_ context.Context, input repository.ListHypothesesInput) ([]repository.HypothesisRecord, string, error) {
+	s.listInput = input
 	return append([]repository.HypothesisRecord(nil), s.records...), "", nil
 }
 
@@ -130,5 +164,16 @@ func (s *dreamControlRepositoryStub) RefreshTeamHypothesisStaleness(_ context.Co
 	return s.updated, nil
 }
 
+type dreamControlTeamConfigStub struct {
+	team        *domain.Team
+	requestedID uuid.UUID
+}
+
+func (s *dreamControlTeamConfigStub) GetByID(_ context.Context, id uuid.UUID) (*domain.Team, error) {
+	s.requestedID = id
+	return s.team, nil
+}
+
 var _ ControlService = (*controlService)(nil)
 var _ repository.DreamControlRepository = (*dreamControlRepositoryStub)(nil)
+var _ TeamConfigService = (*dreamControlTeamConfigStub)(nil)

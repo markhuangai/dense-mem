@@ -181,10 +181,12 @@ type HypothesisRecord struct {
 }
 
 type ListHypothesesInput struct {
-	TeamID string
-	Status string
-	Limit  int
-	Cursor string
+	TeamID    string
+	Status    string
+	Limit     int
+	Cursor    string
+	Sort      string
+	Direction string
 }
 
 type GetHypothesisInput struct {
@@ -509,12 +511,20 @@ func (r *SemanticRepositoryImpl) ListHypotheses(
 	limit := input.Limit + 1
 	records := []HypothesisRecord{}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(hypothesisSelectSQL(`
+		query := hypothesisSelectSQL(`
 			WHERE team_id = ?::uuid
 			  AND (? = '' OR status = ?)
-			ORDER BY updated_at DESC, hypothesis_id
+			ORDER BY ` + hypothesisListOrder(input.Sort, input.Direction) + `, hypothesis_id
 			LIMIT ? OFFSET ?
-		`), input.TeamID, input.Status, input.Status, limit, offset).Rows()
+		`)
+		rows, err := tx.WithContext(ctx).Raw(
+			query,
+			input.TeamID,
+			input.Status,
+			input.Status,
+			limit,
+			offset,
+		).Rows()
 		if err != nil {
 			return err
 		}

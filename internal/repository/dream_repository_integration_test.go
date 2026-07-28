@@ -210,6 +210,25 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrDreamExactRelationshipExists), err)
 }
 
+func TestDreamListSortValidation(t *testing.T) {
+	input := normalizeListHypothesesInput(ListHypothesesInput{
+		TeamID:    uuid.NewString(),
+		Sort:      " CREATED_AT ",
+		Direction: " ASC ",
+	})
+	require.NoError(t, validateListHypothesesInput(input))
+	assert.Equal(t, "created_at ASC", hypothesisListOrder(input.Sort, input.Direction))
+
+	for _, invalid := range []ListHypothesesInput{
+		{TeamID: uuid.NewString(), Sort: "updated_at; DROP TABLE hypotheses", Direction: "asc"},
+		{TeamID: uuid.NewString(), Sort: "updated_at", Direction: "desc NULLS FIRST"},
+		{TeamID: uuid.NewString(), Sort: "last_evaluated_at", Direction: "desc"},
+	} {
+		normalized := normalizeListHypothesesInput(invalid)
+		require.Error(t, validateListHypothesesInput(normalized))
+	}
+}
+
 func TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -246,11 +265,11 @@ func TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh(t *testing.T) 
 		return tx.Exec(`
 			INSERT INTO hypotheses (
 			    team_id, hypothesis_id, owner_profile_id, status, statement,
-			    source_versions, updated_at
+			    source_versions, created_at, updated_at
 			) VALUES
-			    (?::uuid, ?::uuid, ?::uuid, 'proposed', 'owner A hypothesis', jsonb_build_object(?::text, 1), now() - interval '2 minutes'),
-			    (?::uuid, ?::uuid, ?::uuid, 'proposed', 'owner B hypothesis', jsonb_build_object(?::text, 1), now() - interval '1 minute'),
-			    (?::uuid, ?::uuid, ?::uuid, 'proposed', 'owner C hypothesis', jsonb_build_object(?::text, 1), now())
+			    (?::uuid, ?::uuid, ?::uuid, 'proposed', 'owner A hypothesis', jsonb_build_object(?::text, 1), now() - interval '4 minutes', now() - interval '2 minutes'),
+			    (?::uuid, ?::uuid, ?::uuid, 'proposed', 'owner B hypothesis', jsonb_build_object(?::text, 1), now() - interval '5 minutes', now() - interval '1 minute'),
+			    (?::uuid, ?::uuid, ?::uuid, 'proposed', 'owner C hypothesis', jsonb_build_object(?::text, 1), now(), now())
 		`, teamA, hypothesisA, ownerA, missingSourceA,
 			teamA, hypothesisB, ownerB, missingSourceB,
 			teamC, hypothesisC, ownerC, missingSourceC).Error
@@ -271,6 +290,28 @@ func TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, records, 2)
 	assert.ElementsMatch(t, []string{ownerA, ownerB}, []string{records[0].OwnerProfileID, records[1].OwnerProfileID})
+
+	ascending, _, err := repo.ListHypotheses(ctx, ListHypothesesInput{
+		TeamID:    teamA,
+		Limit:     10,
+		Sort:      "updated_at",
+		Direction: "asc",
+	})
+	require.NoError(t, err)
+	require.Len(t, ascending, 2)
+	assert.Equal(t, hypothesisA, ascending[0].HypothesisID)
+	assert.Equal(t, hypothesisB, ascending[1].HypothesisID)
+
+	created, _, err := repo.ListHypotheses(ctx, ListHypothesesInput{
+		TeamID:    teamA,
+		Limit:     10,
+		Sort:      "created_at",
+		Direction: "asc",
+	})
+	require.NoError(t, err)
+	require.Len(t, created, 2)
+	assert.Equal(t, hypothesisB, created[0].HypothesisID)
+	assert.Equal(t, hypothesisA, created[1].HypothesisID)
 
 	pending, err := repo.CountHypotheses(ctx, teamA, "proposed")
 	require.NoError(t, err)

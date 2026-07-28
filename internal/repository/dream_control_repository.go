@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -113,10 +114,10 @@ func (r *SemanticRepositoryImpl) RefreshTeamHypothesisStaleness(
 		return 0, fmt.Errorf("dream: refresh team hypothesis staleness: rls helper is required")
 	}
 
-	active := false
 	updated := 0
-	audited := 0
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		active := false
+		audited := 0
 		// Team scope authorizes the row lock while system mode permits cross-owner updates.
 		if err := tx.Exec("SELECT set_config('app.current_team_id', ?, true)", input.TeamID).Error; err != nil {
 			return fmt.Errorf("set team context: %w", err)
@@ -124,7 +125,7 @@ func (r *SemanticRepositoryImpl) RefreshTeamHypothesisStaleness(
 		if err := ensureActiveTeamForMutation(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
-		return tx.WithContext(ctx).Raw(`
+		if err := tx.WithContext(ctx).Raw(`
 			WITH active_team AS MATERIALIZED (
 			    SELECT id
 			    FROM teams
@@ -174,16 +175,19 @@ func (r *SemanticRepositoryImpl) RefreshTeamHypothesisStaleness(
 		`, input.TeamID, input.Limit, input.ActorRole, input.ClientIP,
 			input.CorrelationID, input.ActorSource, input.Limit).
 			Row().
-			Scan(&active, &updated, &audited)
+			Scan(&active, &updated, &audited); err != nil {
+			return err
+		}
+		if !active {
+			return ErrTeamInactive
+		}
+		if audited != 1 {
+			return errors.New("audit record was not written")
+		}
+		return nil
 	})
 	if err != nil {
 		return 0, fmt.Errorf("dream: refresh team hypothesis staleness: %w", err)
-	}
-	if !active {
-		return 0, ErrTeamInactive
-	}
-	if audited != 1 {
-		return 0, fmt.Errorf("dream: refresh team hypothesis staleness: audit record was not written")
 	}
 	return updated, nil
 }

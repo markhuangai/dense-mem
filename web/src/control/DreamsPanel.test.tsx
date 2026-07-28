@@ -48,7 +48,16 @@ const dream: Dream = {
 
 describe("ControlDreamsPanel", () => {
   it("refreshes staleness before initial and manual reads but not filters or pagination", async () => {
-    const refreshTeamDreams = vi.fn(async () => ({ updated_count: 0 }));
+    let releaseManualRefresh = () => {};
+    const manualRefresh = new Promise<void>((resolve) => {
+      releaseManualRefresh = resolve;
+    });
+    const refreshTeamDreams = vi.fn()
+      .mockResolvedValueOnce({ updated_count: 0 })
+      .mockImplementationOnce(async () => {
+        await manualRefresh;
+        return { updated_count: 0 };
+      });
     const getTeamDreamingStatus = vi.fn(async () => status);
     const listTeamDreamingRuns = vi.fn(async () => []);
     const listTeamDreams = vi.fn(async () => ({ items: [dream], next_cursor: "next-page" }));
@@ -67,9 +76,15 @@ describe("ControlDreamsPanel", () => {
     expect(refreshTeamDreams.mock.invocationCallOrder[0]).toBeLessThan(getTeamDreamingStatus.mock.invocationCallOrder[0]);
     expect(refreshTeamDreams.mock.invocationCallOrder[0]).toBeLessThan(listTeamDreams.mock.invocationCallOrder[0]);
 
-    await userEvent.click(screen.getByRole("button", { name: "Refresh dreams" }));
+    const refreshButton = screen.getByRole("button", { name: "Refresh dreams" });
+    await userEvent.click(refreshButton);
     await waitFor(() => expect(refreshTeamDreams).toHaveBeenCalledTimes(2));
+    expect(refreshButton).toBeDisabled();
+    await userEvent.click(refreshButton);
+    expect(refreshTeamDreams).toHaveBeenCalledTimes(2);
+    releaseManualRefresh();
     await waitFor(() => expect(listTeamDreams).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(refreshButton).toBeEnabled());
 
     await userEvent.selectOptions(screen.getByLabelText("Status"), "proposed");
     await waitFor(() => expect(listTeamDreams).toHaveBeenCalledTimes(3));

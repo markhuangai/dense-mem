@@ -20,7 +20,7 @@ type ControlActor struct {
 type ControlDependencies struct {
 	Store     repository.DreamControlRepository
 	AppConfig AppConfig
-	Profiles  ProfileService
+	Teams     TeamConfigService
 }
 
 type ControlService interface {
@@ -46,10 +46,12 @@ func (s *controlService) List(ctx context.Context, teamID string, opts ListOptio
 		return nil, "", fmt.Errorf("control dream list: dream repository is required")
 	}
 	records, next, err := s.deps.Store.ListHypotheses(ctx, repository.ListHypothesesInput{
-		TeamID: teamID,
-		Status: opts.Status,
-		Limit:  opts.Limit,
-		Cursor: opts.Cursor,
+		TeamID:    teamID,
+		Status:    opts.Status,
+		Limit:     opts.Limit,
+		Cursor:    opts.Cursor,
+		Sort:      opts.Sort,
+		Direction: opts.Direction,
 	})
 	if err != nil {
 		return nil, "", translateDreamRepositoryError(err)
@@ -93,7 +95,7 @@ func (s *controlService) Status(ctx context.Context, teamID string) (*StatusResu
 	if s.deps.Store == nil {
 		return nil, fmt.Errorf("control dream status: dream repository is required")
 	}
-	cfg, err := resolveEffectiveConfig(ctx, teamID, s.deps.AppConfig, s.deps.Profiles)
+	cfg, err := resolveEffectiveTeamConfig(ctx, teamID, s.deps.AppConfig, s.deps.Teams)
 	if err != nil {
 		return nil, err
 	}

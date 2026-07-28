@@ -9,7 +9,6 @@ const DREAM_PAGE_SIZES = [10, 25, 50, 100];
 const DREAM_SORTS: Array<{ value: DreamSort; label: string }> = [
   { value: "updated_at", label: "Updated" },
   { value: "created_at", label: "Created" },
-  { value: "last_evaluated_at", label: "Evaluated" },
 ];
 const DEFAULT_DREAM_QUERY: DreamQuery = { status: "", limit: 25, sort: "updated_at", direction: "desc", cursor: "" };
 
@@ -88,6 +87,7 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
               className="icon-button"
               type="button"
               aria-label="Refresh dreams"
+              disabled={loading}
               onClick={() => void loadData(dreamQuery, cursorStack, { refreshStaleness: true })}
             >
               <RefreshCw size={16} aria-hidden="true" />

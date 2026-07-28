@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
@@ -66,13 +68,9 @@ func resolveEffectiveConfig(
 	appConfig AppConfig,
 	profiles ProfileService,
 ) (EffectiveConfig, error) {
-	global := domain.DreamingRuntimeConfig{}
-	if appConfig != nil {
-		next, err := appConfig.DreamingRuntimeConfig(ctx)
-		if err != nil {
-			return EffectiveConfig{}, err
-		}
-		global = next
+	global, err := globalDreamingConfig(ctx, appConfig)
+	if err != nil {
+		return EffectiveConfig{}, err
 	}
 	var teamConfig map[string]any
 	if profiles != nil {
@@ -89,6 +87,40 @@ func resolveEffectiveConfig(
 		}
 	}
 	return EffectiveDreamingConfig(global, teamConfig)
+}
+
+func resolveEffectiveTeamConfig(
+	ctx context.Context,
+	teamID string,
+	appConfig AppConfig,
+	teams TeamConfigService,
+) (EffectiveConfig, error) {
+	global, err := globalDreamingConfig(ctx, appConfig)
+	if err != nil {
+		return EffectiveConfig{}, err
+	}
+	var teamConfig map[string]any
+	if teams != nil {
+		teamUUID, err := uuid.Parse(teamID)
+		if err != nil {
+			return EffectiveConfig{}, fmt.Errorf("dreaming config: invalid team id: %w", err)
+		}
+		team, err := teams.GetByID(ctx, teamUUID)
+		if err != nil {
+			return EffectiveConfig{}, err
+		}
+		if team != nil {
+			teamConfig = team.Config
+		}
+	}
+	return EffectiveDreamingConfig(global, teamConfig)
+}
+
+func globalDreamingConfig(ctx context.Context, appConfig AppConfig) (domain.DreamingRuntimeConfig, error) {
+	if appConfig == nil {
+		return domain.DreamingRuntimeConfig{}, nil
+	}
+	return appConfig.DreamingRuntimeConfig(ctx)
 }
 
 func normalizeRuntimeConfig(cfg domain.DreamingRuntimeConfig) domain.DreamingRuntimeConfig {
