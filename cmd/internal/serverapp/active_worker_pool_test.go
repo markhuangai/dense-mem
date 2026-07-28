@@ -144,6 +144,32 @@ func TestActiveTeamDispatcherDrainsInflightWorkBeforeCooling(t *testing.T) {
 	}
 }
 
+func TestActiveTeamDispatcherPreservesWorkSeenBeforeDrain(t *testing.T) {
+	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	dispatcher := newActiveTeamDispatcher(time.Second)
+	dispatcher.replaceTeams([]string{"team-a"}, now)
+
+	teamID, ok := dispatcher.next(now)
+	if !ok || teamID != "team-a" {
+		t.Fatalf("initial probe = %q, %t; want team-a, true", teamID, ok)
+	}
+	dispatcher.complete("team-a", true, now)
+
+	for i := 0; i < 2; i++ {
+		teamID, ok = dispatcher.next(now)
+		if !ok || teamID != "team-a" {
+			t.Fatalf("concurrent dispatch %d = %q, %t; want team-a, true", i, teamID, ok)
+		}
+	}
+	dispatcher.complete("team-a", true, now)
+	dispatcher.complete("team-a", false, now)
+
+	teamID, ok = dispatcher.next(now)
+	if !ok || teamID != "team-a" {
+		t.Fatalf("dispatch after mixed burst = %q, %t; want team-a, true", teamID, ok)
+	}
+}
+
 func TestActiveTeamWorkerPoolListsTeamsOnceBeforeIdlePoll(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -156,12 +156,12 @@ func listActiveWorkerTeamIDs(ctx context.Context, profiles activeWorkerProfileLi
 }
 
 type activeTeamDispatchEntry struct {
-	present           bool
-	ready             bool
-	cooling           bool
-	workedDuringDrain bool
-	inFlight          int
-	nextProbe         time.Time
+	present       bool
+	ready         bool
+	cooling       bool
+	workedInBurst bool
+	inFlight      int
+	nextProbe     time.Time
 }
 
 type activeTeamDispatcher struct {
@@ -214,6 +214,9 @@ func (d *activeTeamDispatcher) next(now time.Time) (string, bool) {
 		if entry == nil || !entry.present || entry.cooling {
 			continue
 		}
+		if entry.inFlight == 0 {
+			entry.workedInBurst = false
+		}
 		entry.inFlight++
 		if entry.ready {
 			d.enqueue(teamID)
@@ -237,16 +240,13 @@ func (d *activeTeamDispatcher) complete(teamID string, worked bool, now time.Tim
 		}
 		return
 	}
+	if worked {
+		entry.workedInBurst = true
+	}
 	if !worked {
 		entry.ready = false
-		if !entry.cooling {
-			entry.workedDuringDrain = false
-		}
 		entry.cooling = true
 		d.removeQueued(teamID)
-	}
-	if worked && entry.cooling {
-		entry.workedDuringDrain = true
 	}
 	if worked && !entry.cooling {
 		becameReady := !entry.ready
@@ -258,10 +258,10 @@ func (d *activeTeamDispatcher) complete(teamID string, worked bool, now time.Tim
 		}
 	}
 	if entry.cooling && entry.inFlight == 0 {
-		workedDuringDrain := entry.workedDuringDrain
+		workedInBurst := entry.workedInBurst
 		entry.cooling = false
-		entry.workedDuringDrain = false
-		if workedDuringDrain {
+		entry.workedInBurst = false
+		if workedInBurst {
 			entry.ready = true
 			d.enqueueFront(teamID)
 			return
