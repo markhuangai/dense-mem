@@ -70,7 +70,7 @@ func exportMemoryPackOutputSchema() map[string]any {
 	return closedObject(
 		[]string{"artifact_json", "content_sha256", "filename", "counts", "omissions"},
 		map[string]any{
-			"artifact_json":  schemaString("Canonical dense-mem.memory-pack.v2 JSON.", memoryPackArtifactMaxLength),
+			"artifact_json":  schemaString("Canonical dense-mem.memory-pack.v2.3 JSON.", memoryPackArtifactMaxLength),
 			"content_sha256": sHA256Schema(),
 			"filename":       schemaString("Suggested artifact filename.", 256),
 			"counts":         countMapSchema(),
@@ -85,7 +85,7 @@ func inspectMemoryPackOutputSchema() map[string]any {
 		[]string{"valid", "format", "content_sha256", "mode", "counts", "conflicts", "expected_outcomes"},
 		map[string]any{
 			"valid":             map[string]any{"type": "boolean"},
-			"format":            schemaEnum([]string{"dense-mem.memory-pack.v2"}),
+			"format":            schemaEnum([]string{"dense-mem.memory-pack.v2.3"}),
 			"content_sha256":    sHA256Schema(),
 			"mode":              schemaEnum([]string{"review", "trusted"}),
 			"counts":            countMapSchema(),

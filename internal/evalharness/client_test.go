@@ -554,6 +554,44 @@ func TestHTTPClientImportCorpusReportsPlacementResultFailureCause(t *testing.T) 
 	}
 }
 
+func TestHTTPClientImportCorpusAllowsAwaitingReviewPlacement(t *testing.T) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "tool:remember":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id":        "ingest-review",
+				"processing_state": "queued",
+				"evidence":         []map[string]any{{"id": "fragment-review"}},
+			})
+		case "tool:get_memory_placement":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ingest_id":        "ingest-review",
+				"processing_state": "awaiting_review",
+				"items": []map[string]any{{
+					"evidence_id":  "evidence-review",
+					"search_state": "current",
+				}},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-review", Content: "content"}})
+	if err != nil {
+		t.Fatalf("ImportCorpus: %v", err)
+	}
+	ref, ok := mapping.BySourceDocID["doc-review"]
+	if !ok || ref.Type != "evidence" || ref.ID != "fragment-review" {
+		t.Fatalf("source mapping = %+v, %v", ref, ok)
+	}
+	if refs := mapping.BySourceDocIDAndType["doc-review"]["evidence"]; len(refs) != 1 || refs[0].ID != "fragment-review" {
+		t.Fatalf("evidence mappings = %+v", refs)
+	}
+}
+
 func TestHTTPClientImportCorpusReportsPlacementFailureCause(t *testing.T) {
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

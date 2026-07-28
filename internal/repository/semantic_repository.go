@@ -246,9 +246,9 @@ func (r *SemanticRepositoryImpl) ApplyRelationshipDecision(
 		if err := validateRelationshipEndpointKinds(ctx, tx, input, predicate); err != nil {
 			return err
 		}
-		tier, status := tierStatusForVerdict(input.EvidenceVerdict, input.PromoteToFact)
+		status := statusForVerdict(input.EvidenceVerdict)
 		groupKey := semanticGroupKey(input)
-		recordState, err := upsertRelationshipRecord(ctx, tx, input, predicate, tier, status, groupKey)
+		recordState, err := upsertRelationshipRecord(ctx, tx, input, predicate, status, groupKey)
 		if err != nil {
 			return err
 		}
@@ -283,9 +283,7 @@ func (r *SemanticRepositoryImpl) ApplyRelationshipDecision(
 				TeamID:              input.TeamID,
 				OwnerProfileID:      input.OwnerProfileID,
 				RelationshipID:      recordState.Record.RelationshipID,
-				FromTier:            recordState.FromTier,
 				FromStatus:          recordState.FromStatus,
-				ToTier:              tier,
 				ToStatus:            status,
 				Reason:              "verifier_decision",
 				VerificationEventID: verificationID,
@@ -360,9 +358,7 @@ func (r *SemanticRepositoryImpl) RetractRelationship(
 			OwnerProfileID: input.OwnerProfileID,
 			RelationshipID: input.RelationshipID,
 			IdempotencyKey: input.IdempotencyKey,
-			FromTier:       current.Tier,
 			FromStatus:     current.Status,
-			ToTier:         current.Tier,
 			ToStatus:       string(domain.RelationshipStatusRetracted),
 			Reason:         input.Reason,
 		})
@@ -373,9 +369,7 @@ func (r *SemanticRepositoryImpl) RetractRelationship(
 			TeamID:         input.TeamID,
 			TransitionID:   transitionID,
 			RelationshipID: input.RelationshipID,
-			FromTier:       current.Tier,
 			FromStatus:     current.Status,
-			ToTier:         current.Tier,
 			ToStatus:       string(domain.RelationshipStatusRetracted),
 			IdempotencyKey: input.IdempotencyKey,
 		}
@@ -418,9 +412,7 @@ func (r *SemanticRepositoryImpl) ApplyRelationshipSupportDecision(
 				RelationshipID:    existing.RelationshipID,
 				Decision:          existing.Decision,
 				IdempotencyKey:    input.IdempotencyKey,
-				FromTier:          current.Tier,
 				FromStatus:        current.Status,
-				ToTier:            current.Tier,
 				ToStatus:          current.Status,
 				SupportCount:      current.SupportCount,
 				SourceGroupCount:  current.SourceGroupCount,
@@ -461,9 +453,7 @@ func (r *SemanticRepositoryImpl) ApplyRelationshipSupportDecision(
 			RelationshipID:    input.RelationshipID,
 			Decision:          input.Decision,
 			IdempotencyKey:    input.IdempotencyKey,
-			FromTier:          recomputed.Before.Tier,
 			FromStatus:        recomputed.Before.Status,
-			ToTier:            recomputed.After.Tier,
 			ToStatus:          recomputed.After.Status,
 			SupportCount:      recomputed.After.SupportCount,
 			SourceGroupCount:  recomputed.After.SourceGroupCount,
@@ -590,8 +580,7 @@ func loadRelationshipTransitionByIdempotency(
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT team_id::text, transition_id::text, relationship_id::text,
-		       COALESCE(from_tier, ''), COALESCE(from_status, ''),
-		       to_tier, to_status, idempotency_key
+		       COALESCE(from_status, ''), to_status, idempotency_key
 		FROM relationship_transition_events
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
@@ -610,9 +599,7 @@ func loadRelationshipTransitionByIdempotency(
 		&result.TeamID,
 		&result.TransitionID,
 		&result.RelationshipID,
-		&result.FromTier,
 		&result.FromStatus,
-		&result.ToTier,
 		&result.ToStatus,
 		&result.IdempotencyKey,
 	); err != nil {
@@ -718,7 +705,7 @@ func (r *SemanticRepositoryImpl) ListSemanticEdges(ctx context.Context, teamID s
 			       semantic_group_key, subject_entity_id::text, predicate_key,
 			       predicate_version, COALESCE(object_entity_id::text, ''),
 			       COALESCE(object_value_id::text, ''), relationship_kind,
-			       current_cardinality, polarity, COALESCE(scope_key, ''), tier,
+			       current_cardinality, polarity, COALESCE(scope_key, ''),
 			       support_count, source_group_count, version
 			FROM semantic_edges
 			WHERE team_id = ?::uuid
@@ -735,8 +722,7 @@ func (r *SemanticRepositoryImpl) ListSemanticEdges(ctx context.Context, teamID s
 				&edge.SemanticGroupKey, &edge.SubjectEntityID, &edge.PredicateKey,
 				&edge.PredicateVersion, &edge.ObjectEntityID, &edge.ObjectValueID,
 				&edge.RelationshipKind, &edge.CurrentCardinality, &edge.Polarity,
-				&edge.ScopeKey, &edge.Tier, &edge.SupportCount, &edge.SourceGroupCount,
-				&edge.Version); err != nil {
+				&edge.ScopeKey, &edge.SupportCount, &edge.SourceGroupCount, &edge.Version); err != nil {
 				return err
 			}
 			edges = append(edges, edge)
@@ -756,7 +742,12 @@ func (r *SemanticRepositoryImpl) withTeamProfileTx(ctx context.Context, teamID, 
 	if r.rls == nil {
 		return errors.New("semantic: rls helper is required")
 	}
-	return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, fn)
+	return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
 }
 
 func (r *SemanticRepositoryImpl) withTeamTx(ctx context.Context, teamID string, fn func(tx *gorm.DB) error) error {

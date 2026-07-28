@@ -254,7 +254,6 @@ func TestSemanticRelationshipLifecycleAndRLS(t *testing.T) {
 		},
 	})
 	require.NotNil(t, first.Relationship)
-	assert.Equal(t, "validated_claim", first.Relationship.Tier)
 	assert.Equal(t, "active", first.Relationship.Status)
 	assert.Equal(t, 1, first.Relationship.SupportCount)
 
@@ -309,7 +308,6 @@ func TestSemanticRelationshipLifecycleAndRLS(t *testing.T) {
 		EvidenceVerdict: "insufficient",
 	})
 	require.NotNil(t, candidate.Relationship)
-	assert.Equal(t, "candidate", candidate.Relationship.Tier)
 	assert.Equal(t, "pending_evidence", candidate.Relationship.Status)
 
 	hypothesisID, err := semanticRepo.CreateHypothesis(ctx, CreateHypothesisInput{
@@ -887,9 +885,7 @@ func TestInsertRelationshipTransitionReturnsExistingIDForIdempotentReplay(t *tes
 			OwnerProfileID: ownerID,
 			RelationshipID: decision.Relationship.RelationshipID,
 			IdempotencyKey: "transition-replay-key",
-			FromTier:       "candidate",
 			FromStatus:     "active",
-			ToTier:         "candidate",
 			ToStatus:       "active",
 			Reason:         "idempotency replay",
 		}

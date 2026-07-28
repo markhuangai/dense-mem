@@ -194,7 +194,86 @@ func (r *SearchRepositoryImpl) CheckSearchReadiness(ctx context.Context) (*Searc
 			})
 		}
 	}
+	incompleteRelationships, err := r.relationshipProjectionTextIncomplete(ctx, contract)
+	if err != nil {
+		return nil, err
+	}
+	if incompleteRelationships {
+		readiness.Ready = false
+		readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
+			Code:    "relationship_projection_text_incomplete",
+			Message: "eligible relationship search documents are missing projection format 2 text",
+		})
+	}
 	return readiness, nil
+}
+
+func (r *SearchRepositoryImpl) relationshipProjectionTextIncomplete(ctx context.Context, contract *ActiveSearchContract) (bool, error) {
+	var incomplete bool
+	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		return tx.WithContext(ctx).Raw(`
+			WITH activated_generation AS (
+			    SELECT DISTINCT ON (team_id)
+			           team_id, projection_generation_id
+			    FROM search_projection_generations
+			    WHERE source_kind = 'relationship'
+			      AND projection_format_version = 2
+			      AND state = 'current'
+			      AND activated_at IS NOT NULL
+			    ORDER BY team_id, generation DESC, created_at DESC
+			),
+			latest_generation AS (
+			    SELECT DISTINCT ON (team_id)
+			           team_id, projection_generation_id
+			    FROM search_projection_generations
+			    WHERE source_kind = 'relationship'
+			      AND projection_format_version = 2
+			    ORDER BY team_id, generation DESC, created_at DESC
+			),
+			selected_generation AS (
+			    SELECT COALESCE(activated.team_id, latest.team_id) AS team_id,
+			           COALESCE(activated.projection_generation_id, latest.projection_generation_id) AS projection_generation_id
+			    FROM activated_generation AS activated
+			    FULL JOIN latest_generation AS latest
+			      ON latest.team_id = activated.team_id
+			)
+			SELECT EXISTS (
+			    SELECT 1
+			    FROM relationship_records AS relationship
+			    LEFT JOIN selected_generation AS generation
+			      ON generation.team_id = relationship.team_id
+			    WHERE relationship.identity_alias_of_relationship_id IS NULL
+			      AND relationship.status = 'active'
+			      AND relationship.support_count > 0
+			      AND NOT EXISTS (
+			          SELECT 1
+			          FROM search_documents AS document
+			          WHERE document.team_id = relationship.team_id
+			            AND document.source_kind = 'relationship'
+			            AND document.source_id = relationship.relationship_id
+			            AND document.embedding_contract_id = ?::uuid
+			            AND document.embedding_dimensions = ?
+			            AND document.projection_format_version = 2
+			            AND document.search_state IN ('pending', 'current')
+			            AND (
+			                document.projection_generation_id = generation.projection_generation_id
+			                OR (
+			                    document.projection_generation_id IS NULL
+			                    AND (
+			                        generation.projection_generation_id IS NULL
+			                        OR COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = generation.projection_generation_id::text
+			                    )
+			                )
+			            )
+			      )
+			    LIMIT 1
+			)
+			`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&incomplete).Error
+	})
+	if err != nil {
+		return false, fmt.Errorf("search: relationship projection readiness: %w", err)
+	}
+	return incomplete, nil
 }
 
 func (r *SearchRepositoryImpl) UpsertSearchDocument(
@@ -210,7 +289,7 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 		return nil, err
 	}
 	var result *SearchDocumentResult
-	err = r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+	err = r.withActiveTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
 			return err
 		}
@@ -222,31 +301,49 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 			WITH upserted AS (
 				INSERT INTO search_documents (
 				    team_id, owner_profile_id, source_kind, source_id, source_version,
+				    projection_format_version, projection_generation_id,
 				    document_version, embedding_contract_id, embedding_dimensions,
 				    search_state, document_text, document_hash, metadata
 				) VALUES (
-				    ?::uuid, ?::uuid, ?, ?::uuid, ?, 1, ?::uuid, ?,
+				    ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, 1, ?::uuid, ?,
 				    'pending', ?, ?, ?::jsonb
 				)
 				ON CONFLICT (team_id, source_kind, source_id, embedding_contract_id)
 				DO UPDATE SET
 				    owner_profile_id = EXCLUDED.owner_profile_id,
 				    source_version = EXCLUDED.source_version,
+				    projection_format_version = EXCLUDED.projection_format_version,
+				    projection_generation_id = EXCLUDED.projection_generation_id,
 				    document_version = CASE
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
+				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
 				        THEN search_documents.document_version
 				        ELSE search_documents.document_version + 1
 				    END,
 				    search_state = CASE
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
+				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
 				         AND search_documents.search_state = 'current'
 				        THEN 'current'
 				        ELSE 'pending'
 				    END,
 				    document_text = EXCLUDED.document_text,
 				    document_hash = EXCLUDED.document_hash,
+				    embedding = CASE
+				        WHEN search_documents.document_hash = EXCLUDED.document_hash
+				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+				        THEN search_documents.embedding
+				        ELSE NULL
+				    END,
+				    embedding_updated_at = CASE
+				        WHEN search_documents.document_hash = EXCLUDED.document_hash
+				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+				        THEN search_documents.embedding_updated_at
+				        ELSE NULL
+				    END,
 				    embedding_error = CASE
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
+				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
 				        THEN search_documents.embedding_error
 				        ELSE ''
 				    END,
@@ -254,11 +351,14 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 				    updated_at = now()
 				WHERE EXCLUDED.source_version >= search_documents.source_version
 				RETURNING team_id::text, search_document_id::text, owner_profile_id::text,
-				          source_kind, source_id::text, source_version, document_version,
+				          source_kind, source_id::text, source_version,
+				          projection_format_version, COALESCE(projection_generation_id::text, ''),
+				          document_version,
 				          embedding_contract_id::text, embedding_dimensions, search_state
 			)
 			SELECT * FROM upserted
 		`, input.TeamID, input.OwnerProfileID, input.SourceKind, input.SourceID, input.SourceVersion,
+			input.ProjectionFormat, input.ProjectionGenerationID,
 			contract.EmbeddingContractID, contract.EmbeddingDimensions, input.DocumentText,
 			input.DocumentHash, string(metadata)).Rows()
 		if err != nil {
@@ -280,6 +380,8 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 			&loaded.SourceKind,
 			&loaded.SourceID,
 			&loaded.SourceVersion,
+			&loaded.ProjectionFormat,
+			&loaded.ProjectionGenerationID,
 			&loaded.DocumentVersion,
 			&loaded.EmbeddingContractID,
 			&loaded.EmbeddingDimensions,
@@ -317,24 +419,33 @@ func (r *SearchRepositoryImpl) SearchFullText(ctx context.Context, input FullTex
 	hits := []SearchHit{}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		sourceFilter := ""
-		args := []any{input.Query, input.TeamID, input.Query}
+		args := []any{input.TeamID, input.Query, input.TeamID, input.Query}
 		if input.SourceKind != "" {
-			sourceFilter = "AND source_kind = ?"
+			sourceFilter = "AND document.source_kind = ?"
 			args = append(args, input.SourceKind)
 		}
 		args = append(args, input.Limit)
 		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
-			       source_version, document_version, embedding_contract_id::text,
-			       search_state,
+			WITH `+recallRelationshipGenerationScopeSQL+`
+			SELECT document.team_id::text, document.search_document_id::text, document.source_kind, document.source_id::text,
+			       document.source_version, document.document_version, document.embedding_contract_id::text,
+			       document.search_state,
 			       0::double precision AS distance,
-			       ts_rank_cd(search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
-			FROM search_documents
-			WHERE team_id = ?::uuid
-			  AND search_state IN ('pending', 'current')
-			  AND search_tsv @@ plainto_tsquery('simple', ?)
+			       ts_rank_cd(document.search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
+			FROM recall_relationship_generation AS generation
+			JOIN search_documents AS document
+			  ON document.team_id = ?::uuid
+			WHERE document.search_state IN ('pending', 'current')
+			  AND document.search_tsv @@ plainto_tsquery('simple', ?)
+			  AND (
+			      document.source_kind <> 'relationship'
+			      OR (
+			          document.projection_format_version = 2
+			          AND `+recallRelationshipGenerationDocumentSQL+`
+			      )
+			  )
 			  `+sourceFilter+`
-			ORDER BY text_rank DESC, updated_at DESC, search_document_id ASC
+			ORDER BY text_rank DESC, document.updated_at DESC, document.search_document_id ASC
 			LIMIT ?
 		`, args...).Rows()
 		if err != nil {
@@ -400,6 +511,36 @@ func (r *SearchRepositoryImpl) SearchExactVector(ctx context.Context, input Exac
 				  AND embedding_dimensions = ?
 				  AND search_state = 'current'
 				  AND embedding IS NOT NULL
+				  AND (
+				      source_kind <> 'relationship'
+					      OR (
+					          projection_format_version = 2
+					          AND (
+					              NOT EXISTS (
+					                  SELECT 1
+					                  FROM search_projection_generations AS generation
+					                  WHERE generation.team_id = search_documents.team_id
+					                    AND generation.source_kind = 'relationship'
+					                    AND generation.projection_format_version = search_documents.projection_format_version
+					              )
+					              OR EXISTS (
+					              SELECT 1
+					              FROM search_projection_generations AS generation
+					              WHERE generation.team_id = search_documents.team_id
+					                AND generation.source_kind = 'relationship'
+					                AND generation.projection_format_version = search_documents.projection_format_version
+					                AND generation.state = 'current'
+				                AND (
+				                    generation.projection_generation_id = search_documents.projection_generation_id
+				                    OR (
+				                        search_documents.projection_generation_id IS NULL
+				                        AND COALESCE(search_documents.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = generation.projection_generation_id::text
+				                    )
+				                )
+					              )
+					          )
+				      )
+				  )
 				  `+sourceFilter+`
 				LIMIT ?
 			) AS exact_candidates
@@ -422,6 +563,36 @@ func (r *SearchRepositoryImpl) SearchExactVector(ctx context.Context, input Exac
 				  AND embedding_dimensions = ?
 				  AND search_state = 'current'
 				  AND embedding IS NOT NULL
+					  AND (
+					      source_kind <> 'relationship'
+						      OR (
+						          projection_format_version = 2
+						          AND (
+						              NOT EXISTS (
+						                  SELECT 1
+						                  FROM search_projection_generations AS generation
+						                  WHERE generation.team_id = search_documents.team_id
+						                    AND generation.source_kind = 'relationship'
+						                    AND generation.projection_format_version = search_documents.projection_format_version
+						              )
+						              OR EXISTS (
+						              SELECT 1
+						              FROM search_projection_generations AS generation
+						              WHERE generation.team_id = search_documents.team_id
+						                AND generation.source_kind = 'relationship'
+						                AND generation.projection_format_version = search_documents.projection_format_version
+						                AND generation.state = 'current'
+				                AND (
+				                    generation.projection_generation_id = search_documents.projection_generation_id
+				                    OR (
+				                        search_documents.projection_generation_id IS NULL
+				                        AND COALESCE(search_documents.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') = generation.projection_generation_id::text
+				                    )
+				                )
+						              )
+						          )
+					      )
+					  )
 				  `+sourceFilter+`
 				ORDER BY embedding <=> ?::vector ASC, search_document_id ASC
 				LIMIT ?
@@ -485,22 +656,23 @@ func enqueueEmbeddingJob(
 	maxAttempts = normalizeEmbeddingJobMaxAttempts(maxAttempts)
 	var jobID string
 	err := tx.WithContext(ctx).Raw(`
-		INSERT INTO embedding_jobs (
-		    team_id, search_document_id, owner_profile_id, source_kind, source_id,
-		    source_version, document_version, embedding_contract_id, embedding_dimensions,
-		    max_attempts
-		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid,
-		    ?, ?, ?::uuid, ?, ?
-		)
+			INSERT INTO embedding_jobs (
+			    team_id, search_document_id, owner_profile_id, source_kind, source_id,
+			    source_version, projection_format_version, projection_generation_id,
+			    document_version, embedding_contract_id, embedding_dimensions,
+			    max_attempts
+			) VALUES (
+			    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid,
+			    ?, ?, NULLIF(?, '')::uuid, ?, ?::uuid, ?, ?
+			)
 		ON CONFLICT (
 		    team_id, source_kind, source_id, source_version,
 		    document_version, embedding_contract_id
 		) DO NOTHING
 		RETURNING embedding_job_id::text
-		`, document.TeamID, document.SearchDocumentID, document.OwnerProfileID,
+			`, document.TeamID, document.SearchDocumentID, document.OwnerProfileID,
 		document.SourceKind, document.SourceID, document.SourceVersion,
-		document.DocumentVersion, document.EmbeddingContractID,
+		document.ProjectionFormat, document.ProjectionGenerationID, document.DocumentVersion, document.EmbeddingContractID,
 		document.EmbeddingDimensions, maxAttempts).Scan(&jobID).Error
 	if err != nil {
 		return "", err
@@ -536,14 +708,19 @@ func scanSearchHit(scanner searchHitScanner) (SearchHit, error) {
 	return hit, err
 }
 
-func (r *SearchRepositoryImpl) withTeamProfileTx(ctx context.Context, teamID, profileID string, fn func(tx *gorm.DB) error) error {
+func (r *SearchRepositoryImpl) withActiveTeamProfileTx(ctx context.Context, teamID, profileID string, fn func(tx *gorm.DB) error) error {
 	if _, err := r.database(); err != nil {
 		return err
 	}
 	if r.rls == nil {
 		return errors.New("search: rls helper is required")
 	}
-	return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, fn)
+	return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
 }
 
 func (r *SearchRepositoryImpl) withTeamTx(ctx context.Context, teamID string, fn func(tx *gorm.DB) error) error {
@@ -554,6 +731,21 @@ func (r *SearchRepositoryImpl) withTeamTx(ctx context.Context, teamID string, fn
 		return errors.New("search: rls helper is required")
 	}
 	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
+}
+
+func (r *SearchRepositoryImpl) withActiveTeamTx(ctx context.Context, teamID string, fn func(tx *gorm.DB) error) error {
+	if _, err := r.database(); err != nil {
+		return err
+	}
+	if r.rls == nil {
+		return errors.New("search: rls helper is required")
+	}
+	return r.rls.WithTeamTx(ctx, r.db, teamID, func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
 }
 
 func (r *SearchRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gorm.DB) error) error {

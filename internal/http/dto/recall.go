@@ -7,6 +7,8 @@ import "time"
 type RecallRequest struct {
 	Query                string     `query:"query" validate:"required,max=512"`
 	Limit                int        `query:"limit" validate:"min=0,max=50"`
+	RelationshipLimit    *int       `query:"relationship_limit" validate:"omitempty,min=0,max=20"`
+	CommunityLimit       *int       `query:"community_limit" validate:"omitempty,min=0,max=10"`
 	ValidAt              *time.Time `query:"valid_at"`
 	KnownAt              *time.Time `query:"known_at"`
 	KnownEvidenceIDs     []string   `query:"known_evidence_ids" validate:"max=200,dive,uuid"`

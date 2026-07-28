@@ -257,7 +257,7 @@ func evaluationQuery(input EvaluationListInput, limit int, offset int, ids ...st
 				       subject_entity_id::text, predicate_key, predicate_version,
 				       COALESCE(object_entity_id::text, '') AS object_entity_id,
 				       COALESCE(object_value_id::text, '') AS object_value_id,
-				       relationship_kind, current_cardinality, tier, status, polarity,
+				       relationship_kind, current_cardinality, status, polarity,
 				       COALESCE(scope_key, '') AS scope_key, valid_from, valid_to,
 				       support_count, source_group_count, version, metadata, created_at, updated_at
 				FROM relationship_records
@@ -275,7 +275,6 @@ func evaluationQuery(input EvaluationListInput, limit int, offset int, ids ...st
 				'object_value_id', object_value_id,
 				'relationship_kind', relationship_kind,
 				'current_cardinality', current_cardinality,
-				'tier', tier,
 				'status', status,
 				'polarity', polarity,
 				'scope_key', scope_key,

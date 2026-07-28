@@ -188,6 +188,7 @@ Resume behavior is based on the latest placement attempt for each
 | Latest state | Resume action |
 | --- | --- |
 | `completed` and live fragment exists | Skip the corpus row. |
+| `awaiting_review` and live fragment exists | Skip the corpus row and report review burden separately. |
 | `failed` | Retry the corpus row. |
 | No attempt | Import the corpus row. |
 | `queued` or `processing` | Wait for the placement worker; do not duplicate it. |
@@ -195,7 +196,7 @@ Resume behavior is based on the latest placement attempt for each
 
 One failed concurrent request stops scheduling new rows but allows already
 active requests to finish. A later monitor pass continues from the latest
-completed placements instead of restarting the corpus.
+terminal placements instead of restarting the corpus.
 
 The runtime identity contains the seed and suite hashes, release-policy hash,
 MCP contract, runner binary hash, local server image ID, reviewer/verifier and
@@ -215,9 +216,10 @@ tests/eval/runtime/v1/runs/import/knowledge_mapping.json
 tests/eval/runtime/v1/runs/baseline/summary.json
 ```
 
-`placement_summary.json` reports latest completed/failed/pending counts,
-category and item-status counts, promotion rate, rejection rate, and historical
-retry attempts. Recall starts only when all latest placements are completed,
+`placement_summary.json` reports latest completed/awaiting-review/failed/pending
+counts, category and item-status counts, promotion rate, rejection rate, review
+burden, and historical retry attempts. Recall starts only when all latest
+placements are terminal (`completed` or `awaiting_review` with a live fragment),
 there are no failed or pending latest attempts, the team-scoped eval fragment
 count equals `counts.corpus`, and the remember-only import artifacts exist.
 

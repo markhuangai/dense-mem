@@ -333,6 +333,9 @@ func (s *APIKeyServiceImpl) CreateStandardKey(ctx context.Context, profileID uui
 		if conflict := apiKeyCreateConflict(err, name); conflict != nil {
 			return nil, "", conflict
 		}
+		if errors.Is(err, repository.ErrTeamInactive) {
+			return nil, "", httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team with id '%s' not found", profileID.String()))
+		}
 		return nil, "", fmt.Errorf("failed to create api key: %w", err)
 	}
 

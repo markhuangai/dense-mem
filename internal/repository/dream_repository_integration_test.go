@@ -21,6 +21,7 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 	semanticRepo := NewSemanticRepository(appDB, rls)
 
 	mark := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Mark Huang")
+	alex := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Alex")
 	denseMem := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
 	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
 
@@ -56,6 +57,33 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 	})
 	require.NotNil(t, active.Relationship)
 
+	unsupportedIngest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"dream unsupported active source", "Alex works on PostgreSQL.")
+	unsupported := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        unsupportedIngest.IngestID,
+		SubjectEntityID: alex.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  postgres.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     unsupportedIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:dream-unsupported",
+			SpanStart:      0,
+			SpanEnd:        len("Alex works on PostgreSQL."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, unsupported.Relationship)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_records
+			SET support_count = 0
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+		`, teamID, unsupported.Relationship.RelationshipID).Error
+	}))
+
 	run, err := semanticRepo.ClaimDreamCycle(ctx, DreamCycleClaimInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
@@ -76,8 +104,9 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, inputs, 2)
-	assertDreamInput(t, inputs, candidate.Relationship.RelationshipID, "candidate", "pending_evidence")
-	assertDreamInput(t, inputs, active.Relationship.RelationshipID, "validated_claim", "active")
+	assertDreamInput(t, inputs, candidate.Relationship.RelationshipID, "pending_evidence")
+	assertDreamInput(t, inputs, active.Relationship.RelationshipID, "active")
+	assertDreamInputMissing(t, inputs, unsupported.Relationship.RelationshipID)
 
 	proposal := UpsertHypothesisInput{
 		TeamID:           teamID,
@@ -100,7 +129,7 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 		ContentHash:           "sha256:dream-candidate-postgres",
 		GeneratorKind:         "test",
 		GeneratorVersion:      "test-dream",
-		Payload:               map[string]any{"source_tier": "candidate"},
+		Payload:               map[string]any{"source_status": "pending_evidence"},
 	}
 	record, inserted, err := semanticRepo.UpsertHypothesis(ctx, proposal)
 	require.NoError(t, err)
@@ -173,21 +202,29 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 		ContentHash:           "sha256:dream-exact-active",
 		GeneratorKind:         "test",
 		GeneratorVersion:      "test-dream",
-		Payload:               map[string]any{"source_tier": "validated_claim"},
+		Payload:               map[string]any{"source_status": "active"},
 	}
 	_, _, err = semanticRepo.UpsertHypothesis(ctx, exactActive)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrDreamExactRelationshipExists), err)
 }
 
-func assertDreamInput(t *testing.T, inputs []DreamInput, relationshipID, tier, status string) {
+func assertDreamInput(t *testing.T, inputs []DreamInput, relationshipID, status string) {
 	t.Helper()
 	for _, input := range inputs {
 		if input.RelationshipID == relationshipID {
-			assert.Equal(t, tier, input.Tier)
 			assert.Equal(t, status, input.Status)
 			return
 		}
 	}
 	t.Fatalf("missing dream input %s in %+v", relationshipID, inputs)
+}
+
+func assertDreamInputMissing(t *testing.T, inputs []DreamInput, relationshipID string) {
+	t.Helper()
+	for _, input := range inputs {
+		if input.RelationshipID == relationshipID {
+			t.Fatalf("unexpected dream input %s in %+v", relationshipID, inputs)
+		}
+	}
 }

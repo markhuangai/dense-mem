@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -274,17 +275,51 @@ func (r *ProfileRepositoryImpl) Update(ctx context.Context, profile *domain.Prof
 	return nil
 }
 
-// SoftDelete marks a profile as deleted by setting status='deleted' and deleted_at=now().
-// Does NOT check for active keys - that is the service layer's responsibility.
+// SoftDelete tombstones a team and revokes its active profile credentials.
 func (r *ProfileRepositoryImpl) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	now := time.Now().UTC()
 
 	// Soft-delete is an UPDATE; must satisfy profiles_self_access (id = app.current_profile_id).
 	err := r.rls.WithProfileTx(ctx, r.db, id.String(), func(tx *gorm.DB) error {
-		return tx.Exec(`
+		var lockedID string
+		if err := tx.Raw(`
+			SELECT id::text
+			FROM teams
+			WHERE id = $1 AND deleted_at IS NULL
+			FOR UPDATE
+		`, id).Row().Scan(&lockedID); errors.Is(err, sql.ErrNoRows) {
+			return gorm.ErrRecordNotFound
+		} else if err != nil {
+			return err
+		}
+		if lockedID == "" {
+			return gorm.ErrRecordNotFound
+		}
+		if err := tx.Exec(`
 			UPDATE teams
-			SET status = 'deleted', deleted_at = $1
+			SET status = 'deleted', deleted_at = $1, updated_at = $1
 			WHERE id = $2 AND deleted_at IS NULL
+		`, now, id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			UPDATE embedding_jobs
+			SET status = 'stale',
+			    error = 'team deleted before embedding processing',
+			    completed_at = $1,
+			    lease_until = NULL,
+			    worker_id = '',
+			    updated_at = $1
+			WHERE team_id = $2
+			  AND status IN ('queued', 'processing')
+		`, now, id).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE team_profiles
+			SET revoked_at = $1, updated_at = $1
+			WHERE team_id = $2
+			  AND revoked_at IS NULL
 		`, now, id).Error
 	})
 

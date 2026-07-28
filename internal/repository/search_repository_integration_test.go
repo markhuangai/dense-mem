@@ -746,6 +746,55 @@ func TestSearchReadinessAndHNSWPlan(t *testing.T) {
 	assert.Contains(t, incompatible.Reasons[0].Message, "indexed expression")
 }
 
+func TestSearchReadinessRequiresRelationshipProjectionForActiveContract(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-readiness-active-contract-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-readiness-active-contract-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-readiness-old-contract", 3, "exact", "")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	repo := NewSearchRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Nico")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense Mem")
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"search readiness active contract", "Nico works on Dense Mem.")
+	decision := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        ingest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: "search:readiness-active-contract",
+			SpanStart:      0,
+			SpanEnd:        len("Nico works on Dense Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+	_, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		SourceKind:     "relationship",
+		SourceID:       decision.Relationship.RelationshipID,
+		SourceVersion:  int64(decision.Relationship.Version),
+		DocumentText:   "relationship\nsubject: Nico\npredicate: works on\nobject: Dense Mem\npolarity: positive",
+	})
+	require.NoError(t, err)
+	insertSearchTestContract(t, adminDB, rls, "search-readiness-new-contract", 3, "exact", "")
+
+	readiness, err := repo.CheckSearchReadiness(ctx)
+	require.NoError(t, err)
+	require.False(t, readiness.Ready)
+	require.NotEmpty(t, readiness.Reasons)
+	assert.Equal(t, "relationship_projection_text_incomplete", readiness.Reasons[0].Code)
+}
+
 func createSearchTestHNSWIndex(
 	t *testing.T,
 	db *gorm.DB,

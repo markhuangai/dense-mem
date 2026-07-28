@@ -218,9 +218,19 @@ func (r *SkillPackImportRepositoryImpl) ListChanges(ctx context.Context, teamID,
 
 func (r *SkillPackImportRepositoryImpl) withTeamTx(ctx context.Context, teamID string, fn func(tx *gorm.DB) error) error {
 	if r.rls != nil {
-		return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
+		return r.rls.WithTeamTx(ctx, r.db, teamID, func(tx *gorm.DB) error {
+			if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
+				return err
+			}
+			return fn(tx)
+		})
 	}
-	return r.db.WithContext(ctx).Transaction(fn)
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
 }
 
 func encodeJSON(m map[string]any) ([]byte, error) {

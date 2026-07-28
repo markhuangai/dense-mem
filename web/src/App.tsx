@@ -540,7 +540,7 @@ function TeamEditor({
   }
 
   async function remove() {
-    if (!window.confirm(`Delete team "${team.name}"? This cannot be undone.`)) {
+    if (!window.confirm(`Delete team "${team.name}"? This disables access and hides the team. Knowledge and audit history are preserved.`)) {
       return;
     }
     setBusy(true);

@@ -219,6 +219,8 @@ func recallMemoryInputSchema() map[string]any {
 	return contractInput([]string{"query"}, map[string]any{
 		"query":                  query,
 		"limit":                  map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
+		"relationship_limit":     map[string]any{"type": "integer", "minimum": 0, "maximum": 20},
+		"community_limit":        map[string]any{"type": "integer", "minimum": 0, "maximum": 10},
 		"valid_at":               nullableDateTime("Real-world recall time."),
 		"known_at":               nullableDateTime("System-knowledge recall time."),
 		"known_evidence_ids":     stringArraySchema("Evidence UUID already seen.", 200, 128),
@@ -422,7 +424,6 @@ func relationshipOutcomeArraySchema() map[string]any {
 				"observation_id":      nullableString("Durable observation ID when one exists.", 128),
 				"relationship_id":     nullableString("Relationship ID when one exists.", 128),
 				"owner_profile_id":    schemaString("Relationship owner profile ID.", 128),
-				"tier":                schemaEnum(domain.RelationshipTiers()),
 				"relationship_status": schemaEnum(domain.RelationshipStatuses()),
 				"category":            schemaEnum(domain.RelationshipOutcomeCategories()),
 				"reason":              schemaString("Bounded placement explanation.", 1000),
@@ -470,14 +471,58 @@ func correctEntityResolutionOutputSchema() map[string]any {
 
 func recallMemoryOutputSchema() map[string]any {
 	return closedObject(
-		[]string{"recall_id", "results", "conflicts", "discovery_paths", "discovery_guidance", "related_hypotheses"},
+		[]string{
+			"recall_id", "results", "conflicts", "related_relationships",
+			"related_communities", "related_hypotheses", "search_states", "degradations",
+		},
 		map[string]any{
-			"recall_id":          schemaString("Recall event ID.", 128),
-			"results":            array(recallResultSchema(), 0, 50),
-			"conflicts":          array(recallConflictSchema(), 0, 20),
-			"discovery_paths":    array(recallDiscoveryPathSchema(), 0, 50),
-			"discovery_guidance": schemaString("Bounded follow-up guidance.", 1000),
-			"related_hypotheses": array(hypothesisSummarySchema(), 0, 20),
+			"recall_id":             schemaString("Recall event ID.", 128),
+			"results":               array(recallResultSchema(), 0, 50),
+			"conflicts":             array(recallConflictSchema(), 0, 20),
+			"related_relationships": array(relatedRelationshipSchema(), 0, 20),
+			"related_communities":   array(recallDiscoveryPathSchema(), 0, 10),
+			"related_hypotheses":    array(hypothesisSummarySchema(), 0, 20),
+			"search_states":         recallSearchStatesSchema(),
+			"degradations":          array(recallDegradationSchema(), 0, 10),
+		},
+	)
+}
+
+func relatedRelationshipSchema() map[string]any {
+	return closedObject(
+		[]string{"relationship_id", "equivalent_relationship_ids", "subject", "predicate", "object", "polarity", "evidence_ids"},
+		map[string]any{
+			"relationship_id":             schemaString("Representative Relationship ID.", 128),
+			"equivalent_relationship_ids": stringArraySchema("Same semantic group Relationship ID.", 20, 128),
+			"subject":                     entityHandleSchema(),
+			"predicate":                   schemaString("Registered predicate key.", 128),
+			"object":                      semanticObjectSchema(),
+			"polarity":                    schemaEnum([]string{"+", "-"}),
+			"evidence_ids":                stringArraySchema("Evidence ID supporting this Relationship.", 50, 128),
+			"search_state":                schemaEnum(domain.SearchProjectionStates()),
+		},
+	)
+}
+
+func recallSearchStatesSchema() map[string]any {
+	return closedObject(
+		[]string{"evidence", "relationships"},
+		map[string]any{
+			"evidence":      schemaEnum(domain.SearchProjectionStates()),
+			"relationships": schemaEnum(domain.SearchProjectionStates()),
+		},
+	)
+}
+
+func recallDegradationSchema() map[string]any {
+	return closedObject(
+		[]string{"frontier", "code", "message"},
+		map[string]any{
+			"frontier":         schemaEnum([]string{"evidence", "relationships", "communities", "hypotheses"}),
+			"required_failure": map[string]any{"type": "boolean"},
+			"optional":         map[string]any{"type": "boolean"},
+			"code":             schemaString("Stable bounded degradation code.", 128),
+			"message":          schemaString("Safe bounded degradation message.", 512),
 		},
 	)
 }

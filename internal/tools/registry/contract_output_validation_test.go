@@ -29,7 +29,6 @@ func TestTraceContractOutputMapsCompletePublicLineage(t *testing.T) {
 			PredicateVersion: 1,
 			ObjectEntityID:   "entity-obj",
 			Polarity:         "+",
-			Tier:             "fact",
 			Status:           "active",
 			Version:          2,
 			ValidFrom:        &validFrom,
@@ -92,9 +91,7 @@ func TestTraceContractOutputMapsCompletePublicLineage(t *testing.T) {
 		Transitions: []repository.RelationshipTransitionEvent{{
 			TransitionID:   "transition-1",
 			RelationshipID: "rel-1",
-			FromTier:       "validated_claim",
 			FromStatus:     "active",
-			ToTier:         "fact",
 			ToStatus:       "active",
 			Reason:         "promoted",
 			CreatedAt:      now,
@@ -232,7 +229,7 @@ func TestAuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 	}
 
 	exported := exportMemoryPackContractOutput(&skillpackservice.ExportResult{
-		CanonicalJSON: `{"format":"dense-mem.memory-pack.v2"}`,
+		CanonicalJSON: `{"format":"` + skillpackservice.MemoryPackFormat + `"}`,
 		SHA256:        hash,
 		Filename:      "dense-mem-pack.json",
 		ItemCount:     1,

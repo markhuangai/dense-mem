@@ -23,6 +23,7 @@ var (
 	ErrPlacementLeaseConflict = errors.New("placement lease conflict")
 	ErrPlacementNotFound      = errors.New("placement not found")
 	ErrSourceRevisionConflict = errors.New("source revision conflict")
+	ErrTeamInactive           = errors.New("team is not active")
 )
 
 type LedgerRepository interface {
@@ -64,6 +65,7 @@ type EvidenceInput struct {
 	ExpectedPreviousRevisionToken string
 	SourceRevisionContentHash     string
 	SourceRevisionEnvelope        map[string]any
+	SupersedesFragmentIDs         []string
 	Labels                        []string
 	Metadata                      map[string]any
 	InitialEvent                  *SecurityEventDraft
@@ -224,6 +226,7 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 					ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
 					ContentHash:                   item.SourceRevisionContentHash,
 					Envelope:                      item.SourceRevisionEnvelope,
+					SupersedesFragmentIDs:         item.SupersedesFragmentIDs,
 				}, sources)
 				if err != nil {
 					return err
@@ -432,7 +435,12 @@ func (r *LedgerRepositoryImpl) withTeamProfileTx(ctx context.Context, teamID, pr
 	if r.rls == nil {
 		return errors.New("ledger: rls helper is required")
 	}
-	return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, fn)
+	return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
 }
 
 func (r *LedgerRepositoryImpl) withTeamTx(ctx context.Context, teamID string, fn func(tx *gorm.DB) error) error {
@@ -442,7 +450,12 @@ func (r *LedgerRepositoryImpl) withTeamTx(ctx context.Context, teamID string, fn
 	if r.rls == nil {
 		return errors.New("ledger: rls helper is required")
 	}
-	return r.rls.WithTeamTx(ctx, r.db, teamID, fn)
+	return r.rls.WithTeamTx(ctx, r.db, teamID, func(tx *gorm.DB) error {
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
 }
 
 func (r *LedgerRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
@@ -453,6 +466,25 @@ func (r *LedgerRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gor
 		return errors.New("ledger: rls helper is required")
 	}
 	return r.rls.WithSystemTx(ctx, r.db, fn)
+}
+
+func ensureActiveTeamForMutation(ctx context.Context, tx *gorm.DB, teamID string) error {
+	row := tx.WithContext(ctx).Raw(`
+		SELECT id::text
+		FROM teams
+		WHERE id = ?::uuid
+		  AND status = 'active'
+		  AND deleted_at IS NULL
+		FOR UPDATE
+	`, teamID).Row()
+	var id string
+	if err := row.Scan(&id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTeamInactive
+		}
+		return err
+	}
+	return nil
 }
 
 func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
@@ -486,6 +518,7 @@ func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
 		if input.Evidence[i].SourceRevisionContentHash == "" && input.Evidence[i].SourceKey != "" {
 			input.Evidence[i].SourceRevisionContentHash = input.Evidence[i].ContentHash
 		}
+		input.Evidence[i].SupersedesFragmentIDs = normalizeUUIDStringList(input.Evidence[i].SupersedesFragmentIDs)
 	}
 	return input
 }
@@ -539,6 +572,17 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 		if item.ExpectedPreviousRevisionToken != "" && item.SourceKey == "" {
 			return fmt.Errorf("evidence[%d].previous_source_revision requires source_key and source_revision", i)
 		}
+		if len(item.SupersedesFragmentIDs) > 0 && (item.SourceKey == "" || item.SourceRevisionToken == "" || item.ExpectedPreviousRevisionToken == "") {
+			return fmt.Errorf("evidence[%d].supersedes_fragment_ids requires source_key, source_revision, and previous_source_revision", i)
+		}
+		if len(item.SupersedesFragmentIDs) > 50 {
+			return fmt.Errorf("evidence[%d].supersedes_fragment_ids exceeds maximum 50", i)
+		}
+		for _, fragmentID := range item.SupersedesFragmentIDs {
+			if _, err := uuid.Parse(fragmentID); err != nil {
+				return fmt.Errorf("evidence[%d].supersedes_fragment_ids contains invalid UUID %q: %w", i, fragmentID, err)
+			}
+		}
 		if item.InitialEvent != nil {
 			if err := validateSecurityEventDraft(*item.InitialEvent); err != nil {
 				return fmt.Errorf("evidence[%d].security_event: %w", i, err)
@@ -547,35 +591,6 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 	}
 	if err := validateSourceRevisionBatch(input.Evidence); err != nil {
 		return err
-	}
-	return nil
-}
-
-type sourceRevisionBatch struct {
-	RevisionToken                 string
-	ExpectedPreviousRevisionToken string
-	SourceRevisionContentHash     string
-}
-
-func validateSourceRevisionBatch(evidence []EvidenceInput) error {
-	seen := make(map[string]sourceRevisionBatch)
-	for i, item := range evidence {
-		if item.SourceKey == "" {
-			continue
-		}
-		current := sourceRevisionBatch{
-			RevisionToken:                 item.SourceRevisionToken,
-			ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
-			SourceRevisionContentHash:     item.SourceRevisionContentHash,
-		}
-		previous, ok := seen[item.SourceKey]
-		if !ok {
-			seen[item.SourceKey] = current
-			continue
-		}
-		if previous != current {
-			return fmt.Errorf("evidence[%d].source_key %q revision fields must match earlier item in request", i, item.SourceKey)
-		}
 	}
 	return nil
 }

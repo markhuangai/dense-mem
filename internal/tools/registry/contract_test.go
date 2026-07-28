@@ -687,9 +687,14 @@ func TestDefaultRecallDoesNotPermitCandidatesOrHypotheses(t *testing.T) {
 			t.Fatalf("recall result exposes %s", forbidden)
 		}
 	}
-	for _, required := range []string{"discovery_paths", "discovery_guidance", "related_hypotheses"} {
+	for _, required := range []string{"related_relationships", "related_communities", "related_hypotheses", "search_states", "degradations"} {
 		if _, ok := props[required]; !ok {
 			t.Fatalf("recall output missing %s", required)
+		}
+	}
+	for _, removed := range []string{"discovery_paths", "discovery_guidance"} {
+		if _, ok := props[removed]; ok {
+			t.Fatalf("recall output exposes removed field %s", removed)
 		}
 	}
 	for _, internal := range []string{"search_state", "degradation"} {

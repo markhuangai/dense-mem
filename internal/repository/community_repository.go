@@ -88,7 +88,6 @@ type CommunityInput struct {
 	RelationshipID   string
 	OwnerProfileID   string
 	Version          int
-	Tier             string
 	SubjectEntityID  string
 	SubjectName      string
 	PredicateKey     string
@@ -333,11 +332,10 @@ func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input 
 				  AND valid_to IS NULL
 				ORDER BY team_id, entity_id, created_at DESC, entity_name_id DESC
 			)
-			SELECT relationship.relationship_id::text,
-			       relationship.owner_profile_id::text,
-			       relationship.version,
-			       relationship.tier,
-			       relationship.subject_entity_id::text,
+				SELECT relationship.relationship_id::text,
+				       relationship.owner_profile_id::text,
+				       relationship.version,
+				       relationship.subject_entity_id::text,
 			       COALESCE(subject_name.display_name, relationship.subject_entity_id::text) AS subject_name,
 			       relationship.predicate_key,
 			       relationship.predicate_version,
@@ -349,19 +347,19 @@ func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input 
 			 AND subject.entity_id = relationship.subject_entity_id
 			 AND subject.status = 'active'
 			JOIN entity_records AS object
-			  ON object.team_id = relationship.team_id
-			 AND object.entity_id = relationship.object_entity_id
-			 AND object.status = 'active'
+				  ON object.team_id = relationship.team_id
+				 AND object.entity_id = relationship.object_entity_id
+				 AND object.status = 'active'
 			LEFT JOIN canonical_names AS subject_name
 			  ON subject_name.team_id = relationship.team_id
 			 AND subject_name.entity_id = relationship.subject_entity_id
 			LEFT JOIN canonical_names AS object_name
-			  ON object_name.team_id = relationship.team_id
-			 AND object_name.entity_id = relationship.object_entity_id
-			WHERE relationship.team_id = ?::uuid
-			  AND relationship.status = 'active'
-			  AND relationship.tier IN ('validated_claim', 'fact')
-			  AND relationship.object_entity_id IS NOT NULL
+				  ON object_name.team_id = relationship.team_id
+				 AND object_name.entity_id = relationship.object_entity_id
+				WHERE relationship.team_id = ?::uuid
+				  AND relationship.status = 'active'
+				  AND relationship.support_count > 0
+				  AND relationship.object_entity_id IS NOT NULL
 			ORDER BY relationship.updated_at ASC, relationship.relationship_id ASC
 			LIMIT ?
 		`, input.TeamID, input.TeamID, input.Limit).Rows()
@@ -369,12 +367,12 @@ func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input 
 			return err
 		}
 		defer rows.Close()
-		for rows.Next() {
-			item := CommunityInput{}
-			if err := rows.Scan(&item.RelationshipID, &item.OwnerProfileID, &item.Version,
-				&item.Tier, &item.SubjectEntityID, &item.SubjectName,
-				&item.PredicateKey, &item.PredicateVersion, &item.ObjectEntityID,
-				&item.ObjectName); err != nil {
+			for rows.Next() {
+				item := CommunityInput{}
+				if err := rows.Scan(&item.RelationshipID, &item.OwnerProfileID, &item.Version,
+					&item.SubjectEntityID, &item.SubjectName, &item.PredicateKey,
+					&item.PredicateVersion, &item.ObjectEntityID,
+					&item.ObjectName); err != nil {
 				return err
 			}
 			out = append(out, item)
@@ -479,11 +477,11 @@ func (r *SemanticRepositoryImpl) RefreshCommunityStaleness(ctx context.Context, 
 				          WHERE source.team_id = record.team_id
 				            AND source.community_id = record.community_id
 				            AND (
-				                relationship.relationship_id IS NULL
-				                OR relationship.version <> source.relationship_version
-				                OR relationship.status <> 'active'
-				                OR relationship.tier NOT IN ('validated_claim', 'fact')
-				                OR relationship.object_entity_id IS NULL
+					                relationship.relationship_id IS NULL
+					                OR relationship.version <> source.relationship_version
+					                OR relationship.status <> 'active'
+					                OR relationship.support_count = 0
+					                OR relationship.object_entity_id IS NULL
 				            )
 				      )
 				  )
@@ -659,11 +657,11 @@ func (r *SemanticRepositoryImpl) RecallCommunityDiscovery(ctx context.Context, i
 			 AND community_source.community_id = community.community_id
 			JOIN relationship_records AS relationship
 			  ON relationship.team_id = community_source.team_id
-			 AND relationship.relationship_id = community_source.relationship_id
-			 AND relationship.version = community_source.relationship_version
-			 AND relationship.status = 'active'
-			 AND relationship.tier IN ('validated_claim', 'fact')
-			 AND relationship.object_entity_id IS NOT NULL
+				 AND relationship.relationship_id = community_source.relationship_id
+				 AND relationship.version = community_source.relationship_version
+				 AND relationship.status = 'active'
+				 AND relationship.support_count > 0
+				 AND relationship.object_entity_id IS NOT NULL
 			LEFT JOIN canonical_names AS subject_name
 			  ON subject_name.team_id = relationship.team_id
 			 AND subject_name.entity_id = relationship.subject_entity_id
@@ -854,7 +852,7 @@ func ensureCommunitySourcesCurrent(ctx context.Context, tx *gorm.DB, teamID stri
 		WHERE relationship.relationship_id IS NULL
 		   OR relationship.version <> expected.relationship_version
 		   OR relationship.status <> 'active'
-		   OR relationship.tier NOT IN ('validated_claim', 'fact')
+		   OR relationship.support_count = 0
 		   OR relationship.object_entity_id IS NULL
 		LIMIT 1
 	`, pq.Array(relationshipIDs), pq.Array(versions), teamID).Rows()

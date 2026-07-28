@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	MemoryPackFormat = "dense-mem.memory-pack.v2"
+	MemoryPackFormat = "dense-mem.memory-pack.v2.3"
 
 	MemoryPackSourceType = "memory_pack"
 	MemoryPackLabel      = "memory_pack_import"
@@ -65,7 +65,6 @@ type MemoryPackCandidate struct {
 	ObjectValueType  string `json:"object_value_type,omitempty"`
 	Object           string `json:"object"`
 	Polarity         string `json:"polarity,omitempty"`
-	Tier             string `json:"tier"`
 	SupportCount     int    `json:"support_count"`
 	SourceGroupCount int    `json:"source_group_count"`
 }
@@ -221,7 +220,6 @@ type MemoryPackRelationship struct {
 	Object                    MemoryPackEndpoint `json:"object"`
 	Polarity                  string             `json:"polarity,omitempty"`
 	ScopeKey                  string             `json:"scope_key,omitempty"`
-	Tier                      string             `json:"tier,omitempty"`
 	Status                    string             `json:"status,omitempty"`
 	SupportFragmentIDs        []string           `json:"support_fragment_ids,omitempty"`
 	Metadata                  map[string]any     `json:"metadata,omitempty"`

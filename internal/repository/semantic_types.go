@@ -189,7 +189,6 @@ type RelationshipRecord struct {
 	ObjectValueID      string
 	RelationshipKind   string
 	CurrentCardinality string
-	Tier               string
 	Status             string
 	Polarity           string
 	ScopeKey           string
@@ -227,9 +226,7 @@ type RelationshipTransitionResult struct {
 	TeamID         string
 	TransitionID   string
 	RelationshipID string
-	FromTier       string
 	FromStatus     string
-	ToTier         string
 	ToStatus       string
 	IdempotencyKey string
 }
@@ -298,7 +295,6 @@ type SemanticEdge struct {
 	CurrentCardinality string
 	Polarity           string
 	ScopeKey           string
-	Tier               string
 	SupportCount       int
 	SourceGroupCount   int
 	Version            int
@@ -358,7 +354,6 @@ type RelationshipTraceRecord struct {
 	ObjectValueType    string     `json:"object_value_type,omitempty"`
 	RelationshipKind   string     `json:"relationship_kind,omitempty"`
 	CurrentCardinality string     `json:"current_cardinality,omitempty"`
-	Tier               string     `json:"tier,omitempty"`
 	Status             string     `json:"status,omitempty"`
 	Polarity           string     `json:"polarity,omitempty"`
 	ScopeKey           string     `json:"scope_key,omitempty"`
@@ -457,9 +452,7 @@ type RelationshipSupportDecisionResult struct {
 	RelationshipID    string
 	Decision          string
 	IdempotencyKey    string
-	FromTier          string
 	FromStatus        string
-	ToTier            string
 	ToStatus          string
 	SupportCount      int
 	SourceGroupCount  int
@@ -491,9 +484,7 @@ type RelationshipTransitionEvent struct {
 	TransitionID        string         `json:"transition_id,omitempty"`
 	RelationshipID      string         `json:"relationship_id,omitempty"`
 	OwnerProfileID      string         `json:"owner_profile_id,omitempty"`
-	FromTier            string         `json:"from_tier,omitempty"`
 	FromStatus          string         `json:"from_status,omitempty"`
-	ToTier              string         `json:"to_tier,omitempty"`
 	ToStatus            string         `json:"to_status,omitempty"`
 	Reason              string         `json:"reason,omitempty"`
 	VerificationEventID string         `json:"verification_event_id,omitempty"`
@@ -614,7 +605,6 @@ type SemanticGraphEdge struct {
 	Relationship     string `json:"relationship,omitempty"`
 	Directed         bool   `json:"directed,omitempty"`
 	OwnerProfileID   string `json:"owner_profile_id,omitempty"`
-	Tier             string `json:"tier,omitempty"`
 	SupportCount     int    `json:"support_count,omitempty"`
 	SourceGroupCount int    `json:"source_group_count,omitempty"`
 }

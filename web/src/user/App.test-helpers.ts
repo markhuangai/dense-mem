@@ -12,13 +12,14 @@ export function recallPayloadForHits(hits: RecallHit[]): RecallPayload {
       };
     }),
     conflicts: [],
-    discovery_paths: hits.map((hit, index) => ({
+    related_communities: hits.map((hit, index) => ({
       evidence_ids: [evidenceForHit(hit, index).evidence_id],
       relationships: relationshipsForHit(hit, index),
     })),
-    discovery_guidance: "No additional discovery guidance.",
+    related_relationships: [],
     related_hypotheses: [],
-    search_state: "current",
+    search_states: { evidence: "current", relationships: "current" },
+    degradations: [],
   };
 }
 

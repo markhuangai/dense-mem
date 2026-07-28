@@ -490,7 +490,7 @@ func (c *HTTPClient) WaitForMemoryPlacementResult(ctx context.Context, ingestID 
 		}
 		status := placementProcessingState(out)
 		switch status {
-		case "completed":
+		case "completed", "awaiting_review":
 			searchState := placementSearchState(out)
 			switch searchState {
 			case "", "current", "not_required":
@@ -504,7 +504,7 @@ func (c *HTTPClient) WaitForMemoryPlacementResult(ctx context.Context, ingestID 
 			default:
 				return nil, fmt.Errorf("memory placement %s returned unknown search_state %q", ingestID, searchState)
 			}
-		case "failed", "guarded", "quarantined", "awaiting_review":
+		case "failed", "guarded", "quarantined":
 			if cause := placementErrorMessage(out); cause != "" {
 				return nil, fmt.Errorf("memory placement %s %s: %s", ingestID, status, cause)
 			}

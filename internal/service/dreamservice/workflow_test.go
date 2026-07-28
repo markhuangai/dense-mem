@@ -37,7 +37,6 @@ func TestRunCycleUsesAuthenticatedActorAndCandidateSafeInputs(t *testing.T) {
 			RelationshipID:   sourceID,
 			OwnerProfileID:   ownerID.String(),
 			Version:          3,
-			Tier:             "candidate",
 			Status:           "pending_evidence",
 			SubjectEntityID:  subjectID,
 			SubjectName:      "Dense-Mem",
@@ -96,7 +95,6 @@ func TestRunCyclePersistsValidatedProviderHypothesis(t *testing.T) {
 				RelationshipID:   activeSourceID,
 				OwnerProfileID:   ownerID.String(),
 				Version:          2,
-				Tier:             "validated_claim",
 				Status:           "active",
 				SubjectEntityID:  subjectID,
 				SubjectName:      "Dense-Mem",
@@ -109,7 +107,6 @@ func TestRunCyclePersistsValidatedProviderHypothesis(t *testing.T) {
 				RelationshipID:   candidateSourceID,
 				OwnerProfileID:   ownerID.String(),
 				Version:          4,
-				Tier:             "candidate",
 				Status:           "pending_evidence",
 				SubjectEntityID:  subjectID,
 				SubjectName:      "Dense-Mem",
@@ -180,7 +177,6 @@ func TestRunCycleRejectsMalformedProviderOutputWithoutFallback(t *testing.T) {
 			RelationshipID:   sourceID,
 			OwnerProfileID:   ownerID.String(),
 			Version:          1,
-			Tier:             "candidate",
 			Status:           "pending_evidence",
 			SubjectEntityID:  subjectID,
 			SubjectName:      "Dense-Mem",
@@ -246,7 +242,6 @@ func TestRunCycleMaterializesSeedHypothesesWithoutGenerator(t *testing.T) {
 			RelationshipID:   sourceID,
 			OwnerProfileID:   ownerID.String(),
 			Version:          7,
-			Tier:             "candidate",
 			Status:           "pending_evidence",
 			SubjectEntityID:  subjectID,
 			SubjectName:      "Dense-Mem",
@@ -547,7 +542,6 @@ func TestRunCycleControlAndErrorBranches(t *testing.T) {
 		RelationshipID:   sourceID,
 		OwnerProfileID:   ownerID.String(),
 		Version:          1,
-		Tier:             "candidate",
 		Status:           "pending_evidence",
 		SubjectEntityID:  uuid.NewString(),
 		SubjectName:      "Dense-Mem",
@@ -745,9 +739,9 @@ func TestStatusAndHelperEdgeCases(t *testing.T) {
 	}).Status(ctx, "ignored-profile")
 	require.ErrorContains(t, err, "refresh failed")
 
-	assert.Equal(t, "fact", dreamSourceType(repository.DreamInput{Tier: "fact"}))
-	assert.Equal(t, "claim", dreamSourceType(repository.DreamInput{Tier: "validated_claim"}))
-	assert.Equal(t, "relationship", dreamSourceType(repository.DreamInput{Tier: "other"}))
+	assert.Equal(t, "relationship", dreamSourceType(repository.DreamInput{Status: "active"}))
+	assert.Equal(t, "candidate_relationship", dreamSourceType(repository.DreamInput{Status: "pending_evidence"}))
+	assert.Equal(t, "relationship", dreamSourceType(repository.DreamInput{}))
 	assert.Equal(t, "from stringer", anyString(testStringer("from stringer")))
 	require.Nil(t, optionalProbability(0))
 	require.NotNil(t, optionalProbability(2))

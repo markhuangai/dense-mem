@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -54,6 +55,7 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 		Limit:  cfg.MaxOutputs * 4,
 	})
 	if err != nil {
+		err = translateDreamRepositoryError(err)
 		result.CompletedAt = s.now().UTC()
 		result.Status = "error"
 		result.Error = err.Error()
@@ -72,6 +74,7 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 		SourceSnapshot: dreamInputSnapshot(inputs),
 	})
 	if err != nil {
+		err = translateDreamRepositoryError(err)
 		result.CompletedAt = s.now().UTC()
 		result.Status = "error"
 		result.Error = err.Error()
@@ -91,6 +94,7 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 	result.Status = "completed"
 	completeStatus := "completed"
 	if runErr != nil {
+		runErr = translateDreamRepositoryError(runErr)
 		result.Status = "error"
 		result.Error = runErr.Error()
 		completeStatus = "failed"
@@ -105,11 +109,19 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 		RejectedHypotheses: rejected,
 		Error:              result.Error,
 	}); err != nil && runErr == nil {
+		err = translateDreamRepositoryError(err)
 		result.Status = "error"
 		result.Error = err.Error()
 		return result, err
 	}
 	return result, runErr
+}
+
+func translateDreamRepositoryError(err error) error {
+	if errors.Is(err, repository.ErrTeamInactive) {
+		return httperr.New(httperr.NOT_FOUND, "team not found")
+	}
+	return err
 }
 
 func (s *service) persistHypotheses(
@@ -207,7 +219,7 @@ func dreamGeneratorInputs(inputs []repository.DreamInput) []DreamInput {
 func dreamProposalsFromCandidates(inputs []repository.DreamInput, maxOutputs int) []repository.UpsertHypothesisInput {
 	out := make([]repository.UpsertHypothesisInput, 0, maxOutputs)
 	for _, input := range inputs {
-		if input.Tier != "candidate" || input.Status != "pending_evidence" {
+		if input.Status != "pending_evidence" {
 			continue
 		}
 		proposal := dreamProposalFromInput(input, fmt.Sprintf(
@@ -307,7 +319,6 @@ func dreamProposalFromSources(sources []repository.DreamInput, statement string)
 	sourceVersions := make(map[string]int, len(sources))
 	sourceOwnerProfileIDs := make([]string, 0, len(sources))
 	seenOwners := map[string]struct{}{}
-	sourceTiers := make([]string, 0, len(sources))
 	sourceStatuses := make([]string, 0, len(sources))
 	for _, source := range sources {
 		sourceRefs = append(sourceRefs, map[string]any{
@@ -321,12 +332,10 @@ func dreamProposalFromSources(sources []repository.DreamInput, statement string)
 				sourceOwnerProfileIDs = append(sourceOwnerProfileIDs, source.OwnerProfileID)
 			}
 		}
-		sourceTiers = append(sourceTiers, source.Tier)
 		sourceStatuses = append(sourceStatuses, source.Status)
 	}
 	input = preferredDreamTargetSource(sources)
 	payload := map[string]any{
-		"source_tiers":    sourceTiers,
 		"source_statuses": sourceStatuses,
 	}
 	proposal := repository.UpsertHypothesisInput{
@@ -349,13 +358,9 @@ func dreamProposalFromSources(sources []repository.DreamInput, statement string)
 }
 
 func dreamSourceType(input repository.DreamInput) string {
-	switch input.Tier {
-	case "candidate":
+	switch input.Status {
+	case "pending_evidence":
 		return "candidate_relationship"
-	case "fact":
-		return "fact"
-	case "validated_claim":
-		return "claim"
 	default:
 		return "relationship"
 	}
@@ -363,7 +368,7 @@ func dreamSourceType(input repository.DreamInput) string {
 
 func preferredDreamTargetSource(sources []repository.DreamInput) repository.DreamInput {
 	for _, source := range sources {
-		if source.Tier == "candidate" && source.Status == "pending_evidence" {
+		if source.Status == "pending_evidence" {
 			return source
 		}
 	}
@@ -734,7 +739,6 @@ func dreamInputSnapshot(inputs []repository.DreamInput) []map[string]any {
 		out = append(out, map[string]any{
 			"relationship_id": input.RelationshipID,
 			"version":         input.Version,
-			"tier":            input.Tier,
 			"status":          input.Status,
 		})
 	}
@@ -744,7 +748,7 @@ func dreamInputSnapshot(inputs []repository.DreamInput) []map[string]any {
 func candidateInputCount(inputs []repository.DreamInput) int {
 	count := 0
 	for _, input := range inputs {
-		if input.Tier == "candidate" && input.Status == "pending_evidence" {
+		if input.Status == "pending_evidence" {
 			count++
 		}
 	}

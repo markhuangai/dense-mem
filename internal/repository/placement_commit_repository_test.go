@@ -406,13 +406,12 @@ func TestPlacementPayloadAndSearchTextHelpers(t *testing.T) {
 			Relationship: &RelationshipRecord{
 				RelationshipID: relationshipID,
 				OwnerProfileID: "profile-1",
-				Tier:           string(domain.RelationshipTierFact),
 				Status:         string(domain.RelationshipStatusActive),
 			},
 			ObservationID:  "obs-1",
 			ProposalID:     "rel:authority",
 			OwnerProfileID: "profile-1",
-			Category:       string(domain.OutcomeRelationshipFact),
+			Category:       string(domain.OutcomeRelationshipAccepted),
 			Reason:         "accepted",
 		}},
 		SearchDocuments: []SearchDocumentResult{{
@@ -428,16 +427,19 @@ func TestPlacementPayloadAndSearchTextHelpers(t *testing.T) {
 		t.Fatalf("relationship ids = %#v", got)
 	}
 	outcomes := payload["relationship_outcomes"].([]map[string]any)
-	if len(outcomes) != 1 || outcomes[0]["owner_profile_id"] != "profile-1" || outcomes[0]["category"] != string(domain.OutcomeRelationshipFact) {
+	if len(outcomes) != 1 || outcomes[0]["owner_profile_id"] != "profile-1" || outcomes[0]["category"] != string(domain.OutcomeRelationshipAccepted) {
 		t.Fatalf("relationship outcomes = %#v", outcomes)
 	}
-	text := placementRelationshipSearchText(&RelationshipRecord{
-		SubjectEntityID:  "subject",
-		PredicateKey:     "works_on",
-		ObjectEntityID:   "object",
-		SemanticGroupKey: "group",
+	text := relationshipProjectionText(&RelationshipRecord{
+		SubjectEntityID: "subject",
+		PredicateKey:    "works_on",
+		ObjectEntityID:  "object",
+		Polarity:        "+",
+	}, relationshipProjectionNames{
+		SubjectName: "Mark Huang",
+		ObjectName:  "Dense-Mem",
 	})
-	if text != "relationship works_on subject object  group" {
+	if text != "relationship\nsubject: Mark Huang\npredicate: works on\nobject: Dense-Mem\npolarity: positive" {
 		t.Fatalf("search text = %q", text)
 	}
 }

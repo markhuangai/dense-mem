@@ -51,11 +51,13 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 	}
 
 	result, err := h.svc.Recall(ctx, memoryservice.RecallRequest{
-		ContractVersion: domain.ContractVersion,
-		Query:           req.Query,
-		Limit:           req.Limit,
-		ValidAt:         req.ValidAt,
-		KnownAt:         req.KnownAt,
+		ContractVersion:   domain.ContractVersion,
+		Query:             req.Query,
+		Limit:             req.Limit,
+		RelationshipLimit: req.RelationshipLimit,
+		CommunityLimit:    req.CommunityLimit,
+		ValidAt:           req.ValidAt,
+		KnownAt:           req.KnownAt,
 		KnownEvidenceIDs: append(
 			[]string(nil),
 			req.KnownEvidenceIDs...,
@@ -75,8 +77,8 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 		}
 		return httperr.New(httperr.INTERNAL_ERROR, "recall failed")
 	}
-	if result != nil && result.Degradation != nil && result.Degradation.RequiredFailure {
-		message := strings.TrimSpace(result.Degradation.Message)
+	if degradation := requiredRecallDegradation(result); degradation != nil {
+		message := strings.TrimSpace(degradation.Message)
 		if message == "" {
 			message = "recall unavailable"
 		}
@@ -97,14 +99,44 @@ func recallHTTPResult(result *memoryservice.RecallResult) memoryservice.RecallRe
 	if out.Conflicts == nil {
 		out.Conflicts = []memoryservice.RecallConflictSummary{}
 	}
+	if out.RelatedRelationships == nil {
+		out.RelatedRelationships = []memoryservice.RelatedRelationshipSummary{}
+	}
+	if out.RelatedCommunities == nil {
+		out.RelatedCommunities = []memoryservice.RecallDiscoveryPath{}
+	}
 	if out.DiscoveryPaths == nil {
 		out.DiscoveryPaths = []memoryservice.RecallDiscoveryPath{}
 	}
 	if out.RelatedHypotheses == nil {
 		out.RelatedHypotheses = []memoryservice.RelatedHypothesisSummary{}
 	}
+	if out.Degradations == nil {
+		out.Degradations = []memoryservice.RecallDegradationResult{}
+	}
+	if out.SearchStates.Evidence == "" {
+		out.SearchStates.Evidence = string(domain.SearchProjectionCurrent)
+	}
+	if out.SearchStates.Relationships == "" {
+		out.SearchStates.Relationships = string(domain.SearchProjectionCurrent)
+	}
 	if strings.TrimSpace(out.DiscoveryGuidance) == "" {
 		out.DiscoveryGuidance = "No additional discovery guidance."
 	}
 	return out
+}
+
+func requiredRecallDegradation(result *memoryservice.RecallResult) *memoryservice.RecallDegradationResult {
+	if result == nil {
+		return nil
+	}
+	for i := range result.Degradations {
+		if result.Degradations[i].RequiredFailure {
+			return &result.Degradations[i]
+		}
+	}
+	if result.Degradation != nil && result.Degradation.RequiredFailure {
+		return result.Degradation
+	}
+	return nil
 }

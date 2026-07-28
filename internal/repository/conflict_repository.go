@@ -169,7 +169,7 @@ func relationshipEligibleForConflictPlacement(record *RelationshipRecord) bool {
 		return false
 	}
 	return record.Status == string(domain.RelationshipStatusActive) &&
-		(record.Tier == string(domain.RelationshipTierValidatedClaim) || record.Tier == string(domain.RelationshipTierFact)) &&
+		record.SupportCount > 0 &&
 		record.RelationshipKind == string(domain.RelationshipKindState) &&
 		record.CurrentCardinality == string(domain.CurrentCardinalityOne)
 }
@@ -225,7 +225,7 @@ func loadRelationshipConflictPlacement(
 			  AND relationship.polarity = ?
 			  AND relationship.scope_key IS NOT DISTINCT FROM NULLIF(?, '')
 			  AND relationship.status = 'active'
-			  AND relationship.tier IN ('validated_claim', 'fact')
+			  AND relationship.support_count > 0
 			  AND (relationship.valid_from IS NULL OR relationship.valid_from <= now())
 			  AND (relationship.valid_to IS NULL OR relationship.valid_to > now())
 		),
@@ -250,6 +250,7 @@ func loadRelationshipConflictPlacement(
 			       support.fragment_id,
 			       COALESCE(
 			           NULLIF(source.source_key, ''),
+			           NULLIF(fragment.metadata->>'contract_source_group', ''),
 			           NULLIF(fragment.metadata->>'v2_contract_source_group', ''),
 			           NULLIF(support.source_group_key, ''),
 			           support.support_id::text

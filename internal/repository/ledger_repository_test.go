@@ -82,6 +82,32 @@ func TestLedgerAdvanceSourceRevisionValidationUsesCanonicalAuthority(t *testing.
 	assert.Contains(t, err.Error(), "authority is unsupported")
 }
 
+func TestLedgerCreateIngestValidationAllowsPerEvidenceSourceRevisionSupersedes(t *testing.T) {
+	input := validCreateIngestInput()
+	input.Evidence = []EvidenceInput{
+		{
+			Content:                       "first revised source fragment",
+			SourceKey:                     "doc://policy",
+			SourceRevisionToken:           "rev-2",
+			ExpectedPreviousRevisionToken: "rev-1",
+			SourceRevisionContentHash:     "sha256:revision",
+			SupersedesFragmentIDs:         []string{uuid.NewString()},
+		},
+		{
+			Content:                       "second revised source fragment",
+			SourceKey:                     "doc://policy",
+			SourceRevisionToken:           "rev-2",
+			ExpectedPreviousRevisionToken: "rev-1",
+			SourceRevisionContentHash:     "sha256:revision",
+			SupersedesFragmentIDs:         []string{uuid.NewString()},
+		},
+	}
+
+	err := validateCreateIngestInput(normalizeCreateIngestInput(input))
+
+	require.NoError(t, err)
+}
+
 func TestLedgerCreateIngestFailsClosedWithoutDependencies(t *testing.T) {
 	_, err := (*LedgerRepositoryImpl)(nil).CreateIngest(context.Background(), validCreateIngestInput())
 	require.Error(t, err)

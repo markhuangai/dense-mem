@@ -152,7 +152,8 @@ describe("UserApi", () => {
           },
         ],
         conflicts: [],
-        discovery_paths: [
+        related_relationships: [],
+        related_communities: [
           {
             evidence_ids: ["11111111-1111-4111-8111-111111111111"],
             relationships: [
@@ -166,9 +167,9 @@ describe("UserApi", () => {
             ],
           },
         ],
-        discovery_guidance: "No additional discovery guidance.",
         related_hypotheses: [],
-        search_state: "current",
+        search_states: { evidence: "current", relationships: "current" },
+        degradations: [],
       },
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -187,6 +188,40 @@ describe("UserApi", () => {
         headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
       }),
     );
+  });
+
+  it("maps canonical related relationship recall hits", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        recall_id: "rec_relationships",
+        results: [],
+        conflicts: [],
+        related_relationships: [
+          {
+            relationship_id: "33333333-3333-4333-8333-333333333333",
+            subject: { entity_id: "44444444-4444-4444-8444-444444444444", name: "Dense-Mem" },
+            predicate: "uses",
+            object: { name: "PostgreSQL" },
+            polarity: "+",
+            evidence_ids: ["11111111-1111-4111-8111-111111111111"],
+            search_state: "current",
+          },
+        ],
+        related_communities: [],
+        related_hypotheses: [],
+        search_states: { evidence: "current", relationships: "current" },
+        degradations: [],
+      },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new UserApi("dm_key").recall("postgres", 3);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].relationship?.relationship_id).toBe("33333333-3333-4333-8333-333333333333");
+    expect(result[0].relationships?.[0].evidence_ids).toEqual(["11111111-1111-4111-8111-111111111111"]);
+    expect(result[0].semantic_rank).toBe(1);
+    expect(result[0].final_score).toBe(1);
   });
 
   it("keeps legacy recall hit array compatibility", async () => {
@@ -246,6 +281,7 @@ describe("UserApi", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].relationship?.relationship_id).toBe("relationship-1");
+    expect(result[0].tier).toBe("fact");
     expect(result[0].evidences?.[0].evidence_id).toBe("evidence-1");
     expect(result[0].semantic_rank).toBe(1);
   });

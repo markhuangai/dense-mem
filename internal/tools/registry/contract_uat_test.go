@@ -177,8 +177,11 @@ func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {
 	if _, ok := out["related_hypotheses"].([]memoryservice.RelatedHypothesisSummary); !ok {
 		t.Fatalf("related_hypotheses = %#v, want typed empty array", out["related_hypotheses"])
 	}
-	if _, ok := out["discovery_paths"].([]memoryservice.RecallDiscoveryPath); !ok {
-		t.Fatalf("discovery_paths = %#v, want typed empty array", out["discovery_paths"])
+	if _, ok := out["related_relationships"].([]memoryservice.RelatedRelationshipSummary); !ok {
+		t.Fatalf("related_relationships = %#v, want typed empty array", out["related_relationships"])
+	}
+	if _, ok := out["related_communities"].([]memoryservice.RecallDiscoveryPath); !ok {
+		t.Fatalf("related_communities = %#v, want typed empty array", out["related_communities"])
 	}
 	if _, ok := out["conflicts"].([]memoryservice.RecallConflictSummary); !ok {
 		t.Fatalf("conflicts = %#v, want typed empty array", out["conflicts"])

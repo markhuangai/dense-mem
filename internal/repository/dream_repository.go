@@ -80,7 +80,6 @@ type DreamInput struct {
 	RelationshipID     string
 	OwnerProfileID     string
 	Version            int
-	Tier               string
 	Status             string
 	SubjectEntityID    string
 	SubjectName        string
@@ -284,11 +283,10 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 	var inputs []DreamInput
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT r.relationship_id::text,
-			       r.owner_profile_id::text,
-			       r.version,
-			       r.tier,
-			       r.status,
+				SELECT r.relationship_id::text,
+				       r.owner_profile_id::text,
+				       r.version,
+				       r.status,
 			       r.subject_entity_id::text,
 			       COALESCE(subject_name.display_name, '') AS subject_name,
 			       r.predicate_key,
@@ -313,12 +311,11 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 			  ON value.team_id = r.team_id
 			 AND value.value_id = r.object_value_id
 			WHERE r.team_id = ?::uuid
-			  AND (
-			    (r.tier IN ('validated_claim', 'fact') AND r.status = 'active')
-			    OR (
-			      r.tier = 'candidate'
-			      AND r.status = 'pending_evidence'
-			      AND EXISTS (
+				  AND (
+				    (r.status = 'active' AND r.support_count > 0)
+				    OR (
+				      r.status = 'pending_evidence'
+				      AND EXISTS (
 			        SELECT 1
 			        FROM relationship_observations o
 			        JOIN verification_events v
@@ -350,7 +347,6 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 				&item.RelationshipID,
 				&item.OwnerProfileID,
 				&item.Version,
-				&item.Tier,
 				&item.Status,
 				&item.SubjectEntityID,
 				&item.SubjectName,
@@ -603,10 +599,9 @@ func (r *SemanticRepositoryImpl) RefreshHypothesisStaleness(
 			        WHERE r.relationship_id IS NULL
 			           OR r.version::text <> source.source_version
 			           OR NOT (
-			             (r.tier IN ('validated_claim', 'fact') AND r.status = 'active')
+			             (r.status = 'active' AND r.support_count > 0)
 			             OR (
-			               r.tier = 'candidate'
-			               AND r.status = 'pending_evidence'
+			               r.status = 'pending_evidence'
 			               AND EXISTS (
 			                 SELECT 1
 			                 FROM relationship_observations o
@@ -811,8 +806,8 @@ func validateHypothesisEndpoints(ctx context.Context, tx *gorm.DB, input UpsertH
 		  AND predicate_version = ?
 		  AND object_entity_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
 		  AND object_value_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
-		  AND tier IN ('validated_claim', 'fact')
 		  AND status = 'active'
+		  AND support_count > 0
 	`, input.TeamID, input.SubjectEntityID, input.PredicateKey, input.PredicateVersion,
 		input.ObjectEntityID, input.ObjectValueID).Scan(&existing).Error; err != nil {
 		return err
@@ -834,10 +829,9 @@ func validateHypothesisSources(ctx context.Context, tx *gorm.DB, input UpsertHyp
 			SELECT r.version,
 			       (
 			         (
-			           (r.tier IN ('validated_claim', 'fact') AND r.status = 'active')
+			           (r.status = 'active' AND r.support_count > 0)
 			           OR (
-			             r.tier = 'candidate'
-			             AND r.status = 'pending_evidence'
+			             r.status = 'pending_evidence'
 			             AND EXISTS (
 			               SELECT 1
 			               FROM relationship_observations o
