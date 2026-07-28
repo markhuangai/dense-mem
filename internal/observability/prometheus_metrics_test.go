@@ -255,6 +255,10 @@ func TestPrometheusMetricLabelHelpers(t *testing.T) {
 
 func TestNoopDiscoverabilityMetrics_ConsumesCalls(t *testing.T) {
 	metrics := NoopDiscoverabilityMetrics()
+	assessor, ok := metrics.(AssessorMetrics)
+	if !ok {
+		t.Fatal("NoopDiscoverabilityMetrics does not implement AssessorMetrics")
+	}
 
 	metrics.ObserveEmbeddingLatency(1, "ok")
 	metrics.IncEmbeddingError("timeout")
@@ -272,6 +276,59 @@ func TestNoopDiscoverabilityMetrics_ConsumesCalls(t *testing.T) {
 	metrics.IncFactNeedsRevalidation()
 	metrics.IncCommunityDetect("ok")
 	metrics.ObserveCommunityDetect(1, 2)
+	assessor.ObserveAssessorCall(10, 5, 1, "ok")
+	assessor.IncAssessorValidationFailure("response")
+	assessor.IncAssessorCandidateTruncation()
+	assessor.IncAssessorAssessmentPersistence("persisted")
+	assessor.IncAssessorDuplicateRequestPrevention("post_persist")
+	assessor.IncAssessorConfidenceGate("meets_write_threshold")
+	assessor.AddAssessorReviewExpiry(1)
+}
+
+func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
+	metrics := NewInMemoryDiscoverabilityMetrics()
+	RecordAssessorCall(metrics, 200, 50, 0.25, "ok")
+	RecordAssessorValidationFailure(metrics, "response")
+	RecordAssessorCandidateTruncation(metrics)
+	RecordAssessorAssessmentPersistence(metrics, "persisted")
+	RecordAssessorDuplicateRequestPrevention(metrics, "post_persist")
+	RecordAssessorConfidenceGate(metrics, "below_write_threshold")
+	RecordAssessorReviewExpiry(metrics, 2)
+	RecordAssessorReviewExpiry(metrics, 0)
+
+	calls := metrics.AssessorCalls()
+	if len(calls) != 1 {
+		t.Fatalf("AssessorCalls() len = %d, want 1", len(calls))
+	}
+	if got, want := calls[0], (AssessorCallSample{InputTokens: 200, OutputTokens: 50, DurationSeconds: 0.25, Outcome: "ok"}); got != want {
+		t.Fatalf("AssessorCalls()[0] = %#v, want %#v", got, want)
+	}
+	if got := metrics.AssessorValidationFailureCount("response"); got != 1 {
+		t.Fatalf("AssessorValidationFailureCount() = %d, want 1", got)
+	}
+	if got := metrics.AssessorCandidateTruncationCount(); got != 1 {
+		t.Fatalf("AssessorCandidateTruncationCount() = %d, want 1", got)
+	}
+	if got := metrics.AssessorPersistenceCount("persisted"); got != 1 {
+		t.Fatalf("AssessorPersistenceCount() = %d, want 1", got)
+	}
+	if got := metrics.AssessorDuplicatePreventionCount("post_persist"); got != 1 {
+		t.Fatalf("AssessorDuplicatePreventionCount() = %d, want 1", got)
+	}
+	if got := metrics.AssessorConfidenceGateCount("below_write_threshold"); got != 1 {
+		t.Fatalf("AssessorConfidenceGateCount() = %d, want 1", got)
+	}
+	if got := metrics.AssessorReviewExpiryCount(); got != 2 {
+		t.Fatalf("AssessorReviewExpiryCount() = %d, want 2", got)
+	}
+
+	RecordAssessorCall(NoopDiscoverabilityMetrics(), 0, 0, 0, "")
+	RecordAssessorValidationFailure(NoopDiscoverabilityMetrics(), "")
+	RecordAssessorCandidateTruncation(NoopDiscoverabilityMetrics())
+	RecordAssessorAssessmentPersistence(NoopDiscoverabilityMetrics(), "")
+	RecordAssessorDuplicateRequestPrevention(NoopDiscoverabilityMetrics(), "")
+	RecordAssessorConfidenceGate(NoopDiscoverabilityMetrics(), "")
+	RecordAssessorReviewExpiry(NoopDiscoverabilityMetrics(), 0)
 }
 
 type fakeLogProvider struct {

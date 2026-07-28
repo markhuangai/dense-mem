@@ -1,9 +1,39 @@
 package config
 
 import (
+	"math"
 	"os"
 	"testing"
 )
+
+type assessorConfigProviderStub struct {
+	ConfigProvider
+	inputTokens            int
+	outputTokens           int
+	candidateContextTokens int
+	tokenizer              string
+	confidenceThreshold    float64
+}
+
+func (s assessorConfigProviderStub) GetAIVerifierMaxInputTokens() int {
+	return s.inputTokens
+}
+
+func (s assessorConfigProviderStub) GetAIVerifierMaxOutputTokens() int {
+	return s.outputTokens
+}
+
+func (s assessorConfigProviderStub) GetAIVerifierMaxCandidateContextTokens() int {
+	return s.candidateContextTokens
+}
+
+func (s assessorConfigProviderStub) GetAIVerifierTokenizer() string {
+	return s.tokenizer
+}
+
+func (s assessorConfigProviderStub) GetMemoryAutoWriteConfidenceThreshold() float64 {
+	return s.confidenceThreshold
+}
 
 func TestMemoryAutoWriteConfidenceThresholdDefaultsOnlyWhenUnset(t *testing.T) {
 	if got := (&Config{}).GetMemoryAutoWriteConfidenceThreshold(); got != DefaultMemoryAutoWriteConfidenceThreshold {
@@ -67,5 +97,50 @@ func TestLoadAssessorTokenBudgetAndRejectsObsoleteVariables(t *testing.T) {
 				t.Fatalf("Load() error = %v, want %s validation error", err, tc.key)
 			}
 		})
+	}
+}
+
+func TestAssessorConfigFallbacksAndConfidenceValidation(t *testing.T) {
+	budget := AIVerifierAssessmentBudgetFor(assessorConfigProviderStub{
+		inputTokens:            -1,
+		outputTokens:           0,
+		candidateContextTokens: -2,
+		tokenizer:              "   ",
+	})
+	if budget != (AIVerifierAssessmentBudget{
+		MaxInputTokens:            DefaultAIVerifierMaxInputTokens,
+		MaxOutputTokens:           DefaultAIVerifierMaxOutputTokens,
+		MaxCandidateContextTokens: DefaultAIVerifierMaxCandidateContextTokens,
+		Tokenizer:                 DefaultAIVerifierTokenizer,
+	}) {
+		t.Fatalf("fallback budget = %#v", budget)
+	}
+
+	budget = AIVerifierAssessmentBudgetFor(assessorConfigProviderStub{
+		inputTokens:            10,
+		outputTokens:           20,
+		candidateContextTokens: 30,
+		tokenizer:              " custom ",
+	})
+	if budget != (AIVerifierAssessmentBudget{MaxInputTokens: 10, MaxOutputTokens: 20, MaxCandidateContextTokens: 30, Tokenizer: "custom"}) {
+		t.Fatalf("configured budget = %#v", budget)
+	}
+
+	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), -0.01, 1.01} {
+		if got := MemoryAutoWriteConfidenceThresholdFor(assessorConfigProviderStub{confidenceThreshold: value}); got != DefaultMemoryAutoWriteConfidenceThreshold {
+			t.Fatalf("threshold %v = %v, want default %v", value, got, DefaultMemoryAutoWriteConfidenceThreshold)
+		}
+	}
+	if got := MemoryAutoWriteConfidenceThresholdFor(assessorConfigProviderStub{confidenceThreshold: 0}); got != 0 {
+		t.Fatalf("explicit zero threshold = %v, want 0", got)
+	}
+
+	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), -0.01, 1.01} {
+		if got := (&Config{MemoryAutoWriteConfidenceThreshold: value}).GetMemoryAutoWriteConfidenceThreshold(); got != DefaultMemoryAutoWriteConfidenceThreshold {
+			t.Fatalf("Config threshold %v = %v, want default %v", value, got, DefaultMemoryAutoWriteConfidenceThreshold)
+		}
+	}
+	if got := (&Config{MemoryAutoWriteConfidenceThreshold: 0, memoryAutoWriteConfidenceThresholdSet: true}).GetMemoryAutoWriteConfidenceThreshold(); got != 0 {
+		t.Fatalf("explicit Config zero threshold = %v, want 0", got)
 	}
 }

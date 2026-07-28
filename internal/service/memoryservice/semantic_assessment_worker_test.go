@@ -375,8 +375,12 @@ func testStringPointer(value string) *string { return &value }
 func testIntPointer(value int) *int { return &value }
 
 type semanticAssessmentWorkerLedgerStub struct {
-	run       *repository.PlacementRun
-	placement *repository.CreateIngestResult
+	run               *repository.PlacementRun
+	placement         *repository.CreateIngestResult
+	appendSecurity    []repository.SecurityEventInput
+	appendSecurityErr error
+	finishCalls       int
+	finishErr         error
 }
 
 func (s *semanticAssessmentWorkerLedgerStub) CreateIngest(context.Context, repository.CreateIngestInput) (*repository.CreateIngestResult, error) {
@@ -391,8 +395,12 @@ func (s *semanticAssessmentWorkerLedgerStub) AdvanceSourceRevision(context.Conte
 	return nil, errors.New("unexpected AdvanceSourceRevision")
 }
 
-func (s *semanticAssessmentWorkerLedgerStub) AppendSecurityEvent(context.Context, repository.SecurityEventInput) (string, error) {
-	return "", errors.New("unexpected AppendSecurityEvent")
+func (s *semanticAssessmentWorkerLedgerStub) AppendSecurityEvent(_ context.Context, input repository.SecurityEventInput) (string, error) {
+	s.appendSecurity = append(s.appendSecurity, input)
+	if s.appendSecurityErr != nil {
+		return "", s.appendSecurityErr
+	}
+	return uuid.NewString(), nil
 }
 
 func (s *semanticAssessmentWorkerLedgerStub) AppendPlacementOutcome(context.Context, repository.PlacementOutcomeInput) (string, error) {
@@ -404,7 +412,8 @@ func (s *semanticAssessmentWorkerLedgerStub) ClaimNextPlacementRun(context.Conte
 }
 
 func (s *semanticAssessmentWorkerLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) error {
-	return errors.New("unexpected FinishPlacementRun")
+	s.finishCalls++
+	return s.finishErr
 }
 
 type semanticAssessmentWorkerAssessmentStub struct {
@@ -481,19 +490,30 @@ func (s *semanticAssessmentWorkerCommitStub) RequeuePlacementReviewResult(_ cont
 }
 
 type semanticAssessmentWorkerCatalogStub struct {
-	entityMatches repository.SemanticAssessmentEntityMatchResult
+	entityMatches       repository.SemanticAssessmentEntityMatchResult
+	entityMatchesErr    error
+	knownCandidates     map[string][]repository.SemanticReviewEntityCandidate
+	knownCandidateErr   error
+	predicateOptions    []repository.SemanticReviewPredicateCandidate
+	predicateOptionsErr error
 }
 
 func (s *semanticAssessmentWorkerCatalogStub) ListSemanticAssessmentEntityMatches(context.Context, repository.SemanticAssessmentEntityMatchInput) (repository.SemanticAssessmentEntityMatchResult, error) {
-	return s.entityMatches, nil
+	return s.entityMatches, s.entityMatchesErr
 }
 
-func (s *semanticAssessmentWorkerCatalogStub) ListSemanticReviewEntityCandidates(context.Context, repository.SemanticReviewEntityCandidateInput) ([]repository.SemanticReviewEntityCandidate, error) {
-	return nil, nil
+func (s *semanticAssessmentWorkerCatalogStub) ListSemanticReviewEntityCandidates(_ context.Context, input repository.SemanticReviewEntityCandidateInput) ([]repository.SemanticReviewEntityCandidate, error) {
+	if s.knownCandidateErr != nil {
+		return nil, s.knownCandidateErr
+	}
+	return append([]repository.SemanticReviewEntityCandidate(nil), s.knownCandidates[input.KnownEntityID]...), nil
 }
 
 func (s *semanticAssessmentWorkerCatalogStub) ListSemanticAssessmentPredicateOptions(context.Context, repository.SemanticAssessmentPredicateOptionsInput) ([]repository.SemanticReviewPredicateCandidate, error) {
-	return nil, nil
+	if s.predicateOptionsErr != nil {
+		return nil, s.predicateOptionsErr
+	}
+	return append([]repository.SemanticReviewPredicateCandidate(nil), s.predicateOptions...), nil
 }
 
 type semanticAssessmentWorkerProviderStub struct {
