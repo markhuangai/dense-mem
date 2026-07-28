@@ -9,22 +9,26 @@ import (
 )
 
 const (
-	DefaultHTTPPort                        = "8080"
-	DefaultHTTPAddr                        = ":" + DefaultHTTPPort
-	DefaultPostgresMigrationTimeoutSeconds = 1800
-	MaxPostgresMigrationTimeoutSeconds     = 86400
-	DefaultAIEmbeddingMaxConcurrency       = 8
-	DefaultEmbeddingWorkerCount            = 2
-	DefaultEmbeddingBatchSize              = 64
-	MaxEmbeddingBatchSize                  = 256
-	DefaultEmbeddingJobPollSeconds         = 1
-	DefaultEmbeddingJobMaxAttempts         = 20
-	MaxEmbeddingJobMaxAttempts             = 100
-	DefaultAIVerifierMaxConcurrency        = 5
-	DefaultMemoryPlacementWorkerCount      = 1
-	DefaultMemoryPlacementPollSeconds      = 5
-	DefaultConflictReviewTTLDays           = 7
-	DefaultConflictReviewStartTime         = "04:00"
+	DefaultHTTPPort                            = "8080"
+	DefaultHTTPAddr                            = ":" + DefaultHTTPPort
+	DefaultPostgresMigrationTimeoutSeconds     = 1800
+	MaxPostgresMigrationTimeoutSeconds         = 86400
+	DefaultAIEmbeddingMaxConcurrency           = 8
+	DefaultEmbeddingWorkerCount                = 2
+	DefaultEmbeddingBatchSize                  = 64
+	MaxEmbeddingBatchSize                      = 256
+	DefaultEmbeddingJobPollSeconds             = 1
+	DefaultEmbeddingJobMaxAttempts             = 20
+	MaxEmbeddingJobMaxAttempts                 = 100
+	DefaultAIVerifierMaxConcurrency            = 5
+	DefaultAIVerifierMaxInputTokens            = 200000
+	DefaultAIVerifierMaxOutputTokens           = 65536
+	DefaultAIVerifierMaxCandidateContextTokens = 50000
+	DefaultAIVerifierTokenizer                 = "o200k_base"
+	DefaultMemoryPlacementWorkerCount          = 1
+	DefaultMemoryPlacementPollSeconds          = 5
+	DefaultConflictReviewTTLDays               = 7
+	DefaultConflictReviewStartTime             = "04:00"
 )
 
 var legacyNeo4jEnvVars = []string{
@@ -32,6 +36,12 @@ var legacyNeo4jEnvVars = []string{
 	"NEO4J_USER",
 	"NEO4J_PASSWORD",
 	"NEO4J_DATABASE",
+}
+
+var obsoleteAssessorEnvVars = []string{
+	"AI_VERIFIER_MAX_INPUT_BYTES",
+	"AI_VERIFIER_MAX_OUTPUT_BYTES",
+	"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_BYTES",
 }
 
 // ConfigProvider is the companion interface for Config.
@@ -78,6 +88,51 @@ type aiVerifierTemperatureConfig interface {
 
 type aiEmbeddingConcurrencyConfig interface {
 	GetAIEmbeddingMaxConcurrency() int
+}
+
+type aiVerifierAssessmentConfig interface {
+	GetAIVerifierMaxInputTokens() int
+	GetAIVerifierMaxOutputTokens() int
+	GetAIVerifierMaxCandidateContextTokens() int
+	GetAIVerifierTokenizer() string
+}
+
+// AIVerifierAssessmentBudget contains the semantic limits applied to a single
+// integrated assessor request. They intentionally remain optional on
+// ConfigProvider so existing test providers do not silently become invalid.
+type AIVerifierAssessmentBudget struct {
+	MaxInputTokens            int
+	MaxOutputTokens           int
+	MaxCandidateContextTokens int
+	Tokenizer                 string
+}
+
+// AIVerifierAssessmentBudgetFor reads the assessor budget from cfg and falls
+// back to the V2.4 defaults when an older provider does not expose it.
+func AIVerifierAssessmentBudgetFor(cfg ConfigProvider) AIVerifierAssessmentBudget {
+	budget := AIVerifierAssessmentBudget{
+		MaxInputTokens:            DefaultAIVerifierMaxInputTokens,
+		MaxOutputTokens:           DefaultAIVerifierMaxOutputTokens,
+		MaxCandidateContextTokens: DefaultAIVerifierMaxCandidateContextTokens,
+		Tokenizer:                 DefaultAIVerifierTokenizer,
+	}
+	assessmentConfig, ok := cfg.(aiVerifierAssessmentConfig)
+	if !ok || assessmentConfig == nil {
+		return budget
+	}
+	if value := assessmentConfig.GetAIVerifierMaxInputTokens(); value > 0 {
+		budget.MaxInputTokens = value
+	}
+	if value := assessmentConfig.GetAIVerifierMaxOutputTokens(); value > 0 {
+		budget.MaxOutputTokens = value
+	}
+	if value := assessmentConfig.GetAIVerifierMaxCandidateContextTokens(); value > 0 {
+		budget.MaxCandidateContextTokens = value
+	}
+	if value := strings.TrimSpace(assessmentConfig.GetAIVerifierTokenizer()); value != "" {
+		budget.Tokenizer = value
+	}
+	return budget
 }
 
 // AIVerifierTemperatureDisabled returns true when a config provider exposes
@@ -143,36 +198,40 @@ type Config struct {
 	EmbeddingJobPollSeconds         int
 	EmbeddingJobMaxAttempts         int
 	// Knowledge-pipeline knobs (AC-X3)
-	AIVerifierAPIURL             string
-	AIVerifierAPIKey             string `json:"-"`
-	AIReviewerModel              string
-	AIVerifierModel              string
-	AIVerifierDisableTemperature bool
-	AIVerifierTimeoutSeconds     int
-	AIVerifierMaxConcurrency     int
-	MemoryPlacementWorkerCount   int
-	MemoryPlacementPollSeconds   int
-	ClaimWriteRateLimit          int
-	ClaimReadRateLimit           int
-	RecallValidatedClaimWeight   float64
-	PromoteTxTimeoutSeconds      int
-	SkillPackImportHistoryDays   int
-	AICommunityMaxNodes          int
-	ControlHTTPAddr              string
-	ControlPortalToken           string `json:"-"`
-	TelemetryEnabled             bool
-	TelemetryPrometheusURL       string
-	TelemetryPrometheusJob       string
-	TelemetryQueryTimeoutSeconds int
-	TelemetryScrapeToken         string `json:"-"`
-	AppTimezone                  string
-	ConflictReviewTTLDays        int
-	ConflictReviewStartTimeLocal string
-	ConflictReviewMaxConcurrency int
-	ConflictReviewBatchSize      int
-	ConflictReviewLeaseSeconds   int
-	ConflictReviewMaxAttempts    int
-	ConflictReviewJitterSeconds  int
+	AIVerifierAPIURL                    string
+	AIVerifierAPIKey                    string `json:"-"`
+	AIReviewerModel                     string
+	AIVerifierModel                     string
+	AIVerifierDisableTemperature        bool
+	AIVerifierTimeoutSeconds            int
+	AIVerifierMaxConcurrency            int
+	AIVerifierMaxInputTokens            int
+	AIVerifierMaxOutputTokens           int
+	AIVerifierMaxCandidateContextTokens int
+	AIVerifierTokenizer                 string
+	MemoryPlacementWorkerCount          int
+	MemoryPlacementPollSeconds          int
+	ClaimWriteRateLimit                 int
+	ClaimReadRateLimit                  int
+	RecallValidatedClaimWeight          float64
+	PromoteTxTimeoutSeconds             int
+	SkillPackImportHistoryDays          int
+	AICommunityMaxNodes                 int
+	ControlHTTPAddr                     string
+	ControlPortalToken                  string `json:"-"`
+	TelemetryEnabled                    bool
+	TelemetryPrometheusURL              string
+	TelemetryPrometheusJob              string
+	TelemetryQueryTimeoutSeconds        int
+	TelemetryScrapeToken                string `json:"-"`
+	AppTimezone                         string
+	ConflictReviewTTLDays               int
+	ConflictReviewStartTimeLocal        string
+	ConflictReviewMaxConcurrency        int
+	ConflictReviewBatchSize             int
+	ConflictReviewLeaseSeconds          int
+	ConflictReviewMaxAttempts           int
+	ConflictReviewJitterSeconds         int
 }
 
 // Ensure Config implements ConfigProvider
@@ -260,6 +319,30 @@ func (c *Config) GetAIVerifierTimeoutSeconds() int {
 	return 60
 }
 func (c *Config) GetAIVerifierMaxConcurrency() int { return c.AIVerifierMaxConcurrency }
+func (c *Config) GetAIVerifierMaxInputTokens() int {
+	if c.AIVerifierMaxInputTokens <= 0 {
+		return DefaultAIVerifierMaxInputTokens
+	}
+	return c.AIVerifierMaxInputTokens
+}
+func (c *Config) GetAIVerifierMaxOutputTokens() int {
+	if c.AIVerifierMaxOutputTokens <= 0 {
+		return DefaultAIVerifierMaxOutputTokens
+	}
+	return c.AIVerifierMaxOutputTokens
+}
+func (c *Config) GetAIVerifierMaxCandidateContextTokens() int {
+	if c.AIVerifierMaxCandidateContextTokens <= 0 {
+		return DefaultAIVerifierMaxCandidateContextTokens
+	}
+	return c.AIVerifierMaxCandidateContextTokens
+}
+func (c *Config) GetAIVerifierTokenizer() string {
+	if tokenizer := strings.TrimSpace(c.AIVerifierTokenizer); tokenizer != "" {
+		return tokenizer
+	}
+	return DefaultAIVerifierTokenizer
+}
 func (c *Config) GetMemoryPlacementWorkerCount() int {
 	if c.MemoryPlacementWorkerCount <= 0 {
 		return DefaultMemoryPlacementWorkerCount
@@ -361,7 +444,6 @@ func (c *Config) ValidateServerStartup() error {
 		{"AI_API_URL", c.AIAPIURL},
 		{"AI_API_KEY", c.AIAPIKey},
 		{"AI_API_EMBEDDING_MODEL", c.AIEmbeddingModel},
-		{"AI_REVIEWER_MODEL", c.AIReviewerModel},
 		{"AI_VERIFIER_MODEL", c.AIVerifierModel},
 		{"CONTROL_PORTAL_TOKEN", c.ControlPortalToken},
 	}
@@ -467,6 +549,9 @@ func applyIntEnvSpecs(cfg *Config, specs []intEnvSpec) error {
 func Load() (Config, error) {
 	cfg := Config{}
 	var err error
+	if err := rejectObsoleteAssessorConfig(); err != nil {
+		return cfg, err
+	}
 
 	// String fields with defaults
 	cfg.PostgresDSN = os.Getenv("POSTGRES_DSN")
@@ -548,6 +633,9 @@ func Load() (Config, error) {
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
 		{"AI_VERIFIER_TIMEOUT_SECONDS", 60, func(c *Config, value int) { c.AIVerifierTimeoutSeconds = value }},
 		{"AI_VERIFIER_MAX_CONCURRENCY", DefaultAIVerifierMaxConcurrency, func(c *Config, value int) { c.AIVerifierMaxConcurrency = value }},
+		{"AI_VERIFIER_MAX_INPUT_TOKENS", DefaultAIVerifierMaxInputTokens, func(c *Config, value int) { c.AIVerifierMaxInputTokens = value }},
+		{"AI_VERIFIER_MAX_OUTPUT_TOKENS", DefaultAIVerifierMaxOutputTokens, func(c *Config, value int) { c.AIVerifierMaxOutputTokens = value }},
+		{"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", DefaultAIVerifierMaxCandidateContextTokens, func(c *Config, value int) { c.AIVerifierMaxCandidateContextTokens = value }},
 		{"MEMORY_PLACEMENT_WORKER_COUNT", DefaultMemoryPlacementWorkerCount, func(c *Config, value int) { c.MemoryPlacementWorkerCount = value }},
 		{"MEMORY_PLACEMENT_POLL_SECONDS", DefaultMemoryPlacementPollSeconds, func(c *Config, value int) { c.MemoryPlacementPollSeconds = value }},
 		{"CLAIM_WRITE_RATE_LIMIT", 60, func(c *Config, value int) { c.ClaimWriteRateLimit = value }},
@@ -555,6 +643,7 @@ func Load() (Config, error) {
 	}); err != nil {
 		return cfg, err
 	}
+	cfg.AIVerifierTokenizer = strings.TrimSpace(getEnvOrDefault("AI_VERIFIER_TOKENIZER", DefaultAIVerifierTokenizer))
 
 	cfg.RecallValidatedClaimWeight, err = parseFloatOrDefault("RECALL_VALIDATED_CLAIM_WEIGHT", 0.5)
 	if err != nil {
@@ -648,6 +737,9 @@ func Load() (Config, error) {
 		{"EMBEDDING_JOB_MAX_ATTEMPTS", cfg.EmbeddingJobMaxAttempts},
 		{"AI_VERIFIER_TIMEOUT_SECONDS", cfg.AIVerifierTimeoutSeconds},
 		{"AI_VERIFIER_MAX_CONCURRENCY", cfg.AIVerifierMaxConcurrency},
+		{"AI_VERIFIER_MAX_INPUT_TOKENS", cfg.AIVerifierMaxInputTokens},
+		{"AI_VERIFIER_MAX_OUTPUT_TOKENS", cfg.AIVerifierMaxOutputTokens},
+		{"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", cfg.AIVerifierMaxCandidateContextTokens},
 		{"MEMORY_PLACEMENT_WORKER_COUNT", cfg.MemoryPlacementWorkerCount},
 		{"MEMORY_PLACEMENT_POLL_SECONDS", cfg.MemoryPlacementPollSeconds},
 		{"CLAIM_WRITE_RATE_LIMIT", cfg.ClaimWriteRateLimit},
@@ -693,6 +785,18 @@ func Load() (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "MEMORY_PLACEMENT_WORKER_COUNT",
 			Message: fmt.Sprintf("must be less than or equal to AI_VERIFIER_MAX_CONCURRENCY, got %d > %d", cfg.MemoryPlacementWorkerCount, cfg.AIVerifierMaxConcurrency),
+		}
+	}
+	if cfg.AIVerifierMaxCandidateContextTokens > cfg.AIVerifierMaxInputTokens {
+		return cfg, &ValidationError{
+			Field:   "AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS",
+			Message: fmt.Sprintf("must be less than or equal to AI_VERIFIER_MAX_INPUT_TOKENS, got %d > %d", cfg.AIVerifierMaxCandidateContextTokens, cfg.AIVerifierMaxInputTokens),
+		}
+	}
+	if !supportedAIVerifierTokenizer(cfg.AIVerifierTokenizer) {
+		return cfg, &ValidationError{
+			Field:   "AI_VERIFIER_TOKENIZER",
+			Message: fmt.Sprintf("unsupported tokenizer %q", cfg.AIVerifierTokenizer),
 		}
 	}
 	if cfg.ConflictReviewTTLDays > 30 {
@@ -825,4 +929,34 @@ func rejectLegacyNeo4jConfig() *ValidationError {
 		}
 	}
 	return nil
+}
+
+func rejectObsoleteAssessorConfig() *ValidationError {
+	for _, raw := range os.Environ() {
+		name, value, found := strings.Cut(raw, "=")
+		if found && strings.HasPrefix(name, "AI_ASSESSOR_") && strings.TrimSpace(value) != "" {
+			return &ValidationError{
+				Field:   name,
+				Message: "AI_ASSESSOR_* configuration is unsupported; use AI_VERIFIER_*",
+			}
+		}
+	}
+	for _, name := range obsoleteAssessorEnvVars {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return &ValidationError{
+				Field:   name,
+				Message: "byte budgets are unsupported; use the corresponding AI_VERIFIER_*_TOKENS setting",
+			}
+		}
+	}
+	return nil
+}
+
+func supportedAIVerifierTokenizer(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "o200k_base", "cl100k_base", "p50k_base", "p50k_edit", "r50k_base":
+		return true
+	default:
+		return false
+	}
 }

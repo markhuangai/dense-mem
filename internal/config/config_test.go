@@ -49,6 +49,15 @@ func clearEnv() {
 		"AI_VERIFIER_DISABLE_TEMPERATURE",
 		"AI_VERIFIER_TIMEOUT_SECONDS",
 		"AI_VERIFIER_MAX_CONCURRENCY",
+		"AI_VERIFIER_MAX_INPUT_TOKENS",
+		"AI_VERIFIER_MAX_OUTPUT_TOKENS",
+		"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS",
+		"AI_VERIFIER_TOKENIZER",
+		"AI_VERIFIER_MAX_INPUT_BYTES",
+		"AI_VERIFIER_MAX_OUTPUT_BYTES",
+		"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_BYTES",
+		"AI_ASSESSOR_MODEL",
+		"AI_ASSESSOR_MAX_INPUT_TOKENS",
 		"MEMORY_PLACEMENT_WORKER_COUNT",
 		"MEMORY_PLACEMENT_POLL_SECONDS",
 		"CLAIM_WRITE_RATE_LIMIT",
@@ -99,7 +108,6 @@ func setRequiredEmbeddingEnv() {
 }
 
 func setRequiredModelEnv() {
-	os.Setenv("AI_REVIEWER_MODEL", "reviewer-model")
 	os.Setenv("AI_VERIFIER_MODEL", "verifier-model")
 }
 
@@ -166,6 +174,13 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.GetMemoryPlacementPollSeconds() != DefaultMemoryPlacementPollSeconds {
 		t.Errorf("MemoryPlacementPollSeconds default = %d, want %d", cfg.GetMemoryPlacementPollSeconds(), DefaultMemoryPlacementPollSeconds)
+	}
+	budget := AIVerifierAssessmentBudgetFor(&cfg)
+	if budget.MaxInputTokens != DefaultAIVerifierMaxInputTokens ||
+		budget.MaxOutputTokens != DefaultAIVerifierMaxOutputTokens ||
+		budget.MaxCandidateContextTokens != DefaultAIVerifierMaxCandidateContextTokens ||
+		budget.Tokenizer != DefaultAIVerifierTokenizer {
+		t.Fatalf("default assessor budget = %#v", budget)
 	}
 	if cfg.GetAppTimezone() != "Local" {
 		t.Errorf("AppTimezone default = %q, want Local", cfg.GetAppTimezone())
@@ -764,46 +779,72 @@ func TestValidateServerStartup_SucceedsWithEmbeddingConfig(t *testing.T) {
 	}
 }
 
-func TestValidateServerStartup_RequiresReviewerAndVerifierModels(t *testing.T) {
-	cases := []struct {
-		name  string
-		set   func()
-		field string
-	}{
-		{
-			name:  "missing reviewer model",
-			set:   func() { os.Setenv("AI_VERIFIER_MODEL", "verifier-model") },
-			field: "AI_REVIEWER_MODEL",
-		},
-		{
-			name:  "missing verifier model",
-			set:   func() { os.Setenv("AI_REVIEWER_MODEL", "reviewer-model") },
-			field: "AI_VERIFIER_MODEL",
-		},
+func TestValidateServerStartup_RequiresVerifierModelAndIgnoresReviewerModel(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	setRequiredEmbeddingEnv()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+	if err := cfg.ValidateServerStartup(); err == nil {
+		t.Fatal("ValidateServerStartup() expected missing verifier model error, got nil")
+	} else if validationErr, ok := err.(*ValidationError); !ok || validationErr.Field != "AI_VERIFIER_MODEL" {
+		t.Fatalf("ValidateServerStartup() error = %v, want AI_VERIFIER_MODEL validation error", err)
 	}
 
-	for _, tc := range cases {
+	os.Setenv("AI_VERIFIER_MODEL", "verifier-model")
+	os.Setenv("AI_REVIEWER_MODEL", "legacy-reviewer-model")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() with tolerated reviewer model returned unexpected error: %v", err)
+	}
+	if err := cfg.ValidateServerStartup(); err != nil {
+		t.Fatalf("ValidateServerStartup() with tolerated reviewer model returned unexpected error: %v", err)
+	}
+}
+
+func TestLoadAssessorTokenBudgetAndRejectsObsoleteVariables(t *testing.T) {
+	t.Run("overrides", func(t *testing.T) {
+		clearEnv()
+		setRequiredEnv()
+		os.Setenv("AI_VERIFIER_MAX_INPUT_TOKENS", "1234")
+		os.Setenv("AI_VERIFIER_MAX_OUTPUT_TOKENS", "567")
+		os.Setenv("AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", "789")
+		os.Setenv("AI_VERIFIER_TOKENIZER", "cl100k_base")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() returned unexpected error: %v", err)
+		}
+		budget := AIVerifierAssessmentBudgetFor(&cfg)
+		if budget.MaxInputTokens != 1234 || budget.MaxOutputTokens != 567 || budget.MaxCandidateContextTokens != 789 || budget.Tokenizer != "cl100k_base" {
+			t.Fatalf("assessor budget = %#v", budget)
+		}
+	})
+
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{"assessor prefix", "AI_ASSESSOR_MODEL", "old"},
+		{"input bytes", "AI_VERIFIER_MAX_INPUT_BYTES", "131072"},
+		{"output bytes", "AI_VERIFIER_MAX_OUTPUT_BYTES", "131072"},
+		{"candidate bytes", "AI_VERIFIER_MAX_CANDIDATE_CONTEXT_BYTES", "32768"},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clearEnv()
 			setRequiredEnv()
-			setRequiredEmbeddingEnv()
-			tc.set()
-
-			cfg, err := Load()
-			if err != nil {
-				t.Fatalf("Load() returned unexpected error: %v", err)
-			}
-
-			err = cfg.ValidateServerStartup()
+			os.Setenv(tc.key, tc.value)
+			_, err := Load()
 			if err == nil {
-				t.Fatal("ValidateServerStartup() expected error, got nil")
+				t.Fatal("Load() expected obsolete assessor configuration error, got nil")
 			}
 			validationErr, ok := err.(*ValidationError)
-			if !ok {
-				t.Fatalf("expected *ValidationError, got %T", err)
-			}
-			if validationErr.Field != tc.field {
-				t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, tc.field)
+			if !ok || validationErr.Field != tc.key {
+				t.Fatalf("Load() error = %v, want %s validation error", err, tc.key)
 			}
 		})
 	}
