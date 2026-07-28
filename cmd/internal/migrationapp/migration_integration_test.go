@@ -57,6 +57,43 @@ func TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock(t *testing.T) {
 	require.True(t, migrationTimeoutProbeExists(t, sqlDB), "retry must acquire the migration lock and apply the migration")
 }
 
+func TestRunDownTimeoutRollsBackBlockedMigration(t *testing.T) {
+	db := openMigrationIntegrationDB(t)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+
+	useBlockedMigrationDirectory(t)
+	_, err = sqlDB.Exec(`CREATE TABLE migration_timeout_blocker (id integer PRIMARY KEY)`)
+	require.NoError(t, err)
+	require.NoError(t, RunUp(context.Background(), db, 5*time.Second, newRecordingLogger()))
+	require.True(t, migrationTimeoutProbeExists(t, sqlDB), "setup must apply the probe migration")
+
+	blockerConn, err := sqlDB.Conn(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = blockerConn.Close()
+	})
+	blockerTx, err := blockerConn.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = blockerTx.Rollback()
+	})
+	_, err = blockerTx.Exec(`LOCK TABLE migration_timeout_blocker IN ACCESS SHARE MODE`)
+	require.NoError(t, err)
+
+	startedAt := time.Now()
+	err = RunDown(context.Background(), db, 2*time.Second, newRecordingLogger())
+	require.Error(t, err)
+	require.True(t, errors.Is(err, context.DeadlineExceeded), "migration error = %v, want context deadline exceeded", err)
+	require.GreaterOrEqual(t, time.Since(startedAt), time.Second)
+	require.True(t, migrationTimeoutProbeExists(t, sqlDB), "timed-out rollback must restore its probe table")
+
+	require.NoError(t, blockerTx.Rollback())
+	require.NoError(t, blockerConn.Close())
+	require.NoError(t, RunDown(context.Background(), db, 5*time.Second, newRecordingLogger()))
+	require.False(t, migrationTimeoutProbeExists(t, sqlDB), "retry must complete the rollback")
+}
+
 func openMigrationIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	ctx := context.Background()
@@ -105,6 +142,10 @@ func useBlockedMigrationDirectory(t *testing.T) {
 CREATE TABLE migration_timeout_probe (id integer PRIMARY KEY);
 LOCK TABLE migration_timeout_blocker IN ACCESS EXCLUSIVE MODE;
 INSERT INTO migration_timeout_probe (id) VALUES (1);
+
+-- +goose Down
+DROP TABLE migration_timeout_probe;
+LOCK TABLE migration_timeout_blocker IN ACCESS EXCLUSIVE MODE;
 `), 0o600))
 	require.NoError(t, os.Chdir(temporaryDirectory))
 	t.Cleanup(func() {
