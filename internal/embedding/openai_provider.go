@@ -23,6 +23,7 @@ type OpenAIEmbeddingProvider struct {
 	dimensions int
 	timeout    time.Duration
 	httpClient *http.Client
+	sem        chan struct{}
 	metrics    observability.DiscoverabilityMetrics
 }
 
@@ -49,6 +50,7 @@ func NewOpenAIEmbeddingProvider(cfg config.ConfigProvider, httpClient *http.Clie
 		dimensions: cfg.GetAIEmbeddingDimensions(),
 		timeout:    timeout,
 		httpClient: client,
+		sem:        make(chan struct{}, config.AIEmbeddingMaxConcurrency(cfg)),
 		metrics:    observability.NoopDiscoverabilityMetrics(),
 	}
 }
@@ -101,6 +103,16 @@ type openAIEmbeddingResponse struct {
 
 // EmbedBatch returns embeddings for multiple texts in the same order as inputs.
 func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, string, error) {
+	select {
+	case p.sem <- struct{}{}:
+		defer func() { <-p.sem }()
+	case <-ctx.Done():
+		return nil, "", &TimeoutError{
+			Provider: "openai",
+			Message:  ctx.Err().Error(),
+		}
+	}
+
 	url := strings.TrimSuffix(p.baseURL, "/") + "/embeddings"
 
 	reqBody := openAIEmbeddingRequest{

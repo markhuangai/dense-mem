@@ -53,7 +53,7 @@ func TestEmbeddingWorkerHandlesNoClaimedJobsAndClaimErrors(t *testing.T) {
 		Provider:  &embeddingProviderStub{available: true, model: "test-model", dims: 3},
 		TeamID:    "team-a",
 		WorkerID:  "worker-a",
-		BatchSize: 200,
+		BatchSize: 300,
 	})
 
 	result, err := worker.ProcessNextBatch(context.Background())
@@ -63,8 +63,8 @@ func TestEmbeddingWorkerHandlesNoClaimedJobsAndClaimErrors(t *testing.T) {
 	if result.Claimed != 0 {
 		t.Fatalf("result = %#v", result)
 	}
-	if search.claimLimit != 100 {
-		t.Fatalf("claim limit = %d, want capped 100", search.claimLimit)
+	if search.claimLimit != 256 {
+		t.Fatalf("claim limit = %d, want capped 256", search.claimLimit)
 	}
 
 	search.claimErr = errors.New("claim failed")

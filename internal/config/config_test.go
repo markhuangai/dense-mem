@@ -36,6 +36,10 @@ func clearEnv() {
 		"AI_API_EMBEDDING_MODEL",
 		"AI_API_EMBEDDING_DIMENSIONS",
 		"AI_API_EMBEDDING_TIMEOUT_SECONDS",
+		"AI_API_EMBEDDING_MAX_CONCURRENCY",
+		"EMBEDDING_WORKER_COUNT",
+		"EMBEDDING_BATCH_SIZE",
+		"EMBEDDING_JOB_POLL_SECONDS",
 		"EMBEDDING_JOB_MAX_ATTEMPTS",
 		// Knowledge-pipeline knobs
 		"AI_VERIFIER_API_URL",
@@ -45,6 +49,8 @@ func clearEnv() {
 		"AI_VERIFIER_DISABLE_TEMPERATURE",
 		"AI_VERIFIER_TIMEOUT_SECONDS",
 		"AI_VERIFIER_MAX_CONCURRENCY",
+		"MEMORY_PLACEMENT_WORKER_COUNT",
+		"MEMORY_PLACEMENT_POLL_SECONDS",
 		"CLAIM_WRITE_RATE_LIMIT",
 		"CLAIM_READ_RATE_LIMIT",
 		"RECALL_VALIDATED_CLAIM_WEIGHT",
@@ -142,6 +148,24 @@ func TestLoadDefaults(t *testing.T) {
 			cfg.GetEmbeddingJobMaxAttempts(),
 			DefaultEmbeddingJobMaxAttempts,
 		)
+	}
+	if cfg.GetAIEmbeddingMaxConcurrency() != DefaultAIEmbeddingMaxConcurrency {
+		t.Errorf("AIEmbeddingMaxConcurrency default = %d, want %d", cfg.GetAIEmbeddingMaxConcurrency(), DefaultAIEmbeddingMaxConcurrency)
+	}
+	if cfg.GetEmbeddingWorkerCount() != DefaultEmbeddingWorkerCount {
+		t.Errorf("EmbeddingWorkerCount default = %d, want %d", cfg.GetEmbeddingWorkerCount(), DefaultEmbeddingWorkerCount)
+	}
+	if cfg.GetEmbeddingBatchSize() != DefaultEmbeddingBatchSize {
+		t.Errorf("EmbeddingBatchSize default = %d, want %d", cfg.GetEmbeddingBatchSize(), DefaultEmbeddingBatchSize)
+	}
+	if cfg.GetEmbeddingJobPollSeconds() != DefaultEmbeddingJobPollSeconds {
+		t.Errorf("EmbeddingJobPollSeconds default = %d, want %d", cfg.GetEmbeddingJobPollSeconds(), DefaultEmbeddingJobPollSeconds)
+	}
+	if cfg.GetMemoryPlacementWorkerCount() != DefaultMemoryPlacementWorkerCount {
+		t.Errorf("MemoryPlacementWorkerCount default = %d, want %d", cfg.GetMemoryPlacementWorkerCount(), DefaultMemoryPlacementWorkerCount)
+	}
+	if cfg.GetMemoryPlacementPollSeconds() != DefaultMemoryPlacementPollSeconds {
+		t.Errorf("MemoryPlacementPollSeconds default = %d, want %d", cfg.GetMemoryPlacementPollSeconds(), DefaultMemoryPlacementPollSeconds)
 	}
 	if cfg.GetAppTimezone() != "Local" {
 		t.Errorf("AppTimezone default = %q, want Local", cfg.GetAppTimezone())

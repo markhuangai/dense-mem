@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -308,4 +310,113 @@ func TestOpenAIProvider_ImplementsInterface(t *testing.T) {
 	// Compile-time assertion that OpenAIEmbeddingProvider implements EmbeddingProviderInterface
 	var _ EmbeddingProviderInterface = (*OpenAIEmbeddingProvider)(nil)
 	assert.True(t, true, "compile-time interface assertion passed")
+}
+
+func TestOpenAIProvider_EmbedBatchCapsConcurrentRequests(t *testing.T) {
+	var active atomic.Int64
+	var maximum atomic.Int64
+	started := make(chan struct{}, 3)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for {
+			observed := maximum.Load()
+			if current <= observed || maximum.CompareAndSwap(observed, current) {
+				break
+			}
+		}
+		started <- struct{}{}
+		<-release
+		_, _ = w.Write([]byte(`{"data":[{"embedding":[0.1,0.2]}]}`))
+	}))
+	defer srv.Close()
+
+	cfg := &config.Config{
+		AIAPIURL:                  srv.URL,
+		AIAPIKey:                  "key",
+		AIEmbeddingModel:          "m",
+		AIEmbeddingDimensions:     2,
+		AIEmbeddingTimeoutSeconds: 5,
+		AIEmbeddingMaxConcurrency: 2,
+	}
+	provider := NewOpenAIEmbeddingProvider(cfg, srv.Client())
+
+	errs := make(chan error, 3)
+	var calls sync.WaitGroup
+	for range 3 {
+		calls.Add(1)
+		go func() {
+			defer calls.Done()
+			_, _, err := provider.EmbedBatch(context.Background(), []string{"text"})
+			errs <- err
+		}()
+	}
+
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for requests to enter the provider")
+		}
+	}
+	select {
+	case <-started:
+		t.Fatal("third request entered before a provider slot was released")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	calls.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	assert.Equal(t, int64(2), maximum.Load())
+}
+
+func TestOpenAIProvider_EmbedBatchWaitHonorsContextCancellation(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		<-release
+		_, _ = w.Write([]byte(`{"data":[{"embedding":[0.1,0.2]}]}`))
+	}))
+	defer srv.Close()
+
+	cfg := &config.Config{
+		AIAPIURL:                  srv.URL,
+		AIAPIKey:                  "key",
+		AIEmbeddingModel:          "m",
+		AIEmbeddingDimensions:     2,
+		AIEmbeddingTimeoutSeconds: 5,
+		AIEmbeddingMaxConcurrency: 1,
+	}
+	provider := NewOpenAIEmbeddingProvider(cfg, srv.Client())
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, _, err := provider.EmbedBatch(context.Background(), []string{"first"})
+		firstDone <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the first request")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := provider.EmbedBatch(ctx, []string{"second"})
+	require.ErrorIs(t, err, ErrEmbeddingTimeout)
+
+	releaseOnce.Do(func() { close(release) })
+	require.NoError(t, <-firstDone)
 }

@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
+	"log"
+	"os"
 	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // PostgresClient is the companion interface for any Postgres DB wrapper.
@@ -63,7 +67,9 @@ func Open(ctx context.Context, cfg ConfigProvider) (*gorm.DB, error) {
 		return nil, fmt.Errorf("postgres DSN is empty")
 	}
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: newGORMLogger(os.Stdout),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open postgres connection: %w", err)
 	}
@@ -119,4 +125,17 @@ func OpenWithClient(ctx context.Context, cfg ConfigProvider) (*DB, error) {
 		db:    db,
 		sqlDB: sqlDB,
 	}, nil
+}
+
+func newGORMLogger(output io.Writer) gormlogger.Interface {
+	return gormlogger.New(
+		log.New(output, "\r\n", log.LstdFlags),
+		gormlogger.Config{
+			SlowThreshold:             200 * time.Millisecond,
+			LogLevel:                  gormlogger.Warn,
+			IgnoreRecordNotFoundError: false,
+			ParameterizedQueries:      true,
+			Colorful:                  false,
+		},
+	)
 }

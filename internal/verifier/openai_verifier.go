@@ -115,6 +115,7 @@ type OpenAIVerifier struct {
 	reviewerModel      string
 	disableTemperature bool
 	httpClient         *http.Client
+	sem                chan struct{}
 	metrics            observability.DiscoverabilityMetrics
 }
 
@@ -141,7 +142,28 @@ func NewOpenAIVerifier(cfg config.ConfigProvider, httpClient *http.Client) *Open
 		reviewerModel:      cfg.GetAIReviewerModel(),
 		disableTemperature: config.AIVerifierTemperatureDisabled(cfg),
 		httpClient:         client,
+		sem:                make(chan struct{}, verifierMaxConcurrency(cfg)),
 		metrics:            observability.NoopDiscoverabilityMetrics(),
+	}
+}
+
+func verifierMaxConcurrency(cfg config.ConfigProvider) int {
+	concurrency := cfg.GetAIVerifierMaxConcurrency()
+	if concurrency <= 0 {
+		return 5
+	}
+	return concurrency
+}
+
+func (v *OpenAIVerifier) acquire(ctx context.Context) error {
+	select {
+	case v.sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return &TimeoutError{
+			Provider: openAIVerifierProvider,
+			Message:  ctx.Err().Error(),
+		}
 	}
 }
 
@@ -210,6 +232,11 @@ func (v *OpenAIVerifier) ReviewSemantic(ctx context.Context, req SemanticReviewR
 // types defined in errors.go (ErrVerifierTimeout, ErrVerifierProvider,
 // ErrVerifierRateLimit, ErrVerifierMalformedResponse).
 func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, error) {
+	if err := v.acquire(ctx); err != nil {
+		return Response{}, err
+	}
+	defer func() { <-v.sem }()
+
 	started := time.Now()
 	latencyOutcome := "error"
 	defer func() {
@@ -405,6 +432,11 @@ func (v *OpenAIVerifier) openAIStructuredChatJSON(
 	systemPrompt string,
 	payload any,
 ) (string, error) {
+	if err := v.acquire(ctx); err != nil {
+		return "", err
+	}
+	defer func() { <-v.sem }()
+
 	started := time.Now()
 	latencyOutcome := "error"
 	defer func() {

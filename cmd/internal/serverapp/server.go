@@ -410,7 +410,11 @@ func RunActiveServer(
 		verifierProvider,
 		discoverabilityMetrics,
 		activePlacementLease(cfg.GetAIVerifierTimeoutSeconds(), cfg.GetPromoteTxTimeoutSeconds()),
-		activeWorkerCount(cfg.GetAIVerifierMaxConcurrency()),
+		cfg.GetMemoryPlacementWorkerCount(),
+		time.Duration(cfg.GetMemoryPlacementPollSeconds())*time.Second,
+		cfg.GetEmbeddingWorkerCount(),
+		cfg.GetEmbeddingBatchSize(),
+		time.Duration(cfg.GetEmbeddingJobPollSeconds())*time.Second,
 	)
 	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
 	defer dreamSchedulerCancel()
@@ -772,7 +776,11 @@ func startActiveWorkers(
 	reviewer *verifier.OpenAIVerifier,
 	metrics observability.DiscoverabilityMetrics,
 	placementLease time.Duration,
-	workerCount int,
+	placementWorkerCount int,
+	placementPollInterval time.Duration,
+	embeddingWorkerCount int,
+	embeddingBatchSize int,
+	embeddingPollInterval time.Duration,
 ) {
 	hostname, _ := os.Hostname()
 	baseWorkerID := fmt.Sprintf("active-%s-%d", hostname, os.Getpid())
@@ -789,21 +797,48 @@ func startActiveWorkers(
 		ProposalProvider: reviewer,
 	})
 
-	for workerIndex := 0; workerIndex < activeWorkerCount(workerCount); workerIndex++ {
-		workerID := fmt.Sprintf("%s-%d", baseWorkerID, workerIndex+1)
-		go func() {
-			ticker := time.NewTicker(5 * time.Second)
-			defer ticker.Stop()
-			for {
-				processActiveWorkerTick(ctx, logger, profiles, ledger, search, reviewSvc, commitSvc, reviewSource, embedder, metrics, workerID, placementLease)
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-				}
-			}
-		}()
-	}
+	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
+		name:         "placement",
+		baseWorkerID: baseWorkerID,
+		count:        placementWorkerCount,
+		pollInterval: placementPollInterval,
+		profiles:     profiles,
+		logger:       logger,
+		workerError:  errSemanticPlacementWorkerFailed,
+		work: func(ctx context.Context, teamID string, workerID string) (bool, error) {
+			worker := memoryservice.NewSemanticPlacementWorkerService(memoryservice.SemanticPlacementWorkerDependencies{
+				Ledger:       ledger,
+				Review:       reviewSvc,
+				Commit:       commitSvc,
+				ReviewSource: reviewSource,
+				TeamID:       teamID,
+				WorkerID:     workerID,
+				Lease:        placementLease,
+			})
+			return worker.ProcessNextSemanticPlacement(ctx)
+		},
+	})
+	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
+		name:         "embedding",
+		baseWorkerID: baseWorkerID,
+		count:        embeddingWorkerCount,
+		pollInterval: embeddingPollInterval,
+		profiles:     profiles,
+		logger:       logger,
+		workerError:  errEmbeddingWorkerFailed,
+		work: func(ctx context.Context, teamID string, workerID string) (bool, error) {
+			worker := embeddingservice.NewEmbeddingWorkerService(embeddingservice.EmbeddingWorkerDependencies{
+				Search:    search,
+				Provider:  embedder,
+				Metrics:   metrics,
+				TeamID:    teamID,
+				WorkerID:  workerID,
+				BatchSize: embeddingBatchSize,
+			})
+			result, err := worker.ProcessNextBatch(ctx)
+			return result.Claimed > 0, err
+		},
+	})
 }
 
 func activePlacementLease(verifierTimeoutSeconds int, commitTimeoutSeconds int) time.Duration {
@@ -825,82 +860,4 @@ func logServerStartError(logger observability.LogProvider, message string, err e
 		return
 	}
 	logger.Error(message, err)
-}
-
-func activeWorkerCount(verifierMaxConcurrency int) int {
-	if verifierMaxConcurrency <= 0 {
-		return 1
-	}
-	if verifierMaxConcurrency > 16 {
-		return 16
-	}
-	return verifierMaxConcurrency
-}
-
-func processActiveWorkerTick(
-	ctx context.Context,
-	logger observability.LogProvider,
-	profiles service.ProfileService,
-	ledger *repository.LedgerRepositoryImpl,
-	search repository.SearchRepository,
-	reviewSvc memoryservice.SemanticReviewService,
-	commitSvc memoryservice.SemanticCommitService,
-	reviewSource memoryservice.SemanticPlacementReviewSource,
-	embedder *embedding.RetryEmbeddingProvider,
-	metrics observability.DiscoverabilityMetrics,
-	workerID string,
-	placementLease time.Duration,
-) {
-	const (
-		pageSize                    = 100
-		maxPlacementsPerTeamPerTick = 25
-	)
-	for offset := 0; ; offset += pageSize {
-		teams, err := profiles.List(ctx, pageSize, offset)
-		if err != nil {
-			logger.Error("placement worker profile list failed", err)
-			return
-		}
-		if len(teams) == 0 {
-			return
-		}
-		for _, team := range teams {
-			if team == nil {
-				continue
-			}
-			teamID := team.ID.String()
-			placementWorker := memoryservice.NewSemanticPlacementWorkerService(memoryservice.SemanticPlacementWorkerDependencies{
-				Ledger:       ledger,
-				Review:       reviewSvc,
-				Commit:       commitSvc,
-				ReviewSource: reviewSource,
-				TeamID:       teamID,
-				WorkerID:     workerID,
-				Lease:        placementLease,
-			})
-			for i := 0; i < maxPlacementsPerTeamPerTick; i++ {
-				processed, err := placementWorker.ProcessNextSemanticPlacement(ctx)
-				if err != nil {
-					logger.Error("semantic placement worker failed", err, observability.String("team_id", teamID))
-					break
-				}
-				if !processed {
-					break
-				}
-			}
-			embeddingWorker := embeddingservice.NewEmbeddingWorkerService(embeddingservice.EmbeddingWorkerDependencies{
-				Search:   search,
-				Provider: embedder,
-				Metrics:  metrics,
-				TeamID:   teamID,
-				WorkerID: workerID,
-			})
-			if _, err := embeddingWorker.ProcessNextBatch(ctx); err != nil {
-				logger.Error("embedding worker failed", err, observability.String("team_id", teamID))
-			}
-		}
-		if len(teams) < pageSize {
-			return
-		}
-	}
 }
