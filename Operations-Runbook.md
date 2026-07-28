@@ -111,6 +111,23 @@ Before user traffic:
 13. verify a pending embedding does not hide committed SemanticEdges
 14. take and restore a PostgreSQL backup before accepting important memory
 
+### Migration startup progress
+
+Server, demo-server, and the standalone migration command log `running postgres
+migrations` at the start of a migration run and `postgres migrations still
+running` every 10 seconds until it completes. The heartbeat includes
+`direction`, `elapsed_seconds`, and `timeout_seconds`.
+
+`POSTGRES_MIGRATION_TIMEOUT_SECONDS` defaults to 1800 seconds and is bounded
+to 1–86400 seconds. The five-minute preflight and post-migration checks remain
+separate; the extended timeout applies only to the migration run. Set a higher,
+finite value only for a planned maintenance window.
+
+A heartbeat means the migration run is still active and may be executing DDL or
+waiting on a PostgreSQL lock. Do not restart it solely because heartbeats appear.
+If elapsed time approaches the configured deadline, inspect migration status and
+authorized database lock/transaction state before choosing a recovery action.
+
 Public exposure belongs in
 [Public HTTPS And Redis](Public-HTTPS-And-Redis).
 

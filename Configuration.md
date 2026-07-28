@@ -76,6 +76,7 @@ PostgreSQL is authoritative for knowledge, workflow, search, and control state.
 | `POSTGRES_MAX_OPEN_CONNS` | `25` | per-process pool maximum, also subject to deployment-wide budget |
 | `POSTGRES_MAX_IDLE_CONNS` | `10` | idle pool target |
 | `POSTGRES_CONN_MAX_LIFETIME_SECONDS` | `1800` | connection lifetime |
+| `POSTGRES_MIGRATION_TIMEOUT_SECONDS` | `1800` | bounded migration-run deadline; valid range `1`–`86400` seconds |
 | `POSTGRES_VECTOR_MAX_CONCURRENCY` | `4` | per-process semaphore for exact/ANN database queries |
 | `POSTGRES_STATEMENT_TIMEOUT_SECONDS` | `30` | default application statement ceiling |
 | `POSTGRES_LOCK_TIMEOUT_SECONDS` | `5` | default lock-wait ceiling |
