@@ -79,6 +79,11 @@ func isPostgresUniqueConstraint(err error, constraint string) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraint
 }
 
+func isPostgresForeignKeyConstraint(err error, constraint string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == constraint
+}
+
 func translateSourceCreateError(err error) error {
 	if err == nil {
 		return nil

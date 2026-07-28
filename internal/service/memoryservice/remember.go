@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -100,7 +101,19 @@ type PlacementItemResult struct {
 	Category             string                   `json:"category"`
 	SearchState          string                   `json:"search_state"`
 	RelationshipOutcomes []RelationshipOutcomeRef `json:"relationship_outcomes"`
+	ReviewTasks          []PlacementReviewTaskRef `json:"review_tasks"`
 	Errors               []PlacementError         `json:"errors"`
+}
+
+type PlacementReviewTaskRef struct {
+	ReviewTaskID string           `json:"review_task_id"`
+	Version      int              `json:"version"`
+	Kind         string           `json:"kind"`
+	Status       string           `json:"status"`
+	Question     string           `json:"question"`
+	Options      []map[string]any `json:"options"`
+	Guidance     string           `json:"guidance"`
+	ExpiresAt    *time.Time       `json:"expires_at"`
 }
 
 type RelationshipOutcomeRef struct {
@@ -112,6 +125,8 @@ type RelationshipOutcomeRef struct {
 	Category           string `json:"category"`
 	Reason             string `json:"reason"`
 	ReviewTask         string `json:"review_task,omitempty"`
+	ConfidenceGate     string `json:"confidence_gate,omitempty"`
+	PolicyVersion      string `json:"policy_version,omitempty"`
 }
 
 type PlacementError struct {
@@ -331,6 +346,7 @@ func placementRunResultFromLedger(created *repository.CreateIngestResult) *Place
 			Category:             publicPlacementItemCategory(item),
 			SearchState:          itemSearchState,
 			RelationshipOutcomes: placementRelationshipOutcomes(item.Result),
+			ReviewTasks:          placementReviewTasks(item.ReviewTasks),
 			Errors:               []PlacementError{},
 		})
 	}
@@ -418,9 +434,36 @@ func placementRelationshipOutcomes(result map[string]any) []RelationshipOutcomeR
 			Category:           resultString(fields, "category"),
 			Reason:             resultString(fields, "reason"),
 			ReviewTask:         resultString(fields, "review_task"),
+			ConfidenceGate:     resultString(fields, "confidence_gate"),
+			PolicyVersion:      resultString(fields, "policy_version"),
 		})
 	}
 	return out
+}
+
+func placementReviewTasks(tasks []repository.PlacementReviewTask) []PlacementReviewTaskRef {
+	result := make([]PlacementReviewTaskRef, 0, len(tasks))
+	for _, task := range tasks {
+		options := make([]map[string]any, 0, len(task.Options))
+		for _, option := range task.Options {
+			cloned := make(map[string]any, len(option))
+			for key, value := range option {
+				cloned[key] = value
+			}
+			options = append(options, cloned)
+		}
+		result = append(result, PlacementReviewTaskRef{
+			ReviewTaskID: task.ReviewTaskID,
+			Version:      task.Version,
+			Kind:         task.Kind,
+			Status:       task.Status,
+			Question:     task.Question,
+			Options:      options,
+			Guidance:     task.Guidance,
+			ExpiresAt:    task.ExpiresAt,
+		})
+	}
+	return result
 }
 
 func resultArray(result map[string]any, key string) []any {

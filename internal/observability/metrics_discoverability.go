@@ -52,6 +52,19 @@ type DiscoverabilityMetrics interface {
 	ObserveCommunityDetect(durationSeconds float64, projectedNodes int)
 }
 
+// AssessorMetrics is an optional V2.4 write-path metric surface. Its methods
+// deliberately accept no request identity, evidence, threshold, or rationale
+// so assessor telemetry cannot create sensitive or high-cardinality labels.
+type AssessorMetrics interface {
+	ObserveAssessorCall(inputTokens, outputTokens int, durationSeconds float64, outcome string)
+	IncAssessorValidationFailure(stage string)
+	IncAssessorCandidateTruncation()
+	IncAssessorAssessmentPersistence(outcome string)
+	IncAssessorDuplicateRequestPrevention(stage string)
+	IncAssessorConfidenceGate(band string)
+	AddAssessorReviewExpiry(count int64)
+}
+
 // NoopDiscoverabilityMetrics returns a DiscoverabilityMetrics that discards
 // every call. Use this as the default when no metrics backend is configured —
 // call sites never need nil checks.
@@ -69,37 +82,51 @@ func (noopMetrics) ObserveRecallFeedback(RecallFeedback)    {}
 func (noopMetrics) ObserveDreamFeedback(DreamFeedback)      {}
 func (noopMetrics) ObserveMemoryFunnelLatency(string, float64, string) {
 }
-func (noopMetrics) IncFragmentCreate(string)            {}
-func (noopMetrics) IncClaimCreate(string, string)       {}
-func (noopMetrics) IncVerifyVerdict(string)             {}
-func (noopMetrics) IncPromotionOutcome(string)          {}
-func (noopMetrics) ObservePromoteLockWait(float64)      {}
-func (noopMetrics) IncFragmentRetract()                 {}
-func (noopMetrics) IncFactNeedsRevalidation()           {}
-func (noopMetrics) IncCommunityDetect(string)           {}
-func (noopMetrics) ObserveCommunityDetect(float64, int) {}
+func (noopMetrics) IncFragmentCreate(string)                      {}
+func (noopMetrics) IncClaimCreate(string, string)                 {}
+func (noopMetrics) IncVerifyVerdict(string)                       {}
+func (noopMetrics) IncPromotionOutcome(string)                    {}
+func (noopMetrics) ObservePromoteLockWait(float64)                {}
+func (noopMetrics) IncFragmentRetract()                           {}
+func (noopMetrics) IncFactNeedsRevalidation()                     {}
+func (noopMetrics) IncCommunityDetect(string)                     {}
+func (noopMetrics) ObserveCommunityDetect(float64, int)           {}
+func (noopMetrics) ObserveAssessorCall(int, int, float64, string) {}
+func (noopMetrics) IncAssessorValidationFailure(string)           {}
+func (noopMetrics) IncAssessorCandidateTruncation()               {}
+func (noopMetrics) IncAssessorAssessmentPersistence(string)       {}
+func (noopMetrics) IncAssessorDuplicateRequestPrevention(string)  {}
+func (noopMetrics) IncAssessorConfidenceGate(string)              {}
+func (noopMetrics) AddAssessorReviewExpiry(int64)                 {}
 
 // InMemoryDiscoverabilityMetrics is a test-friendly recorder. Tests can
 // inspect the captured samples to assert that a code path actually emitted
 // the expected metric without standing up Prometheus.
 type InMemoryDiscoverabilityMetrics struct {
-	mu                     sync.Mutex
-	embeddingSamples       []EmbeddingSample
-	embeddingErrors        map[string]int
-	recallLatencies        []float64
-	recallSamples          []RecallSample
-	recallFeedbackSamples  []RecallFeedbackSample
-	dreamFeedbackSamples   []DreamFeedbackSample
-	memoryFunnelSamples    []MemoryFunnelSample
-	fragmentOutcomes       map[string]int
-	claimCreateSamples     []ClaimCreateSample
-	verifyVerdicts         map[string]int
-	promotionOutcomes      map[string]int
-	promoteLockWaits       []float64
-	fragmentRetracts       int
-	factNeedsRevalidation  int
-	communityDetectOuts    map[string]int
-	communityDetectSamples []CommunityDetectSample
+	mu                          sync.Mutex
+	embeddingSamples            []EmbeddingSample
+	embeddingErrors             map[string]int
+	recallLatencies             []float64
+	recallSamples               []RecallSample
+	recallFeedbackSamples       []RecallFeedbackSample
+	dreamFeedbackSamples        []DreamFeedbackSample
+	memoryFunnelSamples         []MemoryFunnelSample
+	fragmentOutcomes            map[string]int
+	claimCreateSamples          []ClaimCreateSample
+	verifyVerdicts              map[string]int
+	promotionOutcomes           map[string]int
+	promoteLockWaits            []float64
+	fragmentRetracts            int
+	factNeedsRevalidation       int
+	communityDetectOuts         map[string]int
+	communityDetectSamples      []CommunityDetectSample
+	assessorCalls               []AssessorCallSample
+	assessorValidation          map[string]int
+	assessorTruncations         int
+	assessorPersistence         map[string]int
+	assessorDuplicatePrevention map[string]int
+	assessorGateBands           map[string]int
+	assessorReviewExpiry        int64
 }
 
 // ClaimCreateSample is one recorded claim-create event.
@@ -112,6 +139,14 @@ type ClaimCreateSample struct {
 type CommunityDetectSample struct {
 	DurationSeconds float64
 	ProjectedNodes  int
+}
+
+// AssessorCallSample records one bounded assessor-provider request.
+type AssessorCallSample struct {
+	InputTokens     int
+	OutputTokens    int
+	DurationSeconds float64
+	Outcome         string
 }
 
 // EmbeddingSample is one recorded embedding latency observation.
@@ -172,11 +207,15 @@ var _ DiscoverabilityMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
 // NewInMemoryDiscoverabilityMetrics constructs a fresh recorder.
 func NewInMemoryDiscoverabilityMetrics() *InMemoryDiscoverabilityMetrics {
 	return &InMemoryDiscoverabilityMetrics{
-		embeddingErrors:     make(map[string]int),
-		fragmentOutcomes:    make(map[string]int),
-		verifyVerdicts:      make(map[string]int),
-		promotionOutcomes:   make(map[string]int),
-		communityDetectOuts: make(map[string]int),
+		embeddingErrors:             make(map[string]int),
+		fragmentOutcomes:            make(map[string]int),
+		verifyVerdicts:              make(map[string]int),
+		promotionOutcomes:           make(map[string]int),
+		communityDetectOuts:         make(map[string]int),
+		assessorValidation:          make(map[string]int),
+		assessorPersistence:         make(map[string]int),
+		assessorDuplicatePrevention: make(map[string]int),
+		assessorGateBands:           make(map[string]int),
 	}
 }
 
@@ -373,6 +412,53 @@ func (m *InMemoryDiscoverabilityMetrics) ObserveCommunityDetect(durationSeconds 
 	m.communityDetectSamples = append(m.communityDetectSamples, CommunityDetectSample{DurationSeconds: durationSeconds, ProjectedNodes: projectedNodes})
 }
 
+func (m *InMemoryDiscoverabilityMetrics) ObserveAssessorCall(inputTokens, outputTokens int, durationSeconds float64, outcome string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorCalls = append(m.assessorCalls, AssessorCallSample{
+		InputTokens: inputTokens, OutputTokens: outputTokens, DurationSeconds: durationSeconds, Outcome: outcome,
+	})
+}
+
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorValidationFailure(stage string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorValidation[stage]++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorCandidateTruncation() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorTruncations++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorAssessmentPersistence(outcome string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorPersistence[outcome]++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorDuplicateRequestPrevention(stage string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorDuplicatePrevention[stage]++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorConfidenceGate(band string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorGateBands[band]++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AddAssessorReviewExpiry(count int64) {
+	if count <= 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorReviewExpiry += count
+}
+
 // ClaimCreateSamples returns a copy of the recorded claim-create samples.
 func (m *InMemoryDiscoverabilityMetrics) ClaimCreateSamples() []ClaimCreateSample {
 	m.mu.Lock()
@@ -433,4 +519,48 @@ func (m *InMemoryDiscoverabilityMetrics) CommunityDetectSamples() []CommunityDet
 	out := make([]CommunityDetectSample, len(m.communityDetectSamples))
 	copy(out, m.communityDetectSamples)
 	return out
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorCalls() []AssessorCallSample {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]AssessorCallSample, len(m.assessorCalls))
+	copy(out, m.assessorCalls)
+	return out
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorValidationFailureCount(stage string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorValidation[stage]
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorCandidateTruncationCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorTruncations
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorPersistenceCount(outcome string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorPersistence[outcome]
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorDuplicatePreventionCount(stage string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorDuplicatePrevention[stage]
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorConfidenceGateCount(band string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorGateBands[band]
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorReviewExpiryCount() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorReviewExpiry
 }

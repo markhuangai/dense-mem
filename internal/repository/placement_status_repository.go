@@ -116,7 +116,7 @@ func loadPlacementRunStatus(
 		return nil, err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT placement_item_id::text, fragment_id::text, evidence_index,
+		SELECT placement_item_id::text, fragment_id::text, claim_key::text, evidence_index,
 		       status, category, version, COALESCE(result, '{}'::jsonb)
 		FROM placement_items
 		WHERE team_id = ?::uuid
@@ -134,6 +134,7 @@ func loadPlacementRunStatus(
 		if err := rows.Scan(
 			&item.PlacementItemID,
 			&item.FragmentID,
+			&item.ClaimKey,
 			&item.EvidenceIndex,
 			&item.Status,
 			&item.Category,
@@ -154,6 +155,9 @@ func loadPlacementRunStatus(
 		return nil, err
 	}
 	if err := hydratePlacementItemSearchStates(ctx, tx, result.TeamID, result.OwnerProfileID, result.Items); err != nil {
+		return nil, err
+	}
+	if err := hydratePlacementItemReviewTasks(ctx, tx, result.TeamID, result.OwnerProfileID, result.IngestID, result.Items); err != nil {
 		return nil, err
 	}
 	return result, nil

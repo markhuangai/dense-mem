@@ -525,7 +525,7 @@ func TestOpenAIVerifierSemanticAdapters(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var reqBody openAIVerifierRequest
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
-			assert.Equal(t, "reviewer-model", reqBody.Model)
+			assert.Equal(t, "verifier-model", reqBody.Model)
 			assert.Equal(t, ProviderProposalSchemaName, reqBody.ResponseFormat.JSONSchema.Name)
 			require.Len(t, reqBody.Messages, 2)
 			assert.Contains(t, reqBody.Messages[0].Content, "structure extraction")

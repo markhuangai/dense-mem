@@ -135,9 +135,9 @@ Cold image pulls can take longer than 60 seconds. Redis and public HTTPS are
 intentionally omitted from the base example; use the expert example when you
 need those deployment options.
 
-The server requires complete embedding and reviewer/verifier configuration at
-startup: `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`,
-`AI_API_EMBEDDING_DIMENSIONS`, `AI_REVIEWER_MODEL`, and `AI_VERIFIER_MODEL`.
+The server requires complete embedding and assessor configuration at startup:
+`AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`,
+`AI_API_EMBEDDING_DIMENSIONS`, and `AI_VERIFIER_MODEL`.
 The compose examples provide OpenAI defaults for the embedding URL, model, and
 dimensions (`https://api.openai.com/v1`, `text-embedding-3-large`, `3072`), but
 you still choose the chat models explicitly in `.env`. Override the embedding
@@ -163,7 +163,6 @@ AI_API_URL=http://host.docker.internal:11434/v1
 AI_API_KEY=ollama
 AI_API_EMBEDDING_MODEL=nomic-embed-text
 AI_API_EMBEDDING_DIMENSIONS=768
-AI_REVIEWER_MODEL=llama3.1:8b
 AI_VERIFIER_MODEL=llama3.1:8b
 AI_VERIFIER_TIMEOUT_SECONDS=300
 ```
@@ -176,12 +175,11 @@ Three details matter on this path:
   by default.
 - `AI_API_KEY` must be non-empty even though Ollama ignores it; startup
   validation requires a complete embedding configuration.
-- Set both `AI_REVIEWER_MODEL` and `AI_VERIFIER_MODEL` to models that exist on
-  the selected chat endpoint. Startup fails if either is missing, so a bad
-  model choice is caught before the service accepts memory writes. A 7B-8B
-  class model works for local smoke tests; larger models can exceed the default
-  60-second timeout while they load, leaving placement attempts retryable until
-  the model responds.
+- Set `AI_VERIFIER_MODEL` to a model that exists on the selected chat endpoint.
+  Startup validates the model configuration before the service accepts memory
+  writes. A 7B-8B class model works for local smoke tests; larger models can
+  exceed the default 60-second timeout while they load, leaving placement
+  attempts retryable until the model responds.
 
 ### Your First Memory
 

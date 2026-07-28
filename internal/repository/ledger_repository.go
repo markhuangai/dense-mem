@@ -131,10 +131,23 @@ type PlacementRun struct {
 
 type PlacementItem struct {
 	PlacementItemID, FragmentID string
+	ClaimKey                    string
 	EvidenceIndex               int
 	Status, Category            string
 	Version                     int
 	Result                      map[string]any
+	ReviewTasks                 []PlacementReviewTask
+}
+
+type PlacementReviewTask struct {
+	ReviewTaskID string
+	Version      int
+	Kind         string
+	Status       string
+	Question     string
+	Options      []map[string]any
+	Guidance     string
+	ExpiresAt    *time.Time
 }
 
 type rLSHelper interface {
@@ -846,7 +859,7 @@ func insertPlacementItem(ctx context.Context, tx *gorm.DB, input CreateIngestInp
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?
 		)
-		RETURNING placement_item_id::text, version
+		RETURNING placement_item_id::text, claim_key::text, version
 	`, input.TeamID, placementRunID, ingestID, input.OwnerProfileID, fragment.FragmentID, fragment.EvidenceIndex, status, category).Rows()
 	if err != nil {
 		return PlacementItem{}, err
@@ -861,7 +874,7 @@ func insertPlacementItem(ctx context.Context, tx *gorm.DB, input CreateIngestInp
 		Status:        status,
 		Category:      category,
 	}
-	if err := rows.Scan(&placementItem.PlacementItemID, &placementItem.Version); err != nil {
+	if err := rows.Scan(&placementItem.PlacementItemID, &placementItem.ClaimKey, &placementItem.Version); err != nil {
 		return PlacementItem{}, err
 	}
 	return placementItem, rows.Err()
@@ -923,7 +936,7 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 		return nil, err
 	}
 	itemRows, err := tx.WithContext(ctx).Raw(`
-		SELECT placement_item_id::text, fragment_id::text, evidence_index, status, category,
+		SELECT placement_item_id::text, fragment_id::text, claim_key::text, evidence_index, status, category,
 		       version, COALESCE(result, '{}'::jsonb)
 		FROM placement_items
 		WHERE team_id = ?::uuid
@@ -940,6 +953,7 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 		if err := itemRows.Scan(
 			&item.PlacementItemID,
 			&item.FragmentID,
+			&item.ClaimKey,
 			&item.EvidenceIndex,
 			&item.Status,
 			&item.Category,
@@ -960,6 +974,9 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 		return nil, err
 	}
 	if err := hydratePlacementItemSearchStates(ctx, tx, result.TeamID, result.OwnerProfileID, result.Items); err != nil {
+		return nil, err
+	}
+	if err := hydratePlacementItemReviewTasks(ctx, tx, result.TeamID, result.OwnerProfileID, result.IngestID, result.Items); err != nil {
 		return nil, err
 	}
 	return &result, nil

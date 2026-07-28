@@ -263,7 +263,15 @@ func (r *ProfileRepositoryImpl) Update(ctx context.Context, profile *domain.Prof
 	err = r.rls.WithProfileTx(ctx, r.db, profile.ID.String(), func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE teams
-			SET name = $1, description = $2, metadata = $3::jsonb, config = $4::jsonb, updated_at = $5
+			SET name = $1,
+			    description = $2,
+			    metadata = $3::jsonb,
+			    config = $4::jsonb,
+			    config_version = CASE
+			        WHEN config IS DISTINCT FROM $4::jsonb THEN config_version + 1
+			        ELSE config_version
+			    END,
+			    updated_at = $5
 			WHERE id = $6 AND deleted_at IS NULL
 		`, profile.Name, profile.Description, metadata, config, profile.UpdatedAt, profile.ID).Error
 	})

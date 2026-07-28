@@ -115,9 +115,9 @@ Control portal: http://127.0.0.1:8090/
 首次拉取镜像可能不止 60 秒。基础示例刻意不包含 Redis 和公网 HTTPS；如果需要
 这些部署能力，请使用 expert 示例。
 
-服务启动时必须有完整的 embedding 和 reviewer/verifier 配置：`AI_API_URL`、
+服务启动时必须有完整的 embedding 和 assessor 配置：`AI_API_URL`、
 `AI_API_KEY`、`AI_API_EMBEDDING_MODEL`、`AI_API_EMBEDDING_DIMENSIONS`、
-`AI_REVIEWER_MODEL` 和 `AI_VERIFIER_MODEL`。compose 示例已经为 embedding URL、
+`AI_VERIFIER_MODEL`。compose 示例已经为 embedding URL、
 model 和 dimensions 提供 OpenAI 默认值：`https://api.openai.com/v1`、
 `text-embedding-3-large`、`3072`，但 chat model 需要在 `.env` 里显式选择。
 如果切换到其他 embedding provider 或 model，请一起覆盖这些配置。
@@ -141,7 +141,6 @@ AI_API_URL=http://host.docker.internal:11434/v1
 AI_API_KEY=ollama
 AI_API_EMBEDDING_MODEL=nomic-embed-text
 AI_API_EMBEDDING_DIMENSIONS=768
-AI_REVIEWER_MODEL=llama3.1:8b
 AI_VERIFIER_MODEL=llama3.1:8b
 AI_VERIFIER_TIMEOUT_SECONDS=300
 ```
@@ -153,10 +152,9 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
   Linux（Docker 默认不定义该域名）上同样可用。
 - `AI_API_KEY` 必须非空，即使 Ollama 会忽略它；启动校验要求完整的 embedding
   配置。
-- `AI_REVIEWER_MODEL` 和 `AI_VERIFIER_MODEL` 都要设为 chat endpoint 上真实存在
-  的模型。任一缺失都会导致启动失败，因此不会等到开始写入 memory 后才暴露
-  错误。7B-8B 级别模型适合本地 smoke test；更大的模型在加载期间可能超过默认
-  60 秒超时，placement 会保持可重试直到模型可响应。
+- `AI_VERIFIER_MODEL` 要设为 chat endpoint 上真实存在的模型。启动校验会在开始
+  写入 memory 前发现缺失或错误配置。7B-8B 级别模型适合本地 smoke test；更大的
+  模型在加载期间可能超过默认 60 秒超时，placement 会保持可重试直到模型可响应。
 
 ### 你的第一条记忆
 

@@ -211,7 +211,7 @@ func assertPlacementResolutionActionState(
 ) {
 	t.Helper()
 	var outcomeStatus, payloadAction, payloadResultStatus string
-	var payloadEvidenceCount, fragmentCount int64
+	var payloadEvidenceCount, fragmentCount, placementItemCount int64
 	err := rls.WithTeamProfileTx(ctx, db, teamID, ownerID, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Raw(`
 			SELECT status,
@@ -232,13 +232,22 @@ func assertPlacementResolutionActionState(
 			&payloadResultStatus,
 			&payloadEvidenceCount,
 		))
-		return tx.Raw(`
+		if err := tx.Raw(`
 			SELECT COUNT(*)
 			FROM evidence_fragments
 			WHERE team_id = ?::uuid
 			  AND owner_profile_id = ?::uuid
 			  AND ingest_id = ?::uuid
-		`, teamID, ownerID, ingest.IngestID).Scan(&fragmentCount).Error
+		`, teamID, ownerID, ingest.IngestID).Scan(&fragmentCount).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM placement_items
+			WHERE team_id = ?::uuid
+			  AND owner_profile_id = ?::uuid
+			  AND ingest_id = ?::uuid
+		`, teamID, ownerID, ingest.IngestID).Scan(&placementItemCount).Error
 	})
 	require.NoError(t, err)
 	assert.Equal(t, wantOutcomeStatus, outcomeStatus)
@@ -246,11 +255,13 @@ func assertPlacementResolutionActionState(
 	assert.Equal(t, wantResultStatus, payloadResultStatus)
 	assert.Equal(t, additionalEvidence, payloadEvidenceCount)
 	assert.Equal(t, int64(1)+additionalEvidence, fragmentCount)
+	assert.Equal(t, int64(1)+additionalEvidence, placementItemCount)
 
 	var runStatus, itemStatus, itemCategory, itemAction string
 	var itemVersion int
+	var queuedNewItemCount int64
 	err = rls.WithTeamProfileTx(ctx, db, teamID, ownerID, func(tx *gorm.DB) error {
-		return tx.Raw(`
+		if err := tx.Raw(`
 			SELECT run.status,
 			       item.status,
 			       item.category,
@@ -270,12 +281,29 @@ func assertPlacementResolutionActionState(
 			&itemCategory,
 			&itemAction,
 			&itemVersion,
-		)
+		); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM placement_items
+			WHERE team_id = ?::uuid
+			  AND owner_profile_id = ?::uuid
+			  AND placement_run_id = ?::uuid
+			  AND placement_item_id <> ?::uuid
+			  AND status = 'queued'
+			  AND category = 'pending'
+		`, teamID, ownerID, ingest.PlacementRunID, ingest.Items[0].PlacementItemID).Scan(&queuedNewItemCount).Error
 	})
 	require.NoError(t, err)
 	assert.Equal(t, string(domain.PlacementRunQueued), runStatus)
-	assert.Equal(t, "queued", itemStatus)
-	assert.Equal(t, "pending", itemCategory)
+	wantItemStatus, wantItemCategory := "queued", "pending"
+	if additionalEvidence > 0 {
+		wantItemStatus, wantItemCategory = "completed", "candidate"
+	}
+	assert.Equal(t, wantItemStatus, itemStatus)
+	assert.Equal(t, wantItemCategory, itemCategory)
+	assert.Equal(t, additionalEvidence, queuedNewItemCount)
 	if wantAction == string(domain.ResolveAcknowledge) {
 		assert.Equal(t, 1, itemVersion)
 		assert.Empty(t, itemAction)

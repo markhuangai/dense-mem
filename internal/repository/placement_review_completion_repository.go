@@ -39,6 +39,11 @@ type RequeuePlacementReviewInput struct {
 	PlacementItemID  string
 	WorkerID         string
 	ExpectedAttempts int
+	OutcomeKind      string
+	Payload          map[string]any
+	// ReleaseAssessorAttempt releases a known failed assessor request only as
+	// part of this lease-bound requeue transaction.
+	ReleaseAssessorAttempt bool
 }
 
 type RequeuePlacementReviewResult struct {
@@ -161,6 +166,36 @@ func (r *LedgerRepositoryImpl) RequeuePlacementReviewResult(
 			}
 			return err
 		}
+		if input.ReleaseAssessorAttempt {
+			if err := releasePlacementAssessmentProviderAttempt(ctx, tx, scope); err != nil {
+				return err
+			}
+		}
+		if len(input.Payload) > 0 {
+			payload := retryPlacementPayload(input.Payload)
+			outcomeID, err := insertPlacementOutcome(ctx, tx, PlacementOutcomeInput{
+				TeamID:          input.TeamID,
+				OwnerProfileID:  input.OwnerProfileID,
+				PlacementRunID:  input.PlacementRunID,
+				PlacementItemID: input.PlacementItemID,
+				OutcomeKind:     input.OutcomeKind,
+				Status:          string(domain.SemanticReviewRetryable),
+				Payload:         payload,
+			})
+			if err != nil {
+				return err
+			}
+			if err := updatePlacementItemOutcome(ctx, tx, PlacementOutcomeInput{
+				TeamID:           input.TeamID,
+				OwnerProfileID:   input.OwnerProfileID,
+				PlacementItemID:  input.PlacementItemID,
+				UpdateItemStatus: string(domain.PlacementRunQueued),
+				Payload:          payload,
+			}); err != nil {
+				return err
+			}
+			result.OutcomeID = outcomeID
+		}
 		return requeuePlacementRunForRetry(ctx, tx, scope)
 	})
 	if err != nil {
@@ -192,6 +227,10 @@ func normalizeRequeuePlacementReviewInput(input RequeuePlacementReviewInput) Req
 	input.PlacementRunID = strings.TrimSpace(input.PlacementRunID)
 	input.PlacementItemID = strings.TrimSpace(input.PlacementItemID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
+	input.OutcomeKind = strings.TrimSpace(input.OutcomeKind)
+	if input.OutcomeKind == "" {
+		input.OutcomeKind = "placement_retry"
+	}
 	return input
 }
 
@@ -267,6 +306,17 @@ func placementRetryScope(input RequeuePlacementReviewInput) CommitPlacementSeman
 		WorkerID:         input.WorkerID,
 		ExpectedAttempts: input.ExpectedAttempts,
 	}
+}
+
+func retryPlacementPayload(base map[string]any) map[string]any {
+	payload := map[string]any{
+		"contract_version": domain.ContractVersion,
+		"status":           string(domain.SemanticReviewRetryable),
+	}
+	for key, value := range base {
+		payload[key] = value
+	}
+	return payload
 }
 
 func terminalPlacementStatuses(status string, category string) (string, string, string) {

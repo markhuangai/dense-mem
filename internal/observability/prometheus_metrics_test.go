@@ -186,6 +186,40 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	)
 }
 
+func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testing.T) {
+	metrics := NewPrometheusMetrics()
+	metrics.ObserveAssessorCall(200, 50, 0.25, "ok")
+	metrics.IncAssessorValidationFailure("response")
+	metrics.IncAssessorCandidateTruncation()
+	metrics.IncAssessorAssessmentPersistence("persisted")
+	metrics.IncAssessorDuplicateRequestPrevention("post_persist")
+	metrics.IncAssessorConfidenceGate("below_write_threshold")
+	metrics.AddAssessorReviewExpiry(3)
+
+	body := scrapePrometheusMetrics(t, metrics)
+	for _, want := range []string{
+		`densemem_assessor_requests_total{outcome="ok"}`,
+		`densemem_assessor_duration_seconds_bucket{outcome="ok",le=`,
+		`densemem_assessor_tokens_total{kind="input"}`,
+		`densemem_assessor_tokens_total{kind="output"}`,
+		`densemem_assessor_validation_failures_total{stage="response"}`,
+		`densemem_assessor_candidate_truncations_total 1`,
+		`densemem_assessor_assessment_persistence_total{outcome="persisted"}`,
+		`densemem_assessor_duplicate_request_prevented_total{stage="post_persist"}`,
+		`densemem_assessor_confidence_gate_total{band="below_write_threshold"}`,
+		`densemem_assessor_review_expiry_total 3`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("scraped assessor metrics missing %q\n%s", want, body)
+		}
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "densemem_assessor_") && (strings.Contains(line, "team_id=") || strings.Contains(line, "profile_id=")) {
+			t.Fatalf("assessor metric leaked identity label %q", line)
+		}
+	}
+}
+
 func TestPrometheusMetricLabelHelpers(t *testing.T) {
 	if got := identityLabels(); len(got) != 2 {
 		t.Fatalf("identityLabels len = %d; want 2", len(got))

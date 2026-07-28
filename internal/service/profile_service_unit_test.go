@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -175,6 +176,62 @@ func TestProfileServiceCreateUpdateErrorBranches(t *testing.T) {
 	svc = NewProfileService(repo, new(MockAuditService), nil)
 	_, err = svc.Update(ctx, id, UpdateProfileRequest{Name: &newName}, nil, "system", "127.0.0.1", "corr")
 	require.ErrorContains(t, err, "failed to update profile")
+}
+
+func TestProfileServiceValidatesMemoryWriteConfidenceThreshold(t *testing.T) {
+	ctx := context.Background()
+	id := uuid.New()
+
+	for _, tc := range []struct {
+		name   string
+		config map[string]any
+		want   string
+	}{
+		{
+			name:   "memory write is not an object",
+			config: map[string]any{"memory_write": "invalid"},
+			want:   "memory_write must be an object",
+		},
+		{
+			name:   "threshold is not numeric",
+			config: map[string]any{"memory_write": map[string]any{"auto_write_confidence_threshold": "high"}},
+			want:   "must be a number between 0 and 1",
+		},
+		{
+			name:   "threshold below range",
+			config: map[string]any{"memory_write": map[string]any{"auto_write_confidence_threshold": -0.01}},
+			want:   "must be a number between 0 and 1",
+		},
+		{
+			name:   "threshold above range",
+			config: map[string]any{"memory_write": map[string]any{"auto_write_confidence_threshold": 1.01}},
+			want:   "must be a number between 0 and 1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &unitProfileRepo{profile: &domain.Profile{ID: id, Name: "Team", Config: map[string]any{}}}
+			svc := NewProfileService(repo, new(MockAuditService), nil)
+
+			_, err := svc.Update(ctx, id, UpdateProfileRequest{Config: tc.config}, nil, "manager", "127.0.0.1", "corr")
+			require.ErrorContains(t, err, tc.want)
+			require.Nil(t, repo.updated)
+		})
+	}
+
+	for _, threshold := range []float64{0, 1} {
+		t.Run(fmt.Sprintf("accepts threshold %v", threshold), func(t *testing.T) {
+			repo := &unitProfileRepo{}
+			audit := new(MockAuditService)
+			audit.On("ProfileCreated", ctx, mock.AnythingOfType("string"), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+			svc := NewProfileService(repo, audit, nil)
+			config := map[string]any{"memory_write": map[string]any{"auto_write_confidence_threshold": threshold}}
+
+			profile, err := svc.Create(ctx, CreateProfileRequest{Name: "Team", Config: config}, nil, "system", "127.0.0.1", "corr")
+			require.NoError(t, err)
+			require.Equal(t, config, profile.Config)
+			audit.AssertExpectations(t)
+		})
+	}
 }
 
 func TestProfileServiceUpdateDeleteSuccessAndFailureBranches(t *testing.T) {

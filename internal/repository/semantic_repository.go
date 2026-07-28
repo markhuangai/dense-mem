@@ -246,7 +246,7 @@ func (r *SemanticRepositoryImpl) ApplyRelationshipDecision(
 		if err := validateRelationshipEndpointKinds(ctx, tx, input, predicate); err != nil {
 			return err
 		}
-		status := statusForVerdict(input.EvidenceVerdict)
+		status := statusForRelationshipDecision(input)
 		groupKey := semanticGroupKey(input)
 		recordState, err := upsertRelationshipRecord(ctx, tx, input, predicate, status, groupKey)
 		if err != nil {
@@ -269,7 +269,7 @@ func (r *SemanticRepositoryImpl) ApplyRelationshipDecision(
 			return err
 		}
 		var supportID, supportDecisionID string
-		if input.EvidenceVerdict == string(domain.VerificationEntailed) && input.Support != nil {
+		if input.EvidenceVerdict == string(domain.VerificationEntailed) && input.Support != nil && !input.SuppressSupport {
 			supportID, supportDecisionID, err = insertRelationshipSupport(ctx, tx, input, recordState.Record.RelationshipID, observationID, verificationID)
 			if err != nil {
 				return err

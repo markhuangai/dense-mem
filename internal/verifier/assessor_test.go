@@ -60,6 +60,58 @@ func TestSemanticAssessmentRejectsWholeResponseWhenRequiredFieldIsMissing(t *tes
 	_ = prepared
 }
 
+func TestSemanticAssessmentRejectsUnknownDuplicateAndUnauthorizedCompleteResponses(t *testing.T) {
+	req, limits := semanticAssessmentTestRequest(t)
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+
+	t.Run("unknown field", func(t *testing.T) {
+		encoded, err := json.Marshal(semanticAssessmentTestResponse())
+		if err != nil {
+			t.Fatalf("marshal response: %v", err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(encoded, &payload); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		payload["unexpected"] = true
+		encoded, err = json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal response: %v", err)
+		}
+		if _, err := DecodeSemanticAssessmentResponseJSON(encoded, limits); err == nil || !strings.Contains(err.Error(), "unexpected") {
+			t.Fatalf("DecodeSemanticAssessmentResponseJSON() error = %v, want unknown field rejection", err)
+		}
+	})
+
+	t.Run("duplicate entity ref", func(t *testing.T) {
+		response := semanticAssessmentTestResponse()
+		response.EntityResults = append(response.EntityResults, response.EntityResults[0])
+		if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "is duplicated") {
+			t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want duplicate ref rejection", errs)
+		}
+	})
+
+	t.Run("candidate outside allowlist", func(t *testing.T) {
+		response := semanticAssessmentTestResponse()
+		candidateID := "entity-not-allowed"
+		response.EntityResults[0].CandidateEntityID = &candidateID
+		if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "single reusable exact candidate") {
+			t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want candidate allowlist rejection", errs)
+		}
+	})
+
+	t.Run("invalid evidence span", func(t *testing.T) {
+		response := semanticAssessmentTestResponse()
+		response.EntityResults[0].Start = 1
+		if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "does not match the original evidence span") {
+			t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want span rejection", errs)
+		}
+	})
+}
+
 func TestSemanticAssessmentRejectsReuseFromTruncatedCandidateGroup(t *testing.T) {
 	req, limits := semanticAssessmentTestRequest(t)
 	req.EntityCandidateGroups[0].CandidateContextTruncated = true
@@ -71,6 +123,42 @@ func TestSemanticAssessmentRejectsReuseFromTruncatedCandidateGroup(t *testing.T)
 	_, errs = PrepareSemanticAssessmentResponse(prepared, response, limits)
 	if len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "single reusable exact candidate") {
 		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want truncated candidate rejection", errs)
+	}
+}
+
+func TestSemanticAssessmentRejectsReuseFromAmbiguousCandidateGroup(t *testing.T) {
+	req, limits := semanticAssessmentTestRequest(t)
+	req.EntityCandidateGroups[0].Candidates = append(req.EntityCandidateGroups[0].Candidates, SemanticAssessmentEntityCandidate{
+		EntityID:      "entity-other-mark",
+		CanonicalName: "Mark Other",
+		Kind:          "person",
+	})
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+	response := semanticAssessmentTestResponse()
+	_, errs = PrepareSemanticAssessmentResponse(prepared, response, limits)
+	if len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "single reusable exact candidate") {
+		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want ambiguous candidate rejection", errs)
+	}
+}
+
+func TestSemanticAssessmentRejectsResolvedPredicateWithIncompatibleEndpointKind(t *testing.T) {
+	req, limits := semanticAssessmentTestRequest(t)
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+	response := semanticAssessmentTestResponse()
+	response.RelationshipResults[0].ObjectRef = nil
+	response.RelationshipResults[0].ObjectValue = &SemanticAssessmentValue{
+		ValueType:      "string",
+		CanonicalValue: "Dense-Mem",
+	}
+	_, errs = PrepareSemanticAssessmentResponse(prepared, response, limits)
+	if len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "does not accept the object kind") {
+		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want incompatible predicate rejection", errs)
 	}
 }
 
@@ -89,6 +177,29 @@ func TestSemanticAssessmentTokenBudgetsAreEnforced(t *testing.T) {
 	}
 	if _, err := DecodeSemanticAssessmentResponseJSON(raw, limits); err == nil || !strings.Contains(err.Error(), "token limit") {
 		t.Fatalf("DecodeSemanticAssessmentResponseJSON() error = %v, want output token budget error", err)
+	}
+}
+
+func TestSemanticAssessmentInputBudgetIncludesFixedSystemPrompt(t *testing.T) {
+	req, limits := semanticAssessmentTestRequest(t)
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+	payload, err := json.Marshal(prepared)
+	if err != nil {
+		t.Fatalf("marshal prepared request: %v", err)
+	}
+	payloadTokens, err := CountTokens(string(payload), limits.Tokenizer)
+	if err != nil {
+		t.Fatalf("CountTokens(payload) error = %v", err)
+	}
+	if prepared.InputTokens <= payloadTokens {
+		t.Fatalf("InputTokens = %d, want prompt-inclusive count greater than payload %d", prepared.InputTokens, payloadTokens)
+	}
+	limits.MaxInputTokens = payloadTokens + 1
+	if _, errs := PrepareSemanticAssessmentRequest(req, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "input_tokens") {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v, want prompt-inclusive input token budget error", errs)
 	}
 }
 

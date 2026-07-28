@@ -342,6 +342,33 @@ func normalizeSemanticReviewEntityCandidateInput(input SemanticReviewEntityCandi
 	return input
 }
 
+func normalizeSemanticAssessmentEntityMatchInput(input SemanticAssessmentEntityMatchInput) SemanticAssessmentEntityMatchInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.EvidenceText = strings.TrimSpace(input.EvidenceText)
+	runes := []rune(input.EvidenceText)
+	if len(runes) > 32000 {
+		input.EvidenceText = string(runes[:32000])
+	}
+	if input.Limit <= 0 {
+		input.Limit = 500
+	}
+	if input.Limit > 1000 {
+		input.Limit = 1000
+	}
+	return input
+}
+
+func validateSemanticAssessmentEntityMatchInput(input SemanticAssessmentEntityMatchInput) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
+		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	return nil
+}
+
 func validateSemanticReviewEntityCandidateInput(input SemanticReviewEntityCandidateInput) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
@@ -419,6 +446,28 @@ func normalizeSemanticReviewPredicateOptionsInput(input SemanticReviewPredicateO
 	}
 	input.Limit = normalizeReviewOptionLimit(input.Limit)
 	return input
+}
+
+func normalizeSemanticAssessmentPredicateOptionsInput(input SemanticAssessmentPredicateOptionsInput) SemanticAssessmentPredicateOptionsInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.QueryText = strings.TrimSpace(input.QueryText)
+	queryRunes := []rune(input.QueryText)
+	if len(queryRunes) > 32000 {
+		input.QueryText = string(queryRunes[:32000])
+	}
+	input.Limit = normalizeReviewOptionLimit(input.Limit)
+	return input
+}
+
+func validateSemanticAssessmentPredicateOptionsInput(input SemanticAssessmentPredicateOptionsInput) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
+		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	return nil
 }
 
 func validateSemanticReviewPredicateOptionsInput(input SemanticReviewPredicateOptionsInput) error {

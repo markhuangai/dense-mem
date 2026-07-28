@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ const (
 	DefaultAIVerifierMaxOutputTokens           = 65536
 	DefaultAIVerifierMaxCandidateContextTokens = 50000
 	DefaultAIVerifierTokenizer                 = "o200k_base"
+	DefaultMemoryAutoWriteConfidenceThreshold  = 0.7
 	DefaultMemoryPlacementWorkerCount          = 1
 	DefaultMemoryPlacementPollSeconds          = 5
 	DefaultConflictReviewTTLDays               = 7
@@ -90,51 +92,6 @@ type aiEmbeddingConcurrencyConfig interface {
 	GetAIEmbeddingMaxConcurrency() int
 }
 
-type aiVerifierAssessmentConfig interface {
-	GetAIVerifierMaxInputTokens() int
-	GetAIVerifierMaxOutputTokens() int
-	GetAIVerifierMaxCandidateContextTokens() int
-	GetAIVerifierTokenizer() string
-}
-
-// AIVerifierAssessmentBudget contains the semantic limits applied to a single
-// integrated assessor request. They intentionally remain optional on
-// ConfigProvider so existing test providers do not silently become invalid.
-type AIVerifierAssessmentBudget struct {
-	MaxInputTokens            int
-	MaxOutputTokens           int
-	MaxCandidateContextTokens int
-	Tokenizer                 string
-}
-
-// AIVerifierAssessmentBudgetFor reads the assessor budget from cfg and falls
-// back to the V2.4 defaults when an older provider does not expose it.
-func AIVerifierAssessmentBudgetFor(cfg ConfigProvider) AIVerifierAssessmentBudget {
-	budget := AIVerifierAssessmentBudget{
-		MaxInputTokens:            DefaultAIVerifierMaxInputTokens,
-		MaxOutputTokens:           DefaultAIVerifierMaxOutputTokens,
-		MaxCandidateContextTokens: DefaultAIVerifierMaxCandidateContextTokens,
-		Tokenizer:                 DefaultAIVerifierTokenizer,
-	}
-	assessmentConfig, ok := cfg.(aiVerifierAssessmentConfig)
-	if !ok || assessmentConfig == nil {
-		return budget
-	}
-	if value := assessmentConfig.GetAIVerifierMaxInputTokens(); value > 0 {
-		budget.MaxInputTokens = value
-	}
-	if value := assessmentConfig.GetAIVerifierMaxOutputTokens(); value > 0 {
-		budget.MaxOutputTokens = value
-	}
-	if value := assessmentConfig.GetAIVerifierMaxCandidateContextTokens(); value > 0 {
-		budget.MaxCandidateContextTokens = value
-	}
-	if value := strings.TrimSpace(assessmentConfig.GetAIVerifierTokenizer()); value != "" {
-		budget.Tokenizer = value
-	}
-	return budget
-}
-
 // AIVerifierTemperatureDisabled returns true when a config provider exposes
 // the verifier temperature omission flag.
 func AIVerifierTemperatureDisabled(cfg ConfigProvider) bool {
@@ -198,40 +155,42 @@ type Config struct {
 	EmbeddingJobPollSeconds         int
 	EmbeddingJobMaxAttempts         int
 	// Knowledge-pipeline knobs (AC-X3)
-	AIVerifierAPIURL                    string
-	AIVerifierAPIKey                    string `json:"-"`
-	AIReviewerModel                     string
-	AIVerifierModel                     string
-	AIVerifierDisableTemperature        bool
-	AIVerifierTimeoutSeconds            int
-	AIVerifierMaxConcurrency            int
-	AIVerifierMaxInputTokens            int
-	AIVerifierMaxOutputTokens           int
-	AIVerifierMaxCandidateContextTokens int
-	AIVerifierTokenizer                 string
-	MemoryPlacementWorkerCount          int
-	MemoryPlacementPollSeconds          int
-	ClaimWriteRateLimit                 int
-	ClaimReadRateLimit                  int
-	RecallValidatedClaimWeight          float64
-	PromoteTxTimeoutSeconds             int
-	SkillPackImportHistoryDays          int
-	AICommunityMaxNodes                 int
-	ControlHTTPAddr                     string
-	ControlPortalToken                  string `json:"-"`
-	TelemetryEnabled                    bool
-	TelemetryPrometheusURL              string
-	TelemetryPrometheusJob              string
-	TelemetryQueryTimeoutSeconds        int
-	TelemetryScrapeToken                string `json:"-"`
-	AppTimezone                         string
-	ConflictReviewTTLDays               int
-	ConflictReviewStartTimeLocal        string
-	ConflictReviewMaxConcurrency        int
-	ConflictReviewBatchSize             int
-	ConflictReviewLeaseSeconds          int
-	ConflictReviewMaxAttempts           int
-	ConflictReviewJitterSeconds         int
+	AIVerifierAPIURL                      string
+	AIVerifierAPIKey                      string `json:"-"`
+	AIReviewerModel                       string
+	AIVerifierModel                       string
+	AIVerifierDisableTemperature          bool
+	AIVerifierTimeoutSeconds              int
+	AIVerifierMaxConcurrency              int
+	AIVerifierMaxInputTokens              int
+	AIVerifierMaxOutputTokens             int
+	AIVerifierMaxCandidateContextTokens   int
+	AIVerifierTokenizer                   string
+	MemoryAutoWriteConfidenceThreshold    float64
+	memoryAutoWriteConfidenceThresholdSet bool
+	MemoryPlacementWorkerCount            int
+	MemoryPlacementPollSeconds            int
+	ClaimWriteRateLimit                   int
+	ClaimReadRateLimit                    int
+	RecallValidatedClaimWeight            float64
+	PromoteTxTimeoutSeconds               int
+	SkillPackImportHistoryDays            int
+	AICommunityMaxNodes                   int
+	ControlHTTPAddr                       string
+	ControlPortalToken                    string `json:"-"`
+	TelemetryEnabled                      bool
+	TelemetryPrometheusURL                string
+	TelemetryPrometheusJob                string
+	TelemetryQueryTimeoutSeconds          int
+	TelemetryScrapeToken                  string `json:"-"`
+	AppTimezone                           string
+	ConflictReviewTTLDays                 int
+	ConflictReviewStartTimeLocal          string
+	ConflictReviewMaxConcurrency          int
+	ConflictReviewBatchSize               int
+	ConflictReviewLeaseSeconds            int
+	ConflictReviewMaxAttempts             int
+	ConflictReviewJitterSeconds           int
 }
 
 // Ensure Config implements ConfigProvider
@@ -319,30 +278,6 @@ func (c *Config) GetAIVerifierTimeoutSeconds() int {
 	return 60
 }
 func (c *Config) GetAIVerifierMaxConcurrency() int { return c.AIVerifierMaxConcurrency }
-func (c *Config) GetAIVerifierMaxInputTokens() int {
-	if c.AIVerifierMaxInputTokens <= 0 {
-		return DefaultAIVerifierMaxInputTokens
-	}
-	return c.AIVerifierMaxInputTokens
-}
-func (c *Config) GetAIVerifierMaxOutputTokens() int {
-	if c.AIVerifierMaxOutputTokens <= 0 {
-		return DefaultAIVerifierMaxOutputTokens
-	}
-	return c.AIVerifierMaxOutputTokens
-}
-func (c *Config) GetAIVerifierMaxCandidateContextTokens() int {
-	if c.AIVerifierMaxCandidateContextTokens <= 0 {
-		return DefaultAIVerifierMaxCandidateContextTokens
-	}
-	return c.AIVerifierMaxCandidateContextTokens
-}
-func (c *Config) GetAIVerifierTokenizer() string {
-	if tokenizer := strings.TrimSpace(c.AIVerifierTokenizer); tokenizer != "" {
-		return tokenizer
-	}
-	return DefaultAIVerifierTokenizer
-}
 func (c *Config) GetMemoryPlacementWorkerCount() int {
 	if c.MemoryPlacementWorkerCount <= 0 {
 		return DefaultMemoryPlacementWorkerCount
@@ -649,6 +584,11 @@ func Load() (Config, error) {
 	if err != nil {
 		return cfg, err
 	}
+	cfg.MemoryAutoWriteConfidenceThreshold, err = parseFloatOrDefault("MEMORY_AUTO_WRITE_CONFIDENCE_THRESHOLD", DefaultMemoryAutoWriteConfidenceThreshold)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.memoryAutoWriteConfidenceThresholdSet = true
 
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
 		{"PROMOTE_TX_TIMEOUT_SECONDS", 10, func(c *Config, value int) { c.PromoteTxTimeoutSeconds = value }},
@@ -791,6 +731,15 @@ func Load() (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS",
 			Message: fmt.Sprintf("must be less than or equal to AI_VERIFIER_MAX_INPUT_TOKENS, got %d > %d", cfg.AIVerifierMaxCandidateContextTokens, cfg.AIVerifierMaxInputTokens),
+		}
+	}
+	if math.IsNaN(cfg.MemoryAutoWriteConfidenceThreshold) ||
+		math.IsInf(cfg.MemoryAutoWriteConfidenceThreshold, 0) ||
+		cfg.MemoryAutoWriteConfidenceThreshold < 0 ||
+		cfg.MemoryAutoWriteConfidenceThreshold > 1 {
+		return cfg, &ValidationError{
+			Field:   "MEMORY_AUTO_WRITE_CONFIDENCE_THRESHOLD",
+			Message: "must be between 0 and 1",
 		}
 	}
 	if !supportedAIVerifierTokenizer(cfg.AIVerifierTokenizer) {

@@ -82,6 +82,15 @@ func applyPlacementRelationshipDecision(
 	applied.OwnerProfileID = commit.OwnerProfileID
 	applied.Category = relationshipOutcomeCategory(applied)
 	applied.Reason = relationshipOutcomeReason(decision, applied)
+	applied.ConfidenceGate = decision.GateResult
+	applied.PolicyVersion = decision.AssessmentPolicyVersion
+	if applied.ReviewTaskID == "" && decision.SemanticReviewKind != "" {
+		taskID, err := insertPlacementSemanticReviewTask(ctx, tx, commit, decision, applied)
+		if err != nil {
+			return err
+		}
+		applied.ReviewTaskID = taskID
+	}
 	result.RelationshipResults = append(result.RelationshipResults, *applied)
 	appendPlacementReviewTaskID(result, applied.ReviewTaskID)
 	if applied.Relationship == nil || applied.Relationship.Status != string(domain.RelationshipStatusActive) {
@@ -565,7 +574,7 @@ func applyRelationshipDecisionInTx(
 	if err := validateRelationshipEndpointKinds(ctx, tx, input, predicate); err != nil {
 		return nil, err
 	}
-	status := statusForVerdict(input.EvidenceVerdict)
+	status := statusForRelationshipDecision(input)
 	groupKey := semanticGroupKey(input)
 	recordState, err := upsertRelationshipRecord(ctx, tx, input, predicate, status, groupKey)
 	if err != nil {
@@ -583,7 +592,7 @@ func applyRelationshipDecisionInTx(
 		return nil, err
 	}
 	var supportID, supportDecisionID string
-	if input.EvidenceVerdict == string(domain.VerificationEntailed) && input.Support != nil {
+	if input.EvidenceVerdict == string(domain.VerificationEntailed) && input.Support != nil && !input.SuppressSupport {
 		supportID, supportDecisionID, err = insertRelationshipSupport(ctx, tx, input, recordState.Record.RelationshipID, observationID, verificationID)
 		if err != nil {
 			return nil, err
@@ -769,6 +778,12 @@ func placementRelationshipOutcomePayload(results []RelationshipDecisionResult) [
 			"owner_profile_id": result.OwnerProfileID,
 			"category":         result.Category,
 			"reason":           result.Reason,
+		}
+		if result.ConfidenceGate != "" {
+			item["confidence_gate"] = result.ConfidenceGate
+		}
+		if result.PolicyVersion != "" {
+			item["policy_version"] = result.PolicyVersion
 		}
 		if result.Relationship != nil {
 			item["relationship_id"] = result.Relationship.RelationshipID

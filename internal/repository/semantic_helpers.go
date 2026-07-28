@@ -158,6 +158,12 @@ func normalizeApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInpu
 	input.Rationale = strings.TrimSpace(input.Rationale)
 	input.Model = strings.TrimSpace(input.Model)
 	input.ResponseHash = strings.TrimSpace(input.ResponseHash)
+	input.AssessmentID = strings.TrimSpace(input.AssessmentID)
+	input.AssessmentPolicyVersion = strings.TrimSpace(input.AssessmentPolicyVersion)
+	input.GateResult = strings.TrimSpace(input.GateResult)
+	input.SemanticReviewKind = strings.TrimSpace(input.SemanticReviewKind)
+	input.ReviewQuestion = strings.TrimSpace(input.ReviewQuestion)
+	input.ReviewGuidance = strings.TrimSpace(input.ReviewGuidance)
 	if input.PredicateVersion == 0 {
 		input.PredicateVersion = 1
 	}
@@ -236,6 +242,12 @@ func validateApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInput
 	if input.Confidence != nil && (*input.Confidence < 0 || *input.Confidence > 1) {
 		return errors.New("confidence must be between 0 and 1")
 	}
+	if err := validateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
+		return err
+	}
+	if err := validateSemanticReviewDetails(input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
+		return err
+	}
 	if input.ValidFrom != nil && input.ValidTo != nil && input.ValidTo.Before(*input.ValidFrom) {
 		return errors.New("valid_to must be greater than or equal to valid_from")
 	}
@@ -246,6 +258,9 @@ func validateApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInput
 	}
 	if input.EvidenceVerdict == string(domain.VerificationEntailed) && input.Support == nil {
 		return errors.New("entailed relationship decisions require support")
+	}
+	if input.SuppressSupport && input.EvidenceVerdict != string(domain.VerificationEntailed) {
+		return errors.New("support suppression requires an entailed relationship decision")
 	}
 	return nil
 }
@@ -591,14 +606,17 @@ func insertVerificationEvent(ctx context.Context, tx *gorm.DB, input ApplyRelati
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO verification_events (
 		    team_id, observation_id, owner_profile_id, evidence_verdict,
-		    confidence, rationale, model, response_hash, metadata
+		    confidence, rationale, model, response_hash, metadata,
+		    assessment_id, assessment_policy_version, threshold_used, gate_result
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?::jsonb
+		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?::jsonb,
+		    NULLIF(?, '')::uuid, NULLIF(?, ''), ?, NULLIF(?, '')
 		)
 		RETURNING verification_event_id::text
 	`, input.TeamID, observationID, input.OwnerProfileID, input.EvidenceVerdict,
 		confidenceArg(input.Confidence), input.Rationale, input.Model, input.ResponseHash,
-		string(metadata)).Rows()
+		string(metadata), input.AssessmentID, input.AssessmentPolicyVersion,
+		confidenceArg(input.ThresholdUsed), input.GateResult).Rows()
 	if err != nil {
 		return "", err
 	}
@@ -634,6 +652,10 @@ func upsertRelationshipRecord(
 	}
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
+	}
+	if input.SuppressSupport && status == string(domain.RelationshipStatusPendingEvidence) &&
+		existing != nil && existing.Status == string(domain.RelationshipStatusActive) && existing.SupportCount > 0 {
+		status = string(domain.RelationshipStatusActive)
 	}
 	if predicate.CurrentCardinality == string(domain.CurrentCardinalityOne) &&
 		status == string(domain.RelationshipStatusActive) {
@@ -898,17 +920,6 @@ func relationshipTransitionIdempotencyKey(verificationEventID string, supportDec
 		return "support_decision:" + id + ":relationship_transition"
 	}
 	return ""
-}
-
-func statusForVerdict(verdict string) string {
-	switch verdict {
-	case string(domain.VerificationContradicted):
-		return string(domain.RelationshipStatusRejected)
-	case string(domain.VerificationInsufficient):
-		return string(domain.RelationshipStatusPendingEvidence)
-	default:
-		return string(domain.RelationshipStatusActive)
-	}
 }
 
 func semanticGroupKey(input ApplyRelationshipDecisionInput) string {

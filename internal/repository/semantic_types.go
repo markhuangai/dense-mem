@@ -66,6 +66,26 @@ type SemanticReviewEntityCandidate struct {
 	Status          string
 }
 
+// SemanticAssessmentEntityMatch is a current, team-scoped canonical or alias
+// name that matched evidence text. The service verifies rune-token boundaries
+// before turning it into a candidate group.
+type SemanticAssessmentEntityMatch struct {
+	Candidate   SemanticReviewEntityCandidate
+	MatchedName string
+}
+
+type SemanticAssessmentEntityMatchInput struct {
+	TeamID         string
+	OwnerProfileID string
+	EvidenceText   string
+	Limit          int
+}
+
+type SemanticAssessmentEntityMatchResult struct {
+	Matches   []SemanticAssessmentEntityMatch
+	Truncated bool
+}
+
 type SemanticReviewPredicateCandidateInput struct {
 	TeamID         string
 	OwnerProfileID string
@@ -107,11 +127,19 @@ type EnsureSemanticPredicateCandidateInput struct {
 type SemanticReviewPredicateCandidate struct {
 	PredicateKey        string
 	Version             int
+	Aliases             []string
 	AllowedSubjectKinds []string
 	AllowedObjectKinds  []string
 	RelationshipKind    string
 	CurrentCardinality  string
 	LifecycleState      string
+}
+
+type SemanticAssessmentPredicateOptionsInput struct {
+	TeamID         string
+	OwnerProfileID string
+	QueryText      string
+	Limit          int
 }
 
 type UpsertValueInput struct {
@@ -149,32 +177,41 @@ type EvidenceSupportInput struct {
 }
 
 type ApplyRelationshipDecisionInput struct {
-	TeamID               string
-	OwnerProfileID       string
-	IngestID             string
-	PlacementItemID      string
-	ProposalRef          string
-	SubjectRef           string
-	SubjectEntityID      string
-	OriginalPredicate    string
-	PredicateKey         string
-	PredicateVersion     int
-	ObjectRef            string
-	ObjectEntityID       string
-	ObjectValueID        string
-	Polarity             string
-	ScopeKey             string
-	ValidFrom            *time.Time
-	ValidTo              *time.Time
-	EvidenceVerdict      string
-	PromoteToFact        bool
-	Confidence           *float64
-	Rationale            string
-	Model                string
-	ResponseHash         string
-	Support              *EvidenceSupportInput
-	ObservationMetadata  map[string]any
-	RelationshipMetadata map[string]any
+	TeamID                  string
+	OwnerProfileID          string
+	IngestID                string
+	PlacementItemID         string
+	ProposalRef             string
+	SubjectRef              string
+	SubjectEntityID         string
+	OriginalPredicate       string
+	PredicateKey            string
+	PredicateVersion        int
+	ObjectRef               string
+	ObjectEntityID          string
+	ObjectValueID           string
+	Polarity                string
+	ScopeKey                string
+	ValidFrom               *time.Time
+	ValidTo                 *time.Time
+	EvidenceVerdict         string
+	PromoteToFact           bool
+	Confidence              *float64
+	Rationale               string
+	Model                   string
+	ResponseHash            string
+	Support                 *EvidenceSupportInput
+	ObservationMetadata     map[string]any
+	RelationshipMetadata    map[string]any
+	AssessmentID            string
+	AssessmentPolicyVersion string
+	ThresholdUsed           *float64
+	GateResult              string
+	SuppressSupport         bool
+	SemanticReviewKind      string
+	ReviewQuestion          string
+	ReviewOptions           []map[string]any
+	ReviewGuidance          string
 }
 
 type RelationshipRecord struct {
@@ -211,6 +248,8 @@ type RelationshipDecisionResult struct {
 	OwnerProfileID      string
 	Category            string
 	Reason              string
+	ConfidenceGate      string
+	PolicyVersion       string
 	CreatedRelationship bool
 }
 

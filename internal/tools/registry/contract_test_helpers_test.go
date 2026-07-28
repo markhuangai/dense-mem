@@ -83,6 +83,7 @@ func (s *stubRememberService) GetMemoryPlacement(
 			Category:             string(domain.EvidenceProcessed),
 			SearchState:          string(domain.SearchProjectionNotRequired),
 			RelationshipOutcomes: []memoryservice.RelationshipOutcomeRef{},
+			ReviewTasks:          []memoryservice.PlacementReviewTaskRef{},
 			Errors:               []memoryservice.PlacementError{},
 		}},
 		Errors: []memoryservice.PlacementError{},

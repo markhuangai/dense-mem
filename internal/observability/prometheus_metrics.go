@@ -50,37 +50,47 @@ type ScopedDiscoverabilityMetrics interface {
 type PrometheusMetrics struct {
 	registry *prometheus.Registry
 
-	httpRequests    *prometheus.CounterVec
-	httpDuration    *prometheus.HistogramVec
-	embeddingCalls  *prometheus.CounterVec
-	embeddingErrors *prometheus.CounterVec
-	embeddingDur    *prometheus.HistogramVec
-	embeddingTokens *prometheus.CounterVec
-	verifierCalls   *prometheus.CounterVec
-	verifierDur     *prometheus.HistogramVec
-	verifierTokens  *prometheus.CounterVec
-	recallCalls     *prometheus.CounterVec
-	recallDur       *prometheus.HistogramVec
-	recallResults   *prometheus.HistogramVec
-	recallFeedback  *prometheus.CounterVec
-	recallQuality   *prometheus.HistogramVec
-	dreamFeedback   *prometheus.CounterVec
-	memoryFunnel    *prometheus.HistogramVec
-	fragmentCreates *prometheus.CounterVec
-	claimCreates    *prometheus.CounterVec
-	verifyVerdicts  *prometheus.CounterVec
-	promotions      *prometheus.CounterVec
-	promoteWait     *prometheus.HistogramVec
-	retractions     *prometheus.CounterVec
-	revalidation    *prometheus.CounterVec
-	communityRuns   *prometheus.CounterVec
-	communityDur    *prometheus.HistogramVec
-	communityNodes  *prometheus.HistogramVec
+	httpRequests                 *prometheus.CounterVec
+	httpDuration                 *prometheus.HistogramVec
+	embeddingCalls               *prometheus.CounterVec
+	embeddingErrors              *prometheus.CounterVec
+	embeddingDur                 *prometheus.HistogramVec
+	embeddingTokens              *prometheus.CounterVec
+	verifierCalls                *prometheus.CounterVec
+	verifierDur                  *prometheus.HistogramVec
+	verifierTokens               *prometheus.CounterVec
+	recallCalls                  *prometheus.CounterVec
+	recallDur                    *prometheus.HistogramVec
+	recallResults                *prometheus.HistogramVec
+	recallFeedback               *prometheus.CounterVec
+	recallQuality                *prometheus.HistogramVec
+	dreamFeedback                *prometheus.CounterVec
+	memoryFunnel                 *prometheus.HistogramVec
+	fragmentCreates              *prometheus.CounterVec
+	claimCreates                 *prometheus.CounterVec
+	verifyVerdicts               *prometheus.CounterVec
+	promotions                   *prometheus.CounterVec
+	promoteWait                  *prometheus.HistogramVec
+	retractions                  *prometheus.CounterVec
+	revalidation                 *prometheus.CounterVec
+	communityRuns                *prometheus.CounterVec
+	communityDur                 *prometheus.HistogramVec
+	communityNodes               *prometheus.HistogramVec
+	assessorCalls                *prometheus.CounterVec
+	assessorDur                  *prometheus.HistogramVec
+	assessorTokens               *prometheus.CounterVec
+	assessorValidation           *prometheus.CounterVec
+	assessorCandidateTruncations *prometheus.CounterVec
+	assessorPersistence          *prometheus.CounterVec
+	assessorDuplicatePrevention  *prometheus.CounterVec
+	assessorConfidenceGate       *prometheus.CounterVec
+	assessorReviewExpiry         prometheus.Counter
 }
 
 var _ DiscoverabilityMetrics = (*PrometheusMetrics)(nil)
 var _ ScopedDiscoverabilityMetrics = (*PrometheusMetrics)(nil)
 var _ HTTPMetrics = (*PrometheusMetrics)(nil)
+var _ AssessorMetrics = (*PrometheusMetrics)(nil)
 
 // NewPrometheusMetrics creates a Prometheus recorder with a private registry so
 // tests and multiple server instances do not collide with global collectors.
@@ -201,6 +211,43 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Help:    "Projected node count for community detection runs.",
 			Buckets: []float64{100, 1000, 10000, 100000, 500000, 1000000},
 		}, identityLabels()),
+		assessorCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_assessor_requests_total",
+			Help: "Integrated assessor provider calls by bounded outcome.",
+		}, []string{"outcome"}),
+		assessorDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "densemem_assessor_duration_seconds",
+			Help:    "Integrated assessor provider call duration.",
+			Buckets: prometheus.DefBuckets,
+		}, []string{"outcome"}),
+		assessorTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_assessor_tokens_total",
+			Help: "Server-accounted integrated assessor tokens.",
+		}, []string{"kind"}),
+		assessorValidation: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_assessor_validation_failures_total",
+			Help: "Integrated assessor validation failures by bounded stage.",
+		}, []string{"stage"}),
+		assessorCandidateTruncations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_assessor_candidate_truncations_total",
+			Help: "Integrated assessor requests with token-bounded candidate context.",
+		}, nil),
+		assessorPersistence: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_assessor_assessment_persistence_total",
+			Help: "Append-once assessment persistence and reuse outcomes.",
+		}, []string{"outcome"}),
+		assessorDuplicatePrevention: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_assessor_duplicate_request_prevented_total",
+			Help: "Provider calls prevented by persisted assessments or durable reservations.",
+		}, []string{"stage"}),
+		assessorConfidenceGate: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_assessor_confidence_gate_total",
+			Help: "Integrated assessor confidence gate bands.",
+		}, []string{"band"}),
+		assessorReviewExpiry: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "densemem_assessor_review_expiry_total",
+			Help: "Integrated assessor semantic review tasks expired by the scheduler.",
+		}),
 	}
 	m.registry.MustRegister(
 		m.httpRequests, m.httpDuration,
@@ -211,6 +258,9 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		m.fragmentCreates, m.claimCreates, m.verifyVerdicts, m.promotions,
 		m.promoteWait, m.retractions, m.revalidation,
 		m.communityRuns, m.communityDur, m.communityNodes,
+		m.assessorCalls, m.assessorDur, m.assessorTokens, m.assessorValidation,
+		m.assessorCandidateTruncations, m.assessorPersistence, m.assessorDuplicatePrevention,
+		m.assessorConfidenceGate, m.assessorReviewExpiry,
 	)
 	return m
 }
@@ -398,6 +448,46 @@ func (m *PrometheusMetrics) ObserveCommunityDetectFor(ctx context.Context, durat
 	m.communityNodes.WithLabelValues(labels...).Observe(float64(projectedNodes))
 }
 
+func (m *PrometheusMetrics) ObserveAssessorCall(inputTokens, outputTokens int, durationSeconds float64, outcome string) {
+	outcome = normalizeAssessorCallOutcome(outcome)
+	m.assessorCalls.WithLabelValues(outcome).Inc()
+	if durationSeconds >= 0 {
+		m.assessorDur.WithLabelValues(outcome).Observe(durationSeconds)
+	}
+	if inputTokens > 0 {
+		m.assessorTokens.WithLabelValues("input").Add(float64(inputTokens))
+	}
+	if outputTokens > 0 {
+		m.assessorTokens.WithLabelValues("output").Add(float64(outputTokens))
+	}
+}
+
+func (m *PrometheusMetrics) IncAssessorValidationFailure(stage string) {
+	m.assessorValidation.WithLabelValues(normalizeAssessorValidationStage(stage)).Inc()
+}
+
+func (m *PrometheusMetrics) IncAssessorCandidateTruncation() {
+	m.assessorCandidateTruncations.WithLabelValues().Inc()
+}
+
+func (m *PrometheusMetrics) IncAssessorAssessmentPersistence(outcome string) {
+	m.assessorPersistence.WithLabelValues(normalizeAssessorPersistenceOutcome(outcome)).Inc()
+}
+
+func (m *PrometheusMetrics) IncAssessorDuplicateRequestPrevention(stage string) {
+	m.assessorDuplicatePrevention.WithLabelValues(normalizeAssessorDuplicatePreventionStage(stage)).Inc()
+}
+
+func (m *PrometheusMetrics) IncAssessorConfidenceGate(band string) {
+	m.assessorConfidenceGate.WithLabelValues(normalizeAssessorConfidenceGateBand(band)).Inc()
+}
+
+func (m *PrometheusMetrics) AddAssessorReviewExpiry(count int64) {
+	if count > 0 {
+		m.assessorReviewExpiry.Add(float64(count))
+	}
+}
+
 func (m *PrometheusMetrics) addTokens(counter *prometheus.CounterVec, ctx context.Context, model string, promptTokens, completionTokens, totalTokens int64) {
 	base := append(identityValues(ctx), normalizeLabel(model))
 	if promptTokens > 0 {
@@ -501,6 +591,51 @@ func boolLabel(value bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func normalizeAssessorCallOutcome(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ok", "provider_error", "invalid_response":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
+	}
+}
+
+func normalizeAssessorValidationStage(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "request", "response", "stored_response":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
+	}
+}
+
+func normalizeAssessorPersistenceOutcome(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "persisted", "reused", "error":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
+	}
+}
+
+func normalizeAssessorDuplicatePreventionStage(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "post_persist", "reservation":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
+	}
+}
+
+func normalizeAssessorConfidenceGateBand(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "meets_write_threshold", "below_write_threshold", "not_applicable":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
+	}
 }
 
 // RecordEmbeddingLatency preserves the narrow DiscoverabilityMetrics contract
@@ -694,4 +829,46 @@ func RecordFactNeedsRevalidation(ctx context.Context, metrics DiscoverabilityMet
 		return
 	}
 	metrics.IncFactNeedsRevalidation()
+}
+
+func RecordAssessorCall(metrics DiscoverabilityMetrics, inputTokens, outputTokens int, durationSeconds float64, outcome string) {
+	if recorder, ok := metrics.(AssessorMetrics); ok {
+		recorder.ObserveAssessorCall(inputTokens, outputTokens, durationSeconds, outcome)
+	}
+}
+
+func RecordAssessorValidationFailure(metrics DiscoverabilityMetrics, stage string) {
+	if recorder, ok := metrics.(AssessorMetrics); ok {
+		recorder.IncAssessorValidationFailure(stage)
+	}
+}
+
+func RecordAssessorCandidateTruncation(metrics DiscoverabilityMetrics) {
+	if recorder, ok := metrics.(AssessorMetrics); ok {
+		recorder.IncAssessorCandidateTruncation()
+	}
+}
+
+func RecordAssessorAssessmentPersistence(metrics DiscoverabilityMetrics, outcome string) {
+	if recorder, ok := metrics.(AssessorMetrics); ok {
+		recorder.IncAssessorAssessmentPersistence(outcome)
+	}
+}
+
+func RecordAssessorDuplicateRequestPrevention(metrics DiscoverabilityMetrics, stage string) {
+	if recorder, ok := metrics.(AssessorMetrics); ok {
+		recorder.IncAssessorDuplicateRequestPrevention(stage)
+	}
+}
+
+func RecordAssessorConfidenceGate(metrics DiscoverabilityMetrics, band string) {
+	if recorder, ok := metrics.(AssessorMetrics); ok {
+		recorder.IncAssessorConfidenceGate(band)
+	}
+}
+
+func RecordAssessorReviewExpiry(metrics DiscoverabilityMetrics, count int64) {
+	if recorder, ok := metrics.(AssessorMetrics); ok {
+		recorder.AddAssessorReviewExpiry(count)
+	}
 }

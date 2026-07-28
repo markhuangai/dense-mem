@@ -74,6 +74,21 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	assert.Contains(t, options, "works_on")
 	assert.Contains(t, options, "is_working_on")
 
+	assessmentOptions, err := repo.ListSemanticAssessmentPredicateOptions(ctx, SemanticAssessmentPredicateOptionsInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerB,
+		QueryText:      "Mark is working on Dense-Mem.",
+		Limit:          100,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, assessmentOptions)
+	assert.Equal(t, "works_on", assessmentOptions[0].PredicateKey)
+	assert.Equal(t, 1, assessmentOptions[0].Version)
+	assert.Contains(t, assessmentOptions[0].Aliases, "is_working_on")
+	assert.NotEmpty(t, assessmentOptions[0].AllowedSubjectKinds)
+	assert.NotEmpty(t, assessmentOptions[0].AllowedObjectKinds)
+	assert.Equal(t, "active", assessmentOptions[0].LifecycleState)
+
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO team_predicate_definitions (
@@ -115,4 +130,51 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	require.NoError(t, err)
 	assert.NotContains(t, retiredOptions, "works_on")
 	assert.NotContains(t, retiredOptions, "is_working_on")
+}
+
+func TestSemanticAssessmentEntityMatchesUseOnlyCanonicalAndAliasNames(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "semantic-assessment-name-kinds-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner")
+	repo := NewSemanticRepository(appDB, rls)
+	entity := createSemanticEntity(t, ctx, repo, teamID, ownerID, "project", "Dense-Mem")
+
+	_, err := repo.AddEntityName(ctx, AddEntityNameInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		EntityID:       entity.EntityID,
+		DisplayName:    "DM",
+		NameKind:       "alias",
+	})
+	require.NoError(t, err)
+	_, err = repo.AddEntityName(ctx, AddEntityNameInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		EntityID:       entity.EntityID,
+		DisplayName:    "Dense Memory Legacy",
+		NameKind:       "former",
+	})
+	require.NoError(t, err)
+
+	formerOnly, err := repo.ListSemanticAssessmentEntityMatches(ctx, SemanticAssessmentEntityMatchInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		EvidenceText:   "Dense Memory Legacy is no longer the current name.",
+		Limit:          5,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, formerOnly.Matches)
+
+	aliasMatches, err := repo.ListSemanticAssessmentEntityMatches(ctx, SemanticAssessmentEntityMatchInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		EvidenceText:   "DM retains its canonical project identity.",
+		Limit:          5,
+	})
+	require.NoError(t, err)
+	require.Len(t, aliasMatches.Matches, 1)
+	assert.Equal(t, entity.EntityID, aliasMatches.Matches[0].Candidate.EntityID)
+	assert.Equal(t, "DM", aliasMatches.Matches[0].MatchedName)
 }
