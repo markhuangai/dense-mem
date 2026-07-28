@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Fmarkhuangai%2Fdense-mem.svg)](https://mcptoplist.com/server/glama%2Fmarkhuangai%2Fdense-mem)
+
 <h1 align="center">Dense-Mem</h1>
 
 <p align="center">
