@@ -66,6 +66,18 @@ func TestAIEmbeddingMaxConcurrency(t *testing.T) {
 	}
 }
 
+func TestAIVerifierMaxConcurrency(t *testing.T) {
+	if got := AIVerifierMaxConcurrency(nil); got != DefaultAIVerifierMaxConcurrency {
+		t.Fatalf("AIVerifierMaxConcurrency(nil) = %d, want %d", got, DefaultAIVerifierMaxConcurrency)
+	}
+	if got := AIVerifierMaxConcurrency(&Config{}); got != DefaultAIVerifierMaxConcurrency {
+		t.Fatalf("AIVerifierMaxConcurrency(empty config) = %d, want %d", got, DefaultAIVerifierMaxConcurrency)
+	}
+	if got := AIVerifierMaxConcurrency(&Config{AIVerifierMaxConcurrency: 12}); got != 12 {
+		t.Fatalf("AIVerifierMaxConcurrency(configured) = %d, want 12", got)
+	}
+}
+
 func TestLoadWorkerConcurrencyOverrides(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()

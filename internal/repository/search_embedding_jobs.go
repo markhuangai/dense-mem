@@ -14,6 +14,81 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+const embeddingJobCandidateCTEsSQL = `
+queued_candidates AS MATERIALIZED (
+	SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
+	FROM embedding_jobs AS job
+	WHERE job.team_id = ?::uuid
+	  AND job.status = 'queued'
+	  AND job.available_at <= now()
+	  AND job.attempts < job.max_attempts
+	ORDER BY job.available_at ASC, job.created_at ASC, job.embedding_job_id ASC
+	LIMIT ?
+	FOR UPDATE SKIP LOCKED
+),
+expired_candidates AS MATERIALIZED (
+	SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
+	FROM embedding_jobs AS job
+	WHERE job.team_id = ?::uuid
+	  AND job.status = 'processing'
+	  AND job.lease_until <= clock_timestamp()
+	  AND job.attempts < job.max_attempts
+	ORDER BY job.lease_until ASC, job.created_at ASC, job.embedding_job_id ASC
+	LIMIT GREATEST(? - (SELECT count(*) FROM queued_candidates), 0)
+	FOR UPDATE SKIP LOCKED
+),
+candidates AS (
+	SELECT * FROM queued_candidates
+	UNION ALL
+	SELECT * FROM expired_candidates
+)`
+
+const claimEmbeddingJobsSQL = `
+WITH ` + embeddingJobCandidateCTEsSQL + `,
+claimed AS (
+	SELECT candidate.team_id, candidate.embedding_job_id
+	FROM candidates AS candidate
+	JOIN embedding_jobs AS job
+	  ON job.team_id = candidate.team_id
+	 AND job.embedding_job_id = candidate.embedding_job_id
+	JOIN search_documents AS document
+	  ON document.team_id = job.team_id
+	 AND document.search_document_id = job.search_document_id
+	 AND document.source_version = job.source_version
+	 AND document.projection_format_version = job.projection_format_version
+	 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+	 AND document.document_version = job.document_version
+	 AND document.embedding_contract_id = job.embedding_contract_id
+	 AND document.embedding_dimensions = job.embedding_dimensions
+	ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.embedding_job_id ASC
+	LIMIT ?
+),
+updated AS (
+	UPDATE embedding_jobs AS job
+	SET status = 'processing',
+	    attempts = attempts + 1,
+	    worker_id = ?,
+	    lease_until = now() + make_interval(secs => ?::integer),
+	    updated_at = now(),
+	    error = ''
+	FROM claimed
+	WHERE job.team_id = claimed.team_id
+	  AND job.embedding_job_id = claimed.embedding_job_id
+	RETURNING job.team_id::text, job.embedding_job_id::text,
+	          job.search_document_id::text, job.owner_profile_id::text,
+	          job.source_kind, job.source_id::text, job.source_version,
+	          job.projection_format_version, COALESCE(job.projection_generation_id::text, ''),
+	          job.document_version, job.embedding_contract_id::text,
+	          job.embedding_dimensions, job.status, job.attempts,
+	          job.lease_until
+)
+SELECT updated.*, document.document_text
+FROM updated
+JOIN search_documents AS document
+  ON document.team_id = updated.team_id::uuid
+ AND document.search_document_id = updated.search_document_id::uuid
+ORDER BY updated.lease_until ASC, updated.embedding_job_id ASC`
+
 func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 	ctx context.Context,
 	input ClaimEmbeddingJobsInput,
@@ -34,78 +109,8 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 		if err := failExpiredMaxAttemptEmbeddingJobs(ctx, tx, input.TeamID, cleanupLimit); err != nil {
 			return err
 		}
-		rows, err := tx.WithContext(ctx).Raw(`
-			WITH queued_candidates AS MATERIALIZED (
-				SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
-				FROM embedding_jobs AS job
-				WHERE job.team_id = ?::uuid
-				  AND job.status = 'queued'
-				  AND job.available_at <= now()
-				  AND attempts < max_attempts
-				ORDER BY job.available_at ASC, job.created_at ASC, job.embedding_job_id ASC
-				LIMIT ?
-				FOR UPDATE SKIP LOCKED
-			),
-			expired_candidates AS MATERIALIZED (
-				SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
-				FROM embedding_jobs AS job
-				WHERE job.team_id = ?::uuid
-				  AND job.status = 'processing'
-				  AND job.lease_until <= clock_timestamp()
-				  AND job.attempts < job.max_attempts
-				ORDER BY job.lease_until ASC, job.created_at ASC, job.embedding_job_id ASC
-				LIMIT ?
-				FOR UPDATE SKIP LOCKED
-			),
-			candidates AS (
-				SELECT * FROM queued_candidates
-				UNION ALL
-				SELECT * FROM expired_candidates
-			),
-			claimed AS (
-				SELECT candidate.team_id, candidate.embedding_job_id
-				FROM candidates AS candidate
-				JOIN embedding_jobs AS job
-				  ON job.team_id = candidate.team_id
-				 AND job.embedding_job_id = candidate.embedding_job_id
-				JOIN search_documents AS document
-				  ON document.team_id = job.team_id
-				 AND document.search_document_id = job.search_document_id
-				 AND document.source_version = job.source_version
-				 AND document.projection_format_version = job.projection_format_version
-				 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
-				 AND document.document_version = job.document_version
-				 AND document.embedding_contract_id = job.embedding_contract_id
-				 AND document.embedding_dimensions = job.embedding_dimensions
-				ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.embedding_job_id ASC
-				LIMIT ?
-			),
-			updated AS (
-				UPDATE embedding_jobs AS job
-				SET status = 'processing',
-				    attempts = attempts + 1,
-				    worker_id = ?,
-				    lease_until = now() + make_interval(secs => ?::integer),
-				    updated_at = now(),
-				    error = ''
-				FROM claimed
-				WHERE job.team_id = claimed.team_id
-				  AND job.embedding_job_id = claimed.embedding_job_id
-				RETURNING job.team_id::text, job.embedding_job_id::text,
-					          job.search_document_id::text, job.owner_profile_id::text,
-					          job.source_kind, job.source_id::text, job.source_version,
-					          job.projection_format_version, COALESCE(job.projection_generation_id::text, ''),
-					          job.document_version, job.embedding_contract_id::text,
-				          job.embedding_dimensions, job.status, job.attempts,
-				          job.lease_until
-			)
-			SELECT updated.*, document.document_text
-			FROM updated
-			JOIN search_documents AS document
-			  ON document.team_id = updated.team_id::uuid
-			 AND document.search_document_id = updated.search_document_id::uuid
-			ORDER BY updated.lease_until ASC, updated.embedding_job_id ASC
-		`,
+		rows, err := tx.WithContext(ctx).Raw(
+			claimEmbeddingJobsSQL,
 			input.TeamID,
 			input.Limit,
 			input.TeamID,

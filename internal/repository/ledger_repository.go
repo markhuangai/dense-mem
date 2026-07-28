@@ -345,6 +345,7 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 				  AND run.status = 'processing'
 				  AND run.lease_until IS NOT NULL
 				  AND run.lease_until < now()
+				  AND NOT EXISTS (SELECT 1 FROM ready)
 				ORDER BY run.lease_until ASC, run.created_at ASC, run.placement_run_id ASC
 				LIMIT 1
 				FOR UPDATE SKIP LOCKED

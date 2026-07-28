@@ -142,17 +142,9 @@ func NewOpenAIVerifier(cfg config.ConfigProvider, httpClient *http.Client) *Open
 		reviewerModel:      cfg.GetAIReviewerModel(),
 		disableTemperature: config.AIVerifierTemperatureDisabled(cfg),
 		httpClient:         client,
-		sem:                make(chan struct{}, verifierMaxConcurrency(cfg)),
+		sem:                make(chan struct{}, config.AIVerifierMaxConcurrency(cfg)),
 		metrics:            observability.NoopDiscoverabilityMetrics(),
 	}
-}
-
-func verifierMaxConcurrency(cfg config.ConfigProvider) int {
-	concurrency := cfg.GetAIVerifierMaxConcurrency()
-	if concurrency <= 0 {
-		return 5
-	}
-	return concurrency
 }
 
 func (v *OpenAIVerifier) acquire(ctx context.Context) error {

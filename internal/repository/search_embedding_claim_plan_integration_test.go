@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +16,108 @@ import (
 func TestNormalizeClaimEmbeddingJobsInputAllowsConfiguredMaxBatch(t *testing.T) {
 	input := normalizeClaimEmbeddingJobsInput(ClaimEmbeddingJobsInput{Limit: 300})
 	assert.Equal(t, 256, input.Limit)
+}
+
+func TestSearchEmbeddingClaimLocksOnlyReturnedJobs(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewSearchRepository(appDB, rls)
+
+	claimWhileFirstTransactionIsOpen := func(t *testing.T, teamID string) []EmbeddingJob {
+		t.Helper()
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		closeRelease := func() {
+			releaseOnce.Do(func() {
+				close(release)
+			})
+		}
+		t.Cleanup(closeRelease)
+		firstClaimed := make(chan string, 1)
+		firstDone := make(chan error, 1)
+		go func() {
+			firstDone <- rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+				var claimed []struct {
+					EmbeddingJobID string `gorm:"column:embedding_job_id"`
+				}
+				if err := tx.Raw(
+					claimEmbeddingJobsSQL,
+					teamID,
+					1,
+					teamID,
+					1,
+					1,
+					"holding-claim-worker",
+					60,
+				).Scan(&claimed).Error; err != nil {
+					return err
+				}
+				if len(claimed) != 1 {
+					return fmt.Errorf("holding claim returned %d jobs, want 1", len(claimed))
+				}
+				firstClaimed <- claimed[0].EmbeddingJobID
+				<-release
+				return nil
+			})
+		}()
+
+		var firstID string
+		select {
+		case firstID = <-firstClaimed:
+		case err := <-firstDone:
+			require.NoError(t, err)
+			t.Fatal("holding claim ended before acquiring a job")
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for holding claim")
+		}
+
+		second, err := repo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{
+			TeamID:   teamID,
+			WorkerID: "second-claim-worker",
+			Limit:    1,
+			Lease:    time.Minute,
+		})
+		require.NoError(t, err)
+		for _, job := range second {
+			assert.NotEqual(t, firstID, job.EmbeddingJobID)
+		}
+
+		closeRelease()
+		require.NoError(t, <-firstDone)
+		return second
+	}
+
+	t.Run("does not lock the unused expired candidate", func(t *testing.T) {
+		teamID := createLedgerTeam(t, adminDB, rls, "search-claim-lock-team")
+		ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-claim-lock-owner")
+		insertSearchTestContract(t, adminDB, rls, "search-claim-lock", 3, "exact", "")
+		upsertSearchDocumentForTest(t, repo, teamID, ownerID, "queued claim candidate", 1)
+		expired := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "expired claim candidate", 1)
+		err := rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+			return tx.Exec(`
+				UPDATE embedding_jobs
+				SET status = 'processing',
+				    attempts = 1,
+				    worker_id = 'expired-worker',
+				    lease_until = now() - interval '1 minute'
+				WHERE team_id = ?::uuid
+				  AND embedding_job_id = ?::uuid
+			`, teamID, expired.QueuedJobID).Error
+		})
+		require.NoError(t, err)
+
+		require.Len(t, claimWhileFirstTransactionIsOpen(t, teamID), 1)
+	})
+
+	t.Run("skips a queued row locked by another claimer", func(t *testing.T) {
+		teamID := createLedgerTeam(t, adminDB, rls, "search-claim-skip-locked-team")
+		ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-claim-skip-locked-owner")
+		upsertSearchDocumentForTest(t, repo, teamID, ownerID, "first queued claim candidate", 1)
+		upsertSearchDocumentForTest(t, repo, teamID, ownerID, "second queued claim candidate", 1)
+
+		require.Len(t, claimWhileFirstTransactionIsOpen(t, teamID), 1)
+	})
 }
 
 func TestSearchEmbeddingClaimPlanStaysBoundedAtElevenThousandJobs(t *testing.T) {
@@ -89,37 +193,12 @@ func TestSearchEmbeddingClaimPlanStaysBoundedAtElevenThousandJobs(t *testing.T) 
 	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
 			EXPLAIN (ANALYZE, BUFFERS, COSTS OFF)
-			WITH queued_candidates AS MATERIALIZED (
-				SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
-				FROM embedding_jobs AS job
-				WHERE job.team_id = ?::uuid
-				  AND job.status = 'queued'
-				  AND job.available_at <= now()
-				  AND job.attempts < job.max_attempts
-				ORDER BY job.available_at ASC, job.created_at ASC, job.embedding_job_id ASC
-				LIMIT 64
-				FOR UPDATE SKIP LOCKED
-			),
-			expired_candidates AS MATERIALIZED (
-				SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
-				FROM embedding_jobs AS job
-				WHERE job.team_id = ?::uuid
-				  AND job.status = 'processing'
-				  AND job.lease_until <= clock_timestamp()
-				  AND job.attempts < job.max_attempts
-				ORDER BY job.lease_until ASC, job.created_at ASC, job.embedding_job_id ASC
-				LIMIT 64
-				FOR UPDATE SKIP LOCKED
-			)
+			WITH `+embeddingJobCandidateCTEsSQL+`
 			SELECT *
-			FROM (
-				SELECT * FROM queued_candidates
-				UNION ALL
-				SELECT * FROM expired_candidates
-			) AS candidates
+			FROM candidates
 			ORDER BY available_at ASC, created_at ASC, embedding_job_id ASC
 			LIMIT 64
-		`, teamID, teamID).Rows()
+		`, teamID, 64, teamID, 64).Rows()
 		if err != nil {
 			return err
 		}

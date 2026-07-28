@@ -20,6 +20,7 @@ const (
 	DefaultEmbeddingJobPollSeconds         = 1
 	DefaultEmbeddingJobMaxAttempts         = 20
 	MaxEmbeddingJobMaxAttempts             = 100
+	DefaultAIVerifierMaxConcurrency        = 5
 	DefaultMemoryPlacementWorkerCount      = 1
 	DefaultMemoryPlacementPollSeconds      = 5
 	DefaultConflictReviewTTLDays           = 7
@@ -99,6 +100,14 @@ func AIEmbeddingMaxConcurrency(cfg ConfigProvider) int {
 		return DefaultAIEmbeddingMaxConcurrency
 	}
 	return concurrencyConfig.GetAIEmbeddingMaxConcurrency()
+}
+
+// AIVerifierMaxConcurrency returns the process-wide verifier request limit.
+func AIVerifierMaxConcurrency(cfg ConfigProvider) int {
+	if cfg == nil || cfg.GetAIVerifierMaxConcurrency() <= 0 {
+		return DefaultAIVerifierMaxConcurrency
+	}
+	return cfg.GetAIVerifierMaxConcurrency()
 }
 
 // Config holds all configuration for the application.
@@ -538,7 +547,7 @@ func Load() (Config, error) {
 
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
 		{"AI_VERIFIER_TIMEOUT_SECONDS", 60, func(c *Config, value int) { c.AIVerifierTimeoutSeconds = value }},
-		{"AI_VERIFIER_MAX_CONCURRENCY", 5, func(c *Config, value int) { c.AIVerifierMaxConcurrency = value }},
+		{"AI_VERIFIER_MAX_CONCURRENCY", DefaultAIVerifierMaxConcurrency, func(c *Config, value int) { c.AIVerifierMaxConcurrency = value }},
 		{"MEMORY_PLACEMENT_WORKER_COUNT", DefaultMemoryPlacementWorkerCount, func(c *Config, value int) { c.MemoryPlacementWorkerCount = value }},
 		{"MEMORY_PLACEMENT_POLL_SECONDS", DefaultMemoryPlacementPollSeconds, func(c *Config, value int) { c.MemoryPlacementPollSeconds = value }},
 		{"CLAIM_WRITE_RATE_LIMIT", 60, func(c *Config, value int) { c.ClaimWriteRateLimit = value }},

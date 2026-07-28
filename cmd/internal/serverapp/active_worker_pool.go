@@ -169,6 +169,7 @@ type activeTeamDispatcher struct {
 	entries      map[string]*activeTeamDispatchEntry
 	queue        []string
 	queued       map[string]bool
+	nextDue      time.Time
 }
 
 func newActiveTeamDispatcher(pollInterval time.Duration) *activeTeamDispatcher {
@@ -198,6 +199,7 @@ func (d *activeTeamDispatcher) replaceTeams(teamIDs []string, now time.Time) {
 		}
 	}
 	d.pruneQueue()
+	d.nextDue = now
 	d.enqueueDue(now)
 }
 
@@ -251,18 +253,31 @@ func (d *activeTeamDispatcher) complete(teamID string, worked bool, now time.Tim
 	if entry.cooling && entry.inFlight == 0 {
 		entry.cooling = false
 		entry.nextProbe = now.Add(d.pollInterval)
+		d.scheduleDue(entry.nextProbe)
 	}
 }
 
 func (d *activeTeamDispatcher) enqueueDue(now time.Time) {
+	if d.nextDue.IsZero() || now.Before(d.nextDue) {
+		return
+	}
+	d.nextDue = time.Time{}
 	for _, teamID := range d.order {
 		entry := d.entries[teamID]
 		if entry == nil || !entry.present || entry.ready || entry.cooling || entry.inFlight > 0 {
 			continue
 		}
-		if !now.Before(entry.nextProbe) {
-			d.enqueue(teamID)
+		if now.Before(entry.nextProbe) {
+			d.scheduleDue(entry.nextProbe)
+			continue
 		}
+		d.enqueue(teamID)
+	}
+}
+
+func (d *activeTeamDispatcher) scheduleDue(at time.Time) {
+	if d.nextDue.IsZero() || at.Before(d.nextDue) {
+		d.nextDue = at
 	}
 }
 
