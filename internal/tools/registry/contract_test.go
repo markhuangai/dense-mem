@@ -970,3 +970,29 @@ func TestPredicateOptionsContract(t *testing.T) {
 		t.Fatal("current_cardinality accepted non-wiki value")
 	}
 }
+
+func TestPlacementReviewOptionSchemaRequiresOneCompleteOptionShape(t *testing.T) {
+	schema := placementReviewOptionSchema()
+	valid := []map[string]any{
+		{"entity_id": "entity-1", "canonical_name": "Dense-Mem", "kind": "product"},
+		{"predicate_key": "works_on", "version": 1, "aliases": []string{"works on"}},
+		{"action": "submit_new_evidence"},
+	}
+	for _, option := range valid {
+		if err := validateSchemaValue("option", option, schema); err != nil {
+			t.Fatalf("validateSchemaValue(%#v) error = %v", option, err)
+		}
+	}
+	for _, option := range []map[string]any{
+		{},
+		{"entity_id": "entity-1"},
+		{"entity_id": "entity-1", "canonical_name": "Dense-Mem", "kind": "product", "action": "submit_new_evidence"},
+	} {
+		if err := validateSchemaValue("option", option, schema); err == nil {
+			t.Fatalf("validateSchemaValue(%#v) accepted incomplete or mixed option", option)
+		}
+	}
+	if got := placementReviewTaskArraySchema()["maxItems"]; got != 300 {
+		t.Fatalf("review task maxItems = %#v, want 300", got)
+	}
+}

@@ -142,6 +142,7 @@ func TestPlacementResolutionSelectEntityResolvesOnlyMatchingV24AssessmentTask(t 
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "placement-v24-entity-selection-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner")
+	otherOwnerID := createLedgerProfile(t, adminDB, rls, teamID, "other-owner")
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	semanticRepo := NewSemanticRepository(appDB, rls)
 
@@ -227,6 +228,19 @@ func TestPlacementResolutionSelectEntityResolvesOnlyMatchingV24AssessmentTask(t 
 	})
 	require.ErrorIs(t, err, ErrPlacementResolutionInvalidState)
 
+	_, err = ledgerRepo.ResolvePlacementReview(ctx, ResolvePlacementReviewInput{
+		TeamID:               teamID,
+		OwnerProfileID:       otherOwnerID,
+		Action:               "select_entity",
+		IngestID:             ingest.IngestID,
+		PlacementItemID:      ingest.Items[0].PlacementItemID,
+		PlacementItemVersion: ingest.Items[0].Version,
+		EntityRef:            "subject",
+		CandidateEntityID:    selected.EntityID,
+		IdempotencyKey:       "v24-cross-owner-entity-option",
+	})
+	require.ErrorIs(t, err, ErrPlacementResolutionNotFound)
+
 	result, err := ledgerRepo.ResolvePlacementReview(ctx, ResolvePlacementReviewInput{
 		TeamID:               teamID,
 		OwnerProfileID:       ownerID,
@@ -280,12 +294,99 @@ func TestPlacementResolutionSelectEntityResolvesOnlyMatchingV24AssessmentTask(t 
 	assert.Equal(t, 1, assessmentCount)
 }
 
+func TestPlacementResolutionSelectEntityValidatesDependentAssessmentTaskOptions(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "placement-v24-dependent-entity-selection-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner")
+	otherOwnerID := createLedgerProfile(t, adminDB, rls, teamID, "other-owner")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"placement-v24-dependent-entity-selection", "Mark works on Dense-Mem.")
+	assessment, _, err := ledgerRepo.PersistPlacementAssessment(ctx, placementAssessmentPersistInput(teamID, ownerID, ingest.Items[0]))
+	require.NoError(t, err)
+	allowedID := uuid.NewString()
+	rejectedID := uuid.NewString()
+	taskID := uuid.NewString()
+
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO review_tasks (
+			    team_id, review_task_id, owner_profile_id, ingest_id, placement_item_id,
+			    task_type, status, reason, payload, dedupe_key, assessment_id, expires_at
+			) VALUES (
+			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+			    'identity_needs_review', 'open', 'identity_needs_review',
+			    jsonb_build_object(
+			        'semantic_kind', 'identity',
+			        'relationship_ref', 'works-on',
+			        'subject_ref', 'subject',
+			        'options', jsonb_build_array(jsonb_build_object('entity_id', ?::text))
+			    ), '', ?::uuid, now() + interval '1 hour'
+			)
+		`, teamID, taskID, ownerID, ingest.IngestID, ingest.Items[0].PlacementItemID, allowedID, assessment.AssessmentID).Error
+	}))
+
+	_, err = ledgerRepo.ResolvePlacementReview(ctx, ResolvePlacementReviewInput{
+		TeamID:               teamID,
+		OwnerProfileID:       ownerID,
+		Action:               "select_entity",
+		IngestID:             ingest.IngestID,
+		PlacementItemID:      ingest.Items[0].PlacementItemID,
+		PlacementItemVersion: ingest.Items[0].Version,
+		EntityRef:            "subject",
+		CandidateEntityID:    rejectedID,
+		IdempotencyKey:       "v24-dependent-rejected-entity-option",
+	})
+	require.ErrorIs(t, err, ErrPlacementResolutionInvalidState)
+
+	_, err = ledgerRepo.ResolvePlacementReview(ctx, ResolvePlacementReviewInput{
+		TeamID:               teamID,
+		OwnerProfileID:       otherOwnerID,
+		Action:               "select_entity",
+		IngestID:             ingest.IngestID,
+		PlacementItemID:      ingest.Items[0].PlacementItemID,
+		PlacementItemVersion: ingest.Items[0].Version,
+		EntityRef:            "subject",
+		CandidateEntityID:    allowedID,
+		IdempotencyKey:       "v24-dependent-cross-owner-entity-option",
+	})
+	require.ErrorIs(t, err, ErrPlacementResolutionNotFound)
+
+	result, err := ledgerRepo.ResolvePlacementReview(ctx, ResolvePlacementReviewInput{
+		TeamID:               teamID,
+		OwnerProfileID:       ownerID,
+		Action:               "select_entity",
+		IngestID:             ingest.IngestID,
+		PlacementItemID:      ingest.Items[0].PlacementItemID,
+		PlacementItemVersion: ingest.Items[0].Version,
+		EntityRef:            "subject",
+		CandidateEntityID:    allowedID,
+		IdempotencyKey:       "v24-dependent-allowed-entity-option",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "queued", result.Status)
+
+	var status, selectedID string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status, COALESCE(resolution->>'candidate_entity_id', '')
+			FROM review_tasks
+			WHERE team_id = ?::uuid AND review_task_id = ?::uuid
+		`, teamID, taskID).Row().Scan(&status, &selectedID)
+	}))
+	assert.Equal(t, "resolved", status)
+	assert.Equal(t, allowedID, selectedID)
+}
+
 func TestPlacementResolutionSelectPredicateResolvesOnlyMatchingV24AssessmentTask(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "placement-v24-predicate-selection-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner")
+	otherOwnerID := createLedgerProfile(t, adminDB, rls, teamID, "other-owner")
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	semanticRepo := NewSemanticRepository(appDB, rls)
 
@@ -345,6 +446,20 @@ func TestPlacementResolutionSelectPredicateResolvesOnlyMatchingV24AssessmentTask
 			)
 		`, teamID, identityTaskID, ownerID, ingest.IngestID, ingest.Items[0].PlacementItemID, subject.EntityID, assessment.AssessmentID).Error
 	}))
+
+	_, err = ledgerRepo.ResolvePlacementReview(ctx, ResolvePlacementReviewInput{
+		TeamID:               teamID,
+		OwnerProfileID:       otherOwnerID,
+		Action:               "select_predicate",
+		IngestID:             ingest.IngestID,
+		PlacementItemID:      ingest.Items[0].PlacementItemID,
+		PlacementItemVersion: ingest.Items[0].Version,
+		ObservationID:        unknown.ObservationID,
+		PredicateKey:         "works_on",
+		PredicateVersion:     1,
+		IdempotencyKey:       "v24-cross-owner-predicate-option",
+	})
+	require.ErrorIs(t, err, ErrPlacementResolutionNotFound)
 
 	result, err := ledgerRepo.ResolvePlacementReview(ctx, ResolvePlacementReviewInput{
 		TeamID:               teamID,

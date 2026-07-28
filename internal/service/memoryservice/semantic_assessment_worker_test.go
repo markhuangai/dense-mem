@@ -111,6 +111,20 @@ func TestSemanticAssessmentWorkerReleasesProviderFailureForLaterClaim(t *testing
 	assert.True(t, commit.requeues[0].ReleaseAssessorAttempt)
 }
 
+func TestSemanticAssessmentWorkerRetriesCatalogPreflightFailure(t *testing.T) {
+	_, assessments, commit, catalog, provider, worker := semanticAssessmentWorkerFixture(t)
+	catalog.entityMatchesErr = errors.New("catalog unavailable")
+
+	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
+	require.True(t, processed)
+	require.ErrorContains(t, err, "catalog unavailable")
+	assert.Zero(t, provider.calls)
+	assert.Zero(t, assessments.persistCalls)
+	require.Len(t, commit.requeues, 1)
+	assert.Empty(t, commit.completions)
+	assert.False(t, commit.requeues[0].ReleaseAssessorAttempt)
+}
+
 func TestSemanticAssessmentWorkerDoesNotCallProviderAfterDurableReservationWithoutAssessment(t *testing.T) {
 	_, assessments, commit, _, provider, worker := semanticAssessmentWorkerFixture(t)
 	assessments.reserved = true
@@ -156,7 +170,7 @@ func TestSemanticAssessmentCommitInputAppliesInclusiveConfidenceGate(t *testing.
 		Threshold:     0.7,
 		ConfigVersion: 4,
 		Version:       repository.AssessmentPolicyVersion,
-	})
+	}, repository.PlacementAssessmentReviewOverrides{}, nil)
 	require.NoError(t, err)
 	require.Len(t, commit.RelationshipObservations, 1)
 	assert.Equal(t, "meets_write_threshold", commit.RelationshipObservations[0].GateResult)
@@ -168,12 +182,109 @@ func TestSemanticAssessmentCommitInputAppliesInclusiveConfidenceGate(t *testing.
 		Threshold:     0.7,
 		ConfigVersion: 4,
 		Version:       repository.AssessmentPolicyVersion,
-	})
+	}, repository.PlacementAssessmentReviewOverrides{}, nil)
 	require.NoError(t, err)
 	require.Len(t, commit.RelationshipObservations, 1)
 	assert.Equal(t, "below_write_threshold", commit.RelationshipObservations[0].GateResult)
 	assert.True(t, commit.RelationshipObservations[0].SuppressSupport)
 	assert.Equal(t, "support_confidence", commit.RelationshipObservations[0].SemanticReviewKind)
+}
+
+func TestSemanticAssessmentRequestKeepsTrustedRelationshipContextServerSide(t *testing.T) {
+	_, _, _, _, _, worker := semanticAssessmentWorkerFixture(t)
+	service := worker.(*semanticAssessmentPlacementWorkerService)
+	ledger := service.ledger.(*semanticAssessmentWorkerLedgerStub)
+	fragment := ledger.placement.Evidence[0]
+	targetID := uuid.NewString()
+	conflictID := uuid.NewString()
+	proposalID := "proposal:durable"
+	relationship := map[string]any{
+		"proposal_id": proposalID,
+		"evidence": []any{map[string]any{
+			"evidence_index": fragment.EvidenceIndex,
+			"start":          0,
+			"end":            len([]rune(fragment.Content)),
+		}},
+		"correction_target": map[string]any{
+			"relationship_id":  targetID,
+			"expected_version": 2,
+		},
+		"conflict_context": map[string]any{
+			"conflict_id":      conflictID,
+			"expected_version": 3,
+		},
+	}
+	proposal := map[string]any{"relationship_hints": []any{relationship}}
+
+	request, err := service.buildRequest(context.Background(), *ledger.run, ledger.placement.Items[0], fragment, proposal)
+	require.NoError(t, err)
+	require.Len(t, request.RequiredRelationshipRefs, 1)
+	assert.Equal(t, proposalID, request.RequiredRelationshipRefs[0].ProposalID)
+	assert.Equal(t, []verifier.SemanticAssessmentEvidenceSpan{{
+		EvidenceID: "evidence:0",
+		Start:      0,
+		End:        len([]rune(fragment.Content)),
+	}}, request.RequiredRelationshipRefs[0].Evidence)
+
+	providerRelationship := placementReviewObjectArray(request.ClientProposal, "relationship_hints")
+	require.Len(t, providerRelationship, 1)
+	assert.Equal(t, proposalID, providerRelationship[0]["proposal_id"])
+	assert.NotContains(t, providerRelationship[0], "correction_target")
+	assert.NotContains(t, providerRelationship[0], "conflict_context")
+	payload, err := json.Marshal(request)
+	require.NoError(t, err)
+	assert.NotContains(t, string(payload), targetID)
+	assert.NotContains(t, string(payload), conflictID)
+	assert.Contains(t, relationship, "correction_target", "the immutable stored proposal must remain intact")
+	assert.Contains(t, relationship, "conflict_context", "the immutable stored proposal must remain intact")
+}
+
+func TestSemanticAssessmentCommitInputReattachesTrustedRelationshipContext(t *testing.T) {
+	run, item, fragment, request, response, assessment := semanticAssessmentConfidenceFixture(t)
+	targetID := uuid.NewString()
+	conflictID := uuid.NewString()
+	proposalID := "proposal:works-on"
+	response.RelationshipResults[0].Ref = proposalID
+	request.RequiredRelationshipRefs = []verifier.SemanticAssessmentRequiredRelationshipRef{{
+		ProposalID: proposalID,
+		Evidence:   append([]verifier.SemanticAssessmentEvidenceSpan(nil), response.RelationshipResults[0].Evidence...),
+	}}
+	proposal := map[string]any{"relationship_hints": []any{map[string]any{
+		"proposal_id": proposalID,
+		"evidence": []any{map[string]any{
+			"evidence_index": fragment.EvidenceIndex,
+			"start":          0,
+			"end":            len([]rune(fragment.Content)),
+		}},
+		"correction_target": map[string]any{
+			"relationship_id":  targetID,
+			"expected_version": 2,
+		},
+		"conflict_context": map[string]any{
+			"conflict_id":      conflictID,
+			"expected_version": 3,
+		},
+	}}}
+	policy := repository.AutoWriteConfidencePolicy{
+		Threshold:     0.7,
+		ConfigVersion: 4,
+		Version:       repository.AssessmentPolicyVersion,
+	}
+
+	commit, err := semanticAssessmentCommitInput(run, item, fragment, request, response, assessment, policy, repository.PlacementAssessmentReviewOverrides{}, proposal)
+	require.NoError(t, err)
+	require.Len(t, commit.RelationshipObservations, 1)
+	observation := commit.RelationshipObservations[0]
+	require.NotNil(t, observation.CorrectionTarget)
+	assert.Equal(t, targetID, observation.CorrectionTarget.RelationshipID)
+	assert.Equal(t, 2, observation.CorrectionTarget.ExpectedVersion)
+	require.NotNil(t, observation.ConflictContext)
+	assert.Equal(t, conflictID, observation.ConflictContext.ConflictID)
+	assert.Equal(t, 3, observation.ConflictContext.ExpectedVersion)
+
+	response.RelationshipResults[0].Ref = "unrelated"
+	_, err = semanticAssessmentCommitInput(run, item, fragment, request, response, assessment, policy, repository.PlacementAssessmentReviewOverrides{}, proposal)
+	require.ErrorContains(t, err, "trusted relationship correspondence")
 }
 
 func TestSemanticAssessmentCommitInputRoutesUnmatchedPredicateToReview(t *testing.T) {
@@ -186,11 +297,49 @@ func TestSemanticAssessmentCommitInputRoutesUnmatchedPredicateToReview(t *testin
 		Threshold:     0.7,
 		ConfigVersion: 4,
 		Version:       repository.AssessmentPolicyVersion,
-	})
+	}, repository.PlacementAssessmentReviewOverrides{}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, commit.RelationshipObservations)
 	require.Len(t, commit.RelationshipReviews, 1)
 	assert.Equal(t, "predicate", commit.RelationshipReviews[0].SemanticReviewKind)
+}
+
+func TestSemanticAssessmentCommitInputReopensIncompatiblePredicateSelection(t *testing.T) {
+	run, item, fragment, request, response, assessment := semanticAssessmentConfidenceFixture(t)
+	request.PredicateOptions[0].AllowedSubjectKinds = []string{"project"}
+
+	commit, err := semanticAssessmentCommitInput(run, item, fragment, request, response, assessment, repository.AutoWriteConfidencePolicy{
+		Threshold:     0.7,
+		ConfigVersion: 4,
+		Version:       repository.AssessmentPolicyVersion,
+	}, repository.PlacementAssessmentReviewOverrides{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, commit.RelationshipObservations)
+	require.Len(t, commit.RelationshipReviews, 1)
+	assert.Equal(t, "predicate", commit.RelationshipReviews[0].SemanticReviewKind)
+	assert.Equal(t, []map[string]any{{"action": "submit_new_evidence"}}, commit.RelationshipReviews[0].ReviewOptions)
+}
+
+func TestSemanticAssessmentCommitInputFiltersPredicateReviewOptionsByEndpoints(t *testing.T) {
+	run, item, fragment, request, response, assessment := semanticAssessmentConfidenceFixture(t)
+	request.PredicateOptions = append(request.PredicateOptions, verifier.SemanticAssessmentPredicateOption{
+		PredicateKey: "manages", Version: 1, Aliases: []string{"manages"},
+		AllowedSubjectKinds: []string{"project"}, AllowedObjectKinds: []string{"product"},
+		RelationshipKind: "state", CurrentCardinality: "many",
+	})
+	response.RelationshipResults[0].PredicateStatus = "needs_review"
+	response.RelationshipResults[0].PredicateKey = nil
+	response.RelationshipResults[0].PredicateVersion = nil
+
+	commit, err := semanticAssessmentCommitInput(run, item, fragment, request, response, assessment, repository.AutoWriteConfidencePolicy{
+		Threshold:     0.7,
+		ConfigVersion: 4,
+		Version:       repository.AssessmentPolicyVersion,
+	}, repository.PlacementAssessmentReviewOverrides{}, nil)
+	require.NoError(t, err)
+	require.Len(t, commit.RelationshipReviews, 1)
+	require.Len(t, commit.RelationshipReviews[0].ReviewOptions, 1)
+	assert.Equal(t, "works_on", commit.RelationshipReviews[0].ReviewOptions[0]["predicate_key"])
 }
 
 func TestApplySemanticAssessmentReviewOverridesUsesPersistedSelections(t *testing.T) {

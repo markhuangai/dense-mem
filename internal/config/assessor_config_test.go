@@ -2,7 +2,6 @@ package config
 
 import (
 	"math"
-	"os"
 	"testing"
 )
 
@@ -59,10 +58,10 @@ func TestLoadAssessorTokenBudgetAndRejectsObsoleteVariables(t *testing.T) {
 	t.Run("overrides", func(t *testing.T) {
 		clearEnv()
 		setRequiredEnv()
-		os.Setenv("AI_VERIFIER_MAX_INPUT_TOKENS", "1234")
-		os.Setenv("AI_VERIFIER_MAX_OUTPUT_TOKENS", "567")
-		os.Setenv("AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", "789")
-		os.Setenv("AI_VERIFIER_TOKENIZER", "cl100k_base")
+		t.Setenv("AI_VERIFIER_MAX_INPUT_TOKENS", "1234")
+		t.Setenv("AI_VERIFIER_MAX_OUTPUT_TOKENS", "567")
+		t.Setenv("AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", "789")
+		t.Setenv("AI_VERIFIER_TOKENIZER", "cl100k_base")
 
 		cfg, err := Load()
 		if err != nil {
@@ -87,7 +86,7 @@ func TestLoadAssessorTokenBudgetAndRejectsObsoleteVariables(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			clearEnv()
 			setRequiredEnv()
-			os.Setenv(tc.key, tc.value)
+			t.Setenv(tc.key, tc.value)
 			_, err := Load()
 			if err == nil {
 				t.Fatal("Load() expected obsolete assessor configuration error, got nil")

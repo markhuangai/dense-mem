@@ -3,7 +3,6 @@ package memoryservice
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ func semanticAssessmentEntityResolutions(
 	fragment repository.EvidenceFragment,
 	assessmentID string,
 	groups map[string]*verifier.SemanticAssessmentEntityCandidateGroup,
+	operatorSelections map[string]string,
 ) ([]repository.PlacementEntityResolutionInput, map[string]assessmentEntityCommitState, error) {
 	resolutions := make([]repository.PlacementEntityResolutionInput, 0, len(response.EntityResults))
 	states := make(map[string]assessmentEntityCommitState, len(response.EntityResults))
@@ -25,7 +25,10 @@ func semanticAssessmentEntityResolutions(
 		action := result.Action
 		switch result.Action {
 		case string(domain.EntityResolutionReuse):
-			if result.CandidateEntityID == nil || !assessmentReusableCandidate(group, *result.CandidateEntityID, result.Kind) {
+			operatorSelectedID := strings.TrimSpace(operatorSelections[result.Ref])
+			operatorSelected := result.CandidateEntityID != nil && operatorSelectedID != "" && operatorSelectedID == *result.CandidateEntityID
+			if result.CandidateEntityID == nil || (!operatorSelected && !assessmentReusableCandidate(group, *result.CandidateEntityID, result.Kind)) ||
+				(operatorSelected && !assessmentSelectedCandidate(group, *result.CandidateEntityID, result.Kind)) {
 				action = string(domain.EntityResolutionAmbiguous)
 			}
 		case string(domain.EntityResolutionCreate):
@@ -67,7 +70,11 @@ func semanticAssessmentEntityResolutions(
 			resolution.ReviewGuidance = assessmentReviewGuidance("identity")
 		}
 		resolutions = append(resolutions, resolution)
-		states[result.Ref] = assessmentEntityCommitState{resolved: action != string(domain.EntityResolutionAmbiguous), group: group}
+		states[result.Ref] = assessmentEntityCommitState{
+			resolved: action != string(domain.EntityResolutionAmbiguous),
+			group:    group,
+			kind:     result.Kind,
+		}
 	}
 	return resolutions, states, nil
 }
@@ -87,6 +94,18 @@ func assessmentReusableCandidate(group *verifier.SemanticAssessmentEntityCandida
 		}
 	}
 	return matching == 1
+}
+
+func assessmentSelectedCandidate(group *verifier.SemanticAssessmentEntityCandidateGroup, entityID, kind string) bool {
+	if group == nil {
+		return false
+	}
+	for _, candidate := range group.Candidates {
+		if candidate.EntityID == entityID && candidate.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func assessmentCompatibleCandidateExists(group *verifier.SemanticAssessmentEntityCandidateGroup, kind string) bool {
@@ -124,7 +143,8 @@ func semanticAssessmentRelationshipReviewKind(
 	if result.PredicateStatus != "resolved" || result.PredicateKey == nil || result.PredicateVersion == nil {
 		return "predicate"
 	}
-	if _, ok := predicates[assessmentPredicateKey(*result.PredicateKey, *result.PredicateVersion)]; !ok {
+	predicate, ok := predicates[assessmentPredicateKey(*result.PredicateKey, *result.PredicateVersion)]
+	if !ok || !semanticAssessmentPredicateAllowsEndpoints(result, entities, predicate) {
 		return "predicate"
 	}
 	if state, ok := entities[result.SubjectRef]; !ok || !state.resolved {
@@ -144,33 +164,77 @@ func semanticAssessmentRelationshipReviewKind(
 	return ""
 }
 
+func semanticAssessmentPredicateAllowsEndpoints(
+	result verifier.SemanticAssessmentRelationshipResult,
+	entities map[string]assessmentEntityCommitState,
+	predicate verifier.SemanticAssessmentPredicateOption,
+) bool {
+	subject, ok := entities[result.SubjectRef]
+	if !ok || !assessmentPredicateAllowsKind(predicate.AllowedSubjectKinds, subject.kind) {
+		return false
+	}
+	objectKind := ""
+	if result.ObjectRef != nil {
+		object, ok := entities[*result.ObjectRef]
+		if !ok {
+			return false
+		}
+		objectKind = object.kind
+	} else if result.ObjectValue != nil {
+		objectKind = result.ObjectValue.ValueType
+	}
+	return assessmentPredicateAllowsKind(predicate.AllowedObjectKinds, objectKind)
+}
+
+func assessmentPredicateAllowsKind(allowed []string, kind string) bool {
+	kind = strings.TrimSpace(kind)
+	for _, candidate := range allowed {
+		if strings.TrimSpace(candidate) == kind {
+			return true
+		}
+	}
+	return false
+}
+
 func semanticAssessmentSupport(
 	fragment repository.EvidenceFragment,
 	assessmentID string,
 	spans []verifier.SemanticAssessmentEvidenceSpan,
-) (*repository.EvidenceSupportInput, error) {
+) ([]repository.EvidenceSupportInput, error) {
 	if len(spans) == 0 {
 		return nil, errors.New("semantic assessment relationship has no evidence span")
 	}
-	span := spans[0]
-	quote, err := verifier.SemanticEvidenceSpan(fragment.Content, span.Start, span.End)
-	if err != nil {
-		return nil, err
+	supports := make([]repository.EvidenceSupportInput, 0, len(spans))
+	for _, span := range spans {
+		quote, err := verifier.SemanticEvidenceSpan(fragment.Content, span.Start, span.End)
+		if err != nil {
+			return nil, err
+		}
+		supports = append(supports, repository.EvidenceSupportInput{
+			FragmentID:       fragment.FragmentID,
+			SourceGroupKey:   fmt.Sprintf("semantic_assessment:%s:%s:%d:%d", assessmentID, span.EvidenceID, span.Start, span.End),
+			SourceID:         fragment.SourceID,
+			SourceRevisionID: fragment.SourceRevisionID,
+			SpanStart:        span.Start,
+			SpanEnd:          span.End,
+			Quote:            quote,
+			Authority:        string(domain.AuthorityPrimary),
+			Metadata: map[string]any{
+				"semantic_contract": "dense-mem.v2.4",
+				"assessment_id":     assessmentID,
+				"evidence_id":       span.EvidenceID,
+			},
+		})
 	}
-	return &repository.EvidenceSupportInput{
-		FragmentID:       fragment.FragmentID,
-		SourceGroupKey:   "semantic_assessment:" + assessmentID + ":" + span.EvidenceID,
-		SourceID:         fragment.SourceID,
-		SourceRevisionID: fragment.SourceRevisionID,
-		SpanStart:        span.Start,
-		SpanEnd:          span.End,
-		Quote:            quote,
-		Authority:        string(domain.AuthorityPrimary),
-		Metadata: map[string]any{
-			"semantic_contract": "dense-mem.v2.4",
-			"assessment_id":     assessmentID,
-		},
-	}, nil
+	return supports, nil
+}
+
+func semanticAssessmentPrimarySupport(supports []repository.EvidenceSupportInput) (*repository.EvidenceSupportInput, []repository.EvidenceSupportInput) {
+	if len(supports) == 0 {
+		return nil, nil
+	}
+	primary := supports[0]
+	return &primary, append([]repository.EvidenceSupportInput(nil), supports[1:]...)
 }
 
 func semanticAssessmentObject(
@@ -234,6 +298,7 @@ func semanticAssessmentRelationshipReviewInput(
 	objectRef string,
 	objectValue *repository.PlacementValueInput,
 	support *repository.EvidenceSupportInput,
+	supports []repository.EvidenceSupportInput,
 	assessmentID, policyVersion, model, responseHash string,
 	threshold *float64,
 	gateResult, kind string,
@@ -253,6 +318,7 @@ func semanticAssessmentRelationshipReviewInput(
 		Model:                   model,
 		ResponseHash:            responseHash,
 		Support:                 support,
+		Supports:                supports,
 		Reason:                  reviewTaskReasonForAssessmentKind(kind),
 		AssessmentID:            assessmentID,
 		AssessmentPolicyVersion: policyVersion,
@@ -290,7 +356,7 @@ func assessmentReviewOptions(
 	kind string,
 	result verifier.SemanticAssessmentRelationshipResult,
 	entities map[string]assessmentEntityCommitState,
-	predicates map[string]verifier.SemanticAssessmentPredicateOption,
+	predicateOptions []verifier.SemanticAssessmentPredicateOption,
 ) []map[string]any {
 	switch kind {
 	case "identity":
@@ -319,19 +385,19 @@ func assessmentReviewOptions(
 		}
 		return options
 	case "predicate":
-		keys := make([]string, 0, len(predicates))
-		for key := range predicates {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		options := make([]map[string]any, 0, len(keys))
-		for _, key := range keys {
-			predicate := predicates[key]
+		options := make([]map[string]any, 0, len(predicateOptions))
+		for _, predicate := range predicateOptions {
+			if !semanticAssessmentPredicateAllowsEndpoints(result, entities, predicate) {
+				continue
+			}
 			options = append(options, map[string]any{
 				"predicate_key": predicate.PredicateKey,
 				"version":       predicate.Version,
 				"aliases":       append([]string(nil), predicate.Aliases...),
 			})
+		}
+		if len(options) == 0 {
+			return []map[string]any{{"action": "submit_new_evidence"}}
 		}
 		return options
 	default:

@@ -10,8 +10,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// hydratePlacementItemReviewTasks exposes only the safe V2.4 semantic-review
-// fields; raw assessments, rationales, and resolution data remain internal.
+// hydratePlacementItemReviewTasks exposes only safe semantic-review fields,
+// including migrated tasks that predate V2.4 assessments.
 func hydratePlacementItemReviewTasks(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -27,18 +27,27 @@ func hydratePlacementItemReviewTasks(
 		byID[items[index].PlacementItemID] = &items[index]
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT placement_item_id::text, review_task_id::text, version, status,
-		       COALESCE(payload->>'semantic_kind', ''),
-		       COALESCE(payload->>'question', ''),
-		       COALESCE(payload->'options', '[]'::jsonb),
-		       COALESCE(payload->>'guidance', ''), expires_at
-		FROM review_tasks
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND ingest_id = ?::uuid
-		  AND placement_item_id IS NOT NULL
-		  AND assessment_id IS NOT NULL
-		ORDER BY placement_item_id, created_at ASC, review_task_id ASC
+		SELECT task.placement_item_id::text, task.review_task_id::text, task.version, task.status,
+		       COALESCE(NULLIF(task.payload->>'semantic_kind', ''),
+		           CASE task.task_type
+		               WHEN 'identity_needs_review' THEN 'identity'
+		               WHEN 'predicate_needs_review' THEN 'predicate'
+		               ELSE 'support_confidence'
+		           END),
+		       COALESCE(task.payload->>'question', ''),
+		       COALESCE(task.payload->'options', '[]'::jsonb),
+		       COALESCE(task.payload->>'guidance', ''), task.expires_at
+		FROM review_tasks AS task
+		WHERE task.team_id = ?::uuid
+		  AND task.owner_profile_id = ?::uuid
+		  AND task.ingest_id = ?::uuid
+		  AND task.placement_item_id IS NOT NULL
+		  AND (
+		      jsonb_exists(task.payload, 'semantic_kind')
+		      OR (task.task_type = 'identity_needs_review' AND task.reason = 'ambiguous_entity')
+		      OR (task.task_type = 'predicate_needs_review' AND task.reason = 'unknown_predicate')
+		  )
+		ORDER BY task.placement_item_id, task.created_at ASC, task.review_task_id ASC
 	`, teamID, ownerProfileID, ingestID).Rows()
 	if err != nil {
 		return err

@@ -218,7 +218,7 @@ WHERE status IN ('open', 'acknowledged')
 UPDATE app_config
 SET value = regexp_replace(
         to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
-        '\\.?0+Z$',
+        '\.?0+Z$',
         'Z'
     ),
     updated_at = clock_timestamp()
@@ -241,6 +241,10 @@ ALTER TABLE review_tasks
     DROP COLUMN IF EXISTS version;
 ALTER TABLE review_tasks
     DROP CONSTRAINT IF EXISTS review_tasks_status_check;
+UPDATE review_tasks
+SET status = 'canceled',
+    updated_at = statement_timestamp()
+WHERE status = 'expired';
 ALTER TABLE review_tasks
     ADD CONSTRAINT review_tasks_status_check
     CHECK (status IN ('open', 'acknowledged', 'resolved', 'canceled'));

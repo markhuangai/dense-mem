@@ -60,6 +60,7 @@ type PlacementRelationshipDecisionInput struct {
 	Model                   string
 	ResponseHash            string
 	Support                 *EvidenceSupportInput
+	Supports                []EvidenceSupportInput
 	CorrectionTarget        *PlacementCorrectionTargetInput
 	ConflictContext         *PlacementConflictContextInput
 	ObservationMetadata     map[string]any
@@ -94,6 +95,7 @@ type PlacementRelationshipReviewInput struct {
 	Model                   string
 	ResponseHash            string
 	Support                 *EvidenceSupportInput
+	Supports                []EvidenceSupportInput
 	Reason                  string
 	Payload                 map[string]any
 	AssessmentID            string

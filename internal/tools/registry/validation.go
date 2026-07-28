@@ -63,6 +63,35 @@ func HasTenantOverrideArgs(args map[string]any) bool {
 }
 
 func validateSchemaValue(name string, value any, schema map[string]any) error {
+	if variants, ok := schema["oneOf"].([]any); ok && schemaEnforcesOneOf(schema) {
+		matches := 0
+		for _, raw := range variants {
+			variant, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if validateSchemaValue(name, value, variant) == nil {
+				matches++
+			}
+		}
+		if matches != 1 {
+			return fmt.Errorf("%s must match exactly one allowed shape", name)
+		}
+	}
+	if raw, ok := schema["not"].(map[string]any); ok && validateSchemaValue(name, value, raw) == nil {
+		return fmt.Errorf("%s must not match a forbidden shape", name)
+	}
+	if required := schemaRequiredFields(schema); len(required) > 0 {
+		fields, ok := objectFields(value)
+		if !ok {
+			return fmt.Errorf("%s must be an object", name)
+		}
+		for _, fieldName := range required {
+			if _, ok := fields[fieldName]; !ok {
+				return fmt.Errorf("%s.%s is required", name, fieldName)
+			}
+		}
+	}
 	expected, isSingleType := schema["type"].(string)
 	if !isSingleType {
 		types := schemaTypeNames(schema["type"])
@@ -150,11 +179,6 @@ func validateSchemaValue(name string, value any, schema map[string]any) error {
 		if maxDepth, ok := schemaNumber(schema["x-max-depth"]); ok && schemaValueDepth(value) > int(maxDepth) {
 			return fmt.Errorf("%s exceeds maximum nesting depth of %d", name, int(maxDepth))
 		}
-		for _, fieldName := range schemaRequiredFields(schema) {
-			if _, ok := fields[fieldName]; !ok {
-				return fmt.Errorf("%s.%s is required", name, fieldName)
-			}
-		}
 		properties := schemaProperties(schema)
 		if schemaDisallowsAdditionalProperties(schema) {
 			for key := range fields {
@@ -199,6 +223,11 @@ func validateSchemaValue(name string, value any, schema map[string]any) error {
 		return err
 	}
 	return nil
+}
+
+func schemaEnforcesOneOf(schema map[string]any) bool {
+	enforce, _ := schema["x-enforce-one-of"].(bool)
+	return enforce
 }
 
 func schemaValueDepth(value any) int {

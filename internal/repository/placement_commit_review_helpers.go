@@ -84,15 +84,15 @@ func insertPlacementSemanticReviewTask(
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
 		    NULLIF(?, '')::uuid, ?::uuid, ?, 'open', ?,
-		    ?::jsonb, ?, ?::uuid,
+		    ?::jsonb, ?, NULLIF(?, '')::uuid,
 		    CASE WHEN NULLIF(?, '') IS NULL THEN NULL ELSE now() + interval '7 days' END,
 		    now()
 		)
 		ON CONFLICT (team_id, dedupe_key)
 		WHERE dedupe_key <> '' AND status IN ('open', 'acknowledged')
 		DO UPDATE SET payload = EXCLUDED.payload,
-		              assessment_id = EXCLUDED.assessment_id,
-		              expires_at = EXCLUDED.expires_at,
+		              assessment_id = COALESCE(EXCLUDED.assessment_id, review_tasks.assessment_id),
+		              expires_at = COALESCE(EXCLUDED.expires_at, review_tasks.expires_at),
 		              version = review_tasks.version + 1,
 		              updated_at = now()
 		RETURNING review_task_id::text
@@ -137,6 +137,7 @@ func insertRelationshipDependencyReview(
 		Model:                   input.Model,
 		ResponseHash:            input.ResponseHash,
 		Support:                 input.Support,
+		Supports:                input.Supports,
 		Reason:                  "identity_needs_review",
 		AssessmentID:            input.AssessmentID,
 		AssessmentPolicyVersion: input.AssessmentPolicyVersion,
@@ -176,6 +177,7 @@ func insertRelationshipPredicateReview(
 		Model:                   input.Model,
 		ResponseHash:            input.ResponseHash,
 		Support:                 input.Support,
+		Supports:                input.Supports,
 		Reason:                  "predicate_needs_review",
 		AssessmentID:            input.AssessmentID,
 		AssessmentPolicyVersion: input.AssessmentPolicyVersion,
@@ -226,10 +228,8 @@ func validatePlacementRelationshipReviewInput(input PlacementRelationshipReviewI
 	if input.Confidence != nil && (*input.Confidence < 0 || *input.Confidence > 1) {
 		return errors.New("relationship review confidence must be between 0 and 1")
 	}
-	if input.Support != nil {
-		if err := validateEvidenceSupportInput(*input.Support); err != nil {
-			return err
-		}
+	if err := validateRelationshipEvidenceSupports(input.Support, input.Supports); err != nil {
+		return err
 	}
 	return nil
 }
@@ -273,6 +273,7 @@ func insertRelationshipReview(
 		Polarity:                input.Polarity,
 		EvidenceVerdict:         input.EvidenceVerdict,
 		Support:                 input.Support,
+		Supports:                input.Supports,
 		ObservationMetadata:     observationMetadata,
 		AssessmentID:            input.AssessmentID,
 		AssessmentPolicyVersion: input.AssessmentPolicyVersion,
@@ -354,8 +355,8 @@ func insertRelationshipReview(
 		ON CONFLICT (team_id, dedupe_key)
 		WHERE dedupe_key <> '' AND status IN ('open', 'acknowledged')
 		DO UPDATE SET payload = EXCLUDED.payload,
-		              assessment_id = EXCLUDED.assessment_id,
-		              expires_at = EXCLUDED.expires_at,
+		              assessment_id = COALESCE(EXCLUDED.assessment_id, review_tasks.assessment_id),
+		              expires_at = COALESCE(EXCLUDED.expires_at, review_tasks.expires_at),
 		              version = review_tasks.version + 1,
 		              updated_at = now()
 		RETURNING review_task_id::text

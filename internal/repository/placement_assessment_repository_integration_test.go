@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 func TestPlacementAssessmentIsAppendOnceClaimBoundAndOwnerScoped(t *testing.T) {
@@ -134,6 +138,35 @@ func TestPlacementAssessmentConcurrentPersistenceConvergesOnOneAssessment(t *tes
 	assert.Equal(t, persisted.ResponseHash, loaded.ResponseHash)
 }
 
+func TestPlacementAssessmentJSONBRoundTripPreservesCanonicalResponseHash(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "placement-assessment-jsonb-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner")
+	repo := NewLedgerRepository(appDB, rls)
+	ingest := createSemanticIngest(t, ctx, repo, teamID, ownerID, "placement-assessment-jsonb", "Canonical hashes survive JSONB key reordering.")
+	input := placementAssessmentPersistInput(teamID, ownerID, ingest.Items[0])
+	input.NormalizedResponse = json.RawMessage(`{"relationship_results":[],"request_id":"assessment","entity_results":[],"security_signals":[]}`)
+	canonical, err := verifier.CanonicalJSON(input.NormalizedResponse)
+	require.NoError(t, err)
+	sum := sha256.Sum256(canonical)
+	input.ResponseHash = fmt.Sprintf("sha256:%x", sum[:])
+
+	_, existing, err := repo.PersistPlacementAssessment(ctx, input)
+	require.NoError(t, err)
+	assert.False(t, existing)
+	loaded, err := repo.LoadPlacementAssessment(ctx, LoadPlacementAssessmentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, PlacementItemID: ingest.Items[0].PlacementItemID,
+	})
+	require.NoError(t, err)
+	loadedCanonical, err := verifier.CanonicalJSON(loaded.NormalizedResponse)
+	require.NoError(t, err)
+	assert.Equal(t, canonical, loadedCanonical)
+	sum = sha256.Sum256(loadedCanonical)
+	assert.Equal(t, fmt.Sprintf("sha256:%x", sum[:]), loaded.ResponseHash)
+}
+
 func TestPlacementAssessmentProviderAttemptReservationIsSingleAndLeaseBound(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -154,23 +187,33 @@ func TestPlacementAssessmentProviderAttemptReservationIsSingleAndLeaseBound(t *t
 		WorkerID:         "assessment-worker",
 		ExpectedAttempts: claimed.Attempts,
 	}
-	results := make(chan bool, 2)
-	errs := make(chan error, 2)
-	var started sync.WaitGroup
-	started.Add(2)
+	type reservationResult struct {
+		reserved bool
+		err      error
+	}
+	results := make(chan reservationResult, 2)
+	start := make(chan struct{})
+	var ready sync.WaitGroup
+	ready.Add(2)
+	var workers sync.WaitGroup
+	workers.Add(2)
 	for range 2 {
 		go func() {
-			started.Done()
+			defer workers.Done()
+			ready.Done()
+			<-start
 			reserved, reserveErr := repo.ReservePlacementAssessmentProviderAttempt(ctx, input)
-			results <- reserved
-			errs <- reserveErr
+			results <- reservationResult{reserved: reserved, err: reserveErr}
 		}()
 	}
-	started.Wait()
+	ready.Wait()
+	close(start)
+	workers.Wait()
+	close(results)
 	var reservedCount int
-	for range 2 {
-		require.NoError(t, <-errs)
-		if <-results {
+	for result := range results {
+		require.NoError(t, result.err)
+		if result.reserved {
 			reservedCount++
 		}
 	}
@@ -186,7 +229,7 @@ func TestPlacementAssessmentProviderAttemptReservationIsSingleAndLeaseBound(t *t
 	}))
 	assert.NotEmpty(t, attemptID)
 
-	_, err = repo.ReservePlacementAssessmentProviderAttempt(ctx, ReservePlacementAssessmentProviderAttemptInput{
+	otherReserved, err := repo.ReservePlacementAssessmentProviderAttempt(ctx, ReservePlacementAssessmentProviderAttemptInput{
 		TeamID:           teamID,
 		OwnerProfileID:   ownerID,
 		PlacementRunID:   ingest.PlacementRunID,
@@ -195,6 +238,7 @@ func TestPlacementAssessmentProviderAttemptReservationIsSingleAndLeaseBound(t *t
 		ExpectedAttempts: claimed.Attempts,
 	})
 	require.NoError(t, err)
+	assert.False(t, otherReserved)
 
 	_, err = repo.RequeuePlacementReviewResult(ctx, RequeuePlacementReviewInput{
 		TeamID:                 teamID,
@@ -240,6 +284,145 @@ func TestPlacementAssessmentProviderAttemptReservationIsSingleAndLeaseBound(t *t
 	})
 	require.NoError(t, err)
 	assert.True(t, reserved, "a later claim can make one request when no valid assessment exists")
+}
+
+func TestPlacementAssessmentReviewTaskUpsertsRetainAssessmentMetadata(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "placement-assessment-review-upsert-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	content := "Mark works on Dense-Mem."
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID, "placement-assessment-review-upsert", content)
+	assessment, _, err := ledgerRepo.PersistPlacementAssessment(ctx, placementAssessmentPersistInput(teamID, ownerID, ingest.Items[0]))
+	require.NoError(t, err)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Mark")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
+	applied := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:            teamID,
+		OwnerProfileID:    ownerID,
+		IngestID:          ingest.IngestID,
+		PlacementItemID:   ingest.Items[0].PlacementItemID,
+		ProposalRef:       "existing-relationship",
+		SubjectRef:        "subject",
+		SubjectEntityID:   subject.EntityID,
+		OriginalPredicate: "works on",
+		PredicateKey:      "works_on",
+		PredicateVersion:  1,
+		ObjectRef:         "object",
+		ObjectEntityID:    object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:assessment-review-upsert",
+			SpanStart:      0,
+			SpanEnd:        len(content),
+			Quote:          content,
+			Authority:      "primary",
+		},
+	})
+	commit := CommitPlacementSemanticInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        ingest.IngestID,
+		PlacementRunID:  ingest.PlacementRunID,
+		PlacementItemID: ingest.Items[0].PlacementItemID,
+	}
+	expectedExpiry := time.Date(2040, time.January, 2, 3, 4, 5, 0, time.UTC)
+
+	testCases := []struct {
+		name   string
+		insert func(tx *gorm.DB, assessmentID string) (string, error)
+	}{
+		{
+			name: "entity",
+			insert: func(tx *gorm.DB, assessmentID string) (string, error) {
+				return insertEntityReviewTask(ctx, tx, commit, PlacementEntityResolutionInput{
+					MentionRef:    "entity-upsert",
+					Action:        "ambiguous",
+					EntityKind:    "person",
+					CanonicalName: "Mark",
+					AssessmentID:  assessmentID,
+				}, uuid.NewString())
+			},
+		},
+		{
+			name: "semantic_relationship",
+			insert: func(tx *gorm.DB, assessmentID string) (string, error) {
+				return insertPlacementSemanticReviewTask(ctx, tx, commit, ApplyRelationshipDecisionInput{
+					ProposalRef:        "semantic-relationship-upsert",
+					SubjectRef:         "subject",
+					ObjectRef:          "object",
+					OriginalPredicate:  "works on",
+					Polarity:           "+",
+					EvidenceVerdict:    "entailed",
+					SemanticReviewKind: "support_confidence",
+					AssessmentID:       assessmentID,
+				}, applied)
+			},
+		},
+		{
+			name: "relationship",
+			insert: func(tx *gorm.DB, assessmentID string) (string, error) {
+				review, reviewErr := insertRelationshipReview(ctx, tx, commit, PlacementRelationshipReviewInput{
+					Ref:               "relationship-upsert",
+					SubjectRef:        "subject",
+					OriginalPredicate: "works on",
+					ObjectRef:         "object",
+					Polarity:          "+",
+					Reason:            "relationship_needs_review",
+					AssessmentID:      assessmentID,
+				})
+				if reviewErr != nil {
+					return "", reviewErr
+				}
+				return review.ReviewTaskID, nil
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var firstTaskID string
+			err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+				var insertErr error
+				firstTaskID, insertErr = testCase.insert(tx, assessment.AssessmentID)
+				if insertErr != nil {
+					return insertErr
+				}
+				return tx.Exec(`
+					UPDATE review_tasks
+					SET expires_at = ?
+					WHERE team_id = ?::uuid AND review_task_id = ?::uuid
+				`, expectedExpiry, teamID, firstTaskID).Error
+			})
+			require.NoError(t, err)
+
+			var secondTaskID string
+			err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+				var insertErr error
+				secondTaskID, insertErr = testCase.insert(tx, "")
+				return insertErr
+			})
+			require.NoError(t, err)
+			assert.Equal(t, firstTaskID, secondTaskID)
+
+			var storedAssessmentID string
+			var storedExpiry time.Time
+			err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+				return tx.Raw(`
+					SELECT assessment_id::text, expires_at
+					FROM review_tasks
+					WHERE team_id = ?::uuid AND review_task_id = ?::uuid
+				`, teamID, firstTaskID).Row().Scan(&storedAssessmentID, &storedExpiry)
+			})
+			require.NoError(t, err)
+			assert.Equal(t, assessment.AssessmentID, storedAssessmentID)
+			assert.True(t, storedExpiry.Equal(expectedExpiry))
+		})
+	}
 }
 
 func TestPlacementAssessmentPolicyReloadsTeamThresholdAndConfigVersion(t *testing.T) {
@@ -328,7 +511,7 @@ func TestPlacementAssessmentReviewExpiryChangesOnlyWorkflowState(t *testing.T) {
 
 	var taskStatus, itemStatus, runStatus string
 	var taskVersion int
-	var verificationCount, supportCount int64
+	var verificationCount, supportCount, expiryOutcomeCount int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT status, version
@@ -352,7 +535,19 @@ func TestPlacementAssessmentReviewExpiryChangesOnlyWorkflowState(t *testing.T) {
 		if err := tx.Raw(`SELECT count(*) FROM verification_events WHERE team_id = ?::uuid`, teamID).Row().Scan(&verificationCount); err != nil {
 			return err
 		}
-		return tx.Raw(`SELECT count(*) FROM relationship_evidence_supports WHERE team_id = ?::uuid`, teamID).Row().Scan(&supportCount)
+		if err := tx.Raw(`SELECT count(*) FROM relationship_evidence_supports WHERE team_id = ?::uuid`, teamID).Row().Scan(&supportCount); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT count(*)
+			FROM placement_outcomes
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+			  AND outcome_kind = 'semantic_review_expired'
+			  AND status = 'expired'
+			  AND payload->>'actor' = 'system'
+			  AND payload->>'reason' = 'semantic_review_expired'
+		`, teamID, item.PlacementItemID).Row().Scan(&expiryOutcomeCount)
 	}))
 	assert.Equal(t, "expired", taskStatus)
 	assert.Equal(t, 2, taskVersion)
@@ -360,6 +555,7 @@ func TestPlacementAssessmentReviewExpiryChangesOnlyWorkflowState(t *testing.T) {
 	assert.Equal(t, "completed", runStatus)
 	assert.Zero(t, verificationCount)
 	assert.Zero(t, supportCount)
+	assert.Equal(t, int64(1), expiryOutcomeCount)
 }
 
 func TestPlacementAssessmentReviewExpiryUsesInclusiveBoundaryAndIsIdempotent(t *testing.T) {
@@ -449,6 +645,7 @@ func TestPlacementAssessmentReviewExpiryUsesInclusiveBoundaryAndIsIdempotent(t *
 	assert.Zero(t, expired, "expiry is idempotent after the transition")
 
 	var taskStatus, itemStatus, runStatus string
+	var expiryOutcomeCount int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT status FROM review_tasks
@@ -462,14 +659,25 @@ func TestPlacementAssessmentReviewExpiryUsesInclusiveBoundaryAndIsIdempotent(t *
 		`, teamID, item.PlacementItemID).Row().Scan(&itemStatus); err != nil {
 			return err
 		}
-		return tx.Raw(`
+		if err := tx.Raw(`
 			SELECT status FROM placement_runs
 			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
-		`, teamID, ingest.PlacementRunID).Row().Scan(&runStatus)
+		`, teamID, ingest.PlacementRunID).Row().Scan(&runStatus); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT count(*)
+			FROM placement_outcomes
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+			  AND outcome_kind = 'semantic_review_expired'
+			  AND status = 'expired'
+		`, teamID, item.PlacementItemID).Row().Scan(&expiryOutcomeCount)
 	}))
 	assert.Equal(t, "expired", taskStatus)
 	assert.Equal(t, "completed", itemStatus)
 	assert.Equal(t, "completed", runStatus)
+	assert.Equal(t, int64(1), expiryOutcomeCount)
 }
 
 func TestPlacementAssessmentReviewExpiryProcessesMigratedSemanticTaskWithoutAssessment(t *testing.T) {
@@ -509,6 +717,17 @@ func TestPlacementAssessmentReviewExpiryProcessesMigratedSemanticTaskWithoutAsse
 			)
 		`, teamID, ownerID, ingest.IngestID, item.PlacementItemID).Error
 	}))
+
+	hydrated, err := repo.GetPlacementRun(ctx, GetPlacementRunInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IngestID:       ingest.IngestID,
+	})
+	require.NoError(t, err)
+	require.Len(t, hydrated.Items, 1)
+	require.Len(t, hydrated.Items[0].ReviewTasks, 1)
+	assert.Equal(t, "identity", hydrated.Items[0].ReviewTasks[0].Kind)
+	assert.Equal(t, "open", hydrated.Items[0].ReviewTasks[0].Status)
 
 	expired, err := repo.ExpirePlacementAssessmentReviews(ctx, ExpirePlacementAssessmentReviewsInput{
 		TeamID: teamID,

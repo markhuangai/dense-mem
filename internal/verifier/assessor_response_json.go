@@ -12,11 +12,6 @@ func validateSemanticAssessmentResponseRaw(raw []byte) []SemanticValidationError
 	if len(errs) > 0 {
 		return errs
 	}
-	for _, field := range []string{"security_signals", "entity_results", "relationship_results"} {
-		if bytes.Equal(bytes.TrimSpace(top[field]), []byte("null")) {
-			errs = append(errs, semanticErr(field, "must not be null"))
-		}
-	}
 	errs = append(errs, assessmentRawArrayObjects(top["security_signals"], "security_signals", []string{"evidence_id", "kind", "start", "end"}, nil)...)
 	errs = append(errs, assessmentRawArrayObjects(top["entity_results"], "entity_results", []string{"ref", "surface", "kind", "evidence_id", "start", "end", "action", "candidate_entity_id", "confidence", "rationale"}, map[string]bool{"candidate_entity_id": true})...)
 

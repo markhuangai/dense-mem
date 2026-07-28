@@ -269,10 +269,18 @@ func (r *SemanticRepositoryImpl) ApplyRelationshipDecision(
 			return err
 		}
 		var supportID, supportDecisionID string
-		if input.EvidenceVerdict == string(domain.VerificationEntailed) && input.Support != nil && !input.SuppressSupport {
-			supportID, supportDecisionID, err = insertRelationshipSupport(ctx, tx, input, recordState.Record.RelationshipID, observationID, verificationID)
+		var supportIDs []string
+		if input.EvidenceVerdict == string(domain.VerificationEntailed) && len(relationshipEvidenceSupports(input.Support, input.Supports)) > 0 && !input.SuppressSupport {
+			var supportDecisionIDs []string
+			supportIDs, supportDecisionIDs, err = insertRelationshipSupports(ctx, tx, input, recordState.Record.RelationshipID, observationID, verificationID)
 			if err != nil {
 				return err
+			}
+			if len(supportIDs) > 0 {
+				supportID = supportIDs[0]
+			}
+			if len(supportDecisionIDs) > 0 {
+				supportDecisionID = supportDecisionIDs[0]
 			}
 			if err := refreshRelationshipSupportCounts(ctx, tx, input.TeamID, recordState.Record.RelationshipID); err != nil {
 				return err
@@ -302,6 +310,7 @@ func (r *SemanticRepositoryImpl) ApplyRelationshipDecision(
 			ObservationID:       observationID,
 			VerificationEventID: verificationID,
 			SupportID:           supportID,
+			SupportIDs:          supportIDs,
 			SupportDecisionID:   supportDecisionID,
 			CreatedRelationship: recordState.Created,
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -35,7 +36,7 @@ func TestSemanticAssessmentEntityResolutionGuards(t *testing.T) {
 
 	resolutions, states, err := semanticAssessmentEntityResolutions(response, fragment, uuid.NewString(), map[string]*verifier.SemanticAssessmentEntityCandidateGroup{
 		assessmentCandidateGroupKey("ev", 0, 4): group,
-	})
+	}, nil)
 	require.NoError(t, err)
 	require.Len(t, resolutions, 4)
 	assert.Equal(t, string(domain.EntityResolutionReuse), resolutions[0].Action)
@@ -49,7 +50,7 @@ func TestSemanticAssessmentEntityResolutionGuards(t *testing.T) {
 	assert.False(t, states["held-create"].resolved)
 
 	response.EntityResults[0].Action = "unsupported"
-	_, _, err = semanticAssessmentEntityResolutions(response, fragment, uuid.NewString(), nil)
+	_, _, err = semanticAssessmentEntityResolutions(response, fragment, uuid.NewString(), nil, nil)
 	require.ErrorContains(t, err, "unsupported stored entity assessment action")
 
 	assert.False(t, assessmentReusableCandidate(nil, entityID, "person"))
@@ -64,12 +65,40 @@ func TestSemanticAssessmentEntityResolutionGuards(t *testing.T) {
 	assert.Equal(t, entityID, assessmentEntityReviewOptions(group)[0]["entity_id"])
 }
 
+func TestSemanticAssessmentEntityResolutionHonorsApprovedCurrentSelection(t *testing.T) {
+	fragment := repository.EvidenceFragment{FragmentID: uuid.NewString(), Content: "Mark works on Dense-Mem."}
+	selectedID := uuid.NewString()
+	otherID := uuid.NewString()
+	response := verifier.SemanticAssessmentResponse{EntityResults: []verifier.SemanticAssessmentEntityResult{{
+		Ref: "mark", EvidenceID: "ev", Start: 0, End: 4, Surface: "Mark", Kind: "person", Action: "ambiguous", Confidence: 1, Rationale: "multiple candidates",
+	}}}
+	response = applySemanticAssessmentReviewOverrides(response, repository.PlacementAssessmentReviewOverrides{
+		EntitySelections: map[string]string{"mark": selectedID},
+	})
+	group := &verifier.SemanticAssessmentEntityCandidateGroup{
+		EvidenceID: "ev", Start: 0, End: 4, CandidateContextTruncated: true,
+		Candidates: []verifier.SemanticAssessmentEntityCandidate{
+			{EntityID: selectedID, CanonicalName: "Mark", Kind: "person"},
+			{EntityID: otherID, CanonicalName: "Mark A.", Kind: "person"},
+		},
+	}
+
+	resolutions, states, err := semanticAssessmentEntityResolutions(response, fragment, uuid.NewString(), map[string]*verifier.SemanticAssessmentEntityCandidateGroup{
+		assessmentCandidateGroupKey("ev", 0, 4): group,
+	}, map[string]string{"mark": selectedID})
+	require.NoError(t, err)
+	require.Len(t, resolutions, 1)
+	assert.Equal(t, string(domain.EntityResolutionReuse), resolutions[0].Action)
+	assert.Equal(t, selectedID, resolutions[0].EntityID)
+	assert.True(t, states["mark"].resolved)
+}
+
 func TestSemanticAssessmentRelationshipHelpersRouteAllReviewKinds(t *testing.T) {
 	entityID := uuid.NewString()
 	group := &verifier.SemanticAssessmentEntityCandidateGroup{Candidates: []verifier.SemanticAssessmentEntityCandidate{{EntityID: entityID, CanonicalName: "Mark", Kind: "person"}}}
 	entities := map[string]assessmentEntityCommitState{
-		"subject": {resolved: true, group: group},
-		"object":  {resolved: true, group: group},
+		"subject": {resolved: true, group: group, kind: "person"},
+		"object":  {resolved: true, group: group, kind: "product"},
 	}
 	key := "works_on"
 	version := 1
@@ -79,7 +108,10 @@ func TestSemanticAssessmentRelationshipHelpersRouteAllReviewKinds(t *testing.T) 
 		ObjectRef: &objectRef, Modality: "statement", ScopeStatus: "absent", TemporalVerdict: "absent",
 	}
 	predicates := map[string]verifier.SemanticAssessmentPredicateOption{
-		assessmentPredicateKey(key, version): {PredicateKey: key, Version: version, Aliases: []string{"works on"}},
+		assessmentPredicateKey(key, version): {
+			PredicateKey: key, Version: version, Aliases: []string{"works on"},
+			AllowedSubjectKinds: []string{"person"}, AllowedObjectKinds: []string{"product"},
+		},
 	}
 	assert.Empty(t, semanticAssessmentRelationshipReviewKind(result, entities, predicates))
 
@@ -89,9 +121,9 @@ func TestSemanticAssessmentRelationshipHelpersRouteAllReviewKinds(t *testing.T) 
 	result.PredicateKey = nil
 	assert.Equal(t, "predicate", semanticAssessmentRelationshipReviewKind(result, entities, predicates))
 	result.PredicateKey = &key
-	entities["subject"] = assessmentEntityCommitState{resolved: false, group: group}
+	entities["subject"] = assessmentEntityCommitState{resolved: false, group: group, kind: "person"}
 	assert.Equal(t, "identity", semanticAssessmentRelationshipReviewKind(result, entities, predicates))
-	entities["subject"] = assessmentEntityCommitState{resolved: true, group: group}
+	entities["subject"] = assessmentEntityCommitState{resolved: true, group: group, kind: "person"}
 	result.ScopeStatus = "needs_review"
 	assert.Equal(t, "scope", semanticAssessmentRelationshipReviewKind(result, entities, predicates))
 	result.ScopeStatus = "absent"
@@ -105,9 +137,16 @@ func TestSemanticAssessmentRelationshipHelpersRouteAllReviewKinds(t *testing.T) 
 	require.ErrorContains(t, err, "no evidence span")
 	_, err = semanticAssessmentSupport(fragment, uuid.NewString(), []verifier.SemanticAssessmentEvidenceSpan{{EvidenceID: "ev", Start: 20, End: 99}})
 	require.Error(t, err)
-	support, err := semanticAssessmentSupport(fragment, "assessment", []verifier.SemanticAssessmentEvidenceSpan{{EvidenceID: "ev", Start: 0, End: 4}})
+	supports, err := semanticAssessmentSupport(fragment, "assessment", []verifier.SemanticAssessmentEvidenceSpan{{EvidenceID: "ev", Start: 0, End: 4}, {EvidenceID: "ev", Start: 5, End: 10}})
 	require.NoError(t, err)
-	assert.Equal(t, "Mark", support.Quote)
+	require.Len(t, supports, 2)
+	assert.Equal(t, "Mark", supports[0].Quote)
+	assert.Equal(t, "works", supports[1].Quote)
+	assert.Contains(t, supports[1].SourceGroupKey, ":5:10")
+	primarySupport, additionalSupports := semanticAssessmentPrimarySupport(supports)
+	require.NotNil(t, primarySupport)
+	assert.Equal(t, supports[0], *primarySupport)
+	assert.Equal(t, supports[1:], additionalSupports)
 
 	valueResult := verifier.SemanticAssessmentRelationshipResult{Ref: "value", ObjectValue: &verifier.SemanticAssessmentValue{ValueType: "number", CanonicalValue: "42", Display: testStringPointer("forty-two"), Unit: testStringPointer("items")}}
 	ref, value, err := semanticAssessmentObject(valueResult)
@@ -142,15 +181,16 @@ func TestSemanticAssessmentRelationshipHelpersRouteAllReviewKinds(t *testing.T) 
 		assert.NotEmpty(t, assessmentReviewGuidance(kind))
 	}
 
-	entities["subject"] = assessmentEntityCommitState{resolved: false, group: group}
-	entities["object"] = assessmentEntityCommitState{resolved: false, group: group}
+	entities["subject"] = assessmentEntityCommitState{resolved: false, group: group, kind: "person"}
+	entities["object"] = assessmentEntityCommitState{resolved: false, group: group, kind: "product"}
 	result.ObjectRef = &objectRef
-	identityOptions := assessmentReviewOptions("identity", result, entities, predicates)
+	orderedPredicates := []verifier.SemanticAssessmentPredicateOption{predicates[assessmentPredicateKey(key, version)]}
+	identityOptions := assessmentReviewOptions("identity", result, entities, orderedPredicates)
 	require.Len(t, identityOptions, 1)
-	predicateOptions := assessmentReviewOptions("predicate", result, entities, predicates)
+	predicateOptions := assessmentReviewOptions("predicate", result, entities, orderedPredicates)
 	require.Len(t, predicateOptions, 1)
 	assert.Equal(t, key, predicateOptions[0]["predicate_key"])
-	assert.Equal(t, "submit_new_evidence", assessmentReviewOptions("scope", result, entities, predicates)[0]["action"])
+	assert.Equal(t, "submit_new_evidence", assessmentReviewOptions("scope", result, entities, orderedPredicates)[0]["action"])
 }
 
 func TestSemanticAssessmentCandidateHelpersBoundAndPrefetch(t *testing.T) {
@@ -176,7 +216,7 @@ func TestSemanticAssessmentCandidateHelpersBoundAndPrefetch(t *testing.T) {
 	hint := placementReviewEntityHint{Name: "Evidence", Evidence: []placementReviewEvidenceSpanHint{{evidenceIndex: 0, start: 0, end: 8}}}
 	assert.Equal(t, []assessmentTextSpan{{start: 0, end: 8, surface: "Evidence"}}, assessmentHintSpans(fragment, hint))
 	hint.Evidence = []placementReviewEvidenceSpanHint{{evidenceIndex: 1, start: 0, end: 8}}
-	assert.Len(t, assessmentHintSpans(fragment, hint), 1)
+	assert.Empty(t, assessmentHintSpans(fragment, hint))
 	assert.Nil(t, exactTokenSpans(fragment.Content, ""))
 	assert.Nil(t, exactTokenSpans(fragment.Content, "very-long-not-present"))
 	assert.False(t, assessmentTokenBoundary([]rune("mark_2"), 0, 4))
@@ -199,6 +239,22 @@ func TestSemanticAssessmentCandidateHelpersBoundAndPrefetch(t *testing.T) {
 	assert.True(t, groups[0].CandidateContextTruncated)
 	assert.Len(t, groups[0].Candidates, 2)
 
+	catalog.entityMatches = repository.SemanticAssessmentEntityMatchResult{}
+	scopedProposal := map[string]any{"entity_hints": []any{map[string]any{
+		"ref":             "known",
+		"name":            "Evidence",
+		"known_entity_id": knownID,
+		"evidence": []any{map[string]any{
+			"evidence_index": 1,
+			"start":          0,
+			"end":            8,
+		}},
+	}}}
+	groups, truncated, err = service.prefetchEntityCandidates(context.Background(), run, ledger.placement.Evidence[0], scopedProposal, "evidence:0")
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	assert.Empty(t, groups)
+
 	catalog.entityMatchesErr = errors.New("catalog unavailable")
 	_, _, err = service.prefetchEntityCandidates(context.Background(), run, ledger.placement.Evidence[0], nil, "evidence:0")
 	require.ErrorContains(t, err, "load exact entity candidates")
@@ -206,6 +262,48 @@ func TestSemanticAssessmentCandidateHelpersBoundAndPrefetch(t *testing.T) {
 	catalog.knownCandidates[knownID] = []repository.SemanticReviewEntityCandidate{{EntityID: knownID, Status: "inactive"}}
 	_, _, err = service.prefetchEntityCandidates(context.Background(), run, ledger.placement.Evidence[0], proposal, "evidence:0")
 	require.ErrorContains(t, err, "not a current active candidate")
+}
+
+func TestSemanticAssessmentCandidatePrefetchCapsGroupsAndTrimClonesTrustedRefs(t *testing.T) {
+	_, _, _, catalog, _, worker := semanticAssessmentWorkerFixture(t)
+	service := worker.(*semanticAssessmentPlacementWorkerService)
+	ledger := service.ledger.(*semanticAssessmentWorkerLedgerStub)
+	run := *ledger.run
+
+	fragment := ledger.placement.Evidence[0]
+	names := make([]string, 0, verifier.SemanticAssessmentMaxEntityResults+1)
+	matches := make([]repository.SemanticAssessmentEntityMatch, 0, verifier.SemanticAssessmentMaxEntityResults+1)
+	for index := 0; index <= verifier.SemanticAssessmentMaxEntityResults; index++ {
+		name := fmt.Sprintf("Known%d", index)
+		names = append(names, name)
+		matches = append(matches, repository.SemanticAssessmentEntityMatch{
+			Candidate: repository.SemanticReviewEntityCandidate{
+				EntityID: fmt.Sprintf("entity-%d", index), CanonicalName: name, EntityKind: "concept", Status: "active",
+			},
+			MatchedName: name,
+		})
+	}
+	fragment.Content = strings.Join(names, " ")
+	catalog.entityMatches = repository.SemanticAssessmentEntityMatchResult{Matches: matches}
+
+	groups, truncated, err := service.prefetchEntityCandidates(context.Background(), run, fragment, nil, "evidence:0")
+	require.NoError(t, err)
+	assert.True(t, truncated)
+	require.Len(t, groups, verifier.SemanticAssessmentMaxEntityResults)
+	for _, group := range groups {
+		assert.True(t, group.CandidateContextTruncated)
+	}
+
+	_, _, _, request, _, _ := semanticAssessmentConfidenceFixture(t)
+	request.RequiredRelationshipRefs = []verifier.SemanticAssessmentRequiredRelationshipRef{{
+		ProposalID: "proposal-1",
+		Evidence:   []verifier.SemanticAssessmentEvidenceSpan{{EvidenceID: "evidence:0", Start: 0, End: 8}},
+	}}
+	cloned := cloneSemanticAssessmentRequestForTrim(request)
+	assert.True(t, trimSemanticAssessmentCandidates(&cloned, 0))
+	assert.False(t, trimSemanticAssessmentCandidates(&verifier.SemanticAssessmentRequest{}, 1))
+	cloned.RequiredRelationshipRefs[0].Evidence[0].EvidenceID = "changed"
+	assert.Equal(t, "evidence:0", request.RequiredRelationshipRefs[0].Evidence[0].EvidenceID)
 }
 
 func TestSemanticAssessmentWorkerFailureAndStoredAssessmentBoundaries(t *testing.T) {
@@ -250,13 +348,15 @@ func TestSemanticAssessmentWorkerFailureAndStoredAssessmentBoundaries(t *testing
 	_, _, _, _, response, _ := semanticAssessmentConfidenceFixture(t)
 	raw, err := json.Marshal(response)
 	require.NoError(t, err)
-	assessment := &repository.PlacementAssessment{NormalizedResponse: raw, ResponseHash: semanticAssessmentHash(raw)}
+	canonicalRaw, err := verifier.CanonicalJSON(raw)
+	require.NoError(t, err)
+	assessment := &repository.PlacementAssessment{NormalizedResponse: raw, ResponseHash: semanticAssessmentHash(canonicalRaw)}
 	_, err = decodeStoredAssessment(nil, verifier.DefaultSemanticAssessmentLimits())
 	require.ErrorContains(t, err, "is nil")
 	assessment.ResponseHash = "sha256:wrong"
 	_, err = decodeStoredAssessment(assessment, verifier.DefaultSemanticAssessmentLimits())
 	require.ErrorContains(t, err, "hash mismatch")
-	assessment.ResponseHash = semanticAssessmentHash(raw)
+	assessment.ResponseHash = semanticAssessmentHash(canonicalRaw)
 	decoded, err := decodeStoredAssessment(assessment, verifier.DefaultSemanticAssessmentLimits())
 	require.NoError(t, err)
 	assert.Equal(t, response.RequestID, decoded.RequestID)
@@ -287,6 +387,11 @@ func TestSemanticAssessmentWorkerFailureAndStoredAssessmentBoundaries(t *testing
 	assert.Equal(t, repository.AssessmentPolicyVersion+":config-7", assessmentPolicyVersion(repository.AutoWriteConfidencePolicy{ConfigVersion: 7}))
 	assert.Equal(t, "custom:config-1", assessmentPolicyVersion(repository.AutoWriteConfidencePolicy{Version: "custom", ConfigVersion: 1}))
 	assert.NotEmpty(t, semanticAssessmentHash([]byte("assessment")))
+	canonicalLeft, err := verifier.CanonicalJSON([]byte(`{"b":2,"a":1}`))
+	require.NoError(t, err)
+	canonicalRight, err := verifier.CanonicalJSON([]byte(`{"a":1,"b":2}`))
+	require.NoError(t, err)
+	assert.Equal(t, semanticAssessmentHash(canonicalLeft), semanticAssessmentHash(canonicalRight))
 }
 
 func TestSemanticAssessmentCandidateContextTrimming(t *testing.T) {
@@ -317,5 +422,48 @@ func TestSemanticAssessmentCandidateContextTrimming(t *testing.T) {
 
 	request.TeamID = ""
 	_, err = trimSemanticAssessmentCandidateContext(request, verifier.DefaultSemanticAssessmentLimits())
+	require.ErrorContains(t, err, "candidate context is invalid")
+	stage, terminal := semanticAssessmentPreflightFailure(err)
+	assert.True(t, terminal)
+	assert.Equal(t, "candidate_context_validation", stage)
+
+	request.TeamID = uuid.NewString()
+	request.PredicateOptions = nil
+	request.EntityCandidateGroups = nil
+	limits = verifier.DefaultSemanticAssessmentLimits()
+	limits.MaxInputTokens = 1
+	_, err = trimSemanticAssessmentCandidateContext(request, limits)
 	require.ErrorContains(t, err, "exceeds configured token limits")
+	stage, terminal = semanticAssessmentPreflightFailure(err)
+	assert.True(t, terminal)
+	assert.Equal(t, "candidate_context_limit", stage)
+}
+
+func TestSemanticAssessmentCandidateContextTrimmingKeepsTheLargestPriorityPrefix(t *testing.T) {
+	_, _, _, request, _, _ := semanticAssessmentConfidenceFixture(t)
+	for i := 0; i < 31; i++ {
+		request.PredicateOptions = append(request.PredicateOptions, verifier.SemanticAssessmentPredicateOption{
+			PredicateKey:        fmt.Sprintf("least_relevant_%02d", i),
+			Version:             1,
+			Aliases:             []string{fmt.Sprintf("least relevant %02d", i)},
+			AllowedSubjectKinds: []string{"person"},
+			AllowedObjectKinds:  []string{"product"},
+			RelationshipKind:    "state",
+			CurrentCardinality:  "many",
+		})
+	}
+	limits := verifier.DefaultSemanticAssessmentLimits()
+	prepared, validationErrors := verifier.PrepareSemanticAssessmentRequest(cloneSemanticAssessmentRequestForTrim(request), limits)
+	require.Empty(t, validationErrors)
+	oneLess := cloneSemanticAssessmentRequestForTrim(request)
+	require.True(t, trimOneSemanticAssessmentCandidate(&oneLess))
+	oneLessPrepared, validationErrors := verifier.PrepareSemanticAssessmentRequest(oneLess, limits)
+	require.Empty(t, validationErrors)
+	require.Less(t, oneLessPrepared.CandidateContextTokens, prepared.CandidateContextTokens)
+
+	limits.MaxCandidateContextTokens = oneLessPrepared.CandidateContextTokens
+	trimmed, err := trimSemanticAssessmentCandidateContext(request, limits)
+	require.NoError(t, err)
+	assert.Equal(t, oneLess.PredicateOptions, trimmed.PredicateOptions)
+	assert.Equal(t, prepared.PredicateOptions[:len(prepared.PredicateOptions)-1], trimmed.PredicateOptions)
 }

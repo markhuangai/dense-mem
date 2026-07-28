@@ -7,11 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -24,6 +22,40 @@ import (
 const SemanticPlacementDefaultAssessorCallBudget = 1
 
 var errSemanticAssessmentProviderAttemptConsumed = errors.New("semantic assessment provider attempt already consumed")
+
+type semanticAssessmentPreflightError struct {
+	stage string
+	err   error
+}
+
+func (err *semanticAssessmentPreflightError) Error() string {
+	if err == nil || err.err == nil {
+		return "semantic assessment preflight failed"
+	}
+	return err.err.Error()
+}
+
+func (err *semanticAssessmentPreflightError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.err
+}
+
+func deterministicSemanticAssessmentPreflightError(stage, message string) error {
+	return &semanticAssessmentPreflightError{
+		stage: strings.TrimSpace(stage),
+		err:   errors.New(message),
+	}
+}
+
+func semanticAssessmentPreflightFailure(err error) (string, bool) {
+	var preflight *semanticAssessmentPreflightError
+	if errors.As(err, &preflight) && preflight.stage != "" {
+		return preflight.stage, true
+	}
+	return "candidate_prefetch", false
+}
 
 type SemanticAssessmentCatalog interface {
 	ListSemanticAssessmentEntityMatches(ctx context.Context, input repository.SemanticAssessmentEntityMatchInput) (repository.SemanticAssessmentEntityMatchResult, error)
@@ -135,7 +167,11 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 
 	request, err := s.buildRequest(ctx, *run, item, fragment, placement.Proposal)
 	if err != nil {
-		return true, errors.Join(err, s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewTerminalFailure), "failed", "candidate_prefetch"))
+		stage, terminal := semanticAssessmentPreflightFailure(err)
+		if terminal {
+			return true, errors.Join(err, s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewTerminalFailure), "failed", stage))
+		}
+		return true, errors.Join(err, s.retryOrFail(ctx, *run, item, stage, false, false))
 	}
 
 	assessment, response, reused, providerAttempted, releaseProviderAttempt, err := s.loadOrAssess(ctx, *run, item, request)
@@ -178,6 +214,8 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 		response,
 		assessment,
 		policy,
+		overrides,
+		placement.Proposal,
 	)
 	if err != nil {
 		return true, errors.Join(err, s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewTerminalFailure), "failed", "deterministic_policy"))
@@ -231,6 +269,13 @@ func (s *semanticAssessmentPlacementWorkerService) buildRequest(
 	proposal map[string]any,
 ) (verifier.SemanticAssessmentRequest, error) {
 	evidenceID := fmt.Sprintf("evidence:%d", fragment.EvidenceIndex)
+	_, requiredRelationshipRefs, err := semanticAssessmentTrustedRelationshipContexts(proposal, fragment, evidenceID)
+	if err != nil {
+		return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError(
+			"trusted_context_validation",
+			"semantic assessment trusted relationship context is invalid",
+		)
+	}
 	groups, truncated, err := s.prefetchEntityCandidates(ctx, run, fragment, proposal, evidenceID)
 	if err != nil {
 		return verifier.SemanticAssessmentRequest{}, err
@@ -264,9 +309,10 @@ func (s *semanticAssessmentPlacementWorkerService) buildRequest(
 		TeamID:                    run.TeamID,
 		OwnerProfileID:            run.OwnerProfileID,
 		Evidence:                  []verifier.SemanticReviewEvidence{semanticReviewEvidence(fragment, evidenceID)},
-		ClientProposal:            cloneAssessmentProposal(proposal),
+		ClientProposal:            assessmentClientProposalWithoutTrustedContext(proposal),
 		EntityCandidateGroups:     groups,
 		PredicateOptions:          options,
+		RequiredRelationshipRefs:  requiredRelationshipRefs,
 		CandidateContextTruncated: truncated,
 	}
 	return trimSemanticAssessmentCandidateContext(req, s.limits)
@@ -354,6 +400,10 @@ func (s *semanticAssessmentPlacementWorkerService) loadOrAssess(
 	if err != nil {
 		return nil, verifier.SemanticAssessmentResponse{}, false, true, false, err
 	}
+	canonicalJSON, err := verifier.CanonicalJSON(normalizedJSON)
+	if err != nil {
+		return nil, verifier.SemanticAssessmentResponse{}, false, true, false, err
+	}
 	persisted, existing, err := s.assessments.PersistPlacementAssessment(ctx, repository.PersistPlacementAssessmentInput{
 		TeamID:                    run.TeamID,
 		OwnerProfileID:            run.OwnerProfileID,
@@ -368,8 +418,8 @@ func (s *semanticAssessmentPlacementWorkerService) loadOrAssess(
 		OutputTokens:              normalized.OutputTokens,
 		CandidateContextTokens:    prepared.CandidateContextTokens,
 		CandidateContextTruncated: prepared.CandidateContextTruncated,
-		NormalizedResponse:        normalizedJSON,
-		ResponseHash:              semanticAssessmentHash(normalizedJSON),
+		NormalizedResponse:        canonicalJSON,
+		ResponseHash:              semanticAssessmentHash(canonicalJSON),
 		ValidatedAt:               s.now().UTC(),
 	})
 	if err != nil {
@@ -404,7 +454,11 @@ func decodeStoredAssessment(
 	if assessment == nil {
 		return verifier.SemanticAssessmentResponse{}, errors.New("stored placement assessment is nil")
 	}
-	if semanticAssessmentHash(assessment.NormalizedResponse) != assessment.ResponseHash {
+	canonicalJSON, err := verifier.CanonicalJSON(assessment.NormalizedResponse)
+	if err != nil {
+		return verifier.SemanticAssessmentResponse{}, fmt.Errorf("stored placement assessment response is invalid JSON: %w", err)
+	}
+	if semanticAssessmentHash(canonicalJSON) != assessment.ResponseHash {
 		return verifier.SemanticAssessmentResponse{}, errors.New("stored placement assessment hash mismatch")
 	}
 	return verifier.DecodeSemanticAssessmentResponseJSON(assessment.NormalizedResponse, limits)
@@ -537,273 +591,107 @@ func cloneAssessmentProposal(proposal map[string]any) map[string]any {
 	return cloned
 }
 
-func (s *semanticAssessmentPlacementWorkerService) prefetchEntityCandidates(
-	ctx context.Context,
-	run repository.PlacementRun,
-	fragment repository.EvidenceFragment,
-	proposal map[string]any,
-	evidenceID string,
-) ([]verifier.SemanticAssessmentEntityCandidateGroup, bool, error) {
-	matches, err := s.catalog.ListSemanticAssessmentEntityMatches(ctx, repository.SemanticAssessmentEntityMatchInput{
-		TeamID:         run.TeamID,
-		OwnerProfileID: run.OwnerProfileID,
-		EvidenceText:   fragment.Content,
-		Limit:          1000,
-	})
-	if err != nil {
-		return nil, false, fmt.Errorf("load exact entity candidates: %w", err)
-	}
-	groups := map[string]*verifier.SemanticAssessmentEntityCandidateGroup{}
-	truncated := matches.Truncated
-	for _, match := range matches.Matches {
-		candidate := assessmentEntityCandidate(match.Candidate)
-		for _, span := range exactTokenSpans(fragment.Content, match.MatchedName) {
-			key := assessmentCandidateGroupKey(evidenceID, span.start, span.end)
-			group := groups[key]
-			if group == nil {
-				group = &verifier.SemanticAssessmentEntityCandidateGroup{
-					Surface:    span.surface,
-					EvidenceID: evidenceID,
-					Start:      span.start,
-					End:        span.end,
-				}
-				groups[key] = group
-			}
-			addAssessmentEntityCandidate(group, candidate)
-		}
-	}
-	if err := s.addKnownEntityHintCandidates(ctx, run, fragment, proposal, evidenceID, groups); err != nil {
-		return nil, false, err
-	}
-	ordered := make([]verifier.SemanticAssessmentEntityCandidateGroup, 0, len(groups))
-	for _, group := range groups {
-		if truncated {
-			group.CandidateContextTruncated = true
-		}
-		sort.Slice(group.Candidates, func(left, right int) bool {
-			return group.Candidates[left].EntityID < group.Candidates[right].EntityID
-		})
-		ordered = append(ordered, *group)
-	}
-	sort.Slice(ordered, func(left, right int) bool {
-		if ordered[left].Start != ordered[right].Start {
-			return ordered[left].Start < ordered[right].Start
-		}
-		return ordered[left].End < ordered[right].End
-	})
-	if len(ordered) > verifier.SemanticAssessmentMaxEntityResults {
-		ordered = ordered[:verifier.SemanticAssessmentMaxEntityResults]
-		truncated = true
-		for i := range ordered {
-			ordered[i].CandidateContextTruncated = true
-		}
-	}
-	for _, group := range ordered {
-		if group.CandidateContextTruncated {
-			truncated = true
-			break
-		}
-	}
-	return ordered, truncated, nil
+type semanticAssessmentTrustedRelationshipContext struct {
+	correctionTarget *repository.PlacementCorrectionTargetInput
+	conflictContext  *repository.PlacementConflictContextInput
 }
 
-func (s *semanticAssessmentPlacementWorkerService) addKnownEntityHintCandidates(
-	ctx context.Context,
-	run repository.PlacementRun,
-	fragment repository.EvidenceFragment,
-	proposal map[string]any,
-	evidenceID string,
-	groups map[string]*verifier.SemanticAssessmentEntityCandidateGroup,
-) error {
-	hints := placementReviewEntityHints(proposal)
-	refs := make([]string, 0, len(hints))
-	for ref, hint := range hints {
-		if strings.TrimSpace(hint.KnownEntityID) != "" {
-			refs = append(refs, ref)
+func assessmentClientProposalWithoutTrustedContext(proposal map[string]any) map[string]any {
+	cloned := cloneAssessmentProposal(proposal)
+	for _, relationship := range placementReviewObjectArray(cloned, "relationship_hints", "relationships") {
+		_, hasCorrection := relationship["correction_target"]
+		_, hasConflict := relationship["conflict_context"]
+		if hasCorrection || hasConflict {
+			proposalID := reviewFirstNonEmpty(
+				reviewString(relationship, "proposal_id"),
+				reviewString(relationship, "ref"),
+				reviewString(relationship, "legacy_id"),
+			)
+			if proposalID != "" {
+				relationship["proposal_id"] = proposalID
+			}
 		}
+		delete(relationship, "correction_target")
+		delete(relationship, "conflict_context")
 	}
-	sort.Strings(refs)
-	for _, ref := range refs {
-		hint := hints[ref]
-		candidates, err := s.catalog.ListSemanticReviewEntityCandidates(ctx, repository.SemanticReviewEntityCandidateInput{
-			TeamID:         run.TeamID,
-			OwnerProfileID: run.OwnerProfileID,
-			KnownEntityID:  hint.KnownEntityID,
-			Limit:          1,
-		})
-		if err != nil {
-			return fmt.Errorf("revalidate known entity %q: %w", hint.KnownEntityID, err)
+	return cloned
+}
+
+func semanticAssessmentTrustedRelationshipContexts(
+	proposal map[string]any,
+	fragment repository.EvidenceFragment,
+	evidenceID string,
+) (map[string]semanticAssessmentTrustedRelationshipContext, []verifier.SemanticAssessmentRequiredRelationshipRef, error) {
+	contexts := map[string]semanticAssessmentTrustedRelationshipContext{}
+	required := make([]verifier.SemanticAssessmentRequiredRelationshipRef, 0)
+	for _, relationship := range placementReviewObjectArray(proposal, "relationship_hints", "relationships") {
+		_, hasCorrection := relationship["correction_target"]
+		_, hasConflict := relationship["conflict_context"]
+		if !hasCorrection && !hasConflict {
+			continue
 		}
-		if len(candidates) != 1 || candidates[0].EntityID != hint.KnownEntityID || candidates[0].Status != "active" {
-			return fmt.Errorf("known entity %q is not a current active candidate", hint.KnownEntityID)
+		spans := make([]verifier.SemanticAssessmentEvidenceSpan, 0)
+		for _, span := range placementReviewEvidenceSpanHints(relationship) {
+			if span.evidenceIndex != fragment.EvidenceIndex {
+				continue
+			}
+			if _, err := verifier.SemanticEvidenceSpan(fragment.Content, span.start, span.end); err != nil {
+				return nil, nil, err
+			}
+			spans = append(spans, verifier.SemanticAssessmentEvidenceSpan{
+				EvidenceID: evidenceID,
+				Start:      span.start,
+				End:        span.end,
+			})
 		}
-		spans := assessmentHintSpans(fragment, hint)
 		if len(spans) == 0 {
-			return fmt.Errorf("known entity %q has no exact evidence span", hint.KnownEntityID)
+			continue
 		}
-		candidate := assessmentEntityCandidate(candidates[0])
-		for _, span := range spans {
-			key := assessmentCandidateGroupKey(evidenceID, span.start, span.end)
-			group := groups[key]
-			if group == nil {
-				group = &verifier.SemanticAssessmentEntityCandidateGroup{
-					Surface:    span.surface,
-					EvidenceID: evidenceID,
-					Start:      span.start,
-					End:        span.end,
-				}
-				groups[key] = group
+		proposalID := reviewFirstNonEmpty(
+			reviewString(relationship, "proposal_id"),
+			reviewString(relationship, "ref"),
+			reviewString(relationship, "legacy_id"),
+		)
+		if proposalID == "" {
+			return nil, nil, errors.New("trusted relationship context proposal_id is required")
+		}
+		if _, exists := contexts[proposalID]; exists {
+			return nil, nil, errors.New("trusted relationship context proposal_id is duplicated")
+		}
+		context := semanticAssessmentTrustedRelationshipContext{}
+		if hasCorrection {
+			target, ok := placementReviewCorrectionTarget(relationship)
+			if !ok {
+				return nil, nil, errors.New("trusted relationship correction_target is invalid")
 			}
-			addAssessmentEntityCandidate(group, candidate)
+			context.correctionTarget = &repository.PlacementCorrectionTargetInput{
+				RelationshipID:  target.RelationshipID,
+				ExpectedVersion: target.ExpectedVersion,
+			}
 		}
-	}
-	return nil
-}
-
-func assessmentEntityCandidate(candidate repository.SemanticReviewEntityCandidate) verifier.SemanticAssessmentEntityCandidate {
-	context := map[string]any{}
-	for key, value := range candidate.IdentityContext {
-		context[key] = value
-	}
-	return verifier.SemanticAssessmentEntityCandidate{
-		EntityID:        candidate.EntityID,
-		CanonicalName:   candidate.CanonicalName,
-		Kind:            candidate.EntityKind,
-		IdentityContext: context,
-	}
-}
-
-func addAssessmentEntityCandidate(
-	group *verifier.SemanticAssessmentEntityCandidateGroup,
-	candidate verifier.SemanticAssessmentEntityCandidate,
-) {
-	if group == nil || candidate.EntityID == "" {
-		return
-	}
-	for _, existing := range group.Candidates {
-		if existing.EntityID == candidate.EntityID {
-			return
+		if hasConflict {
+			conflict, ok := placementReviewConflictContext(relationship)
+			if !ok {
+				return nil, nil, errors.New("trusted relationship conflict_context is invalid")
+			}
+			context.conflictContext = &repository.PlacementConflictContextInput{
+				ConflictID:      conflict.ConflictID,
+				ExpectedVersion: conflict.ExpectedVersion,
+			}
 		}
+		contexts[proposalID] = context
+		required = append(required, verifier.SemanticAssessmentRequiredRelationshipRef{
+			ProposalID: proposalID,
+			Evidence:   spans,
+		})
 	}
-	if len(group.Candidates) >= verifier.SemanticAssessmentMaxEntityCandidatesPerSurface {
-		group.CandidateContextTruncated = true
-		return
-	}
-	group.Candidates = append(group.Candidates, candidate)
-}
-
-type assessmentTextSpan struct {
-	start   int
-	end     int
-	surface string
-}
-
-func assessmentHintSpans(fragment repository.EvidenceFragment, hint placementReviewEntityHint) []assessmentTextSpan {
-	for _, evidence := range hint.Evidence {
-		if evidence.evidenceIndex != fragment.EvidenceIndex {
-			continue
-		}
-		surface, err := verifier.SemanticEvidenceSpan(fragment.Content, evidence.start, evidence.end)
-		if err == nil && strings.TrimSpace(surface) != "" {
-			return []assessmentTextSpan{{start: evidence.start, end: evidence.end, surface: surface}}
-		}
-	}
-	return exactTokenSpans(fragment.Content, hint.Name)
-}
-
-func exactTokenSpans(content, surface string) []assessmentTextSpan {
-	surface = strings.TrimSpace(surface)
-	if surface == "" {
-		return nil
-	}
-	text := []rune(content)
-	needle := []rune(surface)
-	if len(needle) == 0 || len(needle) > len(text) {
-		return nil
-	}
-	spans := make([]assessmentTextSpan, 0, 1)
-	for start := 0; start+len(needle) <= len(text); start++ {
-		if !strings.EqualFold(string(text[start:start+len(needle)]), surface) {
-			continue
-		}
-		end := start + len(needle)
-		if !assessmentTokenBoundary(text, start, end) {
-			continue
-		}
-		spans = append(spans, assessmentTextSpan{start: start, end: end, surface: string(text[start:end])})
-	}
-	return spans
-}
-
-func assessmentTokenBoundary(text []rune, start, end int) bool {
-	if start > 0 && assessmentTokenRune(text[start-1]) {
-		return false
-	}
-	return end >= len(text) || !assessmentTokenRune(text[end])
-}
-
-func assessmentTokenRune(value rune) bool {
-	return unicode.IsLetter(value) || unicode.IsNumber(value) || value == '_'
-}
-
-func assessmentCandidateGroupKey(evidenceID string, start, end int) string {
-	return evidenceID + ":" + strconv.Itoa(start) + ":" + strconv.Itoa(end)
-}
-
-func trimSemanticAssessmentCandidateContext(
-	req verifier.SemanticAssessmentRequest,
-	limits verifier.SemanticAssessmentLimits,
-) (verifier.SemanticAssessmentRequest, error) {
-	for attempts := 0; attempts < 10000; attempts++ {
-		prepared, validationErrors := verifier.PrepareSemanticAssessmentRequest(req, limits)
-		if len(validationErrors) == 0 {
-			return prepared, nil
-		}
-		if !semanticAssessmentLimitFailure(validationErrors) || !trimOneSemanticAssessmentCandidate(&req) {
-			return verifier.SemanticAssessmentRequest{}, errors.New("semantic assessment request exceeds configured token limits")
-		}
-	}
-	return verifier.SemanticAssessmentRequest{}, errors.New("semantic assessment candidate context could not be bounded")
-}
-
-func semanticAssessmentLimitFailure(validationErrors []verifier.SemanticValidationError) bool {
-	if len(validationErrors) == 0 {
-		return false
-	}
-	for _, validationError := range validationErrors {
-		switch validationError.Field {
-		case "candidate_context_tokens", "input_tokens":
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func trimOneSemanticAssessmentCandidate(req *verifier.SemanticAssessmentRequest) bool {
-	if req == nil {
-		return false
-	}
-	if len(req.PredicateOptions) > 0 {
-		req.PredicateOptions = req.PredicateOptions[:len(req.PredicateOptions)-1]
-		req.CandidateContextTruncated = true
-		return true
-	}
-	for index := len(req.EntityCandidateGroups) - 1; index >= 0; index-- {
-		group := &req.EntityCandidateGroups[index]
-		if len(group.Candidates) > 0 {
-			group.Candidates = group.Candidates[:len(group.Candidates)-1]
-			group.CandidateContextTruncated = true
-			req.CandidateContextTruncated = true
-			return true
-		}
-	}
-	return false
+	return contexts, required, nil
 }
 
 type assessmentEntityCommitState struct {
 	resolved bool
 	group    *verifier.SemanticAssessmentEntityCandidateGroup
+	kind     string
 }
 
 func semanticAssessmentCommitInput(
@@ -814,6 +702,8 @@ func semanticAssessmentCommitInput(
 	response verifier.SemanticAssessmentResponse,
 	assessment *repository.PlacementAssessment,
 	policy repository.AutoWriteConfidencePolicy,
+	overrides repository.PlacementAssessmentReviewOverrides,
+	proposal map[string]any,
 ) (repository.CommitPlacementSemanticInput, error) {
 	if assessment == nil || strings.TrimSpace(assessment.AssessmentID) == "" {
 		return repository.CommitPlacementSemanticInput{}, errors.New("persisted assessment is required before semantic commit")
@@ -821,22 +711,40 @@ func semanticAssessmentCommitInput(
 	if policy.Threshold < 0 || policy.Threshold > 1 {
 		return repository.CommitPlacementSemanticInput{}, errors.New("effective confidence threshold is invalid")
 	}
+	trustedContexts, requiredRelationshipRefs, err := semanticAssessmentTrustedRelationshipContexts(
+		proposal,
+		fragment,
+		fmt.Sprintf("evidence:%d", fragment.EvidenceIndex),
+	)
+	if err != nil {
+		return repository.CommitPlacementSemanticInput{}, fmt.Errorf("trusted relationship context: %w", err)
+	}
+	if validationErrors := verifier.ValidateSemanticAssessmentRequiredRelationshipRefs(requiredRelationshipRefs, response.RelationshipResults); len(validationErrors) > 0 {
+		return repository.CommitPlacementSemanticInput{}, errors.New("semantic assessment trusted relationship correspondence is invalid")
+	}
 	groups := assessmentGroupsBySpan(request.EntityCandidateGroups)
 	predicates := assessmentPredicatesByKeyVersion(request.PredicateOptions)
 	policyVersion := assessmentPolicyVersion(policy)
 	threshold := policy.Threshold
 
-	entities, entityStates, err := semanticAssessmentEntityResolutions(response, fragment, assessment.AssessmentID, groups)
+	entities, entityStates, err := semanticAssessmentEntityResolutions(
+		response,
+		fragment,
+		assessment.AssessmentID,
+		groups,
+		overrides.EntitySelections,
+	)
 	if err != nil {
 		return repository.CommitPlacementSemanticInput{}, err
 	}
 	observations := make([]repository.PlacementRelationshipDecisionInput, 0, len(response.RelationshipResults))
 	reviews := make([]repository.PlacementRelationshipReviewInput, 0)
 	for _, result := range response.RelationshipResults {
-		support, err := semanticAssessmentSupport(fragment, assessment.AssessmentID, result.Evidence)
+		supports, err := semanticAssessmentSupport(fragment, assessment.AssessmentID, result.Evidence)
 		if err != nil {
 			return repository.CommitPlacementSemanticInput{}, err
 		}
+		support, additionalSupports := semanticAssessmentPrimarySupport(supports)
 		objectRef, objectValue, err := semanticAssessmentObject(result)
 		if err != nil {
 			return repository.CommitPlacementSemanticInput{}, err
@@ -848,6 +756,7 @@ func semanticAssessmentCommitInput(
 				objectRef,
 				objectValue,
 				support,
+				additionalSupports,
 				assessment.AssessmentID,
 				policyVersion,
 				assessment.Model,
@@ -855,7 +764,7 @@ func semanticAssessmentCommitInput(
 				&threshold,
 				"not_applicable",
 				reviewKind,
-				assessmentReviewOptions(reviewKind, result, entityStates, predicates),
+				assessmentReviewOptions(reviewKind, result, entityStates, request.PredicateOptions),
 			))
 			continue
 		}
@@ -902,6 +811,7 @@ func semanticAssessmentCommitInput(
 			Model:           assessment.Model,
 			ResponseHash:    assessment.ResponseHash,
 			Support:         support,
+			Supports:        additionalSupports,
 			ObservationMetadata: map[string]any{
 				"semantic_contract": "dense-mem.v2.4",
 				"assessment_id":     assessment.AssessmentID,
@@ -919,8 +829,11 @@ func semanticAssessmentCommitInput(
 			SuppressSupport:         suppressSupport,
 			SemanticReviewKind:      reviewKind,
 			ReviewQuestion:          assessmentReviewQuestion(reviewKind),
-			ReviewOptions:           assessmentReviewOptions(reviewKind, result, entityStates, predicates),
+			ReviewOptions:           assessmentReviewOptions(reviewKind, result, entityStates, request.PredicateOptions),
 			ReviewGuidance:          assessmentReviewGuidance(reviewKind),
+		}
+		if trustedContext, ok := trustedContexts[result.Ref]; ok {
+			attachSemanticAssessmentTrustedRelationshipContext(&observation, trustedContext)
 		}
 		observations = append(observations, observation)
 	}
@@ -946,6 +859,23 @@ func semanticAssessmentCommitInput(
 			"request_id":        assessment.RequestID,
 		},
 	}, nil
+}
+
+func attachSemanticAssessmentTrustedRelationshipContext(
+	observation *repository.PlacementRelationshipDecisionInput,
+	context semanticAssessmentTrustedRelationshipContext,
+) {
+	if observation == nil {
+		return
+	}
+	if context.correctionTarget != nil {
+		target := *context.correctionTarget
+		observation.CorrectionTarget = &target
+	}
+	if context.conflictContext != nil {
+		conflict := *context.conflictContext
+		observation.ConflictContext = &conflict
+	}
 }
 
 func assessmentGroupsBySpan(groups []verifier.SemanticAssessmentEntityCandidateGroup) map[string]*verifier.SemanticAssessmentEntityCandidateGroup {

@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 )
@@ -71,6 +72,65 @@ func TestSemanticAssessmentRequestRejectsInvalidCandidateContext(t *testing.T) {
 	}
 }
 
+func TestSemanticAssessmentRequestRejectsMalformedTrustedRelationshipRefs(t *testing.T) {
+	testCases := []struct {
+		name string
+		refs []SemanticAssessmentRequiredRelationshipRef
+		want []string
+	}{
+		{
+			name: "missing proposal and evidence",
+			refs: []SemanticAssessmentRequiredRelationshipRef{{}},
+			want: []string{
+				"required_relationship_refs[0].proposal_id: is required",
+				"required_relationship_refs[0].evidence: must contain between 1 and",
+			},
+		},
+		{
+			name: "duplicate proposal",
+			refs: []SemanticAssessmentRequiredRelationshipRef{
+				{ProposalID: "proposal-1", Evidence: []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 0, End: 4}}},
+				{ProposalID: "proposal-1", Evidence: []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 0, End: 4}}},
+			},
+			want: []string{"required_relationship_refs[1].proposal_id: is duplicated"},
+		},
+		{
+			name: "unknown invalid and duplicate spans",
+			refs: []SemanticAssessmentRequiredRelationshipRef{{
+				ProposalID: "proposal-1",
+				Evidence: []SemanticAssessmentEvidenceSpan{
+					{EvidenceID: "missing", Start: 0, End: 4},
+					{EvidenceID: "ev-1", Start: -1, End: 0},
+					{EvidenceID: "ev-1", Start: 0, End: 4},
+					{EvidenceID: "ev-1", Start: 0, End: 4},
+				},
+			}},
+			want: []string{
+				"required_relationship_refs[0].evidence[0].evidence_id: is unknown",
+				"required_relationship_refs[0].evidence[1]: span is invalid",
+				"required_relationship_refs[0].evidence[3]: is duplicated",
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			req, limits := semanticAssessmentTestRequest(t)
+			req.RequiredRelationshipRefs = testCase.refs
+			_, errs := PrepareSemanticAssessmentRequest(req, limits)
+			if len(errs) == 0 {
+				t.Fatal("PrepareSemanticAssessmentRequest() errors = nil, want malformed trusted relationship refs rejection")
+			}
+			joined := semanticAssessmentJoinedErrors(errs)
+			for _, want := range testCase.want {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("PrepareSemanticAssessmentRequest() errors = %q, want %q", joined, want)
+				}
+			}
+		})
+	}
+}
+
 func TestSemanticAssessmentResponseNormalizesSecurityTimeScopeAndValue(t *testing.T) {
 	req, limits := semanticAssessmentTestRequest(t)
 	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
@@ -119,6 +179,45 @@ func TestSemanticAssessmentResponseNormalizesSecurityTimeScopeAndValue(t *testin
 	}
 	if got := validated.RelationshipResults[0].ObjectValue.CanonicalValue; got != "Dense-Mem" {
 		t.Fatalf("normalized canonical_value = %q, want trimmed value", got)
+	}
+}
+
+func TestSemanticAssessmentResponseRejectsEachTypedObjectValueBound(t *testing.T) {
+	req, limits := semanticAssessmentTestRequest(t)
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+
+	testCases := []struct {
+		name  string
+		value SemanticAssessmentValue
+		want  string
+	}{
+		{
+			name:  "canonical value is required",
+			value: SemanticAssessmentValue{ValueType: "string"},
+			want:  "object: object_value.canonical_value is required and must be bounded",
+		},
+		{
+			name: "unit is bounded independently of display",
+			value: SemanticAssessmentValue{
+				ValueType: "string", CanonicalValue: "Dense-Mem", Unit: stringPointer(strings.Repeat("u", 129)),
+			},
+			want: "object: object_value.unit must be bounded",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := semanticAssessmentTestResponse()
+			response.RelationshipResults[0].ObjectRef = nil
+			response.RelationshipResults[0].ObjectValue = &testCase.value
+			_, errs := PrepareSemanticAssessmentResponse(prepared, response, limits)
+			if len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), testCase.want) {
+				t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want %q", errs, testCase.want)
+			}
+		})
 	}
 }
 
@@ -194,6 +293,33 @@ func TestSemanticAssessmentLimitNormalizationAndTokenizerFailure(t *testing.T) {
 	}
 	if assessmentKindsAllowed([]string{"string"}, false) {
 		t.Fatal("assessmentKindsAllowed() accepted a value kind where only entities are allowed")
+	}
+}
+
+func TestSemanticAssessmentPreservesPredicateCatalogRankAndRejectsNonFiniteConfidence(t *testing.T) {
+	req, limits := semanticAssessmentTestRequest(t)
+	second := req.PredicateOptions[0]
+	second.PredicateKey = "second_ranked"
+	second.Aliases = []string{"second ranked"}
+	first := req.PredicateOptions[0]
+	first.PredicateKey = "first_ranked"
+	first.Aliases = []string{"first ranked"}
+	req.PredicateOptions = []SemanticAssessmentPredicateOption{first, second}
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+	if got := []string{prepared.PredicateOptions[0].PredicateKey, prepared.PredicateOptions[1].PredicateKey}; strings.Join(got, ",") != "first_ranked,second_ranked" {
+		t.Fatalf("predicate order = %#v, want catalog rank order", got)
+	}
+
+	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		response := semanticAssessmentTestResponse()
+		response.EntityResults[0].Confidence = value
+		response.RelationshipResults[0].Confidence = value
+		if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "confidence: must be between 0 and 1") {
+			t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want non-finite confidence rejection", errs)
+		}
 	}
 }
 

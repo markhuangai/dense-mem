@@ -150,6 +150,16 @@ var _ Verifier = (*OpenAIVerifier)(nil)
 // configuration. If httpClient is nil a default client with a 60-second timeout
 // is used.
 func NewOpenAIVerifier(cfg config.ConfigProvider, httpClient *http.Client) *OpenAIVerifier {
+	return NewOpenAIVerifierWithAssessmentLimits(cfg, httpClient, SemanticAssessmentLimitsForConfig(cfg))
+}
+
+// NewOpenAIVerifierWithAssessmentLimits creates a verifier with the supplied
+// shared assessor limits.
+func NewOpenAIVerifierWithAssessmentLimits(
+	cfg config.ConfigProvider,
+	httpClient *http.Client,
+	assessmentLimits SemanticAssessmentLimits,
+) *OpenAIVerifier {
 	client := httpClient
 	if client == nil {
 		timeout := time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second
@@ -159,13 +169,6 @@ func NewOpenAIVerifier(cfg config.ConfigProvider, httpClient *http.Client) *Open
 		client = &http.Client{Timeout: timeout}
 	}
 
-	budget := config.AIVerifierAssessmentBudgetFor(cfg)
-	assessmentLimits := DefaultSemanticAssessmentLimits()
-	assessmentLimits.Tokenizer = budget.Tokenizer
-	assessmentLimits.MaxInputTokens = budget.MaxInputTokens
-	assessmentLimits.MaxOutputTokens = budget.MaxOutputTokens
-	assessmentLimits.MaxCandidateContextTokens = budget.MaxCandidateContextTokens
-
 	return &OpenAIVerifier{
 		baseURL:            cfg.GetAIVerifierAPIURL(),
 		apiKey:             cfg.GetAIVerifierAPIKey(),
@@ -174,8 +177,20 @@ func NewOpenAIVerifier(cfg config.ConfigProvider, httpClient *http.Client) *Open
 		httpClient:         client,
 		sem:                make(chan struct{}, config.AIVerifierMaxConcurrency(cfg)),
 		metrics:            observability.NoopDiscoverabilityMetrics(),
-		assessmentLimits:   assessmentLimits,
+		assessmentLimits:   normalizeSemanticAssessmentLimits(assessmentLimits),
 	}
+}
+
+// SemanticAssessmentLimitsForConfig maps the configured V2.4 budget into the
+// single limits value shared by the provider and placement worker.
+func SemanticAssessmentLimitsForConfig(cfg config.ConfigProvider) SemanticAssessmentLimits {
+	budget := config.AIVerifierAssessmentBudgetFor(cfg)
+	limits := DefaultSemanticAssessmentLimits()
+	limits.Tokenizer = budget.Tokenizer
+	limits.MaxInputTokens = budget.MaxInputTokens
+	limits.MaxOutputTokens = budget.MaxOutputTokens
+	limits.MaxCandidateContextTokens = budget.MaxCandidateContextTokens
+	return limits
 }
 
 func (v *OpenAIVerifier) acquire(ctx context.Context) error {

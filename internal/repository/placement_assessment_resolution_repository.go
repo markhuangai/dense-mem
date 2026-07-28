@@ -35,39 +35,33 @@ func validatePlacementAssessmentEntitySelection(
 	input ResolvePlacementReviewInput,
 	scope placementResolutionScope,
 ) error {
-	var taskCount int
+	var taskCount, validCount int
 	if err := tx.WithContext(ctx).Raw(`
-		SELECT count(*)
-		FROM review_tasks
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND placement_item_id = ?::uuid
-		  AND assessment_id IS NOT NULL
-		  AND payload->>'semantic_kind' = 'identity'
-		  AND payload->>'mention_ref' = ?
-	`, input.TeamID, input.OwnerProfileID, scope.PlacementItemID, input.EntityRef).Row().Scan(&taskCount); err != nil {
-		return err
-	}
-	if taskCount == 0 {
-		return nil
-	}
-	var validCount int
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT count(*)
+		SELECT count(*),
+		       count(*) FILTER (
+		           WHERE payload->'options' @> jsonb_build_array(jsonb_build_object('entity_id', ?::text))
+		       )
 		FROM review_tasks
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
 		  AND placement_item_id = ?::uuid
 		  AND assessment_id IS NOT NULL
 		  AND status IN ('open', 'acknowledged')
-		  AND expires_at > now()
+		  AND (expires_at IS NULL OR expires_at > now())
 		  AND payload->>'semantic_kind' = 'identity'
-		  AND payload->>'mention_ref' = ?
-		  AND payload->'options' @> jsonb_build_array(jsonb_build_object('entity_id', ?::text))
-	`, input.TeamID, input.OwnerProfileID, scope.PlacementItemID, input.EntityRef, input.CandidateEntityID).Row().Scan(&validCount); err != nil {
+		  AND (
+		      payload->>'mention_ref' = ?
+		      OR payload->>'subject_ref' = ?
+		      OR payload->>'object_ref' = ?
+		  )
+	`, input.CandidateEntityID, input.TeamID, input.OwnerProfileID, scope.PlacementItemID,
+		input.EntityRef, input.EntityRef, input.EntityRef).Row().Scan(&taskCount, &validCount); err != nil {
 		return err
 	}
-	if validCount != 1 {
+	if taskCount == 0 {
+		return nil
+	}
+	if validCount != taskCount {
 		return fmt.Errorf("%w: selected entity is not an open server-supplied option", ErrPlacementResolutionInvalidState)
 	}
 	return nil
@@ -79,25 +73,14 @@ func validatePlacementAssessmentPredicateSelection(
 	input ResolvePlacementReviewInput,
 	scope placementResolutionScope,
 ) error {
-	var taskCount int
+	var taskCount, validCount int
 	if err := tx.WithContext(ctx).Raw(`
-		SELECT count(*)
-		FROM review_tasks
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND placement_item_id = ?::uuid
-		  AND assessment_id IS NOT NULL
-		  AND observation_id = ?::uuid
-		  AND payload->>'semantic_kind' = 'predicate'
-	`, input.TeamID, input.OwnerProfileID, scope.PlacementItemID, input.ObservationID).Row().Scan(&taskCount); err != nil {
-		return err
-	}
-	if taskCount == 0 {
-		return nil
-	}
-	var validCount int
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT count(*)
+		SELECT count(*),
+		       count(*) FILTER (
+		           WHERE payload->'options' @> jsonb_build_array(
+		               jsonb_build_object('predicate_key', ?::text, 'version', ?::integer)
+		           )
+		       )
 		FROM review_tasks
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
@@ -105,16 +88,16 @@ func validatePlacementAssessmentPredicateSelection(
 		  AND assessment_id IS NOT NULL
 		  AND observation_id = ?::uuid
 		  AND status IN ('open', 'acknowledged')
-		  AND expires_at > now()
+		  AND (expires_at IS NULL OR expires_at > now())
 		  AND payload->>'semantic_kind' = 'predicate'
-		  AND payload->'options' @> jsonb_build_array(
-		      jsonb_build_object('predicate_key', ?::text, 'version', ?::integer)
-		  )
-	`, input.TeamID, input.OwnerProfileID, scope.PlacementItemID, input.ObservationID,
-		input.PredicateKey, input.PredicateVersion).Row().Scan(&validCount); err != nil {
+	`, input.PredicateKey, input.PredicateVersion, input.TeamID, input.OwnerProfileID,
+		scope.PlacementItemID, input.ObservationID).Row().Scan(&taskCount, &validCount); err != nil {
 		return err
 	}
-	if validCount != 1 {
+	if taskCount == 0 {
+		return nil
+	}
+	if validCount != taskCount {
 		return fmt.Errorf("%w: selected predicate is not an open server-supplied option", ErrPlacementResolutionInvalidState)
 	}
 	return nil

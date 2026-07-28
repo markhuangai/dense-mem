@@ -439,7 +439,7 @@ func relationshipOutcomeArraySchema() map[string]any {
 
 func placementReviewTaskArraySchema() map[string]any {
 	return map[string]any{
-		"type": "array", "maxItems": 200,
+		"type": "array", "maxItems": 300,
 		"items": closedObject(
 			[]string{"review_task_id", "version", "kind", "status", "question", "options", "guidance", "expires_at"},
 			map[string]any{
@@ -457,15 +457,33 @@ func placementReviewTaskArraySchema() map[string]any {
 }
 
 func placementReviewOptionSchema() map[string]any {
-	return closedObject(nil, map[string]any{
-		"entity_id":      schemaString("Server-supplied Entity ID.", 128),
-		"canonical_name": schemaString("Server-supplied Entity canonical name.", 256),
-		"kind":           schemaEnum(domain.EntityKinds()),
-		"predicate_key":  schemaString("Server-supplied predicate key.", 128),
-		"version":        map[string]any{"type": "integer", "minimum": 1},
-		"aliases":        stringArraySchema("Server-supplied predicate alias.", 20, 256),
-		"action":         schemaEnum([]string{"submit_new_evidence"}),
-	})
+	return map[string]any{
+		"x-enforce-one-of": true,
+		"oneOf": []any{
+			closedObject(
+				[]string{"entity_id", "canonical_name", "kind"},
+				map[string]any{
+					"entity_id":      schemaString("Server-supplied Entity ID.", 128),
+					"canonical_name": schemaString("Server-supplied Entity canonical name.", 256),
+					"kind":           schemaEnum(domain.EntityKinds()),
+				},
+			),
+			closedObject(
+				[]string{"predicate_key", "version", "aliases"},
+				map[string]any{
+					"predicate_key": schemaString("Server-supplied predicate key.", 128),
+					"version":       map[string]any{"type": "integer", "minimum": 1},
+					"aliases":       stringArraySchema("Server-supplied predicate alias.", 20, 256),
+				},
+			),
+			closedObject(
+				[]string{"action"},
+				map[string]any{
+					"action": schemaEnum([]string{"submit_new_evidence"}),
+				},
+			),
+		},
+	}
 }
 
 func resolveMemoryPlacementOutputSchema() map[string]any {

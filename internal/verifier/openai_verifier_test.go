@@ -41,6 +41,19 @@ func TestOpenAIVerifierSetMetricsNormalizesNil(t *testing.T) {
 	require.Same(t, metrics, v.metrics)
 }
 
+func TestOpenAIVerifierUsesSharedSemanticAssessmentLimits(t *testing.T) {
+	cfg := newTestVerifierConfig("https://example.com/v1", "sk-test", "model")
+	cfg.AIVerifierMaxInputTokens = 1234
+	cfg.AIVerifierMaxOutputTokens = 567
+	cfg.AIVerifierMaxCandidateContextTokens = 789
+	cfg.AIVerifierTokenizer = "cl100k_base"
+	limits := SemanticAssessmentLimitsForConfig(cfg)
+
+	provider := NewOpenAIVerifierWithAssessmentLimits(cfg, nil, limits)
+	assert.Equal(t, limits, provider.assessmentLimits)
+	assert.Equal(t, limits, NewOpenAIVerifier(cfg, nil).assessmentLimits)
+}
+
 func TestOpenAIVerifierAdapterHelpers(t *testing.T) {
 	v := NewOpenAIVerifier(newTestVerifierConfig("https://example.com/v1", "sk-test", "gpt-4.1-mini"), nil)
 	require.Equal(t, "gpt-4.1-mini", v.ModelName())

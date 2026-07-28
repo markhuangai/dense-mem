@@ -421,26 +421,79 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 		if err := ensureActiveTeamForMutation(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
-		result := tx.WithContext(ctx).Exec(`
-			UPDATE review_tasks
-			SET status = 'expired',
-			    resolved_at = COALESCE(resolved_at, ?),
-			    updated_at = ?,
-			    version = version + 1
-			WHERE team_id = ?::uuid
-			  AND status IN ('open', 'acknowledged')
-			  AND expires_at IS NOT NULL
-			  AND expires_at <= ?
-			  AND (
-			      jsonb_exists(payload, 'semantic_kind')
-			      OR (task_type = 'identity_needs_review' AND reason = 'ambiguous_entity')
-			      OR (task_type = 'predicate_needs_review' AND reason = 'unknown_predicate')
-			  )
-		`, input.Now, input.Now, input.TeamID, input.Now)
-		if result.Error != nil {
-			return result.Error
+		type expiredTask struct {
+			ownerProfileID  string
+			placementRunID  string
+			placementItemID string
+			reviewTaskID    string
 		}
-		affected = result.RowsAffected
+		rows, err := tx.WithContext(ctx).Raw(`
+			UPDATE review_tasks AS task
+			SET status = 'expired',
+			    resolved_at = COALESCE(task.resolved_at, ?),
+			    updated_at = ?,
+			    version = task.version + 1
+			FROM placement_items AS item
+			WHERE task.team_id = ?::uuid
+			  AND task.placement_item_id = item.placement_item_id
+			  AND item.team_id = task.team_id
+			  AND task.status IN ('open', 'acknowledged')
+			  AND task.expires_at IS NOT NULL
+			  AND task.expires_at <= ?
+			  AND (
+			      jsonb_exists(task.payload, 'semantic_kind')
+			      OR (task.task_type = 'identity_needs_review' AND task.reason = 'ambiguous_entity')
+			      OR (task.task_type = 'predicate_needs_review' AND task.reason = 'unknown_predicate')
+			  )
+			RETURNING task.owner_profile_id::text, item.placement_run_id::text,
+			          task.placement_item_id::text, task.review_task_id::text
+		`, input.Now, input.Now, input.TeamID, input.Now).Rows()
+		if err != nil {
+			return err
+		}
+		expiredTasks := make([]expiredTask, 0)
+		for rows.Next() {
+			var task expiredTask
+			if err := rows.Scan(&task.ownerProfileID, &task.placementRunID, &task.placementItemID, &task.reviewTaskID); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			expiredTasks = append(expiredTasks, task)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		affected = int64(len(expiredTasks))
+		for _, task := range expiredTasks {
+			payload, err := marshalJSON(map[string]any{
+				"actor":          "system",
+				"review_task_id": task.reviewTaskID,
+				"reason":         "semantic_review_expired",
+			})
+			if err != nil {
+				return err
+			}
+			result := tx.WithContext(ctx).Exec(`
+				INSERT INTO placement_outcomes (
+				    team_id, placement_run_id, placement_item_id, owner_profile_id,
+				    outcome_kind, status, idempotency_key, payload
+				) VALUES (
+				    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+				    'semantic_review_expired', 'expired', ?, ?::jsonb
+				)
+				ON CONFLICT (team_id, owner_profile_id, idempotency_key)
+				WHERE idempotency_key <> ''
+				DO NOTHING
+			`, input.TeamID, task.placementRunID, task.placementItemID, task.ownerProfileID,
+				"system:semantic_review_expiry:"+task.reviewTaskID, string(payload))
+			if result.Error != nil {
+				return result.Error
+			}
+		}
 		if affected == 0 {
 			return nil
 		}

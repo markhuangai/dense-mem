@@ -218,7 +218,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		assessorDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_assessor_duration_seconds",
 			Help:    "Integrated assessor provider call duration.",
-			Buckets: prometheus.DefBuckets,
+			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120, 300, 600},
 		}, []string{"outcome"}),
 		assessorTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_assessor_tokens_total",

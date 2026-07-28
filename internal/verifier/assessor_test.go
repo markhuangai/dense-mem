@@ -33,6 +33,33 @@ func TestSemanticAssessmentPrepareAndValidateCompleteResponse(t *testing.T) {
 	}
 }
 
+func TestSemanticAssessmentRequiresTrustedProposalCorrespondence(t *testing.T) {
+	req, limits := semanticAssessmentTestRequest(t)
+	req.RequiredRelationshipRefs = []SemanticAssessmentRequiredRelationshipRef{{
+		ProposalID: "proposal-works-on",
+		Evidence:   []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 0, End: 24}},
+	}}
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+
+	response := semanticAssessmentTestResponse()
+	if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "missing result for trusted proposal") {
+		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want missing trusted proposal result", errs)
+	}
+
+	response.RelationshipResults[0].Ref = "proposal-works-on"
+	if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v", errs)
+	}
+
+	response.RelationshipResults[0].Evidence[0].End = 4
+	if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "does not retain a trusted proposal evidence span") {
+		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want trusted span rejection", errs)
+	}
+}
+
 func TestSemanticAssessmentRejectsWholeResponseWhenRequiredFieldIsMissing(t *testing.T) {
 	req, limits := semanticAssessmentTestRequest(t)
 	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
@@ -94,6 +121,16 @@ func TestSemanticAssessmentRejectsUnknownDuplicateAndUnauthorizedCompleteRespons
 		}
 	})
 
+	t.Run("duplicate entity evidence span", func(t *testing.T) {
+		response := semanticAssessmentTestResponse()
+		duplicate := response.EntityResults[0]
+		duplicate.Ref = "person-duplicate"
+		response.EntityResults = append(response.EntityResults, duplicate)
+		if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "duplicates an entity evidence span") {
+			t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want duplicate evidence span rejection", errs)
+		}
+	})
+
 	t.Run("candidate outside allowlist", func(t *testing.T) {
 		response := semanticAssessmentTestResponse()
 		candidateID := "entity-not-allowed"
@@ -110,6 +147,40 @@ func TestSemanticAssessmentRejectsUnknownDuplicateAndUnauthorizedCompleteRespons
 			t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want span rejection", errs)
 		}
 	})
+}
+
+func TestSemanticAssessmentRejectsCreateWhenCandidateContextCannotProveAbsence(t *testing.T) {
+	testCases := []struct {
+		name   string
+		mutate func(*SemanticAssessmentRequest)
+	}{
+		{
+			name:   "compatible candidate exists",
+			mutate: func(*SemanticAssessmentRequest) {},
+		},
+		{
+			name: "candidate context is truncated",
+			mutate: func(req *SemanticAssessmentRequest) {
+				req.EntityCandidateGroups[0].CandidateContextTruncated = true
+			},
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			req, limits := semanticAssessmentTestRequest(t)
+			testCase.mutate(&req)
+			prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+			if len(errs) != 0 {
+				t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+			}
+			response := semanticAssessmentTestResponse()
+			response.EntityResults[0].Action = "create"
+			response.EntityResults[0].CandidateEntityID = nil
+			if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "cannot create when candidate context is truncated or a compatible candidate is available") {
+				t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want create rejection", errs)
+			}
+		})
+	}
 }
 
 func TestSemanticAssessmentRejectsReuseFromTruncatedCandidateGroup(t *testing.T) {

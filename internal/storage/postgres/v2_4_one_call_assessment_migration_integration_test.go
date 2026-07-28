@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,6 +91,37 @@ func TestV24OneCallAssessmentMigrationPreservesPopulatedSemanticAndSearchState(t
 	assert.False(t, legacyExpiry.Valid, "unmarked legacy review work must retain its original timing")
 	assert.False(t, conflictExpiry.Valid, "conflict review work must retain its original timing")
 	assert.Zero(t, assessmentCount)
+}
+
+func TestV24OneCallAssessmentDownMigrationNormalizesExpiredReviewTasks(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072801)
+	semantic := insertV24OneCallAssessmentSemanticFixture(t, ctx, sqlDB)
+	placement := insertV24OneCallAssessmentMigrationPlacementFixture(t, ctx, sqlDB, semantic.teamID, semantic.profileID)
+	runGooseUpTo(t, ctx, sqlDB, 2026072802)
+
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE review_tasks
+			SET status = 'expired'
+			WHERE team_id = $1::uuid AND review_task_id = $2::uuid
+		`, semantic.teamID, placement.semanticTaskID)
+		return err
+	}))
+	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026072801))
+
+	var status string
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT status
+			FROM review_tasks
+			WHERE team_id = $1::uuid AND review_task_id = $2::uuid
+		`, semantic.teamID, placement.semanticTaskID).Scan(&status)
+	}))
+	assert.Equal(t, "canceled", status)
 }
 
 type v24OneCallAssessmentMigrationPlacementFixture struct {

@@ -474,6 +474,12 @@ func TestPlacementSmallHelpers(t *testing.T) {
 			t.Fatalf("review category %q = %q, want %q", category, got, want)
 		}
 	}
+	if got := relationshipOutcomeReason(ApplyRelationshipDecisionInput{
+		GateResult: "below_write_threshold",
+		Rationale:  "provider rationale must not hide the policy gate",
+	}, &RelationshipDecisionResult{Relationship: &RelationshipRecord{Status: string(domain.RelationshipStatusPendingEvidence)}}); got != "confidence was below the write threshold" {
+		t.Fatalf("below-threshold reason = %q", got)
+	}
 }
 
 func TestPlacementCorrectionTargetRelated(t *testing.T) {

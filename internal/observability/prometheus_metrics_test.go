@@ -200,6 +200,7 @@ func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testin
 	for _, want := range []string{
 		`densemem_assessor_requests_total{outcome="ok"}`,
 		`densemem_assessor_duration_seconds_bucket{outcome="ok",le=`,
+		`densemem_assessor_duration_seconds_bucket{outcome="ok",le="600"}`,
 		`densemem_assessor_tokens_total{kind="input"}`,
 		`densemem_assessor_tokens_total{kind="output"}`,
 		`densemem_assessor_validation_failures_total{stage="response"}`,

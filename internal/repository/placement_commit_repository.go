@@ -288,17 +288,7 @@ func normalizeCommitPlacementSemanticInput(input CommitPlacementSemanticInput) C
 			value := normalizePlacementValueInput(*review.ObjectValue)
 			review.ObjectValue = &value
 		}
-		if review.Support != nil {
-			review.Support.FragmentID = strings.TrimSpace(review.Support.FragmentID)
-			review.Support.SourceGroupKey = strings.TrimSpace(review.Support.SourceGroupKey)
-			review.Support.SourceID = strings.TrimSpace(review.Support.SourceID)
-			review.Support.SourceRevisionID = strings.TrimSpace(review.Support.SourceRevisionID)
-			review.Support.Quote = strings.TrimSpace(review.Support.Quote)
-			review.Support.Authority = strings.TrimSpace(review.Support.Authority)
-			if review.Support.Authority == "" {
-				review.Support.Authority = string(domain.AuthorityPrimary)
-			}
-		}
+		review.Support, review.Supports = normalizeEvidenceSupports(review.Support, review.Supports)
 	}
 	return input
 }
@@ -356,12 +346,18 @@ func placementCommitNeedsPlacementFragmentID(input CommitPlacementSemanticInput)
 		return true
 	}
 	for _, observation := range input.RelationshipObservations {
-		if observation.Support != nil && strings.TrimSpace(observation.Support.FragmentID) != "" {
+		for _, support := range relationshipEvidenceSupports(observation.Support, observation.Supports) {
+			if strings.TrimSpace(support.FragmentID) == "" {
+				continue
+			}
 			return true
 		}
 	}
 	for _, decision := range input.RelationshipDecisions {
-		if decision.Support != nil && strings.TrimSpace(decision.Support.FragmentID) != "" {
+		for _, support := range relationshipEvidenceSupports(decision.Support, decision.Supports) {
+			if strings.TrimSpace(support.FragmentID) == "" {
+				continue
+			}
 			return true
 		}
 	}
@@ -440,17 +436,7 @@ func normalizePlacementRelationshipDecisionInput(input PlacementRelationshipDeci
 		value := normalizePlacementValueInput(*input.ObjectValue)
 		input.ObjectValue = &value
 	}
-	if input.Support != nil {
-		input.Support.FragmentID = strings.TrimSpace(input.Support.FragmentID)
-		input.Support.SourceGroupKey = strings.TrimSpace(input.Support.SourceGroupKey)
-		input.Support.SourceID = strings.TrimSpace(input.Support.SourceID)
-		input.Support.SourceRevisionID = strings.TrimSpace(input.Support.SourceRevisionID)
-		input.Support.Quote = strings.TrimSpace(input.Support.Quote)
-		input.Support.Authority = strings.TrimSpace(input.Support.Authority)
-		if input.Support.Authority == "" {
-			input.Support.Authority = "primary"
-		}
-	}
+	input.Support, input.Supports = normalizeEvidenceSupports(input.Support, input.Supports)
 	if input.CorrectionTarget != nil {
 		target := *input.CorrectionTarget
 		target.RelationshipID = strings.TrimSpace(target.RelationshipID)
@@ -515,12 +501,12 @@ func validatePlacementRelationshipDecisionInput(input PlacementRelationshipDecis
 		return errors.New("relationship observation valid_to must be greater than or equal to valid_from")
 	}
 	if input.EvidenceVerdict == string(domain.VerificationEntailed) {
-		if input.Support == nil {
+		if len(relationshipEvidenceSupports(input.Support, input.Supports)) == 0 {
 			return errors.New("entailed relationship observations require support")
 		}
-		if err := validateEvidenceSupportInput(*input.Support); err != nil {
-			return err
-		}
+	}
+	if err := validateRelationshipEvidenceSupports(input.Support, input.Supports); err != nil {
+		return err
 	}
 	if input.CorrectionTarget != nil {
 		if err := validatePlacementCorrectionTargetInput(*input.CorrectionTarget); err != nil {
@@ -769,8 +755,8 @@ func insertEntityReviewTask(
 		ON CONFLICT (team_id, dedupe_key)
 		WHERE dedupe_key <> '' AND status IN ('open', 'acknowledged')
 		DO UPDATE SET payload = EXCLUDED.payload,
-		              assessment_id = EXCLUDED.assessment_id,
-		              expires_at = EXCLUDED.expires_at,
+		              assessment_id = COALESCE(EXCLUDED.assessment_id, review_tasks.assessment_id),
+		              expires_at = COALESCE(EXCLUDED.expires_at, review_tasks.expires_at),
 		              version = review_tasks.version + 1,
 		              updated_at = now()
 		RETURNING review_task_id::text
@@ -823,6 +809,7 @@ func relationshipDecisionFromPlacementObservation(
 		Model:                   input.Model,
 		ResponseHash:            input.ResponseHash,
 		Support:                 input.Support,
+		Supports:                input.Supports,
 		ObservationMetadata:     input.ObservationMetadata,
 		RelationshipMetadata:    input.RelationshipMetadata,
 		AssessmentID:            input.AssessmentID,

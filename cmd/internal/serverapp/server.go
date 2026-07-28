@@ -196,7 +196,8 @@ func RunActiveServer(
 	openaiProvider.SetMetrics(discoverabilityMetrics)
 	retryEmbedder := embedding.NewRetryEmbeddingProviderWithKey(openaiProvider, logger, cfg.GetAIAPIKey())
 	retryEmbedder.SetMetrics(discoverabilityMetrics)
-	verifierProvider := verifier.NewOpenAIVerifier(&cfg, nil)
+	assessmentLimits := verifier.SemanticAssessmentLimitsForConfig(&cfg)
+	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, assessmentLimits)
 	verifierProvider.SetMetrics(discoverabilityMetrics)
 
 	rememberSvc := memoryservice.NewRememberService(memoryservice.RememberDependencies{Ledger: ledgerRepo})
@@ -402,12 +403,6 @@ func RunActiveServer(
 
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
-	assessmentBudget := config.AIVerifierAssessmentBudgetFor(&cfg)
-	assessmentLimits := verifier.DefaultSemanticAssessmentLimits()
-	assessmentLimits.Tokenizer = assessmentBudget.Tokenizer
-	assessmentLimits.MaxInputTokens = assessmentBudget.MaxInputTokens
-	assessmentLimits.MaxOutputTokens = assessmentBudget.MaxOutputTokens
-	assessmentLimits.MaxCandidateContextTokens = assessmentBudget.MaxCandidateContextTokens
 	startActiveWorkers(
 		workerCtx,
 		logger,

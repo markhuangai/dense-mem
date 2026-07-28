@@ -101,7 +101,11 @@ func applyPlacementRelationshipDecision(
 			return err
 		}
 	}
-	if applied.SupportID != "" && decision.Support != nil && decision.Support.FragmentID != "" {
+	supports := relationshipEvidenceSupports(decision.Support, decision.Supports)
+	for index, support := range supports {
+		if index >= len(applied.SupportIDs) || applied.SupportIDs[index] == "" || support.FragmentID == "" {
+			continue
+		}
 		if placementFragmentID == "" {
 			var err error
 			placementFragmentID, err = loadPlacementItemFragmentID(ctx, tx, commit)
@@ -109,15 +113,15 @@ func applyPlacementRelationshipDecision(
 				return err
 			}
 		}
-		if decision.Support.FragmentID != placementFragmentID {
+		if support.FragmentID != placementFragmentID {
 			document, err := upsertPlacementEvidenceSearchDocument(
 				ctx,
 				tx,
 				commit,
-				decision.Support.FragmentID,
+				support.FragmentID,
 				map[string]any{
 					"supporting_placement_item_id": commit.PlacementItemID,
-					"support_id":                   applied.SupportID,
+					"support_id":                   applied.SupportIDs[index],
 					"relationship_id":              applied.Relationship.RelationshipID,
 				},
 				embeddingJobMaxAttempts,
@@ -592,10 +596,18 @@ func applyRelationshipDecisionInTx(
 		return nil, err
 	}
 	var supportID, supportDecisionID string
-	if input.EvidenceVerdict == string(domain.VerificationEntailed) && input.Support != nil && !input.SuppressSupport {
-		supportID, supportDecisionID, err = insertRelationshipSupport(ctx, tx, input, recordState.Record.RelationshipID, observationID, verificationID)
+	var supportIDs []string
+	if input.EvidenceVerdict == string(domain.VerificationEntailed) && len(relationshipEvidenceSupports(input.Support, input.Supports)) > 0 && !input.SuppressSupport {
+		var supportDecisionIDs []string
+		supportIDs, supportDecisionIDs, err = insertRelationshipSupports(ctx, tx, input, recordState.Record.RelationshipID, observationID, verificationID)
 		if err != nil {
 			return nil, err
+		}
+		if len(supportIDs) > 0 {
+			supportID = supportIDs[0]
+		}
+		if len(supportDecisionIDs) > 0 {
+			supportDecisionID = supportDecisionIDs[0]
 		}
 		if err := refreshRelationshipSupportCounts(ctx, tx, input.TeamID, recordState.Record.RelationshipID); err != nil {
 			return nil, err
@@ -625,6 +637,7 @@ func applyRelationshipDecisionInTx(
 		ObservationID:       observationID,
 		VerificationEventID: verificationID,
 		SupportID:           supportID,
+		SupportIDs:          supportIDs,
 		SupportDecisionID:   supportDecisionID,
 		CreatedRelationship: recordState.Created,
 	}, nil
@@ -750,6 +763,9 @@ func relationshipOutcomeCategory(result *RelationshipDecisionResult) string {
 }
 
 func relationshipOutcomeReason(decision ApplyRelationshipDecisionInput, result *RelationshipDecisionResult) string {
+	if decision.GateResult == "below_write_threshold" {
+		return "confidence was below the write threshold"
+	}
 	if rationale := strings.TrimSpace(decision.Rationale); rationale != "" {
 		return rationale
 	}

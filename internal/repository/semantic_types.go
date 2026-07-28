@@ -201,6 +201,7 @@ type ApplyRelationshipDecisionInput struct {
 	Model                   string
 	ResponseHash            string
 	Support                 *EvidenceSupportInput
+	Supports                []EvidenceSupportInput
 	ObservationMetadata     map[string]any
 	RelationshipMetadata    map[string]any
 	AssessmentID            string
@@ -242,6 +243,7 @@ type RelationshipDecisionResult struct {
 	ObservationID       string
 	VerificationEventID string
 	SupportID           string
+	SupportIDs          []string
 	SupportDecisionID   string
 	ReviewTaskID        string
 	ProposalID          string

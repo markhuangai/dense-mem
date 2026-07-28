@@ -60,6 +60,9 @@ func validateSemanticReviewDetails(
 	if question == "" || len([]rune(question)) > 1000 {
 		return errors.New("semantic review question is required and must be at most 1000 characters")
 	}
+	if len(options) == 0 {
+		return errors.New("semantic review options are required")
+	}
 	if len(options) > 100 {
 		return errors.New("semantic review options exceed 100 entries")
 	}
