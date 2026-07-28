@@ -57,21 +57,30 @@ func EffectiveDreamingConfig(global domain.DreamingRuntimeConfig, teamConfig map
 }
 
 func (s *service) EffectiveConfig(ctx context.Context, profileID string) (EffectiveConfig, error) {
+	return resolveEffectiveConfig(ctx, profileID, s.deps.AppConfig, s.deps.Profiles)
+}
+
+func resolveEffectiveConfig(
+	ctx context.Context,
+	profileID string,
+	appConfig AppConfig,
+	profiles ProfileService,
+) (EffectiveConfig, error) {
 	global := domain.DreamingRuntimeConfig{}
-	if s.deps.AppConfig != nil {
-		next, err := s.deps.AppConfig.DreamingRuntimeConfig(ctx)
+	if appConfig != nil {
+		next, err := appConfig.DreamingRuntimeConfig(ctx)
 		if err != nil {
 			return EffectiveConfig{}, err
 		}
 		global = next
 	}
 	var teamConfig map[string]any
-	if s.deps.Profiles != nil {
+	if profiles != nil {
 		profile, err := parseProfileID(profileID)
 		if err != nil {
 			return EffectiveConfig{}, err
 		}
-		p, err := s.deps.Profiles.GetByID(ctx, profile)
+		p, err := profiles.GetByID(ctx, profile)
 		if err != nil {
 			return EffectiveConfig{}, err
 		}

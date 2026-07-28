@@ -886,6 +886,9 @@ function mockPortalFetch({
     if (url.includes(`/teams/${profileA.id}/dreaming/runs`) && method === "GET") {
       return jsonResponse({ data: [dreamRunSnapshot] });
     }
+    if (url.includes(`/teams/${profileA.id}/dreams/refresh`) && method === "POST") {
+      return jsonResponse({ data: { updated_count: 0 } });
+    }
     if (url.includes(`/teams/${profileA.id}/dreams`) && method === "GET") {
       return jsonResponse({ data: { items: dreams, next_cursor: "" } });
     }

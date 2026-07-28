@@ -27,13 +27,20 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
 
   activeTeamIdRef.current = team.id;
 
-  async function loadData(nextQuery = dreamQuery, nextCursorStack = cursorStack) {
+  async function loadData(
+    nextQuery = dreamQuery,
+    nextCursorStack = cursorStack,
+    options: { refreshStaleness?: boolean } = {},
+  ) {
     const requestSeq = requestSeqRef.current + 1;
     requestSeqRef.current = requestSeq;
     const requestTeamId = team.id;
     setLoading(true);
     setError("");
     try {
+      if (options.refreshStaleness) {
+        await api.refreshTeamDreams(requestTeamId);
+      }
       const [nextStatusResult, nextRuns, nextDreams] = await Promise.all([
         api.getTeamDreamingStatus(requestTeamId),
         api.listTeamDreamingRuns(requestTeamId, 10),
@@ -61,7 +68,7 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
   }
 
   useEffect(() => {
-    void loadData({ ...dreamQuery, cursor: "" }, []);
+    void loadData({ ...dreamQuery, cursor: "" }, [], { refreshStaleness: true });
   }, [team.id]);
 
   const pageNumber = cursorStack.length + 1;
@@ -77,7 +84,12 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
           title="Dreaming"
           meta={team.name}
           actions={(
-            <button className="icon-button" type="button" aria-label="Refresh dreams" onClick={() => void loadData()}>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Refresh dreams"
+              onClick={() => void loadData(dreamQuery, cursorStack, { refreshStaleness: true })}
+            >
               <RefreshCw size={16} aria-hidden="true" />
             </button>
           )}

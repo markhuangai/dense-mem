@@ -686,6 +686,31 @@ func TestRegisterUserPortalRegistersCurrentSurface(t *testing.T) {
 	}
 }
 
+func TestUserPortalSessionAloneAllowsOnlyMissingCredentialsThroughAuth(t *testing.T) {
+	e := NewServer(config.Config{}, nil, HealthConfig{})
+	RegisterUserPortal(e, UserPortalDeps{})
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Contains(t, rec.Body.String(), `"code":"AUTH_MISSING"`)
+	require.Contains(t, rec.Body.String(), `"message":"authentication required"`)
+
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/team", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Contains(t, rec.Body.String(), `"message":"missing authorization header"`)
+
+	req = httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
+	req.Header.Set("Authorization", "Bearer invalid")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Contains(t, rec.Body.String(), `"code":"AUTH_INVALID"`)
+}
+
 func TestUserPortalMountedRoutesUseAuthenticatedTeam(t *testing.T) {
 	teamID := uuid.New()
 	managerID := uuid.New()

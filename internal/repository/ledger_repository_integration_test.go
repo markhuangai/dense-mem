@@ -108,7 +108,7 @@ func setupLedgerRepositoryDSN(t *testing.T) (string, func()) {
 		),
 	)
 	if err != nil {
-		t.Skipf("Postgres test container not available: %v", err)
+		t.Fatalf("start Postgres test container: %v", err)
 	}
 
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable")

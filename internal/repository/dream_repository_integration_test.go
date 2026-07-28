@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -207,6 +208,261 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 	_, _, err = semanticRepo.UpsertHypothesis(ctx, exactActive)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrDreamExactRelationshipExists), err)
+}
+
+func TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamA := createLedgerTeam(t, adminDB, rls, "dream-control-a")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamA, "dream-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamA, "dream-owner-b")
+	teamC := createLedgerTeam(t, adminDB, rls, "dream-control-c")
+	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "dream-owner-c")
+	repo := NewSemanticRepository(appDB, rls)
+
+	hypothesisA := uuid.NewString()
+	hypothesisB := uuid.NewString()
+	hypothesisC := uuid.NewString()
+	missingSourceA := uuid.NewString()
+	missingSourceB := uuid.NewString()
+	missingSourceC := uuid.NewString()
+	runA := uuid.NewString()
+	runB := uuid.NewString()
+	runC := uuid.NewString()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		for _, ref := range []struct {
+			teamID  string
+			ownerID string
+		}{
+			{teamID: teamA, ownerID: ownerA},
+			{teamID: teamA, ownerID: ownerB},
+			{teamID: teamC, ownerID: ownerC},
+		} {
+			if err := ensureSemanticRefs(ctx, tx, ref.teamID, ref.ownerID); err != nil {
+				return err
+			}
+		}
+		return tx.Exec(`
+			INSERT INTO hypotheses (
+			    team_id, hypothesis_id, owner_profile_id, status, statement,
+			    source_versions, updated_at
+			) VALUES
+			    (?::uuid, ?::uuid, ?::uuid, 'proposed', 'owner A hypothesis', jsonb_build_object(?::text, 1), now() - interval '2 minutes'),
+			    (?::uuid, ?::uuid, ?::uuid, 'proposed', 'owner B hypothesis', jsonb_build_object(?::text, 1), now() - interval '1 minute'),
+			    (?::uuid, ?::uuid, ?::uuid, 'proposed', 'owner C hypothesis', jsonb_build_object(?::text, 1), now())
+		`, teamA, hypothesisA, ownerA, missingSourceA,
+			teamA, hypothesisB, ownerB, missingSourceB,
+			teamC, hypothesisC, ownerC, missingSourceC).Error
+	}))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO dream_cycle_runs (
+			    team_id, run_id, owner_profile_id, run_date, window_key,
+			    status, started_at, completed_at
+			) VALUES
+			    (?::uuid, ?::uuid, ?::uuid, '2026-07-28', 'owner-a', 'completed', now() - interval '2 hours', now() - interval '2 hours'),
+			    (?::uuid, ?::uuid, ?::uuid, '2026-07-28', 'owner-b', 'completed', now() - interval '1 hour', now() - interval '1 hour'),
+			    (?::uuid, ?::uuid, ?::uuid, '2026-07-28', 'owner-c', 'completed', now(), now())
+		`, teamA, runA, ownerA, teamA, runB, ownerB, teamC, runC, ownerC).Error
+	}))
+
+	records, _, err := repo.ListHypotheses(ctx, ListHypothesesInput{TeamID: teamA, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	assert.ElementsMatch(t, []string{ownerA, ownerB}, []string{records[0].OwnerProfileID, records[1].OwnerProfileID})
+
+	pending, err := repo.CountHypotheses(ctx, teamA, "proposed")
+	require.NoError(t, err)
+	assert.Equal(t, 2, pending)
+
+	runs, err := repo.ListDreamCyclesForTeam(ctx, teamA, 10)
+	require.NoError(t, err)
+	require.Len(t, runs, 2)
+	assert.Equal(t, runB, runs[0].RunID)
+	assert.Equal(t, runA, runs[1].RunID)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			ALTER TABLE audit_log
+			ADD CONSTRAINT audit_log_reject_dream_refresh
+			CHECK (operation <> 'dream_staleness_refreshed')
+		`).Error
+	}))
+	defer func() {
+		_ = rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
+			return tx.Exec(`
+				ALTER TABLE audit_log
+				DROP CONSTRAINT IF EXISTS audit_log_reject_dream_refresh
+			`).Error
+		})
+	}()
+
+	refresh := RefreshTeamHypothesisStalenessInput{
+		TeamID:        teamA,
+		Limit:         200,
+		ActorSource:   "control_portal:authorization-bearer",
+		ActorRole:     "control",
+		ClientIP:      "192.0.2.10",
+		CorrelationID: "corr-dream-control",
+	}
+	_, err = repo.RefreshTeamHypothesisStaleness(ctx, refresh)
+	require.Error(t, err)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var proposed int
+		if err := tx.Raw(`
+			SELECT count(*)
+			FROM hypotheses
+			WHERE team_id = ?::uuid
+			  AND status = 'proposed'
+		`, teamA).Scan(&proposed).Error; err != nil {
+			return err
+		}
+		assert.Equal(t, 2, proposed)
+		return nil
+	}))
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			ALTER TABLE audit_log
+			DROP CONSTRAINT audit_log_reject_dream_refresh
+		`).Error
+	}))
+	updated, err := repo.RefreshTeamHypothesisStaleness(ctx, refresh)
+	require.NoError(t, err)
+	assert.Equal(t, 2, updated)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var staleA, proposedC, auditCount, auditedUpdated int
+		if err := tx.Raw(`
+			SELECT count(*)
+			FROM hypotheses
+			WHERE team_id = ?::uuid
+			  AND status = 'stale'
+		`, teamA).Scan(&staleA).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT count(*)
+			FROM hypotheses
+			WHERE team_id = ?::uuid
+			  AND status = 'proposed'
+		`, teamC).Scan(&proposedC).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT count(*), max((after_payload->>'updated_count')::int)
+			FROM audit_log
+			WHERE team_id = ?::uuid
+			  AND operation = 'dream_staleness_refreshed'
+			  AND actor_profile_id IS NULL
+			  AND actor_role = 'control'
+			  AND client_ip = '192.0.2.10'::inet
+			  AND correlation_id = 'corr-dream-control'
+			  AND metadata->>'actor_source' = 'control_portal:authorization-bearer'
+		`, teamA).Row().Scan(&auditCount, &auditedUpdated); err != nil {
+			return err
+		}
+		assert.Equal(t, 2, staleA)
+		assert.Equal(t, 1, proposedC)
+		assert.Equal(t, 1, auditCount)
+		assert.Equal(t, 2, auditedUpdated)
+		return nil
+	}))
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE teams
+			SET status = 'archived',
+			    deleted_at = now()
+			WHERE id = ?::uuid
+		`, teamA).Error
+	}))
+	_, err = repo.RefreshTeamHypothesisStaleness(ctx, refresh)
+	require.ErrorIs(t, err, ErrTeamInactive)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var auditCount int
+		if err := tx.Raw(`
+			SELECT count(*)
+			FROM audit_log
+			WHERE team_id = ?::uuid
+			  AND operation = 'dream_staleness_refreshed'
+		`, teamA).Scan(&auditCount).Error; err != nil {
+			return err
+		}
+		assert.Equal(t, 1, auditCount)
+		return nil
+	}))
+
+	raceTeam := createLedgerTeam(t, adminDB, rls, "dream-control-archive-race")
+	raceOwner := createLedgerProfile(t, adminDB, rls, raceTeam, "dream-control-archive-owner")
+	raceHypothesis := uuid.NewString()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := ensureSemanticRefs(ctx, tx, raceTeam, raceOwner); err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO hypotheses (
+			    team_id, hypothesis_id, owner_profile_id, status, statement,
+			    source_versions, updated_at
+			) VALUES (
+			    ?::uuid, ?::uuid, ?::uuid, 'proposed', 'archive race hypothesis',
+			    jsonb_build_object(?::text, 1), now()
+			)
+		`, raceTeam, raceHypothesis, raceOwner, uuid.NewString()).Error
+	}))
+
+	appSQL, err := appDB.DB()
+	require.NoError(t, err)
+	appSQL.SetMaxOpenConns(1)
+	appSQL.SetMaxIdleConns(1)
+	require.NoError(t, appDB.Exec(`SET lock_timeout = '100ms'`).Error)
+
+	archiveTx := adminDB.WithContext(ctx).Begin()
+	require.NoError(t, archiveTx.Error)
+	defer func() { _ = archiveTx.Rollback().Error }()
+	require.NoError(t, archiveTx.Exec(`SELECT set_config('app.tx_mode', 'system', true)`).Error)
+	require.NoError(t, archiveTx.Exec(`
+		UPDATE teams
+		SET status = 'archived',
+		    deleted_at = now(),
+		    updated_at = now()
+		WHERE id = ?::uuid
+	`, raceTeam).Error)
+
+	raceRefresh := refresh
+	raceRefresh.TeamID = raceTeam
+	raceRefresh.CorrelationID = "corr-dream-control-race"
+	_, err = repo.RefreshTeamHypothesisStaleness(ctx, raceRefresh)
+	require.ErrorContains(t, err, "lock timeout")
+	require.NoError(t, archiveTx.Commit().Error)
+	require.NoError(t, appDB.Exec(`SET lock_timeout = DEFAULT`).Error)
+
+	_, err = repo.RefreshTeamHypothesisStaleness(ctx, raceRefresh)
+	require.ErrorIs(t, err, ErrTeamInactive)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var proposed, auditCount int
+		if err := tx.Raw(`
+			SELECT count(*)
+			FROM hypotheses
+			WHERE team_id = ?::uuid
+			  AND hypothesis_id = ?::uuid
+			  AND status = 'proposed'
+		`, raceTeam, raceHypothesis).Scan(&proposed).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT count(*)
+			FROM audit_log
+			WHERE team_id = ?::uuid
+			  AND operation = 'dream_staleness_refreshed'
+		`, raceTeam).Scan(&auditCount).Error; err != nil {
+			return err
+		}
+		assert.Equal(t, 1, proposed)
+		assert.Zero(t, auditCount)
+		return nil
+	}))
 }
 
 func assertDreamInput(t *testing.T, inputs []DreamInput, relationshipID, status string) {

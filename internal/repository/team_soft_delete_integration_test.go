@@ -178,6 +178,80 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	require.ErrorIs(t, err, ErrTeamInactive)
 }
 
+func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	activeTeamID := createLedgerTeam(t, adminDB, rls, "sso-active-team")
+	archivedTeamID := createLedgerTeam(t, adminDB, rls, "sso-archived-team")
+	repo := NewSSORepository(adminDB, rls)
+	provider := &domain.SSOProvider{
+		Name:         "sso-active-team-filter",
+		Kind:         domain.SSOProviderKindGenericOIDC,
+		IssuerURL:    "https://idp.example.test",
+		ClientID:     "client",
+		Enabled:      true,
+		Scopes:       []string{"openid"},
+		GroupClaims:  []string{"groups"},
+		GroupsScopes: []string{},
+	}
+	require.NoError(t, repo.CreateProvider(ctx, provider))
+
+	activeMapping := domain.SSOGroupMapping{
+		ID:         uuid.New(),
+		ProviderID: provider.ID,
+		TeamID:     uuid.MustParse(activeTeamID),
+		GroupID:    "shared-group",
+		GroupName:  "Active team",
+		Scopes:     []string{"read"},
+		Role:       "member",
+		Enabled:    true,
+	}
+	archivedMapping := activeMapping
+	archivedMapping.ID = uuid.New()
+	archivedMapping.TeamID = uuid.MustParse(archivedTeamID)
+	archivedMapping.GroupName = "Archived team"
+	require.NoError(t, repo.CreateMapping(ctx, &activeMapping))
+	require.NoError(t, repo.CreateMapping(ctx, &archivedMapping))
+
+	identity := domain.SSOIdentity{
+		ProviderID:  provider.ID,
+		Subject:     "subject-active-team-filter",
+		Email:       "sso@example.test",
+		DisplayName: "SSO User",
+	}
+	require.NoError(t, repo.UpsertIdentity(ctx, &identity))
+	activeProfile, err := repo.UpsertTeamProfileForMapping(ctx, identity, activeMapping, "active-profile")
+	require.NoError(t, err)
+	archivedProfile, err := repo.UpsertTeamProfileForMapping(ctx, identity, archivedMapping, "archived-profile")
+	require.NoError(t, err)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE teams
+			SET status = 'archived',
+			    updated_at = now()
+			WHERE id = ?::uuid
+		`, archivedTeamID).Error
+	}))
+
+	mappings, err := repo.ListMappingsForGroups(ctx, provider.ID, []string{"shared-group"})
+	require.NoError(t, err)
+	require.Len(t, mappings, 1)
+	assert.Equal(t, activeMapping.TeamID, mappings[0].TeamID)
+
+	teams, err := repo.ListTeamProfilesForIdentity(ctx, identity.ID)
+	require.NoError(t, err)
+	require.Len(t, teams, 1)
+	assert.Equal(t, activeMapping.TeamID, teams[0].Team.ID)
+
+	loadedActive, err := repo.GetSSOProfileByID(ctx, activeProfile.ID)
+	require.NoError(t, err)
+	require.NotNil(t, loadedActive)
+	loadedArchived, err := repo.GetSSOProfileByID(ctx, archivedProfile.ID)
+	require.NoError(t, err)
+	assert.Nil(t, loadedArchived)
+}
+
 func TestActiveTeamMutationGuardSerializesWithTeamDelete(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

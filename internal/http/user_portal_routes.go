@@ -35,17 +35,20 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		ssoAPI.POST("/logout", portal.logoutSSO)
 	}
 
-	api := e.Group("/ui/api")
 	authOpts := httpmw.AuthOptions{}
 	if deps.SSOService != nil {
 		authOpts.SSOEntitlementValidator = deps.SSOService
 		authOpts.SSOSessionAuthenticator = deps.SSOService
 	}
-	api.Use(httpmw.AuthMiddlewareWithOptions(deps.APIKeyRepo, deps.AuditSvc, deps.SecuritySvc, authOpts))
-	api.Use(deps.ExtraMiddleware...)
-	api.Use(httpmw.UsageMetricsMiddleware(deps.UsageMetrics))
-	api.Use(httpmw.RateLimitMiddleware(deps.RateLimitSvc, deps.Config, deps.AuditSvc))
-	api.Use(httpmw.LastUsedMiddleware(deps.APIKeyRepo))
+
+	sessionAPI := e.Group("/ui/api")
+	sessionAuthOpts := authOpts
+	sessionAuthOpts.AllowMissingCredentials = true
+	useUserPortalMiddleware(sessionAPI, deps, sessionAuthOpts)
+	sessionAPI.GET("/session", portal.session)
+
+	api := e.Group("/ui/api")
+	useUserPortalMiddleware(api, deps, authOpts)
 
 	profileHandler := handler.NewProfileHandler(deps.ProfileSvc)
 	apiKeyHandler := handler.NewAPIKeyHandler(deps.APIKeySvc)
@@ -56,7 +59,6 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	apiKeySvcMW := userPortalServiceAvailable(deps.APIKeySvc != nil, "api key service unavailable")
 	dreamSvcMW := userPortalServiceAvailable(deps.DreamSvc != nil, "dream service unavailable")
 
-	api.GET("/session", portal.session)
 	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("write"))
 	api.GET("/graph", portal.graphSnapshot, httpmw.RequireScopes("read"))
 	api.GET("/node-detail", portal.graphNodeDetail, httpmw.RequireScopes("read"))
@@ -87,6 +89,14 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		staticDir = defaultUserPortalStaticDir()
 	}
 	registerUserPortalStatic(e, staticDir)
+}
+
+func useUserPortalMiddleware(api *echo.Group, deps UserPortalDeps, authOpts httpmw.AuthOptions) {
+	api.Use(httpmw.AuthMiddlewareWithOptions(deps.APIKeyRepo, deps.AuditSvc, deps.SecuritySvc, authOpts))
+	api.Use(deps.ExtraMiddleware...)
+	api.Use(httpmw.UsageMetricsMiddleware(deps.UsageMetrics))
+	api.Use(httpmw.RateLimitMiddleware(deps.RateLimitSvc, deps.Config, deps.AuditSvc))
+	api.Use(httpmw.LastUsedMiddleware(deps.APIKeyRepo))
 }
 
 func userPortalServiceAvailable(available bool, message string) echo.MiddlewareFunc {

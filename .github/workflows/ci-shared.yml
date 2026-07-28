@@ -55,6 +55,17 @@ jobs:
           printf '%s\n' "${packages}"
           go test ${packages}
 
+      - name: Run SSO and Dreams PostgreSQL regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test \
+            ./internal/repository \
+            ./internal/http \
+            -run '^(TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration)$' \
+            -count=1
+
       - name: Run unit coverage gate
         shell: bash
         run: |

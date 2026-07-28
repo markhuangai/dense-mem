@@ -261,6 +261,7 @@ type ssoRepositoryStub struct {
 	identities           map[uuid.UUID]*domain.SSOIdentity
 	getIdentityErr       error
 	upsertIdentityErr    error
+	upsertProfileErrors  map[uuid.UUID]error
 	listTeamProfilesErr  error
 	teamProfiles         []*domain.SSOTeamProfile
 	ssoProfiles          map[uuid.UUID]*domain.APIKey
@@ -485,6 +486,9 @@ func (r *ssoRepositoryStub) GetIdentityByProviderSubject(ctx context.Context, pr
 }
 
 func (r *ssoRepositoryStub) UpsertTeamProfileForMapping(ctx context.Context, identity domain.SSOIdentity, mapping domain.SSOGroupMapping, name string) (*domain.APIKey, error) {
+	if err := r.upsertProfileErrors[mapping.TeamID]; err != nil {
+		return nil, err
+	}
 	key := &domain.APIKey{
 		ID:            uuid.New(),
 		ProfileID:     mapping.TeamID,

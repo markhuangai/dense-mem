@@ -118,6 +118,28 @@ test("control panel keeps security settings display-only against compose", async
   await expectNoShellOverlap(page);
 });
 
+test("control panel loads team Dreams through the control refresh path", async ({ page }) => {
+  const faviconRequests: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/favicon.ico") {
+      faviconRequests.push(request.url());
+    }
+  });
+
+  await openControlPanel(page);
+  await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
+  const refreshResponse = page.waitForResponse((response) => (
+    response.request().method() === "POST" &&
+    new URL(response.url()).pathname === `/control/api/teams/${seedTeamId}/dreams/refresh`
+  ));
+  await page.getByRole("button", { name: /team dreams/i }).click();
+
+  expect((await refreshResponse).status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Dream Outputs" })).toBeVisible();
+  await expect(page.getByText(/authenticated actor context is required/i)).toHaveCount(0);
+  expect(faviconRequests).toEqual([]);
+});
+
 test("prometheus telemetry is scraped and rendered in control panel and user portal", async ({ page, request }) => {
   const sessionResponse = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(seedApiKey) });
   expect(sessionResponse.status()).toBe(200);
