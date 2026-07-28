@@ -85,6 +85,65 @@ func TestActiveTeamDispatcherSaturatesHotTeamAndPrioritizesNewlyReadyTeam(t *tes
 	}
 }
 
+func TestActiveTeamDispatcherDrainsInflightWorkBeforeCooling(t *testing.T) {
+	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name               string
+		remaining          []bool
+		resumesImmediately bool
+	}{
+		{name: "work then idle", remaining: []bool{true, false}, resumesImmediately: true},
+		{name: "idle then work", remaining: []bool{false, true}, resumesImmediately: true},
+		{name: "all idle", remaining: []bool{false, false}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dispatcher := newActiveTeamDispatcher(time.Second)
+			dispatcher.replaceTeams([]string{"team-a"}, now)
+
+			teamID, ok := dispatcher.next(now)
+			if !ok || teamID != "team-a" {
+				t.Fatalf("initial probe = %q, %t; want team-a, true", teamID, ok)
+			}
+			dispatcher.complete("team-a", true, now)
+
+			for i := 0; i <= len(tt.remaining); i++ {
+				teamID, ok = dispatcher.next(now)
+				if !ok || teamID != "team-a" {
+					t.Fatalf("concurrent dispatch %d = %q, %t; want team-a, true", i, teamID, ok)
+				}
+			}
+			dispatcher.complete("team-a", false, now)
+			if _, ok := dispatcher.next(now); ok {
+				t.Fatal("team dispatched while in-flight work was draining")
+			}
+			for i, worked := range tt.remaining {
+				dispatcher.complete("team-a", worked, now)
+				if i < len(tt.remaining)-1 {
+					if _, ok := dispatcher.next(now); ok {
+						t.Fatal("team dispatched before all in-flight work drained")
+					}
+				}
+			}
+
+			teamID, ok = dispatcher.next(now)
+			if tt.resumesImmediately {
+				if !ok || teamID != "team-a" {
+					t.Fatalf("dispatch after drain = %q, %t; want team-a, true", teamID, ok)
+				}
+				return
+			}
+			if ok {
+				t.Fatalf("idle team dispatched immediately after drain: %q", teamID)
+			}
+			teamID, ok = dispatcher.next(now.Add(time.Second))
+			if !ok || teamID != "team-a" {
+				t.Fatalf("poll dispatch = %q, %t; want team-a, true", teamID, ok)
+			}
+		})
+	}
+}
+
 func TestActiveTeamWorkerPoolListsTeamsOnceBeforeIdlePoll(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
