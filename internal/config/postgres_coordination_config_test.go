@@ -26,6 +26,9 @@ func TestLoadPostgresAndCoordinationDefaults(t *testing.T) {
 	if cfg.PostgresConnMaxLifetimeSeconds != 1800 {
 		t.Errorf("PostgresConnMaxLifetimeSeconds default = %d, want %d", cfg.PostgresConnMaxLifetimeSeconds, 1800)
 	}
+	if cfg.PostgresMigrationTimeoutSeconds != DefaultPostgresMigrationTimeoutSeconds {
+		t.Errorf("PostgresMigrationTimeoutSeconds default = %d, want %d", cfg.PostgresMigrationTimeoutSeconds, DefaultPostgresMigrationTimeoutSeconds)
+	}
 	if cfg.RedisTLSEnabled {
 		t.Error("RedisTLSEnabled default = true, want false")
 	}
@@ -40,6 +43,7 @@ func TestLoadPostgresAndCoordinationOverrides(t *testing.T) {
 	os.Setenv("POSTGRES_MAX_OPEN_CONNS", "50")
 	os.Setenv("POSTGRES_MAX_IDLE_CONNS", "25")
 	os.Setenv("POSTGRES_CONN_MAX_LIFETIME_SECONDS", "900")
+	os.Setenv("POSTGRES_MIGRATION_TIMEOUT_SECONDS", "900")
 	os.Setenv("REDIS_ADDR", "localhost:6379")
 	os.Setenv("REDIS_TLS_ENABLED", "true")
 	os.Setenv("DISTRIBUTED_COORDINATION_REQUIRED", "true")
@@ -57,6 +61,9 @@ func TestLoadPostgresAndCoordinationOverrides(t *testing.T) {
 	}
 	if cfg.PostgresConnMaxLifetimeSeconds != 900 {
 		t.Errorf("PostgresConnMaxLifetimeSeconds = %d, want %d", cfg.PostgresConnMaxLifetimeSeconds, 900)
+	}
+	if cfg.PostgresMigrationTimeoutSeconds != 900 {
+		t.Errorf("PostgresMigrationTimeoutSeconds = %d, want 900", cfg.PostgresMigrationTimeoutSeconds)
 	}
 	if !cfg.RedisTLSEnabled {
 		t.Error("RedisTLSEnabled = false, want true")
@@ -102,6 +109,25 @@ func TestLoadValidation_PostgresIdleExceedsOpen(t *testing.T) {
 	}
 	if validationErr.Field != "POSTGRES_MAX_IDLE_CONNS" {
 		t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, "POSTGRES_MAX_IDLE_CONNS")
+	}
+}
+
+func TestLoadValidation_PostgresMigrationTimeoutExceedsMaximum(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("POSTGRES_MIGRATION_TIMEOUT_SECONDS", "86401")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error for excessive postgres migration timeout, got nil")
+	}
+
+	validationErr, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("expected *ValidationError, got %T", err)
+	}
+	if validationErr.Field != "POSTGRES_MIGRATION_TIMEOUT_SECONDS" {
+		t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, "POSTGRES_MIGRATION_TIMEOUT_SECONDS")
 	}
 }
 

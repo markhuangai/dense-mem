@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
 	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -38,38 +39,40 @@ func main() {
 	validation.SetEmbeddingDimensions(cfg.GetEmbeddingDimensions())
 	middleware.SetAuthVerificationConcurrency(cfg.AuthVerifyMaxConcurrency)
 
-	startupCtx, startupCancel := context.WithTimeout(context.Background(), startupTimeout)
-	defer startupCancel()
+	preflightCtx, preflightCancel := context.WithTimeout(context.Background(), startupTimeout)
 
-	pgDB, err := postgres.OpenWithClient(startupCtx, &cfg)
+	pgDB, err := postgres.OpenWithClient(preflightCtx, &cfg)
 	if err != nil {
 		log.Fatalf("failed to connect to postgres: %v", err)
 	}
 	defer pgDB.Close()
-	if err := postgres.ValidateSinglePrimaryTopology(startupCtx, pgDB.GetDB()); err != nil {
+	if err := postgres.ValidateSinglePrimaryTopology(preflightCtx, pgDB.GetDB()); err != nil {
 		log.Fatalf("unsupported postgres topology: %v", err)
 	}
+	preflightCancel()
 
-	logger.Info("running postgres migrations")
-	if err := postgres.RunUp(startupCtx, pgDB.GetDB()); err != nil {
+	migrationTimeout := time.Duration(cfg.GetPostgresMigrationTimeoutSeconds()) * time.Second
+	if err := migrationapp.RunUp(context.Background(), pgDB.GetDB(), migrationTimeout, logger.Slog()); err != nil {
 		log.Fatalf("failed to run postgres migrations: %v", err)
 	}
-	logger.Info("postgres migrations completed")
-	if err := postgres.CheckPGVectorExtension(startupCtx, pgDB.GetDB()); err != nil {
+
+	postMigrationCtx, postMigrationCancel := context.WithTimeout(context.Background(), startupTimeout)
+	defer postMigrationCancel()
+	if err := postgres.CheckPGVectorExtension(postMigrationCtx, pgDB.GetDB()); err != nil {
 		log.Fatalf("pgvector extension check failed: %v", err)
 	}
 
 	embeddingConfigRepo := postgres.NewEmbeddingConfigRepository(pgDB.GetDB())
 	embeddingConsistencySvc := service.NewEmbeddingConsistencyService(embeddingConfigRepo, &cfg)
-	if err := embeddingConsistencySvc.CheckAtStartup(startupCtx); err != nil {
+	if err := embeddingConsistencySvc.CheckAtStartup(postMigrationCtx); err != nil {
 		log.Fatalf("embedding consistency check failed: %v", err)
 	}
 
 	rlsHelper := postgres.NewRLS()
 	authorityRepo := repository.NewAuthorityRepository(pgDB.GetDB(), rlsHelper)
-	authority, err := serverapp.EnsureAuthority(startupCtx, authorityRepo)
+	authority, err := serverapp.EnsureAuthority(postMigrationCtx, authorityRepo)
 	if err != nil {
 		log.Fatalf("authority bootstrap failed: %v", err)
 	}
-	serverapp.RunActiveServer(startupCtx, cfg, pgDB, logger, level, authority, serverapp.RuntimeOptions{})
+	serverapp.RunActiveServer(postMigrationCtx, cfg, pgDB, logger, level, authority, serverapp.RuntimeOptions{})
 }

@@ -4,14 +4,17 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"time"
 
+	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-const migrationTimeout = 5 * time.Minute
+const connectionTimeout = 5 * time.Minute
 
 func main() {
 	if len(os.Args) < 2 {
@@ -35,14 +38,20 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), migrationTimeout)
-	defer cancel()
+	level := slog.LevelInfo
+	if os.Getenv("LOG_LEVEL") == "debug" {
+		level = slog.LevelDebug
+	}
+	logger := observability.New(level)
+	slog.SetDefault(logger.Slog())
+	migrationTimeout := time.Duration(cfg.GetPostgresMigrationTimeoutSeconds()) * time.Second
 
 	// Execute command
 	switch command {
 	case "up":
-		fmt.Println("Running migrations up...")
-		db, err := postgres.Open(ctx, &cfg)
+		connectionCtx, connectionCancel := context.WithTimeout(context.Background(), connectionTimeout)
+		db, err := postgres.Open(connectionCtx, &cfg)
+		connectionCancel()
 		if err != nil {
 			log.Fatalf("Failed to connect to postgres: %v", err)
 		}
@@ -51,14 +60,14 @@ func main() {
 			log.Fatalf("Failed to get underlying sql.DB: %v", err)
 		}
 		defer sqlDB.Close()
-		if err := postgres.RunUp(ctx, db); err != nil {
+		if err := migrationapp.RunUp(context.Background(), db, migrationTimeout, logger.Slog()); err != nil {
 			log.Fatalf("Failed to run up migrations: %v", err)
 		}
-		fmt.Println("Migrations completed successfully")
 
 	case "down":
-		fmt.Println("Running migrations down...")
-		db, err := postgres.Open(ctx, &cfg)
+		connectionCtx, connectionCancel := context.WithTimeout(context.Background(), connectionTimeout)
+		db, err := postgres.Open(connectionCtx, &cfg)
+		connectionCancel()
 		if err != nil {
 			log.Fatalf("Failed to connect to postgres: %v", err)
 		}
@@ -67,14 +76,15 @@ func main() {
 			log.Fatalf("Failed to get underlying sql.DB: %v", err)
 		}
 		defer sqlDB.Close()
-		if err := postgres.RunDown(ctx, db); err != nil {
+		if err := migrationapp.RunDown(context.Background(), db, migrationTimeout, logger.Slog()); err != nil {
 			log.Fatalf("Failed to run down migrations: %v", err)
 		}
-		fmt.Println("Rollback completed successfully")
 
 	case "status":
 		fmt.Println("Migration status:")
-		db, err := postgres.Open(ctx, &cfg)
+		statusCtx, statusCancel := context.WithTimeout(context.Background(), connectionTimeout)
+		defer statusCancel()
+		db, err := postgres.Open(statusCtx, &cfg)
 		if err != nil {
 			log.Fatalf("Failed to connect to postgres: %v", err)
 		}
@@ -83,7 +93,7 @@ func main() {
 			log.Fatalf("Failed to get underlying sql.DB: %v", err)
 		}
 		defer sqlDB.Close()
-		if err := postgres.RunStatus(ctx, db); err != nil {
+		if err := postgres.RunStatus(statusCtx, db); err != nil {
 			log.Fatalf("Failed to get migration status: %v", err)
 		}
 	}
