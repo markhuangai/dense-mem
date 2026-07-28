@@ -12,6 +12,8 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 		field string
 	}{
 		{"invalid redis db", func() { os.Setenv("REDIS_DB", "bad") }, "REDIS_DB"},
+		{"invalid postgres migration timeout", func() { os.Setenv("POSTGRES_MIGRATION_TIMEOUT_SECONDS", "bad") }, "POSTGRES_MIGRATION_TIMEOUT_SECONDS"},
+		{"zero postgres migration timeout", func() { os.Setenv("POSTGRES_MIGRATION_TIMEOUT_SECONDS", "0") }, "POSTGRES_MIGRATION_TIMEOUT_SECONDS"},
 		{"invalid http max body bytes", func() { os.Setenv("HTTP_MAX_BODY_BYTES", "bad") }, "HTTP_MAX_BODY_BYTES"},
 		{"invalid auth verify concurrency", func() { os.Setenv("AUTH_VERIFY_MAX_CONCURRENCY", "bad") }, "AUTH_VERIFY_MAX_CONCURRENCY"},
 		{"invalid fragment create rate", func() { os.Setenv("FRAGMENT_CREATE_RATE_LIMIT", "bad") }, "FRAGMENT_CREATE_RATE_LIMIT"},
@@ -135,6 +137,7 @@ func TestConfigProviderDatabaseAndCoordinationGetters(t *testing.T) {
 		PostgresMaxOpenConns:            25,
 		PostgresMaxIdleConns:            7,
 		PostgresConnMaxLifetimeSeconds:  90,
+		PostgresMigrationTimeoutSeconds: 1800,
 		RedisTLSEnabled:                 true,
 		DistributedCoordinationRequired: true,
 	}
@@ -147,6 +150,9 @@ func TestConfigProviderDatabaseAndCoordinationGetters(t *testing.T) {
 	}
 	if got := cfg.GetPostgresConnMaxLifetimeSeconds(); got != 90 {
 		t.Fatalf("GetPostgresConnMaxLifetimeSeconds() = %d, want 90", got)
+	}
+	if got := cfg.GetPostgresMigrationTimeoutSeconds(); got != 1800 {
+		t.Fatalf("GetPostgresMigrationTimeoutSeconds() = %d, want 1800", got)
 	}
 	if !cfg.GetRedisTLSEnabled() {
 		t.Fatal("GetRedisTLSEnabled() = false, want true")

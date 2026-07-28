@@ -9,12 +9,14 @@ import (
 )
 
 const (
-	DefaultHTTPPort                = "8080"
-	DefaultHTTPAddr                = ":" + DefaultHTTPPort
-	DefaultEmbeddingJobMaxAttempts = 20
-	MaxEmbeddingJobMaxAttempts     = 100
-	DefaultConflictReviewTTLDays   = 7
-	DefaultConflictReviewStartTime = "04:00"
+	DefaultHTTPPort                        = "8080"
+	DefaultHTTPAddr                        = ":" + DefaultHTTPPort
+	DefaultPostgresMigrationTimeoutSeconds = 1800
+	MaxPostgresMigrationTimeoutSeconds     = 86400
+	DefaultEmbeddingJobMaxAttempts         = 20
+	MaxEmbeddingJobMaxAttempts             = 100
+	DefaultConflictReviewTTLDays           = 7
+	DefaultConflictReviewStartTime         = "04:00"
 )
 
 var legacyNeo4jEnvVars = []string{
@@ -83,6 +85,7 @@ type Config struct {
 	PostgresMaxOpenConns            int
 	PostgresMaxIdleConns            int
 	PostgresConnMaxLifetimeSeconds  int
+	PostgresMigrationTimeoutSeconds int
 	RedisAddr                       string
 	RedisPassword                   string `json:"-"`
 	RedisDB                         int
@@ -142,10 +145,13 @@ func (c *Config) GetPostgresDSN() string                 { return c.PostgresDSN 
 func (c *Config) GetPostgresMaxOpenConns() int           { return c.PostgresMaxOpenConns }
 func (c *Config) GetPostgresMaxIdleConns() int           { return c.PostgresMaxIdleConns }
 func (c *Config) GetPostgresConnMaxLifetimeSeconds() int { return c.PostgresConnMaxLifetimeSeconds }
-func (c *Config) GetRedisAddr() string                   { return c.RedisAddr }
-func (c *Config) GetRedisPassword() string               { return c.RedisPassword }
-func (c *Config) GetRedisDB() int                        { return c.RedisDB }
-func (c *Config) GetRedisTLSEnabled() bool               { return c.RedisTLSEnabled }
+func (c *Config) GetPostgresMigrationTimeoutSeconds() int {
+	return c.PostgresMigrationTimeoutSeconds
+}
+func (c *Config) GetRedisAddr() string     { return c.RedisAddr }
+func (c *Config) GetRedisPassword() string { return c.RedisPassword }
+func (c *Config) GetRedisDB() int          { return c.RedisDB }
+func (c *Config) GetRedisTLSEnabled() bool { return c.RedisTLSEnabled }
 func (c *Config) GetDistributedCoordinationRequired() bool {
 	return c.DistributedCoordinationRequired
 }
@@ -408,6 +414,7 @@ func Load() (Config, error) {
 		{"POSTGRES_MAX_OPEN_CONNS", 25, func(c *Config, value int) { c.PostgresMaxOpenConns = value }},
 		{"POSTGRES_MAX_IDLE_CONNS", 10, func(c *Config, value int) { c.PostgresMaxIdleConns = value }},
 		{"POSTGRES_CONN_MAX_LIFETIME_SECONDS", 1800, func(c *Config, value int) { c.PostgresConnMaxLifetimeSeconds = value }},
+		{"POSTGRES_MIGRATION_TIMEOUT_SECONDS", DefaultPostgresMigrationTimeoutSeconds, func(c *Config, value int) { c.PostgresMigrationTimeoutSeconds = value }},
 		{"HTTP_MAX_BODY_BYTES", 1048576, func(c *Config, value int) { c.HTTPMaxBodyBytes = value }},
 		{"AUTH_VERIFY_MAX_CONCURRENCY", 8, func(c *Config, value int) { c.AuthVerifyMaxConcurrency = value }},
 		{"RATE_LIMIT_PER_MINUTE", 100, func(c *Config, value int) { c.RateLimitPerMinute = value }},
@@ -547,6 +554,7 @@ func Load() (Config, error) {
 		{"POSTGRES_MAX_OPEN_CONNS", cfg.PostgresMaxOpenConns},
 		{"POSTGRES_MAX_IDLE_CONNS", cfg.PostgresMaxIdleConns},
 		{"POSTGRES_CONN_MAX_LIFETIME_SECONDS", cfg.PostgresConnMaxLifetimeSeconds},
+		{"POSTGRES_MIGRATION_TIMEOUT_SECONDS", cfg.PostgresMigrationTimeoutSeconds},
 		{"HTTP_MAX_BODY_BYTES", cfg.HTTPMaxBodyBytes},
 		{"AUTH_VERIFY_MAX_CONCURRENCY", cfg.AuthVerifyMaxConcurrency},
 		{"RATE_LIMIT_PER_MINUTE", cfg.RateLimitPerMinute},
@@ -636,6 +644,12 @@ func Load() (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "POSTGRES_MAX_IDLE_CONNS",
 			Message: fmt.Sprintf("must be less than or equal to POSTGRES_MAX_OPEN_CONNS, got %d > %d", cfg.PostgresMaxIdleConns, cfg.PostgresMaxOpenConns),
+		}
+	}
+	if cfg.PostgresMigrationTimeoutSeconds > MaxPostgresMigrationTimeoutSeconds {
+		return cfg, &ValidationError{
+			Field:   "POSTGRES_MIGRATION_TIMEOUT_SECONDS",
+			Message: fmt.Sprintf("must be less than or equal to %d, got %d", MaxPostgresMigrationTimeoutSeconds, cfg.PostgresMigrationTimeoutSeconds),
 		}
 	}
 
