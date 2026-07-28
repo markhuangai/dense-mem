@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -113,9 +114,40 @@ func TestCoreSchemaIndexes(t *testing.T) {
 		"idx_team_profiles_key_prefix_unique",
 		"idx_audit_log_team_timestamp",
 		"idx_audit_log_timestamp",
+		"placement_runs_team_expired_claim_idx",
 	} {
 		assert.True(t, indexExists(t, ctx, sqlDB, idxName), "index %s should exist", idxName)
 	}
+
+	conn, err := sqlDB.Conn(ctx)
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.ExecContext(ctx, `SET enable_seqscan = off`)
+	require.NoError(t, err)
+	rows, err := conn.QueryContext(ctx, `
+		EXPLAIN (COSTS OFF)
+		SELECT run.placement_run_id
+		FROM placement_runs AS run
+		WHERE run.team_id = '00000000-0000-0000-0000-000000000001'::uuid
+		  AND run.attempts < run.max_attempts
+		  AND run.status = 'processing'
+		  AND run.lease_until IS NOT NULL
+		  AND run.lease_until < now()
+		ORDER BY run.lease_until ASC, run.created_at ASC, run.placement_run_id ASC
+		LIMIT 1
+		FOR UPDATE SKIP LOCKED
+	`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var line string
+		require.NoError(t, rows.Scan(&line))
+		plan.WriteString(line)
+		plan.WriteByte('\n')
+	}
+	require.NoError(t, rows.Err())
+	assert.Contains(t, plan.String(), "placement_runs_team_expired_claim_idx")
 
 	var isUnique bool
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `

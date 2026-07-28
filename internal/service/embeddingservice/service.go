@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	defaultBatchSize      = 10
+	defaultBatchSize      = 64
+	maxBatchSize          = 256
 	defaultLease          = time.Minute
 	defaultFailureTimeout = 10 * time.Second
 )
@@ -60,8 +61,8 @@ func NewEmbeddingWorkerService(deps EmbeddingWorkerDependencies) EmbeddingWorker
 	if batchSize <= 0 {
 		batchSize = defaultBatchSize
 	}
-	if batchSize > 100 {
-		batchSize = 100
+	if batchSize > maxBatchSize {
+		batchSize = maxBatchSize
 	}
 	lease := deps.Lease
 	if lease <= 0 {

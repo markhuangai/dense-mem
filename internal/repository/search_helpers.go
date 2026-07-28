@@ -82,8 +82,8 @@ func normalizeClaimEmbeddingJobsInput(input ClaimEmbeddingJobsInput) ClaimEmbedd
 	if input.Limit <= 0 {
 		input.Limit = 10
 	}
-	if input.Limit > 100 {
-		input.Limit = 100
+	if input.Limit > 256 {
+		input.Limit = 256
 	}
 	if input.Lease <= 0 {
 		input.Lease = time.Minute

@@ -13,8 +13,16 @@ const (
 	DefaultHTTPAddr                        = ":" + DefaultHTTPPort
 	DefaultPostgresMigrationTimeoutSeconds = 1800
 	MaxPostgresMigrationTimeoutSeconds     = 86400
+	DefaultAIEmbeddingMaxConcurrency       = 8
+	DefaultEmbeddingWorkerCount            = 2
+	DefaultEmbeddingBatchSize              = 64
+	MaxEmbeddingBatchSize                  = 256
+	DefaultEmbeddingJobPollSeconds         = 1
 	DefaultEmbeddingJobMaxAttempts         = 20
 	MaxEmbeddingJobMaxAttempts             = 100
+	DefaultAIVerifierMaxConcurrency        = 5
+	DefaultMemoryPlacementWorkerCount      = 1
+	DefaultMemoryPlacementPollSeconds      = 5
 	DefaultConflictReviewTTLDays           = 7
 	DefaultConflictReviewStartTime         = "04:00"
 )
@@ -68,6 +76,10 @@ type aiVerifierTemperatureConfig interface {
 	GetAIVerifierDisableTemperature() bool
 }
 
+type aiEmbeddingConcurrencyConfig interface {
+	GetAIEmbeddingMaxConcurrency() int
+}
+
 // AIVerifierTemperatureDisabled returns true when a config provider exposes
 // the verifier temperature omission flag.
 func AIVerifierTemperatureDisabled(cfg ConfigProvider) bool {
@@ -76,6 +88,26 @@ func AIVerifierTemperatureDisabled(cfg ConfigProvider) bool {
 	}
 	temperatureConfig, ok := cfg.(aiVerifierTemperatureConfig)
 	return ok && temperatureConfig.GetAIVerifierDisableTemperature()
+}
+
+// AIEmbeddingMaxConcurrency returns the process-wide embedding request limit.
+func AIEmbeddingMaxConcurrency(cfg ConfigProvider) int {
+	if cfg == nil {
+		return DefaultAIEmbeddingMaxConcurrency
+	}
+	concurrencyConfig, ok := cfg.(aiEmbeddingConcurrencyConfig)
+	if !ok || concurrencyConfig.GetAIEmbeddingMaxConcurrency() <= 0 {
+		return DefaultAIEmbeddingMaxConcurrency
+	}
+	return concurrencyConfig.GetAIEmbeddingMaxConcurrency()
+}
+
+// AIVerifierMaxConcurrency returns the process-wide verifier request limit.
+func AIVerifierMaxConcurrency(cfg ConfigProvider) int {
+	if cfg == nil || cfg.GetAIVerifierMaxConcurrency() <= 0 {
+		return DefaultAIVerifierMaxConcurrency
+	}
+	return cfg.GetAIVerifierMaxConcurrency()
 }
 
 // Config holds all configuration for the application.
@@ -105,6 +137,10 @@ type Config struct {
 	AIEmbeddingModel                string
 	AIEmbeddingDimensions           int
 	AIEmbeddingTimeoutSeconds       int
+	AIEmbeddingMaxConcurrency       int
+	EmbeddingWorkerCount            int
+	EmbeddingBatchSize              int
+	EmbeddingJobPollSeconds         int
 	EmbeddingJobMaxAttempts         int
 	// Knowledge-pipeline knobs (AC-X3)
 	AIVerifierAPIURL             string
@@ -114,6 +150,8 @@ type Config struct {
 	AIVerifierDisableTemperature bool
 	AIVerifierTimeoutSeconds     int
 	AIVerifierMaxConcurrency     int
+	MemoryPlacementWorkerCount   int
+	MemoryPlacementPollSeconds   int
 	ClaimWriteRateLimit          int
 	ClaimReadRateLimit           int
 	RecallValidatedClaimWeight   float64
@@ -168,7 +206,31 @@ func (c *Config) GetAIAPIKey() string               { return c.AIAPIKey }
 func (c *Config) GetAIEmbeddingModel() string       { return c.AIEmbeddingModel }
 func (c *Config) GetAIEmbeddingDimensions() int     { return c.AIEmbeddingDimensions }
 func (c *Config) GetAIEmbeddingTimeoutSeconds() int { return c.AIEmbeddingTimeoutSeconds }
-func (c *Config) GetEmbeddingJobMaxAttempts() int   { return c.EmbeddingJobMaxAttempts }
+func (c *Config) GetAIEmbeddingMaxConcurrency() int {
+	if c.AIEmbeddingMaxConcurrency <= 0 {
+		return DefaultAIEmbeddingMaxConcurrency
+	}
+	return c.AIEmbeddingMaxConcurrency
+}
+func (c *Config) GetEmbeddingWorkerCount() int {
+	if c.EmbeddingWorkerCount <= 0 {
+		return DefaultEmbeddingWorkerCount
+	}
+	return c.EmbeddingWorkerCount
+}
+func (c *Config) GetEmbeddingBatchSize() int {
+	if c.EmbeddingBatchSize <= 0 {
+		return DefaultEmbeddingBatchSize
+	}
+	return c.EmbeddingBatchSize
+}
+func (c *Config) GetEmbeddingJobPollSeconds() int {
+	if c.EmbeddingJobPollSeconds <= 0 {
+		return DefaultEmbeddingJobPollSeconds
+	}
+	return c.EmbeddingJobPollSeconds
+}
+func (c *Config) GetEmbeddingJobMaxAttempts() int { return c.EmbeddingJobMaxAttempts }
 func (c *Config) IsEmbeddingConfigured() bool {
 	return c.AIAPIURL != "" && c.AIAPIKey != "" && c.AIEmbeddingModel != "" && c.AIEmbeddingDimensions > 0
 }
@@ -197,7 +259,19 @@ func (c *Config) GetAIVerifierTimeoutSeconds() int {
 	}
 	return 60
 }
-func (c *Config) GetAIVerifierMaxConcurrency() int       { return c.AIVerifierMaxConcurrency }
+func (c *Config) GetAIVerifierMaxConcurrency() int { return c.AIVerifierMaxConcurrency }
+func (c *Config) GetMemoryPlacementWorkerCount() int {
+	if c.MemoryPlacementWorkerCount <= 0 {
+		return DefaultMemoryPlacementWorkerCount
+	}
+	return c.MemoryPlacementWorkerCount
+}
+func (c *Config) GetMemoryPlacementPollSeconds() int {
+	if c.MemoryPlacementPollSeconds <= 0 {
+		return DefaultMemoryPlacementPollSeconds
+	}
+	return c.MemoryPlacementPollSeconds
+}
 func (c *Config) GetClaimWriteRateLimit() int            { return c.ClaimWriteRateLimit }
 func (c *Config) GetClaimReadRateLimit() int             { return c.ClaimReadRateLimit }
 func (c *Config) GetRecallValidatedClaimWeight() float64 { return c.RecallValidatedClaimWeight }
@@ -425,6 +499,10 @@ func Load() (Config, error) {
 		{"SSE_MAX_CONCURRENT_STREAMS", 10, func(c *Config, value int) { c.SSEMaxConcurrentStreams = value }},
 		{"AI_API_EMBEDDING_DIMENSIONS", 0, func(c *Config, value int) { c.AIEmbeddingDimensions = value }},
 		{"AI_API_EMBEDDING_TIMEOUT_SECONDS", 30, func(c *Config, value int) { c.AIEmbeddingTimeoutSeconds = value }},
+		{"AI_API_EMBEDDING_MAX_CONCURRENCY", DefaultAIEmbeddingMaxConcurrency, func(c *Config, value int) { c.AIEmbeddingMaxConcurrency = value }},
+		{"EMBEDDING_WORKER_COUNT", DefaultEmbeddingWorkerCount, func(c *Config, value int) { c.EmbeddingWorkerCount = value }},
+		{"EMBEDDING_BATCH_SIZE", DefaultEmbeddingBatchSize, func(c *Config, value int) { c.EmbeddingBatchSize = value }},
+		{"EMBEDDING_JOB_POLL_SECONDS", DefaultEmbeddingJobPollSeconds, func(c *Config, value int) { c.EmbeddingJobPollSeconds = value }},
 		{"EMBEDDING_JOB_MAX_ATTEMPTS", DefaultEmbeddingJobMaxAttempts, func(c *Config, value int) { c.EmbeddingJobMaxAttempts = value }},
 	}); err != nil {
 		return cfg, err
@@ -469,7 +547,9 @@ func Load() (Config, error) {
 
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
 		{"AI_VERIFIER_TIMEOUT_SECONDS", 60, func(c *Config, value int) { c.AIVerifierTimeoutSeconds = value }},
-		{"AI_VERIFIER_MAX_CONCURRENCY", 5, func(c *Config, value int) { c.AIVerifierMaxConcurrency = value }},
+		{"AI_VERIFIER_MAX_CONCURRENCY", DefaultAIVerifierMaxConcurrency, func(c *Config, value int) { c.AIVerifierMaxConcurrency = value }},
+		{"MEMORY_PLACEMENT_WORKER_COUNT", DefaultMemoryPlacementWorkerCount, func(c *Config, value int) { c.MemoryPlacementWorkerCount = value }},
+		{"MEMORY_PLACEMENT_POLL_SECONDS", DefaultMemoryPlacementPollSeconds, func(c *Config, value int) { c.MemoryPlacementPollSeconds = value }},
 		{"CLAIM_WRITE_RATE_LIMIT", 60, func(c *Config, value int) { c.ClaimWriteRateLimit = value }},
 		{"CLAIM_READ_RATE_LIMIT", 300, func(c *Config, value int) { c.ClaimReadRateLimit = value }},
 	}); err != nil {
@@ -561,9 +641,15 @@ func Load() (Config, error) {
 		{"SSE_HEARTBEAT_SECONDS", cfg.SSEHeartbeatSeconds},
 		{"SSE_MAX_DURATION_SECONDS", cfg.SSEMaxDurationSeconds},
 		{"SSE_MAX_CONCURRENT_STREAMS", cfg.SSEMaxConcurrentStreams},
+		{"AI_API_EMBEDDING_MAX_CONCURRENCY", cfg.AIEmbeddingMaxConcurrency},
+		{"EMBEDDING_WORKER_COUNT", cfg.EmbeddingWorkerCount},
+		{"EMBEDDING_BATCH_SIZE", cfg.EmbeddingBatchSize},
+		{"EMBEDDING_JOB_POLL_SECONDS", cfg.EmbeddingJobPollSeconds},
 		{"EMBEDDING_JOB_MAX_ATTEMPTS", cfg.EmbeddingJobMaxAttempts},
 		{"AI_VERIFIER_TIMEOUT_SECONDS", cfg.AIVerifierTimeoutSeconds},
 		{"AI_VERIFIER_MAX_CONCURRENCY", cfg.AIVerifierMaxConcurrency},
+		{"MEMORY_PLACEMENT_WORKER_COUNT", cfg.MemoryPlacementWorkerCount},
+		{"MEMORY_PLACEMENT_POLL_SECONDS", cfg.MemoryPlacementPollSeconds},
 		{"CLAIM_WRITE_RATE_LIMIT", cfg.ClaimWriteRateLimit},
 		{"CLAIM_READ_RATE_LIMIT", cfg.ClaimReadRateLimit},
 		{"PROMOTE_TX_TIMEOUT_SECONDS", cfg.PromoteTxTimeoutSeconds},
@@ -589,6 +675,24 @@ func Load() (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "EMBEDDING_JOB_MAX_ATTEMPTS",
 			Message: fmt.Sprintf("must be less than or equal to %d, got %d", MaxEmbeddingJobMaxAttempts, cfg.EmbeddingJobMaxAttempts),
+		}
+	}
+	if cfg.EmbeddingBatchSize > MaxEmbeddingBatchSize {
+		return cfg, &ValidationError{
+			Field:   "EMBEDDING_BATCH_SIZE",
+			Message: fmt.Sprintf("must be less than or equal to %d, got %d", MaxEmbeddingBatchSize, cfg.EmbeddingBatchSize),
+		}
+	}
+	if cfg.EmbeddingWorkerCount > cfg.AIEmbeddingMaxConcurrency {
+		return cfg, &ValidationError{
+			Field:   "EMBEDDING_WORKER_COUNT",
+			Message: fmt.Sprintf("must be less than or equal to AI_API_EMBEDDING_MAX_CONCURRENCY, got %d > %d", cfg.EmbeddingWorkerCount, cfg.AIEmbeddingMaxConcurrency),
+		}
+	}
+	if cfg.MemoryPlacementWorkerCount > cfg.AIVerifierMaxConcurrency {
+		return cfg, &ValidationError{
+			Field:   "MEMORY_PLACEMENT_WORKER_COUNT",
+			Message: fmt.Sprintf("must be less than or equal to AI_VERIFIER_MAX_CONCURRENCY, got %d > %d", cfg.MemoryPlacementWorkerCount, cfg.AIVerifierMaxConcurrency),
 		}
 	}
 	if cfg.ConflictReviewTTLDays > 30 {

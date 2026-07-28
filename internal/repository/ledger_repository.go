@@ -326,21 +326,41 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 	var run *PlacementRun
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
-			WITH next AS (
-				SELECT placement_run_id
+			WITH ready AS MATERIALIZED (
+				SELECT placement_run_id, available_at, created_at
 				FROM placement_runs AS run
 				WHERE run.team_id = ?::uuid
 				  AND run.attempts < run.max_attempts
-				  AND (
-					(status IN ('queued', 'guarded') AND available_at <= now())
-					OR (status = 'processing' AND lease_until IS NOT NULL AND lease_until < now())
-				  )
-				ORDER BY
-					CASE WHEN run.status IN ('queued', 'guarded') THEN 0 ELSE 1 END,
-					run.available_at ASC,
-					run.created_at ASC
+				  AND run.status IN ('queued', 'guarded')
+				  AND run.available_at <= now()
+				ORDER BY run.available_at ASC, run.created_at ASC, run.placement_run_id ASC
 				LIMIT 1
 				FOR UPDATE SKIP LOCKED
+			),
+			expired AS MATERIALIZED (
+				SELECT placement_run_id, available_at, created_at
+				FROM placement_runs AS run
+				WHERE run.team_id = ?::uuid
+				  AND run.attempts < run.max_attempts
+				  AND run.status = 'processing'
+				  AND run.lease_until IS NOT NULL
+				  AND run.lease_until < now()
+				  AND NOT EXISTS (SELECT 1 FROM ready)
+				ORDER BY run.lease_until ASC, run.created_at ASC, run.placement_run_id ASC
+				LIMIT 1
+				FOR UPDATE SKIP LOCKED
+			),
+			next AS (
+				SELECT placement_run_id
+				FROM (
+					SELECT placement_run_id, available_at, created_at, 0 AS priority
+					FROM ready
+					UNION ALL
+					SELECT placement_run_id, available_at, created_at, 1 AS priority
+					FROM expired
+				) AS candidates
+				ORDER BY priority ASC, available_at ASC, created_at ASC, placement_run_id ASC
+				LIMIT 1
 			)
 			UPDATE placement_runs AS run
 			SET status = 'processing',
@@ -355,7 +375,7 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 			RETURNING run.team_id::text, run.placement_run_id::text, run.ingest_id::text,
 			          run.owner_profile_id::text, run.status, run.attempts, run.max_attempts,
 			          run.lease_until
-		`, teamID, int(lease.Seconds()), workerID, teamID).Rows()
+		`, teamID, teamID, int(lease.Seconds()), workerID, teamID).Rows()
 		if err != nil {
 			return err
 		}
@@ -475,7 +495,7 @@ func ensureActiveTeamForMutation(ctx context.Context, tx *gorm.DB, teamID string
 		WHERE id = ?::uuid
 		  AND status = 'active'
 		  AND deleted_at IS NULL
-		FOR UPDATE
+		FOR SHARE
 	`, teamID).Row()
 	var id string
 	if err := row.Scan(&id); err != nil {

@@ -14,6 +14,81 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+const embeddingJobCandidateCTEsSQL = `
+queued_candidates AS MATERIALIZED (
+	SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
+	FROM embedding_jobs AS job
+	WHERE job.team_id = ?::uuid
+	  AND job.status = 'queued'
+	  AND job.available_at <= now()
+	  AND job.attempts < job.max_attempts
+	ORDER BY job.available_at ASC, job.created_at ASC, job.embedding_job_id ASC
+	LIMIT ?
+	FOR UPDATE SKIP LOCKED
+),
+expired_candidates AS MATERIALIZED (
+	SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
+	FROM embedding_jobs AS job
+	WHERE job.team_id = ?::uuid
+	  AND job.status = 'processing'
+	  AND job.lease_until <= clock_timestamp()
+	  AND job.attempts < job.max_attempts
+	ORDER BY job.lease_until ASC, job.created_at ASC, job.embedding_job_id ASC
+	LIMIT GREATEST(? - (SELECT count(*) FROM queued_candidates), 0)
+	FOR UPDATE SKIP LOCKED
+),
+candidates AS (
+	SELECT * FROM queued_candidates
+	UNION ALL
+	SELECT * FROM expired_candidates
+)`
+
+const claimEmbeddingJobsSQL = `
+WITH ` + embeddingJobCandidateCTEsSQL + `,
+claimed AS (
+	SELECT candidate.team_id, candidate.embedding_job_id
+	FROM candidates AS candidate
+	JOIN embedding_jobs AS job
+	  ON job.team_id = candidate.team_id
+	 AND job.embedding_job_id = candidate.embedding_job_id
+	JOIN search_documents AS document
+	  ON document.team_id = job.team_id
+	 AND document.search_document_id = job.search_document_id
+	 AND document.source_version = job.source_version
+	 AND document.projection_format_version = job.projection_format_version
+	 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+	 AND document.document_version = job.document_version
+	 AND document.embedding_contract_id = job.embedding_contract_id
+	 AND document.embedding_dimensions = job.embedding_dimensions
+	ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.embedding_job_id ASC
+	LIMIT ?
+),
+updated AS (
+	UPDATE embedding_jobs AS job
+	SET status = 'processing',
+	    attempts = attempts + 1,
+	    worker_id = ?,
+	    lease_until = now() + make_interval(secs => ?::integer),
+	    updated_at = now(),
+	    error = ''
+	FROM claimed
+	WHERE job.team_id = claimed.team_id
+	  AND job.embedding_job_id = claimed.embedding_job_id
+	RETURNING job.team_id::text, job.embedding_job_id::text,
+	          job.search_document_id::text, job.owner_profile_id::text,
+	          job.source_kind, job.source_id::text, job.source_version,
+	          job.projection_format_version, COALESCE(job.projection_generation_id::text, ''),
+	          job.document_version, job.embedding_contract_id::text,
+	          job.embedding_dimensions, job.status, job.attempts,
+	          job.lease_until
+)
+SELECT updated.*, document.document_text
+FROM updated
+JOIN search_documents AS document
+  ON document.team_id = updated.team_id::uuid
+ AND document.search_document_id = updated.search_document_id::uuid
+ORDER BY updated.lease_until ASC, updated.embedding_job_id ASC`
+
 func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 	ctx context.Context,
 	input ClaimEmbeddingJobsInput,
@@ -24,61 +99,26 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 	}
 	jobs := []EmbeddingJob{}
 	err := r.withActiveTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		if err := markStaleEmbeddingJobs(ctx, tx, input.TeamID); err != nil {
+		cleanupLimit := input.Limit * 2
+		if cleanupLimit < 64 {
+			cleanupLimit = 64
+		}
+		if err := markStaleClaimableEmbeddingJobs(ctx, tx, input.TeamID, cleanupLimit); err != nil {
 			return err
 		}
-		if err := failExpiredMaxAttemptEmbeddingJobs(ctx, tx, input.TeamID); err != nil {
+		if err := failExpiredMaxAttemptEmbeddingJobs(ctx, tx, input.TeamID, cleanupLimit); err != nil {
 			return err
 		}
-		rows, err := tx.WithContext(ctx).Raw(`
-			WITH claimed AS (
-				SELECT job.team_id, job.embedding_job_id
-				FROM embedding_jobs AS job
-				JOIN search_documents AS document
-				  ON document.team_id = job.team_id
-				 AND document.search_document_id = job.search_document_id
-				 AND document.source_version = job.source_version
-				 AND document.projection_format_version = job.projection_format_version
-				 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
-				 AND document.document_version = job.document_version
-				 AND document.embedding_contract_id = job.embedding_contract_id
-				 AND document.embedding_dimensions = job.embedding_dimensions
-				WHERE job.team_id = ?::uuid
-				  AND attempts < max_attempts
-				  AND (
-				      (job.status = 'queued' AND job.available_at <= now())
-				      OR (job.status = 'processing' AND job.lease_until <= clock_timestamp())
-				  )
-				ORDER BY job.available_at ASC, job.created_at ASC, job.embedding_job_id ASC
-				LIMIT ?
-				FOR UPDATE SKIP LOCKED
-			),
-			updated AS (
-				UPDATE embedding_jobs AS job
-				SET status = 'processing',
-				    attempts = attempts + 1,
-				    worker_id = ?,
-				    lease_until = now() + make_interval(secs => ?::integer),
-				    updated_at = now(),
-				    error = ''
-				FROM claimed
-				WHERE job.team_id = claimed.team_id
-				  AND job.embedding_job_id = claimed.embedding_job_id
-				RETURNING job.team_id::text, job.embedding_job_id::text,
-					          job.search_document_id::text, job.owner_profile_id::text,
-					          job.source_kind, job.source_id::text, job.source_version,
-					          job.projection_format_version, COALESCE(job.projection_generation_id::text, ''),
-					          job.document_version, job.embedding_contract_id::text,
-				          job.embedding_dimensions, job.status, job.attempts,
-				          job.lease_until
-			)
-			SELECT updated.*, document.document_text
-			FROM updated
-			JOIN search_documents AS document
-			  ON document.team_id = updated.team_id::uuid
-			 AND document.search_document_id = updated.search_document_id::uuid
-			ORDER BY updated.lease_until ASC, updated.embedding_job_id ASC
-		`, input.TeamID, input.Limit, input.WorkerID, int(input.Lease.Seconds())).Rows()
+		rows, err := tx.WithContext(ctx).Raw(
+			claimEmbeddingJobsSQL,
+			input.TeamID,
+			input.Limit,
+			input.TeamID,
+			input.Limit,
+			input.Limit,
+			input.WorkerID,
+			int(input.Lease.Seconds()),
+		).Rows()
 		if err != nil {
 			return err
 		}
@@ -475,7 +515,7 @@ func embeddingJobFinalizationTeamActive(ctx context.Context, tx *gorm.DB, teamID
 		SELECT status = 'active' AND deleted_at IS NULL
 		FROM teams
 		WHERE id = ?::uuid
-		FOR UPDATE
+		FOR SHARE
 	`, teamID).Row().Scan(&active)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -579,6 +619,66 @@ func refreshRelationshipProjectionGeneration(ctx context.Context, tx *gorm.DB, t
 	`, teamID, projectionGenerationID).Error
 }
 
+func markStaleClaimableEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string, limit int) error {
+	return tx.WithContext(ctx).Exec(`
+		WITH queued_candidates AS MATERIALIZED (
+			SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
+			FROM embedding_jobs AS job
+			WHERE job.team_id = ?::uuid
+			  AND job.status = 'queued'
+			  AND job.available_at <= now()
+			ORDER BY job.available_at ASC, job.created_at ASC, job.embedding_job_id ASC
+			LIMIT ?
+		),
+		expired_candidates AS MATERIALIZED (
+			SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
+			FROM embedding_jobs AS job
+			WHERE job.team_id = ?::uuid
+			  AND job.status = 'processing'
+			  AND job.lease_until <= clock_timestamp()
+			ORDER BY job.lease_until ASC, job.created_at ASC, job.embedding_job_id ASC
+			LIMIT ?
+		),
+		candidates AS (
+			SELECT * FROM queued_candidates
+			UNION ALL
+			SELECT * FROM expired_candidates
+		),
+		stale AS (
+			SELECT job.team_id, job.embedding_job_id
+			FROM candidates AS candidate
+			JOIN embedding_jobs AS job
+			  ON job.team_id = candidate.team_id
+			 AND job.embedding_job_id = candidate.embedding_job_id
+			WHERE NOT EXISTS (
+			    SELECT 1
+			    FROM search_documents AS document
+			    WHERE document.team_id = job.team_id
+			      AND document.search_document_id = job.search_document_id
+			      AND document.source_version = job.source_version
+			      AND document.projection_format_version = job.projection_format_version
+			      AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+			      AND document.document_version = job.document_version
+			      AND document.embedding_contract_id = job.embedding_contract_id
+			      AND document.embedding_dimensions = job.embedding_dimensions
+			)
+			ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.embedding_job_id ASC
+			LIMIT ?
+			FOR UPDATE OF job SKIP LOCKED
+		)
+		UPDATE embedding_jobs AS job
+		SET status = 'stale',
+		    error = 'source or document version changed before embedding claim',
+		    completed_at = now(),
+		    lease_until = NULL,
+		    worker_id = '',
+		    updated_at = now()
+		FROM stale
+		WHERE job.team_id = stale.team_id
+		  AND job.embedding_job_id = stale.embedding_job_id
+	`, teamID, limit, teamID, limit, limit).Error
+}
+
 func markStaleEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) error {
 	return tx.WithContext(ctx).Exec(`
 		UPDATE embedding_jobs AS job
@@ -594,51 +694,65 @@ func markStaleEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) err
 		      SELECT 1
 		      FROM search_documents AS document
 		      WHERE document.team_id = job.team_id
-			        AND document.search_document_id = job.search_document_id
-			        AND document.source_version = job.source_version
-			        AND document.projection_format_version = job.projection_format_version
-			        AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
-			        AND document.document_version = job.document_version
+		        AND document.search_document_id = job.search_document_id
+		        AND document.source_version = job.source_version
+		        AND document.projection_format_version = job.projection_format_version
+		        AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+		        AND document.document_version = job.document_version
 		        AND document.embedding_contract_id = job.embedding_contract_id
 		        AND document.embedding_dimensions = job.embedding_dimensions
 		  )
 	`, teamID).Error
 }
 
-func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) error {
-	if err := tx.WithContext(ctx).Exec(`
-		UPDATE embedding_jobs AS job
-		SET status = 'failed',
-		    error = ?,
-		    completed_at = now(),
-		    lease_until = NULL,
-		    worker_id = '',
-		    updated_at = now()
-		WHERE job.team_id = ?::uuid
-		  AND job.status = 'processing'
-		  AND job.lease_until <= clock_timestamp()
-		  AND job.attempts >= job.max_attempts
-	`, embeddingJobAttemptsExhaustedMessage, teamID).Error; err != nil {
-		return err
-	}
+func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string, limit int) error {
 	return tx.WithContext(ctx).Exec(`
+		WITH exhausted AS MATERIALIZED (
+			SELECT job.team_id, job.embedding_job_id
+			FROM embedding_jobs AS job
+			WHERE job.team_id = ?::uuid
+			  AND job.status = 'processing'
+			  AND job.lease_until <= clock_timestamp()
+			  AND job.attempts >= job.max_attempts
+			ORDER BY job.lease_until ASC, job.embedding_job_id ASC
+			LIMIT ?
+			FOR UPDATE SKIP LOCKED
+		),
+		failed AS (
+			UPDATE embedding_jobs AS job
+			SET status = 'failed',
+			    error = ?,
+			    completed_at = now(),
+			    lease_until = NULL,
+			    worker_id = '',
+			    updated_at = now()
+			FROM exhausted
+			WHERE job.team_id = exhausted.team_id
+			  AND job.embedding_job_id = exhausted.embedding_job_id
+			RETURNING job.team_id, job.search_document_id, job.source_version,
+			          job.projection_format_version, job.projection_generation_id,
+			          job.document_version, job.embedding_contract_id,
+			          job.embedding_dimensions
+		)
 		UPDATE search_documents AS document
 		SET search_state = 'failed',
 		    embedding_error = ?,
 		    updated_at = now()
-		FROM embedding_jobs AS job
-		WHERE job.team_id = ?::uuid
-		  AND job.status = 'failed'
-		  AND job.error = ?
-		  AND document.team_id = job.team_id
-			  AND document.search_document_id = job.search_document_id
-			  AND document.source_version = job.source_version
-			  AND document.projection_format_version = job.projection_format_version
-			  AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
-			  AND document.document_version = job.document_version
-		  AND document.embedding_contract_id = job.embedding_contract_id
-		  AND document.embedding_dimensions = job.embedding_dimensions
-	`, embeddingJobAttemptsExhaustedMessage, teamID, embeddingJobAttemptsExhaustedMessage).Error
+		FROM failed
+		WHERE document.team_id = failed.team_id
+		  AND document.search_document_id = failed.search_document_id
+		  AND document.source_version = failed.source_version
+		  AND document.projection_format_version = failed.projection_format_version
+		  AND document.projection_generation_id IS NOT DISTINCT FROM failed.projection_generation_id
+		  AND document.document_version = failed.document_version
+		  AND document.embedding_contract_id = failed.embedding_contract_id
+		  AND document.embedding_dimensions = failed.embedding_dimensions
+	`,
+		teamID,
+		limit,
+		embeddingJobAttemptsExhaustedMessage,
+		embeddingJobAttemptsExhaustedMessage,
+	).Error
 }
 
 func embeddingContractHasActiveSearchGeneration(ctx context.Context, tx *gorm.DB, contractID string, dimensions int) (bool, error) {

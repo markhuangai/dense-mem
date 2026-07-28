@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -221,6 +222,56 @@ func TestActiveTeamMutationGuardSerializesWithTeamDelete(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "lock timeout")
+	closeRelease()
+	require.NoError(t, <-done)
+}
+
+func TestActiveTeamMutationGuardsAllowConcurrentTransactions(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "team-concurrent-mutation-guards")
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	closeRelease := func() {
+		releaseOnce.Do(func() {
+			close(release)
+		})
+	}
+	t.Cleanup(closeRelease)
+	locked := make(chan error, 1)
+	done := make(chan error, 1)
+
+	go func() {
+		done <- rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+			err := ensureActiveTeamForMutation(ctx, tx, teamID)
+			locked <- err
+			if err != nil {
+				return err
+			}
+			<-release
+			return nil
+		})
+	}()
+	require.NoError(t, <-locked)
+
+	err := rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		if err := tx.Exec(`SET LOCAL lock_timeout = '100ms'`).Error; err != nil {
+			return err
+		}
+		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
+			return err
+		}
+		active, err := embeddingJobFinalizationTeamActive(ctx, tx, teamID)
+		if err != nil {
+			return err
+		}
+		if !active {
+			return errors.New("active team reported inactive")
+		}
+		return nil
+	})
+	require.NoError(t, err)
 	closeRelease()
 	require.NoError(t, <-done)
 }

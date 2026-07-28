@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -63,7 +64,9 @@ func Open(ctx context.Context, cfg ConfigProvider) (*gorm.DB, error) {
 		return nil, fmt.Errorf("postgres DSN is empty")
 	}
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: newGORMLogger(os.Stdout),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open postgres connection: %w", err)
 	}

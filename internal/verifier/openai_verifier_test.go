@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -782,4 +784,76 @@ func TestOpenAIVerifier_CrossProfileIsolation(t *testing.T) {
 		"profile B result must not leak profile A data")
 	assert.NotEqual(t, respA.Verdict, respB.Verdict,
 		"profiles must produce independent verdicts")
+}
+
+func TestOpenAIVerifierSharesConcurrencyGateAcrossOperations(t *testing.T) {
+	var active atomic.Int64
+	var maximum atomic.Int64
+	started := make(chan struct{}, 3)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for {
+			observed := maximum.Load()
+			if current <= observed || maximum.CompareAndSwap(observed, current) {
+				break
+			}
+		}
+		started <- struct{}{}
+		<-release
+		verifierSuccessHandler("entailed", 0.9, "supported")(w, r)
+	}))
+	defer srv.Close()
+
+	cfg := newTestVerifierConfig(srv.URL, "key", "model")
+	cfg.AIVerifierMaxConcurrency = 2
+	v := NewOpenAIVerifier(cfg, srv.Client())
+
+	errs := make(chan error, 3)
+	var calls sync.WaitGroup
+	calls.Add(3)
+	go func() {
+		defer calls.Done()
+		_, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
+		errs <- err
+	}()
+	for range 2 {
+		go func() {
+			defer calls.Done()
+			_, err := v.openAIStructuredChatJSON(
+				context.Background(),
+				"model",
+				"test",
+				map[string]any{"type": "object"},
+				"system",
+				map[string]string{"claim": "claim"},
+			)
+			errs <- err
+		}()
+	}
+
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for requests to enter the verifier")
+		}
+	}
+	select {
+	case <-started:
+		t.Fatal("third request entered before a verifier slot was released")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	calls.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	assert.Equal(t, int64(2), maximum.Load())
 }
