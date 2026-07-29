@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,16 +57,18 @@ func (s *controlRecallFeedbackReaderStub) GetRecallFeedbackEvent(_ context.Conte
 }
 
 type controlDreamServiceStub struct {
-	status     *dreamservice.StatusResult
-	runs       []*dreamservice.RunCycleResult
-	dreams     []*domain.Dream
-	dream      *domain.Dream
-	nextCursor string
-	listOpts   dreamservice.ListOptions
-	runsLimit  int
-	profileID  string
-	getErr     error
-	listErr    error
+	status       *dreamservice.StatusResult
+	runs         []*dreamservice.RunCycleResult
+	dreams       []*domain.Dream
+	dream        *domain.Dream
+	nextCursor   string
+	listOpts     dreamservice.ListOptions
+	runsLimit    int
+	profileID    string
+	updatedCount int
+	refreshActor dreamservice.ControlActor
+	getErr       error
+	listErr      error
 }
 
 func (s *controlDreamServiceStub) RunCycle(context.Context, string, dreamservice.RunCycleRequest) (*dreamservice.RunCycleResult, error) {
@@ -114,6 +117,12 @@ func (s *controlDreamServiceStub) Status(_ context.Context, profileID string) (*
 
 func (s *controlDreamServiceStub) EffectiveConfig(context.Context, string) (dreamservice.EffectiveConfig, error) {
 	return dreamservice.EffectiveConfig{}, nil
+}
+
+func (s *controlDreamServiceStub) Refresh(_ context.Context, teamID string, actor dreamservice.ControlActor) (int, error) {
+	s.profileID = teamID
+	s.refreshActor = actor
+	return s.updatedCount, nil
 }
 
 func TestControlPortalObservabilityRoutes(t *testing.T) {
@@ -169,6 +178,7 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		},
+		updatedCount: 2,
 	}
 	profiles := &controlProfileSvc{profiles: []*domain.Profile{{ID: teamID, Name: "Default"}}}
 	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
@@ -233,16 +243,37 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.JSONEq(t, `{"data":[]}`, rec.Body.String())
 
-	rec = do("/control/api/teams/" + teamID.String() + "/dreams?limit=4&status=proposed&cursor=next&sort=last_evaluated_at&direction=asc")
+	rec = do("/control/api/teams/" + teamID.String() + "/dreams?limit=4&status=proposed&cursor=next&sort=created_at&direction=asc")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "A control dream appears")
 	assert.Contains(t, rec.Body.String(), `"next_cursor":"after-control-dream-1"`)
 	assert.Equal(t, teamID.String(), dreams.profileID)
-	assert.Equal(t, dreamservice.ListOptions{Limit: 4, Status: "proposed", Cursor: "next", Sort: "last_evaluated_at", Direction: "asc"}, dreams.listOpts)
+	assert.Equal(t, dreamservice.ListOptions{Limit: 4, Status: "proposed", Cursor: "next", Sort: "created_at", Direction: "asc"}, dreams.listOpts)
 
 	rec = do("/control/api/teams/" + teamID.String() + "/dreams/dream-1")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"dream_id":"dream-1"`)
+
+	req := httptest.NewRequest(http.MethodPost, "/control/api/teams/"+teamID.String()+"/dreams/refresh", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("X-Correlation-ID", "corr-control-dream")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.JSONEq(t, `{"data":{"updated_count":2}}`, rec.Body.String())
+	assert.Equal(t, teamID.String(), dreams.profileID)
+	assert.Equal(t, dreamservice.ControlActor{
+		Source:        "control_portal:authorization-bearer",
+		ClientIP:      "192.0.2.1",
+		CorrelationID: "corr-control-dream",
+	}, dreams.refreshActor)
+
+	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+teamID.String()+"/dreams/refresh", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("X-Correlation-ID", strings.Repeat("x", 256))
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 }
 
 func TestControlPortalObservabilityValidation(t *testing.T) {
@@ -320,6 +351,8 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	_, err = controlDreamListOptions(c)
 	require.ErrorContains(t, err, "direction must be asc or desc")
 }
+
+var _ dreamservice.ControlService = (*controlDreamServiceStub)(nil)
 
 func TestControlPortalObservabilityUnavailableAndNotFound(t *testing.T) {
 	e := echo.New()

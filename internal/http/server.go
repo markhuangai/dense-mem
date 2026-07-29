@@ -2,10 +2,12 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -14,6 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	httperr "github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 // HealthCheck is a named function interface for dependency health checks.
@@ -104,6 +107,10 @@ func NewServer(cfg config.Config, logger observability.LogProvider, health Healt
 			if requestID := c.Response().Header().Get(echo.HeaderXRequestID); requestID != "" {
 				attrs = append(attrs, observability.String("request_id", requestID))
 			}
+			if isAnonymousUserSessionProbe(c, v) {
+				logger.Info("http_request", attrs...)
+				return nil
+			}
 			if v.Error != nil {
 				logger.Error("http_request", v.Error, attrs...)
 				return nil
@@ -121,6 +128,26 @@ func NewServer(cfg config.Config, logger observability.LogProvider, health Healt
 	registerPublicRoutes(e, health)
 
 	return e
+}
+
+func isAnonymousUserSessionProbe(c echo.Context, v middleware.RequestLoggerValues) bool {
+	if c == nil || c.Request() == nil ||
+		v.Method != http.MethodGet ||
+		requestLogURI(c) != "/ui/api/session" ||
+		v.Status != http.StatusUnauthorized ||
+		strings.TrimSpace(c.Request().Header.Get(echo.HeaderAuthorization)) != "" {
+		return false
+	}
+	var apiErr *httperr.APIError
+	if !errors.As(v.Error, &apiErr) || apiErr.Code != httperr.AUTH_MISSING {
+		return false
+	}
+	for _, cookie := range c.Request().Cookies() {
+		if cookie.Name == service.SSOSessionCookieName && strings.TrimSpace(cookie.Value) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func requestLogURI(c echo.Context) string {

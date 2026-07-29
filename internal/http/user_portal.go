@@ -334,7 +334,7 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 	ctx := c.Request().Context()
 	principal := httpmw.GetPrincipal(ctx)
 	if principal == nil {
-		return userPortalSessionResponse{}, httperr.New(httperr.FORBIDDEN, "authentication required")
+		return userPortalSessionResponse{}, httperr.New(httperr.AUTH_MISSING, "authentication required")
 	}
 	if principal.AuthMethod == "sso_session" {
 		return h.currentSSOSession(c)

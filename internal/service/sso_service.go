@@ -508,16 +508,24 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		s.debugSSOLoginFailure("sso login identity upsert failed", err, *provider, claims)
 		return nil, err
 	}
-
 	activeByProfileID := make(map[uuid.UUID]struct{}, len(entitlements))
 	for _, entitlement := range entitlements {
 		name := ssoProfileName(claims.Email, claims.DisplayName, identity.ID)
 		profile, err := s.repo.UpsertTeamProfileForMapping(ctx, *identity, entitlement, name)
 		if err != nil {
 			s.debugSSOLoginFailure("sso login team profile upsert failed", err, *provider, claims, ssoUUIDLogAttr("team_id", entitlement.TeamID), ssoHashLogAttr("group_id", entitlement.GroupID), observability.String("role", entitlement.Role))
+			if errors.Is(err, repository.ErrTeamInactive) {
+				continue
+			}
 			return nil, err
 		}
 		activeByProfileID[profile.ID] = struct{}{}
+	}
+	if len(activeByProfileID) == 0 {
+		if cacheErr := s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, provider.ID, claims.Subject, claims.Groups, "denied", ""); cacheErr != nil {
+			s.debugSSOLoginFailure("sso login denied entitlement cache store failed", cacheErr, *provider, claims, observability.Int("entitlement_count", len(entitlements)))
+		}
+		return nil, NewSSOSetupError(SSOSetupEntitlementEmpty, ErrSSOAccessDenied)
 	}
 	cacheTTL := ssoActiveEntitlementCacheTTL(runtime, groupSource)
 	cacheMessage := ssoEntitlementCacheMessage(groupSource)
@@ -525,7 +533,6 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		s.debugSSOLoginFailure("sso login entitlement cache store failed", err, *provider, claims)
 		return nil, err
 	}
-
 	teams, err := s.currentEntitledTeams(ctx, identity.ID, activeByProfileID)
 	if err != nil {
 		s.debugSSOLoginFailure("sso login current entitled teams failed", err, *provider, claims, ssoUUIDLogAttr("identity_id", identity.ID))

@@ -233,7 +233,7 @@ func (r *SSORepositoryImpl) CreateMapping(ctx context.Context, mapping *domain.S
 	mapping.CreatedAt = now
 	mapping.UpdatedAt = now
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, mapping.TeamID.String()); err != nil {
+		if err := setActiveSSOTeamMutationScope(ctx, tx, mapping.TeamID.String()); err != nil {
 			return err
 		}
 		return tx.Exec(`
@@ -265,10 +265,10 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 			}
 			return err
 		}
-		if err := ensureActiveTeamForMutation(ctx, tx, currentTeamID); err != nil {
+		if err := setActiveSSOTeamMutationScope(ctx, tx, currentTeamID); err != nil {
 			return err
 		}
-		if err := ensureActiveTeamForMutation(ctx, tx, mapping.TeamID.String()); err != nil {
+		if err := setActiveSSOTeamMutationScope(ctx, tx, mapping.TeamID.String()); err != nil {
 			return err
 		}
 		res := tx.Exec(`
@@ -318,6 +318,7 @@ func (r *SSORepositoryImpl) ListMappingsForGroups(ctx context.Context, providerI
 			JOIN teams t ON t.id = m.team_id
 			WHERE m.provider_id = $1
 				AND m.enabled = true
+				AND t.status = 'active'
 				AND t.deleted_at IS NULL
 				AND m.group_id = ANY($2)
 			ORDER BY t.name ASC, m.group_name ASC, m.group_id ASC
@@ -406,7 +407,7 @@ func (r *SSORepositoryImpl) UpsertTeamProfileForMapping(ctx context.Context, ide
 	now := time.Now().UTC()
 	var key *domain.APIKey
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, mapping.TeamID.String()); err != nil {
+		if err := setActiveSSOTeamMutationScope(ctx, tx, mapping.TeamID.String()); err != nil {
 			return err
 		}
 		rows, err := tx.Raw(`
@@ -459,6 +460,14 @@ func (r *SSORepositoryImpl) UpsertTeamProfileForMapping(ctx context.Context, ide
 	return key, nil
 }
 
+func setActiveSSOTeamMutationScope(ctx context.Context, tx *gorm.DB, teamID string) error {
+	// Row locks on teams apply mutation RLS, so system SSO transactions also need the target team scope.
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_team_id', ?, true)", teamID).Error; err != nil {
+		return fmt.Errorf("failed to set sso team mutation context: %w", err)
+	}
+	return ensureActiveTeamForMutation(ctx, tx, teamID)
+}
+
 func (r *SSORepositoryImpl) ListTeamProfilesForIdentity(ctx context.Context, identityID uuid.UUID) ([]*domain.SSOTeamProfile, error) {
 	profiles := make([]*domain.SSOTeamProfile, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
@@ -474,6 +483,7 @@ func (r *SSORepositoryImpl) ListTeamProfilesForIdentity(ctx context.Context, ide
 			WHERE k.sso_identity_id = $1
 				AND k.auth_source = 'sso'
 				AND k.revoked_at IS NULL
+				AND t.status = 'active'
 				AND t.deleted_at IS NULL
 			ORDER BY t.name ASC, k.id ASC
 		`, identityID).Rows()
@@ -510,6 +520,7 @@ func (r *SSORepositoryImpl) GetSSOProfileByID(ctx context.Context, id uuid.UUID)
 			WHERE k.id = $1
 				AND k.revoked_at IS NULL
 				AND k.auth_source = 'sso'
+				AND t.status = 'active'
 				AND t.deleted_at IS NULL
 		`, id).Rows()
 		if err != nil {

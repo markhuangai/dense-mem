@@ -21,6 +21,43 @@ var (
 	ErrDreamExactRelationshipExists = errors.New("dream exact relationship already exists")
 )
 
+const hypothesisStaleSourcePredicateSQL = `EXISTS (
+	SELECT 1
+	FROM jsonb_each_text(h.source_versions) AS source(source_id, source_version)
+	LEFT JOIN relationship_records r
+	  ON r.team_id = h.team_id
+	 AND r.relationship_id = CASE
+	     WHEN source.source_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+	     THEN source.source_id::uuid
+	     ELSE NULL
+	 END
+	WHERE r.relationship_id IS NULL
+	   OR r.version::text <> source.source_version
+	   OR NOT (
+	     (r.status = 'active' AND r.support_count > 0)
+	     OR (
+	       r.status = 'pending_evidence'
+	       AND EXISTS (
+	         SELECT 1
+	         FROM relationship_observations o
+	         JOIN verification_events v
+	           ON v.team_id = o.team_id
+	          AND v.observation_id = o.observation_id
+	         WHERE o.team_id = r.team_id
+	           AND o.relationship_id = r.relationship_id
+	           AND v.evidence_verdict = 'insufficient'
+	       )
+	     )
+	   )
+	   OR EXISTS (
+	     SELECT 1
+	     FROM relationship_cross_references cr
+	     WHERE cr.team_id = r.team_id
+	       AND cr.target_relationship_id = r.relationship_id
+	       AND cr.kind = 'challenges'
+	   )
+)`
+
 type DreamRepository interface {
 	ClaimDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error)
 	CompleteDreamCycle(ctx context.Context, input DreamCycleCompleteInput) error
@@ -144,10 +181,12 @@ type HypothesisRecord struct {
 }
 
 type ListHypothesesInput struct {
-	TeamID string
-	Status string
-	Limit  int
-	Cursor string
+	TeamID    string
+	Status    string
+	Limit     int
+	Cursor    string
+	Sort      string
+	Direction string
 }
 
 type GetHypothesisInput struct {
@@ -472,12 +511,20 @@ func (r *SemanticRepositoryImpl) ListHypotheses(
 	limit := input.Limit + 1
 	records := []HypothesisRecord{}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(hypothesisSelectSQL(`
+		query := hypothesisSelectSQL(`
 			WHERE team_id = ?::uuid
 			  AND (? = '' OR status = ?)
-			ORDER BY updated_at DESC, hypothesis_id
+			ORDER BY ` + hypothesisListOrder(input.Sort, input.Direction) + `, hypothesis_id
 			LIMIT ? OFFSET ?
-		`), input.TeamID, input.Status, input.Status, limit, offset).Rows()
+		`)
+		rows, err := tx.WithContext(ctx).Raw(
+			query,
+			input.TeamID,
+			input.Status,
+			input.Status,
+			limit,
+			offset,
+		).Rows()
 		if err != nil {
 			return err
 		}
@@ -586,42 +633,7 @@ func (r *SemanticRepositoryImpl) RefreshHypothesisStaleness(
 			    WHERE h.team_id = ?::uuid
 			      AND h.owner_profile_id = ?::uuid
 			      AND h.status IN ('proposed', 'reinforced')
-			      AND EXISTS (
-			        SELECT 1
-			        FROM jsonb_each_text(h.source_versions) AS source(source_id, source_version)
-			        LEFT JOIN relationship_records r
-			          ON r.team_id = h.team_id
-			         AND r.relationship_id = CASE
-			             WHEN source.source_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-			             THEN source.source_id::uuid
-			             ELSE NULL
-			         END
-			        WHERE r.relationship_id IS NULL
-			           OR r.version::text <> source.source_version
-			           OR NOT (
-			             (r.status = 'active' AND r.support_count > 0)
-			             OR (
-			               r.status = 'pending_evidence'
-			               AND EXISTS (
-			                 SELECT 1
-			                 FROM relationship_observations o
-			                 JOIN verification_events v
-			                   ON v.team_id = o.team_id
-			                  AND v.observation_id = o.observation_id
-			                 WHERE o.team_id = r.team_id
-			                   AND o.relationship_id = r.relationship_id
-			                   AND v.evidence_verdict = 'insufficient'
-			               )
-			             )
-			           )
-			           OR EXISTS (
-			             SELECT 1
-			             FROM relationship_cross_references cr
-			             WHERE cr.team_id = r.team_id
-			               AND cr.target_relationship_id = r.relationship_id
-			               AND cr.kind = 'challenges'
-			           )
-			      )
+			      AND `+hypothesisStaleSourcePredicateSQL+`
 			    ORDER BY h.updated_at, h.hypothesis_id
 			    LIMIT ?
 			)

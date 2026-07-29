@@ -12,6 +12,8 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
@@ -19,6 +21,10 @@ import (
 type controlDreamListResponse struct {
 	Items      []*domain.Dream `json:"items"`
 	NextCursor string          `json:"next_cursor,omitempty"`
+}
+
+type controlDreamRefreshResponse struct {
+	UpdatedCount int `json:"updated_count"`
 }
 
 func (h *controlPortalHandler) listOperationLogs(c echo.Context) error {
@@ -164,6 +170,29 @@ func (h *controlPortalHandler) getTeamDream(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": dream})
 }
 
+func (h *controlPortalHandler) refreshTeamDreams(c echo.Context) error {
+	if h.dreams == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "dream service unavailable")
+	}
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+	if err != nil {
+		return err
+	}
+	correlationID := httpmw.GetCorrelationID(c.Request().Context())
+	if len(correlationID) > 255 {
+		return httperr.New(httperr.VALIDATION_ERROR, "correlation ID must be at most 255 characters")
+	}
+	updated, err := h.dreams.Refresh(c.Request().Context(), teamID.String(), dreamservice.ControlActor{
+		Source:        controlPortalActorFromContext(c.Request().Context()),
+		ClientIP:      c.RealIP(),
+		CorrelationID: correlationID,
+	})
+	if err != nil {
+		return err
+	}
+	return response.SuccessOK(c, controlDreamRefreshResponse{UpdatedCount: updated})
+}
+
 func controlOperationLogsFilter(c echo.Context) (domain.OperationLogFilter, error) {
 	limit, offset := controlPagination(c)
 	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
@@ -275,9 +304,9 @@ func controlDreamListOptions(c echo.Context) (dreamservice.ListOptions, error) {
 	}
 	sort := strings.TrimSpace(c.QueryParam("sort"))
 	switch sort {
-	case "", dreamservice.DreamSortUpdatedAt, dreamservice.DreamSortCreatedAt, dreamservice.DreamSortLastEvaluatedAt:
+	case "", dreamservice.DreamSortUpdatedAt, dreamservice.DreamSortCreatedAt:
 	default:
-		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "sort must be updated_at, created_at, or last_evaluated_at")
+		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "sort must be updated_at or created_at")
 	}
 	direction := strings.TrimSpace(c.QueryParam("direction"))
 	switch direction {

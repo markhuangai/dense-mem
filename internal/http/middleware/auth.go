@@ -109,6 +109,7 @@ type SSOSessionAuthenticator interface {
 type AuthOptions struct {
 	SSOEntitlementValidator SSOEntitlementValidator
 	SSOSessionAuthenticator SSOSessionAuthenticator
+	AllowMissingCredentials bool
 }
 
 func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc service.AuditService, securitySvc SecurityBanService, opts AuthOptions) echo.MiddlewareFunc {
@@ -122,12 +123,18 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 				if opts.SSOSessionAuthenticator != nil {
 					if err := authenticateSSOSession(c, opts.SSOSessionAuthenticator); err != nil {
 						if err == errNoSSOSession {
+							if opts.AllowMissingCredentials {
+								return next(c)
+							}
 							logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_MISSING", "missing authorization header")
 							return httperr.New(httperr.AUTH_MISSING, "missing authorization header")
 						}
 						logAuthFailure(c, auditSvc, securitySvc, nil, "SSO_AUTH_INVALID", "sso session authentication failed")
 						return err
 					}
+					return next(c)
+				}
+				if opts.AllowMissingCredentials {
 					return next(c)
 				}
 				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_MISSING", "missing authorization header")
