@@ -8,7 +8,7 @@ assessment.
 This page owns the current `dense-mem.memory-pack.v2.3` artifact and workflow.
 The artifact version is independent from the public runtime contract. Dense-Mem
 V2.4 continues to read/write this exact pack format; a compatible import sends
-each newly staged evidence placement item through the one-call assessor.
+each newly staged evidence placement item through the integrated assessor.
 Selecting a server-supplied Entity or predicate mapping reuses persisted
 placement state and makes no extra assessor call.
 Tool discovery and transport schemas are in
@@ -312,7 +312,7 @@ audit, exact provider metadata, and non-exportable evidence. Use
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
 | Source IDs collide | destination treats source `entity_id` as canonical | artifact-local refs and mandatory destination resolution |
-| Trusted import bypasses truth policy | a signed pack copies active status without destination assessment | signature affects authority only; normal one-call assessment/lifecycle remains |
+| Trusted import bypasses truth policy | a signed pack copies active status without destination assessment | signature affects authority only; normal integrated assessment/lifecycle remains |
 | SSRF through URL import | server fetches cloud metadata/private services | HTTPS policy, IP/redirect validation, size/time limits, and expected hash |
 | Evidence disclosure | pack includes source content caller may not export | per-fragment authorization and explicit omission/failure report |
 | Rollback erases later work | imported Entity gained new Relationships after import | dry-run dependency graph and block unsafe automatic rollback |

@@ -171,38 +171,53 @@ use a separate OpenAI-compatible chat endpoint.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  URL{"AI_ASSESSOR_API_URL set?"}
+  URL{"AI_VERIFIER_API_URL set?"}
   URL -- No --> Shared["Use AI_API_URL and AI_API_KEY"]
-  URL -- Yes --> Key{"AI_ASSESSOR_API_KEY set?"}
+  URL -- Yes --> Key{"AI_VERIFIER_API_KEY set?"}
   Key -- No --> Invalid["Fail startup"]
   Key -- Yes --> Separate["Use separate endpoint and key"]
 ```
 
 | Variable | Target default | Meaning |
 | --- | --- | --- |
-| `AI_ASSESSOR_API_URL` | empty | share `AI_API_URL` |
-| `AI_ASSESSOR_API_KEY` | empty | share key only when URL is shared |
-| `AI_ASSESSOR_MODEL` | none | integrated structure/support assessment model |
-| `AI_ASSESSOR_DISABLE_TEMPERATURE` | `false` | omit unsupported parameter |
-| `AI_ASSESSOR_TIMEOUT_SECONDS` | `60` | one request timeout |
-| `AI_ASSESSOR_MAX_CONCURRENCY` | `5` | process-wide assessor gate |
-| `AI_ASSESSOR_COOLDOWN_POLL_SECONDS` | `60` | one-probe interval after 429 |
-| `AI_ASSESSOR_MAX_ENTITY_RESULTS` | `100` | hard per-request extracted-Entity cap |
-| `AI_ASSESSOR_MAX_RELATIONSHIP_RESULTS` | `200` | hard per-request Relationship cap |
-| `AI_ASSESSOR_MAX_INPUT_BYTES` | `131072` | complete serialized request cap |
-| `AI_ASSESSOR_MAX_OUTPUT_BYTES` | `131072` | response cap |
-| `AI_ASSESSOR_MAX_CANDIDATE_CONTEXT_BYTES` | `32768` | combined Entity/predicate context inside the input cap |
-| `AI_ASSESSOR_MAX_ENTITY_CANDIDATES_PER_SURFACE` | `20` | exact current-name matches for one evidence span |
-| `AI_ASSESSOR_MAX_PREDICATE_OPTIONS` | `100` | structured active definitions, with exact evidence key/alias matches first |
+| `AI_VERIFIER_API_URL` | empty | share `AI_API_URL` |
+| `AI_VERIFIER_API_KEY` | empty | share key only when URL is shared |
+| `AI_VERIFIER_MODEL` | none | integrated structure/support assessor model |
+| `AI_VERIFIER_DISABLE_TEMPERATURE` | `false` | omit unsupported parameter |
+| `AI_VERIFIER_TIMEOUT_SECONDS` | `60` | timeout for each provider turn |
+| `AI_VERIFIER_MAX_CONCURRENCY` | `5` | process-wide assessor gate |
+| `AI_VERIFIER_MAX_INPUT_TOKENS` | `200000` | complete message-history budget, including the server prompt and any correction history |
+| `AI_VERIFIER_MAX_OUTPUT_TOKENS` | `65536` | complete-response acceptance budget; it is not sent as a provider `max_tokens` parameter |
+| `AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS` | `50000` | Entity/predicate context budget inside the complete request budget |
+| `AI_VERIFIER_TOKENIZER` | `o200k_base` | tokenizer for all assessor budget checks; supported overrides are validated at startup |
 | `MEMORY_AUTO_WRITE_CONFIDENCE_THRESHOLD` | `0.7` | global bootstrap gate for positive Relationship support |
-| `MEMORY_SEMANTIC_REVIEW_TTL_DAYS` | `7` | support-confidence, identity, predicate, scope, and time review expiry |
 | `RELATIONSHIP_MATCH_MAX_CANDIDATES` | `100` | post-assessment server-side identity/conflict comparison cap |
 
-There is no response-regeneration or partial-response retry setting. One
-placement claim may make at most one assessor request. A later claim may make
-one new request only when no valid fingerprint-matched assessment was persisted.
-If an item cannot fit the one-request contract, placement fails with a size
-error; the application does not split semantic dependencies or splice outputs.
+Entity candidates remain capped at 20 per exact evidence surface, structured
+predicate options at 100, extracted Entity results at 100, and Relationship
+results at 200. Those are closed-contract limits, not environment knobs. The
+adapter also has a fixed 16 MiB response transport cap as a safety boundary;
+it does not replace token accounting.
+
+`AI_ASSESSOR_*` and the obsolete `AI_VERIFIER_MAX_*_BYTES` variables are
+rejected at startup. `AI_REVIEWER_MODEL` is tolerated only as an ignored legacy
+setting with a warning; new deployments must not set it.
+
+The correction budget is fixed, not configurable. One placement claim reserves
+one assessor conversation with at most five provider turns: the initial response
+plus four complete-response corrections. For malformed assistant content, the
+server resends the full in-memory history to the same provider/model, including
+the invalid assistant response and exact validation errors as the next user
+message. It never patches or splices output.
+
+A provider/transport/protocol failure ends that transient history, releases the
+reservation with durable backoff, and consumes one
+`MEMORY_PLACEMENT_MAX_ATTEMPTS` claim. The next claim starts a fresh conversation
+only when no valid fingerprint-matched assessment was persisted. HTTP 429 uses
+the longer of the normal placement backoff and a valid `Retry-After`, capped at
+five minutes. Repeated malformed content is terminal after the fifth turn and
+does not start another conversation. If the accumulated history cannot fit the
+input-token budget, placement fails visibly without another provider turn.
 
 The closed contract and validation rules belong in
 [Memory Write Pipeline](Write-Pipeline#strict-assessor-contract).
@@ -517,7 +532,7 @@ core Conflict worker.
 | Incompatible ANN generation | a 3,072-dimensional contract attempts unsupported full-precision HNSW | capability resolver, persisted search-index generation, and controlled build gate |
 | Replica read is stale | recall after correction is routed to a lagging standby | primary-only freshness paths plus explicit lag/version gate |
 | Service scale-out exhausts PostgreSQL | each service instance opens 25 connections independently | deployment-wide pool formula and vector-query semaphore |
-| Inline assessor retry returns | operator enables an old setting that makes several requests or splices missing results inside one claim | reject the unsupported setting, expose one-call-per-claim behavior, and contract-test config parsing |
+| Unbounded assessor correction returns | operator enables an old setting that expands turns or splices missing results | reject the unsupported setting, keep the fixed five-turn complete-replacement loop, and contract-test config parsing |
 | Redis fallback breaks replicas | outage switches multi-instance limits to local state | required distributed flag and no silent fallback |
 | ANN tuning harms quality | low HNSW breadth improves latency but loses tenant results | exact-baseline Recall@K gate and versioned atomic ranking contract/search generation |
 | Worker overload | placement and embedding workers exceed provider/database capacity | startup range checks, saturation metrics, and load testing |

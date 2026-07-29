@@ -153,7 +153,7 @@ Do not:
 ```
 
 Spans use Unicode code-point offsets, start inclusive and end exclusive. The
-one-call assessor may split/reject/normalize hints, resolves Entities and
+integrated assessor may split/reject/normalize hints, resolves Entities and
 registered predicates, and evaluates Relationship support.
 
 ## Read The Terminology
@@ -254,13 +254,13 @@ current session does not exactly identify a supplied option, ask the user the
 returned question rather than guessing.
 
 `accept`, `correct`, and `confirm_new_entity` require exact new evidence. That
-evidence becomes a new placement item and receives one assessor call; a bare
-acceptance or client-supplied confidence cannot grant support. Every semantic
-review includes stable ID/version, kind, state, bounded question/options/
-guidance, and `expires_at`. After seven days an unanswered task expires. Expiry
-never activates knowledge or directly creates a Hypothesis: a structurally
-complete Relationship stays pending, while unresolved structure remains
-Evidence plus Observation only.
+evidence becomes a new placement item and receives one bounded assessor
+conversation; a bare acceptance or client-supplied confidence cannot grant
+support. Every semantic review includes stable ID/version, kind, state, bounded
+question/options/guidance, and `expires_at`. After seven days an unanswered task
+expires. Expiry never activates knowledge or directly creates a Hypothesis: a
+structurally complete Relationship stays pending, while unresolved structure
+remains Evidence plus Observation only.
 
 No resolution action edits an edge directly. See
 [Conflicts And Corrections](Conflicts-And-Corrections).

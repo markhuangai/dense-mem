@@ -453,11 +453,13 @@ atomically with the source or support decision.
 
 ## Assessment And Verification Events
 
-One assessor request returns separate `entity_results` and
+One bounded assessor conversation returns separate `entity_results` and
 `relationship_results`. Entity extraction/resolution, predicate selection,
-Relationship extraction, and evidence support judgment share that request. The
-closed response schema, persisted-response rule, and no-coercion rule are
-defined in
+Relationship extraction, and evidence support judgment share that conversation.
+A malformed HTTP 200 response may be replaced in the same history for at most
+five provider turns; provider failures instead use the durable placement retry
+budget with fresh history. The closed response schema, persisted-response rule,
+and no-coercion rule are defined in
 [Memory Write Pipeline](Write-Pipeline#strict-assessor-contract).
 
 For each observation, the assessor returns bounded semantic judgments:
@@ -503,10 +505,10 @@ Raw confidence, the exact threshold, and provider rationale are internal audit
 data. Public placement returns only the bounded `gate_result`, a bounded
 server-authored reason, and `assessment_policy_version`.
 
-Transport and rate-limit retries remain operational telemetry. An invalid
-response does not trigger an inline second model call or create a material
-event. A later placement claim may call the assessor once only when no valid
-assessment was persisted for that claim.
+Transport, rate-limit, HTTP-status, and provider-protocol failures remain
+operational telemetry and consume durable placement attempts. A malformed HTTP
+200 response triggers a same-history correction turn but creates no material
+event. Five malformed turns exhaust that conversation with zero partial commit.
 
 One placement claim appends at most one material `VerificationEvent` per
 observation, derived from the first valid persisted assessment. Worker restart,
@@ -952,8 +954,10 @@ The refactor is incomplete until tests prove:
     current interval
 29. every suppressed current position remains reconstructable through trace and
     historical `valid_at`/`known_at` recall
-30. one placement claim makes at most one assessor call, and restart, lease
-    reclaim, or commit retry reuses the first valid persisted assessment
+30. one placement attempt opens one assessor conversation with at most five
+    same-history malformed-response turns; provider failures use durable
+    attempts, while restart, lease reclaim, or commit retry reuses the first
+    valid persisted assessment
 31. only `entailed` Relationship support at or above the commit-time effective
     team threshold may grant support; the gate cannot override any structural,
     temporal, security, or conflict hold

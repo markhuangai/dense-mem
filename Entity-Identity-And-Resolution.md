@@ -240,8 +240,8 @@ flowchart TD
   Hint --> Union["Deduplicate Entity IDs by exact span"]
   Name --> Union
   Union --> Context["Attach kind and bounded identity context"]
-  Context --> Limit["At most 20 per surface<br/>inside 32 KiB candidate budget"]
-  Limit --> Assess["One integrated assessor request"]
+  Context --> Limit["At most 20 per surface<br/>inside 50,000-token candidate budget"]
+  Limit --> Assess["One integrated assessor conversation"]
 ```
 
 | Signal | Useful for | Cannot do by itself |
@@ -259,11 +259,12 @@ exist, the group is marked truncated and cannot be auto-resolved. An empty
 candidate list does not automatically authorize `create`. A retrieval error is
 not an empty result and fails placement visibly.
 
-## One Assessor Request
+## One Assessor Conversation
 
-One integrated assessor request extracts evidence-local mentions/Relationships
-and returns separate `entity_results` and `relationship_results`. The exact input,
-closed output schema, retry behavior, and no-coercion rule belong only in
+One integrated assessor conversation extracts evidence-local
+mentions/Relationships and returns separate `entity_results` and
+`relationship_results`. The exact input, closed output schema, retry behavior,
+and no-coercion rule belong only in
 [Memory Write Pipeline](Write-Pipeline#strict-assessor-contract).
 
 For identity, the server enforces:
@@ -277,9 +278,12 @@ For identity, the server enforces:
 - every dependent Relationship remains non-active until its endpoints and
   predicate resolve
 
-Invalid or incomplete output fails the current placement claim. A later claim
-may make one new request only when no valid assessment was persisted. No subset
-commits and application code does not repair provider JSON.
+Malformed or incomplete assistant content is returned in the same transient
+history with exact validation errors for at most five total turns. A fifth
+malformed response fails the current placement claim terminally. Provider
+failures instead use durable placement retry and a later claim starts one fresh
+conversation only when no valid assessment was persisted. No subset commits and
+application code does not repair provider JSON.
 
 ## Build Relationships After Resolution
 

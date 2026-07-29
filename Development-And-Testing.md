@@ -173,7 +173,7 @@ the relevant uniqueness constraints.
 | JSON contract | closed schemas, conditionals, bounds, exact enums, bounded security signals, and no removed/unknown fields |
 | PostgreSQL integration | migrations, RLS, constraints, atomic source activation, append-only security/support history, queues/leases, partial indexes, vector operators |
 | repository/service integration | actual transactions, concurrent create recheck, idempotency, current-state/transition consistency |
-| provider-adapter protocol | malformed JSON, extra/missing/duplicate results, wrong IDs/spans, model security signals, timeouts, 429, one request per claim, and persisted-result reuse |
+| provider-adapter protocol | malformed JSON, full-history correction messages, five-turn exhaustion, extra/missing/duplicate results, wrong IDs/spans, model security signals, provider protocol failures, timeouts, 429/`Retry-After`, durable claim retry, and persisted-result reuse |
 | recall evaluation | exact/full-text/vector/adjacency relevance, RRF/priority profiles, deterministic reranking, exact-vs-HNSW Recall@K, temporal/tenant/profile-conflict slices |
 | MCP contract | `tools/list` visibility, `tools/call` schema/scope enforcement, current contract semantics, and safe errors |
 | browser UAT | ambiguity, trace, correction, forget, quarantine release, Hypothesis styling, role/scope behavior |
@@ -248,11 +248,19 @@ cross-array unresolved endpoint
 valid complete response
 ```
 
-Assert that every invalid case releases the claim with bounded diagnostics,
-makes no inline regeneration call, and causes zero semantic commit. A later
-claim may make one new complete request only if no valid assessment was
-persisted. A valid non-empty security-signal array quarantines the complete item
-and creates no `VerificationEvent` or other semantic subset.
+Assert that every malformed-content case appends the invalid assistant response
+and exact validation errors to the same in-memory history, requests a complete
+replacement, and causes zero semantic commit until a valid whole response
+exists. Assert five total turns at most, terminal failure after the fifth
+malformed response, and token-budget failure before an oversized next turn.
+
+Separately assert that every HTTP status, timeout, transport error, invalid
+provider envelope, missing choice, or empty assistant message makes no
+same-history correction. It must release the reservation transactionally,
+persist only bounded failure class/status, and requeue through placement
+`max_attempts`; 429 honors bounded `Retry-After`. A valid non-empty
+security-signal array quarantines the complete item and creates no
+`VerificationEvent` or other semantic subset.
 
 Persist a valid response, then force process exit, lease loss, pause/resume, and
 semantic transaction failure before commit. Each resumed path must load the
@@ -276,7 +284,7 @@ instant before, exactly at, and one instant after `expires_at`.
 - selecting a supplied Entity/predicate option reuses the persisted assessment
   and makes zero assessor calls
 - accept/correct with exact new evidence creates one new placement claim and
-  makes at most one assessor call
+  one bounded assessor conversation
 - security quarantine and cross-profile Conflict cases are unaffected
 
 ### Injection boundary
@@ -406,8 +414,8 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 
 - domain term has one canonical owner in the wiki
 - no active pending Relationship or Hypothesis path
-- assessor response remains closed and atomic; one claim never makes a second
-  request
+- assessor response remains closed and atomic; malformed correction stays in
+  one history for at most five turns, while provider failures use durable retry
 - first valid assessment is persisted and reused before semantic policy/commit
 - positive-support confidence gates only entailed Relationships; it cannot
   override identity, predicate, scope, time, security, or conflict holds
@@ -431,8 +439,8 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 | --- | --- | --- |
 | Package cleanup becomes a big-bang rewrite | contributors rename all services before one vertical path works | small changes, adapters at boundaries, and deployable test gates |
 | Unit mocks hide storage bugs | mocked repository passes while RLS or unique identity fails | real PostgreSQL/`pgvector` integration is required |
-| Assessor accommodation returns | adapter accepts old/alternate field names to keep tests green | one committed schema, negative fixtures, and no local coercion or inline regeneration |
-| Restart breaks the one-call promise | a valid response is lost before semantic commit and the next worker calls again | append-once assessment row, stable claim key, and crash/lease/transaction integration fixtures |
+| Assessor accommodation returns | adapter accepts old/alternate field names to keep tests green | one committed schema, negative fixtures, same-history complete regeneration, and no local coercion |
+| Restart breaks assessment reuse | a valid response is lost before semantic commit and the next worker starts another conversation | append-once assessment row, stable claim key, and crash/lease/transaction integration fixtures |
 | Seven-day tests become slow or flaky | tests use wall-clock sleeps or race the expiry scheduler | injected clock with exact boundary cases and two-worker idempotency checks |
 | V2.4 migration triggers unnecessary vectors | a broad version bump rewrites search documents and queues embeddings | populated #129 fixture, before/after search hashes/job counts, and a hard zero-provider-call assertion |
 | ANN benchmark is misleading | global unfiltered test passes while small tenants lose results | tenant-filtered exact baseline under representative skew/concurrency |
@@ -447,8 +455,8 @@ The implementation is release-ready only when:
 
 1. every target domain/storage/API acceptance invariant passes
 2. PostgreSQL and `pgvector` integration tests run in CI
-3. strict assessor negative fixtures prove zero partial commits, no inline
-   regeneration, and one request per claim
+3. strict assessor fixtures prove zero partial commits, exact same-history
+   correction with five-turn exhaustion, and separate durable provider retry
 4. exact-vs-ANN recall and concurrent load meet release gates
 5. server, Compose, configuration, readiness, documentation, and dependencies
    contain no secondary durable knowledge-store path

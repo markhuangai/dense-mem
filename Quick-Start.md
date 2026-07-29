@@ -60,7 +60,7 @@ gate. Follow
 [Relationship projection upgrade](Operations-Runbook#relationship-projection-upgrade).
 
 Only after that prerequisite is complete, apply the
-[V2.4 one-call placement upgrade](Operations-Runbook#v24-one-call-placement-upgrade).
+[V2.4 integrated-assessor placement upgrade](Operations-Runbook#v24-integrated-assessor-placement-upgrade).
 The V2.4 migration adds placement/review state but does not rescore legacy
 knowledge, change search projections, enqueue embedding jobs, or re-embed data.
 Do not run mixed-version API or placement workers in either cutover.
@@ -76,7 +76,7 @@ Complete [Required Startup Settings](Configuration#required-startup-settings):
 - non-template PostgreSQL credentials
 - embedding provider, model, dimensions, document/normalization contract
 - pgvector distance and compatible exact/ANN search-index strategy
-- one-call assessor model, prompt, and closed contract
+- integrated-assessor model, prompt, and closed contract
 - control authentication/encryption secrets
 - Redis only when the chosen topology requires it
 

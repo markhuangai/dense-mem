@@ -110,7 +110,7 @@ Ask to correct a prior preference and provide the new user statement as
 evidence. The safe behavior is:
 
 1. preserve prior evidence/history
-2. re-enter the one-call assessment and deterministic policy
+2. re-enter the integrated assessment and deterministic policy
 3. commit the durable decision
 4. update PostgreSQL SemanticEdge/current rows atomically
 5. rebuild the versioned vector asynchronously

@@ -25,11 +25,15 @@ flowchart TD
   Guard -- quarantine --> StageQ["3. Stage evidence<br/>as quarantined"]
   Guard -- pass or guarded --> Stage["3. Stage evidence<br/>and queue placement"]
   Stage --> Context["4. Prefetch bounded Entity<br/>and predicate context"]
-  Context --> Assess["5. One integrated assessor request"]
-  Assess --> Contract{"6. Whole response valid?"}
-  Contract -- No --> Retry["Fail this claim visibly;<br/>no inline retry"]
-  Retry --> Later["Later claim only when no<br/>valid assessment persisted"]
+  Context --> Assess["5. Integrated assessor conversation"]
+  Assess --> Provider{"Provider turn succeeded?"}
+  Provider -- No --> Retry["Release claim with<br/>durable backoff"]
+  Retry --> Later["Later claim starts a<br/>fresh conversation"]
   Later --> Context
+  Provider -- Yes --> Contract{"6. Whole response valid?"}
+  Contract -- No --> Correct{"Correction turn remains<br/>and history fits?"}
+  Correct -- Yes --> Assess
+  Correct -- No --> Fail["Fail placement visibly;<br/>commit no semantic subset"]
   Contract -- Yes --> Signal{"Valid assessor security signal?"}
   Signal -- Yes --> Q["Quarantine staged evidence;<br/>commit no semantic subset"]
   Signal -- No --> Persist["Persist normalized assessment"]
@@ -39,7 +43,7 @@ flowchart TD
   Commit --> Review["Expose committed review when required"]
 ```
 
-The single assessor request extracts structure, selects only server-supplied
+The integrated assessor conversation extracts structure, selects only server-supplied
 Entity/predicate candidates, and evaluates each Relationship observation
 against submitted evidence. The application validates and persists the closed
 response, reloads the current team write threshold, derives comparisons with
@@ -90,13 +94,20 @@ sequenceDiagram
   W->>PG: Claim queued placement with lease
   W->>PG: Load immutable evidence and proposal
   W->>PG: Prefetch exact-span Entity candidates and structured predicates
-  W->>A: One immutable assessment request
+  W->>A: Initial immutable assessment request
   A-->>W: security_signals, entity_results, and relationship_results
   W->>W: Validate entire response and cross-references
+  loop At most four malformed-response corrections
+    W->>A: Full history plus invalid assistant output and exact validation errors
+    A-->>W: Complete replacement response
+    W->>W: Revalidate the entire replacement
+  end
   alt Assessor security signal
     W->>PG: Quarantine item, commit no semantic subset
-  else Invalid response or provider failure
-    W->>PG: Release claim with bounded error and backoff
+  else Fifth malformed response or input-history overflow
+    W->>PG: Fail placement; commit no semantic subset
+  else Provider, transport, or response-envelope failure
+    W->>PG: Release conversation with bounded error and backoff
   else Valid normalized assessment
     W->>PG: Persist assessment idempotently
     W->>PG: Reload current team confidence threshold
@@ -107,17 +118,18 @@ sequenceDiagram
     PG-->>W: Authoritative placement result
     E->>PG: Build version-matched vectors asynchronously
   end
-  opt Later claim after failure or lease reclaim
-    W->>PG: Reuse persisted valid assessment or make one new request
+  opt Later claim after provider failure or lease reclaim
+    W->>PG: Reuse persisted valid assessment or start one fresh conversation
   end
 ```
 
 There is no separate extraction, Entity-resolution, predicate-resolution, or
 Relationship-verification call. They are separate result arrays in one
 assessment response so the server can validate their dependencies as one unit.
-One placement claim may make at most one assessor request. A valid normalized
-response is persisted before semantic policy/commit and is reused after restart,
-lease reclaim, or transaction retry.
+One placement claim reserves one assessor conversation with at most five
+provider turns: an initial response and four complete-response corrections.
+A valid normalized response is persisted before semantic policy/commit and is
+reused after restart, lease reclaim, or transaction retry.
 
 Before any model call and again before semantic commit, the worker verifies
 that a keyed fragment still belongs to its source's current revision. A
@@ -319,9 +331,9 @@ current_cardinality
 
 Exact key/alias matches rank first, followed by evidence-term relevance.
 At most `100` definitions are included when they fit. Combined Entity and
-predicate context is capped at `32768` serialized bytes inside the complete
-`131072`-byte assessor request. Candidate retrieval failure fails placement;
-truncation is explicit and never interpreted as a complete allowlist.
+predicate context is capped at `50000` tokens inside the complete
+`200000`-token conversation-input budget. Candidate retrieval failure fails
+placement; truncation is explicit and never interpreted as a complete allowlist.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -330,18 +342,18 @@ flowchart TD
   Input --> Phrases["Generate bounded evidence phrases"]
   Phrases --> Names["Exact current canonical/alias lookup"]
   Input --> Predicates["Rank active structured predicates"]
-  Known --> Budget["Apply per-surface and byte budgets"]
+  Known --> Budget["Apply per-surface and token budgets"]
   Names --> Budget
   Predicates --> Budget
   Budget --> Context["Freeze assessor context and truncation flags"]
 ```
 
-## Stage 5: One Integrated Assessment
+## Stage 5: One Integrated Assessment Conversation
 
 The assessor receives verbatim evidence, server evidence IDs, optional client
 proposal hints, allowed Entity/Value rules, exact-span Entity candidate groups,
-structured predicate definitions, request IDs, and byte/item limits. In one
-closed-schema response it:
+structured predicate definitions, request IDs, and token/item limits. In each
+complete closed-schema response it:
 
 - extracts evidence-grounded Entity mentions and atomic Relationship
   observations
@@ -361,7 +373,7 @@ stored knowledge afterward.
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
   Evidence["Evidence and proposal hints"] --> Freeze["Frozen candidate context,<br/>limits and request ID"]
-  Freeze --> Assessor["One assessor request"]
+  Freeze --> Assessor["One bounded assessor conversation"]
   Assessor --> Structure["Entity and Relationship extraction"]
   Assessor --> Judgment["Candidate selections,<br/>support/time verdicts and confidence"]
   Assessor --> Security["Bounded security signals"]
@@ -369,7 +381,7 @@ flowchart LR
 
 ## Strict Assessor Contract
 
-One request produces the complete extracted Entity and Relationship result
+Each provider turn produces the complete extracted Entity and Relationship result
 arrays. Predicate resolution and evidence verification are part of each
 `relationship_results` item; there is no second extraction output or
 `predicate_results` array.
@@ -430,7 +442,7 @@ arrays. Predicate resolution and evidence verification are part of each
       "current_cardinality": "many"
     }
   ],
-  "candidate_context_bytes": 824,
+  "candidate_context_tokens": 824,
   "candidate_context_truncated": false
 }
 ```
@@ -511,6 +523,53 @@ database mutations. `entity_results` and `relationship_results` are normalized
 extraction/assessment results, not durable records. The assessor may only
 extract exact submitted spans, choose supplied candidates, and judge whether
 submitted evidence supports the extracted Relationship and temporal bounds.
+
+### Malformed-response correction example
+
+The initial HTTP request contains two messages: the fixed system prompt and the
+complete semantic request above as the user message. Assume the provider returns
+this complete but invalid assistant object:
+
+```json
+{
+  "request_id": "wrong_request",
+  "security_signals": [],
+  "entity_results": [],
+  "relationship_results": []
+}
+```
+
+Dense-Mem does not start a new request with only the original evidence. It
+validates the object, keeps the transcript only in memory, and sends the next
+HTTP request with all four messages:
+
+```json
+[
+  {
+    "role": "system",
+    "content": "<the fixed integrated-assessor prompt>"
+  },
+  {
+    "role": "user",
+    "content": "<the complete semantic request shown above>"
+  },
+  {
+    "role": "assistant",
+    "content": "{\"request_id\":\"wrong_request\",\"security_signals\":[],\"entity_results\":[],\"relationship_results\":[]}"
+  },
+  {
+    "role": "user",
+    "content": "{\"validation_errors\":[{\"field\":\"request_id\",\"message\":\"expected \\\"assess_01J...\\\"\"}],\"instruction\":\"Return one complete replacement JSON object matching the required schema. Do not return a patch or explanation.\"}"
+  }
+]
+```
+
+The next assistant message must be a complete replacement such as the full
+required response above. If it is still malformed, Dense-Mem appends that
+assistant message and another validation user message to the same history.
+There are at most five provider turns total. The history is never persisted,
+logged, audited, or sent to another provider. A provider/transport/protocol
+error ends the conversation and uses durable placement retry instead.
 
 ## Stage 6: Validate And Persist Assessment
 
@@ -884,7 +943,7 @@ validation:
     create evidence-backed time; any `recorded_fallback` is server policy.
 11. `scope_status=resolved` requires an evidence-supported bounded `scope_key`;
     `absent` or `needs_review` contains null.
-12. All arrays, strings, rationales, candidate context, and total bytes remain
+12. All arrays, strings, rationales, candidate context, and total tokens remain
     within server limits.
 13. Cross-array dependency checks prove every would-be Relationship endpoint
     and predicate resolve or the observation remains non-active.
@@ -894,7 +953,9 @@ validation:
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  Response["Assessor response"] --> JSON{"Valid JSON?"}
+  Response["Assessor response"] --> ProviderFailure{"Provider/transport/protocol failure?"}
+  ProviderFailure -- Yes --> Release["Release conversation with<br/>bounded error and backoff"]
+  ProviderFailure -- No --> JSON{"Valid JSON?"}
   JSON -- No --> Error["Create bounded validation report"]
   JSON -- Yes --> Schema{"Closed JSON Schema valid?"}
   Schema -- No --> Error
@@ -903,21 +964,34 @@ flowchart TD
   Coverage -- Yes --> Signals{"security_signals empty?"}
   Signals -- No --> Quarantine["Quarantine evidence;<br/>commit no semantic subset"]
   Signals -- Yes --> Persist["Persist normalized assessment<br/>with contract fingerprint"]
-  Error --> Release["Record bounded error and<br/>release this claim with backoff"]
+  Error --> Turns{"Correction turn remains<br/>and history fits?"}
+  Turns -- Yes --> Correct["Append invalid assistant output<br/>and exact validation user message"]
+  Correct --> Response
+  Turns -- No --> Fail["Fail placement visibly;<br/>commit no semantic subset"]
   Release --> Later{"Later claim available?"}
   Later -- Yes --> Existing{"Valid persisted assessment?"}
   Existing -- Yes --> Persist
-  Existing -- No --> New["Make at most one<br/>new assessor request"]
+  Existing -- No --> New["Start one fresh<br/>assessor conversation"]
   New --> Response
   Later -- No --> Fail["Fail placement visibly;<br/>commit no semantic subset"]
 ```
 
-One placement claim makes at most one assessor request. A provider, transport,
-JSON, schema, allowlist, span, or dependency failure releases the claim with
-bounded diagnostics and durable backoff. A later claim may make one fresh
-request only when no valid assessment was already persisted. The first valid
-normalized response is append-only placement state and is reused after lease
-reclaim, process restart, pause/resume, repair, or semantic transaction retry.
+One placement claim reserves one assessor conversation. JSON, schema, allowlist,
+span, and dependency failures stay in that conversation: Dense-Mem appends the
+invalid assistant content and exact bounded validation errors, requests a
+complete replacement, and allows five provider turns total. It never repairs
+or combines responses locally. The fifth malformed response, or a full history
+that exceeds the input-token budget, fails placement terminally with zero
+semantic subset.
+
+A provider, transport, HTTP, or response-envelope failure ends the transient
+history and releases the claim with bounded diagnostics and durable backoff. A
+later claim starts one fresh conversation only when no valid assessment was
+already persisted. Every such claim consumes the existing placement
+`max_attempts` budget. HTTP 429 uses the longer of normal backoff and a valid
+`Retry-After`, capped at five minutes. The first valid normalized response is
+append-only placement state and is reused after lease reclaim, process restart,
+pause/resume, repair, or semantic transaction retry.
 Application code must not:
 
 - coerce a string into an enum, number, ID, or array
@@ -927,11 +1001,11 @@ Application code must not:
 - commit Entity results while Relationship results are invalid
 - invent a predicate outside the submitted candidate set or substitute the
   closest candidate
-- make a second assessor request inside the same claim
+- start a sixth provider turn or a new conversation after malformed exhaustion
 - call the assessor again after a valid fingerprint-matched response persists
 
-Validation errors should be actionable enough for provider diagnostics and the
-next claim. For example,
+Validation errors must be sent as the next user message in the same conversation
+and be actionable enough for complete regeneration. For example,
 when a Relationship has neither `object_ref` nor `object_value`, the error must
 tell the model to set `object_ref` for a returned Entity, set `object_value` for
 a scalar/text value, or remove the unsupported Relationship result. When both
@@ -1012,11 +1086,11 @@ These findings motivate the review hold, versioned telemetry, threshold sweep,
 and human-labeled calibration gate; they do not establish `0.7` as universally
 correct.
 
-The exact candidate prefetch and byte caps also avoid relying on a large
+The exact candidate prefetch and token budgets also avoid relying on a large
 all-team prompt. Long-context experiments show that relevant information can
 be used less reliably when buried in the middle of a long context
 ([Liu et al., 2023](https://arxiv.org/abs/2307.03172)). This is supporting
-rationale for bounded context, not proof that the chosen `20`/`100`/`32 KiB`
+rationale for bounded context, not proof that the chosen `20`/`100`/`50,000-token`
 limits are optimal; the paired evaluation must test them.
 
 Detailed status/effective-support rules, pending Relationships, unknown
@@ -1180,7 +1254,7 @@ conflict behavior belongs in
 Selecting a server-supplied Entity or predicate option re-runs deterministic
 validation/policy against the persisted assessment and makes no assessor call.
 Accepting or correcting support requires exact new session evidence; that new
-evidence is a new placement item and receives exactly one assessor call. A bare
+evidence is a new placement item and receives one bounded assessor conversation. A bare
 client assertion never raises confidence or grants support.
 
 At semantic review expiry, the task becomes `expired` and no longer keeps
@@ -1279,7 +1353,7 @@ or coordinate workers but never owns queue or result state.
 | Pending-state pollution | `insufficient` results appear in normal graph recall | enforce `pending_evidence` exclusion and active/effective-support eligibility in the database query |
 | Predicate vocabulary fragments | assessor emits wording that matches no supplied definition | preserve wording and open predicate review; only an authorized registry workflow may add vocabulary |
 | Stale embedding overwrite | an old job writes a vector after a correction | compare source/document/contract versions in the update predicate |
-| Hidden provider outage | invalid output is patched locally and reported as success | no local repair, at most one call per claim, bounded later claims, and explicit placement failure |
+| Hidden provider outage | invalid output is patched locally and reported as success | no local repair; complete same-history correction for malformed content, durable claim retry for provider failures, and explicit terminal failure |
 | Deadline becomes truth | an unresolved review expires and its Relationship becomes active | expiry closes workflow only; keep resolved state pending and unresolved state observation-only |
 | Cross-profile overwrite during placement | B's correction updates A's Relationship row | bind owner at intake, include owner in identity, require owner predicates on placement mutations, and write only cross-references/case membership to A |
 | Old worker resurrects replaced evidence | a rev-42 provider call commits after rev-43 activates | supersede old placement intent in activation and require current-source predicates at claim and semantic commit |
@@ -1291,52 +1365,54 @@ or coordinate workers but never owns queue or result state.
 The refactor is incomplete until tests prove:
 
 1. identical `remember` retries do not duplicate any durable record
-2. the normal path makes exactly one assessor request containing candidate
-   context and returns both result arrays plus bounded security signals
+2. the normal path uses one assessor turn containing candidate context and
+   returns both result arrays plus bounded security signals
 3. missing, extra, duplicate, mistyped, or unauthorized results reject the
    complete response
-4. one claim makes no second request; a later claim reuses the first valid
-   persisted assessment and never splices responses
-5. a revalidated known ID or unique compatible exact Entity match is reused;
+4. malformed content is sent back in the same full history with exact validation
+   errors for at most five turns; the fifth failure commits no semantic subset
+5. provider/transport/protocol failures make no inline correction, release the
+   reservation with durable backoff, and consume placement `max_attempts`
+6. a revalidated known ID or unique compatible exact Entity match is reused;
    multiple, conflicting, vector-only, or truncated candidates cannot be
    auto-selected
-6. unresolved ambiguity creates a seven-day review and no dependent active edge
-7. an existing predicate alias resolves to its canonical team definition while
+7. unresolved ambiguity creates a seven-day review and no dependent active edge
+8. an existing predicate alias resolves to its canonical team definition while
    unmatched or colliding wording creates review with no Relationship
-8. repeated evidence attaches to one same-owner Relationship
-9. `entailed` grants support only when confidence is at least the current team
+9. repeated evidence attaches to one same-owner Relationship
+10. `entailed` grants support only when confidence is at least the current team
    threshold; equality passes and lower confidence remains pending
-10. `insufficient` creates a seven-day support-confidence review but no
+11. `insufficient` creates a seven-day support-confidence review but no
     SemanticEdge or default recall result
-11. stored graph context never enters the assessor request and cannot satisfy
+12. stored graph context never enters the assessor request and cannot satisfy
     evidence entailment or independence
-12. PostgreSQL commit makes eligible SemanticEdges readable without a
+13. PostgreSQL commit makes eligible SemanticEdges readable without a
     secondary graph projection
-13. embedding failure changes only search freshness, not knowledge truth
-14. deterministic quarantine reaches no model-backed path
-15. assessor security signals quarantine the complete item with no
+14. embedding failure changes only search freshness, not knowledge truth
+15. deterministic quarantine reaches no model-backed path
+16. assessor security signals quarantine the complete item with no
     semantic subset
-16. only a manager with `write` may release quarantine, and release re-enters as
+17. only a manager with `write` may release quarantine, and release re-enters as
     guarded
-17. a write-scoped profile cannot mutate another profile's Relationship or
+18. a write-scoped profile cannot mutate another profile's Relationship or
     Entity-resolution history
-18. Entity/predicate option selection reuses the persisted assessment with zero
+19. Entity/predicate option selection reuses the persisted assessment with zero
     AI calls; new support/correction evidence receives one new assessment
-19. seven-day expiry never activates knowledge or directly creates a Hypothesis
-20. an entailed cross-profile correction can create the caller's active
+20. seven-day expiry never activates knowledge or directly creates a Hypothesis
+21. an entailed cross-profile correction can create the caller's active
     Relationship and a cross-reference while preserving the target unchanged
-21. one stable source revision advances only for its owner and exact prior token
-22. source activation atomically revokes old effective support and demotes
+22. one stable source revision advances only for its owner and exact prior token
+23. source activation atomically revokes old effective support and demotes
     affected Relationships before asynchronous replacement placement
-23. a quarantined replacement never reactivates the old source revision
-24. old-revision placement and quarantine release cannot commit after a newer
+24. a quarantined replacement never reactivates the old source revision
+25. old-revision placement and quarantine release cannot commit after a newer
     source revision activates
-25. a material cross-profile placement atomically creates/updates its team
+26. a material cross-profile placement atomically creates/updates its team
     Conflict case without changing another owner's Relationship
-26. stale, cross-team, dismissed, or semantically unrelated conflict context
+27. stale, cross-team, dismissed, or semantically unrelated conflict context
     rejects the complete `remember` request before evidence commits
-27. another profile can affect a Conflict case only by creating its own assessed
+28. another profile can affect a Conflict case only by creating its own assessed
     evidence-backed Relationship through `remember`; automatic disposition
     belongs to nightly Conflict review
-28. assessor temporal verdicts are required closed-schema fields and cannot be
+29. assessor temporal verdicts are required closed-schema fields and cannot be
     replaced by server guesses

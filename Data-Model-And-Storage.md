@@ -517,7 +517,7 @@ unit. Do not start old binaries against the migrated schema, start new binaries
 against a restored old schema, or run old and new workers together. A rollback
 restores the backup and the matching application release before traffic opens.
 
-### V2.4 one-call placement migration
+### V2.4 integrated-assessor placement migration
 
 V2.4 follows the Relationship/search cutover tracked by issue #129. It changes
 write-time assessment and review workflow, not stored Relationship meaning,
@@ -530,7 +530,7 @@ flowchart LR
   Pause --> Additive["Add assessment, audit,<br/>review-expiry, and team-config fields"]
   Additive --> TTL["Give open semantic reviews<br/>a fresh seven-day expiry"]
   TTL --> Deploy["Deploy V2.4 API and workers together"]
-  Deploy --> New["Only new/in-flight claims use<br/>one-call assessment policy"]
+  Deploy --> New["Only new/in-flight claims use<br/>integrated assessment policy"]
 ```
 
 The release migration must:
@@ -545,9 +545,10 @@ The release migration must:
 4. set each currently unresolved semantic review (`open` or `acknowledged`) to
    expire seven days after the V2.4 cutover; leave resolved/canceled/expired
    tasks, security quarantine, and Conflict cases unchanged
-5. deploy the API and workers using the one-call contract, then resume claims;
-   an in-flight item with no persisted valid assessment may call once, while
-   one with a valid persisted assessment resumes from that row
+5. deploy the API and workers using the integrated-assessor contract, then
+   resume claims; an in-flight item with no persisted valid assessment opens
+   one bounded conversation per durable provider attempt, while one with a
+   valid persisted assessment resumes from that row
 6. reconcile the before/after counts and prove that Relationship
    status/support, evidence, search-document hashes, vectors, embedding jobs,
    and active embedding/index contracts did not change

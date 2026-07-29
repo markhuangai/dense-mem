@@ -172,7 +172,7 @@ fact, or generic HTTP memory-tool routes.
 | --- | --- |
 | semantic correctness | did evidence become the right Entity/Value/Relationship state and history? |
 | identity | did aliases converge and homonyms stay separable? |
-| assessment contract | did the one-call result resolve structure/support correctly, and did invalid output produce zero partial semantic writes? |
+| assessment contract | did the integrated result resolve structure/support correctly, and did invalid output produce zero partial semantic writes? |
 | retrieval quality | did full-text/vector/adjacency return the intended active Relationships? |
 | vector fidelity | how close is filtered HNSW to exact team-filtered search? |
 | temporal/lifecycle | are pending, conflict, supersession, retraction, and time handled correctly? |
@@ -266,7 +266,7 @@ The corpus includes:
   nightly evaluation fixtures
 
 Seed through MCP `remember` and the first-party client-review workflow so runs
-exercise one-call assessment, policy, transactions, jobs, and interface
+exercise integrated assessment, policy, transactions, jobs, and interface
 contracts. Direct SQL is allowed only to create an explicitly labeled
 corruption/failure fixture.
 
@@ -348,13 +348,16 @@ For every claim and invalid attempt assert:
 - no partial array is spliced into a later response
 - no `VerificationEvent` represents the invalid attempt
 - staged evidence and safe processing failure remain traceable
-- one placement claim makes at most one assessor request
-- an invalid result produces no inline regeneration; only a later claim with no
-  persisted valid assessment may make one fresh complete request
+- one placement attempt opens one assessor conversation with at most five
+  provider turns
+- an invalid HTTP 200 result appends the assistant output and bounded validation
+  errors to the same history before requesting a complete replacement
+- timeout, 429, 4xx, 5xx, transport, and provider-protocol failures end that
+  conversation and requeue through the durable `max_attempts` budget
 - the first valid normalized assessment is unique for its stable claim key
 - restart, lease reclaim, and semantic commit retry reuse that persisted
   assessment and make zero additional assessor calls
-- candidate/entity/predicate/input byte limits and truncation markers are
+- candidate/entity/predicate/input token limits and truncation markers are
   enforced before the call
 
 Run these protocol fixtures against both a scripted assessor and the real
@@ -362,7 +365,7 @@ configured LLM host. The scripted host proves exact call count, crash/retry, and
 schema behavior; the real host measures whether the closed contract and prompt
 work under provider variability.
 
-## V2.4 One-Call Placement Evaluation
+## V2.4 Integrated-Assessor Placement Evaluation
 
 The V2.4 release decision uses a paired V2.3/V2.4 run over the same pinned
 `public_6axis_1k_v1` rows, order, source identities, and isolated starting
@@ -374,7 +377,7 @@ before the first import. Do not reuse a V2.3 import because the change affects
 ```text
 same validated 1k corpus
   -> V2.3 isolated import with the two-call path
-  -> V2.4 isolated import with the one-call assessor
+  -> V2.4 isolated import with the integrated assessor
   -> normalize per-evidence placement outcomes
   -> compare structure, support, lifecycle, review, cost, tokens, and latency
   -> human-adjudicate every active-state disagreement
@@ -394,7 +397,7 @@ raw internal confidence and confidence bucket
 effective threshold and gate result
 Relationship ID/status/support decision
 review kind/state/expiry
-assessor request count, input/output tokens, latency, and provider result
+assessor conversation/turn counts, input/output tokens, latency, and provider result
 ```
 
 Compare exact placement agreement and human-labeled accuracy for Entity
@@ -441,10 +444,16 @@ case category.
 
 V2.4 cannot ship unless:
 
-- every placement claim records at most one assessor request
+- every placement attempt records at most five provider turns in one assessor
+  conversation
+- every malformed correction includes the preceding assistant output and
+  bounded validation errors in that same history
+- provider failures consume durable attempts with fresh history, and respect a
+  bounded `Retry-After` delay
 - restart, lease reclaim, pause/resume, and commit retry make zero extra calls
   after a valid assessment is persisted
-- invalid/partial output creates no semantic subset and no inline regeneration
+- malformed exhaustion and provider-attempt exhaustion create no semantic
+  subset
 - every structural, tenant, security, lifecycle, pending, and append-only hard
   invariant remains at zero violations
 - the complete 1k import terminates with no lost or duplicate evidence claims
@@ -575,7 +584,7 @@ Conflict disposition.
 ## V2.4 Placement Migration
 
 Start from the fully migrated #129 fixture, then run the exact sequence in
-[Data Model And Storage](Data-Model-And-Storage#v24-one-call-placement-migration).
+[Data Model And Storage](Data-Model-And-Storage#v24-integrated-assessor-placement-migration).
 The migration gate must prove:
 
 1. placement workers are paused and mixed V2.3/V2.4 execution is rejected;
@@ -722,7 +731,7 @@ These criteria complement the paired comparison above.
 | Gate | Requirement |
 | --- | --- |
 | hard invariant | zero tenant, pending-Relationship, Hypothesis, duplicate-edge, append-only, and partial-commit violations |
-| assessor | every negative fixture rejects the whole response; one claim never makes a second request |
+| assessor | every negative fixture rejects the whole response; malformed correction is bounded to five same-history turns and provider failures use durable attempts |
 | V2.4 confidence gate | human-labeled false activation and unnecessary hold stay within predeclared bounds; reliability is reported at `0.7` and across the sweep |
 | V2.4 migration | no assessor/embedding calls, legacy rescoring, lifecycle mutation, search projection change, or re-embedding |
 | injection | no quarantined semantic/search state, no unauthorized release, and no model signal accepted as a safety clearance |
@@ -752,7 +761,7 @@ comparisons are not added to the release evidence set.
 | Provider variability hides regression | model change shifts identity/verdict output | record provider, model, prompt revision, and local contract hash; use repeated/paired runs |
 | Confidence looks precise but is miscalibrated | the `0.7` gate activates high-confidence false support for one model or domain | human labels, reliability buckets, ECE/Brier, threshold sweep, and per-slice false-activation reporting |
 | LLM judge prefers presentation or first position | the judge selects V2.4 because of wording or A/B order rather than correctness | normalize and blind outputs, run A/B and B/A, report flip rate, and use human active-state adjudication as the oracle |
-| Efficiency hides review displacement | one call lowers provider cost but pushes many correct writes into manual review | report review rate and unnecessary holds beside calls, tokens, latency, and placement accuracy |
+| Efficiency hides review displacement | fewer provider turns lower cost but push many correct writes into manual review | report review rate and unnecessary holds beside conversations, turns, tokens, latency, and placement accuracy |
 | Security corpus overfits keywords | detector passes benchmark but quarantines ordinary security prose | include quoted/adversarial minimal pairs and measure pass/guarded/quarantine confusion separately |
 | Source fixtures miss shared adoption | revision tests pass for one profile but leave another profile's unsupported Relationship active | use A/B/C adoption fixtures and verify effective support/status/search state for every dependent owner |
 | Migration fixture misses partial-vector bias | only a fully completed backfill is tested, so mixed lexical/vector RRF ships unnoticed | pause jobs at several keysets and assert the complete team vector branch remains disabled |
@@ -766,8 +775,8 @@ comparisons are not added to the release evidence set.
 3. hard semantic/isolation invariants run before quality scoring
 4. HNSW is always compared with exact team-filtered results
 5. concurrent read/write load includes tenant skew and hub graphs
-6. invalid assessor output proves zero partial semantic commit and zero inline
-   regeneration
+6. invalid assessor output proves same-history bounded correction, terminal
+   exhaustion after five malformed turns, and zero partial semantic commit
 7. failure injection and recovery produce canonical expected outcomes
 8. RRF enabled/disabled profiles, deterministic reranking, and cross-profile
    conflict preference are evaluated separately
@@ -788,7 +797,8 @@ comparisons are not added to the release evidence set.
     Evidence/embedding/index contracts
 15. paired V2.3/V2.4 runs use the same pinned 1k corpus and frozen manifest,
     with human adjudication for every active-state disagreement
-16. scripted and real-host multi-round tests prove one request per claim and
+16. scripted and real-host multi-round tests prove the five-turn same-history
+    correction bound, separate durable provider retries, and
     persisted-assessment reuse after restart, lease reclaim, and commit retry
 17. confidence reliability, threshold-sweep results, token/call/latency savings,
     and review burden are reported separately

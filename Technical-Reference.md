@@ -563,8 +563,9 @@ is no nested `decision` compatibility shape.
 
 Clients may select only server-supplied Entity/predicate options. If exact
 current-session context cannot resolve the question, the host asks the user.
-Selection never causes another assessor call. Any action that adds evidence
-creates a new placement item and therefore one new assessor call.
+Selection never causes another assessor conversation. Any action that adds
+evidence creates a new placement item and therefore one new bounded assessor
+conversation.
 
 No action writes a graph side channel or directly forces active status. Merge, split,
 supersede, support changes, and forget target caller-owned records only. A
@@ -1032,8 +1033,10 @@ Contract `dense-mem.v2.4` is incomplete until:
     resolved cases follow their specified primary-result behavior
 19. trace reconstructs every authorized Conflict position, version, event, and
     non-preferred evidence path
-20. normal semantic placement makes exactly one assessor call and persists the
-    first valid normalized response for retry/restart reuse
+20. normal semantic placement opens one bounded assessor conversation, permits
+    at most five same-history malformed-response turns, retries provider
+    failures through durable attempts with fresh history, and persists the first
+    valid normalized response for retry/restart reuse
 21. public placement exposes threshold-relative confidence band, reason, and
     policy version but never raw confidence
 22. Entity/predicate option selection makes zero AI calls, while new

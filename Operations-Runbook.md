@@ -101,7 +101,7 @@ Before user traffic:
    connection budget
 6. verify cluster-safe composite tenant keys and runtime-role/RLS behavior with
    two-team fixtures
-7. validate the one-call assessor schema, request budgets, and persisted-result
+7. validate the integrated-assessor schema, token budgets, and persisted-result
    reuse probe
 8. validate one embedding against persisted dimensions/normalization
 9. validate the active search-index generation, query plan, and exact/ANN oracle
@@ -179,16 +179,20 @@ Required checks:
 - queued count and oldest age
 - active lease owner, heartbeat, and attempt count
 - failures grouped by stage and safe code
-- invalid-assessor count, JSON-pointer classes, requests per claim, and
-  persisted-assessment reuse
+- invalid-assessor count, JSON-pointer classes, provider turns per assessor
+  conversation, and persisted-assessment reuse
 - provider 429/cooldown/concurrency
 - database deadlocks, lock timeouts, serialization failures, and constraint
   errors
 - awaiting-review age separately from worker backlog
 
-Retryable placement failures use deterministic exponential backoff with bounded
-jitter. The first four retry releases wait about 15s, 30s, 60s, and 120s,
-capped at 300s. Attempts are not reset by ordinary retries.
+Retryable provider failures use deterministic exponential backoff with bounded
+jitter. The first four retry releases wait about 15s, 30s, 60s, and 120s. A
+valid `Retry-After` hint may extend that delay; the effective delay remains
+capped at 300s. Attempts are not reset by ordinary retries. A schema-invalid
+HTTP 200 response does not release the placement item: the assessor receives
+the bounded validation errors in the same message history and may return a
+complete replacement, for at most five provider turns in that conversation.
 
 When a legacy authority handoff reaches the end of its source cursor with all
 items terminal but some items failed or were excluded, the supervisor pauses the
@@ -227,26 +231,35 @@ flowchart LR
   Persisted -- No --> Classify["JSON parse, schema,<br/>coverage, allowlist, dependency"]
   Classify --> Contract{"Model, prompt revision, and local<br/>contract hash match deployment?"}
   Contract -- No --> Rollback["Restore compatible model/prompt<br/>or deploy the intended contract"]
-  Contract -- Yes --> Reproduce["Reproduce with redacted IDs<br/>and retained validation pointers"]
-  Reproduce --> Fix["Fix prompt/provider adapter;<br/>allow a later claim"]
-  Fix --> Later["Later claim makes at most one<br/>complete assessor request"]
+  Contract -- Yes --> Turns{"Fewer than five provider<br/>turns used?"}
+  Turns -- Yes --> Correct["Append invalid assistant output and<br/>bounded validation errors to same history"]
+  Correct --> Replace["Request one complete replacement;<br/>never a patch"]
+  Replace --> Invalid
+  Turns -- No --> Reproduce["Record terminal malformed outcome;<br/>reproduce with redacted IDs"]
+  Reproduce --> Fix["Fix prompt/provider adapter<br/>before requeueing new work"]
 ```
 
-Safe evidence for diagnosis includes the local contract hash, response byte
-count, attempt count, JSON pointers, result cardinalities, and model/provider
-version. Do not log evidence text, rationales, or raw response payloads.
+Safe evidence for diagnosis includes the local contract hash, bounded token
+counts, provider-turn count, durable attempt count, JSON pointers, result
+cardinalities, and model/provider version. Do not log evidence text, rationales,
+raw response payloads, or provider error bodies.
 
-No `VerificationEvent` or semantic subset exists for invalid attempts. The
-ingest remains traceable in explicit failed/backoff processing state. One claim
-never makes an inline regeneration request. Do not delete the claim, clear its
-attempt history, or manually invoke the provider. After the root cause is fixed,
-the supported scheduler may create a later claim; it may make one complete
-request only when no valid assessment was persisted.
+No `VerificationEvent` or semantic subset exists for an invalid intermediate
+turn. The full history is transient and sent only back to the same provider.
+After five malformed responses, the claim reaches a visible terminal malformed
+outcome with zero partial semantic commit. Do not delete the claim, clear its
+attempt history, or manually invoke the provider.
 
-If a valid assessment exists, treat any attempted second call as an invariant
-failure. Stop the affected placement workers, preserve the assessment and
-claim rows, inspect uniqueness/lease/version predicates, and resume only after
-the retry path is proven to reload the persisted result.
+A timeout, 429, 4xx, 5xx, transport failure, or invalid provider envelope ends
+the current conversation immediately. The placement item requeues through its
+durable `max_attempts` budget with fresh message history and the bounded
+backoff above. On the final durable attempt it fails terminally. A provider
+failure is never appended to the malformed-response correction history.
+
+If a valid assessment exists, treat any later provider turn as an invariant
+failure. Stop the affected placement workers, preserve the assessment and claim
+rows, inspect uniqueness/lease/version predicates, and resume only after the
+retry path is proven to reload the persisted result.
 
 ## Embedding Backlog And Search Freshness
 
@@ -338,7 +351,7 @@ Rollback restores the pre-migration PostgreSQL backup and the matching old
 application release together. Never roll back one without the other or allow
 old and new workers to overlap.
 
-### V2.4 one-call placement upgrade
+### V2.4 integrated-assessor placement upgrade
 
 Run this upgrade only after issue #129's Relationship projection migration is
 complete and healthy. V2.4 changes placement and semantic-review workflow. It
@@ -370,8 +383,9 @@ During cutover:
    security quarantine, and Conflict cases unchanged;
 5. deploy the V2.4 API and placement workers together and reject mixed-version
    claim execution;
-6. resume work only after the one-call provider probe, persisted-assessment
-   crash/reload probe, and threshold configuration validation pass.
+6. resume work only after the same-history malformed-correction probe, durable
+   provider-retry probe, persisted-assessment crash/reload probe, and threshold
+   configuration validation pass.
 
 After cutover:
 
@@ -381,8 +395,10 @@ After cutover:
   and new V2.4 work admitted after traffic opens;
 - verify legacy VerificationEvents have null V2.4 audit fields and were not
   rescored;
-- verify an in-flight claim with a persisted valid assessment makes zero calls,
-  and one without a valid assessment makes at most one;
+- verify an in-flight claim with a persisted valid assessment makes zero
+  provider turns, malformed output uses at most five turns in one conversation,
+  and a provider failure consumes the durable attempt budget with fresh
+  history;
 - verify expiry closes a task without granting support, creating an active
   Relationship, or directly creating a Hypothesis;
 - verify no search document version changed, no embedding job was enqueued, and
@@ -570,7 +586,7 @@ Never restore another data store over newer PostgreSQL state.
 | --- | --- |
 | PostgreSQL | backup verification, vacuum/analyze, bloat, locks, slow plans, WAL/disk, replica/PITR checks |
 | `pgvector` | index size/build health, Recall@K, iterative-scan cost, reindex planning |
-| placement | queue age, lease churn, semantic review age/expiry, assessor schema failures, requests per claim, persisted-result reuse |
+| placement | queue age, lease churn, semantic review age/expiry, assessor schema failures, turns per conversation, durable provider retries, persisted-result reuse |
 | embeddings | pending/failed age, provider quota, version mismatch, rebuild progress |
 | Conflict review | run/due/overdue age, lease recovery, policy parity, resolved/reopened/dismissed events, three-profile recall smoke |
 | security | key/session cleanup, audit retention, RLS tests |
@@ -635,7 +651,7 @@ dumps.
 | Projection rollout biases Relationship rank | traffic opens while only some Relationships have replacement vectors | require complete text convergence before serve and whole-team vector activation after transactional recount |
 | Projection rollout changes Evidence | an operator launches a global vector rebuild for a Relationship-only format change | pre/post Evidence hashes and counts, source-kind-tagged generation, and unchanged contract/index IDs |
 | Mixed-version rollback writes incompatible state | old workers resume against the migrated schema | stop/lease audit before migration and restore database plus matching application as one unit |
-| Placement retry calls the assessor twice | a worker loses its lease after persisting a valid result and the next worker makes another request | unique claim assessment, request-per-claim alert, stop workers on any post-persist request, and resume from stored result |
+| Placement retry calls the assessor after persistence | a worker loses its lease after persisting a valid result and the next worker starts another conversation | unique claim assessment, post-persist provider-turn alert, stop workers on any violation, and resume from stored result |
 | Team threshold change rewrites history | an operator expects a new value to rescore active or held Relationships | commit-time policy applies only to future/in-flight work; audit the effective version and prohibit backfill |
 | Review expiry becomes approval | an expiry worker grants support to clear backlog | expiry may update only task state; lifecycle/support invariants page on any associated activation |
 | V2.4 cutover re-embeds Relationships | a shared format/version bump queues vectors even though search text is unchanged | pre/post text hashes and job/provider counts; treat any V2.4 embedding work as a blocker |
@@ -646,8 +662,8 @@ Before production:
 
 1. PostgreSQL/PITR restore is proven in isolation
 2. `pgvector` rebuild and exact-vs-ANN quality checks are proven
-3. assessor invalid-response failure is visible, commits no subset, and makes
-   no inline regeneration request
+3. assessor invalid responses use the same bounded history for at most five
+   complete replacements, and exhaustion is visible with zero partial commit
 4. placement and embedding backlog alerts are active
 5. multi-instance Redis failure does not fall back locally
 6. two-team RLS/recall/trace leakage tests pass
@@ -662,8 +678,9 @@ Before production:
 12. Relationship projection upgrade proves resumable text convergence,
     Relationship-only fair re-embedding, whole-team vector activation, and
     unchanged Evidence/embedding/index state
-13. V2.4 cutover after #129 proves one request per claim, persisted-assessment
-    reuse, and zero legacy rescoring or lifecycle mutation
+13. V2.4 cutover after #129 proves bounded same-history correction, durable
+    provider retry, persisted-assessment reuse, and zero legacy rescoring or
+    lifecycle mutation
 14. V2.4 migration makes zero embedding calls/jobs and leaves search hashes,
     vectors, projection formats, and active embedding/index contracts unchanged
 15. seven-day semantic review expiry closes workflow without activating

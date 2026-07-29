@@ -386,9 +386,11 @@ Evidence, exact-span current Entity candidates, and the structured predicate
 catalog are untrusted prompt data. Stored Relationships, source authority, and
 source independence are not assessor inputs. The write path uses a
 deterministic `pass | guarded | quarantine` scan, one bounded capability-free
-assessor request per placement claim, required bounded model security signals,
-structured outputs, strict allowlist validation, persisted valid assessment,
-and independent deterministic policy. Provider output can only escalate
+assessor conversation per placement attempt, required bounded model security
+signals, structured outputs, strict allowlist validation, persisted valid
+assessment, and independent deterministic policy. Malformed HTTP 200 output may
+be replaced in the same history for at most five turns; provider failures
+consume the durable attempt budget with fresh history. Provider output can only escalate
 security handling; it
 cannot clear a deterministic signal, select a stored Relationship or cross-team
 ID, create support, release quarantine, or write lifecycle status/support.

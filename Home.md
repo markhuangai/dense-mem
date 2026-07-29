@@ -36,7 +36,7 @@ sequenceDiagram
   DM->>PG: Commit evidence and queued placement
   DM-->>Host: ingest_id
   DM->>PG: Load exact Entity candidates and structured predicates
-  DM->>DM: One strict structure/support assessor request
+  DM->>DM: One bounded structure/support assessor conversation
   DM->>PG: Persist first valid assessment
   DM->>DM: Apply confidence gate and deterministic lifecycle
   DM->>PG: Commit current state, history, review, and search jobs

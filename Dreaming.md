@@ -251,7 +251,7 @@ Confirming a Hypothesis requires evidence independent of the generated text:
 ```
 
 The server validates ID hints against the team and still runs the normal
-caller-owned one-call `remember` assessor and deterministic lifecycle. The
+caller-owned integrated `remember` assessor and deterministic lifecycle. The
 Hypothesis text is not
 copied into the evidence. A negative decision likewise needs correcting or
 explicitly negative evidence if it is meant to alter knowledge.

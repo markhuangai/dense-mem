@@ -48,7 +48,7 @@ contains memory truth.
 | Application | remember, recall, trace, correction, dreaming, and control orchestration |
 | Domain | Entity identity, predicate vocabulary, Relationship identity/lifecycle, evidence acceptance, and Hypothesis rules |
 | PostgreSQL | durable ledger, current state, queues, review, audit, SemanticEdge queries, full-text, and `pgvector` |
-| Model providers | one-call structure/support assessment, embeddings, and optional dream generation; no write authority |
+| Model providers | one integrated structure/support assessor conversation, embeddings, and optional dream generation; no write authority |
 | Coordination | rate limits, leases/signals, and SSE concurrency; Redis when distributed, process memory when safely single-instance |
 
 Store ownership and recovery belong in
@@ -210,7 +210,7 @@ Canonical ownership:
 | PostgreSQL, Redis, transactions, durable storage, jobs, and recovery | [Data Model And Storage](Data-Model-And-Storage) |
 | PostgreSQL tenant keys, table placement, RLS/query locality, and future team sharding | [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema) |
 | pgvector exact/ANN execution, HNSW/halfvec, index load, and search topology | [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
-| `remember` stage order and strict one-call assessor | [Memory Write Pipeline](Write-Pipeline) |
+| `remember` stage order and bounded integrated assessor | [Memory Write Pipeline](Write-Pipeline) |
 | recall eligibility, PostgreSQL branches, and trace escalation | [Recall Ranking](Recall-Ranking) |
 | cosine distance, RRF, reranking, and conflict preference | [Vector Search And Ranking](Vector-Search-And-Ranking) |
 | Hypothesis generation boundary | [Dreaming](Dreaming) |
@@ -221,11 +221,13 @@ Canonical ownership:
 Remember first validates and deterministically scans the bounded request, then
 atomically commits exact evidence, the scan event, and queued, guarded, or
 quarantined processing intent. A worker handling queued evidence prefetches
-exact-span current Entity candidates and a structured predicate catalog, makes
-one strict assessor request containing bounded `security_signals`,
+exact-span current Entity candidates and a structured predicate catalog, starts
+one strict assessor conversation containing bounded `security_signals`,
 `entity_results`, and `relationship_results`, validates and persists the first
-complete response, applies the positive-support confidence gate plus
+complete valid response, applies the positive-support confidence gate plus
 deterministic policy, and commits all material outcomes in PostgreSQL.
+Malformed content is corrected with full same-provider message history for at
+most five turns; provider failures use durable placement retry.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -235,7 +237,7 @@ flowchart LR
   StageQ --> Quarantine["Restricted audit only"]
   Scan -- pass or guarded --> Intake["Commit evidence and queue intent"]
   Intake --> Context["Exact Entity candidates and<br/>structured predicate catalog"]
-  Context --> Assess["One assessor response"]
+  Context --> Assess["One bounded assessor conversation"]
   Assess --> Validate["Closed-schema, security-signal,<br/>and allowlist validation"]
   Validate --> Signal{"Model security signal?"}
   Signal -- Yes --> Quarantine
@@ -247,10 +249,11 @@ flowchart LR
   Commit --> Async["Versioned embedding job"]
 ```
 
-Invalid assessor output is not regenerated inside the claim. The application
-does not coerce it or commit a valid subset. A later claim may make one new
-request only when no valid assessment persisted; restart and commit retries
-reuse the first valid result. Full details belong in
+Malformed assessor output is returned to the same provider with bounded
+validation errors and full message history for at most five turns. The
+application does not coerce it or commit a valid subset. Provider failures end
+the conversation and consume a durable placement attempt with fresh history;
+restart and commit retries reuse the first valid result. Full details belong in
 [Memory Write Pipeline](Write-Pipeline#strict-assessor-contract).
 
 ## Read Boundary
@@ -357,8 +360,9 @@ change relies on it.
     and physical search-index contracts; its migration cannot re-embed Evidence.
 17. Relationship vector fusion is team-gated until a complete projection
     generation is current.
-18. One placement claim makes at most one assessor request; every retry after a
-    valid persisted assessment makes zero.
+18. One placement claim reserves one assessor conversation with at most five
+    malformed-response turns; every retry after a valid persisted assessment
+    makes zero provider calls.
 19. The confidence threshold gates only positive entailed Relationship support
     and never resolves structure, time, security, or conflict.
 20. Semantic review expiry closes workflow without activating knowledge or

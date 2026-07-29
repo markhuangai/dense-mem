@@ -133,7 +133,7 @@ densemem_review_expired_total{kind}
 Quarantined, failed, and awaiting-review work is distinct from a worker
 backlog. A high review age does not mean adding placement workers will help.
 
-## One-Call Assessor
+## Integrated Assessor
 
 ```text
 densemem_provider_requests_total{provider_kind,model_alias,outcome}
@@ -174,11 +174,13 @@ size_limit
 Invalid attempts count as provider/validation telemetry only. They do not
 increment material `VerificationEvent` counts.
 
-One placement claim may increment the assessor-request counter at most once.
-Assessment reuse covers restart, lease reclaim, pause/resume, and semantic
-commit retry after a valid result persists. Alert when request-per-claim
-invariants fail, persistence/reuse errors appear, or terminal invalid-response
-rate changes by model, prompt revision, or local contract hash.
+The compatibility-named `densemem_assessor_requests_total` counter records
+assessor conversations, not individual malformed-response correction turns.
+Provider request/response and validation counters expose bounded per-turn
+outcomes. Assessment reuse covers restart, lease reclaim, pause/resume, and
+semantic commit retry after a valid result persists. Alert when conversation
+bounds fail, persistence/reuse errors appear, or terminal invalid-response rate
+changes by model, prompt revision, or local contract hash.
 
 `gate_state` is the bounded public policy outcome:
 `meets_write_threshold`, `below_write_threshold`, or `not_applicable`. Never
@@ -462,7 +464,7 @@ must not become metric labels.
 | --- | --- |
 | PostgreSQL unavailable | readiness fails or transaction errors exceed window |
 | placement backlog | oldest queued/processing item above SLO |
-| assessor contract regression | invalid/schema ratio or request-per-claim invariant above baseline after model/prompt change |
+| assessor contract regression | invalid/schema ratio or five-turn conversation-bound violation above baseline after model/prompt change |
 | assessment reuse failure | a restart/lease/commit retry calls the assessor after a valid result persisted |
 | confidence-gate shift | pass/hold ratio moves beyond the evaluated model/prompt baseline |
 | semantic review expiry backlog | due semantic tasks remain open beyond the expiry-worker SLO |
@@ -541,7 +543,8 @@ payloads, and vectors are opt-out by default and should not enter normal logs.
     for its durable event history
 14. Relationship text projection, generation/foreground queue fairness, and
     whole-team vector-gate state are observable without team or generation IDs
-15. assessor request count, tokens, latency, validation, persistence, and
-    retry-time reuse prove the one-call contract without claim-ID labels
+15. assessor conversation and provider-turn counts, tokens, latency,
+    validation, durable retry classes, persistence, and retry-time reuse prove
+    the bounded conversation contract without claim-ID labels
 16. confidence-gate pass/hold and semantic review expiry are visible without
     raw confidence, team thresholds, or team IDs

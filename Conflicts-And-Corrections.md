@@ -107,8 +107,9 @@ evidence through normal `remember`; any confirmation C remembers belongs to C an
 may `confirm` B or `challenge` A. It does not directly edit either record.
 
 If A later accepts the correction directly, A submits or adopts exact evidence
-through the normal one-call assessor. A may then supersede A's old Relationships and
-create A's corrected Relationships. Separately, the system Conflict reviewer may
+through the normal integrated assessor. A may then supersede A's old
+Relationships and create A's corrected Relationships. Separately, the system
+Conflict reviewer may
 supersede A's stale episode after the team case resolves. Adoption preserves B's
 evidence author, provenance, and source-group identity; it does not count the
 same evidence twice.
@@ -361,7 +362,7 @@ deterministically and makes zero assessor calls. If exact current-session
 context cannot select one supplied option, the client asks the user.
 `confirm_new_entity` requires evidence that distinguishes a new identity. The
 client never allocates the new ID; the new evidence becomes one new placement
-item with at most one assessor call.
+item with one bounded assessor conversation.
 
 A late same-name conflict may require a split. Dense-Mem first shows only the
 caller's observations and Relationships that may move. After confirmation, it
@@ -394,7 +395,7 @@ an already registered predicate. See [Dreaming](Dreaming).
 | `acknowledge` | mark review consumption; change no semantic state |
 
 `accept` does not bypass assessment or directly assign active status. New
-evidence enters the one-call assessor; deterministic support policy decides
+evidence enters the integrated assessor; deterministic support policy decides
 whether the Relationship becomes active. See
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#source-independence-and-support-policy).
 
@@ -465,7 +466,7 @@ A correction appends evidence; it is not an in-place text edit.
 }
 ```
 
-The replacement enters the same one-call assessor, deterministic
+The replacement enters the same integrated assessor, deterministic
 lifecycle, and PostgreSQL transaction as every `remember`. Prior evidence and
 transitions remain traceable.
 
@@ -605,4 +606,4 @@ this page owns how the client sees and resolves uncertainty.
 22. selecting a server-supplied Entity or predicate option reuses the persisted
     assessment and makes zero assessor calls
 23. accept, correct, and confirm-new-Entity actions require exact new evidence;
-    each creates one new placement item with at most one assessor call
+    each creates one new placement item with one bounded assessor conversation
