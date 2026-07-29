@@ -47,7 +47,8 @@ func (s *semanticAssessmentPlacementWorkerService) prefetchEntityCandidates(
 			addAssessmentEntityCandidate(group, candidate)
 		}
 	}
-	if err := s.addKnownEntityHintCandidates(ctx, run, fragment, proposal, evidenceID, groups); err != nil {
+	knownGroupKeys := map[string]struct{}{}
+	if err := s.addKnownEntityHintCandidates(ctx, run, fragment, proposal, evidenceID, groups, knownGroupKeys); err != nil {
 		return nil, false, err
 	}
 	ordered := make([]verifier.SemanticAssessmentEntityCandidateGroup, 0, len(groups))
@@ -61,17 +62,24 @@ func (s *semanticAssessmentPlacementWorkerService) prefetchEntityCandidates(
 		ordered = append(ordered, *group)
 	}
 	sort.Slice(ordered, func(left, right int) bool {
-		if ordered[left].Start != ordered[right].Start {
-			return ordered[left].Start < ordered[right].Start
-		}
-		return ordered[left].End < ordered[right].End
+		return assessmentCandidateGroupLess(ordered[left], ordered[right])
 	})
 	if len(ordered) > verifier.SemanticAssessmentMaxEntityResults {
+		sort.SliceStable(ordered, func(left, right int) bool {
+			leftKey := assessmentCandidateGroupKey(ordered[left].EvidenceID, ordered[left].Start, ordered[left].End)
+			rightKey := assessmentCandidateGroupKey(ordered[right].EvidenceID, ordered[right].Start, ordered[right].End)
+			_, leftKnown := knownGroupKeys[leftKey]
+			_, rightKnown := knownGroupKeys[rightKey]
+			return leftKnown && !rightKnown
+		})
 		ordered = ordered[:verifier.SemanticAssessmentMaxEntityResults]
 		truncated = true
 		for i := range ordered {
 			ordered[i].CandidateContextTruncated = true
 		}
+		sort.Slice(ordered, func(left, right int) bool {
+			return assessmentCandidateGroupLess(ordered[left], ordered[right])
+		})
 	}
 	for _, group := range ordered {
 		if group.CandidateContextTruncated {
@@ -82,6 +90,16 @@ func (s *semanticAssessmentPlacementWorkerService) prefetchEntityCandidates(
 	return ordered, truncated, nil
 }
 
+func assessmentCandidateGroupLess(left, right verifier.SemanticAssessmentEntityCandidateGroup) bool {
+	if left.EvidenceID != right.EvidenceID {
+		return left.EvidenceID < right.EvidenceID
+	}
+	if left.Start != right.Start {
+		return left.Start < right.Start
+	}
+	return left.End < right.End
+}
+
 func (s *semanticAssessmentPlacementWorkerService) addKnownEntityHintCandidates(
 	ctx context.Context,
 	run repository.PlacementRun,
@@ -89,6 +107,7 @@ func (s *semanticAssessmentPlacementWorkerService) addKnownEntityHintCandidates(
 	proposal map[string]any,
 	evidenceID string,
 	groups map[string]*verifier.SemanticAssessmentEntityCandidateGroup,
+	knownGroupKeys map[string]struct{},
 ) error {
 	hints := placementReviewEntityHints(proposal)
 	refs := make([]string, 0, len(hints))
@@ -119,6 +138,7 @@ func (s *semanticAssessmentPlacementWorkerService) addKnownEntityHintCandidates(
 		candidate := assessmentEntityCandidate(candidates[0])
 		for _, span := range spans {
 			key := assessmentCandidateGroupKey(evidenceID, span.start, span.end)
+			knownGroupKeys[key] = struct{}{}
 			group := groups[key]
 			if group == nil {
 				group = &verifier.SemanticAssessmentEntityCandidateGroup{

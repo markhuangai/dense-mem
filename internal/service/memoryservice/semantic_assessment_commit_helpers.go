@@ -386,6 +386,9 @@ func assessmentReviewOptions(
 				appendOptions(state)
 			}
 		}
+		if len(options) == 0 {
+			return []map[string]any{{"action": "submit_new_evidence"}}
+		}
 		return options
 	case "predicate":
 		options := make([]map[string]any, 0, len(predicateOptions))

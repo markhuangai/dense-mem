@@ -37,7 +37,8 @@ func trimSemanticAssessmentCandidateContext(
 		}
 		prepared, validationErrors = verifier.PrepareSemanticAssessmentRequest(candidate, limits)
 		if len(validationErrors) == 0 {
-			best = &prepared
+			bestPrepared := prepared
+			best = &bestPrepared
 			high = removeCount - 1
 			continue
 		}

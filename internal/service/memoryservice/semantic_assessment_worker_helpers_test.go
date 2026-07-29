@@ -204,6 +204,7 @@ func TestSemanticAssessmentRelationshipHelpersRouteAllReviewKinds(t *testing.T) 
 	entities["subject"] = assessmentEntityCommitState{resolved: false, kind: "person"}
 	entities["object"] = assessmentEntityCommitState{resolved: true, group: group, kind: "product"}
 	assert.Equal(t, []map[string]any{{"action": "submit_new_evidence"}}, assessmentReviewOptions("identity", result, entities, orderedPredicates))
+	assert.Equal(t, []map[string]any{{"action": "submit_new_evidence"}}, assessmentReviewOptions("identity", result, map[string]assessmentEntityCommitState{}, orderedPredicates))
 	predicateOptions := assessmentReviewOptions("predicate", result, entities, orderedPredicates)
 	require.Len(t, predicateOptions, 1)
 	assert.Equal(t, key, predicateOptions[0]["predicate_key"])
@@ -306,14 +307,28 @@ func TestSemanticAssessmentCandidatePrefetchCapsGroupsAndTrimClonesTrustedRefs(t
 	}
 	fragment.Content = strings.Join(names, " ")
 	catalog.entityMatches = repository.SemanticAssessmentEntityMatchResult{Matches: matches}
+	knownID := uuid.NewString()
+	catalog.knownCandidates = map[string][]repository.SemanticReviewEntityCandidate{
+		knownID: []repository.SemanticReviewEntityCandidate{{
+			EntityID: knownID, CanonicalName: names[len(names)-1], EntityKind: "concept", Status: "active",
+		}},
+	}
+	proposal := map[string]any{"entity_hints": []any{map[string]any{
+		"ref": "known", "name": names[len(names)-1], "known_entity_id": knownID,
+	}}}
 
-	groups, truncated, err := service.prefetchEntityCandidates(context.Background(), run, fragment, nil, "evidence:0")
+	groups, truncated, err := service.prefetchEntityCandidates(context.Background(), run, fragment, proposal, "evidence:0")
 	require.NoError(t, err)
 	assert.True(t, truncated)
 	require.Len(t, groups, verifier.SemanticAssessmentMaxEntityResults)
+	knownRetained := false
 	for _, group := range groups {
 		assert.True(t, group.CandidateContextTruncated)
+		for _, candidate := range group.Candidates {
+			knownRetained = knownRetained || candidate.EntityID == knownID
+		}
 	}
+	assert.True(t, knownRetained)
 
 	_, _, _, request, _, _ := semanticAssessmentConfidenceFixture(t)
 	request.RequiredRelationshipRefs = []verifier.SemanticAssessmentRequiredRelationshipRef{{
@@ -487,4 +502,22 @@ func TestSemanticAssessmentCandidateContextTrimmingKeepsTheLargestPriorityPrefix
 	require.NoError(t, err)
 	assert.Equal(t, oneLess.PredicateOptions, trimmed.PredicateOptions)
 	assert.Equal(t, prepared.PredicateOptions[:len(prepared.PredicateOptions)-1], trimmed.PredicateOptions)
+
+	firstRemoveCount := 1 + (semanticAssessmentRemovableCandidateCount(request)-1)/2
+	boundary := cloneSemanticAssessmentRequestForTrim(request)
+	require.True(t, trimSemanticAssessmentCandidates(&boundary, firstRemoveCount))
+	boundaryPrepared, validationErrors := verifier.PrepareSemanticAssessmentRequest(boundary, verifier.DefaultSemanticAssessmentLimits())
+	require.Empty(t, validationErrors)
+	previous := cloneSemanticAssessmentRequestForTrim(request)
+	require.True(t, trimSemanticAssessmentCandidates(&previous, firstRemoveCount-1))
+	previousPrepared, validationErrors := verifier.PrepareSemanticAssessmentRequest(previous, verifier.DefaultSemanticAssessmentLimits())
+	require.Empty(t, validationErrors)
+	require.Greater(t, previousPrepared.CandidateContextTokens, boundaryPrepared.CandidateContextTokens)
+
+	limits = verifier.DefaultSemanticAssessmentLimits()
+	limits.MaxCandidateContextTokens = boundaryPrepared.CandidateContextTokens
+	trimmed, err = trimSemanticAssessmentCandidateContext(request, limits)
+	require.NoError(t, err)
+	assert.Equal(t, boundaryPrepared.PredicateOptions, trimmed.PredicateOptions)
+	assert.LessOrEqual(t, trimmed.CandidateContextTokens, limits.MaxCandidateContextTokens)
 }
