@@ -361,7 +361,7 @@ func (v *OpenAIVerifier) AssessSemantic(ctx context.Context, req SemanticAssessm
 
 		correctionJSON, err := json.Marshal(semanticAssessmentCorrection{
 			ValidationErrors: boundedSemanticAssessmentCorrectionErrors(responseErrors),
-			Instruction:      "Return one complete replacement JSON object matching the required schema. Do not return a patch or explanation.",
+			Instruction:      "Return one complete replacement JSON object matching the required schema. Correct every validation error exactly. For predicate_status needs_review, predicate_key and predicate_version must both be null; use resolved only when selecting a supplied predicate key and version. Do not return a patch or explanation.",
 		})
 		if err != nil {
 			return SemanticAssessmentResponse{}, &ProviderError{

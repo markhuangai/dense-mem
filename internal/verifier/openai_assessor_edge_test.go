@@ -46,6 +46,7 @@ func TestOpenAIVerifierAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 		assert.Equal(t, "assessor-model", request.Model)
 		assert.Equal(t, SemanticAssessmentSchemaName, request.ResponseFormat.JSONSchema.Name)
 		assert.Contains(t, request.Messages[0].Content, "integrated structure and support assessor")
+		assert.Contains(t, request.Messages[0].Content, `predicate_status "needs_review" requires predicate_key and predicate_version both null`)
 		var payload map[string]any
 		if !assert.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &payload)) {
 			http.Error(w, "invalid assessor payload", http.StatusBadRequest)
@@ -127,6 +128,7 @@ func TestOpenAIVerifierAssessSemanticCorrectsMalformedContentInSameHistory(t *te
 	assert.Equal(t, "request_id", correction.ValidationErrors[0].Field)
 	assert.Contains(t, correction.ValidationErrors[0].Message, `expected "assess-1"`)
 	assert.Contains(t, correction.Instruction, "complete replacement JSON object")
+	assert.Contains(t, correction.Instruction, "predicate_key and predicate_version must both be null")
 	assert.Equal(t, 1, metrics.AssessorValidationFailureCount("response_contract"))
 }
 
