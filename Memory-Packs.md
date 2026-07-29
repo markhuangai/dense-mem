@@ -5,12 +5,14 @@ as reviewable, versioned JSON artifacts. They are portability packages, not
 database backups and not a path around normal identity resolution or
 assessment.
 
-This page owns the current `dense-mem.memory-pack.v2.3` artifact and workflow.
-The artifact version is independent from the public runtime contract. Dense-Mem
-V2.4 continues to read/write this exact pack format; a compatible import sends
-each newly staged evidence placement item through the integrated assessor.
-Selecting a server-supplied Entity or predicate mapping reuses persisted
-placement state and makes no extra assessor call.
+This page owns the current `dense-mem.memory-pack.v2.4` artifact and workflow.
+The artifact version is independent from the public runtime contract. Writers
+emit v2.4 evidence terminology. Strict readers first validate the original
+canonical hash of supported v2.3 and v1 artifacts, then adapt them for normal
+import; mixed v2.4/v2.3 shapes are rejected. A compatible import sends each
+newly staged evidence placement item through the integrated assessor. Selecting
+a server-supplied Entity or predicate mapping reuses persisted placement state
+and makes no extra assessor call.
 Tool discovery and transport schemas are in
 [Technical Reference](Technical-Reference#memory-packs).
 
@@ -35,7 +37,7 @@ A pack can include:
 - source Entity descriptors and name metadata
 - typed Values and predicate keys used by those Relationships
 - temporal/polarity qualifiers
-- optional evidence fragments and accepted support spans
+- optional evidence items and accepted support spans
 - source lifecycle status as provenance, not a destination instruction
 - export team/install identifiers as audit metadata
 - format/schema version, creation time, selection query, and content hash
@@ -54,7 +56,7 @@ A pack excludes:
 
 ```json
 {
-  "format": "dense-mem.memory-pack.v2.3",
+  "format": "dense-mem.memory-pack.v2.4",
   "pack_id": "pack_01J...",
   "name": "dense-mem-architecture",
   "description": "Selected architecture Relationships",
@@ -67,7 +69,7 @@ A pack excludes:
   "values": [],
   "predicate_definitions": [],
   "relationships": [],
-  "evidence_fragments": [],
+  "evidence": [],
   "evidence_supports": [],
   "extensions": {},
   "content_sha256": "..."
@@ -167,9 +169,11 @@ Inspection validates without writing:
 9. data-classification and provenance policy
 10. expected create/update/review counts
 
-Import accepts only the exact compatible `dense-mem.memory-pack.v2.3` format.
-An older, newer, or unknown required format/extension is rejected before
-mapping or writing; clients must export a compatible artifact.
+Import writes the current `dense-mem.memory-pack.v2.4` format. It also strictly
+reads v2.3 and v1 artifacts only after validating each artifact's original
+canonical hash before adaptation. An unknown or mixed required format/extension
+is rejected before mapping or writing; clients must export a compatible
+artifact.
 
 ```json
 {
@@ -314,7 +318,7 @@ audit, exact provider metadata, and non-exportable evidence. Use
 | Source IDs collide | destination treats source `entity_id` as canonical | artifact-local refs and mandatory destination resolution |
 | Trusted import bypasses truth policy | a signed pack copies active status without destination assessment | signature affects authority only; normal integrated assessment/lifecycle remains |
 | SSRF through URL import | server fetches cloud metadata/private services | HTTPS policy, IP/redirect validation, size/time limits, and expected hash |
-| Evidence disclosure | pack includes source content caller may not export | per-fragment authorization and explicit omission/failure report |
+| Evidence disclosure | pack includes source content caller may not export | per-evidence authorization and explicit omission/failure report |
 | Rollback erases later work | imported Entity gained new Relationships after import | dry-run dependency graph and block unsafe automatic rollback |
 | Duplicate replay | same pack imported twice adds support repeatedly | team+pack-hash idempotency and item-level keys |
 | Malicious extension | unknown JSON changes semantics | reject unknown required extensions and ignore only explicitly optional ones |

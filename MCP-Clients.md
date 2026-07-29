@@ -78,11 +78,16 @@ host uses `tools/call` when the model selects a tool. Their canonical behavior
 is in
 [Request Lifecycle And Security](Request-Lifecycle-And-Security#mcp-memory-interface).
 
-For contract `dense-mem.v2.4`, verify:
+For contract `dense-mem.v2.3.2`, verify:
 
 - `remember` takes evidence and optional proposal
 - `get_memory_placement` returns processing/search state, bounded assessment
   policy, and semantic `review_tasks[]`
+- `remember` accepts per-item `supersedes_evidence_ids` for caller-owned current
+  evidence; this direct lifecycle path cannot be combined with
+  `previous_source_revision`
+- `retract_evidence` requires caller-owned evidence IDs, a bounded reason, and
+  an idempotency key; it appends a lifecycle decision instead of deleting data
 - each semantic review exposes only stable ID/version, kind, state, question,
   server-supplied options, bounded guidance, and `expires_at`
 - `resolve_memory_placement` may select a supplied option or submit exact new
@@ -100,6 +105,10 @@ field for short cross-tool guidance:
 
 ```text
 Remember accepts evidence asynchronously. Poll get_memory_placement.
+To replace exact authored evidence, use supersedes_evidence_ids on the new
+evidence item. To withdraw it without a replacement, call retract_evidence.
+Both actions preserve append-only provenance and do not permit cross-profile
+targets.
 For a review, select only a server-supplied option when exact current-session
 context resolves it. Otherwise ask the user the returned question. Selecting an
 Entity or predicate option makes no AI call; accepting or correcting support

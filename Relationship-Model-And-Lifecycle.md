@@ -415,7 +415,7 @@ A Relationship observation is immutable processing history:
   "polarity": "+",
   "evidence": [
     {
-      "fragment_id": "f1",
+      "evidence_id": "e1",
       "start": 0,
       "end": 24,
       "source_group": "source:project-conversation",
@@ -660,7 +660,6 @@ Clients that can identify source lineage may supply:
 source_key
 source_revision
 previous_source_revision
-supersedes_fragment_ids[]
 ```
 
 `source_key` and `source_revision` appear together. The server scopes the
@@ -669,10 +668,18 @@ The first revision omits `previous_source_revision`; every later revision must
 name the exact current token. A mismatch changes no source pointer, support,
 status, or search state.
 
-The source owner may explicitly retire its own prior fragments through
-`supersedes_fragment_ids`. It cannot target fragments from another source
-owner. Ordinary Relationship correction remains profile-local and does not
-make shared evidence globally non-current.
+Source revision advancement makes the prior revision ineffective under the
+source's immutable owner and current-revision pointer. Ordinary Relationship
+correction remains profile-local and does not make shared evidence globally
+non-current.
+
+Direct evidence lifecycle is a separate path. A new evidence item may name
+one to fifty unique caller-owned current IDs in `supersedes_evidence_ids`; it
+cannot combine that field with `previous_source_revision`. The server appends a
+supersession event and retires those exact targets atomically at intake. The
+`retract_evidence` MCP tool appends the same kind of lifecycle decision when
+there is no replacement. Neither action targets another profile's evidence or
+rewrites historical evidence/support records.
 
 All evidence items for one source in a request carry identical revision fields
 and activate as one bounded batch. An idempotent retry of the same revision

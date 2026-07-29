@@ -81,9 +81,11 @@ explicit code/config change is made, and release gates pass.
 }
 ```
 
-Allowed result ref types are `relationship`, `fragment`, `community`, and
-`hypothesis`. Each ID is revalidated against the original same-team recall
-event.
+New recall snapshots record `evidence` and `relationship` refs. Each submitted
+ID is revalidated against the original same-team recall event. Retained events
+created before the evidence contract may still contain legacy result types;
+that narrow compatibility path exists only so feedback can be attached to an
+immutable historical event, not as a new recall output contract.
 
 A comment is required for low-quality, missing-context, irrelevant, or
 contradicted judgments. Comments are bounded and should describe the retrieval

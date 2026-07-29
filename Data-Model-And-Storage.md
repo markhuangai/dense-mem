@@ -706,8 +706,10 @@ The Relationship uniqueness key is defined in
 Cross-reference constraints additionally require both Relationships to share
 the row's team and the source Relationship owner to equal `author_profile_id`.
 An Evidence source has one immutable owner and one current-revision pointer.
-Advancement uses compare-and-set against `previous_source_revision`; explicit
-fragment supersession may name only fragments owned by that source principal.
+Advancement uses compare-and-set against `previous_source_revision`. Direct
+evidence supersession uses `supersedes_evidence_ids` and may name only current
+evidence owned by the authenticated profile; it is separate from source
+revision advancement.
 
 ## Predicate Registry Storage
 
@@ -830,7 +832,7 @@ drills. Runbook commands belong in
 | Async search gap | a committed correction is missing from vector recall while embedding is pending | exact/full-text/adjacency eligibility immediately, explicit `search_state`, job SLOs, and version checks |
 | Tenant leak | a shared vector or adjacency query returns another team's row | RLS, team-leading indexes, transaction-local actor context, and authorization again on hydration |
 | Redis becomes hidden storage | a restart loses an identity decision held only in cache | coordination-only interfaces and restart tests proving all memory survives Redis loss |
-| Source owner invalidates another profile's basis | an unowned source key or fragment ID revokes adopted support | immutable source ownership, composite source/fragment checks, exact prior-revision compare-and-set, and append-only audit |
+| Caller invalidates another profile's basis | an unowned source key or evidence ID revokes adopted support | immutable source/profile ownership, composite evidence checks, exact prior-revision compare-and-set, and append-only audit |
 | Source activation partially demotes knowledge | a large dependency set commits some revocations before failure | precompute indexed dependencies, enforce a fanout bound, and advance the source pointer only in the all-or-nothing transaction |
 | Stale placement resurrects an old revision | an in-flight provider result commits after a newer source pointer advances | supersede prior placement/search intent atomically and predicate later commits on the current source revision |
 | Security audit leaks detector internals | public placement or metrics reveal exact rules and attacker payloads | keep detailed signals in authorized audit rows and expose only bounded categories externally |

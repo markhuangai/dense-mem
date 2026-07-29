@@ -65,7 +65,7 @@ https://demo-dense-mem.markhuang.ai/mcp
 ```
 
 Run tool discovery. Verify that discovery/server metadata
-advertises Dense-Mem contract `dense-mem.v2.4` and that `recall_memory` returns
+advertises Dense-Mem contract `dense-mem.v2.3.2` and that `recall_memory` returns
 `relationship_id` handles.
 
 ## Step 3: Test Shared Memory

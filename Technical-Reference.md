@@ -1,6 +1,6 @@
 # Technical Reference
 
-This page defines public memory contract `dense-mem.v2.4`. The external memory
+This page defines public memory contract `dense-mem.v2.3.2`. The external memory
 contract is discovered and executed through MCP:
 
 ```text
@@ -37,8 +37,9 @@ The LLM host obtains this catalog with `tools/list` and invokes one entry with
 
 | Tool | Scope | Purpose |
 | --- | --- | --- |
-| `remember` | `write` | Persist evidence and queue one integrated structure/support assessment per new placement item plus lifecycle placement. |
+| `remember` | `write` | Persist evidence, optional Entity/Relationship hints, and optional owner-authorized direct supersession targets. |
 | `get_memory_placement` | `read` | Poll processing/search state and inspect outcomes or review tasks. |
+| `retract_evidence` | `write` | Retract caller-owned current evidence without deleting its provenance or trace lineage. |
 | `resolve_memory_placement` | `write` | Supply a client decision, new evidence, correction, rejection, or forget request. |
 | `correct_entity_resolution` | `write` | Dry-run or apply a merge/split limited to caller-owned observations and Relationships. |
 | `recall_memory` | `read` | Retrieve bounded evidence contexts plus separate Relationship, Community, Conflict, and Hypothesis frontiers. |
@@ -86,8 +87,8 @@ must not be enabled for production memory.
 ## Production HTTP Surface
 
 Semantic memory tools are MCP-only. `remember`, `get_memory_placement`,
-`resolve_memory_placement`, `correct_entity_resolution`, `recall_memory`, and
-`trace_memory` are advertised by MCP `tools/list` and invoked by MCP
+`retract_evidence`, `resolve_memory_placement`, `correct_entity_resolution`,
+`recall_memory`, and `trace_memory` are advertised by MCP `tools/list` and invoked by MCP
 `tools/call`. Removed HTTP catalog/executor routes must stay absent so the
 service does not expose a second public memory contract.
 
@@ -101,6 +102,13 @@ visibility is explicit and checked independently by discovery and execution.
 First-party user/control portal handlers may use bounded server-owned browser
 endpoints; those endpoints are private product implementation, not an external
 memory API and not an alternate way to call an MCP tool.
+
+```text
+/ui/api/*       first-party user-portal routes
+/control/api/*  private control-portal routes
+```
+
+There is no supported public REST memory API and no supported `/api/v1` route.
 
 ## Common Request Rules
 
@@ -197,7 +205,7 @@ present, it remains a bounded, independently reviewed hint.
 | `source_key` | no | Stable source-owner-scoped identity; must appear with `source_revision`. |
 | `source_revision` | no | Opaque current revision token for `source_key`. |
 | `previous_source_revision` | no | Exact compare-and-set token required when advancing an existing source. |
-| `supersedes_fragment_ids` | no | Bounded prior fragment IDs owned by the same source principal to retire explicitly. |
+| `supersedes_evidence_ids` | no | One to fifty unique UUIDs for caller-owned current evidence retired by this replacement. Requires this item's `idempotency_key`. |
 | `idempotency_key` | no | Retry key for this evidence item. |
 | `labels` | no | Up to 20 bounded labels. |
 | `metadata` | no | Bounded source-policy-approved JSON. |
@@ -210,9 +218,9 @@ authoritative, and two matching strings do not prove two independent sources.
 ### Source revision rules
 
 Clients omit source-revision fields when they cannot prove lineage. `source_key`
-and `source_revision` appear together; `previous_source_revision` and
-`supersedes_fragment_ids` are invalid without that pair. Unkeyed evidence never
-silently replaces earlier evidence.
+and `source_revision` appear together; `previous_source_revision` is the exact
+compare-and-set token for advancing that source. Unkeyed evidence never silently
+replaces earlier evidence.
 
 ```json
 {
@@ -223,7 +231,6 @@ silently replaces earlier evidence.
       "source_key": "employee-handbook",
       "source_revision": "rev-43",
       "previous_source_revision": "rev-42",
-      "supersedes_fragment_ids": ["fragment_rev42_mfa"],
       "idempotency_key": "employee-handbook:rev-43:mfa"
     }
   ]
@@ -234,13 +241,51 @@ The canonical source identity is scoped to team plus immutable authenticated
 source owner. The first revision omits `previous_source_revision`; every later
 revision must match the current token. Source activation occurs at intake and
 makes the prior revision ineffective team-wide even if the replacement is later
-quarantined or fails semantic placement. A mismatch or unowned fragment ID
-changes no source or knowledge state.
+quarantined or fails semantic placement. A mismatch changes no source or
+knowledge state.
 
 All evidence items for one `source_key` in a request must carry the same
 revision fields and activate as one bounded batch. An idempotent retry of the
 same revision returns the existing intake result; reusing that revision token
 with different content is a conflict and changes no state.
+
+### Direct evidence lifecycle
+
+`supersedes_evidence_ids` is a direct, owner-authorized evidence lifecycle
+operation. It does not require a source revision, but it cannot be combined
+with `previous_source_revision`. Every target must be a current evidence UUID
+owned by the authenticated profile; duplicate targets across one intake are
+rejected. The server writes an append-only supersession event and retires the
+target atomically with the replacement intake, even if the replacement later
+fails placement or is quarantined.
+
+```json
+{
+  "evidence": [
+    {
+      "content": "The handbook now requires phishing-resistant MFA.",
+      "source_type": "manual",
+      "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"],
+      "idempotency_key": "handbook-mfa-correction-20260729"
+    }
+  ]
+}
+```
+
+Use `retract_evidence` when there is no replacement:
+
+```json
+{
+  "evidence_ids": ["<owned-current-evidence-uuid>"],
+  "reason": "The source was withdrawn.",
+  "idempotency_key": "handbook-source-withdrawn-20260729"
+}
+```
+
+It returns an append-only `decision_id`, the retracted evidence IDs, and the
+affected/pending/retained-Relationship counts. Neither lifecycle action
+physically deletes evidence or trace lineage. Current recall excludes retired
+evidence; a `known_at` view before the event can still inspect historical state.
 
 ### Entity proposal fields
 
@@ -840,7 +885,8 @@ relationship
 observations[]
 evidence_supports[]
 support_decision_events[]
-evidence_fragments[]
+evidence[]
+evidence_lifecycle_events[]
 verification_events[]
 transitions[]
 conflicts[]
@@ -1002,7 +1048,7 @@ Provider configuration belongs in
 
 ## Contract Acceptance
 
-Contract `dense-mem.v2.4` is incomplete until:
+Contract `dense-mem.v2.3.2` is incomplete until:
 
 1. generated MCP tool schemas match the committed examples and enums
 2. unknown write fields and forbidden lifecycle fields fail validation

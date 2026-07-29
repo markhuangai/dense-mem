@@ -472,11 +472,13 @@ transitions remain traceable.
 
 This action corrects the caller's Relationship; it does not declare a shared
 source globally obsolete. A source owner that can prove stable lineage instead
-uses `source_key`, `source_revision`, and `previous_source_revision`, optionally
-with its own `supersedes_fragment_ids`. Source activation occurs at intake,
-makes the prior revision ineffective for every profile that adopted it, and
-recomputes affected statuses from remaining effective support. The caller cannot
-mix a profile-local correction with unowned source-fragment retirement.
+uses `source_key`, `source_revision`, and `previous_source_revision`. Source
+activation occurs at intake, makes the prior revision ineffective for every
+profile that adopted it, and recomputes affected statuses from remaining
+effective support. Direct evidence supersession instead uses
+`supersedes_evidence_ids` on new caller-owned evidence and cannot be combined
+with `previous_source_revision`. The caller cannot mix a profile-local
+correction with unowned evidence retirement.
 
 ## Same-Owner Before And After
 
@@ -550,7 +552,7 @@ this page owns how the client sees and resolves uncertainty.
 | --- | --- | --- |
 | Wrong review target | a decision for one conflict applies to another | require ingest/item/Relationship IDs, idempotency key, and echo an impact summary |
 | Accept bypasses policy | a client click writes an active Relationship directly | require exact new evidence and route its new placement item through one assessment plus deterministic lifecycle |
-| Correction erases history | old evidence is edited to match new truth | immutable fragments plus append-only observations, decisions, support, and transitions |
+| Correction erases history | old evidence is edited to match new truth | immutable evidence plus append-only observations, decisions, support, and transitions |
 | Homonym split corrupts history | finance-team Mark causes all Mark edges to move | client-confirmed impact preview and caller-owned observation-ID-level reassignment |
 | Unknown predicate expands vocabulary | assessor invents `dogfoods` as a durable key | structured registry allowlist and separate authorized vocabulary workflow |
 | Wrong supersession | a many-valued predicate is treated as single-current | explicit `current_cardinality`, scope/time comparison, and before/after preview |
@@ -562,7 +564,7 @@ this page owns how the client sees and resolves uncertainty.
 | Deadline becomes truth | an unresolved case automatically chooses B after seven days | TTL only switches thresholds; require one unique temporally applicable position above the applicable evidence floor, otherwise mark `overdue` and escalate |
 | Reviewer closes the wrong episode | B's branch change supersedes an unrelated A Relationship sharing text | lock case membership by Relationship ID/version, revalidate scope/predicate/cardinality/time, and update case plus losing Relationships in one transaction |
 | Historical recall uses today's winner | a query for six months ago returns only B | evaluate both `valid_at` and `known_at` against conflict events and effective time |
-| Fragment-wide suppression hides valid facts | A's fragment supports another still-current Relationship | filter only query-relevant support paths and retain the immutable fragment/search document |
+| Evidence-wide suppression hides valid Relationships | A's evidence supports another still-current Relationship | filter only query-relevant support paths and retain the immutable evidence/search document |
 | Stale C response attaches to the wrong case version | C confirms an alternative after the case was reopened or regrouped | require `conflict_id` plus expected version and reject stale context before commit |
 
 ## Acceptance Invariants

@@ -1,7 +1,7 @@
 # Using Dense-Mem
 
 Dense-Mem exposes its external memory tools through MCP. Contract
-`dense-mem.v2.4` accepts evidence, optionally accepts structured hints, and
+`dense-mem.v2.3.2` accepts evidence, optionally accepts structured hints, and
 processes semantic placement asynchronously. The user and control portals are
 first-party product interfaces, not alternative memory automation contracts.
 
@@ -49,7 +49,8 @@ reads remain distinct from vector freshness.
 | Follow Relationships | “Show Relationships connected to Dense-Mem.” |
 | Inspect support | “Trace the database Relationship and show accepted evidence.” |
 | Resolve identity | “Show placements waiting for me to identify which Mark.” |
-| Correct knowledge | “That deployment target is wrong; record this corrected evidence.” |
+| Replace specific evidence | “That deployment target is wrong; replace the exact evidence item I authored.” |
+| Retract evidence | “The source was withdrawn; retract the exact evidence item I authored.” |
 | Forget an edge | “Forget the selected Relationship, but preserve audit history.” |
 | Review speculation | “List related dreams and keep them labeled Hypotheses.” |
 
@@ -82,6 +83,47 @@ Do not:
 - set predicate definitions, lifecycle status, support, or lifecycle behavior
 - model an alias as an edge
 - omit known discriminators for a name such as `Mark`
+
+## Replace Or Retract Evidence
+
+To replace a particular current evidence item you own, submit its UUID in the
+replacement item's `supersedes_evidence_ids`. This is direct targeting; it is
+not the source-revision workflow. Each replacement needs its own idempotency
+key, and a request cannot combine `supersedes_evidence_ids` with
+`previous_source_revision`.
+
+```json
+{
+  "evidence": [
+    {
+      "content": "Dense-Mem uses PostgreSQL as its only durable authority.",
+      "source_type": "manual",
+      "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"],
+      "idempotency_key": "postgres-authority-correction-20260729"
+    }
+  ]
+}
+```
+
+Dense-Mem verifies that each target is a unique current evidence UUID owned by
+the authenticated profile. It appends the supersession event and retires the
+target atomically at intake; the target remains retired if the new evidence is
+later quarantined or does not produce an active Relationship.
+
+When no replacement exists, use `retract_evidence` instead of deleting data:
+
+```json
+{
+  "evidence_ids": ["<owned-current-evidence-uuid>"],
+  "reason": "The source was withdrawn.",
+  "idempotency_key": "postgres-source-withdrawn-20260729"
+}
+```
+
+Retraction writes an append-only lifecycle decision and reports the affected,
+pending, and retained active Relationship counts. Current recall excludes the
+retired evidence, while a historical `known_at` query before the event can still
+inspect the prior state.
 
 ## Structured Hint Example
 
@@ -321,7 +363,7 @@ conflict, correction, forget, or high-stakes answers.
 ## Correct And Forget
 
 A correction supplies new evidence and appends history. It does not edit the
-old fragment. A correction to another profile creates caller-owned knowledge
+old evidence. A correction to another profile creates caller-owned knowledge
 and a cross-reference during placement; it never directly changes the other
 profile's record. When recall returns an open Conflict case, place its
 `conflict_id` and expected version on the relevant Relationship proposal in a
@@ -333,6 +375,10 @@ Conflict review owns any automatic stale-state closure.
 retraction, removes that Relationship from active/default reads in the same
 PostgreSQL transaction, and keeps Entity/Value nodes plus evidence and decision
 history.
+
+`forget` is Relationship lifecycle, not evidence lifecycle. Use
+`retract_evidence` to remove an authored evidence item from current recall while
+preserving its provenance and trace lineage.
 
 Every write-scoped profile may merge or split its own Entity resolutions after
 a dry-run impact preview. It cannot move another profile's observations. See

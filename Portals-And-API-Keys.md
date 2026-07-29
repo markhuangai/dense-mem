@@ -17,11 +17,14 @@ Keep the control portal private.
 flowchart LR
   User["User/team manager"] --> Main["Main listener :8080"]
   Main --> UI["/ui"]
+  Main --> UserAPI["/ui/api/*"]
   Main --> MCP["/mcp"]
   UI --> Team["Authenticated team boundary"]
+  UserAPI --> Team
   MCP --> Team
 
   Operator["Deployment operator"] --> Control["Control listener :8090"]
+  Control --> ControlAPI["/control/api/*"]
   Control --> Admin["Cross-team control plane"]
   Control --> Metrics["Protected metrics"]
 ```
@@ -32,6 +35,11 @@ accepted by main memory routes.
 The user and control portals use first-party server handlers built for their
 own browser views. Those handlers are not a public client SDK or an alternative
 memory automation contract; external memory use goes through MCP.
+
+The only supported application API prefixes are `/mcp`, `/ui/api/*`, and
+`/control/api/*`. `/ui` is the user-portal document route. Health endpoints are
+operational probes, not memory APIs. Retired generic REST paths, including
+`/api/v1`, must not be exposed.
 
 User-portal authentication remains either a Dense-Mem API key or configured
 SSO. API-key login continues to use the key-based authentication path; SSO uses

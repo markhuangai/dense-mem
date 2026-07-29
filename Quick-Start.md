@@ -1,6 +1,6 @@
 # Quick Start
 
-This is the local PostgreSQL setup and `dense-mem.v2.4` smoke test. Use a
+This is the local PostgreSQL setup and `dense-mem.v2.3.2` smoke test. Use a
 pinned release that advertises that contract.
 
 ## Local Shape
@@ -37,7 +37,7 @@ cp .env.example .env
 ```
 
 Verify the release tag, artifact checksum/signature, and release notes. Stop if
-the release does not advertise `dense-mem.v2.4` and PostgreSQL authority.
+the release does not advertise `dense-mem.v2.3.2` and PostgreSQL authority.
 
 ### Upgrading an existing installation
 
@@ -126,9 +126,10 @@ export DENSE_MEM_API_KEY="dm_..."
 Follow [MCP Clients](MCP-Clients) and connect the LLM host. The host initializes
 the server and calls `tools/list`; verify:
 
-- contract `dense-mem.v2.4`
+- contract `dense-mem.v2.3.2`
 - `remember` accepts evidence plus optional hints
 - `get_memory_placement` returns processing and search state
+- `retract_evidence` is visible to a write-scoped key
 - `recall_memory` returns ranked Evidence contexts plus
   `related_relationships[]`, `related_communities[]`, `conflicts[]`,
   `related_hypotheses[]`, `search_states`, and `degradations[]`

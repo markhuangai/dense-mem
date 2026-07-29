@@ -278,7 +278,7 @@ The runtime advertises supported MCP protocol versions. Do not hardcode one
 protocol date in the manual as timeless.
 
 The negotiated MCP protocol version and Dense-Mem tool contract
-`dense-mem.v2.4` are
+`dense-mem.v2.3.2` are
 different versions. The host follows the current `tools/list` schemas and
 server instructions instead of applying a cached input shape from another
 Dense-Mem release.
@@ -401,7 +401,7 @@ Audit high-value events:
 
 - key/profile/team changes
 - authority changes and review decisions
-- source revision activation, fragment supersession, and resulting
+- source revision activation, direct evidence supersession/retraction, and resulting
   support/status transitions
 - deterministic/model quarantine and manager release
 - Entity merge/split
