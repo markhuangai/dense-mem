@@ -139,6 +139,7 @@ func (r *LedgerRepositoryImpl) CommitPlacementSemanticResult(
 				input,
 				decision,
 				observation.CorrectionTarget,
+				observation.ConflictContext,
 				placementFragmentID,
 				r.embeddingJobMaxAttempts,
 				ConflictRuntimeConfig{
@@ -164,6 +165,7 @@ func (r *LedgerRepositoryImpl) CommitPlacementSemanticResult(
 				tx,
 				input,
 				withPlacementDecisionScope(input, decision),
+				nil,
 				nil,
 				placementFragmentID,
 				r.embeddingJobMaxAttempts,

@@ -33,8 +33,13 @@ ALTER TABLE placement_assessments
 
 ALTER TABLE placement_assessments
     DROP CONSTRAINT IF EXISTS placement_assessments_prompt_nonempty;
+
+-- VALIDATE scans existing rows but permits normal concurrent reads and writes.
 ALTER TABLE placement_assessments
     ADD CONSTRAINT placement_assessments_prompt_nonempty
-    CHECK (btrim(prompt_revision) <> '');
+    CHECK (btrim(prompt_revision) <> '') NOT VALID;
+
+ALTER TABLE placement_assessments
+    VALIDATE CONSTRAINT placement_assessments_prompt_nonempty;
 
 -- +goose StatementEnd

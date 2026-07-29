@@ -407,6 +407,8 @@ func TestPlacementAssessmentReviewTaskUpsertsRetainAssessmentMetadata(t *testing
 		PlacementItemID: ingest.Items[0].PlacementItemID,
 	}
 	expectedExpiry := time.Date(2040, time.January, 2, 3, 4, 5, 0, time.UTC)
+	correctionID := uuid.NewString()
+	conflictID := uuid.NewString()
 
 	testCases := []struct {
 		name   string
@@ -436,7 +438,10 @@ func TestPlacementAssessmentReviewTaskUpsertsRetainAssessmentMetadata(t *testing
 					EvidenceVerdict:    "entailed",
 					SemanticReviewKind: "support_confidence",
 					AssessmentID:       assessmentID,
-				}, applied)
+				}, applied,
+					&PlacementCorrectionTargetInput{RelationshipID: correctionID, ExpectedVersion: 2},
+					&PlacementConflictContextInput{ConflictID: conflictID, ExpectedVersion: 3},
+				)
 			},
 		},
 		{
@@ -487,16 +492,44 @@ func TestPlacementAssessmentReviewTaskUpsertsRetainAssessmentMetadata(t *testing
 
 			var storedAssessmentID string
 			var storedExpiry time.Time
+			var storedVersion int
 			err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 				return tx.Raw(`
-					SELECT assessment_id::text, expires_at
+					SELECT assessment_id::text, expires_at, version
 					FROM review_tasks
 					WHERE team_id = ?::uuid AND review_task_id = ?::uuid
-				`, teamID, firstTaskID).Row().Scan(&storedAssessmentID, &storedExpiry)
+				`, teamID, firstTaskID).Row().Scan(&storedAssessmentID, &storedExpiry, &storedVersion)
 			})
 			require.NoError(t, err)
 			assert.Equal(t, assessment.AssessmentID, storedAssessmentID)
 			assert.True(t, storedExpiry.Equal(expectedExpiry))
+			assert.Equal(t, 2, storedVersion)
+
+			if testCase.name != "semantic_relationship" {
+				return
+			}
+			var storedCorrectionID, storedConflictID string
+			var storedCorrectionVersion, storedConflictVersion int
+			err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+				return tx.Raw(`
+					SELECT payload->'correction_target'->>'relationship_id',
+					       (payload->'correction_target'->>'expected_version')::int,
+					       payload->'conflict_context'->>'conflict_id',
+					       (payload->'conflict_context'->>'expected_version')::int
+					FROM review_tasks
+					WHERE team_id = ?::uuid AND review_task_id = ?::uuid
+				`, teamID, firstTaskID).Row().Scan(
+					&storedCorrectionID,
+					&storedCorrectionVersion,
+					&storedConflictID,
+					&storedConflictVersion,
+				)
+			})
+			require.NoError(t, err)
+			assert.Equal(t, correctionID, storedCorrectionID)
+			assert.Equal(t, 2, storedCorrectionVersion)
+			assert.Equal(t, conflictID, storedConflictID)
+			assert.Equal(t, 3, storedConflictVersion)
 		})
 	}
 }

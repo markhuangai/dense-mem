@@ -52,6 +52,8 @@ func insertPlacementSemanticReviewTask(
 	commit CommitPlacementSemanticInput,
 	input ApplyRelationshipDecisionInput,
 	applied *RelationshipDecisionResult,
+	correctionTarget *PlacementCorrectionTargetInput,
+	conflictContext *PlacementConflictContextInput,
 ) (string, error) {
 	if strings.TrimSpace(input.SemanticReviewKind) == "" || applied == nil || applied.ObservationID == "" {
 		return "", nil
@@ -65,6 +67,18 @@ func insertPlacementSemanticReviewTask(
 		"polarity":           input.Polarity,
 		"evidence_verdict":   input.EvidenceVerdict,
 		"reason":             reason,
+	}
+	if correctionTarget != nil {
+		payload["correction_target"] = map[string]any{
+			"relationship_id":  correctionTarget.RelationshipID,
+			"expected_version": correctionTarget.ExpectedVersion,
+		}
+	}
+	if conflictContext != nil {
+		payload["conflict_context"] = map[string]any{
+			"conflict_id":      conflictContext.ConflictID,
+			"expected_version": conflictContext.ExpectedVersion,
+		}
 	}
 	appendSemanticReviewPayload(payload, input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance)
 	payloadJSON, err := marshalJSON(payload)

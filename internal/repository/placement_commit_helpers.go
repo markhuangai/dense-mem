@@ -71,6 +71,7 @@ func applyPlacementRelationshipDecision(
 	commit CommitPlacementSemanticInput,
 	decision ApplyRelationshipDecisionInput,
 	correctionTarget *PlacementCorrectionTargetInput,
+	conflictContext *PlacementConflictContextInput,
 	placementFragmentID string,
 	embeddingJobMaxAttempts int,
 	conflictConfig ConflictRuntimeConfig,
@@ -87,7 +88,7 @@ func applyPlacementRelationshipDecision(
 	applied.ConfidenceGate = decision.GateResult
 	applied.PolicyVersion = decision.AssessmentPolicyVersion
 	if applied.ReviewTaskID == "" && decision.SemanticReviewKind != "" {
-		taskID, err := insertPlacementSemanticReviewTask(ctx, tx, commit, decision, applied)
+		taskID, err := insertPlacementSemanticReviewTask(ctx, tx, commit, decision, applied, correctionTarget, conflictContext)
 		if err != nil {
 			return err
 		}
