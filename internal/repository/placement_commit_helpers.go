@@ -15,6 +15,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+const placementRetryMaxDelay = 300 * time.Second
+
 const placementRunGuardedStatusCase = `
 	CASE
 	    WHEN EXISTS (
@@ -882,7 +884,8 @@ func finishPlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input Commit
 }
 
 func requeuePlacementRunForRetry(ctx context.Context, tx *gorm.DB, input CommitPlacementSemanticInput) error {
-	retryDelaySeconds := int(placementRetryDelay(input.ExpectedAttempts, input.PlacementItemID) / time.Second)
+	retryDelay := placementEffectiveRetryDelay(input.ExpectedAttempts, input.PlacementItemID, input.RetryAfter)
+	retryDelaySeconds := int(retryDelay / time.Second)
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE placement_runs
 		SET status = `+placementRunGuardedStatusCase+`,
@@ -914,14 +917,25 @@ func placementRetryDelay(attempt int, placementItemID string) time.Duration {
 	base := 15 * time.Second
 	for i := 1; i < attempt; i++ {
 		base *= 2
-		if base >= 300*time.Second {
-			base = 300 * time.Second
+		if base >= placementRetryMaxDelay {
+			base = placementRetryMaxDelay
 			break
 		}
 	}
 	delay := base + time.Duration(placementRetryJitterSeconds(placementItemID))*time.Second
-	if delay > 300*time.Second {
-		return 300 * time.Second
+	if delay > placementRetryMaxDelay {
+		return placementRetryMaxDelay
+	}
+	return delay
+}
+
+func placementEffectiveRetryDelay(attempt int, placementItemID string, retryAfter time.Duration) time.Duration {
+	delay := placementRetryDelay(attempt, placementItemID)
+	if retryAfter > delay {
+		delay = retryAfter
+	}
+	if delay > placementRetryMaxDelay {
+		return placementRetryMaxDelay
 	}
 	return delay
 }

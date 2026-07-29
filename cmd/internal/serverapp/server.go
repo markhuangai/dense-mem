@@ -84,7 +84,7 @@ func RunActiveServer(
 		log.Fatal("active authority requires configured verifier provider")
 	}
 	if strings.TrimSpace(cfg.GetAIReviewerModel()) != "" {
-		logger.Warn("AI_REVIEWER_MODEL is ignored by the V2.4 one-call assessor")
+		logger.Warn("AI_REVIEWER_MODEL is ignored by the V2.4 integrated assessor")
 	}
 
 	backend, err := buildBackendBundle(startupCtx, cfg)
@@ -852,7 +852,7 @@ func activePlacementLease(verifierTimeoutSeconds int, commitTimeoutSeconds int) 
 	if commitTimeoutSeconds <= 0 {
 		commitTimeoutSeconds = 10
 	}
-	lease := time.Duration((verifierTimeoutSeconds*memoryservice.SemanticPlacementDefaultAssessorCallBudget)+commitTimeoutSeconds+30) * time.Second
+	lease := time.Duration((verifierTimeoutSeconds*memoryservice.SemanticPlacementMaxAssessorTurns)+commitTimeoutSeconds+30) * time.Second
 	if lease < 5*time.Minute {
 		return 5 * time.Minute
 	}

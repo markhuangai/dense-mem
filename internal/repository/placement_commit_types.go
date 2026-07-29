@@ -14,6 +14,7 @@ type CommitPlacementSemanticInput struct {
 	Status           string
 	Category         string
 	Payload          map[string]any
+	RetryAfter       time.Duration
 
 	EntityResolutions        []PlacementEntityResolutionInput
 	RelationshipObservations []PlacementRelationshipDecisionInput

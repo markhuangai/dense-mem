@@ -213,11 +213,11 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		}, identityLabels()),
 		assessorCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_assessor_requests_total",
-			Help: "Integrated assessor provider calls by bounded outcome.",
+			Help: "Integrated assessor conversations by bounded outcome.",
 		}, []string{"outcome"}),
 		assessorDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_assessor_duration_seconds",
-			Help:    "Integrated assessor provider call duration.",
+			Help:    "Integrated assessor conversation duration.",
 			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120, 300, 600},
 		}, []string{"outcome"}),
 		assessorTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -595,7 +595,7 @@ func boolLabel(value bool) string {
 
 func normalizeAssessorCallOutcome(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "ok", "provider_error", "invalid_response":
+	case "ok", "provider_error", "malformed_exhausted":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return unknownMetricLabel
@@ -604,7 +604,7 @@ func normalizeAssessorCallOutcome(value string) string {
 
 func normalizeAssessorValidationStage(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "request", "response", "stored_response":
+	case "request", "response", "response_json", "response_contract", "response_output_tokens", "input_budget", "stored_response":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return unknownMetricLabel

@@ -240,6 +240,12 @@ func normalizeCommitPlacementSemanticInput(input CommitPlacementSemanticInput) C
 	if input.Category == "" {
 		input.Category = "validated_claim"
 	}
+	if input.RetryAfter < 0 {
+		input.RetryAfter = 0
+	}
+	if input.RetryAfter > placementRetryMaxDelay {
+		input.RetryAfter = placementRetryMaxDelay
+	}
 	for i := range input.EntityResolutions {
 		resolution := &input.EntityResolutions[i]
 		resolution.MentionRef = strings.TrimSpace(resolution.MentionRef)

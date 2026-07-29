@@ -107,6 +107,11 @@ type openAIStructuredChatResult struct {
 	Usage   *openAIVerifierUsage
 }
 
+type semanticAssessmentCorrection struct {
+	ValidationErrors []SemanticValidationError `json:"validation_errors"`
+	Instruction      string                    `json:"instruction"`
+}
+
 func decodeOpenAIVerifierAPIResponse(body io.Reader) (openAIVerifierAPIResponse, error) {
 	data, err := io.ReadAll(io.LimitReader(body, openAIVerifierMaxResponseBytes+1))
 	if err != nil {
@@ -265,9 +270,8 @@ func (v *OpenAIVerifier) ReviewSemantic(ctx context.Context, req SemanticReviewR
 	return response, nil
 }
 
-// AssessSemantic makes the sole V2.4 structure/support provider call. It does
-// not retry malformed output and does not give the provider a max-token field;
-// the server accepts only output within its configured semantic budget.
+// AssessSemantic runs one V2.4 structure/support conversation. Malformed
+// assistant content is corrected in the same bounded message history.
 func (v *OpenAIVerifier) AssessSemantic(ctx context.Context, req SemanticAssessmentRequest) (SemanticAssessmentResponse, error) {
 	prepared, validationErrors := PrepareSemanticAssessmentRequest(req, v.assessmentLimits)
 	if len(validationErrors) > 0 {
@@ -276,48 +280,108 @@ func (v *OpenAIVerifier) AssessSemantic(ctx context.Context, req SemanticAssessm
 			Message:  "invalid semantic assessment request: " + openAIValidationSummary(validationErrors),
 		}
 	}
-	providerResult, err := v.openAIStructuredChatJSONWithUsage(
-		ctx,
-		v.model,
-		SemanticAssessmentSchemaName,
-		SemanticAssessmentResponseSchema(),
-		semanticAssessmentSystemPrompt,
-		prepared,
-	)
+	userJSON, err := json.Marshal(prepared)
 	if err != nil {
-		return SemanticAssessmentResponse{}, err
+		return SemanticAssessmentResponse{}, &ProviderError{
+			Provider:     openAIVerifierProvider,
+			Message:      "failed to marshal semantic assessment request",
+			Cause:        err,
+			FailureClass: ProviderFailureClassProviderUnavailable,
+		}
 	}
-	if providerResult.Usage != nil {
-		if providerResult.Usage.PromptTokens > int64(v.assessmentLimits.MaxInputTokens) {
-			return SemanticAssessmentResponse{}, &MalformedResponseError{
-				Provider: openAIVerifierProvider,
-				Message:  "provider reported input tokens beyond semantic assessment limit",
+	messages := []openAIVerifierMessage{
+		{Role: "system", Content: semanticAssessmentSystemPrompt},
+		{Role: "user", Content: string(userJSON)},
+	}
+
+	for turn := 1; turn <= SemanticAssessmentMaxProviderTurns; turn++ {
+		inputTokens, err := semanticAssessmentMessageTokens(messages, v.assessmentLimits.Tokenizer)
+		if err != nil {
+			return SemanticAssessmentResponse{}, &ProviderError{
+				Provider:     openAIVerifierProvider,
+				Message:      "failed to count semantic assessment conversation tokens",
+				Cause:        err,
+				FailureClass: ProviderFailureClassProviderUnavailable,
 			}
 		}
-		if providerResult.Usage.CompletionTokens > int64(v.assessmentLimits.MaxOutputTokens) {
+		if inputTokens > v.assessmentLimits.MaxInputTokens {
+			observability.RecordAssessorValidationFailure(v.metrics, "input_budget")
 			return SemanticAssessmentResponse{}, &MalformedResponseError{
-				Provider: openAIVerifierProvider,
-				Message:  "provider reported output tokens beyond semantic assessment limit",
+				Provider:     openAIVerifierProvider,
+				Message:      "semantic assessment conversation exceeds input token limit",
+				FailureClass: "input_budget",
+				Attempts:     turn - 1,
 			}
 		}
-	}
-	response, err := DecodeSemanticAssessmentResponseJSON([]byte(providerResult.Content), v.assessmentLimits)
-	if err != nil {
-		return SemanticAssessmentResponse{}, &MalformedResponseError{
-			Provider: openAIVerifierProvider,
-			Message:  "failed to parse semantic assessment response",
-			RawJSON:  providerResult.Content,
+
+		providerResult, err := v.openAIStructuredChatMessagesJSONWithUsage(
+			ctx,
+			v.model,
+			SemanticAssessmentSchemaName,
+			SemanticAssessmentResponseSchema(),
+			messages,
+		)
+		if err != nil {
+			return SemanticAssessmentResponse{}, err
 		}
-	}
-	response, validationErrors = PrepareSemanticAssessmentResponse(prepared, response, v.assessmentLimits)
-	if len(validationErrors) > 0 {
-		return SemanticAssessmentResponse{}, &MalformedResponseError{
-			Provider: openAIVerifierProvider,
-			Message:  "invalid semantic assessment response: " + openAIValidationSummary(validationErrors),
-			RawJSON:  providerResult.Content,
+		if providerResult.Usage != nil &&
+			providerResult.Usage.PromptTokens > int64(v.assessmentLimits.MaxInputTokens) {
+			observability.RecordAssessorValidationFailure(v.metrics, "input_budget")
+			return SemanticAssessmentResponse{}, &MalformedResponseError{
+				Provider:     openAIVerifierProvider,
+				Message:      "provider reported input tokens beyond semantic assessment limit",
+				FailureClass: "input_budget",
+				Attempts:     turn,
+			}
 		}
+
+		response, responseErrors, failureStage := semanticAssessmentResponseForCorrection(
+			prepared,
+			providerResult,
+			v.assessmentLimits,
+		)
+		if len(responseErrors) == 0 {
+			response.InputTokens = inputTokens
+			if providerResult.Usage != nil &&
+				providerResult.Usage.PromptTokens > 0 {
+				response.InputTokens = int(providerResult.Usage.PromptTokens)
+			}
+			response.ProviderTurns = turn
+			return response, nil
+		}
+		observability.RecordAssessorValidationFailure(v.metrics, failureStage)
+		if turn == SemanticAssessmentMaxProviderTurns {
+			return SemanticAssessmentResponse{}, &MalformedResponseError{
+				Provider:     openAIVerifierProvider,
+				Message:      "semantic assessment response remained invalid after bounded correction",
+				FailureClass: "malformed_exhausted",
+				Attempts:     turn,
+			}
+		}
+
+		correctionJSON, err := json.Marshal(semanticAssessmentCorrection{
+			ValidationErrors: boundedSemanticAssessmentCorrectionErrors(responseErrors),
+			Instruction:      "Return one complete replacement JSON object matching the required schema. Do not return a patch or explanation.",
+		})
+		if err != nil {
+			return SemanticAssessmentResponse{}, &ProviderError{
+				Provider:     openAIVerifierProvider,
+				Message:      "failed to marshal semantic assessment validation feedback",
+				Cause:        err,
+				FailureClass: ProviderFailureClassProviderUnavailable,
+			}
+		}
+		messages = append(messages,
+			openAIVerifierMessage{Role: "assistant", Content: providerResult.Content},
+			openAIVerifierMessage{Role: "user", Content: string(correctionJSON)},
+		)
 	}
-	return response, nil
+	return SemanticAssessmentResponse{}, &MalformedResponseError{
+		Provider:     openAIVerifierProvider,
+		Message:      "semantic assessment response remained invalid after bounded correction",
+		FailureClass: "malformed_exhausted",
+		Attempts:     SemanticAssessmentMaxProviderTurns,
+	}
 }
 
 // Verify submits req to the OpenAI-compatible chat completions endpoint and
@@ -655,6 +719,34 @@ func (v *OpenAIVerifier) openAIStructuredChatJSONWithUsage(
 	systemPrompt string,
 	payload any,
 ) (openAIStructuredChatResult, error) {
+	userJSON, err := json.Marshal(payload)
+	if err != nil {
+		return openAIStructuredChatResult{}, &ProviderError{
+			Provider:     openAIVerifierProvider,
+			Message:      "failed to marshal user payload",
+			Cause:        err,
+			FailureClass: ProviderFailureClassProviderUnavailable,
+		}
+	}
+	return v.openAIStructuredChatMessagesJSONWithUsage(
+		ctx,
+		model,
+		schemaName,
+		schema,
+		[]openAIVerifierMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: string(userJSON)},
+		},
+	)
+}
+
+func (v *OpenAIVerifier) openAIStructuredChatMessagesJSONWithUsage(
+	ctx context.Context,
+	model string,
+	schemaName string,
+	schema map[string]any,
+	messages []openAIVerifierMessage,
+) (openAIStructuredChatResult, error) {
 	if err := v.acquire(ctx); err != nil {
 		return openAIStructuredChatResult{}, err
 	}
@@ -668,25 +760,15 @@ func (v *OpenAIVerifier) openAIStructuredChatJSONWithUsage(
 	schemaRaw, err := json.Marshal(schema)
 	if err != nil {
 		return openAIStructuredChatResult{}, &ProviderError{
-			Provider: openAIVerifierProvider,
-			Message:  "failed to marshal structured schema",
-			Cause:    err,
-		}
-	}
-	userJSON, err := json.Marshal(payload)
-	if err != nil {
-		return openAIStructuredChatResult{}, &ProviderError{
-			Provider: openAIVerifierProvider,
-			Message:  "failed to marshal user payload",
-			Cause:    err,
+			Provider:     openAIVerifierProvider,
+			Message:      "failed to marshal structured schema",
+			Cause:        err,
+			FailureClass: ProviderFailureClassProviderUnavailable,
 		}
 	}
 	chatReq := openAIVerifierRequest{
-		Model: model,
-		Messages: []openAIVerifierMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: string(userJSON)},
-		},
+		Model:       model,
+		Messages:    append([]openAIVerifierMessage(nil), messages...),
 		Temperature: openAIVerifierTemperature(v.disableTemperature),
 		ResponseFormat: openAIVerifierResponseFormat{
 			Type: "json_schema",
@@ -700,18 +782,20 @@ func (v *OpenAIVerifier) openAIStructuredChatJSONWithUsage(
 	bodyBytes, err := json.Marshal(chatReq)
 	if err != nil {
 		return openAIStructuredChatResult{}, &ProviderError{
-			Provider: openAIVerifierProvider,
-			Message:  "failed to marshal request",
-			Cause:    err,
+			Provider:     openAIVerifierProvider,
+			Message:      "failed to marshal request",
+			Cause:        err,
+			FailureClass: ProviderFailureClassProviderUnavailable,
 		}
 	}
 	url := strings.TrimSuffix(v.baseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return openAIStructuredChatResult{}, &ProviderError{
-			Provider: openAIVerifierProvider,
-			Message:  "failed to create HTTP request",
-			Cause:    err,
+			Provider:     openAIVerifierProvider,
+			Message:      "failed to create HTTP request",
+			Cause:        err,
+			FailureClass: ProviderFailureClassProviderUnavailable,
 		}
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+v.apiKey)
@@ -719,55 +803,63 @@ func (v *OpenAIVerifier) openAIStructuredChatJSONWithUsage(
 
 	httpResp, err := v.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if openAIRequestTimedOutOrCanceled(ctx, err) {
 			latencyOutcome = "timeout"
 			return openAIStructuredChatResult{}, &TimeoutError{
 				Provider: openAIVerifierProvider,
-				Message:  ctx.Err().Error(),
+				Message:  "provider request timed out or was canceled",
 			}
 		}
 		return openAIStructuredChatResult{}, &ProviderError{
-			Provider: openAIVerifierProvider,
-			Message:  "HTTP request failed",
-			Cause:    err,
+			Provider:     openAIVerifierProvider,
+			Message:      "HTTP request failed",
+			FailureClass: ProviderFailureClassTransport,
 		}
 	}
 	defer httpResp.Body.Close()
 
-	apiResp, err := decodeOpenAIVerifierAPIResponse(httpResp.Body)
-	if err != nil {
-		latencyOutcome = "malformed"
-		return openAIStructuredChatResult{}, &MalformedResponseError{
-			Provider: openAIVerifierProvider,
-			Message:  "failed to decode API response",
-		}
-	}
 	if httpResp.StatusCode == http.StatusTooManyRequests {
-		msg := "rate limited"
-		if apiResp.Error != nil && apiResp.Error.Message != "" {
-			msg = apiResp.Error.Message
-		}
 		latencyOutcome = "rate_limited"
 		return openAIStructuredChatResult{}, &RateLimitError{
-			Provider: openAIVerifierProvider,
-			Message:  msg,
+			Provider:   openAIVerifierProvider,
+			Message:    "provider returned HTTP 429",
+			RetryAfter: openAIRetryAfterSeconds(httpResp.Header.Get("Retry-After"), time.Now()),
 		}
 	}
 	if httpResp.StatusCode != http.StatusOK {
-		msg := fmt.Sprintf("unexpected status %d", httpResp.StatusCode)
-		if apiResp.Error != nil && apiResp.Error.Message != "" {
-			msg = apiResp.Error.Message
-		}
+		latencyOutcome = "provider_error"
 		return openAIStructuredChatResult{}, &ProviderError{
-			Provider: openAIVerifierProvider,
-			Message:  msg,
+			Provider:     openAIVerifierProvider,
+			Message:      fmt.Sprintf("provider returned HTTP %d", httpResp.StatusCode),
+			FailureClass: openAIHTTPFailureClass(httpResp.StatusCode),
+			StatusCode:   httpResp.StatusCode,
+		}
+	}
+
+	apiResp, err := decodeOpenAIVerifierAPIResponse(httpResp.Body)
+	if err != nil {
+		latencyOutcome = "provider_error"
+		return openAIStructuredChatResult{}, &ProviderError{
+			Provider:     openAIVerifierProvider,
+			Message:      "invalid provider response envelope",
+			FailureClass: ProviderFailureClassProtocol,
 		}
 	}
 	if len(apiResp.Choices) == 0 {
-		latencyOutcome = "malformed"
-		return openAIStructuredChatResult{}, &MalformedResponseError{
-			Provider: openAIVerifierProvider,
-			Message:  "no choices in response",
+		latencyOutcome = "provider_error"
+		return openAIStructuredChatResult{}, &ProviderError{
+			Provider:     openAIVerifierProvider,
+			Message:      "provider response contained no choices",
+			FailureClass: ProviderFailureClassProtocol,
+		}
+	}
+	content := apiResp.Choices[0].Message.Content
+	if strings.TrimSpace(content) == "" {
+		latencyOutcome = "provider_error"
+		return openAIStructuredChatResult{}, &ProviderError{
+			Provider:     openAIVerifierProvider,
+			Message:      "provider response contained empty assistant content",
+			FailureClass: ProviderFailureClassProtocol,
 		}
 	}
 	if apiResp.Usage != nil {
@@ -775,7 +867,7 @@ func (v *OpenAIVerifier) openAIStructuredChatJSONWithUsage(
 	}
 	latencyOutcome = "ok"
 	return openAIStructuredChatResult{
-		Content: apiResp.Choices[0].Message.Content,
+		Content: content,
 		Usage:   apiResp.Usage,
 	}, nil
 }

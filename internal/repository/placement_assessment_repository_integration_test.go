@@ -81,6 +81,82 @@ func TestPlacementAssessmentIsAppendOnceClaimBoundAndOwnerScoped(t *testing.T) {
 	assert.Contains(t, err.Error(), "append-only")
 }
 
+func TestPlacementReviewProviderRetryUsesHintAndReleasesAssessmentReservation(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "placement-provider-retry-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "provider-retry-owner")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"placement provider retry", "A provider rate limit should use durable backoff.")
+	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-provider-retry", time.Minute)
+	require.NoError(t, err)
+	reserved, err := ledgerRepo.ReservePlacementAssessmentProviderAttempt(ctx, ReservePlacementAssessmentProviderAttemptInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		PlacementRunID:   ingest.PlacementRunID,
+		PlacementItemID:  ingest.Items[0].PlacementItemID,
+		WorkerID:         "worker-provider-retry",
+		ExpectedAttempts: claimed.Attempts,
+	})
+	require.NoError(t, err)
+	require.True(t, reserved)
+
+	requeued, err := ledgerRepo.RequeuePlacementReviewResult(ctx, RequeuePlacementReviewInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         ingest.IngestID,
+		PlacementRunID:   ingest.PlacementRunID,
+		PlacementItemID:  ingest.Items[0].PlacementItemID,
+		WorkerID:         "worker-provider-retry",
+		ExpectedAttempts: claimed.Attempts,
+		OutcomeKind:      "semantic_assessment_attempt",
+		Payload: map[string]any{
+			"failure_class":   "rate_limited",
+			"provider_status": 429,
+		},
+		RetryAfter:             2 * time.Minute,
+		ReleaseAssessorAttempt: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "retryable", requeued.Status)
+
+	var delayedByHint, bounded, reservationReleased, leakedProviderMessage bool
+	var failureClass, providerStatus string
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT available_at >= now() + interval '110 seconds',
+			       available_at <= now() + interval '125 seconds'
+			FROM placement_runs
+			WHERE team_id = ?::uuid
+			  AND placement_run_id = ?::uuid
+		`, teamID, ingest.PlacementRunID).Row().Scan(&delayedByHint, &bounded))
+		require.NoError(t, tx.Raw(`
+			SELECT assessor_attempt_id IS NULL
+			FROM placement_items
+			WHERE team_id = ?::uuid
+			  AND placement_item_id = ?::uuid
+		`, teamID, ingest.Items[0].PlacementItemID).Row().Scan(&reservationReleased))
+		return tx.Raw(`
+			SELECT payload ->> 'failure_class',
+			       payload ->> 'provider_status',
+			       jsonb_exists(payload, 'provider_message')
+			FROM placement_outcomes
+			WHERE team_id = ?::uuid
+			  AND outcome_id = ?::uuid
+		`, teamID, requeued.OutcomeID).Row().Scan(&failureClass, &providerStatus, &leakedProviderMessage)
+	})
+	require.NoError(t, err)
+	assert.True(t, delayedByHint)
+	assert.True(t, bounded)
+	assert.True(t, reservationReleased)
+	assert.Equal(t, "rate_limited", failureClass)
+	assert.Equal(t, "429", providerStatus)
+	assert.False(t, leakedProviderMessage)
+}
+
 func TestPlacementAssessmentConcurrentPersistenceConvergesOnOneAssessment(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -283,7 +359,7 @@ func TestPlacementAssessmentProviderAttemptReservationIsSingleAndLeaseBound(t *t
 		ExpectedAttempts: reclaimed.Attempts,
 	})
 	require.NoError(t, err)
-	assert.True(t, reserved, "a later claim can make one request when no valid assessment exists")
+	assert.True(t, reserved, "a later claim can start one conversation when no valid assessment exists")
 }
 
 func TestPlacementAssessmentReviewTaskUpsertsRetainAssessmentMetadata(t *testing.T) {

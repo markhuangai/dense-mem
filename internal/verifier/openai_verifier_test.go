@@ -65,44 +65,81 @@ func TestOpenAIVerifierAdapterHelpers(t *testing.T) {
 	require.Equal(t, "relationships[0].predicate: is required; duplicate response", summary)
 }
 
-func TestOpenAIVerifierAssessSemanticUsesOneBoundedStructuredRequest(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var raw map[string]json.RawMessage
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&raw))
-		if _, exists := raw["max_tokens"]; exists {
-			t.Fatal("assessor request included max_tokens")
-		}
-		if _, exists := raw["max_completion_tokens"]; exists {
-			t.Fatal("assessor request included max_completion_tokens")
-		}
-		var request openAIVerifierRequest
-		require.NoError(t, json.Unmarshal(mustMarshalJSON(t, raw), &request))
-		assert.Equal(t, "assessor-model", request.Model)
-		assert.Equal(t, SemanticAssessmentSchemaName, request.ResponseFormat.JSONSchema.Name)
-		assert.Contains(t, request.Messages[0].Content, "integrated structure and support assessor")
-		var payload map[string]any
-		require.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &payload))
-		assert.NotContains(t, payload, "team_id")
-		assert.NotContains(t, payload, "owner_profile_id")
+func TestOpenAIVerifierAssessSemanticStopsBeforeCorrectionExceedsInputBudget(t *testing.T) {
+	req, limits := semanticAssessmentTestRequest(t)
+	prepared, validationErrors := PrepareSemanticAssessmentRequest(req, limits)
+	require.Empty(t, validationErrors)
+	userJSON := mustMarshalJSON(t, prepared)
+	initialMessages := []openAIVerifierMessage{
+		{Role: "system", Content: semanticAssessmentSystemPrompt},
+		{Role: "user", Content: string(userJSON)},
+	}
+	initialTokens, err := semanticAssessmentMessageTokens(initialMessages, limits.Tokenizer)
+	require.NoError(t, err)
 
-		content, err := json.Marshal(semanticAssessmentTestResponse())
-		require.NoError(t, err)
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
-			"usage":   map[string]any{"prompt_tokens": 200, "completion_tokens": 100, "total_tokens": 300},
+			"choices": []map[string]any{{"message": map[string]any{
+				"content": "not-json-" + strings.Repeat("x", 500),
+			}}},
 		}))
 	}))
 	defer srv.Close()
 
-	cfg := newTestVerifierConfig(srv.URL, "sk-test", "assessor-model")
-	cfg.AIReviewerModel = ""
+	cfg := newTestVerifierConfig(srv.URL, "key", "assessor-model")
+	cfg.AIVerifierMaxInputTokens = initialTokens + 5
 	v := NewOpenAIVerifier(cfg, srv.Client())
+	_, err = v.AssessSemantic(context.Background(), req)
+	var malformed *MalformedResponseError
+	require.ErrorAs(t, err, &malformed)
+	assert.Equal(t, "input_budget", malformed.FailureClass)
+	assert.Equal(t, 1, malformed.Attempts)
+	assert.Equal(t, 1, calls)
+}
+
+func TestOpenAIVerifierAssessSemanticHonorsRetryAfterMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	req, _ := semanticAssessmentTestRequest(t)
-	response, err := v.AssessSemantic(context.Background(), req)
-	require.NoError(t, err)
-	assert.Equal(t, "assess-1", response.RequestID)
-	require.Len(t, response.RelationshipResults, 1)
-	assert.Equal(t, "entailed", response.RelationshipResults[0].EvidenceVerdict)
+	_, err := v.AssessSemantic(context.Background(), req)
+	var rateLimit *RateLimitError
+	require.ErrorAs(t, err, &rateLimit)
+	assert.Equal(t, 120, rateLimit.RetryAfter)
+	assert.Equal(t, 2*time.Minute, ProviderFailureDetails(err).RetryAfter)
+}
+
+func TestOpenAIRetryAfterSeconds(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	assert.Equal(t, 17, openAIRetryAfterSeconds("17", now))
+	assert.Equal(t, 30, openAIRetryAfterSeconds(now.Add(30*time.Second).Format(http.TimeFormat), now))
+	assert.Equal(t, 300, openAIRetryAfterSeconds("999999999999", now))
+	assert.Equal(t, 300, openAIRetryAfterSeconds(now.Add(time.Hour).Format(http.TimeFormat), now))
+	assert.Zero(t, openAIRetryAfterSeconds("-1", now))
+	assert.Zero(t, openAIRetryAfterSeconds("invalid", now))
+}
+
+func TestBoundedSemanticAssessmentCorrectionErrors(t *testing.T) {
+	errs := make([]SemanticValidationError, SemanticAssessmentMaxCorrectionErrors+2)
+	for i := range errs {
+		errs[i] = SemanticValidationError{
+			Field:   fmt.Sprintf("field[%03d]", len(errs)-i),
+			Message: "is invalid",
+		}
+	}
+
+	bounded := boundedSemanticAssessmentCorrectionErrors(errs)
+
+	require.Len(t, bounded, SemanticAssessmentMaxCorrectionErrors)
+	assert.Equal(t, "field[001]", bounded[0].Field)
+	assert.Equal(t, "response", bounded[len(bounded)-1].Field)
+	assert.Contains(t, bounded[len(bounded)-1].Message, "additional validation errors")
 }
 
 func TestOpenAIVerifierAssessSemanticRejectsProviderOutputOverAcceptanceCap(t *testing.T) {

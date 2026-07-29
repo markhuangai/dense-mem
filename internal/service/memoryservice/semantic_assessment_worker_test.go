@@ -32,7 +32,7 @@ func TestSemanticAssessmentWorkerPersistsOnceAndReusesAcrossClaimRetry(t *testin
 	processed, err = worker.ProcessNextSemanticAssessmentPlacement(context.Background())
 	require.NoError(t, err)
 	require.True(t, processed)
-	assert.Equal(t, 1, provider.calls, "a persisted assessment must prevent another provider request")
+	assert.Equal(t, 1, provider.calls, "a persisted assessment must prevent another provider conversation")
 	assert.Equal(t, 1, assessments.persistCalls)
 	require.Len(t, commit.commits, 2)
 	assert.Equal(t, true, commit.commits[1].Payload["assessment_reused"])
@@ -62,8 +62,8 @@ func TestSemanticAssessmentWorkerReusesPersistedAssessmentAfterCommitFailure(t *
 	assert.Equal(t, true, commit.commits[1].Payload["assessment_reused"])
 }
 
-func TestSemanticAssessmentWorkerReleasesInvalidProviderAttemptForLaterClaim(t *testing.T) {
-	ledger, assessments, commit, _, provider, worker := semanticAssessmentWorkerFixture(t)
+func TestSemanticAssessmentWorkerTerminalizesInvalidProviderResponse(t *testing.T) {
+	_, assessments, commit, _, provider, worker := semanticAssessmentWorkerFixture(t)
 	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
 		return verifier.SemanticAssessmentResponse{
 			RequestID:           req.RequestID,
@@ -78,28 +78,23 @@ func TestSemanticAssessmentWorkerReleasesInvalidProviderAttemptForLaterClaim(t *
 	require.Contains(t, err.Error(), "invalid complete response")
 	require.Equal(t, 1, provider.calls)
 	require.Equal(t, 0, assessments.persistCalls)
-	require.Len(t, commit.requeues, 1)
-	require.Equal(t, "semantic_assessment_attempt", commit.requeues[0].OutcomeKind)
-	require.Equal(t, true, commit.requeues[0].Payload["assessor_provider_attempted"])
-	require.True(t, commit.requeues[0].ReleaseAssessorAttempt)
-
-	// Requeue releases a known invalid response atomically. The next placement
-	// claim may use its one request because no valid assessment was persisted.
-	assessments.reserved = false
-	ledger.run.Attempts++
-	provider.response = nil
-	processed, err = worker.ProcessNextSemanticAssessmentPlacement(context.Background())
-	require.True(t, processed)
-	require.NoError(t, err)
-	assert.Equal(t, 2, provider.calls, "each placement claim can make one provider request")
-	assert.Equal(t, 1, assessments.persistCalls)
-	require.Len(t, commit.commits, 1)
+	assert.Empty(t, commit.requeues)
+	require.Len(t, commit.completions, 1)
+	assert.Equal(t, "assessment", commit.completions[0].Payload["failure_stage"])
+	assert.Equal(t, "malformed_response", commit.completions[0].Payload["failure_class"])
+	assert.Equal(t, 1, commit.completions[0].Payload["assessor_turns"])
+	assert.True(t, assessments.reserved, "malformed exhaustion must not release a new conversation")
 }
 
 func TestSemanticAssessmentWorkerReleasesProviderFailureForLaterClaim(t *testing.T) {
 	_, assessments, commit, _, provider, worker := semanticAssessmentWorkerFixture(t)
 	provider.response = func(verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
-		return verifier.SemanticAssessmentResponse{}, errors.New("provider unavailable")
+		return verifier.SemanticAssessmentResponse{}, &verifier.ProviderError{
+			Provider:     "stub",
+			Message:      "provider returned HTTP 503",
+			FailureClass: verifier.ProviderFailureClassHTTPServer,
+			StatusCode:   503,
+		}
 	}
 
 	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
@@ -109,6 +104,62 @@ func TestSemanticAssessmentWorkerReleasesProviderFailureForLaterClaim(t *testing
 	assert.Zero(t, assessments.persistCalls)
 	require.Len(t, commit.requeues, 1)
 	assert.True(t, commit.requeues[0].ReleaseAssessorAttempt)
+	assert.Equal(t, verifier.ProviderFailureClassHTTPServer, commit.requeues[0].Payload["failure_class"])
+	assert.Equal(t, 503, commit.requeues[0].Payload["provider_status"])
+}
+
+func TestSemanticAssessmentWorkerUsesRateLimitRetryAfter(t *testing.T) {
+	_, _, commit, _, provider, worker := semanticAssessmentWorkerFixture(t)
+	provider.response = func(verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+		return verifier.SemanticAssessmentResponse{}, &verifier.RateLimitError{
+			Provider:   "stub",
+			Message:    "provider returned HTTP 429",
+			RetryAfter: 120,
+		}
+	}
+
+	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
+	require.True(t, processed)
+	require.Error(t, err)
+	require.Len(t, commit.requeues, 1)
+	assert.Equal(t, 2*time.Minute, commit.requeues[0].RetryAfter)
+	assert.Equal(t, verifier.ProviderFailureClassRateLimited, commit.requeues[0].Payload["failure_class"])
+	assert.Equal(t, 429, commit.requeues[0].Payload["provider_status"])
+	assert.NotContains(t, commit.requeues[0].Payload, "provider_message")
+}
+
+func TestSemanticAssessmentWorkerTerminalizesProviderFailureAtMaxAttempts(t *testing.T) {
+	ledger, _, commit, _, provider, worker := semanticAssessmentWorkerFixture(t)
+	ledger.run.MaxAttempts = ledger.run.Attempts
+	provider.response = func(verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+		return verifier.SemanticAssessmentResponse{}, &verifier.ProviderError{
+			Provider:     "stub",
+			Message:      "provider returned HTTP 401",
+			FailureClass: verifier.ProviderFailureClassHTTPClient,
+			StatusCode:   401,
+		}
+	}
+
+	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
+	require.True(t, processed)
+	require.Error(t, err)
+	assert.Empty(t, commit.requeues)
+	require.Len(t, commit.completions, 1)
+	assert.Equal(t, verifier.ProviderFailureClassHTTPClient, commit.completions[0].Payload["failure_class"])
+	assert.Equal(t, 401, commit.completions[0].Payload["provider_status"])
+}
+
+func TestSemanticAssessmentMalformedFailureUsesSafeFallbacks(t *testing.T) {
+	failureClass, turns := semanticAssessmentMalformedFailure(errors.New("untyped"))
+	assert.Equal(t, "malformed_response", failureClass)
+	assert.Zero(t, turns)
+
+	failureClass, turns = semanticAssessmentMalformedFailure(&verifier.MalformedResponseError{
+		Provider: "stub",
+		Attempts: 2,
+	})
+	assert.Equal(t, "malformed_response", failureClass)
+	assert.Equal(t, 2, turns)
 }
 
 func TestSemanticAssessmentWorkerRetriesCatalogPreflightFailure(t *testing.T) {
@@ -132,7 +183,7 @@ func TestSemanticAssessmentWorkerDoesNotCallProviderAfterDurableReservationWitho
 	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
 	require.True(t, processed)
 	require.NoError(t, err)
-	assert.Zero(t, provider.calls, "a consumed claim must not make a second provider request")
+	assert.Zero(t, provider.calls, "a consumed claim must not start a second provider conversation")
 	require.Len(t, commit.completions, 1)
 	assert.Equal(t, "assessment_attempt_consumed", commit.completions[0].Payload["failure_stage"])
 }

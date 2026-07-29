@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -41,8 +42,9 @@ type RequeuePlacementReviewInput struct {
 	ExpectedAttempts int
 	OutcomeKind      string
 	Payload          map[string]any
-	// ReleaseAssessorAttempt releases a known failed assessor request only as
-	// part of this lease-bound requeue transaction.
+	RetryAfter       time.Duration
+	// ReleaseAssessorAttempt releases a known failed assessor conversation only
+	// as part of this lease-bound requeue transaction.
 	ReleaseAssessorAttempt bool
 }
 
@@ -231,6 +233,12 @@ func normalizeRequeuePlacementReviewInput(input RequeuePlacementReviewInput) Req
 	if input.OutcomeKind == "" {
 		input.OutcomeKind = "placement_retry"
 	}
+	if input.RetryAfter < 0 {
+		input.RetryAfter = 0
+	}
+	if input.RetryAfter > placementRetryMaxDelay {
+		input.RetryAfter = placementRetryMaxDelay
+	}
 	return input
 }
 
@@ -305,6 +313,7 @@ func placementRetryScope(input RequeuePlacementReviewInput) CommitPlacementSeman
 		PlacementItemID:  input.PlacementItemID,
 		WorkerID:         input.WorkerID,
 		ExpectedAttempts: input.ExpectedAttempts,
+		RetryAfter:       input.RetryAfter,
 	}
 }
 

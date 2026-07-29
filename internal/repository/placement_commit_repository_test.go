@@ -518,6 +518,21 @@ func TestPlacementCorrectionTargetRelated(t *testing.T) {
 	}
 }
 
+func TestPlacementEffectiveRetryDelayHonorsBoundedProviderHint(t *testing.T) {
+	placementItemID := "placement-item"
+	existing := placementRetryDelay(1, placementItemID)
+
+	if got := placementEffectiveRetryDelay(1, placementItemID, existing-time.Second); got != existing {
+		t.Fatalf("retry delay = %s, want existing backoff %s", got, existing)
+	}
+	if got := placementEffectiveRetryDelay(1, placementItemID, 2*time.Minute); got != 2*time.Minute {
+		t.Fatalf("retry delay = %s, want provider hint 2m", got)
+	}
+	if got := placementEffectiveRetryDelay(1, placementItemID, time.Hour); got != placementRetryMaxDelay {
+		t.Fatalf("retry delay = %s, want cap %s", got, placementRetryMaxDelay)
+	}
+}
+
 func TestPlacementErrorsRemainComparable(t *testing.T) {
 	if !errors.Is(ErrPlacementLeaseLost, ErrPlacementLeaseLost) {
 		t.Fatal("lease lost error is not comparable")

@@ -141,7 +141,7 @@ type CommunityDetectSample struct {
 	ProjectedNodes  int
 }
 
-// AssessorCallSample records one bounded assessor-provider request.
+// AssessorCallSample records one bounded assessor conversation.
 type AssessorCallSample struct {
 	InputTokens     int
 	OutputTokens    int

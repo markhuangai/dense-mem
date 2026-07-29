@@ -17,9 +17,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-// SemanticPlacementDefaultAssessorCallBudget is deliberately separate from
-// the legacy proposal/review budget. A V2.4 placement claim can make one call.
-const SemanticPlacementDefaultAssessorCallBudget = 1
+// SemanticPlacementMaxAssessorTurns covers one initial assessor response and
+// the bounded complete-response corrections within the same conversation.
+const SemanticPlacementMaxAssessorTurns = verifier.SemanticAssessmentMaxProviderTurns
 
 var errSemanticAssessmentProviderAttemptConsumed = errors.New("semantic assessment provider attempt already consumed")
 
@@ -178,6 +178,28 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 	if err != nil {
 		if errors.Is(err, errSemanticAssessmentProviderAttemptConsumed) {
 			return true, s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_attempt_consumed")
+		}
+		if providerAttempted && errors.Is(err, verifier.ErrVerifierMalformedResponse) {
+			failureClass, providerTurns := semanticAssessmentMalformedFailure(err)
+			return true, errors.Join(err, s.completeTerminalWithFailure(
+				ctx,
+				*run,
+				item,
+				"assessment",
+				failureClass,
+				0,
+				providerTurns,
+			))
+		}
+		if providerAttempted {
+			return true, errors.Join(err, s.retryProviderFailure(
+				ctx,
+				*run,
+				item,
+				"assessment",
+				releaseProviderAttempt,
+				verifier.ProviderFailureDetails(err),
+			))
 		}
 		return true, errors.Join(err, s.retryOrFail(ctx, *run, item, "assessment", providerAttempted, releaseProviderAttempt))
 	}
@@ -386,16 +408,35 @@ func (s *semanticAssessmentPlacementWorkerService) loadOrAssess(
 	started := time.Now()
 	response, err := s.provider.AssessSemantic(ctx, prepared)
 	if err != nil {
-		observability.RecordAssessorCall(s.metrics, prepared.InputTokens, 0, time.Since(started).Seconds(), "provider_error")
-		return nil, verifier.SemanticAssessmentResponse{}, false, true, true, err
+		outcome := "provider_error"
+		releaseProviderAttempt := true
+		if errors.Is(err, verifier.ErrVerifierMalformedResponse) {
+			outcome = "malformed_exhausted"
+			releaseProviderAttempt = false
+		}
+		observability.RecordAssessorCall(s.metrics, prepared.InputTokens, 0, time.Since(started).Seconds(), outcome)
+		return nil, verifier.SemanticAssessmentResponse{}, false, true, releaseProviderAttempt, err
 	}
 	normalized, validationErrors := verifier.PrepareSemanticAssessmentResponse(prepared, response, s.limits)
 	if len(validationErrors) > 0 {
-		observability.RecordAssessorCall(s.metrics, prepared.InputTokens, response.OutputTokens, time.Since(started).Seconds(), "invalid_response")
-		observability.RecordAssessorValidationFailure(s.metrics, "response")
-		return nil, verifier.SemanticAssessmentResponse{}, false, true, true, errors.New("semantic assessor returned invalid complete response")
+		observability.RecordAssessorCall(s.metrics, prepared.InputTokens, response.OutputTokens, time.Since(started).Seconds(), "malformed_exhausted")
+		observability.RecordAssessorValidationFailure(s.metrics, "response_contract")
+		providerTurns := response.ProviderTurns
+		if providerTurns <= 0 {
+			providerTurns = 1
+		}
+		return nil, verifier.SemanticAssessmentResponse{}, false, true, false, &verifier.MalformedResponseError{
+			Provider:     "semantic_assessor",
+			Message:      "semantic assessor returned an invalid complete response",
+			FailureClass: "malformed_response",
+			Attempts:     providerTurns,
+		}
 	}
-	observability.RecordAssessorCall(s.metrics, prepared.InputTokens, normalized.OutputTokens, time.Since(started).Seconds(), "ok")
+	inputTokens := normalized.InputTokens
+	if inputTokens <= 0 {
+		inputTokens = prepared.InputTokens
+	}
+	observability.RecordAssessorCall(s.metrics, inputTokens, normalized.OutputTokens, time.Since(started).Seconds(), "ok")
 	normalizedJSON, err := json.Marshal(normalized)
 	if err != nil {
 		return nil, verifier.SemanticAssessmentResponse{}, false, true, false, err
@@ -414,7 +455,7 @@ func (s *semanticAssessmentPlacementWorkerService) loadOrAssess(
 		Model:                     s.provider.ModelName(),
 		PromptRevision:            verifier.SemanticAssessmentPromptRev,
 		Tokenizer:                 assessmentTokenizer(s.limits),
-		InputTokens:               prepared.InputTokens,
+		InputTokens:               inputTokens,
 		OutputTokens:              normalized.OutputTokens,
 		CandidateContextTokens:    prepared.CandidateContextTokens,
 		CandidateContextTruncated: prepared.CandidateContextTruncated,
@@ -491,17 +532,6 @@ func (s *semanticAssessmentPlacementWorkerService) retryOrFail(
 		ReleaseAssessorAttempt: releaseProviderAttempt,
 	})
 	return err
-}
-
-func semanticAssessmentRetryPayload(stage string, providerAttempted bool) map[string]any {
-	if !providerAttempted {
-		return nil
-	}
-	return map[string]any{
-		"assessor_contract":           "dense-mem.v2.4",
-		"assessor_provider_attempted": true,
-		"failure_stage":               strings.TrimSpace(stage),
-	}
 }
 
 func (s *semanticAssessmentPlacementWorkerService) completeTerminal(

@@ -22,8 +22,8 @@ var (
 )
 
 // PlacementAssessmentRepository is the append-once boundary between one
-// assessor call and deterministic semantic policy. It deliberately stores a
-// normalized response rather than provider transport data.
+// assessor conversation and deterministic semantic policy. It deliberately
+// stores a normalized response rather than provider transport data.
 type PlacementAssessmentRepository interface {
 	LoadPlacementAssessment(ctx context.Context, input LoadPlacementAssessmentInput) (*PlacementAssessment, error)
 	ReservePlacementAssessmentProviderAttempt(ctx context.Context, input ReservePlacementAssessmentProviderAttemptInput) (bool, error)
@@ -39,9 +39,9 @@ type LoadPlacementAssessmentInput struct {
 	PlacementItemID string
 }
 
-// ReservePlacementAssessmentProviderAttempt reserves the single permitted
-// provider request for the active placement claim while the caller owns its
-// lease. A known failed attempt is released only with its requeue transaction.
+// ReservePlacementAssessmentProviderAttempt reserves the assessor conversation
+// for the active placement claim while the caller owns its lease. A known
+// provider failure is released only with its requeue transaction.
 type ReservePlacementAssessmentProviderAttemptInput struct {
 	TeamID           string
 	OwnerProfileID   string
