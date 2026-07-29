@@ -20,7 +20,21 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	otherOwnerID := createLedgerProfile(t, adminDB, rls, otherTeamID, "catalog-other-owner")
 	repo := NewSemanticRepository(appDB, rls)
 	entity := createSemanticEntity(t, ctx, repo, teamID, ownerA, "project", "Dense-Mem")
+	retiredEntity := createSemanticEntity(t, ctx, repo, teamID, ownerA, "project", "Retired Entity")
 	otherEntity := createSemanticEntity(t, ctx, repo, otherTeamID, otherOwnerID, "project", "Other Team")
+	var retiredRows int64
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			UPDATE entity_records
+			SET status = 'retired',
+			    updated_at = now()
+			WHERE team_id = ?::uuid
+			  AND entity_id = ?::uuid
+		`, teamID, retiredEntity.EntityID)
+		retiredRows = result.RowsAffected
+		return result.Error
+	}))
+	require.Equal(t, int64(1), retiredRows)
 
 	candidates, err := repo.ListSemanticReviewEntityCandidates(ctx, SemanticReviewEntityCandidateInput{
 		TeamID:         teamID,
@@ -46,7 +60,7 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	known, err := repo.ListSemanticAssessmentKnownEntities(ctx, SemanticAssessmentKnownEntityInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerB,
-		EntityIDs:      []string{entity.EntityID, entity.EntityID, otherEntity.EntityID},
+		EntityIDs:      []string{entity.EntityID, entity.EntityID, retiredEntity.EntityID, otherEntity.EntityID},
 	})
 	require.NoError(t, err)
 	require.Len(t, known, 1)

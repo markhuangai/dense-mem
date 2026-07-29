@@ -118,6 +118,7 @@ func (r *SemanticRepositoryImpl) ListSemanticAssessmentKnownEntities(
 			 AND canonical.valid_to IS NULL
 			WHERE rec.team_id = ?::uuid
 			  AND rec.entity_id = ANY(?::uuid[])
+			  AND rec.status = 'active'
 			ORDER BY rec.entity_id
 		`, input.TeamID, pq.Array(input.EntityIDs)).Rows()
 		if err != nil {
