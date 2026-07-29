@@ -100,6 +100,10 @@ func (s *semanticAssessmentPlacementWorkerService) addKnownEntityHintCandidates(
 	sort.Strings(refs)
 	for _, ref := range refs {
 		hint := hints[ref]
+		spans := assessmentHintSpans(fragment, hint)
+		if len(spans) == 0 {
+			continue
+		}
 		candidates, err := s.catalog.ListSemanticReviewEntityCandidates(ctx, repository.SemanticReviewEntityCandidateInput{
 			TeamID:         run.TeamID,
 			OwnerProfileID: run.OwnerProfileID,
@@ -110,13 +114,6 @@ func (s *semanticAssessmentPlacementWorkerService) addKnownEntityHintCandidates(
 			return fmt.Errorf("revalidate known entity %q: %w", hint.KnownEntityID, err)
 		}
 		if len(candidates) != 1 || candidates[0].EntityID != hint.KnownEntityID || candidates[0].Status != "active" {
-			return deterministicSemanticAssessmentPreflightError(
-				"candidate_context_validation",
-				"known entity hint is not a current active candidate",
-			)
-		}
-		spans := assessmentHintSpans(fragment, hint)
-		if len(spans) == 0 {
 			continue
 		}
 		candidate := assessmentEntityCandidate(candidates[0])

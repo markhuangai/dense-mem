@@ -271,14 +271,18 @@ func TestSemanticAssessmentCandidateHelpersBoundAndPrefetch(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, truncated)
 	assert.Empty(t, groups)
+	assert.Equal(t, 1, catalog.knownCandidateCalls)
 
 	catalog.entityMatchesErr = errors.New("catalog unavailable")
 	_, _, err = service.prefetchEntityCandidates(context.Background(), run, ledger.placement.Evidence[0], nil, "evidence:0")
 	require.ErrorContains(t, err, "load exact entity candidates")
 	catalog.entityMatchesErr = nil
 	catalog.knownCandidates[knownID] = []repository.SemanticReviewEntityCandidate{{EntityID: knownID, Status: "inactive"}}
-	_, _, err = service.prefetchEntityCandidates(context.Background(), run, ledger.placement.Evidence[0], proposal, "evidence:0")
-	require.ErrorContains(t, err, "not a current active candidate")
+	groups, truncated, err = service.prefetchEntityCandidates(context.Background(), run, ledger.placement.Evidence[0], proposal, "evidence:0")
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	assert.Empty(t, groups)
+	assert.Equal(t, 2, catalog.knownCandidateCalls)
 }
 
 func TestSemanticAssessmentCandidatePrefetchCapsGroupsAndTrimClonesTrustedRefs(t *testing.T) {

@@ -643,6 +643,7 @@ type semanticAssessmentWorkerCatalogStub struct {
 	entityMatchesErr    error
 	knownCandidates     map[string][]repository.SemanticReviewEntityCandidate
 	knownCandidateErr   error
+	knownCandidateCalls int
 	predicateOptions    []repository.SemanticReviewPredicateCandidate
 	predicateOptionsErr error
 }
@@ -652,6 +653,7 @@ func (s *semanticAssessmentWorkerCatalogStub) ListSemanticAssessmentEntityMatche
 }
 
 func (s *semanticAssessmentWorkerCatalogStub) ListSemanticReviewEntityCandidates(_ context.Context, input repository.SemanticReviewEntityCandidateInput) ([]repository.SemanticReviewEntityCandidate, error) {
+	s.knownCandidateCalls++
 	if s.knownCandidateErr != nil {
 		return nil, s.knownCandidateErr
 	}
