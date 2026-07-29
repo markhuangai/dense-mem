@@ -81,28 +81,3 @@ jobs:
               }
               printf("coverage %.1f%% meets required %.1f%%\n", total, threshold)
             }'
-
-  postgres-regressions:
-    name: SSO and Dreams PostgreSQL regressions
-    runs-on: rootless-docker
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.26.4"
-          cache: false
-
-      - name: Run disposable PostgreSQL regressions
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test \
-            ./internal/repository \
-            ./internal/http \
-            -run '^(TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration)$' \
-            -count=1

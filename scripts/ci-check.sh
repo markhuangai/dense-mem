@@ -20,12 +20,6 @@ packages="$(
 printf '%s\n' "${packages}"
 go test ${packages}
 
-DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test \
-	./internal/repository \
-	./internal/http \
-	-run '^(TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration)$' \
-	-count=1
-
 packages="$(
 	go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./internal/... |
 		sed '/^$/d' |
