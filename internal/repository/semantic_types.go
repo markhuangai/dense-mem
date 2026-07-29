@@ -86,6 +86,12 @@ type SemanticAssessmentEntityMatchResult struct {
 	Truncated bool
 }
 
+type SemanticAssessmentKnownEntityInput struct {
+	TeamID         string
+	OwnerProfileID string
+	EntityIDs      []string
+}
+
 type SemanticReviewPredicateCandidateInput struct {
 	TeamID         string
 	OwnerProfileID string

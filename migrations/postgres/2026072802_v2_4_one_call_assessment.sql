@@ -173,6 +173,8 @@ ALTER TABLE verification_events
         'meets_write_threshold', 'below_write_threshold', 'not_applicable'
     ));
 
+-- Pre-V2.4 tasks have no assessor record; NULL keeps them on the existing
+-- resolution and expiry paths instead of inventing assessment provenance.
 ALTER TABLE review_tasks
     ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1,
     ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NULL,

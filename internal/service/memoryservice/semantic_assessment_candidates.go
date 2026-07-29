@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
@@ -30,9 +31,16 @@ func (s *semanticAssessmentPlacementWorkerService) prefetchEntityCandidates(
 	}
 	groups := map[string]*verifier.SemanticAssessmentEntityCandidateGroup{}
 	truncated := matches.Truncated
+	textIndex := newAssessmentTextIndex(fragment.Content)
+	spansByMatchedName := make(map[string][]assessmentTextSpan)
 	for _, match := range matches.Matches {
 		candidate := assessmentEntityCandidate(match.Candidate)
-		for _, span := range exactTokenSpans(fragment.Content, match.MatchedName) {
+		spans, exists := spansByMatchedName[match.MatchedName]
+		if !exists {
+			spans = textIndex.exactTokenSpans(match.MatchedName)
+			spansByMatchedName[match.MatchedName] = spans
+		}
+		for _, span := range spans {
 			key := assessmentCandidateGroupKey(evidenceID, span.start, span.end)
 			group := groups[key]
 			if group == nil {
@@ -48,7 +56,7 @@ func (s *semanticAssessmentPlacementWorkerService) prefetchEntityCandidates(
 		}
 	}
 	knownGroupKeys := map[string]struct{}{}
-	if err := s.addKnownEntityHintCandidates(ctx, run, fragment, proposal, evidenceID, groups, knownGroupKeys); err != nil {
+	if err := s.addKnownEntityHintCandidates(ctx, run, fragment, proposal, evidenceID, textIndex, groups, knownGroupKeys); err != nil {
 		return nil, false, err
 	}
 	ordered := make([]verifier.SemanticAssessmentEntityCandidateGroup, 0, len(groups))
@@ -106,6 +114,7 @@ func (s *semanticAssessmentPlacementWorkerService) addKnownEntityHintCandidates(
 	fragment repository.EvidenceFragment,
 	proposal map[string]any,
 	evidenceID string,
+	textIndex assessmentTextIndex,
 	groups map[string]*verifier.SemanticAssessmentEntityCandidateGroup,
 	knownGroupKeys map[string]struct{},
 ) error {
@@ -117,26 +126,46 @@ func (s *semanticAssessmentPlacementWorkerService) addKnownEntityHintCandidates(
 		}
 	}
 	sort.Strings(refs)
+	type knownEntityHint struct {
+		entityID string
+		spans    []assessmentTextSpan
+	}
+	pending := make([]knownEntityHint, 0, len(refs))
+	knownIDs := make([]string, 0, len(refs))
+	seenIDs := make(map[string]struct{}, len(refs))
 	for _, ref := range refs {
 		hint := hints[ref]
-		spans := assessmentHintSpans(fragment, hint)
+		spans := assessmentHintSpansWithIndex(fragment, hint, textIndex)
 		if len(spans) == 0 {
 			continue
 		}
-		candidates, err := s.catalog.ListSemanticReviewEntityCandidates(ctx, repository.SemanticReviewEntityCandidateInput{
-			TeamID:         run.TeamID,
-			OwnerProfileID: run.OwnerProfileID,
-			KnownEntityID:  hint.KnownEntityID,
-			Limit:          1,
-		})
-		if err != nil {
-			return fmt.Errorf("revalidate known entity %q: %w", hint.KnownEntityID, err)
+		pending = append(pending, knownEntityHint{entityID: hint.KnownEntityID, spans: spans})
+		if _, exists := seenIDs[hint.KnownEntityID]; !exists {
+			seenIDs[hint.KnownEntityID] = struct{}{}
+			knownIDs = append(knownIDs, hint.KnownEntityID)
 		}
-		if len(candidates) != 1 || candidates[0].EntityID != hint.KnownEntityID || candidates[0].Status != "active" {
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	candidates, err := s.catalog.ListSemanticAssessmentKnownEntities(ctx, repository.SemanticAssessmentKnownEntityInput{
+		TeamID:         run.TeamID,
+		OwnerProfileID: run.OwnerProfileID,
+		EntityIDs:      knownIDs,
+	})
+	if err != nil {
+		return fmt.Errorf("revalidate known entities: %w", err)
+	}
+	candidatesByID := make(map[string]repository.SemanticReviewEntityCandidate, len(candidates))
+	for _, candidate := range candidates {
+		candidatesByID[candidate.EntityID] = candidate
+	}
+	for _, item := range pending {
+		candidate, exists := candidatesByID[item.entityID]
+		if !exists || candidate.Status != "active" {
 			continue
 		}
-		candidate := assessmentEntityCandidate(candidates[0])
-		for _, span := range spans {
+		for _, span := range item.spans {
 			key := assessmentCandidateGroupKey(evidenceID, span.start, span.end)
 			knownGroupKeys[key] = struct{}{}
 			group := groups[key]
@@ -149,7 +178,7 @@ func (s *semanticAssessmentPlacementWorkerService) addKnownEntityHintCandidates(
 				}
 				groups[key] = group
 			}
-			addAssessmentEntityCandidate(group, candidate)
+			addAssessmentEntityCandidate(group, assessmentEntityCandidate(candidate))
 		}
 	}
 	return nil
@@ -194,6 +223,14 @@ type assessmentTextSpan struct {
 }
 
 func assessmentHintSpans(fragment repository.EvidenceFragment, hint placementReviewEntityHint) []assessmentTextSpan {
+	return assessmentHintSpansWithIndex(fragment, hint, newAssessmentTextIndex(fragment.Content))
+}
+
+func assessmentHintSpansWithIndex(
+	fragment repository.EvidenceFragment,
+	hint placementReviewEntityHint,
+	textIndex assessmentTextIndex,
+) []assessmentTextSpan {
 	if len(hint.Evidence) > 0 {
 		for _, evidence := range hint.Evidence {
 			if evidence.evidenceIndex != fragment.EvidenceIndex {
@@ -206,31 +243,51 @@ func assessmentHintSpans(fragment repository.EvidenceFragment, hint placementRev
 		}
 		return nil
 	}
-	return exactTokenSpans(fragment.Content, hint.Name)
+	return textIndex.exactTokenSpans(hint.Name)
 }
 
-func exactTokenSpans(content, surface string) []assessmentTextSpan {
+type assessmentTextIndex struct {
+	content     string
+	runes       []rune
+	byteOffsets []int
+}
+
+func newAssessmentTextIndex(content string) assessmentTextIndex {
+	runes := []rune(content)
+	byteOffsets := make([]int, 0, len(runes)+1)
+	for offset := range content {
+		byteOffsets = append(byteOffsets, offset)
+	}
+	byteOffsets = append(byteOffsets, len(content))
+	return assessmentTextIndex{content: content, runes: runes, byteOffsets: byteOffsets}
+}
+
+func (index assessmentTextIndex) exactTokenSpans(surface string) []assessmentTextSpan {
 	surface = strings.TrimSpace(surface)
 	if surface == "" {
 		return nil
 	}
-	text := []rune(content)
-	needle := []rune(surface)
-	if len(needle) == 0 || len(needle) > len(text) {
+	needleLength := utf8.RuneCountInString(surface)
+	if needleLength == 0 || needleLength > len(index.runes) {
 		return nil
 	}
 	spans := make([]assessmentTextSpan, 0, 1)
-	for start := 0; start+len(needle) <= len(text); start++ {
-		if !strings.EqualFold(string(text[start:start+len(needle)]), surface) {
+	for start := 0; start+needleLength <= len(index.runes); start++ {
+		end := start + needleLength
+		candidate := index.content[index.byteOffsets[start]:index.byteOffsets[end]]
+		if !strings.EqualFold(candidate, surface) {
 			continue
 		}
-		end := start + len(needle)
-		if !assessmentTokenBoundary(text, start, end) {
+		if !assessmentTokenBoundary(index.runes, start, end) {
 			continue
 		}
-		spans = append(spans, assessmentTextSpan{start: start, end: end, surface: string(text[start:end])})
+		spans = append(spans, assessmentTextSpan{start: start, end: end, surface: candidate})
 	}
 	return spans
+}
+
+func exactTokenSpans(content, surface string) []assessmentTextSpan {
+	return newAssessmentTextIndex(content).exactTokenSpans(surface)
 }
 
 func assessmentTokenBoundary(text []rune, start, end int) bool {

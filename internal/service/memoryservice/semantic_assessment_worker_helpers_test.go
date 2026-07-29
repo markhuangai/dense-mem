@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -340,6 +341,112 @@ func TestSemanticAssessmentCandidatePrefetchCapsGroupsAndTrimClonesTrustedRefs(t
 	assert.False(t, trimSemanticAssessmentCandidates(&verifier.SemanticAssessmentRequest{}, 1))
 	cloned.RequiredRelationshipRefs[0].Evidence[0].EvidenceID = "changed"
 	assert.Equal(t, "evidence:0", request.RequiredRelationshipRefs[0].Evidence[0].EvidenceID)
+}
+
+func TestSemanticAssessmentKnownEntityHintsUseOneBatchLookup(t *testing.T) {
+	_, _, _, catalog, _, worker := semanticAssessmentWorkerFixture(t)
+	service := worker.(*semanticAssessmentPlacementWorkerService)
+	ledger := service.ledger.(*semanticAssessmentWorkerLedgerStub)
+	fragment := ledger.placement.Evidence[0]
+	firstID := uuid.NewString()
+	secondID := uuid.NewString()
+	catalog.knownCandidates = map[string][]repository.SemanticReviewEntityCandidate{
+		firstID: {{
+			EntityID: firstID, CanonicalName: "Evidence", EntityKind: "concept", Status: "active",
+		}},
+		secondID: {{
+			EntityID: secondID, CanonicalName: "durable", EntityKind: "concept", Status: "active",
+		}},
+	}
+	proposal := map[string]any{"entity_hints": []any{
+		map[string]any{"ref": "evidence", "name": "Evidence", "known_entity_id": firstID},
+		map[string]any{"ref": "durable", "name": "durable", "known_entity_id": secondID},
+		map[string]any{"ref": "evidence-again", "name": "Evidence", "known_entity_id": firstID},
+	}}
+
+	groups, truncated, err := service.prefetchEntityCandidates(
+		context.Background(),
+		*ledger.run,
+		fragment,
+		proposal,
+		"evidence:0",
+	)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, groups, 2)
+	assert.Equal(t, 1, catalog.knownCandidateCalls)
+	assert.ElementsMatch(t, []string{firstID, secondID}, catalog.knownCandidateIDs)
+}
+
+func TestSemanticAssessmentReviewExpiryThrottle(t *testing.T) {
+	delegate := &semanticAssessmentReviewExpiryStub{}
+	throttle := NewSemanticAssessmentReviewExpiryThrottle(delegate, time.Minute)
+	teamID := uuid.NewString()
+	now := time.Date(2040, time.January, 2, 3, 4, 5, 0, time.UTC)
+	input := repository.ExpirePlacementAssessmentReviewsInput{TeamID: teamID, Now: now}
+
+	_, err := throttle.ExpirePlacementAssessmentReviews(context.Background(), input)
+	require.NoError(t, err)
+	_, err = throttle.ExpirePlacementAssessmentReviews(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, 1, delegate.calls)
+
+	_, err = throttle.ExpirePlacementAssessmentReviews(context.Background(), repository.ExpirePlacementAssessmentReviewsInput{
+		TeamID: uuid.NewString(),
+		Now:    now,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, delegate.calls)
+
+	input.Now = now.Add(time.Minute)
+	_, err = throttle.ExpirePlacementAssessmentReviews(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, 3, delegate.calls)
+
+	delegate.err = errors.New("expiry unavailable")
+	input.Now = now.Add(2 * time.Minute)
+	_, err = throttle.ExpirePlacementAssessmentReviews(context.Background(), input)
+	require.ErrorContains(t, err, "expiry unavailable")
+	delegate.err = nil
+	_, err = throttle.ExpirePlacementAssessmentReviews(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, 5, delegate.calls, "a failed expiry must remain immediately retryable")
+
+	blocking := &semanticAssessmentReviewExpiryStub{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	concurrentThrottle := NewSemanticAssessmentReviewExpiryThrottle(blocking, time.Minute)
+	done := make(chan error, 1)
+	go func() {
+		_, expireErr := concurrentThrottle.ExpirePlacementAssessmentReviews(context.Background(), input)
+		done <- expireErr
+	}()
+	<-blocking.started
+	_, err = concurrentThrottle.ExpirePlacementAssessmentReviews(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, 1, blocking.calls)
+	close(blocking.release)
+	require.NoError(t, <-done)
+}
+
+type semanticAssessmentReviewExpiryStub struct {
+	calls   int
+	err     error
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *semanticAssessmentReviewExpiryStub) ExpirePlacementAssessmentReviews(
+	context.Context,
+	repository.ExpirePlacementAssessmentReviewsInput,
+) (int64, error) {
+	s.calls++
+	if s.started != nil {
+		close(s.started)
+		<-s.release
+	}
+	return 0, s.err
 }
 
 func TestSemanticAssessmentWorkerFailureAndStoredAssessmentBoundaries(t *testing.T) {

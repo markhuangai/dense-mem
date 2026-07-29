@@ -59,8 +59,12 @@ func semanticAssessmentPreflightFailure(err error) (string, bool) {
 
 type SemanticAssessmentCatalog interface {
 	ListSemanticAssessmentEntityMatches(ctx context.Context, input repository.SemanticAssessmentEntityMatchInput) (repository.SemanticAssessmentEntityMatchResult, error)
-	ListSemanticReviewEntityCandidates(ctx context.Context, input repository.SemanticReviewEntityCandidateInput) ([]repository.SemanticReviewEntityCandidate, error)
+	ListSemanticAssessmentKnownEntities(ctx context.Context, input repository.SemanticAssessmentKnownEntityInput) ([]repository.SemanticReviewEntityCandidate, error)
 	ListSemanticAssessmentPredicateOptions(ctx context.Context, input repository.SemanticAssessmentPredicateOptionsInput) ([]repository.SemanticReviewPredicateCandidate, error)
+}
+
+type SemanticAssessmentReviewExpiry interface {
+	ExpirePlacementAssessmentReviews(ctx context.Context, input repository.ExpirePlacementAssessmentReviewsInput) (int64, error)
 }
 
 type SemanticAssessorProvider interface {
@@ -75,6 +79,7 @@ type SemanticAssessmentPlacementWorkerService interface {
 type SemanticAssessmentPlacementWorkerDependencies struct {
 	Ledger                    repository.LedgerRepository
 	Assessments               repository.PlacementAssessmentRepository
+	ReviewExpiry              SemanticAssessmentReviewExpiry
 	Commit                    repository.PlacementCommitRepository
 	Catalog                   SemanticAssessmentCatalog
 	Provider                  SemanticAssessorProvider
@@ -90,6 +95,7 @@ type SemanticAssessmentPlacementWorkerDependencies struct {
 type semanticAssessmentPlacementWorkerService struct {
 	ledger                    repository.LedgerRepository
 	assessments               repository.PlacementAssessmentRepository
+	reviewExpiry              SemanticAssessmentReviewExpiry
 	commit                    repository.PlacementCommitRepository
 	catalog                   SemanticAssessmentCatalog
 	provider                  SemanticAssessorProvider
@@ -113,6 +119,10 @@ func NewSemanticAssessmentPlacementWorkerService(
 	if now == nil {
 		now = time.Now
 	}
+	reviewExpiry := deps.ReviewExpiry
+	if reviewExpiry == nil {
+		reviewExpiry = deps.Assessments
+	}
 	metrics := deps.Metrics
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
@@ -120,6 +130,7 @@ func NewSemanticAssessmentPlacementWorkerService(
 	return &semanticAssessmentPlacementWorkerService{
 		ledger:                    deps.Ledger,
 		assessments:               deps.Assessments,
+		reviewExpiry:              reviewExpiry,
 		commit:                    deps.Commit,
 		catalog:                   deps.Catalog,
 		provider:                  deps.Provider,
@@ -137,7 +148,7 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 	if err := s.validateDependencies(); err != nil {
 		return false, err
 	}
-	expired, err := s.assessments.ExpirePlacementAssessmentReviews(ctx, repository.ExpirePlacementAssessmentReviewsInput{
+	expired, err := s.reviewExpiry.ExpirePlacementAssessmentReviews(ctx, repository.ExpirePlacementAssessmentReviewsInput{
 		TeamID: s.teamID,
 		Now:    s.now().UTC(),
 	})
@@ -262,6 +273,9 @@ func (s *semanticAssessmentPlacementWorkerService) validateDependencies() error 
 	if s.assessments == nil {
 		return errors.New("semantic assessment worker: assessment repository is required")
 	}
+	if s.reviewExpiry == nil {
+		return errors.New("semantic assessment worker: review expiry is required")
+	}
 	if s.commit == nil {
 		return errors.New("semantic assessment worker: placement commit repository is required")
 	}
@@ -364,11 +378,7 @@ func (s *semanticAssessmentPlacementWorkerService) loadOrAssess(
 	if !errors.Is(err, repository.ErrPlacementAssessmentNotFound) {
 		return nil, verifier.SemanticAssessmentResponse{}, false, false, false, err
 	}
-	prepared, validationErrors := verifier.PrepareSemanticAssessmentRequest(request, s.limits)
-	if len(validationErrors) > 0 {
-		observability.RecordAssessorValidationFailure(s.metrics, "request")
-		return nil, verifier.SemanticAssessmentResponse{}, false, false, false, errors.New("semantic assessment request is outside server limits")
-	}
+	prepared := request
 	reserved, err := s.assessments.ReservePlacementAssessmentProviderAttempt(ctx, repository.ReservePlacementAssessmentProviderAttemptInput{
 		TeamID:           run.TeamID,
 		OwnerProfileID:   run.OwnerProfileID,

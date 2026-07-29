@@ -20,6 +20,7 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	otherOwnerID := createLedgerProfile(t, adminDB, rls, otherTeamID, "catalog-other-owner")
 	repo := NewSemanticRepository(appDB, rls)
 	entity := createSemanticEntity(t, ctx, repo, teamID, ownerA, "project", "Dense-Mem")
+	otherEntity := createSemanticEntity(t, ctx, repo, otherTeamID, otherOwnerID, "project", "Other Team")
 
 	candidates, err := repo.ListSemanticReviewEntityCandidates(ctx, SemanticReviewEntityCandidateInput{
 		TeamID:         teamID,
@@ -41,6 +42,16 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	})
 	require.NoError(t, err)
 	assert.Empty(t, hidden)
+
+	known, err := repo.ListSemanticAssessmentKnownEntities(ctx, SemanticAssessmentKnownEntityInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerB,
+		EntityIDs:      []string{entity.EntityID, entity.EntityID, otherEntity.EntityID},
+	})
+	require.NoError(t, err)
+	require.Len(t, known, 1)
+	assert.Equal(t, entity.EntityID, known[0].EntityID)
+	assert.Equal(t, "Dense-Mem", known[0].CanonicalName)
 
 	predicates, err := repo.ListSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateCandidateInput{
 		TeamID:         teamID,

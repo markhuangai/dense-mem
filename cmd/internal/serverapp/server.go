@@ -797,6 +797,7 @@ func startActiveWorkers(
 ) {
 	hostname, _ := os.Hostname()
 	baseWorkerID := fmt.Sprintf("active-%s-%d", hostname, os.Getpid())
+	reviewExpiry := memoryservice.NewSemanticAssessmentReviewExpiryThrottle(ledger, time.Minute)
 	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
 		name:         "placement",
 		baseWorkerID: baseWorkerID,
@@ -809,6 +810,7 @@ func startActiveWorkers(
 			worker := memoryservice.NewSemanticAssessmentPlacementWorkerService(memoryservice.SemanticAssessmentPlacementWorkerDependencies{
 				Ledger:                    ledger,
 				Assessments:               ledger,
+				ReviewExpiry:              reviewExpiry,
 				Commit:                    ledger,
 				Catalog:                   semantic,
 				Provider:                  assessor,

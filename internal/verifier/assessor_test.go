@@ -33,6 +33,21 @@ func TestSemanticAssessmentPrepareAndValidateCompleteResponse(t *testing.T) {
 	}
 }
 
+func TestSemanticAssessmentCandidateGroupsAreOptionalReuseAllowlists(t *testing.T) {
+	req, limits := semanticAssessmentTestRequest(t)
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+	response := semanticAssessmentTestResponse()
+	response.EntityResults = response.EntityResults[:1]
+	response.RelationshipResults = []SemanticAssessmentRelationshipResult{}
+
+	if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentResponse() optional candidate errors = %#v", errs)
+	}
+}
+
 func TestSemanticAssessmentRequiresTrustedProposalCorrespondence(t *testing.T) {
 	req, limits := semanticAssessmentTestRequest(t)
 	req.RequiredRelationshipRefs = []SemanticAssessmentRequiredRelationshipRef{{

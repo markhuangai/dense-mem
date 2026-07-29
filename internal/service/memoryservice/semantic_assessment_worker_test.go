@@ -322,6 +322,29 @@ func TestSemanticAssessmentCommitInputReattachesTrustedRelationshipContext(t *te
 		Version:       repository.AssessmentPolicyVersion,
 	}
 
+	response.RelationshipResults[0].PredicateStatus = "needs_review"
+	response.RelationshipResults[0].PredicateKey = nil
+	response.RelationshipResults[0].PredicateVersion = nil
+	reviewCommit, err := semanticAssessmentCommitInput(
+		run,
+		item,
+		fragment,
+		request,
+		response,
+		assessment,
+		policy,
+		repository.PlacementAssessmentReviewOverrides{},
+		proposal,
+	)
+	require.NoError(t, err)
+	assert.Empty(t, reviewCommit.RelationshipObservations)
+	require.Len(t, reviewCommit.RelationshipReviews, 1)
+
+	response = applySemanticAssessmentReviewOverrides(response, repository.PlacementAssessmentReviewOverrides{
+		PredicateSelections: map[string]repository.PlacementAssessmentPredicateOverride{
+			proposalID: {PredicateKey: "works_on", PredicateVersion: 1},
+		},
+	})
 	commit, err := semanticAssessmentCommitInput(run, item, fragment, request, response, assessment, policy, repository.PlacementAssessmentReviewOverrides{}, proposal)
 	require.NoError(t, err)
 	require.Len(t, commit.RelationshipObservations, 1)
@@ -434,6 +457,11 @@ func TestExactTokenSpansExcludesSubstringAndIdentifierMatches(t *testing.T) {
 	require.Len(t, spans, 2)
 	assert.Equal(t, assessmentTextSpan{start: 0, end: 4, surface: "Mark"}, spans[0])
 	assert.Equal(t, assessmentTextSpan{start: 17, end: 21, surface: "MARK"}, spans[1])
+
+	spans = exactTokenSpans("Renée met RENÉE.", "renée")
+	require.Len(t, spans, 2)
+	assert.Equal(t, assessmentTextSpan{start: 0, end: 5, surface: "Renée"}, spans[0])
+	assert.Equal(t, assessmentTextSpan{start: 10, end: 15, surface: "RENÉE"}, spans[1])
 }
 
 func semanticAssessmentWorkerFixture(t *testing.T) (*semanticAssessmentWorkerLedgerStub, *semanticAssessmentWorkerAssessmentStub, *semanticAssessmentWorkerCommitStub, *semanticAssessmentWorkerCatalogStub, *semanticAssessmentWorkerProviderStub, SemanticAssessmentPlacementWorkerService) {
@@ -695,6 +723,7 @@ type semanticAssessmentWorkerCatalogStub struct {
 	knownCandidates     map[string][]repository.SemanticReviewEntityCandidate
 	knownCandidateErr   error
 	knownCandidateCalls int
+	knownCandidateIDs   []string
 	predicateOptions    []repository.SemanticReviewPredicateCandidate
 	predicateOptionsErr error
 }
@@ -703,12 +732,17 @@ func (s *semanticAssessmentWorkerCatalogStub) ListSemanticAssessmentEntityMatche
 	return s.entityMatches, s.entityMatchesErr
 }
 
-func (s *semanticAssessmentWorkerCatalogStub) ListSemanticReviewEntityCandidates(_ context.Context, input repository.SemanticReviewEntityCandidateInput) ([]repository.SemanticReviewEntityCandidate, error) {
+func (s *semanticAssessmentWorkerCatalogStub) ListSemanticAssessmentKnownEntities(_ context.Context, input repository.SemanticAssessmentKnownEntityInput) ([]repository.SemanticReviewEntityCandidate, error) {
 	s.knownCandidateCalls++
+	s.knownCandidateIDs = append([]string(nil), input.EntityIDs...)
 	if s.knownCandidateErr != nil {
 		return nil, s.knownCandidateErr
 	}
-	return append([]repository.SemanticReviewEntityCandidate(nil), s.knownCandidates[input.KnownEntityID]...), nil
+	candidates := []repository.SemanticReviewEntityCandidate{}
+	for _, entityID := range input.EntityIDs {
+		candidates = append(candidates, s.knownCandidates[entityID]...)
+	}
+	return candidates, nil
 }
 
 func (s *semanticAssessmentWorkerCatalogStub) ListSemanticAssessmentPredicateOptions(context.Context, repository.SemanticAssessmentPredicateOptionsInput) ([]repository.SemanticReviewPredicateCandidate, error) {

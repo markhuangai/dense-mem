@@ -109,11 +109,13 @@ func CountTokens(text string, tokenizerName string) (int, error) {
 // Team and owner fields are retained for deterministic validation but never
 // leave the service boundary.
 type SemanticAssessmentRequest struct {
-	RequestID                 string                                      `json:"request_id"`
-	TeamID                    string                                      `json:"-"`
-	OwnerProfileID            string                                      `json:"-"`
-	Evidence                  []SemanticReviewEvidence                    `json:"evidence"`
-	ClientProposal            map[string]any                              `json:"client_proposal,omitempty"`
+	RequestID      string                   `json:"request_id"`
+	TeamID         string                   `json:"-"`
+	OwnerProfileID string                   `json:"-"`
+	Evidence       []SemanticReviewEvidence `json:"evidence"`
+	ClientProposal map[string]any           `json:"client_proposal,omitempty"`
+	// EntityCandidateGroups are reuse allowlists for spans the assessor may
+	// extract, not required output targets.
 	EntityCandidateGroups     []SemanticAssessmentEntityCandidateGroup    `json:"entity_candidate_groups"`
 	PredicateOptions          []SemanticAssessmentPredicateOption         `json:"predicate_options"`
 	RequiredRelationshipRefs  []SemanticAssessmentRequiredRelationshipRef `json:"-"`
