@@ -61,8 +61,22 @@ func TestSemanticAssessmentEntityResolutionGuards(t *testing.T) {
 	assert.True(t, assessmentReusableCandidate(group, entityID, "person"))
 	assert.False(t, assessmentCompatibleCandidateExists(nil, "person"))
 	assert.True(t, assessmentCompatibleCandidateExists(group, "person"))
-	assert.Empty(t, assessmentEntityReviewOptions(nil))
+	assert.Equal(t, []map[string]any{{"action": "submit_new_evidence"}}, assessmentEntityReviewOptions(nil))
 	assert.Equal(t, entityID, assessmentEntityReviewOptions(group)[0]["entity_id"])
+
+	noCandidates := &verifier.SemanticAssessmentEntityCandidateGroup{
+		EvidenceID: "ev", Start: 0, End: 4, CandidateContextTruncated: true,
+	}
+	resolutions, _, err = semanticAssessmentEntityResolutions(verifier.SemanticAssessmentResponse{
+		EntityResults: []verifier.SemanticAssessmentEntityResult{{
+			Ref: "truncated", EvidenceID: "ev", Start: 0, End: 4, Surface: "Mark", Kind: "person", Action: "ambiguous", Confidence: 1, Rationale: "truncated candidates",
+		}},
+	}, fragment, uuid.NewString(), map[string]*verifier.SemanticAssessmentEntityCandidateGroup{
+		assessmentCandidateGroupKey("ev", 0, 4): noCandidates,
+	}, nil)
+	require.NoError(t, err)
+	require.Len(t, resolutions, 1)
+	assert.Equal(t, []map[string]any{{"action": "submit_new_evidence"}}, resolutions[0].ReviewOptions)
 }
 
 func TestSemanticAssessmentEntityResolutionHonorsApprovedCurrentSelection(t *testing.T) {
@@ -187,6 +201,9 @@ func TestSemanticAssessmentRelationshipHelpersRouteAllReviewKinds(t *testing.T) 
 	orderedPredicates := []verifier.SemanticAssessmentPredicateOption{predicates[assessmentPredicateKey(key, version)]}
 	identityOptions := assessmentReviewOptions("identity", result, entities, orderedPredicates)
 	require.Len(t, identityOptions, 1)
+	entities["subject"] = assessmentEntityCommitState{resolved: false, kind: "person"}
+	entities["object"] = assessmentEntityCommitState{resolved: true, group: group, kind: "product"}
+	assert.Equal(t, []map[string]any{{"action": "submit_new_evidence"}}, assessmentReviewOptions("identity", result, entities, orderedPredicates))
 	predicateOptions := assessmentReviewOptions("predicate", result, entities, orderedPredicates)
 	require.Len(t, predicateOptions, 1)
 	assert.Equal(t, key, predicateOptions[0]["predicate_key"])

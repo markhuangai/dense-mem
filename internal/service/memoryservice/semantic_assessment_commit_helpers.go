@@ -122,7 +122,7 @@ func assessmentCompatibleCandidateExists(group *verifier.SemanticAssessmentEntit
 
 func assessmentEntityReviewOptions(group *verifier.SemanticAssessmentEntityCandidateGroup) []map[string]any {
 	if group == nil {
-		return []map[string]any{}
+		return []map[string]any{{"action": "submit_new_evidence"}}
 	}
 	options := make([]map[string]any, 0, len(group.Candidates))
 	for _, candidate := range group.Candidates {
@@ -131,6 +131,9 @@ func assessmentEntityReviewOptions(group *verifier.SemanticAssessmentEntityCandi
 			"canonical_name": candidate.CanonicalName,
 			"kind":           candidate.Kind,
 		})
+	}
+	if len(options) == 0 {
+		return []map[string]any{{"action": "submit_new_evidence"}}
 	}
 	return options
 }
@@ -423,6 +426,9 @@ func assessmentReviewQuestion(kind string) string {
 func assessmentReviewGuidance(kind string) string {
 	switch kind {
 	case "identity", "predicate":
+		if kind == "identity" {
+			return "Select a server-supplied current option, or submit exact new evidence before confirming a new entity."
+		}
 		return "Select only a server-supplied current option."
 	default:
 		return "A selection alone cannot grant relationship support; submit exact new evidence."

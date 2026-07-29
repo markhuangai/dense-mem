@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/google/uuid"
@@ -205,6 +206,16 @@ func TestProfileServiceValidatesMemoryWriteConfidenceThreshold(t *testing.T) {
 		{
 			name:   "threshold above range",
 			config: map[string]any{"memory_write": map[string]any{"auto_write_confidence_threshold": 1.01}},
+			want:   "must be a number between 0 and 1",
+		},
+		{
+			name:   "threshold is NaN",
+			config: map[string]any{"memory_write": map[string]any{"auto_write_confidence_threshold": math.NaN()}},
+			want:   "must be a number between 0 and 1",
+		},
+		{
+			name:   "threshold is positive infinity",
+			config: map[string]any{"memory_write": map[string]any{"auto_write_confidence_threshold": math.Inf(1)}},
 			want:   "must be a number between 0 and 1",
 		},
 	} {
