@@ -124,6 +124,104 @@ func TestV24OneCallAssessmentDownMigrationNormalizesExpiredReviewTasks(t *testin
 	assert.Equal(t, "canceled", status)
 }
 
+func TestRemovePlacementAssessmentPromptRevisionMigrationPreservesAssessment(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072802)
+	semantic := insertV24OneCallAssessmentSemanticFixture(t, ctx, sqlDB)
+	placement := insertV24OneCallAssessmentMigrationPlacementFixture(t, ctx, sqlDB, semantic.teamID, semantic.profileID)
+
+	var claimKey, assessmentID string
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT claim_key::text
+			FROM placement_items
+			WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
+		`, semantic.teamID, placement.itemID).Scan(&claimKey); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `
+			INSERT INTO placement_assessments (
+				team_id, placement_item_id, claim_key, owner_profile_id, request_id,
+				assessor_contract_version, model, prompt_revision, tokenizer,
+				input_tokens, output_tokens, candidate_context_tokens,
+				normalized_response, response_hash, validated_at
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'request',
+				'dense-mem.v2.4', 'assessment-model', 'obsolete', 'o200k_base',
+				10, 5, 2,
+				'{"request_id":"request","security_signals":[],"entity_results":[],"relationship_results":[]}'::jsonb,
+				'sha256:assessment', now()
+			)
+			RETURNING assessment_id::text
+		`, semantic.teamID, placement.itemID, claimKey, semantic.profileID).Scan(&assessmentID)
+	}))
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072901)
+
+	var promptRevisionExists bool
+	var model, tokenizer, responseHash string
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'placement_assessments'
+				  AND column_name = 'prompt_revision'
+			)
+		`).Scan(&promptRevisionExists); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `
+			SELECT model, tokenizer, response_hash
+			FROM placement_assessments
+			WHERE team_id = $1::uuid AND assessment_id = $2::uuid
+		`, semantic.teamID, assessmentID).Scan(&model, &tokenizer, &responseHash)
+	}))
+	assert.False(t, promptRevisionExists)
+	assert.Equal(t, "assessment-model", model)
+	assert.Equal(t, "o200k_base", tokenizer)
+	assert.Equal(t, "sha256:assessment", responseHash)
+
+	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026072802))
+
+	var restoredPromptRevision string
+	var promptRevisionDefault sql.NullString
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'placement_assessments'
+				  AND column_name = 'prompt_revision'
+			)
+		`).Scan(&promptRevisionExists); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `
+			SELECT column_default
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND table_name = 'placement_assessments'
+			  AND column_name = 'prompt_revision'
+		`).Scan(&promptRevisionDefault); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `
+			SELECT prompt_revision
+			FROM placement_assessments
+			WHERE team_id = $1::uuid AND assessment_id = $2::uuid
+		`, semantic.teamID, assessmentID).Scan(&restoredPromptRevision)
+	}))
+	assert.True(t, promptRevisionExists)
+	assert.False(t, promptRevisionDefault.Valid)
+	assert.Equal(t, "legacy", restoredPromptRevision)
+}
+
 type v24OneCallAssessmentMigrationPlacementFixture struct {
 	itemID          string
 	semanticTaskID  string

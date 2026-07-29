@@ -463,7 +463,6 @@ func (s *semanticAssessmentPlacementWorkerService) loadOrAssess(
 		RequestID:                 prepared.RequestID,
 		AssessorContractVersion:   domain.ContractVersion,
 		Model:                     s.provider.ModelName(),
-		PromptRevision:            verifier.SemanticAssessmentPromptRev,
 		Tokenizer:                 assessmentTokenizer(s.limits),
 		InputTokens:               inputTokens,
 		OutputTokens:              normalized.OutputTokens,

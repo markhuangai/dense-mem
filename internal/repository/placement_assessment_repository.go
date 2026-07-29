@@ -59,7 +59,6 @@ type PersistPlacementAssessmentInput struct {
 	RequestID                 string
 	AssessorContractVersion   string
 	Model                     string
-	PromptRevision            string
 	Tokenizer                 string
 	InputTokens               int
 	OutputTokens              int
@@ -79,7 +78,6 @@ type PlacementAssessment struct {
 	RequestID                 string
 	AssessorContractVersion   string
 	Model                     string
-	PromptRevision            string
 	Tokenizer                 string
 	InputTokens               int
 	OutputTokens              int
@@ -620,7 +618,6 @@ func normalizePersistPlacementAssessmentInput(input PersistPlacementAssessmentIn
 	input.RequestID = strings.TrimSpace(input.RequestID)
 	input.AssessorContractVersion = strings.TrimSpace(input.AssessorContractVersion)
 	input.Model = strings.TrimSpace(input.Model)
-	input.PromptRevision = strings.TrimSpace(input.PromptRevision)
 	input.Tokenizer = strings.TrimSpace(input.Tokenizer)
 	input.ResponseHash = strings.TrimSpace(input.ResponseHash)
 	if input.ValidatedAt.IsZero() {
@@ -646,7 +643,6 @@ func validatePersistPlacementAssessmentInput(input PersistPlacementAssessmentInp
 		"request_id":                input.RequestID,
 		"assessor_contract_version": input.AssessorContractVersion,
 		"model":                     input.Model,
-		"prompt_revision":           input.PromptRevision,
 		"tokenizer":                 input.Tokenizer,
 		"response_hash":             input.ResponseHash,
 	} {
@@ -728,21 +724,21 @@ func insertPlacementAssessment(
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO placement_assessments (
 		    team_id, placement_item_id, claim_key, owner_profile_id, request_id,
-		    assessor_contract_version, model, prompt_revision, tokenizer,
+		    assessor_contract_version, model, tokenizer,
 		    input_tokens, output_tokens, candidate_context_tokens,
 		    candidate_context_truncated, normalized_response, response_hash, validated_at
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?
 		)
 		ON CONFLICT DO NOTHING
 		RETURNING team_id::text, assessment_id::text, owner_profile_id::text,
 		          placement_item_id::text, claim_key::text, request_id,
-		          assessor_contract_version, model, prompt_revision, tokenizer,
+		          assessor_contract_version, model, tokenizer,
 		          input_tokens, output_tokens, candidate_context_tokens,
 		          candidate_context_truncated, normalized_response, response_hash,
 		          validated_at, created_at
 	`, input.TeamID, input.PlacementItemID, input.ClaimKey, input.OwnerProfileID, input.RequestID,
-		input.AssessorContractVersion, input.Model, input.PromptRevision, input.Tokenizer,
+		input.AssessorContractVersion, input.Model, input.Tokenizer,
 		input.InputTokens, input.OutputTokens, input.CandidateContextTokens,
 		input.CandidateContextTruncated, string(input.NormalizedResponse), input.ResponseHash,
 		input.ValidatedAt).Rows()
@@ -785,7 +781,7 @@ func loadPlacementAssessment(
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT team_id::text, assessment_id::text, owner_profile_id::text,
 		       placement_item_id::text, claim_key::text, request_id,
-		       assessor_contract_version, model, prompt_revision, tokenizer,
+		       assessor_contract_version, model, tokenizer,
 		       input_tokens, output_tokens, candidate_context_tokens,
 		       candidate_context_truncated, normalized_response, response_hash,
 		       validated_at, created_at
@@ -824,7 +820,6 @@ func scanPlacementAssessment(rows *sql.Rows) (*PlacementAssessment, error) {
 		&assessment.RequestID,
 		&assessment.AssessorContractVersion,
 		&assessment.Model,
-		&assessment.PromptRevision,
 		&assessment.Tokenizer,
 		&assessment.InputTokens,
 		&assessment.OutputTokens,

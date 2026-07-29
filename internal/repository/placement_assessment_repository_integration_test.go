@@ -845,7 +845,6 @@ func placementAssessmentPersistInput(teamID, ownerID string, item PlacementItem)
 		RequestID:               "semantic-assessment:" + item.ClaimKey,
 		AssessorContractVersion: "dense-mem.v2.4",
 		Model:                   "assessment-model",
-		PromptRevision:          "v2.4",
 		Tokenizer:               "o200k_base",
 		InputTokens:             10,
 		OutputTokens:            10,

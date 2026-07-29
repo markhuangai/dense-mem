@@ -671,7 +671,7 @@ func (s *semanticAssessmentWorkerAssessmentStub) PersistPlacementAssessment(_ co
 	s.assessment = &repository.PlacementAssessment{
 		TeamID: input.TeamID, AssessmentID: uuid.NewString(), OwnerProfileID: input.OwnerProfileID,
 		PlacementItemID: input.PlacementItemID, ClaimKey: input.ClaimKey, RequestID: input.RequestID,
-		AssessorContractVersion: input.AssessorContractVersion, Model: input.Model, PromptRevision: input.PromptRevision,
+		AssessorContractVersion: input.AssessorContractVersion, Model: input.Model,
 		Tokenizer: input.Tokenizer, InputTokens: input.InputTokens, OutputTokens: input.OutputTokens,
 		CandidateContextTokens: input.CandidateContextTokens, CandidateContextTruncated: input.CandidateContextTruncated,
 		NormalizedResponse: append(json.RawMessage(nil), input.NormalizedResponse...), ResponseHash: input.ResponseHash,

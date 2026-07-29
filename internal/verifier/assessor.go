@@ -16,8 +16,7 @@ import (
 )
 
 const (
-	SemanticAssessmentSchemaName = "dense_mem_v2_4_assessment_response"
-	SemanticAssessmentPromptRev  = "v2.4.2"
+	SemanticAssessmentSchemaName = "dense_mem_semantic_assessment_response"
 
 	// SemanticAssessmentMaxProviderTurns bounds one assessor conversation:
 	// the initial response plus at most four complete-response corrections.
