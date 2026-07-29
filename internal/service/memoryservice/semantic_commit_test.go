@@ -430,8 +430,18 @@ func TestSemanticCommitRejectsMismatchedReviewRefsBeforeRepositoryCall(t *testin
 func TestSemanticCommitMapsUnresolvedPredicateToRelationshipReview(t *testing.T) {
 	teamID := uuid.NewString()
 	ownerID := uuid.NewString()
+	targetID := uuid.NewString()
+	conflictID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
 	request.RelationshipObservations[0].Polarity = "-"
+	request.RelationshipObservations[0].CorrectionTarget = &verifier.RelationshipCorrectionTarget{
+		RelationshipID:  targetID,
+		ExpectedVersion: 2,
+	}
+	request.RelationshipObservations[0].ConflictContext = &verifier.RelationshipConflictContext{
+		ConflictID:      conflictID,
+		ExpectedVersion: 3,
+	}
 	result := semanticReviewResultFromResponse(semanticReviewResponse(request.RequestID, false, false), 1, "sha256:unresolved-predicate")
 	result.RelationshipResults[0].PredicateStatus = "ambiguous"
 	result.RelationshipResults[0].PredicateKey = nil
@@ -478,6 +488,12 @@ func TestSemanticCommitMapsUnresolvedPredicateToRelationshipReview(t *testing.T)
 		review.Support.FragmentID != request.Evidence[0].FragmentID ||
 		review.Support.Quote != request.RelationshipObservations[0].Quote {
 		t.Fatalf("relationship review support = %#v", review.Support)
+	}
+	if review.CorrectionTarget == nil || review.CorrectionTarget.RelationshipID != targetID || review.CorrectionTarget.ExpectedVersion != 2 {
+		t.Fatalf("relationship review correction target = %#v", review.CorrectionTarget)
+	}
+	if review.ConflictContext == nil || review.ConflictContext.ConflictID != conflictID || review.ConflictContext.ExpectedVersion != 3 {
+		t.Fatalf("relationship review conflict context = %#v", review.ConflictContext)
 	}
 	if review.Payload["predicate_policy_version"] != domain.PredicatePolicyVersion {
 		t.Fatalf("relationship review payload = %#v", review.Payload)

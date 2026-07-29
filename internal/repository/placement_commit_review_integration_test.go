@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -126,6 +127,82 @@ func TestPlacementSemanticCommitDefaultsRelationshipReviewPolarity(t *testing.T)
 	assert.Equal(t, domain.PredicatePolicyVersion, predicatePolicy)
 	assert.Equal(t, "awaiting_review", runStatus)
 	assert.Equal(t, "awaiting_review", itemStatus)
+}
+
+func TestPlacementRelationshipReviewPreservesTrustedContext(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "placement-review-context", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "placement-review-context-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "placement-review-context-owner")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Alex")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"placement review preserves trusted context", "Alex works on Dense-Mem.")
+	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-review-context", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	correctionID := uuid.NewString()
+	conflictID := uuid.NewString()
+	committed, err := ledgerRepo.CommitPlacementSemanticResult(ctx, CommitPlacementSemanticInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         ingest.IngestID,
+		PlacementRunID:   ingest.PlacementRunID,
+		PlacementItemID:  ingest.Items[0].PlacementItemID,
+		WorkerID:         "worker-review-context",
+		ExpectedAttempts: claimed.Attempts,
+		Status:           "accepted",
+		EntityResolutions: []PlacementEntityResolutionInput{
+			{MentionRef: "subject", Action: "reuse", EntityID: subject.EntityID},
+			{MentionRef: "object", Action: "reuse", EntityID: object.EntityID},
+		},
+		RelationshipReviews: []PlacementRelationshipReviewInput{{
+			Ref:               "review-context",
+			SubjectRef:        "subject",
+			OriginalPredicate: "works on",
+			ObjectRef:         "object",
+			Polarity:          "+",
+			Reason:            "predicate_needs_review",
+			CorrectionTarget: &PlacementCorrectionTargetInput{
+				RelationshipID:  correctionID,
+				ExpectedVersion: 2,
+			},
+			ConflictContext: &PlacementConflictContextInput{
+				ConflictID:      conflictID,
+				ExpectedVersion: 3,
+			},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, committed.ReviewTaskIDs, 1)
+
+	var storedCorrectionID, storedConflictID string
+	var storedCorrectionVersion, storedConflictVersion int
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT payload->'correction_target'->>'relationship_id',
+			       (payload->'correction_target'->>'expected_version')::int,
+			       payload->'conflict_context'->>'conflict_id',
+			       (payload->'conflict_context'->>'expected_version')::int
+			FROM review_tasks
+			WHERE team_id = ?::uuid AND review_task_id = ?::uuid
+		`, teamID, committed.ReviewTaskIDs[0]).Row().Scan(
+			&storedCorrectionID,
+			&storedCorrectionVersion,
+			&storedConflictID,
+			&storedConflictVersion,
+		)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, correctionID, storedCorrectionID)
+	assert.Equal(t, 2, storedCorrectionVersion)
+	assert.Equal(t, conflictID, storedConflictID)
+	assert.Equal(t, 3, storedConflictVersion)
 }
 
 func TestPlacementSemanticCommitRegistersNovelPredicateAtomically(t *testing.T) {

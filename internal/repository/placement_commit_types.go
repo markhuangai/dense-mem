@@ -97,6 +97,8 @@ type PlacementRelationshipReviewInput struct {
 	ResponseHash            string
 	Support                 *EvidenceSupportInput
 	Supports                []EvidenceSupportInput
+	CorrectionTarget        *PlacementCorrectionTargetInput
+	ConflictContext         *PlacementConflictContextInput
 	Reason                  string
 	Payload                 map[string]any
 	AssessmentID            string

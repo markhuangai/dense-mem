@@ -300,6 +300,18 @@ func semanticCommitInputFromReview(job SemanticCommitJob) (repository.CommitPlac
 				}
 				review.ObjectRef = ""
 			}
+			if observation.CorrectionTarget != nil {
+				review.CorrectionTarget = &repository.PlacementCorrectionTargetInput{
+					RelationshipID:  observation.CorrectionTarget.RelationshipID,
+					ExpectedVersion: observation.CorrectionTarget.ExpectedVersion,
+				}
+			}
+			if observation.ConflictContext != nil {
+				review.ConflictContext = &repository.PlacementConflictContextInput{
+					ConflictID:      observation.ConflictContext.ConflictID,
+					ExpectedVersion: observation.ConflictContext.ExpectedVersion,
+				}
+			}
 			relationshipReviews = append(relationshipReviews, review)
 			continue
 		}

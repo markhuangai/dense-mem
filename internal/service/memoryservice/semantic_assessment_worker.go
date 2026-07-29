@@ -790,7 +790,7 @@ func semanticAssessmentCommitInput(
 		}
 		reviewKind := semanticAssessmentRelationshipReviewKind(result, entityStates, predicates)
 		if reviewKind != "" {
-			reviews = append(reviews, semanticAssessmentRelationshipReviewInput(
+			review := semanticAssessmentRelationshipReviewInput(
 				result,
 				objectRef,
 				objectValue,
@@ -804,7 +804,11 @@ func semanticAssessmentCommitInput(
 				"not_applicable",
 				reviewKind,
 				assessmentReviewOptions(reviewKind, result, entityStates, request.PredicateOptions),
-			))
+			)
+			if trustedContext, ok := trustedContexts[result.Ref]; ok {
+				attachSemanticAssessmentTrustedRelationshipContextToReview(&review, trustedContext)
+			}
+			reviews = append(reviews, review)
 			continue
 		}
 		predicate := predicates[assessmentPredicateKey(*result.PredicateKey, *result.PredicateVersion)]
@@ -914,6 +918,23 @@ func attachSemanticAssessmentTrustedRelationshipContext(
 	if context.conflictContext != nil {
 		conflict := *context.conflictContext
 		observation.ConflictContext = &conflict
+	}
+}
+
+func attachSemanticAssessmentTrustedRelationshipContextToReview(
+	review *repository.PlacementRelationshipReviewInput,
+	context semanticAssessmentTrustedRelationshipContext,
+) {
+	if review == nil {
+		return
+	}
+	if context.correctionTarget != nil {
+		target := *context.correctionTarget
+		review.CorrectionTarget = &target
+	}
+	if context.conflictContext != nil {
+		conflict := *context.conflictContext
+		review.ConflictContext = &conflict
 	}
 }
 

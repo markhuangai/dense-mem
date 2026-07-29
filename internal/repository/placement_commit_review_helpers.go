@@ -138,6 +138,8 @@ func insertRelationshipDependencyReview(
 		ResponseHash:            input.ResponseHash,
 		Support:                 input.Support,
 		Supports:                input.Supports,
+		CorrectionTarget:        input.CorrectionTarget,
+		ConflictContext:         input.ConflictContext,
 		Reason:                  "identity_needs_review",
 		AssessmentID:            input.AssessmentID,
 		AssessmentPolicyVersion: input.AssessmentPolicyVersion,
@@ -178,6 +180,8 @@ func insertRelationshipPredicateReview(
 		ResponseHash:            input.ResponseHash,
 		Support:                 input.Support,
 		Supports:                input.Supports,
+		CorrectionTarget:        input.CorrectionTarget,
+		ConflictContext:         input.ConflictContext,
 		Reason:                  "predicate_needs_review",
 		AssessmentID:            input.AssessmentID,
 		AssessmentPolicyVersion: input.AssessmentPolicyVersion,
@@ -230,6 +234,16 @@ func validatePlacementRelationshipReviewInput(input PlacementRelationshipReviewI
 	}
 	if err := validateRelationshipEvidenceSupports(input.Support, input.Supports); err != nil {
 		return err
+	}
+	if input.CorrectionTarget != nil {
+		if err := validatePlacementCorrectionTargetInput(*input.CorrectionTarget); err != nil {
+			return err
+		}
+	}
+	if input.ConflictContext != nil {
+		if err := validatePlacementConflictContextInput(*input.ConflictContext); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -327,6 +341,18 @@ func insertRelationshipReview(
 			"canonical_value": input.ObjectValue.CanonicalValue,
 			"display":         input.ObjectValue.Display,
 			"unit":            input.ObjectValue.Unit,
+		}
+	}
+	if input.CorrectionTarget != nil {
+		payload["correction_target"] = map[string]any{
+			"relationship_id":  input.CorrectionTarget.RelationshipID,
+			"expected_version": input.CorrectionTarget.ExpectedVersion,
+		}
+	}
+	if input.ConflictContext != nil {
+		payload["conflict_context"] = map[string]any{
+			"conflict_id":      input.ConflictContext.ConflictID,
+			"expected_version": input.ConflictContext.ExpectedVersion,
 		}
 	}
 	for key, value := range input.Payload {

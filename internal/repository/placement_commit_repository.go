@@ -295,6 +295,16 @@ func normalizeCommitPlacementSemanticInput(input CommitPlacementSemanticInput) C
 			review.ObjectValue = &value
 		}
 		review.Support, review.Supports = normalizeEvidenceSupports(review.Support, review.Supports)
+		if review.CorrectionTarget != nil {
+			target := *review.CorrectionTarget
+			target.RelationshipID = strings.TrimSpace(target.RelationshipID)
+			review.CorrectionTarget = &target
+		}
+		if review.ConflictContext != nil {
+			context := *review.ConflictContext
+			context.ConflictID = strings.TrimSpace(context.ConflictID)
+			review.ConflictContext = &context
+		}
 	}
 	return input
 }

@@ -339,6 +339,13 @@ func TestSemanticAssessmentCommitInputReattachesTrustedRelationshipContext(t *te
 	require.NoError(t, err)
 	assert.Empty(t, reviewCommit.RelationshipObservations)
 	require.Len(t, reviewCommit.RelationshipReviews, 1)
+	review := reviewCommit.RelationshipReviews[0]
+	require.NotNil(t, review.CorrectionTarget)
+	assert.Equal(t, targetID, review.CorrectionTarget.RelationshipID)
+	assert.Equal(t, 2, review.CorrectionTarget.ExpectedVersion)
+	require.NotNil(t, review.ConflictContext)
+	assert.Equal(t, conflictID, review.ConflictContext.ConflictID)
+	assert.Equal(t, 3, review.ConflictContext.ExpectedVersion)
 
 	response = applySemanticAssessmentReviewOverrides(response, repository.PlacementAssessmentReviewOverrides{
 		PredicateSelections: map[string]repository.PlacementAssessmentPredicateOverride{
