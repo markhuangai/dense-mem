@@ -18,7 +18,7 @@ type ControlPortalTelemetry struct {
 	Config         service.AppConfigService
 	Logs           service.OperationLogReader
 	RecallFeedback service.RecallFeedbackEventReader
-	Dreams         dreamservice.Service
+	Dreams         dreamservice.ControlService
 }
 
 type controlPortalHandler struct {
@@ -29,7 +29,7 @@ type controlPortalHandler struct {
 	telemetry      service.TelemetryReader
 	operationLogs  service.OperationLogReader
 	recallFeedback service.RecallFeedbackEventReader
-	dreams         dreamservice.Service
+	dreams         dreamservice.ControlService
 	health         HealthConfig
 	sso            *service.SSOService
 	appConfig      service.AppConfigService

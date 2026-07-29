@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
@@ -57,21 +59,26 @@ func EffectiveDreamingConfig(global domain.DreamingRuntimeConfig, teamConfig map
 }
 
 func (s *service) EffectiveConfig(ctx context.Context, profileID string) (EffectiveConfig, error) {
-	global := domain.DreamingRuntimeConfig{}
-	if s.deps.AppConfig != nil {
-		next, err := s.deps.AppConfig.DreamingRuntimeConfig(ctx)
-		if err != nil {
-			return EffectiveConfig{}, err
-		}
-		global = next
+	return resolveEffectiveConfig(ctx, profileID, s.deps.AppConfig, s.deps.Profiles)
+}
+
+func resolveEffectiveConfig(
+	ctx context.Context,
+	profileID string,
+	appConfig AppConfig,
+	profiles ProfileService,
+) (EffectiveConfig, error) {
+	global, err := globalDreamingConfig(ctx, appConfig)
+	if err != nil {
+		return EffectiveConfig{}, err
 	}
 	var teamConfig map[string]any
-	if s.deps.Profiles != nil {
+	if profiles != nil {
 		profile, err := parseProfileID(profileID)
 		if err != nil {
 			return EffectiveConfig{}, err
 		}
-		p, err := s.deps.Profiles.GetByID(ctx, profile)
+		p, err := profiles.GetByID(ctx, profile)
 		if err != nil {
 			return EffectiveConfig{}, err
 		}
@@ -80,6 +87,40 @@ func (s *service) EffectiveConfig(ctx context.Context, profileID string) (Effect
 		}
 	}
 	return EffectiveDreamingConfig(global, teamConfig)
+}
+
+func resolveEffectiveTeamConfig(
+	ctx context.Context,
+	teamID string,
+	appConfig AppConfig,
+	teams TeamConfigService,
+) (EffectiveConfig, error) {
+	global, err := globalDreamingConfig(ctx, appConfig)
+	if err != nil {
+		return EffectiveConfig{}, err
+	}
+	var teamConfig map[string]any
+	if teams != nil {
+		teamUUID, err := uuid.Parse(teamID)
+		if err != nil {
+			return EffectiveConfig{}, fmt.Errorf("dreaming config: invalid team id: %w", err)
+		}
+		team, err := teams.GetByID(ctx, teamUUID)
+		if err != nil {
+			return EffectiveConfig{}, err
+		}
+		if team != nil {
+			teamConfig = team.Config
+		}
+	}
+	return EffectiveDreamingConfig(global, teamConfig)
+}
+
+func globalDreamingConfig(ctx context.Context, appConfig AppConfig) (domain.DreamingRuntimeConfig, error) {
+	if appConfig == nil {
+		return domain.DreamingRuntimeConfig{}, nil
+	}
+	return appConfig.DreamingRuntimeConfig(ctx)
 }
 
 func normalizeRuntimeConfig(cfg domain.DreamingRuntimeConfig) domain.DreamingRuntimeConfig {

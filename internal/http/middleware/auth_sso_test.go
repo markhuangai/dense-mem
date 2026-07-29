@@ -22,7 +22,10 @@ func TestAuthMiddleware_SSOSessionFailureIsAuditedAndRecorded(t *testing.T) {
 			return nil, service.ErrSSOAccessDenied
 		},
 	}
-	e.Use(AuthMiddlewareWithOptions(&mockAPIKeyRepository{}, mockAudit, mockSecurity, AuthOptions{SSOSessionAuthenticator: authenticator}))
+	e.Use(AuthMiddlewareWithOptions(&mockAPIKeyRepository{}, mockAudit, mockSecurity, AuthOptions{
+		SSOSessionAuthenticator: authenticator,
+		AllowMissingCredentials: true,
+	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
 	req.RemoteAddr = "198.51.100.10:12345"
@@ -43,4 +46,28 @@ func TestAuthMiddleware_SSOSessionFailureIsAuditedAndRecorded(t *testing.T) {
 	assert.Equal(t, "SSO_AUTH_INVALID", mockSecurity.recordAuthFailureReason)
 	assert.Equal(t, "api", mockSecurity.recordAuthFailureSurface)
 	assert.Equal(t, "198.51.100.10", mockSecurity.recordAuthFailureIP)
+}
+
+func TestAuthMiddleware_OptionalMissingCredentialsHasNoFailureSideEffects(t *testing.T) {
+	e := newTestEcho()
+	mockAudit := &mockAuditService{}
+	mockSecurity := &mockSecurityService{}
+	handlerCalled := false
+
+	e.Use(AuthMiddlewareWithOptions(&mockAPIKeyRepository{}, mockAudit, mockSecurity, AuthOptions{
+		AllowMissingCredentials: true,
+	}))
+	e.GET("/ui/api/session", func(c echo.Context) error {
+		handlerCalled = true
+		return c.NoContent(http.StatusUnauthorized)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.True(t, handlerCalled)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.False(t, mockAudit.authFailureCalled)
+	assert.False(t, mockSecurity.recordAuthFailureCalled)
 }

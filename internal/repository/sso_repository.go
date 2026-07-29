@@ -318,6 +318,7 @@ func (r *SSORepositoryImpl) ListMappingsForGroups(ctx context.Context, providerI
 			JOIN teams t ON t.id = m.team_id
 			WHERE m.provider_id = $1
 				AND m.enabled = true
+				AND t.status = 'active'
 				AND t.deleted_at IS NULL
 				AND m.group_id = ANY($2)
 			ORDER BY t.name ASC, m.group_name ASC, m.group_id ASC
@@ -474,6 +475,7 @@ func (r *SSORepositoryImpl) ListTeamProfilesForIdentity(ctx context.Context, ide
 			WHERE k.sso_identity_id = $1
 				AND k.auth_source = 'sso'
 				AND k.revoked_at IS NULL
+				AND t.status = 'active'
 				AND t.deleted_at IS NULL
 			ORDER BY t.name ASC, k.id ASC
 		`, identityID).Rows()
@@ -510,6 +512,7 @@ func (r *SSORepositoryImpl) GetSSOProfileByID(ctx context.Context, id uuid.UUID)
 			WHERE k.id = $1
 				AND k.revoked_at IS NULL
 				AND k.auth_source = 'sso'
+				AND t.status = 'active'
 				AND t.deleted_at IS NULL
 		`, id).Rows()
 		if err != nil {

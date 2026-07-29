@@ -83,6 +83,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(echomw.Recover())
 	e.Use(echomw.BodyLimit(fmt.Sprintf("%dB", controlMaxBodyBytes(cfg))))
+	e.Use(httpmw.CorrelationIDMiddleware())
 	e.Use(echomw.RequestLoggerWithConfig(echomw.RequestLoggerConfig{
 		HandleError: true,
 		LogMethod:   true,
@@ -144,6 +145,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		api.GET("/teams/:teamId/dreaming/runs", control.listTeamDreamingRuns)
 		api.GET("/teams/:teamId/dreams", control.listTeamDreams)
 		api.GET("/teams/:teamId/dreams/:dreamId", control.getTeamDream)
+		api.POST("/teams/:teamId/dreams/refresh", control.refreshTeamDreams)
 	}
 	api.GET("/teams/:teamId/profiles", control.listAPIKeys)
 	api.POST("/teams/:teamId/profiles", control.createAPIKey)

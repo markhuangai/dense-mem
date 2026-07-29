@@ -378,6 +378,13 @@ export COMPOSE_DOCKER_CLI_BUILD=1
 cd "$ROOT_DIR"
 trap cleanup EXIT
 
+echo "Running disposable PostgreSQL SSO and Dreams regressions."
+DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test \
+  ./internal/repository \
+  ./internal/http \
+  -run '^(TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration)$' \
+  -count=1
+
 prepare_e2e_compose_files
 prepare_root_files
 

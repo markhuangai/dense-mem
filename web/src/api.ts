@@ -511,6 +511,10 @@ export type DreamListResponse = {
   next_cursor?: string;
 };
 
+export type DreamRefreshResult = {
+  updated_count: number;
+};
+
 type RequestOptions = {
   method?: string;
   body?: unknown;
@@ -771,6 +775,10 @@ export class ControlApi {
 
   listTeamDreamingRuns(teamId: string, limit = 20): Promise<DreamRun[]> {
     return this.requestEnvelope<DreamRun[]>(`/teams/${teamId}/dreaming/runs?limit=${limit}`);
+  }
+
+  refreshTeamDreams(teamId: string): Promise<DreamRefreshResult> {
+    return this.requestEnvelope<DreamRefreshResult>(`/teams/${teamId}/dreams/refresh`, { method: "POST" });
   }
 
   listTeamDreams(teamId: string, query: DreamQuery = {}): Promise<DreamListResponse> {

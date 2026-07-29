@@ -219,6 +219,11 @@ func RunActiveServer(
 		Generator: dreamservice.NewHeuristicGenerator(""),
 		Metrics:   discoverabilityMetrics,
 	})
+	controlDreamSvc := dreamservice.NewControl(dreamservice.ControlDependencies{
+		Store:     semanticRepo,
+		AppConfig: appConfigService,
+		Teams:     profileService,
+	})
 	graphViewSvc := graphview.NewSemantic(semanticRepo)
 	memoryPackSvc := skillpackservice.NewMemoryPackService(skillpackservice.MemoryPackDependencies{
 		Semantic:    semanticRepo,
@@ -357,7 +362,7 @@ func RunActiveServer(
 				Config:         appConfigService,
 				Logs:           operationLogService,
 				RecallFeedback: recallFeedbackEventService,
-				Dreams:         dreamSvc,
+				Dreams:         controlDreamSvc,
 			},
 			healthConfig,
 			logger,

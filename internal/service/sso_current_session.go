@@ -8,6 +8,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func (s *SSOService) validCurrentSessionTeams(ctx context.Context, session *domain.SSOSession, allTeams []*domain.SSOTeamProfile) ([]domain.SSOTeamProfile, *domain.SSOTeamProfile, error) {
@@ -82,6 +83,9 @@ func (s *SSOService) reconcileCurrentSessionTeamProfiles(ctx context.Context, id
 		}
 		if _, err := s.repo.UpsertTeamProfileForMapping(ctx, identity, entitlement, name); err != nil {
 			s.debugSSOFailure("sso current session team profile upsert failed", err, ssoUUIDLogAttr("provider_id", identity.ProviderID), ssoHashLogAttr("subject", identity.Subject), ssoUUIDLogAttr("team_id", entitlement.TeamID), ssoHashLogAttr("group_id", entitlement.GroupID), observability.String("role", entitlement.Role))
+			if errors.Is(err, repository.ErrTeamInactive) {
+				continue
+			}
 			return false, err
 		}
 		existingTeamIDs[entitlement.TeamID] = struct{}{}

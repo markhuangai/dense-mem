@@ -39,6 +39,10 @@ type ProfileService interface {
 	List(ctx context.Context, limit, offset int) ([]*domain.Profile, error)
 }
 
+type TeamConfigService interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*domain.Team, error)
+}
+
 type CycleLocker interface {
 	WithCycleLock(ctx context.Context, db *gorm.DB, profileID, runDate string, timeout time.Duration, fn func(tx *gorm.DB) error) error
 }

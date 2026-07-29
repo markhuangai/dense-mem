@@ -12,25 +12,33 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type captureLogProvider struct {
+	level string
 	msg   string
 	attrs []observability.LogAttr
 }
 
 func (l *captureLogProvider) Info(msg string, attrs ...observability.LogAttr) {
+	l.level = "info"
 	l.msg = msg
 	l.attrs = append([]observability.LogAttr(nil), attrs...)
 }
 
 func (l *captureLogProvider) Error(msg string, err error, attrs ...observability.LogAttr) {
-	l.Info(msg, attrs...)
+	l.level = "error"
+	l.msg = msg
+	l.attrs = append([]observability.LogAttr(nil), attrs...)
 }
 
 func (l *captureLogProvider) Warn(msg string, attrs ...observability.LogAttr) {
-	l.Info(msg, attrs...)
+	l.level = "warn"
+	l.msg = msg
+	l.attrs = append([]observability.LogAttr(nil), attrs...)
 }
 
 func (l *captureLogProvider) Debug(msg string, attrs ...observability.LogAttr) {}
@@ -312,6 +320,62 @@ func TestRequestLoggerOmitsQueryString(t *testing.T) {
 		if value == "secret-memory" || value == "raw-token" {
 			t.Fatalf("sensitive query value leaked in attr %q", attr.Key)
 		}
+	}
+}
+
+func TestRequestLoggerTreatsAnonymousUserSessionProbeAsInfo(t *testing.T) {
+	logger := &captureLogProvider{}
+	e := NewServer(config.Config{}, logger, HealthConfig{})
+	e.GET("/ui/api/session", func(c echo.Context) error {
+		return httperr.New(httperr.AUTH_MISSING, "authentication required")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if logger.level != "info" {
+		t.Fatalf("log level = %q, want info", logger.level)
+	}
+}
+
+func TestRequestLoggerKeepsInvalidSessionCredentialsAtError(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*http.Request)
+	}{
+		{
+			name: "bearer",
+			mutate: func(req *http.Request) {
+				req.Header.Set("Authorization", "Bearer invalid")
+			},
+		},
+		{
+			name: "sso cookie",
+			mutate: func(req *http.Request) {
+				req.AddCookie(&http.Cookie{Name: service.SSOSessionCookieName, Value: "invalid"})
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			logger := &captureLogProvider{}
+			e := NewServer(config.Config{}, logger, HealthConfig{})
+			e.GET("/ui/api/session", func(c echo.Context) error {
+				return httperr.New(httperr.AUTH_MISSING, "authentication required")
+			})
+			req := httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
+			test.mutate(req)
+			rec := httptest.NewRecorder()
+
+			e.ServeHTTP(rec, req)
+
+			if logger.level != "error" {
+				t.Fatalf("log level = %q, want error", logger.level)
+			}
+		})
 	}
 }
 
