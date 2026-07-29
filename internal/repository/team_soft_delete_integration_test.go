@@ -179,12 +179,12 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 }
 
 func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
-	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
 	activeTeamID := createLedgerTeam(t, adminDB, rls, "sso-active-team")
 	archivedTeamID := createLedgerTeam(t, adminDB, rls, "sso-archived-team")
-	repo := NewSSORepository(adminDB, rls)
+	repo := NewSSORepository(appDB, rls)
 	provider := &domain.SSOProvider{
 		Name:         "sso-active-team-filter",
 		Kind:         domain.SSOProviderKindGenericOIDC,
@@ -213,6 +213,8 @@ func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 	archivedMapping.GroupName = "Archived team"
 	require.NoError(t, repo.CreateMapping(ctx, &activeMapping))
 	require.NoError(t, repo.CreateMapping(ctx, &archivedMapping))
+	activeMapping.GroupName = "Active team updated"
+	require.NoError(t, repo.UpdateMapping(ctx, &activeMapping))
 
 	identity := domain.SSOIdentity{
 		ProviderID:  provider.ID,
@@ -241,6 +243,7 @@ func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, mappings, 1)
 	assert.Equal(t, activeMapping.TeamID, mappings[0].TeamID)
+	assert.Equal(t, activeMapping.GroupName, mappings[0].GroupName)
 
 	teams, err := repo.ListTeamProfilesForIdentity(ctx, identity.ID)
 	require.NoError(t, err)
