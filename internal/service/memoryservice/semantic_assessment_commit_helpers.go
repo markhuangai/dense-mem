@@ -54,7 +54,7 @@ func semanticAssessmentEntityResolutions(
 				"action":     result.Action,
 			},
 			Metadata: map[string]any{
-				"semantic_contract": "dense-mem.v2.4",
+				"semantic_contract": domain.ContractVersion,
 			},
 			AssessmentID: assessmentID,
 		}
@@ -223,7 +223,7 @@ func semanticAssessmentSupport(
 			Quote:            quote,
 			Authority:        string(domain.AuthorityPrimary),
 			Metadata: map[string]any{
-				"semantic_contract": "dense-mem.v2.4",
+				"semantic_contract": domain.ContractVersion,
 				"assessment_id":     assessmentID,
 				"evidence_id":       span.EvidenceID,
 			},
@@ -332,7 +332,7 @@ func semanticAssessmentRelationshipReviewInput(
 		ReviewOptions:           options,
 		ReviewGuidance:          assessmentReviewGuidance(kind),
 		Payload: map[string]any{
-			"semantic_contract": "dense-mem.v2.4",
+			"semantic_contract": domain.ContractVersion,
 			"modality":          result.Modality,
 			"scope_status":      result.ScopeStatus,
 			"temporal_verdict":  result.TemporalVerdict,

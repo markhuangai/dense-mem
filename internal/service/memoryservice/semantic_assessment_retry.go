@@ -46,7 +46,7 @@ func semanticAssessmentRetryPayload(
 		return nil
 	}
 	payload := map[string]any{
-		"assessor_contract":           "dense-mem.v2.4",
+		"assessor_contract":           domain.ContractVersion,
 		"assessor_provider_attempted": true,
 		"failure_stage":               strings.TrimSpace(stage),
 	}
@@ -71,7 +71,7 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminalWithFailure(
 	providerTurns int,
 ) error {
 	payload := map[string]any{
-		"assessor_contract": "dense-mem.v2.4",
+		"assessor_contract": domain.ContractVersion,
 		"failure_stage":     strings.TrimSpace(stage),
 	}
 	if failureClass = strings.TrimSpace(failureClass); failureClass != "" {

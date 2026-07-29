@@ -551,7 +551,7 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminal(
 		Status:           status,
 		Category:         category,
 		Payload: map[string]any{
-			"assessor_contract": "dense-mem.v2.4",
+			"assessor_contract": domain.ContractVersion,
 			"failure_stage":     strings.TrimSpace(stage),
 		},
 	})
@@ -843,7 +843,7 @@ func semanticAssessmentCommitInput(
 			Support:         support,
 			Supports:        additionalSupports,
 			ObservationMetadata: map[string]any{
-				"semantic_contract": "dense-mem.v2.4",
+				"semantic_contract": domain.ContractVersion,
 				"assessment_id":     assessment.AssessmentID,
 				"modality":          result.Modality,
 				"scope_status":      result.ScopeStatus,
@@ -882,7 +882,7 @@ func semanticAssessmentCommitInput(
 		RelationshipObservations: observations,
 		RelationshipReviews:      reviews,
 		Payload: map[string]any{
-			"assessor_contract": "dense-mem.v2.4",
+			"assessor_contract": domain.ContractVersion,
 			"assessment_id":     assessment.AssessmentID,
 			"response_hash":     assessment.ResponseHash,
 			"policy_version":    policyVersion,

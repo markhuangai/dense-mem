@@ -21,7 +21,7 @@ func appendSemanticReviewPayload(
 	if strings.TrimSpace(assessmentID) == "" {
 		return
 	}
-	payload["semantic_contract"] = "dense-mem.v2.4"
+	payload["semantic_contract"] = domain.ContractVersion
 	payload["assessment_id"] = assessmentID
 	payload["semantic_kind"] = kind
 	payload["question"] = question

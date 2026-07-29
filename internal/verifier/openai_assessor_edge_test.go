@@ -31,26 +31,35 @@ func (assessorErrorReader) Read([]byte) (int, error) {
 func TestOpenAIVerifierAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var raw map[string]json.RawMessage
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&raw))
-		if _, exists := raw["max_tokens"]; exists {
-			t.Fatal("assessor request included max_tokens")
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&raw)) {
+			http.Error(w, "invalid assessor request", http.StatusBadRequest)
+			return
 		}
-		if _, exists := raw["max_completion_tokens"]; exists {
-			t.Fatal("assessor request included max_completion_tokens")
-		}
+		assert.NotContains(t, raw, "max_tokens")
+		assert.NotContains(t, raw, "max_completion_tokens")
 		var request openAIVerifierRequest
-		require.NoError(t, json.Unmarshal(mustMarshalJSON(t, raw), &request))
+		rawJSON, err := json.Marshal(raw)
+		if !assert.NoError(t, err) || !assert.NoError(t, json.Unmarshal(rawJSON, &request)) {
+			http.Error(w, "invalid assessor request", http.StatusBadRequest)
+			return
+		}
 		assert.Equal(t, "assessor-model", request.Model)
 		assert.Equal(t, SemanticAssessmentSchemaName, request.ResponseFormat.JSONSchema.Name)
 		assert.Contains(t, request.Messages[0].Content, "integrated structure and support assessor")
 		var payload map[string]any
-		require.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &payload))
+		if !assert.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &payload)) {
+			http.Error(w, "invalid assessor payload", http.StatusBadRequest)
+			return
+		}
 		assert.NotContains(t, payload, "team_id")
 		assert.NotContains(t, payload, "owner_profile_id")
 
 		content, err := json.Marshal(semanticAssessmentTestResponse())
-		require.NoError(t, err)
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+		if !assert.NoError(t, err) {
+			http.Error(w, "invalid assessor response", http.StatusInternalServerError)
+			return
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
 			"usage":   map[string]any{"prompt_tokens": 200, "completion_tokens": 100, "total_tokens": 300},
 		}))
@@ -75,19 +84,26 @@ func TestOpenAIVerifierAssessSemanticCorrectsMalformedContentInSameHistory(t *te
 	var invalidContent string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request openAIVerifierRequest
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+			http.Error(w, "invalid assessor request", http.StatusBadRequest)
+			return
+		}
 		requests = append(requests, request)
 
 		response := semanticAssessmentTestResponse()
 		if len(requests) == 1 {
 			response.RequestID = "wrong-request"
 		}
-		content := string(mustMarshalJSON(t, response))
-		if len(requests) == 1 {
-			invalidContent = content
+		content, err := json.Marshal(response)
+		if !assert.NoError(t, err) {
+			http.Error(w, "invalid assessor response", http.StatusInternalServerError)
+			return
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{"message": map[string]any{"content": content}}},
+		if len(requests) == 1 {
+			invalidContent = string(content)
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
 		}))
 	}))
 	defer srv.Close()
@@ -118,17 +134,20 @@ func TestOpenAIVerifierAssessSemanticStopsConversationOnProviderFailure(t *testi
 	var requests []openAIVerifierRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request openAIVerifierRequest
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+			http.Error(w, "invalid assessor request", http.StatusBadRequest)
+			return
+		}
 		requests = append(requests, request)
 		if len(requests) == 1 {
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{"message": map[string]any{"content": "not-json"}}},
 			}))
 			return
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, err := w.Write([]byte("provider-private-body"))
-		require.NoError(t, err)
+		assert.NoError(t, err)
 	}))
 	defer srv.Close()
 
