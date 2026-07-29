@@ -494,7 +494,7 @@ func TestControlPortalMetrics(t *testing.T) {
 func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	profiles, keys, server := testControlServer(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/control/api/profiles", nil)
+	req := httptest.NewRequest(http.MethodGet, "/control/api/teams", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -502,7 +502,7 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"Default"`)
 
 	body := `{"name":"Work Profile","description":"for work"}`
-	req = httptest.NewRequest(http.MethodPost, "/control/api/profiles", strings.NewReader(body))
+	req = httptest.NewRequest(http.MethodPost, "/control/api/teams", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -512,7 +512,7 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 
 	profileID := profiles.profiles[1].ID
 	keyBody := `{"rate_limit":120,"scopes":["read"]}`
-	req = httptest.NewRequest(http.MethodPost, "/control/api/profiles/"+profileID.String()+"/api-keys", strings.NewReader(keyBody))
+	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles", strings.NewReader(keyBody))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -579,7 +579,7 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"api_key":"dm_rotated_plaintext"`)
 	require.Contains(t, rec.Body.String(), `"key_suffix":"rot8ed"`)
 
-	req = httptest.NewRequest(http.MethodDelete, "/control/api/profiles/"+profileID.String()+"/api-keys/"+keyID.String(), nil)
+	req = httptest.NewRequest(http.MethodDelete, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -587,7 +587,7 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Equal(t, keyID, keys.deletedKey)
 	require.Len(t, keys.keys, 0)
 
-	req = httptest.NewRequest(http.MethodDelete, "/control/api/profiles/"+profileID.String(), nil)
+	req = httptest.NewRequest(http.MethodDelete, "/control/api/teams/"+profileID.String(), nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)

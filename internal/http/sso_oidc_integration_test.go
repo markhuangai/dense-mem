@@ -99,11 +99,7 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 	}))
 
 	cfg := &config.Config{
-		RateLimitPerMinute:      100,
-		FragmentCreateRateLimit: 60,
-		FragmentReadRateLimit:   300,
-		ClaimWriteRateLimit:     60,
-		ClaimReadRateLimit:      300,
+		RateLimitPerMinute: 100,
 	}
 	e := NewServer(*cfg, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{

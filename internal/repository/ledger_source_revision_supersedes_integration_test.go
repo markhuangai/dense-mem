@@ -7,12 +7,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLedgerCreateIngestAllowsPerEvidenceSupersedesInSourceRevisionBatch(t *testing.T) {
+func TestLedgerCreateIngestAdvancesWholeSourceRevisionWithoutEvidenceTargetList(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
-	teamID := createLedgerTeam(t, adminDB, rls, "team-source-per-evidence")
-	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "source-per-evidence-owner")
+	teamID := createLedgerTeam(t, adminDB, rls, "team-source-revision-whole")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "source-revision-owner")
 	repo := NewLedgerRepository(appDB, rls)
 
 	first, err := repo.CreateIngest(ctx, CreateIngestInput{
@@ -20,14 +20,14 @@ func TestLedgerCreateIngestAllowsPerEvidenceSupersedesInSourceRevisionBatch(t *t
 		OwnerProfileID: ownerID,
 		Evidence: []EvidenceInput{
 			{
-				Content:                   "First source revision fragment.",
-				SourceKey:                 "doc://per-evidence",
+				Content:                   "First source revision evidence.",
+				SourceKey:                 "doc://whole-revision",
 				SourceRevisionToken:       "rev-1",
 				SourceRevisionContentHash: "sha256:rev1",
 			},
 			{
-				Content:                   "Second source revision fragment.",
-				SourceKey:                 "doc://per-evidence",
+				Content:                   "Second source revision evidence.",
+				SourceKey:                 "doc://whole-revision",
 				SourceRevisionToken:       "rev-1",
 				SourceRevisionContentHash: "sha256:rev1",
 			},
@@ -41,61 +41,33 @@ func TestLedgerCreateIngestAllowsPerEvidenceSupersedesInSourceRevisionBatch(t *t
 		OwnerProfileID: ownerID,
 		Evidence: []EvidenceInput{
 			{
-				Content:                       "First revised source fragment.",
-				SourceKey:                     "doc://per-evidence",
+				Content:                       "First revised source evidence.",
+				SourceKey:                     "doc://whole-revision",
 				SourceRevisionToken:           "rev-2",
 				ExpectedPreviousRevisionToken: "rev-1",
 				SourceRevisionContentHash:     "sha256:rev2",
-				SupersedesFragmentIDs:         []string{first.Evidence[0].FragmentID},
 			},
 			{
-				Content:                       "Second revised source fragment.",
-				SourceKey:                     "doc://per-evidence",
+				Content:                       "Second revised source evidence.",
+				SourceKey:                     "doc://whole-revision",
 				SourceRevisionToken:           "rev-2",
 				ExpectedPreviousRevisionToken: "rev-1",
 				SourceRevisionContentHash:     "sha256:rev2",
-				SupersedesFragmentIDs:         []string{first.Evidence[1].FragmentID},
 			},
 		},
 	})
 	require.NoError(t, err)
 	require.Len(t, second.Evidence, 2)
 
-	replayed, err := repo.CreateIngest(ctx, CreateIngestInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		Evidence: []EvidenceInput{
-			{
-				Content:                       "First idempotent source revision replay fragment.",
-				SourceKey:                     "doc://per-evidence",
-				SourceRevisionToken:           "rev-2",
-				ExpectedPreviousRevisionToken: "rev-1",
-				SourceRevisionContentHash:     "sha256:rev2",
-				SupersedesFragmentIDs:         []string{first.Evidence[0].FragmentID},
-			},
-			{
-				Content:                       "Second idempotent source revision replay fragment.",
-				SourceKey:                     "doc://per-evidence",
-				SourceRevisionToken:           "rev-2",
-				ExpectedPreviousRevisionToken: "rev-1",
-				SourceRevisionContentHash:     "sha256:rev2",
-				SupersedesFragmentIDs:         []string{first.Evidence[1].FragmentID},
-			},
-		},
-	})
-	require.NoError(t, err)
-	require.Len(t, replayed.Evidence, 2)
-
 	_, err = repo.CreateIngest(ctx, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		Evidence: []EvidenceInput{{
-			Content:                       "Idempotent source revision replay with invalid supersession.",
-			SourceKey:                     "doc://per-evidence",
-			SourceRevisionToken:           "rev-2",
+			Content:                       "Invalid source revision advancement.",
+			SourceKey:                     "doc://whole-revision",
+			SourceRevisionToken:           "rev-3",
 			ExpectedPreviousRevisionToken: "rev-1",
-			SourceRevisionContentHash:     "sha256:rev2",
-			SupersedesFragmentIDs:         []string{second.Evidence[0].FragmentID},
+			SourceRevisionContentHash:     "sha256:rev3",
 		}},
 	})
 	require.ErrorIs(t, err, ErrSourceRevisionConflict)

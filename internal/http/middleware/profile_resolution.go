@@ -42,9 +42,6 @@ func isHeaderScopedProfileRoute(path string) bool {
 		"/ui/api/recall",
 		"/ui/api/dreaming",
 		"/ui/api/dreams",
-		"/ui/api/evidence",
-		"/ui/api/relationships",
-		"/ui/api/communities",
 	}
 
 	for _, prefix := range headerScopedPrefixes {

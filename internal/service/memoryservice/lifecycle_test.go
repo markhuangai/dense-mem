@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -94,6 +95,107 @@ func TestLifecycleCorrectEntityResolutionUsesAuthenticatedOwner(t *testing.T) {
 	require.Equal(t, "conversation:identity-correction", semantic.correctInput.Evidence[0].SourceGroup)
 }
 
+func TestCorrectionEvidenceFromRequestUsesCanonicalSourceGroupFallbacks(t *testing.T) {
+	require.Nil(t, correctionEvidenceFromRequest(nil))
+
+	mapped := correctionEvidenceFromRequest([]RememberEvidenceInput{
+		{
+			Content:   "The source key identifies this correction.",
+			SourceKey: "wiki:identity-corrections",
+		},
+		{
+			Content: "The source reference identifies this correction.",
+			Source:  "conversation:identity-corrections",
+		},
+	})
+	require.Len(t, mapped, 2)
+	require.Equal(t, "wiki:identity-corrections", mapped[0].SourceGroup)
+	require.Equal(t, "conversation:identity-corrections", mapped[1].SourceGroup)
+}
+
+func TestLifecycleRetractEvidenceUsesAuthenticatedOwner(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	evidenceID := uuid.NewString()
+	evidence := &lifecycleEvidenceStub{result: &repository.EvidenceLifecycleResult{
+		DecisionID:                      "decision-canonical",
+		ProcessingState:                 "completed",
+		RetractedEvidenceIDs:            []string{evidenceID},
+		AffectedRelationshipCount:       1,
+		PendingRelationshipCount:        1,
+		RetainedActiveRelationshipCount: 0,
+	}}
+	svc := NewLifecycleService(LifecycleDependencies{Evidence: evidence})
+
+	result, err := svc.RetractEvidence(authenticatedRememberContext(teamID, profileID, keyID), RetractEvidenceRequest{
+		ContractVersion: domain.ContractVersion,
+		EvidenceIDs:     []string{evidenceID},
+		Reason:          "entered in error",
+		IdempotencyKey:  "retract-1",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "decision-canonical", result.DecisionID)
+	require.Equal(t, []string{evidenceID}, result.RetractedEvidenceIDs)
+	require.Equal(t, teamID.String(), evidence.input.TeamID)
+	require.Equal(t, profileID.String(), evidence.input.OwnerProfileID)
+	require.Equal(t, "retract-1", evidence.input.IdempotencyKey)
+	require.NotEmpty(t, evidence.input.RequestHash)
+
+	_, err = svc.RetractEvidence(context.Background(), RetractEvidenceRequest{
+		ContractVersion: domain.ContractVersion,
+		EvidenceIDs:     []string{evidenceID},
+		Reason:          "entered in error",
+		IdempotencyKey:  "retract-1",
+	})
+	require.ErrorIs(t, err, ErrLifecycleAuthContext)
+}
+
+func TestLifecycleRetractEvidenceValidatesDependenciesAndMapsRepositoryErrors(t *testing.T) {
+	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
+	req := RetractEvidenceRequest{
+		ContractVersion: domain.ContractVersion,
+		EvidenceIDs:     []string{uuid.NewString()},
+		Reason:          "entered in error",
+		IdempotencyKey:  "retract-errors-1",
+	}
+
+	_, err := NewLifecycleService(LifecycleDependencies{}).RetractEvidence(ctx, req)
+	require.ErrorContains(t, err, "evidence repository is required")
+
+	req.ContractVersion = "wrong"
+	_, err = NewLifecycleService(LifecycleDependencies{Evidence: &lifecycleEvidenceStub{}}).RetractEvidence(ctx, req)
+	require.ErrorContains(t, err, "invalid contract_version")
+	req.ContractVersion = domain.ContractVersion
+
+	for _, tc := range []struct {
+		name     string
+		repoErr  error
+		wantCode httperr.ErrorCode
+	}{
+		{name: "missing evidence is bounded", repoErr: repository.ErrEvidenceLifecycleNotFound, wantCode: httperr.NOT_FOUND},
+		{name: "inactive team is bounded", repoErr: repository.ErrTeamInactive, wantCode: httperr.NOT_FOUND},
+		{name: "lifecycle conflict is bounded", repoErr: repository.ErrEvidenceLifecycleConflict, wantCode: httperr.CONFLICT},
+		{name: "idempotency conflict is bounded", repoErr: repository.ErrIdempotencyConflict, wantCode: httperr.CONFLICT},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewLifecycleService(LifecycleDependencies{
+				Evidence: &lifecycleEvidenceStub{err: tc.repoErr},
+			}).RetractEvidence(ctx, req)
+			require.Error(t, err)
+			var apiErr *httperr.APIError
+			require.ErrorAs(t, err, &apiErr)
+			require.Equal(t, tc.wantCode, apiErr.Code)
+		})
+	}
+
+	repoErr := errors.New("database connection failed")
+	_, err = NewLifecycleService(LifecycleDependencies{
+		Evidence: &lifecycleEvidenceStub{err: repoErr},
+	}).RetractEvidence(ctx, req)
+	require.ErrorIs(t, err, repoErr)
+}
+
 func TestLifecycleResolvePlacementUsesAuthenticatedOwner(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
@@ -169,7 +271,7 @@ func TestLifecycleResolvePlacementMapsEvidenceForRepository(t *testing.T) {
 				Authority:              "secondary",
 				Labels:                 []string{"review"},
 				Metadata:               map[string]any{"ticket": "87"},
-				SupersedesFragmentIDs:  []string{"evidence-old"},
+				SupersedesEvidenceIDs:  []string{"evidence-old"},
 				IdempotencyKey:         "evidence-idem-1",
 			},
 			{
@@ -198,7 +300,7 @@ func TestLifecycleResolvePlacementMapsEvidenceForRepository(t *testing.T) {
 	require.Equal(t, "secondary", first.Metadata["contract_authority"])
 	require.Equal(t, "wiki:placement-review", first.Metadata["contract_source_group"])
 	require.Equal(t, "evidence-idem-1", first.Metadata["evidence_idempotency_key"])
-	require.Equal(t, []string{"evidence-old"}, first.Metadata["supersedes_fragment_ids"])
+	require.Equal(t, []string{"evidence-old"}, first.Metadata["supersedes_evidence_ids"])
 	require.Equal(t, "guarded", first.InitialEvent.Decision)
 	require.Equal(t, "deterministic_scan", first.InitialEvent.EventKind)
 	require.NotEmpty(t, first.SourceRevisionContentHash)
@@ -367,6 +469,26 @@ type lifecyclePlacementStub struct {
 	input  repository.ResolvePlacementReviewInput
 	result *repository.ResolvePlacementReviewResult
 	err    error
+}
+
+type lifecycleEvidenceStub struct {
+	input  repository.RetractEvidenceInput
+	result *repository.EvidenceLifecycleResult
+	err    error
+}
+
+func (s *lifecycleEvidenceStub) RetractEvidence(
+	_ context.Context,
+	input repository.RetractEvidenceInput,
+) (*repository.EvidenceLifecycleResult, error) {
+	s.input = input
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.result == nil {
+		return nil, errors.New("missing evidence lifecycle result")
+	}
+	return s.result, nil
 }
 
 func (s *lifecyclePlacementStub) ResolvePlacementReview(

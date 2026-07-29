@@ -84,43 +84,6 @@ export type UpdateTeamProfileInput =
   | { name: string; scopes?: never }
   | { name?: never; scopes: string[] };
 
-export type Fragment = {
-  fragment_id: string;
-  id: string;
-  content: string;
-  source_type: string;
-  source?: string;
-  labels?: string[];
-  status?: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type Claim = {
-  claim_id: string;
-  subject: string;
-  predicate: string;
-  object: string;
-  modality: string;
-  polarity: string;
-  status: string;
-  entailment_verdict: string;
-  extract_conf: number;
-  resolution_conf: number;
-  recorded_at: string;
-};
-
-export type Fact = {
-  fact_id: string;
-  subject: string;
-  predicate: string;
-  object: string;
-  status: string;
-  truth_score: number;
-  recorded_at: string;
-  labels?: string[];
-};
-
 export type ListResponse<T> = {
   items: T[];
   next_cursor?: string;
@@ -153,7 +116,7 @@ export type Dream = {
   rationale: string;
   likelihood: number;
   confidence: number;
-  status: "proposed" | "reinforced" | "stale" | "rejected" | "promoted" | string;
+  status: "proposed" | "reinforced" | "stale" | "rejected" | "submitted" | string;
   cycle: string;
   cycle_run_id?: string;
   generator_model?: string;
@@ -184,9 +147,7 @@ export type DreamRun = {
   reflect_ran: boolean;
   reevaluate_ran: boolean;
   dream_ran: boolean;
-  stale_facts: number;
-  candidate_claims: number;
-  disputed_claims: number;
+  candidate_relationships: number;
   clarifications: number;
   reevaluated_dreams: number;
   created_dreams: number;
@@ -207,9 +168,6 @@ export type RecallHit = {
   relationship?: RecallRelationship;
   relationships?: RecallRelationship[];
   evidences?: RecallEvidenceContext[];
-  fragment?: Fragment;
-  claim?: Claim;
-  fact?: Fact;
   semantic_rank?: number;
   keyword_rank?: number;
   final_score?: number;
@@ -279,12 +237,7 @@ export type RecallPayload = {
   degradations?: unknown[];
 };
 
-type LegacyRecallPayload = {
-  results: RecallRelationship[];
-  evidences: RecallEvidenceContext[];
-};
-
-export type GraphNodeType = "fact" | "claim" | "fragment" | "dream" | "entity" | "value";
+export type GraphNodeType = "entity" | "value";
 
 export type GraphNode = {
   key: string;
@@ -326,7 +279,6 @@ export type GraphQuery = {
   anchorId?: string;
   depth?: number;
   limit?: number;
-  includeSuperseded?: boolean;
 };
 
 type RequestOptions = {
@@ -449,23 +401,6 @@ export class UserApi {
       }));
       return [...evidenceHits, ...relationshipHits];
     }
-    if (Array.isArray(data)) {
-      return data as RecallHit[];
-    }
-    if (isLegacyRecallPayload(data)) {
-      const evidencesByID = new Map(data.evidences.map((evidence) => [evidence.evidence_id, evidence]));
-      return data.results.map((relationship, index) => ({
-        tier: relationship.tier,
-        relationship,
-        relationships: [relationship],
-        evidences: (relationship.evidence_ids ?? [])
-          .map((id) => evidencesByID.get(id))
-          .filter((evidence): evidence is RecallEvidenceContext => Boolean(evidence)),
-        score: 1,
-        final_score: 1,
-        semantic_rank: index + 1,
-      }));
-    }
     throw new ApiError(500, "Unexpected recall response format");
   }
 
@@ -491,9 +426,6 @@ export class UserApi {
     }
     if (query.limit !== undefined) {
       params.set("limit", String(query.limit));
-    }
-    if (query.includeSuperseded) {
-      params.set("include_superseded", "true");
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
     const payload = await this.request<Envelope<GraphSnapshot>>(`/ui/api/graph${suffix}`);
@@ -555,15 +487,6 @@ function isRecallPayload(value: RecallPayload | unknown): value is RecallPayload
   }
   const payload = value as Partial<RecallPayload> & { evidences?: unknown };
   return Array.isArray(payload.results) && !Array.isArray(payload.evidences);
-}
-
-function isLegacyRecallPayload(value: unknown): value is LegacyRecallPayload {
-  return Boolean(
-    value &&
-    typeof value === "object" &&
-    Array.isArray((value as Partial<LegacyRecallPayload>).results) &&
-    Array.isArray((value as Partial<LegacyRecallPayload>).evidences),
-  );
 }
 
 function relationshipsForEvidence(paths: RecallDiscoveryPath[], evidenceID: string): RecallRelationship[] {

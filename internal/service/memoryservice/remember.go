@@ -70,7 +70,7 @@ type RememberEvidenceInput struct {
 	SourceKey              string         `json:"source_key,omitempty"`
 	SourceRevision         string         `json:"source_revision,omitempty"`
 	PreviousSourceRevision string         `json:"previous_source_revision,omitempty"`
-	SupersedesFragmentIDs  []string       `json:"supersedes_fragment_ids,omitempty"`
+	SupersedesEvidenceIDs  []string       `json:"supersedes_evidence_ids,omitempty"`
 	IdempotencyKey         string         `json:"idempotency_key,omitempty"`
 	Labels                 []string       `json:"labels,omitempty"`
 	Metadata               map[string]any `json:"metadata,omitempty"`
@@ -93,14 +93,15 @@ type PlacementRunResult struct {
 }
 
 type PlacementItemResult struct {
-	ItemID               string                   `json:"item_id"`
-	EvidenceID           string                   `json:"evidence_id"`
-	Version              int                      `json:"version"`
-	EvidenceIndex        int                      `json:"evidence_index"`
-	Category             string                   `json:"category"`
-	SearchState          string                   `json:"search_state"`
-	RelationshipOutcomes []RelationshipOutcomeRef `json:"relationship_outcomes"`
-	Errors               []PlacementError         `json:"errors"`
+	ItemID                string                   `json:"item_id"`
+	EvidenceID            string                   `json:"evidence_id"`
+	SupersededEvidenceIDs []string                 `json:"superseded_evidence_ids"`
+	Version               int                      `json:"version"`
+	EvidenceIndex         int                      `json:"evidence_index"`
+	Category              string                   `json:"category"`
+	SearchState           string                   `json:"search_state"`
+	RelationshipOutcomes  []RelationshipOutcomeRef `json:"relationship_outcomes"`
+	Errors                []PlacementError         `json:"errors"`
 }
 
 type RelationshipOutcomeRef struct {
@@ -238,7 +239,8 @@ func (s *rememberService) normalizeEvidence(evidence []RememberEvidenceInput) ([
 			ExpectedPreviousRevisionToken: strings.TrimSpace(item.PreviousSourceRevision),
 			SourceRevisionContentHash:     sourceRevisionHashes[sourceRevisionBatchKey(item)],
 			SourceRevisionEnvelope:        sourceRevisionEnvelope(item),
-			SupersedesFragmentIDs:         append([]string(nil), item.SupersedesFragmentIDs...),
+			SupersedesEvidenceIDs:         append([]string(nil), item.SupersedesEvidenceIDs...),
+			IdempotencyKey:                strings.TrimSpace(item.IdempotencyKey),
 			Labels:                        append([]string(nil), item.Labels...),
 			Metadata:                      metadata,
 			InitialEvent:                  &scan,
@@ -315,6 +317,10 @@ func rememberResultFromLedger(created *repository.CreateIngestResult, correlatio
 
 func placementRunResultFromLedger(created *repository.CreateIngestResult) *PlacementRunResult {
 	items := make([]PlacementItemResult, 0, len(created.Items))
+	lineage := make(map[string][]string, len(created.Evidence))
+	for _, evidence := range created.Evidence {
+		lineage[evidence.FragmentID] = append([]string(nil), evidence.SupersededEvidenceIDs...)
+	}
 	searchState := string(domain.SearchProjectionNotRequired)
 	for _, item := range created.Items {
 		version := item.Version
@@ -323,15 +329,20 @@ func placementRunResultFromLedger(created *repository.CreateIngestResult) *Place
 		}
 		itemSearchState := placementItemSearchState(item)
 		searchState = placementCombinedSearchState(searchState, itemSearchState)
+		supersededEvidenceIDs := lineage[item.FragmentID]
+		if supersededEvidenceIDs == nil {
+			supersededEvidenceIDs = []string{}
+		}
 		items = append(items, PlacementItemResult{
-			ItemID:               item.PlacementItemID,
-			EvidenceID:           item.FragmentID,
-			Version:              version,
-			EvidenceIndex:        item.EvidenceIndex,
-			Category:             publicPlacementItemCategory(item),
-			SearchState:          itemSearchState,
-			RelationshipOutcomes: placementRelationshipOutcomes(item.Result),
-			Errors:               []PlacementError{},
+			ItemID:                item.PlacementItemID,
+			EvidenceID:            item.FragmentID,
+			SupersededEvidenceIDs: supersededEvidenceIDs,
+			Version:               version,
+			EvidenceIndex:         item.EvidenceIndex,
+			Category:              publicPlacementItemCategory(item),
+			SearchState:           itemSearchState,
+			RelationshipOutcomes:  placementRelationshipOutcomes(item.Result),
+			Errors:                []PlacementError{},
 		})
 	}
 	return &PlacementRunResult{
@@ -496,8 +507,8 @@ func ledgerAuthorityAndMetadata(authority string, metadata map[string]any) (stri
 }
 
 func evidenceProcessingIntentMetadata(metadata map[string]any, item RememberEvidenceInput) map[string]any {
-	if len(item.SupersedesFragmentIDs) > 0 {
-		metadata["supersedes_fragment_ids"] = append([]string(nil), item.SupersedesFragmentIDs...)
+	if len(item.SupersedesEvidenceIDs) > 0 {
+		metadata["supersedes_evidence_ids"] = append([]string(nil), item.SupersedesEvidenceIDs...)
 	}
 	if value := strings.TrimSpace(item.IdempotencyKey); value != "" {
 		metadata["evidence_idempotency_key"] = value

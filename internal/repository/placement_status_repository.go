@@ -156,5 +156,8 @@ func loadPlacementRunStatus(
 	if err := hydratePlacementItemSearchStates(ctx, tx, result.TeamID, result.OwnerProfileID, result.Items); err != nil {
 		return nil, err
 	}
+	if err := hydrateEvidenceLifecycleLineage(ctx, tx, result.TeamID, result.Evidence); err != nil {
+		return nil, err
+	}
 	return result, nil
 }

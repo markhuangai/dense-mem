@@ -370,7 +370,7 @@ export type OperationLogQuery = {
 };
 
 export type RecallFeedbackResultRef = {
-  type: "fragment" | "claim" | "fact" | string;
+  type: string;
   id: string;
   rank: number;
   tier?: string;
@@ -388,7 +388,7 @@ export type RecallFeedbackResultRef = {
 };
 
 export type RecallFeedbackJudgedResultRef = {
-  type: "fragment" | "claim" | "fact" | "dream" | string;
+  type: string;
   id: string;
   rank?: number;
 };
@@ -459,7 +459,7 @@ export type Dream = {
   rationale: string;
   likelihood: number;
   confidence: number;
-  status: "proposed" | "reinforced" | "stale" | "rejected" | "promoted" | string;
+  status: "proposed" | "reinforced" | "stale" | "rejected" | "submitted" | string;
   cycle: string;
   cycle_run_id?: string;
   generator_model?: string;
@@ -482,9 +482,7 @@ export type DreamRun = {
   reflect_ran: boolean;
   reevaluate_ran: boolean;
   dream_ran: boolean;
-  stale_facts: number;
-  candidate_claims: number;
-  disputed_claims: number;
+  candidate_relationships: number;
   clarifications: number;
   reevaluated_dreams: number;
   created_dreams: number;

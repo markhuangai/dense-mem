@@ -40,7 +40,7 @@ func evalRunDreamCycleTool(deps Dependencies) Tool {
 								"items": map[string]any{
 									"type": "object",
 									"properties": map[string]any{
-										"type": map[string]any{"type": "string", "enum": []string{"fact", "claim", "fragment", "community", "dream"}},
+										"type": map[string]any{"type": "string", "enum": []string{"relationship", "candidate_relationship"}},
 										"id":   map[string]any{"type": "string", "minLength": 1},
 									},
 									"required":             []string{"type", "id"},

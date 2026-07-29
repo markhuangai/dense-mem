@@ -28,23 +28,3 @@ func TestMaxBytesValidatorAcceptsValidParam(t *testing.T) {
 		t.Fatalf("ValidateVar returned error for valid maxbytes parameter: %v", err)
 	}
 }
-
-func TestEmbeddingDimValidator(t *testing.T) {
-	defer SetEmbeddingDimensions(0)
-
-	SetEmbeddingDimensions(0)
-	if err := ValidateVar([]float64{1, 2, 3}, "embedding_dim"); err != nil {
-		t.Fatalf("ValidateVar returned error with unset embedding dimension: %v", err)
-	}
-
-	SetEmbeddingDimensions(3)
-	if err := ValidateVar([]float64{1, 2, 3}, "embedding_dim"); err != nil {
-		t.Fatalf("ValidateVar returned error for matching embedding dimension: %v", err)
-	}
-	if err := ValidateVar([]float64{1, 2}, "embedding_dim"); err == nil {
-		t.Fatal("ValidateVar accepted mismatched embedding dimension")
-	}
-	if err := ValidateVar("not a slice", "embedding_dim"); err != nil {
-		t.Fatalf("ValidateVar returned error for non-slice value: %v", err)
-	}
-}

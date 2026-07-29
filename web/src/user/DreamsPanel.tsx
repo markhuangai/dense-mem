@@ -3,7 +3,7 @@ import { RefreshCw } from "lucide-react";
 import { InfoTooltip, LoadingState, SectionHeading } from "../ui/components";
 import { Dream, DreamQuery, DreamRun, DreamSort, DreamStatus, UserApi } from "./api";
 
-const DREAM_STATUSES = ["", "proposed", "reinforced", "stale", "rejected", "promoted"];
+const DREAM_STATUSES = ["", "proposed", "reinforced", "stale", "rejected", "submitted"];
 const DREAM_PAGE_SIZES = [10, 25, 50, 100];
 const DREAM_SORTS: Array<{ value: DreamSort; label: string }> = [
   { value: "updated_at", label: "Updated" },
@@ -293,7 +293,7 @@ function dreamStatusClass(status: string): string {
     case "rejected":
     case "stale":
       return "status-pill warning";
-    case "promoted":
+    case "submitted":
     case "reinforced":
       return "status-pill";
     default:

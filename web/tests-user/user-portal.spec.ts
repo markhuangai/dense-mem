@@ -55,45 +55,49 @@ const memberProfile: TestKey = {
   role: "member",
 };
 
-const facts = [
+const evidences = [
   {
-    fact_id: "fact-1",
-    subject: "Alice",
-    predicate: "works_on",
-    object: "project-x",
-    status: "active",
-    truth_score: 0.94,
-    recorded_at: "2026-05-02T12:00:00Z",
-  },
-];
-
-const claims = [
-  {
-    claim_id: "claim-1",
-    subject: "Alice",
-    predicate: "uses",
-    object: "Dense-Mem",
-    modality: "assertion",
-    polarity: "+",
-    status: "validated",
-    entailment_verdict: "entailed",
-    extract_conf: 0.91,
-    resolution_conf: 0.88,
-    recorded_at: "2026-05-02T12:00:00Z",
-  },
-];
-
-const fragments = [
-  {
-    id: "frag-1",
-    fragment_id: "frag-1",
-    content: "Alice is working on project-x with Dense-Mem.",
-    source_type: "manual",
+    evidence_id: "evidence-1",
+    relationship_ids: ["relationship-1"],
+    rank: 1,
+    context: "Alice uses Dense-Mem for project-x.",
     source: "notes",
-    labels: ["project"],
-    status: "active",
+    source_type: "manual",
     created_at: "2026-05-02T12:00:00Z",
-    updated_at: "2026-05-02T12:00:00Z",
+  },
+  {
+    evidence_id: "evidence-2",
+    relationship_ids: ["relationship-2"],
+    rank: 2,
+    context: "Alice works on project-x with Dense-Mem.",
+    source: "notes",
+    source_type: "manual",
+    created_at: "2026-05-03T12:00:00Z",
+  },
+];
+
+const relationships = [
+  {
+    relationship_id: "relationship-1",
+    tier: "verified",
+    subject: { entity_id: "entity-alice", name: "Alice", kind: "person" },
+    predicate: "uses",
+    object: { entity_id: "entity-dense-mem", name: "Dense-Mem", kind: "software" },
+    polarity: "+",
+    valid_from: "2026-05-02T12:00:00Z",
+    evidence_ids: ["evidence-1"],
+    search_state: "current",
+  },
+  {
+    relationship_id: "relationship-2",
+    tier: "verified",
+    subject: { entity_id: "entity-alice", name: "Alice", kind: "person" },
+    predicate: "works_on",
+    object: { value_id: "value-project-x", value: "project-x", type: "project" },
+    polarity: "+",
+    valid_from: "2026-05-03T12:00:00Z",
+    evidence_ids: ["evidence-2"],
+    search_state: "current",
   },
 ];
 
@@ -104,62 +108,58 @@ const graphSnapshot = {
   truncated: false,
   nodes: [
     {
-      key: "fact:fact-1",
-      id: "fact-1",
-      type: "fact",
-      title: "Alice works_on project-x",
+      key: "entity:entity-alice",
+      id: "entity-alice",
+      type: "entity",
+      title: "Alice",
     },
     {
-      key: "claim:claim-1",
-      id: "claim-1",
-      type: "claim",
-      title: "Alice uses Dense-Mem",
+      key: "entity:entity-dense-mem",
+      id: "entity-dense-mem",
+      type: "entity",
+      title: "Dense-Mem",
     },
     {
-      key: "fragment:frag-1",
-      id: "frag-1",
-      type: "fragment",
-      title: "Alice is working on project-x with Dense-Mem.",
+      key: "value:value-project-x",
+      id: "value-project-x",
+      type: "value",
+      title: "project-x",
     },
   ],
   edges: [
-    { id: "edge-1", source: "claim:claim-1", target: "fact:fact-1", relationship: "PROMOTES_TO", directed: true },
-    { id: "edge-2", source: "claim:claim-1", target: "fragment:frag-1", relationship: "SUPPORTED_BY", directed: true },
+    { id: "relationship-1", source: "entity:entity-alice", target: "entity:entity-dense-mem", relationship: "USES", directed: true },
+    { id: "relationship-2", source: "entity:entity-alice", target: "value:value-project-x", relationship: "WORKS_ON", directed: true },
   ],
 };
 
 const graphNodeDetails = {
-  "fact:fact-1": {
-    key: "fact:fact-1",
-    id: "fact-1",
-    type: "fact",
-    title: "Alice works_on project-x",
-    body: "project-x",
+  "entity:entity-alice": {
+    key: "entity:entity-alice",
+    id: "entity-alice",
+    type: "entity",
+    title: "Alice",
+    body: "Person",
     status: "active",
-    community_id: "community-1",
     score: 0.94,
     recorded_at: "2026-05-02T12:00:00Z",
   },
-  "claim:claim-1": {
-    key: "claim:claim-1",
-    id: "claim-1",
-    type: "claim",
-    title: "Alice uses Dense-Mem",
-    body: "Dense-Mem",
-    status: "validated",
-    community_id: "community-1",
+  "entity:entity-dense-mem": {
+    key: "entity:entity-dense-mem",
+    id: "entity-dense-mem",
+    type: "entity",
+    title: "Dense-Mem",
+    body: "Software",
+    status: "active",
     score: 0.88,
     recorded_at: "2026-05-02T12:00:00Z",
   },
-  "fragment:frag-1": {
-    key: "fragment:frag-1",
-    id: "frag-1",
-    type: "fragment",
-    title: "Alice is working on project-x with Dense-Mem.",
-    body: "Alice is working on project-x with Dense-Mem.",
+  "value:value-project-x": {
+    key: "value:value-project-x",
+    id: "value-project-x",
+    type: "value",
+    title: "project-x",
+    body: "project-x",
     status: "active",
-    community_id: "community-1",
-    source: "notes",
     score: 0.75,
     recorded_at: "2026-05-02T12:00:00Z",
   },
@@ -177,18 +177,10 @@ const telemetryCards = [
   { id: "llm_recall_quality_score", label: "LLM recall quality", unit: "percent", value: 75 },
   { id: "llm_recall_missing_context_rate", label: "LLM missing context", unit: "percent", value: 10 },
   { id: "llm_recall_irrelevant_rate", label: "LLM irrelevant recall", unit: "percent", value: 5 },
-  { id: "promotions", label: "Promotions", unit: "promotions", value: 1 },
-  { id: "promotion_rate", label: "Promotion rate", unit: "percent", value: 50 },
   { id: "avg_http_latency", label: "Avg HTTP latency", unit: "ms", value: 16.4 },
   { id: "avg_embedding_latency", label: "Avg embedding latency", unit: "ms", value: 39.1 },
   { id: "avg_verifier_latency", label: "Avg verifier latency", unit: "ms", value: 101.5 },
-  { id: "avg_claim_verify_latency", label: "Avg claim-to-verify", unit: "ms", value: 200 },
-  { id: "avg_claim_promotion_latency", label: "Avg claim-to-promote", unit: "ms", value: 300 },
-  { id: "avg_verify_promotion_latency", label: "Avg verify-to-promote", unit: "ms", value: 90 },
-  { id: "pending_claims", label: "Pending claims", unit: "claims", value: 4 },
-  { id: "validated_claims", label: "Validated claims", unit: "claims", value: 8 },
-  { id: "disputed_claims", label: "Disputed claims", unit: "claims", value: 0 },
-  { id: "revalidation_backlog", label: "Revalidation backlog", unit: "facts", value: 2 },
+  { id: "avg_conflict_review_duration", label: "Avg conflict review", unit: "ms", value: 200 },
 ];
 
 const telemetrySeries = [
@@ -197,20 +189,13 @@ const telemetrySeries = [
   { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens/s" },
   { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens/s" },
   { id: "recalls", label: "Recall requests", unit: "requests/s" },
-  { id: "promotions", label: "Promotions", unit: "promotions/s" },
   { id: "recall_results", label: "Recall results", unit: "results" },
   { id: "llm_recall_used_rate", label: "LLM recall used", unit: "percent" },
   { id: "llm_recall_answer_supported_rate", label: "LLM answer supported", unit: "percent" },
   { id: "llm_recall_quality_score", label: "LLM recall quality", unit: "percent" },
   { id: "llm_recall_missing_context_rate", label: "LLM missing context", unit: "percent" },
   { id: "llm_recall_irrelevant_rate", label: "LLM irrelevant recall", unit: "percent" },
-  { id: "claim_verify_latency", label: "Claim-to-verify", unit: "ms" },
-  { id: "claim_promotion_latency", label: "Claim-to-promote", unit: "ms" },
-  { id: "verify_promotion_latency", label: "Verify-to-promote", unit: "ms" },
-  { id: "pending_claims", label: "Pending claims", unit: "claims" },
-  { id: "validated_claims", label: "Validated claims", unit: "claims" },
-  { id: "disputed_claims", label: "Disputed claims", unit: "claims" },
-  { id: "revalidation_backlog", label: "Revalidation backlog", unit: "facts" },
+  { id: "conflict_review_duration", label: "Conflict review", unit: "ms" },
 ].map((series, index) => ({
   ...series,
   points: [
@@ -218,8 +203,6 @@ const telemetrySeries = [
     { timestamp: "2026-05-02T13:00:00Z", value: index / 20 + 0.2 },
   ],
 }));
-
-const currentTelemetryIds = new Set(["pending_claims", "validated_claims", "disputed_claims", "revalidation_backlog"]);
 
 const telemetry = {
   available: true,
@@ -232,11 +215,11 @@ const telemetry = {
   },
   scope: { type: "self", team_id: team.id, profile_id: readKey.id },
   cards: telemetryCards,
-  windowed_cards: telemetryCards.filter((card) => !currentTelemetryIds.has(card.id)),
-  current_cards: telemetryCards.filter((card) => currentTelemetryIds.has(card.id)),
+  windowed_cards: telemetryCards,
+  current_cards: [],
   series: telemetrySeries,
-  activity_series: telemetrySeries.filter((series) => !currentTelemetryIds.has(series.id)),
-  state_series: telemetrySeries.filter((series) => currentTelemetryIds.has(series.id)),
+  activity_series: telemetrySeries,
+  state_series: [],
 };
 
 test("API key login, recall, and read-only navigation", async ({ page }) => {
@@ -249,26 +232,24 @@ test("API key login, recall, and read-only navigation", async ({ page }) => {
 
   await page.getByLabel("Keyword").fill("project");
   await page.getByRole("button", { name: "Search" }).click();
-  await expect(page.getByRole("heading", { name: "Alice" }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Alice uses Dense-Mem for project-x." }).first()).toBeVisible();
   await expect(page.getByText("project-x").first()).toBeVisible();
   await expect(page.getByText("Dense-Mem").first()).toBeVisible();
   await expect(page.getByLabel("Knowledge filters")).toBeVisible();
-  await expect(page.getByLabel("Inspector")).toContainText("Fact");
+  await expect(page.getByLabel("Inspector")).toContainText("Evidence");
   await expect(page.getByRole("listbox", { name: "Recall result list" }).getByRole("option")).toHaveCount(3);
   await page.getByRole("option").filter({ hasText: "uses: Dense-Mem" }).click();
-  await expect(page.getByLabel("Inspector")).toContainText("Claim");
-  await expect(page.getByLabel("Inspector")).toContainText("Tier 1.5");
-  await page.getByRole("checkbox", { name: /Claim/ }).click();
+  await expect(page.getByLabel("Inspector")).toContainText("Relationship");
+  await expect(page.getByLabel("Inspector")).toContainText("Tier verified");
+  await page.getByRole("checkbox", { name: /Relationship/ }).click();
   await expect(page.getByRole("listbox", { name: "Recall result list" })).not.toContainText("uses: Dense-Mem");
-  await expect(page.getByLabel("Inspector")).toContainText("Fact");
-  await page.getByRole("checkbox", { name: /Fact/ }).click();
-  await expect(page.getByLabel("Inspector")).toContainText("Fragment");
-  await expect(page.getByLabel("Inspector")).toContainText("Alice is working on project-x with Dense-Mem.");
+  await expect(page.getByLabel("Inspector")).toContainText("Evidence");
+  await page.getByRole("checkbox", { name: /Evidence/ }).click();
+  await expect(page.getByLabel("Inspector")).toContainText("Select a result");
 
   await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Facts" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Claims" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Fragments" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Evidence" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Relationships" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Communities" })).toHaveCount(0);
   expect(calls.disallowedProfileCalls).toEqual([]);
   expect(calls.telemetryRequests).toEqual([]);
@@ -474,18 +455,12 @@ async function expectUsageDashboard(page: Page, title: string, snapshot: typeof 
   for (const card of snapshot.windowed_cards) {
     await expect(usageTotals).toContainText(card.label);
   }
-  const usageCurrentState = page.getByLabel(`${title} current state`);
-  for (const card of snapshot.current_cards) {
-    await expect(usageCurrentState).toContainText(card.label);
-  }
+	await expect(page.getByLabel(`${title} current state`)).toHaveCount(0);
   const usageCharts = page.getByLabel(`${title} charts`);
   for (const series of snapshot.activity_series) {
     await expect(usageCharts).toContainText(series.label);
   }
-  const usageStateHistory = page.getByLabel(`${title} state history`);
-  for (const series of snapshot.state_series) {
-    await expect(usageStateHistory).toContainText(series.label);
-  }
+	await expect(page.getByLabel(`${title} state history`)).toHaveCount(0);
 }
 
 function rectanglesOverlap(
@@ -609,7 +584,7 @@ async function mockUserApi(
   await page.route("**/ui/api/node-detail**", async (route) => {
     const url = new URL(route.request().url());
     const key = `${url.searchParams.get("type")}:${url.searchParams.get("id")}`;
-    const node = graphNodeDetails[key as keyof typeof graphNodeDetails] ?? graphNodeDetails["fact:fact-1"];
+    const node = graphNodeDetails[key as keyof typeof graphNodeDetails] ?? graphNodeDetails["entity:entity-alice"];
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -631,11 +606,16 @@ async function mockUserApi(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        data: [
-          { tier: "1", score: 0.94, fact: facts[0], semantic_rank: 0, keyword_rank: 0, final_score: 0 },
-          { tier: "1.5", score: 0.45, claim: claims[0], semantic_rank: 0, keyword_rank: 0, final_score: 0 },
-          { tier: "2", score: 0.02, fragment: fragments[0], semantic_rank: 1, keyword_rank: 2, final_score: 0.02 },
-        ],
+        data: {
+          recall_id: "rec-test",
+          results: evidences,
+          conflicts: [],
+          related_relationships: [relationships[0]],
+          related_communities: [{ relationships, evidence_ids: evidences.map((evidence) => evidence.evidence_id) }],
+          related_hypotheses: [],
+          search_states: { evidence: "current", relationships: "current" },
+          degradations: [],
+        },
       }),
     });
   });

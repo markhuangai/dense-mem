@@ -9,10 +9,6 @@ services:
   server:
     environment:
       RATE_LIMIT_PER_MINUTE: "200000"
-      FRAGMENT_CREATE_RATE_LIMIT: "200000"
-      FRAGMENT_READ_RATE_LIMIT: "200000"
-      CLAIM_WRITE_RATE_LIMIT: "200000"
-      CLAIM_READ_RATE_LIMIT: "200000"
 
   postgres:
     volumes:

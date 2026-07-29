@@ -204,6 +204,9 @@ func TestHeaderScopedProfileRouteRequiresPathBoundary(t *testing.T) {
 		{path: "/ui/api/dreams/dream-1", want: true},
 		{path: "/ui/api/dreams-extra", want: false},
 		{path: "/ui/api/recallXYZ", want: false},
+		{path: "/ui/api/evidence", want: false},
+		{path: "/ui/api/relationships", want: false},
+		{path: "/ui/api/communities", want: false},
 	}
 
 	for _, tt := range tests {

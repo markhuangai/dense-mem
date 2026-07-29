@@ -76,7 +76,7 @@ func TestGeneratedProposalTargetValidationEdges(t *testing.T) {
 		{
 			Hypothesis:      "Dense-Mem may use pgvector.",
 			ObjectValueID:   objectValueID,
-			SourceRefs:      []domain.DreamSourceRef{{Type: "fact", ID: sourceID}},
+			SourceRefs:      []domain.DreamSourceRef{{Type: "relationship", ID: sourceID}},
 			Likelihood:      2,
 			Confidence:      0.5,
 			PossibleOutcome: "Store embeddings in PostgreSQL.",
@@ -85,13 +85,13 @@ func TestGeneratedProposalTargetValidationEdges(t *testing.T) {
 			Hypothesis:      "Invalid because it sets both object endpoint kinds.",
 			ObjectEntityID:  subjectID,
 			ObjectValueID:   objectValueID,
-			SourceRefs:      []domain.DreamSourceRef{{Type: "fact", ID: sourceID}},
+			SourceRefs:      []domain.DreamSourceRef{{Type: "relationship", ID: sourceID}},
 			PredicateKey:    "uses",
 			SubjectEntityID: subjectID,
 		},
 		{
-			Hypothesis: "Invalid source type.",
-			SourceRefs: []domain.DreamSourceRef{{Type: "observation", ID: sourceID}},
+			Hypothesis: "Legacy source type.",
+			SourceRefs: []domain.DreamSourceRef{{Type: "fact", ID: sourceID}},
 		},
 	}, inputs, 5, "")
 

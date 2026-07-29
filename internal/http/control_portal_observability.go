@@ -300,7 +300,7 @@ func controlDreamListOptions(c echo.Context) (dreamservice.ListOptions, error) {
 	}
 	status := strings.TrimSpace(c.QueryParam("status"))
 	if status != "" && !domain.DreamStatus(status).IsValid() {
-		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "status must be one of proposed, reinforced, stale, rejected, promoted")
+		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "status must be one of proposed, reinforced, stale, rejected, submitted")
 	}
 	sort := strings.TrimSpace(c.QueryParam("sort"))
 	switch sort {

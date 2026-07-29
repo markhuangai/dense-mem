@@ -13,13 +13,6 @@ import { TelemetrySnapshot, TelemetryWindowKey, telemetryWindowOptions } from ".
 import { LoadingState, SectionHeading, SummaryCard } from "../ui/components";
 import "./telemetry.css";
 
-const currentStateCardIds = new Set([
-  "pending_claims",
-  "validated_claims",
-  "disputed_claims",
-  "revalidation_backlog",
-]);
-
 type TelemetryDashboardProps = {
   title: string;
   snapshot: TelemetrySnapshot | null;
@@ -209,31 +202,19 @@ function TelemetryChartSection({ title, ariaLabel, series, from, to }: {
 }
 
 export function telemetryWindowedCards(snapshot: TelemetrySnapshot) {
-  if (Array.isArray(snapshot.windowed_cards)) {
-    return snapshot.windowed_cards;
-  }
-  return snapshot.cards.filter((card) => !currentStateCardIds.has(card.id));
+  return Array.isArray(snapshot.windowed_cards) ? snapshot.windowed_cards : snapshot.cards;
 }
 
 export function telemetryCurrentCards(snapshot: TelemetrySnapshot) {
-  if (Array.isArray(snapshot.current_cards)) {
-    return snapshot.current_cards;
-  }
-  return snapshot.cards.filter((card) => currentStateCardIds.has(card.id));
+  return Array.isArray(snapshot.current_cards) ? snapshot.current_cards : [];
 }
 
 export function telemetryActivitySeries(snapshot: TelemetrySnapshot) {
-  if (Array.isArray(snapshot.activity_series)) {
-    return snapshot.activity_series;
-  }
-  return snapshot.series.filter((series) => !currentStateCardIds.has(series.id));
+  return Array.isArray(snapshot.activity_series) ? snapshot.activity_series : snapshot.series;
 }
 
 export function telemetryStateSeries(snapshot: TelemetrySnapshot) {
-  if (Array.isArray(snapshot.state_series)) {
-    return snapshot.state_series;
-  }
-  return snapshot.series.filter((series) => currentStateCardIds.has(series.id));
+  return Array.isArray(snapshot.state_series) ? snapshot.state_series : [];
 }
 
 export function formatTelemetryCardValue(card: Pick<TelemetrySnapshot["cards"][number], "available" | "unit" | "value">) {

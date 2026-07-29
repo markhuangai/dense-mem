@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"reflect"
 	"testing"
 	"time"
 
@@ -9,7 +8,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestDreamStatusIsValid(t *testing.T) {
@@ -18,7 +16,7 @@ func TestDreamStatusIsValid(t *testing.T) {
 		DreamStatusReinforced,
 		DreamStatusStale,
 		DreamStatusRejected,
-		DreamStatusPromoted,
+		DreamStatusSubmitted,
 	} {
 		if !status.IsValid() {
 			t.Fatalf("status %q should be valid", status)
@@ -27,97 +25,8 @@ func TestDreamStatusIsValid(t *testing.T) {
 	if DreamStatus("unknown").IsValid() {
 		t.Fatal("unknown dream status should be invalid")
 	}
-}
-
-// TestKnowledgeContractFieldNames verifies exact field names on all three contract structs match canonical names.
-func TestKnowledgeContractFieldNames(t *testing.T) {
-	t.Run("SourceFragmentContract has correct field names", func(t *testing.T) {
-		typ := reflect.TypeOf(SourceFragmentContract{})
-
-		expectedFields := map[string]string{
-			"FragmentID":     "fragment_id",
-			"Connector":      "connector",
-			"SourceID":       "source_id",
-			"Content":        "content",
-			"Embedding":      "embedding",
-			"Classification": "classification",
-		}
-
-		for fieldName, jsonTag := range expectedFields {
-			field, found := typ.FieldByName(fieldName)
-			require.True(t, found, "Field %s not found", fieldName)
-
-			tag := field.Tag.Get("json")
-			assert.Equal(t, jsonTag, tag, "Field %s json tag mismatch", fieldName)
-		}
-	})
-
-	t.Run("ClaimContract has correct field names", func(t *testing.T) {
-		typ := reflect.TypeOf(ClaimContract{})
-
-		expectedFields := map[string]string{
-			"ClaimID":           "claim_id",
-			"Predicate":         "predicate",
-			"Modality":          "modality",
-			"Status":            "status",
-			"EntailmentVerdict": "entailment_verdict",
-			"ExtractConf":       "extract_conf",
-		}
-
-		for fieldName, jsonTag := range expectedFields {
-			field, found := typ.FieldByName(fieldName)
-			require.True(t, found, "Field %s not found", fieldName)
-
-			tag := field.Tag.Get("json")
-			assert.Equal(t, jsonTag, tag, "Field %s json tag mismatch", fieldName)
-		}
-	})
-
-	t.Run("FactContract has correct field names", func(t *testing.T) {
-		typ := reflect.TypeOf(FactContract{})
-
-		expectedFields := map[string]string{
-			"FactID":     "fact_id",
-			"Status":     "status",
-			"TruthScore": "truth_score",
-			"ValidFrom":  "valid_from",
-			"ValidTo":    "valid_to",
-			"RecordedAt": "recorded_at",
-			"RecordedTo": "recorded_to",
-		}
-
-		for fieldName, jsonTag := range expectedFields {
-			field, found := typ.FieldByName(fieldName)
-			require.True(t, found, "Field %s not found", fieldName)
-
-			tag := field.Tag.Get("json")
-			assert.Equal(t, jsonTag, tag, "Field %s json tag mismatch", fieldName)
-		}
-	})
-}
-
-// TestKnowledgeContractRelationshipConstants verifies all six relationship constants are defined.
-func TestKnowledgeContractRelationshipConstants(t *testing.T) {
-	expectedConstants := []string{
-		SUPPORTED_BY,
-		PROMOTES_TO,
-		SUPERSEDED_BY,
-		CONTRADICTS,
-		SUBJECT,
-		OBJECT,
-	}
-
-	expectedValues := []string{
-		"SUPPORTED_BY",
-		"PROMOTES_TO",
-		"SUPERSEDED_BY",
-		"CONTRADICTS",
-		"SUBJECT",
-		"OBJECT",
-	}
-
-	for i, expected := range expectedValues {
-		assert.Equal(t, expected, expectedConstants[i], "Constant at index %d mismatch", i)
+	if DreamStatus("promoted").IsValid() {
+		t.Fatal("legacy promoted dream status should be invalid")
 	}
 }
 

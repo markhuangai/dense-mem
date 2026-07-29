@@ -715,9 +715,16 @@ func lockPlacementItemForCommit(ctx context.Context, tx *gorm.DB, input CommitPl
 
 func ensurePlacementItemCurrent(ctx context.Context, tx *gorm.DB, input CommitPlacementSemanticInput) error {
 	var sourceRevisionID, currentRevisionID sql.NullString
+	var retired bool
 	err := tx.WithContext(ctx).Raw(`
 		SELECT COALESCE(fragment.source_revision_id::text, ''),
-		       COALESCE(source.current_revision_id::text, '')
+		       COALESCE(source.current_revision_id::text, ''),
+		       EXISTS (
+		           SELECT 1
+		           FROM evidence_lifecycle_events AS lifecycle
+		           WHERE lifecycle.team_id = fragment.team_id
+		             AND lifecycle.target_fragment_id = fragment.fragment_id
+		       )
 		FROM placement_items AS item
 		JOIN evidence_fragments AS fragment
 		  ON fragment.team_id = item.team_id
@@ -728,11 +735,11 @@ func ensurePlacementItemCurrent(ctx context.Context, tx *gorm.DB, input CommitPl
 		WHERE item.team_id = ?::uuid
 		  AND item.owner_profile_id = ?::uuid
 		  AND item.placement_item_id = ?::uuid
-	`, input.TeamID, input.OwnerProfileID, input.PlacementItemID).Row().Scan(&sourceRevisionID, &currentRevisionID)
+	`, input.TeamID, input.OwnerProfileID, input.PlacementItemID).Row().Scan(&sourceRevisionID, &currentRevisionID, &retired)
 	if err != nil {
 		return err
 	}
-	if sourceRevisionID.String != "" && currentRevisionID.String != "" && sourceRevisionID.String != currentRevisionID.String {
+	if retired || (sourceRevisionID.String != "" && currentRevisionID.String != "" && sourceRevisionID.String != currentRevisionID.String) {
 		return ErrPlacementStaleSource
 	}
 	return nil
@@ -742,7 +749,7 @@ func appendSupersededPlacementOutcome(ctx context.Context, tx *gorm.DB, input Co
 	payload := map[string]any{
 		"contract_version": domain.ContractVersion,
 		"status":           "superseded",
-		"reason":           "source revision changed before semantic commit",
+		"reason":           "evidence lifecycle or source revision changed before semantic commit",
 	}
 	outcomeID, err := insertPlacementOutcome(ctx, tx, PlacementOutcomeInput{
 		TeamID:          input.TeamID,

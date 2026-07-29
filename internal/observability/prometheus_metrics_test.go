@@ -13,7 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
+func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 	metrics := NewPrometheusMetrics()
 	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	profileID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
@@ -33,18 +33,9 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 	metrics.IncVerifyVerdictFor(ctx, "verify-model", "verified")
 	metrics.ObserveRecallLatencyFor(ctx, 42)
 	metrics.ObserveRecallFor(ctx, 42, 3, "ok")
-	metrics.ObserveRecallFeedbackFor(ctx, RecallFeedback{Used: true, AnswerSupported: true, Quality: "high", MissingContext: false, Irrelevant: false})
-	metrics.ObserveDreamFeedbackFor(ctx, DreamFeedback{Decision: "promote_candidate", Outcome: "ok", FromStatus: "reinforced"})
+	metrics.ObserveRecallFeedbackFor(ctx, RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
 	metrics.ObserveDreamFeedbackFor(ctx, DreamFeedback{Decision: "confirm_true", Outcome: "ok", FromStatus: "proposed"})
-	metrics.ObserveMemoryFunnelLatencyFor(ctx, "claim_to_verify", 2.5, "verified")
-	metrics.IncFragmentCreateFor(ctx, "created")
-	metrics.IncClaimCreateFor(ctx, "duplicate", "content_hash")
-	metrics.IncPromotionOutcomeFor(ctx, "promoted")
-	metrics.ObservePromoteLockWaitFor(ctx, 0.25)
-	metrics.IncFragmentRetractFor(ctx)
-	metrics.IncFactNeedsRevalidationFor(ctx)
-	metrics.IncCommunityDetectFor(ctx, "ok")
-	metrics.ObserveCommunityDetectFor(ctx, 1.25, 1234)
+	metrics.ObserveConflictReviewDurationFor(ctx, 2.5, "completed")
 
 	body := scrapePrometheusMetrics(t, metrics)
 	for _, want := range []string{
@@ -59,7 +50,6 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 		`kind="prompt"`,
 		`kind="total"`,
 		`densemem_verifier_tokens_total{`,
-		`model="verify-model"`,
 		`kind="completion"`,
 		`densemem_verify_verdict_total{`,
 		`outcome="verified"`,
@@ -68,41 +58,37 @@ func TestPrometheusMetrics_RecordsScopedMetrics(t *testing.T) {
 		`used="true"`,
 		`answer_supported="true"`,
 		`quality="high"`,
-		`missing_context="false"`,
-		`irrelevant="false"`,
-		`densemem_recall_feedback_quality_score_bucket{`,
 		`densemem_dream_feedback_total{`,
 		`decision="confirm_true"`,
-		`densemem_memory_funnel_latency_seconds_bucket{`,
-		`stage="claim_to_verify"`,
-		`densemem_claim_create_total{`,
-		`dedupe_reason="content_hash"`,
-		`densemem_retractions_total{`,
-		`entity="fragment"`,
-		`densemem_community_detect_projected_nodes_bucket{`,
+		`densemem_conflict_review_duration_seconds_bucket{`,
+		`outcome="completed"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scraped metrics missing %q\n%s", want, body)
 		}
 	}
-	requirePrometheusMetricLabels(t, body, "densemem_dream_feedback_total",
-		`decision="promote_candidate"`,
-		`outcome="ok"`,
-		`from_status="reinforced"`,
-	)
-	for _, blocked := range []string{
-		`team_name=`,
-		`profile_name=`,
-		`Research`,
-		`Profile A`,
+	for _, retired := range []string{
+		"densemem_memory_funnel_latency_seconds",
+		"densemem_fragment_create_total",
+		"densemem_claim_create_total",
+		"densemem_promotion_outcome_total",
+		"densemem_promote_lock_wait_seconds",
+		"densemem_retractions_total",
+		"densemem_fact_needs_revalidation_total",
+		"densemem_community_detect_total",
 	} {
+		if strings.Contains(body, retired) {
+			t.Fatalf("scraped metrics still contain retired metric %q\n%s", retired, body)
+		}
+	}
+	for _, blocked := range []string{"team_name=", "profile_name=", "Research", "Profile A"} {
 		if strings.Contains(body, blocked) {
 			t.Fatalf("scraped metrics leaked %q\n%s", blocked, body)
 		}
 	}
 }
 
-func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) {
+func TestPrometheusMetricsRecordsUnknownLabelsAndHelpers(t *testing.T) {
 	metrics := NewPrometheusMetrics()
 	ctx := context.Background()
 
@@ -113,16 +99,9 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	metrics.ObserveRecall(2, 0, "")
 	metrics.ObserveRecallFeedback(RecallFeedback{Quality: "bad"})
 	metrics.ObserveDreamFeedback(DreamFeedback{})
-	metrics.ObserveMemoryFunnelLatency("", 1, "")
-	metrics.IncFragmentCreate("")
-	metrics.IncClaimCreate("", "")
+	metrics.ObserveConflictReviewDuration(1, "")
+	metrics.ObserveConflictReviewDurationFor(ctx, -1, "ignored")
 	metrics.IncVerifyVerdict("")
-	metrics.IncPromotionOutcome("")
-	metrics.ObservePromoteLockWait(0.1)
-	metrics.IncFragmentRetract()
-	metrics.IncFactNeedsRevalidation()
-	metrics.IncCommunityDetect("")
-	metrics.ObserveCommunityDetect(0.5, 0)
 
 	RecordEmbeddingLatency(ctx, metrics, "embed-model", 1, "ok")
 	RecordEmbeddingError(ctx, metrics, "embed-model", "error")
@@ -132,36 +111,9 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 	RecordVerifyVerdict(ctx, metrics, "verify-model", "verified")
 	RecordRecallLatency(ctx, metrics, 1)
 	RecordRecall(ctx, metrics, 1, 2, "ok")
-	RecordRecallFeedback(ctx, metrics, RecallFeedback{Used: true, AnswerSupported: false, Quality: "medium", MissingContext: true, Irrelevant: false})
+	RecordRecallFeedback(ctx, metrics, RecallFeedback{Quality: "medium"})
 	RecordDreamFeedback(ctx, metrics, DreamFeedback{Decision: "reject", Outcome: "error", FromStatus: "proposed"})
-	RecordMemoryFunnelLatency(ctx, metrics, "claim_to_promotion", 5, "promoted")
-	RecordFragmentCreate(ctx, metrics, "created")
-	RecordClaimCreate(ctx, metrics, "created", "")
-	RecordPromotionOutcome(ctx, metrics, "promoted")
-	RecordPromoteLockWait(ctx, metrics, 0.1)
-	RecordFragmentRetract(ctx, metrics)
-	RecordFactNeedsRevalidation(ctx, metrics)
-
-	fallback := NewInMemoryDiscoverabilityMetrics()
-	RecordEmbeddingLatency(ctx, fallback, "ignored", 10, "ok")
-	RecordEmbeddingError(ctx, fallback, "ignored", "timeout")
-	RecordEmbeddingTokens(ctx, fallback, "ignored", 1, 2)
-	RecordVerifierLatency(ctx, fallback, "ignored", 20, "ok")
-	RecordVerifierTokens(ctx, fallback, "ignored", 1, 1, 2)
-	RecordVerifyVerdict(ctx, fallback, "ignored", "verified")
-	RecordRecallLatency(ctx, fallback, 30)
-	RecordRecall(ctx, fallback, 30, 4, "ok")
-	RecordRecallFeedback(ctx, fallback, RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
-	RecordDreamFeedback(ctx, fallback, DreamFeedback{Decision: "stale", Outcome: "ok", FromStatus: "reinforced"})
-	RecordMemoryFunnelLatency(ctx, fallback, "claim_to_verify", 3, "verified")
-	RecordFragmentCreate(ctx, fallback, "created")
-	RecordClaimCreate(ctx, fallback, "duplicate", "exact")
-	RecordPromotionOutcome(ctx, fallback, "promoted")
-	RecordPromoteLockWait(ctx, fallback, 0.2)
-	RecordFragmentRetract(ctx, fallback)
-	RecordFactNeedsRevalidation(ctx, fallback)
-
-	assertFallbackRecorded(t, fallback)
+	RecordConflictReviewDuration(ctx, metrics, 1, "completed")
 	exerciseNilMetricHelpers(ctx)
 
 	body := scrapePrometheusMetrics(t, metrics)
@@ -173,17 +125,12 @@ func TestPrometheusMetrics_RecordsUnknownLabelsAndFallbackHelpers(t *testing.T) 
 		`status_class="5xx"`,
 		`model="unknown"`,
 		`outcome="unknown"`,
-		`dedupe_reason="unknown"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scraped metrics missing %q\n%s", want, body)
 		}
 	}
-	requirePrometheusMetricLabels(t, body, "densemem_dream_feedback_total",
-		`decision="unknown"`,
-		`outcome="unknown"`,
-		`from_status="unknown"`,
-	)
+	requirePrometheusMetricLabels(t, body, "densemem_dream_feedback_total", `decision="unknown"`, `outcome="unknown"`, `from_status="unknown"`)
 }
 
 func TestPrometheusMetricLabelHelpers(t *testing.T) {
@@ -199,66 +146,19 @@ func TestPrometheusMetricLabelHelpers(t *testing.T) {
 	if got := normalizeLabel(" "); got != unknownMetricLabel {
 		t.Fatalf("normalizeLabel blank = %q; want %q", got, unknownMetricLabel)
 	}
+	if got := recallFeedbackQualityScore("low"); got != 0 {
+		t.Fatalf("recallFeedbackQualityScore(low) = %v; want 0", got)
+	}
 	if got := statusClass(204); got != "2xx" {
 		t.Fatalf("statusClass(204) = %q; want 2xx", got)
 	}
 	if got := statusClass(600); got != "5xx" {
 		t.Fatalf("statusClass(600) = %q; want 5xx", got)
 	}
-
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
-		TeamName:    "  Team  ",
-		ProfileName: "  Profile  ",
-	})
-	got := identityValues(ctx)
-	want := []string{"unknown", "unknown"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("identityValues[%d] = %q; want %q", i, got[i], want[i])
-		}
-	}
 }
-
-func TestNoopDiscoverabilityMetrics_ConsumesCalls(t *testing.T) {
-	metrics := NoopDiscoverabilityMetrics()
-
-	metrics.ObserveEmbeddingLatency(1, "ok")
-	metrics.IncEmbeddingError("timeout")
-	metrics.ObserveRecallLatency(1)
-	metrics.ObserveRecall(1, 2, "ok")
-	metrics.ObserveRecallFeedback(RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
-	metrics.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
-	metrics.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
-	metrics.IncFragmentCreate("created")
-	metrics.IncClaimCreate("duplicate", "exact")
-	metrics.IncVerifyVerdict("verified")
-	metrics.IncPromotionOutcome("promoted")
-	metrics.ObservePromoteLockWait(1)
-	metrics.IncFragmentRetract()
-	metrics.IncFactNeedsRevalidation()
-	metrics.IncCommunityDetect("ok")
-	metrics.ObserveCommunityDetect(1, 2)
-}
-
-type fakeLogProvider struct {
-	warns []string
-}
-
-func (f *fakeLogProvider) Info(string, ...LogAttr) {}
-
-func (f *fakeLogProvider) Error(string, error, ...LogAttr) {}
-
-func (f *fakeLogProvider) Warn(msg string, _ ...LogAttr) {
-	f.warns = append(f.warns, msg)
-}
-
-func (f *fakeLogProvider) Debug(string, ...LogAttr) {}
-
-func (f *fakeLogProvider) With(...LogAttr) LogProvider { return f }
 
 func scrapePrometheusMetrics(t *testing.T, metrics *PrometheusMetrics) string {
 	t.Helper()
-
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	metrics.Handler().ServeHTTP(rec, req)
@@ -288,57 +188,6 @@ func requirePrometheusMetricLabels(t *testing.T, body, metric string, labels ...
 	t.Fatalf("scraped metrics missing %s label tuple %v\n%s", metric, labels, body)
 }
 
-func assertFallbackRecorded(t *testing.T, metrics *InMemoryDiscoverabilityMetrics) {
-	t.Helper()
-
-	if got := len(metrics.EmbeddingSamples()); got != 1 {
-		t.Fatalf("fallback embedding samples = %d; want 1", got)
-	}
-	if got := metrics.EmbeddingErrorCount("timeout"); got != 1 {
-		t.Fatalf("fallback embedding timeout errors = %d; want 1", got)
-	}
-	if got := metrics.VerifyVerdictCount("verified"); got != 1 {
-		t.Fatalf("fallback verified verdicts = %d; want 1", got)
-	}
-	if got := len(metrics.RecallLatencies()); got != 2 {
-		t.Fatalf("fallback recall latencies = %d; want 2", got)
-	}
-	recalls := metrics.RecallSamples()
-	if len(recalls) != 1 || recalls[0].ResultCount != 4 || recalls[0].Outcome != "ok" {
-		t.Fatalf("fallback recall samples = %+v", recalls)
-	}
-	recallFeedback := metrics.RecallFeedbackSamples()
-	if len(recallFeedback) != 1 || recallFeedback[0].Quality != "high" || recallFeedback[0].QualityScore != 1 {
-		t.Fatalf("fallback recall feedback samples = %+v", recallFeedback)
-	}
-	dreamFeedback := metrics.DreamFeedbackSamples()
-	if len(dreamFeedback) != 1 || dreamFeedback[0].Decision != "stale" || dreamFeedback[0].Outcome != "ok" || dreamFeedback[0].FromStatus != "reinforced" {
-		t.Fatalf("fallback dream feedback samples = %+v", dreamFeedback)
-	}
-	funnel := metrics.MemoryFunnelSamples()
-	if len(funnel) != 1 || funnel[0].Stage != "claim_to_verify" || funnel[0].Outcome != "verified" {
-		t.Fatalf("fallback funnel samples = %+v", funnel)
-	}
-	if got := metrics.FragmentCreateCount("created"); got != 1 {
-		t.Fatalf("fallback fragment creates = %d; want 1", got)
-	}
-	if got := len(metrics.ClaimCreateSamples()); got != 1 {
-		t.Fatalf("fallback claim creates = %d; want 1", got)
-	}
-	if got := metrics.PromotionOutcomeCount("promoted"); got != 1 {
-		t.Fatalf("fallback promotions = %d; want 1", got)
-	}
-	if got := len(metrics.PromoteLockWaits()); got != 1 {
-		t.Fatalf("fallback promote lock waits = %d; want 1", got)
-	}
-	if got := metrics.FragmentRetractCount(); got != 1 {
-		t.Fatalf("fallback fragment retracts = %d; want 1", got)
-	}
-	if got := metrics.FactNeedsRevalidationCount(); got != 1 {
-		t.Fatalf("fallback revalidation count = %d; want 1", got)
-	}
-}
-
 func exerciseNilMetricHelpers(ctx context.Context) {
 	RecordEmbeddingLatency(ctx, nil, "model", 1, "ok")
 	RecordEmbeddingError(ctx, nil, "model", "error")
@@ -348,13 +197,7 @@ func exerciseNilMetricHelpers(ctx context.Context) {
 	RecordVerifyVerdict(ctx, nil, "model", "verified")
 	RecordRecallLatency(ctx, nil, 1)
 	RecordRecall(ctx, nil, 1, 1, "ok")
-	RecordRecallFeedback(ctx, nil, RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
+	RecordRecallFeedback(ctx, nil, RecallFeedback{Quality: "high"})
 	RecordDreamFeedback(ctx, nil, DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
-	RecordMemoryFunnelLatency(ctx, nil, "stage", 1, "ok")
-	RecordFragmentCreate(ctx, nil, "created")
-	RecordClaimCreate(ctx, nil, "created", "")
-	RecordPromotionOutcome(ctx, nil, "promoted")
-	RecordPromoteLockWait(ctx, nil, 0.1)
-	RecordFragmentRetract(ctx, nil)
-	RecordFactNeedsRevalidation(ctx, nil)
+	RecordConflictReviewDuration(ctx, nil, 1, "completed")
 }

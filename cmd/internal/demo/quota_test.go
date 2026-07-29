@@ -2,6 +2,7 @@ package demo
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -19,8 +20,8 @@ import (
 func TestWrapRegistryConsumesRememberQuotaBeforeInvoke(t *testing.T) {
 	q := DefaultQuotas()
 	q.WriteAttempts = 1
-	q.FragmentAttempts = 1
-	q.FragmentBytes = 4
+	q.EvidenceAttempts = 1
+	q.EvidenceBytes = 4
 	q.VerifierAttempts = 1
 	manager := NewQuotaManager(&fakeCounterStore{}, q)
 	reg := registry.New()
@@ -46,6 +47,18 @@ func TestWrapRegistryConsumesRememberQuotaBeforeInvoke(t *testing.T) {
 	_, err = remember.Invoke(context.Background(), "team-1", input)
 	requireAPIErrorCode(t, err, httperr.RATE_LIMITED)
 	require.Equal(t, 1, calls)
+}
+
+func TestQuotaLimitsUseEvidenceFieldNames(t *testing.T) {
+	payload, err := json.Marshal(DefaultQuotas().Limits())
+	require.NoError(t, err)
+
+	var values map[string]any
+	require.NoError(t, json.Unmarshal(payload, &values))
+	require.Contains(t, values, "evidence_attempts")
+	require.Contains(t, values, "evidence_bytes")
+	require.NotContains(t, values, "fragment_attempts")
+	require.NotContains(t, values, "fragment_bytes")
 }
 
 func TestWrapRegistryConsumesRecallQuota(t *testing.T) {

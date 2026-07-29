@@ -10,7 +10,8 @@ import (
 )
 
 const (
-	MemoryPackFormat = "dense-mem.memory-pack.v2.3"
+	MemoryPackFormat    = "dense-mem.memory-pack.v2.4"
+	memoryPackV23Format = "dense-mem.memory-pack.v2.3"
 
 	MemoryPackSourceType = "memory_pack"
 	MemoryPackLabel      = "memory_pack_import"
@@ -109,7 +110,7 @@ type InspectResult struct {
 }
 
 type SupportSummary struct {
-	FragmentCount int `json:"fragment_count"`
+	EvidenceCount int `json:"evidence_count"`
 	SupportCount  int `json:"support_count"`
 }
 
@@ -122,7 +123,7 @@ type InspectItem struct {
 	PredicateKey         string   `json:"predicate_key,omitempty"`
 	Subject              string   `json:"subject,omitempty"`
 	Object               string   `json:"object,omitempty"`
-	SupportFragmentIDs   []string `json:"support_fragment_ids,omitempty"`
+	SupportEvidenceIDs   []string `json:"support_evidence_ids,omitempty"`
 }
 
 type ConflictPrompt struct {
@@ -189,18 +190,18 @@ type RollbackResult struct {
 }
 
 type MemoryPackArtifact struct {
-	Format              string                       `json:"format"`
-	PackID              string                       `json:"pack_id"`
-	Name                string                       `json:"name"`
-	Description         string                       `json:"description,omitempty"`
-	CreatedAt           string                       `json:"created_at"`
-	Source              MemoryPackSource             `json:"source"`
-	Relationships       []MemoryPackRelationship     `json:"relationships"`
-	EvidenceFragments   []MemoryPackEvidenceFragment `json:"evidence_fragments,omitempty"`
-	EvidenceSupports    []MemoryPackEvidenceSupport  `json:"evidence_supports,omitempty"`
-	Extensions          map[string]any               `json:"extensions,omitempty"`
-	ContentSHA256       string                       `json:"content_sha256,omitempty"`
-	LegacySchemaVersion string                       `json:"legacy_schema_version,omitempty"`
+	Format              string                      `json:"format"`
+	PackID              string                      `json:"pack_id"`
+	Name                string                      `json:"name"`
+	Description         string                      `json:"description,omitempty"`
+	CreatedAt           string                      `json:"created_at"`
+	Source              MemoryPackSource            `json:"source"`
+	Relationships       []MemoryPackRelationship    `json:"relationships"`
+	Evidence            []MemoryPackEvidence        `json:"evidence,omitempty"`
+	EvidenceSupports    []MemoryPackEvidenceSupport `json:"evidence_supports,omitempty"`
+	Extensions          map[string]any              `json:"extensions,omitempty"`
+	ContentSHA256       string                      `json:"content_sha256,omitempty"`
+	LegacySchemaVersion string                      `json:"legacy_schema_version,omitempty"`
 }
 
 type MemoryPackSource struct {
@@ -221,7 +222,7 @@ type MemoryPackRelationship struct {
 	Polarity                  string             `json:"polarity,omitempty"`
 	ScopeKey                  string             `json:"scope_key,omitempty"`
 	Status                    string             `json:"status,omitempty"`
-	SupportFragmentIDs        []string           `json:"support_fragment_ids,omitempty"`
+	SupportEvidenceIDs        []string           `json:"support_evidence_ids,omitempty"`
 	Metadata                  map[string]any     `json:"metadata,omitempty"`
 }
 
@@ -234,8 +235,8 @@ type MemoryPackEndpoint struct {
 	Value       string `json:"value,omitempty"`
 }
 
-type MemoryPackEvidenceFragment struct {
-	FragmentID       string         `json:"fragment_id"`
+type MemoryPackEvidence struct {
+	EvidenceID       string         `json:"evidence_id"`
 	Content          string         `json:"content"`
 	ContentHash      string         `json:"content_hash,omitempty"`
 	SourceType       string         `json:"source_type,omitempty"`
@@ -249,7 +250,7 @@ type MemoryPackEvidenceFragment struct {
 
 type MemoryPackEvidenceSupport struct {
 	RelationshipItemID string         `json:"relationship_item_id"`
-	FragmentID         string         `json:"fragment_id"`
+	EvidenceID         string         `json:"evidence_id"`
 	Quote              string         `json:"quote,omitempty"`
 	SpanStart          int            `json:"span_start,omitempty"`
 	SpanEnd            int            `json:"span_end,omitempty"`
@@ -259,6 +260,60 @@ type MemoryPackEvidenceSupport struct {
 type loadedArtifact struct {
 	artifact MemoryPackArtifact
 	hash     string
+	format   string
 	source   string
 	legacy   bool
+}
+
+type memoryPackArtifactV23 struct {
+	Format              string                          `json:"format"`
+	PackID              string                          `json:"pack_id"`
+	Name                string                          `json:"name"`
+	Description         string                          `json:"description,omitempty"`
+	CreatedAt           string                          `json:"created_at"`
+	Source              MemoryPackSource                `json:"source"`
+	Relationships       []memoryPackRelationshipV23     `json:"relationships"`
+	EvidenceFragments   []memoryPackEvidenceFragmentV23 `json:"evidence_fragments,omitempty"`
+	EvidenceSupports    []memoryPackEvidenceSupportV23  `json:"evidence_supports,omitempty"`
+	Extensions          map[string]any                  `json:"extensions,omitempty"`
+	ContentSHA256       string                          `json:"content_sha256,omitempty"`
+	LegacySchemaVersion string                          `json:"legacy_schema_version,omitempty"`
+}
+
+type memoryPackRelationshipV23 struct {
+	ItemID                    string             `json:"item_id"`
+	SourceRelationshipID      string             `json:"source_relationship_id,omitempty"`
+	SourceRelationshipVersion int                `json:"source_relationship_version,omitempty"`
+	SourceOwnerProfileID      string             `json:"source_owner_profile_id,omitempty"`
+	Subject                   MemoryPackEndpoint `json:"subject"`
+	PredicateKey              string             `json:"predicate_key"`
+	PredicateVersion          int                `json:"predicate_version"`
+	Object                    MemoryPackEndpoint `json:"object"`
+	Polarity                  string             `json:"polarity,omitempty"`
+	ScopeKey                  string             `json:"scope_key,omitempty"`
+	Status                    string             `json:"status,omitempty"`
+	SupportFragmentIDs        []string           `json:"support_fragment_ids,omitempty"`
+	Metadata                  map[string]any     `json:"metadata,omitempty"`
+}
+
+type memoryPackEvidenceFragmentV23 struct {
+	FragmentID       string         `json:"fragment_id"`
+	Content          string         `json:"content"`
+	ContentHash      string         `json:"content_hash,omitempty"`
+	SourceType       string         `json:"source_type,omitempty"`
+	Authority        string         `json:"authority,omitempty"`
+	SourceRef        string         `json:"source_ref,omitempty"`
+	SourceKey        string         `json:"source_key,omitempty"`
+	SourceRevisionID string         `json:"source_revision_id,omitempty"`
+	Labels           []string       `json:"labels,omitempty"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+}
+
+type memoryPackEvidenceSupportV23 struct {
+	RelationshipItemID string         `json:"relationship_item_id"`
+	FragmentID         string         `json:"fragment_id"`
+	Quote              string         `json:"quote,omitempty"`
+	SpanStart          int            `json:"span_start,omitempty"`
+	SpanEnd            int            `json:"span_end,omitempty"`
+	Metadata           map[string]any `json:"metadata,omitempty"`
 }

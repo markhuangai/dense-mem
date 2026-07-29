@@ -30,8 +30,8 @@ type Quotas struct {
 	CounterTTL        time.Duration
 	TotalRequests     int64
 	WriteAttempts     int64
-	FragmentAttempts  int64
-	FragmentBytes     int64
+	EvidenceAttempts  int64
+	EvidenceBytes     int64
 	VerifierAttempts  int64
 	RecallCalls       int64
 	PerMinuteRequests int
@@ -42,8 +42,8 @@ type QuotaLimits struct {
 	SessionHours      int   `json:"session_hours"`
 	TotalRequests     int64 `json:"total_requests"`
 	WriteAttempts     int64 `json:"write_attempts"`
-	FragmentAttempts  int64 `json:"fragment_attempts"`
-	FragmentBytes     int64 `json:"fragment_bytes"`
+	EvidenceAttempts  int64 `json:"evidence_attempts"`
+	EvidenceBytes     int64 `json:"evidence_bytes"`
 	VerifierAttempts  int64 `json:"verifier_attempts"`
 	RecallCalls       int64 `json:"recall_calls"`
 	PerMinuteRequests int   `json:"per_minute_requests"`
@@ -55,8 +55,8 @@ func DefaultQuotas() Quotas {
 		CounterTTL:        defaultCounterTTL,
 		TotalRequests:     300,
 		WriteAttempts:     75,
-		FragmentAttempts:  30,
-		FragmentBytes:     128 * 1024,
+		EvidenceAttempts:  30,
+		EvidenceBytes:     128 * 1024,
 		VerifierAttempts:  30,
 		RecallCalls:       50,
 		PerMinuteRequests: 20,
@@ -78,11 +78,11 @@ func (q Quotas) normalized() Quotas {
 	if q.WriteAttempts <= 0 {
 		q.WriteAttempts = defaults.WriteAttempts
 	}
-	if q.FragmentAttempts <= 0 {
-		q.FragmentAttempts = defaults.FragmentAttempts
+	if q.EvidenceAttempts <= 0 {
+		q.EvidenceAttempts = defaults.EvidenceAttempts
 	}
-	if q.FragmentBytes <= 0 {
-		q.FragmentBytes = defaults.FragmentBytes
+	if q.EvidenceBytes <= 0 {
+		q.EvidenceBytes = defaults.EvidenceBytes
 	}
 	if q.VerifierAttempts <= 0 {
 		q.VerifierAttempts = defaults.VerifierAttempts
@@ -105,8 +105,8 @@ func (q Quotas) Limits() QuotaLimits {
 		SessionHours:      int(q.SessionTTL / time.Hour),
 		TotalRequests:     q.TotalRequests,
 		WriteAttempts:     q.WriteAttempts,
-		FragmentAttempts:  q.FragmentAttempts,
-		FragmentBytes:     q.FragmentBytes,
+		EvidenceAttempts:  q.EvidenceAttempts,
+		EvidenceBytes:     q.EvidenceBytes,
 		VerifierAttempts:  q.VerifierAttempts,
 		RecallCalls:       q.RecallCalls,
 		PerMinuteRequests: q.PerMinuteRequests,
@@ -145,13 +145,13 @@ func (m *QuotaManager) ConsumeMemoryEvidence(ctx context.Context, teamID string,
 	if count <= 0 {
 		count = 1
 	}
-	if err := m.consume(ctx, teamID, "evidence", "memory evidence items", count, m.Quotas().FragmentAttempts); err != nil {
+	if err := m.consume(ctx, teamID, "evidence", "memory evidence items", count, m.Quotas().EvidenceAttempts); err != nil {
 		return err
 	}
 	if bytes <= 0 {
 		return nil
 	}
-	return m.consume(ctx, teamID, "evidence_bytes", "memory evidence bytes", bytes, m.Quotas().FragmentBytes)
+	return m.consume(ctx, teamID, "evidence_bytes", "memory evidence bytes", bytes, m.Quotas().EvidenceBytes)
 }
 
 func (m *QuotaManager) ConsumeVerifier(ctx context.Context, teamID string, count int64) error {

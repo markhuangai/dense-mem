@@ -2,6 +2,7 @@ package skillpackservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -89,6 +90,16 @@ func TestMemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 	}
 	if !strings.Contains(exported.CanonicalJSON, `"content_sha256":"`+exported.SHA256+`"`) {
 		t.Fatalf("canonical_json did not include content_sha256: %s", exported.CanonicalJSON)
+	}
+	for _, legacyField := range []string{"evidence_fragments", "support_fragment_ids", `"fragment_id"`} {
+		if strings.Contains(exported.CanonicalJSON, legacyField) {
+			t.Fatalf("v2.4 export retained legacy field %q: %s", legacyField, exported.CanonicalJSON)
+		}
+	}
+	for _, evidenceField := range []string{`"evidence"`, `"evidence_id":"fragment-1"`, "support_evidence_ids"} {
+		if !strings.Contains(exported.CanonicalJSON, evidenceField) {
+			t.Fatalf("v2.4 export omitted evidence field %q: %s", evidenceField, exported.CanonicalJSON)
+		}
 	}
 
 	inspected, err := svc.Inspect(ctx, InspectRequest{
@@ -240,8 +251,8 @@ func TestMemoryPackExportValueRelationshipWithoutSupport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Export value relationship: %v", err)
 	}
-	if len(result.Omissions) != 1 || len(result.Artifact.EvidenceFragments) != 0 {
-		t.Fatalf("export omissions/fragments = %#v/%#v", result.Omissions, result.Artifact.EvidenceFragments)
+	if len(result.Omissions) != 1 || len(result.Artifact.Evidence) != 0 {
+		t.Fatalf("export omissions/evidence = %#v/%#v", result.Omissions, result.Artifact.Evidence)
 	}
 	item := result.Artifact.Relationships[0]
 	if item.Object.Kind != "value" || item.Object.ValueType != "date" || item.Object.Value != "2026-07-17" {
@@ -266,7 +277,7 @@ func TestMemoryPackInspectAcceptsLegacyArtifactAsReviewOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inspect legacy: %v", err)
 	}
-	if result.Format != MemoryPackFormat || result.ItemCount != 1 {
+	if result.Format != SchemaVersion || result.ItemCount != 1 {
 		t.Fatalf("legacy inspect result = %#v", result)
 	}
 	if result.Items[0].Status != "needs_review" || len(result.DecisionsRequired) != 1 {
@@ -320,31 +331,31 @@ func TestMemoryPackArtifactValidationRejectsMalformedArtifacts(t *testing.T) {
 			a.Relationships = append(a.Relationships, a.Relationships[0])
 			return a
 		}, wantText: "duplicate item_id"},
-		{name: "missing fragment id", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
-			a.EvidenceFragments = []MemoryPackEvidenceFragment{{Content: "evidence"}}
+		{name: "missing evidence id", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
+			a.Evidence = []MemoryPackEvidence{{Content: "evidence"}}
 			return a
-		}, wantText: "fragment_id"},
-		{name: "empty fragment content", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
-			a.EvidenceFragments = []MemoryPackEvidenceFragment{{FragmentID: "fragment-1"}}
+		}, wantText: "evidence_id"},
+		{name: "empty evidence content", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
+			a.Evidence = []MemoryPackEvidence{{EvidenceID: "evidence-1"}}
 			return a
 		}, wantText: "content is required"},
-		{name: "duplicate fragment", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
-			a.EvidenceFragments = []MemoryPackEvidenceFragment{
-				{FragmentID: "fragment-1", Content: "evidence"},
-				{FragmentID: "fragment-1", Content: "evidence"},
+		{name: "duplicate evidence", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
+			a.Evidence = []MemoryPackEvidence{
+				{EvidenceID: "evidence-1", Content: "evidence"},
+				{EvidenceID: "evidence-1", Content: "evidence"},
 			}
 			return a
-		}, wantText: "duplicate fragment_id"},
+		}, wantText: "duplicate evidence_id"},
 		{name: "support missing relationship", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
-			a.EvidenceFragments = []MemoryPackEvidenceFragment{{FragmentID: "fragment-1", Content: "evidence"}}
-			a.EvidenceSupports = []MemoryPackEvidenceSupport{{RelationshipItemID: "missing", FragmentID: "fragment-1"}}
+			a.Evidence = []MemoryPackEvidence{{EvidenceID: "evidence-1", Content: "evidence"}}
+			a.EvidenceSupports = []MemoryPackEvidenceSupport{{RelationshipItemID: "missing", EvidenceID: "evidence-1"}}
 			return a
 		}, wantText: "relationship item"},
-		{name: "support missing fragment", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
-			a.EvidenceFragments = []MemoryPackEvidenceFragment{{FragmentID: "fragment-1", Content: "evidence"}}
-			a.EvidenceSupports = []MemoryPackEvidenceSupport{{RelationshipItemID: "item-1", FragmentID: "missing"}}
+		{name: "support missing evidence", mutate: func(a MemoryPackArtifact) MemoryPackArtifact {
+			a.Evidence = []MemoryPackEvidence{{EvidenceID: "evidence-1", Content: "evidence"}}
+			a.EvidenceSupports = []MemoryPackEvidenceSupport{{RelationshipItemID: "item-1", EvidenceID: "missing"}}
 			return a
-		}, wantText: "fragment"},
+		}, wantText: "evidence"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -386,6 +397,106 @@ func TestMemoryPackLoadRejectsHashMismatches(t *testing.T) {
 	_, err = svc.(*memoryPackService).loadArtifact(context.Background(), string(badEmbedded), "", "")
 	if err == nil || !errors.Is(err, ErrHashMismatch) {
 		t.Fatalf("expected embedded hash mismatch err, got %v", err)
+	}
+}
+
+func TestMemoryPackCompatibilityReadersVerifyOriginalFormatHash(t *testing.T) {
+	v23 := memoryPackArtifactV23{
+		Format:    memoryPackV23Format,
+		PackID:    "pack-v23",
+		Name:      "v2.3 pack",
+		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		Relationships: []memoryPackRelationshipV23{{
+			ItemID:             "item-1",
+			Subject:            MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			PredicateKey:       "uses",
+			PredicateVersion:   1,
+			Object:             MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+			SupportFragmentIDs: []string{"fragment-1"},
+		}},
+		EvidenceFragments: []memoryPackEvidenceFragmentV23{{
+			FragmentID: "fragment-1",
+			Content:    "Dense-Mem uses PostgreSQL.",
+		}},
+		EvidenceSupports: []memoryPackEvidenceSupportV23{{
+			RelationshipItemID: "item-1",
+			FragmentID:         "fragment-1",
+		}},
+	}
+	v23JSON, v23Hash := testArtifactV23JSON(t, v23)
+	svc := NewMemoryPackService(MemoryPackDependencies{}).(*memoryPackService)
+	loaded, err := svc.loadArtifact(context.Background(), v23JSON, "", v23Hash)
+	if err != nil {
+		t.Fatalf("load v2.3 artifact: %v", err)
+	}
+	if loaded.hash != v23Hash || loaded.format != memoryPackV23Format || loaded.artifact.Format != MemoryPackFormat {
+		t.Fatalf("v2.3 loaded artifact = %#v", loaded)
+	}
+	_, adaptedHash, err := canonicalMemoryPackArtifact(loaded.artifact)
+	if err != nil {
+		t.Fatalf("canonical adapted artifact: %v", err)
+	}
+	if adaptedHash == v23Hash {
+		t.Fatalf("v2.3 hash unexpectedly matched adapted v2.4 hash %q", adaptedHash)
+	}
+	_, err = svc.loadArtifact(context.Background(), v23JSON, "", adaptedHash)
+	if !errors.Is(err, ErrHashMismatch) {
+		t.Fatalf("v2.3 artifact accepted adapted hash: %v", err)
+	}
+
+	legacy := validLegacySkillPack()
+	legacyJSON, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy artifact: %v", err)
+	}
+	_, legacyHash, err := canonicalLegacyMemoryPackArtifact(legacy)
+	if err != nil {
+		t.Fatalf("canonical legacy artifact: %v", err)
+	}
+	loaded, err = svc.loadArtifact(context.Background(), string(legacyJSON), "", legacyHash)
+	if err != nil {
+		t.Fatalf("load legacy artifact: %v", err)
+	}
+	if loaded.hash != legacyHash || loaded.format != LegacySchemaVersion || !loaded.legacy {
+		t.Fatalf("legacy loaded artifact = %#v", loaded)
+	}
+}
+
+func TestMemoryPackReadersRejectMixedV23AndV24Shapes(t *testing.T) {
+	v24 := testArtifactJSON(t, MemoryPackArtifact{
+		Format:    MemoryPackFormat,
+		PackID:    "pack-v24-mixed",
+		Name:      "v2.4 mixed",
+		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		Relationships: []MemoryPackRelationship{{
+			ItemID:           "item-1",
+			Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			PredicateKey:     "uses",
+			PredicateVersion: 1,
+			Object:           MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+		}},
+	})
+	v24Mixed := `{"evidence_fragments":[],` + strings.TrimPrefix(v24, "{")
+	if _, _, err := parseMemoryPackArtifactJSON([]byte(v24Mixed)); !errors.Is(err, ErrInvalidArtifact) || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("v2.4 mixed shape err = %v", err)
+	}
+
+	v23JSON, _ := testArtifactV23JSON(t, memoryPackArtifactV23{
+		Format:    memoryPackV23Format,
+		PackID:    "pack-v23-mixed",
+		Name:      "v2.3 mixed",
+		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		Relationships: []memoryPackRelationshipV23{{
+			ItemID:           "item-1",
+			Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			PredicateKey:     "uses",
+			PredicateVersion: 1,
+			Object:           MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+		}},
+	})
+	v23Mixed := `{"evidence":[],` + strings.TrimPrefix(v23JSON, "{")
+	if _, _, err := parseMemoryPackArtifactJSON([]byte(v23Mixed)); !errors.Is(err, ErrInvalidArtifact) || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("v2.3 mixed shape err = %v", err)
 	}
 }
 
