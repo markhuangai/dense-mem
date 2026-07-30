@@ -1,5 +1,5 @@
 -- +goose Up
--- This follows the merged 2026072901 evidence-lifecycle migration.
+-- This follows the 2026073001 one-call assessment migration.
 -- +goose StatementBegin
 
 -- Lock/rewrite analysis:

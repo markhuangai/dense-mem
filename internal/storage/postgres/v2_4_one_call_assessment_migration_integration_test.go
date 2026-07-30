@@ -19,14 +19,14 @@ func TestV24OneCallAssessmentMigrationPreservesPopulatedSemanticAndSearchState(t
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	runGooseUpTo(t, ctx, sqlDB, 2026072801)
+	runGooseUpTo(t, ctx, sqlDB, 2026072901)
 	semantic := insertV24OneCallAssessmentSemanticFixture(t, ctx, sqlDB)
 	placement := insertV24OneCallAssessmentMigrationPlacementFixture(t, ctx, sqlDB, semantic.teamID, semantic.profileID)
 	insertV24OneCallAssessmentMigrationSearchFixture(t, ctx, sqlDB, semantic.teamID, semantic.profileID, semantic.relationshipID)
 	before := loadV24OneCallAssessmentSemanticSearchSnapshot(t, ctx, sqlDB, semantic.teamID)
 	migrationStarted := time.Now().UTC()
 
-	runGooseUpTo(t, ctx, sqlDB, 2026072802)
+	runGooseUpTo(t, ctx, sqlDB, 2026073001)
 	migrationFinished := time.Now().UTC()
 	after := loadV24OneCallAssessmentSemanticSearchSnapshot(t, ctx, sqlDB, semantic.teamID)
 	assert.Equal(t, before, after, "V2.4 must not rewrite existing semantic records, search documents, or embedding jobs")
@@ -98,10 +98,10 @@ func TestV24OneCallAssessmentDownMigrationNormalizesExpiredReviewTasks(t *testin
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	runGooseUpTo(t, ctx, sqlDB, 2026072801)
+	runGooseUpTo(t, ctx, sqlDB, 2026072901)
 	semantic := insertV24OneCallAssessmentSemanticFixture(t, ctx, sqlDB)
 	placement := insertV24OneCallAssessmentMigrationPlacementFixture(t, ctx, sqlDB, semantic.teamID, semantic.profileID)
-	runGooseUpTo(t, ctx, sqlDB, 2026072802)
+	runGooseUpTo(t, ctx, sqlDB, 2026073001)
 
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
@@ -111,7 +111,7 @@ func TestV24OneCallAssessmentDownMigrationNormalizesExpiredReviewTasks(t *testin
 		`, semantic.teamID, placement.semanticTaskID)
 		return err
 	}))
-	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026072801))
+	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026072901))
 
 	var status string
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
@@ -129,7 +129,7 @@ func TestRemovePlacementAssessmentPromptRevisionMigrationPreservesAssessment(t *
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	runGooseUpTo(t, ctx, sqlDB, 2026072802)
+	runGooseUpTo(t, ctx, sqlDB, 2026073001)
 	semantic := insertV24OneCallAssessmentSemanticFixture(t, ctx, sqlDB)
 	placement := insertV24OneCallAssessmentMigrationPlacementFixture(t, ctx, sqlDB, semantic.teamID, semantic.profileID)
 
@@ -159,7 +159,7 @@ func TestRemovePlacementAssessmentPromptRevisionMigrationPreservesAssessment(t *
 		`, semantic.teamID, placement.itemID, claimKey, semantic.profileID).Scan(&assessmentID)
 	}))
 
-	runGooseUpTo(t, ctx, sqlDB, 2026072901)
+	runGooseUpTo(t, ctx, sqlDB, 2026073002)
 
 	var promptRevisionExists bool
 	var model, tokenizer, responseHash string
@@ -186,7 +186,7 @@ func TestRemovePlacementAssessmentPromptRevisionMigrationPreservesAssessment(t *
 	assert.Equal(t, "o200k_base", tokenizer)
 	assert.Equal(t, "sha256:assessment", responseHash)
 
-	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026072802))
+	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026073001))
 
 	var restoredPromptRevision string
 	var promptRevisionDefault sql.NullString

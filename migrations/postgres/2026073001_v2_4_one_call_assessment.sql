@@ -1,4 +1,5 @@
 -- +goose Up
+-- This follows the deployed 2026072901 evidence-lifecycle migration.
 -- +goose StatementBegin
 
 -- Lock/rewrite analysis:
