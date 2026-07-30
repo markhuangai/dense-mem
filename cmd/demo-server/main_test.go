@@ -16,19 +16,12 @@ func TestValidateDemoStartupConfig_AllowsMissingControlPortalToken(t *testing.T)
 	require.NoError(t, validateDemoStartupConfig(&cfg))
 }
 
-func TestValidateDemoStartupConfig_RequiresReviewerAndVerifierModels(t *testing.T) {
+func TestValidateDemoStartupConfig_RequiresVerifierModel(t *testing.T) {
 	tests := []struct {
 		name  string
 		mut   func(*config.Config)
 		field string
 	}{
-		{
-			name: "reviewer model",
-			mut: func(cfg *config.Config) {
-				cfg.AIReviewerModel = ""
-			},
-			field: "AI_REVIEWER_MODEL",
-		},
 		{
 			name: "verifier model",
 			mut: func(cfg *config.Config) {
@@ -58,7 +51,6 @@ func validDemoStartupConfig() config.Config {
 		AIAPIKey:              "sk-test",
 		AIEmbeddingModel:      "text-embedding-3-large",
 		AIEmbeddingDimensions: 3072,
-		AIReviewerModel:       "gpt-5.4-mini",
 		AIVerifierModel:       "gpt-5.4-mini",
 		RedisAddr:             "redis:6379",
 	}

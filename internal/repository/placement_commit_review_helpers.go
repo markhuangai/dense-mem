@@ -12,6 +12,121 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+func appendSemanticReviewPayload(
+	payload map[string]any,
+	assessmentID, kind, question string,
+	options []map[string]any,
+	guidance string,
+) {
+	if strings.TrimSpace(assessmentID) == "" {
+		return
+	}
+	payload["semantic_contract"] = domain.ContractVersion
+	payload["assessment_id"] = assessmentID
+	payload["semantic_kind"] = kind
+	payload["question"] = question
+	payload["options"] = options
+	payload["guidance"] = guidance
+}
+
+func reviewTaskTypeForSemanticKind(kind string) (string, string) {
+	switch strings.TrimSpace(kind) {
+	case "identity":
+		return "identity_needs_review", "identity_needs_review"
+	case "predicate":
+		return "predicate_needs_review", "predicate_needs_review"
+	case "support_confidence":
+		return "relationship_needs_review", "support_confidence"
+	case "scope":
+		return "relationship_needs_review", "scope_needs_review"
+	case "time":
+		return "relationship_needs_review", "time_needs_review"
+	default:
+		return "relationship_needs_review", "relationship_needs_review"
+	}
+}
+
+func insertPlacementSemanticReviewTask(
+	ctx context.Context,
+	tx *gorm.DB,
+	commit CommitPlacementSemanticInput,
+	input ApplyRelationshipDecisionInput,
+	applied *RelationshipDecisionResult,
+	correctionTarget *PlacementCorrectionTargetInput,
+	conflictContext *PlacementConflictContextInput,
+) (string, error) {
+	if strings.TrimSpace(input.SemanticReviewKind) == "" || applied == nil || applied.ObservationID == "" {
+		return "", nil
+	}
+	taskType, reason := reviewTaskTypeForSemanticKind(input.SemanticReviewKind)
+	payload := map[string]any{
+		"relationship_ref":   input.ProposalRef,
+		"subject_ref":        input.SubjectRef,
+		"object_ref":         input.ObjectRef,
+		"original_predicate": input.OriginalPredicate,
+		"polarity":           input.Polarity,
+		"evidence_verdict":   input.EvidenceVerdict,
+		"reason":             reason,
+	}
+	if correctionTarget != nil {
+		payload["correction_target"] = map[string]any{
+			"relationship_id":  correctionTarget.RelationshipID,
+			"expected_version": correctionTarget.ExpectedVersion,
+		}
+	}
+	if conflictContext != nil {
+		payload["conflict_context"] = map[string]any{
+			"conflict_id":      conflictContext.ConflictID,
+			"expected_version": conflictContext.ExpectedVersion,
+		}
+	}
+	appendSemanticReviewPayload(payload, input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance)
+	payloadJSON, err := marshalJSON(payload)
+	if err != nil {
+		return "", err
+	}
+	dedupeKey := "relationship:" + commit.PlacementItemID + ":" + input.ProposalRef + ":" + input.SemanticReviewKind
+	relationshipID := ""
+	if applied.Relationship != nil {
+		relationshipID = applied.Relationship.RelationshipID
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		INSERT INTO review_tasks (
+		    team_id, owner_profile_id, ingest_id, placement_item_id,
+		    relationship_id, observation_id, task_type, status, reason,
+		    payload, dedupe_key, assessment_id, expires_at, updated_at
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+		    NULLIF(?, '')::uuid, ?::uuid, ?, 'open', ?,
+		    ?::jsonb, ?, NULLIF(?, '')::uuid,
+		    CASE WHEN NULLIF(?, '') IS NULL THEN NULL ELSE now() + interval '7 days' END,
+		    now()
+		)
+		ON CONFLICT (team_id, dedupe_key)
+		WHERE dedupe_key <> '' AND status IN ('open', 'acknowledged')
+		DO UPDATE SET payload = EXCLUDED.payload,
+		              assessment_id = COALESCE(EXCLUDED.assessment_id, review_tasks.assessment_id),
+		              expires_at = COALESCE(EXCLUDED.expires_at, review_tasks.expires_at),
+		              version = review_tasks.version + 1,
+		              updated_at = now()
+		RETURNING review_task_id::text
+	`, commit.TeamID, commit.OwnerProfileID, commit.IngestID, commit.PlacementItemID,
+		relationshipID, applied.ObservationID, taskType, reason, string(payloadJSON), dedupeKey,
+		input.AssessmentID, input.AssessmentID).Rows()
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", rows.Err()
+	}
+	var taskID string
+	if err := rows.Scan(&taskID); err != nil {
+		return "", err
+	}
+	return taskID, rows.Err()
+}
+
 func insertRelationshipDependencyReview(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -24,19 +139,30 @@ func insertRelationshipDependencyReview(
 		objectRef = input.ObjectValue.Ref
 	}
 	return insertRelationshipReview(ctx, tx, commit, PlacementRelationshipReviewInput{
-		Ref:               input.Ref,
-		SubjectRef:        input.SubjectRef,
-		OriginalPredicate: input.OriginalPredicate,
-		ObjectRef:         objectRef,
-		ObjectValue:       input.ObjectValue,
-		Polarity:          input.Polarity,
-		EvidenceVerdict:   input.EvidenceVerdict,
-		Confidence:        input.Confidence,
-		Rationale:         input.Rationale,
-		Model:             input.Model,
-		ResponseHash:      input.ResponseHash,
-		Support:           input.Support,
-		Reason:            "identity_needs_review",
+		Ref:                     input.Ref,
+		SubjectRef:              input.SubjectRef,
+		OriginalPredicate:       input.OriginalPredicate,
+		ObjectRef:               objectRef,
+		ObjectValue:             input.ObjectValue,
+		Polarity:                input.Polarity,
+		EvidenceVerdict:         input.EvidenceVerdict,
+		Confidence:              input.Confidence,
+		Rationale:               input.Rationale,
+		Model:                   input.Model,
+		ResponseHash:            input.ResponseHash,
+		Support:                 input.Support,
+		Supports:                input.Supports,
+		CorrectionTarget:        input.CorrectionTarget,
+		ConflictContext:         input.ConflictContext,
+		Reason:                  "identity_needs_review",
+		AssessmentID:            input.AssessmentID,
+		AssessmentPolicyVersion: input.AssessmentPolicyVersion,
+		ThresholdUsed:           input.ThresholdUsed,
+		GateResult:              input.GateResult,
+		SemanticReviewKind:      input.SemanticReviewKind,
+		ReviewQuestion:          input.ReviewQuestion,
+		ReviewOptions:           input.ReviewOptions,
+		ReviewGuidance:          input.ReviewGuidance,
 		Payload: map[string]any{
 			"error": reason,
 		},
@@ -55,19 +181,30 @@ func insertRelationshipPredicateReview(
 		objectRef = input.ObjectValue.Ref
 	}
 	return insertRelationshipReview(ctx, tx, commit, PlacementRelationshipReviewInput{
-		Ref:               input.Ref,
-		SubjectRef:        input.SubjectRef,
-		OriginalPredicate: input.OriginalPredicate,
-		ObjectRef:         objectRef,
-		ObjectValue:       input.ObjectValue,
-		Polarity:          input.Polarity,
-		EvidenceVerdict:   input.EvidenceVerdict,
-		Confidence:        input.Confidence,
-		Rationale:         input.Rationale,
-		Model:             input.Model,
-		ResponseHash:      input.ResponseHash,
-		Support:           input.Support,
-		Reason:            "predicate_needs_review",
+		Ref:                     input.Ref,
+		SubjectRef:              input.SubjectRef,
+		OriginalPredicate:       input.OriginalPredicate,
+		ObjectRef:               objectRef,
+		ObjectValue:             input.ObjectValue,
+		Polarity:                input.Polarity,
+		EvidenceVerdict:         input.EvidenceVerdict,
+		Confidence:              input.Confidence,
+		Rationale:               input.Rationale,
+		Model:                   input.Model,
+		ResponseHash:            input.ResponseHash,
+		Support:                 input.Support,
+		Supports:                input.Supports,
+		CorrectionTarget:        input.CorrectionTarget,
+		ConflictContext:         input.ConflictContext,
+		Reason:                  "predicate_needs_review",
+		AssessmentID:            input.AssessmentID,
+		AssessmentPolicyVersion: input.AssessmentPolicyVersion,
+		ThresholdUsed:           input.ThresholdUsed,
+		GateResult:              input.GateResult,
+		SemanticReviewKind:      input.SemanticReviewKind,
+		ReviewQuestion:          input.ReviewQuestion,
+		ReviewOptions:           input.ReviewOptions,
+		ReviewGuidance:          input.ReviewGuidance,
 		Payload: map[string]any{
 			"error":                    reason,
 			"selected_predicate_key":   input.PredicateKey,
@@ -77,6 +214,12 @@ func insertRelationshipPredicateReview(
 }
 
 func validatePlacementRelationshipReviewInput(input PlacementRelationshipReviewInput) error {
+	if err := validateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, false); err != nil {
+		return err
+	}
+	if err := validateSemanticReviewDetails(input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
+		return err
+	}
 	if input.Ref == "" {
 		return errors.New("relationship review ref is required")
 	}
@@ -103,8 +246,16 @@ func validatePlacementRelationshipReviewInput(input PlacementRelationshipReviewI
 	if input.Confidence != nil && (*input.Confidence < 0 || *input.Confidence > 1) {
 		return errors.New("relationship review confidence must be between 0 and 1")
 	}
-	if input.Support != nil {
-		if err := validateEvidenceSupportInput(*input.Support); err != nil {
+	if err := validateRelationshipEvidenceSupports(input.Support, input.Supports); err != nil {
+		return err
+	}
+	if input.CorrectionTarget != nil {
+		if err := validatePlacementCorrectionTargetInput(*input.CorrectionTarget); err != nil {
+			return err
+		}
+	}
+	if input.ConflictContext != nil {
+		if err := validatePlacementConflictContextInput(*input.ConflictContext); err != nil {
 			return err
 		}
 	}
@@ -138,19 +289,24 @@ func insertRelationshipReview(
 		observationMetadata["object_value_type"] = input.ObjectValue.ValueType
 	}
 	observationID, err := insertRelationshipObservation(ctx, tx, ApplyRelationshipDecisionInput{
-		TeamID:              commit.TeamID,
-		OwnerProfileID:      commit.OwnerProfileID,
-		IngestID:            commit.IngestID,
-		PlacementItemID:     commit.PlacementItemID,
-		ProposalRef:         input.Ref,
-		SubjectRef:          input.SubjectRef,
-		OriginalPredicate:   input.OriginalPredicate,
-		ObjectRef:           objectRef,
-		ObjectValueID:       objectValueID,
-		Polarity:            input.Polarity,
-		EvidenceVerdict:     input.EvidenceVerdict,
-		Support:             input.Support,
-		ObservationMetadata: observationMetadata,
+		TeamID:                  commit.TeamID,
+		OwnerProfileID:          commit.OwnerProfileID,
+		IngestID:                commit.IngestID,
+		PlacementItemID:         commit.PlacementItemID,
+		ProposalRef:             input.Ref,
+		SubjectRef:              input.SubjectRef,
+		OriginalPredicate:       input.OriginalPredicate,
+		ObjectRef:               objectRef,
+		ObjectValueID:           objectValueID,
+		Polarity:                input.Polarity,
+		EvidenceVerdict:         input.EvidenceVerdict,
+		Support:                 input.Support,
+		Supports:                input.Supports,
+		ObservationMetadata:     observationMetadata,
+		AssessmentID:            input.AssessmentID,
+		AssessmentPolicyVersion: input.AssessmentPolicyVersion,
+		ThresholdUsed:           input.ThresholdUsed,
+		GateResult:              input.GateResult,
 	}, "")
 	if err != nil {
 		return nil, err
@@ -158,13 +314,17 @@ func insertRelationshipReview(
 	verificationID := ""
 	if input.EvidenceVerdict != "" {
 		verificationID, err = insertVerificationEvent(ctx, tx, ApplyRelationshipDecisionInput{
-			TeamID:          commit.TeamID,
-			OwnerProfileID:  commit.OwnerProfileID,
-			EvidenceVerdict: input.EvidenceVerdict,
-			Confidence:      input.Confidence,
-			Rationale:       input.Rationale,
-			Model:           input.Model,
-			ResponseHash:    input.ResponseHash,
+			TeamID:                  commit.TeamID,
+			OwnerProfileID:          commit.OwnerProfileID,
+			EvidenceVerdict:         input.EvidenceVerdict,
+			Confidence:              input.Confidence,
+			Rationale:               input.Rationale,
+			Model:                   input.Model,
+			ResponseHash:            input.ResponseHash,
+			AssessmentID:            input.AssessmentID,
+			AssessmentPolicyVersion: input.AssessmentPolicyVersion,
+			ThresholdUsed:           input.ThresholdUsed,
+			GateResult:              input.GateResult,
 		}, observationID)
 		if err != nil {
 			return nil, err
@@ -197,12 +357,25 @@ func insertRelationshipReview(
 			"unit":            input.ObjectValue.Unit,
 		}
 	}
+	if input.CorrectionTarget != nil {
+		payload["correction_target"] = map[string]any{
+			"relationship_id":  input.CorrectionTarget.RelationshipID,
+			"expected_version": input.CorrectionTarget.ExpectedVersion,
+		}
+	}
+	if input.ConflictContext != nil {
+		payload["conflict_context"] = map[string]any{
+			"conflict_id":      input.ConflictContext.ConflictID,
+			"expected_version": input.ConflictContext.ExpectedVersion,
+		}
+	}
 	for key, value := range input.Payload {
 		payload[key] = value
 	}
 	if taskType == "predicate_needs_review" {
 		payload["predicate_policy_version"] = domain.PredicatePolicyVersion
 	}
+	appendSemanticReviewPayload(payload, input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance)
 	payloadJSON, err := marshalJSON(payload)
 	if err != nil {
 		return nil, err
@@ -211,17 +384,25 @@ func insertRelationshipReview(
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO review_tasks (
 		    team_id, owner_profile_id, ingest_id, placement_item_id,
-		    observation_id, task_type, status, reason, payload, dedupe_key, updated_at
+		    observation_id, task_type, status, reason, payload, dedupe_key,
+		    assessment_id, expires_at, updated_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-		    ?::uuid, ?, 'open', ?, ?::jsonb, ?, now()
+		    ?::uuid, ?, 'open', ?, ?::jsonb, ?, NULLIF(?, '')::uuid,
+		    CASE WHEN NULLIF(?, '') IS NULL THEN NULL ELSE now() + interval '7 days' END,
+		    now()
 		)
 		ON CONFLICT (team_id, dedupe_key)
 		WHERE dedupe_key <> '' AND status IN ('open', 'acknowledged')
-		DO UPDATE SET updated_at = now()
+		DO UPDATE SET payload = EXCLUDED.payload,
+		              assessment_id = COALESCE(EXCLUDED.assessment_id, review_tasks.assessment_id),
+		              expires_at = COALESCE(EXCLUDED.expires_at, review_tasks.expires_at),
+		              version = review_tasks.version + 1,
+		              updated_at = now()
 		RETURNING review_task_id::text
 	`, commit.TeamID, commit.OwnerProfileID, commit.IngestID, commit.PlacementItemID,
-		observationID, taskType, reason, string(payloadJSON), dedupeKey).Rows()
+		observationID, taskType, reason, string(payloadJSON), dedupeKey,
+		input.AssessmentID, input.AssessmentID).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +422,8 @@ func insertRelationshipReview(
 		OwnerProfileID:      commit.OwnerProfileID,
 		Category:            taskType,
 		Reason:              reason,
+		ConfidenceGate:      input.GateResult,
+		PolicyVersion:       input.AssessmentPolicyVersion,
 	}, rows.Err()
 }
 

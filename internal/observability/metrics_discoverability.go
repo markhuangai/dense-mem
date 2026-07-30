@@ -15,6 +15,20 @@ type DiscoverabilityMetrics interface {
 	IncVerifyVerdict(outcome string)
 }
 
+// AssessorMetrics is an optional V2.4 write-path metric surface. Its methods
+// deliberately accept no request identity, evidence, threshold, or rationale
+// so assessor telemetry cannot create sensitive or high-cardinality labels.
+type AssessorMetrics interface {
+	ObserveAssessorCall(inputTokens, outputTokens int, durationSeconds float64, outcome string)
+	IncAssessorValidationFailure(stage string)
+	IncAssessorValidationFieldFailure(stage, family string)
+	IncAssessorCandidateTruncation()
+	IncAssessorAssessmentPersistence(outcome string)
+	IncAssessorDuplicateRequestPrevention(stage string)
+	IncAssessorConfidenceGate(band string)
+	AddAssessorReviewExpiry(count int64)
+}
+
 // NoopDiscoverabilityMetrics returns a recorder that discards all metrics.
 func NoopDiscoverabilityMetrics() DiscoverabilityMetrics { return noopMetrics{} }
 
@@ -30,19 +44,49 @@ func (noopMetrics) ObserveRecallFeedback(RecallFeedback)    {}
 func (noopMetrics) ObserveDreamFeedback(DreamFeedback)      {}
 func (noopMetrics) ObserveConflictReviewDuration(float64, string) {
 }
-func (noopMetrics) IncVerifyVerdict(string) {}
+func (noopMetrics) IncVerifyVerdict(string)                       {}
+func (noopMetrics) ObserveAssessorCall(int, int, float64, string) {}
+func (noopMetrics) IncAssessorValidationFailure(string)           {}
+func (noopMetrics) IncAssessorValidationFieldFailure(string, string) {
+}
+func (noopMetrics) IncAssessorCandidateTruncation()              {}
+func (noopMetrics) IncAssessorAssessmentPersistence(string)      {}
+func (noopMetrics) IncAssessorDuplicateRequestPrevention(string) {}
+func (noopMetrics) IncAssessorConfidenceGate(string)             {}
+func (noopMetrics) AddAssessorReviewExpiry(int64)                {}
 
 // InMemoryDiscoverabilityMetrics is a test-friendly recorder.
 type InMemoryDiscoverabilityMetrics struct {
-	mu                    sync.Mutex
-	embeddingSamples      []EmbeddingSample
-	embeddingErrors       map[string]int
-	recallLatencies       []float64
-	recallSamples         []RecallSample
-	recallFeedbackSamples []RecallFeedbackSample
-	dreamFeedbackSamples  []DreamFeedbackSample
-	conflictReviewSamples []ConflictReviewSample
-	verifyVerdicts        map[string]int
+	mu                          sync.Mutex
+	embeddingSamples            []EmbeddingSample
+	embeddingErrors             map[string]int
+	recallLatencies             []float64
+	recallSamples               []RecallSample
+	recallFeedbackSamples       []RecallFeedbackSample
+	dreamFeedbackSamples        []DreamFeedbackSample
+	conflictReviewSamples       []ConflictReviewSample
+	verifyVerdicts              map[string]int
+	assessorCalls               []AssessorCallSample
+	assessorValidation          map[string]int
+	assessorValidationFields    map[assessorValidationFieldKey]int
+	assessorTruncations         int
+	assessorPersistence         map[string]int
+	assessorDuplicatePrevention map[string]int
+	assessorGateBands           map[string]int
+	assessorReviewExpiry        int64
+}
+
+// AssessorCallSample records one bounded assessor conversation.
+type AssessorCallSample struct {
+	InputTokens     int
+	OutputTokens    int
+	DurationSeconds float64
+	Outcome         string
+}
+
+type assessorValidationFieldKey struct {
+	stage  string
+	family string
 }
 
 // EmbeddingSample is one recorded embedding latency observation.
@@ -98,12 +142,18 @@ type ConflictReviewSample struct {
 }
 
 var _ DiscoverabilityMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
+var _ AssessorMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
 
 // NewInMemoryDiscoverabilityMetrics constructs a fresh recorder.
 func NewInMemoryDiscoverabilityMetrics() *InMemoryDiscoverabilityMetrics {
 	return &InMemoryDiscoverabilityMetrics{
-		embeddingErrors: make(map[string]int),
-		verifyVerdicts:  make(map[string]int),
+		embeddingErrors:             make(map[string]int),
+		verifyVerdicts:              make(map[string]int),
+		assessorValidation:          make(map[string]int),
+		assessorValidationFields:    make(map[assessorValidationFieldKey]int),
+		assessorPersistence:         make(map[string]int),
+		assessorDuplicatePrevention: make(map[string]int),
+		assessorGateBands:           make(map[string]int),
 	}
 }
 
@@ -226,4 +276,107 @@ func (m *InMemoryDiscoverabilityMetrics) VerifyVerdictCount(outcome string) int 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.verifyVerdicts[outcome]
+}
+
+func (m *InMemoryDiscoverabilityMetrics) ObserveAssessorCall(inputTokens, outputTokens int, durationSeconds float64, outcome string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorCalls = append(m.assessorCalls, AssessorCallSample{
+		InputTokens: inputTokens, OutputTokens: outputTokens, DurationSeconds: durationSeconds, Outcome: outcome,
+	})
+}
+
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorValidationFailure(stage string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorValidation[stage]++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorValidationFieldFailure(stage, family string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorValidationFields[assessorValidationFieldKey{stage: stage, family: family}]++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorCandidateTruncation() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorTruncations++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorAssessmentPersistence(outcome string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorPersistence[outcome]++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorDuplicateRequestPrevention(stage string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorDuplicatePrevention[stage]++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorConfidenceGate(band string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorGateBands[band]++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AddAssessorReviewExpiry(count int64) {
+	if count <= 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorReviewExpiry += count
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorCalls() []AssessorCallSample {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]AssessorCallSample, len(m.assessorCalls))
+	copy(out, m.assessorCalls)
+	return out
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorValidationFailureCount(stage string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorValidation[stage]
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorValidationFieldFailureCount(stage, family string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorValidationFields[assessorValidationFieldKey{stage: stage, family: family}]
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorCandidateTruncationCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorTruncations
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorPersistenceCount(outcome string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorPersistence[outcome]
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorDuplicatePreventionCount(stage string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorDuplicatePrevention[stage]
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorConfidenceGateCount(band string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorGateBands[band]
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorReviewExpiryCount() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorReviewExpiry
 }

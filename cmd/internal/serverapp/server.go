@@ -83,6 +83,9 @@ func RunActiveServer(
 	if !VerifierConfigured(&cfg) {
 		log.Fatal("active authority requires configured verifier provider")
 	}
+	if strings.TrimSpace(cfg.GetAIReviewerModel()) != "" {
+		logger.Warn("AI_REVIEWER_MODEL is ignored by the V2.4 integrated assessor")
+	}
 
 	backend, err := buildBackendBundle(startupCtx, cfg)
 	if err != nil {
@@ -193,7 +196,8 @@ func RunActiveServer(
 	openaiProvider.SetMetrics(discoverabilityMetrics)
 	retryEmbedder := embedding.NewRetryEmbeddingProviderWithKey(openaiProvider, logger, cfg.GetAIAPIKey())
 	retryEmbedder.SetMetrics(discoverabilityMetrics)
-	verifierProvider := verifier.NewOpenAIVerifier(&cfg, nil)
+	assessmentLimits := verifier.SemanticAssessmentLimitsForConfig(&cfg)
+	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, assessmentLimits)
 	verifierProvider.SetMetrics(discoverabilityMetrics)
 
 	rememberSvc := memoryservice.NewRememberService(memoryservice.RememberDependencies{Ledger: ledgerRepo})
@@ -415,6 +419,8 @@ func RunActiveServer(
 		retryEmbedder,
 		verifierProvider,
 		discoverabilityMetrics,
+		assessmentLimits,
+		config.MemoryAutoWriteConfidenceThresholdFor(&cfg),
 		activePlacementLease(cfg.GetAIVerifierTimeoutSeconds(), cfg.GetPromoteTxTimeoutSeconds()),
 		cfg.GetMemoryPlacementWorkerCount(),
 		time.Duration(cfg.GetMemoryPlacementPollSeconds())*time.Second,
@@ -779,8 +785,10 @@ func startActiveWorkers(
 	search repository.SearchRepository,
 	semantic *repository.SemanticRepositoryImpl,
 	embedder *embedding.RetryEmbeddingProvider,
-	reviewer *verifier.OpenAIVerifier,
+	assessor *verifier.OpenAIVerifier,
 	metrics observability.DiscoverabilityMetrics,
+	assessmentLimits verifier.SemanticAssessmentLimits,
+	globalConfidenceThreshold float64,
 	placementLease time.Duration,
 	placementWorkerCount int,
 	placementPollInterval time.Duration,
@@ -790,19 +798,7 @@ func startActiveWorkers(
 ) {
 	hostname, _ := os.Hostname()
 	baseWorkerID := fmt.Sprintf("active-%s-%d", hostname, os.Getpid())
-	reviewSvc := memoryservice.NewSemanticReviewService(memoryservice.SemanticReviewDependencies{
-		Provider: reviewer,
-		Ledger:   ledger,
-	})
-	commitSvc := memoryservice.NewSemanticCommitService(memoryservice.SemanticCommitDependencies{
-		PlacementCommit: ledger,
-	})
-	reviewSource := memoryservice.NewSemanticPlacementReviewSource(memoryservice.SemanticPlacementReviewSourceDependencies{
-		Ledger:           ledger,
-		Catalog:          semantic,
-		ProposalProvider: reviewer,
-	})
-
+	reviewExpiry := memoryservice.NewSemanticAssessmentReviewExpiryThrottle(ledger, time.Minute)
 	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
 		name:         "placement",
 		baseWorkerID: baseWorkerID,
@@ -812,16 +808,21 @@ func startActiveWorkers(
 		logger:       logger,
 		workerError:  errSemanticPlacementWorkerFailed,
 		work: func(ctx context.Context, teamID string, workerID string) (bool, error) {
-			worker := memoryservice.NewSemanticPlacementWorkerService(memoryservice.SemanticPlacementWorkerDependencies{
-				Ledger:       ledger,
-				Review:       reviewSvc,
-				Commit:       commitSvc,
-				ReviewSource: reviewSource,
-				TeamID:       teamID,
-				WorkerID:     workerID,
-				Lease:        placementLease,
+			worker := memoryservice.NewSemanticAssessmentPlacementWorkerService(memoryservice.SemanticAssessmentPlacementWorkerDependencies{
+				Ledger:                    ledger,
+				Assessments:               ledger,
+				ReviewExpiry:              reviewExpiry,
+				Commit:                    ledger,
+				Catalog:                   semantic,
+				Provider:                  assessor,
+				Limits:                    assessmentLimits,
+				GlobalConfidenceThreshold: globalConfidenceThreshold,
+				Metrics:                   metrics,
+				TeamID:                    teamID,
+				WorkerID:                  workerID,
+				Lease:                     placementLease,
 			})
-			return worker.ProcessNextSemanticPlacement(ctx)
+			return worker.ProcessNextSemanticAssessmentPlacement(ctx)
 		},
 	})
 	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
@@ -854,7 +855,7 @@ func activePlacementLease(verifierTimeoutSeconds int, commitTimeoutSeconds int) 
 	if commitTimeoutSeconds <= 0 {
 		commitTimeoutSeconds = 10
 	}
-	lease := time.Duration((verifierTimeoutSeconds*memoryservice.SemanticPlacementDefaultVerifierCallBudget)+commitTimeoutSeconds+30) * time.Second
+	lease := time.Duration((verifierTimeoutSeconds*memoryservice.SemanticPlacementMaxAssessorTurns)+commitTimeoutSeconds+30) * time.Second
 	if lease < 5*time.Minute {
 		return 5 * time.Minute
 	}

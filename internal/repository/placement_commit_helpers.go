@@ -15,6 +15,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+const placementRetryMaxDelay = 300 * time.Second
+
 const placementRunGuardedStatusCase = `
 	CASE
 	    WHEN EXISTS (
@@ -69,6 +71,7 @@ func applyPlacementRelationshipDecision(
 	commit CommitPlacementSemanticInput,
 	decision ApplyRelationshipDecisionInput,
 	correctionTarget *PlacementCorrectionTargetInput,
+	conflictContext *PlacementConflictContextInput,
 	placementFragmentID string,
 	embeddingJobMaxAttempts int,
 	conflictConfig ConflictRuntimeConfig,
@@ -82,6 +85,15 @@ func applyPlacementRelationshipDecision(
 	applied.OwnerProfileID = commit.OwnerProfileID
 	applied.Category = relationshipOutcomeCategory(applied)
 	applied.Reason = relationshipOutcomeReason(decision, applied)
+	applied.ConfidenceGate = decision.GateResult
+	applied.PolicyVersion = decision.AssessmentPolicyVersion
+	if applied.ReviewTaskID == "" && decision.SemanticReviewKind != "" {
+		taskID, err := insertPlacementSemanticReviewTask(ctx, tx, commit, decision, applied, correctionTarget, conflictContext)
+		if err != nil {
+			return err
+		}
+		applied.ReviewTaskID = taskID
+	}
 	result.RelationshipResults = append(result.RelationshipResults, *applied)
 	appendPlacementReviewTaskID(result, applied.ReviewTaskID)
 	if applied.Relationship == nil || applied.Relationship.Status != string(domain.RelationshipStatusActive) {
@@ -92,7 +104,11 @@ func applyPlacementRelationshipDecision(
 			return err
 		}
 	}
-	if applied.SupportID != "" && decision.Support != nil && decision.Support.FragmentID != "" {
+	supports := relationshipEvidenceSupports(decision.Support, decision.Supports)
+	for index, support := range supports {
+		if index >= len(applied.SupportIDs) || applied.SupportIDs[index] == "" || support.FragmentID == "" {
+			continue
+		}
 		if placementFragmentID == "" {
 			var err error
 			placementFragmentID, err = loadPlacementItemFragmentID(ctx, tx, commit)
@@ -100,15 +116,15 @@ func applyPlacementRelationshipDecision(
 				return err
 			}
 		}
-		if decision.Support.FragmentID != placementFragmentID {
+		if support.FragmentID != placementFragmentID {
 			document, err := upsertPlacementEvidenceSearchDocument(
 				ctx,
 				tx,
 				commit,
-				decision.Support.FragmentID,
+				support.FragmentID,
 				map[string]any{
 					"supporting_placement_item_id": commit.PlacementItemID,
-					"support_id":                   applied.SupportID,
+					"support_id":                   applied.SupportIDs[index],
 					"relationship_id":              applied.Relationship.RelationshipID,
 				},
 				embeddingJobMaxAttempts,
@@ -565,7 +581,7 @@ func applyRelationshipDecisionInTx(
 	if err := validateRelationshipEndpointKinds(ctx, tx, input, predicate); err != nil {
 		return nil, err
 	}
-	status := statusForVerdict(input.EvidenceVerdict)
+	status := statusForRelationshipDecision(input)
 	groupKey := semanticGroupKey(input)
 	recordState, err := upsertRelationshipRecord(ctx, tx, input, predicate, status, groupKey)
 	if err != nil {
@@ -583,10 +599,18 @@ func applyRelationshipDecisionInTx(
 		return nil, err
 	}
 	var supportID, supportDecisionID string
-	if input.EvidenceVerdict == string(domain.VerificationEntailed) && input.Support != nil {
-		supportID, supportDecisionID, err = insertRelationshipSupport(ctx, tx, input, recordState.Record.RelationshipID, observationID, verificationID)
+	var supportIDs []string
+	if input.EvidenceVerdict == string(domain.VerificationEntailed) && len(relationshipEvidenceSupports(input.Support, input.Supports)) > 0 && !input.SuppressSupport {
+		var supportDecisionIDs []string
+		supportIDs, supportDecisionIDs, err = insertRelationshipSupports(ctx, tx, input, recordState.Record.RelationshipID, observationID, verificationID)
 		if err != nil {
 			return nil, err
+		}
+		if len(supportIDs) > 0 {
+			supportID = supportIDs[0]
+		}
+		if len(supportDecisionIDs) > 0 {
+			supportDecisionID = supportDecisionIDs[0]
 		}
 		if err := refreshRelationshipSupportCounts(ctx, tx, input.TeamID, recordState.Record.RelationshipID); err != nil {
 			return nil, err
@@ -616,6 +640,7 @@ func applyRelationshipDecisionInTx(
 		ObservationID:       observationID,
 		VerificationEventID: verificationID,
 		SupportID:           supportID,
+		SupportIDs:          supportIDs,
 		SupportDecisionID:   supportDecisionID,
 		CreatedRelationship: recordState.Created,
 	}, nil
@@ -741,6 +766,9 @@ func relationshipOutcomeCategory(result *RelationshipDecisionResult) string {
 }
 
 func relationshipOutcomeReason(decision ApplyRelationshipDecisionInput, result *RelationshipDecisionResult) string {
+	if decision.GateResult == "below_write_threshold" {
+		return "confidence was below the write threshold"
+	}
 	if rationale := strings.TrimSpace(decision.Rationale); rationale != "" {
 		return rationale
 	}
@@ -769,6 +797,12 @@ func placementRelationshipOutcomePayload(results []RelationshipDecisionResult) [
 			"owner_profile_id": result.OwnerProfileID,
 			"category":         result.Category,
 			"reason":           result.Reason,
+		}
+		if result.ConfidenceGate != "" {
+			item["confidence_gate"] = result.ConfidenceGate
+		}
+		if result.PolicyVersion != "" {
+			item["policy_version"] = result.PolicyVersion
 		}
 		if result.Relationship != nil {
 			item["relationship_id"] = result.Relationship.RelationshipID
@@ -851,7 +885,8 @@ func finishPlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input Commit
 }
 
 func requeuePlacementRunForRetry(ctx context.Context, tx *gorm.DB, input CommitPlacementSemanticInput) error {
-	retryDelaySeconds := int(placementRetryDelay(input.ExpectedAttempts, input.PlacementItemID) / time.Second)
+	retryDelay := placementEffectiveRetryDelay(input.ExpectedAttempts, input.PlacementItemID, input.RetryAfter)
+	retryDelaySeconds := int(retryDelay / time.Second)
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE placement_runs
 		SET status = `+placementRunGuardedStatusCase+`,
@@ -883,14 +918,25 @@ func placementRetryDelay(attempt int, placementItemID string) time.Duration {
 	base := 15 * time.Second
 	for i := 1; i < attempt; i++ {
 		base *= 2
-		if base >= 300*time.Second {
-			base = 300 * time.Second
+		if base >= placementRetryMaxDelay {
+			base = placementRetryMaxDelay
 			break
 		}
 	}
 	delay := base + time.Duration(placementRetryJitterSeconds(placementItemID))*time.Second
-	if delay > 300*time.Second {
-		return 300 * time.Second
+	if delay > placementRetryMaxDelay {
+		return placementRetryMaxDelay
+	}
+	return delay
+}
+
+func placementEffectiveRetryDelay(attempt int, placementItemID string, retryAfter time.Duration) time.Duration {
+	delay := placementRetryDelay(attempt, placementItemID)
+	if retryAfter > delay {
+		delay = retryAfter
+	}
+	if delay > placementRetryMaxDelay {
+		return placementRetryMaxDelay
 	}
 	return delay
 }

@@ -474,6 +474,12 @@ func TestPlacementSmallHelpers(t *testing.T) {
 			t.Fatalf("review category %q = %q, want %q", category, got, want)
 		}
 	}
+	if got := relationshipOutcomeReason(ApplyRelationshipDecisionInput{
+		GateResult: "below_write_threshold",
+		Rationale:  "provider rationale must not hide the policy gate",
+	}, &RelationshipDecisionResult{Relationship: &RelationshipRecord{Status: string(domain.RelationshipStatusPendingEvidence)}}); got != "confidence was below the write threshold" {
+		t.Fatalf("below-threshold reason = %q", got)
+	}
 }
 
 func TestPlacementCorrectionTargetRelated(t *testing.T) {
@@ -509,6 +515,21 @@ func TestPlacementCorrectionTargetRelated(t *testing.T) {
 		ObjectEntityID:  "object-b",
 	}) {
 		t.Fatal("same predicate without an endpoint overlap must not be related")
+	}
+}
+
+func TestPlacementEffectiveRetryDelayHonorsBoundedProviderHint(t *testing.T) {
+	placementItemID := "placement-item"
+	existing := placementRetryDelay(1, placementItemID)
+
+	if got := placementEffectiveRetryDelay(1, placementItemID, existing-time.Second); got != existing {
+		t.Fatalf("retry delay = %s, want existing backoff %s", got, existing)
+	}
+	if got := placementEffectiveRetryDelay(1, placementItemID, 2*time.Minute); got != 2*time.Minute {
+		t.Fatalf("retry delay = %s, want provider hint 2m", got)
+	}
+	if got := placementEffectiveRetryDelay(1, placementItemID, time.Hour); got != placementRetryMaxDelay {
+		t.Fatalf("retry delay = %s, want cap %s", got, placementRetryMaxDelay)
 	}
 }
 

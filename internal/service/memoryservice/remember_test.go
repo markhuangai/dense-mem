@@ -273,6 +273,15 @@ func TestGetMemoryPlacementUsesAuthenticatedOwnerAndReturnsCurrentVersion(t *tes
 						"reason":              "accepted",
 					}},
 				},
+				ReviewTasks: []repository.PlacementReviewTask{{
+					ReviewTaskID: "review-task-1",
+					Version:      2,
+					Kind:         "identity_needs_review",
+					Status:       "open",
+					Question:     "Which entity is correct?",
+					Options:      []map[string]any{{"entity_id": "entity-1"}},
+					Guidance:     "Select an allowed entity.",
+				}},
 			}},
 		},
 	}
@@ -301,6 +310,15 @@ func TestGetMemoryPlacementUsesAuthenticatedOwnerAndReturnsCurrentVersion(t *tes
 		Category:           string(domain.OutcomeRelationshipAccepted),
 		Reason:             "accepted",
 	}}, result.Items[0].RelationshipOutcomes)
+	require.Equal(t, []PlacementReviewTaskRef{{
+		ReviewTaskID: "review-task-1",
+		Version:      2,
+		Kind:         "identity_needs_review",
+		Status:       "open",
+		Question:     "Which entity is correct?",
+		Options:      []map[string]any{{"entity_id": "entity-1"}},
+		Guidance:     "Select an allowed entity.",
+	}}, result.Items[0].ReviewTasks)
 	require.Equal(t, teamID.String(), ledger.placementInput.TeamID)
 	require.Equal(t, profileID.String(), ledger.placementInput.OwnerProfileID)
 	require.Equal(t, ingestID, ledger.placementInput.IngestID)

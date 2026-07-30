@@ -432,7 +432,7 @@ func retractEvidenceOutputSchema() map[string]any {
 
 func placementItemSchema() map[string]any {
 	return closedObject(
-		[]string{"item_id", "evidence_id", "superseded_evidence_ids", "version", "evidence_index", "category", "search_state", "relationship_outcomes", "errors"},
+		[]string{"item_id", "evidence_id", "superseded_evidence_ids", "version", "evidence_index", "category", "search_state", "relationship_outcomes", "review_tasks", "errors"},
 		map[string]any{
 			"item_id":                 schemaString("Stable placement item ID.", 128),
 			"evidence_id":             schemaString("Durable evidence ID.", 128),
@@ -441,6 +441,7 @@ func placementItemSchema() map[string]any {
 			"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
 			"category":                schemaEnum(domain.EvidenceItemCategories()),
 			"relationship_outcomes":   relationshipOutcomeArraySchema(),
+			"review_tasks":            placementReviewTaskArraySchema(),
 			"search_state":            schemaEnum(domain.SearchProjectionStates()),
 			"errors":                  placementErrorArraySchema(),
 		},
@@ -462,8 +463,59 @@ func relationshipOutcomeArraySchema() map[string]any {
 				"reason":              schemaString("Bounded placement explanation.", 1000),
 				"review_task":         nullableString("Review task handle.", 128),
 				"predicate_options":   array(predicateDefinitionSchema(), 0, 100),
+				"confidence_gate":     schemaEnum([]string{"meets_write_threshold", "below_write_threshold", "not_applicable"}),
+				"policy_version":      nullableString("Bounded assessment policy version.", 256),
 			},
 		),
+	}
+}
+
+func placementReviewTaskArraySchema() map[string]any {
+	return map[string]any{
+		"type": "array", "maxItems": 300,
+		"items": closedObject(
+			[]string{"review_task_id", "version", "kind", "status", "question", "options", "guidance", "expires_at"},
+			map[string]any{
+				"review_task_id": schemaString("Stable semantic review task ID.", 128),
+				"version":        map[string]any{"type": "integer", "minimum": 1},
+				"kind":           schemaEnum([]string{"support_confidence", "identity", "predicate", "scope", "time"}),
+				"status":         schemaEnum([]string{"open", "acknowledged", "resolved", "canceled", "expired"}),
+				"question":       schemaString("Exact bounded semantic review question.", 1000),
+				"options":        array(placementReviewOptionSchema(), 0, 100),
+				"guidance":       schemaString("Bounded semantic review guidance.", 2000),
+				"expires_at":     map[string]any{"type": []any{"string", "null"}, "format": "date-time"},
+			},
+		),
+	}
+}
+
+func placementReviewOptionSchema() map[string]any {
+	return map[string]any{
+		"x-enforce-one-of": true,
+		"oneOf": []any{
+			closedObject(
+				[]string{"entity_id", "canonical_name", "kind"},
+				map[string]any{
+					"entity_id":      schemaString("Server-supplied Entity ID.", 128),
+					"canonical_name": schemaString("Server-supplied Entity canonical name.", 256),
+					"kind":           schemaEnum(domain.EntityKinds()),
+				},
+			),
+			closedObject(
+				[]string{"predicate_key", "version", "aliases"},
+				map[string]any{
+					"predicate_key": schemaString("Server-supplied predicate key.", 128),
+					"version":       map[string]any{"type": "integer", "minimum": 1},
+					"aliases":       stringArraySchema("Server-supplied predicate alias.", 20, 256),
+				},
+			),
+			closedObject(
+				[]string{"action"},
+				map[string]any{
+					"action": schemaEnum([]string{"submit_new_evidence"}),
+				},
+			),
+		},
 	}
 }
 

@@ -87,10 +87,13 @@ MCP:            http://127.0.0.1:8080/mcp
 控制门户:       http://127.0.0.1:8090/
 ```
 
-启动时必须配置完整的 embedding 和 reviewer/verifier：`AI_API_URL`、
+启动时必须配置完整的 embedding 和 verifier：`AI_API_URL`、
 `AI_API_KEY`、`AI_API_EMBEDDING_MODEL`、`AI_API_EMBEDDING_DIMENSIONS`、
-`AI_REVIEWER_MODEL` 和 `AI_VERIFIER_MODEL`。compose 示例为 embedding 提供
+`AI_VERIFIER_MODEL`。compose 示例为 embedding 提供
 OpenAI 默认值；chat model 需要在 `.env` 中明确选择。
+
+Verifier 和 assessor 调用默认发送 `temperature: 0`。如果 provider 或 model
+拒绝 temperature 字段，设置 `AI_VERIFIER_DISABLE_TEMPERATURE=true` 可以省略该字段。
 
 ### 完全本地部署（Ollama）
 
@@ -107,7 +110,6 @@ AI_API_URL=http://host.docker.internal:11434/v1
 AI_API_KEY=ollama
 AI_API_EMBEDDING_MODEL=nomic-embed-text
 AI_API_EMBEDDING_DIMENSIONS=768
-AI_REVIEWER_MODEL=llama3.1:8b
 AI_VERIFIER_MODEL=llama3.1:8b
 AI_VERIFIER_TIMEOUT_SECONDS=300
 ```
@@ -115,6 +117,10 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 请使用 `host.docker.internal`，不要使用 `127.0.0.1`，因为服务从 compose
 网络内调用 provider。即使 Ollama 忽略它，`AI_API_KEY` 也必须非空，因为启动校验
 要求完整的 provider 配置。
+
+- `AI_VERIFIER_MODEL` 要设为 chat endpoint 上真实存在的模型。启动校验会在开始
+  写入 memory 前发现缺失或错误配置。7B-8B 级别模型适合本地 smoke test；更大的
+  模型在加载期间可能超过默认 60 秒超时，placement 会保持可重试直到模型可响应。
 
 ## 证据生命周期
 
@@ -176,7 +182,7 @@ remember 证据（可选 Entity/Relationship 提议）
 
 ## MCP 工具目录
 
-当前契约版本为 `dense-mem.v2.3.2`。用 MCP `tools/list` 发现已授权目录；服务端对
+当前契约版本为 `dense-mem.v2.4`。用 MCP `tools/list` 发现已授权目录；服务端对
 `tools/call` 施加相同的 scope、功能和可见性检查。
 
 | 工具 | 用途 |

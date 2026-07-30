@@ -90,7 +90,6 @@ func validateDemoStartupConfig(cfg *config.Config) error {
 		{"AI_API_URL", cfg.GetAIAPIURL()},
 		{"AI_API_KEY", cfg.GetAIAPIKey()},
 		{"AI_API_EMBEDDING_MODEL", cfg.GetAIEmbeddingModel()},
-		{"AI_REVIEWER_MODEL", cfg.GetAIReviewerModel()},
 		{"AI_VERIFIER_MODEL", cfg.GetAIVerifierModel()},
 		{"REDIS_ADDR", cfg.GetRedisAddr()},
 	}

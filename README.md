@@ -96,11 +96,15 @@ User portal:    http://127.0.0.1:8080/ui
 Control portal: http://127.0.0.1:8090/
 ```
 
-The server requires complete embedding and reviewer/verifier configuration at
+The server requires complete embedding and verifier configuration at
 startup: `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`,
-`AI_API_EMBEDDING_DIMENSIONS`, `AI_REVIEWER_MODEL`, and `AI_VERIFIER_MODEL`.
+`AI_API_EMBEDDING_DIMENSIONS`, and `AI_VERIFIER_MODEL`.
 The compose examples provide OpenAI defaults for embeddings; choose the chat
 models explicitly in `.env`.
+
+Verifier and assessor calls send `temperature: 0` by default. Set
+`AI_VERIFIER_DISABLE_TEMPERATURE=true` to omit the field for providers or models
+that reject temperature.
 
 ### Fully Local Setup (Ollama)
 
@@ -117,7 +121,6 @@ AI_API_URL=http://host.docker.internal:11434/v1
 AI_API_KEY=ollama
 AI_API_EMBEDDING_MODEL=nomic-embed-text
 AI_API_EMBEDDING_DIMENSIONS=768
-AI_REVIEWER_MODEL=llama3.1:8b
 AI_VERIFIER_MODEL=llama3.1:8b
 AI_VERIFIER_TIMEOUT_SECONDS=300
 ```
@@ -125,6 +128,12 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 Use `host.docker.internal`, not `127.0.0.1`, because the server calls the
 provider from the compose network. `AI_API_KEY` must remain non-empty because
 startup validation requires a complete provider configuration.
+
+- Set `AI_VERIFIER_MODEL` to a model that exists on the selected chat endpoint.
+  Startup validates the model configuration before the service accepts memory
+  writes. A 7B-8B class model works for local smoke tests; larger models can
+  exceed the default 60-second timeout while they load, leaving placement
+  attempts retryable until the model responds.
 
 ## Evidence Lifecycle
 
@@ -191,7 +200,7 @@ durable staging -> validated placement -> active eligible Relationships
 
 ## MCP Tool Catalog
 
-The active contract is `dense-mem.v2.3.2`. Discover the authorized catalog with
+The active contract is `dense-mem.v2.4`. Discover the authorized catalog with
 MCP `tools/list`; the server applies the same scope, feature, and visibility
 checks to `tools/call`.
 

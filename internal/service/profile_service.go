@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -100,6 +102,10 @@ func (s *ProfileServiceImpl) logAuditError(err error, operation, profileID, corr
 // Create creates a new profile with server-side UUID generation.
 // Enforces unique lower(name) among non-deleted rows and sets status=active.
 func (s *ProfileServiceImpl) Create(ctx context.Context, req CreateProfileRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.Profile, error) {
+	if err := validateMemoryWriteConfig(req.Config); err != nil {
+		return nil, err
+	}
+
 	// Create the profile
 	profile := &domain.Profile{
 		Name:        req.Name,
@@ -175,6 +181,9 @@ func (s *ProfileServiceImpl) Update(ctx context.Context, id uuid.UUID, req Updat
 	if existing == nil {
 		return nil, httperr.New(httperr.NOT_FOUND, fmt.Sprintf("profile with id '%s' not found", id.String()))
 	}
+	if err := validateMemoryWriteConfig(req.Config); err != nil {
+		return nil, err
+	}
 
 	// Build before payload for audit
 	beforePayload := map[string]interface{}{
@@ -239,6 +248,63 @@ func (s *ProfileServiceImpl) Update(ctx context.Context, id uuid.UUID, req Updat
 	}
 
 	return existing, nil
+}
+
+func validateMemoryWriteConfig(config map[string]any) error {
+	if config == nil {
+		return nil
+	}
+	memoryWrite, exists := config["memory_write"]
+	if !exists || memoryWrite == nil {
+		return nil
+	}
+	section, ok := memoryWrite.(map[string]any)
+	if !ok {
+		return httperr.New(httperr.VALIDATION_ERROR, "memory_write must be an object")
+	}
+	rawThreshold, exists := section["auto_write_confidence_threshold"]
+	if !exists || rawThreshold == nil {
+		return nil
+	}
+	threshold, ok := memoryWriteConfidenceThreshold(rawThreshold)
+	if !ok || math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold < 0 || threshold > 1 {
+		return httperr.New(httperr.VALIDATION_ERROR, "memory_write.auto_write_confidence_threshold must be a number between 0 and 1")
+	}
+	return nil
+}
+
+func memoryWriteConfidenceThreshold(raw any) (float64, bool) {
+	switch value := raw.(type) {
+	case float64:
+		return value, true
+	case float32:
+		return float64(value), true
+	case int:
+		return float64(value), true
+	case int8:
+		return float64(value), true
+	case int16:
+		return float64(value), true
+	case int32:
+		return float64(value), true
+	case int64:
+		return float64(value), true
+	case uint:
+		return float64(value), true
+	case uint8:
+		return float64(value), true
+	case uint16:
+		return float64(value), true
+	case uint32:
+		return float64(value), true
+	case uint64:
+		return float64(value), true
+	case json.Number:
+		parsed, err := value.Float64()
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 // PROFILE_HAS_ACTIVE_KEYS is kept for backward-compat with callers referencing the const.

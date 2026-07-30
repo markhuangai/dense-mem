@@ -3,6 +3,20 @@ package verifier
 import (
 	"errors"
 	"fmt"
+	"time"
+)
+
+const (
+	ProviderFailureClassTimeout             = "timeout"
+	ProviderFailureClassRateLimited         = "rate_limited"
+	ProviderFailureClassHTTPClient          = "http_4xx"
+	ProviderFailureClassHTTPServer          = "http_5xx"
+	ProviderFailureClassHTTPUnexpected      = "http_unexpected"
+	ProviderFailureClassTransport           = "transport"
+	ProviderFailureClassProtocol            = "provider_protocol"
+	ProviderFailureClassProviderUnavailable = "provider_unavailable"
+
+	providerFailureMaxRetryAfter = 5 * time.Minute
 )
 
 // ErrVerifierTimeout is returned when a verifier request times out.
@@ -36,9 +50,11 @@ func (e *TimeoutError) Is(target error) bool {
 
 // ProviderError wraps ErrVerifierProvider with additional context.
 type ProviderError struct {
-	Provider string
-	Message  string
-	Cause    error
+	Provider     string
+	Message      string
+	Cause        error
+	FailureClass string
+	StatusCode   int
 }
 
 // Error implements the error interface.
@@ -78,9 +94,11 @@ func (e *RateLimitError) Is(target error) bool {
 
 // MalformedResponseError wraps ErrVerifierMalformedResponse with additional context.
 type MalformedResponseError struct {
-	Provider string
-	Message  string
-	RawJSON  string
+	Provider     string
+	Message      string
+	RawJSON      string
+	FailureClass string
+	Attempts     int
 }
 
 // Error implements the error interface.
@@ -91,4 +109,45 @@ func (e *MalformedResponseError) Error() string {
 // Is allows errors.Is to match ErrVerifierMalformedResponse.
 func (e *MalformedResponseError) Is(target error) bool {
 	return target == ErrVerifierMalformedResponse
+}
+
+// ProviderFailureMetadata is safe, bounded retry data derived from a provider error.
+type ProviderFailureMetadata struct {
+	Class      string
+	StatusCode int
+	RetryAfter time.Duration
+}
+
+// ProviderFailureDetails excludes provider messages and response bodies.
+func ProviderFailureDetails(err error) ProviderFailureMetadata {
+	var rateLimit *RateLimitError
+	if errors.As(err, &rateLimit) {
+		retryAfter := time.Duration(0)
+		switch {
+		case rateLimit.RetryAfter >= int(providerFailureMaxRetryAfter/time.Second):
+			retryAfter = providerFailureMaxRetryAfter
+		case rateLimit.RetryAfter > 0:
+			retryAfter = time.Duration(rateLimit.RetryAfter) * time.Second
+		}
+		return ProviderFailureMetadata{
+			Class:      ProviderFailureClassRateLimited,
+			StatusCode: 429,
+			RetryAfter: retryAfter,
+		}
+	}
+	if errors.Is(err, ErrVerifierTimeout) {
+		return ProviderFailureMetadata{Class: ProviderFailureClassTimeout}
+	}
+	var provider *ProviderError
+	if errors.As(err, &provider) {
+		class := provider.FailureClass
+		if class == "" {
+			class = ProviderFailureClassProviderUnavailable
+		}
+		return ProviderFailureMetadata{
+			Class:      class,
+			StatusCode: provider.StatusCode,
+		}
+	}
+	return ProviderFailureMetadata{Class: ProviderFailureClassProviderUnavailable}
 }

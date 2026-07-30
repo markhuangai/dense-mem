@@ -95,10 +95,16 @@ func supersedeOneCardinalityRelationships(
 }
 
 func validateSupportOwnership(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput) error {
-	if input.Support == nil {
-		return nil
+	for _, support := range relationshipEvidenceSupports(input.Support, input.Supports) {
+		if err := validateSingleSupportOwnership(ctx, tx, input, support); err != nil {
+			return err
+		}
 	}
-	if (input.Support.SourceID == "") != (input.Support.SourceRevisionID == "") {
+	return nil
+}
+
+func validateSingleSupportOwnership(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput, support EvidenceSupportInput) error {
+	if (support.SourceID == "") != (support.SourceRevisionID == "") {
 		return errors.New("support source and source revision must be provided together")
 	}
 	query := `
@@ -110,8 +116,8 @@ func validateSupportOwnership(ctx context.Context, tx *gorm.DB, input ApplyRelat
 			  AND fragment.fragment_id = ?::uuid
 			  AND fragment.owner_profile_id = ?::uuid
 	`
-	args := []any{input.TeamID, input.IngestID, input.Support.FragmentID, input.OwnerProfileID}
-	if input.Support.SourceID != "" {
+	args := []any{input.TeamID, input.IngestID, support.FragmentID, input.OwnerProfileID}
+	if support.SourceID != "" {
 		query += `
 			  AND fragment.source_id = ?::uuid
 			  AND fragment.source_revision_id = ?::uuid
@@ -124,7 +130,7 @@ func validateSupportOwnership(ctx context.Context, tx *gorm.DB, input ApplyRelat
 			        AND revision.owner_profile_id = fragment.owner_profile_id
 			  )
 		`
-		args = append(args, input.Support.SourceID, input.Support.SourceRevisionID)
+		args = append(args, support.SourceID, support.SourceRevisionID)
 	}
 	query += `
 		)
@@ -326,6 +332,34 @@ func insertRelationshipSupport(
 		return "", "", err
 	}
 	return supportID, decisionID, nil
+}
+
+func insertRelationshipSupports(
+	ctx context.Context,
+	tx *gorm.DB,
+	input ApplyRelationshipDecisionInput,
+	relationshipID string,
+	observationID string,
+	verificationID string,
+) ([]string, []string, error) {
+	supports := relationshipEvidenceSupports(input.Support, input.Supports)
+	supportIDs := make([]string, 0, len(supports))
+	supportDecisionIDs := make([]string, 0, len(supports))
+	for _, support := range supports {
+		supportInput := input
+		supportCopy := support
+		supportInput.Support = &supportCopy
+		supportInput.Supports = nil
+		supportID, supportDecisionID, err := insertRelationshipSupport(ctx, tx, supportInput, relationshipID, observationID, verificationID)
+		if err != nil {
+			return nil, nil, err
+		}
+		supportIDs = append(supportIDs, supportID)
+		if supportDecisionID != "" {
+			supportDecisionIDs = append(supportDecisionIDs, supportDecisionID)
+		}
+	}
+	return supportIDs, supportDecisionIDs, nil
 }
 
 func insertSupportDecision(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, supportID, relationshipID, decision, reason string) (string, error) {

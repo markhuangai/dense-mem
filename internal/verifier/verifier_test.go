@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -88,6 +89,55 @@ func TestSentinels(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestProviderFailureDetailsReturnsBoundedRetryMetadata(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want ProviderFailureMetadata
+	}{
+		{
+			name: "rate limit",
+			err:  &RateLimitError{Provider: "openai", Message: "HTTP 429", RetryAfter: 75},
+			want: ProviderFailureMetadata{Class: ProviderFailureClassRateLimited, StatusCode: 429, RetryAfter: 75 * time.Second},
+		},
+		{
+			name: "rate limit capped before duration conversion",
+			err:  &RateLimitError{Provider: "openai", Message: "HTTP 429", RetryAfter: int(^uint(0) >> 1)},
+			want: ProviderFailureMetadata{Class: ProviderFailureClassRateLimited, StatusCode: 429, RetryAfter: 5 * time.Minute},
+		},
+		{
+			name: "rate limit without retry hint",
+			err:  &RateLimitError{Provider: "openai", Message: "HTTP 429", RetryAfter: -1},
+			want: ProviderFailureMetadata{Class: ProviderFailureClassRateLimited, StatusCode: 429},
+		},
+		{
+			name: "timeout",
+			err:  &TimeoutError{Provider: "openai", Message: "deadline"},
+			want: ProviderFailureMetadata{Class: ProviderFailureClassTimeout},
+		},
+		{
+			name: "http status",
+			err: &ProviderError{
+				Provider:     "openai",
+				Message:      "HTTP 503",
+				FailureClass: ProviderFailureClassHTTPServer,
+				StatusCode:   503,
+			},
+			want: ProviderFailureMetadata{Class: ProviderFailureClassHTTPServer, StatusCode: 503},
+		},
+		{
+			name: "untyped provider failure",
+			err:  errors.New("provider failed"),
+			want: ProviderFailureMetadata{Class: ProviderFailureClassProviderUnavailable},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, ProviderFailureDetails(test.err))
+		})
+	}
 }
 
 // TestVerifier exercises the Verifier interface via a stub implementation.

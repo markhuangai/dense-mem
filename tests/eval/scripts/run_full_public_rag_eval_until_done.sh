@@ -499,8 +499,7 @@ prepare_identity() {
     --arg embedding_model "${EMBEDDING_MODEL}" \
     --arg embedding_dimensions "${EMBEDDING_DIMENSIONS}" \
     --arg embedding_endpoint_sha256 "${EMBEDDING_ENDPOINT_HASH}" \
-    --arg reviewer_model "${AI_REVIEWER_MODEL:-}" \
-    --arg verifier_model "${AI_VERIFIER_MODEL:-}" \
+    --arg assessor_model "${AI_VERIFIER_MODEL:-}" \
     --arg team_id "${EVAL_TEAM_ID}" \
     --arg release_gate_policy_sha256 "${RELEASE_GATE_POLICY_HASH}" \
     --arg runner_sha256 "${RUNNER_HASH}" \
@@ -512,8 +511,7 @@ prepare_identity() {
       embedding_model: $embedding_model,
       embedding_dimensions: ($embedding_dimensions | tonumber),
       embedding_endpoint_sha256: $embedding_endpoint_sha256,
-      reviewer_model: $reviewer_model,
-      verifier_model: $verifier_model,
+      assessor_model: $assessor_model,
       team_id: $team_id,
       release_gate_policy_sha256: $release_gate_policy_sha256,
       runner_sha256: $runner_sha256,

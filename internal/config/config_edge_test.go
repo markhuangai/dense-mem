@@ -37,6 +37,14 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 		{"invalid verifier disable temperature", func() { os.Setenv("AI_VERIFIER_DISABLE_TEMPERATURE", "bad") }, "AI_VERIFIER_DISABLE_TEMPERATURE"},
 		{"invalid verifier timeout", func() { os.Setenv("AI_VERIFIER_TIMEOUT_SECONDS", "bad") }, "AI_VERIFIER_TIMEOUT_SECONDS"},
 		{"invalid verifier concurrency", func() { os.Setenv("AI_VERIFIER_MAX_CONCURRENCY", "bad") }, "AI_VERIFIER_MAX_CONCURRENCY"},
+		{"invalid verifier input token budget", func() { os.Setenv("AI_VERIFIER_MAX_INPUT_TOKENS", "bad") }, "AI_VERIFIER_MAX_INPUT_TOKENS"},
+		{"invalid verifier output token budget", func() { os.Setenv("AI_VERIFIER_MAX_OUTPUT_TOKENS", "bad") }, "AI_VERIFIER_MAX_OUTPUT_TOKENS"},
+		{"invalid verifier candidate token budget", func() { os.Setenv("AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", "bad") }, "AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS"},
+		{"candidate token budget exceeds input", func() {
+			os.Setenv("AI_VERIFIER_MAX_INPUT_TOKENS", "10")
+			os.Setenv("AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", "11")
+		}, "AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS"},
+		{"unsupported verifier tokenizer", func() { os.Setenv("AI_VERIFIER_TOKENIZER", "unknown") }, "AI_VERIFIER_TOKENIZER"},
 		{"invalid placement worker count", func() { os.Setenv("MEMORY_PLACEMENT_WORKER_COUNT", "bad") }, "MEMORY_PLACEMENT_WORKER_COUNT"},
 		{"placement workers exceed verifier", func() {
 			os.Setenv("AI_VERIFIER_MAX_CONCURRENCY", "1")
@@ -103,7 +111,6 @@ func TestValidateServerStartupRemainingRequiredFields(t *testing.T) {
 		AIAPIKey:              "sk-test",
 		AIEmbeddingModel:      "text-embedding-3-small",
 		AIEmbeddingDimensions: 1536,
-		AIReviewerModel:       "reviewer-model",
 		AIVerifierModel:       "verifier-model",
 		ControlPortalToken:    "control-secret",
 	}
@@ -115,7 +122,6 @@ func TestValidateServerStartupRemainingRequiredFields(t *testing.T) {
 		{"missing api key", func(c *Config) { c.AIAPIKey = "" }, "AI_API_KEY"},
 		{"missing embedding model", func(c *Config) { c.AIEmbeddingModel = "" }, "AI_API_EMBEDDING_MODEL"},
 		{"missing embedding dimensions", func(c *Config) { c.AIEmbeddingDimensions = 0 }, "AI_API_EMBEDDING_DIMENSIONS"},
-		{"missing reviewer model", func(c *Config) { c.AIReviewerModel = "" }, "AI_REVIEWER_MODEL"},
 		{"missing verifier model", func(c *Config) { c.AIVerifierModel = "" }, "AI_VERIFIER_MODEL"},
 	}
 

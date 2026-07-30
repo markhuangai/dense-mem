@@ -16,11 +16,11 @@ import (
 )
 
 func TestActivePlacementLeaseCoversVerifierAndCommitWindow(t *testing.T) {
-	if got := activePlacementLease(60, 10); got != 640*time.Second {
-		t.Fatalf("lease = %s, want verifier*10 + commit + buffer", got)
+	if got := activePlacementLease(60, 10); got != 5*time.Minute+40*time.Second {
+		t.Fatalf("lease = %s, want five assessor turns plus commit and buffer", got)
 	}
-	if got := activePlacementLease(120, 20); got != 1250*time.Second {
-		t.Fatalf("lease = %s, want verifier*10 + commit + buffer", got)
+	if got := activePlacementLease(400, 20); got != 2050*time.Second {
+		t.Fatalf("lease = %s, want five assessor timeouts plus commit and buffer", got)
 	}
 	if got := activePlacementLease(1, 1); got != 5*time.Minute {
 		t.Fatalf("lease = %s, want 5m minimum", got)

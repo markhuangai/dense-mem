@@ -87,11 +87,22 @@ func (r *LedgerRepositoryImpl) ResolvePlacementReview(
 		if err := validatePlacementResolutionState(input, scope); err != nil {
 			return err
 		}
-		evidenceIDs, err := appendPlacementResolutionEvidence(ctx, tx, input)
+		if err := validatePlacementAssessmentSelection(ctx, tx, input, scope); err != nil {
+			return err
+		}
+		evidenceFragments, err := appendPlacementResolutionEvidence(ctx, tx, input)
 		if err != nil {
 			return err
 		}
+		newItems, err := appendPlacementResolutionItems(ctx, tx, input, scope, evidenceFragments)
+		if err != nil {
+			return err
+		}
+		evidenceIDs := placementResolutionEvidenceIDs(evidenceFragments)
 		payload := placementResolutionPayload(input, scope, requestHash, evidenceIDs)
+		if len(newItems) > 0 {
+			payload["new_placement_item_ids"] = placementResolutionItemIDs(newItems)
+		}
 		outcomeID, err := insertPlacementOutcome(ctx, tx, PlacementOutcomeInput{
 			TeamID:          input.TeamID,
 			OwnerProfileID:  input.OwnerProfileID,
@@ -105,10 +116,13 @@ func (r *LedgerRepositoryImpl) ResolvePlacementReview(
 		if err != nil {
 			return err
 		}
-		if err := applyPlacementResolutionState(ctx, tx, input, scope, outcomeID, payload); err != nil {
+		if err := applyPlacementResolutionState(ctx, tx, input, scope, outcomeID, payload, newItems); err != nil {
 			return err
 		}
 		result = placementResolutionResult(input, scope, outcomeID, false)
+		if len(newItems) > 0 {
+			result.PlacementItemID = newItems[0].PlacementItemID
+		}
 		return nil
 	})
 	if err != nil {
@@ -277,6 +291,9 @@ func loadPlacementResolutionByIdempotency(
 	if got, _ := payload["request_hash"].(string); got != requestHash {
 		return nil, fmt.Errorf("%w: placement resolution idempotency key %q already recorded with a different request", ErrIdempotencyConflict, input.IdempotencyKey)
 	}
+	if newItemID := firstPlacementResolutionItemID(payload["new_placement_item_ids"]); newItemID != "" {
+		placementItemID = newItemID
+	}
 	return &ResolvePlacementReviewResult{
 		DecisionID:        outcomeID,
 		IngestID:          stringFromPayload(payload, "ingest_id", input.IngestID),
@@ -287,6 +304,15 @@ func loadPlacementResolutionByIdempotency(
 		CheckAfterSeconds: intFromPayload(payload, "check_after_seconds"),
 		Existing:          true,
 	}, rows.Err()
+}
+
+func firstPlacementResolutionItemID(value any) string {
+	values, ok := value.([]any)
+	if !ok || len(values) == 0 {
+		return ""
+	}
+	itemID, _ := values[0].(string)
+	return strings.TrimSpace(itemID)
 }
 
 func lockPlacementResolutionScope(
@@ -361,7 +387,7 @@ func appendPlacementResolutionEvidence(
 	ctx context.Context,
 	tx *gorm.DB,
 	input ResolvePlacementReviewInput,
-) ([]string, error) {
+) ([]EvidenceFragment, error) {
 	if len(input.Evidence) == 0 {
 		return nil, nil
 	}
@@ -384,7 +410,7 @@ func appendPlacementResolutionEvidence(
 		return nil, err
 	}
 	sources := make(map[string]SourceRevisionResult)
-	fragmentIDs := make([]string, 0, len(normalized.Evidence))
+	fragments := make([]EvidenceFragment, 0, len(normalized.Evidence))
 	for i, item := range normalized.Evidence {
 		var source *SourceRevisionResult
 		if item.SourceKey != "" {
@@ -408,7 +434,7 @@ func appendPlacementResolutionEvidence(
 		if err != nil {
 			return nil, err
 		}
-		fragmentIDs = append(fragmentIDs, fragment.FragmentID)
+		fragments = append(fragments, fragment)
 		if item.InitialEvent != nil {
 			eventInput := SecurityEventInput{
 				TeamID:             input.TeamID,
@@ -427,7 +453,7 @@ func appendPlacementResolutionEvidence(
 			}
 		}
 	}
-	return fragmentIDs, nil
+	return fragments, nil
 }
 
 func applyPlacementResolutionState(
@@ -437,6 +463,7 @@ func applyPlacementResolutionState(
 	scope placementResolutionScope,
 	outcomeID string,
 	payload map[string]any,
+	newItems []PlacementItem,
 ) error {
 	resolution := placementResolutionReviewTaskPayload(input, outcomeID)
 	switch domain.ResolveAction(input.Action) {
@@ -477,6 +504,12 @@ func applyPlacementResolutionState(
 			}
 			return requeuePlacementRunForUserResolution(ctx, tx, scope, string(domain.PlacementRunGuarded))
 		}
+		if len(newItems) > 0 {
+			if err := updatePlacementItemForResolution(ctx, tx, scope, "completed", "candidate", payload); err != nil {
+				return err
+			}
+			return requeuePlacementRunForNewEvidence(ctx, tx, scope)
+		}
 		if err := updatePlacementItemForResolution(ctx, tx, scope, "queued", "pending", payload); err != nil {
 			return err
 		}
@@ -504,6 +537,7 @@ func updateReviewTasksForResolution(
 		SET status = ?,
 		    resolution = ?::jsonb,
 		    resolved_at = %s,
+		    version = version + 1,
 		    updated_at = now()
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
@@ -518,9 +552,41 @@ func updateReviewTasksForResolution(
 		query += ` AND placement_item_id = ?::uuid`
 		args = append(args, input.PlacementItemID)
 	}
+	query += ` AND (assessment_id IS NULL OR expires_at IS NULL OR expires_at > now())`
 	if input.ObservationID != "" {
 		query += ` AND observation_id = ?::uuid`
 		args = append(args, input.ObservationID)
+	}
+	switch domain.ResolveAction(input.Action) {
+	case domain.ResolveSelectEntity:
+		query += ` AND (
+			(
+				assessment_id IS NOT NULL
+				AND
+				payload->>'semantic_kind' = 'identity'
+				AND (
+					payload->>'mention_ref' = ?
+					OR payload->>'subject_ref' = ?
+					OR payload->>'object_ref' = ?
+				)
+			)
+			OR (
+				assessment_id IS NULL
+				AND task_type = 'identity_needs_review'
+				AND reason = 'ambiguous_entity'
+				AND payload->>'mention_ref' = ?
+			)
+		)`
+		args = append(args, input.EntityRef, input.EntityRef, input.EntityRef, input.EntityRef)
+	case domain.ResolveSelectPredicate:
+		query += ` AND (
+			(assessment_id IS NOT NULL AND payload->>'semantic_kind' = 'predicate')
+			OR (
+				assessment_id IS NULL
+				AND task_type = 'predicate_needs_review'
+				AND reason = 'unknown_predicate'
+			)
+		)`
 	}
 	return tx.WithContext(ctx).Exec(query, args...).Error
 }
@@ -619,6 +685,31 @@ func requeuePlacementRunForUserResolution(
 		  AND placement_run_id = ?::uuid
 		  AND status <> 'processing'
 	`, status, scope.TeamID, scope.OwnerProfileID, scope.PlacementRunID)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrPlacementResolutionInvalidState
+	}
+	return nil
+}
+
+func requeuePlacementRunForNewEvidence(ctx context.Context, tx *gorm.DB, scope placementResolutionScope) error {
+	result := tx.WithContext(ctx).Exec(`
+		UPDATE placement_runs
+		SET status = 'queued',
+		    attempts = 0,
+		    error = '',
+		    available_at = now(),
+		    lease_until = NULL,
+		    worker_id = '',
+		    completed_at = NULL,
+		    updated_at = now()
+		WHERE team_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		  AND placement_run_id = ?::uuid
+		  AND status <> 'processing'
+	`, scope.TeamID, scope.OwnerProfileID, scope.PlacementRunID)
 	if result.Error != nil {
 		return result.Error
 	}

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -26,117 +25,6 @@ type PlacementCommitRepository interface {
 	CommitPlacementSemanticResult(ctx context.Context, input CommitPlacementSemanticInput) (*CommitPlacementSemanticResult, error)
 	CompletePlacementReviewResult(ctx context.Context, input CompletePlacementReviewInput) (*CompletePlacementReviewResult, error)
 	RequeuePlacementReviewResult(ctx context.Context, input RequeuePlacementReviewInput) (*RequeuePlacementReviewResult, error)
-}
-
-type CommitPlacementSemanticInput struct {
-	TeamID           string
-	OwnerProfileID   string
-	IngestID         string
-	PlacementRunID   string
-	PlacementItemID  string
-	WorkerID         string
-	ExpectedAttempts int
-	OutcomeKind      string
-	Status           string
-	Category         string
-	Payload          map[string]any
-
-	EntityResolutions        []PlacementEntityResolutionInput
-	RelationshipObservations []PlacementRelationshipDecisionInput
-	RelationshipReviews      []PlacementRelationshipReviewInput
-	RelationshipDecisions    []ApplyRelationshipDecisionInput
-}
-
-type PlacementEntityResolutionInput struct {
-	MentionRef      string
-	Action          string
-	EntityID        string
-	EntityKind      string
-	CanonicalName   string
-	FragmentID      string
-	SpanStart       *int
-	SpanEnd         *int
-	IdentityContext map[string]any
-	VerifierResult  map[string]any
-	Metadata        map[string]any
-}
-
-type PlacementRelationshipDecisionInput struct {
-	Ref                  string
-	SubjectRef           string
-	OriginalPredicate    string
-	PredicateKey         string
-	PredicateVersion     int
-	PredicateCandidate   *PlacementPredicateCandidateInput
-	ObjectRef            string
-	ObjectValue          *PlacementValueInput
-	Polarity             string
-	ScopeKey             string
-	ValidFrom            *time.Time
-	ValidTo              *time.Time
-	EvidenceVerdict      string
-	PromoteToFact        bool
-	Confidence           *float64
-	Rationale            string
-	Model                string
-	ResponseHash         string
-	Support              *EvidenceSupportInput
-	CorrectionTarget     *PlacementCorrectionTargetInput
-	ConflictContext      *PlacementConflictContextInput
-	ObservationMetadata  map[string]any
-	RelationshipMetadata map[string]any
-}
-
-type PlacementPredicateCandidateInput struct {
-	PredicateKey     string
-	PredicateVersion int
-	RelationshipKind string
-}
-
-type PlacementRelationshipReviewInput struct {
-	Ref               string
-	SubjectRef        string
-	OriginalPredicate string
-	ObjectRef         string
-	ObjectValue       *PlacementValueInput
-	Polarity          string
-	EvidenceVerdict   string
-	Confidence        *float64
-	Rationale         string
-	Model             string
-	ResponseHash      string
-	Support           *EvidenceSupportInput
-	Reason            string
-	Payload           map[string]any
-}
-
-type PlacementCorrectionTargetInput struct {
-	RelationshipID  string
-	ExpectedVersion int
-}
-
-type PlacementConflictContextInput struct {
-	ConflictID      string
-	ExpectedVersion int
-}
-
-type PlacementValueInput struct {
-	Ref                  string
-	ValueType            string
-	CanonicalValue       string
-	Unit                 string
-	Display              string
-	NormalizationVersion int
-	Metadata             map[string]any
-}
-
-type CommitPlacementSemanticResult struct {
-	Status              string
-	OutcomeID           string
-	RelationshipResults []RelationshipDecisionResult
-	SearchDocuments     []SearchDocumentResult
-	EntityResolutionIDs []string
-	ReviewTaskIDs       []string
 }
 
 var _ PlacementCommitRepository = (*LedgerRepositoryImpl)(nil)
@@ -250,6 +138,7 @@ func (r *LedgerRepositoryImpl) CommitPlacementSemanticResult(
 				input,
 				decision,
 				observation.CorrectionTarget,
+				observation.ConflictContext,
 				placementFragmentID,
 				r.embeddingJobMaxAttempts,
 				ConflictRuntimeConfig{
@@ -275,6 +164,7 @@ func (r *LedgerRepositoryImpl) CommitPlacementSemanticResult(
 				tx,
 				input,
 				withPlacementDecisionScope(input, decision),
+				nil,
 				nil,
 				placementFragmentID,
 				r.embeddingJobMaxAttempts,
@@ -351,6 +241,12 @@ func normalizeCommitPlacementSemanticInput(input CommitPlacementSemanticInput) C
 	if input.Category == "" {
 		input.Category = "validated_claim"
 	}
+	if input.RetryAfter < 0 {
+		input.RetryAfter = 0
+	}
+	if input.RetryAfter > placementRetryMaxDelay {
+		input.RetryAfter = placementRetryMaxDelay
+	}
 	for i := range input.EntityResolutions {
 		resolution := &input.EntityResolutions[i]
 		resolution.MentionRef = strings.TrimSpace(resolution.MentionRef)
@@ -359,6 +255,10 @@ func normalizeCommitPlacementSemanticInput(input CommitPlacementSemanticInput) C
 		resolution.EntityKind = strings.TrimSpace(resolution.EntityKind)
 		resolution.CanonicalName = strings.TrimSpace(resolution.CanonicalName)
 		resolution.FragmentID = strings.TrimSpace(resolution.FragmentID)
+		resolution.AssessmentID = strings.TrimSpace(resolution.AssessmentID)
+		resolution.SemanticReviewKind = strings.TrimSpace(resolution.SemanticReviewKind)
+		resolution.ReviewQuestion = strings.TrimSpace(resolution.ReviewQuestion)
+		resolution.ReviewGuidance = strings.TrimSpace(resolution.ReviewGuidance)
 		if resolution.EntityKind == "" {
 			resolution.EntityKind = string(domain.EntityKindOther)
 		}
@@ -379,6 +279,12 @@ func normalizeCommitPlacementSemanticInput(input CommitPlacementSemanticInput) C
 		review.Model = strings.TrimSpace(review.Model)
 		review.ResponseHash = strings.TrimSpace(review.ResponseHash)
 		review.Reason = strings.TrimSpace(review.Reason)
+		review.AssessmentID = strings.TrimSpace(review.AssessmentID)
+		review.AssessmentPolicyVersion = strings.TrimSpace(review.AssessmentPolicyVersion)
+		review.GateResult = strings.TrimSpace(review.GateResult)
+		review.SemanticReviewKind = strings.TrimSpace(review.SemanticReviewKind)
+		review.ReviewQuestion = strings.TrimSpace(review.ReviewQuestion)
+		review.ReviewGuidance = strings.TrimSpace(review.ReviewGuidance)
 		if review.Polarity == "" {
 			review.Polarity = "+"
 		}
@@ -389,16 +295,16 @@ func normalizeCommitPlacementSemanticInput(input CommitPlacementSemanticInput) C
 			value := normalizePlacementValueInput(*review.ObjectValue)
 			review.ObjectValue = &value
 		}
-		if review.Support != nil {
-			review.Support.FragmentID = strings.TrimSpace(review.Support.FragmentID)
-			review.Support.SourceGroupKey = strings.TrimSpace(review.Support.SourceGroupKey)
-			review.Support.SourceID = strings.TrimSpace(review.Support.SourceID)
-			review.Support.SourceRevisionID = strings.TrimSpace(review.Support.SourceRevisionID)
-			review.Support.Quote = strings.TrimSpace(review.Support.Quote)
-			review.Support.Authority = strings.TrimSpace(review.Support.Authority)
-			if review.Support.Authority == "" {
-				review.Support.Authority = string(domain.AuthorityPrimary)
-			}
+		review.Support, review.Supports = normalizeEvidenceSupports(review.Support, review.Supports)
+		if review.CorrectionTarget != nil {
+			target := *review.CorrectionTarget
+			target.RelationshipID = strings.TrimSpace(target.RelationshipID)
+			review.CorrectionTarget = &target
+		}
+		if review.ConflictContext != nil {
+			context := *review.ConflictContext
+			context.ConflictID = strings.TrimSpace(context.ConflictID)
+			review.ConflictContext = &context
 		}
 	}
 	return input
@@ -452,7 +358,38 @@ func validateCommitPlacementSemanticInput(input CommitPlacementSemanticInput) er
 	return nil
 }
 
+func placementCommitNeedsPlacementFragmentID(input CommitPlacementSemanticInput) bool {
+	if placementEvidenceSearchableStatus(input.Status) {
+		return true
+	}
+	for _, observation := range input.RelationshipObservations {
+		for _, support := range relationshipEvidenceSupports(observation.Support, observation.Supports) {
+			if strings.TrimSpace(support.FragmentID) == "" {
+				continue
+			}
+			return true
+		}
+	}
+	for _, decision := range input.RelationshipDecisions {
+		for _, support := range relationshipEvidenceSupports(decision.Support, decision.Supports) {
+			if strings.TrimSpace(support.FragmentID) == "" {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
 func validatePlacementEntityResolutionInput(input PlacementEntityResolutionInput) error {
+	if input.AssessmentID != "" {
+		if _, err := uuid.Parse(input.AssessmentID); err != nil {
+			return fmt.Errorf("entity resolution assessment_id is invalid: %w", err)
+		}
+	}
+	if err := validateSemanticReviewDetails(input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
+		return err
+	}
 	if input.MentionRef == "" {
 		return errors.New("entity resolution mention_ref is required")
 	}
@@ -488,6 +425,12 @@ func normalizePlacementRelationshipDecisionInput(input PlacementRelationshipDeci
 	input.Rationale = strings.TrimSpace(input.Rationale)
 	input.Model = strings.TrimSpace(input.Model)
 	input.ResponseHash = strings.TrimSpace(input.ResponseHash)
+	input.AssessmentID = strings.TrimSpace(input.AssessmentID)
+	input.AssessmentPolicyVersion = strings.TrimSpace(input.AssessmentPolicyVersion)
+	input.GateResult = strings.TrimSpace(input.GateResult)
+	input.SemanticReviewKind = strings.TrimSpace(input.SemanticReviewKind)
+	input.ReviewQuestion = strings.TrimSpace(input.ReviewQuestion)
+	input.ReviewGuidance = strings.TrimSpace(input.ReviewGuidance)
 	if input.PredicateCandidate != nil {
 		candidate := *input.PredicateCandidate
 		candidate.PredicateKey = strings.TrimSpace(candidate.PredicateKey)
@@ -510,17 +453,7 @@ func normalizePlacementRelationshipDecisionInput(input PlacementRelationshipDeci
 		value := normalizePlacementValueInput(*input.ObjectValue)
 		input.ObjectValue = &value
 	}
-	if input.Support != nil {
-		input.Support.FragmentID = strings.TrimSpace(input.Support.FragmentID)
-		input.Support.SourceGroupKey = strings.TrimSpace(input.Support.SourceGroupKey)
-		input.Support.SourceID = strings.TrimSpace(input.Support.SourceID)
-		input.Support.SourceRevisionID = strings.TrimSpace(input.Support.SourceRevisionID)
-		input.Support.Quote = strings.TrimSpace(input.Support.Quote)
-		input.Support.Authority = strings.TrimSpace(input.Support.Authority)
-		if input.Support.Authority == "" {
-			input.Support.Authority = "primary"
-		}
-	}
+	input.Support, input.Supports = normalizeEvidenceSupports(input.Support, input.Supports)
 	if input.CorrectionTarget != nil {
 		target := *input.CorrectionTarget
 		target.RelationshipID = strings.TrimSpace(target.RelationshipID)
@@ -535,6 +468,12 @@ func normalizePlacementRelationshipDecisionInput(input PlacementRelationshipDeci
 }
 
 func validatePlacementRelationshipDecisionInput(input PlacementRelationshipDecisionInput) error {
+	if err := validateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
+		return err
+	}
+	if err := validateSemanticReviewDetails(input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
+		return err
+	}
 	if input.SubjectRef == "" {
 		return errors.New("relationship observation subject_ref is required")
 	}
@@ -579,12 +518,12 @@ func validatePlacementRelationshipDecisionInput(input PlacementRelationshipDecis
 		return errors.New("relationship observation valid_to must be greater than or equal to valid_from")
 	}
 	if input.EvidenceVerdict == string(domain.VerificationEntailed) {
-		if input.Support == nil {
+		if len(relationshipEvidenceSupports(input.Support, input.Supports)) == 0 {
 			return errors.New("entailed relationship observations require support")
 		}
-		if err := validateEvidenceSupportInput(*input.Support); err != nil {
-			return err
-		}
+	}
+	if err := validateRelationshipEvidenceSupports(input.Support, input.Supports); err != nil {
+		return err
 	}
 	if input.CorrectionTarget != nil {
 		if err := validatePlacementCorrectionTargetInput(*input.CorrectionTarget); err != nil {
@@ -780,16 +719,17 @@ func insertPlacementEntityResolution(
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO entity_resolution_events (
 		    team_id, ingest_id, placement_item_id, owner_profile_id, mention_ref,
-		    action, entity_id, fragment_id, span_start, span_end, verifier_result, metadata
+		    action, entity_id, fragment_id, span_start, span_end, verifier_result, metadata,
+		    assessment_id
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, NULLIF(?, '')::uuid,
-		    NULLIF(?, '')::uuid, ?, ?, ?::jsonb, ?::jsonb
+		    NULLIF(?, '')::uuid, ?, ?, ?::jsonb, ?::jsonb, NULLIF(?, '')::uuid
 		)
 		RETURNING resolution_event_id::text
 	`, commit.TeamID, commit.IngestID, commit.PlacementItemID, commit.OwnerProfileID,
 		input.MentionRef, input.Action, entityID, input.FragmentID,
 		intPointerArg(input.SpanStart), intPointerArg(input.SpanEnd),
-		string(verifierResult), string(metadata)).Rows()
+		string(verifierResult), string(metadata), input.AssessmentID).Rows()
 	if err != nil {
 		return "", "", err
 	}
@@ -811,14 +751,16 @@ func insertEntityReviewTask(
 	input PlacementEntityResolutionInput,
 	resolutionID string,
 ) (string, error) {
-	payload, err := marshalJSON(map[string]any{
+	payload := map[string]any{
 		"mention_ref":         input.MentionRef,
 		"resolution_event_id": resolutionID,
 		"action":              input.Action,
 		"entity_kind":         input.EntityKind,
 		"canonical_name":      input.CanonicalName,
 		"reason":              "ambiguous_entity",
-	})
+	}
+	appendSemanticReviewPayload(payload, input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance)
+	payloadJSON, err := marshalJSON(payload)
 	if err != nil {
 		return "", err
 	}
@@ -826,17 +768,24 @@ func insertEntityReviewTask(
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO review_tasks (
 		    team_id, owner_profile_id, ingest_id, placement_item_id,
-		    task_type, status, reason, payload, dedupe_key, updated_at
+		    task_type, status, reason, payload, dedupe_key, assessment_id, expires_at, updated_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-		    'identity_needs_review', 'open', 'ambiguous_entity', ?::jsonb, ?, now()
+		    'identity_needs_review', 'open', 'ambiguous_entity', ?::jsonb, ?,
+		    NULLIF(?, '')::uuid,
+		    CASE WHEN NULLIF(?, '') IS NULL THEN NULL ELSE now() + interval '7 days' END,
+		    now()
 		)
 		ON CONFLICT (team_id, dedupe_key)
 		WHERE dedupe_key <> '' AND status IN ('open', 'acknowledged')
-		DO UPDATE SET updated_at = now()
+		DO UPDATE SET payload = EXCLUDED.payload,
+		              assessment_id = COALESCE(EXCLUDED.assessment_id, review_tasks.assessment_id),
+		              expires_at = COALESCE(EXCLUDED.expires_at, review_tasks.expires_at),
+		              version = review_tasks.version + 1,
+		              updated_at = now()
 		RETURNING review_task_id::text
 	`, commit.TeamID, commit.OwnerProfileID, commit.IngestID, commit.PlacementItemID,
-		string(payload), dedupeKey).Rows()
+		string(payloadJSON), dedupeKey, input.AssessmentID, input.AssessmentID).Rows()
 	if err != nil {
 		return "", err
 	}
@@ -863,29 +812,39 @@ func relationshipDecisionFromPlacementObservation(
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf("%w: relationship observation %q references subject_ref %q", errPlacementUnresolvedEndpoint, input.Ref, input.SubjectRef)
 	}
 	decision := ApplyRelationshipDecisionInput{
-		TeamID:               commit.TeamID,
-		OwnerProfileID:       commit.OwnerProfileID,
-		IngestID:             commit.IngestID,
-		PlacementItemID:      commit.PlacementItemID,
-		ProposalRef:          input.Ref,
-		SubjectRef:           input.SubjectRef,
-		SubjectEntityID:      subjectID,
-		OriginalPredicate:    input.OriginalPredicate,
-		PredicateKey:         input.PredicateKey,
-		PredicateVersion:     input.PredicateVersion,
-		Polarity:             input.Polarity,
-		ScopeKey:             input.ScopeKey,
-		ValidFrom:            input.ValidFrom,
-		ValidTo:              input.ValidTo,
-		EvidenceVerdict:      input.EvidenceVerdict,
-		PromoteToFact:        input.PromoteToFact,
-		Confidence:           input.Confidence,
-		Rationale:            input.Rationale,
-		Model:                input.Model,
-		ResponseHash:         input.ResponseHash,
-		Support:              input.Support,
-		ObservationMetadata:  input.ObservationMetadata,
-		RelationshipMetadata: input.RelationshipMetadata,
+		TeamID:                  commit.TeamID,
+		OwnerProfileID:          commit.OwnerProfileID,
+		IngestID:                commit.IngestID,
+		PlacementItemID:         commit.PlacementItemID,
+		ProposalRef:             input.Ref,
+		SubjectRef:              input.SubjectRef,
+		SubjectEntityID:         subjectID,
+		OriginalPredicate:       input.OriginalPredicate,
+		PredicateKey:            input.PredicateKey,
+		PredicateVersion:        input.PredicateVersion,
+		Polarity:                input.Polarity,
+		ScopeKey:                input.ScopeKey,
+		ValidFrom:               input.ValidFrom,
+		ValidTo:                 input.ValidTo,
+		EvidenceVerdict:         input.EvidenceVerdict,
+		PromoteToFact:           input.PromoteToFact,
+		Confidence:              input.Confidence,
+		Rationale:               input.Rationale,
+		Model:                   input.Model,
+		ResponseHash:            input.ResponseHash,
+		Support:                 input.Support,
+		Supports:                input.Supports,
+		ObservationMetadata:     input.ObservationMetadata,
+		RelationshipMetadata:    input.RelationshipMetadata,
+		AssessmentID:            input.AssessmentID,
+		AssessmentPolicyVersion: input.AssessmentPolicyVersion,
+		ThresholdUsed:           input.ThresholdUsed,
+		GateResult:              input.GateResult,
+		SuppressSupport:         input.SuppressSupport,
+		SemanticReviewKind:      input.SemanticReviewKind,
+		ReviewQuestion:          input.ReviewQuestion,
+		ReviewOptions:           input.ReviewOptions,
+		ReviewGuidance:          input.ReviewGuidance,
 	}
 	if input.ObjectValue != nil {
 		value, err := upsertPlacementValue(ctx, tx, commit, *input.ObjectValue)
