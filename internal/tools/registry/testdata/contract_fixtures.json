@@ -67,6 +67,7 @@
         {
           "item_id": "item-1",
           "evidence_id": "ev-1",
+	      "superseded_evidence_ids": [],
           "version": 1,
           "evidence_index": 0,
           "category": "evidence_processed",
@@ -194,8 +195,9 @@
       "relationship": {"relationship_id": "rel-1"},
       "observations": [],
       "evidence_supports": [],
-      "support_decision_events": [],
-      "evidence_fragments": [],
+      "evidence_support_decision_events": [],
+      "evidence": [],
+      "evidence_lifecycle_events": [],
       "verification_events": [],
       "transitions": [],
       "conflicts": [],
@@ -308,10 +310,10 @@
       "include_entity_names": true
     },
     "output": {
-      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2.3\"}",
+      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2.4\"}",
       "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "filename": "release-workflow.json",
-      "counts": {"relationships": 1, "evidence_fragments": 1},
+      "counts": {"relationships": 1, "evidence": 1},
       "omissions": []
     }
   },
@@ -322,13 +324,13 @@
     "scopes": ["read"],
     "valid": true,
     "input": {
-      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2.3\"}",
+      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2.4\"}",
       "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "mode": "review"
     },
     "output": {
       "valid": true,
-      "format": "dense-mem.memory-pack.v2.3",
+      "format": "dense-mem.memory-pack.v2.4",
       "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "mode": "review",
       "counts": {"relationships": 0},
@@ -343,7 +345,7 @@
     "scopes": ["write"],
     "valid": true,
     "input": {
-      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2.3\"}",
+      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2.4\"}",
       "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "mode": "review",
       "conflict_decisions": [{"item_id": "rel-1", "decision": "import_for_review"}],

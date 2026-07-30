@@ -211,6 +211,7 @@ func RunActiveServer(
 	lifecycleSvc := memoryservice.NewLifecycleService(memoryservice.LifecycleDependencies{
 		Semantic:  semanticRepo,
 		Placement: ledgerRepo,
+		Evidence:  ledgerRepo,
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
@@ -233,7 +234,7 @@ func RunActiveServer(
 		Semantic:    semanticRepo,
 		Remember:    rememberSvc,
 		Ledger:      skillPackImportRepo,
-		HistoryDays: cfg.GetSkillPackImportHistoryDays(),
+		HistoryDays: cfg.GetMemoryPackImportHistoryDays(),
 	})
 	recallFeedbackEventService := service.NewRecallFeedbackEventService(recallFeedbackEventRepo, appConfigService, nil)
 	recallFeedbackEventService.Start(context.Background())
@@ -589,7 +590,7 @@ func processTeamConflictReview(
 	started := time.Now()
 	outcome := "completed"
 	defer func() {
-		metrics.ObserveMemoryFunnelLatency("conflict_review", time.Since(started).Seconds(), outcome)
+		observability.RecordConflictReviewDuration(ctx, metrics, time.Since(started).Seconds(), outcome)
 	}()
 	lease := time.Duration(cfg.GetConflictReviewLeaseSeconds()) * time.Second
 	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, repository.ConflictReviewRunInput{

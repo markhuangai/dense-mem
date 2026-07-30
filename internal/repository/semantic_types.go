@@ -363,24 +363,25 @@ type TraceRelationshipInput struct {
 }
 
 type RelationshipTraceResult struct {
-	Relationship           *RelationshipTraceRecord
-	Observations           []RelationshipObservationRecord
-	EvidenceSupports       []RelationshipEvidenceSupportRecord
-	SupportDecisionEvents  []RelationshipSupportDecisionEvent
-	EvidenceFragments      []TraceEvidenceFragment
-	VerificationEvents     []RelationshipVerificationEvent
-	Transitions            []RelationshipTransitionEvent
-	Conflicts              []RelationshipConflictCaseRecord
-	CrossProfileReferences []RelationshipCrossReferenceRecord
-	IdentityCorrections    []EntityCorrectionEventRecord
-	SupersessionLineage    []RelationshipTraceRecord
-	SearchDocuments        []TraceSearchDocument
-	EmbeddingJobs          []TraceEmbeddingJob
-	SemanticNodes          []SemanticGraphNode
-	SemanticEdges          []SemanticGraphEdge
-	VisitedEntityIDs       []string
-	StoppedReason          string
-	Truncated              bool
+	Relationship            *RelationshipTraceRecord
+	Observations            []RelationshipObservationRecord
+	EvidenceSupports        []RelationshipEvidenceSupportRecord
+	SupportDecisionEvents   []RelationshipSupportDecisionEvent
+	EvidenceFragments       []TraceEvidenceFragment
+	EvidenceLifecycleEvents []TraceEvidenceLifecycleEvent
+	VerificationEvents      []RelationshipVerificationEvent
+	Transitions             []RelationshipTransitionEvent
+	Conflicts               []RelationshipConflictCaseRecord
+	CrossProfileReferences  []RelationshipCrossReferenceRecord
+	IdentityCorrections     []EntityCorrectionEventRecord
+	SupersessionLineage     []RelationshipTraceRecord
+	SearchDocuments         []TraceSearchDocument
+	EmbeddingJobs           []TraceEmbeddingJob
+	SemanticNodes           []SemanticGraphNode
+	SemanticEdges           []SemanticGraphEdge
+	VisitedEntityIDs        []string
+	StoppedReason           string
+	Truncated               bool
 }
 
 type RelationshipTraceRecord struct {
@@ -452,11 +453,11 @@ type RelationshipVerificationEvent struct {
 }
 
 type RelationshipEvidenceSupportRecord struct {
-	SupportID           string         `json:"support_id,omitempty"`
+	SupportID           string         `json:"evidence_support_id,omitempty"`
 	RelationshipID      string         `json:"relationship_id,omitempty"`
 	ObservationID       string         `json:"observation_id,omitempty"`
 	VerificationEventID string         `json:"verification_event_id,omitempty"`
-	FragmentID          string         `json:"fragment_id,omitempty"`
+	FragmentID          string         `json:"evidence_id,omitempty"`
 	OwnerProfileID      string         `json:"owner_profile_id,omitempty"`
 	SourceGroupKey      string         `json:"source_group_key,omitempty"`
 	SourceID            string         `json:"source_id,omitempty"`
@@ -470,8 +471,8 @@ type RelationshipEvidenceSupportRecord struct {
 }
 
 type RelationshipSupportDecisionEvent struct {
-	SupportDecisionID string         `json:"support_decision_id,omitempty"`
-	SupportID         string         `json:"support_id,omitempty"`
+	SupportDecisionID string         `json:"evidence_support_decision_id,omitempty"`
+	SupportID         string         `json:"evidence_support_id,omitempty"`
 	RelationshipID    string         `json:"relationship_id,omitempty"`
 	OwnerProfileID    string         `json:"owner_profile_id,omitempty"`
 	ActorProfileID    string         `json:"actor_profile_id,omitempty"`
@@ -506,7 +507,7 @@ type RelationshipSupportDecisionResult struct {
 }
 
 type TraceEvidenceFragment struct {
-	FragmentID        string         `json:"fragment_id,omitempty"`
+	FragmentID        string         `json:"evidence_id,omitempty"`
 	IngestID          string         `json:"ingest_id,omitempty"`
 	OwnerProfileID    string         `json:"owner_profile_id,omitempty"`
 	SourceID          string         `json:"source_id,omitempty"`
@@ -525,6 +526,17 @@ type TraceEvidenceFragment struct {
 	Labels            []string       `json:"labels,omitempty"`
 	Metadata          map[string]any `json:"metadata,omitempty"`
 	CreatedAt         time.Time      `json:"created_at,omitempty"`
+}
+
+type TraceEvidenceLifecycleEvent struct {
+	LifecycleEventID      string    `json:"lifecycle_event_id,omitempty"`
+	LifecycleOperationID  string    `json:"lifecycle_operation_id,omitempty"`
+	TargetFragmentID      string    `json:"target_evidence_id,omitempty"`
+	ReplacementFragmentID string    `json:"replacement_evidence_id,omitempty"`
+	OwnerProfileID        string    `json:"owner_profile_id,omitempty"`
+	Action                string    `json:"action,omitempty"`
+	Reason                string    `json:"reason,omitempty"`
+	CreatedAt             time.Time `json:"created_at,omitempty"`
 }
 
 type RelationshipTransitionEvent struct {

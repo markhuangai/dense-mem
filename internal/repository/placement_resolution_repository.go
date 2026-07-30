@@ -424,7 +424,6 @@ func appendPlacementResolutionEvidence(
 				ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
 				ContentHash:                   item.SourceRevisionContentHash,
 				Envelope:                      item.SourceRevisionEnvelope,
-				SupersedesFragmentIDs:         item.SupersedesFragmentIDs,
 			}, sources)
 			if err != nil {
 				return nil, err

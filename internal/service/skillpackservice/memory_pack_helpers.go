@@ -70,7 +70,7 @@ func memoryPackCandidateFromEdge(
 	return candidate
 }
 
-func MemoryPackSortedKeys(values map[string]MemoryPackEvidenceFragment) []string {
+func MemoryPackSortedEvidenceIDs(values map[string]MemoryPackEvidence) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

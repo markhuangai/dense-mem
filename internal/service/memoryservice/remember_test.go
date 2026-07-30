@@ -248,6 +248,10 @@ func TestGetMemoryPlacementUsesAuthenticatedOwnerAndReturnsCurrentVersion(t *tes
 			IngestID:       ingestID,
 			PlacementRunID: uuid.NewString(),
 			Status:         string(domain.PlacementRunCompleted),
+			Evidence: []repository.EvidenceFragment{{
+				FragmentID:            fragmentID,
+				SupersededEvidenceIDs: []string{"superseded-evidence-id"},
+			}},
 			Items: []repository.PlacementItem{{
 				PlacementItemID: itemID,
 				FragmentID:      fragmentID,
@@ -269,6 +273,15 @@ func TestGetMemoryPlacementUsesAuthenticatedOwnerAndReturnsCurrentVersion(t *tes
 						"reason":              "accepted",
 					}},
 				},
+				ReviewTasks: []repository.PlacementReviewTask{{
+					ReviewTaskID: "review-task-1",
+					Version:      2,
+					Kind:         "identity_needs_review",
+					Status:       "open",
+					Question:     "Which entity is correct?",
+					Options:      []map[string]any{{"entity_id": "entity-1"}},
+					Guidance:     "Select an allowed entity.",
+				}},
 			}},
 		},
 	}
@@ -284,6 +297,7 @@ func TestGetMemoryPlacementUsesAuthenticatedOwnerAndReturnsCurrentVersion(t *tes
 	require.Len(t, result.Items, 1)
 	require.Equal(t, itemID, result.Items[0].ItemID)
 	require.Equal(t, fragmentID, result.Items[0].EvidenceID)
+	require.Equal(t, []string{"superseded-evidence-id"}, result.Items[0].SupersededEvidenceIDs)
 	require.Equal(t, 4, result.Items[0].Version)
 	require.Equal(t, string(domain.EvidenceProcessed), result.Items[0].Category)
 	require.Equal(t, string(domain.SearchProjectionCurrent), result.Items[0].SearchState)
@@ -296,9 +310,37 @@ func TestGetMemoryPlacementUsesAuthenticatedOwnerAndReturnsCurrentVersion(t *tes
 		Category:           string(domain.OutcomeRelationshipAccepted),
 		Reason:             "accepted",
 	}}, result.Items[0].RelationshipOutcomes)
+	require.Equal(t, []PlacementReviewTaskRef{{
+		ReviewTaskID: "review-task-1",
+		Version:      2,
+		Kind:         "identity_needs_review",
+		Status:       "open",
+		Question:     "Which entity is correct?",
+		Options:      []map[string]any{{"entity_id": "entity-1"}},
+		Guidance:     "Select an allowed entity.",
+	}}, result.Items[0].ReviewTasks)
 	require.Equal(t, teamID.String(), ledger.placementInput.TeamID)
 	require.Equal(t, profileID.String(), ledger.placementInput.OwnerProfileID)
 	require.Equal(t, ingestID, ledger.placementInput.IngestID)
+}
+
+func TestPlacementRunResultUsesEmptyLineageForCurrentEvidence(t *testing.T) {
+	result := placementRunResultFromLedger(&repository.CreateIngestResult{
+		Status: string(domain.PlacementRunCompleted),
+		Evidence: []repository.EvidenceFragment{{
+			FragmentID: "evidence-current",
+		}},
+		Items: []repository.PlacementItem{{
+			PlacementItemID: "item-current",
+			FragmentID:      "evidence-current",
+			Status:          string(domain.PlacementRunCompleted),
+			Category:        string(domain.EvidenceProcessed),
+			Version:         1,
+		}},
+	})
+	require.Len(t, result.Items, 1)
+	require.NotNil(t, result.Items[0].SupersededEvidenceIDs)
+	require.Empty(t, result.Items[0].SupersededEvidenceIDs)
 }
 
 func TestGetMemoryPlacementRequiresAuthContractAndLedger(t *testing.T) {
@@ -348,7 +390,7 @@ func TestRememberUsesOneSourceRevisionHashForBatch(t *testing.T) {
 				Content:               "first source fragment",
 				SourceKey:             "wiki://write-pipeline",
 				SourceRevision:        "rev-2",
-				SupersedesFragmentIDs: []string{"evidence-old-a"},
+				SupersedesEvidenceIDs: []string{"evidence-old-a"},
 				IdempotencyKey:        "fragment-a",
 				Metadata:              map[string]any{"item": "first"},
 			},
@@ -356,7 +398,7 @@ func TestRememberUsesOneSourceRevisionHashForBatch(t *testing.T) {
 				Content:               "second source fragment",
 				SourceKey:             "wiki://write-pipeline",
 				SourceRevision:        "rev-2",
-				SupersedesFragmentIDs: []string{"evidence-old-b"},
+				SupersedesEvidenceIDs: []string{"evidence-old-b"},
 				IdempotencyKey:        "fragment-b",
 				Metadata:              map[string]any{"item": "second"},
 			},
@@ -374,13 +416,13 @@ func TestRememberUsesOneSourceRevisionHashForBatch(t *testing.T) {
 	if first == ledger.input.Evidence[0].ContentHash || first == ledger.input.Evidence[1].ContentHash {
 		t.Fatalf("source revision hash %q must describe the batch, not one fragment", first)
 	}
-	require.Equal(t, []string{"evidence-old-a"}, ledger.input.Evidence[0].Metadata["supersedes_fragment_ids"])
+	require.Equal(t, []string{"evidence-old-a"}, ledger.input.Evidence[0].Metadata["supersedes_evidence_ids"])
 	require.Equal(t, "fragment-a", ledger.input.Evidence[0].Metadata["evidence_idempotency_key"])
-	require.Equal(t, []string{"evidence-old-b"}, ledger.input.Evidence[1].Metadata["supersedes_fragment_ids"])
+	require.Equal(t, []string{"evidence-old-b"}, ledger.input.Evidence[1].Metadata["supersedes_evidence_ids"])
 	require.Equal(t, "fragment-b", ledger.input.Evidence[1].Metadata["evidence_idempotency_key"])
-	require.NotContains(t, ledger.input.Evidence[0].SourceRevisionEnvelope, "supersedes_fragment_ids")
+	require.NotContains(t, ledger.input.Evidence[0].SourceRevisionEnvelope, "supersedes_evidence_ids")
 	require.NotContains(t, ledger.input.Evidence[0].SourceRevisionEnvelope, "evidence_idempotency_key")
-	require.NotContains(t, ledger.input.Evidence[1].SourceRevisionEnvelope, "supersedes_fragment_ids")
+	require.NotContains(t, ledger.input.Evidence[1].SourceRevisionEnvelope, "supersedes_evidence_ids")
 	require.NotContains(t, ledger.input.Evidence[1].SourceRevisionEnvelope, "evidence_idempotency_key")
 }
 

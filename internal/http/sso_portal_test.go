@@ -427,18 +427,14 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 	})
 
 	e := NewServer(config.Config{
-		HTTPMaxBodyBytes:        1048576,
-		RateLimitPerMinute:      100,
-		FragmentCreateRateLimit: 60,
-		FragmentReadRateLimit:   300,
-		ClaimWriteRateLimit:     60,
-		ClaimReadRateLimit:      300,
+		HTTPMaxBodyBytes:   1048576,
+		RateLimitPerMinute: 100,
 	}, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{
 		APIKeyRepo:   &userPortalAuthRepo{},
 		RateLimitSvc: service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
 		SSOService:   ssoSvc,
-		Config:       &config.Config{RateLimitPerMinute: 100, FragmentCreateRateLimit: 60, FragmentReadRateLimit: 300, ClaimWriteRateLimit: 60, ClaimReadRateLimit: 300},
+		Config:       &config.Config{RateLimitPerMinute: 100},
 	})
 
 	req := httptest.NewRequest(nethttp.MethodGet, "/ui/api/sso/providers", nil)
@@ -479,12 +475,8 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 
 func TestUserPortalPublicSSOStartIsRateLimited(t *testing.T) {
 	cfg := &config.Config{
-		HTTPMaxBodyBytes:        1048576,
-		RateLimitPerMinute:      1,
-		FragmentCreateRateLimit: 60,
-		FragmentReadRateLimit:   300,
-		ClaimWriteRateLimit:     60,
-		ClaimReadRateLimit:      300,
+		HTTPMaxBodyBytes:   1048576,
+		RateLimitPerMinute: 1,
 	}
 	e := NewServer(*cfg, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{

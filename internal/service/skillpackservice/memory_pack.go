@@ -87,7 +87,7 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 		},
 		Relationships: []MemoryPackRelationship{},
 	}
-	fragments := map[string]MemoryPackEvidenceFragment{}
+	evidence := map[string]MemoryPackEvidence{}
 	supports := []MemoryPackEvidenceSupport{}
 	for _, relationshipID := range relationshipIDs {
 		trace, err := s.deps.Semantic.TraceRelationship(ctx, repository.TraceRelationshipInput{
@@ -110,11 +110,11 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 		if includeSupport {
 			for _, support := range trace.EvidenceSupports {
 				if support.FragmentID != "" {
-					item.SupportFragmentIDs = append(item.SupportFragmentIDs, support.FragmentID)
+					item.SupportEvidenceIDs = append(item.SupportEvidenceIDs, support.FragmentID)
 				}
 				supports = append(supports, MemoryPackEvidenceSupport{
 					RelationshipItemID: item.ItemID,
-					FragmentID:         support.FragmentID,
+					EvidenceID:         support.FragmentID,
 					Quote:              support.Quote,
 					SpanStart:          support.SpanStart,
 					SpanEnd:            support.SpanEnd,
@@ -125,8 +125,8 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 				if fragment.FragmentID == "" {
 					continue
 				}
-				fragments[fragment.FragmentID] = MemoryPackEvidenceFragment{
-					FragmentID:       fragment.FragmentID,
+				evidence[fragment.FragmentID] = MemoryPackEvidence{
+					EvidenceID:       fragment.FragmentID,
 					Content:          fragment.Content,
 					ContentHash:      fragment.ContentHash,
 					SourceType:       fragment.SourceType,
@@ -139,12 +139,12 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 				}
 			}
 		}
-		item.SupportFragmentIDs = uniqueStrings(item.SupportFragmentIDs)
+		item.SupportEvidenceIDs = uniqueStrings(item.SupportEvidenceIDs)
 		artifact.Relationships = append(artifact.Relationships, item)
 	}
 	if includeSupport {
-		for _, id := range MemoryPackSortedKeys(fragments) {
-			artifact.EvidenceFragments = append(artifact.EvidenceFragments, fragments[id])
+		for _, id := range MemoryPackSortedEvidenceIDs(evidence) {
+			artifact.Evidence = append(artifact.Evidence, evidence[id])
 		}
 		artifact.EvidenceSupports = supports
 	}
@@ -176,7 +176,7 @@ func (s *memoryPackService) Inspect(ctx context.Context, req InspectRequest) (*I
 	if err != nil {
 		return nil, err
 	}
-	return inspectMemoryPack(loaded.artifact, loaded.hash, loaded.source), nil
+	return inspectMemoryPack(loaded.artifact, loaded.hash, loaded.format, loaded.source), nil
 }
 
 func (s *memoryPackService) Import(ctx context.Context, req ImportRequest) (*ImportResult, error) {
@@ -197,7 +197,7 @@ func (s *memoryPackService) Import(ctx context.Context, req ImportRequest) (*Imp
 	if err != nil {
 		return nil, err
 	}
-	inspection := inspectMemoryPack(loaded.artifact, loaded.hash, loaded.source)
+	inspection := inspectMemoryPack(loaded.artifact, loaded.hash, loaded.format, loaded.source)
 	if err := validateMemoryPackImportSelections(loaded.artifact, req.SelectedItemIDs, req.ConflictDecisions); err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func (s *memoryPackService) Import(ctx context.Context, req ImportRequest) (*Imp
 		OwnerProfileID:     actor.ProfileID.String(),
 		ArtifactHash:       loaded.hash,
 		SourceURL:          loaded.source,
-		SchemaVersion:      loaded.artifact.Format,
+		SchemaVersion:      loaded.format,
 		Name:               loaded.artifact.Name,
 		Mode:               req.Mode,
 		Status:             domain.SkillPackImportStatusInspecting,
@@ -225,7 +225,7 @@ func (s *memoryPackService) Import(ctx context.Context, req ImportRequest) (*Imp
 		UpdatedAt:          now,
 		Summary: map[string]any{
 			"contract_version": domain.ContractVersion,
-			"artifact_format":  loaded.artifact.Format,
+			"artifact_format":  loaded.format,
 			"owner_profile_id": actor.ProfileID.String(),
 		},
 	}

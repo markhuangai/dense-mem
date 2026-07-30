@@ -127,7 +127,7 @@ func TestRunCyclePersistsValidatedProviderHypothesis(t *testing.T) {
 			PredicateVersion: 1,
 			ObjectEntityID:   objectID,
 			SourceRefs: []domain.DreamSourceRef{
-				{Type: "claim", ID: activeSourceID},
+				{Type: "relationship", ID: activeSourceID},
 				{Type: "candidate_relationship", ID: candidateSourceID},
 			},
 		}},

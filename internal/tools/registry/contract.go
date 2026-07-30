@@ -15,6 +15,7 @@ import (
 const (
 	ToolRemember                    = "remember"
 	ToolGetMemoryPlacement          = "get_memory_placement"
+	ToolRetractEvidence             = "retract_evidence"
 	ToolResolveMemoryPlacement      = "resolve_memory_placement"
 	ToolCorrectEntityResolution     = "correct_entity_resolution"
 	ToolRecallMemory                = "recall_memory"
@@ -35,6 +36,7 @@ const (
 var contractToolNames = []string{
 	ToolRemember,
 	ToolGetMemoryPlacement,
+	ToolRetractEvidence,
 	ToolResolveMemoryPlacement,
 	ToolCorrectEntityResolution,
 	ToolRecallMemory,
@@ -67,6 +69,13 @@ func ContractTools() []Tool {
 			[]string{"read"},
 			getMemoryPlacementInputSchema(),
 			placementRunOutputSchema(),
+		),
+		contractTool(
+			ToolRetractEvidence,
+			"Retract caller-owned evidence while preserving append-only provenance.",
+			[]string{"write"},
+			retractEvidenceInputSchema(),
+			retractEvidenceOutputSchema(),
 		),
 		contractTool(
 			ToolResolveMemoryPlacement,
@@ -202,6 +211,26 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				req.ContractVersion = domain.ContractVersion
 				res, err := deps.Remember.GetMemoryPlacement(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(res)
+			}
+		case ToolRetractEvidence:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.Lifecycle == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("retract_evidence: invalid input: %w", err)
+				}
+				var req memoryservice.RetractEvidenceRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("retract_evidence: invalid input: %w", err)
+				}
+				req.ContractVersion = domain.ContractVersion
+				res, err := deps.Lifecycle.RetractEvidence(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -533,6 +562,8 @@ func ValidateContractInput(tool Tool, args map[string]any, scopes []string) erro
 		return validateRemember(args)
 	case ToolRecallMemory:
 		return validateRecall(args)
+	case ToolRetractEvidence:
+		return validateUniqueStringArray(args, "evidence_ids")
 	case ToolTraceMemory:
 		return validateUniqueStringArray(args, "predicate_keys")
 	case ToolResolveMemoryPlacement:
@@ -586,6 +617,9 @@ func validateRemember(args map[string]any) error {
 		if err := validateSourceRevisionBatch(i, fields, sourceRevisions); err != nil {
 			return err
 		}
+	}
+	if err := validateDirectEvidenceSupersessions(evidence); err != nil {
+		return err
 	}
 	proposal, _ := objectFields(args["proposal"])
 	if err := validateUniqueObjectRefsIn(proposal["entities"], "proposal.entities", "ref"); err != nil {
@@ -663,7 +697,7 @@ func validateSourceRevisionFields(index int, fields map[string]any) error {
 	_, hasSourceKey := fields["source_key"]
 	_, hasSourceRevision := fields["source_revision"]
 	_, hasPreviousRevision := fields["previous_source_revision"]
-	_, hasSupersededFragments := fields["supersedes_fragment_ids"]
+	_, hasSupersededEvidence := fields["supersedes_evidence_ids"]
 	if hasSourceKey != hasSourceRevision {
 		return fmt.Errorf("evidence[%d]: source_key and source_revision must appear together", index)
 	}
@@ -673,9 +707,9 @@ func validateSourceRevisionFields(index int, fields map[string]any) error {
 			index,
 		)
 	}
-	if hasSupersededFragments && (!hasSourceKey || !hasSourceRevision) {
+	if hasSupersededEvidence && hasPreviousRevision {
 		return fmt.Errorf(
-			"evidence[%d]: supersedes_fragment_ids requires source_key and source_revision",
+			"evidence[%d]: supersedes_evidence_ids cannot be combined with previous_source_revision",
 			index,
 		)
 	}

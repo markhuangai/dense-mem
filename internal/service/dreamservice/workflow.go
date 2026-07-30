@@ -90,7 +90,7 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 	result.CompletedAt = s.now().UTC()
 	result.DreamRan = true
 	result.CreatedDreams = created
-	result.CandidateClaims = candidateInputCount(inputs)
+	result.CandidateRelationships = candidateInputCount(inputs)
 	result.Status = "completed"
 	completeStatus := "completed"
 	if runErr != nil {
@@ -383,7 +383,7 @@ func dreamInputsFromRefs(
 	seen := map[string]struct{}{}
 	for _, ref := range refs {
 		switch ref.Type {
-		case "relationship", "candidate_relationship", "fact", "claim":
+		case "relationship", "candidate_relationship":
 		default:
 			return nil, false
 		}
@@ -468,7 +468,7 @@ func applyGeneratedTarget(
 func firstDreamSeedSource(refs []domain.DreamSourceRef, inputs map[string]repository.DreamInput) (repository.DreamInput, bool) {
 	for _, ref := range refs {
 		switch ref.Type {
-		case "relationship", "candidate_relationship", "fact", "claim":
+		case "relationship", "candidate_relationship":
 			if input, ok := inputs[ref.ID]; ok {
 				return input, true
 			}

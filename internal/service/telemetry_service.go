@@ -293,32 +293,15 @@ func telemetryWindowedCardSpecs(scope TelemetryScope, baseLabels map[string]stri
 		{ID: "llm_recall_irrelevant_rate", Label: "LLM irrelevant recall", Unit: "percent", Query: telemetryRecallFeedbackRate(scope, baseLabels, map[string]string{"irrelevant": "true"}, window)},
 		{ID: "dream_feedbacks", Label: "Dream feedback", Unit: "events", Query: telemetrySparseCounterIncrease("densemem_dream_feedback_total", scope, baseLabels, nil, window)},
 		{ID: "dream_promote_candidates", Label: "Dream promote candidates", Unit: "events", Query: telemetrySparseCounterIncrease("densemem_dream_feedback_total", scope, baseLabels, map[string]string{"decision": "promote_candidate", "outcome": "ok"}, window)},
-		{ID: "fragment_creates", Label: "Fragment creates", Unit: "events", Query: telemetrySparseCounterIncrease("densemem_fragment_create_total", scope, baseLabels, nil, window)},
-		{ID: "claim_creates", Label: "Claim creates", Unit: "events", Query: telemetrySparseCounterIncrease("densemem_claim_create_total", scope, baseLabels, nil, window)},
-		{ID: "promotions", Label: "Promotions", Unit: "promotions", Query: telemetrySparseCounterIncrease("densemem_promotion_outcome_total", scope, baseLabels, map[string]string{"outcome": "promoted"}, window)},
-		{ID: "promotion_rate", Label: "Promotion rate", Unit: "percent", Query: telemetryPromotionRate(scope, baseLabels, window)},
-		{ID: "retractions", Label: "Retractions", Unit: "events", Query: telemetrySparseCounterIncrease("densemem_retractions_total", scope, baseLabels, nil, window)},
-		{ID: "facts_requeued", Label: "Facts requeued", Unit: "events", Query: telemetrySparseCounterIncrease("densemem_fact_needs_revalidation_total", scope, baseLabels, nil, window)},
-		{ID: "community_runs", Label: "Community runs", Unit: "runs", Query: telemetrySparseCounterIncrease("densemem_community_detect_total", scope, baseLabels, nil, window)},
 		{ID: "avg_http_latency", Label: "Avg HTTP latency", Unit: "ms", Query: telemetryAverageLatency("densemem_http_request_duration_seconds", scope, baseLabels, window)},
 		{ID: "avg_embedding_latency", Label: "Avg embedding latency", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_embedding_duration_seconds", scope, baseLabels, nil, window, 1000)},
 		{ID: "avg_verifier_latency", Label: "Avg verifier latency", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_verifier_duration_seconds", scope, baseLabels, nil, window, 1000)},
-		{ID: "avg_claim_verify_latency", Label: "Avg claim-to-verify", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_memory_funnel_latency_seconds", scope, baseLabels, map[string]string{"stage": "claim_to_verify"}, window, 1000)},
-		{ID: "avg_claim_promotion_latency", Label: "Avg claim-to-promote", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_memory_funnel_latency_seconds", scope, baseLabels, map[string]string{"stage": "claim_to_promotion"}, window, 1000)},
-		{ID: "avg_verify_promotion_latency", Label: "Avg verify-to-promote", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_memory_funnel_latency_seconds", scope, baseLabels, map[string]string{"stage": "verify_to_promotion"}, window, 1000)},
-		{ID: "avg_promote_lock_wait", Label: "Avg promote lock wait", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_promote_lock_wait_seconds", scope, baseLabels, nil, window, 1000)},
-		{ID: "avg_community_detect_latency", Label: "Avg community detect", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_community_detect_duration_seconds", scope, baseLabels, nil, window, 1000)},
-		{ID: "avg_community_projected_nodes", Label: "Avg community nodes", Unit: "nodes", Query: telemetrySparseHistogramAverage("densemem_community_detect_projected_nodes", scope, baseLabels, nil, window, 1)},
+		{ID: "avg_conflict_review_duration", Label: "Avg conflict review", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_conflict_review_duration_seconds", scope, baseLabels, nil, window, 1000)},
 	}
 }
 
 func telemetryCurrentCardSpecs(scope TelemetryScope, baseLabels map[string]string) []telemetryQuerySpec {
-	return []telemetryQuerySpec{
-		{ID: "pending_claims", Label: "Pending claims", Unit: "claims", Query: telemetryGaugeSum("densemem_knowledge_backlog_items", scope, baseLabels, map[string]string{"item": "claim_candidate"})},
-		{ID: "validated_claims", Label: "Validated claims", Unit: "claims", Query: telemetryGaugeSum("densemem_knowledge_backlog_items", scope, baseLabels, map[string]string{"item": "claim_validated"})},
-		{ID: "disputed_claims", Label: "Disputed claims", Unit: "claims", Query: telemetryGaugeSum("densemem_knowledge_backlog_items", scope, baseLabels, map[string]string{"item": "claim_disputed"})},
-		{ID: "revalidation_backlog", Label: "Revalidation backlog", Unit: "facts", Query: telemetryGaugeSum("densemem_knowledge_backlog_items", scope, baseLabels, map[string]string{"item": "fact_needs_revalidation"})},
-	}
+	return nil
 }
 
 func telemetrySeriesSpecs(selector string, rateWindow string) []telemetryQuerySpec {
@@ -339,7 +322,6 @@ func telemetryActivitySeriesSpecs(selector string, rateWindow string) []telemetr
 		{ID: "verifier_tokens", Label: "Verifier tokens", Unit: "tokens/s", Query: fmt.Sprintf("sum(rate(densemem_verifier_tokens_total%s[%s]))", telemetrySelectorWithRaw(selector, `kind="total"`), rateWindow)},
 		{ID: "verify_verdicts", Label: "Verify verdicts", Unit: "verdicts/s", Query: fmt.Sprintf("sum(rate(densemem_verify_verdict_total%s[%s]))", selector, rateWindow)},
 		{ID: "recalls", Label: "Recall requests", Unit: "requests/s", Query: fmt.Sprintf("sum(rate(densemem_recall_requests_total%s[%s]))", selector, rateWindow)},
-		{ID: "promotions", Label: "Promotions", Unit: "promotions/s", Query: fmt.Sprintf("sum(rate(densemem_promotion_outcome_total%s[%s]))", telemetrySelectorWithRaw(selector, `outcome="promoted"`), rateWindow)},
 		{ID: "recall_results", Label: "Recall results", Unit: "results", Query: telemetryRangeHistogramAverage("densemem_recall_results", selector, "", rateWindow, 1)},
 		{ID: "recall_p95_latency", Label: "Recall p95 latency", Unit: "ms", Query: telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", selector, "", rateWindow, 0.95, 1000)},
 		{ID: "llm_recall_used_rate", Label: "LLM recall used", Unit: "percent", Query: telemetryRangeRecallFeedbackRate(selector, `used="true"`, rateWindow)},
@@ -349,27 +331,12 @@ func telemetryActivitySeriesSpecs(selector string, rateWindow string) []telemetr
 		{ID: "llm_recall_irrelevant_rate", Label: "LLM irrelevant recall", Unit: "percent", Query: telemetryRangeRecallFeedbackRate(selector, `irrelevant="true"`, rateWindow)},
 		{ID: "dream_feedbacks", Label: "Dream feedback", Unit: "events/s", Query: fmt.Sprintf("sum(rate(densemem_dream_feedback_total%s[%s]))", selector, rateWindow)},
 		{ID: "dream_promote_candidates", Label: "Dream promote candidates", Unit: "events/s", Query: fmt.Sprintf("sum(rate(densemem_dream_feedback_total%s[%s]))", telemetrySelectorWithRaw(selector, `decision="promote_candidate",outcome="ok"`), rateWindow)},
-		{ID: "fragment_creates", Label: "Fragment creates", Unit: "events/s", Query: fmt.Sprintf("sum(rate(densemem_fragment_create_total%s[%s]))", selector, rateWindow)},
-		{ID: "claim_creates", Label: "Claim creates", Unit: "events/s", Query: fmt.Sprintf("sum(rate(densemem_claim_create_total%s[%s]))", selector, rateWindow)},
-		{ID: "retractions", Label: "Retractions", Unit: "events/s", Query: fmt.Sprintf("sum(rate(densemem_retractions_total%s[%s]))", selector, rateWindow)},
-		{ID: "facts_requeued", Label: "Facts requeued", Unit: "events/s", Query: fmt.Sprintf("sum(rate(densemem_fact_needs_revalidation_total%s[%s]))", selector, rateWindow)},
-		{ID: "community_runs", Label: "Community runs", Unit: "runs/s", Query: fmt.Sprintf("sum(rate(densemem_community_detect_total%s[%s]))", selector, rateWindow)},
-		{ID: "claim_verify_latency", Label: "Claim-to-verify", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_memory_funnel_latency_seconds", selector, `stage="claim_to_verify"`, rateWindow, 1000)},
-		{ID: "claim_promotion_latency", Label: "Claim-to-promote", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_memory_funnel_latency_seconds", selector, `stage="claim_to_promotion"`, rateWindow, 1000)},
-		{ID: "verify_promotion_latency", Label: "Verify-to-promote", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_memory_funnel_latency_seconds", selector, `stage="verify_to_promotion"`, rateWindow, 1000)},
-		{ID: "promote_lock_wait", Label: "Promote lock wait", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_promote_lock_wait_seconds", selector, "", rateWindow, 1000)},
-		{ID: "community_detect_latency", Label: "Community detect", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_community_detect_duration_seconds", selector, "", rateWindow, 1000)},
-		{ID: "community_projected_nodes", Label: "Community nodes", Unit: "nodes", Query: telemetryRangeHistogramAverage("densemem_community_detect_projected_nodes", selector, "", rateWindow, 1)},
+		{ID: "conflict_review_duration", Label: "Conflict review", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_conflict_review_duration_seconds", selector, "", rateWindow, 1000)},
 	}
 }
 
 func telemetryStateSeriesSpecs(selector string) []telemetryQuerySpec {
-	return []telemetryQuerySpec{
-		{ID: "pending_claims", Label: "Pending claims", Unit: "claims", Query: telemetryRangeGauge("densemem_knowledge_backlog_items", selector, `item="claim_candidate"`)},
-		{ID: "validated_claims", Label: "Validated claims", Unit: "claims", Query: telemetryRangeGauge("densemem_knowledge_backlog_items", selector, `item="claim_validated"`)},
-		{ID: "disputed_claims", Label: "Disputed claims", Unit: "claims", Query: telemetryRangeGauge("densemem_knowledge_backlog_items", selector, `item="claim_disputed"`)},
-		{ID: "revalidation_backlog", Label: "Revalidation backlog", Unit: "facts", Query: telemetryRangeGauge("densemem_knowledge_backlog_items", selector, `item="fact_needs_revalidation"`)},
-	}
+	return nil
 }
 
 func telemetryIncrease(metric string, scope TelemetryScope, baseLabels map[string]string, extra map[string]string, window string) string {
@@ -394,10 +361,6 @@ func telemetryRecallFeedbackRate(scope TelemetryScope, baseLabels map[string]str
 	matched := telemetryOrZero(telemetrySparseCounterIncrease("densemem_recall_feedback_total", scope, baseLabels, extra, window))
 	all := telemetrySparseCounterIncrease("densemem_recall_feedback_total", scope, baseLabels, nil, window)
 	return fmt.Sprintf("100 * (%s) / (%s)", matched, all)
-}
-
-func telemetryGaugeSum(metric string, scope TelemetryScope, baseLabels map[string]string, extra map[string]string) string {
-	return fmt.Sprintf("sum(%s%s)", metric, telemetrySelector(scope, mergeTelemetryLabels(baseLabels, extra)))
 }
 
 func telemetrySparseCounterIncrease(metric string, scope TelemetryScope, baseLabels map[string]string, extra map[string]string, window string) string {
@@ -449,16 +412,6 @@ func telemetryRangeSparseHistogramAverage(metric string, selector string, raw st
 	sum := telemetrySparseCounterIncreaseForSelector(metric+"_sum", selector, rateWindow)
 	count := telemetrySparseCounterIncreaseForSelector(metric+"_count", selector, rateWindow)
 	return fmt.Sprintf("%g * (%s) / (%s)", multiplier, sum, count)
-}
-
-func telemetryRangeGauge(metric string, selector string, raw string) string {
-	return fmt.Sprintf("sum(%s%s)", metric, telemetrySelectorWithRaw(selector, raw))
-}
-
-func telemetryPromotionRate(scope TelemetryScope, baseLabels map[string]string, window string) string {
-	promoted := telemetryOrZero(telemetrySparseCounterIncrease("densemem_promotion_outcome_total", scope, baseLabels, map[string]string{"outcome": "promoted"}, window))
-	all := telemetrySparseCounterIncrease("densemem_promotion_outcome_total", scope, baseLabels, nil, window)
-	return fmt.Sprintf("100 * (%s) / (%s)", promoted, all)
 }
 
 func telemetryOrZero(query string) string {

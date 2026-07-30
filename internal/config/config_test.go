@@ -26,8 +26,6 @@ func clearEnv() {
 		"HTTP_MAX_BODY_BYTES",
 		"AUTH_VERIFY_MAX_CONCURRENCY",
 		"RATE_LIMIT_PER_MINUTE",
-		"FRAGMENT_CREATE_RATE_LIMIT",
-		"FRAGMENT_READ_RATE_LIMIT",
 		"SSE_HEARTBEAT_SECONDS",
 		"SSE_MAX_DURATION_SECONDS",
 		"SSE_MAX_CONCURRENT_STREAMS",
@@ -61,13 +59,8 @@ func clearEnv() {
 		"AI_ASSESSOR_MAX_INPUT_TOKENS",
 		"MEMORY_PLACEMENT_WORKER_COUNT",
 		"MEMORY_PLACEMENT_POLL_SECONDS",
-		"CLAIM_WRITE_RATE_LIMIT",
-		"CLAIM_READ_RATE_LIMIT",
-		"RECALL_VALIDATED_CLAIM_WEIGHT",
 		"PROMOTE_TX_TIMEOUT_SECONDS",
 		"MEMORY_PACK_IMPORT_HISTORY_DAYS",
-		"SKILL_PACK_IMPORT_HISTORY_DAYS",
-		"AI_COMMUNITY_MAX_NODES",
 		"CONTROL_HTTP_ADDR",
 		"CONTROL_PORTAL_TOKEN",
 		"TELEMETRY_ENABLED",
@@ -470,11 +463,8 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.GetRedisDB()
 	_ = provider.GetHTTPMaxBodyBytes()
 	_ = provider.GetRateLimitPerMinute()
-	_ = provider.GetFragmentCreateRateLimit()
-	_ = provider.GetFragmentReadRateLimit()
 	_ = provider.GetSSEHeartbeatSeconds()
 	_ = provider.GetSSEMaxDurationSeconds()
-	_ = provider.GetSSEMaxConcurrentStreams()
 	_ = provider.GetEmbeddingDimensions()
 	_ = provider.GetAIAPIURL()
 	_ = provider.GetAIAPIKey()
@@ -488,12 +478,8 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.GetAIVerifierModel()
 	_ = provider.GetAIVerifierTimeoutSeconds()
 	_ = provider.GetAIVerifierMaxConcurrency()
-	_ = provider.GetClaimWriteRateLimit()
-	_ = provider.GetClaimReadRateLimit()
-	_ = provider.GetRecallValidatedClaimWeight()
 	_ = provider.GetPromoteTxTimeoutSeconds()
-	_ = provider.GetSkillPackImportHistoryDays()
-	_ = provider.GetAICommunityMaxNodes()
+	_ = provider.GetMemoryPackImportHistoryDays()
 	_ = provider.GetControlHTTPAddr()
 	_ = provider.GetControlPortalToken()
 }
@@ -501,8 +487,6 @@ func TestConfigProviderInterface(t *testing.T) {
 func TestConfigGetterFallbacksAndParsers(t *testing.T) {
 	cfg := &Config{
 		HTTPMaxBodyBytes:         2048,
-		FragmentCreateRateLimit:  11,
-		FragmentReadRateLimit:    22,
 		AIAPIURL:                 "https://shared.example/v1",
 		AIAPIKey:                 "shared-key",
 		AIReviewerModel:          "reviewer-model",
@@ -512,12 +496,6 @@ func TestConfigGetterFallbacksAndParsers(t *testing.T) {
 
 	if got := cfg.GetHTTPMaxBodyBytes(); got != 2048 {
 		t.Fatalf("GetHTTPMaxBodyBytes() = %d, want 2048", got)
-	}
-	if got := cfg.GetFragmentCreateRateLimit(); got != 11 {
-		t.Fatalf("GetFragmentCreateRateLimit() = %d, want 11", got)
-	}
-	if got := cfg.GetFragmentReadRateLimit(); got != 22 {
-		t.Fatalf("GetFragmentReadRateLimit() = %d, want 22", got)
 	}
 	if got := cfg.GetAIVerifierTimeoutSeconds(); got != 60 {
 		t.Fatalf("GetAIVerifierTimeoutSeconds() fallback = %d, want 60", got)
@@ -829,35 +807,19 @@ func TestLoadKnowledgeConfigDefaults(t *testing.T) {
 	if got := cfg.GetAIVerifierMaxConcurrency(); got != 5 {
 		t.Errorf("GetAIVerifierMaxConcurrency() = %d, want %d", got, 5)
 	}
-	if got := cfg.GetClaimWriteRateLimit(); got != 60 {
-		t.Errorf("GetClaimWriteRateLimit() = %d, want %d", got, 60)
-	}
-	if got := cfg.GetClaimReadRateLimit(); got != 300 {
-		t.Errorf("GetClaimReadRateLimit() = %d, want %d", got, 300)
-	}
-	if got := cfg.GetRecallValidatedClaimWeight(); got != 0.5 {
-		t.Errorf("GetRecallValidatedClaimWeight() = %f, want %f", got, 0.5)
-	}
 	if got := cfg.GetPromoteTxTimeoutSeconds(); got != 10 {
 		t.Errorf("GetPromoteTxTimeoutSeconds() = %d, want %d", got, 10)
-	}
-	if got := cfg.GetSkillPackImportHistoryDays(); got != 30 {
-		t.Errorf("GetSkillPackImportHistoryDays() = %d, want %d", got, 30)
 	}
 	if got := cfg.GetMemoryPackImportHistoryDays(); got != 30 {
 		t.Errorf("GetMemoryPackImportHistoryDays() = %d, want %d", got, 30)
 	}
-	if got := cfg.GetAICommunityMaxNodes(); got != 500000 {
-		t.Errorf("GetAICommunityMaxNodes() = %d, want %d", got, 500000)
-	}
 }
 
 func TestLoadMemoryPackImportHistoryEnv(t *testing.T) {
-	t.Run("new env wins", func(t *testing.T) {
+	t.Run("canonical env", func(t *testing.T) {
 		clearEnv()
 		setRequiredEnv()
 		os.Setenv("MEMORY_PACK_IMPORT_HISTORY_DAYS", "14")
-		os.Setenv("SKILL_PACK_IMPORT_HISTORY_DAYS", "60")
 
 		cfg, err := Load()
 		if err != nil {
@@ -865,20 +827,6 @@ func TestLoadMemoryPackImportHistoryEnv(t *testing.T) {
 		}
 		if got := cfg.GetMemoryPackImportHistoryDays(); got != 14 {
 			t.Fatalf("GetMemoryPackImportHistoryDays() = %d, want 14", got)
-		}
-	})
-
-	t.Run("legacy env fallback", func(t *testing.T) {
-		clearEnv()
-		setRequiredEnv()
-		os.Setenv("SKILL_PACK_IMPORT_HISTORY_DAYS", "21")
-
-		cfg, err := Load()
-		if err != nil {
-			t.Fatalf("Load() returned unexpected error: %v", err)
-		}
-		if got := cfg.GetMemoryPackImportHistoryDays(); got != 21 {
-			t.Fatalf("GetMemoryPackImportHistoryDays() = %d, want 21", got)
 		}
 	})
 }

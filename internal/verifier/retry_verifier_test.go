@@ -19,38 +19,31 @@ type stubConfigProvider struct {
 	maxConcurrency int
 }
 
-func (s *stubConfigProvider) GetPostgresDSN() string                 { return "" }
-func (s *stubConfigProvider) GetRedisAddr() string                   { return "" }
-func (s *stubConfigProvider) GetRedisPassword() string               { return "" }
-func (s *stubConfigProvider) GetRedisDB() int                        { return 0 }
-func (s *stubConfigProvider) GetHTTPMaxBodyBytes() int               { return 1048576 }
-func (s *stubConfigProvider) GetRateLimitPerMinute() int             { return 100 }
-func (s *stubConfigProvider) GetFragmentCreateRateLimit() int        { return 60 }
-func (s *stubConfigProvider) GetFragmentReadRateLimit() int          { return 300 }
-func (s *stubConfigProvider) GetSSEHeartbeatSeconds() int            { return 30 }
-func (s *stubConfigProvider) GetSSEMaxDurationSeconds() int          { return 300 }
-func (s *stubConfigProvider) GetSSEMaxConcurrentStreams() int        { return 10 }
-func (s *stubConfigProvider) GetEmbeddingDimensions() int            { return 1536 }
-func (s *stubConfigProvider) GetAIAPIURL() string                    { return "" }
-func (s *stubConfigProvider) GetAIAPIKey() string                    { return "" }
-func (s *stubConfigProvider) GetAIEmbeddingModel() string            { return "" }
-func (s *stubConfigProvider) GetAIEmbeddingDimensions() int          { return 0 }
-func (s *stubConfigProvider) GetAIEmbeddingTimeoutSeconds() int      { return 30 }
-func (s *stubConfigProvider) IsEmbeddingConfigured() bool            { return false }
-func (s *stubConfigProvider) GetAIVerifierAPIURL() string            { return "" }
-func (s *stubConfigProvider) GetAIVerifierAPIKey() string            { return "" }
-func (s *stubConfigProvider) GetAIReviewerModel() string             { return "reviewer-model" }
-func (s *stubConfigProvider) GetAIVerifierModel() string             { return "gpt-4o-mini" }
-func (s *stubConfigProvider) GetAIVerifierTimeoutSeconds() int       { return 60 }
-func (s *stubConfigProvider) GetAIVerifierMaxConcurrency() int       { return s.maxConcurrency }
-func (s *stubConfigProvider) GetClaimWriteRateLimit() int            { return 60 }
-func (s *stubConfigProvider) GetClaimReadRateLimit() int             { return 300 }
-func (s *stubConfigProvider) GetRecallValidatedClaimWeight() float64 { return 0.5 }
-func (s *stubConfigProvider) GetPromoteTxTimeoutSeconds() int        { return 10 }
-func (s *stubConfigProvider) GetSkillPackImportHistoryDays() int     { return 30 }
-func (s *stubConfigProvider) GetAICommunityMaxNodes() int            { return 500000 }
-func (s *stubConfigProvider) GetControlHTTPAddr() string             { return "127.0.0.1:8090" }
-func (s *stubConfigProvider) GetControlPortalToken() string          { return "" }
+func (s *stubConfigProvider) GetPostgresDSN() string              { return "" }
+func (s *stubConfigProvider) GetRedisAddr() string                { return "" }
+func (s *stubConfigProvider) GetRedisPassword() string            { return "" }
+func (s *stubConfigProvider) GetRedisDB() int                     { return 0 }
+func (s *stubConfigProvider) GetHTTPMaxBodyBytes() int            { return 1048576 }
+func (s *stubConfigProvider) GetRateLimitPerMinute() int          { return 100 }
+func (s *stubConfigProvider) GetSSEHeartbeatSeconds() int         { return 30 }
+func (s *stubConfigProvider) GetSSEMaxDurationSeconds() int       { return 300 }
+func (s *stubConfigProvider) GetEmbeddingDimensions() int         { return 1536 }
+func (s *stubConfigProvider) GetAIAPIURL() string                 { return "" }
+func (s *stubConfigProvider) GetAIAPIKey() string                 { return "" }
+func (s *stubConfigProvider) GetAIEmbeddingModel() string         { return "" }
+func (s *stubConfigProvider) GetAIEmbeddingDimensions() int       { return 0 }
+func (s *stubConfigProvider) GetAIEmbeddingTimeoutSeconds() int   { return 30 }
+func (s *stubConfigProvider) IsEmbeddingConfigured() bool         { return false }
+func (s *stubConfigProvider) GetAIVerifierAPIURL() string         { return "" }
+func (s *stubConfigProvider) GetAIVerifierAPIKey() string         { return "" }
+func (s *stubConfigProvider) GetAIReviewerModel() string          { return "reviewer-model" }
+func (s *stubConfigProvider) GetAIVerifierModel() string          { return "gpt-4o-mini" }
+func (s *stubConfigProvider) GetAIVerifierTimeoutSeconds() int    { return 60 }
+func (s *stubConfigProvider) GetAIVerifierMaxConcurrency() int    { return s.maxConcurrency }
+func (s *stubConfigProvider) GetPromoteTxTimeoutSeconds() int     { return 10 }
+func (s *stubConfigProvider) GetMemoryPackImportHistoryDays() int { return 30 }
+func (s *stubConfigProvider) GetControlHTTPAddr() string          { return "127.0.0.1:8090" }
+func (s *stubConfigProvider) GetControlPortalToken() string       { return "" }
 
 // newTestCfg returns a stub config with the given concurrency cap.
 func newTestCfg(concurrency int) *stubConfigProvider {

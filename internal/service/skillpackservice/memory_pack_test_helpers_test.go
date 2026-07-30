@@ -3,6 +3,7 @@ package skillpackservice
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -193,9 +194,23 @@ func testArtifactJSON(t *testing.T, artifact MemoryPackArtifact) string {
 	return string(data)
 }
 
+func testArtifactV23JSON(t *testing.T, artifact memoryPackArtifactV23) (string, string) {
+	t.Helper()
+	_, hash, err := canonicalMemoryPackArtifactV23(artifact)
+	if err != nil {
+		t.Fatalf("canonical v2.3 artifact: %v", err)
+	}
+	artifact.ContentSHA256 = hash
+	data, err := json.Marshal(normalizeMemoryPackArtifactV23(artifact))
+	if err != nil {
+		t.Fatalf("marshal v2.3 artifact: %v", err)
+	}
+	return string(data), hash
+}
+
 func cloneTestArtifact(artifact MemoryPackArtifact) MemoryPackArtifact {
 	artifact.Relationships = append([]MemoryPackRelationship(nil), artifact.Relationships...)
-	artifact.EvidenceFragments = append([]MemoryPackEvidenceFragment(nil), artifact.EvidenceFragments...)
+	artifact.Evidence = append([]MemoryPackEvidence(nil), artifact.Evidence...)
 	artifact.EvidenceSupports = append([]MemoryPackEvidenceSupport(nil), artifact.EvidenceSupports...)
 	return artifact
 }

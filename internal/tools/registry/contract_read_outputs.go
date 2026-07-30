@@ -192,9 +192,9 @@ func traceRelationshipSchema() map[string]any {
 			"predicate_key":       schemaString("Registered predicate key.", 128),
 			"predicate_version":   map[string]any{"type": "integer", "minimum": 1},
 			"object_entity_id":    nullableString("Object Entity ID.", 128),
-				"object_value_id":     nullableString("Object Value ID.", 128),
-				"polarity":            schemaEnum([]string{"+", "-"}),
-				"relationship_status": schemaEnum(domain.RelationshipStatuses()),
+			"object_value_id":     nullableString("Object Value ID.", 128),
+			"polarity":            schemaEnum([]string{"+", "-"}),
+			"relationship_status": schemaEnum(domain.RelationshipStatuses()),
 			"version":             map[string]any{"type": "integer", "minimum": 1},
 			"valid_from":          nullableDateTime("Real-world validity start."),
 			"valid_to":            nullableDateTime("Real-world validity end."),
@@ -223,13 +223,13 @@ func traceObservationSchema() map[string]any {
 
 func traceEvidenceSupportSchema() map[string]any {
 	return closedObject(
-		[]string{"support_id", "relationship_id", "fragment_id", "span_start", "span_end"},
+		[]string{"evidence_support_id", "relationship_id", "evidence_id", "span_start", "span_end"},
 		map[string]any{
-			"support_id":            schemaString("Evidence support ID.", 128),
+			"evidence_support_id":   schemaString("Evidence support ID.", 128),
 			"relationship_id":       schemaString("Relationship ID.", 128),
 			"observation_id":        schemaString("Observation ID.", 128),
 			"verification_event_id": schemaString("Verification event ID.", 128),
-			"fragment_id":           schemaString("Evidence fragment ID.", 128),
+			"evidence_id":           schemaString("Evidence ID.", 128),
 			"source_group_key":      schemaString("Derived source group key.", 256),
 			"span_start":            map[string]any{"type": "integer", "minimum": 0},
 			"span_end":              map[string]any{"type": "integer", "minimum": 0},
@@ -242,24 +242,24 @@ func traceEvidenceSupportSchema() map[string]any {
 
 func traceSupportDecisionSchema() map[string]any {
 	return closedObject(
-		[]string{"support_decision_id", "support_id", "relationship_id", "decision", "created_at"},
+		[]string{"evidence_support_decision_id", "evidence_support_id", "relationship_id", "decision", "created_at"},
 		map[string]any{
-			"support_decision_id": schemaString("Support decision ID.", 128),
-			"support_id":          schemaString("Evidence support ID.", 128),
-			"relationship_id":     schemaString("Relationship ID.", 128),
-			"actor_profile_id":    schemaString("Decision actor profile ID.", 128),
-			"decision":            schemaEnum([]string{"grant", "revoke", "reinstate"}),
-			"reason":              schemaString("Bounded decision reason.", 1000),
-			"created_at":          map[string]any{"type": "string", "format": "date-time"},
+			"evidence_support_decision_id": schemaString("Evidence support decision ID.", 128),
+			"evidence_support_id":          schemaString("Evidence support ID.", 128),
+			"relationship_id":              schemaString("Relationship ID.", 128),
+			"actor_profile_id":             schemaString("Decision actor profile ID.", 128),
+			"decision":                     schemaEnum([]string{"grant", "revoke", "reinstate"}),
+			"reason":                       schemaString("Bounded decision reason.", 1000),
+			"created_at":                   map[string]any{"type": "string", "format": "date-time"},
 		},
 	)
 }
 
-func traceEvidenceFragmentSchema() map[string]any {
+func traceEvidenceSchema() map[string]any {
 	return closedObject(
-		[]string{"fragment_id", "ingest_id", "evidence_index", "content_hash", "content_truncated"},
+		[]string{"evidence_id", "ingest_id", "evidence_index", "content_hash", "content_truncated"},
 		map[string]any{
-			"fragment_id":       schemaString("Evidence fragment ID.", 128),
+			"evidence_id":       schemaString("Evidence ID.", 128),
 			"ingest_id":         schemaString("Placement run ID.", 128),
 			"evidence_index":    map[string]any{"type": "integer", "minimum": 0, "maximum": 19},
 			"content":           schemaString("Optional bounded evidence content.", 999),
@@ -268,6 +268,21 @@ func traceEvidenceFragmentSchema() map[string]any {
 			"source_type":       schemaEnum([]string{"conversation", "document", "observation", "manual"}),
 			"source":            schemaString("Bounded provenance locator.", 256),
 			"created_at":        map[string]any{"type": "string", "format": "date-time"},
+		},
+	)
+}
+
+func traceEvidenceLifecycleEventSchema() map[string]any {
+	return closedObject(
+		[]string{"lifecycle_event_id", "lifecycle_operation_id", "target_evidence_id", "action", "created_at"},
+		map[string]any{
+			"lifecycle_event_id":      schemaString("Append-only evidence lifecycle event ID.", 128),
+			"lifecycle_operation_id":  schemaString("Append-only evidence lifecycle operation ID.", 128),
+			"target_evidence_id":      schemaString("Retired evidence ID.", 128),
+			"replacement_evidence_id": nullableString("Replacement evidence ID when superseded.", 128),
+			"action":                  schemaEnum([]string{"supersede", "retract"}),
+			"reason":                  schemaString("Bounded lifecycle reason.", 1000),
+			"created_at":              map[string]any{"type": "string", "format": "date-time"},
 		},
 	)
 }

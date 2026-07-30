@@ -559,7 +559,14 @@ func hydrateRecallEvidence(
 				      )
 				    LIMIT 1
 				) AS relationship ON TRUE
-				WHERE quarantine.quarantine_id IS NULL
+			WHERE quarantine.quarantine_id IS NULL
+			  AND NOT EXISTS (
+			      SELECT 1
+			      FROM evidence_lifecycle_events AS lifecycle
+			      WHERE lifecycle.team_id = fragment.team_id
+			        AND lifecycle.target_fragment_id = fragment.fragment_id
+			        AND (?::timestamptz IS NULL OR lifecycle.created_at <= ?::timestamptz)
+			  )
 			  AND (
 			      fragment.source_id IS NULL
 			      OR fragment_source.current_revision_id = fragment.source_revision_id
@@ -590,6 +597,7 @@ func hydrateRecallEvidence(
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
+		input.KnownAt, input.KnownAt,
 		input.KnownAt, input.KnownAt).Rows()
 	if err != nil {
 		return nil, err

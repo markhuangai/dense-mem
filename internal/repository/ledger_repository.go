@@ -16,14 +16,14 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-const maxEvidenceItems = 100
-
 var (
-	ErrIdempotencyConflict    = errors.New("idempotency conflict")
-	ErrPlacementLeaseConflict = errors.New("placement lease conflict")
-	ErrPlacementNotFound      = errors.New("placement not found")
-	ErrSourceRevisionConflict = errors.New("source revision conflict")
-	ErrTeamInactive           = errors.New("team is not active")
+	ErrIdempotencyConflict       = errors.New("idempotency conflict")
+	ErrPlacementLeaseConflict    = errors.New("placement lease conflict")
+	ErrPlacementNotFound         = errors.New("placement not found")
+	ErrSourceRevisionConflict    = errors.New("source revision conflict")
+	ErrEvidenceLifecycleNotFound = errors.New("evidence lifecycle target not found")
+	ErrEvidenceLifecycleConflict = errors.New("evidence lifecycle conflict")
+	ErrTeamInactive              = errors.New("team is not active")
 )
 
 type LedgerRepository interface {
@@ -65,7 +65,8 @@ type EvidenceInput struct {
 	ExpectedPreviousRevisionToken string
 	SourceRevisionContentHash     string
 	SourceRevisionEnvelope        map[string]any
-	SupersedesFragmentIDs         []string
+	SupersedesEvidenceIDs         []string
+	IdempotencyKey                string
 	Labels                        []string
 	Metadata                      map[string]any
 	InitialEvent                  *SecurityEventDraft
@@ -110,12 +111,13 @@ type CreateIngestResult struct {
 }
 
 type EvidenceFragment struct {
-	FragmentID       string
-	EvidenceIndex    int
-	Content          string
-	ContentHash      string
-	SourceID         string
-	SourceRevisionID string
+	FragmentID            string
+	EvidenceIndex         int
+	Content               string
+	ContentHash           string
+	SourceID              string
+	SourceRevisionID      string
+	SupersededEvidenceIDs []string
 }
 
 type PlacementRun struct {
@@ -204,6 +206,12 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
 			return err
 		}
+		if replay, err := loadDirectSupersessionReplay(ctx, tx, input); err != nil {
+			return err
+		} else if replay != nil {
+			result = replay
+			return nil
+		}
 		ingestID, created, err := insertKnowledgeIngest(ctx, tx, input)
 		if err != nil {
 			return err
@@ -239,7 +247,6 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 					ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
 					ContentHash:                   item.SourceRevisionContentHash,
 					Envelope:                      item.SourceRevisionEnvelope,
-					SupersedesFragmentIDs:         item.SupersedesFragmentIDs,
 				}, sources)
 				if err != nil {
 					return err
@@ -273,6 +280,9 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 					}
 				}
 			}
+		}
+		if err := applyDirectEvidenceSupersessions(ctx, tx, input, ingestID, evidence); err != nil {
+			return err
 		}
 		result = &CreateIngestResult{
 			TeamID:         input.TeamID,
@@ -515,114 +525,6 @@ func ensureActiveTeamForMutation(ctx context.Context, tx *gorm.DB, teamID string
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrTeamInactive
 		}
-		return err
-	}
-	return nil
-}
-
-func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
-	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
-	input.RequestHash = strings.TrimSpace(input.RequestHash)
-	input.SourceSummary = strings.TrimSpace(input.SourceSummary)
-	input.Status = strings.TrimSpace(input.Status)
-	if input.Status == "" {
-		input.Status = string(domain.PlacementRunQueued)
-	}
-	for i := range input.Evidence {
-		input.Evidence[i].ContentHash = strings.TrimSpace(input.Evidence[i].ContentHash)
-		if input.Evidence[i].ContentHash == "" && input.Evidence[i].Content != "" {
-			input.Evidence[i].ContentHash = sha256Hex(input.Evidence[i].Content)
-		}
-		input.Evidence[i].SourceType = strings.TrimSpace(input.Evidence[i].SourceType)
-		if input.Evidence[i].SourceType == "" {
-			input.Evidence[i].SourceType = "conversation"
-		}
-		input.Evidence[i].Authority = strings.TrimSpace(input.Evidence[i].Authority)
-		if input.Evidence[i].Authority == "" {
-			input.Evidence[i].Authority = "primary"
-		}
-		input.Evidence[i].SourceRef = strings.TrimSpace(input.Evidence[i].SourceRef)
-		input.Evidence[i].SourceKey = strings.TrimSpace(input.Evidence[i].SourceKey)
-		input.Evidence[i].SourceRevisionToken = strings.TrimSpace(input.Evidence[i].SourceRevisionToken)
-		input.Evidence[i].ExpectedPreviousRevisionToken = strings.TrimSpace(input.Evidence[i].ExpectedPreviousRevisionToken)
-		input.Evidence[i].SourceRevisionContentHash = strings.TrimSpace(input.Evidence[i].SourceRevisionContentHash)
-		if input.Evidence[i].SourceRevisionContentHash == "" && input.Evidence[i].SourceKey != "" {
-			input.Evidence[i].SourceRevisionContentHash = input.Evidence[i].ContentHash
-		}
-		input.Evidence[i].SupersedesFragmentIDs = normalizeUUIDStringList(input.Evidence[i].SupersedesFragmentIDs)
-	}
-	return input
-}
-
-func validateCreateIngestInput(input CreateIngestInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
-		return fmt.Errorf("owner_profile_id is required: %w", err)
-	}
-	if input.Status != string(domain.PlacementRunQueued) &&
-		input.Status != string(domain.PlacementRunGuarded) &&
-		input.Status != string(domain.PlacementRunQuarantined) {
-		return fmt.Errorf("unsupported ingest status %q", input.Status)
-	}
-	if input.IdempotencyKey != "" && input.RequestHash == "" {
-		return errors.New("request_hash is required when idempotency_key is set")
-	}
-	if len(input.Evidence) == 0 {
-		return errors.New("evidence is required")
-	}
-	if len(input.Evidence) > maxEvidenceItems {
-		return fmt.Errorf("evidence count %d exceeds maximum %d", len(input.Evidence), maxEvidenceItems)
-	}
-	for i, item := range input.Evidence {
-		if strings.TrimSpace(item.Content) == "" {
-			return fmt.Errorf("evidence[%d].content is required", i)
-		}
-		if item.ContentHash == "" {
-			return fmt.Errorf("evidence[%d].content_hash is required", i)
-		}
-		if want := sha256Hex(item.Content); item.ContentHash != want {
-			return fmt.Errorf("evidence[%d].content_hash does not match content hash", i)
-		}
-		if item.SourceType != "conversation" && item.SourceType != "document" && item.SourceType != "observation" && item.SourceType != "manual" {
-			return fmt.Errorf("evidence[%d].source_type is unsupported", i)
-		}
-		if !domain.Authority(item.Authority).IsValid() {
-			return fmt.Errorf("evidence[%d].authority is unsupported", i)
-		}
-		if item.SourceKey == "" && item.SourceRevisionToken != "" {
-			return fmt.Errorf("evidence[%d].source_revision requires source_key", i)
-		}
-		if item.SourceKey != "" && item.SourceRevisionToken == "" {
-			return fmt.Errorf("evidence[%d].source_key requires source_revision", i)
-		}
-		if item.SourceKey != "" && item.SourceRevisionContentHash == "" {
-			return fmt.Errorf("evidence[%d].source_revision_content_hash is required", i)
-		}
-		if item.ExpectedPreviousRevisionToken != "" && item.SourceKey == "" {
-			return fmt.Errorf("evidence[%d].previous_source_revision requires source_key and source_revision", i)
-		}
-		if len(item.SupersedesFragmentIDs) > 0 && (item.SourceKey == "" || item.SourceRevisionToken == "" || item.ExpectedPreviousRevisionToken == "") {
-			return fmt.Errorf("evidence[%d].supersedes_fragment_ids requires source_key, source_revision, and previous_source_revision", i)
-		}
-		if len(item.SupersedesFragmentIDs) > 50 {
-			return fmt.Errorf("evidence[%d].supersedes_fragment_ids exceeds maximum 50", i)
-		}
-		for _, fragmentID := range item.SupersedesFragmentIDs {
-			if _, err := uuid.Parse(fragmentID); err != nil {
-				return fmt.Errorf("evidence[%d].supersedes_fragment_ids contains invalid UUID %q: %w", i, fragmentID, err)
-			}
-		}
-		if item.InitialEvent != nil {
-			if err := validateSecurityEventDraft(*item.InitialEvent); err != nil {
-				return fmt.Errorf("evidence[%d].security_event: %w", i, err)
-			}
-		}
-	}
-	if err := validateSourceRevisionBatch(input.Evidence); err != nil {
 		return err
 	}
 	return nil
@@ -977,6 +879,9 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 		return nil, err
 	}
 	if err := hydratePlacementItemReviewTasks(ctx, tx, result.TeamID, result.OwnerProfileID, result.IngestID, result.Items); err != nil {
+		return nil, err
+	}
+	if err := hydrateEvidenceLifecycleLineage(ctx, tx, result.TeamID, result.Evidence); err != nil {
 		return nil, err
 	}
 	return &result, nil

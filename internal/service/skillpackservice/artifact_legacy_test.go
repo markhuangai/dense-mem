@@ -39,11 +39,11 @@ func TestParseLegacyArtifactConvertsToMemoryPack(t *testing.T) {
 		relationship.Status != string(domain.RelationshipStatusNeedsReview) ||
 		relationship.Subject.DisplayName != "Dense-Mem" ||
 		relationship.Object.DisplayName != "PostgreSQL" ||
-		len(relationship.SupportFragmentIDs) != 1 {
+		len(relationship.SupportEvidenceIDs) != 1 {
 		t.Fatalf("converted relationship = %+v", relationship)
 	}
-	if len(artifact.EvidenceFragments) != 1 || artifact.EvidenceFragments[0].FragmentID != "fragment-1" {
-		t.Fatalf("converted fragments = %+v", artifact.EvidenceFragments)
+	if len(artifact.Evidence) != 1 || artifact.Evidence[0].EvidenceID != "fragment-1" {
+		t.Fatalf("converted evidence = %+v", artifact.Evidence)
 	}
 
 	if err := validateExpectedHash("abc", ""); err != nil {

@@ -85,22 +85,20 @@ type RunCycleRequest struct {
 }
 
 type RunCycleResult struct {
-	RunID             string    `json:"run_id"`
-	ProfileID         string    `json:"team_id"`
-	RunDate           string    `json:"run_date"`
-	StartedAt         time.Time `json:"started_at"`
-	CompletedAt       time.Time `json:"completed_at"`
-	ReflectRan        bool      `json:"reflect_ran"`
-	ReevaluateRan     bool      `json:"reevaluate_ran"`
-	DreamRan          bool      `json:"dream_ran"`
-	StaleFacts        int       `json:"stale_facts"`
-	CandidateClaims   int       `json:"candidate_claims"`
-	DisputedClaims    int       `json:"disputed_claims"`
-	Clarifications    int       `json:"clarifications"`
-	ReevaluatedDreams int       `json:"reevaluated_dreams"`
-	CreatedDreams     int       `json:"created_dreams"`
-	Status            string    `json:"status"`
-	Error             string    `json:"error,omitempty"`
+	RunID                  string    `json:"run_id"`
+	ProfileID              string    `json:"team_id"`
+	RunDate                string    `json:"run_date"`
+	StartedAt              time.Time `json:"started_at"`
+	CompletedAt            time.Time `json:"completed_at"`
+	ReflectRan             bool      `json:"reflect_ran"`
+	ReevaluateRan          bool      `json:"reevaluate_ran"`
+	DreamRan               bool      `json:"dream_ran"`
+	CandidateRelationships int       `json:"candidate_relationships"`
+	Clarifications         int       `json:"clarifications"`
+	ReevaluatedDreams      int       `json:"reevaluated_dreams"`
+	CreatedDreams          int       `json:"created_dreams"`
+	Status                 string    `json:"status"`
+	Error                  string    `json:"error,omitempty"`
 }
 
 type ListOptions struct {

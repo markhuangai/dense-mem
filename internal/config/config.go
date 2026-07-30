@@ -55,11 +55,8 @@ type ConfigProvider interface {
 	GetRedisDB() int
 	GetHTTPMaxBodyBytes() int
 	GetRateLimitPerMinute() int
-	GetFragmentCreateRateLimit() int
-	GetFragmentReadRateLimit() int
 	GetSSEHeartbeatSeconds() int
 	GetSSEMaxDurationSeconds() int
-	GetSSEMaxConcurrentStreams() int
 	GetEmbeddingDimensions() int
 	GetAIAPIURL() string
 	GetAIAPIKey() string
@@ -74,12 +71,8 @@ type ConfigProvider interface {
 	GetAIVerifierModel() string
 	GetAIVerifierTimeoutSeconds() int
 	GetAIVerifierMaxConcurrency() int
-	GetClaimWriteRateLimit() int
-	GetClaimReadRateLimit() int
-	GetRecallValidatedClaimWeight() float64
 	GetPromoteTxTimeoutSeconds() int
-	GetSkillPackImportHistoryDays() int
-	GetAICommunityMaxNodes() int
+	GetMemoryPackImportHistoryDays() int
 	GetControlHTTPAddr() string
 	GetControlPortalToken() string
 }
@@ -138,8 +131,6 @@ type Config struct {
 	HTTPMaxBodyBytes                int
 	AuthVerifyMaxConcurrency        int
 	RateLimitPerMinute              int
-	FragmentCreateRateLimit         int
-	FragmentReadRateLimit           int
 	SSEHeartbeatSeconds             int
 	SSEMaxDurationSeconds           int
 	SSEMaxConcurrentStreams         int
@@ -170,12 +161,8 @@ type Config struct {
 	memoryAutoWriteConfidenceThresholdSet bool
 	MemoryPlacementWorkerCount            int
 	MemoryPlacementPollSeconds            int
-	ClaimWriteRateLimit                   int
-	ClaimReadRateLimit                    int
-	RecallValidatedClaimWeight            float64
 	PromoteTxTimeoutSeconds               int
-	SkillPackImportHistoryDays            int
-	AICommunityMaxNodes                   int
+	MemoryPackImportHistoryDays           int
 	ControlHTTPAddr                       string
 	ControlPortalToken                    string `json:"-"`
 	TelemetryEnabled                      bool
@@ -213,11 +200,8 @@ func (c *Config) GetDistributedCoordinationRequired() bool {
 }
 func (c *Config) GetHTTPMaxBodyBytes() int          { return c.HTTPMaxBodyBytes }
 func (c *Config) GetRateLimitPerMinute() int        { return c.RateLimitPerMinute }
-func (c *Config) GetFragmentCreateRateLimit() int   { return c.FragmentCreateRateLimit }
-func (c *Config) GetFragmentReadRateLimit() int     { return c.FragmentReadRateLimit }
 func (c *Config) GetSSEHeartbeatSeconds() int       { return c.SSEHeartbeatSeconds }
 func (c *Config) GetSSEMaxDurationSeconds() int     { return c.SSEMaxDurationSeconds }
-func (c *Config) GetSSEMaxConcurrentStreams() int   { return c.SSEMaxConcurrentStreams }
 func (c *Config) GetEmbeddingDimensions() int       { return c.EmbeddingDimensions }
 func (c *Config) GetAIAPIURL() string               { return c.AIAPIURL }
 func (c *Config) GetAIAPIKey() string               { return c.AIAPIKey }
@@ -290,18 +274,13 @@ func (c *Config) GetMemoryPlacementPollSeconds() int {
 	}
 	return c.MemoryPlacementPollSeconds
 }
-func (c *Config) GetClaimWriteRateLimit() int            { return c.ClaimWriteRateLimit }
-func (c *Config) GetClaimReadRateLimit() int             { return c.ClaimReadRateLimit }
-func (c *Config) GetRecallValidatedClaimWeight() float64 { return c.RecallValidatedClaimWeight }
-func (c *Config) GetPromoteTxTimeoutSeconds() int        { return c.PromoteTxTimeoutSeconds }
-func (c *Config) GetMemoryPackImportHistoryDays() int    { return c.SkillPackImportHistoryDays }
-func (c *Config) GetSkillPackImportHistoryDays() int     { return c.SkillPackImportHistoryDays }
-func (c *Config) GetAICommunityMaxNodes() int            { return c.AICommunityMaxNodes }
-func (c *Config) GetControlHTTPAddr() string             { return c.ControlHTTPAddr }
-func (c *Config) GetControlPortalToken() string          { return c.ControlPortalToken }
-func (c *Config) GetTelemetryEnabled() bool              { return c.TelemetryEnabled }
-func (c *Config) GetTelemetryPrometheusURL() string      { return c.TelemetryPrometheusURL }
-func (c *Config) GetTelemetryPrometheusJob() string      { return c.TelemetryPrometheusJob }
+func (c *Config) GetPromoteTxTimeoutSeconds() int     { return c.PromoteTxTimeoutSeconds }
+func (c *Config) GetMemoryPackImportHistoryDays() int { return c.MemoryPackImportHistoryDays }
+func (c *Config) GetControlHTTPAddr() string          { return c.ControlHTTPAddr }
+func (c *Config) GetControlPortalToken() string       { return c.ControlPortalToken }
+func (c *Config) GetTelemetryEnabled() bool           { return c.TelemetryEnabled }
+func (c *Config) GetTelemetryPrometheusURL() string   { return c.TelemetryPrometheusURL }
+func (c *Config) GetTelemetryPrometheusJob() string   { return c.TelemetryPrometheusJob }
 func (c *Config) GetTelemetryQueryTimeoutSeconds() int {
 	if c.TelemetryQueryTimeoutSeconds > 0 {
 		return c.TelemetryQueryTimeoutSeconds
@@ -424,7 +403,6 @@ func parseIntOrDefault(key string, defaultValue int) (int, error) {
 	return parsed, nil
 }
 
-// parseFloatOrDefault parses an environment variable as float64 or returns the default.
 func parseFloatOrDefault(key string, defaultValue float64) (float64, error) {
 	value := os.Getenv(key)
 	if value == "" {
@@ -453,13 +431,6 @@ func parseBoolOrDefault(key string, defaultValue bool) (bool, error) {
 		}
 	}
 	return parsed, nil
-}
-
-func parseMemoryPackImportHistoryDays(defaultValue int) (int, error) {
-	if strings.TrimSpace(os.Getenv("MEMORY_PACK_IMPORT_HISTORY_DAYS")) != "" {
-		return parseIntOrDefault("MEMORY_PACK_IMPORT_HISTORY_DAYS", defaultValue)
-	}
-	return parseIntOrDefault("SKILL_PACK_IMPORT_HISTORY_DAYS", defaultValue)
 }
 
 type intEnvSpec struct {
@@ -499,10 +470,7 @@ func Load() (Config, error) {
 	cfg.RedisAddr = os.Getenv("REDIS_ADDR")
 	cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
 
-	// Integer fields with defaults
-	// Fragment rate-limit tiers (AC-54): writes are stricter than reads because
-	// a fragment create triggers an embedding call (external network + cost)
-	// plus a graph write, whereas a read is a single indexed lookup.
+	// Integer fields with defaults.
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
 		{"REDIS_DB", 0, func(c *Config, value int) { c.RedisDB = value }},
 		{"POSTGRES_MAX_OPEN_CONNS", 25, func(c *Config, value int) { c.PostgresMaxOpenConns = value }},
@@ -512,8 +480,6 @@ func Load() (Config, error) {
 		{"HTTP_MAX_BODY_BYTES", 1048576, func(c *Config, value int) { c.HTTPMaxBodyBytes = value }},
 		{"AUTH_VERIFY_MAX_CONCURRENCY", 8, func(c *Config, value int) { c.AuthVerifyMaxConcurrency = value }},
 		{"RATE_LIMIT_PER_MINUTE", 100, func(c *Config, value int) { c.RateLimitPerMinute = value }},
-		{"FRAGMENT_CREATE_RATE_LIMIT", 60, func(c *Config, value int) { c.FragmentCreateRateLimit = value }},
-		{"FRAGMENT_READ_RATE_LIMIT", 300, func(c *Config, value int) { c.FragmentReadRateLimit = value }},
 		{"SSE_HEARTBEAT_SECONDS", 30, func(c *Config, value int) { c.SSEHeartbeatSeconds = value }},
 		{"SSE_MAX_DURATION_SECONDS", 300, func(c *Config, value int) { c.SSEMaxDurationSeconds = value }},
 		{"SSE_MAX_CONCURRENT_STREAMS", 10, func(c *Config, value int) { c.SSEMaxConcurrentStreams = value }},
@@ -573,23 +539,16 @@ func Load() (Config, error) {
 		{"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", DefaultAIVerifierMaxCandidateContextTokens, func(c *Config, value int) { c.AIVerifierMaxCandidateContextTokens = value }},
 		{"MEMORY_PLACEMENT_WORKER_COUNT", DefaultMemoryPlacementWorkerCount, func(c *Config, value int) { c.MemoryPlacementWorkerCount = value }},
 		{"MEMORY_PLACEMENT_POLL_SECONDS", DefaultMemoryPlacementPollSeconds, func(c *Config, value int) { c.MemoryPlacementPollSeconds = value }},
-		{"CLAIM_WRITE_RATE_LIMIT", 60, func(c *Config, value int) { c.ClaimWriteRateLimit = value }},
-		{"CLAIM_READ_RATE_LIMIT", 300, func(c *Config, value int) { c.ClaimReadRateLimit = value }},
 	}); err != nil {
 		return cfg, err
 	}
 	cfg.AIVerifierTokenizer = strings.TrimSpace(getEnvOrDefault("AI_VERIFIER_TOKENIZER", DefaultAIVerifierTokenizer))
 
-	cfg.RecallValidatedClaimWeight, err = parseFloatOrDefault("RECALL_VALIDATED_CLAIM_WEIGHT", 0.5)
-	if err != nil {
-		return cfg, err
-	}
 	cfg.MemoryAutoWriteConfidenceThreshold, err = parseFloatOrDefault("MEMORY_AUTO_WRITE_CONFIDENCE_THRESHOLD", DefaultMemoryAutoWriteConfidenceThreshold)
 	if err != nil {
 		return cfg, err
 	}
 	cfg.memoryAutoWriteConfidenceThresholdSet = true
-
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
 		{"PROMOTE_TX_TIMEOUT_SECONDS", 10, func(c *Config, value int) { c.PromoteTxTimeoutSeconds = value }},
 	}); err != nil {
@@ -607,12 +566,8 @@ func Load() (Config, error) {
 	}); err != nil {
 		return cfg, err
 	}
-	cfg.SkillPackImportHistoryDays, err = parseMemoryPackImportHistoryDays(30)
-	if err != nil {
-		return cfg, err
-	}
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
-		{"AI_COMMUNITY_MAX_NODES", 500000, func(c *Config, value int) { c.AICommunityMaxNodes = value }},
+		{"MEMORY_PACK_IMPORT_HISTORY_DAYS", 30, func(c *Config, value int) { c.MemoryPackImportHistoryDays = value }},
 	}); err != nil {
 		return cfg, err
 	}
@@ -682,16 +637,13 @@ func Load() (Config, error) {
 		{"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", cfg.AIVerifierMaxCandidateContextTokens},
 		{"MEMORY_PLACEMENT_WORKER_COUNT", cfg.MemoryPlacementWorkerCount},
 		{"MEMORY_PLACEMENT_POLL_SECONDS", cfg.MemoryPlacementPollSeconds},
-		{"CLAIM_WRITE_RATE_LIMIT", cfg.ClaimWriteRateLimit},
-		{"CLAIM_READ_RATE_LIMIT", cfg.ClaimReadRateLimit},
 		{"PROMOTE_TX_TIMEOUT_SECONDS", cfg.PromoteTxTimeoutSeconds},
 		{"CONFLICT_REVIEW_TTL_DAYS", cfg.ConflictReviewTTLDays},
 		{"CONFLICT_REVIEW_MAX_CONCURRENCY", cfg.ConflictReviewMaxConcurrency},
 		{"CONFLICT_REVIEW_BATCH_SIZE", cfg.ConflictReviewBatchSize},
 		{"CONFLICT_REVIEW_LEASE_SECONDS", cfg.ConflictReviewLeaseSeconds},
 		{"CONFLICT_REVIEW_MAX_ATTEMPTS", cfg.ConflictReviewMaxAttempts},
-		{"MEMORY_PACK_IMPORT_HISTORY_DAYS", cfg.SkillPackImportHistoryDays},
-		{"AI_COMMUNITY_MAX_NODES", cfg.AICommunityMaxNodes},
+		{"MEMORY_PACK_IMPORT_HISTORY_DAYS", cfg.MemoryPackImportHistoryDays},
 		{"TELEMETRY_QUERY_TIMEOUT_SECONDS", cfg.TelemetryQueryTimeoutSeconds},
 	}
 
@@ -807,14 +759,6 @@ func Load() (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "POSTGRES_MIGRATION_TIMEOUT_SECONDS",
 			Message: fmt.Sprintf("must be less than or equal to %d, got %d", MaxPostgresMigrationTimeoutSeconds, cfg.PostgresMigrationTimeoutSeconds),
-		}
-	}
-
-	// RecallValidatedClaimWeight must be in [0, 1]
-	if cfg.RecallValidatedClaimWeight < 0 || cfg.RecallValidatedClaimWeight > 1 {
-		return cfg, &ValidationError{
-			Field:   "RECALL_VALIDATED_CLAIM_WEIGHT",
-			Message: fmt.Sprintf("must be between 0 and 1, got %f", cfg.RecallValidatedClaimWeight),
 		}
 	}
 

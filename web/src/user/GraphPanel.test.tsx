@@ -27,7 +27,7 @@ vi.mock("react-force-graph-2d", async () => {
 });
 
 describe("GraphPanel", () => {
-  it("offers only active legacy graph types as local anchors", async () => {
+  it("offers semantic graph types as local anchors", async () => {
     render(<GraphPanel api={graphApi()} />);
 
     const controls = await screen.findByLabelText("Graph controls");
@@ -35,10 +35,8 @@ describe("GraphPanel", () => {
 
     const anchorType = within(controls).getByRole("combobox", { name: "Anchor type" });
     expect(within(anchorType).getAllByRole("option").map((option) => option.textContent)).toEqual([
-      "Fact",
-      "Claim",
-      "Fragment",
-      "Dream",
+      "Entity",
+      "Value",
     ]);
   });
 });

@@ -29,10 +29,10 @@ func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *te
 	require.Equal(t, "telemetry backend is not configured", snapshot.Message)
 	require.NotEmpty(t, snapshot.Cards)
 	require.NotEmpty(t, snapshot.WindowedCards)
-	require.NotEmpty(t, snapshot.CurrentCards)
+	require.Empty(t, snapshot.CurrentCards)
 	require.NotEmpty(t, snapshot.Series)
 	require.NotEmpty(t, snapshot.ActivitySeries)
-	require.NotEmpty(t, snapshot.StateSeries)
+	require.Empty(t, snapshot.StateSeries)
 	require.False(t, snapshot.Cards[0].Available)
 
 	payload, err := json.Marshal(snapshot)
@@ -81,10 +81,10 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 	require.Len(t, snapshot.Cards, len(snapshot.WindowedCards)+len(snapshot.CurrentCards))
 	require.Len(t, snapshot.Series, len(snapshot.ActivitySeries)+len(snapshot.StateSeries))
 	require.NotNil(t, telemetrySpecByID(snapshot.WindowedCards, "http_requests"))
-	require.Nil(t, telemetrySpecByID(snapshot.WindowedCards, "pending_claims"))
-	require.NotNil(t, telemetrySpecByID(snapshot.CurrentCards, "pending_claims"))
-	require.Nil(t, telemetrySeriesByID(snapshot.ActivitySeries, "pending_claims"))
-	require.NotNil(t, telemetrySeriesByID(snapshot.StateSeries, "pending_claims"))
+	require.NotNil(t, telemetrySpecByID(snapshot.WindowedCards, "avg_conflict_review_duration"))
+	require.Empty(t, snapshot.CurrentCards)
+	require.NotNil(t, telemetrySeriesByID(snapshot.ActivitySeries, "conflict_review_duration"))
+	require.Empty(t, snapshot.StateSeries)
 	require.Condition(t, func() bool {
 		for _, query := range queries {
 			if strings.Contains(query, `team_id="`+teamID.String()+`"`) && strings.Contains(query, `profile_id="`+profileID.String()+`"`) {
@@ -231,36 +231,28 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 		return false
 	})
 	require.Equal(t, `1000 * histogram_quantile(0.95, sum(rate(densemem_recall_duration_seconds_bucket[1m])) by (le))`, telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", "", "", "1m", 0.95, 1000))
-	require.Contains(t, telemetryPromotionRate(TelemetryScope{}, nil, "1h"), `min_over_time(densemem_promotion_outcome_total{outcome="promoted"}[1h])`)
-	require.Contains(t, telemetryPromotionRate(TelemetryScope{}, nil, "1h"), `or vector(0)`)
-	require.Subset(t, telemetryQuerySpecIDs(telemetryWindowedCardSpecs(TelemetryScope{}, nil, "1h")), []string{
+	windowedIDs := telemetryQuerySpecIDs(telemetryWindowedCardSpecs(TelemetryScope{}, nil, "1h"))
+	require.Subset(t, windowedIDs, []string{
 		"embedding_requests",
 		"embedding_errors",
 		"verifier_requests",
 		"verify_verdicts",
-		"fragment_creates",
-		"claim_creates",
-		"retractions",
-		"facts_requeued",
-		"community_runs",
-		"avg_promote_lock_wait",
-		"avg_community_detect_latency",
-		"avg_community_projected_nodes",
+		"avg_conflict_review_duration",
 	})
-	require.Subset(t, telemetryQuerySpecIDs(telemetryActivitySeriesSpecs("", "1m")), []string{
+	activityIDs := telemetryQuerySpecIDs(telemetryActivitySeriesSpecs("", "1m"))
+	require.Subset(t, activityIDs, []string{
 		"embedding_requests",
 		"embedding_errors",
 		"verifier_requests",
 		"verify_verdicts",
-		"fragment_creates",
-		"claim_creates",
-		"retractions",
-		"facts_requeued",
-		"community_runs",
-		"promote_lock_wait",
-		"community_detect_latency",
-		"community_projected_nodes",
+		"conflict_review_duration",
 	})
+	for _, retiredID := range []string{"fragment_creates", "claim_creates", "promotions", "retractions", "facts_requeued", "community_runs", "promote_lock_wait"} {
+		require.NotContains(t, windowedIDs, retiredID)
+		require.NotContains(t, activityIDs, retiredID)
+	}
+	require.Empty(t, telemetryCurrentCardSpecs(TelemetryScope{}, nil))
+	require.Empty(t, telemetryStateSeriesSpecs(""))
 
 	scope, err = normalizeTelemetryScope(TelemetryFilter{Scope: "self", TeamID: &teamID, ProfileID: &profileID})
 	require.NoError(t, err)

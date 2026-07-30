@@ -34,15 +34,7 @@ type ScopedDiscoverabilityMetrics interface {
 	ObserveRecallFor(ctx context.Context, durationMs float64, resultCount int, outcome string)
 	ObserveRecallFeedbackFor(ctx context.Context, feedback RecallFeedback)
 	ObserveDreamFeedbackFor(ctx context.Context, feedback DreamFeedback)
-	ObserveMemoryFunnelLatencyFor(ctx context.Context, stage string, seconds float64, outcome string)
-	IncFragmentCreateFor(ctx context.Context, outcome string)
-	IncClaimCreateFor(ctx context.Context, outcome string, dedupeReason string)
-	IncPromotionOutcomeFor(ctx context.Context, outcome string)
-	ObservePromoteLockWaitFor(ctx context.Context, seconds float64)
-	IncFragmentRetractFor(ctx context.Context)
-	IncFactNeedsRevalidationFor(ctx context.Context)
-	IncCommunityDetectFor(ctx context.Context, outcome string)
-	ObserveCommunityDetectFor(ctx context.Context, durationSeconds float64, projectedNodes int)
+	ObserveConflictReviewDurationFor(ctx context.Context, seconds float64, outcome string)
 }
 
 // PrometheusMetrics exports Dense-Mem operational metrics through a private
@@ -65,17 +57,8 @@ type PrometheusMetrics struct {
 	recallFeedback               *prometheus.CounterVec
 	recallQuality                *prometheus.HistogramVec
 	dreamFeedback                *prometheus.CounterVec
-	memoryFunnel                 *prometheus.HistogramVec
-	fragmentCreates              *prometheus.CounterVec
-	claimCreates                 *prometheus.CounterVec
+	conflictReview               *prometheus.HistogramVec
 	verifyVerdicts               *prometheus.CounterVec
-	promotions                   *prometheus.CounterVec
-	promoteWait                  *prometheus.HistogramVec
-	retractions                  *prometheus.CounterVec
-	revalidation                 *prometheus.CounterVec
-	communityRuns                *prometheus.CounterVec
-	communityDur                 *prometheus.HistogramVec
-	communityNodes               *prometheus.HistogramVec
 	assessorCalls                *prometheus.CounterVec
 	assessorDur                  *prometheus.HistogramVec
 	assessorTokens               *prometheus.CounterVec
@@ -164,54 +147,15 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Name: "densemem_dream_feedback_total",
 			Help: "Dream feedback decision events with bounded labels.",
 		}, append(identityLabels(), "decision", "outcome", "from_status")),
-		memoryFunnel: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "densemem_memory_funnel_latency_seconds",
-			Help:    "Latency between memory pipeline stages.",
-			Buckets: []float64{1, 5, 30, 60, 300, 900, 3600, 21600, 86400, 604800},
-		}, append(identityLabels(), "stage", "outcome")),
-		fragmentCreates: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "densemem_fragment_create_total",
-			Help: "Fragment create outcomes.",
+		conflictReview: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "densemem_conflict_review_duration_seconds",
+			Help:    "Relationship conflict review duration.",
+			Buckets: []float64{0.1, 1, 5, 15, 30, 60, 300, 900},
 		}, append(identityLabels(), "outcome")),
-		claimCreates: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "densemem_claim_create_total",
-			Help: "Claim create outcomes.",
-		}, append(identityLabels(), "outcome", "dedupe_reason")),
 		verifyVerdicts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_verify_verdict_total",
 			Help: "Claim verification outcomes.",
 		}, append(identityLabels(), "model", "outcome")),
-		promotions: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "densemem_promotion_outcome_total",
-			Help: "Claim-to-fact promotion outcomes.",
-		}, append(identityLabels(), "outcome")),
-		promoteWait: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "densemem_promote_lock_wait_seconds",
-			Help:    "Promotion advisory lock wait duration.",
-			Buckets: prometheus.DefBuckets,
-		}, identityLabels()),
-		retractions: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "densemem_retractions_total",
-			Help: "Knowledge retractions by entity type.",
-		}, append(identityLabels(), "entity")),
-		revalidation: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "densemem_fact_needs_revalidation_total",
-			Help: "Facts queued for revalidation after contradicting evidence.",
-		}, identityLabels()),
-		communityRuns: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "densemem_community_detect_total",
-			Help: "Community detection runs by outcome.",
-		}, append(identityLabels(), "outcome")),
-		communityDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "densemem_community_detect_duration_seconds",
-			Help:    "Community detection duration.",
-			Buckets: prometheus.DefBuckets,
-		}, identityLabels()),
-		communityNodes: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "densemem_community_detect_projected_nodes",
-			Help:    "Projected node count for community detection runs.",
-			Buckets: []float64{100, 1000, 10000, 100000, 500000, 1000000},
-		}, identityLabels()),
 		assessorCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_assessor_requests_total",
 			Help: "Integrated assessor conversations by bounded outcome.",
@@ -259,10 +203,8 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		m.embeddingCalls, m.embeddingErrors, m.embeddingDur, m.embeddingTokens,
 		m.verifierCalls, m.verifierDur, m.verifierTokens,
 		m.recallCalls, m.recallDur, m.recallResults,
-		m.recallFeedback, m.recallQuality, m.dreamFeedback, m.memoryFunnel,
-		m.fragmentCreates, m.claimCreates, m.verifyVerdicts, m.promotions,
-		m.promoteWait, m.retractions, m.revalidation,
-		m.communityRuns, m.communityDur, m.communityNodes,
+		m.recallFeedback, m.recallQuality, m.dreamFeedback, m.conflictReview,
+		m.verifyVerdicts,
 		m.assessorCalls, m.assessorDur, m.assessorTokens, m.assessorValidation, m.assessorValidationFields,
 		m.assessorCandidateTruncations, m.assessorPersistence, m.assessorDuplicatePrevention,
 		m.assessorConfidenceGate, m.assessorReviewExpiry,
@@ -368,31 +310,15 @@ func (m *PrometheusMetrics) ObserveDreamFeedbackFor(ctx context.Context, feedbac
 	m.dreamFeedback.WithLabelValues(labels...).Inc()
 }
 
-func (m *PrometheusMetrics) ObserveMemoryFunnelLatency(stage string, seconds float64, outcome string) {
-	m.ObserveMemoryFunnelLatencyFor(context.Background(), stage, seconds, outcome)
+func (m *PrometheusMetrics) ObserveConflictReviewDuration(seconds float64, outcome string) {
+	m.ObserveConflictReviewDurationFor(context.Background(), seconds, outcome)
 }
 
-func (m *PrometheusMetrics) ObserveMemoryFunnelLatencyFor(ctx context.Context, stage string, seconds float64, outcome string) {
+func (m *PrometheusMetrics) ObserveConflictReviewDurationFor(ctx context.Context, seconds float64, outcome string) {
 	if seconds < 0 {
 		return
 	}
-	m.memoryFunnel.WithLabelValues(append(identityValues(ctx), normalizeLabel(stage), normalizeLabel(outcome))...).Observe(seconds)
-}
-
-func (m *PrometheusMetrics) IncFragmentCreate(outcome string) {
-	m.IncFragmentCreateFor(context.Background(), outcome)
-}
-
-func (m *PrometheusMetrics) IncFragmentCreateFor(ctx context.Context, outcome string) {
-	m.fragmentCreates.WithLabelValues(append(identityValues(ctx), normalizeLabel(outcome))...).Inc()
-}
-
-func (m *PrometheusMetrics) IncClaimCreate(outcome string, dedupeReason string) {
-	m.IncClaimCreateFor(context.Background(), outcome, dedupeReason)
-}
-
-func (m *PrometheusMetrics) IncClaimCreateFor(ctx context.Context, outcome string, dedupeReason string) {
-	m.claimCreates.WithLabelValues(append(identityValues(ctx), normalizeLabel(outcome), normalizeLabel(dedupeReason))...).Inc()
+	m.conflictReview.WithLabelValues(append(identityValues(ctx), normalizeLabel(outcome))...).Observe(seconds)
 }
 
 func (m *PrometheusMetrics) IncVerifyVerdict(outcome string) {
@@ -401,56 +327,6 @@ func (m *PrometheusMetrics) IncVerifyVerdict(outcome string) {
 
 func (m *PrometheusMetrics) IncVerifyVerdictFor(ctx context.Context, model string, outcome string) {
 	m.verifyVerdicts.WithLabelValues(append(identityValues(ctx), normalizeLabel(model), normalizeLabel(outcome))...).Inc()
-}
-
-func (m *PrometheusMetrics) IncPromotionOutcome(outcome string) {
-	m.IncPromotionOutcomeFor(context.Background(), outcome)
-}
-
-func (m *PrometheusMetrics) IncPromotionOutcomeFor(ctx context.Context, outcome string) {
-	m.promotions.WithLabelValues(append(identityValues(ctx), normalizeLabel(outcome))...).Inc()
-}
-
-func (m *PrometheusMetrics) ObservePromoteLockWait(seconds float64) {
-	m.ObservePromoteLockWaitFor(context.Background(), seconds)
-}
-
-func (m *PrometheusMetrics) ObservePromoteLockWaitFor(ctx context.Context, seconds float64) {
-	m.promoteWait.WithLabelValues(identityValues(ctx)...).Observe(seconds)
-}
-
-func (m *PrometheusMetrics) IncFragmentRetract() {
-	m.IncFragmentRetractFor(context.Background())
-}
-
-func (m *PrometheusMetrics) IncFragmentRetractFor(ctx context.Context) {
-	m.retractions.WithLabelValues(append(identityValues(ctx), "fragment")...).Inc()
-}
-
-func (m *PrometheusMetrics) IncFactNeedsRevalidation() {
-	m.IncFactNeedsRevalidationFor(context.Background())
-}
-
-func (m *PrometheusMetrics) IncFactNeedsRevalidationFor(ctx context.Context) {
-	m.revalidation.WithLabelValues(identityValues(ctx)...).Inc()
-}
-
-func (m *PrometheusMetrics) IncCommunityDetect(outcome string) {
-	m.IncCommunityDetectFor(context.Background(), outcome)
-}
-
-func (m *PrometheusMetrics) IncCommunityDetectFor(ctx context.Context, outcome string) {
-	m.communityRuns.WithLabelValues(append(identityValues(ctx), normalizeLabel(outcome))...).Inc()
-}
-
-func (m *PrometheusMetrics) ObserveCommunityDetect(durationSeconds float64, projectedNodes int) {
-	m.ObserveCommunityDetectFor(context.Background(), durationSeconds, projectedNodes)
-}
-
-func (m *PrometheusMetrics) ObserveCommunityDetectFor(ctx context.Context, durationSeconds float64, projectedNodes int) {
-	labels := identityValues(ctx)
-	m.communityDur.WithLabelValues(labels...).Observe(durationSeconds)
-	m.communityNodes.WithLabelValues(labels...).Observe(float64(projectedNodes))
 }
 
 func (m *PrometheusMetrics) ObserveAssessorCall(inputTokens, outputTokens int, durationSeconds float64, outcome string) {
@@ -605,83 +481,6 @@ func boolLabel(value bool) string {
 	return "false"
 }
 
-func normalizeAssessorCallOutcome(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "ok", "provider_error", "malformed_exhausted":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
-}
-
-func normalizeAssessorValidationStage(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "request", "response", "response_json", "response_contract", "response_output_tokens", "input_budget", "stored_response":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
-}
-
-func normalizeAssessorValidationFieldFamily(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "request_id",
-		"output_tokens",
-		"response",
-		"security_signals",
-		"entity_results",
-		"entity_results.ref",
-		"entity_results.span",
-		"entity_results.kind",
-		"entity_results.selection",
-		"entity_results.quality",
-		"entity_results.other",
-		"relationship_results",
-		"relationship_results.ref",
-		"relationship_results.subject",
-		"relationship_results.predicate",
-		"relationship_results.object",
-		"relationship_results.evidence",
-		"relationship_results.semantics",
-		"relationship_results.verdict",
-		"relationship_results.temporal",
-		"relationship_results.scope",
-		"relationship_results.quality",
-		"relationship_results.other",
-		"other":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return "other"
-	}
-}
-
-func normalizeAssessorPersistenceOutcome(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "persisted", "reused", "error":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
-}
-
-func normalizeAssessorDuplicatePreventionStage(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "post_persist", "reservation":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
-}
-
-func normalizeAssessorConfidenceGateBand(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "meets_write_threshold", "below_write_threshold", "not_applicable":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
-}
-
 // RecordEmbeddingLatency preserves the narrow DiscoverabilityMetrics contract
 // while allowing scoped recorders to attach request identity and model labels.
 func RecordEmbeddingLatency(ctx context.Context, metrics DiscoverabilityMetrics, model string, durationMs float64, outcome string) {
@@ -798,81 +597,91 @@ func RecordDreamFeedback(ctx context.Context, metrics DiscoverabilityMetrics, fe
 	metrics.ObserveDreamFeedback(feedback)
 }
 
-func RecordMemoryFunnelLatency(ctx context.Context, metrics DiscoverabilityMetrics, stage string, seconds float64, outcome string) {
+func RecordConflictReviewDuration(ctx context.Context, metrics DiscoverabilityMetrics, seconds float64, outcome string) {
 	if metrics == nil || seconds < 0 {
 		return
 	}
 	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
-		scoped.ObserveMemoryFunnelLatencyFor(ctx, stage, seconds, outcome)
+		scoped.ObserveConflictReviewDurationFor(ctx, seconds, outcome)
 		return
 	}
-	metrics.ObserveMemoryFunnelLatency(stage, seconds, outcome)
+	metrics.ObserveConflictReviewDuration(seconds, outcome)
+}
+func normalizeAssessorCallOutcome(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ok", "provider_error", "malformed_exhausted":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
+	}
 }
 
-func RecordFragmentCreate(ctx context.Context, metrics DiscoverabilityMetrics, outcome string) {
-	if metrics == nil {
-		return
+func normalizeAssessorValidationStage(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "request", "response", "response_json", "response_contract", "response_output_tokens", "input_budget", "stored_response":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
 	}
-	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
-		scoped.IncFragmentCreateFor(ctx, outcome)
-		return
-	}
-	metrics.IncFragmentCreate(outcome)
 }
 
-func RecordClaimCreate(ctx context.Context, metrics DiscoverabilityMetrics, outcome string, dedupeReason string) {
-	if metrics == nil {
-		return
+func normalizeAssessorValidationFieldFamily(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "request_id",
+		"output_tokens",
+		"response",
+		"security_signals",
+		"entity_results",
+		"entity_results.ref",
+		"entity_results.span",
+		"entity_results.kind",
+		"entity_results.selection",
+		"entity_results.quality",
+		"entity_results.other",
+		"relationship_results",
+		"relationship_results.ref",
+		"relationship_results.subject",
+		"relationship_results.predicate",
+		"relationship_results.object",
+		"relationship_results.evidence",
+		"relationship_results.semantics",
+		"relationship_results.verdict",
+		"relationship_results.temporal",
+		"relationship_results.scope",
+		"relationship_results.quality",
+		"relationship_results.other",
+		"other":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "other"
 	}
-	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
-		scoped.IncClaimCreateFor(ctx, outcome, dedupeReason)
-		return
-	}
-	metrics.IncClaimCreate(outcome, dedupeReason)
 }
 
-func RecordPromotionOutcome(ctx context.Context, metrics DiscoverabilityMetrics, outcome string) {
-	if metrics == nil {
-		return
+func normalizeAssessorPersistenceOutcome(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "persisted", "reused", "error":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
 	}
-	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
-		scoped.IncPromotionOutcomeFor(ctx, outcome)
-		return
-	}
-	metrics.IncPromotionOutcome(outcome)
 }
 
-func RecordPromoteLockWait(ctx context.Context, metrics DiscoverabilityMetrics, seconds float64) {
-	if metrics == nil {
-		return
+func normalizeAssessorDuplicatePreventionStage(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "post_persist", "reservation":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
 	}
-	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
-		scoped.ObservePromoteLockWaitFor(ctx, seconds)
-		return
-	}
-	metrics.ObservePromoteLockWait(seconds)
 }
 
-func RecordFragmentRetract(ctx context.Context, metrics DiscoverabilityMetrics) {
-	if metrics == nil {
-		return
+func normalizeAssessorConfidenceGateBand(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "meets_write_threshold", "below_write_threshold", "not_applicable":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return unknownMetricLabel
 	}
-	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
-		scoped.IncFragmentRetractFor(ctx)
-		return
-	}
-	metrics.IncFragmentRetract()
-}
-
-func RecordFactNeedsRevalidation(ctx context.Context, metrics DiscoverabilityMetrics) {
-	if metrics == nil {
-		return
-	}
-	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
-		scoped.IncFactNeedsRevalidationFor(ctx)
-		return
-	}
-	metrics.IncFactNeedsRevalidation()
 }
 
 func RecordAssessorCall(metrics DiscoverabilityMetrics, inputTokens, outputTokens int, durationSeconds float64, outcome string) {

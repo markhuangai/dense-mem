@@ -20,7 +20,8 @@ func contractInput(required []string, properties map[string]any) map[string]any 
 
 func rememberInputSchema() map[string]any {
 	return contractInput([]string{"evidence"}, map[string]any{
-		"evidence": evidenceArraySchema(),
+		"evidence":        evidenceArraySchema(),
+		"idempotency_key": schemaString("Ingest retry key scoped to team and profile.", 128),
 		"proposal": closedObject(nil, map[string]any{
 			"entities":      entityProposalArraySchema(),
 			"relationships": relationshipProposalArraySchema(),
@@ -47,7 +48,7 @@ func evidenceArraySchema() map[string]any {
 				"source_key":               schemaString("Stable source-owner-scoped identity.", 256),
 				"source_revision":          schemaString("Opaque current source revision token.", 256),
 				"previous_source_revision": schemaString("Exact previous source revision token.", 256),
-				"supersedes_fragment_ids":  stringArraySchema("Evidence fragment ID to supersede.", 50, 128),
+				"supersedes_evidence_ids":  stringArraySchema("Caller-owned evidence ID to supersede.", 50, 128),
 				"idempotency_key":          schemaString("Evidence retry key scoped to team and profile.", 128),
 				"labels":                   stringArraySchema("Evidence label.", 20, 64),
 				"metadata":                 boundedMap("Source-policy-approved metadata."),
@@ -165,6 +166,16 @@ func relationshipConflictContextSchema() map[string]any {
 func getMemoryPlacementInputSchema() map[string]any {
 	return contractInput([]string{"ingest_id"}, map[string]any{
 		"ingest_id": schemaString("Placement run ID returned by remember.", 128),
+	})
+}
+
+func retractEvidenceInputSchema() map[string]any {
+	evidenceIDs := stringArraySchema("Caller-owned evidence ID to retract.", 50, 128)
+	evidenceIDs["minItems"] = 1
+	return contractInput([]string{"evidence_ids", "reason", "idempotency_key"}, map[string]any{
+		"evidence_ids":    evidenceIDs,
+		"reason":          nonEmptyStringSchema("Required bounded retraction reason.", 1000),
+		"idempotency_key": nonEmptyStringSchema("Retraction retry key scoped to team and profile.", 128),
 	})
 }
 
@@ -398,19 +409,41 @@ func placementRunOutputSchema() map[string]any {
 	)
 }
 
+func retractEvidenceOutputSchema() map[string]any {
+	return closedObject(
+		[]string{
+			"decision_id",
+			"processing_state",
+			"retracted_evidence_ids",
+			"affected_relationship_count",
+			"pending_relationship_count",
+			"retained_active_relationship_count",
+		},
+		map[string]any{
+			"decision_id":                        schemaString("Append-only lifecycle decision ID.", 128),
+			"processing_state":                   schemaEnum([]string{"completed"}),
+			"retracted_evidence_ids":             stringArraySchema("Retracted evidence ID.", 50, 128),
+			"affected_relationship_count":        map[string]any{"type": "integer", "minimum": 0},
+			"pending_relationship_count":         map[string]any{"type": "integer", "minimum": 0},
+			"retained_active_relationship_count": map[string]any{"type": "integer", "minimum": 0},
+		},
+	)
+}
+
 func placementItemSchema() map[string]any {
 	return closedObject(
-		[]string{"item_id", "evidence_id", "version", "evidence_index", "category", "search_state", "relationship_outcomes", "review_tasks", "errors"},
+		[]string{"item_id", "evidence_id", "superseded_evidence_ids", "version", "evidence_index", "category", "search_state", "relationship_outcomes", "review_tasks", "errors"},
 		map[string]any{
-			"item_id":               schemaString("Stable placement item ID.", 128),
-			"evidence_id":           schemaString("Durable evidence fragment ID.", 128),
-			"version":               map[string]any{"type": "integer", "minimum": 1},
-			"evidence_index":        map[string]any{"type": "integer", "minimum": 0},
-			"category":              schemaEnum(domain.EvidenceItemCategories()),
-			"relationship_outcomes": relationshipOutcomeArraySchema(),
-			"review_tasks":          placementReviewTaskArraySchema(),
-			"search_state":          schemaEnum(domain.SearchProjectionStates()),
-			"errors":                placementErrorArraySchema(),
+			"item_id":                 schemaString("Stable placement item ID.", 128),
+			"evidence_id":             schemaString("Durable evidence ID.", 128),
+			"superseded_evidence_ids": stringArraySchema("Evidence ID superseded by this replacement.", 50, 128),
+			"version":                 map[string]any{"type": "integer", "minimum": 1},
+			"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
+			"category":                schemaEnum(domain.EvidenceItemCategories()),
+			"relationship_outcomes":   relationshipOutcomeArraySchema(),
+			"review_tasks":            placementReviewTaskArraySchema(),
+			"search_state":            schemaEnum(domain.SearchProjectionStates()),
+			"errors":                  placementErrorArraySchema(),
 		},
 	)
 }
@@ -591,27 +624,28 @@ func recallResultSchema() map[string]any {
 
 func traceMemoryOutputSchema() map[string]any {
 	required := []string{
-		"relationship", "observations", "evidence_supports", "support_decision_events",
-		"evidence_fragments", "verification_events", "transitions", "conflicts",
+		"relationship", "observations", "evidence_supports", "evidence_support_decision_events",
+		"evidence", "evidence_lifecycle_events", "verification_events", "transitions", "conflicts",
 		"cross_profile_references", "identity_corrections", "supersession_lineage",
 		"semantic_nodes", "semantic_edges", "visited_entity_ids", "stopped_reason",
 	}
 	return closedObject(required, map[string]any{
-		"relationship":             traceRelationshipSchema(),
-		"observations":             array(traceObservationSchema(), 0, 500),
-		"evidence_supports":        array(traceEvidenceSupportSchema(), 0, 500),
-		"support_decision_events":  array(traceSupportDecisionSchema(), 0, 500),
-		"evidence_fragments":       array(traceEvidenceFragmentSchema(), 0, 500),
-		"verification_events":      array(traceVerificationSchema(), 0, 500),
-		"transitions":              array(traceTransitionSchema(), 0, 500),
-		"conflicts":                array(traceConflictSchema(), 0, 500),
-		"cross_profile_references": array(crossProfileReferenceSchema(), 0, 500),
-		"identity_corrections":     array(traceIdentityCorrectionSchema(), 0, 500),
-		"supersession_lineage":     array(traceRelationshipSchema(), 0, 500),
-		"semantic_nodes":           array(semanticNodeSchema(), 0, 500),
-		"semantic_edges":           array(semanticEdgeSchema(), 0, 500),
-		"visited_entity_ids":       stringArraySchema("Visited Entity ID.", 500, 128),
-		"stopped_reason":           nullableString("Trace budget stop reason.", 128),
+		"relationship":                     traceRelationshipSchema(),
+		"observations":                     array(traceObservationSchema(), 0, 500),
+		"evidence_supports":                array(traceEvidenceSupportSchema(), 0, 500),
+		"evidence_support_decision_events": array(traceSupportDecisionSchema(), 0, 500),
+		"evidence":                         array(traceEvidenceSchema(), 0, 500),
+		"evidence_lifecycle_events":        array(traceEvidenceLifecycleEventSchema(), 0, 500),
+		"verification_events":              array(traceVerificationSchema(), 0, 500),
+		"transitions":                      array(traceTransitionSchema(), 0, 500),
+		"conflicts":                        array(traceConflictSchema(), 0, 500),
+		"cross_profile_references":         array(crossProfileReferenceSchema(), 0, 500),
+		"identity_corrections":             array(traceIdentityCorrectionSchema(), 0, 500),
+		"supersession_lineage":             array(traceRelationshipSchema(), 0, 500),
+		"semantic_nodes":                   array(semanticNodeSchema(), 0, 500),
+		"semantic_edges":                   array(semanticEdgeSchema(), 0, 500),
+		"visited_entity_ids":               stringArraySchema("Visited Entity ID.", 500, 128),
+		"stopped_reason":                   nullableString("Trace budget stop reason.", 128),
 	})
 }
 

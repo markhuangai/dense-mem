@@ -16,8 +16,6 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 		{"zero postgres migration timeout", func() { os.Setenv("POSTGRES_MIGRATION_TIMEOUT_SECONDS", "0") }, "POSTGRES_MIGRATION_TIMEOUT_SECONDS"},
 		{"invalid http max body bytes", func() { os.Setenv("HTTP_MAX_BODY_BYTES", "bad") }, "HTTP_MAX_BODY_BYTES"},
 		{"invalid auth verify concurrency", func() { os.Setenv("AUTH_VERIFY_MAX_CONCURRENCY", "bad") }, "AUTH_VERIFY_MAX_CONCURRENCY"},
-		{"invalid fragment create rate", func() { os.Setenv("FRAGMENT_CREATE_RATE_LIMIT", "bad") }, "FRAGMENT_CREATE_RATE_LIMIT"},
-		{"invalid fragment read rate", func() { os.Setenv("FRAGMENT_READ_RATE_LIMIT", "bad") }, "FRAGMENT_READ_RATE_LIMIT"},
 		{"invalid sse heartbeat", func() { os.Setenv("SSE_HEARTBEAT_SECONDS", "bad") }, "SSE_HEARTBEAT_SECONDS"},
 		{"invalid sse max duration", func() { os.Setenv("SSE_MAX_DURATION_SECONDS", "bad") }, "SSE_MAX_DURATION_SECONDS"},
 		{"invalid sse streams", func() { os.Setenv("SSE_MAX_CONCURRENT_STREAMS", "bad") }, "SSE_MAX_CONCURRENT_STREAMS"},
@@ -53,9 +51,6 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 			os.Setenv("MEMORY_PLACEMENT_WORKER_COUNT", "2")
 		}, "MEMORY_PLACEMENT_WORKER_COUNT"},
 		{"invalid placement poll", func() { os.Setenv("MEMORY_PLACEMENT_POLL_SECONDS", "bad") }, "MEMORY_PLACEMENT_POLL_SECONDS"},
-		{"invalid claim write rate", func() { os.Setenv("CLAIM_WRITE_RATE_LIMIT", "bad") }, "CLAIM_WRITE_RATE_LIMIT"},
-		{"invalid claim read rate", func() { os.Setenv("CLAIM_READ_RATE_LIMIT", "bad") }, "CLAIM_READ_RATE_LIMIT"},
-		{"invalid recall weight", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "bad") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},
 		{"invalid promote timeout", func() { os.Setenv("PROMOTE_TX_TIMEOUT_SECONDS", "bad") }, "PROMOTE_TX_TIMEOUT_SECONDS"},
 		{"invalid conflict ttl", func() { os.Setenv("CONFLICT_REVIEW_TTL_DAYS", "bad") }, "CONFLICT_REVIEW_TTL_DAYS"},
 		{"zero conflict ttl", func() { os.Setenv("CONFLICT_REVIEW_TTL_DAYS", "0") }, "CONFLICT_REVIEW_TTL_DAYS"},
@@ -69,10 +64,7 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 		{"excessive conflict attempts", func() { os.Setenv("CONFLICT_REVIEW_MAX_ATTEMPTS", "21") }, "CONFLICT_REVIEW_MAX_ATTEMPTS"},
 		{"negative conflict jitter", func() { os.Setenv("CONFLICT_REVIEW_JITTER_SECONDS", "-1") }, "CONFLICT_REVIEW_JITTER_SECONDS"},
 		{"excessive conflict jitter", func() { os.Setenv("CONFLICT_REVIEW_JITTER_SECONDS", "3601") }, "CONFLICT_REVIEW_JITTER_SECONDS"},
-		{"invalid community max nodes", func() { os.Setenv("AI_COMMUNITY_MAX_NODES", "bad") }, "AI_COMMUNITY_MAX_NODES"},
 		{"zero http max body bytes", func() { os.Setenv("HTTP_MAX_BODY_BYTES", "0") }, "HTTP_MAX_BODY_BYTES"},
-		{"recall weight below range", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "-0.1") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},
-		{"recall weight above range", func() { os.Setenv("RECALL_VALIDATED_CLAIM_WEIGHT", "1.1") }, "RECALL_VALIDATED_CLAIM_WEIGHT"},
 		{"verifier key without url or shared api url", func() { os.Setenv("AI_VERIFIER_API_KEY", "verifier-key") }, "AI_VERIFIER_API_URL"},
 		{"embedding missing url", func() {
 			os.Setenv("AI_API_KEY", "sk-test")

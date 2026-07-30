@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"net/http"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -36,8 +35,6 @@ type ProfileHandler struct {
 // ProfileHandlerInterface is the companion interface for ProfileHandler.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type ProfileHandlerInterface interface {
-	Create(c echo.Context) error
-	List(c echo.Context) error
 	Get(c echo.Context) error
 	Patch(c echo.Context) error
 	Delete(c echo.Context) error
@@ -64,88 +61,12 @@ type Pagination struct {
 	Total  int64 `json:"total"`
 }
 
-// Create handles POST /ui/api/team/profiles.
-// Returns 201 with the created profile.
-func (h *ProfileHandler) Create(c echo.Context) error {
-	ctx := c.Request().Context()
-	principal := middleware.GetPrincipal(ctx)
-
-	// Get validated request body
-	body, ok := middleware.GetValidatedBody[dto.CreateProfileRequest](ctx, middleware.CreateProfileBodyKey)
-	if !ok {
-		return httperr.New(httperr.VALIDATION_ERROR, "request body not found")
-	}
-
-	// Build service request
-	req := service.CreateProfileRequest{
-		Name:        body.Name,
-		Description: body.Description,
-		Metadata:    body.Metadata,
-		Config:      body.Config,
-	}
-
-	// Get actor metadata from principal
-	var actorKeyID *string
-	actorRole := "standard"
-	if principal != nil {
-		keyIDStr := principal.KeyID.String()
-		actorKeyID = &keyIDStr
-		actorRole = principal.Role
-	}
-
-	// Create profile
-	profile, err := h.svc.Create(ctx, req, actorKeyID, actorRole, c.RealIP(), middleware.GetCorrelationID(ctx))
-	if err != nil {
-		return err
-	}
-
-	// Return 201 with profile data
-	return response.SuccessCreated(c, toProfileResponse(profile))
-}
-
-// List handles GET /ui/api/team/profiles.
-// Returns 200 with paginated list of profiles.
-func (h *ProfileHandler) List(c echo.Context) error {
-	ctx := c.Request().Context()
-
-	// Parse pagination params
-	limit, offset := parsePaginationParams(c)
-
-	// Get profiles
-	profiles, err := h.svc.List(ctx, limit, offset)
-	if err != nil {
-		return err
-	}
-
-	// Get total count for pagination
-	total, err := h.svc.Count(ctx)
-	if err != nil {
-		return err
-	}
-
-	// Convert to response format
-	data := make([]dto.ProfileResponse, len(profiles))
-	for i, p := range profiles {
-		data[i] = toProfileResponse(p)
-	}
-
-	// Return 200 with pagination envelope
-	return c.JSON(http.StatusOK, PaginationEnvelope{
-		Data: data,
-		Pagination: Pagination{
-			Limit:  limit,
-			Offset: offset,
-			Total:  total,
-		},
-	})
-}
-
 // Get handles GET /ui/api/team.
 // Returns 200 with the team data.
 func (h *ProfileHandler) Get(c echo.Context) error {
 	ctx := c.Request().Context()
 
-	profileIDStr := teamPathIDParam(c)
+	profileIDStr := authenticatedTeamID(c)
 	if profileIDStr == "" {
 		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
@@ -177,7 +98,7 @@ func (h *ProfileHandler) Patch(c echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
-	profileIDStr := teamPathIDParam(c)
+	profileIDStr := authenticatedTeamID(c)
 	if profileIDStr == "" {
 		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
@@ -234,7 +155,7 @@ func (h *ProfileHandler) Delete(c echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
-	profileIDStr := teamPathIDParam(c)
+	profileIDStr := authenticatedTeamID(c)
 	if profileIDStr == "" {
 		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
@@ -264,13 +185,7 @@ func (h *ProfileHandler) Delete(c echo.Context) error {
 	return response.SuccessOK(c, map[string]string{"status": "deleted"})
 }
 
-func teamPathIDParam(c echo.Context) string {
-	if v := c.Param("teamId"); v != "" {
-		return v
-	}
-	if v := c.Param("profileId"); v != "" {
-		return v
-	}
+func authenticatedTeamID(c echo.Context) string {
 	if principal := middleware.GetPrincipal(c.Request().Context()); principal != nil && principal.GetTeamID() != uuid.Nil {
 		return principal.GetTeamID().String()
 	}

@@ -74,57 +74,48 @@ const memberProfile: UserKey = {
 
 const recallHits: RecallHit[] = [
   {
-    tier: "canonical",
     score: 0.94,
     semantic_rank: 1,
     keyword_rank: 1,
     final_score: 0.94,
-    fact: {
-      fact_id: "fact-1",
-      subject: "Alice",
-      predicate: "works_on",
-      object: "project-x",
-      status: "active",
-      truth_score: 0.94,
-      recorded_at: "2026-05-02T12:00:00Z",
+    evidence: {
+      evidence_id: "evidence-1",
+      context: "Alice is working on project-x with Dense-Mem.",
+      source: "notes",
+      source_type: "manual",
+      created_at: "2026-05-02T12:00:00Z",
     },
+    relationships: [{
+      relationship_id: "relationship-1",
+      subject: { entity_id: "entity-alice", name: "Alice" },
+      predicate: "works_on",
+      object: { value_id: "value-project-x", value: "project-x" },
+      search_state: "current",
+    }],
   },
   {
-    tier: "claim",
     score: 0.84,
     semantic_rank: 2,
     keyword_rank: 2,
     final_score: 0.84,
-    claim: {
-      claim_id: "claim-1",
-      subject: "Alice",
-      predicate: "uses",
-      object: "Dense-Mem",
-      modality: "assertion",
-      polarity: "+",
-      status: "validated",
-      entailment_verdict: "entailed",
-      extract_conf: 0.91,
-      resolution_conf: 0.88,
-      recorded_at: "2026-05-02T12:00:00Z",
+    evidence: {
+      evidence_id: "evidence-2",
+      context: "Alice uses: Dense-Mem",
+      source: "knowledge graph",
+      created_at: "2026-05-02T12:00:00Z",
     },
   },
   {
-    tier: "raw",
     score: 0.74,
     semantic_rank: 3,
     keyword_rank: 3,
     final_score: 0.74,
-    fragment: {
-      id: "frag-1",
-      fragment_id: "frag-1",
-      content: "Alice is working on project-x with Dense-Mem.",
-      source_type: "manual",
+    evidence: {
+      evidence_id: "evidence-3",
+      context: "Project-x uses Dense-Mem.",
       source: "notes",
-      labels: ["project"],
-      status: "active",
+      source_type: "manual",
       created_at: "2026-05-02T12:00:00Z",
-      updated_at: "2026-05-02T12:00:00Z",
     },
   },
 ];
@@ -136,42 +127,42 @@ const overviewGraph: GraphSnapshot = {
   truncated: false,
   nodes: [
     {
-      key: "fact:fact-1",
-      id: "fact-1",
-      type: "fact",
-      title: "Alice works_on project-x",
+      key: "entity:entity-alice",
+      id: "entity-alice",
+      type: "entity",
+      title: "Alice",
     },
     {
-      key: "claim:claim-1",
-      id: "claim-1",
-      type: "claim",
-      title: "Alice uses Dense-Mem",
+      key: "value:value-project-x",
+      id: "value-project-x",
+      type: "value",
+      title: "project-x",
     },
   ],
   edges: [
-    { id: "edge-1", source: "claim:claim-1", target: "fact:fact-1", relationship: "PROMOTES_TO", directed: true },
+    { id: "edge-1", source: "entity:entity-alice", target: "value:value-project-x", relationship: "works_on", directed: true },
   ],
 };
 
 const graphNodeDetails: Record<string, GraphNode> = {
-  "fact:fact-1": {
-    key: "fact:fact-1",
-    id: "fact-1",
-    type: "fact",
-    title: "Alice works_on project-x",
-    body: "project-x",
+  "entity:entity-alice": {
+    key: "entity:entity-alice",
+    id: "entity-alice",
+    type: "entity",
+    title: "Alice",
+    body: "Person",
     status: "active",
     community_id: "community-1",
     score: 0.94,
     recorded_at: "2026-05-02T12:00:00Z",
   },
-  "claim:claim-1": {
-    key: "claim:claim-1",
-    id: "claim-1",
-    type: "claim",
-    title: "Alice uses Dense-Mem",
-    body: "Dense-Mem",
-    status: "validated",
+  "value:value-project-x": {
+    key: "value:value-project-x",
+    id: "value-project-x",
+    type: "value",
+    title: "project-x",
+    body: "project-x",
+    status: "active",
     community_id: "community-1",
     score: 0.88,
     recorded_at: "2026-05-02T12:00:00Z",
@@ -181,7 +172,7 @@ const graphNodeDetails: Record<string, GraphNode> = {
 const localGraph: GraphSnapshot = {
   ...overviewGraph,
   scope: "local",
-  anchor: { type: "fact", id: "fact-1", key: "fact:fact-1" },
+  anchor: { type: "entity", id: "entity-alice", key: "entity:entity-alice" },
   depth: 1,
   limit: 48,
 };
@@ -205,10 +196,7 @@ describe("UserPortalApp", () => {
     expect(screen.getByLabelText("Knowledge navigation")).toHaveClass("top-nav-bar");
     expect(screen.getByLabelText("Knowledge sections")).toHaveClass("top-nav-tabs");
     expect(screen.getByLabelText("Current workspace")).not.toHaveTextContent("Mine");
-    expect(screen.queryByRole("button", { name: "Facts" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Claims" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Fragments" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Communities" })).not.toBeInTheDocument();
+	 expect(screen.queryByRole("button", { name: "Communities" })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/profiles"))).toBe(false);
   });
 
@@ -285,26 +273,25 @@ describe("UserPortalApp", () => {
     expect(await screen.findByLabelText("Knowledge graph")).toBeInTheDocument();
     const controls = screen.getByLabelText("Graph controls");
     expect(within(controls).queryByLabelText("Limit")).not.toBeInTheDocument();
-    expect((await screen.findAllByText("Alice works_on project-x")).length).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText("Alice")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText("Graph totals")).toHaveTextContent("2");
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("Select a node");
-    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice works_on project-x" }));
+    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice" }));
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/ui/api/node-detail?type=fact&id=fact-1", expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith("/ui/api/node-detail?type=entity&id=entity-alice", expect.any(Object));
     });
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("community-1");
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2",
+        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2",
         expect.any(Object),
       );
     });
-    await userEvent.click(within(controls).getByRole("checkbox", { name: "Superseded" }));
     await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2&include_superseded=true",
+        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2",
         expect.any(Object),
       );
     });
@@ -313,8 +300,8 @@ describe("UserPortalApp", () => {
   it("refreshes selected graph node details when the graph reloads", async () => {
     const refreshedDetails = {
       ...graphNodeDetails,
-      "fact:fact-1": {
-        ...graphNodeDetails["fact:fact-1"],
+      "entity:entity-alice": {
+        ...graphNodeDetails["entity:entity-alice"],
         body: "project-y",
         community_id: "community-2",
         score: 0.67,
@@ -328,7 +315,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /graph/i }));
     const controls = await screen.findByLabelText("Graph controls");
 
-    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice works_on project-x" }));
+    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice" }));
     await waitFor(() => {
       expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
     });
@@ -336,7 +323,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/node-detail?type=fact&id=fact-1"))).toHaveLength(2);
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/node-detail?type=entity&id=entity-alice"))).toHaveLength(2);
     });
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("community-2");
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.670");
@@ -352,15 +339,14 @@ describe("UserPortalApp", () => {
     const controls = await screen.findByLabelText("Graph controls");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=fact%2Cclaim%2Cfragment%2Cdream&depth=2",
+        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2",
         expect.any(Object),
       );
     });
     const graphCallCount = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/graph")).length;
     const beforeDisabledRefresh = graphCallCount();
 
-    expect(["Entity", "Value"].some((label) => within(controls).queryByRole("checkbox", { name: label }))).toBe(false);
-    for (const label of ["Fact", "Claim", "Fragment", "Dream"]) {
+    for (const label of ["Entity", "Value"]) {
       await userEvent.click(within(controls).getByRole("checkbox", { name: label }));
     }
 
@@ -381,10 +367,10 @@ describe("UserPortalApp", () => {
     await screen.findByRole("listbox", { name: "Recall result list" });
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
 
-    expect(await screen.findByTestId("force-graph")).toHaveTextContent("Alice works_on project-x");
+    expect(await screen.findByTestId("force-graph")).toHaveTextContent("Alice");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=local&types=fact%2Cclaim%2Cfragment%2Cdream&anchor_type=entity&anchor_id=entity-alice&depth=2&limit=48",
+        "/ui/api/graph?scope=local&types=entity%2Cvalue&anchor_type=entity&anchor_id=entity-alice&depth=2&limit=48",
         expect.any(Object),
       );
     });
@@ -401,14 +387,14 @@ describe("UserPortalApp", () => {
 
     await userEvent.selectOptions(await screen.findByLabelText("Source"), "notes");
     expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
-    expect(screen.getByRole("listbox", { name: "Recall result list" })).not.toHaveTextContent("works_on: project-x");
+    expect(screen.getByRole("listbox", { name: "Recall result list" })).not.toHaveTextContent("Alice uses: Dense-Mem");
 
     await userEvent.clear(screen.getByLabelText("Keyword"));
     await userEvent.type(screen.getByLabelText("Keyword"), "alice");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
     expect(await screen.findByLabelText("Source")).toHaveValue("all");
-    expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("works_on: project-x");
+    expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
   });
 
   it("labels write-member telemetry as key usage", async () => {
@@ -801,7 +787,7 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
       const params = new URLSearchParams(url.split("?")[1] ?? "");
       const key = `${params.get("type")}:${params.get("id")}`;
       const details = optionValue(options.graphNodeDetails ?? graphNodeDetails, graphNodeDetailCallCount++);
-      return jsonResponse({ data: details[key] ?? graphNodeDetails["fact:fact-1"] });
+      return jsonResponse({ data: details[key] ?? graphNodeDetails["entity:entity-alice"] });
     }
     if (url.startsWith("/ui/api/graph") && method === "GET") {
       return jsonResponse({ data: optionValue(options.graphSnapshot ?? overviewGraph, graphCallCount++) });

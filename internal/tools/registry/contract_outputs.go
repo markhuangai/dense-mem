@@ -143,21 +143,22 @@ func traceContractOutput(trace *contextservice.SemanticTrace) (map[string]any, e
 		stoppedReason = trace.StoppedReason
 	}
 	return map[string]any{
-		"relationship":             traceRelationshipOutput(trace.Relationship),
-		"observations":             traceObservationOutputs(trace.Observations),
-		"evidence_supports":        traceEvidenceSupportOutputs(trace.EvidenceSupports),
-		"support_decision_events":  traceSupportDecisionOutputs(trace.SupportDecisionEvents),
-		"evidence_fragments":       traceEvidenceFragmentOutputs(trace.EvidenceFragments),
-		"verification_events":      traceVerificationOutputs(trace.VerificationEvents),
-		"transitions":              traceTransitionOutputs(trace.Transitions),
-		"conflicts":                traceConflictOutputs(trace.Conflicts),
-		"cross_profile_references": traceCrossProfileReferenceOutputs(trace.CrossProfileReferences),
-		"identity_corrections":     traceIdentityCorrectionOutputs(trace.IdentityCorrections),
-		"supersession_lineage":     traceRelationshipLineageOutputs(trace.SupersessionLineage),
-		"semantic_nodes":           traceSemanticNodeOutputs(trace.SemanticNodes),
-		"semantic_edges":           traceSemanticEdgeOutputs(trace.SemanticEdges),
-		"visited_entity_ids":       traceStringArray(trace.VisitedEntityIDs),
-		"stopped_reason":           stoppedReason,
+		"relationship":                     traceRelationshipOutput(trace.Relationship),
+		"observations":                     traceObservationOutputs(trace.Observations),
+		"evidence_supports":                traceEvidenceSupportOutputs(trace.EvidenceSupports),
+		"evidence_support_decision_events": traceSupportDecisionOutputs(trace.EvidenceSupportDecisionEvents),
+		"evidence":                         traceEvidenceOutputs(trace.Evidence),
+		"evidence_lifecycle_events":        traceEvidenceLifecycleEventOutputs(trace.EvidenceLifecycleEvents),
+		"verification_events":              traceVerificationOutputs(trace.VerificationEvents),
+		"transitions":                      traceTransitionOutputs(trace.Transitions),
+		"conflicts":                        traceConflictOutputs(trace.Conflicts),
+		"cross_profile_references":         traceCrossProfileReferenceOutputs(trace.CrossProfileReferences),
+		"identity_corrections":             traceIdentityCorrectionOutputs(trace.IdentityCorrections),
+		"supersession_lineage":             traceRelationshipLineageOutputs(trace.SupersessionLineage),
+		"semantic_nodes":                   traceSemanticNodeOutputs(trace.SemanticNodes),
+		"semantic_edges":                   traceSemanticEdgeOutputs(trace.SemanticEdges),
+		"visited_entity_ids":               traceStringArray(trace.VisitedEntityIDs),
+		"stopped_reason":                   stoppedReason,
 	}, nil
 }
 
@@ -220,11 +221,11 @@ func traceEvidenceSupportOutputs(records []repository.RelationshipEvidenceSuppor
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		item := map[string]any{
-			"support_id":      record.SupportID,
-			"relationship_id": record.RelationshipID,
-			"fragment_id":     record.FragmentID,
-			"span_start":      record.SpanStart,
-			"span_end":        record.SpanEnd,
+			"evidence_support_id": record.SupportID,
+			"relationship_id":     record.RelationshipID,
+			"evidence_id":         record.FragmentID,
+			"span_start":          record.SpanStart,
+			"span_end":            record.SpanEnd,
 		}
 		putString(item, "observation_id", record.ObservationID)
 		putString(item, "verification_event_id", record.VerificationEventID)
@@ -241,10 +242,10 @@ func traceSupportDecisionOutputs(records []repository.RelationshipSupportDecisio
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		item := map[string]any{
-			"support_decision_id": record.SupportDecisionID,
-			"support_id":          record.SupportID,
-			"relationship_id":     record.RelationshipID,
-			"decision":            record.Decision,
+			"evidence_support_decision_id": record.SupportDecisionID,
+			"evidence_support_id":          record.SupportID,
+			"relationship_id":              record.RelationshipID,
+			"decision":                     record.Decision,
 		}
 		putString(item, "actor_profile_id", record.ActorProfileID)
 		putString(item, "reason", record.Reason)
@@ -254,11 +255,11 @@ func traceSupportDecisionOutputs(records []repository.RelationshipSupportDecisio
 	return out
 }
 
-func traceEvidenceFragmentOutputs(records []repository.TraceEvidenceFragment) []map[string]any {
+func traceEvidenceOutputs(records []repository.TraceEvidenceFragment) []map[string]any {
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		item := map[string]any{
-			"fragment_id":       record.FragmentID,
+			"evidence_id":       record.FragmentID,
 			"ingest_id":         record.IngestID,
 			"evidence_index":    record.EvidenceIndex,
 			"content_hash":      record.ContentHash,
@@ -268,6 +269,23 @@ func traceEvidenceFragmentOutputs(records []repository.TraceEvidenceFragment) []
 		putString(item, "source_type", record.SourceType)
 		putString(item, "source", firstNonEmpty(record.SourceRef, record.SourceKey))
 		putTime(item, "created_at", record.CreatedAt)
+		out = append(out, item)
+	}
+	return out
+}
+
+func traceEvidenceLifecycleEventOutputs(records []repository.TraceEvidenceLifecycleEvent) []map[string]any {
+	out := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		item := map[string]any{
+			"lifecycle_event_id":     record.LifecycleEventID,
+			"lifecycle_operation_id": record.LifecycleOperationID,
+			"target_evidence_id":     record.TargetFragmentID,
+			"action":                 record.Action,
+		}
+		putNullableString(item, "replacement_evidence_id", record.ReplacementFragmentID)
+		putString(item, "reason", record.Reason)
+		putRequiredTime(item, "created_at", record.CreatedAt)
 		out = append(out, item)
 	}
 	return out
@@ -545,9 +563,9 @@ func exportMemoryPackContractOutput(res *skillpackservice.ExportResult) map[stri
 		"content_sha256": res.SHA256,
 		"filename":       res.Filename,
 		"counts": map[string]any{
-			"relationships":      res.ItemCount,
-			"evidence_fragments": len(res.Artifact.EvidenceFragments),
-			"evidence_supports":  len(res.Artifact.EvidenceSupports),
+			"relationships":     res.ItemCount,
+			"evidence":          len(res.Artifact.Evidence),
+			"evidence_supports": len(res.Artifact.EvidenceSupports),
 		},
 		"omissions": memoryPackOmissionsContractOutput(res.Omissions),
 	}
@@ -580,10 +598,10 @@ func inspectMemoryPackContractOutput(res *skillpackservice.InspectResult, mode s
 		"content_sha256": res.ArtifactHash,
 		"mode":           firstNonEmpty(mode, "review"),
 		"counts": map[string]any{
-			"relationships":      res.ItemCount,
-			"selected":           res.SelectedCount,
-			"evidence_fragments": res.SupportSummary.FragmentCount,
-			"evidence_supports":  res.SupportSummary.SupportCount,
+			"relationships":     res.ItemCount,
+			"selected":          res.SelectedCount,
+			"evidence":          res.SupportSummary.EvidenceCount,
+			"evidence_supports": res.SupportSummary.SupportCount,
 		},
 		"conflicts": memoryPackConflictsContractOutput(res.DecisionsRequired),
 		"expected_outcomes": map[string]any{

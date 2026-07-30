@@ -71,6 +71,11 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 			return err
 		}
 		result.EvidenceFragments = evidence
+		lifecycleEvents, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, fragmentIDs, input.MaxEvents)
+		if err != nil {
+			return err
+		}
+		result.EvidenceLifecycleEvents = lifecycleEvents
 
 		if boolDefault(input.IncludeVerification, true) {
 			verification, err := loadTraceVerificationEvents(ctx, tx, input)
@@ -134,7 +139,7 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 		}
 		if len(observations) >= input.MaxEvents || len(supports) >= input.MaxEvents ||
 			len(decisions) >= input.MaxEvents || len(result.VerificationEvents) >= input.MaxEvents ||
-			len(result.Transitions) >= input.MaxEvents {
+			len(result.Transitions) >= input.MaxEvents || len(lifecycleEvents) >= input.MaxEvents {
 			result.Truncated = true
 			if result.StoppedReason == "" {
 				result.StoppedReason = "max_events"
@@ -602,11 +607,11 @@ func loadTraceTransitions(
 	var out []RelationshipTransitionEvent
 	for rows.Next() {
 		var row RelationshipTransitionEvent
-			var metadataJSON string
-			if err := rows.Scan(
-				&row.TransitionID, &row.RelationshipID, &row.OwnerProfileID,
-				&row.FromStatus, &row.ToStatus, &row.Reason, &row.VerificationEventID, &row.SupportDecisionID,
-				&metadataJSON, &row.CreatedAt,
+		var metadataJSON string
+		if err := rows.Scan(
+			&row.TransitionID, &row.RelationshipID, &row.OwnerProfileID,
+			&row.FromStatus, &row.ToStatus, &row.Reason, &row.VerificationEventID, &row.SupportDecisionID,
+			&metadataJSON, &row.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

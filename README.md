@@ -5,19 +5,15 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Dense--Mem-trustworthy_AI_memory-0f766e?style=for-the-badge&logo=github&logoColor=white" alt="Dense-Mem" />
+  <img src="https://img.shields.io/badge/Dense--Mem-governed_AI_memory-0f766e?style=for-the-badge&logo=github&logoColor=white" alt="Dense-Mem" />
 </p>
 
 <p align="center">
-  <strong>Self-hosted memory for AI agents that preserves evidence, detects conflicts, and never silently rewrites facts.</strong>
+  <strong>Self-hosted MCP memory with durable evidence, explicit lifecycle, and support-gated recall.</strong>
 </p>
 
 <p align="center">
   <a href="https://demo-dense-mem.markhuang.ai"><img src="https://img.shields.io/badge/Try%20Dense--Mem%20live-Open%20hosted%20demo-0f766e?style=for-the-badge" alt="Try Dense-Mem live" /></a>
-</p>
-
-<p align="center">
-  <strong>Create a temporary isolated team and test Dense-Mem before self-hosting.</strong>
 </p>
 
 <p align="center">
@@ -28,73 +24,50 @@
   <a href="https://github.com/markhuangai/dense-mem/pkgs/container/dense-mem"><img src="https://img.shields.io/badge/Docker-GHCR-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker image on GHCR" /></a>
 </p>
 
-<p align="center">
-  <img src="https://img.shields.io/badge/MCP-Streamable_HTTP-111827?style=flat-square" alt="MCP Streamable HTTP" />
-  <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 18" />
-  <img src="https://visitor-badge.laobi.icu/badge?page_id=markhuangai.dense-mem&style=flat-square" alt="Visitors" />
-</p>
+Dense-Mem is a standalone HTTP MCP memory server using Streamable HTTP. It
+stages exact evidence, derives semantic state through validated server policy,
+and returns active evidence contexts with graph-shaped Relationship handles.
+PostgreSQL is the durable authority for knowledge, lifecycle, provenance,
+search, authorization, and audit; Redis is coordination only. A single-node
+deployment may use process-local coordination; a multi-instance deployment
+requires Redis or an equivalent distributed coordination implementation.
 
-<p align="center">
-  <a href="https://doi.org/10.5281/zenodo.21403316"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.21403316.svg" alt="DOI: 10.5281/zenodo.21403316" /></a>
-</p>
-
-Dense-Mem gives MCP clients a durable memory layer with provenance, typed claims
-and facts, verification gates, server-side embeddings, recall, team isolation,
-an MCP endpoint, a first-party user portal with graph inspection, and a
-token-protected control portal. The host LLM owns conversation and judgment;
-Dense-Mem owns durable memory state and returns structured outcomes the host can
-explain to users.
-
-Under the hood, Dense-Mem is a standalone HTTP MCP memory server. HTTP MCP is
-the v1 supported MCP transport and is served at `/mcp` from the main HTTP
-process.
+The host LLM owns conversation and judgment. Dense-Mem owns durable evidence,
+owner authorization, lifecycle events, support eligibility, and bounded recall.
+The external memory automation contract is MCP at `/mcp`; browser routes are
+first-party interfaces, not an alternative public automation API.
 
 Dense-Mem is part of the research preprint
 [Governed Enterprise AI Memory Beyond RAG: From Vector Retrieval to Permissioned
 Knowledge Graphs](https://zenodo.org/records/21403316).
 
-## Project Intro
-
-<p align="center">
-  <a href="https://cdn.markhuang.ai/videos/dense-mem/intro.mp4" target="_blank" rel="noopener noreferrer">
-    <img src="assets/thumbnail.png" alt="Watch the Dense-Mem intro video" width="100%" />
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://cdn.markhuang.ai/videos/dense-mem/intro.mp4" target="_blank" rel="noopener noreferrer"><strong>Watch the Dense-Mem intro video</strong></a>
-</p>
-
 ## Try the Hosted Demo
 
 Create a temporary isolated team at
-[https://demo-dense-mem.markhuang.ai](https://demo-dense-mem.markhuang.ai) and
-test Dense-Mem before self-hosting.
+[https://demo-dense-mem.markhuang.ai](https://demo-dense-mem.markhuang.ai) to
+test disposable data before self-hosting.
 
 <p align="center">
-  <img src="assets/readme-hero.jpg" alt="Cartoon architecture illustration: AI clients send evidence into a secure Dense-Mem vault where claims become facts, conflicts become clarification questions, and durable storage sits behind the service." />
+  <img src="assets/readme-hero.jpg" alt="AI clients submit evidence to a governed memory service, which records lifecycle and returns active relationships with provenance." />
 </p>
 
-## Why Dense-Mem?
+## Why Dense-Mem
 
-AI agents need memory that can be trusted later, not only text that can be
-retrieved later.
-
-- Evidence is first-class. Memories start as source fragments before they become
-  claims or facts.
-- Facts pass through typed claims, verification, and promotion gates.
-- Comparable conflicts become `clarifications[]`; Dense-Mem does not silently
-  overwrite active facts.
-- The host LLM stays responsible for extracting candidates and asking the user
-  questions. Dense-Mem stays responsible for durable state, gates, audit
-  metadata, and recall.
-- Operators keep control of storage, team/profile isolation, API keys, and data
-  egress boundaries.
+- Evidence is exact, durable, and append-only. A lifecycle action changes its
+  effective state without deleting provenance or trace lineage.
+- Entity and typed Value are semantic nodes. Profile-owned Relationships become
+  active graph edges only when their evidence support is eligible.
+- Provider output is a proposal. Closed-schema validation and deterministic
+  server policy decide durable state.
+- Default recall excludes candidates and Hypotheses and returns evidence only
+  when its active Relationship support path is eligible for the requested time.
+- Team visibility and profile mutation authority are distinct. An author can
+  change only their own evidence or owned semantic records.
 
 ## 60-Second Quickstart
 
-Download the base local-only compose example and env template, set the required
-secrets, and start Dense-Mem:
+Download the local compose example and environment template, configure the
+required secrets, and start Dense-Mem:
 
 ```bash
 mkdir dense-mem-local
@@ -113,45 +86,30 @@ docker compose up -d
 docker compose exec server /app/provision-team --name "primary-memory"
 ```
 
-The base compose example provisions PostgreSQL with pgvector and the Dense-Mem
-server. Fresh installs leave `NEO4J_*` unset and initialize PostgreSQL
-directly. Cleanup releases reject legacy Neo4j configuration; operators with a
-legacy Neo4j corpus must first run `v2.1.2`, complete the guided migration
-there, remove `NEO4J_*`, and then upgrade. The
-base stack exposes only local host ports:
+The base stack uses PostgreSQL with pgvector as the durable authority. Leave
+`NEO4J_*` unset for normal operation; a legacy Neo4j corpus is migration input,
+not a runtime fallback. The local ports are:
 
 ```text
-MCP/API:        http://127.0.0.1:8080/mcp
+MCP:            http://127.0.0.1:8080/mcp
 User portal:    http://127.0.0.1:8080/ui
 Control portal: http://127.0.0.1:8090/
 ```
 
-The user portal includes recall, facts, claims, fragments, communities, dreams,
-and a bounded graph explorer for seeing facts, claims, evidence fragments, and
-dream hypotheses as connected memory. The graph view is a read-scoped UI
-endpoint, not a raw database query or unrestricted traversal API.
-
-Cold image pulls can take longer than 60 seconds. Redis and public HTTPS are
-intentionally omitted from the base example; use the expert example when you
-need those deployment options.
-
-The server requires complete embedding and assessor configuration at startup:
-`AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`,
+The server requires complete embedding and verifier configuration at
+startup: `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`,
 `AI_API_EMBEDDING_DIMENSIONS`, and `AI_VERIFIER_MODEL`.
-The compose examples provide OpenAI defaults for the embedding URL, model, and
-dimensions (`https://api.openai.com/v1`, `text-embedding-3-large`, `3072`), but
-you still choose the chat models explicitly in `.env`. Override the embedding
-values together when using a different embedding provider or model.
+The compose examples provide OpenAI defaults for embeddings; choose the chat
+models explicitly in `.env`.
 
-Verifier calls send `temperature: 0` by default. Set
+Verifier and assessor calls send `temperature: 0` by default. Set
 `AI_VERIFIER_DISABLE_TEMPERATURE=true` to omit the field for providers or models
 that reject temperature.
 
 ### Fully Local Setup (Ollama)
 
-Dense-Mem also runs with no hosted AI provider at all. Any OpenAI-compatible
-endpoint can serve embeddings and verification; with [Ollama](https://ollama.com)
-on the Docker host, pull the two models once and point `.env` at them:
+Any OpenAI-compatible endpoint can provide embeddings and verification. With
+[Ollama](https://ollama.com) running on the Docker host:
 
 ```bash
 ollama pull nomic-embed-text
@@ -167,48 +125,124 @@ AI_VERIFIER_MODEL=llama3.1:8b
 AI_VERIFIER_TIMEOUT_SECONDS=300
 ```
 
-Three details matter on this path:
+Use `host.docker.internal`, not `127.0.0.1`, because the server calls the
+provider from the compose network. `AI_API_KEY` must remain non-empty because
+startup validation requires a complete provider configuration.
 
-- Use `host.docker.internal`, not `127.0.0.1`; the server calls the provider
-  from inside the compose network. The base compose example maps that name to
-  the Docker host so it also works on Linux, where Docker does not define it
-  by default.
-- `AI_API_KEY` must be non-empty even though Ollama ignores it; startup
-  validation requires a complete embedding configuration.
 - Set `AI_VERIFIER_MODEL` to a model that exists on the selected chat endpoint.
   Startup validates the model configuration before the service accepts memory
   writes. A 7B-8B class model works for local smoke tests; larger models can
   exceed the default 60-second timeout while they load, leaving placement
   attempts retryable until the model responds.
 
-### Your First Memory
+## Evidence Lifecycle
 
-`remember` stores evidence and returns an `ingest_id` immediately; placement
-happens asynchronously. Poll `get_memory_placement` with that `ingest_id` to
-see where the memory landed:
+`remember` durably stages exact evidence and returns an `ingest_id`; provider
+calls and placement happen after acknowledgement. Poll `get_memory_placement`
+for the authoritative processing state.
 
-| Category | Meaning |
-|----------|---------|
-| `promoted_fact` | A claim was extracted, verified, and promoted to an active fact. |
-| `validated_claim` | The claim verified but did not create a fact. |
-| `candidate_claim` | The claim is parked pending stronger support; check the item's `error` field for verifier failures. |
-| `fragment_only` | The text was stored as searchable evidence without a typed claim. |
-| `needs_more_evidence` | Placement wants more evidence before deciding. |
-| `rejected_false` | The evidence looked like a contradiction or false-memory correction. |
+To replace a specific current evidence item you own, put its UUID in the new
+item's `supersedes_evidence_ids`. Direct targeting is separate from advancing a
+source revision with `previous_source_revision`; do not combine them.
 
-Server-side claim extraction is deliberately conservative: simple first-person
-statements such as "I prefer ...", "I like ...", or "I use ..." are the
-reliable way to see the full evidence-to-fact path on a first run. Other
-phrasings, including third-person forms like "Josh prefers ...", are kept as
-`fragment_only` evidence, which recall still returns and ranks below facts.
-`fragment_only` is a normal outcome, not an error.
+```json
+{
+  "evidence": [
+    {
+      "content": "The deployment target is now PostgreSQL only.",
+      "source_type": "manual",
+      "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"],
+      "idempotency_key": "deployment-target-correction-20260729"
+    }
+  ]
+}
+```
 
-### Telemetry Overlay
+The target is retired atomically when the replacement is accepted for intake,
+even if later placement is rejected or quarantined. This preserves the exact
+correction decision instead of silently leaving stale evidence effective.
 
-Prometheus telemetry is optional and off by default. To collect usage,
-performance, verifier token, embedding token, recall, and promotion metrics for
-the `/ui` app and control portal dashboards, run the base stack with the
-telemetry overlay:
+To retract evidence without a replacement, call `retract_evidence` with owned
+current IDs, a bounded reason, and an idempotency key:
+
+```json
+{
+  "evidence_ids": ["<owned-current-evidence-uuid>"],
+  "reason": "The source was withdrawn.",
+  "idempotency_key": "withdrawn-source-20260729"
+}
+```
+
+Both operations append lifecycle events. They never physically delete evidence
+or trace lineage. Current recall excludes retired evidence, while a historical
+`known_at` view before the event can still show what the system knew then.
+
+## Recall and Graph State
+
+`recall_memory` is evidence-first but support-path gated. Its `results[]`
+contain evidence contexts only after final hydration proves an active,
+query-relevant Relationship support path remains eligible for the requested
+`valid_at` and `known_at` view. Related Relationships, communities, and
+Hypotheses are separate bounded fields; candidates and Hypotheses are not
+default memory results.
+
+```text
+remember evidence (+ optional Entity/Relationship proposals)
+        |
+        v
+durable staging -> validated placement -> active eligible Relationships
+        |                                      |
+        +-- lifecycle event -------------------+
+                                               |
+                                               v
+                         support-gated evidence recall and trace lineage
+```
+
+## MCP Tool Catalog
+
+The active contract is `dense-mem.v2.4`. Discover the authorized catalog with
+MCP `tools/list`; the server applies the same scope, feature, and visibility
+checks to `tools/call`.
+
+| Tool | Purpose |
+|------|---------|
+| `remember` | Submit exact evidence and optional Entity/Relationship proposal hints for server-owned placement. |
+| `get_memory_placement` | Poll a placement run. |
+| `retract_evidence` | Retract caller-owned evidence while preserving append-only provenance. |
+| `resolve_memory_placement` | Resolve placement review items through append-only evidence decisions. |
+| `correct_entity_resolution` | Dry-run or apply caller-owned Entity merge and split corrections. |
+| `recall_memory` | Recall active evidence contexts and Relationship handles. |
+| `trace_memory` | Trace one same-team Relationship through evidence, decisions, and lineage. |
+| `submit_recall_session_feedback` | Record bounded session-level recall quality feedback. |
+| `list_dreams` | List reviewable Hypotheses without treating them as memory. |
+| `get_dream` | Fetch one authorized Hypothesis and its source references. |
+| `resolve_dream_feedback` | Resolve Hypothesis feedback without using the Hypothesis as evidence. |
+| `find_memory_pack_candidates` | Find active Relationships that may be exported. |
+| `export_memory_pack` | Export selected active Relationships with support provenance. |
+| `inspect_memory_pack` | Inspect a memory-pack artifact without writing durable state. |
+| `import_memory_pack` | Import a reviewed memory pack through normal evidence placement. |
+| `rollback_memory_pack_import` | Roll back an import when no selected state changed. |
+
+Memory-pack writers emit `dense-mem.memory-pack.v2.4`; strict readers preserve
+support for prior v2.3 and v1 artifacts after validating their original hashes.
+
+## Supported HTTP Surfaces
+
+| Surface | Path | Intended use |
+|---------|------|--------------|
+| Streamable HTTP MCP | `GET /mcp`, `POST /mcp` | Supported external memory integration contract. |
+| User portal | `/ui` and `/ui/api/*` | First-party browser interface. |
+| Control portal | `/control/api/*` | Private or dedicated administrative ingress. |
+| Health | `/health`, `/ready` | Container liveness and readiness checks. |
+
+There is no supported public REST memory API. Do not automate browser routes or
+depend on retired `/api/v1` paths.
+
+## Telemetry Overlay
+
+Prometheus telemetry is optional and off by default. To collect HTTP,
+embedding, verifier, recall, feedback, and conflict-review metrics for the
+first-party dashboards, start the base stack with the overlay:
 
 ```bash
 curl -fsSLo prometheus.yml \
@@ -220,151 +254,37 @@ export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
 docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
 ```
 
-The overlay starts Prometheus on `127.0.0.1:9090`, retains 30 days of samples,
-passes `TELEMETRY_SCRAPE_TOKEN` to Prometheus as a scrape secret, and points
-Dense-Mem at `http://prometheus:9090` for telemetry queries. It also sets
-`TELEMETRY_PROMETHEUS_JOB=dense-mem` so dashboards query only the `dense-mem`
-scrape job when Prometheus is shared.
-
-Online recall-quality cards use `densemem_recall_feedback_total` and
-`densemem_recall_feedback_quality_score`. They stay at zero until
-recall feedback is enabled from the control portal config panel and a host LLM
-submits feedback for `recall_memory` results. Feedback only omits
-`feedback_comment` when quality is `high` with no negative flags; medium, low,
-or flagged feedback includes a bounded comment and can include irrelevant result
-refs for offline analysis. Prometheus still receives only bounded labels; the
-free-text comment stays in the recall feedback investigation records. When
-related dreams are returned, feedback can also include bounded `dream_feedback`
-judgments without promoting or rejecting the dream automatically. Confirmed true
-or false dreams should be resolved through `resolve_dream_feedback`, which
-records dream-specific telemetry and routes the confirmation evidence through
-normal memory placement. Normal production recall traffic still contributes
-request volume, result count, and latency.
-
-## Compare
-
-| Capability | Dense-Mem | File memory | Vector DB | Generic MCP memory |
-|------------|-----------|-------------|-----------|--------------------|
-| Evidence provenance | Source fragments are stored before claims or facts | Usually absent or informal | Stores chunks, not truth history | Varies by implementation |
-| Fact changes | Verification gates and promotion rules | Manual edits | Similarity updates can obscure history | Often tool-specific |
-| Conflict handling | Comparable conflicts return clarification tasks | Caller must notice | Similar vectors do not mean contradiction | Usually caller-managed |
-| Recall | Facts, claims, fragments, contradictions, and clarifications | Text search | Vector similarity | Varies |
-| Graph inspection | User portal graph view plus bounded `trace_memory` lineage | Manual cross-references | Usually external tooling | Varies |
-| Agent boundary | Host LLM judges; Dense-Mem stores and enforces | Blurred | Retrieval only | Often blurred |
-| Operations | Teams, profiles, API keys, audit metadata, MCP, browser and control APIs | Minimal | Database operations | Varies |
-
-Redis is optional for single-node deployments and required for multi-instance
-deployments.
-
-## Documentation
-
-The README is the product overview. The full user documentation lives in the
-[Dense-Mem wiki](https://github.com/markhuangai/dense-mem/wiki):
-
-| Goal | Wiki page |
-|------|-----------|
-| Run Dense-Mem locally | [Quick Start](https://github.com/markhuangai/dense-mem/wiki/Quick-Start) |
-| Use memory day to day | [Using Dense-Mem](https://github.com/markhuangai/dense-mem/wiki/Using-Dense-Mem) |
-| Configure providers, Redis, and Traefik | [Configuration](https://github.com/markhuangai/dense-mem/wiki/Configuration) |
-| Understand the system design | [Architecture](https://github.com/markhuangai/dense-mem/wiki/Architecture) |
-| Review API and operations details | [Technical Reference](https://github.com/markhuangai/dense-mem/wiki/Technical-Reference) |
+The overlay starts Prometheus on `127.0.0.1:9090` and scopes dashboard queries
+to `TELEMETRY_PROMETHEUS_JOB=dense-mem`. Free-text recall-feedback comments stay
+in bounded investigation records; Prometheus receives only bounded labels.
 
 ## Responsibility Boundary
 
 | Area | Dense-Mem owns | Host LLM owns |
 |------|----------------|---------------|
-| Memory writes | Evidence fragments, claim extraction, verification, gates, promotion | Submitting evidence from chat text |
-| Embeddings | Fragment embeddings and recall-query embeddings through the configured provider | No vectors for normal writes or recall |
-| Retrieval | Facts, validated claims, fragments, contradictions, clarification tasks | Choosing what to ask or cite in the conversation |
-| Truth changes | Comparable-conflict detection, confirmation-driven supersession | Asking the user which uncertain memory is correct |
-| Operations | Teams, named profiles, API keys, audit metadata, control portal | Client-side MCP configuration |
+| Evidence | Exact staging, provenance, lifecycle, and owner checks | Choosing what source material to submit |
+| Semantic state | Validation, deterministic policy, support eligibility | Proposing optional Entity/Relationship hints |
+| Recall | Active evidence contexts and Relationship handles | Selecting what to cite or ask in the conversation |
+| Corrections | Authorized supersession, retraction, and append-only lineage | Deciding whether a correction is warranted |
+| Operations | Teams, profiles, API keys, audit, and portals | MCP client configuration |
 
-Dense-Mem is not an agent brain, planner, or external truth arbiter. It stores
-memory, applies explicit gates, and returns structured outcomes.
+## Data Egress and Consistency
 
-## Memory Workflow
+Dense-Mem can send evidence text, proposal context, and recall queries to the
+configured embedding and verifier providers. Self-hosted providers keep that
+traffic within your boundary; hosted providers do not. Embeddings are derived,
+versioned state and cannot overwrite newer sources. Startup checks prevent
+mixing incompatible embedding models or dimensions.
 
-| Tool | Purpose |
-|------|---------|
-| `remember` | Normal chat-session memory insertion. Saves evidence only and returns a placement run for Dense-Mem verifier processing. |
-| `get_memory_placement` | Polls the verifier-owned placement run returned by `remember`, including fragment-only, claim, fact, rejected, and needs-evidence outcomes. |
-| `dispute_memory_placement` | Starts or continues a bounded placement dispute with additional evidence; the verifier decides whether to promote or keep the placement rejected. |
-| `import_memories` | Trusted migration path for summarized historical conversations. It may carry explicit claims and can request auto-promotion. |
-| `recall_memory` | Retrieves facts, validated claims, fragments, `clarifications[]`, and hypothesis-only `related_dreams` for the authenticated team. |
-| `resolve_dream_feedback` | Records dream-specific decisions. `ignore` leaves the dream for future recall, while confirmed true or false dreams enter normal memory placement and are removed from future dream recall. |
-| `trace_memory` | Expands one fact or claim into bounded evidence, promotion lineage, contradictions, and supersession links. |
-| `assemble_context` | Builds a bounded prompt-ready context block plus structured facts, claims, fragments, and clarifications. |
-| `reflect_memories` | Reviews active facts, candidate or disputed claims, contradictions, stale memories, and clarification needs. |
-| `confirm_memory` | Applies the user's answer to a clarification task, either accepting a claim and superseding comparable active facts or keeping/rejecting it. |
-| `find_memory_pack_candidates` | Finds facts and validated claims that can be exported into a portable memory pack. |
-| `export_memory_pack` | Exports selected memory into canonical JSON with a SHA-256 integrity hash for review or sharing. |
-| `inspect_memory_pack` | Parses a memory-pack artifact or URL and reports duplicates, conflicts, and required decisions without writing memory. |
-| `import_memory_pack` | Imports a reviewed or trusted memory pack with ledgered changes and rollback support. |
-| `rollback_memory_pack_import` | Rolls back changes from a prior memory-pack import when the ledger has enough state. |
+## Documentation
 
-Direct client tools for claim/fact promotion, raw fragment mutation, raw
-keyword/vector/graph search, community detection, and retractions are not part
-of the public client surface. Dense-Mem keeps the underlying logic server-side
-for verifier, recall, migration, and maintenance flows.
-
-The older `*_skill_pack*` tool names remain accepted as hidden compatibility
-aliases, but new clients should use `*_memory_pack*`. Dense-Mem also exposes MCP
-prompts through `prompts/list` and `prompts/get`; the first bundled prompt,
-`export_memory_as_agent_skill`, guides an LLM to recall Dense-Mem experience and
-draft a self-contained, shareable Agent Skill `SKILL.md` file for recipients
-without access to the source memory instance, and without relying on memory-pack
-import/export.
-
-Memory moves through this path:
-
-```text
-remember evidence -> verifier placement -> typed claim -> verification -> promotion gate -> active fact
-                         |                                                 |
-                         v                                                 v
-                  fragment-only / reject                              clarification task
-```
-
-Comparable conflicts are not resolved silently. Dense-Mem returns
-`clarifications[]`, and the host LLM asks the user which memory is correct. After
-the user answers, the host calls `confirm_memory`.
-
-## Data Egress
-
-Dense-Mem forwards fragment text and recall queries to the configured embedding
-provider. Claim verification can send candidate claims and supporting evidence to
-the configured verifier provider. Self-hosted providers keep that traffic inside
-your boundary; hosted providers do not. See the wiki
-[Configuration](https://github.com/markhuangai/dense-mem/wiki/Configuration) and
-[Technical Reference](https://github.com/markhuangai/dense-mem/wiki/Technical-Reference)
-for provider settings and egress details.
-
-## Embedding Model Consistency
-
-Dense-Mem owns embeddings for normal writes and recall. It checks the stored
-embedding model and dimension on startup so vectors from incompatible models are
-not mixed silently. Rotation requires re-embedding or rebuilding vector indexes;
-the step-by-step process belongs in the wiki
-[Configuration](https://github.com/markhuangai/dense-mem/wiki/Configuration).
-
-## Tool Discoverability
-
-Dense-Mem exposes MCP discovery from the same runtime registry used by the
-server-side tool executor:
-
-| Surface | Path | Purpose |
-|---------|------|---------|
-| MCP Streamable HTTP | `POST /mcp`, `GET /mcp` | MCP clients over the main HTTP service, including tools and bundled prompts |
-
-The full route list and client examples live in the wiki
-[Technical Reference](https://github.com/markhuangai/dense-mem/wiki/Technical-Reference)
-and [Quick Start](https://github.com/markhuangai/dense-mem/wiki/Quick-Start).
-
-## Design Notes
-
-- [standalone MCP memory architecture](https://github.com/markhuangai/dense-mem/wiki/Standalone-MCP-Memory-Architecture)
-- [knowledge-pipeline contracts](https://github.com/markhuangai/dense-mem/wiki/Knowledge-Pipeline-Contracts)
-- [knowledge-pipeline client contracts](https://github.com/markhuangai/dense-mem/wiki/Knowledge-Pipeline-Client-Contracts)
-- [knowledge-pipeline operability](https://github.com/markhuangai/dense-mem/wiki/Knowledge-Pipeline-Operability)
+| Goal | Wiki page |
+|------|-----------|
+| Run Dense-Mem locally | [Quick Start](https://github.com/markhuangai/dense-mem/wiki/Quick-Start) |
+| Use evidence lifecycle and recall | [Using Dense-Mem](https://github.com/markhuangai/dense-mem/wiki/Using-Dense-Mem) |
+| Configure providers, Redis, and ingress | [Configuration](https://github.com/markhuangai/dense-mem/wiki/Configuration) |
+| Understand the design | [Architecture](https://github.com/markhuangai/dense-mem/wiki/Architecture) |
+| Review MCP and portal routes | [Technical Reference](https://github.com/markhuangai/dense-mem/wiki/Technical-Reference) |
 
 ## License
 

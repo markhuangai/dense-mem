@@ -42,55 +42,34 @@ func (s *stubRateLimitService) Check(ctx context.Context, subject, routePath str
 
 // testRateLimitConfig implements config.ConfigProvider for rate limit tests.
 type testRateLimitConfig struct {
-	rateLimitPerMinute      int
-	fragmentCreateRateLimit int
-	fragmentReadRateLimit   int
-	claimWriteRateLimit     int
-	claimReadRateLimit      int
+	rateLimitPerMinute int
 }
 
-func (c *testRateLimitConfig) GetPostgresDSN() string            { return "" }
-func (c *testRateLimitConfig) GetRedisAddr() string              { return "" }
-func (c *testRateLimitConfig) GetRedisPassword() string          { return "" }
-func (c *testRateLimitConfig) GetRedisDB() int                   { return 0 }
-func (c *testRateLimitConfig) GetHTTPMaxBodyBytes() int          { return 1048576 }
-func (c *testRateLimitConfig) GetRateLimitPerMinute() int        { return c.rateLimitPerMinute }
-func (c *testRateLimitConfig) GetFragmentCreateRateLimit() int   { return c.fragmentCreateRateLimit }
-func (c *testRateLimitConfig) GetFragmentReadRateLimit() int     { return c.fragmentReadRateLimit }
-func (c *testRateLimitConfig) GetSSEHeartbeatSeconds() int       { return 30 }
-func (c *testRateLimitConfig) GetSSEMaxDurationSeconds() int     { return 300 }
-func (c *testRateLimitConfig) GetSSEMaxConcurrentStreams() int   { return 10 }
-func (c *testRateLimitConfig) GetEmbeddingDimensions() int       { return 1536 }
-func (c *testRateLimitConfig) GetAIAPIURL() string               { return "" }
-func (c *testRateLimitConfig) GetAIAPIKey() string               { return "" }
-func (c *testRateLimitConfig) GetAIEmbeddingModel() string       { return "" }
-func (c *testRateLimitConfig) GetAIEmbeddingDimensions() int     { return 0 }
-func (c *testRateLimitConfig) GetAIEmbeddingTimeoutSeconds() int { return 30 }
-func (c *testRateLimitConfig) IsEmbeddingConfigured() bool       { return false }
-func (c *testRateLimitConfig) GetAIVerifierAPIURL() string       { return "" }
-func (c *testRateLimitConfig) GetAIVerifierAPIKey() string       { return "" }
-func (c *testRateLimitConfig) GetAIReviewerModel() string        { return "reviewer-model" }
-func (c *testRateLimitConfig) GetAIVerifierModel() string        { return "gpt-4o-mini" }
-func (c *testRateLimitConfig) GetAIVerifierTimeoutSeconds() int  { return 60 }
-func (c *testRateLimitConfig) GetAIVerifierMaxConcurrency() int  { return 5 }
-func (c *testRateLimitConfig) GetClaimWriteRateLimit() int {
-	if c.claimWriteRateLimit != 0 {
-		return c.claimWriteRateLimit
-	}
-	return 60
-}
-func (c *testRateLimitConfig) GetClaimReadRateLimit() int {
-	if c.claimReadRateLimit != 0 {
-		return c.claimReadRateLimit
-	}
-	return 300
-}
-func (c *testRateLimitConfig) GetRecallValidatedClaimWeight() float64 { return 0.5 }
-func (c *testRateLimitConfig) GetPromoteTxTimeoutSeconds() int        { return 10 }
-func (c *testRateLimitConfig) GetSkillPackImportHistoryDays() int     { return 30 }
-func (c *testRateLimitConfig) GetAICommunityMaxNodes() int            { return 500000 }
-func (c *testRateLimitConfig) GetControlHTTPAddr() string             { return "127.0.0.1:8090" }
-func (c *testRateLimitConfig) GetControlPortalToken() string          { return "" }
+func (c *testRateLimitConfig) GetPostgresDSN() string              { return "" }
+func (c *testRateLimitConfig) GetRedisAddr() string                { return "" }
+func (c *testRateLimitConfig) GetRedisPassword() string            { return "" }
+func (c *testRateLimitConfig) GetRedisDB() int                     { return 0 }
+func (c *testRateLimitConfig) GetHTTPMaxBodyBytes() int            { return 1048576 }
+func (c *testRateLimitConfig) GetRateLimitPerMinute() int          { return c.rateLimitPerMinute }
+func (c *testRateLimitConfig) GetSSEHeartbeatSeconds() int         { return 30 }
+func (c *testRateLimitConfig) GetSSEMaxDurationSeconds() int       { return 300 }
+func (c *testRateLimitConfig) GetEmbeddingDimensions() int         { return 1536 }
+func (c *testRateLimitConfig) GetAIAPIURL() string                 { return "" }
+func (c *testRateLimitConfig) GetAIAPIKey() string                 { return "" }
+func (c *testRateLimitConfig) GetAIEmbeddingModel() string         { return "" }
+func (c *testRateLimitConfig) GetAIEmbeddingDimensions() int       { return 0 }
+func (c *testRateLimitConfig) GetAIEmbeddingTimeoutSeconds() int   { return 30 }
+func (c *testRateLimitConfig) IsEmbeddingConfigured() bool         { return false }
+func (c *testRateLimitConfig) GetAIVerifierAPIURL() string         { return "" }
+func (c *testRateLimitConfig) GetAIVerifierAPIKey() string         { return "" }
+func (c *testRateLimitConfig) GetAIReviewerModel() string          { return "reviewer-model" }
+func (c *testRateLimitConfig) GetAIVerifierModel() string          { return "gpt-4o-mini" }
+func (c *testRateLimitConfig) GetAIVerifierTimeoutSeconds() int    { return 60 }
+func (c *testRateLimitConfig) GetAIVerifierMaxConcurrency() int    { return 5 }
+func (c *testRateLimitConfig) GetPromoteTxTimeoutSeconds() int     { return 10 }
+func (c *testRateLimitConfig) GetMemoryPackImportHistoryDays() int { return 30 }
+func (c *testRateLimitConfig) GetControlHTTPAddr() string          { return "127.0.0.1:8090" }
+func (c *testRateLimitConfig) GetControlPortalToken() string       { return "" }
 
 // runRateLimitMiddlewareContract is the shared contract helper for rate limit
 // middleware. It exercises header contract and 429 behavior for any backend
@@ -101,11 +80,7 @@ func runRateLimitMiddlewareContract(t *testing.T, name string, svc service.RateL
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 
-	cfg := &testRateLimitConfig{
-		rateLimitPerMinute:      2,
-		fragmentCreateRateLimit: 60,
-		fragmentReadRateLimit:   300,
-	}
+	cfg := &testRateLimitConfig{rateLimitPerMinute: 2}
 	e.Use(RateLimitMiddleware(svc, cfg, nil))
 
 	principalProfileID := uuid.New()
@@ -145,46 +120,37 @@ func TestRateLimitMiddleware_Contract_InMemory(t *testing.T) {
 
 // redisRateLimitConfig implements config.ConfigProvider for Redis-backed rate limit tests.
 type redisRateLimitConfig struct {
-	addr                    string
-	password                string
-	db                      int
-	rateLimitPerMinute      int
-	fragmentCreateRateLimit int
-	fragmentReadRateLimit   int
+	addr               string
+	password           string
+	db                 int
+	rateLimitPerMinute int
 }
 
-func (c *redisRateLimitConfig) GetPostgresDSN() string                 { return "" }
-func (c *redisRateLimitConfig) GetRedisAddr() string                   { return c.addr }
-func (c *redisRateLimitConfig) GetRedisPassword() string               { return c.password }
-func (c *redisRateLimitConfig) GetRedisDB() int                        { return c.db }
-func (c *redisRateLimitConfig) GetHTTPMaxBodyBytes() int               { return 1048576 }
-func (c *redisRateLimitConfig) GetRateLimitPerMinute() int             { return c.rateLimitPerMinute }
-func (c *redisRateLimitConfig) GetFragmentCreateRateLimit() int        { return c.fragmentCreateRateLimit }
-func (c *redisRateLimitConfig) GetFragmentReadRateLimit() int          { return c.fragmentReadRateLimit }
-func (c *redisRateLimitConfig) GetSSEHeartbeatSeconds() int            { return 30 }
-func (c *redisRateLimitConfig) GetSSEMaxDurationSeconds() int          { return 300 }
-func (c *redisRateLimitConfig) GetSSEMaxConcurrentStreams() int        { return 10 }
-func (c *redisRateLimitConfig) GetEmbeddingDimensions() int            { return 1536 }
-func (c *redisRateLimitConfig) GetAIAPIURL() string                    { return "" }
-func (c *redisRateLimitConfig) GetAIAPIKey() string                    { return "" }
-func (c *redisRateLimitConfig) GetAIEmbeddingModel() string            { return "" }
-func (c *redisRateLimitConfig) GetAIEmbeddingDimensions() int          { return 0 }
-func (c *redisRateLimitConfig) GetAIEmbeddingTimeoutSeconds() int      { return 30 }
-func (c *redisRateLimitConfig) IsEmbeddingConfigured() bool            { return false }
-func (c *redisRateLimitConfig) GetAIVerifierAPIURL() string            { return "" }
-func (c *redisRateLimitConfig) GetAIVerifierAPIKey() string            { return "" }
-func (c *redisRateLimitConfig) GetAIReviewerModel() string             { return "reviewer-model" }
-func (c *redisRateLimitConfig) GetAIVerifierModel() string             { return "gpt-4o-mini" }
-func (c *redisRateLimitConfig) GetAIVerifierTimeoutSeconds() int       { return 60 }
-func (c *redisRateLimitConfig) GetAIVerifierMaxConcurrency() int       { return 5 }
-func (c *redisRateLimitConfig) GetClaimWriteRateLimit() int            { return 60 }
-func (c *redisRateLimitConfig) GetClaimReadRateLimit() int             { return 300 }
-func (c *redisRateLimitConfig) GetRecallValidatedClaimWeight() float64 { return 0.5 }
-func (c *redisRateLimitConfig) GetPromoteTxTimeoutSeconds() int        { return 10 }
-func (c *redisRateLimitConfig) GetSkillPackImportHistoryDays() int     { return 30 }
-func (c *redisRateLimitConfig) GetAICommunityMaxNodes() int            { return 500000 }
-func (c *redisRateLimitConfig) GetControlHTTPAddr() string             { return "127.0.0.1:8090" }
-func (c *redisRateLimitConfig) GetControlPortalToken() string          { return "" }
+func (c *redisRateLimitConfig) GetPostgresDSN() string              { return "" }
+func (c *redisRateLimitConfig) GetRedisAddr() string                { return c.addr }
+func (c *redisRateLimitConfig) GetRedisPassword() string            { return c.password }
+func (c *redisRateLimitConfig) GetRedisDB() int                     { return c.db }
+func (c *redisRateLimitConfig) GetHTTPMaxBodyBytes() int            { return 1048576 }
+func (c *redisRateLimitConfig) GetRateLimitPerMinute() int          { return c.rateLimitPerMinute }
+func (c *redisRateLimitConfig) GetSSEHeartbeatSeconds() int         { return 30 }
+func (c *redisRateLimitConfig) GetSSEMaxDurationSeconds() int       { return 300 }
+func (c *redisRateLimitConfig) GetEmbeddingDimensions() int         { return 1536 }
+func (c *redisRateLimitConfig) GetAIAPIURL() string                 { return "" }
+func (c *redisRateLimitConfig) GetAIAPIKey() string                 { return "" }
+func (c *redisRateLimitConfig) GetAIEmbeddingModel() string         { return "" }
+func (c *redisRateLimitConfig) GetAIEmbeddingDimensions() int       { return 0 }
+func (c *redisRateLimitConfig) GetAIEmbeddingTimeoutSeconds() int   { return 30 }
+func (c *redisRateLimitConfig) IsEmbeddingConfigured() bool         { return false }
+func (c *redisRateLimitConfig) GetAIVerifierAPIURL() string         { return "" }
+func (c *redisRateLimitConfig) GetAIVerifierAPIKey() string         { return "" }
+func (c *redisRateLimitConfig) GetAIReviewerModel() string          { return "reviewer-model" }
+func (c *redisRateLimitConfig) GetAIVerifierModel() string          { return "gpt-4o-mini" }
+func (c *redisRateLimitConfig) GetAIVerifierTimeoutSeconds() int    { return 60 }
+func (c *redisRateLimitConfig) GetAIVerifierMaxConcurrency() int    { return 5 }
+func (c *redisRateLimitConfig) GetPromoteTxTimeoutSeconds() int     { return 10 }
+func (c *redisRateLimitConfig) GetMemoryPackImportHistoryDays() int { return 30 }
+func (c *redisRateLimitConfig) GetControlHTTPAddr() string          { return "127.0.0.1:8090" }
+func (c *redisRateLimitConfig) GetControlPortalToken() string       { return "" }
 
 func TestRateLimitMiddleware_Contract_Redis(t *testing.T) {
 	t.Parallel()
@@ -194,12 +160,7 @@ func TestRateLimitMiddleware_Contract_Redis(t *testing.T) {
 		t.Skip("REDIS_ADDR not set — skipping Redis-backed rate limit test")
 	}
 
-	cfg := &redisRateLimitConfig{
-		addr:                    redisAddr,
-		rateLimitPerMinute:      2,
-		fragmentCreateRateLimit: 60,
-		fragmentReadRateLimit:   300,
-	}
+	cfg := &redisRateLimitConfig{addr: redisAddr, rateLimitPerMinute: 2}
 
 	redisClient, err := redis.NewClient(t.Context(), cfg)
 	if err != nil {
@@ -212,157 +173,15 @@ func TestRateLimitMiddleware_Contract_Redis(t *testing.T) {
 	runRateLimitMiddlewareContract(t, "Redis", svc)
 }
 
-// TestSelectRateLimit_FragmentTiers asserts AC-54: fragment writes use the
-// stricter FragmentCreateRateLimit while fragment reads use the looser
-// FragmentReadRateLimit. Non-fragment traffic falls back to the standard tier
-// for the profile.
-func TestSelectRateLimit_FragmentTiers(t *testing.T) {
+func TestSelectRateLimitUsesStandardTier(t *testing.T) {
 	t.Parallel()
 
-	cfg := &testRateLimitConfig{
-		rateLimitPerMinute:      100,
-		fragmentCreateRateLimit: 60,
-		fragmentReadRateLimit:   300,
-	}
-
-	cases := []struct {
-		name   string
-		role   string
-		method string
-		path   string
-		want   int
-	}{
-		{"fragment create POST uses write tier", "standard", "POST", "/ui/api/team/profiles/:id/fragments", 60},
-		{"fragment delete DELETE uses write tier", "standard", "DELETE", "/ui/api/team/profiles/:id/fragments/:fragmentId", 60},
-		{"fragment list GET uses read tier", "standard", "GET", "/ui/api/team/profiles/:id/fragments", 300},
-		{"fragment read GET uses read tier", "standard", "GET", "/ui/api/team/profiles/:id/fragments/:fragmentId", 300},
-		{"non-fragment standard uses default tier", "standard", "GET", "/ui/api/team/profiles/:id", 100},
-		{"fragment write stricter than read", "standard", "POST", "/ui/api/team/profiles/:id/fragments", 60},
-	}
-
-	for _, tc := range cases {
-		got := selectRateLimit(cfg, tc.role, tc.method, tc.path)
-		if got != tc.want {
-			t.Errorf("%s: selectRateLimit(%q, %q, %q) = %d; want %d", tc.name, tc.role, tc.method, tc.path, got, tc.want)
-		}
-	}
-
-	if cfg.GetFragmentCreateRateLimit() >= cfg.GetFragmentReadRateLimit() {
-		t.Errorf("fragment create (%d) should be stricter than fragment read (%d)",
-			cfg.GetFragmentCreateRateLimit(), cfg.GetFragmentReadRateLimit())
-	}
-}
-
-// TestSelectRateLimit_ClaimTiers asserts that POST and DELETE on /claims routes
-// use GetClaimWriteRateLimit and GETs use GetClaimReadRateLimit.
-func TestSelectRateLimit_ClaimTiers(t *testing.T) {
-	t.Parallel()
-
-	cfg := &testRateLimitConfig{
-		rateLimitPerMinute:      100,
-		fragmentCreateRateLimit: 60,
-		fragmentReadRateLimit:   300,
-		claimWriteRateLimit:     40,
-		claimReadRateLimit:      200,
-	}
-
-	cases := []struct {
-		name   string
-		role   string
-		method string
-		path   string
-		want   int
-	}{
-		{"claim create POST uses write tier", "standard", "POST", "/ui/api/team/profiles/:id/claims", 40},
-		{"claim delete DELETE uses write tier", "standard", "DELETE", "/ui/api/team/profiles/:id/claims/:claimId", 40},
-		{"claim list GET uses read tier", "standard", "GET", "/ui/api/team/profiles/:id/claims", 200},
-		{"claim read GET uses read tier", "standard", "GET", "/ui/api/team/profiles/:id/claims/:claimId", 200},
-	}
-
-	for _, tc := range cases {
-		got := selectRateLimit(cfg, tc.role, tc.method, tc.path)
-		if got != tc.want {
-			t.Errorf("%s: selectRateLimit(%q, %q, %q) = %d; want %d",
-				tc.name, tc.role, tc.method, tc.path, got, tc.want)
-		}
-	}
-
-	if cfg.GetClaimWriteRateLimit() >= cfg.GetClaimReadRateLimit() {
-		t.Errorf("claim write (%d) should be stricter than claim read (%d)",
-			cfg.GetClaimWriteRateLimit(), cfg.GetClaimReadRateLimit())
-	}
-}
-
-// TestRateLimitMiddleware_EnforcesStricterFragmentWriteTier proves that when a
-// principal floods POST /fragments, the middleware returns 429 at exactly the
-// write-tier ceiling, even though the same principal could still issue read
-// traffic under the higher read-tier quota. This is AC-54's enforcement check,
-// not just a config-ordering assertion.
-func TestRateLimitMiddleware_EnforcesStricterFragmentWriteTier(t *testing.T) {
-	t.Parallel()
-
-	store := inmem.NewInMemoryRateLimitStore()
-	svc := service.NewRateLimitService(store)
-
-	// Tight numbers for a fast, deterministic test: writes get 2/min, reads 5/min.
-	cfg := &testRateLimitConfig{
-		rateLimitPerMinute:      50,
-		fragmentCreateRateLimit: 2,
-		fragmentReadRateLimit:   5,
-	}
-
-	e := echo.New()
-	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.Use(RateLimitMiddleware(svc, cfg, nil))
-
-	profileID := uuid.New()
-	principal := &Principal{KeyID: uuid.New(), ProfileID: &profileID, Role: "standard"}
-
-	e.POST("/ui/api/team/profiles/:id/fragments", func(c echo.Context) error {
-		return c.NoContent(http.StatusCreated)
-	})
-	e.GET("/ui/api/team/profiles/:id/fragments", func(c echo.Context) error {
-		return c.NoContent(http.StatusOK)
-	})
-
-	post := func() int {
-		req := httptest.NewRequest(http.MethodPost, "/ui/api/team/profiles/"+profileID.String()+"/fragments", nil)
-		req = req.WithContext(SetPrincipalForTest(req.Context(), principal))
-		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, req)
-		return rec.Code
-	}
-	get := func() int {
-		req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/fragments", nil)
-		req = req.WithContext(SetPrincipalForTest(req.Context(), principal))
-		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, req)
-		return rec.Code
-	}
-
-	// First two POSTs must succeed — write tier allows 2.
-	assert.Equal(t, http.StatusCreated, post(), "first write must succeed under write-tier")
-	assert.Equal(t, http.StatusCreated, post(), "second write must succeed under write-tier")
-
-	// Third POST must exceed the write tier and return 429 even though the
-	// default/read tiers still have headroom. This is the actual enforcement check.
-	assert.Equal(t, http.StatusTooManyRequests, post(),
-		"third write must be rate-limited — stricter write tier enforced, not config-only")
-
-	// Reads share the same principal but use a looser tier and must still pass.
-	// This proves the middleware picks the per-route tier, not a shared global bucket.
-	assert.Equal(t, http.StatusOK, get(), "read must still succeed — read tier is separate from write tier")
-	assert.Equal(t, http.StatusOK, get(), "second read must still succeed")
+	cfg := &testRateLimitConfig{rateLimitPerMinute: 100}
+	assert.Equal(t, 100, selectRateLimit(cfg))
 }
 
 func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
-	cfg := &testRateLimitConfig{
-		rateLimitPerMinute:      100,
-		fragmentCreateRateLimit: 50,
-		fragmentReadRateLimit:   200,
-		claimWriteRateLimit:     40,
-		claimReadRateLimit:      150,
-	}
+	cfg := &testRateLimitConfig{rateLimitPerMinute: 100}
 
 	t.Run("no principal passes through", func(t *testing.T) {
 		e := echo.New()
@@ -421,13 +240,13 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		e := echo.New()
 		limiter := &stubRateLimitService{allowed: true, remaining: 4}
 		e.Use(RateLimitMiddleware(limiter, cfg, nil))
-		e.GET("/ui/api/team/profiles/:id/fragments", func(c echo.Context) error {
+		e.GET("/ui/api/other", func(c echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 
 		profileID := uuid.New()
 		keyID := uuid.New()
-		req := httptest.NewRequest(http.MethodGet, "/ui/api/team/profiles/"+profileID.String()+"/fragments", nil)
+		req := httptest.NewRequest(http.MethodGet, "/ui/api/other", nil)
 		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{
 			KeyID:     keyID,
 			ProfileID: &profileID,
@@ -452,12 +271,12 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		}
 		e.Use(CorrelationIDMiddleware())
 		e.Use(RateLimitMiddleware(limiter, cfg, &mockAuditService{}))
-		e.DELETE("/ui/api/team/profiles/:id/claims/:claim_id", func(c echo.Context) error {
+		e.DELETE("/ui/api/other", func(c echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 
 		profileID := uuid.New()
-		req := httptest.NewRequest(http.MethodDelete, "/ui/api/team/profiles/"+profileID.String()+"/claims/claim-1", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/ui/api/other", nil)
 		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{
 			KeyID:     uuid.New(),
 			ProfileID: &profileID,
@@ -467,6 +286,6 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 
 		assert.Equal(t, http.StatusTooManyRequests, rec.Code)
 		assert.Equal(t, "0", rec.Header().Get("Retry-After"))
-		assert.Equal(t, 40, limiter.lastLimit)
+		assert.Equal(t, 100, limiter.lastLimit)
 	})
 }

@@ -16,7 +16,7 @@ import (
 )
 
 func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string, selected map[string]bool, decisions map[string]string) (memoryservice.RememberRequest, []ImportItemResult) {
-	fragmentByID := MemoryPackFragmentsByID(loaded.artifact)
+	evidenceByID := MemoryPackEvidenceByID(loaded.artifact)
 	evidence := []memoryservice.RememberEvidenceInput{}
 	relationshipHints := []map[string]any{}
 	results := make([]ImportItemResult, 0, len(loaded.artifact.Relationships))
@@ -41,7 +41,7 @@ func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string
 		evidenceIndex := len(evidence)
 		result.EvidenceIndex = evidenceIndex
 		result.Status = "staged"
-		content := MemoryPackEvidenceContent(loaded.artifact, item, fragmentByID)
+		content := MemoryPackEvidenceContent(loaded.artifact, item, evidenceByID)
 		evidence = append(evidence, memoryservice.RememberEvidenceInput{
 			Content:        content,
 			SourceType:     MemoryPackSourceType,
@@ -123,7 +123,7 @@ func (s *memoryPackService) appendImportChanges(ctx context.Context, teamID, imp
 func MemoryPackImportSummary(loaded loadedArtifact, mode string, ingestID string, items []ImportItemResult) map[string]any {
 	out := map[string]any{
 		"contract_version": domain.ContractVersion,
-		"artifact_format":  loaded.artifact.Format,
+		"artifact_format":  loaded.format,
 		"artifact_hash":    loaded.hash,
 		"mode":             mode,
 		"source_url":       loaded.source,
@@ -240,18 +240,18 @@ func rollbackImpactToken(record *domain.SkillPackImport, changes []domain.SkillP
 	return hex.EncodeToString(sum[:])
 }
 
-func MemoryPackEvidenceContent(artifact MemoryPackArtifact, item MemoryPackRelationship, fragments map[string]MemoryPackEvidenceFragment) string {
+func MemoryPackEvidenceContent(artifact MemoryPackArtifact, item MemoryPackRelationship, evidence map[string]MemoryPackEvidence) string {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "Memory pack %q proposes a relationship: %s %s %s.", artifact.Name, item.Subject.DisplayName, item.PredicateKey, MemoryPackEndpointText(item.Object))
 	if item.SourceRelationshipID != "" {
 		_, _ = fmt.Fprintf(&b, "\nSource relationship %s version %d is provenance only.", item.SourceRelationshipID, item.SourceRelationshipVersion)
 	}
-	for _, fragmentID := range item.SupportFragmentIDs {
-		fragment, ok := fragments[fragmentID]
-		if !ok || strings.TrimSpace(fragment.Content) == "" {
+	for _, evidenceID := range item.SupportEvidenceIDs {
+		supportEvidence, ok := evidence[evidenceID]
+		if !ok || strings.TrimSpace(supportEvidence.Content) == "" {
 			continue
 		}
-		_, _ = fmt.Fprintf(&b, "\nSupport fragment %s: %s", fragmentID, fragment.Content)
+		_, _ = fmt.Fprintf(&b, "\nSupport evidence %s: %s", evidenceID, supportEvidence.Content)
 	}
 	return b.String()
 }
@@ -285,10 +285,10 @@ func MemoryPackRelationshipHint(item MemoryPackRelationship, evidenceIndex int) 
 	return hint
 }
 
-func MemoryPackFragmentsByID(artifact MemoryPackArtifact) map[string]MemoryPackEvidenceFragment {
-	out := map[string]MemoryPackEvidenceFragment{}
-	for _, fragment := range artifact.EvidenceFragments {
-		out[fragment.FragmentID] = fragment
+func MemoryPackEvidenceByID(artifact MemoryPackArtifact) map[string]MemoryPackEvidence {
+	out := map[string]MemoryPackEvidence{}
+	for _, item := range artifact.Evidence {
+		out[item.EvidenceID] = item
 	}
 	return out
 }

@@ -19,17 +19,3 @@ func (a Authority) IsValid() bool {
 	}
 	return false
 }
-
-// Evidence captures the provenance chain for a claim or fact as exposed to
-// external callers.
-type Evidence struct {
-	FragmentID        string    `json:"fragment_id"`
-	Speaker           string    `json:"speaker,omitempty"`
-	SpanStart         int       `json:"span_start"`
-	SpanEnd           int       `json:"span_end"`
-	ExtractConf       float64   `json:"extract_conf"`
-	ExtractionModel   string    `json:"extraction_model,omitempty"`
-	ExtractionVersion string    `json:"extraction_version,omitempty"`
-	PipelineRunID     string    `json:"pipeline_run_id,omitempty"`
-	Authority         Authority `json:"authority,omitempty"`
-}

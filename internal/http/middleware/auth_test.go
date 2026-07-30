@@ -886,11 +886,7 @@ func TestLastUsedMiddleware_SkipsWhenRateLimited(t *testing.T) {
 		remaining: 0,
 		resetAt:   time.Now().Add(time.Minute),
 	}
-	cfg := &testRateLimitConfig{
-		rateLimitPerMinute:      1,
-		fragmentCreateRateLimit: 1,
-		fragmentReadRateLimit:   1,
-	}
+	cfg := &testRateLimitConfig{rateLimitPerMinute: 1}
 	principal := &Principal{
 		KeyID:     keyID,
 		ProfileID: &profileID,

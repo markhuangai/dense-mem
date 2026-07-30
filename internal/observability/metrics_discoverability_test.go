@@ -1,10 +1,11 @@
 package observability
 
 import (
+	"context"
 	"testing"
 )
 
-func TestNoopDiscoverabilityMetrics_NeverPanics(t *testing.T) {
+func TestNoopDiscoverabilityMetricsNeverPanics(t *testing.T) {
 	m := NoopDiscoverabilityMetrics()
 	m.ObserveEmbeddingLatency(10, "ok")
 	m.IncEmbeddingError("timeout")
@@ -12,153 +13,94 @@ func TestNoopDiscoverabilityMetrics_NeverPanics(t *testing.T) {
 	m.ObserveRecall(5, 2, "ok")
 	m.ObserveRecallFeedback(RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
 	m.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
-	m.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
-	m.IncFragmentCreate("created")
-	m.IncClaimCreate("created", "")
+	m.ObserveConflictReviewDuration(1, "completed")
 	m.IncVerifyVerdict("verified")
-	m.IncPromotionOutcome("promoted")
-	m.ObservePromoteLockWait(0.001)
-	m.IncFragmentRetract()
-	m.IncFactNeedsRevalidation()
-	m.IncCommunityDetect("ok")
-	m.ObserveCommunityDetect(1.2, 10)
 }
 
-func TestInMemoryDiscoverabilityMetrics_RecordsEmbeddingLatency(t *testing.T) {
+func TestInMemoryDiscoverabilityMetricsRecordsActiveSignals(t *testing.T) {
 	m := NewInMemoryDiscoverabilityMetrics()
 	m.ObserveEmbeddingLatency(123.4, "ok")
-	m.ObserveEmbeddingLatency(987.6, "timeout")
-
-	samples := m.EmbeddingSamples()
-	if len(samples) != 2 {
-		t.Fatalf("samples len = %d; want 2", len(samples))
-	}
-	if samples[0].DurationMs != 123.4 || samples[0].Outcome != "ok" {
-		t.Errorf("sample[0] = %+v", samples[0])
-	}
-	if samples[1].DurationMs != 987.6 || samples[1].Outcome != "timeout" {
-		t.Errorf("sample[1] = %+v", samples[1])
-	}
-}
-
-func TestInMemoryDiscoverabilityMetrics_RecordsEmbeddingErrors(t *testing.T) {
-	m := NewInMemoryDiscoverabilityMetrics()
 	m.IncEmbeddingError("timeout")
-	m.IncEmbeddingError("timeout")
-	m.IncEmbeddingError("rate_limited")
-	if got := m.EmbeddingErrorCount("timeout"); got != 2 {
-		t.Errorf("timeout count = %d; want 2", got)
-	}
-	if got := m.EmbeddingErrorCount("rate_limited"); got != 1 {
-		t.Errorf("rate_limited count = %d; want 1", got)
-	}
-	if got := m.EmbeddingErrorCount("never"); got != 0 {
-		t.Errorf("unused code count = %d; want 0", got)
-	}
-}
-
-func TestInMemoryDiscoverabilityMetrics_RecordsRecallLatency(t *testing.T) {
-	m := NewInMemoryDiscoverabilityMetrics()
-	m.ObserveRecallLatency(42.0)
-	m.ObserveRecallLatency(7.5)
-	out := m.RecallLatencies()
-	if len(out) != 2 || out[0] != 42.0 || out[1] != 7.5 {
-		t.Errorf("latencies = %+v", out)
-	}
-}
-
-func TestInMemoryDiscoverabilityMetrics_RecordsRecallResults(t *testing.T) {
-	m := NewInMemoryDiscoverabilityMetrics()
-	m.ObserveRecall(42.0, 3, "ok")
-
-	samples := m.RecallSamples()
-	if len(samples) != 1 {
-		t.Fatalf("recall samples = %d; want 1", len(samples))
-	}
-	if samples[0].DurationMs != 42.0 || samples[0].ResultCount != 3 || samples[0].Outcome != "ok" {
-		t.Errorf("recall sample = %+v", samples[0])
-	}
-}
-
-func TestInMemoryDiscoverabilityMetrics_RecordsRecallFeedback(t *testing.T) {
-	m := NewInMemoryDiscoverabilityMetrics()
+	m.ObserveRecallLatency(42)
+	m.ObserveRecall(7.5, 3, "ok")
 	m.ObserveRecallFeedback(RecallFeedback{
 		Used:            true,
 		AnswerSupported: false,
 		Quality:         "medium",
 		MissingContext:  true,
-		Irrelevant:      false,
 	})
+	m.ObserveDreamFeedback(DreamFeedback{Decision: "confirm_true", Outcome: "ok", FromStatus: "proposed"})
+	m.ObserveDreamFeedback(DreamFeedback{Decision: "invalid", Outcome: "invalid", FromStatus: "invalid"})
+	m.ObserveConflictReviewDuration(2.5, "completed")
+	m.IncVerifyVerdict("verified")
 
-	samples := m.RecallFeedbackSamples()
-	if len(samples) != 1 {
-		t.Fatalf("recall feedback samples = %d; want 1", len(samples))
+	if got := m.EmbeddingSamples(); len(got) != 1 || got[0].DurationMs != 123.4 || got[0].Outcome != "ok" {
+		t.Fatalf("embedding samples = %+v", got)
 	}
-	if !samples[0].Used || samples[0].AnswerSupported || samples[0].Quality != "medium" || samples[0].QualityScore != 0.5 || !samples[0].MissingContext || samples[0].Irrelevant {
-		t.Errorf("recall feedback sample = %+v", samples[0])
+	if got := m.EmbeddingErrorCount("timeout"); got != 1 {
+		t.Fatalf("embedding timeout count = %d; want 1", got)
+	}
+	if got := m.RecallLatencies(); len(got) != 2 || got[0] != 42 || got[1] != 7.5 {
+		t.Fatalf("recall latencies = %+v", got)
+	}
+	if got := m.RecallSamples(); len(got) != 1 || got[0].ResultCount != 3 || got[0].Outcome != "ok" {
+		t.Fatalf("recall samples = %+v", got)
+	}
+	if got := m.RecallFeedbackSamples(); len(got) != 1 || got[0].Quality != "medium" || got[0].QualityScore != 0.5 || !got[0].MissingContext {
+		t.Fatalf("recall feedback = %+v", got)
+	}
+	if got := m.DreamFeedbackSamples(); len(got) != 2 || got[0].Decision != "confirm_true" || got[1].Decision != unknownMetricLabel {
+		t.Fatalf("dream feedback = %+v", got)
+	}
+	if got := m.ConflictReviewSamples(); len(got) != 1 || got[0].Seconds != 2.5 || got[0].Outcome != "completed" {
+		t.Fatalf("conflict review samples = %+v", got)
+	}
+	if got := m.VerifyVerdictCount("verified"); got != 1 {
+		t.Fatalf("verified verdict count = %d; want 1", got)
 	}
 }
 
-func TestInMemoryDiscoverabilityMetrics_RecordsDreamFeedback(t *testing.T) {
-	m := NewInMemoryDiscoverabilityMetrics()
-	m.ObserveDreamFeedback(DreamFeedback{
-		Decision:   "promote_candidate",
-		Outcome:    "ok",
-		FromStatus: "reinforced",
-	})
-	m.ObserveDreamFeedback(DreamFeedback{
-		Decision:   "confirm_false",
-		Outcome:    "ok",
-		FromStatus: "proposed",
-	})
-	m.ObserveDreamFeedback(DreamFeedback{
-		Decision:   "sounds_good",
-		Outcome:    "maybe",
-		FromStatus: "draft",
-	})
+func TestRecordDiscoverabilityMetricsUsesUnscopedRecorder(t *testing.T) {
+	metrics := NewInMemoryDiscoverabilityMetrics()
+	ctx := context.Background()
 
-	samples := m.DreamFeedbackSamples()
-	if len(samples) != 3 {
-		t.Fatalf("dream feedback samples = %d; want 3", len(samples))
+	RecordEmbeddingLatency(ctx, metrics, "embed-model", 12, "ok")
+	RecordEmbeddingError(ctx, metrics, "embed-model", "timeout")
+	RecordEmbeddingTokens(ctx, metrics, "embed-model", 3, 5)
+	RecordVerifierLatency(ctx, metrics, "verify-model", 9, "ok")
+	RecordVerifierTokens(ctx, metrics, "verify-model", 2, 3, 5)
+	RecordVerifyVerdict(ctx, metrics, "verify-model", "verified")
+	RecordRecallLatency(ctx, metrics, 7)
+	RecordRecall(ctx, metrics, 8, 2, "ok")
+	RecordRecallFeedback(ctx, metrics, RecallFeedback{Used: true, Quality: "high"})
+	RecordDreamFeedback(ctx, metrics, DreamFeedback{Decision: "confirm_true", Outcome: "ok", FromStatus: "proposed"})
+	RecordConflictReviewDuration(ctx, metrics, 1.5, "completed")
+	RecordConflictReviewDuration(ctx, metrics, -1, "ignored")
+
+	if got := metrics.EmbeddingSamples(); len(got) != 1 || got[0].DurationMs != 12 {
+		t.Fatalf("embedding samples = %+v", got)
 	}
-	if samples[0].Decision != "promote_candidate" || samples[0].Outcome != "ok" || samples[0].FromStatus != "reinforced" {
-		t.Errorf("sample[0] = %+v", samples[0])
+	if got := metrics.EmbeddingErrorCount("timeout"); got != 1 {
+		t.Fatalf("embedding errors = %d, want 1", got)
 	}
-	if samples[1].Decision != "confirm_false" || samples[1].Outcome != "ok" || samples[1].FromStatus != "proposed" {
-		t.Errorf("sample[1] = %+v", samples[1])
+	if got := metrics.RecallSamples(); len(got) != 1 || got[0].ResultCount != 2 {
+		t.Fatalf("recall samples = %+v", got)
 	}
-	if samples[2].Decision != "unknown" || samples[2].Outcome != "unknown" || samples[2].FromStatus != "unknown" {
-		t.Errorf("sample[2] = %+v", samples[2])
+	if got := metrics.RecallFeedbackSamples(); len(got) != 1 || got[0].Quality != "high" {
+		t.Fatalf("recall feedback = %+v", got)
+	}
+	if got := metrics.DreamFeedbackSamples(); len(got) != 1 || got[0].Decision != "confirm_true" {
+		t.Fatalf("dream feedback = %+v", got)
+	}
+	if got := metrics.ConflictReviewSamples(); len(got) != 1 || got[0].Seconds != 1.5 {
+		t.Fatalf("conflict review samples = %+v", got)
+	}
+	if got := metrics.VerifyVerdictCount("verified"); got != 1 {
+		t.Fatalf("verify verdicts = %d, want 1", got)
 	}
 }
 
-func TestInMemoryDiscoverabilityMetrics_RecordsMemoryFunnelLatency(t *testing.T) {
-	m := NewInMemoryDiscoverabilityMetrics()
-	m.ObserveMemoryFunnelLatency("claim_to_verify", 2.5, "verified")
-
-	samples := m.MemoryFunnelSamples()
-	if len(samples) != 1 {
-		t.Fatalf("funnel samples = %d; want 1", len(samples))
-	}
-	if samples[0].Stage != "claim_to_verify" || samples[0].Seconds != 2.5 || samples[0].Outcome != "verified" {
-		t.Errorf("funnel sample = %+v", samples[0])
-	}
-}
-
-func TestInMemoryDiscoverabilityMetrics_RecordsFragmentCreateOutcomes(t *testing.T) {
-	m := NewInMemoryDiscoverabilityMetrics()
-	m.IncFragmentCreate("created")
-	m.IncFragmentCreate("created")
-	m.IncFragmentCreate("duplicate")
-	if got := m.FragmentCreateCount("created"); got != 2 {
-		t.Errorf("created = %d; want 2", got)
-	}
-	if got := m.FragmentCreateCount("duplicate"); got != 1 {
-		t.Errorf("duplicate = %d; want 1", got)
-	}
-}
-
-func TestInMemoryDiscoverabilityMetrics_ConcurrentSafe(t *testing.T) {
+func TestInMemoryDiscoverabilityMetricsIsConcurrentSafe(t *testing.T) {
 	m := NewInMemoryDiscoverabilityMetrics()
 	done := make(chan struct{})
 	for i := 0; i < 50; i++ {
@@ -166,198 +108,23 @@ func TestInMemoryDiscoverabilityMetrics_ConcurrentSafe(t *testing.T) {
 			defer func() { done <- struct{}{} }()
 			m.ObserveEmbeddingLatency(1, "ok")
 			m.IncEmbeddingError("timeout")
-			m.ObserveRecallLatency(1)
 			m.ObserveRecall(1, 1, "ok")
-			m.ObserveRecallFeedback(RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
+			m.ObserveRecallFeedback(RecallFeedback{Quality: "high"})
 			m.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
-			m.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
-			m.IncFragmentCreate("created")
+			m.ObserveConflictReviewDuration(1, "completed")
+			m.IncVerifyVerdict("verified")
 		}()
 	}
 	for i := 0; i < 50; i++ {
 		<-done
 	}
 	if got := len(m.EmbeddingSamples()); got != 50 {
-		t.Errorf("embedding samples = %d; want 50", got)
+		t.Fatalf("embedding samples = %d; want 50", got)
 	}
-	if got := m.FragmentCreateCount("created"); got != 50 {
-		t.Errorf("fragment_create created = %d; want 50", got)
+	if got := len(m.ConflictReviewSamples()); got != 50 {
+		t.Fatalf("conflict review samples = %d; want 50", got)
 	}
-	if got := len(m.RecallFeedbackSamples()); got != 50 {
-		t.Errorf("recall feedback samples = %d; want 50", got)
+	if got := m.VerifyVerdictCount("verified"); got != 50 {
+		t.Fatalf("verified verdict count = %d; want 50", got)
 	}
-	if got := len(m.DreamFeedbackSamples()); got != 50 {
-		t.Errorf("dream feedback samples = %d; want 50", got)
-	}
-}
-
-// TestInMemoryKnowledgeMetrics verifies all knowledge-pipeline metrics methods
-// introduced in Unit 5.
-func TestInMemoryKnowledgeMetrics(t *testing.T) {
-	t.Run("IncClaimCreate_records_outcome_and_dedupe_reason", func(t *testing.T) {
-		m := NewInMemoryDiscoverabilityMetrics()
-		m.IncClaimCreate("created", "")
-		m.IncClaimCreate("duplicate", "exact_match")
-		m.IncClaimCreate("duplicate", "semantic_similarity")
-
-		samples := m.ClaimCreateSamples()
-		if len(samples) != 3 {
-			t.Fatalf("claim create samples = %d; want 3", len(samples))
-		}
-		if samples[0].Outcome != "created" || samples[0].DedupeReason != "" {
-			t.Errorf("sample[0] = %+v", samples[0])
-		}
-		if samples[1].Outcome != "duplicate" || samples[1].DedupeReason != "exact_match" {
-			t.Errorf("sample[1] = %+v", samples[1])
-		}
-		if samples[2].Outcome != "duplicate" || samples[2].DedupeReason != "semantic_similarity" {
-			t.Errorf("sample[2] = %+v", samples[2])
-		}
-	})
-
-	t.Run("IncVerifyVerdict_counts_by_outcome", func(t *testing.T) {
-		m := NewInMemoryDiscoverabilityMetrics()
-		m.IncVerifyVerdict("verified")
-		m.IncVerifyVerdict("verified")
-		m.IncVerifyVerdict("refuted")
-
-		if got := m.VerifyVerdictCount("verified"); got != 2 {
-			t.Errorf("verified = %d; want 2", got)
-		}
-		if got := m.VerifyVerdictCount("refuted"); got != 1 {
-			t.Errorf("refuted = %d; want 1", got)
-		}
-		if got := m.VerifyVerdictCount("inconclusive"); got != 0 {
-			t.Errorf("inconclusive = %d; want 0", got)
-		}
-	})
-
-	t.Run("IncPromotionOutcome_counts_by_outcome", func(t *testing.T) {
-		m := NewInMemoryDiscoverabilityMetrics()
-		m.IncPromotionOutcome("promoted")
-		m.IncPromotionOutcome("promoted")
-		m.IncPromotionOutcome("skipped")
-
-		if got := m.PromotionOutcomeCount("promoted"); got != 2 {
-			t.Errorf("promoted = %d; want 2", got)
-		}
-		if got := m.PromotionOutcomeCount("skipped"); got != 1 {
-			t.Errorf("skipped = %d; want 1", got)
-		}
-	})
-
-	t.Run("ObservePromoteLockWait_records_durations", func(t *testing.T) {
-		m := NewInMemoryDiscoverabilityMetrics()
-		m.ObservePromoteLockWait(0.001)
-		m.ObservePromoteLockWait(0.250)
-
-		waits := m.PromoteLockWaits()
-		if len(waits) != 2 {
-			t.Fatalf("promote lock waits = %d; want 2", len(waits))
-		}
-		if waits[0] != 0.001 || waits[1] != 0.250 {
-			t.Errorf("waits = %+v", waits)
-		}
-	})
-
-	t.Run("IncFragmentRetract_counts_retracts", func(t *testing.T) {
-		m := NewInMemoryDiscoverabilityMetrics()
-		m.IncFragmentRetract()
-		m.IncFragmentRetract()
-		m.IncFragmentRetract()
-
-		if got := m.FragmentRetractCount(); got != 3 {
-			t.Errorf("fragment retracts = %d; want 3", got)
-		}
-	})
-
-	t.Run("IncFactNeedsRevalidation_counts_events", func(t *testing.T) {
-		m := NewInMemoryDiscoverabilityMetrics()
-		m.IncFactNeedsRevalidation()
-		m.IncFactNeedsRevalidation()
-
-		if got := m.FactNeedsRevalidationCount(); got != 2 {
-			t.Errorf("fact needs revalidation = %d; want 2", got)
-		}
-	})
-
-	t.Run("IncCommunityDetect_counts_by_outcome", func(t *testing.T) {
-		m := NewInMemoryDiscoverabilityMetrics()
-		m.IncCommunityDetect("ok")
-		m.IncCommunityDetect("ok")
-		m.IncCommunityDetect("error")
-
-		if got := m.CommunityDetectCount("ok"); got != 2 {
-			t.Errorf("community detect ok = %d; want 2", got)
-		}
-		if got := m.CommunityDetectCount("error"); got != 1 {
-			t.Errorf("community detect error = %d; want 1", got)
-		}
-	})
-
-	t.Run("ObserveCommunityDetect_records_duration_and_nodes", func(t *testing.T) {
-		m := NewInMemoryDiscoverabilityMetrics()
-		m.ObserveCommunityDetect(1.5, 100)
-		m.ObserveCommunityDetect(3.2, 500)
-
-		samples := m.CommunityDetectSamples()
-		if len(samples) != 2 {
-			t.Fatalf("community detect samples = %d; want 2", len(samples))
-		}
-		if samples[0].DurationSeconds != 1.5 || samples[0].ProjectedNodes != 100 {
-			t.Errorf("sample[0] = %+v", samples[0])
-		}
-		if samples[1].DurationSeconds != 3.2 || samples[1].ProjectedNodes != 500 {
-			t.Errorf("sample[1] = %+v", samples[1])
-		}
-	})
-
-	t.Run("noop_never_panics_with_new_methods", func(t *testing.T) {
-		m := NoopDiscoverabilityMetrics()
-		m.IncClaimCreate("created", "")
-		m.IncVerifyVerdict("verified")
-		m.IncPromotionOutcome("promoted")
-		m.ObservePromoteLockWait(0.1)
-		m.ObserveRecall(1, 1, "ok")
-		m.ObserveMemoryFunnelLatency("claim_to_verify", 1, "verified")
-		m.IncFragmentRetract()
-		m.IncFactNeedsRevalidation()
-		m.IncCommunityDetect("ok")
-		m.ObserveCommunityDetect(1.0, 50)
-	})
-
-	// Cross-profile isolation: two separate InMemoryDiscoverabilityMetrics
-	// instances represent two independent profiles and must not share state.
-	// This mirrors the profile-isolation invariant enforced at the service layer.
-	t.Run("cross_profile_isolation", func(t *testing.T) {
-		profileA := NewInMemoryDiscoverabilityMetrics()
-		profileB := NewInMemoryDiscoverabilityMetrics()
-
-		profileA.IncClaimCreate("created", "")
-		profileA.IncVerifyVerdict("verified")
-		profileA.IncPromotionOutcome("promoted")
-		profileA.IncFragmentRetract()
-		profileA.IncFactNeedsRevalidation()
-		profileA.IncCommunityDetect("ok")
-
-		// profile B must see zero counts — no cross-profile bleed.
-		if got := len(profileB.ClaimCreateSamples()); got != 0 {
-			t.Errorf("profile B claim create samples = %d; want 0", got)
-		}
-		if got := profileB.VerifyVerdictCount("verified"); got != 0 {
-			t.Errorf("profile B verify verdict = %d; want 0", got)
-		}
-		if got := profileB.PromotionOutcomeCount("promoted"); got != 0 {
-			t.Errorf("profile B promotion outcome = %d; want 0", got)
-		}
-		if got := profileB.FragmentRetractCount(); got != 0 {
-			t.Errorf("profile B fragment retracts = %d; want 0", got)
-		}
-		if got := profileB.FactNeedsRevalidationCount(); got != 0 {
-			t.Errorf("profile B fact needs revalidation = %d; want 0", got)
-		}
-		if got := profileB.CommunityDetectCount("ok"); got != 0 {
-			t.Errorf("profile B community detect ok = %d; want 0", got)
-		}
-	})
 }

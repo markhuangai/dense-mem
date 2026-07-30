@@ -100,18 +100,10 @@ const telemetryCards = [
   { id: "llm_recall_quality_score", label: "LLM recall quality", unit: "percent", value: 75 },
   { id: "llm_recall_missing_context_rate", label: "LLM missing context", unit: "percent", value: 10 },
   { id: "llm_recall_irrelevant_rate", label: "LLM irrelevant recall", unit: "percent", value: 5 },
-  { id: "promotions", label: "Promotions", unit: "promotions", value: 4 },
-  { id: "promotion_rate", label: "Promotion rate", unit: "percent", value: 66.6 },
   { id: "avg_http_latency", label: "Avg HTTP latency", unit: "ms", value: 18.5 },
   { id: "avg_embedding_latency", label: "Avg embedding latency", unit: "ms", value: 44.2 },
   { id: "avg_verifier_latency", label: "Avg verifier latency", unit: "ms", value: 112.8 },
-  { id: "avg_claim_verify_latency", label: "Avg claim-to-verify", unit: "ms", value: 210.4 },
-  { id: "avg_claim_promotion_latency", label: "Avg claim-to-promote", unit: "ms", value: 420.9 },
-  { id: "avg_verify_promotion_latency", label: "Avg verify-to-promote", unit: "ms", value: 190.1 },
-  { id: "pending_claims", label: "Pending claims", unit: "claims", value: 5 },
-  { id: "validated_claims", label: "Validated claims", unit: "claims", value: 12 },
-  { id: "disputed_claims", label: "Disputed claims", unit: "claims", value: 1 },
-  { id: "revalidation_backlog", label: "Revalidation backlog", unit: "facts", value: 7 },
+  { id: "avg_conflict_review_duration", label: "Avg conflict review", unit: "ms", value: 210.4 },
 ];
 
 const telemetrySeries = [
@@ -120,20 +112,13 @@ const telemetrySeries = [
   { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens/s" },
   { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens/s" },
   { id: "recalls", label: "Recall requests", unit: "requests/s" },
-  { id: "promotions", label: "Promotions", unit: "promotions/s" },
   { id: "recall_results", label: "Recall results", unit: "results" },
   { id: "llm_recall_used_rate", label: "LLM recall used", unit: "percent" },
   { id: "llm_recall_answer_supported_rate", label: "LLM answer supported", unit: "percent" },
   { id: "llm_recall_quality_score", label: "LLM recall quality", unit: "percent" },
   { id: "llm_recall_missing_context_rate", label: "LLM missing context", unit: "percent" },
   { id: "llm_recall_irrelevant_rate", label: "LLM irrelevant recall", unit: "percent" },
-  { id: "claim_verify_latency", label: "Claim-to-verify", unit: "ms" },
-  { id: "claim_promotion_latency", label: "Claim-to-promote", unit: "ms" },
-  { id: "verify_promotion_latency", label: "Verify-to-promote", unit: "ms" },
-  { id: "pending_claims", label: "Pending claims", unit: "claims" },
-  { id: "validated_claims", label: "Validated claims", unit: "claims" },
-  { id: "disputed_claims", label: "Disputed claims", unit: "claims" },
-  { id: "revalidation_backlog", label: "Revalidation backlog", unit: "facts" },
+  { id: "conflict_review_duration", label: "Conflict review", unit: "ms" },
 ].map((series, index) => ({
   ...series,
   points: [
@@ -141,8 +126,6 @@ const telemetrySeries = [
     { timestamp: "2026-05-02T13:00:00Z", value: index / 10 + 0.4 },
   ],
 }));
-
-const currentTelemetryIds = new Set(["pending_claims", "validated_claims", "disputed_claims", "revalidation_backlog"]);
 
 const telemetry = {
   available: true,
@@ -155,11 +138,11 @@ const telemetry = {
   },
   scope: { type: "system" },
   cards: telemetryCards,
-  windowed_cards: telemetryCards.filter((card) => !currentTelemetryIds.has(card.id)),
-  current_cards: telemetryCards.filter((card) => currentTelemetryIds.has(card.id)),
+  windowed_cards: telemetryCards,
+  current_cards: [],
   series: telemetrySeries,
-  activity_series: telemetrySeries.filter((series) => !currentTelemetryIds.has(series.id)),
-  state_series: telemetrySeries.filter((series) => currentTelemetryIds.has(series.id)),
+  activity_series: telemetrySeries,
+  state_series: [],
 };
 
 const operationLogs = [
@@ -219,10 +202,10 @@ const recallFeedbackEvents = [
     query: "Why was recall bad?",
     tool_args: {
       input: { query: "Why was recall bad?", limit: 5 },
-      effective: { query: "Why was recall bad?", limit: 5, include_evidence: false, use_communities: false },
+      effective: { query: "Why was recall bad?", limit: 5 },
     },
     result_refs: [
-      { type: "fragment", id: "fragment-1", rank: 1, tier: "2", final_score: 0.74, status_at_recall: "active" },
+      { type: "evidence", id: "evidence-1", rank: 1, tier: "evidence", final_score: 0.74, status_at_recall: "active" },
     ],
     result_count: 1,
     snapshot_state: "captured",
@@ -232,16 +215,16 @@ const recallFeedbackEvents = [
     missing_context: true,
     irrelevant: false,
     feedback_comment: "Returned stale UI notes instead of the requested button pattern. SearchPanel disabled-state and listbox accessibility pattern.",
-    irrelevant_result_refs: [{ type: "fragment", id: "fragment-1", rank: 1 }],
+    irrelevant_result_refs: [{ type: "evidence", id: "evidence-1", rank: 1 }],
     resolved_results: [
       {
-        type: "fragment",
-        id: "fragment-1",
+        type: "evidence",
+        id: "evidence-1",
         rank: 1,
         resolution_status: "found",
         current_status: "retracted",
-        current: { content: "The old fragment has been retracted.", status: "retracted" },
-        ref: { type: "fragment", id: "fragment-1", rank: 1, tier: "2", status_at_recall: "active" },
+        current: { context: "The obsolete evidence has been retracted.", status: "retracted" },
+        ref: { type: "evidence", id: "evidence-1", rank: 1, tier: "evidence", status_at_recall: "active" },
       },
     ],
   },
@@ -275,9 +258,7 @@ const dreamRun = {
   reflect_ran: true,
   reevaluate_ran: true,
   dream_ran: true,
-  stale_facts: 0,
-  candidate_claims: 0,
-  disputed_claims: 0,
+  candidate_relationships: 0,
   clarifications: 0,
   reevaluated_dreams: 0,
   created_dreams: 1,
@@ -391,18 +372,12 @@ test("metrics tab renders operational totals and filter queries", async ({ page 
   for (const card of telemetry.windowed_cards) {
     await expect(telemetryTotals).toContainText(card.label);
   }
-  const telemetryCurrentState = page.getByLabel("Telemetry current state");
-  for (const card of telemetry.current_cards) {
-    await expect(telemetryCurrentState).toContainText(card.label);
-  }
+	await expect(page.getByLabel("Telemetry current state")).toHaveCount(0);
   const telemetryCharts = page.getByLabel("Telemetry charts");
   for (const series of telemetry.activity_series) {
     await expect(telemetryCharts).toContainText(series.label);
   }
-  const telemetryStateHistory = page.getByLabel("Telemetry state history");
-  for (const series of telemetry.state_series) {
-    await expect(telemetryStateHistory).toContainText(series.label);
-  }
+	await expect(page.getByLabel("Telemetry state history")).toHaveCount(0);
 
   const summary = page.getByLabel("Request metrics");
   await expect(summary).toContainText("42");
@@ -414,7 +389,7 @@ test("metrics tab renders operational totals and filter queries", async ({ page 
   await expect(page.getByText("redis")).toBeVisible();
   await expect(page.getByRole("row", { name: /Default\s+42\s+2\s+19 ms\s+90 ms/ })).toBeVisible();
   await expect(page.getByRole("row", { name: /default profile\s+\*\*\*\*\*\*abc123\s+Default\s+40\s+1\s+17 ms/ })).toBeVisible();
-  await expect(page.getByRole("row", { name: /\/api\/v1\/fragments\/:id\s+GET\s+2xx\s+39\s+0/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /\/ui\/api\/evidence\/:id\s+GET\s+2xx\s+39\s+0/ })).toBeVisible();
 
   await page.getByLabel("Window").selectOption("360");
   await page.getByLabel("Team", { exact: true }).selectOption(team.id);
@@ -459,11 +434,11 @@ test("recall feedback tab renders query, params, result ids, and resolved state"
 
   await page.getByRole("button", { name: /View recall feedback rec_1234567890/ }).click();
   const resultRefs = page.getByRole("table", { name: "Recall feedback result refs" });
-  await expect(resultRefs.getByRole("row", { name: /fragment-1/ })).toBeVisible();
+  await expect(resultRefs.getByRole("row", { name: /evidence-1/ })).toBeVisible();
   const commentDetails = page.getByRole("table", { name: "Recall feedback comment details" });
   await expect(commentDetails.getByText("Returned stale UI notes instead of the requested button pattern. SearchPanel disabled-state and listbox accessibility pattern.")).toBeVisible();
-  await expect(commentDetails.getByText("#1 fragment:fragment-1")).toBeVisible();
-  await expect(resultRefs.getByText("The old fragment has been retracted.")).toBeVisible();
+  await expect(commentDetails.getByText("#1 evidence:evidence-1")).toBeVisible();
+  await expect(resultRefs.getByText("The obsolete evidence has been retracted.")).toBeVisible();
   await expect(page.getByLabel(/Raw recall feedback rec_1234567890/)).toContainText('"feedback_comment"');
   await expectNoShellOverlap(page);
 

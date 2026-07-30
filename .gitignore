@@ -59,5 +59,6 @@ temp/
 *.bak
 telemetry-scrape-token
 prometheus.yml
+densemem-e2e-prometheus-*/
 .env.mcp
 .codex
