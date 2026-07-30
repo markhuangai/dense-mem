@@ -15,9 +15,9 @@ func TestHeuristicGeneratorProducesReviewableDreams(t *testing.T) {
 	dreams, err := generator.Generate(context.Background(), "team-1", GenerateRequest{
 		MaxOutputs: 2,
 		Inputs: []DreamInput{
-			{Type: "fact", ID: "fact-1", Subject: "assistant", Predicate: "uses", Object: "dense-mem"},
-			{Type: "claim", ID: "claim-1", Subject: "user", Predicate: "prefers", Object: "nightly review"},
-			{Type: "fragment", ID: "fragment-1", Content: "The team wants speculative memory to stay unapproved."},
+			{Type: "relationship", ID: "relationship-1", Subject: "assistant", Predicate: "uses", Object: "dense-mem"},
+			{Type: "candidate_relationship", ID: "candidate-relationship-1", Subject: "user", Predicate: "prefers", Object: "nightly review"},
+			{Type: "relationship", ID: "relationship-2", Content: "The team wants speculative memory to stay unapproved."},
 		},
 	})
 	require.NoError(t, err)
@@ -42,9 +42,9 @@ func TestHeuristicGeneratorSkipsSamePredicatePairs(t *testing.T) {
 	dreams, err := generator.Generate(context.Background(), "team-1", GenerateRequest{
 		MaxOutputs: 5,
 		Inputs: []DreamInput{
-			{Type: "fact", ID: "fact-1", Subject: "a", Predicate: "likes", Object: "x"},
-			{Type: "fact", ID: "fact-2", Subject: "b", Predicate: "likes", Object: "y"},
-			{Type: "claim", ID: "claim-1", Subject: "c", Predicate: "uses", Object: "z"},
+			{Type: "relationship", ID: "relationship-1", Subject: "a", Predicate: "likes", Object: "x"},
+			{Type: "relationship", ID: "relationship-2", Subject: "b", Predicate: "likes", Object: "y"},
+			{Type: "candidate_relationship", ID: "candidate-relationship-1", Subject: "c", Predicate: "uses", Object: "z"},
 		},
 	})
 	require.NoError(t, err)
@@ -57,7 +57,7 @@ func TestHeuristicGeneratorSkipsSamePredicatePairs(t *testing.T) {
 func TestInputSummaryTruncatesContentAtRuneBoundary(t *testing.T) {
 	content := strings.Repeat("a", 95) + "🙂tail"
 
-	summary := inputSummary(DreamInput{Type: "fragment", ID: "fragment-1", Content: content})
+	summary := inputSummary(DreamInput{Type: "relationship", ID: "relationship-1", Content: content})
 
 	require.True(t, utf8.ValidString(summary))
 	require.Equal(t, 96, utf8.RuneCountInString(summary))

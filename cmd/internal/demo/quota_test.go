@@ -2,6 +2,7 @@ package demo
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -19,8 +20,8 @@ import (
 func TestWrapRegistryConsumesRememberQuotaBeforeInvoke(t *testing.T) {
 	q := DefaultQuotas()
 	q.WriteAttempts = 1
-	q.FragmentAttempts = 1
-	q.FragmentBytes = 4
+	q.EvidenceAttempts = 1
+	q.EvidenceBytes = 4
 	q.VerifierAttempts = 1
 	manager := NewQuotaManager(&fakeCounterStore{}, q)
 	reg := registry.New()
@@ -48,6 +49,18 @@ func TestWrapRegistryConsumesRememberQuotaBeforeInvoke(t *testing.T) {
 	require.Equal(t, 1, calls)
 }
 
+func TestQuotaLimitsUseEvidenceFieldNames(t *testing.T) {
+	payload, err := json.Marshal(DefaultQuotas().Limits())
+	require.NoError(t, err)
+
+	var values map[string]any
+	require.NoError(t, json.Unmarshal(payload, &values))
+	require.Contains(t, values, "evidence_attempts")
+	require.Contains(t, values, "evidence_bytes")
+	require.NotContains(t, values, "fragment_attempts")
+	require.NotContains(t, values, "fragment_bytes")
+}
+
 func TestWrapRegistryConsumesRecallQuota(t *testing.T) {
 	q := DefaultQuotas()
 	q.RecallCalls = 1
@@ -70,6 +83,32 @@ func TestWrapRegistryConsumesRecallQuota(t *testing.T) {
 	_, err = recall.Invoke(context.Background(), "team-1", nil)
 	require.NoError(t, err)
 	_, err = recall.Invoke(context.Background(), "team-1", nil)
+	requireAPIErrorCode(t, err, httperr.RATE_LIMITED)
+	require.Equal(t, 1, calls)
+}
+
+func TestWrapRegistryConsumesRetractEvidenceQuota(t *testing.T) {
+	q := DefaultQuotas()
+	q.WriteAttempts = 1
+	manager := NewQuotaManager(&fakeCounterStore{}, q)
+	reg := registry.New()
+	calls := 0
+	require.NoError(t, reg.Register(registry.Tool{
+		Name: registry.ToolRetractEvidence,
+		Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
+			calls++
+			return map[string]any{"ok": true}, nil
+		},
+	}))
+
+	wrapped, err := WrapRegistry(reg, manager)
+	require.NoError(t, err)
+	retract, ok := wrapped.Get(registry.ToolRetractEvidence)
+	require.True(t, ok)
+
+	_, err = retract.Invoke(context.Background(), "team-1", nil)
+	require.NoError(t, err)
+	_, err = retract.Invoke(context.Background(), "team-1", nil)
 	requireAPIErrorCode(t, err, httperr.RATE_LIMITED)
 	require.Equal(t, 1, calls)
 }

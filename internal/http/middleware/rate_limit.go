@@ -3,7 +3,6 @@ package middleware
 import (
 	"context"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -14,11 +13,6 @@ import (
 )
 
 // RateLimitMiddleware creates a rate limiting middleware using the fixed-window algorithm.
-// It reads the Principal from context to determine the caller profile for tier
-// selection. Fragment writes (POST/DELETE) use FragmentCreateRateLimit and
-// fragment reads (GET) use FragmentReadRateLimit — writes are stricter because
-// they trigger an embedding call plus graph write. All other profile traffic
-// falls back to RateLimitPerMinute.
 func RateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.ConfigProvider, auditSvc service.AuditService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -38,9 +32,7 @@ func RateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.Confi
 			// Get route path for stable bucket
 			routePath := c.Path()
 
-			// Select limit tier. Fragment routes get their write/read tier and
-			// everything else falls back to the standard per-profile tier.
-			limit := selectRateLimit(cfg, principal.Role, c.Request().Method, routePath)
+			limit := selectRateLimit(cfg)
 			if principal.RateLimit > 0 && principal.RateLimit < limit {
 				limit = principal.RateLimit
 			}
@@ -108,44 +100,6 @@ func logRateLimit(c echo.Context, auditSvc service.AuditService, profileID, rout
 	_ = auditSvc.RateLimited(ctx, profileIDPtr, "request", metadata, clientIP, correlationID)
 }
 
-// selectRateLimit resolves the rate-limit tier for a single request.
-// Callers hit:
-//   - fragment write tier for POST/DELETE on /fragments (stricter: triggers embedding + graph write)
-//   - fragment read tier for GET on /fragments
-//   - claim write tier for POST/DELETE on /claims
-//   - claim read tier for GET on /claims
-//   - default standard tier for everything else
-func selectRateLimit(cfg config.ConfigProvider, role, method, routePath string) int {
-	if isFragmentRoute(routePath) {
-		switch method {
-		case "POST", "DELETE":
-			return cfg.GetFragmentCreateRateLimit()
-		case "GET":
-			return cfg.GetFragmentReadRateLimit()
-		}
-	}
-
-	if isClaimRoute(routePath) {
-		switch method {
-		case "POST", "DELETE":
-			return cfg.GetClaimWriteRateLimit()
-		case "GET":
-			return cfg.GetClaimReadRateLimit()
-		}
-	}
-
+func selectRateLimit(cfg config.ConfigProvider) int {
 	return cfg.GetRateLimitPerMinute()
-}
-
-// isFragmentRoute matches any /fragments or /fragments/:id route regardless
-// of the surrounding profile path. Echo route paths include the literal
-// ":param" markers so a simple substring check is reliable.
-func isFragmentRoute(routePath string) bool {
-	return strings.Contains(routePath, "/fragments")
-}
-
-// isClaimRoute matches any /claims or /claims/:id route regardless
-// of the surrounding path prefix.
-func isClaimRoute(routePath string) bool {
-	return strings.Contains(routePath, "/claims")
 }

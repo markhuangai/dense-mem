@@ -99,17 +99,16 @@ describe("UserApi", () => {
     const result = await new UserApi("dm_key").graph({
       scope: "local",
       q: "project graph",
-      types: ["fact", "claim"],
-      anchorType: "fact",
-      anchorId: "fact-1",
+      types: ["entity", "value"],
+      anchorType: "entity",
+      anchorId: "entity-1",
       depth: 2,
       limit: 40,
-      includeSuperseded: true,
     });
 
     expect(result.scope).toBe("local");
     expect(fetchMock).toHaveBeenCalledWith(
-      "/ui/api/graph?scope=local&q=project+graph&types=fact%2Cclaim&anchor_type=fact&anchor_id=fact-1&depth=2&limit=40&include_superseded=true",
+      "/ui/api/graph?scope=local&q=project+graph&types=entity%2Cvalue&anchor_type=entity&anchor_id=entity-1&depth=2&limit=40",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
       }),
@@ -119,20 +118,20 @@ describe("UserApi", () => {
   it("requests graph node details", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: {
-        key: "claim:claim-1",
-        id: "claim-1",
-        type: "claim",
-        title: "claim title",
-        body: "claim detail",
+        key: "entity:entity-1",
+        id: "entity-1",
+        type: "entity",
+        title: "entity title",
+        body: "entity detail",
       },
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await new UserApi("dm_key").nodeDetail("claim", "claim-1");
+    const result = await new UserApi("dm_key").nodeDetail("entity", "entity-1");
 
-    expect(result.body).toBe("claim detail");
+    expect(result.body).toBe("entity detail");
     expect(fetchMock).toHaveBeenCalledWith(
-      "/ui/api/node-detail?type=claim&id=claim-1",
+      "/ui/api/node-detail?type=entity&id=entity-1",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
       }),
@@ -222,68 +221,6 @@ describe("UserApi", () => {
     expect(result[0].relationships?.[0].evidence_ids).toEqual(["11111111-1111-4111-8111-111111111111"]);
     expect(result[0].semantic_rank).toBe(1);
     expect(result[0].final_score).toBe(1);
-  });
-
-  it("keeps legacy recall hit array compatibility", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: [
-        {
-          tier: "1",
-          score: 0.94,
-          semantic_rank: 1,
-          final_score: 0.94,
-          fact: {
-            fact_id: "fact-1",
-            subject: "Dense-Mem",
-            predicate: "uses",
-            object: "PostgreSQL",
-            status: "active",
-            truth_score: 0.99,
-            recorded_at: "2026-05-01T12:00:00Z",
-          },
-        },
-      ],
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const result = await new UserApi("dm_key").recall("postgres", 3);
-
-    expect(result).toHaveLength(1);
-    expect(result[0].fact?.fact_id).toBe("fact-1");
-    expect(result[0].semantic_rank).toBe(1);
-  });
-
-  it("keeps legacy relationship and evidence recall compatibility", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: {
-        results: [
-          {
-            relationship_id: "relationship-1",
-            subject: { name: "Dense-Mem" },
-            predicate: "uses",
-            object: { name: "PostgreSQL" },
-            tier: "fact",
-            evidence_ids: ["evidence-1"],
-          },
-        ],
-        evidences: [
-          {
-            evidence_id: "evidence-1",
-            context: "Dense-Mem uses PostgreSQL.",
-            source: "legacy",
-          },
-        ],
-      },
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const result = await new UserApi("dm_key").recall("postgres", 3);
-
-    expect(result).toHaveLength(1);
-    expect(result[0].relationship?.relationship_id).toBe("relationship-1");
-    expect(result[0].tier).toBe("fact");
-    expect(result[0].evidences?.[0].evidence_id).toBe("evidence-1");
-    expect(result[0].semantic_rank).toBe(1);
   });
 
   it("throws a typed error for unknown successful recall payloads", async () => {

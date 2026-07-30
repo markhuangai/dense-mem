@@ -60,7 +60,7 @@ func TestTraceContractOutputMapsCompletePublicLineage(t *testing.T) {
 			Authority:           "primary",
 			CreatedAt:           now,
 		}},
-		SupportDecisionEvents: []repository.RelationshipSupportDecisionEvent{{
+		EvidenceSupportDecisionEvents: []repository.RelationshipSupportDecisionEvent{{
 			SupportDecisionID: "support-decision-1",
 			SupportID:         "support-1",
 			RelationshipID:    "rel-1",
@@ -69,7 +69,7 @@ func TestTraceContractOutputMapsCompletePublicLineage(t *testing.T) {
 			Reason:            "matches evidence",
 			CreatedAt:         now,
 		}},
-		EvidenceFragments: []repository.TraceEvidenceFragment{{
+		Evidence: []repository.TraceEvidenceFragment{{
 			FragmentID:       "fragment-1",
 			IngestID:         "ingest-1",
 			EvidenceIndex:    0,
@@ -79,6 +79,15 @@ func TestTraceContractOutputMapsCompletePublicLineage(t *testing.T) {
 			SourceType:       "conversation",
 			SourceRef:        "thread-1",
 			CreatedAt:        now,
+		}},
+		EvidenceLifecycleEvents: []repository.TraceEvidenceLifecycleEvent{{
+			LifecycleEventID:      "lifecycle-event-1",
+			LifecycleOperationID:  "lifecycle-operation-1",
+			TargetFragmentID:      "fragment-1",
+			ReplacementFragmentID: "fragment-2",
+			Action:                "supersede",
+			Reason:                "replacement evidence is more precise",
+			CreatedAt:             now,
 		}},
 		VerificationEvents: []repository.RelationshipVerificationEvent{{
 			VerificationEventID: "verify-1",
@@ -157,6 +166,10 @@ func TestTraceContractOutputMapsCompletePublicLineage(t *testing.T) {
 	if out["stopped_reason"] != "max_edges" {
 		t.Fatalf("stopped_reason = %#v", out["stopped_reason"])
 	}
+	lifecycleEvents := out["evidence_lifecycle_events"].([]map[string]any)
+	if len(lifecycleEvents) != 1 || lifecycleEvents[0]["target_evidence_id"] != "fragment-1" || lifecycleEvents[0]["replacement_evidence_id"] != "fragment-2" {
+		t.Fatalf("evidence lifecycle events = %#v", lifecycleEvents)
+	}
 }
 
 func TestAuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
@@ -234,8 +247,8 @@ func TestAuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 		Filename:      "dense-mem-pack.json",
 		ItemCount:     1,
 		Artifact: skillpackservice.MemoryPackArtifact{
-			EvidenceFragments: []skillpackservice.MemoryPackEvidenceFragment{{FragmentID: "fragment-1"}},
-			EvidenceSupports:  []skillpackservice.MemoryPackEvidenceSupport{{FragmentID: "fragment-1"}},
+			Evidence:         []skillpackservice.MemoryPackEvidence{{EvidenceID: "evidence-1"}},
+			EvidenceSupports: []skillpackservice.MemoryPackEvidenceSupport{{EvidenceID: "evidence-1"}},
 		},
 		Omissions: []string{"support omitted"},
 	})
@@ -248,7 +261,7 @@ func TestAuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 		Format:         skillpackservice.MemoryPackFormat,
 		ItemCount:      2,
 		SelectedCount:  1,
-		SupportSummary: skillpackservice.SupportSummary{FragmentCount: 1, SupportCount: 1},
+		SupportSummary: skillpackservice.SupportSummary{EvidenceCount: 1, SupportCount: 1},
 		Items: []skillpackservice.InspectItem{
 			{ItemID: "item-ready", Status: "ready"},
 			{ItemID: "item-review", Status: "needs_review"},
@@ -301,6 +314,142 @@ func TestAuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 	}
 	if rolledBack["applied"] != true || rolledBack["safe"] != false {
 		t.Fatalf("rollback output = %#v", rolledBack)
+	}
+}
+
+func TestContractOutputEmptyCollectionResultsRemainSchemaValid(t *testing.T) {
+	cases := []struct {
+		name   string
+		schema map[string]any
+		out    map[string]any
+	}{
+		{
+			name:   "dream list",
+			schema: listDreamsOutputSchema(),
+			out:    listDreamsContractOutput(nil, ""),
+		},
+		{
+			name:   "memory pack candidates",
+			schema: findMemoryPackCandidatesOutputSchema(),
+			out:    findMemoryPackCandidatesContractOutput(nil),
+		},
+		{
+			name:   "memory pack inspect",
+			schema: inspectMemoryPackOutputSchema(),
+			out:    inspectMemoryPackContractOutput(nil, ""),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateInput(Tool{InputSchema: tc.schema}, tc.out); err != nil {
+				t.Fatalf("empty output validation failed: %v; output=%#v", err, tc.out)
+			}
+		})
+	}
+}
+
+func TestDreamContractOutputUsesCanonicalFallbackFields(t *testing.T) {
+	dream := &domain.Dream{
+		DreamID:    "dream-fallback",
+		ProfileID:  "owner-fallback",
+		Hypothesis: "Dense-Mem may need an evidence lifecycle guide.",
+		Status:     domain.DreamStatusProposed,
+		SourceRefs: []domain.DreamSourceRef{
+			{Type: "relationship", ID: "relationship-fallback"},
+			{Type: "candidate_relationship", ID: "candidate-fallback"},
+			{Type: "relationship", ID: ""},
+		},
+	}
+
+	out := dreamContractOutput(dream)
+	if owners := out["source_owner_profile_ids"].([]string); len(owners) != 1 || owners[0] != "owner-fallback" {
+		t.Fatalf("source owner fallback = %#v", owners)
+	}
+	if relationships := out["source_relationship_ids"].([]string); len(relationships) != 1 || relationships[0] != "relationship-fallback" {
+		t.Fatalf("relationship source fallback = %#v", relationships)
+	}
+	if candidates := out["source_candidate_relationship_ids"].([]string); len(candidates) != 1 || candidates[0] != "candidate-fallback" {
+		t.Fatalf("candidate source fallback = %#v", candidates)
+	}
+	if versions := out["source_versions"].(map[string]int); len(versions) != 0 {
+		t.Fatalf("source versions fallback = %#v", versions)
+	}
+	if out["generator_kind"] != "deterministic" || out["generator_version"] != "dream-v2" || out["created_at"] != "1970-01-01T00:00:00Z" {
+		t.Fatalf("dream fallback output = %#v", out)
+	}
+}
+
+func TestMemoryPackContractOutputsMapCurrentLifecycleStates(t *testing.T) {
+	cases := []struct {
+		name string
+		res  *skillpackservice.ImportResult
+		want string
+	}{
+		{
+			name: "failed",
+			res: &skillpackservice.ImportResult{
+				ImportID: "import-failed",
+				Status:   domain.SkillPackImportStatusFailed,
+				Items: []skillpackservice.ImportItemResult{
+					{ItemID: "item-skipped", Status: "skipped"},
+					{ItemID: "item-failed", Status: "failed", Error: "verification failed"},
+				},
+			},
+			want: "failed",
+		},
+		{
+			name: "processing",
+			res:  &skillpackservice.ImportResult{ImportID: "import-processing", Status: domain.SkillPackImportStatusInspecting},
+			want: "processing",
+		},
+		{
+			name: "completed without staged evidence",
+			res:  &skillpackservice.ImportResult{ImportID: "import-completed", Status: domain.SkillPackImportStatusApplied},
+			want: "completed",
+		},
+		{
+			name: "queued with staged evidence",
+			res:  &skillpackservice.ImportResult{ImportID: "import-queued", Status: domain.SkillPackImportStatusApplied, IngestID: "ingest-queued"},
+			want: "queued",
+		},
+		{
+			name: "unknown historical status remains completed",
+			res:  &skillpackservice.ImportResult{ImportID: "import-unknown", Status: "unknown_historical_status"},
+			want: "completed",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := importMemoryPackContractOutput(tc.res)
+			if err := ValidateInput(Tool{InputSchema: importMemoryPackOutputSchema()}, out); err != nil {
+				t.Fatalf("import output validation failed: %v; output=%#v", err, out)
+			}
+			if out["processing_state"] != tc.want {
+				t.Fatalf("processing_state = %#v, want %q", out["processing_state"], tc.want)
+			}
+		})
+	}
+
+	export := exportMemoryPackContractOutput(&skillpackservice.ExportResult{
+		SHA256:    strings.Repeat("a", 64),
+		Omissions: []string{"", "support was intentionally omitted"},
+	})
+	if omissions := export["omissions"].([]map[string]any); len(omissions) != 1 || omissions[0]["reason"] != "support was intentionally omitted" {
+		t.Fatalf("export omissions = %#v", omissions)
+	}
+
+	rollback := rollbackMemoryPackContractOutput(&skillpackservice.RollbackResult{
+		ImportID:                "import-rollback",
+		Status:                  domain.SkillPackImportStatusRolledBack,
+		Conflicts:               []string{"relationship changed"},
+		ImpactToken:             "rollback-token",
+		AffectedRelationshipIDs: []string{"relationship-1"},
+	})
+	if err := ValidateInput(Tool{InputSchema: rollbackMemoryPackImportOutputSchema()}, rollback); err != nil {
+		t.Fatalf("rollback output validation failed: %v; output=%#v", err, rollback)
+	}
+	if rollback["safe"] != false || rollback["applied"] != true || rollback["impact_token"] != "rollback-token" {
+		t.Fatalf("rollback output = %#v", rollback)
 	}
 }
 

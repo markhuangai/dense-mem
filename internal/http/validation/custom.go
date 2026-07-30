@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync/atomic"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -13,25 +12,12 @@ import (
 // Validator is the global validator instance with custom validators registered.
 var Validator *validator.Validate
 
-// embeddingDim stores the configured embedding dimension for the embedding_dim
-// validator tag. It is set at startup via SetEmbeddingDimensions and read
-// atomically so the validator remains safe under concurrent HTTP handling.
-var embeddingDim atomic.Int64
-
-// SetEmbeddingDimensions configures the expected dimension for the embedding_dim
-// validator tag. Call this once at startup with the value from config.
-// A value of 0 disables dimension validation (the tag becomes a no-op).
-func SetEmbeddingDimensions(dim int) {
-	embeddingDim.Store(int64(dim))
-}
-
 func init() {
 	Validator = validator.New()
 
 	// Register custom validators
 	Validator.RegisterValidation("notblank", notBlankValidator)
 	Validator.RegisterValidation("maxbytes", maxBytesValidator)
-	Validator.RegisterValidation("embedding_dim", embeddingDimValidator)
 }
 
 // notBlankValidator validates that a string is not blank (not empty and not only whitespace).
@@ -74,25 +60,6 @@ func maxBytesValidator(fl validator.FieldLevel) bool {
 	}
 
 	return int64(len(data)) <= max
-}
-
-// embeddingDimValidator validates that a slice/array has exactly the configured
-// embedding dimension length. The dimension is set via SetEmbeddingDimensions.
-// If the dimension is 0 (unset), the validator allows any length to avoid
-// breaking tests and early startup paths.
-func embeddingDimValidator(fl validator.FieldLevel) bool {
-	field := fl.Field()
-
-	if field.Kind() != reflect.Slice && field.Kind() != reflect.Array {
-		return true
-	}
-
-	expected := embeddingDim.Load()
-	if expected == 0 {
-		return true
-	}
-
-	return int64(field.Len()) == expected
 }
 
 // ValidateStruct validates a struct using the registered validators.

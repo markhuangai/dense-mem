@@ -11,7 +11,6 @@ import (
 	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
-	"github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
@@ -36,7 +35,6 @@ func main() {
 	logger := observability.New(level)
 	slog.SetDefault(logger.Slog())
 
-	validation.SetEmbeddingDimensions(cfg.GetEmbeddingDimensions())
 	middleware.SetAuthVerificationConcurrency(cfg.AuthVerifyMaxConcurrency)
 
 	preflightCtx, preflightCancel := context.WithTimeout(context.Background(), startupTimeout)

@@ -176,20 +176,14 @@ func (h *userPortalHandler) graphSnapshot(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	includeSuperseded, err := userPortalOptionalBoolQuery(c, "include_superseded")
-	if err != nil {
-		return err
-	}
-
 	snapshot, err := h.graph.Graph(c.Request().Context(), teamID.String(), graphview.Query{
-		Scope:             c.QueryParam("scope"),
-		Query:             c.QueryParam("q"),
-		Types:             userPortalGraphTypes(c.QueryParam("types")),
-		AnchorType:        c.QueryParam("anchor_type"),
-		AnchorID:          c.QueryParam("anchor_id"),
-		Depth:             depth,
-		Limit:             limit,
-		IncludeSuperseded: includeSuperseded,
+		Scope:      c.QueryParam("scope"),
+		Query:      c.QueryParam("q"),
+		Types:      userPortalGraphTypes(c.QueryParam("types")),
+		AnchorType: c.QueryParam("anchor_type"),
+		AnchorID:   c.QueryParam("anchor_id"),
+		Depth:      depth,
+		Limit:      limit,
 	})
 	if err != nil {
 		if errors.Is(err, graphview.ErrMissingAnchor) || errors.Is(err, graphview.ErrInvalidAnchorType) {
@@ -234,18 +228,6 @@ func userPortalOptionalIntQuery(c echo.Context, name string) (int, error) {
 	value, err := strconv.Atoi(raw)
 	if err != nil || value < 0 {
 		return 0, httperr.New(httperr.VALIDATION_ERROR, name+" must be a non-negative integer")
-	}
-	return value, nil
-}
-
-func userPortalOptionalBoolQuery(c echo.Context, name string) (bool, error) {
-	raw := strings.TrimSpace(c.QueryParam(name))
-	if raw == "" {
-		return false, nil
-	}
-	value, err := strconv.ParseBool(raw)
-	if err != nil {
-		return false, httperr.New(httperr.VALIDATION_ERROR, name+" must be a boolean")
 	}
 	return value, nil
 }

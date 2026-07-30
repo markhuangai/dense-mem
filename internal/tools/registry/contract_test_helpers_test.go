@@ -3,7 +3,6 @@ package registry
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"testing"
 
@@ -76,14 +75,15 @@ func (s *stubRememberService) GetMemoryPlacement(
 		ProcessingState: string(domain.PlacementRunCompleted),
 		SearchState:     string(domain.SearchProjectionNotRequired),
 		Items: []memoryservice.PlacementItemResult{{
-			ItemID:               "item-canonical",
-			EvidenceID:           "evidence-canonical",
-			Version:              3,
-			EvidenceIndex:        0,
-			Category:             string(domain.EvidenceProcessed),
-			SearchState:          string(domain.SearchProjectionNotRequired),
-			RelationshipOutcomes: []memoryservice.RelationshipOutcomeRef{},
-			Errors:               []memoryservice.PlacementError{},
+			ItemID:                "item-canonical",
+			EvidenceID:            "evidence-canonical",
+			SupersededEvidenceIDs: []string{},
+			Version:               3,
+			EvidenceIndex:         0,
+			Category:              string(domain.EvidenceProcessed),
+			SearchState:           string(domain.SearchProjectionNotRequired),
+			RelationshipOutcomes:  []memoryservice.RelationshipOutcomeRef{},
+			Errors:                []memoryservice.PlacementError{},
 		}},
 		Errors: []memoryservice.PlacementError{},
 	}, nil
@@ -139,8 +139,4 @@ func (s *stubTraceContext) Trace(_ context.Context, _ string, req contextservice
 			Truncated:     true,
 		},
 	}, nil
-}
-
-func (s *stubTraceContext) Assemble(context.Context, string, contextservice.AssembleRequest) (*contextservice.AssembleResult, error) {
-	return nil, errors.New("not implemented")
 }

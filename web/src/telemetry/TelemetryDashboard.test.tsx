@@ -12,8 +12,8 @@ import type { TelemetrySnapshot } from "./types";
 
 describe("TelemetryDashboard helpers", () => {
   it("keeps small per-second axis labels distinct", () => {
-    expect(formatTelemetryAxisTick(0, "promotions/s")).toBe("0");
-    expect(formatTelemetryAxisTick(0.006, "promotions/s")).toBe("0.006");
+    expect(formatTelemetryAxisTick(0, "events/s")).toBe("0");
+    expect(formatTelemetryAxisTick(0.006, "events/s")).toBe("0.006");
     expect(formatTelemetryAxisTick(0.04, "rps")).toBe("0.04");
     expect(formatTelemetryAxisTick(1.5, "requests/s")).toBe("1.5");
   });
@@ -38,38 +38,36 @@ describe("TelemetryDashboard helpers", () => {
     expect(telemetryChartPoints(samples, "2026-05-02T11:00:00Z", "2026-05-02T13:00:00Z")).toBe(samples);
   });
 
-  it("splits legacy telemetry payloads into windowed and current state groups", () => {
+  it("treats ungrouped telemetry as windowed activity", () => {
     const snapshot = telemetrySnapshot({
       cards: [
         { id: "http_requests", label: "HTTP requests", unit: "requests", value: 4 },
-        { id: "pending_claims", label: "Pending claims", unit: "claims", value: 2 },
       ],
       series: [
         { id: "http_rps", label: "HTTP requests", unit: "rps", points: [] },
-        { id: "pending_claims", label: "Pending claims", unit: "claims", points: [] },
       ],
     });
 
     expect(telemetryWindowedCards(snapshot).map((card) => card.id)).toEqual(["http_requests"]);
-    expect(telemetryCurrentCards(snapshot).map((card) => card.id)).toEqual(["pending_claims"]);
+    expect(telemetryCurrentCards(snapshot)).toEqual([]);
     expect(telemetryActivitySeries(snapshot).map((series) => series.id)).toEqual(["http_rps"]);
-    expect(telemetryStateSeries(snapshot).map((series) => series.id)).toEqual(["pending_claims"]);
+    expect(telemetryStateSeries(snapshot)).toEqual([]);
   });
 
   it("prefers explicit telemetry groups when the backend provides them", () => {
     const snapshot = telemetrySnapshot({
       cards: [{ id: "legacy", label: "Legacy", unit: "events", value: 1 }],
       windowed_cards: [{ id: "dream_feedbacks", label: "Dream feedback", unit: "events", value: 1 }],
-      current_cards: [{ id: "pending_claims", label: "Pending claims", unit: "claims", value: 3 }],
+      current_cards: [{ id: "active_evidence", label: "Active evidence", unit: "evidence", value: 3 }],
       series: [{ id: "legacy_series", label: "Legacy", unit: "events/s", points: [] }],
       activity_series: [{ id: "dream_feedbacks", label: "Dream feedback", unit: "events/s", points: [] }],
-      state_series: [{ id: "pending_claims", label: "Pending claims", unit: "claims", points: [] }],
+      state_series: [{ id: "active_evidence", label: "Active evidence", unit: "evidence", points: [] }],
     });
 
     expect(telemetryWindowedCards(snapshot).map((card) => card.id)).toEqual(["dream_feedbacks"]);
-    expect(telemetryCurrentCards(snapshot).map((card) => card.id)).toEqual(["pending_claims"]);
+    expect(telemetryCurrentCards(snapshot).map((card) => card.id)).toEqual(["active_evidence"]);
     expect(telemetryActivitySeries(snapshot).map((series) => series.id)).toEqual(["dream_feedbacks"]);
-    expect(telemetryStateSeries(snapshot).map((series) => series.id)).toEqual(["pending_claims"]);
+    expect(telemetryStateSeries(snapshot).map((series) => series.id)).toEqual(["active_evidence"]);
   });
 
   it("formats unavailable telemetry cards as no data", () => {

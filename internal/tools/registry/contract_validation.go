@@ -10,9 +10,8 @@ import (
 )
 
 type contractSourceRevision struct {
-	revision   string
-	previous   string
-	supersedes string
+	revision string
+	previous string
 }
 
 func validateSourceRevisionBatch(
@@ -24,11 +23,9 @@ func validateSourceRevisionBatch(
 	if sourceKey == "" {
 		return nil
 	}
-	supersedes, _ := fields["supersedes_fragment_ids"].([]any)
 	current := contractSourceRevision{
-		revision:   stringField(fields, "source_revision"),
-		previous:   stringField(fields, "previous_source_revision"),
-		supersedes: fmt.Sprint(supersedes),
+		revision: stringField(fields, "source_revision"),
+		previous: stringField(fields, "previous_source_revision"),
 	}
 	prior, exists := seen[sourceKey]
 	if !exists {
@@ -37,6 +34,37 @@ func validateSourceRevisionBatch(
 	}
 	if prior != current {
 		return fmt.Errorf("evidence[%d]: source_key %q revision fields must match earlier item in request", index, sourceKey)
+	}
+	return nil
+}
+
+func validateDirectEvidenceSupersessions(evidence []any) error {
+	targets := map[string]int{}
+	keys := map[string]int{}
+	for index, item := range evidence {
+		fields, ok := objectFields(item)
+		if !ok {
+			continue
+		}
+		targetIDs, _ := fields["supersedes_evidence_ids"].([]any)
+		if len(targetIDs) == 0 {
+			continue
+		}
+		key := strings.TrimSpace(stringField(fields, "idempotency_key"))
+		if key == "" {
+			return fmt.Errorf("evidence[%d]: idempotency_key is required when supersedes_evidence_ids is set", index)
+		}
+		if previous, exists := keys[key]; exists {
+			return fmt.Errorf("evidence[%d]: idempotency_key duplicates evidence[%d] direct supersession", index, previous)
+		}
+		keys[key] = index
+		for _, rawID := range targetIDs {
+			targetID, _ := rawID.(string)
+			if previous, exists := targets[targetID]; exists {
+				return fmt.Errorf("evidence[%d]: supersedes_evidence_ids duplicates target from evidence[%d]", index, previous)
+			}
+			targets[targetID] = index
+		}
 	}
 	return nil
 }
@@ -140,6 +168,9 @@ func validateDreamFeedback(args map[string]any) error {
 			if err := validateSourceRevisionBatch(i, fields, sourceRevisions); err != nil {
 				return err
 			}
+		}
+		if err := validateDirectEvidenceSupersessions(evidence); err != nil {
+			return err
 		}
 		proposal, _ := objectFields(args["proposal"])
 		if err := validateUniqueObjectRefsIn(proposal["entities"], "proposal.entities", "ref"); err != nil {

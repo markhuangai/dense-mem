@@ -501,13 +501,17 @@ func effectiveRelationshipSupportCounts(ctx context.Context, tx *gorm.DB, teamID
 			  ON quarantine.team_id = support.team_id
 			 AND quarantine.fragment_id = support.fragment_id
 			 AND quarantine.status = 'active'
-			LEFT JOIN evidence_sources AS source
-			  ON source.team_id = support.team_id
-			 AND source.source_id = support.source_id
-			WHERE support.team_id = ?::uuid
+		LEFT JOIN evidence_sources AS source
+		  ON source.team_id = support.team_id
+		 AND source.source_id = support.source_id
+		LEFT JOIN evidence_lifecycle_events AS lifecycle
+		  ON lifecycle.team_id = support.team_id
+		 AND lifecycle.target_fragment_id = support.fragment_id
+		WHERE support.team_id = ?::uuid
 			  AND support.relationship_id = ?::uuid
-			  AND latest.decision IN ('grant', 'reinstate')
-			  AND quarantine.quarantine_id IS NULL
+		  AND latest.decision IN ('grant', 'reinstate')
+		  AND quarantine.quarantine_id IS NULL
+		  AND lifecycle.lifecycle_event_id IS NULL
 			  AND (
 			      support.source_id IS NULL
 			      OR source.current_revision_id = support.source_revision_id

@@ -63,14 +63,14 @@ const recallFeedbackEvents: RecallFeedbackEvent[] = [
     query: "Why was recall bad?",
     tool_args: {
       input: { query: "Why was recall bad?", limit: 5 },
-      effective: { query: "Why was recall bad?", limit: 5, include_evidence: false, use_communities: false },
+      effective: { query: "Why was recall bad?", limit: 5 },
     },
     result_refs: [
       {
-        type: "fragment",
-        id: "fragment-1",
+        type: "evidence",
+        id: "evidence-1",
         rank: 1,
-        tier: "2",
+        tier: "evidence",
         final_score: 0.74,
         status_at_recall: "active",
       },
@@ -83,20 +83,20 @@ const recallFeedbackEvents: RecallFeedbackEvent[] = [
     missing_context: true,
     irrelevant: false,
     feedback_comment: "Returned stale UI notes instead of the requested button pattern. SearchPanel disabled-state and listbox accessibility pattern.",
-    irrelevant_result_refs: [{ type: "fragment", id: "fragment-1", rank: 1 }],
+    irrelevant_result_refs: [{ type: "evidence", id: "evidence-1", rank: 1 }],
     resolved_results: [
       {
-        type: "fragment",
-        id: "fragment-1",
+        type: "evidence",
+        id: "evidence-1",
         rank: 1,
         resolution_status: "found",
         current_status: "retracted",
-        current: { content: "The old fragment has been retracted.", status: "retracted" },
+        current: { context: "The obsolete evidence has been retracted.", status: "retracted" },
         ref: {
-          type: "fragment",
-          id: "fragment-1",
+          type: "evidence",
+          id: "evidence-1",
           rank: 1,
-          tier: "2",
+          tier: "evidence",
           status_at_recall: "active",
         },
       },
@@ -148,11 +148,11 @@ it("shows recall feedback query, params, result ids, and resolved state", async 
   });
 
   await userEvent.click(screen.getByRole("button", { name: /view recall feedback rec_1234567890/i }));
-  expect(await screen.findByText("fragment-1")).toBeInTheDocument();
+  expect(await screen.findByText("evidence-1")).toBeInTheDocument();
   const commentDetails = screen.getByRole("table", { name: /Recall feedback comment details/i });
   expect(within(commentDetails).getByText("Returned stale UI notes instead of the requested button pattern. SearchPanel disabled-state and listbox accessibility pattern.")).toBeInTheDocument();
-  expect(within(commentDetails).getByText("#1 fragment:fragment-1")).toBeInTheDocument();
-  expect(screen.getByText("The old fragment has been retracted.")).toBeInTheDocument();
+  expect(within(commentDetails).getByText("#1 evidence:evidence-1")).toBeInTheDocument();
+  expect(screen.getByText("The obsolete evidence has been retracted.")).toBeInTheDocument();
   expect(screen.getByLabelText(/Raw recall feedback rec_1234567890/i)).toHaveTextContent('"feedback_comment"');
 
   await userEvent.selectOptions(screen.getByLabelText("Quality"), "low");

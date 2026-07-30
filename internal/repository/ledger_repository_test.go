@@ -82,24 +82,25 @@ func TestLedgerAdvanceSourceRevisionValidationUsesCanonicalAuthority(t *testing.
 	assert.Contains(t, err.Error(), "authority is unsupported")
 }
 
-func TestLedgerCreateIngestValidationAllowsPerEvidenceSourceRevisionSupersedes(t *testing.T) {
+func TestLedgerCreateIngestValidationAllowsDirectEvidenceSupersedes(t *testing.T) {
 	input := validCreateIngestInput()
+	input.RequestHash = "sha256:request"
 	input.Evidence = []EvidenceInput{
 		{
-			Content:                       "first revised source fragment",
-			SourceKey:                     "doc://policy",
-			SourceRevisionToken:           "rev-2",
-			ExpectedPreviousRevisionToken: "rev-1",
-			SourceRevisionContentHash:     "sha256:revision",
-			SupersedesFragmentIDs:         []string{uuid.NewString()},
+			Content:                   "first revised source fragment",
+			SourceKey:                 "doc://policy",
+			SourceRevisionToken:       "rev-2",
+			SourceRevisionContentHash: "sha256:revision",
+			SupersedesEvidenceIDs:     []string{uuid.NewString()},
+			IdempotencyKey:            "evidence-a",
 		},
 		{
-			Content:                       "second revised source fragment",
-			SourceKey:                     "doc://policy",
-			SourceRevisionToken:           "rev-2",
-			ExpectedPreviousRevisionToken: "rev-1",
-			SourceRevisionContentHash:     "sha256:revision",
-			SupersedesFragmentIDs:         []string{uuid.NewString()},
+			Content:                   "second revised source fragment",
+			SourceKey:                 "doc://policy",
+			SourceRevisionToken:       "rev-2",
+			SourceRevisionContentHash: "sha256:revision",
+			SupersedesEvidenceIDs:     []string{uuid.NewString()},
+			IdempotencyKey:            "evidence-b",
 		},
 	}
 

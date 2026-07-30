@@ -141,8 +141,8 @@ func TestProcessTeamConflictReviewCompletesEmptyRun(t *testing.T) {
 	if complete.Status != "completed" || complete.ClaimedCases != 0 {
 		t.Fatalf("complete input = %#v", complete)
 	}
-	samples := metrics.MemoryFunnelSamples()
-	if len(samples) != 1 || samples[0].Stage != "conflict_review" || samples[0].Outcome != "empty" {
+	samples := metrics.ConflictReviewSamples()
+	if len(samples) != 1 || samples[0].Outcome != "empty" {
 		t.Fatalf("metrics samples = %#v", samples)
 	}
 }
@@ -193,7 +193,7 @@ func TestProcessTeamConflictReviewCountsMixedOutcomes(t *testing.T) {
 		complete.FailedCases != 1 {
 		t.Fatalf("complete input = %#v", complete)
 	}
-	samples := metrics.MemoryFunnelSamples()
+	samples := metrics.ConflictReviewSamples()
 	if len(samples) != 1 || samples[0].Outcome != "partial_error" {
 		t.Fatalf("metrics samples = %#v", samples)
 	}

@@ -157,6 +157,13 @@ func (r *LedgerRepositoryImpl) CommitPlacementSemanticResult(
 		if err := lockPlacementItemForCommit(ctx, tx, input); err != nil {
 			return err
 		}
+		placementFragmentID, err := loadPlacementItemFragmentID(ctx, tx, input)
+		if err != nil {
+			return err
+		}
+		if err := lockEvidenceLifecycleTargetIDs(ctx, tx, input.TeamID, []string{placementFragmentID}); err != nil {
+			return err
+		}
 		if err := ensurePlacementItemCurrent(ctx, tx, input); err != nil {
 			if errors.Is(err, ErrPlacementStaleSource) {
 				outcomeID, outcomeErr := appendSupersededPlacementOutcome(ctx, tx, input)
@@ -177,14 +184,6 @@ func (r *LedgerRepositoryImpl) CommitPlacementSemanticResult(
 		}
 		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
 			return err
-		}
-		placementFragmentID := ""
-		if placementCommitNeedsPlacementFragmentID(input) {
-			var err error
-			placementFragmentID, err = loadPlacementItemFragmentID(ctx, tx, input)
-			if err != nil {
-				return err
-			}
 		}
 		if placementEvidenceSearchableStatus(input.Status) {
 			document, err := upsertPlacementItemEvidenceSearchDocument(
@@ -453,23 +452,6 @@ func validateCommitPlacementSemanticInput(input CommitPlacementSemanticInput) er
 	return nil
 }
 
-func placementCommitNeedsPlacementFragmentID(input CommitPlacementSemanticInput) bool {
-	if placementEvidenceSearchableStatus(input.Status) {
-		return true
-	}
-	for _, observation := range input.RelationshipObservations {
-		if observation.Support != nil && strings.TrimSpace(observation.Support.FragmentID) != "" {
-			return true
-		}
-	}
-	for _, decision := range input.RelationshipDecisions {
-		if decision.Support != nil && strings.TrimSpace(decision.Support.FragmentID) != "" {
-			return true
-		}
-	}
-	return false
-}
-
 func validatePlacementEntityResolutionInput(input PlacementEntityResolutionInput) error {
 	if input.MentionRef == "" {
 		return errors.New("entity resolution mention_ref is required")
@@ -715,9 +697,16 @@ func lockPlacementItemForCommit(ctx context.Context, tx *gorm.DB, input CommitPl
 
 func ensurePlacementItemCurrent(ctx context.Context, tx *gorm.DB, input CommitPlacementSemanticInput) error {
 	var sourceRevisionID, currentRevisionID sql.NullString
+	var retired bool
 	err := tx.WithContext(ctx).Raw(`
 		SELECT COALESCE(fragment.source_revision_id::text, ''),
-		       COALESCE(source.current_revision_id::text, '')
+		       COALESCE(source.current_revision_id::text, ''),
+		       EXISTS (
+		           SELECT 1
+		           FROM evidence_lifecycle_events AS lifecycle
+		           WHERE lifecycle.team_id = fragment.team_id
+		             AND lifecycle.target_fragment_id = fragment.fragment_id
+		       )
 		FROM placement_items AS item
 		JOIN evidence_fragments AS fragment
 		  ON fragment.team_id = item.team_id
@@ -728,11 +717,11 @@ func ensurePlacementItemCurrent(ctx context.Context, tx *gorm.DB, input CommitPl
 		WHERE item.team_id = ?::uuid
 		  AND item.owner_profile_id = ?::uuid
 		  AND item.placement_item_id = ?::uuid
-	`, input.TeamID, input.OwnerProfileID, input.PlacementItemID).Row().Scan(&sourceRevisionID, &currentRevisionID)
+	`, input.TeamID, input.OwnerProfileID, input.PlacementItemID).Row().Scan(&sourceRevisionID, &currentRevisionID, &retired)
 	if err != nil {
 		return err
 	}
-	if sourceRevisionID.String != "" && currentRevisionID.String != "" && sourceRevisionID.String != currentRevisionID.String {
+	if retired || (sourceRevisionID.String != "" && currentRevisionID.String != "" && sourceRevisionID.String != currentRevisionID.String) {
 		return ErrPlacementStaleSource
 	}
 	return nil
@@ -742,7 +731,7 @@ func appendSupersededPlacementOutcome(ctx context.Context, tx *gorm.DB, input Co
 	payload := map[string]any{
 		"contract_version": domain.ContractVersion,
 		"status":           "superseded",
-		"reason":           "source revision changed before semantic commit",
+		"reason":           "evidence lifecycle or source revision changed before semantic commit",
 	}
 	outcomeID, err := insertPlacementOutcome(ctx, tx, PlacementOutcomeInput{
 		TeamID:          input.TeamID,

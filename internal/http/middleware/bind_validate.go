@@ -131,12 +131,6 @@ func formatValidationMessage(tag, errMsg string) string {
 	}
 }
 
-// BindValidateMiddleware creates a middleware that binds and validates request body.
-// This is an alias for BindAndValidate for backward compatibility.
-func BindValidateMiddleware[T any](ctxKey string) echo.MiddlewareFunc {
-	return BindAndValidate[T](ctxKey)
-}
-
 // Context key constants for common validated bodies.
 const (
 	// CreateProfileBodyKey is the context key for create profile request body.

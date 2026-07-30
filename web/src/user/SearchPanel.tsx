@@ -5,20 +5,19 @@ import {
   FileText,
   GitBranch,
   Search,
-  ShieldCheck,
   X,
 } from "lucide-react";
 import { LoadingState, SectionHeading } from "../ui/components";
-import { Claim, Fact, Fragment, GraphNodeType, RecallEvidenceContext, RecallHit, RecallRelationship, UserApi } from "./api";
+import { GraphNodeType, RecallEvidenceContext, RecallHit, RecallRelationship, UserApi } from "./api";
 
 const ResultGraphPreview = lazy(() => import("./GraphPanel").then((module) => ({ default: module.ResultGraphPreview })));
 
-type RecallResultKind = "evidence" | "relationship" | "fact" | "claim" | "fragment";
+type RecallResultKind = "evidence" | "relationship";
 type RecallResultStatus = "verified" | "provisional" | "disputed" | "deprecated";
 type RecallSortMode = "relevance" | "date";
 type ResultDensity = "comfortable" | "compact";
 type InspectorTab = "evidence" | "lineage" | "recall" | "graph";
-type RecallDisplayItem = RecallEvidenceContext | RecallRelationship | Fact | Claim | Fragment | undefined;
+type RecallDisplayItem = RecallEvidenceContext | RecallRelationship | undefined;
 
 type IndexedRecallResult = {
   hit: RecallHit;
@@ -33,9 +32,6 @@ export function SearchPanel({ api }: { api: UserApi }) {
   const [enabledTypes, setEnabledTypes] = useState<Record<RecallResultKind, boolean>>({
     evidence: true,
     relationship: true,
-    fact: true,
-    claim: true,
-    fragment: true,
   });
   const [enabledStatuses, setEnabledStatuses] = useState<Record<RecallResultStatus, boolean>>({
     verified: true,
@@ -100,7 +96,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
   const typeCounts = useMemo(() => indexedHits.reduce<Record<RecallResultKind, number>>((counts, item) => ({
     ...counts,
     [item.kind]: counts[item.kind] + 1,
-  }), { evidence: 0, relationship: 0, fact: 0, claim: 0, fragment: 0 }), [indexedHits]);
+  }), { evidence: 0, relationship: 0 }), [indexedHits]);
   const statusCounts = useMemo(() => indexedHits.reduce<Record<RecallResultStatus, number>>((counts, indexed) => {
     const status = recallResultStatus(resultItem(indexed.hit));
     if (status === null) {
@@ -134,7 +130,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
   }
 
   function clearFilters() {
-    setEnabledTypes({ evidence: true, relationship: true, fact: true, claim: true, fragment: true });
+    setEnabledTypes({ evidence: true, relationship: true });
     setEnabledStatuses({ verified: true, provisional: true, disputed: false, deprecated: false });
     setDateMode("all");
     setStartDate("");
@@ -159,7 +155,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
         />
         <fieldset className="filter-stack">
           <legend>Type</legend>
-          {(["evidence", "relationship", "fact", "claim", "fragment"] as RecallResultKind[]).map((kind) => (
+          {(["evidence", "relationship"] as RecallResultKind[]).map((kind) => (
             <label className="filter-row" key={kind}>
               <input
                 type="checkbox"
@@ -495,12 +491,6 @@ function recallGraphAnchor(result: IndexedRecallResult): { type: GraphNodeType; 
   if (relationship?.object?.value_id) {
     return { type: "value", id: relationship.object.value_id };
   }
-  if (result.hit.fact?.fact_id) {
-    return { type: "fact", id: result.hit.fact.fact_id };
-  }
-  if (result.hit.claim?.claim_id) {
-    return { type: "claim", id: result.hit.claim.claim_id };
-  }
   return null;
 }
 
@@ -513,12 +503,6 @@ function deriveEntities(hits: RecallHit[]): string[] {
         addEntity(values, relationship.predicate);
         addEntity(values, relationship.object?.name ?? relationship.object?.value);
       }
-    }
-    const source = hit.fact ?? hit.claim;
-    if (source) {
-      addEntity(values, source.subject);
-      addEntity(values, source.object);
-      addEntity(values, source.predicate);
     }
   }
   return Array.from(values).slice(0, 20);
@@ -541,15 +525,12 @@ function itemTitle(item: RecallDisplayItem): string {
   if (isRelationship(item)) {
     return item.subject?.name || shortId(item.relationship_id);
   }
-  if ("content" in item) {
-    return item.source || shortId(item.fragment_id || item.id);
-  }
-  return item.subject;
+  return "Result";
 }
 
 function itemBody(item: RecallDisplayItem): string {
   if (!item) {
-    return "";
+  return "";
   }
   if (isEvidence(item)) {
     return item.context;
@@ -558,10 +539,7 @@ function itemBody(item: RecallDisplayItem): string {
     const object = item.object?.name || item.object?.value || "";
     return [item.predicate, object].filter(Boolean).join(": ");
   }
-  if ("content" in item) {
-    return item.content;
-  }
-  return `${item.predicate}: ${item.object}`;
+	return "";
 }
 
 function tierLabel(hit: RecallHit): string {
@@ -579,36 +557,18 @@ function recallResultKind(hit: RecallHit): RecallResultKind {
   if (hit.evidence) {
     return "evidence";
   }
-  if (hit.relationship) {
-    return "relationship";
-  }
-  if (hit.fact) {
-    return "fact";
-  }
-  if (hit.claim) {
-    return "claim";
-  }
-  return "fragment";
+  return "relationship";
 }
 
 function recallResultKindLabel(kind: RecallResultKind): string {
   if (kind === "evidence") {
     return "Evidence";
   }
-  if (kind === "relationship") {
-    return "Relationship";
-  }
-  if (kind === "fact") {
-    return "Fact";
-  }
-  if (kind === "claim") {
-    return "Claim";
-  }
-  return "Fragment";
+  return "Relationship";
 }
 
 function resultItem(hit: RecallHit): RecallDisplayItem {
-  return hit.evidence ?? hit.relationship ?? hit.fact ?? hit.claim ?? hit.fragment;
+  return hit.evidence ?? hit.relationship;
 }
 
 function recallResultStatus(item: RecallDisplayItem): RecallResultStatus | null {
@@ -629,17 +589,7 @@ function recallResultStatus(item: RecallDisplayItem): RecallResultStatus | null 
     }
     return "verified";
   }
-  const raw = item?.status?.toLowerCase() ?? "";
-  if (raw.includes("disputed") || raw.includes("contradicted") || raw.includes("rejected") || raw.includes("invalid")) {
-    return "disputed";
-  }
-  if (raw.includes("deprecated") || raw.includes("retracted") || raw.includes("stale") || raw.includes("superseded")) {
-    return "deprecated";
-  }
-  if (raw.includes("candidate") || raw.includes("pending") || raw.includes("provisional") || raw.includes("unverified") || raw.includes("draft")) {
-    return "provisional";
-  }
-  return "verified";
+  return null;
 }
 
 function recallResultStatusLabel(status: RecallResultStatus): string {
@@ -717,7 +667,7 @@ function itemRawDate(item: RecallDisplayItem): string {
   if (isRelationship(item)) {
     return item.valid_from ?? item.valid_to ?? "";
   }
-  return "content" in item ? item.created_at : item.recorded_at;
+  return "";
 }
 
 function startOfDay(value: string): number {
@@ -732,20 +682,11 @@ function resultIcon(kind: RecallResultKind) {
   if (kind === "evidence") {
     return <FileText size={15} aria-hidden="true" />;
   }
-  if (kind === "relationship") {
-    return <GitBranch size={15} aria-hidden="true" />;
-  }
-  if (kind === "fact") {
-    return <ShieldCheck size={15} aria-hidden="true" />;
-  }
-  if (kind === "claim") {
-    return <GitBranch size={15} aria-hidden="true" />;
-  }
-  return <FileText size={15} aria-hidden="true" />;
+  return <GitBranch size={15} aria-hidden="true" />;
 }
 
 function recallKey(hit: RecallHit, index: number): string {
-  return hit.evidence?.evidence_id ?? hit.relationship?.relationship_id ?? hit.fact?.fact_id ?? hit.claim?.claim_id ?? hit.fragment?.fragment_id ?? String(index);
+  return hit.evidence?.evidence_id ?? hit.relationship?.relationship_id ?? String(index);
 }
 
 function sourceLabel(item: RecallDisplayItem): string {
@@ -755,13 +696,7 @@ function sourceLabel(item: RecallDisplayItem): string {
   if (isEvidence(item)) {
     return item.source || item.source_type || "evidence";
   }
-  if (isRelationship(item)) {
-    return "relationship graph";
-  }
-  if ("content" in item) {
-    return item.source || item.source_type || "fragment";
-  }
-  return "knowledge graph";
+  return "relationship graph";
 }
 
 function itemDate(item: RecallDisplayItem): string {

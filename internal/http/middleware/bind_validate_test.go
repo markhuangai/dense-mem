@@ -59,7 +59,7 @@ func TestBindAndValidateRejectsMalformedAndInvalidBodies(t *testing.T) {
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.POST("/body", func(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
-	}, BindValidateMiddleware[bindValidateBody]("body"))
+	}, BindAndValidate[bindValidateBody]("body"))
 
 	req := httptest.NewRequest(http.MethodPost, "/body", strings.NewReader(`{"name":`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)

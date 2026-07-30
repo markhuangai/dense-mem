@@ -17,7 +17,7 @@ func RegisterRoutes(e *echo.Echo, provisioner *Provisioner, configuredBaseURL st
 		return c.HTML(http.StatusOK, landingHTML)
 	})
 
-	e.POST("/demo/api/session", func(c echo.Context) error {
+	e.POST("/ui/api/demo/session", func(c echo.Context) error {
 		resp, err := provisioner.Provision(c.Request().Context(), ProvisionOptions{
 			ClientIP: c.RealIP(),
 			BaseURL:  requestBaseURL(c, configuredBaseURL),
@@ -140,7 +140,7 @@ const landingHTML = `<!doctype html>
           <div class="meta">
             <div class="metric"><strong id="qRequests">300</strong><span>requests</span></div>
             <div class="metric"><strong id="qWrites">75</strong><span>writes</span></div>
-            <div class="metric"><strong id="qFragments">30</strong><span>memory items</span></div>
+            <div class="metric"><strong id="qEvidence">30</strong><span>memory items</span></div>
             <div class="metric"><strong id="qBytes">128 KiB</strong><span>content</span></div>
             <div class="metric"><strong id="qVerifier">30</strong><span>verifier</span></div>
             <div class="metric"><strong id="qRecall">50</strong><span>recall</span></div>
@@ -186,7 +186,7 @@ const landingHTML = `<!doctype html>
       els.status.textContent = message || '';
     }
     async function createSession() {
-      const response = await fetch('/demo/api/session', { method: 'POST' });
+      const response = await fetch('/ui/api/demo/session', { method: 'POST' });
       if (!response.ok) {
         let message = 'Could not create a demo key.';
         try {
@@ -225,8 +225,8 @@ const landingHTML = `<!doctype html>
       els.status.textContent = message || '';
       setText('qRequests', quotas.total_requests);
       setText('qWrites', quotas.write_attempts);
-      setText('qFragments', quotas.fragment_attempts);
-      setText('qBytes', formatBytes(quotas.fragment_bytes));
+      setText('qEvidence', quotas.evidence_attempts);
+      setText('qBytes', formatBytes(quotas.evidence_bytes));
       setText('qVerifier', quotas.verifier_attempts);
       setText('qRecall', quotas.recall_calls);
       setText('qRate', (quotas.per_minute_requests || 20) + '/min');

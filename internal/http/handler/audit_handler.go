@@ -56,59 +56,26 @@ type AuditLogResponse struct {
 	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// Get handles GET /ui/api/team/audit-log and the test-only
-// GET /ui/api/team/profiles/:profileId/audit-log alias.
-// Requires a same-profile principal.
-// Returns 200 with paginated audit log entries for the requested profile only.
+// Get handles GET /ui/api/team/audit-log for the authenticated team.
 // No update/delete endpoints are provided - audit log is append-only.
 func (h *AuditHandler) Get(c echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
-	// For test purposes, also check Echo's context storage (allows testing without middleware)
-	if principal == nil {
-		if p, ok := c.Get("principal").(*middleware.Principal); ok {
-			principal = p
-		}
-	}
-
 	if h == nil || h.svc == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "audit log unavailable")
 	}
 
-	// Parse team ID from the path, then fall back to the authenticated team for
-	// the actor-scoped user portal route.
-	profileIDStr := c.Param("teamId")
-	if profileIDStr == "" {
-		profileIDStr = c.Param("profileId")
-	}
-	if profileIDStr == "" && principal != nil && principal.GetTeamID() != uuid.Nil {
-		profileIDStr = principal.GetTeamID().String()
-	}
-	if profileIDStr == "" {
+	if principal == nil || principal.GetTeamID() == uuid.Nil {
 		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
-
-	// Validate UUID format
-	profileID, err := uuid.Parse(profileIDStr)
-	if err != nil {
-		return httperr.New(httperr.INVALID_UUID, "invalid profile ID format")
-	}
-	if principal == nil {
-		return httperr.New(httperr.FORBIDDEN, "authentication required")
-	}
-
-	// Permission check: same-team principal only. Team-profile keys carry their
-	// own key ID as ProfileID and their owning team as TeamID.
-	if principal.GetTeamID() != profileID {
-		return httperr.New(httperr.FORBIDDEN, "access denied to this profile's audit log")
-	}
+	teamID := principal.GetTeamID()
 
 	// Parse pagination params
 	limit, offset := parseAuditPaginationParams(c)
 
 	// Get audit log entries scoped to this profile
-	entries, total, err := h.svc.List(ctx, profileID.String(), limit, offset)
+	entries, total, err := h.svc.List(ctx, teamID.String(), limit, offset)
 	if err != nil {
 		return err
 	}

@@ -42,14 +42,13 @@ type Service interface {
 }
 
 type Query struct {
-	Scope             string
-	Query             string
-	Types             []string
-	AnchorType        string
-	AnchorID          string
-	Depth             int
-	Limit             int
-	IncludeSuperseded bool
+	Scope      string
+	Query      string
+	Types      []string
+	AnchorType string
+	AnchorID   string
+	Depth      int
+	Limit      int
 }
 
 type Snapshot struct {

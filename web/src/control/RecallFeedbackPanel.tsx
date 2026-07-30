@@ -420,8 +420,9 @@ function currentSummary(result: RecallFeedbackResolvedResult): string {
     return "Missing from graph";
   }
   const current = result.current ?? {};
-  if (result.type === "fragment") {
-    return compact(String(current.content ?? ""));
+  const context = String(current.context ?? current.content ?? "").trim();
+  if (context) {
+    return compact(context);
   }
   const triple = [current.subject, current.predicate, current.object].map((value) => String(value ?? "").trim()).filter(Boolean);
   if (triple.length > 0) {

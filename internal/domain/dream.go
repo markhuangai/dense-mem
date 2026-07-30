@@ -11,24 +11,21 @@ const (
 	DreamStatusStale      DreamStatus = "stale"
 	DreamStatusRejected   DreamStatus = "rejected"
 	DreamStatusSubmitted  DreamStatus = "submitted"
-	// Deprecated: use DreamStatusSubmitted. Hypotheses are submitted to remember;
-	// they are never promoted directly into semantic truth.
-	DreamStatusPromoted DreamStatus = "promoted"
 )
 
 // IsValid reports whether s is a supported DreamStatus value.
 func (s DreamStatus) IsValid() bool {
 	switch s {
 	case DreamStatusProposed, DreamStatusReinforced, DreamStatusStale,
-		DreamStatusRejected, DreamStatusSubmitted, DreamStatusPromoted:
+		DreamStatusRejected, DreamStatusSubmitted:
 		return true
 	default:
 		return false
 	}
 }
 
-// DreamSourceRef identifies one same-profile source used to produce or
-// evaluate a dream. Type is one of fact, claim, fragment, community, or dream.
+// DreamSourceRef identifies one same-profile Relationship source used to
+// produce or evaluate a dream. Type is relationship or candidate_relationship.
 type DreamSourceRef struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`

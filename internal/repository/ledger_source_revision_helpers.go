@@ -40,6 +40,14 @@ func normalizeUUIDStringList(values []string) []string {
 	return out
 }
 
+func normalizeUUIDStrings(values []string) []string {
+	out := make([]string, len(values))
+	for i, value := range values {
+		out[i] = strings.TrimSpace(value)
+	}
+	return out
+}
+
 func validateSourceRevisionBatch(evidence []EvidenceInput) error {
 	seen := make(map[string]sourceRevisionBatch)
 	for i, item := range evidence {
