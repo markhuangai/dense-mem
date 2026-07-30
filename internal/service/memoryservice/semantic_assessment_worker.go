@@ -870,10 +870,12 @@ func semanticAssessmentCommitInput(
 			ThresholdUsed:           &threshold,
 			GateResult:              gateResult,
 			SuppressSupport:         suppressSupport,
-			SemanticReviewKind:      reviewKind,
-			ReviewQuestion:          assessmentReviewQuestion(reviewKind),
-			ReviewOptions:           assessmentReviewOptions(reviewKind, result, entityStates, request.PredicateOptions),
-			ReviewGuidance:          assessmentReviewGuidance(reviewKind),
+		}
+		if reviewKind != "" {
+			observation.SemanticReviewKind = reviewKind
+			observation.ReviewQuestion = assessmentReviewQuestion(reviewKind)
+			observation.ReviewOptions = assessmentReviewOptions(reviewKind, result, entityStates, request.PredicateOptions)
+			observation.ReviewGuidance = assessmentReviewGuidance(reviewKind)
 		}
 		if trustedContext, ok := trustedContexts[result.Ref]; ok {
 			attachSemanticAssessmentTrustedRelationshipContext(&observation, trustedContext)

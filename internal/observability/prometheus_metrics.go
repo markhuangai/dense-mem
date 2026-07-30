@@ -80,6 +80,7 @@ type PrometheusMetrics struct {
 	assessorDur                  *prometheus.HistogramVec
 	assessorTokens               *prometheus.CounterVec
 	assessorValidation           *prometheus.CounterVec
+	assessorValidationFields     *prometheus.CounterVec
 	assessorCandidateTruncations *prometheus.CounterVec
 	assessorPersistence          *prometheus.CounterVec
 	assessorDuplicatePrevention  *prometheus.CounterVec
@@ -228,6 +229,10 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Name: "densemem_assessor_validation_failures_total",
 			Help: "Integrated assessor validation failures by bounded stage.",
 		}, []string{"stage"}),
+		assessorValidationFields: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_assessor_validation_field_failures_total",
+			Help: "Integrated assessor invalid turns by bounded stage and validation-field family.",
+		}, []string{"stage", "family"}),
 		assessorCandidateTruncations: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_assessor_candidate_truncations_total",
 			Help: "Integrated assessor requests with token-bounded candidate context.",
@@ -258,7 +263,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		m.fragmentCreates, m.claimCreates, m.verifyVerdicts, m.promotions,
 		m.promoteWait, m.retractions, m.revalidation,
 		m.communityRuns, m.communityDur, m.communityNodes,
-		m.assessorCalls, m.assessorDur, m.assessorTokens, m.assessorValidation,
+		m.assessorCalls, m.assessorDur, m.assessorTokens, m.assessorValidation, m.assessorValidationFields,
 		m.assessorCandidateTruncations, m.assessorPersistence, m.assessorDuplicatePrevention,
 		m.assessorConfidenceGate, m.assessorReviewExpiry,
 	)
@@ -466,6 +471,13 @@ func (m *PrometheusMetrics) IncAssessorValidationFailure(stage string) {
 	m.assessorValidation.WithLabelValues(normalizeAssessorValidationStage(stage)).Inc()
 }
 
+func (m *PrometheusMetrics) IncAssessorValidationFieldFailure(stage, family string) {
+	m.assessorValidationFields.WithLabelValues(
+		normalizeAssessorValidationStage(stage),
+		normalizeAssessorValidationFieldFamily(family),
+	).Inc()
+}
+
 func (m *PrometheusMetrics) IncAssessorCandidateTruncation() {
 	m.assessorCandidateTruncations.WithLabelValues().Inc()
 }
@@ -608,6 +620,38 @@ func normalizeAssessorValidationStage(value string) string {
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return unknownMetricLabel
+	}
+}
+
+func normalizeAssessorValidationFieldFamily(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "request_id",
+		"output_tokens",
+		"response",
+		"security_signals",
+		"entity_results",
+		"entity_results.ref",
+		"entity_results.span",
+		"entity_results.kind",
+		"entity_results.selection",
+		"entity_results.quality",
+		"entity_results.other",
+		"relationship_results",
+		"relationship_results.ref",
+		"relationship_results.subject",
+		"relationship_results.predicate",
+		"relationship_results.object",
+		"relationship_results.evidence",
+		"relationship_results.semantics",
+		"relationship_results.verdict",
+		"relationship_results.temporal",
+		"relationship_results.scope",
+		"relationship_results.quality",
+		"relationship_results.other",
+		"other":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "other"
 	}
 }
 
@@ -840,6 +884,12 @@ func RecordAssessorCall(metrics DiscoverabilityMetrics, inputTokens, outputToken
 func RecordAssessorValidationFailure(metrics DiscoverabilityMetrics, stage string) {
 	if recorder, ok := metrics.(AssessorMetrics); ok {
 		recorder.IncAssessorValidationFailure(stage)
+	}
+}
+
+func RecordAssessorValidationFieldFailure(metrics DiscoverabilityMetrics, stage, family string) {
+	if recorder, ok := metrics.(AssessorMetrics); ok {
+		recorder.IncAssessorValidationFieldFailure(stage, family)
 	}
 }
 

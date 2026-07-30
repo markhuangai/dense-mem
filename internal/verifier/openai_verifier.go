@@ -107,9 +107,35 @@ type openAIStructuredChatResult struct {
 	Usage   *openAIVerifierUsage
 }
 
+type semanticAssessmentCorrectionSpan struct {
+	Start                 int     `json:"start"`
+	End                   int     `json:"end"`
+	Action                string  `json:"action"`
+	CandidateEntityID     *string `json:"candidate_entity_id"`
+	OccupiedByOtherResult bool    `json:"occupied_by_other_result"`
+}
+
+type semanticAssessmentCorrectionSpanHint struct {
+	Field           string                             `json:"field"`
+	EvidenceID      string                             `json:"evidence_id"`
+	Surface         string                             `json:"surface,omitempty"`
+	RecommendedSpan *semanticAssessmentCorrectionSpan  `json:"recommended_span,omitempty"`
+	ValidSpans      []semanticAssessmentCorrectionSpan `json:"valid_spans"`
+	RemoveResult    bool                               `json:"remove_result"`
+	Truncated       bool                               `json:"truncated"`
+}
+
+type semanticAssessmentCorrectionEntitySelectionHint struct {
+	Index             int     `json:"index"`
+	Action            string  `json:"action"`
+	CandidateEntityID *string `json:"candidate_entity_id"`
+}
+
 type semanticAssessmentCorrection struct {
-	ValidationErrors []SemanticValidationError `json:"validation_errors"`
-	Instruction      string                    `json:"instruction"`
+	ValidationErrors     []SemanticValidationError                         `json:"validation_errors"`
+	SpanHints            []semanticAssessmentCorrectionSpanHint            `json:"span_hints,omitempty"`
+	EntitySelectionHints []semanticAssessmentCorrectionEntitySelectionHint `json:"entity_selection_hints,omitempty"`
+	Instruction          string                                            `json:"instruction"`
 }
 
 func decodeOpenAIVerifierAPIResponse(body io.Reader) (openAIVerifierAPIResponse, error) {
@@ -350,6 +376,9 @@ func (v *OpenAIVerifier) AssessSemantic(ctx context.Context, req SemanticAssessm
 			return response, nil
 		}
 		observability.RecordAssessorValidationFailure(v.metrics, failureStage)
+		for _, family := range semanticAssessmentValidationFieldFamilies(responseErrors) {
+			observability.RecordAssessorValidationFieldFailure(v.metrics, failureStage, family)
+		}
 		if turn == SemanticAssessmentMaxProviderTurns {
 			return SemanticAssessmentResponse{}, &MalformedResponseError{
 				Provider:     openAIVerifierProvider,
@@ -359,9 +388,16 @@ func (v *OpenAIVerifier) AssessSemantic(ctx context.Context, req SemanticAssessm
 			}
 		}
 
+		correctionErrors := boundedSemanticAssessmentCorrectionErrors(responseErrors)
 		correctionJSON, err := json.Marshal(semanticAssessmentCorrection{
-			ValidationErrors: boundedSemanticAssessmentCorrectionErrors(responseErrors),
-			Instruction:      "Return one complete replacement JSON object matching the required schema. Correct every validation error exactly. For predicate_status needs_review, predicate_key and predicate_version must both be null; use resolved only when selecting a supplied predicate key and version. Do not return a patch or explanation.",
+			ValidationErrors: correctionErrors,
+			SpanHints:        semanticAssessmentCorrectionSpanHints(prepared, response, correctionErrors),
+			EntitySelectionHints: semanticAssessmentCorrectionEntitySelectionHints(
+				prepared,
+				response,
+				correctionErrors,
+			),
+			Instruction: semanticAssessmentCorrectionInstruction,
 		})
 		if err != nil {
 			return SemanticAssessmentResponse{}, &ProviderError{

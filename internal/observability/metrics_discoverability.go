@@ -58,6 +58,7 @@ type DiscoverabilityMetrics interface {
 type AssessorMetrics interface {
 	ObserveAssessorCall(inputTokens, outputTokens int, durationSeconds float64, outcome string)
 	IncAssessorValidationFailure(stage string)
+	IncAssessorValidationFieldFailure(stage, family string)
 	IncAssessorCandidateTruncation()
 	IncAssessorAssessmentPersistence(outcome string)
 	IncAssessorDuplicateRequestPrevention(stage string)
@@ -93,11 +94,13 @@ func (noopMetrics) IncCommunityDetect(string)                     {}
 func (noopMetrics) ObserveCommunityDetect(float64, int)           {}
 func (noopMetrics) ObserveAssessorCall(int, int, float64, string) {}
 func (noopMetrics) IncAssessorValidationFailure(string)           {}
-func (noopMetrics) IncAssessorCandidateTruncation()               {}
-func (noopMetrics) IncAssessorAssessmentPersistence(string)       {}
-func (noopMetrics) IncAssessorDuplicateRequestPrevention(string)  {}
-func (noopMetrics) IncAssessorConfidenceGate(string)              {}
-func (noopMetrics) AddAssessorReviewExpiry(int64)                 {}
+func (noopMetrics) IncAssessorValidationFieldFailure(string, string) {
+}
+func (noopMetrics) IncAssessorCandidateTruncation()              {}
+func (noopMetrics) IncAssessorAssessmentPersistence(string)      {}
+func (noopMetrics) IncAssessorDuplicateRequestPrevention(string) {}
+func (noopMetrics) IncAssessorConfidenceGate(string)             {}
+func (noopMetrics) AddAssessorReviewExpiry(int64)                {}
 
 // InMemoryDiscoverabilityMetrics is a test-friendly recorder. Tests can
 // inspect the captured samples to assert that a code path actually emitted
@@ -122,6 +125,7 @@ type InMemoryDiscoverabilityMetrics struct {
 	communityDetectSamples      []CommunityDetectSample
 	assessorCalls               []AssessorCallSample
 	assessorValidation          map[string]int
+	assessorValidationFields    map[assessorValidationFieldKey]int
 	assessorTruncations         int
 	assessorPersistence         map[string]int
 	assessorDuplicatePrevention map[string]int
@@ -147,6 +151,11 @@ type AssessorCallSample struct {
 	OutputTokens    int
 	DurationSeconds float64
 	Outcome         string
+}
+
+type assessorValidationFieldKey struct {
+	stage  string
+	family string
 }
 
 // EmbeddingSample is one recorded embedding latency observation.
@@ -213,6 +222,7 @@ func NewInMemoryDiscoverabilityMetrics() *InMemoryDiscoverabilityMetrics {
 		promotionOutcomes:           make(map[string]int),
 		communityDetectOuts:         make(map[string]int),
 		assessorValidation:          make(map[string]int),
+		assessorValidationFields:    make(map[assessorValidationFieldKey]int),
 		assessorPersistence:         make(map[string]int),
 		assessorDuplicatePrevention: make(map[string]int),
 		assessorGateBands:           make(map[string]int),
@@ -426,6 +436,12 @@ func (m *InMemoryDiscoverabilityMetrics) IncAssessorValidationFailure(stage stri
 	m.assessorValidation[stage]++
 }
 
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorValidationFieldFailure(stage, family string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorValidationFields[assessorValidationFieldKey{stage: stage, family: family}]++
+}
+
 func (m *InMemoryDiscoverabilityMetrics) IncAssessorCandidateTruncation() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -533,6 +549,12 @@ func (m *InMemoryDiscoverabilityMetrics) AssessorValidationFailureCount(stage st
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.assessorValidation[stage]
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorValidationFieldFailureCount(stage, family string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorValidationFields[assessorValidationFieldKey{stage: stage, family: family}]
 }
 
 func (m *InMemoryDiscoverabilityMetrics) AssessorCandidateTruncationCount() int {

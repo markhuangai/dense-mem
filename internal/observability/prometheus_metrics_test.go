@@ -190,6 +190,8 @@ func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testin
 	metrics := NewPrometheusMetrics()
 	metrics.ObserveAssessorCall(200, 50, 0.25, "ok")
 	metrics.IncAssessorValidationFailure("response")
+	metrics.IncAssessorValidationFieldFailure("response_contract", "relationship_results.predicate")
+	metrics.IncAssessorValidationFieldFailure("not-a-stage", "provider supplied arbitrary field")
 	metrics.IncAssessorCandidateTruncation()
 	metrics.IncAssessorAssessmentPersistence("persisted")
 	metrics.IncAssessorDuplicateRequestPrevention("post_persist")
@@ -204,6 +206,8 @@ func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testin
 		`densemem_assessor_tokens_total{kind="input"}`,
 		`densemem_assessor_tokens_total{kind="output"}`,
 		`densemem_assessor_validation_failures_total{stage="response"}`,
+		`densemem_assessor_validation_field_failures_total{family="relationship_results.predicate",stage="response_contract"}`,
+		`densemem_assessor_validation_field_failures_total{family="other",stage="unknown"}`,
 		`densemem_assessor_candidate_truncations_total 1`,
 		`densemem_assessor_assessment_persistence_total{outcome="persisted"}`,
 		`densemem_assessor_duplicate_request_prevented_total{stage="post_persist"}`,
@@ -218,6 +222,9 @@ func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testin
 		if strings.HasPrefix(line, "densemem_assessor_") && (strings.Contains(line, "team_id=") || strings.Contains(line, "profile_id=")) {
 			t.Fatalf("assessor metric leaked identity label %q", line)
 		}
+	}
+	if strings.Contains(body, "provider supplied arbitrary field") {
+		t.Fatalf("assessor metric leaked an unbounded field label\n%s", body)
 	}
 }
 
@@ -279,6 +286,7 @@ func TestNoopDiscoverabilityMetrics_ConsumesCalls(t *testing.T) {
 	metrics.ObserveCommunityDetect(1, 2)
 	assessor.ObserveAssessorCall(10, 5, 1, "ok")
 	assessor.IncAssessorValidationFailure("response")
+	assessor.IncAssessorValidationFieldFailure("response_contract", "request_id")
 	assessor.IncAssessorCandidateTruncation()
 	assessor.IncAssessorAssessmentPersistence("persisted")
 	assessor.IncAssessorDuplicateRequestPrevention("post_persist")
@@ -290,6 +298,7 @@ func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
 	metrics := NewInMemoryDiscoverabilityMetrics()
 	RecordAssessorCall(metrics, 200, 50, 0.25, "ok")
 	RecordAssessorValidationFailure(metrics, "response")
+	RecordAssessorValidationFieldFailure(metrics, "response_contract", "request_id")
 	RecordAssessorCandidateTruncation(metrics)
 	RecordAssessorAssessmentPersistence(metrics, "persisted")
 	RecordAssessorDuplicateRequestPrevention(metrics, "post_persist")
@@ -306,6 +315,9 @@ func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
 	}
 	if got := metrics.AssessorValidationFailureCount("response"); got != 1 {
 		t.Fatalf("AssessorValidationFailureCount() = %d, want 1", got)
+	}
+	if got := metrics.AssessorValidationFieldFailureCount("response_contract", "request_id"); got != 1 {
+		t.Fatalf("AssessorValidationFieldFailureCount() = %d, want 1", got)
 	}
 	if got := metrics.AssessorCandidateTruncationCount(); got != 1 {
 		t.Fatalf("AssessorCandidateTruncationCount() = %d, want 1", got)
@@ -325,6 +337,7 @@ func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
 
 	RecordAssessorCall(NoopDiscoverabilityMetrics(), 0, 0, 0, "")
 	RecordAssessorValidationFailure(NoopDiscoverabilityMetrics(), "")
+	RecordAssessorValidationFieldFailure(NoopDiscoverabilityMetrics(), "", "")
 	RecordAssessorCandidateTruncation(NoopDiscoverabilityMetrics())
 	RecordAssessorAssessmentPersistence(NoopDiscoverabilityMetrics(), "")
 	RecordAssessorDuplicateRequestPrevention(NoopDiscoverabilityMetrics(), "")

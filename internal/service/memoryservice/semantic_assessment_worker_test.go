@@ -227,6 +227,9 @@ func TestSemanticAssessmentCommitInputAppliesInclusiveConfidenceGate(t *testing.
 	assert.Equal(t, "meets_write_threshold", commit.RelationshipObservations[0].GateResult)
 	assert.False(t, commit.RelationshipObservations[0].SuppressSupport)
 	assert.Empty(t, commit.RelationshipObservations[0].SemanticReviewKind)
+	assert.Empty(t, commit.RelationshipObservations[0].ReviewQuestion)
+	assert.Empty(t, commit.RelationshipObservations[0].ReviewOptions)
+	assert.Empty(t, commit.RelationshipObservations[0].ReviewGuidance)
 
 	response.RelationshipResults[0].Confidence = 0.699
 	commit, err = semanticAssessmentCommitInput(run, item, fragment, request, response, assessment, repository.AutoWriteConfidencePolicy{
@@ -239,6 +242,9 @@ func TestSemanticAssessmentCommitInputAppliesInclusiveConfidenceGate(t *testing.
 	assert.Equal(t, "below_write_threshold", commit.RelationshipObservations[0].GateResult)
 	assert.True(t, commit.RelationshipObservations[0].SuppressSupport)
 	assert.Equal(t, "support_confidence", commit.RelationshipObservations[0].SemanticReviewKind)
+	assert.NotEmpty(t, commit.RelationshipObservations[0].ReviewQuestion)
+	assert.NotEmpty(t, commit.RelationshipObservations[0].ReviewOptions)
+	assert.NotEmpty(t, commit.RelationshipObservations[0].ReviewGuidance)
 }
 
 func TestSemanticAssessmentRequestKeepsTrustedRelationshipContextServerSide(t *testing.T) {
