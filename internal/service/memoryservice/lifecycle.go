@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -305,9 +306,14 @@ func (s *lifecycleService) RetractEvidence(
 }
 
 func retractEvidenceRequestHash(req RetractEvidenceRequest) (string, error) {
+	evidenceIDs := make([]string, len(req.EvidenceIDs))
+	for index, evidenceID := range req.EvidenceIDs {
+		evidenceIDs[index] = strings.TrimSpace(evidenceID)
+	}
+	sort.Strings(evidenceIDs)
 	payload, err := json.Marshal(map[string]any{
 		"contract_version": req.ContractVersion,
-		"evidence_ids":     req.EvidenceIDs,
+		"evidence_ids":     evidenceIDs,
 		"reason":           strings.TrimSpace(req.Reason),
 		"idempotency_key":  strings.TrimSpace(req.IdempotencyKey),
 	})

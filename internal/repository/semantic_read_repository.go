@@ -139,7 +139,7 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 		}
 		if len(observations) >= input.MaxEvents || len(supports) >= input.MaxEvents ||
 			len(decisions) >= input.MaxEvents || len(result.VerificationEvents) >= input.MaxEvents ||
-			len(result.Transitions) >= input.MaxEvents {
+			len(result.Transitions) >= input.MaxEvents || len(lifecycleEvents) >= input.MaxEvents {
 			result.Truncated = true
 			if result.StoppedReason == "" {
 				result.StoppedReason = "max_events"

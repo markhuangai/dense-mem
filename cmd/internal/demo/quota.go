@@ -249,6 +249,7 @@ func (m *QuotaManager) ConsumeTool(ctx context.Context, teamID, toolName string,
 		return m.ConsumeRecall(ctx, teamID)
 	case registry.ToolResolveMemoryPlacement,
 		registry.ToolCorrectEntityResolution,
+		registry.ToolRetractEvidence,
 		registry.ToolResolveDreamFeedback,
 		registry.ToolImportMemoryPack,
 		registry.ToolRollbackMemoryPackImport:

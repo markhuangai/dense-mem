@@ -89,7 +89,9 @@ func TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically(t *testi
 	})
 	require.NoError(t, err)
 	assert.True(t, replay.Existing)
-	assert.Equal(t, firstRetraction.DecisionID, replay.DecisionID)
+	wantReplay := *firstRetraction
+	wantReplay.Existing = true
+	assert.Equal(t, &wantReplay, replay)
 
 	_, err = ledger.RetractEvidence(ctx, RetractEvidenceInput{
 		TeamID:         teamID,
@@ -230,4 +232,67 @@ func TestLedgerDirectEvidenceSupersessionRetiresTargetWhenReplacementIsQuarantin
 	require.NoError(t, err)
 	assert.True(t, replay.Existing)
 	assert.Equal(t, replacement.IngestID, replay.IngestID)
+}
+
+func TestTraceRelationshipMarksLifecycleEventLimitAsTruncated(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-lifecycle-trace-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-lifecycle-trace-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+
+	targetEvidenceIDs := make([]string, 0, 3)
+	for index, content := range []string{
+		"Prior evidence one.",
+		"Prior evidence two.",
+		"Prior evidence three.",
+	} {
+		target := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "trace-lifecycle-target-"+string(rune('a'+index)), content)
+		targetEvidenceIDs = append(targetEvidenceIDs, target.Evidence[0].FragmentID)
+	}
+	replacement, err := ledger.CreateIngest(ctx, CreateIngestInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerID,
+		IdempotencyKey: "trace-lifecycle-replacement-ingest",
+		RequestHash:    "sha256:trace-lifecycle-replacement",
+		Evidence: []EvidenceInput{{
+			Content:               "The corrected evidence is current.",
+			SupersedesEvidenceIDs: targetEvidenceIDs,
+			IdempotencyKey:        "trace-lifecycle-replacement-evidence",
+		}},
+	})
+	require.NoError(t, err)
+
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Jamie")
+	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Dense-Mem")
+	decision := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        replacement.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     replacement.Evidence[0].FragmentID,
+			SourceGroupKey: "source:replacement",
+			SpanStart:      0,
+			SpanEnd:        len("The corrected evidence is current."),
+			Authority:      "primary",
+		},
+	})
+
+	trace, err := semantic.TraceRelationship(ctx, TraceRelationshipInput{
+		TeamID:         teamID,
+		RelationshipID: decision.Relationship.RelationshipID,
+		MaxEvents:      2,
+	})
+	require.NoError(t, err)
+	assert.Len(t, trace.Observations, 1)
+	assert.Len(t, trace.EvidenceSupports, 1)
+	assert.Len(t, trace.SupportDecisionEvents, 1)
+	assert.Len(t, trace.EvidenceLifecycleEvents, 2)
+	assert.True(t, trace.Truncated)
+	assert.Equal(t, "max_events", trace.StoppedReason)
 }

@@ -157,6 +157,13 @@ func (r *LedgerRepositoryImpl) CommitPlacementSemanticResult(
 		if err := lockPlacementItemForCommit(ctx, tx, input); err != nil {
 			return err
 		}
+		placementFragmentID, err := loadPlacementItemFragmentID(ctx, tx, input)
+		if err != nil {
+			return err
+		}
+		if err := lockEvidenceLifecycleTargetIDs(ctx, tx, input.TeamID, []string{placementFragmentID}); err != nil {
+			return err
+		}
 		if err := ensurePlacementItemCurrent(ctx, tx, input); err != nil {
 			if errors.Is(err, ErrPlacementStaleSource) {
 				outcomeID, outcomeErr := appendSupersededPlacementOutcome(ctx, tx, input)
@@ -177,14 +184,6 @@ func (r *LedgerRepositoryImpl) CommitPlacementSemanticResult(
 		}
 		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
 			return err
-		}
-		placementFragmentID := ""
-		if placementCommitNeedsPlacementFragmentID(input) {
-			var err error
-			placementFragmentID, err = loadPlacementItemFragmentID(ctx, tx, input)
-			if err != nil {
-				return err
-			}
 		}
 		if placementEvidenceSearchableStatus(input.Status) {
 			document, err := upsertPlacementItemEvidenceSearchDocument(
@@ -451,23 +450,6 @@ func validateCommitPlacementSemanticInput(input CommitPlacementSemanticInput) er
 		}
 	}
 	return nil
-}
-
-func placementCommitNeedsPlacementFragmentID(input CommitPlacementSemanticInput) bool {
-	if placementEvidenceSearchableStatus(input.Status) {
-		return true
-	}
-	for _, observation := range input.RelationshipObservations {
-		if observation.Support != nil && strings.TrimSpace(observation.Support.FragmentID) != "" {
-			return true
-		}
-	}
-	for _, decision := range input.RelationshipDecisions {
-		if decision.Support != nil && strings.TrimSpace(decision.Support.FragmentID) != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func validatePlacementEntityResolutionInput(input PlacementEntityResolutionInput) error {

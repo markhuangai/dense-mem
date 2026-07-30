@@ -28,13 +28,13 @@ type RetractEvidenceInput struct {
 }
 
 type EvidenceLifecycleResult struct {
-	DecisionID                      string
-	ProcessingState                 string
-	RetractedEvidenceIDs            []string
-	AffectedRelationshipCount       int
-	PendingRelationshipCount        int
-	RetainedActiveRelationshipCount int
-	Existing                        bool
+	DecisionID                      string   `json:"-"`
+	ProcessingState                 string   `json:"processing_state"`
+	RetractedEvidenceIDs            []string `json:"retracted_evidence_ids"`
+	AffectedRelationshipCount       int      `json:"affected_relationship_count"`
+	PendingRelationshipCount        int      `json:"pending_relationship_count"`
+	RetainedActiveRelationshipCount int      `json:"retained_active_relationship_count"`
+	Existing                        bool     `json:"-"`
 }
 
 type evidenceLifecycleOperationInput struct {

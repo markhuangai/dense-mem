@@ -151,6 +151,26 @@ func TestLifecycleRetractEvidenceUsesAuthenticatedOwner(t *testing.T) {
 	require.ErrorIs(t, err, ErrLifecycleAuthContext)
 }
 
+func TestRetractEvidenceRequestHashCanonicalizesEvidenceIDs(t *testing.T) {
+	firstEvidenceID := uuid.NewString()
+	secondEvidenceID := uuid.NewString()
+	first, err := retractEvidenceRequestHash(RetractEvidenceRequest{
+		ContractVersion: domain.ContractVersion,
+		EvidenceIDs:     []string{" " + firstEvidenceID + " ", secondEvidenceID},
+		Reason:          "entered in error",
+		IdempotencyKey:  "retract-canonical-hash",
+	})
+	require.NoError(t, err)
+	second, err := retractEvidenceRequestHash(RetractEvidenceRequest{
+		ContractVersion: domain.ContractVersion,
+		EvidenceIDs:     []string{secondEvidenceID, firstEvidenceID},
+		Reason:          "entered in error",
+		IdempotencyKey:  "retract-canonical-hash",
+	})
+	require.NoError(t, err)
+	require.Equal(t, first, second)
+}
+
 func TestLifecycleRetractEvidenceValidatesDependenciesAndMapsRepositoryErrors(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
 	req := RetractEvidenceRequest{

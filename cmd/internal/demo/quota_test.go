@@ -87,6 +87,32 @@ func TestWrapRegistryConsumesRecallQuota(t *testing.T) {
 	require.Equal(t, 1, calls)
 }
 
+func TestWrapRegistryConsumesRetractEvidenceQuota(t *testing.T) {
+	q := DefaultQuotas()
+	q.WriteAttempts = 1
+	manager := NewQuotaManager(&fakeCounterStore{}, q)
+	reg := registry.New()
+	calls := 0
+	require.NoError(t, reg.Register(registry.Tool{
+		Name: registry.ToolRetractEvidence,
+		Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
+			calls++
+			return map[string]any{"ok": true}, nil
+		},
+	}))
+
+	wrapped, err := WrapRegistry(reg, manager)
+	require.NoError(t, err)
+	retract, ok := wrapped.Get(registry.ToolRetractEvidence)
+	require.True(t, ok)
+
+	_, err = retract.Invoke(context.Background(), "team-1", nil)
+	require.NoError(t, err)
+	_, err = retract.Invoke(context.Background(), "team-1", nil)
+	requireAPIErrorCode(t, err, httperr.RATE_LIMITED)
+	require.Equal(t, 1, calls)
+}
+
 func TestRequestQuotaMiddlewareConsumesResolvedTeam(t *testing.T) {
 	q := DefaultQuotas()
 	q.TotalRequests = 1
