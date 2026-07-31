@@ -9,6 +9,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 const lockTimeout = 30 * time.Second
@@ -28,6 +29,11 @@ func New(deps Dependencies) Service {
 	if deps.Generator == nil {
 		deps.Generator = NewHeuristicGenerator("")
 	}
+	if deps.ScheduledStore == nil {
+		if store, ok := deps.Store.(repository.ScheduledDreamRepository); ok {
+			deps.ScheduledStore = store
+		}
+	}
 	return &service{deps: deps, now: now}
 }
 
@@ -36,6 +42,20 @@ func (s *service) RunCycle(ctx context.Context, _ string, req RunCycleRequest) (
 		return nil, fmt.Errorf("dreaming cycle: dream repository is required")
 	}
 	return s.runCycle(ctx, req)
+}
+
+func (s *service) RunScheduledCycle(ctx context.Context, teamID string, windowAt time.Time) (*RunCycleResult, error) {
+	if s.deps.ScheduledStore == nil {
+		return nil, fmt.Errorf("scheduled dreaming cycle: scheduled dream repository is required")
+	}
+	return s.runScheduledCycle(ctx, teamID, windowAt)
+}
+
+func (s *service) RecordMissedScheduledCycle(ctx context.Context, teamID, runDate string) (*RunCycleResult, error) {
+	if s.deps.ScheduledStore == nil {
+		return nil, fmt.Errorf("record missed scheduled dreaming cycle: scheduled dream repository is required")
+	}
+	return s.recordMissedScheduledCycle(ctx, teamID, runDate)
 }
 
 func (s *service) List(ctx context.Context, _ string, opts ListOptions) ([]*domain.Dream, string, error) {
@@ -100,10 +120,10 @@ func localRunDate(now time.Time, cfg EffectiveConfig) string {
 	return now.In(loc).Format("2006-01-02")
 }
 
-func parseProfileID(profileID string) (uuid.UUID, error) {
-	parsed, err := uuid.Parse(profileID)
+func parseTeamID(teamID string) (uuid.UUID, error) {
+	parsed, err := uuid.Parse(teamID)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("dreaming config: invalid profile id: %w", err)
+		return uuid.Nil, fmt.Errorf("dreaming config: invalid team id: %w", err)
 	}
 	return parsed, nil
 }

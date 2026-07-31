@@ -9,14 +9,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-const controlRefreshLimit = 200
-
-type ControlActor struct {
-	Source        string
-	ClientIP      string
-	CorrelationID string
-}
-
 type ControlDependencies struct {
 	Store     repository.DreamControlRepository
 	AppConfig AppConfig
@@ -28,7 +20,6 @@ type ControlService interface {
 	Get(ctx context.Context, teamID, dreamID string) (*domain.Dream, error)
 	ListRuns(ctx context.Context, teamID string, limit int) ([]*RunCycleResult, error)
 	Status(ctx context.Context, teamID string) (*StatusResult, error)
-	Refresh(ctx context.Context, teamID string, actor ControlActor) (int, error)
 }
 
 type controlService struct {
@@ -112,22 +103,4 @@ func (s *controlService) Status(ctx context.Context, teamID string) (*StatusResu
 		latest = cycleRunResult(&runs[0])
 	}
 	return &StatusResult{EffectiveConfig: cfg, LatestRun: latest, PendingCount: pending}, nil
-}
-
-func (s *controlService) Refresh(ctx context.Context, teamID string, actor ControlActor) (int, error) {
-	if s.deps.Store == nil {
-		return 0, fmt.Errorf("control dream refresh: dream repository is required")
-	}
-	updated, err := s.deps.Store.RefreshTeamHypothesisStaleness(ctx, repository.RefreshTeamHypothesisStalenessInput{
-		TeamID:        teamID,
-		Limit:         controlRefreshLimit,
-		ActorSource:   actor.Source,
-		ActorRole:     "control",
-		ClientIP:      actor.ClientIP,
-		CorrelationID: actor.CorrelationID,
-	})
-	if err != nil {
-		return 0, translateDreamRepositoryError(err)
-	}
-	return updated, nil
 }

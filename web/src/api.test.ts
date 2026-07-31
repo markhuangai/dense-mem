@@ -170,9 +170,6 @@ describe("ControlApi", () => {
           force_enabled: false,
           start_time_local: "03:00",
           timezone: "UTC",
-          reflect_enabled: true,
-          reevaluate_enabled: true,
-          dream_enabled: true,
           max_outputs: 5,
         },
       },
@@ -239,18 +236,4 @@ describe("ControlApi", () => {
     expect(fetchMock).toHaveBeenCalledWith("/control/api/teams/team-1/dreams?limit=50&status=proposed&cursor=current-dream&sort=created_at&direction=asc", expect.any(Object));
   });
 
-  it("refreshes team dream staleness with a POST", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: { updated_count: 2 },
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const api = new ControlApi("secret", "/control/api");
-    const result = await api.refreshTeamDreams("team-1");
-
-    expect(result.updated_count).toBe(2);
-    expect(fetchMock).toHaveBeenCalledWith("/control/api/teams/team-1/dreams/refresh", expect.objectContaining({
-      method: "POST",
-    }));
-  });
 });

@@ -16,7 +16,7 @@ func TestRunCycleTranslatesInactiveTeamRepositoryErrors(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
 	ctx := dreamTestContext(teamID, ownerID)
-	cfg := domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, MaxOutputs: 5, Timezone: "UTC"}
+	cfg := domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC"}
 
 	for _, tc := range []struct {
 		name string

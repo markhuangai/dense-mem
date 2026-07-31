@@ -738,7 +738,7 @@ func TestUserPortalMountedRoutesUseAuthenticatedTeam(t *testing.T) {
 		UpdatedAt:   time.Now().UTC().Truncate(time.Second),
 	}}}
 	keys := &userPortalKeySvc{keys: []*domain.APIKey{managerKey, memberKey}}
-	dreams := &controlDreamServiceStub{dream: &domain.Dream{ProfileID: teamID.String(), Status: domain.DreamStatusProposed}}
+	dreams := &controlDreamServiceStub{dream: &domain.Dream{TeamID: teamID.String(), Status: domain.DreamStatusProposed}}
 	e := NewServer(config.Config{
 		HTTPMaxBodyBytes:   1048576,
 		RateLimitPerMinute: 100,

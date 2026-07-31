@@ -115,18 +115,13 @@ func TestAppConfigServiceDreamingSettingsDefaultsAndUpdate(t *testing.T) {
 	assert.Equal(t, "false", dreamingConfigItemForTest(settings, domain.AppConfigDreamingEnabled).EffectiveValue)
 	assert.Equal(t, "false", dreamingConfigItemForTest(settings, domain.AppConfigDreamingForceEnabled).EffectiveValue)
 	assert.Equal(t, "03:00", dreamingConfigItemForTest(settings, domain.AppConfigDreamingStartTimeLocal).EffectiveValue)
-	assert.Equal(t, "true", dreamingConfigItemForTest(settings, domain.AppConfigDreamingReflectEnabled).EffectiveValue)
-	assert.Equal(t, "true", dreamingConfigItemForTest(settings, domain.AppConfigDreamingReevaluateEnabled).EffectiveValue)
-	assert.Equal(t, "true", dreamingConfigItemForTest(settings, domain.AppConfigDreamingDreamEnabled).EffectiveValue)
 	assert.Equal(t, "5", dreamingConfigItemForTest(settings, domain.AppConfigDreamingMaxOutputs).EffectiveValue)
+	assert.Len(t, settings.Items, 4)
 
 	runtime, err := svc.DreamingRuntimeConfig(ctx)
 	require.NoError(t, err)
 	assert.False(t, runtime.Enabled)
 	assert.False(t, runtime.ForceEnabled)
-	assert.True(t, runtime.ReflectEnabled)
-	assert.True(t, runtime.ReevaluateEnabled)
-	assert.True(t, runtime.DreamEnabled)
 	assert.Equal(t, "03:00", runtime.StartTimeLocal)
 	assert.Equal(t, "Local", runtime.Timezone)
 	assert.Equal(t, 5, runtime.MaxOutputs)
@@ -135,13 +130,11 @@ func TestAppConfigServiceDreamingSettingsDefaultsAndUpdate(t *testing.T) {
 	updated, err := svc.UpdateDreamingSettings(ctx, map[string]string{
 		domain.AppConfigDreamingEnabled:        "true",
 		domain.AppConfigDreamingStartTimeLocal: "02:30",
-		domain.AppConfigDreamingDreamEnabled:   "false",
 		domain.AppConfigDreamingMaxOutputs:     "9",
 	}, "control", "127.0.0.1", "corr")
 	require.NoError(t, err)
 	assert.Equal(t, "true", dreamingConfigItemForTest(updated, domain.AppConfigDreamingEnabled).EffectiveValue)
 	assert.Equal(t, "02:30", dreamingConfigItemForTest(updated, domain.AppConfigDreamingStartTimeLocal).EffectiveValue)
-	assert.Equal(t, "false", dreamingConfigItemForTest(updated, domain.AppConfigDreamingDreamEnabled).EffectiveValue)
 	assert.Equal(t, "9", dreamingConfigItemForTest(updated, domain.AppConfigDreamingMaxOutputs).EffectiveValue)
 
 	runtime, err = svc.DreamingRuntimeConfig(ctx)
@@ -149,7 +142,6 @@ func TestAppConfigServiceDreamingSettingsDefaultsAndUpdate(t *testing.T) {
 	assert.True(t, runtime.Enabled)
 	assert.Equal(t, "02:30", runtime.StartTimeLocal)
 	assert.Equal(t, "Local", runtime.Timezone)
-	assert.False(t, runtime.DreamEnabled)
 	assert.Equal(t, 9, runtime.MaxOutputs)
 }
 

@@ -4,13 +4,10 @@ import { X } from "lucide-react";
 import type { DreamingEffectiveConfig } from "./api";
 import { SectionHeading } from "./ui/components";
 
-type DreamingBooleanKey = "enabled" | "reflect_enabled" | "reevaluate_enabled" | "dream_enabled";
+type DreamingBooleanKey = "enabled";
 
 type TeamDreamingDraft = {
   enabled?: boolean;
-  reflect_enabled?: boolean;
-  reevaluate_enabled?: boolean;
-  dream_enabled?: boolean;
 };
 
 type TeamDreamingConfigFormProps = {
@@ -22,9 +19,6 @@ type TeamDreamingConfigFormProps = {
 
 const BOOLEAN_FIELDS: Array<{ key: DreamingBooleanKey; label: string }> = [
   { key: "enabled", label: "Scheduled cycle" },
-  { key: "reflect_enabled", label: "Reflect phase" },
-  { key: "reevaluate_enabled", label: "Re-evaluate phase" },
-  { key: "dream_enabled", label: "Dream phase" },
 ];
 
 export function TeamDreamingConfigForm({ config, effective, disabled = false, onSave }: TeamDreamingConfigFormProps) {
@@ -155,9 +149,6 @@ function draftFromConfig(config: Record<string, unknown> | null | undefined): Te
   }
   return {
     enabled: boolFromUnknown(dreaming.enabled),
-    reflect_enabled: boolFromUnknown(dreaming.reflect_enabled),
-    reevaluate_enabled: boolFromUnknown(dreaming.reevaluate_enabled),
-    dream_enabled: boolFromUnknown(dreaming.dream_enabled),
   };
 }
 
@@ -168,11 +159,11 @@ function buildTeamConfigWithDreaming(config: Record<string, unknown> | null | un
   delete dreaming.start_time_local;
   delete dreaming.timezone;
   delete dreaming.max_outputs;
+  delete dreaming.reflect_enabled;
+  delete dreaming.reevaluate_enabled;
+  delete dreaming.dream_enabled;
 
   setOptional(dreaming, "enabled", draft.enabled);
-  setOptional(dreaming, "reflect_enabled", draft.reflect_enabled);
-  setOptional(dreaming, "reevaluate_enabled", draft.reevaluate_enabled);
-  setOptional(dreaming, "dream_enabled", draft.dream_enabled);
 
   if (Object.keys(dreaming).length > 0) {
     next.dreaming = dreaming;

@@ -25,13 +25,13 @@ func TestRunCycleUsesAuthenticatedActorAndCandidateSafeInputs(t *testing.T) {
 	sourceID := uuid.NewString()
 	repo := &dreamRepositoryStub{
 		run: repository.DreamCycleRun{
-			TeamID:         teamID.String(),
-			RunID:          runID,
-			OwnerProfileID: ownerID.String(),
-			RunDate:        "2026-07-17",
-			WindowKey:      "manual",
-			Status:         "running",
-			Claimed:        true,
+			TeamID:               teamID.String(),
+			RunID:                runID,
+			InitiatedByProfileID: ownerID.String(),
+			RunDate:              "2026-07-17",
+			WindowKey:            "manual",
+			Status:               "running",
+			Claimed:              true,
 		},
 		inputs: []repository.DreamInput{{
 			RelationshipID:   sourceID,
@@ -48,7 +48,7 @@ func TestRunCycleUsesAuthenticatedActorAndCandidateSafeInputs(t *testing.T) {
 	}
 	svc := New(Dependencies{
 		Store:     repo,
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
 		Now:       func() time.Time { return time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC) },
 	})
 
@@ -60,13 +60,13 @@ func TestRunCycleUsesAuthenticatedActorAndCandidateSafeInputs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.Status)
 	require.Equal(t, runID, result.RunID)
-	require.Equal(t, ownerID.String(), result.ProfileID)
+	require.Equal(t, teamID.String(), result.TeamID)
 	require.Len(t, repo.upserts, 1)
 	assert.Equal(t, teamID.String(), repo.listInput.TeamID)
 	assert.Equal(t, teamID.String(), repo.claimInput.TeamID)
-	assert.Equal(t, ownerID.String(), repo.claimInput.OwnerProfileID)
+	assert.Equal(t, ownerID.String(), repo.claimInput.InitiatedByProfileID)
 	assert.Equal(t, teamID.String(), repo.upserts[0].TeamID)
-	assert.Equal(t, ownerID.String(), repo.upserts[0].OwnerProfileID)
+	assert.Equal(t, ownerID.String(), repo.upserts[0].CreatedByProfileID)
 	assert.Equal(t, runID, repo.upserts[0].RunID)
 	assert.Equal(t, sourceID, repo.upserts[0].SourceRefs[0]["id"])
 	assert.Equal(t, 3, repo.upserts[0].SourceVersions[sourceID])
@@ -83,12 +83,12 @@ func TestRunCyclePersistsValidatedProviderHypothesis(t *testing.T) {
 	candidateSourceID := uuid.NewString()
 	repo := &dreamRepositoryStub{
 		run: repository.DreamCycleRun{
-			TeamID:         teamID.String(),
-			RunID:          runID,
-			OwnerProfileID: ownerID.String(),
-			RunDate:        "2026-07-17",
-			Status:         "running",
-			Claimed:        true,
+			TeamID:               teamID.String(),
+			RunID:                runID,
+			InitiatedByProfileID: ownerID.String(),
+			RunDate:              "2026-07-17",
+			Status:               "running",
+			Claimed:              true,
 		},
 		inputs: []repository.DreamInput{
 			{
@@ -135,7 +135,7 @@ func TestRunCyclePersistsValidatedProviderHypothesis(t *testing.T) {
 	svc := New(Dependencies{
 		Store:     repo,
 		Generator: generator,
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
 		Now:       func() time.Time { return time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC) },
 	})
 
@@ -166,12 +166,12 @@ func TestRunCycleRejectsMalformedProviderOutputWithoutFallback(t *testing.T) {
 	sourceID := uuid.NewString()
 	repo := &dreamRepositoryStub{
 		run: repository.DreamCycleRun{
-			TeamID:         teamID.String(),
-			RunID:          runID,
-			OwnerProfileID: ownerID.String(),
-			RunDate:        "2026-07-17",
-			Status:         "running",
-			Claimed:        true,
+			TeamID:               teamID.String(),
+			RunID:                runID,
+			InitiatedByProfileID: ownerID.String(),
+			RunDate:              "2026-07-17",
+			Status:               "running",
+			Claimed:              true,
 		},
 		inputs: []repository.DreamInput{{
 			RelationshipID:   sourceID,
@@ -209,7 +209,7 @@ func TestRunCycleRejectsMalformedProviderOutputWithoutFallback(t *testing.T) {
 	svc := New(Dependencies{
 		Store:     repo,
 		Generator: generator,
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
 		Now:       func() time.Time { return time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC) },
 	})
 
@@ -231,12 +231,12 @@ func TestRunCycleMaterializesSeedHypothesesWithoutGenerator(t *testing.T) {
 	sourceID := uuid.NewString()
 	repo := &dreamRepositoryStub{
 		run: repository.DreamCycleRun{
-			TeamID:         teamID.String(),
-			RunID:          runID,
-			OwnerProfileID: ownerID.String(),
-			RunDate:        "2026-07-17",
-			Status:         "running",
-			Claimed:        true,
+			TeamID:               teamID.String(),
+			RunID:                runID,
+			InitiatedByProfileID: ownerID.String(),
+			RunDate:              "2026-07-17",
+			Status:               "running",
+			Claimed:              true,
 		},
 		inputs: []repository.DreamInput{{
 			RelationshipID:   sourceID,
@@ -255,7 +255,7 @@ func TestRunCycleMaterializesSeedHypothesesWithoutGenerator(t *testing.T) {
 	svc := New(Dependencies{
 		Store:     repo,
 		Generator: generator,
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
 		Now:       func() time.Time { return time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC) },
 	})
 
@@ -288,7 +288,7 @@ func TestRunCycleMaterializesSeedHypothesesWithoutGenerator(t *testing.T) {
 func TestRunCycleRequiresAuthenticatedActor(t *testing.T) {
 	svc := New(Dependencies{
 		Store:     &dreamRepositoryStub{},
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true}},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 	})
 
 	_, err := svc.RunCycle(context.Background(), "profile-argument", RunCycleRequest{Manual: true})
@@ -306,28 +306,28 @@ func TestReadPathsRefreshAndMapHypotheses(t *testing.T) {
 	now := time.Date(2026, 7, 17, 4, 0, 0, 0, time.UTC)
 	repo := &dreamRepositoryStub{
 		run: repository.DreamCycleRun{
-			TeamID:             teamID.String(),
-			RunID:              runID,
-			OwnerProfileID:     ownerID.String(),
-			RunDate:            "2026-07-17",
-			Status:             "completed",
-			CreatedHypotheses:  1,
-			RejectedHypotheses: 2,
-			StartedAt:          now.Add(-time.Minute),
-			CompletedAt:        &now,
+			TeamID:               teamID.String(),
+			RunID:                runID,
+			InitiatedByProfileID: ownerID.String(),
+			RunDate:              "2026-07-17",
+			Status:               "completed",
+			CreatedHypotheses:    1,
+			RejectedHypotheses:   2,
+			StartedAt:            now.Add(-time.Minute),
+			CompletedAt:          &now,
 		},
 		getRecord: repository.HypothesisRecord{
-			TeamID:         teamID.String(),
-			HypothesisID:   hypothesisID,
-			OwnerProfileID: ownerID.String(),
-			Status:         string(domain.DreamStatusReinforced),
-			Statement:      "Dense-Mem may use PostgreSQL.",
-			Rationale:      "Eligible sources point at a possible relation.",
-			Likelihood:     &likelihood,
-			Confidence:     &confidence,
-			CycleRunID:     runID,
-			GeneratorKind:  "provider",
-			ContentHash:    "sha256:read-path",
+			TeamID:             teamID.String(),
+			HypothesisID:       hypothesisID,
+			CreatedByProfileID: ownerID.String(),
+			Status:             string(domain.DreamStatusReinforced),
+			Statement:          "Dense-Mem may use PostgreSQL.",
+			Rationale:          "Eligible sources point at a possible relation.",
+			Likelihood:         &likelihood,
+			Confidence:         &confidence,
+			CycleRunID:         runID,
+			GeneratorKind:      "provider",
+			ContentHash:        "sha256:read-path",
 			SourceRefs: []map[string]any{{
 				"type": "candidate_relationship",
 				"id":   "source-1",
@@ -342,7 +342,7 @@ func TestReadPathsRefreshAndMapHypotheses(t *testing.T) {
 	}
 	svc := New(Dependencies{
 		Store:     repo,
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
 		Now:       func() time.Time { return now },
 	})
 	ctx := dreamTestContext(teamID, ownerID)
@@ -354,8 +354,6 @@ func TestReadPathsRefreshAndMapHypotheses(t *testing.T) {
 	assert.Equal(t, hypothesisID, listed[0].DreamID)
 	assert.Equal(t, "What if PostgreSQL is durable memory?", listed[0].WhatIf)
 	assert.Equal(t, []domain.DreamSourceRef{{Type: "candidate_relationship", ID: "source-1"}}, listed[0].SourceRefs)
-	assert.Equal(t, teamID.String(), repo.refreshInput.TeamID)
-	assert.Equal(t, ownerID.String(), repo.refreshInput.OwnerProfileID)
 
 	got, err := svc.Get(ctx, "ignored-profile", hypothesisID)
 	require.NoError(t, err)
@@ -374,7 +372,7 @@ func TestReadPathsRefreshAndMapHypotheses(t *testing.T) {
 	status, err := svc.Status(ctx, "ignored-profile")
 	require.NoError(t, err)
 	require.NotNil(t, status.LatestRun)
-	assert.Equal(t, 1, status.PendingCount)
+	assert.Equal(t, 0, status.PendingCount)
 }
 
 func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
@@ -384,14 +382,14 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	ingestID := uuid.NewString()
 	repo := &dreamRepositoryStub{
 		getRecord: repository.HypothesisRecord{
-			TeamID:         teamID.String(),
-			HypothesisID:   hypothesisID,
-			OwnerProfileID: ownerID.String(),
-			Status:         string(domain.DreamStatusProposed),
-			Statement:      "Dense-Mem may use PostgreSQL.",
-			Rationale:      "Candidate needs independent evidence.",
-			CreatedAt:      time.Now().UTC(),
-			UpdatedAt:      time.Now().UTC(),
+			TeamID:             teamID.String(),
+			HypothesisID:       hypothesisID,
+			CreatedByProfileID: ownerID.String(),
+			Status:             string(domain.DreamStatusProposed),
+			Statement:          "Dense-Mem may use PostgreSQL.",
+			Rationale:          "Candidate needs independent evidence.",
+			CreatedAt:          time.Now().UTC(),
+			UpdatedAt:          time.Now().UTC(),
 		},
 	}
 	remember := &rememberServiceStub{result: &memoryservice.RememberResult{
@@ -401,7 +399,7 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	svc := New(Dependencies{
 		Store:     repo,
 		Remember:  remember,
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true}},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 	})
 	ctx := dreamTestContext(teamID, ownerID)
 
@@ -440,7 +438,7 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	assert.Equal(t, "dream-submit-1", remember.requests[0].IdempotencyKey)
 	assert.Equal(t, hypothesisID, remember.requests[0].Evidence[0].Metadata["hypothesis_id"])
 	assert.Equal(t, teamID.String(), repo.submitInput.TeamID)
-	assert.Equal(t, ownerID.String(), repo.submitInput.OwnerProfileID)
+	assert.Equal(t, ownerID.String(), repo.submitInput.ActorProfileID)
 	assert.Equal(t, ingestID, repo.submitInput.SubmittedIngestID)
 }
 
@@ -449,14 +447,14 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 	ownerID := uuid.New()
 	hypothesisID := uuid.NewString()
 	baseRecord := repository.HypothesisRecord{
-		TeamID:         teamID.String(),
-		HypothesisID:   hypothesisID,
-		OwnerProfileID: ownerID.String(),
-		Status:         string(domain.DreamStatusProposed),
-		Statement:      "Dense-Mem may use PostgreSQL.",
-		Rationale:      "Candidate needs independent evidence.",
-		CreatedAt:      time.Now().UTC(),
-		UpdatedAt:      time.Now().UTC(),
+		TeamID:             teamID.String(),
+		HypothesisID:       hypothesisID,
+		CreatedByProfileID: ownerID.String(),
+		Status:             string(domain.DreamStatusProposed),
+		Statement:          "Dense-Mem may use PostgreSQL.",
+		Rationale:          "Candidate needs independent evidence.",
+		CreatedAt:          time.Now().UTC(),
+		UpdatedAt:          time.Now().UTC(),
 	}
 
 	tests := []struct {
@@ -495,7 +493,7 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 					Content: "The deployment note says Dense-Mem does not use PostgreSQL.",
 				}},
 			},
-			wantStatus: domain.DreamStatusRejected,
+			wantStatus: domain.DreamStatusSubmitted,
 			wantMemory: true,
 		},
 		{
@@ -515,7 +513,7 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 			svc := New(Dependencies{
 				Store:     repo,
 				Remember:  remember,
-				AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true}},
+				AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 			})
 			res, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", tc.req)
 			if tc.wantErr != "" {
@@ -527,7 +525,7 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 			assert.Equal(t, tc.wantStatus, res.Dream.Status)
 			if tc.wantMemory {
 				require.NotNil(t, res.Memory)
-				assert.Equal(t, string(domain.DreamStatusRejected), repo.updateInput.Status)
+				assert.Equal(t, "confirm_false", repo.submitInput.Decision)
 				require.Len(t, remember.requests, 1)
 			}
 		})
@@ -564,55 +562,48 @@ func TestRunCycleControlAndErrorBranches(t *testing.T) {
 	}{
 		{
 			name:       "global disabled skips scheduled cycle",
-			cfg:        domain.DreamingRuntimeConfig{Enabled: false, DreamEnabled: true, MaxOutputs: 5, Timezone: "UTC"},
+			cfg:        domain.DreamingRuntimeConfig{Enabled: false, MaxOutputs: 5, Timezone: "UTC"},
 			req:        RunCycleRequest{},
 			repo:       &dreamRepositoryStub{},
 			wantStatus: "skipped",
 		},
 		{
-			name:       "dream phase disabled completes without repository reads",
-			cfg:        domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: false, MaxOutputs: 5, Timezone: "UTC"},
-			req:        RunCycleRequest{},
-			repo:       &dreamRepositoryStub{},
-			wantStatus: "completed",
-		},
-		{
 			name: "unclaimed scheduled run skips without completion",
-			cfg:  domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, MaxOutputs: 5, Timezone: "UTC"},
+			cfg:  domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC"},
 			repo: &dreamRepositoryStub{run: repository.DreamCycleRun{
-				RunID:          uuid.NewString(),
-				TeamID:         teamID.String(),
-				OwnerProfileID: ownerID.String(),
-				RunDate:        "2026-07-17",
-				Status:         "running",
-				Claimed:        false,
+				RunID:                uuid.NewString(),
+				TeamID:               teamID.String(),
+				InitiatedByProfileID: ownerID.String(),
+				RunDate:              "2026-07-17",
+				Status:               "running",
+				Claimed:              false,
 			}},
 			wantStatus: "skipped",
 		},
 		{
 			name:       "input query error is returned",
-			cfg:        domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, MaxOutputs: 5, Timezone: "UTC"},
+			cfg:        domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC"},
 			repo:       &dreamRepositoryStub{listInputsErr: errors.New("list inputs failed")},
 			wantStatus: "error",
 			wantErr:    "list inputs failed",
 		},
 		{
 			name:       "claim error is returned",
-			cfg:        domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, MaxOutputs: 5, Timezone: "UTC"},
+			cfg:        domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC"},
 			repo:       &dreamRepositoryStub{claimErr: errors.New("claim failed")},
 			wantStatus: "error",
 			wantErr:    "claim failed",
 		},
 		{
 			name:       "completion error is returned",
-			cfg:        domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, MaxOutputs: 5, Timezone: "UTC"},
+			cfg:        domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC"},
 			repo:       &dreamRepositoryStub{completeErr: errors.New("complete failed")},
 			wantStatus: "error",
 			wantErr:    "complete failed",
 		},
 		{
 			name:            "exact existing relationship is rejected without failing cycle",
-			cfg:             domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, MaxOutputs: 5, Timezone: "UTC"},
+			cfg:             domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC"},
 			repo:            &dreamRepositoryStub{inputs: []repository.DreamInput{candidateInput}, upsertErr: repository.ErrDreamExactRelationshipExists},
 			wantStatus:      "completed",
 			wantComplete:    "completed",
@@ -621,7 +612,7 @@ func TestRunCycleControlAndErrorBranches(t *testing.T) {
 		},
 		{
 			name:            "unexpected upsert error fails cycle and records failed completion",
-			cfg:             domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true, MaxOutputs: 5, Timezone: "UTC"},
+			cfg:             domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC"},
 			repo:            &dreamRepositoryStub{inputs: []repository.DreamInput{candidateInput}, upsertErr: errors.New("write failed")},
 			wantStatus:      "error",
 			wantErr:         "write failed",
@@ -659,26 +650,26 @@ func TestResolveFeedbackErrorBranches(t *testing.T) {
 	ownerID := uuid.New()
 	hypothesisID := uuid.NewString()
 	record := repository.HypothesisRecord{
-		TeamID:         teamID.String(),
-		HypothesisID:   hypothesisID,
-		OwnerProfileID: ownerID.String(),
-		Status:         string(domain.DreamStatusProposed),
-		Statement:      "Dense-Mem may use PostgreSQL.",
-		CreatedAt:      time.Now().UTC(),
-		UpdatedAt:      time.Now().UTC(),
+		TeamID:             teamID.String(),
+		HypothesisID:       hypothesisID,
+		CreatedByProfileID: ownerID.String(),
+		Status:             string(domain.DreamStatusProposed),
+		Statement:          "Dense-Mem may use PostgreSQL.",
+		CreatedAt:          time.Now().UTC(),
+		UpdatedAt:          time.Now().UTC(),
 	}
 	ctx := dreamTestContext(teamID, ownerID)
 
 	svc := New(Dependencies{
 		Store:     &dreamRepositoryStub{getErr: repository.ErrDreamHypothesisNotFound},
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true}},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 	})
 	_, err := svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{DreamID: hypothesisID, Decision: "reject"})
 	require.ErrorIs(t, err, ErrDreamNotFound)
 
 	svc = New(Dependencies{
 		Store:     &dreamRepositoryStub{getRecord: record},
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true}},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 	})
 	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
 		DreamID:  hypothesisID,
@@ -694,7 +685,7 @@ func TestResolveFeedbackErrorBranches(t *testing.T) {
 			getRecord: record,
 			updateErr: repository.ErrDreamHypothesisNotFound,
 		},
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true}},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 	})
 	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{DreamID: hypothesisID, Decision: "reject"})
 	require.ErrorIs(t, err, ErrDreamNotFound)
@@ -702,7 +693,7 @@ func TestResolveFeedbackErrorBranches(t *testing.T) {
 	svc = New(Dependencies{
 		Store:     &dreamRepositoryStub{getRecord: record},
 		Remember:  &rememberServiceStub{err: errors.New("remember failed")},
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true}},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 	})
 	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
 		DreamID:  hypothesisID,
@@ -720,24 +711,18 @@ func TestStatusAndHelperEdgeCases(t *testing.T) {
 	repo := &dreamRepositoryStub{}
 	svc := New(Dependencies{
 		Store:     repo,
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true}},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 	})
 	ctx := dreamTestContext(teamID, ownerID)
 
 	runs, err := svc.ListRuns(ctx, "ignored-profile", 5)
 	require.NoError(t, err)
-	assert.Nil(t, runs)
+	assert.Empty(t, runs)
 
 	status, err := svc.Status(ctx, "ignored-profile")
 	require.NoError(t, err)
 	assert.Nil(t, status.LatestRun)
 	assert.Equal(t, 0, status.PendingCount)
-
-	_, err = New(Dependencies{
-		Store:     &dreamRepositoryStub{refreshErr: errors.New("refresh failed")},
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true}},
-	}).Status(ctx, "ignored-profile")
-	require.ErrorContains(t, err, "refresh failed")
 
 	assert.Equal(t, "relationship", dreamSourceType(repository.DreamInput{Status: "active"}))
 	assert.Equal(t, "candidate_relationship", dreamSourceType(repository.DreamInput{Status: "pending_evidence"}))
@@ -771,7 +756,7 @@ type dreamRepositoryStub struct {
 	listInput     repository.DreamInputListInput
 	claimInput    repository.DreamCycleClaimInput
 	completeInput repository.DreamCycleCompleteInput
-	refreshInput  repository.RefreshHypothesisStalenessInput
+	missedInput   repository.DreamCycleClaimInput
 	upserts       []repository.UpsertHypothesisInput
 	submitInput   repository.SubmitHypothesisInput
 	updateInput   repository.UpdateHypothesisStatusInput
@@ -783,7 +768,6 @@ type dreamRepositoryStub struct {
 	listErr       error
 	getErr        error
 	recallErr     error
-	refreshErr    error
 	updateErr     error
 	submitErr     error
 	latestErr     error
@@ -801,7 +785,7 @@ func (s *dreamRepositoryStub) ClaimDreamCycle(_ context.Context, input repositor
 	if run.RunID == "" {
 		run.RunID = uuid.NewString()
 		run.TeamID = input.TeamID
-		run.OwnerProfileID = input.OwnerProfileID
+		run.InitiatedByProfileID = input.InitiatedByProfileID
 		run.RunDate = input.RunDate
 		run.WindowKey = input.WindowKey
 		run.Status = "running"
@@ -835,16 +819,16 @@ func (s *dreamRepositoryStub) UpsertHypothesis(_ context.Context, input reposito
 		return nil, false, s.err
 	}
 	return &repository.HypothesisRecord{
-		TeamID:         input.TeamID,
-		HypothesisID:   uuid.NewString(),
-		OwnerProfileID: input.OwnerProfileID,
-		Status:         string(domain.DreamStatusProposed),
-		Statement:      input.Statement,
-		CycleRunID:     input.RunID,
-		ContentHash:    input.ContentHash,
-		SourceRefs:     input.SourceRefs,
-		CreatedAt:      time.Now().UTC(),
-		UpdatedAt:      time.Now().UTC(),
+		TeamID:             input.TeamID,
+		HypothesisID:       uuid.NewString(),
+		CreatedByProfileID: input.CreatedByProfileID,
+		Status:             string(domain.DreamStatusProposed),
+		Statement:          input.Statement,
+		CycleRunID:         input.RunID,
+		ContentHash:        input.ContentHash,
+		SourceRefs:         input.SourceRefs,
+		CreatedAt:          time.Now().UTC(),
+		UpdatedAt:          time.Now().UTC(),
 	}, true, nil
 }
 
@@ -894,14 +878,6 @@ func (s *dreamRepositoryStub) RecallHypotheses(context.Context, repository.Recal
 	return []repository.HypothesisRecord{s.getRecord}, nil
 }
 
-func (s *dreamRepositoryStub) RefreshHypothesisStaleness(_ context.Context, input repository.RefreshHypothesisStalenessInput) (int, error) {
-	s.refreshInput = input
-	if s.refreshErr != nil {
-		return 0, s.refreshErr
-	}
-	return 0, s.err
-}
-
 func (s *dreamRepositoryStub) UpdateHypothesisStatus(_ context.Context, input repository.UpdateHypothesisStatusInput) (*repository.HypothesisRecord, error) {
 	s.updateInput = input
 	if s.updateErr != nil {
@@ -931,7 +907,7 @@ func (s *dreamRepositoryStub) SubmitHypothesis(_ context.Context, input reposito
 	return &record, nil
 }
 
-func (s *dreamRepositoryStub) LatestDreamCycle(context.Context, string, string) (*repository.DreamCycleRun, error) {
+func (s *dreamRepositoryStub) ListDreamCyclesForTeam(context.Context, string, int) ([]repository.DreamCycleRun, error) {
 	if s.latestErr != nil {
 		return nil, s.latestErr
 	}
@@ -941,8 +917,41 @@ func (s *dreamRepositoryStub) LatestDreamCycle(context.Context, string, string) 
 	if s.run.RunID == "" {
 		return nil, nil
 	}
-	run := s.run
-	return &run, nil
+	return []repository.DreamCycleRun{s.run}, nil
+}
+
+func (s *dreamRepositoryStub) CountHypotheses(context.Context, string, string) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	if s.getRecord.HypothesisID != "" && s.getRecord.Status == string(domain.DreamStatusProposed) {
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func (s *dreamRepositoryStub) ClaimScheduledDreamCycle(ctx context.Context, input repository.DreamCycleClaimInput) (*repository.DreamCycleRun, error) {
+	return s.ClaimDreamCycle(ctx, input)
+}
+
+func (s *dreamRepositoryStub) CompleteScheduledDreamCycle(ctx context.Context, input repository.DreamCycleCompleteInput) error {
+	return s.CompleteDreamCycle(ctx, input)
+}
+
+func (s *dreamRepositoryStub) UpsertScheduledHypothesis(ctx context.Context, input repository.UpsertHypothesisInput) (*repository.HypothesisRecord, bool, error) {
+	return s.UpsertHypothesis(ctx, input)
+}
+
+func (s *dreamRepositoryStub) RecordMissedScheduledDreamCycle(_ context.Context, input repository.DreamCycleClaimInput) (*repository.DreamCycleRun, error) {
+	s.missedInput = input
+	return &repository.DreamCycleRun{
+		TeamID:    input.TeamID,
+		RunID:     uuid.NewString(),
+		RunDate:   input.RunDate,
+		WindowKey: input.WindowKey,
+		Status:    "missed",
+		Claimed:   true,
+	}, nil
 }
 
 type rememberServiceStub struct {

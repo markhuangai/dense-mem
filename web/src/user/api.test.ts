@@ -73,12 +73,12 @@ describe("UserApi", () => {
       status: "proposed",
       limit: 50,
       cursor: "current-dream",
-      sort: "last_evaluated_at",
+      sort: "updated_at",
       direction: "desc",
     });
 
     expect(result.next_cursor).toBe("next-dream");
-    expect(fetchMock).toHaveBeenCalledWith("/ui/api/dreams?limit=50&status=proposed&cursor=current-dream&sort=last_evaluated_at&direction=desc", expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith("/ui/api/dreams?limit=50&status=proposed&cursor=current-dream&sort=updated_at&direction=desc", expect.objectContaining({
       headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
     }));
   });

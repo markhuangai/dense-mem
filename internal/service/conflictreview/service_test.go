@@ -282,6 +282,31 @@ func TestServiceProcessesPendingDerivedEvidence(t *testing.T) {
 	require.Len(t, repo.stagedTargets, 1)
 }
 
+func TestServiceReportsPendingDerivedEvidenceFailures(t *testing.T) {
+	t.Run("service is not configured", func(t *testing.T) {
+		var service *Service
+		_, err := service.ProcessPendingConflictDerivedEvidence(context.Background(), repository.ClaimConflictDerivedEvidenceTasksInput{})
+		require.EqualError(t, err, "conflict review service is not configured")
+	})
+
+	t.Run("claim failure", func(t *testing.T) {
+		repo := newConflictReviewRepositoryStub(t)
+		repo.derivedClaimErr = errors.New("derived evidence claim failed")
+		service := newConflictReviewService(t, repo, &conflictReviewProviderStub{})
+
+		staged, err := service.ProcessPendingConflictDerivedEvidence(context.Background(), repository.ClaimConflictDerivedEvidenceTasksInput{
+			TeamID:      conflictReviewTestTeamID,
+			ReviewRunID: conflictReviewTestReviewRunID,
+			WorkerID:    conflictReviewTestWorkerID,
+			Limit:       1,
+			Lease:       time.Minute,
+		})
+
+		require.ErrorIs(t, err, repo.derivedClaimErr)
+		assert.Zero(t, staged)
+	})
+}
+
 func TestServiceLeavesAlreadyReservedAssessmentUntouched(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	repo.reserved = false
@@ -309,6 +334,78 @@ func TestNewRejectsInvalidConflictReviewDependencies(t *testing.T) {
 
 	_, err = New(Dependencies{Repository: repo, Provider: provider, Timezone: "not/a-timezone"})
 	require.ErrorContains(t, err, "timezone is invalid")
+}
+
+func TestNewRunnerRejectsInvalidDependencies(t *testing.T) {
+	provider := &conflictReviewProviderStub{}
+	_, err := NewRunner(nil, provider, "UTC", verifier.DefaultSemanticAssessmentLimits())
+	require.EqualError(t, err, "conflict review runner: ledger is required")
+
+	ledger := newConflictReviewRunLedgerStub(t)
+	_, err = NewRunner(ledger, emptyModelConflictReviewProvider{}, "UTC", verifier.DefaultSemanticAssessmentLimits())
+	require.EqualError(t, err, "conflict review service: provider model is required")
+}
+
+func TestRunnerExecutesConflictReviewLifecycle(t *testing.T) {
+	ledger := newConflictReviewRunLedgerStub(t)
+	provider := &conflictReviewProviderStub{
+		response: verifier.ConflictAssessmentResponse{
+			Decision:   verifier.ConflictAssessmentDecisionSelect,
+			PositionID: pointer(conflictReviewTestPositionBID),
+			Confidence: 0.91,
+			Rationale:  "The supplied evidence supports this position.",
+		},
+	}
+	runner, err := NewRunner(ledger, provider, "UTC", verifier.DefaultSemanticAssessmentLimits())
+	require.NoError(t, err)
+
+	run, claimed, err := runner.ReserveRelationshipConflictReviewRun(context.Background(), repository.ConflictReviewRunInput{
+		TeamID:       conflictReviewTestTeamID,
+		WorkerID:     conflictReviewTestWorkerID,
+		LocalRunDate: time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC),
+		Timezone:     "UTC",
+		Lease:        time.Minute,
+	})
+	require.NoError(t, err)
+	assert.True(t, claimed)
+	assert.Equal(t, conflictReviewTestReviewRunID, run.ReviewRunID)
+
+	cases, err := runner.ClaimRelationshipConflictCases(context.Background(), repository.ClaimRelationshipConflictCasesInput{
+		TeamID:      conflictReviewTestTeamID,
+		ReviewRunID: conflictReviewTestReviewRunID,
+		WorkerID:    conflictReviewTestWorkerID,
+		Limit:       1,
+		Lease:       time.Minute,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, cases)
+
+	reviewed, err := runner.ReviewRelationshipConflictCase(context.Background(), conflictReviewInput())
+	require.NoError(t, err)
+	assert.Equal(t, "overdue_ai", reviewed.Stage)
+	assert.Equal(t, conflictReviewTestPositionBID, reviewed.PreferredPositionID)
+
+	staged, err := runner.ProcessPendingConflictDerivedEvidence(context.Background(), repository.ClaimConflictDerivedEvidenceTasksInput{
+		TeamID:      conflictReviewTestTeamID,
+		ReviewRunID: conflictReviewTestReviewRunID,
+		WorkerID:    conflictReviewTestWorkerID,
+		Limit:       1,
+		Lease:       time.Minute,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, staged)
+
+	err = runner.CompleteRelationshipConflictReviewRun(context.Background(), repository.ConflictReviewRunCompleteInput{
+		TeamID:      conflictReviewTestTeamID,
+		ReviewRunID: conflictReviewTestReviewRunID,
+		WorkerID:    conflictReviewTestWorkerID,
+		Status:      "completed",
+	})
+	require.NoError(t, err)
+	assert.Len(t, ledger.reserveRunInputs, 1)
+	assert.Len(t, ledger.claimInputs, 1)
+	assert.Len(t, ledger.completeRunInputs, 1)
+	assert.Len(t, ledger.derivedClaimInputs, 1)
 }
 
 func TestServiceStopsBeforeOverdueAssessmentWhenReviewCannotProceed(t *testing.T) {
@@ -476,6 +573,46 @@ type conflictReviewRepositoryStub struct {
 	derivedBatches     [][]repository.ConflictDerivedEvidenceTarget
 	stagedTargets      []repository.ConflictDerivedEvidenceTarget
 	recordedFailures   []conflictReviewRecordedFailure
+}
+
+type conflictReviewRunLedgerStub struct {
+	*conflictReviewRepositoryStub
+	run                repository.ConflictReviewRunRecord
+	claimed            bool
+	reserveRunInputs   []repository.ConflictReviewRunInput
+	claimInputs        []repository.ClaimRelationshipConflictCasesInput
+	completeRunInputs  []repository.ConflictReviewRunCompleteInput
+	claimedCaseRecords []repository.RelationshipConflictCaseRecord
+}
+
+func newConflictReviewRunLedgerStub(t *testing.T) *conflictReviewRunLedgerStub {
+	t.Helper()
+	return &conflictReviewRunLedgerStub{
+		conflictReviewRepositoryStub: newConflictReviewRepositoryStub(t),
+		run: repository.ConflictReviewRunRecord{
+			TeamID:      conflictReviewTestTeamID,
+			ReviewRunID: conflictReviewTestReviewRunID,
+			Status:      "running",
+			WorkerID:    conflictReviewTestWorkerID,
+		},
+		claimed: true,
+	}
+}
+
+func (s *conflictReviewRunLedgerStub) ReserveRelationshipConflictReviewRun(_ context.Context, input repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error) {
+	s.reserveRunInputs = append(s.reserveRunInputs, input)
+	run := s.run
+	return &run, s.claimed, nil
+}
+
+func (s *conflictReviewRunLedgerStub) ClaimRelationshipConflictCases(_ context.Context, input repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error) {
+	s.claimInputs = append(s.claimInputs, input)
+	return append([]repository.RelationshipConflictCaseRecord(nil), s.claimedCaseRecords...), nil
+}
+
+func (s *conflictReviewRunLedgerStub) CompleteRelationshipConflictReviewRun(_ context.Context, input repository.ConflictReviewRunCompleteInput) error {
+	s.completeRunInputs = append(s.completeRunInputs, input)
+	return nil
 }
 
 type conflictReviewRecordedFailure struct {

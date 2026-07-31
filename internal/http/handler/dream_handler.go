@@ -113,9 +113,9 @@ func dreamListOptions(c echo.Context) (dreamservice.ListOptions, error) {
 	}
 	sort := strings.TrimSpace(c.QueryParam("sort"))
 	switch sort {
-	case "", dreamservice.DreamSortUpdatedAt, dreamservice.DreamSortCreatedAt, dreamservice.DreamSortLastEvaluatedAt:
+	case "", dreamservice.DreamSortUpdatedAt, dreamservice.DreamSortCreatedAt:
 	default:
-		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "sort must be updated_at, created_at, or last_evaluated_at")
+		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "sort must be updated_at or created_at")
 	}
 	direction := strings.TrimSpace(c.QueryParam("direction"))
 	switch direction {

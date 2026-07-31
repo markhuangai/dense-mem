@@ -174,8 +174,6 @@ func TestRecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 	require.Equal(t, hypothesisID, result.RelatedHypotheses[0].HypothesisID)
 	require.Equal(t, "deterministic", result.RelatedHypotheses[0].GeneratorKind)
 	require.Equal(t, []string{sourceRelationshipID}, result.RelatedHypotheses[0].SourceRelationshipIDs)
-	require.Equal(t, teamID.String(), hypotheses.refreshInput.TeamID)
-	require.Equal(t, profileID.String(), hypotheses.refreshInput.OwnerProfileID)
 	require.Equal(t, defaultRelatedHypothesisLimit, hypotheses.recallInput.Limit)
 	require.Equal(t, "PostgreSQL memory", hypotheses.recallInput.Query)
 }
@@ -706,18 +704,9 @@ func (s *recallSearchStub) RecallRelationships(_ context.Context, input reposito
 }
 
 type recallHypothesisStub struct {
-	refreshInput repository.RefreshHypothesisStalenessInput
-	recallInput  repository.RecallHypothesesInput
-	records      []repository.HypothesisRecord
-	err          error
-}
-
-func (s *recallHypothesisStub) RefreshHypothesisStaleness(_ context.Context, input repository.RefreshHypothesisStalenessInput) (int, error) {
-	s.refreshInput = input
-	if s.err != nil {
-		return 0, s.err
-	}
-	return 0, nil
+	recallInput repository.RecallHypothesesInput
+	records     []repository.HypothesisRecord
+	err         error
 }
 
 func (s *recallHypothesisStub) RecallHypotheses(_ context.Context, input repository.RecallHypothesesInput) ([]repository.HypothesisRecord, error) {
