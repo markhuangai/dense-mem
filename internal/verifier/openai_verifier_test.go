@@ -25,7 +25,6 @@ func newTestVerifierConfig(serverURL, apiKey, model string) *config.Config {
 	return &config.Config{
 		AIAPIURL:        serverURL,
 		AIAPIKey:        apiKey,
-		AIReviewerModel: model,
 		AIVerifierModel: model,
 	}
 }
@@ -261,7 +260,6 @@ func TestOpenAIVerifier(t *testing.T) {
 			AIAPIKey:         "embedding-key",
 			AIVerifierAPIURL: srv.URL,
 			AIVerifierAPIKey: "verifier-key",
-			AIReviewerModel:  "reviewer-model",
 			AIVerifierModel:  "verifier-model",
 		}
 		v := NewOpenAIVerifier(cfg, srv.Client())
@@ -613,7 +611,6 @@ func TestOpenAIVerifierSemanticAdapters(t *testing.T) {
 		defer srv.Close()
 
 		cfg := newTestVerifierConfig(srv.URL, "sk-test", "verifier-model")
-		cfg.AIReviewerModel = "reviewer-model"
 		v := NewOpenAIVerifier(cfg, srv.Client())
 		got, err := v.ProposeSemantic(context.Background(), ProviderProposalRequest{
 			RequestID:        "extract-1",
@@ -666,7 +663,6 @@ func TestOpenAIVerifierSemanticAdapters(t *testing.T) {
 
 		content := "Dense-Mem uses PostgreSQL."
 		cfg := newTestVerifierConfig(srv.URL, "sk-test", "verifier-model")
-		cfg.AIReviewerModel = "reviewer-model"
 		v := NewOpenAIVerifier(cfg, srv.Client())
 		got, err := v.ReviewSemantic(context.Background(), SemanticReviewRequest{
 			RequestID:            "verify-1",

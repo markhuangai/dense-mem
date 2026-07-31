@@ -8,6 +8,7 @@ const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
+const placementTimeoutSeconds = positiveIntEnv("DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS", 720, 30, 1800);
 
 let rpcID = 0;
 
@@ -48,7 +49,7 @@ const second = await rememberAndWait(profileB.apiKey, {
   relationshipID: "rel:primary-db-b",
 });
 
-const openConflict = await waitForConflict(profileA.apiKey, "open");
+const openConflict = await waitForRelationshipConflict(profileB.apiKey, second.relationshipID, "open");
 const conflictID = String(openConflict.conflict_id);
 const conflictVersion = Number(openConflict.version);
 if (!conflictID || !Number.isInteger(conflictVersion) || conflictVersion < 1) {
@@ -76,7 +77,7 @@ if (!resolved || resolved.outcome !== "resolve") {
   throw new Error(`conflict reviewer did not resolve ${conflictID}: ${JSON.stringify(review)}`);
 }
 
-const resolvedConflict = await waitForConflict(profileA.apiKey, "resolved");
+const resolvedConflict = await waitForRelationshipConflict(profileB.apiKey, second.relationshipID, "resolved");
 if (resolvedConflict.conflict_id !== conflictID || resolvedConflict.status !== "resolved") {
   throw new Error(`resolved recall returned wrong conflict: ${JSON.stringify(resolvedConflict)}`);
 }
@@ -93,12 +94,16 @@ if (!Array.isArray(loserTrace.conflicts) || !loserTrace.conflicts.some((item) =>
   throw new Error(`trace did not include resolved conflict: ${JSON.stringify(loserTrace.conflicts)}`);
 }
 
+const overdueResolution = await resolveOverdueConflictThroughVerifier();
+
 console.log(JSON.stringify({
   status: "ok",
   run_id: runID,
   conflict_id: conflictID,
   first_relationship_id: first.relationshipID,
   losing_relationship_id: second.relationshipID,
+  overdue_conflict_id: overdueResolution.conflictID,
+  overdue_resolution_method: overdueResolution.method,
 }, null, 2));
 
 async function createProfile(name) {
@@ -132,6 +137,7 @@ async function rememberAndWait(apiKey, input) {
       source: input.sourceGroup,
       source_group: input.sourceGroup,
       idempotency_key: input.idempotencyKey,
+      ...(input.authority ? { authority: input.authority } : {}),
     }],
     proposal: {
       entities: [
@@ -171,7 +177,8 @@ function entityProposal(entity) {
 
 async function waitForPlacement(apiKey, ingestID, proposalID) {
   let lastSummary = {};
-  for (let attempt = 0; attempt < 150; attempt += 1) {
+  const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2_000);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     const placement = await mcpTool(apiKey, "get_memory_placement", { ingest_id: ingestID });
     if (placement.processing_state === "failed" || placement.processing_state === "quarantined") {
       throw new Error(`placement failed: ${JSON.stringify(placement)}`);
@@ -206,22 +213,107 @@ async function waitForPlacement(apiKey, ingestID, proposalID) {
     }
     await delay(2_000);
   }
-  throw new Error(`timed out waiting for placement ${ingestID}: ${JSON.stringify(lastSummary)}`);
+  throw new Error(`timed out waiting for placement ${ingestID} after ${placementTimeoutSeconds}s: ${JSON.stringify(lastSummary)}`);
 }
 
-async function waitForConflict(apiKey, status) {
+async function waitForRelationshipConflict(apiKey, relationshipID, status) {
   for (let attempt = 0; attempt < 90; attempt += 1) {
-    const recall = await mcpTool(apiKey, "recall_memory", {
-      query: `ConflictE2E ${runID} primary database`,
-      limit: 10,
-    });
-    const conflict = (recall.conflicts ?? []).find((item) => item.status === status);
+    const trace = await mcpTool(apiKey, "trace_memory", { relationship_id: relationshipID });
+    const conflict = (trace.conflicts ?? []).find((item) => (
+      item.status === status
+      && (item.positions ?? []).some((position) => (position.relationship_ids ?? []).includes(relationshipID))
+    ));
     if (conflict) {
       return conflict;
     }
     await delay(2_000);
   }
-  throw new Error(`timed out waiting for ${status} conflict`);
+  throw new Error(`timed out waiting for ${status} conflict for relationship ${relationshipID}`);
+}
+
+async function waitForConflictID(apiKey, query, conflictID, status) {
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    const recall = await mcpTool(apiKey, "recall_memory", { query, limit: 10 });
+    const conflict = (recall.conflicts ?? []).find((item) => item.conflict_id === conflictID && item.status === status);
+    if (conflict) {
+      return conflict;
+    }
+    await delay(2_000);
+  }
+  throw new Error(`timed out waiting for ${status} conflict ${conflictID}`);
+}
+
+async function resolveOverdueConflictThroughVerifier() {
+  const marker = `OverdueConflictE2E ${runID}`;
+  const firstOverdue = await rememberAndWait(profileA.apiKey, {
+  idempotencyKey: `${runID}:overdue:a`,
+  evidence: `${marker}: Dense-Mem overdue primary database is PostgreSQL according to profile A.`,
+  sourceGroup: `${runID}:overdue:source:a`,
+  authority: "primary",
+    subject: { ref: "overdue-project", name: `${marker} project`, kind: "project" },
+    object: { ref: "overdue-postgres", name: "PostgreSQL", kind: "product" },
+    relationshipID: "rel:overdue-primary-db-a",
+  });
+  const overdueTrace = await mcpTool(profileA.apiKey, "trace_memory", {
+    relationship_id: firstOverdue.relationshipID,
+    include_evidence_content: true,
+  });
+  const overdueSubjectEntityID = stringAt(overdueTrace, ["relationship", "subject_entity_id"]);
+  const overduePostgresEntityID = stringAt(overdueTrace, ["relationship", "object_entity_id"]);
+  if (!overdueSubjectEntityID || !overduePostgresEntityID) {
+    throw new Error(`overdue trace did not return canonical entity IDs: ${JSON.stringify(overdueTrace)}`);
+  }
+
+  const secondOverdue = await rememberAndWait(profileB.apiKey, {
+  idempotencyKey: `${runID}:overdue:b`,
+  evidence: `${marker}: Dense-Mem overdue primary database is GraphDB according to profile B.`,
+  sourceGroup: `${runID}:overdue:source:b`,
+  authority: "primary",
+    subject: { ref: "overdue-project", name: `${marker} project`, kind: "project", knownEntityID: overdueSubjectEntityID },
+    object: { ref: "overdue-graphdb", name: "GraphDB", kind: "product" },
+    relationshipID: "rel:overdue-primary-db-b",
+  });
+  const openOverdueConflict = await waitForRelationshipConflict(profileB.apiKey, secondOverdue.relationshipID, "open");
+  const overdueConflictID = stringAt(openOverdueConflict, ["conflict_id"]);
+  if (!overdueConflictID) {
+    throw new Error(`overdue conflict did not return an ID: ${JSON.stringify(openOverdueConflict)}`);
+  }
+  const overdueRelationshipIDs = new Set((openOverdueConflict.positions ?? [])
+    .flatMap((position) => position.relationship_ids ?? []));
+  if (overdueRelationshipIDs.size !== 2 || !overdueRelationshipIDs.has(firstOverdue.relationshipID) || !overdueRelationshipIDs.has(secondOverdue.relationshipID)) {
+    throw new Error(`overdue conflict did not contain the two tied positions: ${JSON.stringify(openOverdueConflict)}`);
+  }
+
+  const overdueReviewDueAt = Date.parse(stringAt(openOverdueConflict, ["review_due_at"]));
+  if (!Number.isFinite(overdueReviewDueAt)) {
+    throw new Error(`overdue conflict did not return a valid review_due_at: ${JSON.stringify(openOverdueConflict)}`);
+  }
+  const overdueReviewNow = new Date(overdueReviewDueAt + 1_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const overdueReview = runConflictReview(overdueReviewNow);
+  if (overdueReview.status !== "completed") {
+    throw new Error(`overdue conflict reviewer did not complete: ${JSON.stringify(overdueReview)}`);
+  }
+  const resolution = (overdueReview.results ?? []).find((item) => item.conflict_id === overdueConflictID);
+  if (!resolution || resolution.outcome !== "resolve") {
+    throw new Error(`overdue conflict did not resolve: ${JSON.stringify(overdueReview)}`);
+  }
+  if (!["ai", "last_write_wins"].includes(resolution.resolution_method)) {
+    throw new Error(`overdue conflict used an unexpected resolution method: ${JSON.stringify(resolution)}`);
+  }
+  if (!resolution.assessment_attempt_id || !Array.isArray(resolution.retracted_evidence_ids) || resolution.retracted_evidence_ids.length === 0) {
+    throw new Error(`overdue conflict did not record assessment/retraction lineage: ${JSON.stringify(resolution)}`);
+  }
+
+  await waitForConflictID(profileA.apiKey, marker, overdueConflictID, "resolved");
+  const overdueTraces = await Promise.all([
+    mcpTool(profileA.apiKey, "trace_memory", { relationship_id: firstOverdue.relationshipID, include_transitions: true }),
+    mcpTool(profileB.apiKey, "trace_memory", { relationship_id: secondOverdue.relationshipID, include_transitions: true }),
+  ]);
+  const supersededCount = overdueTraces.filter((trace) => stringAt(trace, ["relationship", "relationship_status"]) === "superseded").length;
+  if (supersededCount !== 1) {
+    throw new Error(`overdue conflict did not suppress exactly one losing relationship: ${JSON.stringify(overdueTraces)}`);
+  }
+  return { conflictID: overdueConflictID, method: resolution.resolution_method };
 }
 
 function runConflictReview(now) {
@@ -234,6 +326,7 @@ function runConflictReview(now) {
     "exec",
     "-T",
     "server",
+    "/app/docker-entrypoint.sh",
     "/app/review-conflicts",
     "--team-id",
     teamID,
@@ -298,6 +391,18 @@ function requiredEnv(name) {
   const value = process.env[name];
   if (!value) {
     throw new Error(`${name} is required`);
+  }
+  return value;
+}
+
+function positiveIntEnv(name, fallback, minimum, maximum) {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
   }
   return value;
 }

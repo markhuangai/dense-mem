@@ -375,6 +375,7 @@ func semanticReviewEvidence(fragment repository.EvidenceFragment, evidenceID str
 		FragmentID:              fragment.FragmentID,
 		EvidenceIndex:           fragment.EvidenceIndex,
 		Content:                 fragment.Content,
+		Authority:               fragment.Authority,
 		SourceID:                fragment.SourceID,
 		SourceRevisionID:        fragment.SourceRevisionID,
 		CurrentSourceRevisionID: fragment.SourceRevisionID,

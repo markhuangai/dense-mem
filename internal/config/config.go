@@ -67,7 +67,6 @@ type ConfigProvider interface {
 	// Knowledge-pipeline knobs (AC-X3)
 	GetAIVerifierAPIURL() string
 	GetAIVerifierAPIKey() string
-	GetAIReviewerModel() string
 	GetAIVerifierModel() string
 	GetAIVerifierTimeoutSeconds() int
 	GetAIVerifierMaxConcurrency() int
@@ -148,7 +147,6 @@ type Config struct {
 	// Knowledge-pipeline knobs (AC-X3)
 	AIVerifierAPIURL                      string
 	AIVerifierAPIKey                      string `json:"-"`
-	AIReviewerModel                       string
 	AIVerifierModel                       string
 	AIVerifierDisableTemperature          bool
 	AIVerifierTimeoutSeconds              int
@@ -250,7 +248,6 @@ func (c *Config) GetAIVerifierAPIKey() string {
 	}
 	return c.AIAPIKey
 }
-func (c *Config) GetAIReviewerModel() string { return c.AIReviewerModel }
 func (c *Config) GetAIVerifierModel() string { return c.AIVerifierModel }
 func (c *Config) GetAIVerifierDisableTemperature() bool {
 	return c.AIVerifierDisableTemperature
@@ -453,6 +450,16 @@ func applyIntEnvSpecs(cfg *Config, specs []intEnvSpec) error {
 // Load reads configuration from environment variables and returns a Config.
 // Returns a typed ValidationError for any validation failures.
 func Load() (Config, error) {
+	return loadWithPostgresDSN("")
+}
+
+// LoadWithPostgresDSN validates the normal environment configuration while
+// using a PostgreSQL DSN already resolved by an operator entry point.
+func LoadWithPostgresDSN(postgresDSN string) (Config, error) {
+	return loadWithPostgresDSN(strings.TrimSpace(postgresDSN))
+}
+
+func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	cfg := Config{}
 	var err error
 	if err := rejectObsoleteAssessorConfig(); err != nil {
@@ -460,7 +467,10 @@ func Load() (Config, error) {
 	}
 
 	// String fields with defaults
-	cfg.PostgresDSN = os.Getenv("POSTGRES_DSN")
+	cfg.PostgresDSN = postgresDSN
+	if cfg.PostgresDSN == "" {
+		cfg.PostgresDSN = os.Getenv("POSTGRES_DSN")
+	}
 	if strings.TrimSpace(os.Getenv("POSTGRES_READ_DSN")) != "" {
 		return cfg, &ValidationError{
 			Field:   "POSTGRES_READ_DSN",
@@ -524,7 +534,6 @@ func Load() (Config, error) {
 	if cfg.AIVerifierAPIKey == "" && !verifierAPIURLSet {
 		cfg.AIVerifierAPIKey = cfg.AIAPIKey
 	}
-	cfg.AIReviewerModel = os.Getenv("AI_REVIEWER_MODEL")
 	cfg.AIVerifierModel = os.Getenv("AI_VERIFIER_MODEL")
 	cfg.AIVerifierDisableTemperature, err = parseBoolOrDefault("AI_VERIFIER_DISABLE_TEMPERATURE", false)
 	if err != nil {

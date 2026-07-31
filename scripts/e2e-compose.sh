@@ -375,12 +375,16 @@ export COMPOSE_DOCKER_CLI_BUILD=1
 cd "$ROOT_DIR"
 trap cleanup EXIT
 
-echo "Running disposable PostgreSQL SSO and Dreams regressions."
-DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test \
-  ./internal/repository \
-  ./internal/http \
-  -run '^(TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration)$' \
-  -count=1
+if [[ "${DENSE_MEM_E2E_SKIP_PRECHECKS:-0}" == "1" ]]; then
+  echo "Skipping disposable PostgreSQL prechecks by DENSE_MEM_E2E_SKIP_PRECHECKS."
+else
+  echo "Running disposable PostgreSQL SSO and Dreams regressions."
+  DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test \
+    ./internal/repository \
+    ./internal/http \
+    -run '^(TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration)$' \
+    -count=1
+fi
 
 prepare_e2e_compose_files
 prepare_e2e_prometheus_files
@@ -413,15 +417,19 @@ seed_json="$(compose exec -T server /app/provision-team --name "E2E Team" --desc
 team_id="$(printf '%s' "$seed_json" | json_field team_id)"
 api_key="$(printf '%s' "$seed_json" | json_field api_key)"
 
-echo "Running compose-backed Playwright tests."
-DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
-DENSE_MEM_USER_URL="$USER_URL" \
-DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
-DENSE_MEM_E2E_TEAM_ID="$team_id" \
-DENSE_MEM_E2E_TEAM_NAME="E2E Team" \
-DENSE_MEM_E2E_API_KEY="$api_key" \
-DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" \
-npm --prefix "$ROOT_DIR/web" run playwright:compose
+if [[ "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" == "1" ]]; then
+  echo "Skipping compose-backed Playwright tests by DENSE_MEM_E2E_SKIP_PLAYWRIGHT."
+else
+  echo "Running compose-backed Playwright tests."
+  DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
+  DENSE_MEM_USER_URL="$USER_URL" \
+  DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
+  DENSE_MEM_E2E_TEAM_ID="$team_id" \
+  DENSE_MEM_E2E_TEAM_NAME="E2E Team" \
+  DENSE_MEM_E2E_API_KEY="$api_key" \
+  DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" \
+  npm --prefix "$ROOT_DIR/web" run playwright:compose
+fi
 
 echo "Running compose-backed MCP conflict e2e."
 DENSE_MEM_CONTROL_URL="$CONTROL_URL" \

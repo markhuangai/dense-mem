@@ -27,6 +27,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
+	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
@@ -83,10 +84,6 @@ func RunActiveServer(
 	if !VerifierConfigured(&cfg) {
 		log.Fatal("active authority requires configured verifier provider")
 	}
-	if strings.TrimSpace(cfg.GetAIReviewerModel()) != "" {
-		logger.Warn("AI_REVIEWER_MODEL is ignored by the V2.4 integrated assessor")
-	}
-
 	backend, err := buildBackendBundle(startupCtx, cfg)
 	if err != nil {
 		log.Fatalf("failed to build backend: %v", err)
@@ -199,6 +196,10 @@ func RunActiveServer(
 	assessmentLimits := verifier.SemanticAssessmentLimitsForConfig(&cfg)
 	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, assessmentLimits)
 	verifierProvider.SetMetrics(discoverabilityMetrics)
+	conflictReviewRunner, err := conflictreview.NewRunner(ledgerRepo, verifierProvider, cfg.GetAppTimezone(), assessmentLimits)
+	if err != nil {
+		log.Fatalf("failed to build conflict review runner: %v", err)
+	}
 
 	rememberSvc := memoryservice.NewRememberService(memoryservice.RememberDependencies{Ledger: ledgerRepo})
 	recallSvc := memoryservice.NewRecallService(memoryservice.RecallDependencies{
@@ -433,7 +434,7 @@ func RunActiveServer(
 	go dreamservice.NewScheduler(dreamSvc, profileService, slog.Default()).Start(dreamSchedulerCtx)
 	conflictReviewCtx, conflictReviewCancel := context.WithCancel(context.Background())
 	defer conflictReviewCancel()
-	startConflictReviewWorkers(conflictReviewCtx, logger, profileService, ledgerRepo, &cfg, discoverabilityMetrics)
+	startConflictReviewWorkers(conflictReviewCtx, logger, profileService, conflictReviewRunner, &cfg, discoverabilityMetrics)
 
 	httpAddr := os.Getenv("HTTP_ADDR")
 	if httpAddr == "" {
@@ -574,6 +575,8 @@ func processConflictReviewTick(
 	}
 }
 
+const conflictReviewCompletionTimeout = 15 * time.Second
+
 func processTeamConflictReview(
 	ctx context.Context,
 	logger observability.LogProvider,
@@ -613,6 +616,17 @@ func processTeamConflictReview(
 		ReviewRunID: run.ReviewRunID,
 		WorkerID:    workerID,
 		Status:      "completed",
+	}
+	if _, err := ledger.ProcessPendingConflictDerivedEvidence(ctx, repository.ClaimConflictDerivedEvidenceTasksInput{
+		TeamID:      teamID,
+		ReviewRunID: run.ReviewRunID,
+		WorkerID:    workerID,
+		Limit:       cfg.GetConflictReviewBatchSize(),
+		Lease:       lease,
+	}); err != nil {
+		counts.Status = "failed"
+		counts.LastError = "derived evidence retry failed"
+		outcome = "partial_error"
 	}
 	attempted := map[string]struct{}{}
 	for {
@@ -674,7 +688,9 @@ func processTeamConflictReview(
 	} else if counts.ClaimedCases == 0 && counts.Status == "completed" {
 		outcome = "empty"
 	}
-	if err := ledger.CompleteRelationshipConflictReviewRun(ctx, counts); err != nil {
+	completeCtx, completeCancel := context.WithTimeout(context.WithoutCancel(ctx), conflictReviewCompletionTimeout)
+	defer completeCancel()
+	if err := ledger.CompleteRelationshipConflictReviewRun(completeCtx, counts); err != nil {
 		outcome = "error"
 		return err
 	}
@@ -698,6 +714,7 @@ type conflictReviewLedger interface {
 	ReserveRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error)
 	ClaimRelationshipConflictCases(context.Context, repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error)
 	ReviewRelationshipConflictCase(context.Context, repository.ReviewRelationshipConflictCaseInput) (*repository.ReviewRelationshipConflictCaseResult, error)
+	ProcessPendingConflictDerivedEvidence(context.Context, repository.ClaimConflictDerivedEvidenceTasksInput) (int, error)
 	CompleteRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunCompleteInput) error
 }
 

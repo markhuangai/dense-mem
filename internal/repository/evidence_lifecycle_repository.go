@@ -40,6 +40,7 @@ type EvidenceLifecycleResult struct {
 type evidenceLifecycleOperationInput struct {
 	TeamID              string
 	OwnerProfileID      string
+	ActorProfileID      string
 	Action              string
 	EvidenceIDs         []string
 	Reason              string
@@ -541,13 +542,13 @@ func insertEvidenceLifecycleOperation(
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_lifecycle_operations (
-		    team_id, owner_profile_id, action, idempotency_key, request_hash,
+		    team_id, owner_profile_id, actor_profile_id, action, idempotency_key, request_hash,
 		    reason, replacement_ingest_id, result
 		) VALUES (
-		    ?::uuid, ?::uuid, ?, ?, ?, ?, NULLIF(?, '')::uuid, ?::jsonb
+		    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, NULLIF(?, '')::uuid, ?::jsonb
 		)
 		RETURNING lifecycle_operation_id::text
-	`, input.TeamID, input.OwnerProfileID, input.Action, input.IdempotencyKey, input.RequestHash,
+	`, input.TeamID, input.OwnerProfileID, input.ActorProfileID, input.Action, input.IdempotencyKey, input.RequestHash,
 		input.Reason, input.ReplacementIngestID, string(encoded)).Rows()
 	if err != nil {
 		if isPostgresUniqueConstraint(err, "evidence_lifecycle_operations_idempotency_unique") {
@@ -626,15 +627,25 @@ func applyEvidenceLifecycleEffects(
 	plan *evidenceLifecyclePlan,
 ) error {
 	return withSystemModeInTx(ctx, tx, input.TeamID, input.OwnerProfileID, func(systemTx *gorm.DB) error {
-		relationshipsToRetire, err := revokeEvidenceLifecycleSupports(ctx, systemTx, input, operationID, plan.Supports)
-		if err != nil {
-			return err
-		}
-		if err := retireEvidenceLifecycleSearchDocuments(ctx, systemTx, input.TeamID, "evidence", plan.EvidenceIDs); err != nil {
-			return err
-		}
-		return retireEvidenceLifecycleSearchDocuments(ctx, systemTx, input.TeamID, "relationship", relationshipsToRetire)
+		return applyEvidenceLifecycleEffectsInSystem(ctx, systemTx, input, operationID, plan)
 	})
+}
+
+func applyEvidenceLifecycleEffectsInSystem(
+	ctx context.Context,
+	tx *gorm.DB,
+	input evidenceLifecycleOperationInput,
+	operationID string,
+	plan *evidenceLifecyclePlan,
+) error {
+	relationshipsToRetire, err := revokeEvidenceLifecycleSupports(ctx, tx, input, operationID, plan.Supports)
+	if err != nil {
+		return err
+	}
+	if err := retireEvidenceLifecycleSearchDocuments(ctx, tx, input.TeamID, "evidence", plan.EvidenceIDs); err != nil {
+		return err
+	}
+	return retireEvidenceLifecycleSearchDocuments(ctx, tx, input.TeamID, "relationship", relationshipsToRetire)
 }
 
 func revokeEvidenceLifecycleSupports(
@@ -649,7 +660,7 @@ func revokeEvidenceLifecycleSupports(
 		decisionID, err := insertSupportDecisionEvent(ctx, tx, supportDecisionInput{
 			TeamID:         input.TeamID,
 			OwnerProfileID: support.OwnerProfileID,
-			ActorProfileID: input.OwnerProfileID,
+			ActorProfileID: lifecycleActorProfileID(input),
 			SupportID:      support.SupportID,
 			RelationshipID: support.RelationshipID,
 			Decision:       string(domain.SupportRevoke),
@@ -688,6 +699,13 @@ func revokeEvidenceLifecycleSupports(
 		}
 	}
 	return retire, nil
+}
+
+func lifecycleActorProfileID(input evidenceLifecycleOperationInput) string {
+	if input.ActorProfileID != "" {
+		return input.ActorProfileID
+	}
+	return input.OwnerProfileID
 }
 
 func retireEvidenceLifecycleSearchDocuments(
