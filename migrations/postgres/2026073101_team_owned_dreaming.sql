@@ -123,6 +123,48 @@ ALTER TABLE dream_cycle_runs
 
 -- Canonicalize same-team duplicate hypotheses. The canonical row keeps the
 -- strongest lifecycle state and merges source provenance from aliases.
+WITH legacy_hash_sources AS (
+    SELECT hypothesis.team_id,
+           hypothesis.hypothesis_id,
+           COALESCE(
+               string_agg(
+                   source.key || ':' || CASE
+                       WHEN source.value ~ '^-?[0-9]+$' THEN source.value
+                       ELSE '0'
+                   END,
+                   ',' ORDER BY source.key || ':' || CASE
+                       WHEN source.value ~ '^-?[0-9]+$' THEN source.value
+                       ELSE '0'
+                   END
+               ),
+               ''
+           ) AS source_entries
+    FROM hypotheses hypothesis
+    LEFT JOIN LATERAL jsonb_each_text(hypothesis.source_versions) AS source(key, value)
+      ON true
+    WHERE hypothesis.content_hash IS NULL
+      AND btrim(hypothesis.statement) <> ''
+    GROUP BY hypothesis.team_id, hypothesis.hypothesis_id
+)
+UPDATE hypotheses hypothesis
+SET content_hash = 'sha256:' || encode(
+        digest(
+            convert_to(btrim(hypothesis.statement), 'UTF8') || decode('00', 'hex') ||
+            convert_to(COALESCE(hypothesis.subject_entity_id::text, ''), 'UTF8') || decode('00', 'hex') ||
+            convert_to(COALESCE(btrim(hypothesis.predicate_key), ''), 'UTF8') || decode('00', 'hex') ||
+            convert_to(COALESCE(hypothesis.predicate_version, 1)::text, 'UTF8') || decode('00', 'hex') ||
+            convert_to(COALESCE(hypothesis.object_entity_id::text, ''), 'UTF8') || decode('00', 'hex') ||
+            convert_to(COALESCE(hypothesis.object_value_id::text, ''), 'UTF8') || decode('00', 'hex') ||
+            convert_to(legacy_hash_sources.source_entries, 'UTF8'),
+            'sha256'
+        ),
+        'hex'
+    ),
+    updated_at = clock_timestamp()
+FROM legacy_hash_sources
+WHERE hypothesis.team_id = legacy_hash_sources.team_id
+  AND hypothesis.hypothesis_id = legacy_hash_sources.hypothesis_id;
+
 WITH ranked AS (
     SELECT team_id,
            hypothesis_id,

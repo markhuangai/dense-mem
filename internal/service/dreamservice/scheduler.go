@@ -30,6 +30,12 @@ type scheduledWindow struct {
 	minute int
 }
 
+type scheduledWindowArm struct {
+	runDate        string
+	startTimeLocal string
+	timezone       string
+}
+
 type Scheduler struct {
 	service  Service
 	profiles ProfileService
@@ -38,6 +44,7 @@ type Scheduler struct {
 
 	mu       sync.Mutex
 	observed map[string]string
+	armed    map[string]scheduledWindowArm
 }
 
 func NewScheduler(service Service, profiles ProfileService, logger *slog.Logger) *Scheduler {
@@ -50,6 +57,7 @@ func NewScheduler(service Service, profiles ProfileService, logger *slog.Logger)
 		now:      func() time.Time { return time.Now().UTC() },
 		logger:   logger,
 		observed: map[string]string{},
+		armed:    map[string]scheduledWindowArm{},
 	}
 }
 
@@ -90,42 +98,36 @@ func (s *Scheduler) runDue(ctx context.Context) {
 				continue
 			}
 			if !cfg.Enabled {
+				s.disarm(teamID)
 				continue
 			}
 			state := scheduledWindowAt(now, cfg)
-			if state == scheduledWindowNotDue {
-				previousRunDate, ok := previousScheduledRunDate(now, cfg)
-				if !ok {
-					continue
-				}
-				if s.alreadyObserved(teamID, previousRunDate) {
-					continue
-				}
-				result, err := s.service.RecordMissedScheduledCycle(ctx, teamID, previousRunDate)
-				if err != nil {
-					s.logger.Warn("dreaming scheduler: prior cycle was not recorded", slog.String("team_id", teamID), slog.String("error", err.Error()))
-					continue
-				}
-				s.markObserved(teamID, previousRunDate)
-				s.logger.Info("dreaming scheduler: prior cycle observed",
-					slog.String("team_id", teamID),
-					slog.String("run_id", result.RunID),
-					slog.String("run_date", previousRunDate),
-					slog.String("status", result.Status),
-				)
-				continue
-			}
-			windowAt, ok := scheduledWindowAtTime(now, cfg)
+			window, ok := scheduledWindowFor(now, cfg)
 			if !ok {
 				continue
 			}
-			runDate := localRunDate(now, cfg)
+			runDate := now.In(window.at.Location()).Format(schedulerRunDateLayout)
+			arm := scheduledWindowArm{
+				runDate:        runDate,
+				startTimeLocal: cfg.StartTimeLocal,
+				timezone:       cfg.Timezone,
+			}
+			if state == scheduledWindowNotDue {
+				s.markArmed(teamID, arm)
+				continue
+			}
 			if s.alreadyObserved(teamID, runDate) {
+				s.disarmMatching(teamID, arm)
+				continue
+			}
+			if state == scheduledWindowDue {
+				s.markArmed(teamID, arm)
+			} else if !s.isArmed(teamID, arm) {
 				continue
 			}
 			var result *RunCycleResult
 			if state == scheduledWindowDue {
-				result, err = s.service.RunScheduledCycle(ctx, teamID, windowAt)
+				result, err = s.service.RunScheduledCycle(ctx, teamID, window.at)
 			} else {
 				result, err = s.service.RecordMissedScheduledCycle(ctx, teamID, runDate)
 			}
@@ -207,14 +209,6 @@ func (w scheduledWindow) exists() bool {
 		actual.Minute() == w.minute
 }
 
-func previousScheduledRunDate(now time.Time, cfg EffectiveConfig) (string, bool) {
-	window, ok := scheduledWindowFor(now, cfg)
-	if !ok {
-		return "", false
-	}
-	return now.In(window.at.Location()).AddDate(0, 0, -1).Format(schedulerRunDateLayout), true
-}
-
 func (s *Scheduler) alreadyObserved(teamID, runDate string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -225,6 +219,33 @@ func (s *Scheduler) markObserved(teamID, runDate string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.observed[teamID] = runDate
+	delete(s.armed, teamID)
+}
+
+func (s *Scheduler) markArmed(teamID string, arm scheduledWindowArm) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.armed[teamID] = arm
+}
+
+func (s *Scheduler) isArmed(teamID string, arm scheduledWindowArm) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.armed[teamID] == arm
+}
+
+func (s *Scheduler) disarm(teamID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.armed, teamID)
+}
+
+func (s *Scheduler) disarmMatching(teamID string, arm scheduledWindowArm) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.armed[teamID] == arm {
+		delete(s.armed, teamID)
+	}
 }
 
 func (s *Scheduler) pruneObserved(now time.Time) {
@@ -234,6 +255,11 @@ func (s *Scheduler) pruneObserved(now time.Time) {
 	for teamID, runDate := range s.observed {
 		if _, err := time.Parse(schedulerRunDateLayout, runDate); err != nil || runDate < cutoffDate {
 			delete(s.observed, teamID)
+		}
+	}
+	for teamID, arm := range s.armed {
+		if _, err := time.Parse(schedulerRunDateLayout, arm.runDate); err != nil || arm.runDate < cutoffDate {
+			delete(s.armed, teamID)
 		}
 	}
 }

@@ -13,11 +13,11 @@ const evalDreamCycleMaxOutputs = 10000
 func evalRunDreamCycleTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_run_dream_cycle",
-		Description: "Run the dream phase for a team during evaluation so expected dream hypotheses can be exported and scored.",
+		Description: "Run an isolated manual dream phase for a team during evaluation so expected dream hypotheses can be exported and scored.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"manual":      map[string]any{"type": "boolean"},
+				"manual":      map[string]any{"type": "boolean", "description": "Ignored; evaluation dream cycles are always manual."},
 				"max_outputs": map[string]any{"type": "integer", "minimum": 1, "maximum": evalDreamCycleMaxOutputs},
 				"seed_dreams": map[string]any{
 					"type":     "array",
@@ -63,7 +63,7 @@ func evalRunDreamCycleTool(deps Dependencies) Tool {
 				return nil, err
 			}
 			req := dreamservice.RunCycleRequest{
-				Manual:     boolInputOrDefault(input["manual"], true),
+				Manual:     true,
 				MaxOutputs: maxOutputs,
 				SeedDreams: seedDreamsInput(input["seed_dreams"]),
 			}

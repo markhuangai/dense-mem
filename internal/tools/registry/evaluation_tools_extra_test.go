@@ -91,7 +91,7 @@ func TestEvaluationDreamTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("eval_run_dream_cycle Invoke: %v", err)
 	}
-	if run["run_id"] != "run-1" || dreams.lastRunReq.Manual || dreams.lastRunReq.MaxOutputs != 7 {
+	if run["run_id"] != "run-1" || !dreams.lastRunReq.Manual || dreams.lastRunReq.MaxOutputs != 7 {
 		t.Fatalf("run output/request = %v/%+v", run, dreams.lastRunReq)
 	}
 	if len(dreams.lastRunReq.SeedDreams) != 1 || dreams.lastRunReq.SeedDreams[0].Hypothesis != "Dense-Mem uses PostgreSQL" {

@@ -21,6 +21,43 @@ var (
 	ErrDreamExactRelationshipExists = errors.New("dream exact relationship already exists")
 )
 
+const hypothesisSourceIneligiblePredicateSQL = `EXISTS (
+	SELECT 1
+	FROM jsonb_each_text(hypotheses.source_versions) AS source(source_id, source_version)
+	LEFT JOIN relationship_records r
+	  ON r.team_id = hypotheses.team_id
+	 AND r.relationship_id = CASE
+	     WHEN source.source_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+	     THEN source.source_id::uuid
+	     ELSE NULL
+	 END
+	WHERE r.relationship_id IS NULL
+	   OR r.version::text <> source.source_version
+	   OR NOT (
+	     (r.status = 'active' AND r.support_count > 0)
+	     OR (
+	       r.status = 'pending_evidence'
+	       AND EXISTS (
+	         SELECT 1
+	         FROM relationship_observations o
+	         JOIN verification_events v
+	           ON v.team_id = o.team_id
+	          AND v.observation_id = o.observation_id
+	         WHERE o.team_id = r.team_id
+	           AND o.relationship_id = r.relationship_id
+	           AND v.evidence_verdict = 'insufficient'
+	       )
+	     )
+	   )
+	   OR EXISTS (
+	     SELECT 1
+	     FROM relationship_cross_references cr
+	     WHERE cr.team_id = r.team_id
+	       AND cr.target_relationship_id = r.relationship_id
+	       AND cr.kind = 'challenges'
+	   )
+)`
+
 type DreamRepository interface {
 	ClaimDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error)
 	CompleteDreamCycle(ctx context.Context, input DreamCycleCompleteInput) error
@@ -518,16 +555,18 @@ func (r *SemanticRepositoryImpl) RecallHypotheses(ctx context.Context, input Rec
 	pattern := "%" + input.Query + "%"
 	records := []HypothesisRecord{}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(hypothesisSelectSQL(`
+		query := hypothesisSelectSQL(`
 			WHERE team_id = ?::uuid
 			  AND canonical_hypothesis_id IS NULL
 			  AND status IN ('proposed', 'reinforced')
+			  AND NOT (` + hypothesisSourceIneligiblePredicateSQL + `)
 			  AND (? = '' OR statement ILIKE ? OR rationale ILIKE ?)
 			ORDER BY CASE WHEN ? <> '' AND statement ILIKE ? THEN 0 ELSE 1 END,
 			         updated_at DESC,
 			         hypothesis_id
 			LIMIT ?
-		`), input.TeamID, input.Query, pattern, pattern, input.Query, pattern, input.Limit).Rows()
+		`)
+		rows, err := tx.WithContext(ctx).Raw(query, input.TeamID, input.Query, pattern, pattern, input.Query, pattern, input.Limit).Rows()
 		if err != nil {
 			return err
 		}

@@ -89,6 +89,47 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 		InputCount:           len(inputs),
 		CreatedHypotheses:    1,
 	}))
+
+	recalled, err := semanticRepo.RecallHypotheses(ctx, RecallHypothesesInput{
+		TeamID: teamID,
+		Query:  "PostgreSQL",
+		Limit:  10,
+	})
+	require.NoError(t, err)
+	require.Len(t, recalled, 1)
+	require.Equal(t, record.HypothesisID, recalled[0].HypothesisID)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_records
+			SET version = version + 1,
+			    updated_at = now()
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+		`, teamID, candidate.Relationship.RelationshipID).Error
+	}))
+
+	recalled, err = semanticRepo.RecallHypotheses(ctx, RecallHypothesesInput{
+		TeamID: teamID,
+		Query:  "PostgreSQL",
+		Limit:  10,
+	})
+	require.NoError(t, err)
+	require.Empty(t, recalled)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var status string
+		if err := tx.Raw(`
+			SELECT status
+			FROM hypotheses
+			WHERE team_id = ?::uuid
+			  AND hypothesis_id = ?::uuid
+		`, teamID, record.HypothesisID).Row().Scan(&status); err != nil {
+			return err
+		}
+		assert.Equal(t, "reinforced", status)
+		return nil
+	}))
 }
 
 func TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited(t *testing.T) {

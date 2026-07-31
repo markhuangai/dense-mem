@@ -26,6 +26,8 @@ func TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows(t *testing.T) {
 	secondRunID := uuid.NewString()
 	firstHypothesisID := uuid.NewString()
 	secondHypothesisID := uuid.NewString()
+	firstNullHashHypothesisID := uuid.NewString()
+	secondNullHashHypothesisID := uuid.NewString()
 
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
@@ -72,9 +74,23 @@ func TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows(t *testing.T) {
 				 '{"source-a":1}'::jsonb, ARRAY[$3::uuid]),
 				($1::uuid, $5::uuid, $6::uuid, 'reinforced', 'legacy team hypothesis',
 				 'sha256:legacy-team-hypothesis', $7::uuid,
-				 '[{"type":"relationship","id":"source-b"}]'::jsonb,
-				 '{"source-b":2}'::jsonb, ARRAY[$6::uuid])
+					 '[{"type":"relationship","id":"source-b"}]'::jsonb,
+					 '{"source-b":2}'::jsonb, ARRAY[$6::uuid])
 		`, teamID, firstHypothesisID, firstProfileID, firstRunID, secondHypothesisID, secondProfileID, secondRunID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO hypotheses (
+				team_id, hypothesis_id, owner_profile_id, status, statement,
+				content_hash, source_refs, source_versions, source_owner_profile_ids
+			) VALUES
+				($1::uuid, $2::uuid, $3::uuid, 'proposed', 'legacy null-hash hypothesis',
+				 NULL, '[{"type":"relationship","id":"source-null"}]'::jsonb,
+				 '{"source-null":1}'::jsonb, ARRAY[$3::uuid]),
+				($1::uuid, $4::uuid, $5::uuid, 'reinforced', 'legacy null-hash hypothesis',
+				 NULL, '[{"type":"relationship","id":"source-null"}]'::jsonb,
+				 '{"source-null":1}'::jsonb, ARRAY[$5::uuid])
+		`, teamID, firstNullHashHypothesisID, firstProfileID, secondNullHashHypothesisID, secondProfileID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -104,6 +120,9 @@ func TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows(t *testing.T) {
 		sourceVersionCount       int
 		sourceOwnerCount         int
 		aliasCount               int
+		canonicalNullHashCount   int
+		nullHashAliasCount       int
+		backfilledHash           string
 		enabled                  string
 		legacyConfigCount        int
 	)
@@ -154,6 +173,28 @@ func TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows(t *testing.T) {
 		  AND canonical_hypothesis_id IS NOT NULL
 	`, teamID).Scan(&aliasCount))
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM hypotheses
+		WHERE team_id = $1::uuid
+		  AND statement = 'legacy null-hash hypothesis'
+		  AND canonical_hypothesis_id IS NULL
+	`, teamID).Scan(&canonicalNullHashCount))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT content_hash
+		FROM hypotheses
+		WHERE team_id = $1::uuid
+		  AND statement = 'legacy null-hash hypothesis'
+		  AND canonical_hypothesis_id IS NULL
+		LIMIT 1
+	`, teamID).Scan(&backfilledHash))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM hypotheses
+		WHERE team_id = $1::uuid
+		  AND statement = 'legacy null-hash hypothesis'
+		  AND canonical_hypothesis_id IS NOT NULL
+	`, teamID).Scan(&nullHashAliasCount))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
 		SELECT value
 		FROM app_config
 		WHERE key = 'DREAMING_ENABLED'
@@ -177,6 +218,9 @@ func TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows(t *testing.T) {
 	assert.Equal(t, 2, sourceVersionCount)
 	assert.Equal(t, 2, sourceOwnerCount)
 	assert.Equal(t, 1, aliasCount)
+	assert.Equal(t, 1, canonicalNullHashCount)
+	assert.Equal(t, 1, nullHashAliasCount)
+	assert.True(t, strings.HasPrefix(backfilledHash, "sha256:"))
 	assert.Equal(t, "true", enabled)
 	assert.Zero(t, legacyConfigCount)
 }

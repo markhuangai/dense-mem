@@ -51,8 +51,6 @@ func TestScheduledWindowHelpersRejectInvalidStartTime(t *testing.T) {
 	require.Equal(t, scheduledWindowNotDue, scheduledWindowAt(now, cfg))
 	_, ok := scheduledWindowAtTime(now, cfg)
 	require.False(t, ok)
-	_, ok = previousScheduledRunDate(now, cfg)
-	require.False(t, ok)
 }
 
 func TestSchedulerStartReturnsWhenUnavailableOrCanceled(t *testing.T) {
@@ -80,7 +78,7 @@ func TestSchedulerPagesThroughTeamsAndUsesScheduledPath(t *testing.T) {
 	require.Empty(t, dreams.missedTeams)
 }
 
-func TestSchedulerRecordsMissedWindowWithoutCatchup(t *testing.T) {
+func TestSchedulerDoesNotRecordMissedWindowWhenFirstObservedLate(t *testing.T) {
 	teamID := uuid.New()
 	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
 	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig()}
@@ -91,11 +89,11 @@ func TestSchedulerRecordsMissedWindowWithoutCatchup(t *testing.T) {
 	scheduler.runDue(context.Background())
 
 	require.Empty(t, dreams.scheduledTeams)
-	require.Equal(t, []string{teamID.String()}, dreams.missedTeams)
-	require.True(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
+	require.Empty(t, dreams.missedTeams)
+	require.False(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
 }
 
-func TestSchedulerRecordsPreviousLocalWindowAfterOvernightRestart(t *testing.T) {
+func TestSchedulerDoesNotRecordPreviousLocalWindowWhenFirstObservedOvernight(t *testing.T) {
 	teamID := uuid.New()
 	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
 	dreams := &schedulerDreamStub{cfg: EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{
@@ -110,8 +108,33 @@ func TestSchedulerRecordsPreviousLocalWindowAfterOvernightRestart(t *testing.T) 
 	scheduler.runDue(context.Background())
 
 	require.Empty(t, dreams.scheduledTeams)
+	require.Empty(t, dreams.missedTeams)
+	require.Empty(t, dreams.missedRunDates)
+	require.False(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
+}
+
+func TestSchedulerRecordsMissedWindowAfterArmingBeforeWindow(t *testing.T) {
+	teamID := uuid.New()
+	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
+	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig()}
+	scheduler := NewScheduler(dreams, profiles, discardSchedulerLogger())
+	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 2, 59, 0, 0, time.UTC) }
+
+	scheduler.runDue(context.Background())
+
+	require.True(t, scheduler.isArmed(teamID.String(), scheduledWindowArm{
+		runDate:        "2026-06-11",
+		startTimeLocal: "03:00",
+		timezone:       "UTC",
+	}))
+	require.Empty(t, dreams.scheduledTeams)
+	require.Empty(t, dreams.missedTeams)
+
+	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 3, 1, 0, 0, time.UTC) }
+	scheduler.runDue(context.Background())
+
+	require.Empty(t, dreams.scheduledTeams)
 	require.Equal(t, []string{teamID.String()}, dreams.missedTeams)
-	require.Equal(t, []string{"2026-06-11"}, dreams.missedRunDates)
 	require.True(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
 }
 
@@ -144,7 +167,6 @@ func TestSchedulerRecordsNonexistentDSTWindowWithoutRunningEarly(t *testing.T) {
 		MaxOutputs:     5,
 	}}}
 	scheduler := NewScheduler(dreams, profiles, discardSchedulerLogger())
-	scheduler.observed[teamID.String()] = "2026-03-07"
 	scheduler.now = func() time.Time { return time.Date(2026, 3, 8, 6, 30, 0, 0, time.UTC) }
 
 	scheduler.runDue(context.Background())
@@ -152,6 +174,11 @@ func TestSchedulerRecordsNonexistentDSTWindowWithoutRunningEarly(t *testing.T) {
 	require.Empty(t, dreams.scheduledTeams)
 	require.Empty(t, dreams.missedTeams)
 	require.False(t, scheduler.alreadyObserved(teamID.String(), "2026-03-08"))
+	require.True(t, scheduler.isArmed(teamID.String(), scheduledWindowArm{
+		runDate:        "2026-03-08",
+		startTimeLocal: "02:30",
+		timezone:       "America/New_York",
+	}))
 
 	scheduler.now = func() time.Time { return time.Date(2026, 3, 8, 7, 0, 0, 0, time.UTC) }
 	scheduler.runDue(context.Background())
@@ -213,12 +240,20 @@ func TestSchedulerPrunesObservedEntries(t *testing.T) {
 		"recent":  "2026-06-10",
 		"invalid": "not-a-date",
 	}
+	scheduler.armed = map[string]scheduledWindowArm{
+		"stale":   {runDate: "2026-06-03"},
+		"recent":  {runDate: "2026-06-10"},
+		"invalid": {runDate: "not-a-date"},
+	}
 
 	scheduler.pruneObserved(time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC))
 
 	require.NotContains(t, scheduler.observed, "stale")
 	require.NotContains(t, scheduler.observed, "invalid")
 	require.Equal(t, "2026-06-10", scheduler.observed["recent"])
+	require.NotContains(t, scheduler.armed, "stale")
+	require.NotContains(t, scheduler.armed, "invalid")
+	require.Equal(t, "2026-06-10", scheduler.armed["recent"].runDate)
 }
 
 func dueSchedulerConfig() EffectiveConfig {
