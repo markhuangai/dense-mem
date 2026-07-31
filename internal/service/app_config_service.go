@@ -435,17 +435,21 @@ func ssoRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (SSOR
 	cookieSecure, cookieEffective := ssoConfigBool(normalized[domain.AppConfigSSOCookieSecure], cookieSecureDefault)
 
 	runtime := SSORuntimeConfig{
-		PublicBaseURL:       normalized[domain.AppConfigSSOPublicBaseURL],
-		EntitlementCacheTTL: entitlementTTL,
-		SessionTTL:          sessionTTL,
-		StateTTL:            stateTTL,
-		CookieSecure:        cookieSecure,
-		HTTPTimeout:         httpTimeout,
+		PublicBaseURL:        normalized[domain.AppConfigSSOPublicBaseURL],
+		SCIMPublicBaseURL:    normalized[domain.AppConfigSCIMPublicBaseURL],
+		ControlPublicBaseURL: normalized[domain.AppConfigControlPublicBaseURL],
+		EntitlementCacheTTL:  entitlementTTL,
+		SessionTTL:           sessionTTL,
+		StateTTL:             stateTTL,
+		CookieSecure:         cookieSecure,
+		HTTPTimeout:          httpTimeout,
 	}
 
 	updateTime := entries[domain.AppConfigUpdateTimeKey].Value
 	items := []domain.SSOConfigItem{
 		ssoConfigItem(entries, domain.AppConfigSSOPublicBaseURL, normalized[domain.AppConfigSSOPublicBaseURL]),
+		ssoConfigItem(entries, domain.AppConfigSCIMPublicBaseURL, normalized[domain.AppConfigSCIMPublicBaseURL]),
+		ssoConfigItem(entries, domain.AppConfigControlPublicBaseURL, normalized[domain.AppConfigControlPublicBaseURL]),
 		ssoConfigItem(entries, domain.AppConfigSSOEntitlementCacheTTLSeconds, entitlementEffective),
 		ssoConfigItem(entries, domain.AppConfigSSOSessionTTLSeconds, sessionEffective),
 		ssoConfigItem(entries, domain.AppConfigSSOStateTTLSeconds, stateEffective),
@@ -721,15 +725,18 @@ func normalizeSSOConfigValues(values map[string]string) (map[string]string, erro
 		}
 		trimmed := strings.TrimSpace(value)
 		switch key {
-		case domain.AppConfigSSOPublicBaseURL:
+		case domain.AppConfigSSOPublicBaseURL, domain.AppConfigSCIMPublicBaseURL, domain.AppConfigControlPublicBaseURL:
 			normalized[key] = strings.TrimRight(trimmed, "/")
 			if normalized[key] != "" {
 				parsed, err := url.Parse(normalized[key])
 				if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-					return nil, fmt.Errorf("%w: SSO_PUBLIC_BASE_URL must be an absolute http or https URL", ErrInvalidAppConfig)
+					return nil, fmt.Errorf("%w: %s must be an absolute http or https URL", ErrInvalidAppConfig, key)
+				}
+				if (key == domain.AppConfigSCIMPublicBaseURL || key == domain.AppConfigControlPublicBaseURL) && parsed.Scheme != "https" {
+					return nil, fmt.Errorf("%w: %s must use https", ErrInvalidAppConfig, key)
 				}
 				if parsed.RawQuery != "" || parsed.Fragment != "" {
-					return nil, fmt.Errorf("%w: SSO_PUBLIC_BASE_URL must not include query or fragment", ErrInvalidAppConfig)
+					return nil, fmt.Errorf("%w: %s must not include query or fragment", ErrInvalidAppConfig, key)
 				}
 			}
 		case domain.AppConfigSSOEntitlementCacheTTLSeconds, domain.AppConfigSSOSessionTTLSeconds, domain.AppConfigSSOStateTTLSeconds, domain.AppConfigSSOHTTPTimeoutSeconds:
@@ -764,6 +771,8 @@ func editableGeneralConfigKeys() []string {
 func editableSSOConfigKeys() []string {
 	return []string{
 		domain.AppConfigSSOPublicBaseURL,
+		domain.AppConfigSCIMPublicBaseURL,
+		domain.AppConfigControlPublicBaseURL,
 		domain.AppConfigSSOEntitlementCacheTTLSeconds,
 		domain.AppConfigSSOSessionTTLSeconds,
 		domain.AppConfigSSOStateTTLSeconds,

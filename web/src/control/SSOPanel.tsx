@@ -10,6 +10,7 @@ import {
   Team,
 } from "../api";
 import { SectionHeading } from "../ui/components";
+import { DirectoryAutomationPanel } from "./DirectoryAutomationPanel";
 import { profilePermissionLabel, profileRoleLabel, readError, shortId } from "./utils";
 
 export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
@@ -231,6 +232,8 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
           <div className="table-placeholder">No SSO provider selected</div>
         )}
       </section>
+
+      {selectedProvider && <DirectoryAutomationPanel api={api} provider={selectedProvider} teams={teams} />}
     </>
   );
 }
@@ -262,6 +265,10 @@ function SSOProviderForm({
       </select>
       <label htmlFor="sso-issuer-url">Issuer URL</label>
       <input id="sso-issuer-url" value={draft.issuer_url} onChange={(event) => onChange({ ...draft, issuer_url: event.target.value })} />
+      <label htmlFor="sso-tenant-id">Tenant ID</label>
+      <input id="sso-tenant-id" value={draft.tenant_id} onChange={(event) => onChange({ ...draft, tenant_id: event.target.value })} placeholder="Azure Entra tenant GUID" />
+      <label htmlFor="sso-identity-claim">Stable identity claim</label>
+      <input id="sso-identity-claim" value={draft.identity_claim} onChange={(event) => onChange({ ...draft, identity_claim: event.target.value })} placeholder={draft.kind === "azure_ad" ? "oid" : "sub"} />
       <label htmlFor="sso-client-id">Client ID</label>
       <input id="sso-client-id" value={draft.client_id} onChange={(event) => onChange({ ...draft, client_id: event.target.value })} />
       <label htmlFor="sso-client-secret-env">Client secret env</label>
@@ -392,6 +399,8 @@ function emptyProviderInput(): SSOProviderInput {
     name: "",
     kind: "azure_ad",
     issuer_url: "",
+    tenant_id: "",
+    identity_claim: "oid",
     client_id: "",
     client_secret_env: "",
     scopes: ["openid", "profile", "email"],
@@ -407,6 +416,8 @@ function providerToInput(provider: SSOProvider): SSOProviderInput {
     name: provider.name,
     kind: provider.kind,
     issuer_url: provider.issuer_url,
+    tenant_id: provider.tenant_id,
+    identity_claim: provider.identity_claim,
     client_id: provider.client_id,
     client_secret_env: provider.client_secret_env,
     scopes: provider.scopes,

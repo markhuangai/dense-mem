@@ -10,27 +10,31 @@ import (
 )
 
 type ControlPortalTelemetry struct {
-	Reader         service.TelemetryReader
-	HTTPMetrics    observability.HTTPMetrics
-	ScrapeHandler  nethttp.Handler
-	ScrapeToken    string
-	SSO            *service.SSOService
-	Config         service.AppConfigService
-	Logs           service.OperationLogReader
-	RecallFeedback service.RecallFeedbackEventReader
-	Dreams         dreamservice.ControlService
+	Reader          service.TelemetryReader
+	HTTPMetrics     observability.HTTPMetrics
+	ScrapeHandler   nethttp.Handler
+	ScrapeToken     string
+	SSO             *service.SSOService
+	Directory       *service.DirectoryIdentityService
+	ControlIdentity *service.ControlIdentityService
+	Config          service.AppConfigService
+	Logs            service.OperationLogReader
+	RecallFeedback  service.RecallFeedbackEventReader
+	Dreams          dreamservice.ControlService
 }
 
 type controlPortalHandler struct {
-	profiles       handler.ProfileServiceInterface
-	keys           handler.APIKeyServiceInterface
-	security       service.SecurityService
-	metrics        service.UsageMetricsReader
-	telemetry      service.TelemetryReader
-	operationLogs  service.OperationLogReader
-	recallFeedback service.RecallFeedbackEventReader
-	dreams         dreamservice.ControlService
-	health         HealthConfig
-	sso            *service.SSOService
-	appConfig      service.AppConfigService
+	profiles        handler.ProfileServiceInterface
+	keys            handler.APIKeyServiceInterface
+	security        service.SecurityService
+	metrics         service.UsageMetricsReader
+	telemetry       service.TelemetryReader
+	operationLogs   service.OperationLogReader
+	recallFeedback  service.RecallFeedbackEventReader
+	dreams          dreamservice.ControlService
+	health          HealthConfig
+	sso             *service.SSOService
+	directory       *service.DirectoryIdentityService
+	controlIdentity *service.ControlIdentityService
+	appConfig       service.AppConfigService
 }

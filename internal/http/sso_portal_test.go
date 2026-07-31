@@ -740,6 +740,14 @@ func (r *httpSSORepoStub) ListMappingsForGroups(_ context.Context, providerID uu
 	return items, nil
 }
 
+func (r *httpSSORepoStub) DirectoryAuthorityActive(context.Context, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
+func (r *httpSSORepoStub) DirectoryTeamProfileEntitled(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string) (bool, error) {
+	return false, nil
+}
+
 func (r *httpSSORepoStub) UpsertIdentity(_ context.Context, identity *domain.SSOIdentity) error {
 	if identity.ID == uuid.Nil {
 		identity.ID = uuid.New()

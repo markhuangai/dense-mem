@@ -150,6 +150,8 @@ export type SSOProvider = {
   name: string;
   kind: "azure_ad" | "pingone" | "generic_oidc";
   issuer_url: string;
+  tenant_id: string;
+  identity_claim: string;
   client_id: string;
   client_secret_env: string;
   scopes: string[];
@@ -171,6 +173,8 @@ export type SSOGroupMapping = {
   scopes: string[];
   role: ProfileRole;
   enabled: boolean;
+  origin: string;
+  retired_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -179,6 +183,8 @@ export type SSOProviderInput = {
   name: string;
   kind: SSOProvider["kind"];
   issuer_url: string;
+  tenant_id: string;
+  identity_claim: string;
   client_id: string;
   client_secret_env: string;
   scopes: string[];
@@ -194,6 +200,89 @@ export type SSOGroupMappingInput = {
   scopes: string[];
   role: ProfileRole;
   enabled: boolean;
+};
+
+export type DirectoryRoleEntitlement = {
+  role: ProfileRole;
+  scopes: string[];
+};
+
+export type DirectoryConnector = {
+  id: string;
+  provider_id: string;
+  status: "disabled" | "observe" | "active";
+  group_pattern: string;
+  role_entitlements: Record<string, DirectoryRoleEntitlement>;
+  max_auto_teams: number;
+  credential_version: number;
+  scim_path: string;
+  last_activation_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DirectoryConnectorInput = {
+  group_pattern: string;
+  role_entitlements: Record<string, DirectoryRoleEntitlement>;
+  max_auto_teams: number;
+};
+
+export type DirectoryCredential = {
+  connector_id: string;
+  credential_version: number;
+  bearer_token: string;
+  oauth_client_id: string;
+  oauth_client_secret: string;
+};
+
+export type DirectoryConnectorCreateResult = {
+  connector: DirectoryConnector;
+  credential: DirectoryCredential;
+};
+
+export type DirectoryPreview = {
+  version: string;
+  candidates: Array<{
+    group_id: string;
+    external_id: string;
+    display_name: string;
+    team_name: string;
+    entitlement: DirectoryRoleEntitlement;
+    binding_origin: string;
+  }>;
+  issues: Array<{
+    kind: string;
+    detail: string;
+    active: boolean;
+  }>;
+};
+
+export type ControlAdminGroup = {
+  id: string;
+  provider_id: string;
+  group_id: string;
+  group_name: string;
+  enabled: boolean;
+  retired_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ControlAdminGroupInput = {
+  group_id: string;
+  group_name: string;
+  enabled: boolean;
+};
+
+export type ControlIdentityProvider = {
+  id: string;
+  name: string;
+  kind: string;
+};
+
+export type ControlSession = {
+  authenticated: boolean;
+  auth_method: "token" | "sso";
 };
 
 export type SSOConfigItem = {
@@ -522,13 +611,13 @@ export class ControlApi {
   private readonly token: string;
   private readonly baseUrl: string;
 
-  constructor(token: string, baseUrl = "/control/api") {
+  constructor(token = "", baseUrl = "/control/api") {
     this.token = token;
     this.baseUrl = baseUrl;
   }
 
-  session(): Promise<{ authenticated: boolean }> {
-    return this.request<{ authenticated: boolean }>("/session");
+  session(): Promise<ControlSession> {
+    return this.request<ControlSession>("/session");
   }
 
   listTeams(): Promise<Page<Team>> {
@@ -648,6 +737,58 @@ export class ControlApi {
 
   deleteSSOGroupMapping(providerId: string, mappingId: string): Promise<{ status: string }> {
     return this.requestEnvelope<{ status: string }>(`/sso/providers/${providerId}/mappings/${mappingId}`, { method: "DELETE" });
+  }
+
+  listDirectoryConnectors(): Promise<DirectoryConnector[]> {
+    return this.requestEnvelope<DirectoryConnector[]>("/sso/directory/connectors");
+  }
+
+  getDirectoryConnector(providerId: string): Promise<DirectoryConnector> {
+    return this.requestEnvelope<DirectoryConnector>(`/sso/providers/${providerId}/directory-connector`);
+  }
+
+  createDirectoryConnector(providerId: string, input: DirectoryConnectorInput): Promise<DirectoryConnectorCreateResult> {
+    return this.requestEnvelope<DirectoryConnectorCreateResult>(`/sso/providers/${providerId}/directory-connector`, { method: "POST", body: input });
+  }
+
+  updateDirectoryConnector(connectorId: string, input: DirectoryConnectorInput): Promise<DirectoryConnector> {
+    return this.requestEnvelope<DirectoryConnector>(`/sso/directory/connectors/${connectorId}`, { method: "PATCH", body: input });
+  }
+
+  rotateDirectoryCredentials(connectorId: string): Promise<DirectoryCredential> {
+    return this.requestEnvelope<DirectoryCredential>(`/sso/directory/connectors/${connectorId}/credentials/rotate`, { method: "POST" });
+  }
+
+  previewDirectoryConnector(connectorId: string): Promise<DirectoryPreview> {
+    return this.requestEnvelope<DirectoryPreview>(`/sso/directory/connectors/${connectorId}/preview`);
+  }
+
+  setDirectoryConnectorStatus(connectorId: string, status: DirectoryConnector["status"], previewVersion = ""): Promise<DirectoryConnector> {
+    return this.requestEnvelope<DirectoryConnector>(`/sso/directory/connectors/${connectorId}/status`, { method: "POST", body: { status, preview_version: previewVersion } });
+  }
+
+  adoptDirectoryGroupTeam(connectorId: string, groupId: string, teamId: string): Promise<{ status: string }> {
+    return this.requestEnvelope<{ status: string }>(`/sso/directory/connectors/${connectorId}/groups/${groupId}/adopt`, { method: "POST", body: { team_id: teamId } });
+  }
+
+  listControlAdminGroups(providerId: string): Promise<ControlAdminGroup[]> {
+    return this.requestEnvelope<ControlAdminGroup[]>(`/sso/providers/${providerId}/control-admin-groups`);
+  }
+
+  createControlAdminGroup(providerId: string, input: ControlAdminGroupInput): Promise<ControlAdminGroup> {
+    return this.requestEnvelope<ControlAdminGroup>(`/sso/providers/${providerId}/control-admin-groups`, { method: "POST", body: input });
+  }
+
+  deleteControlAdminGroup(providerId: string, groupId: string): Promise<{ status: string }> {
+    return this.requestEnvelope<{ status: string }>(`/sso/providers/${providerId}/control-admin-groups/${groupId}`, { method: "DELETE" });
+  }
+
+  logoutControlSSO(): Promise<void> {
+    return requestJson<void>("/control/auth/logout", {
+      method: "POST",
+      credentials: "include",
+      csrf: { cookieName: "dense_mem_control_csrf", headerName: "X-Dense-Mem-Control-CSRF" },
+    });
   }
 
   getGeneralConfig(): Promise<GeneralConfig> {
@@ -808,8 +949,15 @@ export class ControlApi {
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     return requestJson<T>(`${this.baseUrl}${path}`, {
       method: options.method ?? "GET",
-      token: this.token,
+      token: this.token || undefined,
       body: options.body,
+      credentials: this.token ? undefined : "include",
+      csrf: this.token ? undefined : { cookieName: "dense_mem_control_csrf", headerName: "X-Dense-Mem-Control-CSRF" },
     });
   }
+}
+
+export async function listControlIdentityProviders(): Promise<ControlIdentityProvider[]> {
+  const payload = await requestJson<{ data: ControlIdentityProvider[] }>("/control/auth/providers", { credentials: "include" });
+  return payload.data;
 }

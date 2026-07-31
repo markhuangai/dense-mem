@@ -98,6 +98,8 @@ func RunActiveServer(
 	profileRepo := repository.NewProfileRepository(pgDB.GetDB(), rlsHelper)
 	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)
 	ssoRepo := repository.NewSSORepository(pgDB.GetDB(), rlsHelper)
+	directoryIdentityRepo := repository.NewDirectoryIdentityRepository(pgDB.GetDB(), rlsHelper)
+	controlIdentityRepo := repository.NewControlIdentityRepository(pgDB.GetDB(), rlsHelper)
 	appConfigRepo := repository.NewAppConfigRepository(pgDB.GetDB(), rlsHelper)
 	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
@@ -159,6 +161,8 @@ func RunActiveServer(
 		RuntimeConfig: appConfigService,
 		Logger:        logger,
 	})
+	directoryIdentityService := service.NewDirectoryIdentityService(directoryIdentityRepo, service.DirectoryIdentityConfig{})
+	controlIdentityService := service.NewControlIdentityService(controlIdentityRepo, ssoRepo, service.ControlIdentityConfig{RuntimeConfig: appConfigService})
 	rateLimitService := backend.rateLimitService
 	runtimeCtx := RuntimeContext{
 		Config:         &cfg,
@@ -303,6 +307,9 @@ func RunActiveServer(
 	e.Use(middleware.CorrelationIDMiddleware())
 	e.Use(middleware.ClientIPMiddleware())
 	e.Use(middleware.SecurityBanMiddleware(securityService))
+	if err := http.RegisterDirectorySCIM(e, directoryIdentityService, http.DirectorySCIMConfig{RuntimeConfig: appConfigService}); err != nil {
+		log.Fatalf("failed to register directory SCIM routes: %v", err)
+	}
 	runtimeCtx.Echo = e
 	if options.RegisterRoutes != nil {
 		if err := options.RegisterRoutes(runtimeCtx); err != nil {
@@ -360,15 +367,17 @@ func RunActiveServer(
 			apiKeyService,
 			usageMetricsService,
 			http.ControlPortalTelemetry{
-				Reader:         telemetryReader,
-				HTTPMetrics:    telemetryHTTPMetrics,
-				ScrapeHandler:  telemetryScrapeHandler,
-				ScrapeToken:    cfg.GetTelemetryScrapeToken(),
-				SSO:            ssoService,
-				Config:         appConfigService,
-				Logs:           operationLogService,
-				RecallFeedback: recallFeedbackEventService,
-				Dreams:         controlDreamSvc,
+				Reader:          telemetryReader,
+				HTTPMetrics:     telemetryHTTPMetrics,
+				ScrapeHandler:   telemetryScrapeHandler,
+				ScrapeToken:     cfg.GetTelemetryScrapeToken(),
+				SSO:             ssoService,
+				Directory:       directoryIdentityService,
+				ControlIdentity: controlIdentityService,
+				Config:          appConfigService,
+				Logs:            operationLogService,
+				RecallFeedback:  recallFeedbackEventService,
+				Dreams:          controlDreamSvc,
 			},
 			healthConfig,
 			logger,

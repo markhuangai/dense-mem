@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
+
+var ErrDirectoryIdentityNotProvisioned = errors.New("directory identity is not provisioned and active")
 
 type SSORepository interface {
 	ListProviders(ctx context.Context) ([]*domain.SSOProvider, error)
@@ -27,6 +30,8 @@ type SSORepository interface {
 	UpdateMapping(ctx context.Context, mapping *domain.SSOGroupMapping) error
 	DeleteMapping(ctx context.Context, providerID, id uuid.UUID) error
 	ListMappingsForGroups(ctx context.Context, providerID uuid.UUID, groups []string) ([]*domain.SSOGroupMapping, error)
+	DirectoryAuthorityActive(ctx context.Context, providerID uuid.UUID) (bool, error)
+	DirectoryTeamProfileEntitled(ctx context.Context, profileID, providerID, identityID, teamID uuid.UUID, groupID string) (bool, error)
 
 	UpsertIdentity(ctx context.Context, identity *domain.SSOIdentity) error
 	GetIdentity(ctx context.Context, id uuid.UUID) (*domain.SSOIdentity, error)
@@ -73,10 +78,10 @@ func (r *SSORepositoryImpl) listProviders(ctx context.Context, enabledOnly bool)
 	providers := make([]*domain.SSOProvider, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		query := `
-			SELECT id, name, kind, issuer_url, client_id, client_secret_env, scopes, group_claims, groups_endpoint, groups_scopes, enabled, created_at, updated_at
+			SELECT id, name, kind, issuer_url, tenant_id, identity_claim, client_id, client_secret_env, scopes, group_claims, groups_endpoint, groups_scopes, enabled, retired_at, created_at, updated_at
 			FROM sso_providers`
 		if enabledOnly {
-			query += ` WHERE enabled = true`
+			query += ` WHERE enabled = true AND retired_at IS NULL`
 		}
 		query += ` ORDER BY name ASC, id ASC`
 
@@ -104,7 +109,7 @@ func (r *SSORepositoryImpl) GetProvider(ctx context.Context, id uuid.UUID) (*dom
 	var provider *domain.SSOProvider
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
-			SELECT id, name, kind, issuer_url, client_id, client_secret_env, scopes, group_claims, groups_endpoint, groups_scopes, enabled, created_at, updated_at
+			SELECT id, name, kind, issuer_url, tenant_id, identity_claim, client_id, client_secret_env, scopes, group_claims, groups_endpoint, groups_scopes, enabled, retired_at, created_at, updated_at
 			FROM sso_providers
 			WHERE id = $1
 		`, id).Rows()
@@ -143,9 +148,9 @@ func (r *SSORepositoryImpl) CreateProvider(ctx context.Context, provider *domain
 	}
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`
-			INSERT INTO sso_providers (id, name, kind, issuer_url, client_id, client_secret_env, scopes, group_claims, groups_endpoint, groups_scopes, enabled, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
-		`, provider.ID, provider.Name, string(provider.Kind), provider.IssuerURL, provider.ClientID, provider.ClientSecretEnv, pq.Array(provider.Scopes), pq.Array(provider.GroupClaims), provider.GroupsEndpoint, pq.Array(provider.GroupsScopes), provider.Enabled, now).Error
+			INSERT INTO sso_providers (id, name, kind, issuer_url, tenant_id, identity_claim, client_id, client_secret_env, scopes, group_claims, groups_endpoint, groups_scopes, enabled, retired_at, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULL, $14, $14)
+		`, provider.ID, provider.Name, string(provider.Kind), provider.IssuerURL, provider.TenantID, provider.IdentityClaim, provider.ClientID, provider.ClientSecretEnv, pq.Array(provider.Scopes), pq.Array(provider.GroupClaims), provider.GroupsEndpoint, pq.Array(provider.GroupsScopes), provider.Enabled, now).Error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create sso provider: %w", err)
@@ -162,21 +167,27 @@ func (r *SSORepositoryImpl) UpdateProvider(ctx context.Context, provider *domain
 			SET name = $1,
 			    kind = $2,
 			    issuer_url = $3,
-			    client_id = $4,
-			    client_secret_env = $5,
-			    scopes = $6,
-			    group_claims = $7,
-			    groups_endpoint = $8,
-			    groups_scopes = $9,
-			    enabled = $10,
-			    updated_at = $11
-			WHERE id = $12
-		`, provider.Name, string(provider.Kind), provider.IssuerURL, provider.ClientID, provider.ClientSecretEnv, pq.Array(provider.Scopes), pq.Array(provider.GroupClaims), provider.GroupsEndpoint, pq.Array(provider.GroupsScopes), provider.Enabled, now, provider.ID)
+			    tenant_id = $4,
+			    identity_claim = $5,
+			    client_id = $6,
+			    client_secret_env = $7,
+			    scopes = $8,
+			    group_claims = $9,
+			    groups_endpoint = $10,
+			    groups_scopes = $11,
+			    enabled = $12,
+			    retired_at = CASE WHEN $12 THEN NULL ELSE retired_at END,
+			    updated_at = $13
+			WHERE id = $14
+		`, provider.Name, string(provider.Kind), provider.IssuerURL, provider.TenantID, provider.IdentityClaim, provider.ClientID, provider.ClientSecretEnv, pq.Array(provider.Scopes), pq.Array(provider.GroupClaims), provider.GroupsEndpoint, pq.Array(provider.GroupsScopes), provider.Enabled, now, provider.ID)
 		if res.Error != nil {
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
+		}
+		if !provider.Enabled {
+			return disableDirectoryProvisioningForProviderTx(tx, provider.ID, now)
 		}
 		return nil
 	})
@@ -187,8 +198,20 @@ func (r *SSORepositoryImpl) UpdateProvider(ctx context.Context, provider *domain
 }
 
 func (r *SSORepositoryImpl) DeleteProvider(ctx context.Context, id uuid.UUID) error {
+	now := time.Now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		return tx.Exec(`DELETE FROM sso_providers WHERE id = $1`, id).Error
+		res := tx.Exec(`
+			UPDATE sso_providers
+			SET enabled = false, retired_at = COALESCE(retired_at, $1), updated_at = $1
+			WHERE id = $2
+		`, now, id)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return disableDirectoryProvisioningForProviderTx(tx, id, now)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete sso provider: %w", err)
@@ -196,11 +219,29 @@ func (r *SSORepositoryImpl) DeleteProvider(ctx context.Context, id uuid.UUID) er
 	return nil
 }
 
+func disableDirectoryProvisioningForProviderTx(tx *gorm.DB, providerID uuid.UUID, now time.Time) error {
+	if err := tx.Exec(`
+		DELETE FROM sso_directory_oauth_tokens
+		WHERE connector_id IN (
+			SELECT id
+			FROM sso_directory_connectors
+			WHERE provider_id = $1
+		)
+	`, providerID).Error; err != nil {
+		return err
+	}
+	return tx.Exec(`
+		UPDATE sso_directory_connectors
+		SET status = 'disabled', updated_at = $1
+		WHERE provider_id = $2
+	`, now, providerID).Error
+}
+
 func (r *SSORepositoryImpl) ListMappings(ctx context.Context, providerID uuid.UUID) ([]*domain.SSOGroupMapping, error) {
 	mappings := make([]*domain.SSOGroupMapping, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
-			SELECT m.id, m.provider_id, m.team_id, COALESCE(t.name, ''), m.group_id, m.group_name, m.scopes, m.role, m.enabled, m.created_at, m.updated_at
+			SELECT m.id, m.provider_id, m.team_id, COALESCE(t.name, ''), m.group_id, m.group_name, m.scopes, m.role, m.enabled, m.origin, m.retired_at, m.created_at, m.updated_at
 			FROM sso_group_mappings m
 			LEFT JOIN teams t ON t.id = m.team_id
 			WHERE m.provider_id = $1
@@ -237,8 +278,8 @@ func (r *SSORepositoryImpl) CreateMapping(ctx context.Context, mapping *domain.S
 			return err
 		}
 		return tx.Exec(`
-			INSERT INTO sso_group_mappings (id, provider_id, team_id, group_id, group_name, scopes, role, enabled, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+			INSERT INTO sso_group_mappings (id, provider_id, team_id, group_id, group_name, scopes, role, enabled, origin, retired_at, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'manual', NULL, $9, $9)
 		`, mapping.ID, mapping.ProviderID, mapping.TeamID, mapping.GroupID, mapping.GroupName, pq.Array(mapping.Scopes), mapping.Role, mapping.Enabled, now).Error
 	})
 	if err != nil {
@@ -252,13 +293,14 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 	mapping.UpdatedAt = now
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		var currentTeamID string
+		var origin string
 		err := tx.Raw(`
-			SELECT team_id::text
+			SELECT team_id::text, origin
 			FROM sso_group_mappings
 			WHERE id = $1
 			  AND provider_id = $2
 			FOR UPDATE
-		`, mapping.ID, mapping.ProviderID).Row().Scan(&currentTeamID)
+		`, mapping.ID, mapping.ProviderID).Row().Scan(&currentTeamID, &origin)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				return gorm.ErrRecordNotFound
@@ -267,6 +309,9 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 		}
 		if err := setActiveSSOTeamMutationScope(ctx, tx, currentTeamID); err != nil {
 			return err
+		}
+		if origin != "manual" {
+			return fmt.Errorf("directory-managed sso mappings are read-only")
 		}
 		if err := setActiveSSOTeamMutationScope(ctx, tx, mapping.TeamID.String()); err != nil {
 			return err
@@ -279,6 +324,7 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 			    scopes = $4,
 			    role = $5,
 			    enabled = $6,
+			    retired_at = CASE WHEN $6 THEN NULL ELSE COALESCE(retired_at, $7) END,
 			    updated_at = $7
 			WHERE id = $8 AND provider_id = $9
 		`, mapping.TeamID, mapping.GroupID, mapping.GroupName, pq.Array(mapping.Scopes), mapping.Role, mapping.Enabled, now, mapping.ID, mapping.ProviderID)
@@ -297,8 +343,20 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 }
 
 func (r *SSORepositoryImpl) DeleteMapping(ctx context.Context, providerID, id uuid.UUID) error {
+	now := time.Now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		return tx.Exec(`DELETE FROM sso_group_mappings WHERE id = $1 AND provider_id = $2`, id, providerID).Error
+		res := tx.Exec(`
+			UPDATE sso_group_mappings
+			SET enabled = false, retired_at = COALESCE(retired_at, $1), updated_at = $1
+			WHERE id = $2 AND provider_id = $3 AND origin = 'manual'
+		`, now, id, providerID)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete sso group mapping: %w", err)
@@ -313,11 +371,12 @@ func (r *SSORepositoryImpl) ListMappingsForGroups(ctx context.Context, providerI
 	mappings := make([]*domain.SSOGroupMapping, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
-			SELECT m.id, m.provider_id, m.team_id, COALESCE(t.name, ''), m.group_id, m.group_name, m.scopes, m.role, m.enabled, m.created_at, m.updated_at
+			SELECT m.id, m.provider_id, m.team_id, COALESCE(t.name, ''), m.group_id, m.group_name, m.scopes, m.role, m.enabled, m.origin, m.retired_at, m.created_at, m.updated_at
 			FROM sso_group_mappings m
 			JOIN teams t ON t.id = m.team_id
 			WHERE m.provider_id = $1
 				AND m.enabled = true
+				AND m.retired_at IS NULL
 				AND t.status = 'active'
 				AND t.deleted_at IS NULL
 				AND m.group_id = ANY($2)
@@ -340,67 +399,6 @@ func (r *SSORepositoryImpl) ListMappingsForGroups(ctx context.Context, providerI
 		return nil, fmt.Errorf("failed to list matching sso group mappings: %w", err)
 	}
 	return mappings, nil
-}
-
-func (r *SSORepositoryImpl) UpsertIdentity(ctx context.Context, identity *domain.SSOIdentity) error {
-	if identity.ID == uuid.Nil {
-		identity.ID = uuid.New()
-	}
-	now := time.Now().UTC()
-	if identity.LastLoginAt == nil {
-		identity.LastLoginAt = &now
-	}
-	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			INSERT INTO sso_identities (id, provider_id, subject, email, display_name, last_login_at, last_entitlement_check_at, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-			ON CONFLICT (provider_id, subject) DO UPDATE
-			SET email = EXCLUDED.email,
-			    display_name = EXCLUDED.display_name,
-			    last_login_at = EXCLUDED.last_login_at,
-			    last_entitlement_check_at = EXCLUDED.last_entitlement_check_at,
-			    updated_at = EXCLUDED.updated_at
-			RETURNING id, created_at, updated_at
-		`, identity.ID, identity.ProviderID, identity.Subject, identity.Email, identity.DisplayName, identity.LastLoginAt, identity.LastEntitlementCheckAt, now).Row().Scan(&identity.ID, &identity.CreatedAt, &identity.UpdatedAt)
-	})
-	if err != nil {
-		return fmt.Errorf("failed to upsert sso identity: %w", err)
-	}
-	return nil
-}
-
-func (r *SSORepositoryImpl) GetIdentity(ctx context.Context, id uuid.UUID) (*domain.SSOIdentity, error) {
-	return r.getIdentity(ctx, `WHERE id = $1`, id)
-}
-
-func (r *SSORepositoryImpl) GetIdentityByProviderSubject(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOIdentity, error) {
-	return r.getIdentity(ctx, `WHERE provider_id = $1 AND subject = $2`, providerID, subject)
-}
-
-func (r *SSORepositoryImpl) getIdentity(ctx context.Context, where string, args ...any) (*domain.SSOIdentity, error) {
-	var identity *domain.SSOIdentity
-	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		rows, err := tx.Raw(`
-			SELECT id, provider_id, subject, email, display_name, last_login_at, last_entitlement_check_at, created_at, updated_at
-			FROM sso_identities `+where, args...).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		if !rows.Next() {
-			return rows.Err()
-		}
-		scanned, err := scanSSOIdentity(rows)
-		if err != nil {
-			return err
-		}
-		identity = scanned
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get sso identity: %w", err)
-	}
-	return identity, nil
 }
 
 func (r *SSORepositoryImpl) UpsertTeamProfileForMapping(ctx context.Context, identity domain.SSOIdentity, mapping domain.SSOGroupMapping, name string) (*domain.APIKey, error) {
@@ -734,6 +732,8 @@ func scanSSOProvider(rows *sql.Rows) (*domain.SSOProvider, error) {
 		&provider.Name,
 		&kind,
 		&provider.IssuerURL,
+		&provider.TenantID,
+		&provider.IdentityClaim,
 		&provider.ClientID,
 		&provider.ClientSecretEnv,
 		pq.Array(&provider.Scopes),
@@ -741,6 +741,7 @@ func scanSSOProvider(rows *sql.Rows) (*domain.SSOProvider, error) {
 		&provider.GroupsEndpoint,
 		pq.Array(&provider.GroupsScopes),
 		&provider.Enabled,
+		&provider.RetiredAt,
 		&provider.CreatedAt,
 		&provider.UpdatedAt,
 	); err != nil {
@@ -762,6 +763,8 @@ func scanSSOGroupMapping(rows *sql.Rows) (*domain.SSOGroupMapping, error) {
 		pq.Array(&mapping.Scopes),
 		&mapping.Role,
 		&mapping.Enabled,
+		&mapping.Origin,
+		&mapping.RetiredAt,
 		&mapping.CreatedAt,
 		&mapping.UpdatedAt,
 	); err != nil {
@@ -776,8 +779,10 @@ func scanSSOIdentity(rows *sql.Rows) (*domain.SSOIdentity, error) {
 		&identity.ID,
 		&identity.ProviderID,
 		&identity.Subject,
+		&identity.ExternalID,
 		&identity.Email,
 		&identity.DisplayName,
+		&identity.Active,
 		&identity.LastLoginAt,
 		&identity.LastEntitlementCheckAt,
 		&identity.CreatedAt,

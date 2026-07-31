@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -29,6 +30,8 @@ import (
 
 type oidcLoginClaims struct {
 	Subject             string
+	ExternalID          string
+	TenantID            string
 	Email               string
 	DisplayName         string
 	Nonce               string
@@ -39,6 +42,8 @@ type oidcLoginClaims struct {
 	UserInfoError       string
 	UserInfoClaimsError string
 }
+
+var ssoClaimNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,127}$`)
 
 type SSOSetupErrorCode string
 
@@ -104,11 +109,19 @@ func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.
 	}
 	claims := oidcLoginClaims{
 		Subject:           idToken.Subject,
+		ExternalID:        oidcIdentityValue(raw, ssoProvider, idToken.Subject),
+		TenantID:          firstClaimString(raw, "tid"),
 		Email:             firstClaimString(raw, "email", "preferred_username", "upn"),
 		DisplayName:       firstClaimString(raw, "name", "display_name"),
 		Nonce:             firstClaimString(raw, "nonce"),
 		Groups:            groupsFromRawClaims(raw, ssoProvider.GroupClaims),
 		IDTokenClaimNames: rawClaimNames(raw),
+	}
+	if ssoProvider.TenantID != "" && claims.TenantID != ssoProvider.TenantID {
+		return oidcLoginClaims{}, fmt.Errorf("oidc token tenant does not match the configured sso tenant")
+	}
+	if claims.ExternalID != "" {
+		claims.Subject = claims.ExternalID
 	}
 	if claims.Email == "" || claims.DisplayName == "" || len(claims.Groups) == 0 {
 		info, err := provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
@@ -142,6 +155,24 @@ func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.
 		claims.DisplayName = claims.Subject
 	}
 	return claims, nil
+}
+
+func oidcIdentityValue(raw map[string]json.RawMessage, provider domain.SSOProvider, fallback string) string {
+	claim := strings.TrimSpace(provider.IdentityClaim)
+	if claim == "" {
+		claim = "sub"
+		if provider.Kind == domain.SSOProviderKindAzureAD {
+			claim = "oid"
+		}
+	}
+	if claim == "sub" {
+		return fallback
+	}
+	value := firstClaimString(raw, claim)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func rawClaimNames(raw map[string]json.RawMessage) []string {
@@ -564,7 +595,7 @@ func ssoRuntimeReadyForPublicLogin(runtime SSORuntimeConfig) bool {
 }
 
 func ssoProviderReadyForPublicLogin(provider *domain.SSOProvider) bool {
-	if provider == nil || !provider.Enabled {
+	if provider == nil || !provider.Enabled || provider.RetiredAt != nil {
 		return false
 	}
 	copy := *provider
@@ -606,6 +637,17 @@ func normalizeSSOProvider(provider *domain.SSOProvider) error {
 		return fmt.Errorf("sso client_id is required")
 	}
 	provider.ClientSecretEnv = strings.TrimSpace(provider.ClientSecretEnv)
+	provider.TenantID = strings.TrimSpace(provider.TenantID)
+	provider.IdentityClaim = strings.TrimSpace(provider.IdentityClaim)
+	if provider.IdentityClaim == "" {
+		provider.IdentityClaim = "sub"
+		if provider.Kind == domain.SSOProviderKindAzureAD {
+			provider.IdentityClaim = "oid"
+		}
+	}
+	if !ssoClaimNamePattern.MatchString(provider.IdentityClaim) {
+		return fmt.Errorf("sso identity_claim is invalid")
+	}
 	provider.GroupsEndpoint = strings.TrimSpace(provider.GroupsEndpoint)
 	if provider.GroupsEndpoint != "" {
 		parsedEndpoint, err := url.Parse(provider.GroupsEndpoint)

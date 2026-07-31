@@ -19,6 +19,8 @@ type SSOProvider struct {
 	Name            string
 	Kind            SSOProviderKind
 	IssuerURL       string
+	TenantID        string
+	IdentityClaim   string
 	ClientID        string
 	ClientSecretEnv string
 	Scopes          []string
@@ -26,6 +28,7 @@ type SSOProvider struct {
 	GroupsEndpoint  string
 	GroupsScopes    []string
 	Enabled         bool
+	RetiredAt       *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -40,6 +43,8 @@ type SSOGroupMapping struct {
 	Scopes     []string
 	Role       string
 	Enabled    bool
+	Origin     string
+	RetiredAt  *time.Time
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
@@ -48,8 +53,10 @@ type SSOIdentity struct {
 	ID                     uuid.UUID
 	ProviderID             uuid.UUID
 	Subject                string
+	ExternalID             string
 	Email                  string
 	DisplayName            string
+	Active                 bool
 	LastLoginAt            *time.Time
 	LastEntitlementCheckAt *time.Time
 	CreatedAt              time.Time

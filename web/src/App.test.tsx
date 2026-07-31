@@ -281,7 +281,7 @@ beforeEach(() => {
 describe("App", () => {
   it("validates the token before opening the portal", async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse({ message: "invalid token" }, 401));
+      .mockImplementation(() => Promise.resolve(jsonResponse({ message: "invalid token" }, 401)));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App />);

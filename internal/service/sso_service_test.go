@@ -238,48 +238,56 @@ func (r *ssoGroupResolverStub) ResolveGroups(ctx context.Context, provider domai
 }
 
 type ssoRepositoryStub struct {
-	t                    *testing.T
-	providers            map[uuid.UUID]*domain.SSOProvider
-	providerList         []*domain.SSOProvider
-	listProvidersErr     error
-	getProviderErr       error
-	createProviderErr    error
-	updateProviderErr    error
-	deleteProviderErr    error
-	deletedProviderID    uuid.UUID
-	cache                *domain.SSOEntitlementCache
-	cacheErr             error
-	setCacheErr          error
-	savedCache           *domain.SSOEntitlementCache
-	mappings             []*domain.SSOGroupMapping
-	listMappingsErr      error
-	createMappingErr     error
-	updateMappingErr     error
-	deleteMappingErr     error
-	mappingsForGroupsErr error
-	deletedMappingID     uuid.UUID
-	identities           map[uuid.UUID]*domain.SSOIdentity
-	getIdentityErr       error
-	upsertIdentityErr    error
-	upsertProfileErrors  map[uuid.UUID]error
-	listTeamProfilesErr  error
-	teamProfiles         []*domain.SSOTeamProfile
-	ssoProfiles          map[uuid.UUID]*domain.APIKey
-	getSSOProfileErr     error
-	sessions             map[string]*domain.SSOSession
-	getSessionErr        error
-	createSessionErr     error
-	updateSessionErr     error
-	deleteSessionErr     error
-	updatedSessionHash   string
-	deletedSessionHash   string
-	oauthStates          []domain.SSOOAuthState
-	createOAuthStateErr  error
-	consumeOAuthStateErr error
-	consumableState      *domain.SSOOAuthState
-	deleteExpiredAt      time.Time
-	deleteExpiredErr     error
-	createdSession       *domain.SSOSession
+	t                             *testing.T
+	providers                     map[uuid.UUID]*domain.SSOProvider
+	providerList                  []*domain.SSOProvider
+	listProvidersErr              error
+	getProviderErr                error
+	createProviderErr             error
+	updateProviderErr             error
+	deleteProviderErr             error
+	deletedProviderID             uuid.UUID
+	cache                         *domain.SSOEntitlementCache
+	cacheErr                      error
+	setCacheErr                   error
+	savedCache                    *domain.SSOEntitlementCache
+	mappings                      []*domain.SSOGroupMapping
+	listMappingsErr               error
+	createMappingErr              error
+	updateMappingErr              error
+	deleteMappingErr              error
+	mappingsForGroupsErr          error
+	mappingLookupCalls            int
+	deletedMappingID              uuid.UUID
+	identities                    map[uuid.UUID]*domain.SSOIdentity
+	getIdentityErr                error
+	upsertIdentityErr             error
+	upsertIdentityID              uuid.UUID
+	upsertProfileErrors           map[uuid.UUID]error
+	upsertProfileCalls            int
+	listTeamProfilesErr           error
+	teamProfiles                  []*domain.SSOTeamProfile
+	ssoProfiles                   map[uuid.UUID]*domain.APIKey
+	getSSOProfileErr              error
+	directoryAuthorityActive      bool
+	directoryAuthorityErr         error
+	directoryProfileEntitled      map[uuid.UUID]bool
+	directoryProfileEntitledErr   error
+	directoryProfileEntitledCalls []uuid.UUID
+	sessions                      map[string]*domain.SSOSession
+	getSessionErr                 error
+	createSessionErr              error
+	updateSessionErr              error
+	deleteSessionErr              error
+	updatedSessionHash            string
+	deletedSessionHash            string
+	oauthStates                   []domain.SSOOAuthState
+	createOAuthStateErr           error
+	consumeOAuthStateErr          error
+	consumableState               *domain.SSOOAuthState
+	deleteExpiredAt               time.Time
+	deleteExpiredErr              error
+	createdSession                *domain.SSOSession
 }
 
 func (r *ssoRepositoryStub) unexpected(name string) {
@@ -432,6 +440,7 @@ func (r *ssoRepositoryStub) DeleteMapping(ctx context.Context, providerID, id uu
 }
 
 func (r *ssoRepositoryStub) ListMappingsForGroups(ctx context.Context, providerID uuid.UUID, groups []string) ([]*domain.SSOGroupMapping, error) {
+	r.mappingLookupCalls++
 	if r.mappingsForGroupsErr != nil {
 		return nil, r.mappingsForGroupsErr
 	}
@@ -457,7 +466,9 @@ func (r *ssoRepositoryStub) UpsertIdentity(ctx context.Context, identity *domain
 	if r.upsertIdentityErr != nil {
 		return r.upsertIdentityErr
 	}
-	if identity.ID == uuid.Nil {
+	if r.upsertIdentityID != uuid.Nil {
+		identity.ID = r.upsertIdentityID
+	} else if identity.ID == uuid.Nil {
 		identity.ID = uuid.New()
 	}
 	copy := *identity
@@ -486,6 +497,7 @@ func (r *ssoRepositoryStub) GetIdentityByProviderSubject(ctx context.Context, pr
 }
 
 func (r *ssoRepositoryStub) UpsertTeamProfileForMapping(ctx context.Context, identity domain.SSOIdentity, mapping domain.SSOGroupMapping, name string) (*domain.APIKey, error) {
+	r.upsertProfileCalls++
 	if err := r.upsertProfileErrors[mapping.TeamID]; err != nil {
 		return nil, err
 	}
@@ -516,6 +528,21 @@ func (r *ssoRepositoryStub) UpsertTeamProfileForMapping(ctx context.Context, ide
 		Profile: *key,
 	})
 	return key, nil
+}
+
+func (r *ssoRepositoryStub) DirectoryAuthorityActive(ctx context.Context, providerID uuid.UUID) (bool, error) {
+	if r.directoryAuthorityErr != nil {
+		return false, r.directoryAuthorityErr
+	}
+	return r.directoryAuthorityActive, nil
+}
+
+func (r *ssoRepositoryStub) DirectoryTeamProfileEntitled(ctx context.Context, profileID, providerID, identityID, teamID uuid.UUID, groupID string) (bool, error) {
+	r.directoryProfileEntitledCalls = append(r.directoryProfileEntitledCalls, profileID)
+	if r.directoryProfileEntitledErr != nil {
+		return false, r.directoryProfileEntitledErr
+	}
+	return r.directoryProfileEntitled[profileID], nil
 }
 
 func (r *ssoRepositoryStub) ListTeamProfilesForIdentity(ctx context.Context, identityID uuid.UUID) ([]*domain.SSOTeamProfile, error) {
