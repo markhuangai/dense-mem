@@ -126,6 +126,7 @@ type ResumePendingOverdueConflictResolutionInput struct {
 }
 
 type ConflictDerivedEvidenceTarget struct {
+	TaskID               string
 	TeamID               string
 	ConflictID           string
 	SystemProfileID      string
@@ -134,6 +135,14 @@ type ConflictDerivedEvidenceTarget struct {
 	SelectedPositionID   string
 	SourceGroupKey       string
 	EvidenceIndex        int
+}
+
+type ClaimConflictDerivedEvidenceTasksInput struct {
+	TeamID      string
+	ReviewRunID string
+	WorkerID    string
+	Limit       int
+	Lease       time.Duration
 }
 
 type StageConflictDerivedEvidenceResult struct {
@@ -585,7 +594,7 @@ func loadOverdueConflictAssessmentDossier(
 		}
 		return nil, err
 	}
-	positionByID := make(map[string]*OverdueConflictAssessmentPosition)
+	positionIndexByID := make(map[string]int)
 	positionRows, err := tx.WithContext(ctx).Raw(`
 		SELECT position.position_id::text,
 		       position.position_key,
@@ -614,7 +623,7 @@ func loadOverdueConflictAssessmentDossier(
 			return nil, err
 		}
 		dossier.Positions = append(dossier.Positions, position)
-		positionByID[position.PositionID] = &dossier.Positions[len(dossier.Positions)-1]
+		positionIndexByID[position.PositionID] = len(dossier.Positions) - 1
 	}
 	if err := positionRows.Err(); err != nil {
 		return nil, err
@@ -716,7 +725,7 @@ func loadOverdueConflictAssessmentDossier(
 		); err != nil {
 			return nil, err
 		}
-		position, exists := positionByID[item.PositionID]
+		positionIndex, exists := positionIndexByID[item.PositionID]
 		if !exists {
 			return nil, ErrConflictAssessmentStale
 		}
@@ -725,7 +734,7 @@ func loadOverdueConflictAssessmentDossier(
 			value := item.EffectiveAt.UTC()
 			item.EffectiveAt = &value
 		}
-		position.Supports = append(position.Supports, domain.ConflictResolutionSupport{Authority: item.Authority, AcceptedAt: item.AcceptedAt})
+		dossier.Positions[positionIndex].Supports = append(dossier.Positions[positionIndex].Supports, domain.ConflictResolutionSupport{Authority: item.Authority, AcceptedAt: item.AcceptedAt})
 		dossier.Evidence = append(dossier.Evidence, item)
 	}
 	if err := evidenceRows.Err(); err != nil {

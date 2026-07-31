@@ -250,8 +250,8 @@ async function resolveOverdueConflictThroughVerifier() {
   evidence: `${marker}: Dense-Mem overdue primary database is PostgreSQL according to profile A.`,
   sourceGroup: `${runID}:overdue:source:a`,
   authority: "primary",
-    subject: { ref: "project", name: `${marker} project`, kind: "project" },
-    object: { ref: "postgres", name: "PostgreSQL", kind: "product" },
+    subject: { ref: "overdue-project", name: `${marker} project`, kind: "project" },
+    object: { ref: "overdue-postgres", name: "PostgreSQL", kind: "product" },
     relationshipID: "rel:overdue-primary-db-a",
   });
   const overdueTrace = await mcpTool(profileA.apiKey, "trace_memory", {
@@ -269,8 +269,8 @@ async function resolveOverdueConflictThroughVerifier() {
   evidence: `${marker}: Dense-Mem overdue primary database is GraphDB according to profile B.`,
   sourceGroup: `${runID}:overdue:source:b`,
   authority: "primary",
-    subject: { ref: "project", name: `${marker} project`, kind: "project", knownEntityID: overdueSubjectEntityID },
-    object: { ref: "graphdb", name: "GraphDB", kind: "product" },
+    subject: { ref: "overdue-project", name: `${marker} project`, kind: "project", knownEntityID: overdueSubjectEntityID },
+    object: { ref: "overdue-graphdb", name: "GraphDB", kind: "product" },
     relationshipID: "rel:overdue-primary-db-b",
   });
   const openOverdueConflict = await waitForRelationshipConflict(profileB.apiKey, secondOverdue.relationshipID, "open");

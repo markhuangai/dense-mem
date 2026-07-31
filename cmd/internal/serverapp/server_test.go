@@ -137,6 +137,9 @@ func TestProcessTeamConflictReviewCompletesEmptyRun(t *testing.T) {
 	if len(ledger.completes) != 1 {
 		t.Fatalf("complete calls = %#v", ledger.completes)
 	}
+	if len(ledger.derivedInputs) != 1 || ledger.derivedInputs[0].TeamID != ledger.run.TeamID {
+		t.Fatalf("derived evidence retry inputs = %#v", ledger.derivedInputs)
+	}
 	complete := ledger.completes[0]
 	if complete.Status != "completed" || complete.ClaimedCases != 0 {
 		t.Fatalf("complete input = %#v", complete)
@@ -222,6 +225,8 @@ type conflictReviewLedgerStub struct {
 	reserveErr    error
 	claimBatches  [][]repository.RelationshipConflictCaseRecord
 	claimErr      error
+	derivedErr    error
+	derivedInputs []repository.ClaimConflictDerivedEvidenceTasksInput
 	reviewResults map[string]*repository.ReviewRelationshipConflictCaseResult
 	reviewErrs    map[string]error
 	completes     []repository.ConflictReviewRunCompleteInput
@@ -289,6 +294,11 @@ func (s *conflictReviewLedgerStub) ReviewRelationshipConflictCase(_ context.Cont
 		return result, nil
 	}
 	return &repository.ReviewRelationshipConflictCaseResult{Outcome: repository.ConflictReviewOutcomeNoop}, nil
+}
+
+func (s *conflictReviewLedgerStub) ProcessPendingConflictDerivedEvidence(_ context.Context, input repository.ClaimConflictDerivedEvidenceTasksInput) (int, error) {
+	s.derivedInputs = append(s.derivedInputs, input)
+	return 0, s.derivedErr
 }
 
 func (s *conflictReviewLedgerStub) CompleteRelationshipConflictReviewRun(_ context.Context, input repository.ConflictReviewRunCompleteInput) error {

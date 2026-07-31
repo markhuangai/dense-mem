@@ -381,6 +381,8 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 	require.NotNil(t, dossier)
 	assert.Len(t, dossier.Positions, 2)
 	assert.Len(t, dossier.Evidence, 4)
+	assert.Len(t, dossier.Positions[0].Supports, 2)
+	assert.Len(t, dossier.Positions[1].Supports, 2)
 	var storedLocalAssessmentDate string
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
 		return tx.Raw(`
@@ -453,14 +455,37 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 	require.True(t, applied.Resolved)
 	assert.Contains(t, applied.RetractedEvidenceIDs, losingFragmentID)
 	require.Len(t, applied.DerivedEvidence, 1)
+	assert.NotEmpty(t, applied.DerivedEvidence[0].TaskID)
 
-	derived, err := ledgerRepo.StageConflictDerivedEvidence(ctx, applied.DerivedEvidence[0])
+	claimedDerived, err := ledgerRepo.ClaimConflictDerivedEvidenceTasks(ctx, ClaimConflictDerivedEvidenceTasksInput{
+		TeamID:      teamID,
+		ReviewRunID: uuid.NewString(),
+		WorkerID:    "worker-overdue-derived-first",
+		Limit:       1,
+		Lease:       time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimedDerived, 1)
+	assert.Equal(t, applied.DerivedEvidence[0].TaskID, claimedDerived[0].TaskID)
+	require.NoError(t, ledgerRepo.RecordConflictDerivedEvidenceFailure(ctx, claimedDerived[0], "staging_failed"))
+
+	claimedDerived, err = ledgerRepo.ClaimConflictDerivedEvidenceTasks(ctx, ClaimConflictDerivedEvidenceTasksInput{
+		TeamID:      teamID,
+		ReviewRunID: uuid.NewString(),
+		WorkerID:    "worker-overdue-derived-retry",
+		Limit:       1,
+		Lease:       time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimedDerived, 1)
+	derived, err := ledgerRepo.StageConflictDerivedEvidence(ctx, claimedDerived[0])
 	require.NoError(t, err)
 	require.NotEmpty(t, derived.IngestID)
 	require.NotEmpty(t, derived.ReplacementFragment)
 
 	var conflictStatus, resolutionReason, loserStatus, searchState, systemProfileID, authSource, replacementAuthority string
-	var loserSupportCount, derivationCount, replacementSearchDocuments, relationshipCountBeforeDerived int64
+	var loserSupportCount, derivationCount, replacementSearchDocuments, relationshipCountBeforeDerived, derivedTaskAttempts int64
+	var derivedTaskStatus string
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Raw(`
 			SELECT status, resolution_reason
@@ -504,6 +529,12 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 			  AND conflict_id = ?::uuid
 		`, teamID, conflictID).Scan(&derivationCount).Error)
 		require.NoError(t, tx.Raw(`
+			SELECT status, attempts
+			FROM relationship_conflict_derived_evidence_tasks
+			WHERE team_id = ?::uuid
+			  AND derived_evidence_task_id = ?::uuid
+		`, teamID, applied.DerivedEvidence[0].TaskID).Row().Scan(&derivedTaskStatus, &derivedTaskAttempts))
+		require.NoError(t, tx.Raw(`
 			SELECT count(*)
 			FROM relationship_records
 			WHERE team_id = ?::uuid
@@ -525,6 +556,8 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 	assert.Equal(t, "system", authSource)
 	assert.Equal(t, "inferred", replacementAuthority)
 	assert.Equal(t, int64(1), derivationCount)
+	assert.Equal(t, "completed", derivedTaskStatus)
+	assert.Equal(t, int64(2), derivedTaskAttempts)
 	assert.Equal(t, int64(0), replacementSearchDocuments)
 
 	derivedIngest, err := ledgerRepo.GetPlacementRun(ctx, GetPlacementRunInput{

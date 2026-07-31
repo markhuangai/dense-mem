@@ -615,6 +615,17 @@ func processTeamConflictReview(
 		WorkerID:    workerID,
 		Status:      "completed",
 	}
+	if _, err := ledger.ProcessPendingConflictDerivedEvidence(ctx, repository.ClaimConflictDerivedEvidenceTasksInput{
+		TeamID:      teamID,
+		ReviewRunID: run.ReviewRunID,
+		WorkerID:    workerID,
+		Limit:       cfg.GetConflictReviewBatchSize(),
+		Lease:       lease,
+	}); err != nil {
+		counts.Status = "failed"
+		counts.LastError = "derived evidence retry failed"
+		outcome = "partial_error"
+	}
 	attempted := map[string]struct{}{}
 	for {
 		excluded := make([]string, 0, len(attempted))
@@ -699,6 +710,7 @@ type conflictReviewLedger interface {
 	ReserveRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error)
 	ClaimRelationshipConflictCases(context.Context, repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error)
 	ReviewRelationshipConflictCase(context.Context, repository.ReviewRelationshipConflictCaseInput) (*repository.ReviewRelationshipConflictCaseResult, error)
+	ProcessPendingConflictDerivedEvidence(context.Context, repository.ClaimConflictDerivedEvidenceTasksInput) (int, error)
 	CompleteRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunCompleteInput) error
 }
 

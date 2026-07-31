@@ -203,6 +203,10 @@ CREATE TABLE IF NOT EXISTS relationship_conflict_ai_assessment_attempts (
 CREATE INDEX IF NOT EXISTS relationship_conflict_ai_assessment_case_idx
     ON relationship_conflict_ai_assessment_attempts(team_id, conflict_id, case_version, created_at ASC);
 
+CREATE INDEX IF NOT EXISTS relationship_conflict_ai_assessment_failure_count_idx
+    ON relationship_conflict_ai_assessment_attempts(team_id, conflict_id, case_version, model, policy_version)
+    WHERE status = 'failed';
+
 CREATE TABLE IF NOT EXISTS relationship_conflict_ai_assessment_events (
     team_id UUID NOT NULL,
     assessment_event_id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -284,6 +288,46 @@ CREATE TRIGGER relationship_conflict_evidence_derivations_append_only
     BEFORE UPDATE OR DELETE ON relationship_conflict_evidence_derivations
     FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation();
 
+CREATE TABLE IF NOT EXISTS relationship_conflict_derived_evidence_tasks (
+    team_id UUID NOT NULL,
+    derived_evidence_task_id UUID NOT NULL DEFAULT gen_random_uuid(),
+    resolution_plan_id UUID NOT NULL,
+    conflict_id UUID NOT NULL,
+    target_fragment_id UUID NOT NULL,
+    target_owner_profile_id UUID NOT NULL,
+    selected_position_id UUID NOT NULL,
+    system_profile_id UUID NOT NULL,
+    source_group_key TEXT NOT NULL,
+    origin_evidence_index INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    lease_worker_id TEXT NULL,
+    lease_until TIMESTAMPTZ NULL,
+    last_review_run_id UUID NULL,
+    last_failure_class TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ NULL,
+    PRIMARY KEY (team_id, derived_evidence_task_id),
+    UNIQUE (team_id, conflict_id, target_fragment_id),
+    FOREIGN KEY (team_id, resolution_plan_id)
+        REFERENCES relationship_conflict_resolution_plans(team_id, resolution_plan_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, conflict_id) REFERENCES relationship_conflict_cases(team_id, conflict_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, target_fragment_id, target_owner_profile_id)
+        REFERENCES evidence_fragments(team_id, fragment_id, owner_profile_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, selected_position_id) REFERENCES relationship_conflict_positions(team_id, position_id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, system_profile_id) REFERENCES semantic_profile_refs(team_id, profile_id) ON DELETE RESTRICT,
+    CONSTRAINT relationship_conflict_derived_evidence_tasks_status_check CHECK (status IN ('pending', 'processing', 'completed')),
+    CONSTRAINT relationship_conflict_derived_evidence_tasks_attempts_check CHECK (attempts >= 0),
+    CONSTRAINT relationship_conflict_derived_evidence_tasks_source_group_check CHECK (btrim(source_group_key) <> ''),
+    CONSTRAINT relationship_conflict_derived_evidence_tasks_origin_index_check CHECK (origin_evidence_index >= 0),
+    CONSTRAINT relationship_conflict_derived_evidence_tasks_failure_length_check CHECK (char_length(last_failure_class) <= 128)
+);
+
+CREATE INDEX IF NOT EXISTS relationship_conflict_derived_evidence_tasks_claim_idx
+    ON relationship_conflict_derived_evidence_tasks(team_id, status, lease_until, created_at ASC, derived_evidence_task_id ASC)
+    WHERE status IN ('pending', 'processing');
+
 ALTER TABLE relationship_conflict_ai_assessment_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE relationship_conflict_ai_assessment_attempts FORCE ROW LEVEL SECURITY;
 ALTER TABLE relationship_conflict_ai_assessment_events ENABLE ROW LEVEL SECURITY;
@@ -292,6 +336,8 @@ ALTER TABLE relationship_conflict_resolution_plans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE relationship_conflict_resolution_plans FORCE ROW LEVEL SECURITY;
 ALTER TABLE relationship_conflict_evidence_derivations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE relationship_conflict_evidence_derivations FORCE ROW LEVEL SECURITY;
+ALTER TABLE relationship_conflict_derived_evidence_tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE relationship_conflict_derived_evidence_tasks FORCE ROW LEVEL SECURITY;
 
 DO $$
 DECLARE
@@ -301,7 +347,8 @@ BEGIN
         'relationship_conflict_ai_assessment_attempts',
         'relationship_conflict_ai_assessment_events',
         'relationship_conflict_resolution_plans',
-        'relationship_conflict_evidence_derivations'
+        'relationship_conflict_evidence_derivations',
+        'relationship_conflict_derived_evidence_tasks'
     ]
     LOOP
         EXECUTE format('DROP POLICY IF EXISTS %I ON %I', table_name || '_select', table_name);

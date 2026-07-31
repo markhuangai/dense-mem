@@ -109,6 +109,10 @@ func (r *LedgerRepositoryImpl) ApplyOverdueConflictResolution(
 			result.Pending = true
 			return nil
 		}
+		systemProfileID, err := ensureConflictSystemProfile(ctx, tx, input.TeamID)
+		if err != nil {
+			return err
+		}
 		evaluation := RelationshipConflictEvaluation{
 			Outcome:             ConflictReviewOutcomeResolve,
 			Stage:               "overdue_" + input.Method,
@@ -127,11 +131,18 @@ func (r *LedgerRepositoryImpl) ApplyOverdueConflictResolution(
 		if err != nil {
 			return err
 		}
-		systemProfileID, err := ensureConflictSystemProfile(ctx, tx, input.TeamID)
+		retracted, err := retractConflictLosingEvidence(ctx, tx, input, systemProfileID, targets)
 		if err != nil {
 			return err
 		}
-		retracted, err := retractConflictLosingEvidence(ctx, tx, input, systemProfileID, targets)
+		derived, err := enqueueConflictDerivedEvidenceTasks(ctx, tx, planID, conflictDerivedEvidenceTargets(
+			input.TeamID,
+			input.ConflictID,
+			systemProfileID,
+			input.PreferredPositionID,
+			targets,
+			retracted,
+		))
 		if err != nil {
 			return err
 		}
@@ -153,7 +164,7 @@ func (r *LedgerRepositoryImpl) ApplyOverdueConflictResolution(
 		result.Resolved = true
 		result.UpdatedRelationships = updated
 		result.RetractedEvidenceIDs = retracted
-		result.DerivedEvidence = conflictDerivedEvidenceTargets(input.TeamID, input.ConflictID, systemProfileID, input.PreferredPositionID, targets, retracted)
+		result.DerivedEvidence = derived
 		return nil
 	})
 	if err != nil {
@@ -237,149 +248,6 @@ func (r *LedgerRepositoryImpl) ResumePendingOverdueConflictResolution(
 	return result, true, nil
 }
 
-func (r *LedgerRepositoryImpl) StageConflictDerivedEvidence(
-	ctx context.Context,
-	target ConflictDerivedEvidenceTarget,
-) (*StageConflictDerivedEvidenceResult, error) {
-	target = normalizeConflictDerivedEvidenceTarget(target)
-	if err := validateConflictDerivedEvidenceTarget(target); err != nil {
-		return nil, err
-	}
-	content := "Overdue conflict review retracted prior evidence. This deletion-only derivation cannot establish a semantic relationship."
-	requestHash := sha256Hex(strings.Join([]string{
-		target.ConflictID,
-		target.TargetFragmentID,
-		target.SelectedPositionID,
-		target.SourceGroupKey,
-		fmt.Sprint(target.EvidenceIndex),
-		content,
-	}, "\x00"))
-	ingest, err := r.CreateIngest(ctx, CreateIngestInput{
-		TeamID:         target.TeamID,
-		OwnerProfileID: target.SystemProfileID,
-		IdempotencyKey: "conflict-derived:" + target.ConflictID + ":" + target.TargetFragmentID,
-		RequestHash:    requestHash,
-		SourceSummary:  "overdue conflict deletion-only derivation",
-		Metadata: map[string]any{
-			"conflict_id":                        target.ConflictID,
-			"target_fragment_id":                 target.TargetFragmentID,
-			"target_owner_profile_id":            target.TargetOwnerProfileID,
-			"selected_position_id":               target.SelectedPositionID,
-			"conflict_resolution_deletion_only":  true,
-			"conflict_resolution_policy_version": domain.ConflictOverduePolicyVersion,
-		},
-		Evidence: []EvidenceInput{{
-			Content:    content,
-			SourceType: "observation",
-			Authority:  string(domain.AuthorityInferred),
-			SourceRef:  "conflict:" + target.ConflictID,
-			Metadata: map[string]any{
-				"conflict_id":                       target.ConflictID,
-				"target_fragment_id":                target.TargetFragmentID,
-				"target_owner_profile_id":           target.TargetOwnerProfileID,
-				"selected_position_id":              target.SelectedPositionID,
-				"contract_source_group":             target.SourceGroupKey,
-				"origin_evidence_index":             target.EvidenceIndex,
-				"conflict_resolution_deletion_only": true,
-				"derived_authority":                 string(domain.AuthorityInferred),
-			},
-		}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("conflict review: stage derived evidence: %w", err)
-	}
-	if ingest == nil || ingest.IngestID == "" || len(ingest.Evidence) != 1 || ingest.Evidence[0].FragmentID == "" {
-		return nil, errors.New("conflict review: derived evidence ingest is incomplete")
-	}
-	result := &StageConflictDerivedEvidenceResult{
-		IngestID:            ingest.IngestID,
-		ReplacementFragment: ingest.Evidence[0].FragmentID,
-		Existing:            ingest.Existing,
-	}
-	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		if err := setConflictSystemTeamContext(ctx, tx, target.TeamID); err != nil {
-			return err
-		}
-		if err := ensureActiveTeamForMutation(ctx, tx, target.TeamID); err != nil {
-			return err
-		}
-		var existingReplacement string
-		err := tx.WithContext(ctx).Raw(`
-			INSERT INTO relationship_conflict_evidence_derivations (
-			    team_id, conflict_id, target_fragment_id, target_owner_profile_id,
-			    selected_position_id, replacement_fragment_id, system_profile_id
-		) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-			    ?::uuid, ?::uuid, ?::uuid
-			)
-			ON CONFLICT (team_id, conflict_id, target_fragment_id) DO NOTHING
-			RETURNING replacement_fragment_id::text
-		`, target.TeamID, target.ConflictID, target.TargetFragmentID, target.TargetOwnerProfileID,
-			target.SelectedPositionID, result.ReplacementFragment, target.SystemProfileID).Row().Scan(&existingReplacement)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if existingReplacement == "" {
-			if err := tx.WithContext(ctx).Raw(`
-				SELECT replacement_fragment_id::text
-				FROM relationship_conflict_evidence_derivations
-				WHERE team_id = ?::uuid
-				  AND conflict_id = ?::uuid
-				  AND target_fragment_id = ?::uuid
-			`, target.TeamID, target.ConflictID, target.TargetFragmentID).Row().Scan(&existingReplacement); err != nil {
-				return err
-			}
-			result.Existing = true
-		}
-		if existingReplacement != result.ReplacementFragment {
-			return ErrConflictAssessmentStale
-		}
-		return appendRelationshipConflictEvent(ctx, tx, target.TeamID, target.ConflictID, target.SelectedPositionID, "", "", string(domain.RelationshipConflictEventDerivedStaged), "staged", "case:"+target.ConflictID+":evidence:"+target.TargetFragmentID+":derived_staged", map[string]any{
-			"target_fragment_id":      target.TargetFragmentID,
-			"replacement_fragment_id": result.ReplacementFragment,
-			"replacement_ingest_id":   result.IngestID,
-			"source_group_key":        target.SourceGroupKey,
-			"origin_evidence_index":   target.EvidenceIndex,
-			"authority":               string(domain.AuthorityInferred),
-		})
-	})
-	if err != nil {
-		return nil, fmt.Errorf("conflict review: record derived evidence: %w", err)
-	}
-	return result, nil
-}
-
-func (r *LedgerRepositoryImpl) RecordConflictDerivedEvidenceFailure(
-	ctx context.Context,
-	target ConflictDerivedEvidenceTarget,
-	failureClass string,
-) error {
-	target = normalizeConflictDerivedEvidenceTarget(target)
-	if err := validateConflictDerivedEvidenceTarget(target); err != nil {
-		return err
-	}
-	failureClass = strings.TrimSpace(failureClass)
-	if failureClass == "" || len(failureClass) > 128 {
-		return errors.New("derived evidence failure_class is invalid")
-	}
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		if err := setConflictSystemTeamContext(ctx, tx, target.TeamID); err != nil {
-			return err
-		}
-		if err := ensureActiveTeamForMutation(ctx, tx, target.TeamID); err != nil {
-			return err
-		}
-		return appendRelationshipConflictEvent(ctx, tx, target.TeamID, target.ConflictID, target.SelectedPositionID, "", "", string(domain.RelationshipConflictEventDerivedFailed), failureClass, "case:"+target.ConflictID+":evidence:"+target.TargetFragmentID+":derived_failed", map[string]any{
-			"target_fragment_id": target.TargetFragmentID,
-			"failure_class":      failureClass,
-		})
-	})
-	if err != nil {
-		return fmt.Errorf("conflict review: record derived evidence failure: %w", err)
-	}
-	return nil
-}
-
 func normalizeApplyOverdueConflictResolutionInput(input ApplyOverdueConflictResolutionInput) ApplyOverdueConflictResolutionInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.ConflictID = strings.TrimSpace(input.ConflictID)
@@ -410,6 +278,7 @@ func normalizeResumePendingOverdueConflictResolutionInput(input ResumePendingOve
 }
 
 func normalizeConflictDerivedEvidenceTarget(target ConflictDerivedEvidenceTarget) ConflictDerivedEvidenceTarget {
+	target.TaskID = strings.TrimSpace(target.TaskID)
 	target.TeamID = strings.TrimSpace(target.TeamID)
 	target.ConflictID = strings.TrimSpace(target.ConflictID)
 	target.SystemProfileID = strings.TrimSpace(target.SystemProfileID)
@@ -418,6 +287,13 @@ func normalizeConflictDerivedEvidenceTarget(target ConflictDerivedEvidenceTarget
 	target.SelectedPositionID = strings.TrimSpace(target.SelectedPositionID)
 	target.SourceGroupKey = strings.TrimSpace(target.SourceGroupKey)
 	return target
+}
+
+func normalizeClaimConflictDerivedEvidenceTasksInput(input ClaimConflictDerivedEvidenceTasksInput) ClaimConflictDerivedEvidenceTasksInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.ReviewRunID = strings.TrimSpace(input.ReviewRunID)
+	input.WorkerID = strings.TrimSpace(input.WorkerID)
+	return input
 }
 
 func validateApplyOverdueConflictResolutionInput(input ApplyOverdueConflictResolutionInput) error {
@@ -475,6 +351,7 @@ func validateConflictDerivedEvidenceTarget(target ConflictDerivedEvidenceTarget)
 		name string
 		id   string
 	}{
+		{name: "derived_evidence_task_id", id: target.TaskID},
 		{name: "team_id", id: target.TeamID},
 		{name: "conflict_id", id: target.ConflictID},
 		{name: "system_profile_id", id: target.SystemProfileID},
@@ -494,6 +371,30 @@ func validateConflictDerivedEvidenceTarget(target ConflictDerivedEvidenceTarget)
 	}
 	if target.EvidenceIndex < 0 {
 		return errors.New("evidence_index must not be negative")
+	}
+	return nil
+}
+
+func validateClaimConflictDerivedEvidenceTasksInput(input ClaimConflictDerivedEvidenceTasksInput) error {
+	for _, value := range []struct {
+		name string
+		id   string
+	}{
+		{name: "team_id", id: input.TeamID},
+		{name: "review_run_id", id: input.ReviewRunID},
+	} {
+		if _, err := uuid.Parse(value.id); err != nil {
+			return fmt.Errorf("%s is required: %w", value.name, err)
+		}
+	}
+	if input.WorkerID == "" {
+		return errors.New("worker_id is required")
+	}
+	if input.Limit < 1 || input.Limit > conflictResolutionMaxFragments {
+		return fmt.Errorf("derived evidence task limit must be between 1 and %d", conflictResolutionMaxFragments)
+	}
+	if input.Lease <= 0 {
+		return errors.New("derived evidence task lease is required")
 	}
 	return nil
 }
@@ -975,4 +876,48 @@ func conflictDerivedEvidenceTargets(
 		})
 	}
 	return result
+}
+
+func enqueueConflictDerivedEvidenceTasks(
+	ctx context.Context,
+	tx *gorm.DB,
+	resolutionPlanID string,
+	targets []ConflictDerivedEvidenceTarget,
+) ([]ConflictDerivedEvidenceTarget, error) {
+	result := make([]ConflictDerivedEvidenceTarget, 0, len(targets))
+	for _, target := range targets {
+		var taskID string
+		err := tx.WithContext(ctx).Raw(`
+			INSERT INTO relationship_conflict_derived_evidence_tasks (
+			    team_id, resolution_plan_id, conflict_id,
+			    target_fragment_id, target_owner_profile_id, selected_position_id,
+			    system_profile_id, source_group_key, origin_evidence_index
+		) VALUES (
+			    ?::uuid, ?::uuid, ?::uuid,
+			    ?::uuid, ?::uuid, ?::uuid,
+			    ?::uuid, ?, ?
+		)
+			ON CONFLICT (team_id, conflict_id, target_fragment_id) DO NOTHING
+			RETURNING derived_evidence_task_id::text
+		`, target.TeamID, resolutionPlanID, target.ConflictID,
+			target.TargetFragmentID, target.TargetOwnerProfileID, target.SelectedPositionID,
+			target.SystemProfileID, target.SourceGroupKey, target.EvidenceIndex).Row().Scan(&taskID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		if taskID == "" {
+			if err := tx.WithContext(ctx).Raw(`
+				SELECT derived_evidence_task_id::text
+				FROM relationship_conflict_derived_evidence_tasks
+				WHERE team_id = ?::uuid
+				  AND conflict_id = ?::uuid
+				  AND target_fragment_id = ?::uuid
+			`, target.TeamID, target.ConflictID, target.TargetFragmentID).Row().Scan(&taskID); err != nil {
+				return nil, err
+			}
+		}
+		target.TaskID = taskID
+		result = append(result, target)
+	}
+	return result, nil
 }

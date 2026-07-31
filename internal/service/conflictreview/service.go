@@ -22,6 +22,7 @@ type Repository interface {
 	ReserveOverdueConflictAssessment(context.Context, repository.ReserveOverdueConflictAssessmentInput) (*repository.OverdueConflictAssessmentReservation, *repository.OverdueConflictAssessmentDossier, bool, error)
 	CompleteOverdueConflictAssessment(context.Context, repository.CompleteOverdueConflictAssessmentInput) (*repository.CompleteOverdueConflictAssessmentResult, error)
 	ApplyOverdueConflictResolution(context.Context, repository.ApplyOverdueConflictResolutionInput) (*repository.ApplyOverdueConflictResolutionResult, error)
+	ClaimConflictDerivedEvidenceTasks(context.Context, repository.ClaimConflictDerivedEvidenceTasksInput) ([]repository.ConflictDerivedEvidenceTarget, error)
 	StageConflictDerivedEvidence(context.Context, repository.ConflictDerivedEvidenceTarget) (*repository.StageConflictDerivedEvidenceResult, error)
 	RecordConflictDerivedEvidenceFailure(context.Context, repository.ConflictDerivedEvidenceTarget, string) error
 }
@@ -150,6 +151,33 @@ func (s *Service) ReviewRelationshipConflictCase(
 		return s.recordAssessmentFailure(ctx, result, input, reservation, dossier, conflictAssessmentFailureClass(err))
 	}
 	return s.applyAssessmentResponse(ctx, result, input, reservation, dossier, response)
+}
+
+func (s *Service) ProcessPendingConflictDerivedEvidence(
+	ctx context.Context,
+	input repository.ClaimConflictDerivedEvidenceTasksInput,
+) (int, error) {
+	if s == nil || s.repository == nil {
+		return 0, errors.New("conflict review service is not configured")
+	}
+	staged := 0
+	for {
+		targets, err := s.repository.ClaimConflictDerivedEvidenceTasks(ctx, input)
+		if err != nil {
+			return staged, err
+		}
+		if len(targets) == 0 {
+			return staged, nil
+		}
+		completed, err := s.stageConflictDerivedEvidence(ctx, targets)
+		staged += completed
+		if err != nil {
+			return staged, err
+		}
+		if len(targets) < input.Limit {
+			return staged, nil
+		}
+	}
 }
 
 func (s *Service) applyAssessmentResponse(
@@ -319,16 +347,25 @@ func (s *Service) applyResolutionResult(
 	result.Stage = "overdue_" + result.ResolutionMethod
 	result.UpdatedRelationships = append([]string(nil), applied.UpdatedRelationships...)
 	result.RetractedEvidenceIDs = append([]string(nil), applied.RetractedEvidenceIDs...)
-	for _, target := range applied.DerivedEvidence {
+	if _, err := s.stageConflictDerivedEvidence(ctx, applied.DerivedEvidence); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *Service) stageConflictDerivedEvidence(ctx context.Context, targets []repository.ConflictDerivedEvidenceTarget) (int, error) {
+	staged := 0
+	for _, target := range targets {
 		if _, err := s.repository.StageConflictDerivedEvidence(ctx, target); err != nil {
 			failureErr := s.repository.RecordConflictDerivedEvidenceFailure(ctx, target, "staging_failed")
 			if failureErr != nil {
-				return nil, errors.Join(err, failureErr)
+				return staged, errors.Join(err, failureErr)
 			}
-			return nil, err
+			return staged, err
 		}
+		staged++
 	}
-	return result, nil
+	return staged, nil
 }
 
 func (s *Service) handleAssessmentCompletionError(result *repository.ReviewRelationshipConflictCaseResult, err error) (*repository.ReviewRelationshipConflictCaseResult, error) {

@@ -46,6 +46,10 @@ func (r *Runner) ReviewRelationshipConflictCase(ctx context.Context, input repos
 	return r.service.ReviewRelationshipConflictCase(ctx, input)
 }
 
+func (r *Runner) ProcessPendingConflictDerivedEvidence(ctx context.Context, input repository.ClaimConflictDerivedEvidenceTasksInput) (int, error) {
+	return r.service.ProcessPendingConflictDerivedEvidence(ctx, input)
+}
+
 func (r *Runner) CompleteRelationshipConflictReviewRun(ctx context.Context, input repository.ConflictReviewRunCompleteInput) error {
 	return r.ledger.CompleteRelationshipConflictReviewRun(ctx, input)
 }

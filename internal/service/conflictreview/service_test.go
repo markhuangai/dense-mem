@@ -25,6 +25,7 @@ const (
 	conflictReviewTestFragmentBID = "00000000-0000-0000-0000-000000000302"
 	conflictReviewTestSupportAID  = "00000000-0000-0000-0000-000000000401"
 	conflictReviewTestSupportBID  = "00000000-0000-0000-0000-000000000402"
+	conflictReviewTestTaskID      = "00000000-0000-0000-0000-000000000501"
 	conflictReviewTestWorkerID    = "conflict-review-test"
 )
 
@@ -210,6 +211,7 @@ func TestServiceLeavesUnresolvableLastWriteWinsCaseOverdue(t *testing.T) {
 func TestServiceRecordsDerivedEvidenceStagingFailure(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	repo.applyResult.DerivedEvidence = []repository.ConflictDerivedEvidenceTarget{{
+		TaskID:               conflictReviewTestTaskID,
 		TeamID:               conflictReviewTestTeamID,
 		ConflictID:           conflictReviewTestConflictID,
 		SystemProfileID:      conflictReviewTestTeamID,
@@ -234,6 +236,34 @@ func TestServiceRecordsDerivedEvidenceStagingFailure(t *testing.T) {
 	require.Len(t, repo.stagedTargets, 1)
 	require.Len(t, repo.recordedFailures, 1)
 	assert.Equal(t, "staging_failed", repo.recordedFailures[0].failureClass)
+}
+
+func TestServiceProcessesPendingDerivedEvidence(t *testing.T) {
+	repo := newConflictReviewRepositoryStub(t)
+	repo.derivedBatches = [][]repository.ConflictDerivedEvidenceTarget{{{
+		TaskID:               conflictReviewTestTaskID,
+		TeamID:               conflictReviewTestTeamID,
+		ConflictID:           conflictReviewTestConflictID,
+		SystemProfileID:      conflictReviewTestTeamID,
+		TargetFragmentID:     conflictReviewTestFragmentAID,
+		TargetOwnerProfileID: conflictReviewTestTeamID,
+		SelectedPositionID:   conflictReviewTestPositionAID,
+		SourceGroupKey:       "source-a",
+	}}}
+	service := newConflictReviewService(t, repo, &conflictReviewProviderStub{})
+
+	staged, err := service.ProcessPendingConflictDerivedEvidence(context.Background(), repository.ClaimConflictDerivedEvidenceTasksInput{
+		TeamID:      conflictReviewTestTeamID,
+		ReviewRunID: conflictReviewTestReviewRunID,
+		WorkerID:    conflictReviewTestWorkerID,
+		Limit:       2,
+		Lease:       time.Minute,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, staged)
+	require.Len(t, repo.derivedClaimInputs, 1)
+	require.Len(t, repo.stagedTargets, 1)
 }
 
 func TestServiceLeavesAlreadyReservedAssessmentUntouched(t *testing.T) {
@@ -405,27 +435,30 @@ func newConflictReviewRepositoryStub(t *testing.T) *conflictReviewRepositoryStub
 }
 
 type conflictReviewRepositoryStub struct {
-	reviewResult   *repository.ReviewRelationshipConflictCaseResult
-	reservation    *repository.OverdueConflictAssessmentReservation
-	dossier        *repository.OverdueConflictAssessmentDossier
-	completeResult repository.CompleteOverdueConflictAssessmentResult
-	applyResult    *repository.ApplyOverdueConflictResolutionResult
-	pendingFound   bool
-	pendingResult  *repository.ApplyOverdueConflictResolutionResult
-	reserved       bool
-	reviewErr      error
-	resumeErr      error
-	reserveErr     error
-	completeErr    error
-	applyErr       error
-	stageErr       error
-	recordStageErr error
+	reviewResult    *repository.ReviewRelationshipConflictCaseResult
+	reservation     *repository.OverdueConflictAssessmentReservation
+	dossier         *repository.OverdueConflictAssessmentDossier
+	completeResult  repository.CompleteOverdueConflictAssessmentResult
+	applyResult     *repository.ApplyOverdueConflictResolutionResult
+	pendingFound    bool
+	pendingResult   *repository.ApplyOverdueConflictResolutionResult
+	reserved        bool
+	reviewErr       error
+	resumeErr       error
+	reserveErr      error
+	completeErr     error
+	applyErr        error
+	derivedClaimErr error
+	stageErr        error
+	recordStageErr  error
 
-	reserveInputs    []repository.ReserveOverdueConflictAssessmentInput
-	completions      []repository.CompleteOverdueConflictAssessmentInput
-	applyInputs      []repository.ApplyOverdueConflictResolutionInput
-	stagedTargets    []repository.ConflictDerivedEvidenceTarget
-	recordedFailures []conflictReviewRecordedFailure
+	reserveInputs      []repository.ReserveOverdueConflictAssessmentInput
+	completions        []repository.CompleteOverdueConflictAssessmentInput
+	applyInputs        []repository.ApplyOverdueConflictResolutionInput
+	derivedClaimInputs []repository.ClaimConflictDerivedEvidenceTasksInput
+	derivedBatches     [][]repository.ConflictDerivedEvidenceTarget
+	stagedTargets      []repository.ConflictDerivedEvidenceTarget
+	recordedFailures   []conflictReviewRecordedFailure
 }
 
 type conflictReviewRecordedFailure struct {
@@ -485,6 +518,19 @@ func (s *conflictReviewRepositoryStub) ApplyOverdueConflictResolution(_ context.
 	copy.PreferredPositionID = input.PreferredPositionID
 	copy.Method = input.Method
 	return &copy, nil
+}
+
+func (s *conflictReviewRepositoryStub) ClaimConflictDerivedEvidenceTasks(_ context.Context, input repository.ClaimConflictDerivedEvidenceTasksInput) ([]repository.ConflictDerivedEvidenceTarget, error) {
+	s.derivedClaimInputs = append(s.derivedClaimInputs, input)
+	if s.derivedClaimErr != nil {
+		return nil, s.derivedClaimErr
+	}
+	if len(s.derivedBatches) == 0 {
+		return nil, nil
+	}
+	batch := s.derivedBatches[0]
+	s.derivedBatches = s.derivedBatches[1:]
+	return batch, nil
 }
 
 func (s *conflictReviewRepositoryStub) StageConflictDerivedEvidence(_ context.Context, target repository.ConflictDerivedEvidenceTarget) (*repository.StageConflictDerivedEvidenceResult, error) {
