@@ -21,58 +21,52 @@ import (
 
 var ErrDreamAuthContext = errors.New("dream: authenticated actor context is required")
 
-func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleResult, error) {
-	teamID, ownerID, err := dreamActor(ctx)
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := s.EffectiveConfig(ctx, ownerID)
-	if err != nil {
-		return nil, err
-	}
+func (s *service) runTeamCycle(
+	ctx context.Context,
+	teamID string,
+	initiatedByProfileID string,
+	cfg EffectiveConfig,
+	req RunCycleRequest,
+	scheduled bool,
+	scheduledWindowAt time.Time,
+) (*RunCycleResult, error) {
 	started := s.now().UTC()
 	runDate := localRunDate(started, cfg)
+	if scheduled {
+		runDate = localRunDate(scheduledWindowAt, cfg)
+	}
 	if !cfg.Enabled && !req.Manual {
-		return &RunCycleResult{ProfileID: ownerID, RunDate: runDate, Status: "skipped"}, nil
+		return &RunCycleResult{TeamID: teamID, RunDate: runDate, Status: "skipped"}, nil
 	}
 	if req.MaxOutputs > 0 {
 		cfg.MaxOutputs = req.MaxOutputs
 	}
-	dreamEnabled := boolValue(req.DreamEnabled, cfg.DreamEnabled)
 	result := &RunCycleResult{
-		ProfileID: ownerID,
+		TeamID:    teamID,
 		RunDate:   runDate,
 		StartedAt: started,
 		Status:    "running",
-	}
-	if !dreamEnabled {
-		result.CompletedAt = s.now().UTC()
-		result.Status = "completed"
-		return result, nil
-	}
-	inputs, err := s.deps.Store.ListDreamInputs(ctx, repository.DreamInputListInput{
-		TeamID: teamID,
-		Limit:  cfg.MaxOutputs * 4,
-	})
-	if err != nil {
-		err = translateDreamRepositoryError(err)
-		result.CompletedAt = s.now().UTC()
-		result.Status = "error"
-		result.Error = err.Error()
-		return result, err
 	}
 	windowKey := runDate
 	if req.Manual {
 		windowKey = "manual:" + uuid.NewString()
 	}
-	claimed, err := s.deps.Store.ClaimDreamCycle(ctx, repository.DreamCycleClaimInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		RunDate:        runDate,
-		WindowKey:      windowKey,
-		LeaseUntil:     started.Add(lockTimeout),
-		SourceSnapshot: dreamInputSnapshot(inputs),
-	})
+	claimInput := repository.DreamCycleClaimInput{
+		TeamID:               teamID,
+		InitiatedByProfileID: initiatedByProfileID,
+		RunDate:              runDate,
+		WindowKey:            windowKey,
+		LeaseUntil:           started.Add(lockTimeout),
+	}
+	var (
+		claimed *repository.DreamCycleRun
+		err     error
+	)
+	if scheduled {
+		claimed, err = s.deps.ScheduledStore.ClaimScheduledDreamCycle(ctx, claimInput)
+	} else {
+		claimed, err = s.deps.Store.ClaimDreamCycle(ctx, claimInput)
+	}
 	if err != nil {
 		err = translateDreamRepositoryError(err)
 		result.CompletedAt = s.now().UTC()
@@ -86,11 +80,32 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 		result.Status = "skipped"
 		return result, nil
 	}
-	created, rejected, runErr := s.persistHypotheses(ctx, teamID, ownerID, claimed.RunID, inputs, req.SeedDreams, cfg.MaxOutputs)
+	inputs, err := s.deps.Store.ListDreamInputs(ctx, repository.DreamInputListInput{
+		TeamID: teamID,
+		Limit:  cfg.MaxOutputs * 4,
+	})
+	if err != nil {
+		err = translateDreamRepositoryError(err)
+		result.CompletedAt = s.now().UTC()
+		result.Status = "error"
+		result.Error = err.Error()
+		completeErr := s.completeTeamCycle(ctx, scheduled, repository.DreamCycleCompleteInput{
+			TeamID:               teamID,
+			InitiatedByProfileID: initiatedByProfileID,
+			RunID:                claimed.RunID,
+			Status:               "failed",
+			Error:                result.Error,
+		})
+		if completeErr != nil {
+			return result, errors.Join(err, completeErr)
+		}
+		return result, err
+	}
+	created, rejected, runErr := s.persistHypotheses(ctx, teamID, initiatedByProfileID, claimed.RunID, inputs, req.SeedDreams, cfg.MaxOutputs, scheduled)
 	result.CompletedAt = s.now().UTC()
-	result.DreamRan = true
+	result.InputRelationships = len(inputs)
 	result.CreatedDreams = created
-	result.CandidateRelationships = candidateInputCount(inputs)
+	result.RejectedDreams = rejected
 	result.Status = "completed"
 	completeStatus := "completed"
 	if runErr != nil {
@@ -99,15 +114,16 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 		result.Error = runErr.Error()
 		completeStatus = "failed"
 	}
-	if err := s.deps.Store.CompleteDreamCycle(ctx, repository.DreamCycleCompleteInput{
-		TeamID:             teamID,
-		OwnerProfileID:     ownerID,
-		RunID:              claimed.RunID,
-		Status:             completeStatus,
-		InputCount:         len(inputs),
-		CreatedHypotheses:  created,
-		RejectedHypotheses: rejected,
-		Error:              result.Error,
+	if err := s.completeTeamCycle(ctx, scheduled, repository.DreamCycleCompleteInput{
+		TeamID:               teamID,
+		InitiatedByProfileID: initiatedByProfileID,
+		RunID:                claimed.RunID,
+		Status:               completeStatus,
+		InputCount:           len(inputs),
+		CreatedHypotheses:    created,
+		RejectedHypotheses:   rejected,
+		SourceSnapshot:       dreamInputSnapshot(inputs),
+		Error:                result.Error,
 	}); err != nil && runErr == nil {
 		err = translateDreamRepositoryError(err)
 		result.Status = "error"
@@ -115,6 +131,27 @@ func (s *service) runCycle(ctx context.Context, req RunCycleRequest) (*RunCycleR
 		return result, err
 	}
 	return result, runErr
+}
+
+func (s *service) completeTeamCycle(ctx context.Context, scheduled bool, input repository.DreamCycleCompleteInput) error {
+	var err error
+	if scheduled {
+		err = s.deps.ScheduledStore.CompleteScheduledDreamCycle(ctx, input)
+	} else {
+		err = s.deps.Store.CompleteDreamCycle(ctx, input)
+	}
+	if err != nil {
+		return translateDreamRepositoryError(err)
+	}
+	return nil
+}
+
+func normalizeDreamTeamID(teamID string) (string, error) {
+	teamID = strings.TrimSpace(teamID)
+	if _, err := uuid.Parse(teamID); err != nil {
+		return "", fmt.Errorf("dreaming cycle: invalid team id: %w", err)
+	}
+	return teamID, nil
 }
 
 func translateDreamRepositoryError(err error) error {
@@ -127,11 +164,12 @@ func translateDreamRepositoryError(err error) error {
 func (s *service) persistHypotheses(
 	ctx context.Context,
 	teamID string,
-	ownerID string,
+	createdByProfileID string,
 	runID string,
 	inputs []repository.DreamInput,
 	seeds []SeedDream,
 	maxOutputs int,
+	scheduled bool,
 ) (int, int, error) {
 	if maxOutputs <= 0 {
 		maxOutputs = DefaultMaxOutputs
@@ -147,7 +185,7 @@ func (s *service) persistHypotheses(
 		proposals = dreamProposalsFromSeeds(seeds, byID, maxOutputs)
 	} else {
 		var err error
-		proposals, generatedRejected, generatedAttempted, err = s.generateDreamProposals(ctx, ownerID, inputs, byID, maxOutputs)
+		proposals, generatedRejected, generatedAttempted, err = s.generateDreamProposals(ctx, teamID, inputs, byID, maxOutputs)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -159,9 +197,18 @@ func (s *service) persistHypotheses(
 	rejected := generatedRejected
 	for _, proposal := range proposals {
 		proposal.TeamID = teamID
-		proposal.OwnerProfileID = ownerID
+		proposal.CreatedByProfileID = createdByProfileID
 		proposal.RunID = runID
-		record, inserted, err := s.deps.Store.UpsertHypothesis(ctx, proposal)
+		var (
+			record   *repository.HypothesisRecord
+			inserted bool
+			err      error
+		)
+		if scheduled {
+			record, inserted, err = s.deps.ScheduledStore.UpsertScheduledHypothesis(ctx, proposal)
+		} else {
+			record, inserted, err = s.deps.Store.UpsertHypothesis(ctx, proposal)
+		}
 		if err != nil {
 			if errors.Is(err, repository.ErrDreamExactRelationshipExists) ||
 				errors.Is(err, repository.ErrDreamSourceStale) {
@@ -179,7 +226,7 @@ func (s *service) persistHypotheses(
 
 func (s *service) generateDreamProposals(
 	ctx context.Context,
-	ownerID string,
+	teamID string,
 	inputs []repository.DreamInput,
 	byID map[string]repository.DreamInput,
 	maxOutputs int,
@@ -189,7 +236,7 @@ func (s *service) generateDreamProposals(
 	}
 	generator := s.deps.Generator
 	model := generator.Model()
-	generated, err := generator.Generate(ctx, ownerID, GenerateRequest{
+	generated, err := generator.Generate(ctx, teamID, GenerateRequest{
 		MaxOutputs:     maxOutputs,
 		Inputs:         dreamGeneratorInputs(inputs),
 		GeneratorModel: model,
@@ -478,18 +525,17 @@ func firstDreamSeedSource(refs []domain.DreamSourceRef, inputs map[string]reposi
 }
 
 func (s *service) listDreams(ctx context.Context, opts ListOptions) ([]*domain.Dream, string, error) {
-	teamID, ownerID, err := dreamActor(ctx)
+	teamID, _, err := dreamActor(ctx)
 	if err != nil {
 		return nil, "", err
 	}
-	if err := s.refreshDreamStaleness(ctx, teamID, ownerID); err != nil {
-		return nil, "", err
-	}
 	records, next, err := s.deps.Store.ListHypotheses(ctx, repository.ListHypothesesInput{
-		TeamID: teamID,
-		Status: opts.Status,
-		Limit:  opts.Limit,
-		Cursor: opts.Cursor,
+		TeamID:    teamID,
+		Status:    opts.Status,
+		Limit:     opts.Limit,
+		Cursor:    opts.Cursor,
+		Sort:      opts.Sort,
+		Direction: opts.Direction,
 	})
 	if err != nil {
 		return nil, "", err
@@ -498,11 +544,8 @@ func (s *service) listDreams(ctx context.Context, opts ListOptions) ([]*domain.D
 }
 
 func (s *service) getDream(ctx context.Context, dreamID string) (*domain.Dream, error) {
-	teamID, ownerID, err := dreamActor(ctx)
+	teamID, _, err := dreamActor(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if err := s.refreshDreamStaleness(ctx, teamID, ownerID); err != nil {
 		return nil, err
 	}
 	record, err := s.deps.Store.GetHypothesis(ctx, repository.GetHypothesisInput{
@@ -519,23 +562,24 @@ func (s *service) getDream(ctx context.Context, dreamID string) (*domain.Dream, 
 }
 
 func (s *service) listRuns(ctx context.Context, limit int) ([]*RunCycleResult, error) {
-	teamID, ownerID, err := dreamActor(ctx)
+	teamID, _, err := dreamActor(ctx)
 	if err != nil {
 		return nil, err
 	}
-	latest, err := s.deps.Store.LatestDreamCycle(ctx, teamID, ownerID)
-	if err != nil || latest == nil {
+	runs, err := s.deps.Store.ListDreamCyclesForTeam(ctx, teamID, limit)
+	if err != nil {
 		return nil, err
 	}
-	return []*RunCycleResult{cycleRunResult(latest)}, nil
+	results := make([]*RunCycleResult, 0, len(runs))
+	for i := range runs {
+		results = append(results, cycleRunResult(&runs[i]))
+	}
+	return results, nil
 }
 
 func (s *service) recallDreams(ctx context.Context, query string, limit int) ([]*domain.Dream, error) {
-	teamID, ownerID, err := dreamActor(ctx)
+	teamID, _, err := dreamActor(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if err := s.refreshDreamStaleness(ctx, teamID, ownerID); err != nil {
 		return nil, err
 	}
 	records, err := s.deps.Store.RecallHypotheses(ctx, repository.RecallHypothesesInput{
@@ -550,7 +594,7 @@ func (s *service) recallDreams(ctx context.Context, query string, limit int) ([]
 }
 
 func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackRequest) (*ResolveFeedbackResult, error) {
-	teamID, ownerID, err := dreamActor(ctx)
+	teamID, actorProfileID, err := dreamActor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -575,34 +619,37 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 	case "reject":
 		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
 			TeamID:            teamID,
-			OwnerProfileID:    ownerID,
+			ActorProfileID:    actorProfileID,
 			HypothesisID:      dreamID,
 			Status:            string(domain.DreamStatusRejected),
+			Decision:          decision,
 			InvalidatedReason: req.Feedback,
 		})
 		return s.feedbackResult(ctx, decision, dream, updated, nil, err)
 	case "stale":
 		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
 			TeamID:            teamID,
-			OwnerProfileID:    ownerID,
+			ActorProfileID:    actorProfileID,
 			HypothesisID:      dreamID,
 			Status:            string(domain.DreamStatusStale),
+			Decision:          decision,
 			InvalidatedReason: req.Feedback,
 		})
 		return s.feedbackResult(ctx, decision, dream, updated, nil, err)
 	case "reinforce":
 		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
 			TeamID:            teamID,
-			OwnerProfileID:    ownerID,
+			ActorProfileID:    actorProfileID,
 			HypothesisID:      dreamID,
 			Status:            string(domain.DreamStatusReinforced),
+			Decision:          decision,
 			InvalidatedReason: req.Feedback,
 		})
 		return s.feedbackResult(ctx, decision, dream, updated, nil, err)
 	case "ignore":
 		s.recordDreamFeedback(ctx, decision, dream, "ok")
 		return &ResolveFeedbackResult{Dream: dream}, nil
-	case "confirm_true", "promote_candidate":
+	case "confirm_true", "confirm_false", "promote_candidate":
 		if s.deps.Remember == nil {
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, fmt.Errorf("resolve dream feedback: remember service is required")
@@ -625,38 +672,10 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 		}
 		updated, err := s.deps.Store.SubmitHypothesis(ctx, repository.SubmitHypothesisInput{
 			TeamID:            teamID,
-			OwnerProfileID:    ownerID,
+			ActorProfileID:    actorProfileID,
 			HypothesisID:      dreamID,
+			Decision:          decision,
 			SubmittedIngestID: remember.IngestID,
-			InvalidatedReason: req.Feedback,
-		})
-		return s.feedbackResult(ctx, decision, dream, updated, remember, err)
-	case "confirm_false":
-		if s.deps.Remember == nil {
-			s.recordDreamFeedback(ctx, decision, dream, "error")
-			return nil, fmt.Errorf("resolve dream feedback: remember service is required")
-		}
-		evidence, err := dreamSubmissionEvidence(req, record)
-		if err != nil {
-			s.recordDreamFeedback(ctx, decision, dream, "error")
-			return nil, err
-		}
-		remember, err := s.deps.Remember.Remember(ctx, memoryservice.RememberRequest{
-			ContractVersion:   domain.ContractVersion,
-			Evidence:          evidence,
-			EntityHints:       req.EntityHints,
-			RelationshipHints: req.RelationshipHints,
-			IdempotencyKey:    dreamFeedbackIdempotency(req, dreamID, decision),
-		})
-		if err != nil {
-			s.recordDreamFeedback(ctx, decision, dream, "error")
-			return nil, err
-		}
-		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
-			TeamID:            teamID,
-			OwnerProfileID:    ownerID,
-			HypothesisID:      dreamID,
-			Status:            string(domain.DreamStatusRejected),
 			InvalidatedReason: req.Feedback,
 		})
 		return s.feedbackResult(ctx, decision, dream, updated, remember, err)
@@ -686,43 +705,27 @@ func (s *service) feedbackResult(
 }
 
 func (s *service) status(ctx context.Context) (*StatusResult, error) {
-	teamID, ownerID, err := dreamActor(ctx)
+	teamID, _, err := dreamActor(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.refreshDreamStaleness(ctx, teamID, ownerID); err != nil {
-		return nil, err
-	}
-	cfg, err := s.EffectiveConfig(ctx, ownerID)
+	cfg, err := s.effectiveConfigForTeam(ctx, teamID)
 	if err != nil {
 		return nil, err
 	}
-	pending, _, err := s.deps.Store.ListHypotheses(ctx, repository.ListHypothesesInput{
-		TeamID: teamID,
-		Status: string(domain.DreamStatusProposed),
-		Limit:  100,
-	})
+	pending, err := s.deps.Store.CountHypotheses(ctx, teamID, string(domain.DreamStatusProposed))
 	if err != nil {
 		return nil, err
 	}
-	latest, err := s.deps.Store.LatestDreamCycle(ctx, teamID, ownerID)
+	runs, err := s.deps.Store.ListDreamCyclesForTeam(ctx, teamID, 1)
 	if err != nil {
 		return nil, err
 	}
 	var latestResult *RunCycleResult
-	if latest != nil {
-		latestResult = cycleRunResult(latest)
+	if len(runs) > 0 {
+		latestResult = cycleRunResult(&runs[0])
 	}
-	return &StatusResult{EffectiveConfig: cfg, LatestRun: latestResult, PendingCount: len(pending)}, nil
-}
-
-func (s *service) refreshDreamStaleness(ctx context.Context, teamID string, ownerID string) error {
-	_, err := s.deps.Store.RefreshHypothesisStaleness(ctx, repository.RefreshHypothesisStalenessInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		Limit:          200,
-	})
-	return err
+	return &StatusResult{EffectiveConfig: cfg, LatestRun: latestResult, PendingCount: pending}, nil
 }
 
 func dreamActor(ctx context.Context) (string, string, error) {
@@ -745,16 +748,6 @@ func dreamInputSnapshot(inputs []repository.DreamInput) []map[string]any {
 	return out
 }
 
-func candidateInputCount(inputs []repository.DreamInput) int {
-	count := 0
-	for _, input := range inputs {
-		if input.Status == "pending_evidence" {
-			count++
-		}
-	}
-	return count
-}
-
 func dreamRecords(records []repository.HypothesisRecord) []*domain.Dream {
 	out := make([]*domain.Dream, 0, len(records))
 	for i := range records {
@@ -769,7 +762,7 @@ func dreamRecord(record *repository.HypothesisRecord) *domain.Dream {
 	}
 	return &domain.Dream{
 		DreamID:                        record.HypothesisID,
-		ProfileID:                      record.OwnerProfileID,
+		TeamID:                         record.TeamID,
 		Hypothesis:                     record.Statement,
 		WhatIf:                         anyString(record.Payload["what_if"]),
 		PossibleOutcome:                anyString(record.Payload["possible_outcome"]),
@@ -787,7 +780,6 @@ func dreamRecord(record *repository.HypothesisRecord) *domain.Dream {
 		GeneratorKind:                  firstNonEmpty(record.GeneratorKind, "deterministic"),
 		GeneratorVersion:               firstNonEmpty(record.GeneratorVersion, "dream-v2"),
 		Status:                         domain.DreamStatus(record.Status),
-		Cycle:                          CycleDream,
 		CycleRunID:                     record.CycleRunID,
 		GeneratorModel:                 firstNonEmpty(record.GeneratorVersion, record.GeneratorKind),
 		ContentHash:                    record.ContentHash,
@@ -831,15 +823,16 @@ func cycleRunResult(run *repository.DreamCycleRun) *RunCycleResult {
 		completed = *run.CompletedAt
 	}
 	return &RunCycleResult{
-		RunID:         run.RunID,
-		ProfileID:     run.OwnerProfileID,
-		RunDate:       run.RunDate,
-		StartedAt:     run.StartedAt,
-		CompletedAt:   completed,
-		DreamRan:      true,
-		CreatedDreams: run.CreatedHypotheses,
-		Status:        run.Status,
-		Error:         run.Error,
+		RunID:              run.RunID,
+		TeamID:             run.TeamID,
+		RunDate:            run.RunDate,
+		StartedAt:          run.StartedAt,
+		CompletedAt:        completed,
+		InputRelationships: run.InputCount,
+		CreatedDreams:      run.CreatedHypotheses,
+		RejectedDreams:     run.RejectedHypotheses,
+		Status:             run.Status,
+		Error:              run.Error,
 	}
 }
 

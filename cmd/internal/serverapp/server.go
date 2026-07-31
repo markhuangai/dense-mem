@@ -220,14 +220,15 @@ func RunActiveServer(
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
-		Remember:  rememberSvc,
-		Store:     semanticRepo,
-		AppConfig: appConfigService,
-		Profiles:  profileService,
-		Locker:    dreamservice.NewPostgresCycleLocker(),
-		Postgres:  pgDB.GetDB(),
-		Generator: dreamservice.NewHeuristicGenerator(""),
-		Metrics:   discoverabilityMetrics,
+		Remember:       rememberSvc,
+		Store:          semanticRepo,
+		ScheduledStore: semanticRepo,
+		AppConfig:      appConfigService,
+		Profiles:       profileService,
+		Locker:         dreamservice.NewPostgresCycleLocker(),
+		Postgres:       pgDB.GetDB(),
+		Generator:      dreamservice.NewHeuristicGenerator(""),
+		Metrics:        discoverabilityMetrics,
 	})
 	controlDreamSvc := dreamservice.NewControl(dreamservice.ControlDependencies{
 		Store:     semanticRepo,

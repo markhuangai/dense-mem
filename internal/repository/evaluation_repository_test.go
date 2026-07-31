@@ -40,3 +40,16 @@ func TestEvaluationInputNormalization(t *testing.T) {
 		t.Fatalf("negative cursor offset = %d; want 0", offset)
 	}
 }
+
+func TestEvaluationHypothesisQueryExcludesCanonicalAliases(t *testing.T) {
+	query, _, err := evaluationQuery(EvaluationListInput{
+		TeamID: "00000000-0000-0000-0000-000000000101",
+		Type:   "hypothesis",
+	}, 10, 0)
+	if err != nil {
+		t.Fatalf("evaluationQuery: %v", err)
+	}
+	if !strings.Contains(query, "canonical_hypothesis_id IS NULL") {
+		t.Fatalf("hypothesis query did not exclude canonical aliases:\n%s", query)
+	}
+}

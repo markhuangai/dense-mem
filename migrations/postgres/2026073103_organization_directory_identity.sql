@@ -318,7 +318,7 @@ CREATE POLICY teams_directory_system_update ON teams
 
 DO $$
 BEGIN
-    RAISE EXCEPTION '2026073102_organization_directory_identity is irreversible once directory state exists; use a forward migration or restore from backup';
+    RAISE EXCEPTION '2026073103_organization_directory_identity is irreversible once directory state exists; use a forward migration or restore from backup';
 END $$;
 
 -- +goose StatementEnd

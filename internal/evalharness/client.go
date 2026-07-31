@@ -592,11 +592,8 @@ func (c *HTTPClient) RunDreamCycle(ctx context.Context, expectedDreams int, seed
 		return nil
 	}
 	input := map[string]any{
-		"manual":             true,
-		"reflect_enabled":    false,
-		"reevaluate_enabled": false,
-		"dream_enabled":      true,
-		"max_outputs":        expectedDreams,
+		"manual":      true,
+		"max_outputs": expectedDreams,
 	}
 	if len(seeds) > 0 {
 		input["seed_dreams"] = seeds

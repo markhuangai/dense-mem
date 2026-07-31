@@ -354,14 +354,16 @@ func evaluationQuery(input EvaluationListInput, limit int, offset int, ids ...st
 	case "hypothesis":
 		return `
 			WITH rows AS (
-				SELECT hypothesis_id AS id, owner_profile_id::text, status, payload, created_at, updated_at
+				SELECT hypothesis_id AS id, COALESCE(created_by_profile_id::text, '') AS created_by_profile_id,
+				       status, payload, created_at, updated_at
 				FROM hypotheses
 				WHERE team_id = ?::uuid
+				  AND canonical_hypothesis_id IS NULL
 			)
 			SELECT jsonb_build_object(
 				'type', 'hypothesis',
 				'id', id::text,
-				'owner_profile_id', owner_profile_id,
+				'created_by_profile_id', created_by_profile_id,
 				'status', status,
 				'payload', payload,
 				'created_at', created_at,

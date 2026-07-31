@@ -15,14 +15,11 @@ func TestEffectiveDreamingConfigHelper(t *testing.T) {
 
 	effective, err := effectiveDreamingConfig(ctx, &controlAppConfigSvc{
 		dreamingRuntime: domain.DreamingRuntimeConfig{
-			Enabled:           true,
-			ForceEnabled:      true,
-			StartTimeLocal:    "03:00",
-			Timezone:          "UTC",
-			ReflectEnabled:    true,
-			ReevaluateEnabled: true,
-			DreamEnabled:      true,
-			MaxOutputs:        5,
+			Enabled:        true,
+			ForceEnabled:   true,
+			StartTimeLocal: "03:00",
+			Timezone:       "UTC",
+			MaxOutputs:     5,
 		},
 	}, map[string]any{"dreaming": map[string]any{"enabled": false}})
 	require.NoError(t, err)
@@ -34,8 +31,8 @@ func TestEffectiveDreamingConfigHelper(t *testing.T) {
 	effective, err = effectiveDreamingConfig(ctx, nil, map[string]any{"dreaming": map[string]any{"enabled": true}})
 	require.NoError(t, err)
 	require.NotNil(t, effective)
-	require.True(t, effective.Enabled)
-	require.Equal(t, "team", effective.Source)
+	require.False(t, effective.Enabled)
+	require.Equal(t, "global", effective.Source)
 
 	effective, err = effectiveDreamingConfig(ctx, &controlAppConfigSvc{
 		dreamingRuntimeErr: errors.New("config failed"),

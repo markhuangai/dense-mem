@@ -148,7 +148,6 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		api.GET("/teams/:teamId/dreaming/runs", control.listTeamDreamingRuns)
 		api.GET("/teams/:teamId/dreams", control.listTeamDreams)
 		api.GET("/teams/:teamId/dreams/:dreamId", control.getTeamDream)
-		api.POST("/teams/:teamId/dreams/refresh", control.refreshTeamDreams)
 	}
 	api.GET("/teams/:teamId/profiles", control.listAPIKeys)
 	api.POST("/teams/:teamId/profiles", control.createAPIKey)

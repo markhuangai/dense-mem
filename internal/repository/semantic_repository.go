@@ -680,7 +680,7 @@ func (r *SemanticRepositoryImpl) CreateHypothesis(ctx context.Context, input Cre
 			return err
 		}
 		rows, err := tx.WithContext(ctx).Raw(`
-			INSERT INTO hypotheses (team_id, owner_profile_id, status, payload)
+			INSERT INTO hypotheses (team_id, created_by_profile_id, status, payload)
 			VALUES (?::uuid, ?::uuid, ?, ?::jsonb)
 			RETURNING hypothesis_id::text
 		`, input.TeamID, input.OwnerProfileID, input.Status, string(payload)).Rows()

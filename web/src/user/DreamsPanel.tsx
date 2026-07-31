@@ -8,7 +8,6 @@ const DREAM_PAGE_SIZES = [10, 25, 50, 100];
 const DREAM_SORTS: Array<{ value: DreamSort; label: string }> = [
   { value: "updated_at", label: "Updated" },
   { value: "created_at", label: "Created" },
-  { value: "last_evaluated_at", label: "Evaluated" },
 ];
 const DEFAULT_DREAM_QUERY: DreamQuery = { status: "", limit: 25, sort: "updated_at", direction: "desc", cursor: "" };
 
@@ -241,11 +240,7 @@ function dreamDateHeader(sort: DreamSort): string {
 }
 
 function formatDreamDate(dream: Dream, sort: DreamSort): string {
-  const value = sort === "created_at"
-    ? dream.created_at
-    : sort === "last_evaluated_at"
-      ? dream.last_evaluated_at
-      : dream.updated_at;
+  const value = sort === "created_at" ? dream.created_at : dream.updated_at;
   return value ? formatDate(value) : "-";
 }
 
@@ -257,9 +252,9 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
           <tr>
             <th>Started</th>
             <th>Status</th>
-            <th>Phases</th>
+            <th>Inputs</th>
             <th>Created</th>
-            <th>Re-evaluated</th>
+            <th>Rejected</th>
           </tr>
         </thead>
         <tbody>
@@ -267,9 +262,9 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
             <tr key={run.run_id}>
               <td>{formatDate(run.started_at)}</td>
               <td><span className={runStatusClass(run.status)}>{run.status}</span></td>
-              <td>{[run.reflect_ran && "reflect", run.reevaluate_ran && "re-evaluate", run.dream_ran && "dream"].filter(Boolean).join(", ") || "-"}</td>
+              <td>{run.input_relationships}</td>
               <td>{run.created_dreams}</td>
-              <td>{run.reevaluated_dreams}</td>
+              <td>{run.rejected_dreams}</td>
             </tr>
           ))}
         </tbody>

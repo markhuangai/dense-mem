@@ -11,7 +11,7 @@ import (
 
 func normalizeDreamCycleClaimInput(input DreamCycleClaimInput) DreamCycleClaimInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.InitiatedByProfileID = strings.TrimSpace(input.InitiatedByProfileID)
 	input.RunDate = strings.TrimSpace(input.RunDate)
 	input.WindowKey = strings.TrimSpace(input.WindowKey)
 	if input.RunDate == "" {
@@ -26,12 +26,14 @@ func normalizeDreamCycleClaimInput(input DreamCycleClaimInput) DreamCycleClaimIn
 	return input
 }
 
-func validateDreamCycleClaimInput(input DreamCycleClaimInput) error {
+func validateDreamCycleClaimInput(input DreamCycleClaimInput, system bool) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
 	}
-	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
-		return fmt.Errorf("owner_profile_id is required: %w", err)
+	if !system {
+		if _, err := uuid.Parse(input.InitiatedByProfileID); err != nil {
+			return fmt.Errorf("initiated_by_profile_id is required: %w", err)
+		}
 	}
 	if input.RunDate == "" {
 		return errors.New("run_date is required")
@@ -44,7 +46,7 @@ func validateDreamCycleClaimInput(input DreamCycleClaimInput) error {
 
 func normalizeDreamCycleCompleteInput(input DreamCycleCompleteInput) DreamCycleCompleteInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.InitiatedByProfileID = strings.TrimSpace(input.InitiatedByProfileID)
 	input.RunID = strings.TrimSpace(input.RunID)
 	input.Status = strings.TrimSpace(input.Status)
 	input.Error = strings.TrimSpace(input.Error)
@@ -54,18 +56,20 @@ func normalizeDreamCycleCompleteInput(input DreamCycleCompleteInput) DreamCycleC
 	return input
 }
 
-func validateDreamCycleCompleteInput(input DreamCycleCompleteInput) error {
+func validateDreamCycleCompleteInput(input DreamCycleCompleteInput, system bool) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
 	}
-	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
-		return fmt.Errorf("owner_profile_id is required: %w", err)
+	if !system {
+		if _, err := uuid.Parse(input.InitiatedByProfileID); err != nil {
+			return fmt.Errorf("initiated_by_profile_id is required: %w", err)
+		}
 	}
 	if _, err := uuid.Parse(input.RunID); err != nil {
 		return fmt.Errorf("run_id is required: %w", err)
 	}
 	switch input.Status {
-	case "completed", "failed", "skipped", "cancelled":
+	case "completed", "failed", "skipped", "cancelled", "missed":
 		return nil
 	default:
 		return fmt.Errorf("unsupported cycle status %q", input.Status)
@@ -92,7 +96,7 @@ func validateDreamInputListInput(input DreamInputListInput) error {
 
 func normalizeUpsertHypothesisInput(input UpsertHypothesisInput) UpsertHypothesisInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.CreatedByProfileID = strings.TrimSpace(input.CreatedByProfileID)
 	input.RunID = strings.TrimSpace(input.RunID)
 	input.Statement = strings.TrimSpace(input.Statement)
 	input.Rationale = strings.TrimSpace(input.Rationale)
@@ -116,15 +120,19 @@ func normalizeUpsertHypothesisInput(input UpsertHypothesisInput) UpsertHypothesi
 	return input
 }
 
-func validateUpsertHypothesisInput(input UpsertHypothesisInput) error {
+func validateUpsertHypothesisInput(input UpsertHypothesisInput, system bool) error {
 	for label, value := range map[string]string{
 		"team_id":           input.TeamID,
-		"owner_profile_id":  input.OwnerProfileID,
 		"run_id":            input.RunID,
 		"subject_entity_id": input.SubjectEntityID,
 	} {
 		if _, err := uuid.Parse(value); err != nil {
 			return fmt.Errorf("%s is required: %w", label, err)
+		}
+	}
+	if !system {
+		if _, err := uuid.Parse(input.CreatedByProfileID); err != nil {
+			return fmt.Errorf("created_by_profile_id is required: %w", err)
 		}
 	}
 	if input.Statement == "" {
@@ -211,33 +219,12 @@ func hypothesisListOrder(sort, direction string) string {
 	return column + " DESC"
 }
 
-func normalizeRefreshHypothesisStalenessInput(input RefreshHypothesisStalenessInput) RefreshHypothesisStalenessInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
-	if input.Limit <= 0 {
-		input.Limit = 100
-	}
-	if input.Limit > 500 {
-		input.Limit = 500
-	}
-	return input
-}
-
-func validateRefreshHypothesisStalenessInput(input RefreshHypothesisStalenessInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
-		return fmt.Errorf("owner_profile_id is required: %w", err)
-	}
-	return nil
-}
-
 func normalizeUpdateHypothesisStatusInput(input UpdateHypothesisStatusInput) UpdateHypothesisStatusInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.ActorProfileID = strings.TrimSpace(input.ActorProfileID)
 	input.HypothesisID = strings.TrimSpace(input.HypothesisID)
 	input.Status = strings.TrimSpace(input.Status)
+	input.Decision = strings.TrimSpace(input.Decision)
 	input.InvalidatedReason = strings.TrimSpace(input.InvalidatedReason)
 	return input
 }
@@ -245,7 +232,7 @@ func normalizeUpdateHypothesisStatusInput(input UpdateHypothesisStatusInput) Upd
 func validateUpdateHypothesisStatusInput(input UpdateHypothesisStatusInput) error {
 	for label, value := range map[string]string{
 		"team_id":          input.TeamID,
-		"owner_profile_id": input.OwnerProfileID,
+		"actor_profile_id": input.ActorProfileID,
 		"hypothesis_id":    input.HypothesisID,
 	} {
 		if _, err := uuid.Parse(value); err != nil {
@@ -255,13 +242,30 @@ func validateUpdateHypothesisStatusInput(input UpdateHypothesisStatusInput) erro
 	if !hypothesisStatusValid(input.Status) || input.Status == "submitted" {
 		return fmt.Errorf("unsupported hypothesis status %q", input.Status)
 	}
+	switch input.Decision {
+	case "reject":
+		if input.Status != "rejected" {
+			return fmt.Errorf("decision %q requires status %q", input.Decision, "rejected")
+		}
+	case "stale":
+		if input.Status != "stale" {
+			return fmt.Errorf("decision %q requires status %q", input.Decision, "stale")
+		}
+	case "reinforce":
+		if input.Status != "reinforced" {
+			return fmt.Errorf("decision %q requires status %q", input.Decision, "reinforced")
+		}
+	default:
+		return fmt.Errorf("unsupported feedback decision %q", input.Decision)
+	}
 	return nil
 }
 
 func normalizeSubmitHypothesisInput(input SubmitHypothesisInput) SubmitHypothesisInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.ActorProfileID = strings.TrimSpace(input.ActorProfileID)
 	input.HypothesisID = strings.TrimSpace(input.HypothesisID)
+	input.Decision = strings.TrimSpace(input.Decision)
 	input.SubmittedIngestID = strings.TrimSpace(input.SubmittedIngestID)
 	input.InvalidatedReason = strings.TrimSpace(input.InvalidatedReason)
 	return input
@@ -270,7 +274,7 @@ func normalizeSubmitHypothesisInput(input SubmitHypothesisInput) SubmitHypothesi
 func validateSubmitHypothesisInput(input SubmitHypothesisInput) error {
 	for label, value := range map[string]string{
 		"team_id":             input.TeamID,
-		"owner_profile_id":    input.OwnerProfileID,
+		"actor_profile_id":    input.ActorProfileID,
 		"hypothesis_id":       input.HypothesisID,
 		"submitted_ingest_id": input.SubmittedIngestID,
 	} {
@@ -278,7 +282,12 @@ func validateSubmitHypothesisInput(input SubmitHypothesisInput) error {
 			return fmt.Errorf("%s is required: %w", label, err)
 		}
 	}
-	return nil
+	switch input.Decision {
+	case "confirm_true", "confirm_false", "promote_candidate":
+		return nil
+	default:
+		return fmt.Errorf("unsupported feedback decision %q", input.Decision)
+	}
 }
 
 func hypothesisStatusValid(status string) bool {

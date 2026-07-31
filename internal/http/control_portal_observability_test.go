@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -57,21 +56,27 @@ func (s *controlRecallFeedbackReaderStub) GetRecallFeedbackEvent(_ context.Conte
 }
 
 type controlDreamServiceStub struct {
-	status       *dreamservice.StatusResult
-	runs         []*dreamservice.RunCycleResult
-	dreams       []*domain.Dream
-	dream        *domain.Dream
-	nextCursor   string
-	listOpts     dreamservice.ListOptions
-	runsLimit    int
-	profileID    string
-	updatedCount int
-	refreshActor dreamservice.ControlActor
-	getErr       error
-	listErr      error
+	status     *dreamservice.StatusResult
+	runs       []*dreamservice.RunCycleResult
+	dreams     []*domain.Dream
+	dream      *domain.Dream
+	nextCursor string
+	listOpts   dreamservice.ListOptions
+	runsLimit  int
+	profileID  string
+	getErr     error
+	listErr    error
 }
 
 func (s *controlDreamServiceStub) RunCycle(context.Context, string, dreamservice.RunCycleRequest) (*dreamservice.RunCycleResult, error) {
+	return nil, nil
+}
+
+func (s *controlDreamServiceStub) RunScheduledCycle(context.Context, string, time.Time) (*dreamservice.RunCycleResult, error) {
+	return nil, nil
+}
+
+func (s *controlDreamServiceStub) RecordMissedScheduledCycle(context.Context, string, string) (*dreamservice.RunCycleResult, error) {
 	return nil, nil
 }
 
@@ -93,7 +98,7 @@ func (s *controlDreamServiceStub) Get(_ context.Context, profileID, dreamID stri
 		s.dream.DreamID = dreamID
 		return s.dream, nil
 	}
-	return &domain.Dream{DreamID: dreamID, ProfileID: profileID, Status: domain.DreamStatusProposed}, nil
+	return &domain.Dream{DreamID: dreamID, TeamID: profileID, Status: domain.DreamStatusProposed}, nil
 }
 
 func (s *controlDreamServiceStub) ListRuns(_ context.Context, profileID string, limit int) ([]*dreamservice.RunCycleResult, error) {
@@ -117,12 +122,6 @@ func (s *controlDreamServiceStub) Status(_ context.Context, profileID string) (*
 
 func (s *controlDreamServiceStub) EffectiveConfig(context.Context, string) (dreamservice.EffectiveConfig, error) {
 	return dreamservice.EffectiveConfig{}, nil
-}
-
-func (s *controlDreamServiceStub) Refresh(_ context.Context, teamID string, actor dreamservice.ControlActor) (int, error) {
-	s.profileID = teamID
-	s.refreshActor = actor
-	return s.updatedCount, nil
 }
 
 func TestControlPortalObservabilityRoutes(t *testing.T) {
@@ -157,14 +156,14 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 	dreams := &controlDreamServiceStub{
 		status: &dreamservice.StatusResult{PendingCount: 1},
 		runs: []*dreamservice.RunCycleResult{{
-			RunID:     "run-1",
-			ProfileID: teamID.String(),
-			RunDate:   "2026-06-14",
-			Status:    "completed",
+			RunID:   "run-1",
+			TeamID:  teamID.String(),
+			RunDate: "2026-06-14",
+			Status:  "completed",
 		}},
 		dreams: []*domain.Dream{{
 			DreamID:    "dream-1",
-			ProfileID:  teamID.String(),
+			TeamID:     teamID.String(),
 			Hypothesis: "A control dream appears",
 			Status:     domain.DreamStatusProposed,
 			CreatedAt:  now,
@@ -172,13 +171,12 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 		}},
 		nextCursor: "after-control-dream-1",
 		dream: &domain.Dream{
-			ProfileID:  teamID.String(),
+			TeamID:     teamID.String(),
 			Hypothesis: "A control dream appears",
 			Status:     domain.DreamStatusProposed,
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		},
-		updatedCount: 2,
 	}
 	profiles := &controlProfileSvc{profiles: []*domain.Profile{{ID: teamID, Name: "Default"}}}
 	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
@@ -254,26 +252,6 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"dream_id":"dream-1"`)
 
-	req := httptest.NewRequest(http.MethodPost, "/control/api/teams/"+teamID.String()+"/dreams/refresh", nil)
-	req.Header.Set("Authorization", "Bearer secret")
-	req.Header.Set("X-Correlation-ID", "corr-control-dream")
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.JSONEq(t, `{"data":{"updated_count":2}}`, rec.Body.String())
-	assert.Equal(t, teamID.String(), dreams.profileID)
-	assert.Equal(t, dreamservice.ControlActor{
-		Source:        "control_portal:authorization-bearer",
-		ClientIP:      "192.0.2.1",
-		CorrelationID: "corr-control-dream",
-	}, dreams.refreshActor)
-
-	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+teamID.String()+"/dreams/refresh", nil)
-	req.Header.Set("Authorization", "Bearer secret")
-	req.Header.Set("X-Correlation-ID", strings.Repeat("x", 256))
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 }
 
 func TestControlPortalObservabilityValidation(t *testing.T) {

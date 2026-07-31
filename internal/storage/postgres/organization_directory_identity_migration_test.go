@@ -33,7 +33,7 @@ func TestOrganizationDirectoryIdentityMigrationSeedsConfigAndBackfillsLegacyAzur
 	}))
 
 	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026073102))
+	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026073103))
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		var identityClaim string
 		if err := tx.QueryRowContext(ctx, `SELECT identity_claim FROM sso_providers WHERE id = $1`, providerID).Scan(&identityClaim); err != nil {
@@ -55,7 +55,7 @@ func TestOrganizationDirectoryIdentityMigrationUsesSystemRLSMode(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
-	runGooseUpTo(t, ctx, sqlDB, 2026073102)
+	runGooseUpTo(t, ctx, sqlDB, 2026073103)
 
 	roleName := "dense_mem_org_identity_migration_rls"
 	quotedRole := quoteMigrationIdentifier(roleName)

@@ -11,11 +11,12 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-// EffectiveDreamingConfig resolves global defaults plus optional
-// teams.config.dreaming overrides. Global force-enable controls whether teams
-// may opt out; it does not change phase ordering.
+// EffectiveDreamingConfig resolves the global schedule plus an optional team
+// enablement override. A disabled global schedule always wins; force-enable
+// applies only when the global schedule is enabled.
 func EffectiveDreamingConfig(global domain.DreamingRuntimeConfig, teamConfig map[string]any) (EffectiveConfig, error) {
 	runtime := normalizeRuntimeConfig(global)
 	cfg := EffectiveConfig{
@@ -23,34 +24,20 @@ func EffectiveDreamingConfig(global domain.DreamingRuntimeConfig, teamConfig map
 		TeamEnabled:           runtime.Enabled,
 		Source:                "global",
 	}
-	dreaming, ok := nestedMap(teamConfig, "dreaming")
-	if ok {
-		hasTeamOverride := false
-		if v, ok := boolFromAny(dreaming["enabled"]); ok {
-			cfg.Enabled = v
-			cfg.TeamEnabled = v
-			hasTeamOverride = true
-		}
-		if v, ok := boolFromAny(dreaming["reflect_enabled"]); ok {
-			cfg.ReflectEnabled = v
-			hasTeamOverride = true
-		}
-		if v, ok := boolFromAny(dreaming["reevaluate_enabled"]); ok {
-			cfg.ReevaluateEnabled = v
-			hasTeamOverride = true
-		}
-		if v, ok := boolFromAny(dreaming["dream_enabled"]); ok {
-			cfg.DreamEnabled = v
-			hasTeamOverride = true
-		}
-		if hasTeamOverride {
-			cfg.Source = "team"
-		}
-	}
-	if cfg.ForceEnabled {
+	if !runtime.Enabled {
+		cfg.Enabled = false
+		cfg.TeamEnabled = false
+		cfg.Source = "global"
+	} else if runtime.ForceEnabled {
 		cfg.Enabled = true
 		cfg.TeamEnabled = true
 		cfg.Source = "global_force"
+	} else if dreaming, ok := nestedMap(teamConfig, "dreaming"); ok {
+		if enabled, ok := boolFromAny(dreaming["enabled"]); ok {
+			cfg.Enabled = enabled
+			cfg.TeamEnabled = enabled
+			cfg.Source = "team"
+		}
 	}
 	if err := validateEffectiveConfig(cfg); err != nil {
 		return EffectiveConfig{}, err
@@ -58,13 +45,20 @@ func EffectiveDreamingConfig(global domain.DreamingRuntimeConfig, teamConfig map
 	return cfg, nil
 }
 
-func (s *service) EffectiveConfig(ctx context.Context, profileID string) (EffectiveConfig, error) {
-	return resolveEffectiveConfig(ctx, profileID, s.deps.AppConfig, s.deps.Profiles)
+func (s *service) EffectiveConfig(ctx context.Context, teamID string) (EffectiveConfig, error) {
+	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok && actor.TeamID != uuid.Nil {
+		teamID = actor.TeamID.String()
+	}
+	return s.effectiveConfigForTeam(ctx, teamID)
+}
+
+func (s *service) effectiveConfigForTeam(ctx context.Context, teamID string) (EffectiveConfig, error) {
+	return resolveEffectiveConfig(ctx, teamID, s.deps.AppConfig, s.deps.Profiles)
 }
 
 func resolveEffectiveConfig(
 	ctx context.Context,
-	profileID string,
+	teamID string,
 	appConfig AppConfig,
 	profiles ProfileService,
 ) (EffectiveConfig, error) {
@@ -74,11 +68,11 @@ func resolveEffectiveConfig(
 	}
 	var teamConfig map[string]any
 	if profiles != nil {
-		profile, err := parseProfileID(profileID)
+		team, err := parseTeamID(teamID)
 		if err != nil {
 			return EffectiveConfig{}, err
 		}
-		p, err := profiles.GetByID(ctx, profile)
+		p, err := profiles.GetByID(ctx, team)
 		if err != nil {
 			return EffectiveConfig{}, err
 		}
