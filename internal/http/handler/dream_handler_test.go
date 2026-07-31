@@ -34,6 +34,14 @@ func (s *dreamHandlerServiceStub) RunCycle(context.Context, string, dreamservice
 	return nil, nil
 }
 
+func (s *dreamHandlerServiceStub) RunScheduledCycle(context.Context, string, time.Time) (*dreamservice.RunCycleResult, error) {
+	return nil, nil
+}
+
+func (s *dreamHandlerServiceStub) RecordMissedScheduledCycle(context.Context, string, string) (*dreamservice.RunCycleResult, error) {
+	return nil, nil
+}
+
 func (s *dreamHandlerServiceStub) List(_ context.Context, profileID string, opts dreamservice.ListOptions) ([]*domain.Dream, string, error) {
 	s.profileIDs = append(s.profileIDs, profileID)
 	s.listOpts = opts
@@ -52,7 +60,7 @@ func (s *dreamHandlerServiceStub) Get(_ context.Context, profileID, dreamID stri
 		s.dream.DreamID = dreamID
 		return s.dream, nil
 	}
-	return &domain.Dream{DreamID: dreamID, ProfileID: profileID, Status: domain.DreamStatusProposed}, nil
+	return &domain.Dream{DreamID: dreamID, TeamID: profileID, Status: domain.DreamStatusProposed}, nil
 }
 
 func (s *dreamHandlerServiceStub) ListRuns(_ context.Context, profileID string, limit int) ([]*dreamservice.RunCycleResult, error) {
@@ -87,7 +95,7 @@ func TestDreamHandlerRoutes(t *testing.T) {
 		status: &dreamservice.StatusResult{PendingCount: 2},
 		runs: []*dreamservice.RunCycleResult{{
 			RunID:       "run-1",
-			ProfileID:   profileID.String(),
+			TeamID:      profileID.String(),
 			RunDate:     "2026-06-14",
 			StartedAt:   now,
 			CompletedAt: now,
@@ -95,7 +103,7 @@ func TestDreamHandlerRoutes(t *testing.T) {
 		}},
 		dreams: []*domain.Dream{{
 			DreamID:    "dream-1",
-			ProfileID:  profileID.String(),
+			TeamID:     profileID.String(),
 			Hypothesis: "A dream appears",
 			Status:     domain.DreamStatusProposed,
 			CreatedAt:  now,
@@ -103,7 +111,7 @@ func TestDreamHandlerRoutes(t *testing.T) {
 		}},
 		nextCursor: "after-dream-1",
 		dream: &domain.Dream{
-			ProfileID:  profileID.String(),
+			TeamID:     profileID.String(),
 			Hypothesis: "A dream appears",
 			Status:     domain.DreamStatusProposed,
 			CreatedAt:  now,

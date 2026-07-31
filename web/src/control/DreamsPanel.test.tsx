@@ -20,9 +20,6 @@ const status: DreamStatus = {
     force_enabled: false,
     start_time_local: "03:00",
     timezone: "UTC",
-    reflect_enabled: true,
-    reevaluate_enabled: true,
-    dream_enabled: true,
     max_outputs: 5,
     team_enabled: true,
     source: "team",
@@ -33,7 +30,7 @@ const status: DreamStatus = {
 
 const dream: Dream = {
   dream_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-  team_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  team_id: team.id,
   hypothesis: "A team-scoped control dream",
   what_if: "",
   possible_outcome: "",
@@ -41,28 +38,16 @@ const dream: Dream = {
   likelihood: 0.7,
   confidence: 0.8,
   status: "proposed",
-  cycle: "dream",
   created_at: "2026-07-28T19:00:00Z",
   updated_at: "2026-07-28T20:00:00Z",
 };
 
 describe("ControlDreamsPanel", () => {
-  it("refreshes staleness before initial and manual reads but not filters or pagination", async () => {
-    let releaseManualRefresh = () => {};
-    const manualRefresh = new Promise<void>((resolve) => {
-      releaseManualRefresh = resolve;
-    });
-    const refreshTeamDreams = vi.fn()
-      .mockResolvedValueOnce({ updated_count: 0 })
-      .mockImplementationOnce(async () => {
-        await manualRefresh;
-        return { updated_count: 0 };
-      });
+  it("loads team-owned outputs and paginates without a re-evaluation request", async () => {
     const getTeamDreamingStatus = vi.fn(async () => status);
     const listTeamDreamingRuns = vi.fn(async () => []);
     const listTeamDreams = vi.fn(async () => ({ items: [dream], next_cursor: "next-page" }));
     const api = {
-      refreshTeamDreams,
       getTeamDreamingStatus,
       listTeamDreamingRuns,
       listTeamDreams,
@@ -71,27 +56,11 @@ describe("ControlDreamsPanel", () => {
     render(<ControlDreamsPanel api={api} team={team} />);
 
     expect(await screen.findByText("A team-scoped control dream")).toBeInTheDocument();
-    expect(refreshTeamDreams).toHaveBeenCalledTimes(1);
-    expect(refreshTeamDreams).toHaveBeenCalledWith(team.id);
-    expect(refreshTeamDreams.mock.invocationCallOrder[0]).toBeLessThan(getTeamDreamingStatus.mock.invocationCallOrder[0]);
-    expect(refreshTeamDreams.mock.invocationCallOrder[0]).toBeLessThan(listTeamDreams.mock.invocationCallOrder[0]);
-
-    const refreshButton = screen.getByRole("button", { name: "Refresh dreams" });
-    await userEvent.click(refreshButton);
-    await waitFor(() => expect(refreshTeamDreams).toHaveBeenCalledTimes(2));
-    expect(refreshButton).toBeDisabled();
-    await userEvent.click(refreshButton);
-    expect(refreshTeamDreams).toHaveBeenCalledTimes(2);
-    releaseManualRefresh();
-    await waitFor(() => expect(listTeamDreams).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(refreshButton).toBeEnabled());
-
-    await userEvent.selectOptions(screen.getByLabelText("Status"), "proposed");
-    await waitFor(() => expect(listTeamDreams).toHaveBeenCalledTimes(3));
-    expect(refreshTeamDreams).toHaveBeenCalledTimes(2);
+    expect(getTeamDreamingStatus).toHaveBeenCalledWith(team.id);
+    expect(listTeamDreamingRuns).toHaveBeenCalledWith(team.id, 10);
 
     await userEvent.click(screen.getByRole("button", { name: "Next" }));
-    await waitFor(() => expect(listTeamDreams).toHaveBeenCalledTimes(4));
-    expect(refreshTeamDreams).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(listTeamDreams).toHaveBeenCalledTimes(2));
+    expect(listTeamDreams).toHaveBeenLastCalledWith(team.id, expect.objectContaining({ cursor: "next-page" }));
   });
 });

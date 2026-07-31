@@ -21,43 +21,6 @@ var (
 	ErrDreamExactRelationshipExists = errors.New("dream exact relationship already exists")
 )
 
-const hypothesisStaleSourcePredicateSQL = `EXISTS (
-	SELECT 1
-	FROM jsonb_each_text(h.source_versions) AS source(source_id, source_version)
-	LEFT JOIN relationship_records r
-	  ON r.team_id = h.team_id
-	 AND r.relationship_id = CASE
-	     WHEN source.source_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-	     THEN source.source_id::uuid
-	     ELSE NULL
-	 END
-	WHERE r.relationship_id IS NULL
-	   OR r.version::text <> source.source_version
-	   OR NOT (
-	     (r.status = 'active' AND r.support_count > 0)
-	     OR (
-	       r.status = 'pending_evidence'
-	       AND EXISTS (
-	         SELECT 1
-	         FROM relationship_observations o
-	         JOIN verification_events v
-	           ON v.team_id = o.team_id
-	          AND v.observation_id = o.observation_id
-	         WHERE o.team_id = r.team_id
-	           AND o.relationship_id = r.relationship_id
-	           AND v.evidence_verdict = 'insufficient'
-	       )
-	     )
-	   )
-	   OR EXISTS (
-	     SELECT 1
-	     FROM relationship_cross_references cr
-	     WHERE cr.team_id = r.team_id
-	       AND cr.target_relationship_id = r.relationship_id
-	       AND cr.kind = 'challenges'
-	   )
-)`
-
 type DreamRepository interface {
 	ClaimDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error)
 	CompleteDreamCycle(ctx context.Context, input DreamCycleCompleteInput) error
@@ -66,46 +29,57 @@ type DreamRepository interface {
 	ListHypotheses(ctx context.Context, input ListHypothesesInput) ([]HypothesisRecord, string, error)
 	GetHypothesis(ctx context.Context, input GetHypothesisInput) (*HypothesisRecord, error)
 	RecallHypotheses(ctx context.Context, input RecallHypothesesInput) ([]HypothesisRecord, error)
-	RefreshHypothesisStaleness(ctx context.Context, input RefreshHypothesisStalenessInput) (int, error)
 	UpdateHypothesisStatus(ctx context.Context, input UpdateHypothesisStatusInput) (*HypothesisRecord, error)
 	SubmitHypothesis(ctx context.Context, input SubmitHypothesisInput) (*HypothesisRecord, error)
-	LatestDreamCycle(ctx context.Context, teamID, ownerProfileID string) (*DreamCycleRun, error)
+	CountHypotheses(ctx context.Context, teamID, status string) (int, error)
+	ListDreamCyclesForTeam(ctx context.Context, teamID string, limit int) ([]DreamCycleRun, error)
+}
+
+// ScheduledDreamRepository is deliberately separate from DreamRepository's
+// authenticated actor methods. Only the scheduler receives this system-mode
+// port, so a request cannot select system mutation mode.
+type ScheduledDreamRepository interface {
+	ClaimScheduledDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error)
+	CompleteScheduledDreamCycle(ctx context.Context, input DreamCycleCompleteInput) error
+	UpsertScheduledHypothesis(ctx context.Context, input UpsertHypothesisInput) (*HypothesisRecord, bool, error)
+	RecordMissedScheduledDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error)
 }
 
 type DreamCycleClaimInput struct {
-	TeamID         string
-	OwnerProfileID string
-	RunDate        string
-	WindowKey      string
-	LeaseUntil     time.Time
-	SourceSnapshot []map[string]any
+	TeamID               string
+	InitiatedByProfileID string
+	RunDate              string
+	WindowKey            string
+	LeaseUntil           time.Time
+	SourceSnapshot       []map[string]any
 }
 
 type DreamCycleCompleteInput struct {
-	TeamID             string
-	OwnerProfileID     string
-	RunID              string
-	Status             string
-	InputCount         int
-	CreatedHypotheses  int
-	RejectedHypotheses int
-	Error              string
+	TeamID               string
+	InitiatedByProfileID string
+	RunID                string
+	Status               string
+	InputCount           int
+	CreatedHypotheses    int
+	RejectedHypotheses   int
+	SourceSnapshot       []map[string]any
+	Error                string
 }
 
 type DreamCycleRun struct {
-	TeamID             string
-	RunID              string
-	OwnerProfileID     string
-	RunDate            string
-	WindowKey          string
-	Status             string
-	InputCount         int
-	CreatedHypotheses  int
-	RejectedHypotheses int
-	Error              string
-	StartedAt          time.Time
-	CompletedAt        *time.Time
-	Claimed            bool
+	TeamID               string
+	RunID                string
+	InitiatedByProfileID string
+	RunDate              string
+	WindowKey            string
+	Status               string
+	InputCount           int
+	CreatedHypotheses    int
+	RejectedHypotheses   int
+	Error                string
+	StartedAt            time.Time
+	CompletedAt          *time.Time
+	Claimed              bool
 }
 
 type DreamInputListInput struct {
@@ -131,7 +105,7 @@ type DreamInput struct {
 
 type UpsertHypothesisInput struct {
 	TeamID                string
-	OwnerProfileID        string
+	CreatedByProfileID    string
 	RunID                 string
 	Statement             string
 	Rationale             string
@@ -154,7 +128,7 @@ type UpsertHypothesisInput struct {
 type HypothesisRecord struct {
 	TeamID                string
 	HypothesisID          string
-	OwnerProfileID        string
+	CreatedByProfileID    string
 	Status                string
 	Statement             string
 	Rationale             string
@@ -200,118 +174,46 @@ type RecallHypothesesInput struct {
 	Limit  int
 }
 
-type RefreshHypothesisStalenessInput struct {
-	TeamID         string
-	OwnerProfileID string
-	Limit          int
-}
-
 type UpdateHypothesisStatusInput struct {
 	TeamID            string
-	OwnerProfileID    string
+	ActorProfileID    string
 	HypothesisID      string
 	Status            string
+	Decision          string
 	InvalidatedReason string
 }
 
 type SubmitHypothesisInput struct {
 	TeamID            string
-	OwnerProfileID    string
+	ActorProfileID    string
 	HypothesisID      string
+	Decision          string
 	SubmittedIngestID string
 	InvalidatedReason string
 }
 
 var _ DreamRepository = (*SemanticRepositoryImpl)(nil)
+var _ ScheduledDreamRepository = (*SemanticRepositoryImpl)(nil)
 
-func (r *SemanticRepositoryImpl) ClaimDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error) {
-	input = normalizeDreamCycleClaimInput(input)
-	if err := validateDreamCycleClaimInput(input); err != nil {
-		return nil, err
-	}
-	snapshot, err := marshalJSONArray(input.SourceSnapshot)
-	if err != nil {
-		return nil, err
-	}
-	var run *DreamCycleRun
-	err = r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
-			INSERT INTO dream_cycle_runs (
-			    team_id, owner_profile_id, run_date, window_key, lease_until,
-			    source_snapshot
-			) VALUES (
-			    ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb
-			)
-			ON CONFLICT ON CONSTRAINT dream_cycle_runs_window_unique DO NOTHING
-			RETURNING team_id::text, run_id::text, owner_profile_id::text,
-			          run_date, window_key, status, input_count,
-			          created_hypotheses, rejected_hypotheses, error,
-			          started_at, completed_at
-		`, input.TeamID, input.OwnerProfileID, input.RunDate, input.WindowKey,
-			input.LeaseUntil, string(snapshot)).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		if rows.Next() {
-			loaded, err := scanDreamCycleRun(rows)
-			if err != nil {
-				return err
-			}
-			loaded.Claimed = true
-			run = loaded
-			return rows.Err()
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		existing, err := loadDreamCycleByWindow(ctx, tx, input.TeamID, input.OwnerProfileID, input.WindowKey)
-		if err != nil {
-			return err
-		}
-		existing.Claimed = false
-		run = existing
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("dream: claim cycle: %w", err)
-	}
-	return run, nil
-}
-
-func (r *SemanticRepositoryImpl) CompleteDreamCycle(ctx context.Context, input DreamCycleCompleteInput) error {
-	input = normalizeDreamCycleCompleteInput(input)
-	if err := validateDreamCycleCompleteInput(input); err != nil {
-		return err
-	}
-	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		res := tx.WithContext(ctx).Exec(`
-			UPDATE dream_cycle_runs
-			SET status = ?,
-			    input_count = ?,
-			    created_hypotheses = ?,
-			    rejected_hypotheses = ?,
-			    error = ?,
-			    lease_until = NULL,
-			    completed_at = now(),
-			    updated_at = now()
-			WHERE team_id = ?::uuid
-			  AND owner_profile_id = ?::uuid
-			  AND run_id = ?::uuid
-		`, input.Status, input.InputCount, input.CreatedHypotheses, input.RejectedHypotheses,
-			input.Error, input.TeamID, input.OwnerProfileID, input.RunID)
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected == 0 {
-			return sql.ErrNoRows
-		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("dream: complete cycle: %w", err)
-	}
-	return nil
+func insertHypothesisFeedbackEvent(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	hypothesisID string,
+	actorProfileID string,
+	decision string,
+	feedback string,
+	submittedIngestID string,
+) error {
+	return tx.WithContext(ctx).Exec(`
+		INSERT INTO hypothesis_feedback_events (
+		    team_id, hypothesis_id, actor_profile_id, decision, feedback,
+		    submitted_ingest_id
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, ?, COALESCE(NULLIF(?, ''), ''),
+		    NULLIF(?, '')::uuid
+		)
+	`, teamID, hypothesisID, actorProfileID, decision, feedback, submittedIngestID).Error
 }
 
 func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input DreamInputListInput) ([]DreamInput, error) {
@@ -413,13 +315,28 @@ func (r *SemanticRepositoryImpl) UpsertHypothesis(
 	ctx context.Context,
 	input UpsertHypothesisInput,
 ) (*HypothesisRecord, bool, error) {
+	return r.upsertHypothesis(ctx, input, false)
+}
+
+func (r *SemanticRepositoryImpl) UpsertScheduledHypothesis(
+	ctx context.Context,
+	input UpsertHypothesisInput,
+) (*HypothesisRecord, bool, error) {
+	return r.upsertHypothesis(ctx, input, true)
+}
+
+func (r *SemanticRepositoryImpl) upsertHypothesis(
+	ctx context.Context,
+	input UpsertHypothesisInput,
+	system bool,
+) (*HypothesisRecord, bool, error) {
 	input = normalizeUpsertHypothesisInput(input)
-	if err := validateUpsertHypothesisInput(input); err != nil {
+	if err := validateUpsertHypothesisInput(input, system); err != nil {
 		return nil, false, err
 	}
 	var record *HypothesisRecord
 	inserted := false
-	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+	err := r.withDreamWriteTx(ctx, input.TeamID, input.CreatedByProfileID, system, func(tx *gorm.DB) error {
 		if err := validateHypothesisEndpoints(ctx, tx, input); err != nil {
 			return err
 		}
@@ -440,21 +357,21 @@ func (r *SemanticRepositoryImpl) UpsertHypothesis(
 		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			INSERT INTO hypotheses (
-			    team_id, owner_profile_id, status, statement, rationale,
+			    team_id, created_by_profile_id, status, statement, rationale,
 			    likelihood, confidence, subject_entity_id, predicate_key,
 			    predicate_version, object_entity_id, object_value_id,
 			    source_refs, source_versions, source_owner_profile_ids,
 			    content_hash, cycle_run_id, generator_kind, generator_version,
 			    payload
 			) VALUES (
-			    ?::uuid, ?::uuid, 'proposed', ?, ?, ?, ?, ?::uuid, ?, ?,
+			    ?::uuid, NULLIF(?, '')::uuid, 'proposed', ?, ?, ?, ?, ?::uuid, ?, ?,
 			    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?::jsonb, ?::jsonb,
 			    ?::uuid[], ?, ?::uuid, ?, ?, ?::jsonb
 			)
-			ON CONFLICT (team_id, owner_profile_id, content_hash)
-			WHERE content_hash IS NOT NULL
+			ON CONFLICT (team_id, content_hash)
+			WHERE content_hash IS NOT NULL AND canonical_hypothesis_id IS NULL
 			DO NOTHING
-			RETURNING team_id::text, hypothesis_id::text, owner_profile_id::text,
+			RETURNING team_id::text, hypothesis_id::text, COALESCE(created_by_profile_id::text, ''),
 			          status, statement, rationale, likelihood, confidence,
 			          subject_entity_id::text, predicate_key, predicate_version,
 			          COALESCE(object_entity_id::text, ''), COALESCE(object_value_id::text, ''),
@@ -464,7 +381,7 @@ func (r *SemanticRepositoryImpl) UpsertHypothesis(
 			          generator_kind, generator_version, invalidated_reason,
 			          COALESCE(submitted_ingest_id::text, ''), submitted_at,
 			          payload, created_at, updated_at
-		`, input.TeamID, input.OwnerProfileID, input.Statement, input.Rationale,
+		`, input.TeamID, input.CreatedByProfileID, input.Statement, input.Rationale,
 			input.Likelihood, input.Confidence, input.SubjectEntityID, input.PredicateKey,
 			input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
 			string(sourceRefs), string(sourceVersions), pq.Array(input.SourceOwnerProfileIDs),
@@ -513,6 +430,7 @@ func (r *SemanticRepositoryImpl) ListHypotheses(
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		query := hypothesisSelectSQL(`
 			WHERE team_id = ?::uuid
+			  AND canonical_hypothesis_id IS NULL
 			  AND (? = '' OR status = ?)
 			ORDER BY ` + hypothesisListOrder(input.Sort, input.Direction) + `, hypothesis_id
 			LIMIT ? OFFSET ?
@@ -556,9 +474,15 @@ func (r *SemanticRepositoryImpl) GetHypothesis(ctx context.Context, input GetHyp
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(hypothesisSelectSQL(`
 			WHERE team_id = ?::uuid
-			  AND hypothesis_id = ?::uuid
+			  AND canonical_hypothesis_id IS NULL
+			  AND hypothesis_id = COALESCE((
+			      SELECT canonical_hypothesis_id
+			      FROM hypotheses
+			      WHERE team_id = ?::uuid
+			        AND hypothesis_id = ?::uuid
+			  ), ?::uuid)
 			LIMIT 1
-		`), input.TeamID, input.HypothesisID).Rows()
+		`), input.TeamID, input.TeamID, input.HypothesisID, input.HypothesisID).Rows()
 		if err != nil {
 			return err
 		}
@@ -596,6 +520,7 @@ func (r *SemanticRepositoryImpl) RecallHypotheses(ctx context.Context, input Rec
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(hypothesisSelectSQL(`
 			WHERE team_id = ?::uuid
+			  AND canonical_hypothesis_id IS NULL
 			  AND status IN ('proposed', 'reinforced')
 			  AND (? = '' OR statement ILIKE ? OR rationale ILIKE ?)
 			ORDER BY CASE WHEN ? <> '' AND statement ILIKE ? THEN 0 ELSE 1 END,
@@ -616,55 +541,6 @@ func (r *SemanticRepositoryImpl) RecallHypotheses(ctx context.Context, input Rec
 	return records, nil
 }
 
-func (r *SemanticRepositoryImpl) RefreshHypothesisStaleness(
-	ctx context.Context,
-	input RefreshHypothesisStalenessInput,
-) (int, error) {
-	input = normalizeRefreshHypothesisStalenessInput(input)
-	if err := validateRefreshHypothesisStalenessInput(input); err != nil {
-		return 0, err
-	}
-	updated := 0
-	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
-			WITH stale AS (
-			    SELECT h.team_id, h.hypothesis_id
-			    FROM hypotheses h
-			    WHERE h.team_id = ?::uuid
-			      AND h.owner_profile_id = ?::uuid
-			      AND h.status IN ('proposed', 'reinforced')
-			      AND `+hypothesisStaleSourcePredicateSQL+`
-			    ORDER BY h.updated_at, h.hypothesis_id
-			    LIMIT ?
-			)
-			UPDATE hypotheses h
-			SET status = 'stale',
-			    invalidated_reason = 'source relationship changed or became ineligible',
-			    updated_at = now()
-			FROM stale
-			WHERE h.team_id = stale.team_id
-			  AND h.hypothesis_id = stale.hypothesis_id
-			RETURNING h.hypothesis_id
-		`, input.TeamID, input.OwnerProfileID, input.Limit).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				return err
-			}
-			updated++
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return 0, fmt.Errorf("dream: refresh hypothesis staleness: %w", err)
-	}
-	return updated, nil
-}
-
 func (r *SemanticRepositoryImpl) UpdateHypothesisStatus(
 	ctx context.Context,
 	input UpdateHypothesisStatusInput,
@@ -674,30 +550,46 @@ func (r *SemanticRepositoryImpl) UpdateHypothesisStatus(
 		return nil, err
 	}
 	var record *HypothesisRecord
-	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+	err := r.withTeamProfileTx(ctx, input.TeamID, input.ActorProfileID, func(tx *gorm.DB) error {
+		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.ActorProfileID); err != nil {
+			return err
+		}
 		rows, err := tx.WithContext(ctx).Raw(hypothesisUpdateReturningSQL(`
 			UPDATE hypotheses
 			SET status = ?,
 			    invalidated_reason = CASE WHEN ? <> '' THEN ? ELSE invalidated_reason END,
 			    updated_at = now()
 			WHERE team_id = ?::uuid
-			  AND owner_profile_id = ?::uuid
-			  AND hypothesis_id = ?::uuid
+			  AND canonical_hypothesis_id IS NULL
+			  AND hypothesis_id = COALESCE((
+			      SELECT canonical_hypothesis_id
+			      FROM hypotheses
+			      WHERE team_id = ?::uuid
+			        AND hypothesis_id = ?::uuid
+			  ), ?::uuid)
 		`), input.Status, input.InvalidatedReason, input.InvalidatedReason,
-			input.TeamID, input.OwnerProfileID, input.HypothesisID).Rows()
+			input.TeamID, input.TeamID, input.HypothesisID, input.HypothesisID).Rows()
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
 		if !rows.Next() {
+			_ = rows.Close()
 			return ErrDreamHypothesisNotFound
 		}
 		loaded, err := scanHypothesisRecord(rows)
 		if err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if err := insertHypothesisFeedbackEvent(ctx, tx, input.TeamID, loaded.HypothesisID,
+			input.ActorProfileID, input.Decision, input.InvalidatedReason, ""); err != nil {
 			return err
 		}
 		record = loaded
-		return rows.Err()
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dream: update hypothesis: %w", err)
@@ -714,7 +606,10 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 		return nil, err
 	}
 	var record *HypothesisRecord
-	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+	err := r.withTeamProfileTx(ctx, input.TeamID, input.ActorProfileID, func(tx *gorm.DB) error {
+		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.ActorProfileID); err != nil {
+			return err
+		}
 		rows, err := tx.WithContext(ctx).Raw(hypothesisUpdateReturningSQL(`
 			UPDATE hypotheses
 			SET status = 'submitted',
@@ -723,70 +618,41 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 			    invalidated_reason = CASE WHEN ? <> '' THEN ? ELSE invalidated_reason END,
 			    updated_at = now()
 			WHERE team_id = ?::uuid
-			  AND owner_profile_id = ?::uuid
-			  AND hypothesis_id = ?::uuid
+			  AND canonical_hypothesis_id IS NULL
+			  AND hypothesis_id = COALESCE((
+			      SELECT canonical_hypothesis_id
+			      FROM hypotheses
+			      WHERE team_id = ?::uuid
+			        AND hypothesis_id = ?::uuid
+			  ), ?::uuid)
 		`), input.SubmittedIngestID, input.InvalidatedReason, input.InvalidatedReason,
-			input.TeamID, input.OwnerProfileID, input.HypothesisID).Rows()
+			input.TeamID, input.TeamID, input.HypothesisID, input.HypothesisID).Rows()
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
 		if !rows.Next() {
+			_ = rows.Close()
 			return ErrDreamHypothesisNotFound
 		}
 		loaded, err := scanHypothesisRecord(rows)
 		if err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if err := insertHypothesisFeedbackEvent(ctx, tx, input.TeamID, loaded.HypothesisID,
+			input.ActorProfileID, input.Decision, input.InvalidatedReason, input.SubmittedIngestID); err != nil {
 			return err
 		}
 		record = loaded
-		return rows.Err()
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dream: submit hypothesis: %w", err)
 	}
 	return record, nil
-}
-
-func (r *SemanticRepositoryImpl) LatestDreamCycle(ctx context.Context, teamID, ownerProfileID string) (*DreamCycleRun, error) {
-	teamID = strings.TrimSpace(teamID)
-	ownerProfileID = strings.TrimSpace(ownerProfileID)
-	if _, err := uuid.Parse(teamID); err != nil {
-		return nil, fmt.Errorf("team_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(ownerProfileID); err != nil {
-		return nil, fmt.Errorf("owner_profile_id is required: %w", err)
-	}
-	var run *DreamCycleRun
-	err := r.withTeamProfileTx(ctx, teamID, ownerProfileID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT team_id::text, run_id::text, owner_profile_id::text,
-			       run_date, window_key, status, input_count,
-			       created_hypotheses, rejected_hypotheses, error,
-			       started_at, completed_at
-			FROM dream_cycle_runs
-			WHERE team_id = ?::uuid
-			  AND owner_profile_id = ?::uuid
-			ORDER BY started_at DESC
-			LIMIT 1
-		`, teamID, ownerProfileID).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		if !rows.Next() {
-			return nil
-		}
-		loaded, err := scanDreamCycleRun(rows)
-		if err != nil {
-			return err
-		}
-		run = loaded
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, fmt.Errorf("dream: latest cycle: %w", err)
-	}
-	return run, nil
 }
 
 func validateHypothesisEndpoints(ctx context.Context, tx *gorm.DB, input UpsertHypothesisInput) error {
@@ -796,7 +662,6 @@ func validateHypothesisEndpoints(ctx context.Context, tx *gorm.DB, input UpsertH
 	}
 	relationshipInput := ApplyRelationshipDecisionInput{
 		TeamID:           input.TeamID,
-		OwnerProfileID:   input.OwnerProfileID,
 		IngestID:         uuid.NewString(),
 		SubjectEntityID:  input.SubjectEntityID,
 		PredicateKey:     input.PredicateKey,
@@ -905,9 +770,9 @@ func reinforceHypothesisByHash(
 		    END,
 		    updated_at = now()
 		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
+		  AND canonical_hypothesis_id IS NULL
 		  AND content_hash = ?
-	`), input.TeamID, input.OwnerProfileID, input.ContentHash).Rows()
+	`), input.TeamID, input.ContentHash).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -918,18 +783,18 @@ func reinforceHypothesisByHash(
 	return scanHypothesisRecord(rows)
 }
 
-func loadDreamCycleByWindow(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, windowKey string) (*DreamCycleRun, error) {
+func loadDreamCycleByWindow(ctx context.Context, tx *gorm.DB, teamID, windowKey string) (*DreamCycleRun, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT team_id::text, run_id::text, owner_profile_id::text,
+		SELECT team_id::text, run_id::text, COALESCE(initiated_by_profile_id::text, ''),
 		       run_date, window_key, status, input_count,
 		       created_hypotheses, rejected_hypotheses, error,
 		       started_at, completed_at
 		FROM dream_cycle_runs
 		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
+		  AND canonical_run_id IS NULL
 		  AND window_key = ?
 		LIMIT 1
-	`, teamID, ownerProfileID, windowKey).Rows()
+	`, teamID, windowKey).Rows()
 	if err != nil {
 		return nil, err
 	}

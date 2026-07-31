@@ -17,11 +17,8 @@ func evalRunDreamCycleTool(deps Dependencies) Tool {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"manual":             map[string]any{"type": "boolean"},
-				"reflect_enabled":    map[string]any{"type": "boolean"},
-				"reevaluate_enabled": map[string]any{"type": "boolean"},
-				"dream_enabled":      map[string]any{"type": "boolean"},
-				"max_outputs":        map[string]any{"type": "integer", "minimum": 1, "maximum": evalDreamCycleMaxOutputs},
+				"manual":      map[string]any{"type": "boolean"},
+				"max_outputs": map[string]any{"type": "integer", "minimum": 1, "maximum": evalDreamCycleMaxOutputs},
 				"seed_dreams": map[string]any{
 					"type":     "array",
 					"maxItems": evalDreamCycleMaxOutputs,
@@ -66,12 +63,9 @@ func evalRunDreamCycleTool(deps Dependencies) Tool {
 				return nil, err
 			}
 			req := dreamservice.RunCycleRequest{
-				Manual:            boolInputOrDefault(input["manual"], true),
-				ReflectEnabled:    boolPtrInput(input["reflect_enabled"]),
-				ReevaluateEnabled: boolPtrInput(input["reevaluate_enabled"]),
-				DreamEnabled:      boolPtrInput(input["dream_enabled"]),
-				MaxOutputs:        maxOutputs,
-				SeedDreams:        seedDreamsInput(input["seed_dreams"]),
+				Manual:     boolInputOrDefault(input["manual"], true),
+				MaxOutputs: maxOutputs,
+				SeedDreams: seedDreamsInput(input["seed_dreams"]),
 			}
 			result, err := deps.Dreams.RunCycle(ctx, profileID, req)
 			if err != nil {
@@ -129,14 +123,6 @@ func dreamRefs(dreams []*domain.Dream) []map[string]any {
 		})
 	}
 	return refs
-}
-
-func boolPtrInput(value any) *bool {
-	parsed, ok := value.(bool)
-	if !ok {
-		return nil
-	}
-	return &parsed
 }
 
 func seedDreamsInput(value any) []dreamservice.SeedDream {

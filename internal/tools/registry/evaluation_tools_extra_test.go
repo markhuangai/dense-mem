@@ -73,11 +73,8 @@ func TestEvaluationDreamTools(t *testing.T) {
 
 	runTool, _ := reg.Get("eval_run_dream_cycle")
 	run, err := runTool.Invoke(ctx, "profile-dream", map[string]any{
-		"manual":             false,
-		"reflect_enabled":    true,
-		"reevaluate_enabled": false,
-		"dream_enabled":      true,
-		"max_outputs":        float64(7),
+		"manual":      false,
+		"max_outputs": float64(7),
 		"seed_dreams": []any{map[string]any{
 			"hypothesis":       " Dense-Mem uses PostgreSQL ",
 			"what_if":          " authority ",
@@ -96,11 +93,6 @@ func TestEvaluationDreamTools(t *testing.T) {
 	}
 	if run["run_id"] != "run-1" || dreams.lastRunReq.Manual || dreams.lastRunReq.MaxOutputs != 7 {
 		t.Fatalf("run output/request = %v/%+v", run, dreams.lastRunReq)
-	}
-	if dreams.lastRunReq.ReflectEnabled == nil || !*dreams.lastRunReq.ReflectEnabled ||
-		dreams.lastRunReq.ReevaluateEnabled == nil || *dreams.lastRunReq.ReevaluateEnabled ||
-		dreams.lastRunReq.DreamEnabled == nil || !*dreams.lastRunReq.DreamEnabled {
-		t.Fatalf("run boolean overrides = %+v", dreams.lastRunReq)
 	}
 	if len(dreams.lastRunReq.SeedDreams) != 1 || dreams.lastRunReq.SeedDreams[0].Hypothesis != "Dense-Mem uses PostgreSQL" {
 		t.Fatalf("seed dreams = %+v", dreams.lastRunReq.SeedDreams)

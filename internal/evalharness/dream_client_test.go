@@ -51,7 +51,7 @@ func TestHTTPClientRunsDreamCycleAndExportsDreamMapping(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RunDreamCycle: %v", err)
 	}
-	if runInput["manual"] != true || runInput["dream_enabled"] != true || runInput["max_outputs"] != float64(2) {
+	if runInput["manual"] != true || runInput["max_outputs"] != float64(2) {
 		t.Fatalf("run dream cycle input = %#v", runInput)
 	}
 	seeds, ok := runInput["seed_dreams"].([]any)

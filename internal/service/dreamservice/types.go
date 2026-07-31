@@ -1,5 +1,5 @@
-// Package dreamservice implements the scheduled reflect -> re-evaluate ->
-// dream cycle chain and reviewable Dream hypothesis layer.
+// Package dreamservice implements scheduled team dreaming and its reviewable
+// hypothesis layer.
 package dreamservice
 
 import (
@@ -16,10 +16,6 @@ import (
 )
 
 const (
-	CycleReflect    = "reflect"
-	CycleReevaluate = "re_evaluate"
-	CycleDream      = "dream"
-
 	DefaultStartTimeLocal = "03:00"
 	DefaultTimezone       = "Local"
 	DefaultMaxOutputs     = 5
@@ -53,19 +49,22 @@ type Generator interface {
 }
 
 type Dependencies struct {
-	Remember  memoryservice.RememberService
-	Store     repository.DreamRepository
-	AppConfig AppConfig
-	Profiles  ProfileService
-	Locker    CycleLocker
-	Postgres  *gorm.DB
-	Generator Generator
-	Metrics   observability.DiscoverabilityMetrics
-	Now       func() time.Time
+	Remember       memoryservice.RememberService
+	Store          repository.DreamRepository
+	ScheduledStore repository.ScheduledDreamRepository
+	AppConfig      AppConfig
+	Profiles       ProfileService
+	Locker         CycleLocker
+	Postgres       *gorm.DB
+	Generator      Generator
+	Metrics        observability.DiscoverabilityMetrics
+	Now            func() time.Time
 }
 
 type Service interface {
 	RunCycle(ctx context.Context, profileID string, req RunCycleRequest) (*RunCycleResult, error)
+	RunScheduledCycle(ctx context.Context, teamID string, windowAt time.Time) (*RunCycleResult, error)
+	RecordMissedScheduledCycle(ctx context.Context, teamID, runDate string) (*RunCycleResult, error)
 	List(ctx context.Context, profileID string, opts ListOptions) ([]*domain.Dream, string, error)
 	Get(ctx context.Context, profileID, dreamID string) (*domain.Dream, error)
 	ListRuns(ctx context.Context, profileID string, limit int) ([]*RunCycleResult, error)
@@ -76,29 +75,22 @@ type Service interface {
 }
 
 type RunCycleRequest struct {
-	Manual            bool        `json:"manual,omitempty"`
-	ReflectEnabled    *bool       `json:"reflect_enabled,omitempty"`
-	ReevaluateEnabled *bool       `json:"reevaluate_enabled,omitempty"`
-	DreamEnabled      *bool       `json:"dream_enabled,omitempty"`
-	MaxOutputs        int         `json:"max_outputs,omitempty"`
-	SeedDreams        []SeedDream `json:"seed_dreams,omitempty"`
+	Manual     bool        `json:"manual,omitempty"`
+	MaxOutputs int         `json:"max_outputs,omitempty"`
+	SeedDreams []SeedDream `json:"seed_dreams,omitempty"`
 }
 
 type RunCycleResult struct {
-	RunID                  string    `json:"run_id"`
-	ProfileID              string    `json:"team_id"`
-	RunDate                string    `json:"run_date"`
-	StartedAt              time.Time `json:"started_at"`
-	CompletedAt            time.Time `json:"completed_at"`
-	ReflectRan             bool      `json:"reflect_ran"`
-	ReevaluateRan          bool      `json:"reevaluate_ran"`
-	DreamRan               bool      `json:"dream_ran"`
-	CandidateRelationships int       `json:"candidate_relationships"`
-	Clarifications         int       `json:"clarifications"`
-	ReevaluatedDreams      int       `json:"reevaluated_dreams"`
-	CreatedDreams          int       `json:"created_dreams"`
-	Status                 string    `json:"status"`
-	Error                  string    `json:"error,omitempty"`
+	RunID              string    `json:"run_id"`
+	TeamID             string    `json:"team_id"`
+	RunDate            string    `json:"run_date"`
+	StartedAt          time.Time `json:"started_at"`
+	CompletedAt        time.Time `json:"completed_at"`
+	InputRelationships int       `json:"input_relationships"`
+	CreatedDreams      int       `json:"created_dreams"`
+	RejectedDreams     int       `json:"rejected_dreams"`
+	Status             string    `json:"status"`
+	Error              string    `json:"error,omitempty"`
 }
 
 type ListOptions struct {
@@ -177,11 +169,4 @@ type SeedDream struct {
 	Likelihood      float64                 `json:"likelihood,omitempty"`
 	Confidence      float64                 `json:"confidence,omitempty"`
 	SourceRefs      []domain.DreamSourceRef `json:"source_refs"`
-}
-
-func boolValue(ptr *bool, fallback bool) bool {
-	if ptr == nil {
-		return fallback
-	}
-	return *ptr
 }

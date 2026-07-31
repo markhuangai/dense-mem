@@ -239,9 +239,6 @@ export type DreamingRuntimeConfig = {
   force_enabled: boolean;
   start_time_local: string;
   timezone: string;
-  reflect_enabled: boolean;
-  reevaluate_enabled: boolean;
-  dream_enabled: boolean;
   max_outputs: number;
 };
 
@@ -460,17 +457,15 @@ export type Dream = {
   likelihood: number;
   confidence: number;
   status: "proposed" | "reinforced" | "stale" | "rejected" | "submitted" | string;
-  cycle: string;
   cycle_run_id?: string;
   generator_model?: string;
   source_refs?: Array<{ type: string; id: string }>;
   invalidated_reason?: string;
-  last_evaluated_at?: string;
   created_at: string;
   updated_at: string;
 };
 
-export type DreamSort = "updated_at" | "created_at" | "last_evaluated_at";
+export type DreamSort = "updated_at" | "created_at";
 export type DreamDirection = "asc" | "desc";
 
 export type DreamRun = {
@@ -479,13 +474,9 @@ export type DreamRun = {
   run_date: string;
   started_at: string;
   completed_at: string;
-  reflect_ran: boolean;
-  reevaluate_ran: boolean;
-  dream_ran: boolean;
-  candidate_relationships: number;
-  clarifications: number;
-  reevaluated_dreams: number;
+  input_relationships: number;
   created_dreams: number;
+  rejected_dreams: number;
   status: string;
   error?: string;
 };
@@ -507,10 +498,6 @@ export type DreamQuery = {
 export type DreamListResponse = {
   items: Dream[];
   next_cursor?: string;
-};
-
-export type DreamRefreshResult = {
-  updated_count: number;
 };
 
 type RequestOptions = {
@@ -773,10 +760,6 @@ export class ControlApi {
 
   listTeamDreamingRuns(teamId: string, limit = 20): Promise<DreamRun[]> {
     return this.requestEnvelope<DreamRun[]>(`/teams/${teamId}/dreaming/runs?limit=${limit}`);
-  }
-
-  refreshTeamDreams(teamId: string): Promise<DreamRefreshResult> {
-    return this.requestEnvelope<DreamRefreshResult>(`/teams/${teamId}/dreams/refresh`, { method: "POST" });
   }
 
   listTeamDreams(teamId: string, query: DreamQuery = {}): Promise<DreamListResponse> {

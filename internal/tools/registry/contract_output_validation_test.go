@@ -177,7 +177,7 @@ func TestAuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 	hash := strings.Repeat("a", 64)
 	dream := &domain.Dream{
 		DreamID:         "dream-1",
-		ProfileID:       "owner-1",
+		TeamID:          "team-1",
 		Hypothesis:      "Dense-Mem may add cutover telemetry.",
 		Rationale:       "related implementation signals",
 		Likelihood:      0.62,
@@ -189,11 +189,12 @@ func TestAuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 			{Type: "relationship", ID: "rel-1"},
 			{Type: "candidate_relationship", ID: "candidate-1"},
 		},
-		SourceVersions:   map[string]int{"rel-1": 2},
-		GeneratorKind:    "provider",
-		GeneratorVersion: "gpt-4.1-mini",
-		Status:           domain.DreamStatusProposed,
-		CreatedAt:        now,
+		SourceOwnerProfileIDs: []string{"owner-1"},
+		SourceVersions:        map[string]int{"rel-1": 2},
+		GeneratorKind:         "provider",
+		GeneratorVersion:      "gpt-4.1-mini",
+		Status:                domain.DreamStatusProposed,
+		CreatedAt:             now,
 	}
 
 	listDreams := listDreamsContractOutput([]*domain.Dream{dream}, "next-dream")
@@ -351,7 +352,7 @@ func TestContractOutputEmptyCollectionResultsRemainSchemaValid(t *testing.T) {
 func TestDreamContractOutputUsesCanonicalFallbackFields(t *testing.T) {
 	dream := &domain.Dream{
 		DreamID:    "dream-fallback",
-		ProfileID:  "owner-fallback",
+		TeamID:     "team-fallback",
 		Hypothesis: "Dense-Mem may need an evidence lifecycle guide.",
 		Status:     domain.DreamStatusProposed,
 		SourceRefs: []domain.DreamSourceRef{
@@ -362,7 +363,7 @@ func TestDreamContractOutputUsesCanonicalFallbackFields(t *testing.T) {
 	}
 
 	out := dreamContractOutput(dream)
-	if owners := out["source_owner_profile_ids"].([]string); len(owners) != 1 || owners[0] != "owner-fallback" {
+	if owners := out["source_owner_profile_ids"].([]string); len(owners) != 0 {
 		t.Fatalf("source owner fallback = %#v", owners)
 	}
 	if relationships := out["source_relationship_ids"].([]string); len(relationships) != 1 || relationships[0] != "relationship-fallback" {

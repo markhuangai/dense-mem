@@ -764,9 +764,6 @@ func dreamOutputOwnerIDs(dream *domain.Dream) []string {
 	if len(dream.SourceOwnerProfileIDs) > 0 {
 		return append([]string(nil), dream.SourceOwnerProfileIDs...)
 	}
-	if strings.TrimSpace(dream.ProfileID) != "" {
-		return []string{dream.ProfileID}
-	}
 	return []string{}
 }
 
