@@ -154,6 +154,27 @@ func TestSchedulerRecordsMissedWindowAfterArmingBeforeWindow(t *testing.T) {
 	require.True(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
 }
 
+func TestSchedulerDoesNotObserveSkippedMissedWindow(t *testing.T) {
+	teamID := uuid.New()
+	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
+	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig(), missedStatus: "skipped"}
+	scheduler := NewScheduler(dreams, profiles, discardSchedulerLogger())
+	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 2, 59, 0, 0, time.UTC) }
+
+	scheduler.runDue(context.Background())
+
+	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 3, 1, 0, 0, time.UTC) }
+	scheduler.runDue(context.Background())
+
+	require.Equal(t, []string{teamID.String()}, dreams.missedTeams)
+	require.False(t, scheduler.alreadyObserved(teamID.String(), "2026-06-11"))
+	require.True(t, scheduler.isArmed(teamID.String(), scheduledWindowArm{
+		runDate:        "2026-06-11",
+		startTimeLocal: "03:00",
+		timezone:       "UTC",
+	}))
+}
+
 func TestSchedulerRecordsMissedWindowAfterDueCycleSkips(t *testing.T) {
 	teamID := uuid.New()
 	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
@@ -374,6 +395,7 @@ type schedulerDreamStub struct {
 	scheduledErrs    map[string]error
 	missedErrs       map[string]error
 	scheduledStatus  string
+	missedStatus     string
 	scheduledTeams   []string
 	missedTeams      []string
 	scheduledWindows []time.Time
@@ -403,7 +425,11 @@ func (s *schedulerDreamStub) RecordMissedScheduledCycle(_ context.Context, teamI
 	if err := s.missedErrs[teamID]; err != nil {
 		return nil, err
 	}
-	return &RunCycleResult{RunID: uuid.NewString(), TeamID: teamID, Status: "missed"}, nil
+	status := s.missedStatus
+	if status == "" {
+		status = "missed"
+	}
+	return &RunCycleResult{RunID: uuid.NewString(), TeamID: teamID, Status: status}, nil
 }
 
 func (s *schedulerDreamStub) List(context.Context, string, ListOptions) ([]*domain.Dream, string, error) {

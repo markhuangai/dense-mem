@@ -136,8 +136,8 @@ func (s *Scheduler) runDue(ctx context.Context) {
 				s.logger.Warn("dreaming scheduler: cycle failed", slog.String("team_id", teamID), slog.String("error_kind", "cycle_failed"))
 				continue
 			}
-			if state == scheduledWindowDue && result.Status == "skipped" {
-				s.logger.Warn("dreaming scheduler: due cycle skipped before it could claim the window", slog.String("team_id", teamID), slog.String("run_date", runDate))
+			if result.Status == "skipped" {
+				s.logger.Warn("dreaming scheduler: cycle skipped before it could claim the window", slog.String("team_id", teamID), slog.String("run_date", runDate))
 				continue
 			}
 			s.markObserved(teamID, runDate)
