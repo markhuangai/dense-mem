@@ -262,6 +262,9 @@ func (h *controlPortalHandler) updateTelemetryPricingConfig(c echo.Context) erro
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
+	if len(body.Items) == 0 {
+		return httperr.New(httperr.VALIDATION_ERROR, "at least one telemetry pricing item is required")
+	}
 	values := make(map[string]string, len(body.Items))
 	for _, item := range body.Items {
 		values[item.Key] = item.Value

@@ -66,6 +66,10 @@ func TestTelemetryCostCardsAreOperatorOnly(t *testing.T) {
 	require.NotNil(t, verifierCost)
 	require.Equal(t, "USD", verifierCost.Unit)
 	require.Contains(t, verifierCost.Query, `component="verifier"`)
+
+	profileBackgroundCost := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(TelemetryScope{Type: "profile"}, nil, "1h", true), "background_embedding_cost_usd")
+	require.NotNil(t, profileBackgroundCost)
+	require.Equal(t, "Background embedding cost (team-only)", profileBackgroundCost.Label)
 }
 
 func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {

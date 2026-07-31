@@ -323,9 +323,16 @@ func telemetryWindowedCardSpecsForAudience(scope TelemetryScope, baseLabels map[
 		telemetryQuerySpec{ID: "ai_cost_usd", Label: "AI cost", Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, nil, window)},
 		telemetryQuerySpec{ID: "verifier_cost_usd", Label: "Verifier cost", Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, map[string]string{"component": observability.AIComponentVerifier}, window)},
 		telemetryQuerySpec{ID: "recall_embedding_cost_usd", Label: "Recall embedding cost", Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, map[string]string{"operation": observability.AIOperationRecallEmbedding}, window)},
-		telemetryQuerySpec{ID: "background_embedding_cost_usd", Label: "Background embedding cost", Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, map[string]string{"operation": observability.AIOperationBackgroundEmbedding}, window)},
+		telemetryQuerySpec{ID: "background_embedding_cost_usd", Label: telemetryBackgroundEmbeddingCostLabel(scope), Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, map[string]string{"operation": observability.AIOperationBackgroundEmbedding}, window)},
 		telemetryQuerySpec{ID: "ai_unpriced_operations", Label: "Unpriced AI operations", Unit: "operations", Query: telemetrySparseCounterIncrease("densemem_ai_operation_unpriced_total", scope, baseLabels, nil, window)},
 	)
+}
+
+func telemetryBackgroundEmbeddingCostLabel(scope TelemetryScope) string {
+	if scope.Type == "profile" {
+		return "Background embedding cost (team-only)"
+	}
+	return "Background embedding cost"
 }
 
 func telemetryCurrentCardSpecs(scope TelemetryScope, baseLabels map[string]string) []telemetryQuerySpec {

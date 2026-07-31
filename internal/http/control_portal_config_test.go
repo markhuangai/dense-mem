@@ -732,6 +732,12 @@ func TestControlPortalTelemetryPricingConfigFlows(t *testing.T) {
 	rec = do(http.MethodPatch, "/control/api/config/telemetry-pricing", "{")
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
+	for _, body := range []string{`{}`, `{"telemetry_items":[]}`} {
+		rec = do(http.MethodPatch, "/control/api/config/telemetry-pricing", body)
+		require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		require.Equal(t, "3", appConfig.telemetryValues[domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens])
+	}
+
 	appConfig.updateErr = service.ErrInvalidAppConfig
 	rec = do(http.MethodPatch, "/control/api/config/telemetry-pricing", `{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS","value":"-1"}]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)

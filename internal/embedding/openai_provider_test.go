@@ -125,6 +125,46 @@ func TestOpenAIProviderRecordsProviderUsageBeforeRejectingInvalidResult(t *testi
 	t.Fatal("provider usage did not produce an AI operation cost sample")
 }
 
+func TestOpenAIProviderUsesTotalTokensWhenPromptTokensAreOmitted(t *testing.T) {
+	rate := 1_000_000.0
+	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
+		return observability.AIPricing{EmbeddingInputUSDPerMillionTokens: &rate}, nil
+	}))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"data":  []any{map[string]any{"embedding": []float32{0.1, 0.2}}},
+			"usage": map[string]any{"total_tokens": 12},
+		}))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL:                  srv.URL,
+		AIAPIKey:                  "key",
+		AIEmbeddingModel:          "embedding-model",
+		AIEmbeddingDimensions:     2,
+		AIEmbeddingTimeoutSeconds: 5,
+	}, srv.Client())
+	p.SetMetrics(metrics)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationRecallEmbedding, 1)
+	_, _, err := p.Embed(ctx, "total-only usage")
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+		if !strings.HasPrefix(line, "densemem_ai_operation_cost_usd_total{") {
+			continue
+		}
+		assert.Contains(t, line, `operation="recall_embedding"`)
+		assert.Contains(t, line, `component="embedding"`)
+		assert.Contains(t, line, `model="embedding-model"`)
+		assert.True(t, strings.HasSuffix(line, " 12"), "cost line = %q; want 12 USD", line)
+		return
+	}
+	t.Fatal("total embedding tokens did not produce an AI operation cost sample")
+}
+
 func TestOpenAIProviderMarksMalformedSuccessfulResponseUnpriced(t *testing.T) {
 	metrics := observability.NewPrometheusMetrics()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

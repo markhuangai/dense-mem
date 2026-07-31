@@ -220,11 +220,15 @@ func (p *OpenAIEmbeddingProvider) recordEmbeddingUsage(ctx context.Context, usag
 		observability.RecordAIOperationUnpriced(ctx, p.metrics, observability.AIComponentEmbedding, p.model, "missing_usage")
 		return
 	}
+	inputTokens := usage.PromptTokens
+	if inputTokens == 0 && usage.TotalTokens > 0 {
+		inputTokens = usage.TotalTokens
+	}
 	observability.RecordEmbeddingTokens(ctx, p.metrics, p.model, usage.PromptTokens, usage.TotalTokens)
 	observability.RecordAIOperationUsage(ctx, p.metrics, observability.AIOperationUsage{
 		Component:   observability.AIComponentEmbedding,
 		Model:       p.model,
-		InputTokens: usage.PromptTokens,
+		InputTokens: inputTokens,
 		ItemCount:   itemCount,
 		Source:      observability.AITokenSourceProvider,
 	})
