@@ -14,13 +14,10 @@ const (
 	AppConfigSSOHTTPTimeoutSeconds         = "SSO_HTTP_TIMEOUT_SECONDS"
 	AppConfigSSOCookieSecure               = "SSO_COOKIE_SECURE"
 
-	AppConfigDreamingEnabled           = "DREAMING_ENABLED"
-	AppConfigDreamingForceEnabled      = "DREAMING_FORCE_ENABLED"
-	AppConfigDreamingStartTimeLocal    = "DREAMING_START_TIME_LOCAL"
-	AppConfigDreamingReflectEnabled    = "DREAMING_REFLECT_ENABLED"
-	AppConfigDreamingReevaluateEnabled = "DREAMING_REEVALUATE_ENABLED"
-	AppConfigDreamingDreamEnabled      = "DREAMING_DREAM_ENABLED"
-	AppConfigDreamingMaxOutputs        = "DREAMING_MAX_OUTPUTS"
+	AppConfigDreamingEnabled        = "DREAMING_ENABLED"
+	AppConfigDreamingForceEnabled   = "DREAMING_FORCE_ENABLED"
+	AppConfigDreamingStartTimeLocal = "DREAMING_START_TIME_LOCAL"
+	AppConfigDreamingMaxOutputs     = "DREAMING_MAX_OUTPUTS"
 
 	AppConfigCommunityDetectionEnabled        = "COMMUNITY_DETECTION_ENABLED"
 	AppConfigCommunityDetectionStartTimeLocal = "COMMUNITY_DETECTION_START_TIME_LOCAL"

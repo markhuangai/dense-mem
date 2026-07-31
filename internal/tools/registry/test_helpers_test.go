@@ -91,7 +91,15 @@ type stubDreamService struct {
 
 func (s *stubDreamService) RunCycle(_ context.Context, profileID string, req dreamservice.RunCycleRequest) (*dreamservice.RunCycleResult, error) {
 	s.lastRunReq = req
-	return &dreamservice.RunCycleResult{RunID: "run-1", ProfileID: profileID, RunDate: "2026-06-11", Status: "completed"}, nil
+	return &dreamservice.RunCycleResult{RunID: "run-1", TeamID: profileID, RunDate: "2026-06-11", Status: "completed"}, nil
+}
+
+func (s *stubDreamService) RunScheduledCycle(context.Context, string, time.Time) (*dreamservice.RunCycleResult, error) {
+	return &dreamservice.RunCycleResult{RunID: "run-1", Status: "completed"}, nil
+}
+
+func (s *stubDreamService) RecordMissedScheduledCycle(context.Context, string, string) (*dreamservice.RunCycleResult, error) {
+	return &dreamservice.RunCycleResult{RunID: "run-1", Status: "missed"}, nil
 }
 
 func (s *stubDreamService) List(_ context.Context, profileID string, opts dreamservice.ListOptions) ([]*domain.Dream, string, error) {
@@ -137,7 +145,7 @@ func (s *stubDreamService) EffectiveConfig(context.Context, string) (dreamservic
 func stubDream(profileID string) *domain.Dream {
 	return &domain.Dream{
 		DreamID:                        "dream-1",
-		ProfileID:                      profileID,
+		TeamID:                         profileID,
 		Hypothesis:                     "A may affect B.",
 		WhatIf:                         "What if A and B interact?",
 		PossibleOutcome:                "Review before promotion.",

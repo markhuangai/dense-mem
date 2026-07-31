@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
 import { ControlApi, Dream, DreamQuery, DreamRun, DreamSort, DreamStatus, Team } from "../api";
 import { InfoTooltip, LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
@@ -29,7 +28,6 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
   async function loadData(
     nextQuery = dreamQuery,
     nextCursorStack = cursorStack,
-    options: { refreshStaleness?: boolean } = {},
   ) {
     const requestSeq = requestSeqRef.current + 1;
     requestSeqRef.current = requestSeq;
@@ -37,9 +35,6 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
     setLoading(true);
     setError("");
     try {
-      if (options.refreshStaleness) {
-        await api.refreshTeamDreams(requestTeamId);
-      }
       const [nextStatusResult, nextRuns, nextDreams] = await Promise.all([
         api.getTeamDreamingStatus(requestTeamId),
         api.listTeamDreamingRuns(requestTeamId, 10),
@@ -67,7 +62,7 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
   }
 
   useEffect(() => {
-    void loadData({ ...dreamQuery, cursor: "" }, [], { refreshStaleness: true });
+    void loadData({ ...dreamQuery, cursor: "" }, []);
   }, [team.id]);
 
   const pageNumber = cursorStack.length + 1;
@@ -79,21 +74,7 @@ export function ControlDreamsPanel({ api, team, embedded = false }: { api: Contr
   return (
     <>
       <section className={panelClassName}>
-        <SectionHeading
-          title="Dreaming"
-          meta={team.name}
-          actions={(
-            <button
-              className="icon-button"
-              type="button"
-              aria-label="Refresh dreams"
-              disabled={loading}
-              onClick={() => void loadData(dreamQuery, cursorStack, { refreshStaleness: true })}
-            >
-              <RefreshCw size={16} aria-hidden="true" />
-            </button>
-          )}
-        />
+        <SectionHeading title="Dreaming" meta={team.name} />
         {error && <div className="banner error" role="alert">{error}</div>}
         {status && (
           <div className="dream-status-bar" aria-label="Dreaming status">
@@ -260,11 +241,7 @@ function dreamDateHeader(sort: DreamSort): string {
 }
 
 function formatDreamDate(dream: Dream, sort: DreamSort): string {
-  const value = sort === "created_at"
-    ? dream.created_at
-    : sort === "last_evaluated_at"
-      ? dream.last_evaluated_at
-      : dream.updated_at;
+  const value = sort === "created_at" ? dream.created_at : dream.updated_at;
   return value ? formatDate(value) : "-";
 }
 
@@ -276,9 +253,9 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
           <tr>
             <th>Started</th>
             <th>Status</th>
-            <th>Phases</th>
+            <th>Inputs</th>
             <th>Created</th>
-            <th>Re-evaluated</th>
+            <th>Rejected</th>
           </tr>
         </thead>
         <tbody>
@@ -286,9 +263,9 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
             <tr key={run.run_id}>
               <td>{formatDate(run.started_at)}</td>
               <td><span className={runStatusClass(run.status)}>{run.status}</span></td>
-              <td>{[run.reflect_ran && "reflect", run.reevaluate_ran && "re-evaluate", run.dream_ran && "dream"].filter(Boolean).join(", ") || "-"}</td>
+              <td>{run.input_relationships}</td>
               <td>{run.created_dreams}</td>
-              <td>{run.reevaluated_dreams}</td>
+              <td>{run.rejected_dreams}</td>
             </tr>
           ))}
         </tbody>

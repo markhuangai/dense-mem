@@ -17,7 +17,7 @@ func TestReadPathErrorBranches(t *testing.T) {
 	ownerID := uuid.New()
 	hypothesisID := uuid.NewString()
 	ctx := dreamTestContext(teamID, ownerID)
-	cfg := cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, DreamEnabled: true}}
+	cfg := cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}}
 
 	_, _, err := New(Dependencies{
 		Store:     &dreamRepositoryStub{listErr: errors.New("list failed")},

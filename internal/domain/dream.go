@@ -24,8 +24,8 @@ func (s DreamStatus) IsValid() bool {
 	}
 }
 
-// DreamSourceRef identifies one same-profile Relationship source used to
-// produce or evaluate a dream. Type is relationship or candidate_relationship.
+// DreamSourceRef identifies one team-visible Relationship source used to
+// produce a dream. Type is relationship or candidate_relationship.
 type DreamSourceRef struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
@@ -36,7 +36,7 @@ type DreamSourceRef struct {
 // normal memory pipeline.
 type Dream struct {
 	DreamID                        string           `json:"dream_id"`
-	ProfileID                      string           `json:"team_id"`
+	TeamID                         string           `json:"team_id"`
 	Hypothesis                     string           `json:"hypothesis"`
 	WhatIf                         string           `json:"what_if"`
 	PossibleOutcome                string           `json:"possible_outcome"`
@@ -54,19 +54,17 @@ type Dream struct {
 	GeneratorKind                  string           `json:"generator_kind,omitempty"`
 	GeneratorVersion               string           `json:"generator_version,omitempty"`
 	Status                         DreamStatus      `json:"status"`
-	Cycle                          string           `json:"cycle"`
 	CycleRunID                     string           `json:"cycle_run_id,omitempty"`
 	GeneratorModel                 string           `json:"generator_model,omitempty"`
 	ContentHash                    string           `json:"content_hash,omitempty"`
 	SourceRefs                     []DreamSourceRef `json:"source_refs,omitempty"`
-	LastEvaluatedAt                *time.Time       `json:"last_evaluated_at,omitempty"`
 	InvalidatedReason              string           `json:"invalidated_reason,omitempty"`
 	CreatedAt                      time.Time        `json:"created_at"`
 	UpdatedAt                      time.Time        `json:"updated_at"`
 }
 
 // DreamingConfigSettings is the editable global runtime configuration for the
-// nightly reflect -> re-evaluate -> dream cycle chain.
+// scheduled team dreaming cycle.
 type DreamingConfigSettings struct {
 	UpdateTime string                `json:"update_time"`
 	Items      []DreamingConfigItem  `json:"items"`
@@ -84,12 +82,9 @@ type DreamingConfigItem struct {
 // DreamingRuntimeConfig is the effective global default. Per-team config may
 // override these values unless ForceEnabled is true.
 type DreamingRuntimeConfig struct {
-	Enabled           bool   `json:"enabled"`
-	ForceEnabled      bool   `json:"force_enabled"`
-	StartTimeLocal    string `json:"start_time_local"`
-	Timezone          string `json:"timezone"`
-	ReflectEnabled    bool   `json:"reflect_enabled"`
-	ReevaluateEnabled bool   `json:"reevaluate_enabled"`
-	DreamEnabled      bool   `json:"dream_enabled"`
-	MaxOutputs        int    `json:"max_outputs"`
+	Enabled        bool   `json:"enabled"`
+	ForceEnabled   bool   `json:"force_enabled"`
+	StartTimeLocal string `json:"start_time_local"`
+	Timezone       string `json:"timezone"`
+	MaxOutputs     int    `json:"max_outputs"`
 }

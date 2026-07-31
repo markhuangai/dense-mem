@@ -6,6 +6,7 @@ const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const seedTeamId = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const seedTeamName = requiredEnv("DENSE_MEM_E2E_TEAM_NAME");
 const seedApiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
+const dreamStatement = requiredEnv("DENSE_MEM_E2E_DREAM_STATEMENT");
 const prometheusUrl = requiredEnv("DENSE_MEM_PROMETHEUS_URL").replace(/\/$/, "");
 
 type CreatedProfile = {
@@ -118,26 +119,22 @@ test("control panel keeps security settings display-only against compose", async
   await expectNoShellOverlap(page);
 });
 
-test("control panel loads team Dreams through the control refresh path", async ({ page }) => {
-  const faviconRequests: string[] = [];
+test("control panel loads team Dreams without re-evaluation", async ({ page }) => {
+  const refreshRequests: string[] = [];
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/favicon.ico") {
-      faviconRequests.push(request.url());
+    if (new URL(request.url()).pathname === `/control/api/teams/${seedTeamId}/dreams/refresh`) {
+      refreshRequests.push(request.url());
     }
   });
 
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
-  const refreshResponse = page.waitForResponse((response) => (
-    response.request().method() === "POST" &&
-    new URL(response.url()).pathname === `/control/api/teams/${seedTeamId}/dreams/refresh`
-  ));
   await page.getByRole("button", { name: /team dreams/i }).click();
 
-  expect((await refreshResponse).status()).toBe(200);
   await expect(page.getByRole("heading", { name: "Dream Outputs" })).toBeVisible();
+  await expect(page.getByText(dreamStatement, { exact: true })).toBeVisible();
   await expect(page.getByText(/authenticated actor context is required/i)).toHaveCount(0);
-  expect(faviconRequests).toEqual([]);
+  expect(refreshRequests).toEqual([]);
 });
 
 test("prometheus telemetry is scraped and rendered in control panel and user portal", async ({ page, request }) => {
@@ -379,10 +376,11 @@ test("user portal logs in with a real API key and shows only that profile", asyn
 
   await page.getByRole("button", { name: "Graph" }).click();
   await expect(page.getByLabel("Knowledge graph")).toBeVisible();
-  await expect(page.getByText("No graph nodes")).toBeVisible();
+  await expect(page.getByLabel("Graph totals")).toContainText(/Nodes\s*[1-9]/);
 
   await page.getByRole("button", { name: "Dreams" }).click();
   await expect(page.getByRole("heading", { name: "Dream Outputs" })).toBeVisible();
+  await expect(page.getByText(dreamStatement, { exact: true })).toBeVisible();
 });
 
 test("read-only user key cannot regenerate itself", async ({ page, request }, testInfo) => {

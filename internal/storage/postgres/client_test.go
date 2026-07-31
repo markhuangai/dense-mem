@@ -162,9 +162,9 @@ func TestMigratorRunUpAppliesPostCutoverCleanupAfterEmbeddingRetry(t *testing.T)
 	require.NoError(t, m.RunUp(ctx), "repeat RunUp should remain idempotent")
 }
 
-// TestMigratorRunDownRejectsPostCutoverCleanup verifies the latest cleanup
+// TestMigratorRunDownRejectsTeamOwnedDreaming verifies the latest migration
 // boundary is intentionally irreversible.
-func TestMigratorRunDownRejectsPostCutoverCleanup(t *testing.T) {
+func TestMigratorRunDownRejectsTeamOwnedDreaming(t *testing.T) {
 	ctx := context.Background()
 
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
@@ -176,10 +176,10 @@ func TestMigratorRunDownRejectsPostCutoverCleanup(t *testing.T) {
 	err := m.RunUp(ctx)
 	require.NoError(t, err, "RunUp should succeed")
 
-	// The latest cleanup migration is intentionally irreversible.
+	// The latest ownership migration is intentionally irreversible.
 	err = m.RunDown(ctx)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "irreversible migration: post-cutover legacy cleanup")
+	assert.Contains(t, err.Error(), "2026073102_team_owned_dreaming is irreversible")
 }
 
 func TestSearchStorageMigrationAllowsIndexGenerationLifecycleOnly(t *testing.T) {

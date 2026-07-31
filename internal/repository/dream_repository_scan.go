@@ -13,7 +13,7 @@ func scanDreamCycleRun(rows *sql.Rows) (*DreamCycleRun, error) {
 	if err := rows.Scan(
 		&run.TeamID,
 		&run.RunID,
-		&run.OwnerProfileID,
+		&run.InitiatedByProfileID,
 		&run.RunDate,
 		&run.WindowKey,
 		&run.Status,
@@ -34,7 +34,7 @@ func scanDreamCycleRun(rows *sql.Rows) (*DreamCycleRun, error) {
 
 func hypothesisSelectSQL(where string) string {
 	return `
-		SELECT team_id::text, hypothesis_id::text, owner_profile_id::text,
+		SELECT team_id::text, hypothesis_id::text, COALESCE(created_by_profile_id::text, ''),
 		       status, statement, rationale, likelihood, confidence,
 		       COALESCE(subject_entity_id::text, ''), COALESCE(predicate_key, ''),
 		       COALESCE(predicate_version, 0), COALESCE(object_entity_id::text, ''),
@@ -50,7 +50,7 @@ func hypothesisSelectSQL(where string) string {
 
 func hypothesisUpdateReturningSQL(update string) string {
 	return update + `
-		RETURNING team_id::text, hypothesis_id::text, owner_profile_id::text,
+		RETURNING team_id::text, hypothesis_id::text, COALESCE(created_by_profile_id::text, ''),
 		          status, statement, rationale, likelihood, confidence,
 		          COALESCE(subject_entity_id::text, ''), COALESCE(predicate_key, ''),
 		          COALESCE(predicate_version, 0), COALESCE(object_entity_id::text, ''),
@@ -87,7 +87,7 @@ func scanHypothesisRecord(rows *sql.Rows) (*HypothesisRecord, error) {
 	if err := rows.Scan(
 		&record.TeamID,
 		&record.HypothesisID,
-		&record.OwnerProfileID,
+		&record.CreatedByProfileID,
 		&record.Status,
 		&record.Statement,
 		&record.Rationale,

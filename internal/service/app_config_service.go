@@ -468,30 +468,21 @@ func dreamingRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry, 
 
 	enabled, enabledEffective := dreamingConfigBool(normalized[domain.AppConfigDreamingEnabled], false)
 	forceEnabled, forceEffective := dreamingConfigBool(normalized[domain.AppConfigDreamingForceEnabled], false)
-	reflectEnabled, reflectEffective := dreamingConfigBool(normalized[domain.AppConfigDreamingReflectEnabled], true)
-	reevaluateEnabled, reevaluateEffective := dreamingConfigBool(normalized[domain.AppConfigDreamingReevaluateEnabled], true)
-	dreamEnabled, dreamEffective := dreamingConfigBool(normalized[domain.AppConfigDreamingDreamEnabled], true)
 	maxOutputs, maxOutputsEffective := dreamingConfigInt(normalized[domain.AppConfigDreamingMaxOutputs], 5)
 	startTime := configString(normalized[domain.AppConfigDreamingStartTimeLocal], "03:00")
 
 	runtime := domain.DreamingRuntimeConfig{
-		Enabled:           enabled,
-		ForceEnabled:      forceEnabled,
-		StartTimeLocal:    startTime,
-		Timezone:          timezone,
-		ReflectEnabled:    reflectEnabled,
-		ReevaluateEnabled: reevaluateEnabled,
-		DreamEnabled:      dreamEnabled,
-		MaxOutputs:        maxOutputs,
+		Enabled:        enabled,
+		ForceEnabled:   forceEnabled,
+		StartTimeLocal: startTime,
+		Timezone:       timezone,
+		MaxOutputs:     maxOutputs,
 	}
 	updateTime := entries[domain.AppConfigUpdateTimeKey].Value
 	items := []domain.DreamingConfigItem{
 		dreamingConfigItem(entries, domain.AppConfigDreamingEnabled, enabledEffective),
 		dreamingConfigItem(entries, domain.AppConfigDreamingForceEnabled, forceEffective),
 		dreamingConfigItem(entries, domain.AppConfigDreamingStartTimeLocal, startTime),
-		dreamingConfigItem(entries, domain.AppConfigDreamingReflectEnabled, reflectEffective),
-		dreamingConfigItem(entries, domain.AppConfigDreamingReevaluateEnabled, reevaluateEffective),
-		dreamingConfigItem(entries, domain.AppConfigDreamingDreamEnabled, dreamEffective),
 		dreamingConfigItem(entries, domain.AppConfigDreamingMaxOutputs, maxOutputsEffective),
 	}
 	return domain.DreamingConfigSettings{UpdateTime: updateTime, Items: items, Effective: runtime}, nil
@@ -512,9 +503,7 @@ func normalizeDreamingConfigValues(values map[string]string) (map[string]string,
 		}
 		trimmed := strings.TrimSpace(value)
 		switch key {
-		case domain.AppConfigDreamingEnabled, domain.AppConfigDreamingForceEnabled,
-			domain.AppConfigDreamingReflectEnabled, domain.AppConfigDreamingReevaluateEnabled,
-			domain.AppConfigDreamingDreamEnabled:
+		case domain.AppConfigDreamingEnabled, domain.AppConfigDreamingForceEnabled:
 			if trimmed != "" {
 				parsed, err := strconv.ParseBool(trimmed)
 				if err != nil {
@@ -777,9 +766,6 @@ func editableDreamingConfigKeys() []string {
 		domain.AppConfigDreamingEnabled,
 		domain.AppConfigDreamingForceEnabled,
 		domain.AppConfigDreamingStartTimeLocal,
-		domain.AppConfigDreamingReflectEnabled,
-		domain.AppConfigDreamingReevaluateEnabled,
-		domain.AppConfigDreamingDreamEnabled,
 		domain.AppConfigDreamingMaxOutputs,
 	}
 }

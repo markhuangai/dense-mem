@@ -47,7 +47,6 @@ type RecallSearchRepository interface {
 
 type RecallHypothesisRepository interface {
 	RecallHypotheses(ctx context.Context, input repository.RecallHypothesesInput) ([]repository.HypothesisRecord, error)
-	RefreshHypothesisStaleness(ctx context.Context, input repository.RefreshHypothesisStalenessInput) (int, error)
 }
 
 type RecallCommunityRepository interface {
@@ -379,19 +378,11 @@ func relationshipVectorDegradation(state string) *RecallDegradationResult {
 func (s *recallService) recallRelatedHypotheses(
 	ctx context.Context,
 	teamID string,
-	ownerProfileID string,
+	_ string,
 	query string,
 ) ([]RelatedHypothesisSummary, *RecallDegradationResult) {
 	if s.hypotheses == nil || strings.TrimSpace(query) == "" {
 		return []RelatedHypothesisSummary{}, nil
-	}
-	_, err := s.hypotheses.RefreshHypothesisStaleness(ctx, repository.RefreshHypothesisStalenessInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerProfileID,
-		Limit:          200,
-	})
-	if err != nil {
-		return []RelatedHypothesisSummary{}, relatedHypothesisDegradation()
 	}
 	records, err := s.hypotheses.RecallHypotheses(ctx, repository.RecallHypothesesInput{
 		TeamID: teamID,
