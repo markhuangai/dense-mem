@@ -433,12 +433,16 @@ export COMPOSE_DOCKER_CLI_BUILD=1
 cd "$ROOT_DIR"
 trap cleanup EXIT
 
-echo "Running disposable PostgreSQL SSO and Dreams regressions."
-DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test \
-  ./internal/repository \
-  ./internal/http \
-  -run '^(TestSSORuntimeEntitlementsExcludeArchivedTeams|TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited|TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration)$' \
-  -count=1
+if [[ "${DENSE_MEM_E2E_SKIP_PRECHECKS:-0}" == "1" ]]; then
+  echo "Skipping disposable PostgreSQL prechecks by DENSE_MEM_E2E_SKIP_PRECHECKS."
+else
+  echo "Running disposable PostgreSQL SSO and Dreams regressions."
+  DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test \
+    ./internal/repository \
+    ./internal/http \
+    -run '^(TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited|TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration)$' \
+    -count=1
+fi
 
 prepare_e2e_compose_files
 prepare_e2e_prometheus_files
@@ -484,8 +488,12 @@ node "$ROOT_DIR/tests/uat/team_dreaming_e2e.mjs")"
 printf '%s\n' "$dream_json"
 dream_statement="$(printf '%s' "$dream_json" | json_field statement)"
 
-echo "Running compose-backed Playwright tests."
-run_compose_playwright_tests
+if [[ "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" == "1" ]]; then
+  echo "Skipping compose-backed Playwright tests by DENSE_MEM_E2E_SKIP_PLAYWRIGHT."
+else
+  echo "Running compose-backed Playwright tests."
+  run_compose_playwright_tests
+fi
 
 echo "Running compose-backed MCP conflict e2e."
 DENSE_MEM_CONTROL_URL="$CONTROL_URL" \

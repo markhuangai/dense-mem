@@ -86,7 +86,7 @@ func loadPlacementRunStatus(
 		return nil, err
 	}
 	evidenceRows, err := tx.WithContext(ctx).Raw(`
-		SELECT fragment_id::text, evidence_index, content, content_hash,
+		SELECT fragment_id::text, evidence_index, content, content_hash, authority,
 		       COALESCE(source_id::text, ''), COALESCE(source_revision_id::text, '')
 		FROM evidence_fragments
 		WHERE team_id = ?::uuid
@@ -105,6 +105,7 @@ func loadPlacementRunStatus(
 			&item.EvidenceIndex,
 			&item.Content,
 			&item.ContentHash,
+			&item.Authority,
 			&item.SourceID,
 			&item.SourceRevisionID,
 		); err != nil {

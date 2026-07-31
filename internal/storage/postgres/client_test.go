@@ -179,7 +179,7 @@ func TestMigratorRunDownRejectsTeamOwnedDreaming(t *testing.T) {
 	// The latest ownership migration is intentionally irreversible.
 	err = m.RunDown(ctx)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "2026073101_team_owned_dreaming is irreversible")
+	assert.Contains(t, err.Error(), "2026073102_team_owned_dreaming is irreversible")
 }
 
 func TestSearchStorageMigrationAllowsIndexGenerationLifecycleOnly(t *testing.T) {

@@ -123,17 +123,18 @@ func upsertRelationshipConflictMember(
 		INSERT INTO relationship_conflict_position_members (
 			    team_id, conflict_id, position_id, relationship_id, owner_profile_id,
 			    support_id, verification_event_id, fragment_id, source_group_key, authority,
-			    effective_at, effective_time_basis, recorded_fallback, active, retired_at, metadata
-			) VALUES (
+			    accepted_at, effective_at, effective_time_basis, recorded_fallback, active, retired_at, metadata
+		) VALUES (
 			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
 			    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?,
-			    ?, ?, ?, true, NULL, ?::jsonb
-			)
+			    ?, ?, ?, ?, true, NULL, ?::jsonb
+		)
 			ON CONFLICT (team_id, position_id, relationship_id, source_group_key)
 			DO UPDATE SET support_id = EXCLUDED.support_id,
 			              verification_event_id = EXCLUDED.verification_event_id,
 			              fragment_id = EXCLUDED.fragment_id,
 			              authority = EXCLUDED.authority,
+			              accepted_at = EXCLUDED.accepted_at,
 			              effective_at = EXCLUDED.effective_at,
 			              effective_time_basis = EXCLUDED.effective_time_basis,
 			              recorded_fallback = EXCLUDED.recorded_fallback,
@@ -143,7 +144,7 @@ func upsertRelationshipConflictMember(
 			              metadata = EXCLUDED.metadata
 	`, teamID, conflictID, positionID, row.RelationshipID, row.OwnerProfileID,
 		row.SupportID, row.VerificationEventID, row.FragmentID, row.SourceGroupKey, row.Authority,
-		row.EffectiveAt, row.EffectiveTimeBasis, row.RecordedFallback, string(metadata))
+		row.AcceptedAt, row.EffectiveAt, row.EffectiveTimeBasis, row.RecordedFallback, string(metadata))
 	if result.Error != nil {
 		return false, result.Error
 	}
@@ -227,6 +228,7 @@ func relationshipConflictMemberWouldChange(
 	var verificationEventID string
 	var fragmentID string
 	var authority string
+	var acceptedAt time.Time
 	var effectiveAt sql.NullTime
 	var effectiveTimeBasis string
 	var recordedFallback bool
@@ -237,6 +239,7 @@ func relationshipConflictMemberWouldChange(
 		       COALESCE(verification_event_id::text, ''),
 		       COALESCE(fragment_id::text, ''),
 		       authority,
+		       accepted_at,
 		       effective_at,
 		       effective_time_basis,
 		       recorded_fallback,
@@ -252,6 +255,7 @@ func relationshipConflictMemberWouldChange(
 		&verificationEventID,
 		&fragmentID,
 		&authority,
+		&acceptedAt,
 		&effectiveAt,
 		&effectiveTimeBasis,
 		&recordedFallback,
@@ -268,11 +272,16 @@ func relationshipConflictMemberWouldChange(
 		verificationEventID != row.VerificationEventID ||
 		fragmentID != row.FragmentID ||
 		authority != row.Authority ||
+		!conflictTimesEqualAtDatabasePrecision(acceptedAt, row.AcceptedAt) ||
 		!conflictNullableTimesEqual(effectiveAt, row.EffectiveAt) ||
 		effectiveTimeBasis != row.EffectiveTimeBasis ||
 		recordedFallback != row.RecordedFallback ||
 		!active ||
 		retiredAt.Valid, nil
+}
+
+func conflictTimesEqualAtDatabasePrecision(left, right time.Time) bool {
+	return left.UTC().Truncate(time.Microsecond).Equal(right.UTC().Truncate(time.Microsecond))
 }
 
 func conflictNullableTimesEqual(left sql.NullTime, right *time.Time) bool {

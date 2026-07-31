@@ -33,6 +33,7 @@ type SemanticReviewEvidence struct {
 	FragmentID              string `json:"-"`
 	EvidenceIndex           int    `json:"-"`
 	Content                 string `json:"content"`
+	Authority               string `json:"-"`
 	SourceID                string `json:"-"`
 	SourceRevisionID        string `json:"-"`
 	CurrentSourceRevisionID string `json:"-"`

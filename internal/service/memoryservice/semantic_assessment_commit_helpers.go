@@ -207,6 +207,10 @@ func semanticAssessmentSupport(
 	if len(spans) == 0 {
 		return nil, errors.New("semantic assessment relationship has no evidence span")
 	}
+	authority, err := semanticSupportAuthority(fragment.Authority)
+	if err != nil {
+		return nil, err
+	}
 	supports := make([]repository.EvidenceSupportInput, 0, len(spans))
 	for _, span := range spans {
 		quote, err := verifier.SemanticEvidenceSpan(fragment.Content, span.Start, span.End)
@@ -221,7 +225,7 @@ func semanticAssessmentSupport(
 			SpanStart:        span.Start,
 			SpanEnd:          span.End,
 			Quote:            quote,
-			Authority:        string(domain.AuthorityPrimary),
+			Authority:        authority,
 			Metadata: map[string]any{
 				"semantic_contract": domain.ContractVersion,
 				"assessment_id":     assessmentID,
@@ -230,6 +234,17 @@ func semanticAssessmentSupport(
 		})
 	}
 	return supports, nil
+}
+
+func semanticSupportAuthority(raw string) (string, error) {
+	authority := domain.Authority(strings.TrimSpace(raw))
+	if authority == "" {
+		return string(domain.AuthorityPrimary), nil
+	}
+	if !authority.IsValid() {
+		return "", fmt.Errorf("semantic support authority is unsupported: %q", authority)
+	}
+	return string(authority), nil
 }
 
 func semanticAssessmentPrimarySupport(supports []repository.EvidenceSupportInput) (*repository.EvidenceSupportInput, []repository.EvidenceSupportInput) {

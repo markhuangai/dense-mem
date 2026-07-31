@@ -92,14 +92,23 @@ func (r *LedgerRepositoryImpl) CompletePlacementReviewResult(
 			if err != nil {
 				return err
 			}
-			if _, err := upsertPlacementItemEvidenceSearchDocument(
-				ctx,
-				tx,
-				scope,
-				placementFragmentID,
-				r.embeddingJobMaxAttempts,
-			); err != nil {
+			deletionOnly, err := isConflictResolutionDeletionOnlyFragment(ctx, tx, input.TeamID, placementFragmentID)
+			if err != nil {
 				return err
+			}
+			if !deletionOnly {
+				if _, err := upsertPlacementItemEvidenceSearchDocument(
+					ctx,
+					tx,
+					scope,
+					placementFragmentID,
+					r.embeddingJobMaxAttempts,
+				); err != nil {
+					return err
+				}
+			} else {
+				payload["conflict_resolution_deletion_only"] = true
+				payload["semantic_projection"] = "not_allowed"
 			}
 		}
 		outcomeID, err := insertPlacementOutcome(ctx, tx, PlacementOutcomeInput{

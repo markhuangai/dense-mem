@@ -414,6 +414,10 @@ func semanticPlacementSupport(
 			observation.EvidenceID,
 		)
 	}
+	authority, err := semanticSupportAuthority(evidence.Authority)
+	if err != nil {
+		return nil, err
+	}
 	return &repository.EvidenceSupportInput{
 		FragmentID:       evidence.FragmentID,
 		SourceGroupKey:   "semantic_review:" + evidence.EvidenceID,
@@ -422,7 +426,7 @@ func semanticPlacementSupport(
 		SpanStart:        observation.Start,
 		SpanEnd:          observation.End,
 		Quote:            observation.Quote,
-		Authority:        string(domain.AuthorityPrimary),
+		Authority:        authority,
 	}, nil
 }
 

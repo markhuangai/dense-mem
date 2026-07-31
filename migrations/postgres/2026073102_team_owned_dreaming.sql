@@ -395,7 +395,7 @@ CREATE POLICY dream_cycle_runs_update ON dream_cycle_runs FOR UPDATE USING (
 -- old per-profile duplicates or remove scheduled rows with no profile owner.
 DO $$
 BEGIN
-    RAISE EXCEPTION '2026073101_team_owned_dreaming is irreversible';
+    RAISE EXCEPTION '2026073102_team_owned_dreaming is irreversible';
 END $$;
 
 -- +goose StatementEnd

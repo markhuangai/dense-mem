@@ -115,6 +115,7 @@ type EvidenceFragment struct {
 	EvidenceIndex         int
 	Content               string
 	ContentHash           string
+	Authority             string
 	SourceID              string
 	SourceRevisionID      string
 	SupersededEvidenceIDs []string
@@ -723,7 +724,7 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?,
 		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?::jsonb
 		)
-	RETURNING fragment_id::text
+	RETURNING fragment_id::text, authority
 	`, input.TeamID, ingestID, input.OwnerProfileID, index, item.Content, item.ContentHash,
 		item.SourceType, item.Authority, item.SourceRef, sourceID, sourceRevisionID,
 		pqStringArray(item.Labels), string(metadata)).Rows()
@@ -741,7 +742,7 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 		SourceID:         sourceID,
 		SourceRevisionID: sourceRevisionID,
 	}
-	if err := rows.Scan(&fragment.FragmentID); err != nil {
+	if err := rows.Scan(&fragment.FragmentID, &fragment.Authority); err != nil {
 		return EvidenceFragment{}, err
 	}
 	return fragment, rows.Err()
@@ -813,7 +814,7 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 		return nil, err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-			SELECT fragment_id::text, evidence_index, content, content_hash,
+			SELECT fragment_id::text, evidence_index, content, content_hash, authority,
 			       COALESCE(source_id::text, ''), COALESCE(source_revision_id::text, '')
 			FROM evidence_fragments
 			WHERE team_id = ?::uuid
@@ -826,7 +827,7 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 	defer rows.Close()
 	for rows.Next() {
 		var item EvidenceFragment
-		if err := rows.Scan(&item.FragmentID, &item.EvidenceIndex, &item.Content, &item.ContentHash, &item.SourceID, &item.SourceRevisionID); err != nil {
+		if err := rows.Scan(&item.FragmentID, &item.EvidenceIndex, &item.Content, &item.ContentHash, &item.Authority, &item.SourceID, &item.SourceRevisionID); err != nil {
 			return nil, err
 		}
 		result.Evidence = append(result.Evidence, item)

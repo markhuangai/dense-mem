@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
 	"io"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func TestParseCLIRejectsInvalidTimezone(t *testing.T) {
@@ -132,4 +137,84 @@ func TestParseCLIRejectsOutOfRangeConflictReviewFlags(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConflictVerifierConfigurationErrorUsesResolvedFallbacks(t *testing.T) {
+	configured := config.Config{
+		AIAPIURL:        "https://shared.example.test/v1",
+		AIAPIKey:        "shared-key",
+		AIVerifierModel: "reviewer-model",
+	}
+	if err := conflictVerifierConfigurationError(&configured); err != nil {
+		t.Fatalf("conflictVerifierConfigurationError returned error for shared verifier configuration: %v", err)
+	}
+
+	missing := config.Config{AIVerifierModel: "reviewer-model"}
+	err := conflictVerifierConfigurationError(&missing)
+	if err == nil {
+		t.Fatal("conflictVerifierConfigurationError returned nil for missing endpoint and key")
+	}
+	if !strings.Contains(err.Error(), "AI_VERIFIER_API_URL or AI_API_URL") ||
+		!strings.Contains(err.Error(), "AI_VERIFIER_API_KEY or AI_API_KEY") ||
+		strings.Contains(err.Error(), "AI_VERIFIER_MODEL") {
+		t.Fatalf("conflictVerifierConfigurationError = %q", err)
+	}
+}
+
+func TestReviewTeamConflictsCompletesRunAfterParentContextDeadline(t *testing.T) {
+	ledger := &reviewConflictLedgerStub{
+		run: &repository.ConflictReviewRunRecord{
+			TeamID:      "00000000-0000-0000-0000-000000000001",
+			ReviewRunID: "00000000-0000-0000-0000-000000000002",
+			Status:      "running",
+			WorkerID:    "worker-a",
+		},
+		claimed: true,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	out, err := reviewTeamConflicts(ctx, ledger, cliConfig{
+		teamID:       ledger.run.TeamID,
+		workerID:     "worker-a",
+		batchSize:    1,
+		leaseSeconds: 30,
+		maxAttempts:  1,
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("reviewTeamConflicts returned error: %v", err)
+	}
+	if out.Status != "completed" {
+		t.Fatalf("review output status = %q, want completed", out.Status)
+	}
+	if len(ledger.completionContextErrors) != 1 || ledger.completionContextErrors[0] != nil {
+		t.Fatalf("completion context errors = %#v, want [nil]", ledger.completionContextErrors)
+	}
+}
+
+type reviewConflictLedgerStub struct {
+	run                     *repository.ConflictReviewRunRecord
+	claimed                 bool
+	completionContextErrors []error
+}
+
+func (s *reviewConflictLedgerStub) ReserveRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error) {
+	return s.run, s.claimed, nil
+}
+
+func (*reviewConflictLedgerStub) ClaimRelationshipConflictCases(context.Context, repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error) {
+	return nil, nil
+}
+
+func (*reviewConflictLedgerStub) ReviewRelationshipConflictCase(context.Context, repository.ReviewRelationshipConflictCaseInput) (*repository.ReviewRelationshipConflictCaseResult, error) {
+	return nil, nil
+}
+
+func (*reviewConflictLedgerStub) ProcessPendingConflictDerivedEvidence(context.Context, repository.ClaimConflictDerivedEvidenceTasksInput) (int, error) {
+	return 0, nil
+}
+
+func (s *reviewConflictLedgerStub) CompleteRelationshipConflictReviewRun(ctx context.Context, _ repository.ConflictReviewRunCompleteInput) error {
+	s.completionContextErrors = append(s.completionContextErrors, ctx.Err())
+	return nil
 }
