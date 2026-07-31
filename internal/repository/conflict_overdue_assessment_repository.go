@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	conflictAssessmentMaxFailedDays = 5
+	ConflictAssessmentMaxFailedDays = 5
 	conflictResolutionMaxFragments  = 200
 )
 
@@ -44,13 +44,12 @@ type OverdueConflictAssessmentReservation struct {
 }
 
 type OverdueConflictAssessmentDossier struct {
-	TeamID          string
-	ConflictID      string
-	CaseVersion     int
-	Question        string
-	Positions       []OverdueConflictAssessmentPosition
-	Evidence        []OverdueConflictAssessmentEvidence
-	SystemProfileID string
+	TeamID      string
+	ConflictID  string
+	CaseVersion int
+	Question    string
+	Positions   []OverdueConflictAssessmentPosition
+	Evidence    []OverdueConflictAssessmentEvidence
 }
 
 type OverdueConflictAssessmentPosition struct {
@@ -207,7 +206,7 @@ func (r *LedgerRepositoryImpl) ReserveOverdueConflictAssessment(
 		if err != nil {
 			return err
 		}
-		if failureCount >= conflictAssessmentMaxFailedDays {
+		if failureCount >= ConflictAssessmentMaxFailedDays {
 			assessmentAttemptID, err := latestFailedOverdueConflictAssessmentID(ctx, tx, input.TeamID, input.ConflictID, version, input.Model, input.PolicyVersion)
 			if err != nil {
 				return err
@@ -522,6 +521,7 @@ func supersedeReservedOverdueConflictAssessments(
 	if err != nil {
 		return err
 	}
+	defer rows.Close()
 	type supersededAssessment struct {
 		assessmentAttemptID string
 		caseVersion         int
@@ -530,16 +530,11 @@ func supersedeReservedOverdueConflictAssessments(
 	for rows.Next() {
 		item := supersededAssessment{}
 		if err := rows.Scan(&item.assessmentAttemptID, &item.caseVersion); err != nil {
-			_ = rows.Close()
 			return err
 		}
 		superseded = append(superseded, item)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
 		return err
 	}
 	for _, item := range superseded {

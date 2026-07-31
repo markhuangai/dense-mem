@@ -108,6 +108,22 @@ func TestServiceUsesLastWriteWinsAfterFifthFailedAssessment(t *testing.T) {
 	assert.Equal(t, "last_write_wins", repo.applyInputs[0].Method)
 }
 
+func TestServiceLeavesFailedAssessmentPendingWhenCompletionResultIsNil(t *testing.T) {
+	repo := newConflictReviewRepositoryStub(t)
+	repo.completeNil = true
+	provider := &conflictReviewProviderStub{err: &verifier.ProviderError{
+		Provider:     "test",
+		Message:      "provider failed",
+		FailureClass: verifier.ProviderFailureClassHTTPServer,
+	}}
+	service := newConflictReviewService(t, repo, provider)
+
+	result, err := service.ReviewRelationshipConflictCase(context.Background(), conflictReviewInput())
+	require.NoError(t, err)
+	assert.Equal(t, "overdue_assessment_failed", result.Stage)
+	assert.Empty(t, repo.applyInputs)
+}
+
 func TestServiceUsesLastWriteWinsAfterAbandonedAssessmentRecoveryWithoutProviderCall(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	repo.reservation.LastWriteWins = true
@@ -439,6 +455,7 @@ type conflictReviewRepositoryStub struct {
 	reservation     *repository.OverdueConflictAssessmentReservation
 	dossier         *repository.OverdueConflictAssessmentDossier
 	completeResult  repository.CompleteOverdueConflictAssessmentResult
+	completeNil     bool
 	applyResult     *repository.ApplyOverdueConflictResolutionResult
 	pendingFound    bool
 	pendingResult   *repository.ApplyOverdueConflictResolutionResult
@@ -504,6 +521,9 @@ func (s *conflictReviewRepositoryStub) CompleteOverdueConflictAssessment(_ conte
 	s.completions = append(s.completions, input)
 	if s.completeErr != nil {
 		return nil, s.completeErr
+	}
+	if s.completeNil {
+		return nil, nil
 	}
 	copy := s.completeResult
 	return &copy, nil

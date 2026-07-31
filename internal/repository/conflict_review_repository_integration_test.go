@@ -300,6 +300,19 @@ func TestEnsureConflictSystemProfileAvoidsLegacyUserNameCollision(t *testing.T) 
 	assert.Equal(t, "system", authSource)
 	assert.True(t, isSystem)
 	assert.Equal(t, 1, semanticRefCount)
+
+	unscopedTeamID := createLedgerTeam(t, adminDB, rls, "conflict-system-profile-unscoped-team")
+	err := rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO team_profiles (
+			    team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit,
+			    revoked_at, auth_source, is_system
+		) VALUES (
+			    ?::uuid, NULL, NULL, NULL, ?, ARRAY[]::text[], 'member', 0, now(), 'system', true
+		)
+		`, unscopedTeamID, newConflictSystemProfileName()).Error
+	})
+	require.Error(t, err)
 }
 
 func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDerivation(t *testing.T) {
@@ -795,7 +808,7 @@ func TestReserveOverdueConflictAssessmentExpiresAbandonedAttemptIntoLastWriteWin
 	require.Equal(t, ConflictReviewOutcomeOverdue, result.Outcome)
 
 	firstLocalDate := time.Date(2026, time.August, 2, 0, 30, 0, 0, time.FixedZone("UTC+14", 14*60*60))
-	for day := 0; day < conflictAssessmentMaxFailedDays-1; day++ {
+	for day := 0; day < ConflictAssessmentMaxFailedDays-1; day++ {
 		reservation, _, reserved, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
 			TeamID:              teamID,
 			ConflictID:          conflictID,
@@ -826,7 +839,7 @@ func TestReserveOverdueConflictAssessmentExpiresAbandonedAttemptIntoLastWriteWin
 		ConflictID:          conflictID,
 		ReviewRunID:         uuid.NewString(),
 		WorkerID:            "worker-overdue-abandoned-assessment",
-		LocalAssessmentDate: firstLocalDate.AddDate(0, 0, conflictAssessmentMaxFailedDays-1),
+		LocalAssessmentDate: firstLocalDate.AddDate(0, 0, ConflictAssessmentMaxFailedDays-1),
 		Model:               "test-model",
 		PolicyVersion:       domain.ConflictOverduePolicyVersion,
 	})
@@ -839,7 +852,7 @@ func TestReserveOverdueConflictAssessmentExpiresAbandonedAttemptIntoLastWriteWin
 		ConflictID:          conflictID,
 		ReviewRunID:         uuid.NewString(),
 		WorkerID:            "worker-overdue-abandoned-recovery",
-		LocalAssessmentDate: firstLocalDate.AddDate(0, 0, conflictAssessmentMaxFailedDays),
+		LocalAssessmentDate: firstLocalDate.AddDate(0, 0, ConflictAssessmentMaxFailedDays),
 		Model:               "test-model",
 		PolicyVersion:       domain.ConflictOverduePolicyVersion,
 	})
@@ -859,6 +872,7 @@ func TestReserveOverdueConflictAssessmentExpiresAbandonedAttemptIntoLastWriteWin
 	}
 	winner, ok := domain.SelectConflictLastWriteWinner(positions)
 	require.True(t, ok)
+	assert.Equal(t, "authoritative", winner.Authority)
 	applied, err := ledgerRepo.ApplyOverdueConflictResolution(ctx, ApplyOverdueConflictResolutionInput{
 		TeamID:              teamID,
 		ConflictID:          conflictID,
@@ -868,7 +882,7 @@ func TestReserveOverdueConflictAssessmentExpiresAbandonedAttemptIntoLastWriteWin
 		PreferredPositionID: winner.PositionID,
 		AssessmentAttemptID: fallback.AssessmentAttemptID,
 		Method:              "last_write_wins",
-		Now:                 reviewNow.AddDate(0, 0, conflictAssessmentMaxFailedDays),
+		Now:                 reviewNow.AddDate(0, 0, ConflictAssessmentMaxFailedDays),
 	})
 	require.NoError(t, err)
 	assert.True(t, applied.Resolved)

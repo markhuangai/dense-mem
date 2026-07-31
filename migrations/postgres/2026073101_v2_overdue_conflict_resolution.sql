@@ -1,6 +1,18 @@
 -- +goose Up
 -- +goose StatementBegin
 
+-- Lock/rewrite analysis:
+-- - This migration requires an exclusive maintenance window. Adding and making
+--   accepted_at non-null takes normal transactional table locks; its backfill
+--   visits each existing conflict member once.
+-- - It is intentionally atomic rather than online/resumable: a timeout or
+--   failure rolls back the schema and backfill together. Size the maintenance
+--   window from the target table's row count and lock budget before applying.
+-- - RLS impact: new workflow tables preserve the existing team/profile policy;
+--   normal application mutation paths remain the conflict-review worker.
+-- - Rollback: the Down migration is intentionally blocked once audit lineage
+--   may exist; restoring requires a database backup or a forward migration.
+
 SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
@@ -59,14 +71,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS team_profiles_system_team_unique
 
 DROP POLICY IF EXISTS team_profiles_system_conflict_insert_access ON team_profiles;
 CREATE POLICY team_profiles_system_conflict_insert_access ON team_profiles
-    FOR INSERT
-    TO PUBLIC
-    WITH CHECK (
-        current_setting('app.tx_mode', true) IN ('system', 'migration')
-        AND auth_source = 'system'
-        AND is_system
-        AND revoked_at IS NOT NULL
-    );
+	FOR INSERT
+	TO PUBLIC
+	WITH CHECK (
+		(
+			current_setting('app.tx_mode', true) = 'migration'
+			OR (
+				current_setting('app.tx_mode', true) = 'system'
+				AND team_id = nullif(current_setting('app.current_team_id', true), '')::uuid
+			)
+		)
+		AND auth_source = 'system'
+		AND is_system
+		AND revoked_at IS NOT NULL
+	);
 
 DO $$
 DECLARE

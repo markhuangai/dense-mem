@@ -302,9 +302,15 @@ func loadRelationshipConflictPlacement(
 			       support.authority
 			FROM effective_supports AS support
 			ORDER BY support.relationship_id,
-				         support.source_group_key,
-				         CASE WHEN support.authority = 'authoritative' THEN 0 ELSE 1 END,
-				         support.accepted_at DESC,
+			         support.source_group_key,
+			         CASE support.authority
+			             WHEN 'authoritative' THEN 0
+			             WHEN 'primary' THEN 1
+			             WHEN 'secondary' THEN 2
+			             WHEN 'inferred' THEN 3
+			             ELSE 4
+			         END,
+			         support.accepted_at DESC,
 				         support.support_id
 		),
 		position_counts AS (

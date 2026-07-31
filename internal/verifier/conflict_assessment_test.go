@@ -96,7 +96,7 @@ func TestPrepareConflictAssessmentRequestRejectsInvalidPositionAndEvidenceFields
 	assert.Contains(t, summary, "positions[0].position_id")
 	assert.Contains(t, summary, "positions[1].position_key")
 	assert.Contains(t, summary, "positions[2].position_id")
-	assert.Contains(t, summary, "positions[2]")
+	assert.Contains(t, summary, "support counts must not be negative")
 	assert.Contains(t, summary, "evidence[0]")
 	assert.Contains(t, summary, "evidence[0].accepted_at")
 	assert.Contains(t, summary, "evidence[1].position_id")
@@ -139,6 +139,19 @@ func TestConflictAssessmentResponseValidationRejectsInvalidDecisionShapes(t *tes
 			assert.Contains(t, openAIValidationSummary(errs), testCase.field)
 		})
 	}
+}
+
+func TestConflictAssessmentResponseValidationCountsUnicodeRationaleRunes(t *testing.T) {
+	request := conflictAssessmentTestRequest(t)
+	valid := ConflictAssessmentResponse{
+		Decision:   ConflictAssessmentDecisionAbstain,
+		Confidence: 0,
+		Rationale:  strings.Repeat("é", ConflictAssessmentMaxRationale),
+	}
+	assert.Empty(t, validateConflictAssessmentResponse(request, valid))
+
+	valid.Rationale += "é"
+	assert.Contains(t, openAIValidationSummary(validateConflictAssessmentResponse(request, valid)), "rationale")
 }
 
 func TestDecodeConflictAssessmentResponseJSONRejectsInvalidPayloads(t *testing.T) {

@@ -272,12 +272,16 @@ func relationshipConflictMemberWouldChange(
 		verificationEventID != row.VerificationEventID ||
 		fragmentID != row.FragmentID ||
 		authority != row.Authority ||
-		!acceptedAt.Equal(row.AcceptedAt.UTC()) ||
+		!conflictTimesEqualAtDatabasePrecision(acceptedAt, row.AcceptedAt) ||
 		!conflictNullableTimesEqual(effectiveAt, row.EffectiveAt) ||
 		effectiveTimeBasis != row.EffectiveTimeBasis ||
 		recordedFallback != row.RecordedFallback ||
 		!active ||
 		retiredAt.Valid, nil
+}
+
+func conflictTimesEqualAtDatabasePrecision(left, right time.Time) bool {
+	return left.UTC().Truncate(time.Microsecond).Equal(right.UTC().Truncate(time.Microsecond))
 }
 
 func conflictNullableTimesEqual(left sql.NullTime, right *time.Time) bool {

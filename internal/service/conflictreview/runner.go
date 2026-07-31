@@ -8,13 +8,20 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
+type RunLedger interface {
+	Repository
+	ReserveRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error)
+	ClaimRelationshipConflictCases(context.Context, repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error)
+	CompleteRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunCompleteInput) error
+}
+
 type Runner struct {
-	ledger  *repository.LedgerRepositoryImpl
+	ledger  RunLedger
 	service *Service
 }
 
 func NewRunner(
-	ledger *repository.LedgerRepositoryImpl,
+	ledger RunLedger,
 	provider Provider,
 	timezone string,
 	limits verifier.SemanticAssessmentLimits,

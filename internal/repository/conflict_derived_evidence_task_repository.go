@@ -34,7 +34,7 @@ func (r *LedgerRepositoryImpl) StageConflictDerivedEvidence(
 		OwnerProfileID: target.SystemProfileID,
 		IdempotencyKey: "conflict-derived:" + target.ConflictID + ":" + target.TargetFragmentID,
 		RequestHash:    requestHash,
-		SourceSummary:  "overdue conflict deletion-only derivation",
+		SourceSummary:  conflictResolutionDeletionOnlySourceSummary,
 		Metadata: map[string]any{
 			"conflict_id":                        target.ConflictID,
 			"target_fragment_id":                 target.TargetFragmentID,

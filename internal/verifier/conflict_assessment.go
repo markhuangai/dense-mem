@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -277,7 +278,7 @@ func normalizeConflictAssessmentResponse(response ConflictAssessmentResponse) Co
 func validateConflictAssessmentResponse(req ConflictAssessmentRequest, response ConflictAssessmentResponse) []SemanticValidationError {
 	errs := make([]SemanticValidationError, 0)
 	response = normalizeConflictAssessmentResponse(response)
-	if response.Rationale == "" || len(response.Rationale) > ConflictAssessmentMaxRationale {
+	if response.Rationale == "" || utf8.RuneCountInString(response.Rationale) > ConflictAssessmentMaxRationale {
 		errs = append(errs, SemanticValidationError{Field: "rationale", Message: "must be a bounded non-empty string"})
 	}
 	switch response.Decision {

@@ -60,15 +60,16 @@ type postgresConfig struct {
 }
 
 const (
-	reviewConflictMinBatchSize    = 1
-	reviewConflictMaxBatchSize    = 500
-	reviewConflictMinLeaseSeconds = 30
-	reviewConflictMaxLeaseSeconds = 1800
-	reviewConflictMinAttempts     = 1
-	reviewConflictMaxAttempts     = 20
-	reviewConflictMinTimeoutSecs  = 1
-	reviewConflictMaxTimeoutSecs  = 86400
-	reviewConflictDefaultTimeout  = 360
+	reviewConflictMinBatchSize      = 1
+	reviewConflictMaxBatchSize      = 500
+	reviewConflictMinLeaseSeconds   = 30
+	reviewConflictMaxLeaseSeconds   = 1800
+	reviewConflictMinAttempts       = 1
+	reviewConflictMaxAttempts       = 20
+	reviewConflictMinTimeoutSecs    = 1
+	reviewConflictMaxTimeoutSecs    = 86400
+	reviewConflictDefaultTimeout    = 360
+	reviewConflictCompletionTimeout = 15 * time.Second
 )
 
 func (c postgresConfig) GetPostgresDSN() string {
@@ -103,8 +104,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("load verifier configuration: %w", err)
 	}
-	if !conflictVerifierConfigured(&runtimeConfig) {
-		return errors.New("AI_VERIFIER_API_URL, AI_VERIFIER_API_KEY, and AI_VERIFIER_MODEL are required for overdue conflict assessment")
+	if err := conflictVerifierConfigurationError(&runtimeConfig); err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutSecs)*time.Second)
 	defer cancel()
@@ -239,15 +240,17 @@ func reviewTeamConflicts(
 		counts.Status = "failed"
 		counts.LastError = "one or more conflict cases failed"
 	}
-	if err := ledger.CompleteRelationshipConflictReviewRun(ctx, counts); err != nil {
-		return reviewOutput{}, err
-	}
 	out.Status = counts.Status
 	out.ClaimedCases = counts.ClaimedCases
 	out.ResolvedCases = counts.ResolvedCases
 	out.OverdueCases = counts.OverdueCases
 	out.NoOpCases = counts.NoOpCases
 	out.FailedCases = counts.FailedCases
+	completeCtx, completeCancel := context.WithTimeout(context.WithoutCancel(ctx), reviewConflictCompletionTimeout)
+	defer completeCancel()
+	if err := ledger.CompleteRelationshipConflictReviewRun(completeCtx, counts); err != nil {
+		return out, err
+	}
 	if counts.Status == "failed" {
 		return out, errReviewConflictsFailed
 	}
@@ -270,6 +273,23 @@ func conflictVerifierConfigured(cfg config.ConfigProvider) bool {
 		strings.TrimSpace(cfg.GetAIVerifierModel()) != ""
 }
 
+func conflictVerifierConfigurationError(cfg config.ConfigProvider) error {
+	if conflictVerifierConfigured(cfg) {
+		return nil
+	}
+	missing := make([]string, 0, 3)
+	if strings.TrimSpace(cfg.GetAIVerifierAPIURL()) == "" {
+		missing = append(missing, "AI_VERIFIER_API_URL or AI_API_URL")
+	}
+	if strings.TrimSpace(cfg.GetAIVerifierAPIKey()) == "" {
+		missing = append(missing, "AI_VERIFIER_API_KEY or AI_API_KEY")
+	}
+	if strings.TrimSpace(cfg.GetAIVerifierModel()) == "" {
+		missing = append(missing, "AI_VERIFIER_MODEL")
+	}
+	return fmt.Errorf("overdue conflict assessment requires configured verifier values: %s", strings.Join(missing, ", "))
+}
+
 func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	var cfg cliConfig
 	fs := flag.NewFlagSet("review-conflicts", flag.ContinueOnError)
@@ -285,7 +305,7 @@ func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	fs.IntVar(&cfg.batchSize, "batch-size", 100, "Maximum cases claimed per batch")
 	fs.IntVar(&cfg.leaseSeconds, "lease-seconds", 300, "Review lease seconds")
 	fs.IntVar(&cfg.maxAttempts, "max-attempts", 5, "Maximum case attempts")
-	fs.IntVar(&cfg.timeoutSecs, "timeout-seconds", reviewConflictDefaultTimeout, "Maximum review command duration in seconds")
+	fs.IntVar(&cfg.timeoutSecs, "timeout-seconds", reviewConflictDefaultTimeout, "Maximum review command duration in seconds; include verifier latency")
 	if err := fs.Parse(args); err != nil {
 		return cliConfig{}, err
 	}

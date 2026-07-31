@@ -393,8 +393,8 @@ func validateClaimConflictDerivedEvidenceTasksInput(input ClaimConflictDerivedEv
 	if input.Limit < 1 || input.Limit > conflictResolutionMaxFragments {
 		return fmt.Errorf("derived evidence task limit must be between 1 and %d", conflictResolutionMaxFragments)
 	}
-	if input.Lease <= 0 {
-		return errors.New("derived evidence task lease is required")
+	if input.Lease < time.Second {
+		return errors.New("derived evidence task lease must be at least 1 second")
 	}
 	return nil
 }
@@ -477,7 +477,7 @@ func validateConflictResolutionAssessment(
 		if err != nil {
 			return err
 		}
-		if failureCount < conflictAssessmentMaxFailedDays {
+		if failureCount < ConflictAssessmentMaxFailedDays {
 			return ErrConflictAssessmentStale
 		}
 	default:
@@ -509,20 +509,16 @@ func expirePriorOverdueConflictAssessmentReservations(
 	if err != nil {
 		return err
 	}
+	defer rows.Close()
 	assessmentAttemptIDs := []string{}
 	for rows.Next() {
 		var assessmentAttemptID string
 		if err := rows.Scan(&assessmentAttemptID); err != nil {
-			_ = rows.Close()
 			return err
 		}
 		assessmentAttemptIDs = append(assessmentAttemptIDs, assessmentAttemptID)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
 		return err
 	}
 	for _, assessmentAttemptID := range assessmentAttemptIDs {

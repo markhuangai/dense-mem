@@ -253,7 +253,7 @@ func (s *Service) recordAssessmentFailure(
 	if err != nil {
 		return s.handleAssessmentCompletionError(result, err)
 	}
-	if completed.FailureCount < 5 {
+	if completed == nil || completed.FailureCount < repository.ConflictAssessmentMaxFailedDays {
 		result.Stage = "overdue_assessment_failed"
 		return result, nil
 	}

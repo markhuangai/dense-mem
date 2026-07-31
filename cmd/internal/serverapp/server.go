@@ -575,6 +575,8 @@ func processConflictReviewTick(
 	}
 }
 
+const conflictReviewCompletionTimeout = 15 * time.Second
+
 func processTeamConflictReview(
 	ctx context.Context,
 	logger observability.LogProvider,
@@ -686,7 +688,9 @@ func processTeamConflictReview(
 	} else if counts.ClaimedCases == 0 && counts.Status == "completed" {
 		outcome = "empty"
 	}
-	if err := ledger.CompleteRelationshipConflictReviewRun(ctx, counts); err != nil {
+	completeCtx, completeCancel := context.WithTimeout(context.WithoutCancel(ctx), conflictReviewCompletionTimeout)
+	defer completeCancel()
+	if err := ledger.CompleteRelationshipConflictReviewRun(completeCtx, counts); err != nil {
 		outcome = "error"
 		return err
 	}

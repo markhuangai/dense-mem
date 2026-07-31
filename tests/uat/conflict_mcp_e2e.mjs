@@ -284,7 +284,11 @@ async function resolveOverdueConflictThroughVerifier() {
     throw new Error(`overdue conflict did not contain the two tied positions: ${JSON.stringify(openOverdueConflict)}`);
   }
 
-  const overdueReviewNow = new Date(Date.parse(reviewNow) + 24 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const overdueReviewDueAt = Date.parse(stringAt(openOverdueConflict, ["review_due_at"]));
+  if (!Number.isFinite(overdueReviewDueAt)) {
+    throw new Error(`overdue conflict did not return a valid review_due_at: ${JSON.stringify(openOverdueConflict)}`);
+  }
+  const overdueReviewNow = new Date(overdueReviewDueAt + 1_000).toISOString().replace(/\.\d{3}Z$/, "Z");
   const overdueReview = runConflictReview(overdueReviewNow);
   if (overdueReview.status !== "completed") {
     throw new Error(`overdue conflict reviewer did not complete: ${JSON.stringify(overdueReview)}`);

@@ -724,7 +724,7 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?,
 		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?::jsonb
 		)
-	RETURNING fragment_id::text
+	RETURNING fragment_id::text, authority
 	`, input.TeamID, ingestID, input.OwnerProfileID, index, item.Content, item.ContentHash,
 		item.SourceType, item.Authority, item.SourceRef, sourceID, sourceRevisionID,
 		pqStringArray(item.Labels), string(metadata)).Rows()
@@ -739,11 +739,10 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 		EvidenceIndex:    index,
 		Content:          item.Content,
 		ContentHash:      item.ContentHash,
-		Authority:        item.Authority,
 		SourceID:         sourceID,
 		SourceRevisionID: sourceRevisionID,
 	}
-	if err := rows.Scan(&fragment.FragmentID); err != nil {
+	if err := rows.Scan(&fragment.FragmentID, &fragment.Authority); err != nil {
 		return EvidenceFragment{}, err
 	}
 	return fragment, rows.Err()
