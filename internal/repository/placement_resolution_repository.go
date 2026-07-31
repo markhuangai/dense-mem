@@ -47,6 +47,7 @@ type ResolvePlacementReviewResult struct {
 	ImpactSummary     string
 	CheckAfterSeconds int
 	Existing          bool
+	FirstDisposition  *PlacementFirstDisposition
 }
 
 type placementResolutionScope struct {
@@ -116,10 +117,12 @@ func (r *LedgerRepositoryImpl) ResolvePlacementReview(
 		if err != nil {
 			return err
 		}
-		if err := applyPlacementResolutionState(ctx, tx, input, scope, outcomeID, payload, newItems); err != nil {
+		firstDisposition, err := applyPlacementResolutionState(ctx, tx, input, scope, outcomeID, payload, newItems)
+		if err != nil {
 			return err
 		}
 		result = placementResolutionResult(input, scope, outcomeID, false)
+		result.FirstDisposition = firstDisposition
 		if len(newItems) > 0 {
 			result.PlacementItemID = newItems[0].PlacementItemID
 		}
@@ -464,56 +467,56 @@ func applyPlacementResolutionState(
 	outcomeID string,
 	payload map[string]any,
 	newItems []PlacementItem,
-) error {
+) (*PlacementFirstDisposition, error) {
 	resolution := placementResolutionReviewTaskPayload(input, outcomeID)
 	switch domain.ResolveAction(input.Action) {
 	case domain.ResolveAcknowledge:
-		return updateReviewTasksForResolution(ctx, tx, input, "acknowledged", resolution)
+		return nil, updateReviewTasksForResolution(ctx, tx, input, "acknowledged", resolution)
 	case domain.ResolveReject:
 		if err := updateReviewTasksForResolution(ctx, tx, input, "resolved", resolution); err != nil {
-			return err
+			return nil, err
 		}
 		if err := updatePlacementItemForResolution(ctx, tx, scope, "completed", "candidate", payload); err != nil {
-			return err
+			return nil, err
 		}
 		return finishPlacementRunAfterUserResolution(ctx, tx, scope)
 	case domain.ResolveReleaseQuarantine:
 		if err := releasePlacementQuarantine(ctx, tx, input, scope); err != nil {
-			return err
+			return nil, err
 		}
 		if err := updateReviewTasksForResolution(ctx, tx, input, "resolved", resolution); err != nil {
-			return err
+			return nil, err
 		}
 		if err := updatePlacementItemForResolution(ctx, tx, scope, "queued", "pending", payload); err != nil {
-			return err
+			return nil, err
 		}
-		return requeuePlacementRunForUserResolution(ctx, tx, scope, string(domain.PlacementRunGuarded))
+		return nil, requeuePlacementRunForUserResolution(ctx, tx, scope, string(domain.PlacementRunGuarded))
 	default:
 		if err := updateReviewTasksForResolution(ctx, tx, input, "resolved", resolution); err != nil {
-			return err
+			return nil, err
 		}
 		switch placementResolutionSecurityDecision(input) {
 		case "quarantine":
 			if err := updatePlacementItemForResolution(ctx, tx, scope, "quarantined", "quarantined", payload); err != nil {
-				return err
+				return nil, err
 			}
 			return quarantinePlacementRunForUserResolution(ctx, tx, scope)
 		case "guarded":
 			if err := updatePlacementItemForResolution(ctx, tx, scope, "queued", "pending", payload); err != nil {
-				return err
+				return nil, err
 			}
-			return requeuePlacementRunForUserResolution(ctx, tx, scope, string(domain.PlacementRunGuarded))
+			return nil, requeuePlacementRunForUserResolution(ctx, tx, scope, string(domain.PlacementRunGuarded))
 		}
 		if len(newItems) > 0 {
 			if err := updatePlacementItemForResolution(ctx, tx, scope, "completed", "candidate", payload); err != nil {
-				return err
+				return nil, err
 			}
-			return requeuePlacementRunForNewEvidence(ctx, tx, scope)
+			return nil, requeuePlacementRunForNewEvidence(ctx, tx, scope)
 		}
 		if err := updatePlacementItemForResolution(ctx, tx, scope, "queued", "pending", payload); err != nil {
-			return err
+			return nil, err
 		}
-		return requeuePlacementRunForUserResolution(ctx, tx, scope, string(domain.PlacementRunQueued))
+		return nil, requeuePlacementRunForUserResolution(ctx, tx, scope, string(domain.PlacementRunQueued))
 	}
 }
 
@@ -710,70 +713,6 @@ func requeuePlacementRunForNewEvidence(ctx context.Context, tx *gorm.DB, scope p
 		  AND placement_run_id = ?::uuid
 		  AND status <> 'processing'
 	`, scope.TeamID, scope.OwnerProfileID, scope.PlacementRunID)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return ErrPlacementResolutionInvalidState
-	}
-	return nil
-}
-
-func quarantinePlacementRunForUserResolution(ctx context.Context, tx *gorm.DB, scope placementResolutionScope) error {
-	result := tx.WithContext(ctx).Exec(`
-		UPDATE placement_runs
-		SET status = 'quarantined',
-		    error = '',
-		    lease_until = NULL,
-		    worker_id = '',
-		    completed_at = now(),
-		    updated_at = now()
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND placement_run_id = ?::uuid
-		  AND status <> 'processing'
-	`, scope.TeamID, scope.OwnerProfileID, scope.PlacementRunID)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return ErrPlacementResolutionInvalidState
-	}
-	return nil
-}
-
-func finishPlacementRunAfterUserResolution(ctx context.Context, tx *gorm.DB, scope placementResolutionScope) error {
-	var openCount, reviewCount int64
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT
-		    COUNT(*) FILTER (WHERE status IN ('queued', 'processing')),
-		    COUNT(*) FILTER (WHERE status = 'awaiting_review')
-		FROM placement_items
-		WHERE team_id = ?::uuid
-		  AND placement_run_id = ?::uuid
-	`, scope.TeamID, scope.PlacementRunID).Row().Scan(&openCount, &reviewCount); err != nil {
-		return err
-	}
-	if openCount > 0 {
-		return nil
-	}
-	runStatus := string(domain.PlacementRunCompleted)
-	if reviewCount > 0 {
-		runStatus = string(domain.PlacementRunAwaitingReview)
-	}
-	result := tx.WithContext(ctx).Exec(`
-		UPDATE placement_runs
-		SET status = ?,
-		    error = '',
-		    lease_until = NULL,
-		    worker_id = '',
-		    completed_at = now(),
-		    updated_at = now()
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND placement_run_id = ?::uuid
-		  AND status <> 'processing'
-	`, runStatus, scope.TeamID, scope.OwnerProfileID, scope.PlacementRunID)
 	if result.Error != nil {
 		return result.Error
 	}

@@ -899,33 +899,6 @@ func finishPlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input Commit
 	return appendPlacementFirstDisposition(ctx, tx, input.TeamID, input.OwnerProfileID, input.PlacementRunID, runStatus, createdAt, completedAt)
 }
 
-func appendPlacementFirstDisposition(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID, ownerProfileID, placementRunID, status string,
-	createdAt, completedAt time.Time,
-) (*PlacementFirstDisposition, error) {
-	if completedAt.IsZero() {
-		return nil, errors.New("placement first disposition requires completed_at")
-	}
-	if _, err := insertPlacementOutcome(ctx, tx, PlacementOutcomeInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerProfileID,
-		PlacementRunID: placementRunID,
-		OutcomeKind:    "telemetry_first_disposition",
-		Status:         status,
-		IdempotencyKey: "telemetry:first_disposition:" + placementRunID,
-		Payload:        map[string]any{"telemetry": "first_disposition"},
-	}); err != nil {
-		return nil, err
-	}
-	return &PlacementFirstDisposition{
-		Status:      status,
-		CreatedAt:   createdAt.UTC(),
-		CompletedAt: completedAt.UTC(),
-	}, nil
-}
-
 func requeuePlacementRunForRetry(ctx context.Context, tx *gorm.DB, input CommitPlacementSemanticInput) error {
 	retryDelay := placementEffectiveRetryDelay(input.ExpectedAttempts, input.PlacementItemID, input.RetryAfter)
 	retryDelaySeconds := int(retryDelay / time.Second)

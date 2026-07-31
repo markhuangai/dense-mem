@@ -224,6 +224,7 @@ func RunActiveServer(
 		Semantic:  semanticRepo,
 		Placement: ledgerRepo,
 		Evidence:  ledgerRepo,
+		Metrics:   discoverabilityMetrics,
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{

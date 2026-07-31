@@ -125,6 +125,40 @@ func TestOpenAIProviderRecordsProviderUsageBeforeRejectingInvalidResult(t *testi
 	t.Fatal("provider usage did not produce an AI operation cost sample")
 }
 
+func TestOpenAIProviderMarksMalformedSuccessfulResponseUnpriced(t *testing.T) {
+	metrics := observability.NewPrometheusMetrics()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("{"))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL:                  srv.URL,
+		AIAPIKey:                  "key",
+		AIEmbeddingModel:          "embedding-model",
+		AIEmbeddingDimensions:     2,
+		AIEmbeddingTimeoutSeconds: 5,
+	}, srv.Client())
+	p.SetMetrics(metrics)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationRecallEmbedding, 1)
+	_, _, err := p.Embed(ctx, "malformed response")
+	require.ErrorIs(t, err, ErrEmbeddingProvider)
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+		if strings.HasPrefix(line, "densemem_ai_operation_unpriced_total{") &&
+			strings.Contains(line, "operation=\"recall_embedding\"") &&
+			strings.Contains(line, "component=\"embedding\"") &&
+			strings.Contains(line, "model=\"embedding-model\"") &&
+			strings.Contains(line, "reason=\"missing_usage\"") {
+			assert.True(t, strings.HasSuffix(line, " 1"), "unpriced line = %q; want one missing-usage observation", line)
+			return
+		}
+	}
+	t.Fatal("malformed successful provider response did not produce an unpriced observation")
+}
+
 func TestOpenAIProvider_Non200Response(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
