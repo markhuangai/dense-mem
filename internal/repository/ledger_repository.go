@@ -115,6 +115,7 @@ type EvidenceFragment struct {
 	EvidenceIndex         int
 	Content               string
 	ContentHash           string
+	Authority             string
 	SourceID              string
 	SourceRevisionID      string
 	SupersededEvidenceIDs []string
@@ -738,6 +739,7 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 		EvidenceIndex:    index,
 		Content:          item.Content,
 		ContentHash:      item.ContentHash,
+		Authority:        item.Authority,
 		SourceID:         sourceID,
 		SourceRevisionID: sourceRevisionID,
 	}
@@ -813,7 +815,7 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 		return nil, err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-			SELECT fragment_id::text, evidence_index, content, content_hash,
+			SELECT fragment_id::text, evidence_index, content, content_hash, authority,
 			       COALESCE(source_id::text, ''), COALESCE(source_revision_id::text, '')
 			FROM evidence_fragments
 			WHERE team_id = ?::uuid
@@ -826,7 +828,7 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 	defer rows.Close()
 	for rows.Next() {
 		var item EvidenceFragment
-		if err := rows.Scan(&item.FragmentID, &item.EvidenceIndex, &item.Content, &item.ContentHash, &item.SourceID, &item.SourceRevisionID); err != nil {
+		if err := rows.Scan(&item.FragmentID, &item.EvidenceIndex, &item.Content, &item.ContentHash, &item.Authority, &item.SourceID, &item.SourceRevisionID); err != nil {
 			return nil, err
 		}
 		result.Evidence = append(result.Evidence, item)

@@ -68,7 +68,6 @@ func TestOpenAIVerifierAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 	defer srv.Close()
 
 	cfg := newTestVerifierConfig(srv.URL, "sk-test", "assessor-model")
-	cfg.AIReviewerModel = ""
 	v := NewOpenAIVerifier(cfg, srv.Client())
 	req, _ := semanticAssessmentTestRequest(t)
 	response, err := v.AssessSemantic(context.Background(), req)

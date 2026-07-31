@@ -11,9 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/operatorcli"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 type cliConfig struct {
@@ -46,6 +49,10 @@ type reviewCaseResult struct {
 	Stage                string   `json:"stage"`
 	PreferredPositionID  string   `json:"preferred_position_id,omitempty"`
 	UpdatedRelationships []string `json:"updated_relationships,omitempty"`
+	RetractedEvidenceIDs []string `json:"retracted_evidence_ids,omitempty"`
+	AssessmentAttemptID  string   `json:"assessment_attempt_id,omitempty"`
+	ResolutionMethod     string   `json:"resolution_method,omitempty"`
+	ResolutionPending    bool     `json:"resolution_pending,omitempty"`
 }
 
 type postgresConfig struct {
@@ -92,6 +99,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	runtimeConfig, err := config.LoadWithPostgresDSN(dsn)
+	if err != nil {
+		return fmt.Errorf("load verifier configuration: %w", err)
+	}
+	if !conflictVerifierConfigured(&runtimeConfig) {
+		return errors.New("AI_VERIFIER_API_URL, AI_VERIFIER_API_KEY, and AI_VERIFIER_MODEL are required for overdue conflict assessment")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutSecs)*time.Second)
 	defer cancel()
 	pgClient, err := postgres.OpenWithClient(ctx, postgresConfig{dsn: dsn})
@@ -99,7 +113,14 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("connect postgres: %w", err)
 	}
 	defer pgClient.Close()
-	out, reviewErr := reviewTeamConflicts(ctx, repository.NewLedgerRepository(pgClient.GetDB(), postgres.NewRLS()), cfg, now)
+	ledger := repository.NewLedgerRepository(pgClient.GetDB(), postgres.NewRLS())
+	assessmentLimits := verifier.SemanticAssessmentLimitsForConfig(&runtimeConfig)
+	provider := verifier.NewOpenAIVerifierWithAssessmentLimits(&runtimeConfig, nil, assessmentLimits)
+	runner, err := conflictreview.NewRunner(ledger, provider, cfg.timezone, assessmentLimits)
+	if err != nil {
+		return fmt.Errorf("build conflict review runner: %w", err)
+	}
+	out, reviewErr := reviewTeamConflicts(ctx, runner, cfg, now)
 	if reviewErr != nil && out.TeamID == "" {
 		return reviewErr
 	}
@@ -113,7 +134,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 func reviewTeamConflicts(
 	ctx context.Context,
-	ledger *repository.LedgerRepositoryImpl,
+	ledger conflictReviewLedger,
 	cfg cliConfig,
 	now time.Time,
 ) (reviewOutput, error) {
@@ -189,6 +210,10 @@ func reviewTeamConflicts(
 				Stage:                result.Stage,
 				PreferredPositionID:  result.PreferredPositionID,
 				UpdatedRelationships: append([]string(nil), result.UpdatedRelationships...),
+				RetractedEvidenceIDs: append([]string(nil), result.RetractedEvidenceIDs...),
+				AssessmentAttemptID:  result.AssessmentAttemptID,
+				ResolutionMethod:     result.ResolutionMethod,
+				ResolutionPending:    result.ResolutionPending,
 			})
 			switch result.Outcome {
 			case repository.ConflictReviewOutcomeResolve:
@@ -220,6 +245,19 @@ func reviewTeamConflicts(
 }
 
 var errReviewConflictsFailed = errors.New("conflict review failed")
+
+type conflictReviewLedger interface {
+	ReserveRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error)
+	ClaimRelationshipConflictCases(context.Context, repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error)
+	ReviewRelationshipConflictCase(context.Context, repository.ReviewRelationshipConflictCaseInput) (*repository.ReviewRelationshipConflictCaseResult, error)
+	CompleteRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunCompleteInput) error
+}
+
+func conflictVerifierConfigured(cfg config.ConfigProvider) bool {
+	return strings.TrimSpace(cfg.GetAIVerifierAPIURL()) != "" &&
+		strings.TrimSpace(cfg.GetAIVerifierAPIKey()) != "" &&
+		strings.TrimSpace(cfg.GetAIVerifierModel()) != ""
+}
 
 func parseCLI(args []string, stderr io.Writer) (cliConfig, error) {
 	var cfg cliConfig

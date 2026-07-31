@@ -2,12 +2,16 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestRelationshipConflictReviewerDismissesStaleCaseAfterRetraction(t *testing.T) {
@@ -145,6 +149,696 @@ func TestRelationshipConflictReviewerDoesNotExhaustAttemptsBeforeDueDate(t *test
 	}))
 	assert.Equal(t, "open", status)
 	assert.Equal(t, 0, attempts)
+}
+
+func TestRelationshipConflictReviewerResetsAttemptsAfterOverdueAndSnapshotVersionChange(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "conflict-review-reset-attempts", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-review-reset-attempts-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-reset-attempts-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-reset-attempts-owner-b")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
+	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL")
+	graphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB")
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerA, "worker-reset-attempts-a",
+		"reset-attempts-conflict-a", "Dense-Mem uses PostgreSQL.", subject.EntityID, postgres.EntityID, "source-group-reset-attempts-a",
+	)
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerB, "worker-reset-attempts-b",
+		"reset-attempts-conflict-b", "Dense-Mem uses GraphDB.", subject.EntityID, graphdb.EntityID, "source-group-reset-attempts-b",
+	)
+
+	conflictID, _ := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+	reviewNow := time.Now().UTC()
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_conflict_cases
+			SET review_due_at = ?,
+			    next_review_at = ?,
+			    attempts = 4
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+		`, reviewNow.Add(-time.Minute), reviewNow.Add(-time.Minute), teamID, conflictID).Error
+	}))
+
+	result := reviewConflictCaseForTest(t, ctx, ledgerRepo, teamID, "conflict-reviewer-reset-attempts", conflictID, reviewNow)
+	assert.Equal(t, ConflictReviewOutcomeOverdue, result.Outcome)
+
+	var status string
+	var attempts int
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status, attempts
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+		`, teamID, conflictID).Row().Scan(&status, &attempts)
+	}))
+	assert.Equal(t, "overdue", status)
+	assert.Equal(t, 0, attempts)
+	reservation, _, reserved, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
+		TeamID:              teamID,
+		ConflictID:          conflictID,
+		ReviewRunID:         uuid.NewString(),
+		WorkerID:            "worker-reset-attempts-assessment",
+		LocalAssessmentDate: reviewNow,
+		Model:               "test-model",
+		PolicyVersion:       domain.ConflictOverduePolicyVersion,
+	})
+	require.NoError(t, err)
+	require.True(t, reserved)
+	require.NotNil(t, reservation)
+
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Exec(`
+			UPDATE relationship_conflict_cases
+			SET attempts = 4,
+			    lease_worker_id = 'stale-worker',
+			    lease_until = now() + interval '1 minute',
+			    last_error = 'stale lease'
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+		`, teamID, conflictID).Error)
+		return bumpRelationshipConflictCaseVersion(ctx, tx, teamID, conflictID)
+	}))
+
+	var leaseWorkerID string
+	var lastError string
+	var assessmentStatus string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT attempts, lease_worker_id, COALESCE(last_error, '')
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+		`, teamID, conflictID).Row().Scan(&attempts, &leaseWorkerID, &lastError)
+	}))
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status
+			FROM relationship_conflict_ai_assessment_attempts
+			WHERE team_id = ?::uuid
+			  AND assessment_attempt_id = ?::uuid
+		`, teamID, reservation.AssessmentAttemptID).Row().Scan(&assessmentStatus)
+	}))
+	assert.Equal(t, 0, attempts)
+	assert.Empty(t, leaseWorkerID)
+	assert.Empty(t, lastError)
+	assert.Equal(t, "superseded", assessmentStatus)
+}
+
+func TestEnsureConflictSystemProfileAvoidsLegacyUserNameCollision(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-system-profile-name-collision-team")
+	legacyName := conflictSystemProfileNamePrefix + teamID
+	userProfileID := createLedgerProfile(t, adminDB, rls, teamID, legacyName)
+
+	var systemProfileID string
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		if err := setConflictSystemTeamContext(ctx, tx, teamID); err != nil {
+			return err
+		}
+		var err error
+		systemProfileID, err = ensureConflictSystemProfile(ctx, tx, teamID)
+		return err
+	}))
+	require.NotEmpty(t, systemProfileID)
+	assert.NotEqual(t, userProfileID, systemProfileID)
+
+	var systemName, authSource string
+	var isSystem bool
+	var semanticRefCount int
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		if err := setConflictSystemTeamContext(ctx, tx, teamID); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT name, auth_source, is_system
+			FROM team_profiles
+			WHERE team_id = ?::uuid
+			  AND id = ?::uuid
+		`, teamID, systemProfileID).Row().Scan(&systemName, &authSource, &isSystem); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM semantic_profile_refs
+			WHERE team_id = ?::uuid
+			  AND profile_id = ?::uuid
+		`, teamID, systemProfileID).Row().Scan(&semanticRefCount)
+	}))
+	assert.NotEqual(t, legacyName, systemName)
+	assert.True(t, strings.HasPrefix(systemName, conflictSystemProfileNamePrefix))
+	assert.Equal(t, "system", authSource)
+	assert.True(t, isSystem)
+	assert.Equal(t, 1, semanticRefCount)
+}
+
+func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDerivation(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "overdue-conflict-resolution", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "overdue-conflict-resolution-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "overdue-conflict-resolution-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "overdue-conflict-resolution-owner-b")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
+	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL")
+	graphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB")
+	preferredContent := "Dense-Mem uses PostgreSQL. Dense-Mem uses PostgreSQL."
+	preferredQuote := "Dense-Mem uses PostgreSQL."
+	preferredSecondStart := strings.LastIndex(preferredContent, preferredQuote)
+	require.Greater(t, preferredSecondStart, 0)
+	preferred := commitPlacementRelationshipForConflictTestWithOptions(
+		t, ctx, ledgerRepo, teamID, ownerA, "worker-overdue-preferred",
+		"overdue-conflict-preferred", preferredContent, subject.EntityID, postgres.EntityID, "source-group-overdue-preferred",
+		conflictTestRelationshipOptions{
+			authority: "primary",
+			additionalSupports: []conflictTestAdditionalSupport{{
+				sourceGroupKey: "source-group-overdue-preferred-second",
+				spanStart:      preferredSecondStart,
+				spanEnd:        preferredSecondStart + len(preferredQuote),
+				quote:          preferredQuote,
+			}},
+		},
+	)
+	loserContent := "Dense-Mem uses GraphDB. Dense-Mem uses GraphDB."
+	loserQuote := "Dense-Mem uses GraphDB."
+	loserSecondStart := strings.LastIndex(loserContent, loserQuote)
+	require.Greater(t, loserSecondStart, 0)
+	loser := commitPlacementRelationshipForConflictTestWithOptions(
+		t, ctx, ledgerRepo, teamID, ownerB, "worker-overdue-loser",
+		"overdue-conflict-loser", loserContent, subject.EntityID, graphdb.EntityID, "source-group-overdue-loser",
+		conflictTestRelationshipOptions{
+			authority: "primary",
+			additionalSupports: []conflictTestAdditionalSupport{{
+				sourceGroupKey: "source-group-overdue-loser-second",
+				spanStart:      loserSecondStart,
+				spanEnd:        loserSecondStart + len(loserQuote),
+				quote:          loserQuote,
+			}},
+		},
+	)
+
+	conflictID, _ := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+	reviewNow := time.Now().UTC()
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_conflict_cases
+			SET review_due_at = ?,
+			    next_review_at = ?
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+		`, reviewNow.Add(-time.Minute), reviewNow.Add(-time.Minute), teamID, conflictID).Error
+	}))
+	result := reviewConflictCaseForTest(t, ctx, ledgerRepo, teamID, "worker-overdue-review", conflictID, reviewNow)
+	require.Equal(t, ConflictReviewOutcomeOverdue, result.Outcome)
+
+	localDate := time.Date(2026, time.August, 2, 0, 30, 0, 0, time.FixedZone("UTC+14", 14*60*60))
+	reservation, dossier, reserved, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
+		TeamID:              teamID,
+		ConflictID:          conflictID,
+		ReviewRunID:         uuid.NewString(),
+		WorkerID:            "worker-overdue-assessment",
+		LocalAssessmentDate: localDate,
+		Model:               "test-model",
+		PolicyVersion:       domain.ConflictOverduePolicyVersion,
+	})
+	require.NoError(t, err)
+	require.True(t, reserved)
+	require.NotNil(t, reservation)
+	require.NotNil(t, dossier)
+	assert.Len(t, dossier.Positions, 2)
+	assert.Len(t, dossier.Evidence, 4)
+	var storedLocalAssessmentDate string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT local_assessment_date::text
+			FROM relationship_conflict_ai_assessment_attempts
+			WHERE team_id = ?::uuid
+			  AND assessment_attempt_id = ?::uuid
+		`, teamID, reservation.AssessmentAttemptID).Row().Scan(&storedLocalAssessmentDate)
+	}))
+	assert.Equal(t, "2026-08-02", storedLocalAssessmentDate)
+
+	_, _, reservedAgain, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
+		TeamID:              teamID,
+		ConflictID:          conflictID,
+		ReviewRunID:         uuid.NewString(),
+		WorkerID:            "worker-overdue-assessment-retry",
+		LocalAssessmentDate: localDate,
+		Model:               "test-model",
+		PolicyVersion:       domain.ConflictOverduePolicyVersion,
+	})
+	require.NoError(t, err)
+	assert.False(t, reservedAgain)
+
+	preferredPositionID, losingFragmentID := "", ""
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT member.position_id::text
+			FROM relationship_conflict_position_members AS member
+			WHERE member.team_id = ?::uuid
+			  AND member.conflict_id = ?::uuid
+			  AND member.relationship_id = ?::uuid
+			  AND member.active
+		`, teamID, conflictID, preferred.RelationshipResults[0].Relationship.RelationshipID).Row().Scan(&preferredPositionID))
+		return tx.Raw(`
+			SELECT support.fragment_id::text
+			FROM relationship_evidence_supports AS support
+			WHERE support.team_id = ?::uuid
+			  AND support.relationship_id = ?::uuid
+			  AND support.owner_profile_id = ?::uuid
+		`, teamID, loser.RelationshipResults[0].Relationship.RelationshipID, ownerB).Row().Scan(&losingFragmentID)
+	}))
+	require.NotEmpty(t, preferredPositionID)
+	require.NotEmpty(t, losingFragmentID)
+	confidence := 0.92
+	_, err = ledgerRepo.CompleteOverdueConflictAssessment(ctx, CompleteOverdueConflictAssessmentInput{
+		TeamID:              teamID,
+		ConflictID:          conflictID,
+		AssessmentAttemptID: reservation.AssessmentAttemptID,
+		CaseVersion:         reservation.CaseVersion,
+		ReviewRunID:         uuid.NewString(),
+		Decision:            "selected",
+		SelectedPositionID:  preferredPositionID,
+		Confidence:          &confidence,
+		ProviderTurns:       1,
+		ResponseHash:        "sha256:test",
+	})
+	require.NoError(t, err)
+	applied, err := ledgerRepo.ApplyOverdueConflictResolution(ctx, ApplyOverdueConflictResolutionInput{
+		TeamID:              teamID,
+		ConflictID:          conflictID,
+		ReviewRunID:         uuid.NewString(),
+		WorkerID:            "worker-overdue-apply",
+		ExpectedCaseVersion: reservation.CaseVersion,
+		PreferredPositionID: preferredPositionID,
+		AssessmentAttemptID: reservation.AssessmentAttemptID,
+		Method:              "ai",
+		Now:                 reviewNow,
+	})
+	require.NoError(t, err)
+	require.True(t, applied.Resolved)
+	assert.Contains(t, applied.RetractedEvidenceIDs, losingFragmentID)
+	require.Len(t, applied.DerivedEvidence, 1)
+
+	derived, err := ledgerRepo.StageConflictDerivedEvidence(ctx, applied.DerivedEvidence[0])
+	require.NoError(t, err)
+	require.NotEmpty(t, derived.IngestID)
+	require.NotEmpty(t, derived.ReplacementFragment)
+
+	var conflictStatus, resolutionReason, loserStatus, searchState, systemProfileID, authSource, replacementAuthority string
+	var loserSupportCount, derivationCount, replacementSearchDocuments, relationshipCountBeforeDerived int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT status, resolution_reason
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+		`, teamID, conflictID).Row().Scan(&conflictStatus, &resolutionReason))
+		require.NoError(t, tx.Raw(`
+			SELECT status, support_count
+			FROM relationship_records
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+		`, teamID, loser.RelationshipResults[0].Relationship.RelationshipID).Row().Scan(&loserStatus, &loserSupportCount))
+		require.NoError(t, tx.Raw(`
+			SELECT search_state
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'evidence'
+			  AND source_id = ?::uuid
+		`, teamID, losingFragmentID).Row().Scan(&searchState))
+		require.NoError(t, tx.Raw(`
+			SELECT id::text, auth_source
+			FROM team_profiles
+			WHERE team_id = ?::uuid
+			  AND is_system
+		`, teamID).Row().Scan(&systemProfileID, &authSource))
+		require.NoError(t, tx.Raw(`
+			SELECT fragment.authority
+			FROM relationship_conflict_evidence_derivations AS derivation
+			JOIN evidence_fragments AS fragment
+			  ON fragment.team_id = derivation.team_id
+			 AND fragment.fragment_id = derivation.replacement_fragment_id
+			WHERE derivation.team_id = ?::uuid
+			  AND derivation.conflict_id = ?::uuid
+			  AND derivation.target_fragment_id = ?::uuid
+		`, teamID, conflictID, losingFragmentID).Row().Scan(&replacementAuthority))
+		require.NoError(t, tx.Raw(`
+			SELECT count(*)
+			FROM relationship_conflict_evidence_derivations
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+		`, teamID, conflictID).Scan(&derivationCount).Error)
+		require.NoError(t, tx.Raw(`
+			SELECT count(*)
+			FROM relationship_records
+			WHERE team_id = ?::uuid
+		`, teamID).Scan(&relationshipCountBeforeDerived).Error)
+		return tx.Raw(`
+			SELECT count(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'evidence'
+			  AND source_id = ?::uuid
+		`, teamID, derived.ReplacementFragment).Scan(&replacementSearchDocuments).Error
+	}))
+	assert.Equal(t, "resolved", conflictStatus)
+	assert.Equal(t, domain.ConflictResolutionReasonAI, resolutionReason)
+	assert.Equal(t, "superseded", loserStatus)
+	assert.Equal(t, int64(0), loserSupportCount)
+	assert.Equal(t, "not_required", searchState)
+	assert.NotEmpty(t, systemProfileID)
+	assert.Equal(t, "system", authSource)
+	assert.Equal(t, "inferred", replacementAuthority)
+	assert.Equal(t, int64(1), derivationCount)
+	assert.Equal(t, int64(0), replacementSearchDocuments)
+
+	derivedIngest, err := ledgerRepo.GetPlacementRun(ctx, GetPlacementRunInput{
+		TeamID:         teamID,
+		OwnerProfileID: systemProfileID,
+		IngestID:       derived.IngestID,
+	})
+	require.NoError(t, err)
+	require.Len(t, derivedIngest.Items, 1)
+	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-overdue-derived", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, derivedIngest.PlacementRunID, claimed.PlacementRunID)
+	derivedCommit, err := ledgerRepo.CommitPlacementSemanticResult(ctx, CommitPlacementSemanticInput{
+		TeamID:           teamID,
+		OwnerProfileID:   systemProfileID,
+		IngestID:         derivedIngest.IngestID,
+		PlacementRunID:   derivedIngest.PlacementRunID,
+		PlacementItemID:  derivedIngest.Items[0].PlacementItemID,
+		WorkerID:         "worker-overdue-derived",
+		ExpectedAttempts: claimed.Attempts,
+		EntityResolutions: []PlacementEntityResolutionInput{
+			{MentionRef: "subject", Action: "reuse", EntityID: subject.EntityID},
+			{MentionRef: "object", Action: "reuse", EntityID: postgres.EntityID},
+		},
+		RelationshipObservations: []PlacementRelationshipDecisionInput{{
+			Ref:          "derived-must-not-project",
+			SubjectRef:   "subject",
+			PredicateKey: "primary_database",
+			ObjectRef:    "object",
+			Support: &EvidenceSupportInput{
+				FragmentID:     derived.ReplacementFragment,
+				SourceGroupKey: "source-group-overdue-loser",
+				SpanStart:      0,
+				SpanEnd:        len(derivedIngest.Evidence[0].Content),
+				Quote:          derivedIngest.Evidence[0].Content,
+				Authority:      "inferred",
+			},
+		}},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, derivedCommit.RelationshipResults)
+
+	var relationshipCountAfterDerived, derivedSearchDocuments int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT count(*)
+			FROM relationship_records
+			WHERE team_id = ?::uuid
+		`, teamID).Scan(&relationshipCountAfterDerived).Error)
+		return tx.Raw(`
+			SELECT count(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'evidence'
+			  AND source_id = ?::uuid
+		`, teamID, derived.ReplacementFragment).Scan(&derivedSearchDocuments).Error
+	}))
+	assert.Equal(t, relationshipCountBeforeDerived, relationshipCountAfterDerived)
+	assert.Equal(t, int64(0), derivedSearchDocuments)
+}
+
+func TestOverdueConflictResolutionRejectsAssessmentAfterEvidenceRetraction(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "overdue-conflict-stale-evidence", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "overdue-conflict-stale-evidence-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "overdue-conflict-stale-evidence-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "overdue-conflict-stale-evidence-owner-b")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
+	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL")
+	graphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB")
+	preferred := commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerA, "worker-overdue-stale-preferred",
+		"overdue-stale-preferred", "Dense-Mem uses PostgreSQL.", subject.EntityID, postgres.EntityID, "source-group-overdue-stale-preferred",
+	)
+	loser := commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerB, "worker-overdue-stale-loser",
+		"overdue-stale-loser", "Dense-Mem uses GraphDB.", subject.EntityID, graphdb.EntityID, "source-group-overdue-stale-loser",
+	)
+
+	conflictID, _ := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+	reviewNow := time.Now().UTC()
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_conflict_cases
+			SET review_due_at = ?,
+			    next_review_at = ?
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+		`, reviewNow.Add(-time.Minute), reviewNow.Add(-time.Minute), teamID, conflictID).Error
+	}))
+	review := reviewConflictCaseForTest(t, ctx, ledgerRepo, teamID, "worker-overdue-stale-review", conflictID, reviewNow)
+	require.Equal(t, ConflictReviewOutcomeOverdue, review.Outcome)
+
+	reservation, _, reserved, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
+		TeamID:              teamID,
+		ConflictID:          conflictID,
+		ReviewRunID:         uuid.NewString(),
+		WorkerID:            "worker-overdue-stale-assessment",
+		LocalAssessmentDate: reviewNow,
+		Model:               "test-model",
+		PolicyVersion:       domain.ConflictOverduePolicyVersion,
+	})
+	require.NoError(t, err)
+	require.True(t, reserved)
+	require.NotNil(t, reservation)
+
+	preferredPositionID, losingFragmentID := "", ""
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT member.position_id::text
+			FROM relationship_conflict_position_members AS member
+			WHERE member.team_id = ?::uuid
+			  AND member.conflict_id = ?::uuid
+			  AND member.relationship_id = ?::uuid
+			  AND member.active
+		`, teamID, conflictID, preferred.RelationshipResults[0].Relationship.RelationshipID).Row().Scan(&preferredPositionID))
+		return tx.Raw(`
+			SELECT support.fragment_id::text
+			FROM relationship_evidence_supports AS support
+			WHERE support.team_id = ?::uuid
+			  AND support.relationship_id = ?::uuid
+			  AND support.owner_profile_id = ?::uuid
+		`, teamID, loser.RelationshipResults[0].Relationship.RelationshipID, ownerB).Row().Scan(&losingFragmentID)
+	}))
+	confidence := 0.92
+	_, err = ledgerRepo.CompleteOverdueConflictAssessment(ctx, CompleteOverdueConflictAssessmentInput{
+		TeamID:              teamID,
+		ConflictID:          conflictID,
+		AssessmentAttemptID: reservation.AssessmentAttemptID,
+		CaseVersion:         reservation.CaseVersion,
+		ReviewRunID:         uuid.NewString(),
+		Decision:            "selected",
+		SelectedPositionID:  preferredPositionID,
+		Confidence:          &confidence,
+		ProviderTurns:       1,
+		ResponseHash:        "sha256:stale-evidence",
+	})
+	require.NoError(t, err)
+
+	_, err = ledgerRepo.RetractEvidence(ctx, RetractEvidenceInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerB,
+		EvidenceIDs:    []string{losingFragmentID},
+		Reason:         "source was withdrawn while assessment was in flight",
+		IdempotencyKey: "overdue-stale-evidence-retract",
+		RequestHash:    "sha256:overdue-stale-evidence-retract",
+	})
+	require.NoError(t, err)
+
+	applied, err := ledgerRepo.ApplyOverdueConflictResolution(ctx, ApplyOverdueConflictResolutionInput{
+		TeamID:              teamID,
+		ConflictID:          conflictID,
+		ReviewRunID:         uuid.NewString(),
+		WorkerID:            "worker-overdue-stale-apply",
+		ExpectedCaseVersion: reservation.CaseVersion,
+		PreferredPositionID: preferredPositionID,
+		AssessmentAttemptID: reservation.AssessmentAttemptID,
+		Method:              "ai",
+		Now:                 reviewNow,
+	})
+	require.NoError(t, err)
+	assert.True(t, applied.Stale)
+	assert.False(t, applied.Resolved)
+	assert.Empty(t, applied.RetractedEvidenceIDs)
+
+	var conflictStatus, preferredStatus, loserStatus string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		require.NoError(t, tx.Raw(`
+			SELECT status
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+		`, teamID, conflictID).Row().Scan(&conflictStatus))
+		require.NoError(t, tx.Raw(`
+			SELECT status
+			FROM relationship_records
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+		`, teamID, preferred.RelationshipResults[0].Relationship.RelationshipID).Row().Scan(&preferredStatus))
+		return tx.Raw(`
+			SELECT status
+			FROM relationship_records
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+		`, teamID, loser.RelationshipResults[0].Relationship.RelationshipID).Row().Scan(&loserStatus)
+	}))
+	assert.Equal(t, "dismissed", conflictStatus)
+	assert.Equal(t, "active", preferredStatus)
+	assert.Equal(t, "pending_evidence", loserStatus)
+}
+
+func TestReserveOverdueConflictAssessmentExpiresAbandonedAttemptIntoLastWriteWins(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "overdue-conflict-abandoned", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "overdue-conflict-abandoned-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "overdue-conflict-abandoned-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "overdue-conflict-abandoned-owner-b")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
+	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL")
+	graphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB")
+	commitPlacementRelationshipForConflictTestWithOptions(
+		t, ctx, ledgerRepo, teamID, ownerA, "worker-overdue-abandoned-preferred",
+		"overdue-conflict-abandoned-preferred", "Dense-Mem uses PostgreSQL.", subject.EntityID, postgres.EntityID, "source-group-overdue-abandoned-preferred",
+		conflictTestRelationshipOptions{authority: "authoritative"},
+	)
+	commitPlacementRelationshipForConflictTestWithOptions(
+		t, ctx, ledgerRepo, teamID, ownerB, "worker-overdue-abandoned-loser",
+		"overdue-conflict-abandoned-loser", "Dense-Mem uses GraphDB.", subject.EntityID, graphdb.EntityID, "source-group-overdue-abandoned-loser",
+		conflictTestRelationshipOptions{authority: "primary"},
+	)
+
+	conflictID, _ := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+	reviewNow := time.Now().UTC()
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_conflict_cases
+			SET review_due_at = ?,
+			    next_review_at = ?
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+		`, reviewNow.Add(-time.Minute), reviewNow.Add(-time.Minute), teamID, conflictID).Error
+	}))
+	result := reviewConflictCaseForTest(t, ctx, ledgerRepo, teamID, "worker-overdue-abandoned-review", conflictID, reviewNow)
+	require.Equal(t, ConflictReviewOutcomeOverdue, result.Outcome)
+
+	firstLocalDate := time.Date(2026, time.August, 2, 0, 30, 0, 0, time.FixedZone("UTC+14", 14*60*60))
+	for day := 0; day < conflictAssessmentMaxFailedDays-1; day++ {
+		reservation, _, reserved, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
+			TeamID:              teamID,
+			ConflictID:          conflictID,
+			ReviewRunID:         uuid.NewString(),
+			WorkerID:            "worker-overdue-abandoned-assessment",
+			LocalAssessmentDate: firstLocalDate.AddDate(0, 0, day),
+			Model:               "test-model",
+			PolicyVersion:       domain.ConflictOverduePolicyVersion,
+		})
+		require.NoError(t, err)
+		require.True(t, reserved)
+		require.NotNil(t, reservation)
+		completed, err := ledgerRepo.CompleteOverdueConflictAssessment(ctx, CompleteOverdueConflictAssessmentInput{
+			TeamID:              teamID,
+			ConflictID:          conflictID,
+			AssessmentAttemptID: reservation.AssessmentAttemptID,
+			CaseVersion:         reservation.CaseVersion,
+			ReviewRunID:         uuid.NewString(),
+			Decision:            "failed",
+			FailureClass:        "provider_unavailable",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, day+1, completed.FailureCount)
+	}
+
+	abandoned, _, reserved, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
+		TeamID:              teamID,
+		ConflictID:          conflictID,
+		ReviewRunID:         uuid.NewString(),
+		WorkerID:            "worker-overdue-abandoned-assessment",
+		LocalAssessmentDate: firstLocalDate.AddDate(0, 0, conflictAssessmentMaxFailedDays-1),
+		Model:               "test-model",
+		PolicyVersion:       domain.ConflictOverduePolicyVersion,
+	})
+	require.NoError(t, err)
+	require.True(t, reserved)
+	require.NotNil(t, abandoned)
+
+	fallback, dossier, reserved, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
+		TeamID:              teamID,
+		ConflictID:          conflictID,
+		ReviewRunID:         uuid.NewString(),
+		WorkerID:            "worker-overdue-abandoned-recovery",
+		LocalAssessmentDate: firstLocalDate.AddDate(0, 0, conflictAssessmentMaxFailedDays),
+		Model:               "test-model",
+		PolicyVersion:       domain.ConflictOverduePolicyVersion,
+	})
+	require.NoError(t, err)
+	require.True(t, reserved)
+	require.NotNil(t, fallback)
+	require.NotNil(t, dossier)
+	assert.True(t, fallback.LastWriteWins)
+	assert.Equal(t, abandoned.AssessmentAttemptID, fallback.AssessmentAttemptID)
+
+	positions := make([]domain.ConflictResolutionPosition, 0, len(dossier.Positions))
+	for _, position := range dossier.Positions {
+		positions = append(positions, domain.ConflictResolutionPosition{
+			PositionID: position.PositionID,
+			Supports:   position.Supports,
+		})
+	}
+	winner, ok := domain.SelectConflictLastWriteWinner(positions)
+	require.True(t, ok)
+	applied, err := ledgerRepo.ApplyOverdueConflictResolution(ctx, ApplyOverdueConflictResolutionInput{
+		TeamID:              teamID,
+		ConflictID:          conflictID,
+		ReviewRunID:         uuid.NewString(),
+		WorkerID:            "worker-overdue-abandoned-apply",
+		ExpectedCaseVersion: fallback.CaseVersion,
+		PreferredPositionID: winner.PositionID,
+		AssessmentAttemptID: fallback.AssessmentAttemptID,
+		Method:              "last_write_wins",
+		Now:                 reviewNow.AddDate(0, 0, conflictAssessmentMaxFailedDays),
+	})
+	require.NoError(t, err)
+	assert.True(t, applied.Resolved)
 }
 
 func reviewConflictCaseForTest(

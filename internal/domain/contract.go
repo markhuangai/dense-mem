@@ -1,11 +1,12 @@
 package domain
 
 const (
-	ContractVersion        = "dense-mem.v2.4"
-	PredicatePolicyVersion = "open_vocabulary_v1"
-	ConflictPolicyVersion  = "cross_profile_conflict_v1"
-	FeatureGate            = "memory"
-	ToolVisibility         = "dormant"
+	ContractVersion              = "dense-mem.v2.4"
+	PredicatePolicyVersion       = "open_vocabulary_v1"
+	ConflictPolicyVersion        = "cross_profile_conflict_v1"
+	ConflictOverduePolicyVersion = "overdue_conflict_ai_v1"
+	FeatureGate                  = "memory"
+	ToolVisibility               = "dormant"
 )
 
 type IngestID string
@@ -143,14 +144,20 @@ const (
 type RelationshipConflictEventAction string
 
 const (
-	RelationshipConflictEventOpened              RelationshipConflictEventAction = "opened"
-	RelationshipConflictEventPositionAdded       RelationshipConflictEventAction = "position_added"
-	RelationshipConflictEventMemberAdded         RelationshipConflictEventAction = "member_added"
-	RelationshipConflictEventEvaluated           RelationshipConflictEventAction = "evaluated"
-	RelationshipConflictEventMarkedOverdue       RelationshipConflictEventAction = "marked_overdue"
-	RelationshipConflictEventResolved            RelationshipConflictEventAction = "resolved"
-	RelationshipConflictEventRelationshipUpdated RelationshipConflictEventAction = "relationship_updated"
-	RelationshipConflictEventDismissed           RelationshipConflictEventAction = "dismissed"
+	RelationshipConflictEventOpened               RelationshipConflictEventAction = "opened"
+	RelationshipConflictEventPositionAdded        RelationshipConflictEventAction = "position_added"
+	RelationshipConflictEventMemberAdded          RelationshipConflictEventAction = "member_added"
+	RelationshipConflictEventEvaluated            RelationshipConflictEventAction = "evaluated"
+	RelationshipConflictEventMarkedOverdue        RelationshipConflictEventAction = "marked_overdue"
+	RelationshipConflictEventResolved             RelationshipConflictEventAction = "resolved"
+	RelationshipConflictEventRelationshipUpdated  RelationshipConflictEventAction = "relationship_updated"
+	RelationshipConflictEventDismissed            RelationshipConflictEventAction = "dismissed"
+	RelationshipConflictEventAIAssessmentReserved RelationshipConflictEventAction = "ai_assessment_reserved"
+	RelationshipConflictEventAIAssessed           RelationshipConflictEventAction = "ai_assessed"
+	RelationshipConflictEventResolutionPending    RelationshipConflictEventAction = "resolution_pending"
+	RelationshipConflictEventEvidenceRetracted    RelationshipConflictEventAction = "evidence_retracted"
+	RelationshipConflictEventDerivedStaged        RelationshipConflictEventAction = "derived_replacement_staged"
+	RelationshipConflictEventDerivedFailed        RelationshipConflictEventAction = "derived_replacement_failed"
 )
 
 type HypothesisStatus string

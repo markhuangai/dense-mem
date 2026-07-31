@@ -78,6 +78,10 @@ type ReviewRelationshipConflictCaseResult struct {
 	Stage                string
 	PreferredPositionID  string
 	UpdatedRelationships []string
+	RetractedEvidenceIDs []string
+	AssessmentAttemptID  string
+	ResolutionMethod     string
+	ResolutionPending    bool
 }
 
 type RelationshipConflictCaseRecord struct {
@@ -143,6 +147,7 @@ type conflictPlacementRow struct {
 	FragmentID              string
 	SourceGroupKey          string
 	Authority               string
+	AcceptedAt              time.Time
 	EffectiveAt             *time.Time
 	EffectiveTimeBasis      string
 	RecordedFallback        bool
@@ -248,6 +253,7 @@ func loadRelationshipConflictPlacement(
 			       support.support_id,
 			       support.verification_event_id,
 			       support.fragment_id,
+			       support.created_at AS accepted_at,
 			       COALESCE(
 			           NULLIF(source.source_key, ''),
 			           NULLIF(fragment.metadata->>'contract_source_group', ''),
@@ -274,7 +280,12 @@ func loadRelationshipConflictPlacement(
 			LEFT JOIN evidence_sources AS source
 			  ON source.team_id = support.team_id
 			 AND source.source_id = support.source_id
+			LEFT JOIN evidence_lifecycle_events AS lifecycle
+			  ON lifecycle.team_id = support.team_id
+			 AND lifecycle.target_fragment_id = support.fragment_id
 			WHERE quarantine.quarantine_id IS NULL
+			  AND lifecycle.lifecycle_event_id IS NULL
+			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 			  AND (
 			      support.source_id IS NULL
 			      OR source.current_revision_id = support.source_revision_id
@@ -286,13 +297,15 @@ func loadRelationshipConflictPlacement(
 			       support.support_id,
 			       support.verification_event_id,
 			       support.fragment_id,
+			       support.accepted_at,
 			       support.source_group_key,
 			       support.authority
 			FROM effective_supports AS support
 			ORDER BY support.relationship_id,
-			         support.source_group_key,
-			         CASE WHEN support.authority = 'authoritative' THEN 0 ELSE 1 END,
-			         support.support_id
+				         support.source_group_key,
+				         CASE WHEN support.authority = 'authoritative' THEN 0 ELSE 1 END,
+				         support.accepted_at DESC,
+				         support.support_id
 		),
 		position_counts AS (
 			SELECT active.object_entity_id,
@@ -321,8 +334,9 @@ func loadRelationshipConflictPlacement(
 		       END AS position_key,
 		       support.support_id::text,
 		       support.verification_event_id::text,
-		       support.fragment_id::text,
-		       support.source_group_key,
+			       support.fragment_id::text,
+			       support.accepted_at,
+			       support.source_group_key,
 		       support.authority,
 		       active.valid_from,
 		       CASE WHEN active.valid_from IS NULL THEN 'recorded_at' ELSE 'valid_from' END,
@@ -369,6 +383,7 @@ func loadRelationshipConflictPlacement(
 			&row.SupportID,
 			&row.VerificationEventID,
 			&row.FragmentID,
+			&row.AcceptedAt,
 			&row.SourceGroupKey,
 			&row.Authority,
 			&row.EffectiveAt,
@@ -525,9 +540,19 @@ func loadConflictReviewTTLDays(ctx context.Context, tx *gorm.DB, teamID string, 
 }
 
 func bumpRelationshipConflictCaseVersion(ctx context.Context, tx *gorm.DB, teamID string, conflictID string) error {
+	if err := supersedeReservedOverdueConflictAssessments(ctx, tx, teamID, conflictID); err != nil {
+		return err
+	}
+	if err := supersedePendingOverdueConflictResolutions(ctx, tx, teamID, conflictID); err != nil {
+		return err
+	}
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE relationship_conflict_cases
 		SET version = version + 1,
+		    attempts = 0,
+		    lease_worker_id = '',
+		    lease_until = NULL,
+		    last_error = '',
 		    updated_at = now()
 		WHERE team_id = ?::uuid
 		  AND conflict_id = ?::uuid

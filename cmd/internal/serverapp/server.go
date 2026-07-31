@@ -27,6 +27,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
+	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
@@ -83,10 +84,6 @@ func RunActiveServer(
 	if !VerifierConfigured(&cfg) {
 		log.Fatal("active authority requires configured verifier provider")
 	}
-	if strings.TrimSpace(cfg.GetAIReviewerModel()) != "" {
-		logger.Warn("AI_REVIEWER_MODEL is ignored by the V2.4 integrated assessor")
-	}
-
 	backend, err := buildBackendBundle(startupCtx, cfg)
 	if err != nil {
 		log.Fatalf("failed to build backend: %v", err)
@@ -199,6 +196,10 @@ func RunActiveServer(
 	assessmentLimits := verifier.SemanticAssessmentLimitsForConfig(&cfg)
 	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, assessmentLimits)
 	verifierProvider.SetMetrics(discoverabilityMetrics)
+	conflictReviewRunner, err := conflictreview.NewRunner(ledgerRepo, verifierProvider, cfg.GetAppTimezone(), assessmentLimits)
+	if err != nil {
+		log.Fatalf("failed to build conflict review runner: %v", err)
+	}
 
 	rememberSvc := memoryservice.NewRememberService(memoryservice.RememberDependencies{Ledger: ledgerRepo})
 	recallSvc := memoryservice.NewRecallService(memoryservice.RecallDependencies{
@@ -433,7 +434,7 @@ func RunActiveServer(
 	go dreamservice.NewScheduler(dreamSvc, profileService, slog.Default()).Start(dreamSchedulerCtx)
 	conflictReviewCtx, conflictReviewCancel := context.WithCancel(context.Background())
 	defer conflictReviewCancel()
-	startConflictReviewWorkers(conflictReviewCtx, logger, profileService, ledgerRepo, &cfg, discoverabilityMetrics)
+	startConflictReviewWorkers(conflictReviewCtx, logger, profileService, conflictReviewRunner, &cfg, discoverabilityMetrics)
 
 	httpAddr := os.Getenv("HTTP_ADDR")
 	if httpAddr == "" {

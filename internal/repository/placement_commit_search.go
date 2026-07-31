@@ -505,6 +505,25 @@ func loadPlacementItemFragmentID(ctx context.Context, tx *gorm.DB, commit Commit
 	return fragmentID, nil
 }
 
+func isConflictResolutionDeletionOnlyFragment(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	fragmentID string,
+) (bool, error) {
+	var deletionOnly bool
+	err := tx.WithContext(ctx).Raw(`
+		SELECT COALESCE(metadata->>'conflict_resolution_deletion_only', '') = 'true'
+		FROM evidence_fragments
+		WHERE team_id = ?::uuid
+		  AND fragment_id = ?::uuid
+	`, teamID, fragmentID).Row().Scan(&deletionOnly)
+	if err != nil {
+		return false, err
+	}
+	return deletionOnly, nil
+}
+
 func upsertPlacementItemEvidenceSearchDocument(
 	ctx context.Context,
 	tx *gorm.DB,
