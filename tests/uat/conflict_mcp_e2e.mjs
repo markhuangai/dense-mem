@@ -245,12 +245,13 @@ async function waitForConflictID(apiKey, query, conflictID, status) {
 
 async function resolveOverdueConflictThroughVerifier() {
   const marker = `OverdueConflictE2E ${runID}`;
+  const overdueProjectName = `${marker} project`;
   const firstOverdue = await rememberAndWait(profileA.apiKey, {
-  idempotencyKey: `${runID}:overdue:a`,
-  evidence: `${marker}: Dense-Mem overdue primary database is PostgreSQL according to profile A.`,
-  sourceGroup: `${runID}:overdue:source:a`,
-  authority: "primary",
-    subject: { ref: "overdue-project", name: `${marker} project`, kind: "project" },
+    idempotencyKey: `${runID}:overdue:a`,
+    evidence: `${marker}: ${overdueProjectName} primary database is PostgreSQL according to profile A.`,
+    sourceGroup: `${runID}:overdue:source:a`,
+    authority: "primary",
+    subject: { ref: "overdue-project", name: overdueProjectName, kind: "project" },
     object: { ref: "overdue-postgres", name: "PostgreSQL", kind: "product" },
     relationshipID: "rel:overdue-primary-db-a",
   });
@@ -263,13 +264,16 @@ async function resolveOverdueConflictThroughVerifier() {
   if (!overdueSubjectEntityID || !overduePostgresEntityID) {
     throw new Error(`overdue trace did not return canonical entity IDs: ${JSON.stringify(overdueTrace)}`);
   }
+  if (overdueSubjectEntityID === subjectEntityID) {
+    throw new Error(`overdue fixture resolved onto the earlier conflict subject: ${JSON.stringify(overdueTrace.relationship)}`);
+  }
 
   const secondOverdue = await rememberAndWait(profileB.apiKey, {
-  idempotencyKey: `${runID}:overdue:b`,
-  evidence: `${marker}: Dense-Mem overdue primary database is GraphDB according to profile B.`,
-  sourceGroup: `${runID}:overdue:source:b`,
-  authority: "primary",
-    subject: { ref: "overdue-project", name: `${marker} project`, kind: "project", knownEntityID: overdueSubjectEntityID },
+    idempotencyKey: `${runID}:overdue:b`,
+    evidence: `${marker}: ${overdueProjectName} primary database is GraphDB according to profile B.`,
+    sourceGroup: `${runID}:overdue:source:b`,
+    authority: "primary",
+    subject: { ref: "overdue-project", name: overdueProjectName, kind: "project", knownEntityID: overdueSubjectEntityID },
     object: { ref: "overdue-graphdb", name: "GraphDB", kind: "product" },
     relationshipID: "rel:overdue-primary-db-b",
   });

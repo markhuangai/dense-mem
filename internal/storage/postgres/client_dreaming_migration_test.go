@@ -94,6 +94,16 @@ func TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows(t *testing.T) {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO app_config (key, value)
+			VALUES
+				('DREAMING_REFLECT_ENABLED', 'true'),
+				('DREAMING_REEVALUATE_ENABLED', 'true'),
+				('DREAMING_DREAM_ENABLED', 'true')
+			ON CONFLICT (key) DO UPDATE SET value = excluded.value
+		`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
 			UPDATE app_config
 			SET value = CASE key
 				WHEN 'DREAMING_ENABLED' THEN 'false'
@@ -106,6 +116,18 @@ func TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows(t *testing.T) {
 		}
 		return nil
 	}))
+
+	var seededLegacyConfigCount int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM app_config
+		WHERE key IN (
+			'DREAMING_REFLECT_ENABLED',
+			'DREAMING_REEVALUATE_ENABLED',
+			'DREAMING_DREAM_ENABLED'
+		)
+	`).Scan(&seededLegacyConfigCount))
+	require.Equal(t, 3, seededLegacyConfigCount)
 
 	m := NewMigratorWithDB(sqlDB)
 	require.NoError(t, m.RunUp(ctx))

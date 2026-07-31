@@ -33,7 +33,7 @@ WHERE key IN (
 UPDATE app_config
 SET value = regexp_replace(
         to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
-        '\\.?0+Z$',
+        '\.?0+Z$',
         'Z'
     ),
     updated_at = clock_timestamp()
@@ -351,6 +351,29 @@ CREATE POLICY hypotheses_update ON hypotheses FOR UPDATE USING (
         AND team_id = nullif(current_setting('app.current_team_id', true), '')::uuid
     )
 );
+
+CREATE OR REPLACE FUNCTION hypotheses_guard_provenance()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF current_setting('app.tx_mode', true) IN ('system', 'migration') THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.team_id IS DISTINCT FROM OLD.team_id
+       OR NEW.created_by_profile_id IS DISTINCT FROM OLD.created_by_profile_id
+       OR NEW.canonical_hypothesis_id IS DISTINCT FROM OLD.canonical_hypothesis_id
+       OR NEW.content_hash IS DISTINCT FROM OLD.content_hash THEN
+        RAISE EXCEPTION 'hypothesis provenance columns are immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS hypotheses_guard_provenance_trg ON hypotheses;
+CREATE TRIGGER hypotheses_guard_provenance_trg
+    BEFORE UPDATE ON hypotheses
+    FOR EACH ROW EXECUTE FUNCTION hypotheses_guard_provenance();
 
 CREATE POLICY dream_cycle_runs_select ON dream_cycle_runs FOR SELECT USING (
     current_setting('app.tx_mode', true) IN ('system', 'migration')

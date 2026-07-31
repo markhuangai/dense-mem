@@ -323,8 +323,15 @@ run_compose_playwright_tests() {
   fi
 
   docker create --name "$E2E_PLAYWRIGHT_CONTAINER" --network host "$image" sleep infinity >/dev/null
-  docker cp "$ROOT_DIR/web/." "${E2E_PLAYWRIGHT_CONTAINER}:/tmp/web"
   docker start "$E2E_PLAYWRIGHT_CONTAINER" >/dev/null
+  docker exec "$E2E_PLAYWRIGHT_CONTAINER" mkdir -p /tmp/web
+  tar \
+    --exclude='./node_modules' \
+    --exclude='./node_modules/*' \
+    --exclude='./dist' \
+    --exclude='./dist/*' \
+    -C "$ROOT_DIR/web" \
+    -cf - . | docker cp - "${E2E_PLAYWRIGHT_CONTAINER}:/tmp/web"
   docker exec \
     -e "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright" \
     -e "DENSE_MEM_CONTROL_URL=$CONTROL_URL" \
@@ -336,7 +343,7 @@ run_compose_playwright_tests() {
     -e "DENSE_MEM_E2E_DREAM_STATEMENT=$dream_statement" \
     -e "DENSE_MEM_PROMETHEUS_URL=$PROMETHEUS_URL" \
     "$E2E_PLAYWRIGHT_CONTAINER" \
-    sh -ec 'cd /tmp/web && ./node_modules/.bin/playwright test --config playwright.compose.config.ts'
+    sh -ec 'cd /tmp/web && npm ci && ./node_modules/.bin/playwright test --config playwright.compose.config.ts'
   remove_e2e_playwright_container
 }
 

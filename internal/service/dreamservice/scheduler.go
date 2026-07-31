@@ -84,7 +84,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 	for offset := 0; ; offset += schedulerProfilePageSize {
 		teams, err := s.profiles.List(ctx, schedulerProfilePageSize, offset)
 		if err != nil {
-			s.logger.Warn("dreaming scheduler: list teams failed", slog.Int("offset", offset), slog.String("error", err.Error()))
+			s.logger.Warn("dreaming scheduler: list teams failed", slog.Int("offset", offset), slog.String("error_kind", "team_list_failed"))
 			return
 		}
 		for _, team := range teams {
@@ -94,18 +94,19 @@ func (s *Scheduler) runDue(ctx context.Context) {
 			teamID := team.ID.String()
 			cfg, err := s.service.EffectiveConfig(ctx, teamID)
 			if err != nil {
-				s.logger.Warn("dreaming scheduler: config resolve failed", slog.String("team_id", teamID), slog.String("error", err.Error()))
+				s.logger.Warn("dreaming scheduler: config resolve failed", slog.String("team_id", teamID), slog.String("error_kind", "config_resolve_failed"))
 				continue
 			}
 			if !cfg.Enabled {
 				s.disarm(teamID)
 				continue
 			}
-			state := scheduledWindowAt(now, cfg)
 			window, ok := scheduledWindowFor(now, cfg)
 			if !ok {
+				s.logger.Warn("dreaming scheduler: schedule unavailable", slog.String("team_id", teamID), slog.String("error_kind", "schedule_unavailable"))
 				continue
 			}
+			state := scheduledWindowAt(now, cfg)
 			runDate := now.In(window.at.Location()).Format(schedulerRunDateLayout)
 			arm := scheduledWindowArm{
 				runDate:        runDate,
@@ -132,7 +133,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 				result, err = s.service.RecordMissedScheduledCycle(ctx, teamID, runDate)
 			}
 			if err != nil {
-				s.logger.Warn("dreaming scheduler: cycle failed", slog.String("team_id", teamID), slog.String("error", err.Error()))
+				s.logger.Warn("dreaming scheduler: cycle failed", slog.String("team_id", teamID), slog.String("error_kind", "cycle_failed"))
 				continue
 			}
 			if state == scheduledWindowDue && result.Status == "skipped" {
@@ -183,7 +184,7 @@ func scheduledWindowAtTime(now time.Time, cfg EffectiveConfig) (time.Time, bool)
 func scheduledWindowFor(now time.Time, cfg EffectiveConfig) (scheduledWindow, bool) {
 	loc, err := time.LoadLocation(cfg.Timezone)
 	if err != nil {
-		loc = time.UTC
+		return scheduledWindow{}, false
 	}
 	start, err := time.Parse("15:04", cfg.StartTimeLocal)
 	if err != nil {

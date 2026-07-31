@@ -237,6 +237,66 @@ func TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited(t *testing.T) {
 	})
 	require.Error(t, err)
 
+	var visibleEvents int
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, actorID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM hypothesis_feedback_events
+			WHERE team_id = ?::uuid
+			  AND hypothesis_id = ?::uuid
+		`, teamID, hypothesis.HypothesisID).Scan(&visibleEvents).Error
+	}))
+	require.Equal(t, 1, visibleEvents)
+
+	var hiddenEvents int
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, otherTeamID, otherActorID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM hypothesis_feedback_events
+			WHERE team_id = ?::uuid
+			  AND hypothesis_id = ?::uuid
+		`, teamID, hypothesis.HypothesisID).Scan(&hiddenEvents).Error
+	}))
+	require.Zero(t, hiddenEvents)
+
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, actorID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO hypothesis_feedback_events (
+				team_id, hypothesis_id, actor_profile_id, decision
+			) VALUES (?::uuid, ?::uuid, ?::uuid, 'reinforce')
+		`, teamID, hypothesis.HypothesisID, creatorID).Error
+	})
+	require.Error(t, err)
+
+	for _, mutation := range []struct {
+		name  string
+		query string
+		args  []any
+	}{
+		{
+			name:  "creator",
+			query: `UPDATE hypotheses SET created_by_profile_id = ?::uuid WHERE team_id = ?::uuid AND hypothesis_id = ?::uuid`,
+			args:  []any{creatorID, teamID, hypothesis.HypothesisID},
+		},
+		{
+			name:  "canonical hypothesis",
+			query: `UPDATE hypotheses SET canonical_hypothesis_id = hypothesis_id WHERE team_id = ?::uuid AND hypothesis_id = ?::uuid`,
+			args:  []any{teamID, hypothesis.HypothesisID},
+		},
+		{
+			name:  "content hash",
+			query: `UPDATE hypotheses SET content_hash = 'sha256:tampered' WHERE team_id = ?::uuid AND hypothesis_id = ?::uuid`,
+			args:  []any{teamID, hypothesis.HypothesisID},
+		},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			err := rls.WithTeamProfileTx(ctx, appDB, teamID, actorID, func(tx *gorm.DB) error {
+				return tx.Exec(mutation.query, mutation.args...).Error
+			})
+			require.ErrorContains(t, err, "hypothesis provenance columns are immutable")
+		})
+	}
+
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		var (
 			createdBy string
@@ -301,6 +361,36 @@ func TestDreamListSortValidation(t *testing.T) {
 	} {
 		normalized := normalizeListHypothesesInput(invalid)
 		require.Error(t, validateListHypothesesInput(normalized))
+	}
+}
+
+func TestUpdateHypothesisStatusValidationBindsDecisionToStatus(t *testing.T) {
+	input := UpdateHypothesisStatusInput{
+		TeamID:         uuid.NewString(),
+		ActorProfileID: uuid.NewString(),
+		HypothesisID:   uuid.NewString(),
+	}
+	for _, tc := range []struct {
+		name     string
+		status   string
+		decision string
+		wantErr  string
+	}{
+		{name: "reject", status: "rejected", decision: "reject"},
+		{name: "stale", status: "stale", decision: "stale"},
+		{name: "reinforce", status: "reinforced", decision: "reinforce"},
+		{name: "contradicting", status: "rejected", decision: "reinforce", wantErr: `decision "reinforce" requires status "reinforced"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input.Status = tc.status
+			input.Decision = tc.decision
+			err := validateUpdateHypothesisStatusInput(input)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
 	}
 }
 

@@ -104,12 +104,14 @@ async function waitForScheduledRun() {
 }
 
 async function assertSystemRun(runID) {
-  const owner = postgresQuery(`
-    SELECT COALESCE(initiated_by_profile_id::text, '')
+  const row = postgresQuery(`
+    SELECT 'present', COALESCE(initiated_by_profile_id::text, '')
     FROM dream_cycle_runs
     WHERE team_id = ${sqlLiteral(teamID)}::uuid
       AND run_id = ${sqlLiteral(runID)}::uuid
   `);
+  const [present, owner] = row.split("|");
+  assertEqual(present, "present", "scheduled run row");
   assertEqual(owner, "", "scheduled run initiator");
 }
 
@@ -234,6 +236,7 @@ async function createTeamProfile(name) {
 async function assertFeedbackActor(hypothesisID, profileID) {
   const row = postgresQuery(`
     SELECT
+      'present',
       COALESCE(h.created_by_profile_id::text, ''),
       f.actor_profile_id::text,
       f.decision
@@ -249,7 +252,8 @@ async function assertFeedbackActor(hypothesisID, profileID) {
     WHERE h.team_id = ${sqlLiteral(teamID)}::uuid
       AND h.hypothesis_id = ${sqlLiteral(hypothesisID)}::uuid
   `);
-  const [createdBy, actor, decision] = row.split("|");
+  const [present, createdBy, actor, decision] = row.split("|");
+  assertEqual(present, "present", "feedback row");
   assertEqual(createdBy, "", "team hypothesis creator");
   assertEqual(actor, profileID, "feedback actor");
   assertEqual(decision, "reinforce", "feedback decision");

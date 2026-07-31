@@ -243,11 +243,22 @@ func validateUpdateHypothesisStatusInput(input UpdateHypothesisStatusInput) erro
 		return fmt.Errorf("unsupported hypothesis status %q", input.Status)
 	}
 	switch input.Decision {
-	case "reject", "stale", "reinforce":
-		return nil
+	case "reject":
+		if input.Status != "rejected" {
+			return fmt.Errorf("decision %q requires status %q", input.Decision, "rejected")
+		}
+	case "stale":
+		if input.Status != "stale" {
+			return fmt.Errorf("decision %q requires status %q", input.Decision, "stale")
+		}
+	case "reinforce":
+		if input.Status != "reinforced" {
+			return fmt.Errorf("decision %q requires status %q", input.Decision, "reinforced")
+		}
 	default:
 		return fmt.Errorf("unsupported feedback decision %q", input.Decision)
 	}
+	return nil
 }
 
 func normalizeSubmitHypothesisInput(input SubmitHypothesisInput) SubmitHypothesisInput {

@@ -1,6 +1,7 @@
 package dreamservice
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -44,6 +46,20 @@ func TestScheduledWindowHelpersRejectInvalidStartTime(t *testing.T) {
 		Enabled:        true,
 		StartTimeLocal: "invalid",
 		Timezone:       "UTC",
+		MaxOutputs:     5,
+	}}
+	now := time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
+
+	require.Equal(t, scheduledWindowNotDue, scheduledWindowAt(now, cfg))
+	_, ok := scheduledWindowAtTime(now, cfg)
+	require.False(t, ok)
+}
+
+func TestScheduledWindowHelpersRejectInvalidTimezone(t *testing.T) {
+	cfg := EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{
+		Enabled:        true,
+		StartTimeLocal: "03:00",
+		Timezone:       "not-a-timezone",
 		MaxOutputs:     5,
 	}}
 	now := time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
@@ -231,6 +247,63 @@ func TestSchedulerContinuesAfterPerTeamErrorAndStopsOnListError(t *testing.T) {
 	failingProfiles := &schedulerProfileStub{err: errors.New("list failed")}
 	NewScheduler(dreams, failingProfiles, discardSchedulerLogger()).runDue(context.Background())
 	require.Equal(t, []int{0}, failingProfiles.offsets)
+}
+
+func TestSchedulerLogsBoundedErrorsAndSkipsUnavailableSchedules(t *testing.T) {
+	const rawError = "database password=secret"
+	teamID := uuid.New()
+	for _, tc := range []struct {
+		name     string
+		profiles *schedulerProfileStub
+		dreams   *schedulerDreamStub
+		wantKind string
+	}{
+		{
+			name:     "team list",
+			profiles: &schedulerProfileStub{err: errors.New(rawError)},
+			dreams:   &schedulerDreamStub{cfg: dueSchedulerConfig()},
+			wantKind: "team_list_failed",
+		},
+		{
+			name:     "config resolve",
+			profiles: &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}},
+			dreams:   &schedulerDreamStub{cfgErrs: map[string]error{teamID.String(): errors.New(rawError)}},
+			wantKind: "config_resolve_failed",
+		},
+		{
+			name:     "cycle",
+			profiles: &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}},
+			dreams: &schedulerDreamStub{
+				cfg:           dueSchedulerConfig(),
+				scheduledErrs: map[string]error{teamID.String(): errors.New(rawError)},
+			},
+			wantKind: "cycle_failed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			scheduler := NewScheduler(tc.dreams, tc.profiles, slog.New(slog.NewTextHandler(&logs, nil)))
+			scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC) }
+			scheduler.runDue(context.Background())
+
+			assert.Contains(t, logs.String(), "error_kind="+tc.wantKind)
+			assert.NotContains(t, logs.String(), rawError)
+		})
+	}
+
+	var logs bytes.Buffer
+	dreams := &schedulerDreamStub{cfg: EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{
+		Enabled:        true,
+		StartTimeLocal: "03:00",
+		Timezone:       "not-a-timezone",
+		MaxOutputs:     5,
+	}}}
+	scheduler := NewScheduler(dreams, &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}, slog.New(slog.NewTextHandler(&logs, nil)))
+	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC) }
+	scheduler.runDue(context.Background())
+
+	require.Empty(t, dreams.scheduledTeams)
+	assert.Contains(t, logs.String(), "error_kind=schedule_unavailable")
 }
 
 func TestSchedulerPrunesObservedEntries(t *testing.T) {
