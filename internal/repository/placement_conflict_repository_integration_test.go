@@ -685,8 +685,17 @@ func commitPlacementRelationshipForConflictTest(
 }
 
 type conflictTestRelationshipOptions struct {
-	validFrom *time.Time
-	authority string
+	validFrom          *time.Time
+	authority          string
+	additionalSupports []conflictTestAdditionalSupport
+}
+
+type conflictTestAdditionalSupport struct {
+	sourceGroupKey string
+	spanStart      int
+	spanEnd        int
+	quote          string
+	authority      string
 }
 
 func commitPlacementRelationshipForConflictTestWithOptions(
@@ -741,6 +750,21 @@ func attemptPlacementRelationshipForConflictTest(
 	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, workerID, time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
+	additionalSupports := make([]EvidenceSupportInput, 0, len(option.additionalSupports))
+	for _, support := range option.additionalSupports {
+		authority := support.authority
+		if authority == "" {
+			authority = option.authority
+		}
+		additionalSupports = append(additionalSupports, EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: support.sourceGroupKey,
+			SpanStart:      support.spanStart,
+			SpanEnd:        support.spanEnd,
+			Quote:          support.quote,
+			Authority:      authority,
+		})
+	}
 	return repo.CommitPlacementSemanticResult(ctx, CommitPlacementSemanticInput{
 		TeamID:           teamID,
 		OwnerProfileID:   ownerID,
@@ -774,6 +798,7 @@ func attemptPlacementRelationshipForConflictTest(
 				Quote:          content,
 				Authority:      option.authority,
 			},
+			Supports: additionalSupports,
 		}},
 	})
 }

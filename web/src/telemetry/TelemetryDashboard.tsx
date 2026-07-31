@@ -234,6 +234,9 @@ export function formatTelemetryValue(value: number, unit: string) {
   if (unit === "ms") {
     return `${value.toFixed(value >= 100 ? 0 : 1)} ms`;
   }
+  if (unit === "USD") {
+    return formatTelemetryUSD(value);
+  }
   if (unit.includes("/s") || unit === "rps") {
     return value.toFixed(value >= 10 ? 1 : 2);
   }
@@ -247,10 +250,23 @@ export function formatTelemetryAxisTick(value: number, unit: string) {
   if (unit === "percent") {
     return `${trimFixed(value, value >= 10 ? 0 : 1)}%`;
   }
+  if (unit === "USD") {
+    return `$${compactNumber(value)}`;
+  }
   if (unit.includes("/s") || unit === "rps") {
     return formatRateTick(value);
   }
   return compactNumber(value);
+}
+
+function formatTelemetryUSD(value: number) {
+  const fractionDigits = value > 0 && value < 0.01 ? 6 : 2;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  }).format(value);
 }
 
 export function telemetryChartPoints(

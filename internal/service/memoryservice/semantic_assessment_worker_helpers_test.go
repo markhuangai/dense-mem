@@ -146,7 +146,7 @@ func TestSemanticAssessmentRelationshipHelpersRouteAllReviewKinds(t *testing.T) 
 	assert.Equal(t, "time", semanticAssessmentRelationshipReviewKind(result, entities, predicates))
 
 	fragment := repository.EvidenceFragment{
-		FragmentID: uuid.NewString(), Content: "Mark works on Dense-Mem.", SourceID: uuid.NewString(), SourceRevisionID: uuid.NewString(),
+		FragmentID: uuid.NewString(), Content: "Mark works on Dense-Mem.", Authority: string(domain.AuthorityAuthoritative), SourceID: uuid.NewString(), SourceRevisionID: uuid.NewString(),
 	}
 	_, err := semanticAssessmentSupport(fragment, uuid.NewString(), nil)
 	require.ErrorContains(t, err, "no evidence span")
@@ -157,11 +157,18 @@ func TestSemanticAssessmentRelationshipHelpersRouteAllReviewKinds(t *testing.T) 
 	require.Len(t, supports, 2)
 	assert.Equal(t, "Mark", supports[0].Quote)
 	assert.Equal(t, "works", supports[1].Quote)
+	assert.Equal(t, string(domain.AuthorityAuthoritative), supports[0].Authority)
 	assert.Contains(t, supports[1].SourceGroupKey, ":5:10")
 	primarySupport, additionalSupports := semanticAssessmentPrimarySupport(supports)
 	require.NotNil(t, primarySupport)
 	assert.Equal(t, supports[0], *primarySupport)
 	assert.Equal(t, supports[1:], additionalSupports)
+
+	defaultAuthority, err := semanticSupportAuthority("")
+	require.NoError(t, err)
+	assert.Equal(t, string(domain.AuthorityPrimary), defaultAuthority)
+	_, err = semanticSupportAuthority("unsupported")
+	require.ErrorContains(t, err, "authority is unsupported")
 
 	valueResult := verifier.SemanticAssessmentRelationshipResult{Ref: "value", ObjectValue: &verifier.SemanticAssessmentValue{ValueType: "number", CanonicalValue: "42", Display: testStringPointer("forty-two"), Unit: testStringPointer("items")}}
 	ref, value, err := semanticAssessmentObject(valueResult)

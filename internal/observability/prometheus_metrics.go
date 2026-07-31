@@ -41,6 +41,7 @@ type ScopedDiscoverabilityMetrics interface {
 // registry. It is safe for concurrent use.
 type PrometheusMetrics struct {
 	registry *prometheus.Registry
+	pricing  AIPricingResolver
 
 	httpRequests                 *prometheus.CounterVec
 	httpDuration                 *prometheus.HistogramVec
@@ -59,6 +60,14 @@ type PrometheusMetrics struct {
 	dreamFeedback                *prometheus.CounterVec
 	conflictReview               *prometheus.HistogramVec
 	verifyVerdicts               *prometheus.CounterVec
+	rememberAcknowledgements     *prometheus.CounterVec
+	rememberAcknowledgementDur   *prometheus.HistogramVec
+	rememberFirstDisposition     *prometheus.CounterVec
+	rememberFirstDispositionDur  *prometheus.HistogramVec
+	aiOperationTokens            *prometheus.CounterVec
+	aiOperationCosts             *prometheus.CounterVec
+	aiOperationItems             *prometheus.CounterVec
+	aiOperationUnpriced          *prometheus.CounterVec
 	assessorCalls                *prometheus.CounterVec
 	assessorDur                  *prometheus.HistogramVec
 	assessorTokens               *prometheus.CounterVec
@@ -75,12 +84,18 @@ var _ DiscoverabilityMetrics = (*PrometheusMetrics)(nil)
 var _ ScopedDiscoverabilityMetrics = (*PrometheusMetrics)(nil)
 var _ HTTPMetrics = (*PrometheusMetrics)(nil)
 var _ AssessorMetrics = (*PrometheusMetrics)(nil)
+var _ AIOperationMetrics = (*PrometheusMetrics)(nil)
 
 // NewPrometheusMetrics creates a Prometheus recorder with a private registry so
 // tests and multiple server instances do not collide with global collectors.
-func NewPrometheusMetrics() *PrometheusMetrics {
+func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetrics {
+	var pricing AIPricingResolver
+	if len(pricingResolvers) > 0 {
+		pricing = pricingResolvers[0]
+	}
 	m := &PrometheusMetrics{
 		registry: prometheus.NewRegistry(),
+		pricing:  pricing,
 		httpRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_http_requests_total",
 			Help: "Authenticated HTTP requests handled by Dense-Mem.",
@@ -156,6 +171,40 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 			Name: "densemem_verify_verdict_total",
 			Help: "Claim verification outcomes.",
 		}, append(identityLabels(), "model", "outcome")),
+		rememberAcknowledgements: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_remember_acknowledgements_total",
+			Help: "Remember requests acknowledged after durable staging by outcome.",
+		}, append(identityLabels(), "outcome")),
+		rememberAcknowledgementDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "densemem_remember_acknowledgement_duration_seconds",
+			Help:    "Elapsed time from remember request receipt to durable acknowledgement.",
+			Buckets: prometheus.DefBuckets,
+		}, append(identityLabels(), "outcome")),
+		rememberFirstDisposition: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_remember_first_disposition_total",
+			Help: "First terminal placement disposition per remembered request.",
+		}, append(identityLabels(), "status")),
+		rememberFirstDispositionDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "densemem_remember_first_disposition_duration_seconds",
+			Help:    "Elapsed time from durable staging to first terminal placement disposition.",
+			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600, 1800, 3600},
+		}, append(identityLabels(), "status")),
+		aiOperationTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_ai_operation_tokens_total",
+			Help: "AI operation input and output tokens used for cost telemetry.",
+		}, append(identityLabels(), "operation", "component", "model", "kind", "source")),
+		aiOperationCosts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_ai_operation_cost_usd_total",
+			Help: "Estimated AI operation cost in USD using the current operator rate card.",
+		}, append(identityLabels(), "operation", "component", "model", "source")),
+		aiOperationItems: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_ai_operation_items_total",
+			Help: "AI operation items processed for cost telemetry.",
+		}, append(identityLabels(), "operation", "component", "model", "source")),
+		aiOperationUnpriced: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_ai_operation_unpriced_total",
+			Help: "AI operations whose cost cannot be estimated.",
+		}, append(identityLabels(), "operation", "component", "model", "reason")),
 		assessorCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_assessor_requests_total",
 			Help: "Integrated assessor conversations by bounded outcome.",
@@ -205,6 +254,8 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		m.recallCalls, m.recallDur, m.recallResults,
 		m.recallFeedback, m.recallQuality, m.dreamFeedback, m.conflictReview,
 		m.verifyVerdicts,
+		m.rememberAcknowledgements, m.rememberAcknowledgementDur, m.rememberFirstDisposition, m.rememberFirstDispositionDur,
+		m.aiOperationTokens, m.aiOperationCosts, m.aiOperationItems, m.aiOperationUnpriced,
 		m.assessorCalls, m.assessorDur, m.assessorTokens, m.assessorValidation, m.assessorValidationFields,
 		m.assessorCandidateTruncations, m.assessorPersistence, m.assessorDuplicatePrevention,
 		m.assessorConfidenceGate, m.assessorReviewExpiry,
@@ -278,6 +329,110 @@ func (m *PrometheusMetrics) ObserveRecallFor(ctx context.Context, durationMs flo
 		resultCount = 0
 	}
 	m.recallResults.WithLabelValues(append(labels, outcome)...).Observe(float64(resultCount))
+}
+
+func (m *PrometheusMetrics) ObserveRememberAcknowledgement(ctx context.Context, durationSeconds float64, outcome string) {
+	if durationSeconds < 0 {
+		return
+	}
+	labels := append(identityValues(ctx), normalizeRememberOutcome(outcome))
+	m.rememberAcknowledgements.WithLabelValues(labels...).Inc()
+	m.rememberAcknowledgementDur.WithLabelValues(labels...).Observe(durationSeconds)
+}
+
+func (m *PrometheusMetrics) ObserveRememberFirstDisposition(ctx context.Context, durationSeconds float64, status string) {
+	if durationSeconds < 0 {
+		return
+	}
+	labels := append(identityValues(ctx), normalizePlacementStatus(status))
+	m.rememberFirstDisposition.WithLabelValues(labels...).Inc()
+	m.rememberFirstDispositionDur.WithLabelValues(labels...).Observe(durationSeconds)
+}
+
+func (m *PrometheusMetrics) ObserveAIOperationUsage(ctx context.Context, usage AIOperationUsage) {
+	operation, ok := aiOperationFromContext(ctx)
+	if !ok {
+		return
+	}
+	component := normalizeAIComponent(usage.Component)
+	model := normalizeLabel(usage.Model)
+	source := normalizeAITokenSource(usage.Source)
+	if component == unknownMetricLabel || source == unknownMetricLabel || usage.InputTokens < 0 || usage.OutputTokens < 0 || (component == AIComponentEmbedding && usage.OutputTokens > 0) {
+		m.observeAIOperationUnpriced(ctx, operation.operation, component, model, "invalid_usage")
+		return
+	}
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 {
+		m.observeAIOperationUnpriced(ctx, operation.operation, component, model, "missing_usage")
+		return
+	}
+	base := append(identityValues(ctx), operation.operation, component, model)
+	if usage.InputTokens > 0 {
+		m.aiOperationTokens.WithLabelValues(append(base, "input", source)...).Add(float64(usage.InputTokens))
+	}
+	if usage.OutputTokens > 0 {
+		m.aiOperationTokens.WithLabelValues(append(base, "output", source)...).Add(float64(usage.OutputTokens))
+	}
+	itemCount := operation.itemCount
+	if usage.ItemCount > 0 {
+		itemCount = usage.ItemCount
+	}
+	m.aiOperationItems.WithLabelValues(append(base, source)...).Add(float64(itemCount))
+
+	if m.pricing == nil {
+		m.observeAIOperationUnpriced(ctx, operation.operation, component, model, "pricing_unavailable")
+		return
+	}
+	pricing, err := m.pricing.ResolveAIPricing(ctx)
+	if err != nil {
+		m.observeAIOperationUnpriced(ctx, operation.operation, component, model, "pricing_unavailable")
+		return
+	}
+	cost, priced := aiOperationCostUSD(component, usage, pricing)
+	if !priced {
+		m.observeAIOperationUnpriced(ctx, operation.operation, component, model, "missing_price")
+		return
+	}
+	m.aiOperationCosts.WithLabelValues(append(base, source)...).Add(cost)
+}
+
+func (m *PrometheusMetrics) ObserveAIOperationUnpriced(ctx context.Context, component, model, reason string) {
+	operation, ok := aiOperationFromContext(ctx)
+	if !ok {
+		return
+	}
+	m.observeAIOperationUnpriced(ctx, operation.operation, normalizeAIComponent(component), normalizeLabel(model), reason)
+}
+
+func (m *PrometheusMetrics) observeAIOperationUnpriced(ctx context.Context, operation, component, model, reason string) {
+	m.aiOperationUnpriced.WithLabelValues(append(identityValues(ctx), normalizeAIOperation(operation), component, model, normalizeAIUnpricedReason(reason))...).Inc()
+}
+
+func aiOperationCostUSD(component string, usage AIOperationUsage, pricing AIPricing) (float64, bool) {
+	const tokensPerMillion = 1_000_000
+	switch component {
+	case AIComponentVerifier:
+		if usage.InputTokens > 0 && pricing.VerifierInputUSDPerMillionTokens == nil {
+			return 0, false
+		}
+		if usage.OutputTokens > 0 && pricing.VerifierOutputUSDPerMillionTokens == nil {
+			return 0, false
+		}
+		cost := 0.0
+		if usage.InputTokens > 0 {
+			cost += float64(usage.InputTokens) * *pricing.VerifierInputUSDPerMillionTokens / tokensPerMillion
+		}
+		if usage.OutputTokens > 0 {
+			cost += float64(usage.OutputTokens) * *pricing.VerifierOutputUSDPerMillionTokens / tokensPerMillion
+		}
+		return cost, true
+	case AIComponentEmbedding:
+		if pricing.EmbeddingInputUSDPerMillionTokens == nil {
+			return 0, false
+		}
+		return float64(usage.InputTokens) * *pricing.EmbeddingInputUSDPerMillionTokens / tokensPerMillion, true
+	default:
+		return 0, false
+	}
 }
 
 func (m *PrometheusMetrics) ObserveRecallFeedback(feedback RecallFeedback) {
@@ -394,6 +549,9 @@ func identityLabels() []string {
 }
 
 func identityValues(ctx context.Context) []string {
+	if identity, ok := metricIdentityFromContext(ctx); ok {
+		return []string{identity.teamID, identity.profileID}
+	}
 	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok {
 		return []string{
 			uuidLabel(actor.TeamID),

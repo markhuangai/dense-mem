@@ -652,9 +652,9 @@ func (s *semanticAssessmentWorkerLedgerStub) ClaimNextPlacementRun(context.Conte
 	return s.run, nil
 }
 
-func (s *semanticAssessmentWorkerLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) error {
+func (s *semanticAssessmentWorkerLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) (*repository.PlacementFirstDisposition, error) {
 	s.finishCalls++
-	return s.finishErr
+	return nil, s.finishErr
 }
 
 type semanticAssessmentWorkerAssessmentStub struct {

@@ -134,8 +134,17 @@ type PlacementValueInput struct {
 type CommitPlacementSemanticResult struct {
 	Status              string
 	OutcomeID           string
+	FirstDisposition    *PlacementFirstDisposition
 	RelationshipResults []RelationshipDecisionResult
 	SearchDocuments     []SearchDocumentResult
 	EntityResolutionIDs []string
 	ReviewTaskIDs       []string
+}
+
+// PlacementFirstDisposition is produced once, in the transaction that first
+// moves a placement run to a terminal or review disposition.
+type PlacementFirstDisposition struct {
+	Status      string
+	CreatedAt   time.Time
+	CompletedAt time.Time
 }

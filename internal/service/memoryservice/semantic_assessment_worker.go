@@ -263,7 +263,16 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 	if committed == nil {
 		return true, errors.Join(errors.New("semantic assessment worker: nil semantic commit result"), s.retryOrFail(ctx, *run, item, "semantic_commit", false, false))
 	}
+	s.recordFirstDisposition(ctx, *run, committed.FirstDisposition)
 	return true, nil
+}
+
+func (s *semanticAssessmentPlacementWorkerService) recordFirstDisposition(ctx context.Context, run repository.PlacementRun, disposition *repository.PlacementFirstDisposition) {
+	if disposition == nil {
+		return
+	}
+	metricCtx := observability.WithMetricIdentity(ctx, run.TeamID, run.OwnerProfileID)
+	observability.RecordRememberFirstDisposition(metricCtx, s.metrics, disposition.CompletedAt.Sub(disposition.CreatedAt), disposition.Status)
 }
 
 func (s *semanticAssessmentPlacementWorkerService) validateDependencies() error {
@@ -416,7 +425,9 @@ func (s *semanticAssessmentPlacementWorkerService) loadOrAssess(
 		observability.RecordAssessorCandidateTruncation(s.metrics)
 	}
 	started := time.Now()
-	response, err := s.provider.AssessSemantic(ctx, prepared)
+	providerCtx := observability.WithMetricIdentity(ctx, run.TeamID, run.OwnerProfileID)
+	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationPlacementAssessment, 1)
+	response, err := s.provider.AssessSemantic(providerCtx, prepared)
 	if err != nil {
 		outcome := "provider_error"
 		releaseProviderAttempt := true
@@ -523,12 +534,16 @@ func (s *semanticAssessmentPlacementWorkerService) retryOrFail(
 	releaseProviderAttempt bool,
 ) error {
 	if item.PlacementItemID == "" {
-		return s.ledger.FinishPlacementRun(ctx, run.TeamID, run.PlacementRunID, s.workerID, string(domain.PlacementRunFailed), "semantic assessment failed before item selection")
+		firstDisposition, err := s.ledger.FinishPlacementRun(ctx, run.TeamID, run.PlacementRunID, s.workerID, string(domain.PlacementRunFailed), "semantic assessment failed before item selection")
+		if err == nil {
+			s.recordFirstDisposition(ctx, run, firstDisposition)
+		}
+		return err
 	}
 	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
 		return s.completeTerminal(ctx, run, item, string(domain.SemanticReviewTerminalFailure), "failed", stage)
 	}
-	_, err := s.commit.RequeuePlacementReviewResult(ctx, repository.RequeuePlacementReviewInput{
+	requeued, err := s.commit.RequeuePlacementReviewResult(ctx, repository.RequeuePlacementReviewInput{
 		TeamID:                 run.TeamID,
 		OwnerProfileID:         run.OwnerProfileID,
 		IngestID:               run.IngestID,
@@ -540,6 +555,9 @@ func (s *semanticAssessmentPlacementWorkerService) retryOrFail(
 		Payload:                semanticAssessmentRetryPayload(stage, providerAttempted),
 		ReleaseAssessorAttempt: releaseProviderAttempt,
 	})
+	if err == nil && requeued != nil {
+		s.recordFirstDisposition(ctx, run, requeued.FirstDisposition)
+	}
 	return err
 }
 
@@ -549,7 +567,7 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminal(
 	item repository.PlacementItem,
 	status, category, stage string,
 ) error {
-	_, err := s.commit.CompletePlacementReviewResult(ctx, repository.CompletePlacementReviewInput{
+	completed, err := s.commit.CompletePlacementReviewResult(ctx, repository.CompletePlacementReviewInput{
 		TeamID:           run.TeamID,
 		OwnerProfileID:   run.OwnerProfileID,
 		IngestID:         run.IngestID,
@@ -564,6 +582,9 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminal(
 			"failure_stage":     strings.TrimSpace(stage),
 		},
 	})
+	if err == nil && completed != nil {
+		s.recordFirstDisposition(ctx, run, completed.FirstDisposition)
+	}
 	return err
 }
 

@@ -47,6 +47,9 @@ type AppConfigService interface {
 	GetEvaluationSettings(ctx context.Context) (*domain.EvaluationConfigSettings, error)
 	UpdateEvaluationSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.EvaluationConfigSettings, error)
 	EvaluationRuntimeConfig(ctx context.Context) (domain.EvaluationRuntimeConfig, error)
+	GetTelemetryPricingSettings(ctx context.Context) (*domain.TelemetryPricingConfigSettings, error)
+	UpdateTelemetryPricingSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.TelemetryPricingConfigSettings, error)
+	TelemetryPricingRuntimeConfig(ctx context.Context) (domain.TelemetryPricingRuntimeConfig, error)
 }
 
 type AppConfigServiceImpl struct {
@@ -70,6 +73,7 @@ type appConfigCache struct {
 	opLogs     domain.OperationLogConfigSettings
 	recall     domain.RecallFeedbackConfigSettings
 	evaluation domain.EvaluationConfigSettings
+	telemetry  domain.TelemetryPricingConfigSettings
 	checkedAt  time.Time
 }
 
@@ -382,6 +386,10 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 	if err != nil {
 		return nil, err
 	}
+	telemetry, err := telemetryPricingRuntimeConfigFromEntries(entries)
+	if err != nil {
+		return nil, err
+	}
 	return &appConfigCache{
 		updateTime: updateEntry.Value,
 		entries:    cloneAppConfigEntries(entries),
@@ -393,6 +401,7 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 		opLogs:     opLogs,
 		recall:     recall,
 		evaluation: evaluation,
+		telemetry:  telemetry,
 		checkedAt:  checkedAt,
 	}, nil
 }
@@ -933,6 +942,8 @@ func cloneAppConfigCache(cache *appConfigCache) *appConfigCache {
 	copy.opLogs.Items = append([]domain.OperationLogConfigItem(nil), cache.opLogs.Items...)
 	copy.recall.Items = append([]domain.RecallFeedbackConfigItem(nil), cache.recall.Items...)
 	copy.evaluation.Items = append([]domain.EvaluationConfigItem(nil), cache.evaluation.Items...)
+	copy.telemetry.Items = append([]domain.TelemetryPricingConfigItem(nil), cache.telemetry.Items...)
+	copy.telemetry.Effective = cloneTelemetryPricingRuntimeConfig(cache.telemetry.Effective)
 	return &copy
 }
 

@@ -150,3 +150,23 @@ func TestNormalizeConflictReviewRunInputRejectsInvalidTimezone(t *testing.T) {
 
 	assert.ErrorContains(t, err, "timezone is invalid")
 }
+
+func TestValidateClaimConflictDerivedEvidenceTasksRejectsSubsecondLease(t *testing.T) {
+	err := validateClaimConflictDerivedEvidenceTasksInput(ClaimConflictDerivedEvidenceTasksInput{
+		TeamID:      "00000000-0000-0000-0000-000000000001",
+		ReviewRunID: "00000000-0000-0000-0000-000000000002",
+		WorkerID:    "worker-a",
+		Limit:       1,
+		Lease:       500 * time.Millisecond,
+	})
+
+	assert.ErrorContains(t, err, "at least 1 second")
+}
+
+func TestConflictTimesEqualAtDatabasePrecision(t *testing.T) {
+	stored := time.Date(2026, 7, 31, 12, 0, 0, 123456000, time.UTC)
+	request := stored.Add(789 * time.Nanosecond)
+
+	assert.True(t, conflictTimesEqualAtDatabasePrecision(stored, request))
+	assert.False(t, conflictTimesEqualAtDatabasePrecision(stored, stored.Add(time.Microsecond)))
+}

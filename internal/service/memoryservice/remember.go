@@ -15,6 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -38,15 +39,21 @@ type RememberService interface {
 }
 
 type RememberDependencies struct {
-	Ledger repository.LedgerRepository
+	Ledger  repository.LedgerRepository
+	Metrics observability.DiscoverabilityMetrics
 }
 
 type rememberService struct {
-	ledger repository.LedgerRepository
+	ledger  repository.LedgerRepository
+	metrics observability.DiscoverabilityMetrics
 }
 
 func NewRememberService(deps RememberDependencies) RememberService {
-	return &rememberService{ledger: deps.Ledger}
+	metrics := deps.Metrics
+	if metrics == nil {
+		metrics = observability.NoopDiscoverabilityMetrics()
+	}
+	return &rememberService{ledger: deps.Ledger, metrics: metrics}
 }
 
 type RememberRequest struct {
@@ -154,6 +161,7 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("remember: evidence is required")
 	}
+	started := time.Now()
 
 	normalized, status := s.normalizeEvidence(req.Evidence)
 	requestHash, err := canonicalRequestHash(req)
@@ -191,7 +199,12 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 		Evidence:       normalized,
 	})
 	if err != nil {
+		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
 		return nil, translateRememberLedgerError(err)
+	}
+	observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "ok")
+	if disposition := created.FirstDisposition; disposition != nil {
+		observability.RecordRememberFirstDisposition(ctx, s.metrics, disposition.CompletedAt.Sub(disposition.CreatedAt), disposition.Status)
 	}
 	return rememberResultFromLedger(created, correlationID), nil
 }

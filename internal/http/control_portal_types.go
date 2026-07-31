@@ -33,4 +33,6 @@ type controlPortalHandler struct {
 	health         HealthConfig
 	sso            *service.SSOService
 	appConfig      service.AppConfigService
+	verifierModel  string
+	embeddingModel string
 }

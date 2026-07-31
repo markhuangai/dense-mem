@@ -347,6 +347,29 @@ export type EvaluationConfigInput = {
   }>;
 };
 
+export type TelemetryPricingRuntimeConfig = {
+  verifier_model: string;
+  embedding_model: string;
+  verifier_input_usd_per_million_tokens: number | null;
+  verifier_output_usd_per_million_tokens: number | null;
+  embedding_input_usd_per_million_tokens: number | null;
+};
+
+export type TelemetryPricingConfigItem = SSOConfigItem;
+
+export type TelemetryPricingConfig = {
+  update_time: string;
+  items: TelemetryPricingConfigItem[];
+  effective: TelemetryPricingRuntimeConfig;
+};
+
+export type TelemetryPricingConfigInput = {
+  items: Array<{
+    key: string;
+    value: string;
+  }>;
+};
+
 export type OperationLog = {
   id: string;
   timestamp: string;
@@ -704,6 +727,14 @@ export class ControlApi {
 
   updateEvaluationConfig(input: EvaluationConfigInput): Promise<EvaluationConfig> {
     return this.requestEnvelope<EvaluationConfig>("/config/evaluation", { method: "PATCH", body: input });
+  }
+
+  getTelemetryPricingConfig(): Promise<TelemetryPricingConfig> {
+    return this.requestEnvelope<TelemetryPricingConfig>("/config/telemetry-pricing");
+  }
+
+  updateTelemetryPricingConfig(input: TelemetryPricingConfigInput): Promise<TelemetryPricingConfig> {
+    return this.requestEnvelope<TelemetryPricingConfig>("/config/telemetry-pricing", { method: "PATCH", body: input });
   }
 
   listOperationLogs(query: OperationLogQuery = {}): Promise<Page<OperationLog>> {

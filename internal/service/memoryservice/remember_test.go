@@ -555,6 +555,6 @@ func (s *rememberLedgerStub) ClaimNextPlacementRun(context.Context, string, stri
 	return nil, errors.New("unexpected ClaimNextPlacementRun")
 }
 
-func (s *rememberLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) error {
-	return errors.New("unexpected FinishPlacementRun")
+func (s *rememberLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) (*repository.PlacementFirstDisposition, error) {
+	return nil, errors.New("unexpected FinishPlacementRun")
 }

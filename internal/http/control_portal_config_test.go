@@ -26,6 +26,7 @@ type controlAppConfigSvc struct {
 	operationLogSettings *domain.OperationLogConfigSettings
 	recallSettings       *domain.RecallFeedbackConfigSettings
 	evaluationSettings   *domain.EvaluationConfigSettings
+	telemetrySettings    *domain.TelemetryPricingConfigSettings
 	generalValues        map[string]string
 	values               map[string]string
 	dreamingValues       map[string]string
@@ -33,6 +34,7 @@ type controlAppConfigSvc struct {
 	operationLogValues   map[string]string
 	recallValues         map[string]string
 	evaluationValues     map[string]string
+	telemetryValues      map[string]string
 	getErr               error
 	updateErr            error
 	dreamingRuntime      domain.DreamingRuntimeConfig
@@ -41,6 +43,8 @@ type controlAppConfigSvc struct {
 	recallRuntimeErr     error
 	evaluationRuntime    domain.EvaluationRuntimeConfig
 	evaluationRuntimeErr error
+	telemetryRuntime     domain.TelemetryPricingRuntimeConfig
+	telemetryRuntimeErr  error
 }
 
 func (s *controlAppConfigSvc) GetGeneralSettings(context.Context) (*domain.GeneralConfigSettings, error) {
@@ -273,6 +277,30 @@ func (s *controlAppConfigSvc) UpdateEvaluationSettings(_ context.Context, values
 
 func (s *controlAppConfigSvc) EvaluationRuntimeConfig(context.Context) (domain.EvaluationRuntimeConfig, error) {
 	return s.evaluationRuntime, s.evaluationRuntimeErr
+}
+
+func (s *controlAppConfigSvc) GetTelemetryPricingSettings(context.Context) (*domain.TelemetryPricingConfigSettings, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.telemetrySettings, nil
+}
+
+func (s *controlAppConfigSvc) UpdateTelemetryPricingSettings(_ context.Context, values map[string]string, _, _, _ string) (*domain.TelemetryPricingConfigSettings, error) {
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
+	if s.telemetryValues == nil {
+		s.telemetryValues = make(map[string]string)
+	}
+	for key, value := range values {
+		s.telemetryValues[key] = value
+	}
+	return s.telemetrySettings, nil
+}
+
+func (s *controlAppConfigSvc) TelemetryPricingRuntimeConfig(context.Context) (domain.TelemetryPricingRuntimeConfig, error) {
+	return s.telemetryRuntime, s.telemetryRuntimeErr
 }
 
 func TestControlPortalGeneralConfigFlows(t *testing.T) {
@@ -655,6 +683,60 @@ func TestControlPortalEvaluationConfigFlows(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
+func TestControlPortalTelemetryPricingConfigFlows(t *testing.T) {
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	verifierInput, verifierOutput, embeddingInput := 1.25, 2.5, 0.1
+	appConfig := &controlAppConfigSvc{
+		telemetrySettings: &domain.TelemetryPricingConfigSettings{
+			UpdateTime: now.Format(time.RFC3339Nano),
+			Items: []domain.TelemetryPricingConfigItem{{
+				Key:            domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens,
+				Value:          "1.25",
+				EffectiveValue: "1.25",
+				UpdatedAt:      now,
+			}},
+			Effective: domain.TelemetryPricingRuntimeConfig{
+				VerifierInputUSDPerMillionTokens:  &verifierInput,
+				VerifierOutputUSDPerMillionTokens: &verifierOutput,
+				EmbeddingInputUSDPerMillionTokens: &embeddingInput,
+			},
+		},
+	}
+	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+		ControlHTTPAddr:    "127.0.0.1:8090",
+		ControlPortalToken: "secret",
+		AIVerifierModel:    "configured-verifier",
+		AIEmbeddingModel:   "configured-embedding",
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{Config: appConfig}, HealthConfig{}, nil)
+	require.NoError(t, err)
+
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret")
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := do(http.MethodGet, "/control/api/config/telemetry-pricing", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"verifier_model":"configured-verifier"`)
+	require.Contains(t, rec.Body.String(), `"embedding_model":"configured-embedding"`)
+	require.Contains(t, rec.Body.String(), `"verifier_input_usd_per_million_tokens":1.25`)
+
+	rec = do(http.MethodPatch, "/control/api/config/telemetry-pricing", `{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS","value":"3"}]}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "3", appConfig.telemetryValues[domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens])
+
+	rec = do(http.MethodPatch, "/control/api/config/telemetry-pricing", "{")
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	appConfig.updateErr = service.ErrInvalidAppConfig
+	rec = do(http.MethodPatch, "/control/api/config/telemetry-pricing", `{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS","value":"-1"}]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
 func TestControlConfigNilResponses(t *testing.T) {
 	require.Empty(t, toControlGeneralConfig(nil).Items)
 	require.Empty(t, toControlSSOConfig(nil).Items)
@@ -663,6 +745,7 @@ func TestControlConfigNilResponses(t *testing.T) {
 	require.Empty(t, toControlOperationLogConfig(nil).Items)
 	require.Empty(t, toControlRecallFeedbackConfig(nil).Items)
 	require.Empty(t, toControlEvaluationConfig(nil).Items)
+	require.Empty(t, toControlTelemetryPricingConfig(nil, "", "").Items)
 }
 
 func TestControlPortalConfigUnavailableHandlers(t *testing.T) {
@@ -684,6 +767,8 @@ func TestControlPortalConfigUnavailableHandlers(t *testing.T) {
 		{name: "update recall feedback", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateRecallFeedbackConfig(c) }},
 		{name: "get evaluation", call: func(h *controlPortalHandler, c echo.Context) error { return h.getEvaluationConfig(c) }},
 		{name: "update evaluation", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateEvaluationConfig(c) }},
+		{name: "get telemetry pricing", call: func(h *controlPortalHandler, c echo.Context) error { return h.getTelemetryPricingConfig(c) }},
+		{name: "update telemetry pricing", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateTelemetryPricingConfig(c) }},
 	}
 
 	for _, tt := range tests {
@@ -706,6 +791,7 @@ func TestControlPortalConfigGetErrors(t *testing.T) {
 		{name: "operation logs", call: h.getOperationLogConfig},
 		{name: "recall feedback", call: h.getRecallFeedbackConfig},
 		{name: "evaluation", call: h.getEvaluationConfig},
+		{name: "telemetry pricing", call: h.getTelemetryPricingConfig},
 	}
 
 	for _, tt := range tests {
@@ -751,6 +837,11 @@ func TestControlPortalConfigUpdateBackendErrors(t *testing.T) {
 			name: "evaluation",
 			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateEvaluationConfig(c) },
 			body: `{"items":[{"key":"EVALUATION_MODE_ENABLED","value":"true"}]}`,
+		},
+		{
+			name: "telemetry pricing",
+			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateTelemetryPricingConfig(c) },
+			body: `{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS","value":"1"}]}`,
 		},
 	}
 

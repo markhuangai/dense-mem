@@ -61,6 +61,7 @@ func TestControlPortalTelemetry(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"available":true`)
 	require.Equal(t, "1h", telemetry.filter.Window)
 	require.Equal(t, "team", telemetry.filter.Scope)
+	require.Equal(t, service.TelemetryAudienceOperator, telemetry.filter.Audience)
 	require.Equal(t, teamID, *telemetry.filter.TeamID)
 	require.Len(t, httpMetrics.events, 1)
 	require.Equal(t, "/control/api/telemetry", httpMetrics.events[0].route)

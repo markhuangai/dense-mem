@@ -21,7 +21,7 @@ func (s *semanticAssessmentPlacementWorkerService) retryProviderFailure(
 	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
 		return s.completeTerminalWithFailure(ctx, run, item, stage, failure.Class, failure.StatusCode, 0)
 	}
-	_, err := s.commit.RequeuePlacementReviewResult(ctx, repository.RequeuePlacementReviewInput{
+	requeued, err := s.commit.RequeuePlacementReviewResult(ctx, repository.RequeuePlacementReviewInput{
 		TeamID:                 run.TeamID,
 		OwnerProfileID:         run.OwnerProfileID,
 		IngestID:               run.IngestID,
@@ -34,6 +34,9 @@ func (s *semanticAssessmentPlacementWorkerService) retryProviderFailure(
 		RetryAfter:             failure.RetryAfter,
 		ReleaseAssessorAttempt: releaseProviderAttempt,
 	})
+	if err == nil && requeued != nil {
+		s.recordFirstDisposition(ctx, run, requeued.FirstDisposition)
+	}
 	return err
 }
 
@@ -83,7 +86,7 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminalWithFailure(
 	if providerTurns > 0 {
 		payload["assessor_turns"] = providerTurns
 	}
-	_, err := s.commit.CompletePlacementReviewResult(ctx, repository.CompletePlacementReviewInput{
+	completed, err := s.commit.CompletePlacementReviewResult(ctx, repository.CompletePlacementReviewInput{
 		TeamID:           run.TeamID,
 		OwnerProfileID:   run.OwnerProfileID,
 		IngestID:         run.IngestID,
@@ -95,6 +98,9 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminalWithFailure(
 		Category:         "failed",
 		Payload:          payload,
 	})
+	if err == nil && completed != nil {
+		s.recordFirstDisposition(ctx, run, completed.FirstDisposition)
+	}
 	return err
 }
 

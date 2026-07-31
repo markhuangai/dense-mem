@@ -42,7 +42,6 @@ func clearEnv() {
 		// Knowledge-pipeline knobs
 		"AI_VERIFIER_API_URL",
 		"AI_VERIFIER_API_KEY",
-		"AI_REVIEWER_MODEL",
 		"AI_VERIFIER_MODEL",
 		"AI_VERIFIER_DISABLE_TEMPERATURE",
 		"AI_VERIFIER_TIMEOUT_SECONDS",
@@ -333,6 +332,20 @@ func TestLoadValidation_MissingPostgresDSN(t *testing.T) {
 	}
 }
 
+func TestLoadWithPostgresDSNUsesOperatorResolvedDSN(t *testing.T) {
+	clearEnv()
+	t.Cleanup(clearEnv)
+
+	const resolvedDSN = "postgres://operator:resolved@localhost:5432/dense_mem?sslmode=disable"
+	cfg, err := LoadWithPostgresDSN(resolvedDSN)
+	if err != nil {
+		t.Fatalf("LoadWithPostgresDSN returned error: %v", err)
+	}
+	if cfg.PostgresDSN != resolvedDSN {
+		t.Fatalf("PostgresDSN = %q, want resolved operator DSN", cfg.PostgresDSN)
+	}
+}
+
 func TestLoadValidation_InvalidInteger(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
@@ -474,7 +487,6 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.IsEmbeddingConfigured()
 	_ = provider.GetAIVerifierAPIURL()
 	_ = provider.GetAIVerifierAPIKey()
-	_ = provider.GetAIReviewerModel()
 	_ = provider.GetAIVerifierModel()
 	_ = provider.GetAIVerifierTimeoutSeconds()
 	_ = provider.GetAIVerifierMaxConcurrency()
@@ -489,7 +501,6 @@ func TestConfigGetterFallbacksAndParsers(t *testing.T) {
 		HTTPMaxBodyBytes:         2048,
 		AIAPIURL:                 "https://shared.example/v1",
 		AIAPIKey:                 "shared-key",
-		AIReviewerModel:          "reviewer-model",
 		AIVerifierModel:          "verifier-model",
 		AIVerifierTimeoutSeconds: 0,
 	}
@@ -647,7 +658,6 @@ func TestLoadVerifierConfig_SeparateEndpoint(t *testing.T) {
 	setRequiredEmbeddingEnv()
 	os.Setenv("AI_VERIFIER_API_URL", "https://verifier.example.com/v1")
 	os.Setenv("AI_VERIFIER_API_KEY", "verifier-key")
-	os.Setenv("AI_REVIEWER_MODEL", "local-reviewer")
 	os.Setenv("AI_VERIFIER_MODEL", "local-verifier")
 	os.Setenv("AI_VERIFIER_TIMEOUT_SECONDS", "45")
 
@@ -664,9 +674,6 @@ func TestLoadVerifierConfig_SeparateEndpoint(t *testing.T) {
 	}
 	if got := cfg.GetAIVerifierAPIKey(); got != "verifier-key" {
 		t.Errorf("GetAIVerifierAPIKey() = %q, want %q", got, "verifier-key")
-	}
-	if got := cfg.GetAIReviewerModel(); got != "local-reviewer" {
-		t.Errorf("GetAIReviewerModel() = %q, want %q", got, "local-reviewer")
 	}
 	if got := cfg.GetAIVerifierModel(); got != "local-verifier" {
 		t.Errorf("GetAIVerifierModel() = %q, want %q", got, "local-verifier")
@@ -758,7 +765,7 @@ func TestValidateServerStartup_SucceedsWithEmbeddingConfig(t *testing.T) {
 	}
 }
 
-func TestValidateServerStartup_RequiresVerifierModelAndIgnoresReviewerModel(t *testing.T) {
+func TestValidateServerStartup_RequiresVerifierModel(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 	setRequiredEmbeddingEnv()
@@ -774,13 +781,12 @@ func TestValidateServerStartup_RequiresVerifierModelAndIgnoresReviewerModel(t *t
 	}
 
 	os.Setenv("AI_VERIFIER_MODEL", "verifier-model")
-	os.Setenv("AI_REVIEWER_MODEL", "legacy-reviewer-model")
 	cfg, err = Load()
 	if err != nil {
-		t.Fatalf("Load() with tolerated reviewer model returned unexpected error: %v", err)
+		t.Fatalf("Load() with verifier model returned unexpected error: %v", err)
 	}
 	if err := cfg.ValidateServerStartup(); err != nil {
-		t.Fatalf("ValidateServerStartup() with tolerated reviewer model returned unexpected error: %v", err)
+		t.Fatalf("ValidateServerStartup() with verifier model returned unexpected error: %v", err)
 	}
 }
 
@@ -795,9 +801,6 @@ func TestLoadKnowledgeConfigDefaults(t *testing.T) {
 		t.Fatalf("Load() returned unexpected error: %v", err)
 	}
 
-	if got := cfg.GetAIReviewerModel(); got != "" {
-		t.Errorf("GetAIReviewerModel() = %q, want empty", got)
-	}
 	if got := cfg.GetAIVerifierModel(); got != "" {
 		t.Errorf("GetAIVerifierModel() = %q, want empty", got)
 	}

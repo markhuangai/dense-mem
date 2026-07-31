@@ -819,7 +819,7 @@ func placementRelationshipOutcomePayload(results []RelationshipDecisionResult) [
 	return out
 }
 
-func finishPlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input CommitPlacementSemanticInput, status string) error {
+func finishPlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input CommitPlacementSemanticInput, status string) (*PlacementFirstDisposition, error) {
 	var openCount, reviewCount int64
 	if err := tx.WithContext(ctx).Raw(`
 		SELECT
@@ -829,7 +829,7 @@ func finishPlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input Commit
 		WHERE team_id = ?::uuid
 		  AND placement_run_id = ?::uuid
 	`, input.TeamID, input.PlacementRunID).Row().Scan(&openCount, &reviewCount); err != nil {
-		return err
+		return nil, err
 	}
 	if openCount > 0 {
 		result := tx.WithContext(ctx).Exec(`
@@ -849,18 +849,18 @@ func finishPlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input Commit
 			  AND lease_until > clock_timestamp()
 		`, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
 		if result.Error != nil {
-			return result.Error
+			return nil, result.Error
 		}
 		if result.RowsAffected != 1 {
-			return ErrPlacementLeaseLost
+			return nil, ErrPlacementLeaseLost
 		}
-		return nil
+		return nil, nil
 	}
 	runStatus := status
 	if reviewCount > 0 && status != string(domain.PlacementRunFailed) && status != string(domain.PlacementRunQuarantined) {
 		runStatus = string(domain.PlacementRunAwaitingReview)
 	}
-	result := tx.WithContext(ctx).Exec(`
+	rows, err := tx.WithContext(ctx).Raw(`
 		UPDATE placement_runs
 		SET status = ?,
 		    error = '',
@@ -874,14 +874,56 @@ func finishPlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input Commit
 		  AND worker_id = ?
 		  AND attempts = ?
 		  AND lease_until > clock_timestamp()
-	`, runStatus, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
-	if result.Error != nil {
-		return result.Error
+		RETURNING created_at, completed_at
+	`, runStatus, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts).Rows()
+	if err != nil {
+		return nil, err
 	}
-	if result.RowsAffected != 1 {
-		return ErrPlacementLeaseLost
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, ErrPlacementLeaseLost
 	}
-	return nil
+	var createdAt, completedAt time.Time
+	if err := rows.Scan(&createdAt, &completedAt); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return appendPlacementFirstDisposition(ctx, tx, input.TeamID, input.OwnerProfileID, input.PlacementRunID, runStatus, createdAt, completedAt)
+}
+
+func appendPlacementFirstDisposition(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID, ownerProfileID, placementRunID, status string,
+	createdAt, completedAt time.Time,
+) (*PlacementFirstDisposition, error) {
+	if completedAt.IsZero() {
+		return nil, errors.New("placement first disposition requires completed_at")
+	}
+	if _, err := insertPlacementOutcome(ctx, tx, PlacementOutcomeInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerProfileID,
+		PlacementRunID: placementRunID,
+		OutcomeKind:    "telemetry_first_disposition",
+		Status:         status,
+		IdempotencyKey: "telemetry:first_disposition:" + placementRunID,
+		Payload:        map[string]any{"telemetry": "first_disposition"},
+	}); err != nil {
+		return nil, err
+	}
+	return &PlacementFirstDisposition{
+		Status:      status,
+		CreatedAt:   createdAt.UTC(),
+		CompletedAt: completedAt.UTC(),
+	}, nil
 }
 
 func requeuePlacementRunForRetry(ctx context.Context, tx *gorm.DB, input CommitPlacementSemanticInput) error {

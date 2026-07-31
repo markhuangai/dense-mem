@@ -323,8 +323,8 @@ func (s *placementWorkerLedgerStub) ClaimNextPlacementRun(_ context.Context, tea
 	return s.run, nil
 }
 
-func (s *placementWorkerLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) error {
-	return errors.New("unexpected FinishPlacementRun")
+func (s *placementWorkerLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) (*repository.PlacementFirstDisposition, error) {
+	return nil, errors.New("unexpected FinishPlacementRun")
 }
 
 type placementWorkerReviewSourceStub struct {

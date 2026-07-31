@@ -110,6 +110,35 @@ describe("ControlApi", () => {
     }));
   });
 
+  it("reads existing models and updates telemetry pricing only", async () => {
+	const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+	  data: {
+		update_time: "2026-07-31T12:00:00Z",
+		items: [{ key: "TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS", value: "", effective_value: "", updated_at: "2026-07-31T12:00:00Z" }],
+		effective: {
+		  verifier_model: "existing-verifier",
+		  embedding_model: "existing-embedding",
+		  verifier_input_usd_per_million_tokens: null,
+		  verifier_output_usd_per_million_tokens: null,
+		  embedding_input_usd_per_million_tokens: null,
+		},
+	  },
+	}), { status: 200 })));
+	vi.stubGlobal("fetch", fetchMock);
+
+	const api = new ControlApi("secret", "/control/api");
+	const config = await api.getTelemetryPricingConfig();
+	await api.updateTelemetryPricingConfig({ items: [{ key: "TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS", value: "2.5" }] });
+
+	expect(config.effective.verifier_model).toBe("existing-verifier");
+	expect(config.effective.embedding_model).toBe("existing-embedding");
+	expect(fetchMock).toHaveBeenNthCalledWith(1, "/control/api/config/telemetry-pricing", expect.objectContaining({ method: "GET" }));
+	expect(fetchMock).toHaveBeenNthCalledWith(2, "/control/api/config/telemetry-pricing", expect.objectContaining({
+	  method: "PATCH",
+	  body: JSON.stringify({ items: [{ key: "TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS", value: "2.5" }] }),
+	}));
+  });
+
   it("reads and updates general config", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
       data: {

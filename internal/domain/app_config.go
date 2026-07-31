@@ -34,6 +34,10 @@ const (
 
 	AppConfigEvaluationModeEnabled   = "EVALUATION_MODE_ENABLED"
 	AppConfigEvaluationExportMaxPage = "EVALUATION_EXPORT_MAX_PAGE_SIZE"
+
+	AppConfigTelemetryCostVerifierInputUSDPerMillionTokens  = "TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS"
+	AppConfigTelemetryCostVerifierOutputUSDPerMillionTokens = "TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS"
+	AppConfigTelemetryCostEmbeddingInputUSDPerMillionTokens = "TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS"
 )
 
 type AppConfigEntry struct {
@@ -138,4 +142,28 @@ type EvaluationConfigItem struct {
 type EvaluationRuntimeConfig struct {
 	Enabled           bool `json:"enabled"`
 	ExportMaxPageSize int  `json:"export_max_page_size"`
+}
+
+// TelemetryPricingConfigSettings contains editable token pricing used only for
+// operational cost telemetry.
+type TelemetryPricingConfigSettings struct {
+	UpdateTime string                        `json:"update_time"`
+	Items      []TelemetryPricingConfigItem  `json:"items"`
+	Effective  TelemetryPricingRuntimeConfig `json:"effective"`
+}
+
+// TelemetryPricingConfigItem is one editable telemetry pricing entry.
+type TelemetryPricingConfigItem struct {
+	Key            string    `json:"key"`
+	Value          string    `json:"value"`
+	EffectiveValue string    `json:"effective_value"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// TelemetryPricingRuntimeConfig is the effective pricing used to estimate
+// provider operation cost. A nil value means that operation is unpriced.
+type TelemetryPricingRuntimeConfig struct {
+	VerifierInputUSDPerMillionTokens  *float64 `json:"verifier_input_usd_per_million_tokens"`
+	VerifierOutputUSDPerMillionTokens *float64 `json:"verifier_output_usd_per_million_tokens"`
+	EmbeddingInputUSDPerMillionTokens *float64 `json:"embedding_input_usd_per_million_tokens"`
 }

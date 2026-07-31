@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,6 +83,46 @@ func TestOpenAIProvider_EmbedBatch_HappyPath(t *testing.T) {
 	require.Len(t, vecs, 2)
 	assert.Equal(t, []float32{0.1, 0.2, 0.3}, vecs[0])
 	assert.Equal(t, []float32{0.4, 0.5, 0.6}, vecs[1])
+}
+
+func TestOpenAIProviderRecordsProviderUsageBeforeRejectingInvalidResult(t *testing.T) {
+	rate := 1_000_000.0
+	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
+		return observability.AIPricing{EmbeddingInputUSDPerMillionTokens: &rate}, nil
+	}))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"data":  []any{map[string]any{"embedding": []float32{0.1, 0.2}}},
+			"usage": map[string]any{"prompt_tokens": 12, "total_tokens": 12},
+		}))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL:                  srv.URL,
+		AIAPIKey:                  "key",
+		AIEmbeddingModel:          "embedding-model",
+		AIEmbeddingDimensions:     2,
+		AIEmbeddingTimeoutSeconds: 5,
+	}, srv.Client())
+	p.SetMetrics(metrics)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationRecallEmbedding, 1)
+	_, _, err := p.EmbedBatch(ctx, []string{"first", "second"})
+	require.ErrorIs(t, err, ErrEmbeddingProvider)
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+		if !strings.HasPrefix(line, "densemem_ai_operation_cost_usd_total{") {
+			continue
+		}
+		assert.Contains(t, line, `operation="recall_embedding"`)
+		assert.Contains(t, line, `component="embedding"`)
+		assert.Contains(t, line, `model="embedding-model"`)
+		assert.True(t, strings.HasSuffix(line, " 12"), "cost line = %q; want 12 USD", line)
+		return
+	}
+	t.Fatal("provider usage did not produce an AI operation cost sample")
 }
 
 func TestOpenAIProvider_Non200Response(t *testing.T) {

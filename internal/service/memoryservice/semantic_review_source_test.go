@@ -91,7 +91,7 @@ func TestSemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 		},
 		Evidence: []repository.EvidenceFragment{
 			{FragmentID: uuid.NewString(), EvidenceIndex: 0, Content: "old evidence", ContentHash: "sha256:old"},
-			{FragmentID: uuid.NewString(), EvidenceIndex: 1, Content: currentContent, ContentHash: "sha256:current", SourceRevisionID: uuid.NewString()},
+			{FragmentID: uuid.NewString(), EvidenceIndex: 1, Content: currentContent, ContentHash: "sha256:current", Authority: "authoritative", SourceRevisionID: uuid.NewString()},
 		},
 		Items: []repository.PlacementItem{
 			{PlacementItemID: doneItemID, EvidenceIndex: 0, Status: "completed"},
@@ -230,6 +230,9 @@ func TestSemanticPlacementReviewSourceBuildsCurrentEvidenceJob(t *testing.T) {
 	}
 	if len(job.Request.Evidence) != 1 || job.Request.Evidence[0].EvidenceIndex != 1 || job.Request.Evidence[0].Content != currentContent {
 		t.Fatalf("evidence = %#v", job.Request.Evidence)
+	}
+	if job.Request.Evidence[0].Authority != "authoritative" {
+		t.Fatalf("evidence authority = %q", job.Request.Evidence[0].Authority)
 	}
 	if len(job.Request.EntityMentions) != 3 {
 		t.Fatalf("entity mentions = %#v validation=%#v retryable=%#v", job.Request.EntityMentions, job.ValidationErrors, job.RetryableValidationErrors)

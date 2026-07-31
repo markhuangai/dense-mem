@@ -263,8 +263,9 @@ func TestLedgerCreateIngestIsIdempotentAndOwnerScoped(t *testing.T) {
 			}},
 		},
 		Evidence: []EvidenceInput{{
-			Content: "Dense-Mem stores exact evidence durably before acknowledgement.",
-			Labels:  []string{"canonical", "ledger"},
+			Content:   "Dense-Mem stores exact evidence durably before acknowledgement.",
+			Authority: string(domain.AuthorityAuthoritative),
+			Labels:    []string{"canonical", "ledger"},
 			InitialEvent: &SecurityEventDraft{
 				EventKind: "deterministic_scan",
 				Decision:  "pass",
@@ -276,6 +277,7 @@ func TestLedgerCreateIngestIsIdempotentAndOwnerScoped(t *testing.T) {
 	require.Len(t, first.Evidence, 1)
 	require.Equal(t, ownerA, first.OwnerProfileID)
 	require.Equal(t, "Dense-Mem stores exact evidence durably before acknowledgement.", first.Evidence[0].Content)
+	require.Equal(t, string(domain.AuthorityAuthoritative), first.Evidence[0].Authority)
 
 	loaded, err := repo.GetPlacementRun(ctx, GetPlacementRunInput{
 		TeamID:         teamA,
@@ -286,6 +288,7 @@ func TestLedgerCreateIngestIsIdempotentAndOwnerScoped(t *testing.T) {
 	require.Equal(t, ownerA, loaded.OwnerProfileID)
 	require.Len(t, loaded.Evidence, 1)
 	require.Equal(t, first.Evidence[0].Content, loaded.Evidence[0].Content)
+	require.Equal(t, string(domain.AuthorityAuthoritative), loaded.Evidence[0].Authority)
 	relationshipHints, ok := loaded.Proposal["relationship_hints"].([]any)
 	require.True(t, ok, "relationship_hints = %#v", loaded.Proposal["relationship_hints"])
 	require.Len(t, relationshipHints, 1)
@@ -345,6 +348,7 @@ func TestLedgerCreateIngestIsIdempotentAndOwnerScoped(t *testing.T) {
 	require.True(t, second.Existing)
 	assert.Equal(t, first.IngestID, second.IngestID)
 	assert.Equal(t, first.PlacementRunID, second.PlacementRunID)
+	assert.Equal(t, string(domain.AuthorityAuthoritative), second.Evidence[0].Authority)
 
 	_, err = repo.CreateIngest(ctx, CreateIngestInput{
 		TeamID:         teamA,
@@ -884,6 +888,20 @@ func TestLedgerAuthorityConstraintsUseCanonicalValues(t *testing.T) {
 
 	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
+			INSERT INTO evidence_fragments (
+				team_id, ingest_id, owner_profile_id, evidence_index, content, content_hash, authority
+			)
+			VALUES (
+				?::uuid, ?::uuid, ?::uuid, 1,
+				'Legacy derived fragment authority is rejected.', 'sha256:legacy-derived-fragment', 'derived'
+			)
+		`, teamID, created.IngestID, ownerID).Error
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "evidence_fragments_authority_check")
+
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
 			INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
 			VALUES (?::uuid, ?::uuid, 'doc://canonical-authority', 'document', 'unknown')
 		`, teamID, ownerID).Error
@@ -956,11 +974,12 @@ func TestLedgerPlacementClaimIsTeamLocal(t *testing.T) {
 	assert.Equal(t, 1, claimed.Attempts)
 	require.NotNil(t, claimed.LeaseUntil)
 
-	err = repo.FinishPlacementRun(ctx, teamA, claimed.PlacementRunID, "worker-b", "completed", "")
+	_, err = repo.FinishPlacementRun(ctx, teamA, claimed.PlacementRunID, "worker-b", "completed", "")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPlacementLeaseConflict), fmt.Sprintf("err=%v", err))
 
-	require.NoError(t, repo.FinishPlacementRun(ctx, teamA, claimed.PlacementRunID, "worker-a", "completed", ""))
+	_, err = repo.FinishPlacementRun(ctx, teamA, claimed.PlacementRunID, "worker-a", "completed", "")
+	require.NoError(t, err)
 }
 
 func insertPredicateDefinitionForTest(db *gorm.DB, predicateKey string) error {

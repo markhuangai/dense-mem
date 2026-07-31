@@ -19,6 +19,7 @@ func TestSemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.T)
 	targetID := uuid.NewString()
 	conflictID := uuid.NewString()
 	request := semanticReviewServiceRequest(teamID, ownerID)
+	request.Evidence[0].Authority = string(domain.AuthorityAuthoritative)
 	request.Evidence[0].SourceID = uuid.NewString()
 	request.Evidence[0].SourceRevisionID = uuid.NewString()
 	request.EntityMentions[1].IdentityContext = map[string]any{"repo": "dense-mem"}
@@ -109,6 +110,9 @@ func TestSemanticCommitMapsAcceptedReviewIntoAtomicRepositoryInput(t *testing.T)
 	}
 	if relationship.Support.SourceID != request.Evidence[0].SourceID || relationship.Support.SourceRevisionID != request.Evidence[0].SourceRevisionID {
 		t.Fatalf("relationship support source scope = %#v", relationship.Support)
+	}
+	if relationship.Support.Authority != string(domain.AuthorityAuthoritative) {
+		t.Fatalf("relationship support authority = %q", relationship.Support.Authority)
 	}
 	if got.Payload["response_hash"] != "sha256:semantic-response" {
 		t.Fatalf("payload = %#v", got.Payload)

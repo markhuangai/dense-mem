@@ -134,7 +134,9 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 	if len(eligible) == 0 {
 		return result, nil
 	}
-	embeddings, model, err := s.provider.EmbedBatch(ctx, texts)
+	providerCtx := observability.WithMetricIdentity(ctx, s.teamID, "")
+	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationBackgroundEmbedding, len(eligible))
+	embeddings, model, err := s.provider.EmbedBatch(providerCtx, texts)
 	if err != nil {
 		code, terminal, retryAfter := classifyProviderFailure(err)
 		s.failJobs(ctx, contract, eligible, &result, err, code, terminal, retryAfter)

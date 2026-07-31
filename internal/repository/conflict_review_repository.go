@@ -537,6 +537,7 @@ func markRelationshipConflictCaseOverdue(
 		    lease_worker_id = '',
 		    lease_until = NULL,
 		    next_review_at = ?,
+		    attempts = 0,
 		    last_error = '',
 		    updated_at = now()
 		WHERE team_id = ?::uuid
@@ -559,6 +560,12 @@ func dismissRelationshipConflictCase(
 	input ReviewRelationshipConflictCaseInput,
 	snapshotChanged bool,
 ) error {
+	if err := supersedeReservedOverdueConflictAssessments(ctx, tx, input.TeamID, input.ConflictID); err != nil {
+		return err
+	}
+	if err := supersedePendingOverdueConflictResolutions(ctx, tx, input.TeamID, input.ConflictID); err != nil {
+		return err
+	}
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE relationship_conflict_cases
 		SET status = 'dismissed',

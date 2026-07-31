@@ -13,6 +13,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+const conflictResolutionDeletionOnlySourceSummary = "overdue conflict deletion-only derivation"
+
 func loadActiveSearchContractInTx(ctx context.Context, tx *gorm.DB) (*ActiveSearchContract, error) {
 	var contract ActiveSearchContract
 	err := tx.WithContext(ctx).Raw(`
@@ -503,6 +505,38 @@ func loadPlacementItemFragmentID(ctx context.Context, tx *gorm.DB, commit Commit
 		return "", err
 	}
 	return fragmentID, nil
+}
+
+func isConflictResolutionDeletionOnlyFragment(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	fragmentID string,
+) (bool, error) {
+	var deletionOnly bool
+	err := tx.WithContext(ctx).Raw(`
+		SELECT COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') = 'true'
+		   AND COALESCE(ingest.metadata->>'conflict_resolution_deletion_only', '') = 'true'
+		   AND ingest.source_summary = ?
+		   AND profile.auth_source = 'system'
+		   AND profile.is_system
+		FROM evidence_fragments AS fragment
+		JOIN knowledge_ingests AS ingest
+		  ON ingest.team_id = fragment.team_id
+		 AND ingest.ingest_id = fragment.ingest_id
+		JOIN team_profiles AS profile
+		  ON profile.team_id = fragment.team_id
+		 AND profile.id = fragment.owner_profile_id
+		WHERE fragment.team_id = ?::uuid
+		  AND fragment.fragment_id = ?::uuid
+	`, conflictResolutionDeletionOnlySourceSummary, teamID, fragmentID).Row().Scan(&deletionOnly)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return deletionOnly, nil
 }
 
 func upsertPlacementItemEvidenceSearchDocument(

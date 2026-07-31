@@ -481,8 +481,8 @@ func (s *semanticReviewLedgerStub) ClaimNextPlacementRun(context.Context, string
 	return nil, errors.New("unexpected ClaimNextPlacementRun")
 }
 
-func (s *semanticReviewLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) error {
-	return errors.New("unexpected FinishPlacementRun")
+func (s *semanticReviewLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) (*repository.PlacementFirstDisposition, error) {
+	return nil, errors.New("unexpected FinishPlacementRun")
 }
 
 func (s *semanticReviewLedgerStub) combinedPayloadJSON(t *testing.T) string {
