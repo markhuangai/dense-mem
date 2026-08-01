@@ -156,9 +156,17 @@ func stubDream(profileID string) *domain.Dream {
 		SourceRelationshipIDs:          []string{"relationship-1"},
 		SourceCandidateRelationshipIDs: []string{},
 		SourceVersions:                 map[string]int{"relationship-1": 1},
-		GeneratorKind:                  "deterministic",
-		GeneratorVersion:               "dream-v2",
-		Status:                         domain.DreamStatusProposed,
-		CreatedAt:                      time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC),
+		Derivations: []domain.DreamDerivation{{
+			PremisePosition:     1,
+			RelationshipID:      "relationship-1",
+			RelationshipVersion: 1,
+			SourceGroupKey:      "source-group-1",
+			Quote:               "A affects B.",
+			Authority:           "primary",
+		}},
+		GeneratorKind:    "deterministic",
+		GeneratorVersion: "dream-v2",
+		Status:           domain.DreamStatusProposed,
+		CreatedAt:        time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC),
 	}
 }

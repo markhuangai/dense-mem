@@ -757,6 +757,25 @@ func dreamContractOutput(dream *domain.Dream) map[string]any {
 	out["confidence"] = dream.Confidence
 	out["source_candidate_relationship_ids"] = dreamOutputSourceIDs(dream, true)
 	out["source_versions"] = dreamOutputSourceVersions(dream)
+	out["derivations"] = dreamDerivationsContractOutput(dream)
+	return out
+}
+
+func dreamDerivationsContractOutput(dream *domain.Dream) []map[string]any {
+	if dream == nil || len(dream.Derivations) == 0 {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(dream.Derivations))
+	for _, derivation := range dream.Derivations {
+		out = append(out, map[string]any{
+			"premise_position":     derivation.PremisePosition,
+			"relationship_id":      derivation.RelationshipID,
+			"relationship_version": derivation.RelationshipVersion,
+			"source_group_key":     derivation.SourceGroupKey,
+			"quote":                derivation.Quote,
+			"authority":            derivation.Authority,
+		})
+	}
 	return out
 }
 

@@ -47,6 +47,10 @@ type Scheduler struct {
 	armed    map[string]scheduledWindowArm
 }
 
+type scheduledRecoveryService interface {
+	RecoverScheduledCycle(ctx context.Context, teamID string) (*RunCycleResult, error)
+}
+
 func NewScheduler(service Service, profiles ProfileService, logger *slog.Logger) *Scheduler {
 	if logger == nil {
 		logger = slog.Default()
@@ -96,6 +100,18 @@ func (s *Scheduler) runDue(ctx context.Context) {
 			if err != nil {
 				s.logger.Warn("dreaming scheduler: config resolve failed", slog.String("team_id", teamID), slog.String("error_kind", "config_resolve_failed"))
 				continue
+			}
+			if recovery, ok := s.service.(scheduledRecoveryService); ok {
+				recovered, recoverErr := recovery.RecoverScheduledCycle(ctx, teamID)
+				if recoverErr != nil {
+					s.logger.Warn("dreaming scheduler: recovery failed", slog.String("team_id", teamID), slog.String("error_kind", "recovery_failed"))
+				} else if recovered != nil {
+					s.logger.Info("dreaming scheduler: expired cycle recovered",
+						slog.String("team_id", teamID),
+						slog.String("run_id", recovered.RunID),
+						slog.String("status", recovered.Status),
+					)
+				}
 			}
 			if !cfg.Enabled {
 				s.disarm(teamID)

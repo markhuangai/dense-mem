@@ -58,7 +58,11 @@
 }
 
 .dreams-table {
-  min-width: 0;
+  min-width: 720px;
+}
+
+.dream-table-wrap {
+  overflow-x: auto;
 }
 
 .dreams-table th:nth-child(4),

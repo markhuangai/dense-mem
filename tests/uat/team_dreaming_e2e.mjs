@@ -15,7 +15,7 @@ let rpcID = 0;
 const scheduledAt = nextScheduledUTCMinute();
 const runDate = formatDate(scheduledAt);
 const ownerProfileID = await userProfileID();
-seedSchedulerInputs(ownerProfileID);
+const seeded = seedSchedulerInputs(ownerProfileID);
 
 await updateControlConfig("/config/general", [{ key: "APP_TIMEZONE", value: "UTC" }]);
 await updateControlConfig("/config/dreaming", [
@@ -31,10 +31,15 @@ assertEqual(scheduledRun.run_date, runDate, "scheduled run date");
 assertEqual(scheduledRun.status, "completed", "scheduled run status");
 assertEqual(Number(scheduledRun.input_relationships), 2, "scheduled input count");
 assertEqual(Number(scheduledRun.created_dreams), 1, "scheduled created output count");
+assertAtLeast(Number(scheduledRun.attempted_paths), 1, "scheduled attempted paths");
+assertAtLeast(Number(scheduledRun.provider_turns), 1, "scheduled provider turns");
+assertAtLeast(Number(scheduledRun.provider_proposals), 1, "scheduled provider proposals");
+assertEqual(Number(scheduledRun.outcome_summary?.provider_failed ?? 0), 0, "scheduled provider failure");
 await assertSystemRun(scheduledRun.run_id);
 
 const controlDreams = await controlJSON(`/teams/${teamID}/dreams?limit=10`);
 const scheduledDream = findDream(controlDreams.data?.items, scheduledRun.run_id, "control portal API");
+assertEvidenceDerivedDream(scheduledDream, seeded, "control portal API");
 const hypothesisID = scheduledDream.dream_id;
 const statement = scheduledDream.hypothesis;
 const reviewer = await createTeamProfile("Team Dreaming E2E reviewer");
@@ -49,9 +54,11 @@ await assertFeedbackActor(hypothesisID, reviewer.profileID);
 
 assertContainsDream(controlDreams.data?.items, hypothesisID, statement, "control portal API");
 const userDreams = await userJSON("/ui/api/dreams?limit=10");
-assertContainsDream(userDreams.data?.items, hypothesisID, statement, "user portal API");
+assertEvidenceDerivedDream(assertContainsDream(userDreams.data?.items, hypothesisID, statement, "user portal API"), seeded, "user portal API");
 const listOutput = await mcpTool(apiKey, "list_dreams", { limit: 10 });
 assertContainsDream(listOutput.dreams, hypothesisID, statement, "MCP list_dreams");
+const getOutput = await mcpTool(apiKey, "get_dream", { hypothesis_id: hypothesisID });
+assertEvidenceDerivedDream(getOutput.hypothesis, seeded, "MCP get_dream");
 
 console.log(JSON.stringify({
   status: "ok",
@@ -126,13 +133,21 @@ async function userProfileID() {
 
 function seedSchedulerInputs(ownerProfileID) {
   const subjectID = randomUUID();
-  const usesObjectID = randomUUID();
-  const worksOnSubjectID = randomUUID();
-  const worksOnObjectID = randomUUID();
-  const usesRelationshipID = randomUUID();
-  const worksOnRelationshipID = randomUUID();
-  const candidateIngestID = randomUUID();
-  const candidateObservationID = randomUUID();
+  const middleID = randomUUID();
+  const objectID = randomUUID();
+  const firstRelationshipID = randomUUID();
+  const secondRelationshipID = randomUUID();
+  const ingestID = randomUUID();
+  const firstFragmentID = randomUUID();
+  const secondFragmentID = randomUUID();
+  const firstObservationID = randomUUID();
+  const secondObservationID = randomUUID();
+  const firstVerificationID = randomUUID();
+  const secondVerificationID = randomUUID();
+  const firstSupportID = randomUUID();
+  const secondSupportID = randomUUID();
+  const firstQuote = "Dense-Mem uses the Runtime service to process memory requests.";
+  const secondQuote = "The Runtime service uses PostgreSQL to store durable memory records.";
   postgresQuery(`
     INSERT INTO semantic_team_refs (team_id)
     VALUES (${sqlLiteral(teamID)}::uuid)
@@ -152,25 +167,46 @@ function seedSchedulerInputs(ownerProfileID) {
            current_cardinality, lifecycle_state, 'built_in',
            metadata || jsonb_build_object('source', 'compose_uat'), created_at
     FROM predicate_definitions
-    WHERE (predicate_key, version) IN (('uses', 1), ('works_on', 1))
+    WHERE (predicate_key, version) = ('uses', 1)
     ON CONFLICT (team_id, predicate_key, version) DO NOTHING;
 
     INSERT INTO entity_records (team_id, entity_id, entity_kind)
     VALUES
       (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(subjectID)}::uuid, 'project'),
-      (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(usesObjectID)}::uuid, 'product'),
-      (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(worksOnSubjectID)}::uuid, 'project'),
-      (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(worksOnObjectID)}::uuid, 'project');
+      (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(middleID)}::uuid, 'product'),
+      (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(objectID)}::uuid, 'product');
+
+    INSERT INTO entity_names (
+      team_id, entity_id, owner_profile_id, display_name, normalized_name, name_kind
+    ) VALUES
+      (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(subjectID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 'Dense-Mem', 'dense-mem', 'canonical'),
+      (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(middleID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 'Runtime service', 'runtime service', 'canonical'),
+      (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(objectID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 'PostgreSQL', 'postgresql', 'canonical');
 
     INSERT INTO knowledge_ingests (
       team_id, ingest_id, owner_profile_id, idempotency_key, request_hash,
       source_summary, status, proposal, metadata, completed_at
     ) VALUES (
-      ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(candidateIngestID)}::uuid,
-      ${sqlLiteral(ownerProfileID)}::uuid, 'compose-e2e-candidate',
-      'sha256:compose-e2e-candidate', 'Candidate relationship for scheduled dreaming',
+      ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ingestID)}::uuid,
+      ${sqlLiteral(ownerProfileID)}::uuid, 'compose-e2e-evidence',
+      'sha256:compose-e2e-evidence', 'Evidence-backed relationships for scheduled dreaming',
       'completed', '{}'::jsonb, '{}'::jsonb, now()
     );
+
+    INSERT INTO evidence_fragments (
+      team_id, fragment_id, ingest_id, owner_profile_id, evidence_index,
+      content, content_hash, source_type, authority, source_ref
+    ) VALUES
+      (
+        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(firstFragmentID)}::uuid,
+        ${sqlLiteral(ingestID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 0,
+        ${sqlLiteral(firstQuote)}, 'sha256:compose-e2e-first', 'manual', 'primary', 'compose-e2e-first'
+      ),
+      (
+        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(secondFragmentID)}::uuid,
+        ${sqlLiteral(ingestID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 1,
+        ${sqlLiteral(secondQuote)}, 'sha256:compose-e2e-second', 'manual', 'primary', 'compose-e2e-second'
+      );
 
     INSERT INTO relationship_records (
       team_id, relationship_id, owner_profile_id, semantic_group_key,
@@ -179,15 +215,15 @@ function seedSchedulerInputs(ownerProfileID) {
       source_group_count
     ) VALUES
       (
-        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(usesRelationshipID)}::uuid,
-        ${sqlLiteral(ownerProfileID)}::uuid, 'compose-e2e-uses',
-        ${sqlLiteral(subjectID)}::uuid, 'uses', 1, ${sqlLiteral(usesObjectID)}::uuid,
-        'state', 'many', 'pending_evidence', 0, 0
+        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(firstRelationshipID)}::uuid,
+        ${sqlLiteral(ownerProfileID)}::uuid, 'compose-e2e-dense-runtime',
+        ${sqlLiteral(subjectID)}::uuid, 'uses', 1, ${sqlLiteral(middleID)}::uuid,
+        'state', 'many', 'active', 1, 1
       ),
       (
-        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(worksOnRelationshipID)}::uuid,
-        ${sqlLiteral(ownerProfileID)}::uuid, 'compose-e2e-works-on',
-        ${sqlLiteral(worksOnSubjectID)}::uuid, 'works_on', 1, ${sqlLiteral(worksOnObjectID)}::uuid,
+        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(secondRelationshipID)}::uuid,
+        ${sqlLiteral(ownerProfileID)}::uuid, 'compose-e2e-runtime-postgres',
+        ${sqlLiteral(middleID)}::uuid, 'uses', 1, ${sqlLiteral(objectID)}::uuid,
         'state', 'many', 'active', 1, 1
       );
 
@@ -195,24 +231,82 @@ function seedSchedulerInputs(ownerProfileID) {
       team_id, observation_id, relationship_id, ingest_id, owner_profile_id,
       subject_ref, original_predicate, object_ref, subject_entity_id,
       predicate_key, predicate_version, object_entity_id, evidence, metadata
-    ) VALUES (
-      ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(candidateObservationID)}::uuid,
-      ${sqlLiteral(usesRelationshipID)}::uuid, ${sqlLiteral(candidateIngestID)}::uuid,
-      ${sqlLiteral(ownerProfileID)}::uuid, 'Compose E2E project', 'uses',
-      'Compose E2E product', ${sqlLiteral(subjectID)}::uuid, 'uses', 1,
-      ${sqlLiteral(usesObjectID)}::uuid, '[]'::jsonb, '{}'::jsonb
-    );
+    ) VALUES
+      (
+        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(firstObservationID)}::uuid,
+        ${sqlLiteral(firstRelationshipID)}::uuid, ${sqlLiteral(ingestID)}::uuid,
+        ${sqlLiteral(ownerProfileID)}::uuid, 'Dense-Mem', 'uses',
+        'Runtime service', ${sqlLiteral(subjectID)}::uuid, 'uses', 1,
+        ${sqlLiteral(middleID)}::uuid,
+        jsonb_build_array(jsonb_build_object('fragment_id', ${sqlLiteral(firstFragmentID)}, 'start', 0, 'end', char_length(${sqlLiteral(firstQuote)}))), '{}'::jsonb
+      ),
+      (
+        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(secondObservationID)}::uuid,
+        ${sqlLiteral(secondRelationshipID)}::uuid, ${sqlLiteral(ingestID)}::uuid,
+        ${sqlLiteral(ownerProfileID)}::uuid, 'Runtime service', 'uses',
+        'PostgreSQL', ${sqlLiteral(middleID)}::uuid, 'uses', 1,
+        ${sqlLiteral(objectID)}::uuid,
+        jsonb_build_array(jsonb_build_object('fragment_id', ${sqlLiteral(secondFragmentID)}, 'start', 0, 'end', char_length(${sqlLiteral(secondQuote)}))), '{}'::jsonb
+      );
 
     INSERT INTO verification_events (
-      team_id, observation_id, owner_profile_id, evidence_verdict,
+      team_id, verification_event_id, observation_id, owner_profile_id, evidence_verdict,
       confidence, rationale, model, response_hash, metadata
-    ) VALUES (
-      ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(candidateObservationID)}::uuid,
-      ${sqlLiteral(ownerProfileID)}::uuid, 'insufficient', 0.4,
-      'The scheduled candidate requires independent evidence.',
-      'compose-e2e', 'sha256:compose-e2e-verification', '{}'::jsonb
-    );
+    ) VALUES
+      (
+        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(firstVerificationID)}::uuid,
+        ${sqlLiteral(firstObservationID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid,
+        'entailed', 0.95, 'The exact excerpt supports the first premise.',
+        'compose-e2e', 'sha256:compose-e2e-first-verification', '{}'::jsonb
+      ),
+      (
+        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(secondVerificationID)}::uuid,
+        ${sqlLiteral(secondObservationID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid,
+        'entailed', 0.95, 'The exact excerpt supports the second premise.',
+        'compose-e2e', 'sha256:compose-e2e-second-verification', '{}'::jsonb
+      );
+
+    INSERT INTO relationship_evidence_supports (
+      team_id, support_id, relationship_id, observation_id, verification_event_id,
+      fragment_id, owner_profile_id, source_group_key, span_start, span_end,
+      quote, authority, metadata
+    ) VALUES
+      (
+        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(firstSupportID)}::uuid,
+        ${sqlLiteral(firstRelationshipID)}::uuid, ${sqlLiteral(firstObservationID)}::uuid,
+        ${sqlLiteral(firstVerificationID)}::uuid, ${sqlLiteral(firstFragmentID)}::uuid,
+        ${sqlLiteral(ownerProfileID)}::uuid, 'compose-e2e-runtime', 0,
+        char_length(${sqlLiteral(firstQuote)}), ${sqlLiteral(firstQuote)}, 'primary', '{}'::jsonb
+      ),
+      (
+        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(secondSupportID)}::uuid,
+        ${sqlLiteral(secondRelationshipID)}::uuid, ${sqlLiteral(secondObservationID)}::uuid,
+        ${sqlLiteral(secondVerificationID)}::uuid, ${sqlLiteral(secondFragmentID)}::uuid,
+        ${sqlLiteral(ownerProfileID)}::uuid, 'compose-e2e-postgres', 0,
+        char_length(${sqlLiteral(secondQuote)}), ${sqlLiteral(secondQuote)}, 'primary', '{}'::jsonb
+      );
+
+    INSERT INTO relationship_support_decision_events (
+      team_id, support_id, relationship_id, owner_profile_id, actor_profile_id,
+      decision, reason, metadata
+    ) VALUES
+      (
+        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(firstSupportID)}::uuid,
+        ${sqlLiteral(firstRelationshipID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid,
+        ${sqlLiteral(ownerProfileID)}::uuid, 'grant', 'compose e2e support', '{}'::jsonb
+      ),
+      (
+        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(secondSupportID)}::uuid,
+        ${sqlLiteral(secondRelationshipID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid,
+        ${sqlLiteral(ownerProfileID)}::uuid, 'grant', 'compose e2e support', '{}'::jsonb
+      );
   `);
+  return {
+    firstRelationshipID,
+    secondRelationshipID,
+    firstQuote,
+    secondQuote,
+  };
 }
 
 async function createTeamProfile(name) {
@@ -360,11 +454,38 @@ function assertContainsDream(items, hypothesisID, expectedStatement, label) {
   if (!dream || (dream.hypothesis !== expectedStatement && dream.statement !== expectedStatement)) {
     throw new Error(`${label} did not return team-owned hypothesis ${hypothesisID}: ${JSON.stringify(items)}`);
   }
+  return dream;
+}
+
+function assertEvidenceDerivedDream(dream, seededInputs, label) {
+  const derivations = dream?.derivations;
+  if (!Array.isArray(derivations) || derivations.length !== 2) {
+    throw new Error(`${label} did not return exactly two cited premise excerpts: ${JSON.stringify(dream)}`);
+  }
+  const byPosition = new Map(derivations.map((derivation) => [Number(derivation?.premise_position), derivation]));
+  const first = byPosition.get(1);
+  const second = byPosition.get(2);
+  if (!first || !second) {
+    throw new Error(`${label} did not return premise positions 1 and 2: ${JSON.stringify(derivations)}`);
+  }
+  assertEqual(first.relationship_id, seededInputs.firstRelationshipID, `${label} first derivation relationship`);
+  assertEqual(second.relationship_id, seededInputs.secondRelationshipID, `${label} second derivation relationship`);
+  assertEqual(first.quote, seededInputs.firstQuote, `${label} first derivation quote`);
+  assertEqual(second.quote, seededInputs.secondQuote, `${label} second derivation quote`);
+  if (!first.source_group_key || !second.source_group_key) {
+    throw new Error(`${label} derivations omitted source groups: ${JSON.stringify(derivations)}`);
+  }
 }
 
 function assertEqual(actual, expected, label) {
   if (actual !== expected) {
     throw new Error(`${label} = ${JSON.stringify(actual)}; want ${JSON.stringify(expected)}`);
+  }
+}
+
+function assertAtLeast(actual, minimum, label) {
+  if (!Number.isFinite(actual) || actual < minimum) {
+    throw new Error(`${label} = ${JSON.stringify(actual)}; want at least ${minimum}`);
   }
 }
 

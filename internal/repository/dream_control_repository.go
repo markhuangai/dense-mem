@@ -58,10 +58,7 @@ func (r *SemanticRepositoryImpl) ListDreamCyclesForTeam(ctx context.Context, tea
 	runs := []DreamCycleRun{}
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT team_id::text, run_id::text, COALESCE(initiated_by_profile_id::text, ''),
-			       run_date, window_key, status, input_count,
-			       created_hypotheses, rejected_hypotheses, error,
-			       started_at, completed_at
+			SELECT `+dreamCycleRunSelectColumns+`
 			FROM dream_cycle_runs
 			WHERE team_id = ?::uuid
 			  AND canonical_run_id IS NULL

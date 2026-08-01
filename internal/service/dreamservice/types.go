@@ -49,16 +49,17 @@ type Generator interface {
 }
 
 type Dependencies struct {
-	Remember       memoryservice.RememberService
-	Store          repository.DreamRepository
-	ScheduledStore repository.ScheduledDreamRepository
-	AppConfig      AppConfig
-	Profiles       ProfileService
-	Locker         CycleLocker
-	Postgres       *gorm.DB
-	Generator      Generator
-	Metrics        observability.DiscoverabilityMetrics
-	Now            func() time.Time
+	Remember           memoryservice.RememberService
+	Store              repository.DreamRepository
+	ScheduledStore     repository.ScheduledDreamRepository
+	AppConfig          AppConfig
+	Profiles           ProfileService
+	Locker             CycleLocker
+	Postgres           *gorm.DB
+	Generator          Generator
+	Metrics            observability.DiscoverabilityMetrics
+	ProviderCycleLease time.Duration
+	Now                func() time.Time
 }
 
 type Service interface {
@@ -81,16 +82,25 @@ type RunCycleRequest struct {
 }
 
 type RunCycleResult struct {
-	RunID              string    `json:"run_id"`
-	TeamID             string    `json:"team_id"`
-	RunDate            string    `json:"run_date"`
-	StartedAt          time.Time `json:"started_at"`
-	CompletedAt        time.Time `json:"completed_at"`
-	InputRelationships int       `json:"input_relationships"`
-	CreatedDreams      int       `json:"created_dreams"`
-	RejectedDreams     int       `json:"rejected_dreams"`
-	Status             string    `json:"status"`
-	Error              string    `json:"error,omitempty"`
+	RunID                string         `json:"run_id"`
+	TeamID               string         `json:"team_id"`
+	RunDate              string         `json:"run_date"`
+	StartedAt            time.Time      `json:"started_at"`
+	CompletedAt          time.Time      `json:"completed_at"`
+	InputRelationships   int            `json:"input_relationships"`
+	CreatedDreams        int            `json:"created_dreams"`
+	RejectedDreams       int            `json:"rejected_dreams"`
+	ScheduledFor         time.Time      `json:"scheduled_for,omitempty"`
+	AttemptCount         int            `json:"attempt_count,omitempty"`
+	ProviderModel        string         `json:"provider_model,omitempty"`
+	ProviderTurns        int            `json:"provider_turns,omitempty"`
+	ProviderInputTokens  int            `json:"provider_input_tokens,omitempty"`
+	ProviderOutputTokens int            `json:"provider_output_tokens,omitempty"`
+	AttemptedPaths       int            `json:"attempted_paths,omitempty"`
+	ProviderProposals    int            `json:"provider_proposals,omitempty"`
+	OutcomeSummary       map[string]int `json:"outcome_summary,omitempty"`
+	Status               string         `json:"status"`
+	Error                string         `json:"error,omitempty"`
 }
 
 type ListOptions struct {
@@ -132,6 +142,7 @@ type EffectiveConfig struct {
 type GenerateRequest struct {
 	MaxOutputs     int
 	Inputs         []DreamInput
+	Paths          []DreamPath
 	Existing       []*domain.Dream
 	GeneratorModel string
 }
@@ -147,6 +158,9 @@ type DreamInput struct {
 }
 
 type GeneratedDream struct {
+	PathRef          string
+	PredicateRef     string
+	EvidenceRefs     []string
 	Hypothesis       string
 	WhatIf           string
 	PossibleOutcome  string
@@ -159,6 +173,41 @@ type GeneratedDream struct {
 	ObjectEntityID   string
 	ObjectValueID    string
 	SourceRefs       []domain.DreamSourceRef
+}
+
+type GenerationDiagnostics struct {
+	ProviderTurns        int
+	ProviderInputTokens  int
+	ProviderOutputTokens int
+	ProviderProposals    int
+}
+
+type DiagnosticsGenerator interface {
+	GenerateWithDiagnostics(ctx context.Context, profileID string, req GenerateRequest) ([]GeneratedDream, GenerationDiagnostics, error)
+}
+
+// DreamPath is a server-derived, directed two-premise path. Database IDs stay
+// in this process; the generator receives only its opaque references.
+type DreamPath struct {
+	PathRef           string
+	Subject           DreamPathNode
+	Middle            DreamPathNode
+	Object            DreamPathNode
+	Premises          []DreamPathPremise
+	AllowedPredicates []repository.DreamTargetPredicate
+}
+
+type DreamPathNode struct {
+	Ref     string
+	ID      string
+	Display string
+	Kind    string
+}
+
+type DreamPathPremise struct {
+	PremiseRef      string
+	RelationshipRef string
+	Input           repository.DreamInput
 }
 
 type SeedDream struct {

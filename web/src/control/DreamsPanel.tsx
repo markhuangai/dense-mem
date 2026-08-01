@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ControlApi, Dream, DreamQuery, DreamRun, DreamSort, DreamStatus, Team } from "../api";
 import { InfoTooltip, LoadingState, SectionHeading } from "../ui/components";
+import { DreamEvidenceSummary, MetricLabel, runOutcome, runStatusClass } from "../ui/dreams";
 import { formatDate, readError } from "./utils";
 
 const DREAM_STATUSES = ["", "proposed", "reinforced", "stale", "rejected", "submitted"];
@@ -200,13 +201,14 @@ function StatusItem({ label, value }: { label: string; value: string | number })
 
 function DreamTable({ dreams, sort }: { dreams: Dream[]; sort: DreamSort }) {
   return (
-    <div className="table-wrap">
+    <div className="table-wrap dream-table-wrap">
       <table className="data-table dreams-table">
         <thead>
           <tr>
             <th>{dreamDateHeader(sort)}</th>
             <th>Status</th>
             <th>Hypothesis</th>
+            <th>Evidence</th>
             <th>Confidence</th>
             <th>Run</th>
           </tr>
@@ -226,6 +228,7 @@ function DreamTable({ dreams, sort }: { dreams: Dream[]; sort: DreamSort }) {
                   )}
                 </div>
               </td>
+              <td><DreamEvidenceSummary dream={dream} /></td>
               <td>{Math.round(dream.confidence * 100)}%</td>
               <td><code>{dream.cycle_run_id?.slice(0, 8) || "-"}</code></td>
             </tr>
@@ -253,9 +256,12 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
           <tr>
             <th>Started</th>
             <th>Status</th>
-            <th>Inputs</th>
+            <th><MetricLabel label="Eligible" detail="Relationships with current, valid evidence. This is not the number of AI calls." /></th>
+            <th><MetricLabel label="Paths" detail="Direct A → B → C paths actually sent to the AI provider." /></th>
+            <th><MetricLabel label="AI" detail="Valid possible-relationship proposals returned by the provider." /></th>
             <th>Created</th>
-            <th>Rejected</th>
+            <th><MetricLabel label="Rejected" detail="Provider proposals rejected by current target or source policy after validation." /></th>
+            <th>Outcome</th>
           </tr>
         </thead>
         <tbody>
@@ -264,8 +270,11 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
               <td>{formatDate(run.started_at)}</td>
               <td><span className={runStatusClass(run.status)}>{run.status}</span></td>
               <td>{run.input_relationships}</td>
+              <td>{run.attempted_paths ?? 0}</td>
+              <td>{run.provider_proposals ?? 0}</td>
               <td>{run.created_dreams}</td>
               <td>{run.rejected_dreams}</td>
+              <td>{runOutcome(run)}</td>
             </tr>
           ))}
         </tbody>
@@ -299,14 +308,4 @@ function dreamStatusClass(status: string): string {
     default:
       return "status-pill neutral";
   }
-}
-
-function runStatusClass(status: string): string {
-  if (status === "error") {
-    return "status-pill error";
-  }
-  if (status === "skipped") {
-    return "status-pill warning";
-  }
-  return "status-pill";
 }

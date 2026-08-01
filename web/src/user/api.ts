@@ -117,6 +117,14 @@ export type Dream = {
   cycle_run_id?: string;
   generator_model?: string;
   source_refs?: Array<{ type: string; id: string }>;
+  derivations?: Array<{
+    premise_position: number;
+    relationship_id: string;
+    relationship_version: number;
+    source_group_key: string;
+    quote: string;
+    authority: string;
+  }>;
   invalidated_reason?: string;
   created_at: string;
   updated_at: string;
@@ -142,6 +150,15 @@ export type DreamRun = {
   input_relationships: number;
   created_dreams: number;
   rejected_dreams: number;
+  scheduled_for?: string;
+  attempt_count?: number;
+  provider_model?: string;
+  provider_turns?: number;
+  provider_input_tokens?: number;
+  provider_output_tokens?: number;
+  attempted_paths?: number;
+  provider_proposals?: number;
+  outcome_summary?: Record<string, number>;
   status: string;
   error?: string;
 };
