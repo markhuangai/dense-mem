@@ -320,26 +320,10 @@ func telemetryWindowedCardSpecsForAudience(scope TelemetryScope, baseLabels map[
 		return specs
 	}
 	return append(specs,
-		telemetryQuerySpec{ID: "ai_cost_usd", Label: "AI cost", Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, nil, window)},
-		telemetryQuerySpec{ID: "verifier_cost_usd", Label: "Verifier cost", Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, map[string]string{"component": observability.AIComponentVerifier}, window)},
-		telemetryQuerySpec{ID: "recall_embedding_cost_usd", Label: "Recall embedding cost", Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, map[string]string{"operation": observability.AIOperationRecallEmbedding}, window)},
-		telemetryQuerySpec{ID: "background_embedding_cost_usd", Label: telemetryBackgroundEmbeddingCostLabel(scope), Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", telemetryBackgroundEmbeddingCostScope(scope), baseLabels, map[string]string{"operation": observability.AIOperationBackgroundEmbedding}, window)},
-		telemetryQuerySpec{ID: "ai_unpriced_operations", Label: "Unpriced AI operations", Unit: "operations", Query: telemetrySparseCounterIncrease("densemem_ai_operation_unpriced_total", scope, baseLabels, nil, window)},
+		telemetryQuerySpec{ID: "ai_cost_usd", Label: "AI cost", Unit: "USD", Query: telemetryAICost(scope, baseLabels, "", window)},
+		telemetryQuerySpec{ID: "verifier_cost_usd", Label: "Verifier cost", Unit: "USD", Query: telemetryAICost(scope, baseLabels, observability.AIComponentVerifier, window)},
+		telemetryQuerySpec{ID: "embedding_cost_usd", Label: "Embedding cost", Unit: "USD", Query: telemetryAICost(scope, baseLabels, observability.AIComponentEmbedding, window)},
 	)
-}
-
-func telemetryBackgroundEmbeddingCostLabel(scope TelemetryScope) string {
-	if telemetryBackgroundEmbeddingCostScope(scope).Type == "team" && (scope.Type == "profile" || scope.Type == "self") {
-		return "Background embedding cost (team-only)"
-	}
-	return "Background embedding cost"
-}
-
-func telemetryBackgroundEmbeddingCostScope(scope TelemetryScope) TelemetryScope {
-	if (scope.Type != "profile" && scope.Type != "self") || scope.TeamID == nil || *scope.TeamID == uuid.Nil {
-		return scope
-	}
-	return TelemetryScope{Type: "team", TeamID: scope.TeamID}
 }
 
 func telemetryCurrentCardSpecs(scope TelemetryScope, baseLabels map[string]string) []telemetryQuerySpec {
@@ -418,6 +402,32 @@ func telemetrySparseCounterIncreaseForSelector(metric string, selector string, w
 	targetScrapeCount := fmt.Sprintf("count_over_time(up[%s])", window)
 	fallback := fmt.Sprintf("((%s unless %s) or (%s * (%s >= bool 0) * (%s < bool on(job, instance) group_left() %s)) or (0 * %s))", first, offset, first, current, sampleCount, targetScrapeCount, ranged)
 	return fmt.Sprintf("sum(%s + %s)", ranged, fallback)
+}
+
+func telemetryAICost(scope TelemetryScope, baseLabels map[string]string, component string, window string) string {
+	extra := map[string]string(nil)
+	if component != "" {
+		extra = map[string]string{"component": component}
+	}
+	cost := telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, extra, window)
+	unpriced := telemetryOrZero(telemetrySparseCounterIncrease("densemem_ai_operation_unpriced_total", scope, baseLabels, extra, window))
+	activity := telemetryAIRequestActivity(scope, baseLabels, component, window)
+	completeCost := fmt.Sprintf("((%s) unless ((%s) > 0))", cost, unpriced)
+	zeroWhenInactive := fmt.Sprintf("(vector(0) unless (((%s) + (%s)) > 0))", activity, unpriced)
+	return fmt.Sprintf("(%s or %s)", completeCost, zeroWhenInactive)
+}
+
+func telemetryAIRequestActivity(scope TelemetryScope, baseLabels map[string]string, component string, window string) string {
+	verifier := telemetryOrZero(telemetrySparseCounterIncrease("densemem_verifier_requests_total", scope, baseLabels, nil, window))
+	embedding := telemetryOrZero(telemetrySparseCounterIncrease("densemem_embedding_requests_total", scope, baseLabels, nil, window))
+	switch component {
+	case observability.AIComponentVerifier:
+		return verifier
+	case observability.AIComponentEmbedding:
+		return embedding
+	default:
+		return fmt.Sprintf("((%s) + (%s))", verifier, embedding)
+	}
 }
 
 func telemetrySparseHistogramAverage(metric string, scope TelemetryScope, baseLabels map[string]string, extra map[string]string, window string, multiplier float64) string {
