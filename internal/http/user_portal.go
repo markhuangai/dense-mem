@@ -796,6 +796,10 @@ func (h *userPortalHandler) ssoCallbackURL(ctx context.Context) (string, error) 
 }
 
 func publicSSORateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.ConfigProvider) echo.MiddlewareFunc {
+	return publicIPRateLimitMiddleware("public-sso", svc, cfg)
+}
+
+func publicIPRateLimitMiddleware(subjectNamespace string, svc service.RateLimitServiceInterface, cfg config.ConfigProvider) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if svc == nil || cfg == nil {
@@ -809,10 +813,10 @@ func publicSSORateLimitMiddleware(svc service.RateLimitServiceInterface, cfg con
 			if routePath == "" {
 				routePath = c.Request().URL.Path
 			}
-			subject := "public-sso:ip:" + c.RealIP()
+			subject := subjectNamespace + ":ip:" + c.RealIP()
 			allowed, remaining, resetAt, err := svc.Check(c.Request().Context(), subject, routePath, limit)
 			if err != nil {
-				c.Logger().Errorf("public sso rate limit check failed: %v", err)
+				c.Logger().Error("public ip rate limit check failed")
 				return next(c)
 			}
 			c.Response().Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))

@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ControlApi, SSOGroupMapping, SSOProvider, Team } from "../api";
+import { ApiError, ControlApi, SSOGroupMapping, SSOProvider, Team } from "../api";
 import { SSOPanel } from "./SSOPanel";
 
 const team: Team = {
@@ -32,6 +32,10 @@ describe("SSOPanel", () => {
         }
         return Promise.resolve([ssoMapping(providerB, "group-b")]);
       }),
+      getDirectoryConnector: vi.fn(async () => {
+        throw new ApiError(404, "not found");
+      }),
+      listControlAdminGroups: vi.fn(async () => []),
     } as unknown as ControlApi;
 
     render(<SSOPanel api={api} teams={[team]} />);
@@ -57,6 +61,8 @@ function ssoProvider(id: string, name: string): SSOProvider {
     name,
     kind: "generic_oidc",
     issuer_url: `https://${name.toLowerCase().split(" ").join("-")}.example.com`,
+    tenant_id: "",
+    identity_claim: "sub",
     client_id: `${id}-client`,
     client_secret_env: "",
     scopes: ["openid", "profile", "email"],
@@ -80,6 +86,8 @@ function ssoMapping(provider: SSOProvider, groupId: string): SSOGroupMapping {
     scopes: ["read"],
     role: "member",
     enabled: true,
+    origin: "manual",
+    retired_at: null,
     created_at: "2026-05-01T12:00:00Z",
     updated_at: "2026-05-01T12:00:00Z",
   };

@@ -49,12 +49,14 @@ type SSORuntimeConfigProvider interface {
 }
 
 type SSORuntimeConfig struct {
-	PublicBaseURL       string
-	EntitlementCacheTTL time.Duration
-	SessionTTL          time.Duration
-	StateTTL            time.Duration
-	CookieSecure        bool
-	HTTPTimeout         time.Duration
+	PublicBaseURL        string
+	SCIMPublicBaseURL    string
+	ControlPublicBaseURL string
+	EntitlementCacheTTL  time.Duration
+	SessionTTL           time.Duration
+	StateTTL             time.Duration
+	CookieSecure         bool
+	HTTPTimeout          time.Duration
 }
 
 type SSOConfig struct {
@@ -185,7 +187,7 @@ func (s *SSOService) ListProviders(ctx context.Context) ([]*domain.SSOProvider, 
 }
 
 func (s *SSOService) CreateProvider(ctx context.Context, provider domain.SSOProvider) (*domain.SSOProvider, error) {
-	if err := normalizeSSOProvider(&provider); err != nil {
+	if err := normalizeSSOProviderForWrite(&provider); err != nil {
 		s.debugSSOProviderFailure("sso create provider validation failed", err, &provider)
 		return nil, err
 	}
@@ -202,7 +204,7 @@ func (s *SSOService) UpdateProvider(ctx context.Context, provider domain.SSOProv
 		s.debugSSOProviderFailure("sso update provider validation failed", err, &provider)
 		return nil, err
 	}
-	if err := normalizeSSOProvider(&provider); err != nil {
+	if err := normalizeSSOProviderForWrite(&provider); err != nil {
 		s.debugSSOProviderFailure("sso update provider validation failed", err, &provider)
 		return nil, err
 	}
@@ -330,7 +332,7 @@ func (s *SSOService) BeginLogin(ctx context.Context, providerID uuid.UUID, callb
 		s.debugSSOFailure("sso begin login provider lookup failed", err, ssoUUIDLogAttr("provider_id", providerID))
 		return nil, err
 	}
-	if provider == nil || !provider.Enabled {
+	if provider == nil || !provider.Enabled || provider.RetiredAt != nil {
 		s.debugSSOProviderFailure("sso begin login provider disabled", ErrSSOProviderDisabled, provider, ssoUUIDLogAttr("requested_provider_id", providerID))
 		return nil, ErrSSOProviderDisabled
 	}
@@ -414,7 +416,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		s.debugSSOFailure("sso complete login provider lookup failed", err, ssoUUIDLogAttr("provider_id", state.ProviderID))
 		return nil, err
 	}
-	if provider == nil || !provider.Enabled {
+	if provider == nil || !provider.Enabled || provider.RetiredAt != nil {
 		s.debugSSOProviderFailure("sso complete login provider disabled", ErrSSOProviderDisabled, provider, ssoUUIDLogAttr("requested_provider_id", state.ProviderID))
 		return nil, ErrSSOProviderDisabled
 	}
@@ -458,88 +460,115 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 	if claims.Subject == "" {
 		claims.Subject = idToken.Subject
 	}
-	groupSource := ssoEntitlementSourceClaims
 	s.debugSSOLoginClaims("sso login oidc claims read", *provider, claims)
-	if len(claims.Groups) == 0 {
-		s.debugSSOLoginClaims("sso login groups missing from oidc claims", *provider, claims, observability.Bool("groups_endpoint_configured", strings.TrimSpace(provider.GroupsEndpoint) != ""))
-		claims.Groups, err = s.resolveGroups(providerCtx, runtime, *provider, claims.Subject, token.AccessToken)
-		if err != nil {
-			s.debugSSOLoginFailure("sso login group resolution failed", err, *provider, claims)
-			if errors.Is(err, ErrSSOGroupRefreshUnavailable) {
-				return nil, NewSSOSetupError(SSOSetupGroupsMissing, ErrSSOAccessDenied)
-			}
-			return nil, NewSSOSetupError(SSOSetupGroupLookupFailed, ErrSSOAccessDenied)
-		}
-		claims.Groups = dedupeStrings(claims.Groups)
-		groupSource = ssoEntitlementSourceEndpoint
-		s.debugSSOLoginClaims("sso login groups resolved from endpoint", *provider, claims)
-	}
-
-	mappings, err := s.repo.ListMappingsForGroups(ctx, provider.ID, claims.Groups)
+	directoryAuthority, err := s.repo.DirectoryAuthorityActive(ctx, provider.ID)
 	if err != nil {
-		s.debugSSOLoginFailure("sso login mapping lookup failed", err, *provider, claims)
+		s.debugSSOLoginFailure("sso login directory authority lookup failed", err, *provider, claims)
 		return nil, err
 	}
-	s.debugSSOLoginClaims("sso login mapping lookup complete", *provider, claims, observability.Int("mapping_count", len(mappings)))
-	entitlements, err := s.entitlementsFromMappings(provider.ID, claims.Subject, mappings)
-	if err != nil {
-		s.debugSSOLoginFailure("sso login entitlement denied", err, *provider, claims, observability.Int("mapping_count", len(mappings)))
-		if cacheErr := s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, provider.ID, claims.Subject, claims.Groups, "denied", ""); cacheErr != nil {
-			s.debugSSOLoginFailure("sso login denied entitlement cache store failed", cacheErr, *provider, claims, observability.Int("mapping_count", len(mappings)))
+	var (
+		entitlements []domain.SSOGroupMapping
+		groupSource  string
+	)
+	if !directoryAuthority {
+		groupSource = ssoEntitlementSourceClaims
+		if len(claims.Groups) == 0 {
+			s.debugSSOLoginClaims("sso login groups missing from oidc claims", *provider, claims, observability.Bool("groups_endpoint_configured", strings.TrimSpace(provider.GroupsEndpoint) != ""))
+			claims.Groups, err = s.resolveGroups(providerCtx, runtime, *provider, claims.Subject, token.AccessToken)
+			if err != nil {
+				s.debugSSOLoginFailure("sso login group resolution failed", err, *provider, claims)
+				if errors.Is(err, ErrSSOGroupRefreshUnavailable) {
+					return nil, NewSSOSetupError(SSOSetupGroupsMissing, ErrSSOAccessDenied)
+				}
+				return nil, NewSSOSetupError(SSOSetupGroupLookupFailed, ErrSSOAccessDenied)
+			}
+			claims.Groups = dedupeStrings(claims.Groups)
+			groupSource = ssoEntitlementSourceEndpoint
+			s.debugSSOLoginClaims("sso login groups resolved from endpoint", *provider, claims)
 		}
-		setupCode := SSOSetupMappingMissing
-		if len(mappings) > 0 {
-			setupCode = SSOSetupEntitlementEmpty
+
+		mappings, err := s.repo.ListMappingsForGroups(ctx, provider.ID, claims.Groups)
+		if err != nil {
+			s.debugSSOLoginFailure("sso login mapping lookup failed", err, *provider, claims)
+			return nil, err
 		}
-		return nil, NewSSOSetupError(setupCode, ErrSSOAccessDenied)
+		s.debugSSOLoginClaims("sso login mapping lookup complete", *provider, claims, observability.Int("mapping_count", len(mappings)))
+		entitlements, err = s.entitlementsFromMappings(provider.ID, claims.Subject, mappings)
+		if err != nil {
+			s.debugSSOLoginFailure("sso login entitlement denied", err, *provider, claims, observability.Int("mapping_count", len(mappings)))
+			if cacheErr := s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, provider.ID, claims.Subject, claims.Groups, "denied", ""); cacheErr != nil {
+				s.debugSSOLoginFailure("sso login denied entitlement cache store failed", cacheErr, *provider, claims, observability.Int("mapping_count", len(mappings)))
+			}
+			setupCode := SSOSetupMappingMissing
+			if len(mappings) > 0 {
+				setupCode = SSOSetupEntitlementEmpty
+			}
+			return nil, NewSSOSetupError(setupCode, ErrSSOAccessDenied)
+		}
 	}
-	s.debugSSOLoginClaims("sso login entitlements resolved", *provider, claims, observability.Int("entitlement_count", len(entitlements)))
+	if !directoryAuthority {
+		s.debugSSOLoginClaims("sso login entitlements resolved", *provider, claims, observability.Int("entitlement_count", len(entitlements)))
+	}
 
 	now := s.now()
 	identity := &domain.SSOIdentity{
 		ProviderID:             provider.ID,
 		Subject:                claims.Subject,
+		ExternalID:             claims.ExternalID,
 		Email:                  claims.Email,
 		DisplayName:            claims.DisplayName,
+		Active:                 true,
 		LastLoginAt:            &now,
 		LastEntitlementCheckAt: &now,
 	}
 	if err := s.repo.UpsertIdentity(ctx, identity); err != nil {
+		if errors.Is(err, repository.ErrDirectoryIdentityNotProvisioned) {
+			return nil, NewSSOSetupError(SSOSetupEntitlementEmpty, ErrSSOAccessDenied)
+		}
 		s.debugSSOLoginFailure("sso login identity upsert failed", err, *provider, claims)
 		return nil, err
 	}
-	activeByProfileID := make(map[uuid.UUID]struct{}, len(entitlements))
-	for _, entitlement := range entitlements {
-		name := ssoProfileName(claims.Email, claims.DisplayName, identity.ID)
-		profile, err := s.repo.UpsertTeamProfileForMapping(ctx, *identity, entitlement, name)
+	var teams []domain.SSOTeamProfile
+	if directoryAuthority {
+		teams, err = s.directoryEntitledTeams(ctx, provider.ID, identity.ID)
 		if err != nil {
-			s.debugSSOLoginFailure("sso login team profile upsert failed", err, *provider, claims, ssoUUIDLogAttr("team_id", entitlement.TeamID), ssoHashLogAttr("group_id", entitlement.GroupID), observability.String("role", entitlement.Role))
-			if errors.Is(err, repository.ErrTeamInactive) {
-				continue
-			}
+			s.debugSSOLoginFailure("sso login directory team entitlement lookup failed", err, *provider, claims, ssoUUIDLogAttr("identity_id", identity.ID))
 			return nil, err
 		}
-		activeByProfileID[profile.ID] = struct{}{}
-	}
-	if len(activeByProfileID) == 0 {
-		if cacheErr := s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, provider.ID, claims.Subject, claims.Groups, "denied", ""); cacheErr != nil {
-			s.debugSSOLoginFailure("sso login denied entitlement cache store failed", cacheErr, *provider, claims, observability.Int("entitlement_count", len(entitlements)))
+	} else {
+		activeByProfileID := make(map[uuid.UUID]struct{}, len(entitlements))
+		for _, entitlement := range entitlements {
+			name := ssoProfileName(claims.Email, claims.DisplayName, identity.ID)
+			profile, err := s.repo.UpsertTeamProfileForMapping(ctx, *identity, entitlement, name)
+			if err != nil {
+				s.debugSSOLoginFailure("sso login team profile upsert failed", err, *provider, claims, ssoUUIDLogAttr("team_id", entitlement.TeamID), ssoHashLogAttr("group_id", entitlement.GroupID), observability.String("role", entitlement.Role))
+				if errors.Is(err, repository.ErrTeamInactive) {
+					continue
+				}
+				return nil, err
+			}
+			activeByProfileID[profile.ID] = struct{}{}
 		}
-		return nil, NewSSOSetupError(SSOSetupEntitlementEmpty, ErrSSOAccessDenied)
-	}
-	cacheTTL := ssoActiveEntitlementCacheTTL(runtime, groupSource)
-	cacheMessage := ssoEntitlementCacheMessage(groupSource)
-	if err := s.storeEntitlementCacheWithTTL(ctx, cacheTTL, provider.ID, claims.Subject, claims.Groups, "active", cacheMessage); err != nil {
-		s.debugSSOLoginFailure("sso login entitlement cache store failed", err, *provider, claims)
-		return nil, err
-	}
-	teams, err := s.currentEntitledTeams(ctx, identity.ID, activeByProfileID)
-	if err != nil {
-		s.debugSSOLoginFailure("sso login current entitled teams failed", err, *provider, claims, ssoUUIDLogAttr("identity_id", identity.ID))
-		return nil, err
+		if len(activeByProfileID) == 0 {
+			if cacheErr := s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, provider.ID, claims.Subject, claims.Groups, "denied", ""); cacheErr != nil {
+				s.debugSSOLoginFailure("sso login denied entitlement cache store failed", cacheErr, *provider, claims, observability.Int("entitlement_count", len(entitlements)))
+			}
+			return nil, NewSSOSetupError(SSOSetupEntitlementEmpty, ErrSSOAccessDenied)
+		}
+		cacheTTL := ssoActiveEntitlementCacheTTL(runtime, groupSource)
+		cacheMessage := ssoEntitlementCacheMessage(groupSource)
+		if err := s.storeEntitlementCacheWithTTL(ctx, cacheTTL, provider.ID, claims.Subject, claims.Groups, "active", cacheMessage); err != nil {
+			s.debugSSOLoginFailure("sso login entitlement cache store failed", err, *provider, claims)
+			return nil, err
+		}
+		teams, err = s.currentEntitledTeams(ctx, identity.ID, activeByProfileID)
+		if err != nil {
+			s.debugSSOLoginFailure("sso login current entitled teams failed", err, *provider, claims, ssoUUIDLogAttr("identity_id", identity.ID))
+			return nil, err
+		}
 	}
 	if len(teams) == 0 {
-		s.debugSSOLoginFailure("sso login entitled teams empty", ErrSSOAccessDenied, *provider, claims, observability.Int("active_profile_count", len(activeByProfileID)))
+		s.debugSSOLoginFailure("sso login entitled teams empty", ErrSSOAccessDenied, *provider, claims, observability.Int("active_profile_count", len(teams)))
 		return nil, NewSSOSetupError(SSOSetupEntitlementEmpty, ErrSSOAccessDenied)
 	}
 	selected := teams[0]
@@ -708,92 +737,6 @@ func (s *SSOService) Logout(ctx context.Context, sessionToken string) error {
 	return nil
 }
 
-func (s *SSOService) ValidateAPIKeyPrincipal(ctx context.Context, key *domain.APIKey) (*domain.APIKey, error) {
-	if key == nil {
-		s.debugSSOFailure("sso api key validation key missing", ErrSSOAccessDenied, ssoAPIKeyLogAttrs(key)...)
-		return nil, ErrSSOAccessDenied
-	}
-	if key.SSOProviderID == nil || strings.TrimSpace(key.SSOSubject) == "" {
-		if ssoKeyRequiresEntitlementValidation(key) {
-			s.debugSSOFailure("sso api key validation incomplete sso link", ErrSSOAccessDenied, ssoAPIKeyLogAttrs(key)...)
-			return nil, ErrSSOAccessDenied
-		}
-		return key, nil
-	}
-	provider, err := s.repo.GetProvider(ctx, *key.SSOProviderID)
-	if err != nil {
-		s.debugSSOFailure("sso api key validation provider lookup failed", err, ssoAPIKeyLogAttrs(key)...)
-		return nil, err
-	}
-	if provider == nil || !provider.Enabled {
-		s.debugSSOProviderFailure("sso api key validation provider disabled", ErrSSOProviderDisabled, provider, ssoAPIKeyLogAttrs(key)...)
-		return nil, ErrSSOProviderDisabled
-	}
-
-	cache, err := s.repo.GetEntitlementCache(ctx, provider.ID, key.SSOSubject)
-	if err != nil {
-		s.debugSSOProviderFailure("sso api key validation entitlement cache lookup failed", err, provider, ssoAPIKeyLogAttrs(key)...)
-		return nil, err
-	}
-	now := s.now()
-	if cache == nil || cache.ExpiresAt.Before(now) || cache.ExpiresAt.Equal(now) {
-		runtime, err := s.runtimeConfig(ctx)
-		if err != nil {
-			s.debugSSOProviderFailure("sso api key validation runtime config failed", err, provider, ssoAPIKeyLogAttrs(key)...)
-			return nil, err
-		}
-		providerCtx, cancel := s.providerContext(ctx, runtime)
-		groups, refreshErr := s.resolveGroups(providerCtx, runtime, *provider, key.SSOSubject, "")
-		cancel()
-		if refreshErr != nil {
-			s.debugSSOProviderFailure("sso api key validation group refresh failed", refreshErr, provider, ssoAPIKeyLogAttrs(key)...)
-			if cacheErr := s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, provider.ID, key.SSOSubject, nil, "error", refreshErr.Error()); cacheErr != nil {
-				s.debugSSOProviderFailure("sso api key validation refresh error cache store failed", cacheErr, provider, ssoAPIKeyLogAttrs(key)...)
-			}
-			return nil, ErrSSOEntitlementRefreshStale
-		}
-		cache = &domain.SSOEntitlementCache{
-			ProviderID: provider.ID,
-			Subject:    key.SSOSubject,
-			Groups:     groups,
-			Status:     "active",
-			CheckedAt:  now,
-			ExpiresAt:  now.Add(runtime.EntitlementCacheTTL),
-		}
-		mappings, err := s.repo.ListMappingsForGroups(ctx, provider.ID, groups)
-		if err != nil {
-			s.debugSSOProviderFailure("sso api key validation mapping lookup failed", err, provider, append(ssoAPIKeyLogAttrs(key), observability.Int("group_count", len(groups)), ssoHashesLogAttr("groups", groups))...)
-			return nil, err
-		}
-		if !hasMappingForTeam(mappings, key.GetTeamID()) {
-			cache.Status = "denied"
-		}
-		if err := s.repo.SetEntitlementCache(ctx, *cache); err != nil {
-			s.debugSSOProviderFailure("sso api key validation entitlement cache store failed", err, provider, append(ssoAPIKeyLogAttrs(key), observability.String("cache_status", cache.Status), observability.Int("group_count", len(cache.Groups)), ssoHashesLogAttr("groups", cache.Groups))...)
-			return nil, err
-		}
-	}
-	if cache.Status != "active" {
-		s.debugSSOProviderFailure("sso api key validation cache denied", ErrSSOAccessDenied, provider, append(ssoAPIKeyLogAttrs(key), observability.String("cache_status", cache.Status), observability.Int("group_count", len(cache.Groups)), ssoHashesLogAttr("groups", cache.Groups))...)
-		return nil, ErrSSOAccessDenied
-	}
-	mappings, err := s.repo.ListMappingsForGroups(ctx, provider.ID, cache.Groups)
-	if err != nil {
-		s.debugSSOProviderFailure("sso api key validation cached mapping lookup failed", err, provider, append(ssoAPIKeyLogAttrs(key), observability.Int("group_count", len(cache.Groups)), ssoHashesLogAttr("groups", cache.Groups))...)
-		return nil, err
-	}
-	entitlement, ok := mergedEntitlementForTeam(mappings, key.GetTeamID())
-	if !ok {
-		s.debugSSOProviderFailure("sso api key validation team entitlement missing", ErrSSOAccessDenied, provider, append(ssoAPIKeyLogAttrs(key), observability.Int("mapping_count", len(mappings)), observability.Int("group_count", len(cache.Groups)), ssoHashesLogAttr("groups", cache.Groups))...)
-		return nil, ErrSSOAccessDenied
-	}
-	key.Scopes = entitlement.Scopes
-	key.Role = entitlement.Role
-	key.SSOGroupID = entitlement.GroupID
-	key.SSOEntitlementStatus = "active"
-	return key, nil
-}
-
 func (s *SSOService) oauthConfig(ctx context.Context, provider domain.SSOProvider, callbackURL string) (*oidc.Provider, *oauth2.Config, error) {
 	oidcProvider, err := oidc.NewProvider(ctx, provider.IssuerURL)
 	if err != nil {
@@ -933,6 +876,27 @@ func (s *SSOService) currentEntitledTeams(ctx context.Context, identityID uuid.U
 	return teams, nil
 }
 
+func (s *SSOService) directoryEntitledTeams(ctx context.Context, providerID, identityID uuid.UUID) ([]domain.SSOTeamProfile, error) {
+	profiles, err := s.repo.ListTeamProfilesForIdentity(ctx, identityID)
+	if err != nil {
+		return nil, err
+	}
+	teams := make([]domain.SSOTeamProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		if profile == nil {
+			continue
+		}
+		entitled, err := s.repo.DirectoryTeamProfileEntitled(ctx, profile.Profile.ID, providerID, identityID, profile.Profile.GetTeamID(), profile.Profile.SSOGroupID)
+		if err != nil {
+			return nil, err
+		}
+		if entitled {
+			teams = append(teams, *profile)
+		}
+	}
+	return teams, nil
+}
+
 func (s *SSOService) storeEntitlementCache(ctx context.Context, providerID uuid.UUID, subject string, groups []string, status, message string) error {
 	runtime, err := s.runtimeConfig(ctx)
 	if err != nil {
@@ -976,6 +940,8 @@ func (s *SSOService) runtimeConfig(ctx context.Context) (SSORuntimeConfig, error
 
 func normalizeSSORuntimeConfig(cfg SSORuntimeConfig) SSORuntimeConfig {
 	cfg.PublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
+	cfg.SCIMPublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.SCIMPublicBaseURL), "/")
+	cfg.ControlPublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.ControlPublicBaseURL), "/")
 	if cfg.EntitlementCacheTTL <= 0 {
 		cfg.EntitlementCacheTTL = DefaultSSOEntitlementCacheTTL
 	}
