@@ -68,6 +68,7 @@ func TestTelemetryCostCardsAreOperatorOnly(t *testing.T) {
 	require.NotNil(t, verifierCost)
 	require.Equal(t, "USD", verifierCost.Unit)
 	require.Contains(t, verifierCost.Query, `component="verifier"`)
+	require.Contains(t, verifierCost.Query, "densemem_ai_operation_cost_usd_total")
 	require.Contains(t, verifierCost.Query, "densemem_verifier_requests_total")
 	require.Contains(t, verifierCost.Query, "densemem_ai_operation_unpriced_total")
 	require.Contains(t, verifierCost.Query, "vector(0) unless")
@@ -77,7 +78,10 @@ func TestTelemetryCostCardsAreOperatorOnly(t *testing.T) {
 	require.Equal(t, "Embedding cost", embeddingCost.Label)
 	require.Equal(t, "USD", embeddingCost.Unit)
 	require.Contains(t, embeddingCost.Query, `component="embedding"`)
+	require.Contains(t, embeddingCost.Query, "densemem_ai_operation_cost_usd_total")
 	require.Contains(t, embeddingCost.Query, "densemem_embedding_requests_total")
+	require.Contains(t, embeddingCost.Query, "densemem_ai_operation_unpriced_total")
+	require.Contains(t, embeddingCost.Query, "vector(0) unless")
 	require.NotContains(t, embeddingCost.Query, "operation=")
 
 	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")

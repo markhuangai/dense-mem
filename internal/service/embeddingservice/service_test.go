@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +116,81 @@ func TestEmbeddingWorkerCompletesValidBatch(t *testing.T) {
 	}
 	if len(provider.gotTexts) != 2 || provider.gotTexts[0] != "document job-a" {
 		t.Fatalf("provider texts = %#v", provider.gotTexts)
+	}
+}
+
+func TestEmbeddingWorkerBackgroundCostUsesTeamOnlyIdentityForMixedOwners(t *testing.T) {
+	teamID := "11111111-1111-4111-8111-111111111111"
+	ownerA := "22222222-2222-4222-8222-222222222222"
+	ownerB := "33333333-3333-4333-8333-333333333333"
+	search := newEmbeddingSearchStub()
+	jobA := embeddingJobForTest("job-a", 1)
+	jobA.TeamID = teamID
+	jobA.OwnerProfileID = ownerA
+	jobB := embeddingJobForTest("job-b", 1)
+	jobB.TeamID = teamID
+	jobB.OwnerProfileID = ownerB
+	search.jobs = []repository.EmbeddingJob{jobA, jobB}
+
+	embeddingInputPrice := 1.0
+	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
+		return observability.AIPricing{EmbeddingInputUSDPerMillionTokens: &embeddingInputPrice}, nil
+	}))
+	provider := &embeddingProviderStub{
+		available: true,
+		model:     "test-model",
+		dims:      3,
+		vectors: [][]float32{
+			{1, 0, 0},
+			{0, 1, 0},
+		},
+		observeUsage: func(ctx context.Context, itemCount int) {
+			observability.RecordAIOperationUsage(ctx, metrics, observability.AIOperationUsage{
+				Component:   observability.AIComponentEmbedding,
+				Model:       "test-model",
+				InputTokens: 1_000_000,
+				ItemCount:   itemCount,
+				Source:      observability.AITokenSourceProvider,
+			})
+		},
+	}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search:   search,
+		Provider: provider,
+		Metrics:  metrics,
+		TeamID:   teamID,
+		WorkerID: "worker-a",
+	})
+
+	result, err := worker.ProcessNextBatch(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNextBatch returned error: %v", err)
+	}
+	if result.Completed != 2 {
+		t.Fatalf("result = %#v", result)
+	}
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	var costLine string
+	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+		if strings.HasPrefix(line, "densemem_ai_operation_cost_usd_total{") && strings.Contains(line, `operation="background_embedding"`) {
+			costLine = line
+			break
+		}
+	}
+	if costLine == "" {
+		t.Fatalf("background embedding cost sample missing:\n%s", recorder.Body.String())
+	}
+	for _, label := range []string{`team_id="` + teamID + `"`, `profile_id="unknown"`, `component="embedding"`} {
+		if !strings.Contains(costLine, label) {
+			t.Fatalf("background embedding cost sample missing %s: %s", label, costLine)
+		}
+	}
+	for _, ownerID := range []string{ownerA, ownerB} {
+		if strings.Contains(costLine, ownerID) {
+			t.Fatalf("background embedding cost attributed to owner %s: %s", ownerID, costLine)
+		}
 	}
 }
 
@@ -536,20 +613,24 @@ func (s *embeddingSearchStub) SearchExactVector(context.Context, repository.Exac
 }
 
 type embeddingProviderStub struct {
-	available bool
-	model     string
-	dims      int
-	vectors   [][]float32
-	err       error
-	gotTexts  []string
+	available    bool
+	model        string
+	dims         int
+	vectors      [][]float32
+	err          error
+	gotTexts     []string
+	observeUsage func(context.Context, int)
 }
 
 func (p *embeddingProviderStub) Embed(context.Context, string) ([]float32, string, error) {
 	return nil, "", errors.New("not implemented")
 }
 
-func (p *embeddingProviderStub) EmbedBatch(_ context.Context, texts []string) ([][]float32, string, error) {
+func (p *embeddingProviderStub) EmbedBatch(ctx context.Context, texts []string) ([][]float32, string, error) {
 	p.gotTexts = append([]string(nil), texts...)
+	if p.observeUsage != nil {
+		p.observeUsage(ctx, len(texts))
+	}
 	if p.err != nil {
 		return nil, "", p.err
 	}
