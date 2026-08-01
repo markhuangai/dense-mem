@@ -65,8 +65,9 @@ https://demo-dense-mem.markhuang.ai/mcp
 ```
 
 Run tool discovery. Verify that discovery/server metadata
-advertises Dense-Mem contract `dense-mem.v2.3.2` and that `recall_memory` returns
-`relationship_id` handles.
+advertises Dense-Mem contract `dense-mem.v2.4`, that `remember` requires an
+exact-span proposal, and that `get_submission_status` is present while the
+retired placement/review tools are absent.
 
 ## Step 3: Test Shared Memory
 
@@ -82,8 +83,9 @@ Client B, using the same key:
 Before answering, use Dense-Mem to recall the demo codename and response style.
 ```
 
-A new chat with the same key should recall from Dense-Mem rather than the old
-chat transcript.
+Poll the returned submission ID until it is completed before testing recall. A
+new chat with the same key should then recall from Dense-Mem rather than the
+old chat transcript.
 
 ## Step 4: Test Trace
 
@@ -99,10 +101,12 @@ Normal recall should be compact and trace should use
 ## Step 5: Test Identity Ambiguity
 
 Store two clearly distinguished people with the same first name, then submit an
-underspecified statement about that name. The safe behavior is an
-`identity_needs_review` task and no speculative Entity/edge.
+underspecified statement about that name. The safe behavior is a server-owned
+terminal rejection or non-active outcome, with no speculative Entity/edge and
+no client identity-choice tool.
 
-Do not choose a candidate unless the evidence identifies which person.
+Submit a new complete evidence/proposal package only when the source identifies
+which person.
 
 ## Step 6: Test A Correction
 
@@ -122,8 +126,8 @@ evidence. The safe behavior is:
 | --- | --- |
 | tool names/fields differ | deployed contract version and `tools/list` |
 | another client sees nothing | both clients use exactly the same key |
-| placement is not searchable | inspect processing outcome, branch degradation, and search freshness |
-| review task appears | show the exact question; provide evidence/identity choice |
+| submission is not searchable | inspect submission processing outcome and search freshness |
+| rejected or quarantined status | do not use the content; submit a new complete request only when appropriate |
 | quota/expiry error | current limits on demo page/runtime response |
 | deployed behavior differs from this page | check the current release tag and `tools/list` metadata |
 

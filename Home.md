@@ -32,21 +32,20 @@ sequenceDiagram
   participant PG as PostgreSQL + pgvector
 
   User->>Host: Share evidence
-  Host->>DM: remember(evidence, optional proposal)
-  DM->>PG: Commit evidence and queued placement
-  DM-->>Host: ingest_id
+  Host->>DM: remember(evidence, exact-span proposal)
+  DM->>DM: Deterministic write-time security scan
+  DM->>PG: Stage isolated submission
+  DM-->>Host: submission_id
   DM->>PG: Load exact Entity candidates and structured predicates
-  DM->>DM: One bounded structure/support assessor conversation
+  DM->>DM: One capability-free assessor request
   DM->>PG: Persist first valid assessment
-  DM->>DM: Apply confidence gate and deterministic lifecycle
-  DM->>PG: Commit current state, history, review, and search jobs
-  alt Placement review required
-    Host->>DM: get_memory_placement
-    DM-->>Host: Exact owner-scoped ambiguity/conflict and impact
-    Host->>User: Ask for evidence-backed choice
-    User-->>Host: Decision or new evidence
-    Host->>DM: resolve_memory_placement
+  alt Security concern
+    DM->>PG: Quarantine isolated submission for exactly 24 hours
+  else Clean validated assessment
+    DM->>PG: Atomically commit state, history, predicates, and search jobs
   end
+  Host->>DM: get_submission_status(submission_id)
+  DM-->>Host: Safe owner-scoped processing/search outcomes
   Host->>DM: recall_memory(query)
   DM->>PG: Evidence and Relationship search with optional derived frontiers
   DM-->>Host: Ranked Evidence plus separate related frontiers and degradations
@@ -71,7 +70,7 @@ another profile agrees  -> keep its authored Relationship and group on recall
 profiles disagree       -> preserve each author; use a team Conflict case
 new real identity       -> create one Entity
 new relationship        -> create one Relationship
-actual ambiguity        -> review; do not guess
+actual ambiguity        -> server assessment; no client resolution loop
 insufficient evidence   -> pending Relationship; no active edge/default recall
 dream speculation       -> Hypothesis only; no new node
 ```
@@ -156,7 +155,7 @@ Full definitions exist only in
 | Redis | optional distributed coordination: limits, short leases/signals, SSE |
 | process memory | the same coordination interfaces for one process only |
 
-Redis never stores the only copy of an Entity, Relationship, evidence, review,
+Redis never stores the only copy of an Entity, Relationship, evidence, submission,
 key, or audit event.
 
 ## What Dense-Mem Does Not Do

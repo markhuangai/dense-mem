@@ -367,14 +367,22 @@ Entities, Relationships, reviews, queues, API keys, or audit.
 | `SSE_MAX_DURATION_SECONDS` | `300` | stream maximum |
 | `SSE_MAX_CONCURRENT_STREAMS` | `10` | streams per principal |
 | `SSO_PUBLIC_BASE_URL` | empty | disable browser SSO when empty |
+| `SCIM_PUBLIC_BASE_URL` | empty | dedicated HTTPS base URL for per-provider SCIM endpoints |
+| `CONTROL_PUBLIC_BASE_URL` | empty | dedicated HTTPS base URL and OIDC callback origin for the control portal |
 | `SSO_ENTITLEMENT_CACHE_TTL_SECONDS` | `300` | entitlement refresh |
 | `SSO_SESSION_TTL_SECONDS` | `28800` | browser session lifetime |
 | `SSO_STATE_TTL_SECONDS` | `600` | OAuth state/PKCE lifetime |
 | `SSO_HTTP_TIMEOUT_SECONDS` | `10` | provider timeout |
 | `SSO_COOKIE_SECURE` | derived | true for HTTPS by default |
 
+`SCIM_PUBLIC_BASE_URL` and `CONTROL_PUBLIC_BASE_URL` must be absolute HTTPS URLs
+without a query or fragment. They are control-plane settings, not request
+fields. A SCIM base is expanded to `/scim/v2/<connector-id>`; the control base
+expands its OIDC callback to `/control/auth/callback` and restricts browser
+origins to that administrative ingress.
+
 Detailed public-edge policy is in [Public HTTPS And Redis](Public-HTTPS-And-Redis);
-SSO mapping is in [User Portal SSO](User-Portal-SSO).
+SSO and Entra directory mapping are in [User Portal SSO](User-Portal-SSO).
 
 ## Telemetry And Logging
 
@@ -444,12 +452,14 @@ no external graph-analysis dependency is implied. See
 
 ### Conflict review
 
-Conflict review is core deterministic maintenance, not an optional/model-backed
-feature. Placement opens or updates durable cases in the committing transaction;
-automatic disposition belongs to the nightly reviewer. There is no
-shadow/observe mode and no normal-runtime disable flag. The nightly job reviews
-known open/overdue cases, may close losing stale Relationship episodes through
-audited lifecycle transitions, and calls no model.
+Conflict review is core maintenance, not an optional feature. Placement opens or
+updates durable cases in the committing transaction; automatic disposition
+belongs to the nightly reviewer. There is no shadow/observe mode and no
+normal-runtime disable flag. The reviewer uses deterministic policy for ordinary
+cases. For an unchanged overdue case with no deterministic winner, it uses the
+existing `AI_VERIFIER_API_URL`, `AI_VERIFIER_API_KEY`, and `AI_VERIFIER_MODEL`
+provider contract for one bounded assessment per local day; no separate reviewer
+model or configuration exists.
 
 | Key | Target default | Meaning |
 | --- | --- | --- |
@@ -458,7 +468,7 @@ audited lifecycle transitions, and calls no model.
 | `CONFLICT_REVIEW_MAX_CONCURRENCY` | `1` | concurrent team runs per process, 1–16 |
 | `CONFLICT_REVIEW_BATCH_SIZE` | `100` | team-local case claim size, 1–500 |
 | `CONFLICT_REVIEW_LEASE_SECONDS` | `300` | renewable case-claim lease, 30–1800 |
-| `CONFLICT_REVIEW_MAX_ATTEMPTS` | `5` | bounded retry attempts before operator alert, 1–20 |
+| `CONFLICT_REVIEW_MAX_ATTEMPTS` | `5` | bounded claim retries before operator alert, 1–20; separate from the five failed overdue-assessment fallback |
 | `CONFLICT_REVIEW_JITTER_SECONDS` | `600` | stable per-team schedule jitter, 0–3600 |
 
 A team may set only `review_ttl_days` as a PostgreSQL-backed override in the

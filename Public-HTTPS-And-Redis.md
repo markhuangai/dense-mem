@@ -88,8 +88,8 @@ Redis never owns:
 - evidence or ingests
 - Entity/EntityName records
 - Relationship records/support/transitions
-- verification/review decisions
-- placement/embedding queues and results
+- verifier/submission assessment decisions
+- submission/embedding queues and results
 - API keys/audit
 
 PostgreSQL remains the authoritative queue/ledger. Redis loss does not remove
@@ -158,12 +158,12 @@ Verify:
 
 - certificate/hostname and HTTP-to-HTTPS behavior
 - control/metrics/data ports are unreachable publicly
-- `dense-mem.v2.3.2` routes/tools work
+- `dense-mem.v2.4` routes/tools work
 - wrong/missing keys fail safely
 - body/rate/in-flight limits
 - Redis outage drains replicas
 - no knowledge is lost after Redis restart
-- placement/search/recall continue after coordination recovery
+- submission/search/recall continue after coordination recovery
 
 ## Risks And Mitigations
 
@@ -171,7 +171,7 @@ Verify:
 | --- | --- | --- |
 | Control listener exposed | public caller gains cross-team operations | separate private listener/ingress and network policy |
 | Plaintext bearer key | key captured outside loopback | HTTPS-only public edge |
-| Redis becomes memory store | Redis restart removes Entity/review state | coordination-only interfaces and persistence tests |
+| Redis becomes memory store | Redis restart removes Entity/submission state | coordination-only interfaces and persistence tests |
 | Silent replica fallback | global limits split per process | distributed-required readiness |
 | Wildcard route exposes compatibility/admin | ingress publishes unintended path | explicit route allowlist and external scan |
 | Proxy logs secrets | Authorization header appears in access logs | header redaction and log validation |

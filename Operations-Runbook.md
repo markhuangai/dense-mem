@@ -487,17 +487,20 @@ never “repair” it by creating a node. See [Dreaming](Dreaming).
 
 ## Conflict Review Job
 
-Conflict review is deterministic core maintenance, separate from optional dream
-and community work. New evidence is evaluated synchronously, so a nightly
-outage does not roll back committed placement or authorize a fallback winner.
-It leaves due cases open/overdue and raises backlog/run alerts.
+Conflict review is core maintenance, separate from optional dream and community
+work. It deterministically handles ordinary cases and uses the configured
+verifier only for an unchanged overdue case with no deterministic winner. New
+evidence is evaluated synchronously, so a nightly outage does not roll back
+committed placement. A provider/schema failure is one bounded local-day attempt;
+after five failures for the unchanged tuple, server-side last-write-wins applies.
 
 Inspect durable per-team run rows, oldest due/overdue age, attempts, lease owner
 and expiry, current case/version, member Relationship versions, policy version,
-and the last append-only event. After process/database recovery, let bounded
-catch-up reserve the team/local date and reclaim expired leases. Do not launch
-parallel manual scans, extend deadlines, or mark a case resolved to clear an
-alert.
+assessment-attempt/plan history, pending deletion-only derivation tasks, and the
+last append-only event. After
+process/database recovery, let bounded catch-up reserve the team/local date and
+reclaim expired leases. Do not launch parallel manual scans, extend deadlines,
+or mark a case resolved to clear an alert.
 
 For a stuck case:
 
@@ -505,13 +508,23 @@ For a stuck case:
 2. verify the case still has at least two material positions and current support
 3. distinguish a live lease from an expired lease before retrying
 4. allow the supported worker path to recompute from current PostgreSQL state
-5. if no position qualifies, keep/mark `overdue` and request new evidence
-6. confirm current and historical recall plus trace before closing the incident
+5. for an unchanged overdue case, inspect only the durable assessment outcome,
+   failure class, model, and policy—not provider content—and allow the supported
+   retry/fallback path to run
+6. if a resolution is `resolution_pending`, reduce the bounded fanout through
+   normal lifecycle/source changes; do not apply a partial manual retraction
+7. if a deletion-only derivation task is pending or has an expired lease, let the
+   next supported nightly run reclaim it; do not recreate raw evidence manually
+8. confirm current and historical recall plus trace before closing the incident
 
 The worker path may resolve the case and losing Relationship episodes selected
-by the deterministic policy. Never edit/delete evidence, add support, rewrite a
-case event, or set another owner's `valid_to`/status outside the locked nightly
-Conflict review transaction. Lifecycle rules are in
+by deterministic policy or the validated overdue-assessment path. It may retract
+only a case-exclusive losing fragment through its audited system lifecycle
+operation; a fragment that supports any Relationship outside the active case is
+retained. Never edit raw evidence, add support, rewrite a case event, or set
+another owner's `valid_to`/status outside the locked nightly Conflict review
+transaction.
+Lifecycle rules are in
 [Conflicts And Corrections](Conflicts-And-Corrections#nightly-conflict-review).
 
 ## Backup

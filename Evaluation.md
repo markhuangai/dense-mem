@@ -1,806 +1,213 @@
 # Evaluation
 
-Evaluation decides whether the current architecture is correct, retrievable,
-isolated, recoverable, and fast under representative concurrent reads and
-writes. A single answer-quality score is insufficient.
+Dense-Mem evaluates retrieval through the production MCP submission and recall
+paths. The evaluation corpus, downloaded datasets, runtime databases,
+credentials, and full run outputs are local-only ignored artifacts. The
+generator, source locks, validation, scoring, and compact baseline evidence are
+reviewed with code.
 
 ## Current Retrieval Evaluation
 
-The current release uses the deterministic 1k public comparison as the hard
-retrieval-quality gate. Larger runs and judge outputs are diagnostic unless a
-later roadmap decision explicitly promotes them.
+The release retrieval gate is the public six-axis 1k corpus:
 
-The active public comparison uses validated six-axis seeds generated locally and
-ignored by git:
+| Axis | Dataset | Purpose |
+| --- | --- | --- |
+| scifact | BEIR SciFact | Scientific claim/document retrieval. |
+| msmarco | BEIR MS MARCO | Web-passage retrieval. |
+| hotpotqa | BEIR HotpotQA | Public passage retrieval. |
+| musique | MuSiQue answerable dev | Multi-hop Relationship retrieval. |
+| qasper | QASPER | Paper QA evidence retrieval. |
+| longmem_oracle | LongMemEval-S cleaned | Long-memory chat recall. |
 
-```text
-tests/eval/seeds/public_6axis_1k_v1
-tests/eval/seeds/public_6axis_5k_v1
-tests/eval/suites/public_6axis_1k_v1.jsonl
-tests/eval/suites/public_6axis_5k_v1.jsonl
-```
+The historical V1 seed preserves corpus identity but cannot enter the new
+submission API because it lacks required exact-span proposals. The V2 seed is a
+source-locked, auditable derivative of that V1 corpus.
 
-`public_6axis_1k_v1` contains exactly 1,000 corpus rows and is the required
-release gate. `public_6axis_5k_v1` contains exactly 5,000 corpus rows and may
-be run as an optional diagnostic. The 1k seed is a strict deterministic subset
-of the 5k seed. The six axes are SciFact, MS MARCO, HotpotQA, MuSiQue, QASPER,
-and LongMem Oracle. The corpus-row allocation is:
+~~~text
+V1 source-locked corpus
+  -> deterministic safe-content normalization
+  -> exact-span proposal generation
+  -> model-only security/conformance audit
+  -> real Go scanner + proposal validation
+  -> detailed V1/V2 comparison
+  -> live submission import and retrieval evaluation
+~~~
 
-| Axis | 1k rows | 5k rows |
-| --- | ---: | ---: |
-| SciFact | 90 | 500 |
-| MS MARCO | 90 | 500 |
-| HotpotQA | 90 | 500 |
-| MuSiQue | 160 | 1000 |
-| QASPER | 300 | 1400 |
-| LongMem Oracle | 270 | 1100 |
+## V1-to-V2 Seed Comparison Gate
 
-Corpus evidence is split rather than truncated, every row is at most 999
-Unicode code points, and qrels resolve to generated `source_key` plus
-`source_revision` pairs before import. Seed validation, not recall quality, is
-a mandatory gate before any evaluated stack starts.
+No live evaluation begins until the generated V2 seed has passed both
+validation and a detailed V1/V2 comparison.
 
-### Run protocol
+The comparison reports, without exposing raw restricted corpus content:
 
-```text
-validated seed and suite
-  -> isolated runtime for each compared implementation
-  -> production MCP remember for every corpus evidence row
-  -> wait for every placement to reach a terminal successful state
-  -> export and validate complete remember outcomes
-  -> exactly one production recall_memory call per case
-  -> deterministic direct ranking report
-  -> separate discovery exposure report
-  -> AI-judge report over the initial response only
-  -> record final report and durable project-memory summary
-```
-
-Runs are sequential so provider contention does not bias recall latency. Each
-run records the server revision, evaluator revision and dirty-state
-fingerprint, seed/suite hashes, embedding configuration, assessor model,
-prompt/contract versions, judge model, transport, and isolated team ID. The
-assessor model is configured by the runtime profile. The answer-quality judge model is
-recorded exactly. Import uses one evidence row per production `remember` call,
-and runner concurrency is part of the manifest.
-
-When baseline behavior and the seed are unchanged, the retained clean baseline
-trace and retrieval artifact may be reused. If the seed, baseline behavior,
-recall parser, or judge contract changes, regenerate the affected artifact. The
-current implementation is reimported whenever remember logic, persisted
-semantic shape, assessor prompt, or schema behavior changes. If only
-recall ranking changes, the existing successful import may be reused after
-validating search freshness and placement state.
-
-The evaluator must not call `assemble_context`, embed the query again, perform a
-second retrieval, import through a shortcut, write the database directly, or let
-the judge discover missing facts. Final scoring requires every latest corpus
-evidence row to reach successful terminal placement; timed-out or failed
-production remembers must be repaired or reprocessed before recall scoring.
-Completed evidence rows are not restarted unless the production remember logic
-or persisted semantic shape changed. Monitor and resume logic count latest
-placement state per evidence `idempotency_key`, not raw placement-run rows.
-
-Direct Recall@K, MRR, nDCG@K, rank-one rate, and bad-result counts score only
-the initial ranked `results[]`. `related_relationships[]` and
-`related_communities[]` are separate discovery frontiers, so their recall and
-exposure are secondary metrics and never improve the direct top-K score. The AI
-judge receives only the exact initial response
-and supplied gold data; it cannot follow guidance, recall again, or use outside
-knowledge. Recall latency reports average, p50, and p95.
-
-Optional diagnostic ablations may run after the main report, but they must
-use the same production recall entry point with a named runtime profile, never
-gold labels or evaluator-only candidate manipulation. Useful ablations are:
-full-text-only, vector-only, no-discovery, and adjusted evidence branch limits.
-
-### Seed generation and validation
-
-Before seed generation, delete the existing ignored generated seed, suite, and
-`.runtime` contents after stopping eval compose projects and confirming their
-mounts. Preserve `tests/eval/data/`, source scripts, compose files, and tracked
-repository files. After cleanup, the final generated inventory must contain
-only the two six-axis seeds and their two suites.
-
-Generate into temporary staging directories, validate independently, regenerate
-cleanly and byte-compare, write `validation_report.json`, then atomically
-promote. The 1k seed must pass before any required import, baseline, candidate,
-recall, judge, or comparison run. If a diagnostic 5k run is requested, the 5k
-seed must pass the same validation before that run starts. A failed validation
-promotes no required seed; fix the generator or mapping, regenerate from
-scratch, and rerun validation.
-
-Validation must prove exact counts, deterministic 1k subset of 5k, stable
-hashes, upstream hash/license metadata, unique same-scope source IDs, no
-oversized rows, no within-scope exact duplicate content, complete qrel
-resolution, grouped/alternative qrel semantics, no answer/qrel leakage in
-corpus metadata, BEIR positive completeness, QASPER original-unit mapping, and
-LongMem Oracle non-abstention sourcing. Final import and runner modes refuse a
-seed whose validation report is missing, failed, hash-mismatched, or produced
-by an incompatible validator.
-
-## Source Versus Runtime Boundary
-
-| Committed source | Local ignored runtime data |
+| Check | Required result |
 | --- | --- |
-| evaluation runner and harness code | downloaded/generated datasets |
-| generation, sampling, execution, and validation scripts | generated seeds and suites |
-| schemas, deterministic test definitions, and gate logic | isolated databases, run outputs, and logs |
-| documentation describing methodology and required gates | baseline/candidate results and generated comparison artifacts |
+| Source lock | V1 manifest/hash matches the approved source. |
+| Count and order | Same corpus row count and source_doc_id order. |
+| Metadata projections | Suite, qrels, licenses, transforms, and non-content metadata are unchanged. |
+| Content normalization | Every changed row has a documented safe deterministic operation and before/after hash. |
+| Proposal audit | Every V2 row has a complete exact-span proposal accepted by the real Go contract validator. |
+| Security audit | Every V2 row has a passed model-only security/conformance decision. |
+| Regeneration | Regeneration warnings/failures are zero or explicitly fail the gate. |
 
-Generated seeds, suites, downloaded datasets, imports, results, and comparison
-artifacts stay under ignored evaluation paths such as `tests/eval/data/`,
-`tests/eval/seeds/`, `tests/eval/suites/`, `tests/eval/runs/`, and
-`tests/eval/.runtime/`. They are local runtime data: never stage or commit them,
-exclude them from line-count checks, and do not treat them as release
-documentation or release evidence. The manual defines how to evaluate and what
-must pass; it may include compact dated notes when a run changes methodology or
-comparability, but it does not replace the generated artifact files.
+The comparison is not a retrieval-score comparison. It establishes that the V2
+corpus is a usable semantic equivalent of V1 before measuring live system
+behavior.
+
+## V2 Seed Generation
+
+The V2 generator keeps a parent source hash, generator version, normalization
+report, and proposal audit report in its manifest. It may make only bounded
+deterministic content repairs needed for the current security contract, such as
+removing hidden controls or a known terminal control directive from a
+LongMemEval chat wrapper. It must not silently rewrite answer, suite, qrel,
+license, or transform projections.
+
+It produces a smallest meaningful lexical Entity/Relationship proposal for each
+corpus item. The generator does not decide canonical IDs or accepted semantic
+state.
+
+Before release use, every row is checked by the same Go code as production:
+
+1. the deterministic evidence scanner must pass;
+2. the required proposal must satisfy exact Unicode code-point span rules;
+3. the source metadata and source revision rules must be valid; and
+4. the manifest and suite cross-checks must pass.
+
+## Model-Only Seed Audit
+
+The generator runs a separate model-only security/conformance audit for all V2
+rows. Its narrow job is to detect prompt-injection/security concerns in the
+proposed evidence package; it does not normalize semantic meaning or choose
+server state.
+
+The audit uses strict structured output and records only row ID, hashes, policy
+version, verdict, bounded category, and retry count in its local checkpoint.
+It does not write raw evidence, credentials, prompts, or provider responses to
+review artifacts.
+
+A non-passing verdict, warning, incomplete checkpoint, transport retry that
+does not recover, or schema mismatch fails seed generation. An unaudited
+deterministic-only output is for local development and is not a release seed.
+
+## Live Import and Retrieval Run
+
+A live run uses a dedicated disposable local team against the local Compose
+server. It imports through the same public MCP route as normal clients:
+
+~~~text
+corpus row
+  -> tools/call remember
+  -> submission_id
+  -> tools/call get_submission_status
+  -> completed + current/not_required search state
+  -> canonical evidence mapping
+  -> tools/call recall_memory
+  -> deterministic qrel scoring
+~~~
+
+The runner fails the import gate if a corpus row is rejected, quarantined, fails,
+times out, cannot reach a current/not_required required search state, or cannot
+produce its canonical mapping. It does not fake a successful row with a mock or
+manual database write.
+
+Run outputs contain mapping hashes, run identity, model/configuration
+fingerprints, scorer versions, submission terminal-state counts, search-state
+counts, recall traces, score summaries, and safe bounded errors. Credentials and
+raw provider data remain outside artifacts.
+
+## Baseline, Candidate, and Comparison
+
+Run a baseline and candidate against the same validated V2 seed, same suite,
+and isolated runtime identity. Then compare their generated summaries:
+
+~~~bash
+go run ./cmd/eval-runner --mode baseline   --seed "$SEED" --suite "$SUITE" --out "$BASELINE_OUT"
+
+go run ./cmd/eval-runner --mode candidate   --seed "$SEED" --suite "$SUITE" --out "$CANDIDATE_OUT"
+
+go run ./cmd/eval-runner --mode compare   --baseline-run "$BASELINE_OUT"   --candidate-run "$CANDIDATE_OUT"   --out "$COMPARISON_OUT"
+~~~
+
+The comparison reports recall@k, MRR, nDCG, bad-at-k, rank-one rates, and
+available context/evidence/dream dimensions. Its interpretation must include
+submission acceptance/rejection/quarantine counts and retrieval degradations;
+a good score does not excuse unsafe or incomplete ingestion.
+
+## Local E2E Security Gate
+
+Before the 1k evaluation, use the real local Compose server and a live
+ephemeral credential to prove the public integration path:
+
+1. tools/list exposes get_submission_status and omits retired placement/review
+   tools;
+2. a safe span-grounded remember call completes and its search state converges;
+3. Base64 evidence is rejected before a submission is staged;
+4. prompt-injection evidence is rejected before a submission is staged;
+5. another profile cannot fetch the first profile’s submission status;
+6. recall/trace preserve evidence-first output and flag returned evidence as
+   untrusted data; and
+7. the migration and repository integration tests prove exact 24-hour
+   quarantine retention and hard-delete cleanup.
+
+This is a real PostgreSQL/service test, not a mocked method-call test.
 
 ## PR Evaluation Rule
 
-Any PR that may affect retrieval quality, ranking, placement accuracy,
-assessor behavior, embeddings, search documents, or performance must
-run the 1k corpus evaluation/comparison and include the result in the PR. If
-the seed and import logic are unchanged, a later PR may reuse a previous
-successful import after validating manifest identity, placement terminality,
-search/vector freshness, and schema/contract compatibility.
-Recall/ranking-only changes still rerun recall and scoring against the retained
-import.
+A pull request that can affect retrieval quality, ranking, submission
+assessment, deterministic security scanning, embedding/search documents,
+predicate normalization, migration placement, or performance must include:
 
-## Pre-Evaluation Local Gate
+- passed V2 seed validation;
+- passed detailed V1/V2 seed comparison before live evaluation;
+- passed Compose-backed MCP security E2E;
+- baseline and candidate 1k summaries plus their deterministic comparison;
+- terminal submission and search-state counts; and
+- any degradation or failure analysis.
 
-Before running or reporting the current evaluation, the branch must pass:
-
-```text
-go test ./... -count=1
-npm --prefix web run build
-npm --prefix web test -- --run
-npm --prefix web run playwright:mock
-scripts/e2e-compose.sh
-tests/uat/e2e-journey.spec.ts against an isolated compose stack
-```
-
-The UAT journey is the current production-surface smoke: MCP `tools/list` and
-`tools/call` for `remember`, `get_memory_placement`, `recall_memory`, and
-`trace_memory`; checks that removed generic HTTP memory-tool routes stay absent;
-and cross-team isolation. It must not depend on removed direct fragment, claim,
-fact, or generic HTTP memory-tool routes.
-
-## Evaluation Dimensions
-
-| Dimension | Question |
-| --- | --- |
-| semantic correctness | did evidence become the right Entity/Value/Relationship state and history? |
-| identity | did aliases converge and homonyms stay separable? |
-| assessment contract | did the integrated result resolve structure/support correctly, and did invalid output produce zero partial semantic writes? |
-| retrieval quality | did full-text/vector/adjacency return the intended active Relationships? |
-| vector fidelity | how close is filtered HNSW to exact team-filtered search? |
-| temporal/lifecycle | are pending, conflict, supersession, retraction, and time handled correctly? |
-| provenance | can trace reconstruct exact evidence, verification, support, and transitions? |
-| isolation/security | can any actor see or affect another team, and can a profile mutate another profile's knowledge? |
-| performance/scaling | what happens under simultaneous remember/recall/trace/job load? |
-| operations | do restart, Redis loss, backup/restore, and vector rebuild preserve behavior? |
+A failed mandatory gate blocks the PR. Generated seed files, datasets,
+credentials, runtime databases, and full outputs remain ignored. Commit only
+the generator/source lock/provenance/validation/scoring code and a compact
+safe baseline record.
 
 ## Reproducibility Manifest
 
 Every run records:
 
-```text
-run_id
-UTC start/end
-application commit and dirty-tree state
-Go/web dependency lock hashes
-contract and schema migration versions
-cluster-safe schema/key-contract version
-PostgreSQL and pgvector versions/config
-predicate registry version
-assessor provider, model, prompt revision, assessment-policy version, and local contract hash
-embedding provider/model, dimensions, normalization, and document version
-search-index profile, distance/operator, and HNSW construction
-ranking profile and HNSW query parameters
-PostgreSQL topology, node/shard count, connection budget, and replica policy
-team-size/skew/concurrency dataset version
-random seeds and algorithm versions
-Redis mode/topology when used
-feature flags and hard limits
-```
-
-Secrets, unnecessary evidence content, provider raw responses, and vectors are
-excluded from the local run record.
-
-## Isolated Run Lifecycle
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  Manifest["Freeze manifest"] --> DB["Create isolated PostgreSQL database"]
-  DB --> Migrate["Install pgvector and run migrations"]
-  Migrate --> Seed["Seed through MCP tools and<br/>first-party review workflows"]
-  Seed --> Poll["Poll processing and search state"]
-  Poll --> Integrity["Run semantic and RLS invariants"]
-  Integrity --> Cases["Run recall, trace, dream,<br/>correction and load cases"]
-  Cases --> Oracle["Compare ANN with exact<br/>and outputs with judgments"]
-  Oracle --> Outputs["Write ignored local<br/>runtime outputs"]
-  Outputs --> Cleanup["Stop isolated dependencies"]
-```
-
-Baseline and candidate use separate restored copies of the same seed snapshot.
-Do not run both against one mutable team or share vector-job state.
-
-If evaluation invokes a real provider, store stable request IDs, model/version,
-and bounded structured verdicts needed for comparison. A deterministic recorded
-provider may test protocol repeatability, but it cannot substitute for
-model-quality evaluation.
-
-## Seed Design
-
-Seed packs are generated locally from approved public or synthetic inputs and
-remain ignored runtime data. Commit the generator and validation logic, not the
-generated corpus, suite, or seed manifest.
-
-The corpus includes:
-
-- repeated paraphrases of the same Entity/Relationship
-- aliases, former names, title/kind drift, and two same-name people
-- one initially plausible Mark followed by later distinguishing conflict
-- Entity and typed-Value objects
-- registered predicate aliases and unknown predicates
-- state/event and one/many current-cardinality predicates
-- positive/negative polarity and temporal intervals
-- authoritative user evidence, dependent duplicates, and independent sources
-- entailed, contradicted, insufficient, conflict, update, and ambiguity cases
-- deterministic pass, guarded, and quarantine evidence, including quoted
-  security documentation that must not become a one-phrase false positive
-- assessor security-signal cases, manager release, and unauthorized
-  release
-- stable source revisions, stale prior-revision tokens, explicit fragment
-  supersession, team-wide support revocation, and pending-state transition
-- hub/cyclic graph shapes
-- pending Relationship inputs eligible/ineligible for dreaming
-- cross-team near-duplicates designed to catch vector/RLS leaks
-- three writable same-team profiles with corroborating and conflicting
-  Relationships, cross-references, and profile-local merge/split corrections
-- stale A knowledge followed by B's later correction and C's independent
-  response, with reliable/missing effective times, case deadlines, copied-source
-  controls, pre-TTL/post-TTL thresholds, authority-override controls, and
-  nightly evaluation fixtures
-
-Seed through MCP `remember` and the first-party client-review workflow so runs
-exercise integrated assessment, policy, transactions, jobs, and interface
-contracts. Direct SQL is allowed only to create an explicitly labeled
-corruption/failure fixture.
-
-## Hard Semantic Invariants
-
-Every run fails immediately on:
-
-| Invariant | Required result |
-| --- | --- |
-| Entity identity | one real identity has one canonical ID; homonyms may have separate IDs |
-| semantic node kinds | only Entity and typed Value appear in graph-shaped reads |
-| Relationship identity | repeated same-owner evidence attaches to one episode; another owner remains distinct and grouped; `valid_to` closure does not change identity |
-| edge eligibility | only `active` Relationships with effective support appear as SemanticEdges |
-| pending isolation | `pending_evidence` appears in neither default recall nor active graph |
-| Hypothesis isolation | dream output changes no Entity/Value/Relationship/support/status |
-| evidence lineage | every support resolves to an exact immutable span/source group; effective counts match latest support decisions |
-| support activation | one accepted entailed support at or above the effective team threshold activates the Relationship; additional sources do not add lifecycle or recall-rank classes |
-| source revision | one source lineage remains one independence group; exact prior token required; activation revokes old support team-wide |
-| support loss | loss of final effective support moves the same Relationship to `pending_evidence` automatically |
-| injection boundary | deterministic quarantine calls no model; model signals commit no semantic subset; release requires manager plus write |
-| unknown predicate | observation/review only; no Relationship |
-| forget | no active edge; Entity/Value and ledger history remain |
-| append-only | evidence, material decisions, support, correction, and transition history is unchanged |
-| tenant isolation | zero cross-team rows/IDs across all branches and trace |
-| profile ownership | same-team eligible knowledge is readable, but ordinary lifecycle/support/merge/split changes affect caller-owned records only |
-| system reviewer boundary | nightly Conflict review may close losing stale Relationship episodes, but cannot edit evidence, support links, owner/author, Entity resolution, or source history |
-| version safety | stale embedding job cannot update a newer document |
-| Relationship projection boundary | format-2 migration changes no Evidence document/vector, numerical embedding contract, or HNSW generation |
-| Relationship vector activation | no team uses partial Relationship vector results; lexical-only mode remains complete until generation activation |
-
-## Identity Cases
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart TD
-  Case["Identity fixture"] --> Repeat["Repeated exact/paraphrased mention"]
-  Case --> Alias["Alias or former name"]
-  Case --> One["One plausible same-name candidate"]
-  Case --> Many["Several plausible homonyms"]
-  Case --> Late["Later contradictory context"]
-  Repeat --> OneID["One Entity"]
-  Alias --> OneID
-  One --> Reuse["Reuse unless contradiction"]
-  Many --> Review["Ambiguity review; no active dependent edge"]
-  Late --> Split["Client-confirmed selected-observation split"]
-```
-
-Measure false merge, false split, duplicate-candidate rate, ambiguity rate, and
-client-correction burden. A low duplicate count is not success if valid
-homonyms were collapsed.
-
-## Strict Assessor Evaluation
-
-Fault fixtures include:
-
-```text
-malformed JSON
-unknown field
-missing or extra result array
-extra predicate_results array
-missing, duplicate, or unknown ref
-candidate ID outside allowlist
-non-null ID on create/ambiguous
-unknown predicate key
-security signal with unknown evidence ID
-security signal with invalid or mismatched span
-wrong enum/type/range
-oversized string/array/output
-cross-array unresolved endpoint
-timeout and 429
-invalid response followed by a later placement claim
-worker restart after valid assessment persistence but before semantic commit
-lease reclaim and transaction retry after valid assessment persistence
-```
-
-For every claim and invalid attempt assert:
-
-- no Entity/Value/Relationship/support/transition is committed from that output
-- no partial array is spliced into a later response
-- no `VerificationEvent` represents the invalid attempt
-- staged evidence and safe processing failure remain traceable
-- one placement attempt opens one assessor conversation with at most five
-  provider turns
-- an invalid HTTP 200 result appends the assistant output and bounded validation
-  errors to the same history before requesting a complete replacement
-- timeout, 429, 4xx, 5xx, transport, and provider-protocol failures end that
-  conversation and requeue through the durable `max_attempts` budget
-- the first valid normalized assessment is unique for its stable claim key
-- restart, lease reclaim, and semantic commit retry reuse that persisted
-  assessment and make zero additional assessor calls
-- candidate/entity/predicate/input token limits and truncation markers are
-  enforced before the call
-
-Run these protocol fixtures against both a scripted assessor and the real
-configured LLM host. The scripted host proves exact call count, crash/retry, and
-schema behavior; the real host measures whether the closed contract and prompt
-work under provider variability.
-
-## V2.4 Integrated-Assessor Placement Evaluation
-
-The V2.4 release decision uses a paired V2.3/V2.4 run over the same pinned
-`public_6axis_1k_v1` rows, order, source identities, and isolated starting
-snapshot. Freeze the baseline/candidate revisions, model/provider versions,
-prompts, contracts, team configuration, runner concurrency, and random seeds
-before the first import. Do not reuse a V2.3 import because the change affects
-`remember` and persisted placement state.
-
-```text
-same validated 1k corpus
-  -> V2.3 isolated import with the two-call path
-  -> V2.4 isolated import with the integrated assessor
-  -> normalize per-evidence placement outcomes
-  -> compare structure, support, lifecycle, review, cost, tokens, and latency
-  -> human-adjudicate every active-state disagreement
-  -> run blinded swapped-order LLM judging as a diagnostic
-  -> repeat deterministic and real-host rounds
-```
-
-The paired outcome record includes:
-
-```text
-evidence id and source identity
-Entity action and selected Entity ID
-predicate status/key/version
-subject/object/polarity/scope/time
-evidence and temporal verdicts
-raw internal confidence and confidence bucket
-effective threshold and gate result
-Relationship ID/status/support decision
-review kind/state/expiry
-assessor conversation/turn counts, input/output tokens, latency, and provider result
-```
-
-Compare exact placement agreement and human-labeled accuracy for Entity
-identity, predicate resolution, Relationship structure, support verdict,
-temporal result, active/pending/review state, and final recall eligibility.
-Every difference receives a stable category rather than being collapsed into a
-single answer-quality score.
-
-### Confidence reliability
-
-Confidence evaluation applies only to positive Relationship support. Build
-reliability buckets and report sample count, empirical correctness, mean
-confidence, expected calibration error, Brier score, precision, recall, false
-activation, and unnecessary-hold rates. Report the bootstrap `0.7` operating
-point and a threshold sweep from `0` through `1`; choose future defaults from
-the measured reliability/cost trade-off, not from the LLM's numeric confidence
-alone. Identity, predicate, scope, time, security, and conflict failures remain
-separate hard holds regardless of confidence.
-
-Human reviewers label whether each candidate should have granted active
-positive support at write time from the exact submitted evidence and allowed
-context. They are blind to implementation, confidence, and threshold. Resolve
-reviewer disagreement under a recorded rubric before computing gate accuracy.
-
-### LLM-judge diagnostic
-
-An LLM judge may compare normalized V2.3 and V2.4 placement summaries, but it is
-not the active-state oracle or a release gate. Present outputs without version
-labels, run both A/B and B/A order for every case, and report agreement plus
-position-flip rate. The judge receives only the submitted evidence, allowed
-candidate context, and normalized outputs; it cannot recall, browse, or infer
-missing facts. Human adjudication controls every lifecycle disagreement. This
-swapped-order rule addresses documented position, verbosity, and
-self-enhancement biases in LLM-as-judge evaluation
-([Zheng et al., 2023](https://arxiv.org/abs/2306.05685)).
-
-### Multi-round gates
-
-Run at least two clean rounds with the scripted host and two with the real
-configured LLM host. Each round starts from a fresh isolated database and
-replays the identical manifest. Deterministic output should be byte-stable
-where the host is scripted; real-host results are compared by distribution and
-case category.
-
-V2.4 cannot ship unless:
-
-- every placement attempt records at most five provider turns in one assessor
-  conversation
-- every malformed correction includes the preceding assistant output and
-  bounded validation errors in that same history
-- provider failures consume durable attempts with fresh history, and respect a
-  bounded `Retry-After` delay
-- restart, lease reclaim, pause/resume, and commit retry make zero extra calls
-  after a valid assessment is persisted
-- malformed exhaustion and provider-attempt exhaustion create no semantic
-  subset
-- every structural, tenant, security, lifecycle, pending, and append-only hard
-  invariant remains at zero violations
-- the complete 1k import terminates with no lost or duplicate evidence claims
-- predeclared placement-quality non-regression bounds pass for the full corpus
-  and the homonym, predicate, temporal, conflict, and security slices
-- input/output tokens, call count, end-to-end placement latency, review burden,
-  and provider errors are reported side by side
-- confidence reliability and human false-activation results are published for
-  `0.7` and the threshold sweep
-
-The comparison report must keep quality and efficiency separate. Fewer calls do
-not excuse a false activation, structural regression, or increased unresolved
-review burden.
-
-## Relationship Lifecycle Cases
-
-Required examples:
-
-1. one accepted entailed support creates or updates an active Relationship
-2. source authority remains provenance and does not create a lifecycle class
-3. a second genuinely independent support improves trace provenance but does
-   not change Relationship status or correlation rank
-4. duplicate copies or quoted common origin remain one provenance source group
-5. `Mark works_on Dense-Mem` and `Dense-Mem uses PostgreSQL` do not automatically
-   create `Mark uses PostgreSQL`
-6. a dream may propose that third connection as a Hypothesis using existing
-   nodes, but cannot activate it
-7. `insufficient` creates/retains a pending Relationship only when endpoints and a
-   predicate resolve, opens a seven-day support-confidence review, and grants
-   no support
-8. `entailed` confidence below the effective team threshold follows the same
-   pending/review boundary, while confidence equal to the threshold passes
-9. changing the team threshold affects future/in-flight commits only and never
-   rescores completed or held assessments
-10. review expiry closes workflow without granting support or directly creating
-    a Hypothesis; only a structurally complete pending Relationship may later
-    become Dream input
-11. same-owner conflict/single-current replacement remains review-held until safe
-12. forget retracts from current reads without erasing trace
-13. B's entailed correction creates B-owned knowledge, links A, and creates an
-    open team Conflict case without changing A during placement
-14. an open/overdue case returns material alternatives and clarification; a
-    resolved case returns preferred current support paths plus conflict refs
-15. C's independent response creates C-owned knowledge and may contribute to
-    later nightly resolution; a bare assertion or copied source adds no vote
-16. `valid_at` before the change and `known_at` before later evidence/resolution
-    reconstruct the earlier position and case state
-17. nightly evaluation resolves only one qualifying position, otherwise records
-    `overdue`, and never treats TTL as evidence
-18. nightly resolution atomically supersedes losing stale episodes with
-    `valid_to`, Relationship transitions, Conflict events, and search refresh
-19. A can adopt B's exact evidence without duplicating its source group, then
-    supersede only A's prior Relationship
-
-## Recall Judgments
-
-Each case records query, allowed actor/team, expected relevant IDs, forbidden
-IDs, time scope, expected branch behavior, and optional Hypothesis/community
-expectations.
-
-Core metrics:
-
-| Metric | Meaning |
-| --- | --- |
-| Recall@K | relevant evidence-context coverage after support-path eligibility |
-| MRR | first relevant rank |
-| nDCG@K | graded ranking quality |
-| exact-anchor success | all required hard anchors satisfied by one result |
-| judged-bad rate | top-K results explicitly unsafe/irrelevant |
-| trace completeness | expected evidence/verification/transition refs present |
-| pending/Hypothesis leak count | must be zero in primary results |
-| Relationship MRR/nDCG | correlation relevance in `related_relationships[]` independent from Evidence rank |
-| semantic-group duplicate count | at most one response item per `semantic_group_key`; must be zero duplicates |
-| Relationship vector-gate parity | lexical-only rollout sees the complete eligible corpus and no partial RRF advantage |
-| cross-team leak count | must be zero |
-| cross-profile placement mutation count | must be zero |
-| reviewer closure accuracy | losing stale Relationship episodes receive the intended `valid_to` and ledger only after nightly resolution |
-| conflict preference accuracy | the uniquely qualifying evidence-backed position resolves and supplies primary current paths |
-| conflict clarification accuracy | zero or multiple qualifying positions produce clarification |
-| conflict disposition accuracy | resolved current recall includes only the qualifying preferred support paths |
-| conflict false-suppression count | eligible unresolved, historical, or unrelated support paths suppressed; must be zero |
-| conflict overdue accuracy | deadline cases without one qualifying position become overdue rather than resolved |
-| conflict historical reconstruction | `valid_at`/`known_at` return the labeled position/event view |
-| p50/p95/p99 latency | overall and per branch |
-
-Report results by status, time, team size, degree, query type, and search-freshness
-state. Aggregate scores can hide a small-tenant or homonym failure.
-
-## Relationship Projection Migration
-
-The release fixture starts from a populated pre-upgrade database and executes
-the exact text-first/vector-async sequence from
-[Data Model And Storage](Data-Model-And-Storage#relationship-projection-generation).
-The gate must prove:
-
-1. all old API and worker processes are stopped before schema change;
-2. the preflight snapshot records Relationship counts plus Evidence
-   document/vector counts and hashes;
-3. schema/status cutover makes zero provider calls;
-4. a forced stop after each keyset batch resumes without duplicate documents or
-   duplicate effective jobs;
-5. every eligible Relationship has projection format `2`, and every ineligible
-   Relationship is `not_required`, before readiness opens;
-6. lexical Relationship recall covers early, middle, and late keyset rows as
-   soon as traffic opens;
-7. the complete Relationship vector branch stays disabled while any tagged job
-   is queued, processing, or failed;
-8. foreground jobs and generation jobs both make progress under sustained load;
-9. stale leases, retries, split batches, and old document versions cannot mark
-   a newer document current;
-10. one failed generation job prevents activation without disabling lexical
-    Relationship recall;
-11. the final generation check and `current` transition are atomic, after which
-    lexical/vector RRF becomes available for the complete eligible corpus;
-12. normal post-cutover Relationship writes do not reopen the release
-    generation;
-13. Evidence documents, Evidence vectors, numerical embedding contract,
-    query-construction contract, and active HNSW generation match the preflight
-    snapshot;
-14. restore testing rolls back the database backup and matching application
-    release together; mixed-version startup is rejected.
-
-Compare Relationship MRR/nDCG before vector activation and after full
-activation. The after state may improve correlation quality, but neither state
-may alter Evidence `results[]`, lifecycle eligibility, semantic grouping, or
-Conflict disposition.
-
-## V2.4 Placement Migration
-
-Start from the fully migrated #129 fixture, then run the exact sequence in
-[Data Model And Storage](Data-Model-And-Storage#v24-integrated-assessor-placement-migration).
-The migration gate must prove:
-
-1. placement workers are paused and mixed V2.3/V2.4 execution is rejected;
-2. the preflight captures lifecycle, review, search, vector, and job counts;
-3. additive schema/config changes make zero assessor or embedding calls;
-4. legacy VerificationEvents remain byte-equivalent and receive no synthetic
-   confidence, threshold, or policy values;
-5. existing Relationship status, effective support, and transitions remain
-   unchanged;
-6. currently unresolved semantic reviews (`open` or `acknowledged`) receive a
-   fresh seven-day expiry, while resolved/canceled/expired tasks, security
-   quarantine, and Conflict cases do not;
-7. search-document text/hashes, vectors, embedding jobs, projection formats,
-   embedding contracts, and active HNSW generations match preflight;
-8. an in-flight item with a valid persisted assessment resumes without a call,
-   while one without a valid assessment makes at most one V2.4 call;
-9. rollback before traffic restores the matching database/application pair,
-   and rollback after V2.4 writes is rejected without full restore.
-
-Any re-embedding observed in this fixture is a failure. V2.4 changes placement
-policy and audit/workflow data only; #129 owns its separate Relationship
-projection and embedding work.
-
-## Exact Versus HNSW Oracle
-
-For each vector dataset/query:
-
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  Query["Same query vector and<br/>team/eligibility filters"] --> Exact["Exact distance top K"]
-  Query --> ANN["HNSW iterative top K"]
-  Exact --> Compare["Recall@K, rank overlap,<br/>latency, tuples, buffers"]
-  ANN --> Compare
-  Compare --> Gate{"Quality and latency<br/>both pass?"}
-```
-
-Datasets vary:
-
-- small/medium/large teams
-- many small tenants sharing one table
-- one large skewed tenant
-- selective status/effective-support/time/predicate filters
-- concurrent inserts/updates and reads
-- pending/stale/current embedding mixtures
-- single-primary, qualified hot-standby, and every advertised team-sharded
-  topology
-
-Exact filtered search is the quality oracle, not an assumed production path.
-Changing `ef_search`, iterative mode, topology/partitioning, index construction,
-RRF/reranking, or projection format requires the applicable execution checks in
-[ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) and fusion checks in
-[Vector Search And Ranking](Vector-Search-And-Ranking), plus a new matched run.
-
-## PostgreSQL Graph-Read Evaluation
-
-Evaluate point lookup, one-hop incoming/outgoing, predicate-filtered one-hop,
-and bounded multi-hop/recursive expansion under:
-
-- uniform and power-law degree
-- hubs and cycles
-- strict seed/fan-out/depth/edge/time caps
-- concurrent `remember` transactions and embedding jobs
-- tenant-filter selectivity and RLS
-- cold/warm cache conditions
-
-Record query plans, rows, buffers, temp spill, lock/wait time, stopped reason,
-and result parity with a deterministic in-test traversal oracle.
-
-The goal is not to prove PostgreSQL wins every graph workload. It is to prove
-Dense-Mem's bounded workload meets its SLO. If it cannot, capture the failing
-shape before proposing another store.
-
-## Concurrent Load Matrix
-
-| Workload | Example mix |
-| --- | --- |
-| write-heavy | remember intake + placement + embedding jobs |
-| read-heavy | full-text/vector/adjacency recall + trace |
-| mixed | 20% writes, 70% recall, 10% trace/control |
-| burst | many users submit and recall after a shared event |
-| correction | active recall while corrections/forget/splits commit |
-| optional jobs | dream/community runs beside core traffic |
-
-For each, record throughput, latency percentiles, errors, per-process and total
-connection-pool saturation, vector-semaphore waits, locks/deadlocks, WAL/disk,
-replica lag/cancellation, CPU/memory, HNSW quality, queue age, and tenant
-fairness.
-
-## Failure Injection
-
-Inject:
-
-- assessor timeout, 429, malformed and partial response
-- deterministic scanner false-positive/false-negative fixtures, valid assessor
-  security signals, and repeated quarantine after release
-- stale or unowned source revision, source-activation fanout overflow, and crash
-  before/after the atomic source pointer and support transition
-- embedding provider outage and wrong dimension
-- PostgreSQL connection loss, lock timeout, serialization failure, and worker
-  restart
-- standby replay lag, recovery-conflict cancellation, failover, and stale-route
-  prevention
-- one distributed worker missing the active pgvector index/profile
-- stale team placement epoch during rebalance/failover and attempted
-  alternate-shard write
-- cross-team composite-FK insert, missing-team repository lookup, and worker
-  claim without transaction-local team context
-- stale embedding job racing correction
-- Redis loss in one-process and multi-instance modes
-- crash before and after semantic transaction commit
-- backup restore followed by derived vector rebuild
-- dream/community source version change during generation
-
-Expected outcomes come from
-[Memory Write Pipeline](Write-Pipeline#failure-semantics) and
-[Operations Runbook](Operations-Runbook), not per-test invention.
-
-## Local Runtime Outputs
-
-Suggested ignored local layout:
-
-```text
-tests/eval/.runtime/
-  final-v1/
-    1k/
-    5k/
-  final-v2/
-    1k/
-    5k/
-  final-comparison/
-    1k/
-    5k/
-```
-
-Runtime outputs may include stable IDs and bounded judgments but omit secrets
-and unapproved evidence/provider payloads. They may be regenerated or deleted
-without changing source or release documentation.
-
-## Release Gates
-
-These criteria complement the paired comparison above.
-
-| Gate | Requirement |
-| --- | --- |
-| hard invariant | zero tenant, pending-Relationship, Hypothesis, duplicate-edge, append-only, and partial-commit violations |
-| assessor | every negative fixture rejects the whole response; malformed correction is bounded to five same-history turns and provider failures use durable attempts |
-| V2.4 confidence gate | human-labeled false activation and unnecessary hold stay within predeclared bounds; reliability is reported at `0.7` and across the sweep |
-| V2.4 migration | no assessor/embedding calls, legacy rescoring, lifecycle mutation, search projection change, or re-embedding |
-| injection | no quarantined semantic/search state, no unauthorized release, and no model signal accepted as a safety clearance |
-| source lifecycle | stale/unowned revision changes nothing; accepted revision atomically revokes old effective support and recomputes statuses |
-| Relationship projection | complete format-2 text before serve; whole-team vector gate until current; zero Evidence/vector/index-contract changes |
-| identity | false merge/split thresholds approved per dataset slice |
-| recall | agreed Recall@K/MRR/nDCG and judged-bad thresholds |
-| vector | HNSW Recall@K versus exact plus latency SLO |
-| performance | p95/p99 and throughput under target concurrent mix |
-| topology | single-primary plus every advertised HA/distributed topology passes parity, lag, failover, RLS, and bounded-load gates |
-| cluster-safe schema | zero nullable tenant rows, unscoped tenant keys/FKs/lookups, or cross-team references |
-| recovery | isolated PITR restore, vector rebuild, and smoke pass |
-
-A gate waiver names the failing slice, owner, expiry, user impact, and rollback.
-Security/tenant-leak and append-only/partial-write invariants are not waivable.
-Gate review reads the ignored local outputs; generated seeds, results, and
-comparisons are not added to the release evidence set.
-
-## Risks And Mitigations
+- seed and suite IDs/hashes;
+- parent V1 source hash and V2 normalization/audit policy hashes;
+- generator and runner versions;
+- contract version;
+- local server image/revision and relevant provider configuration fingerprints;
+- team-scoped mapping hash;
+- scorer version and metric configuration; and
+- start/end timestamps and safe terminal-state counts.
+
+An identity mismatch is a hard error. The runner must not adopt, overwrite, or
+erase a pre-existing runtime with a different identity.
+
+## Evaluation Risks
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Benchmark overfits one tenant | HNSW looks good globally but misses small-team matches | stratify by tenant size/filter and use exact filtered oracle |
-| Baseline/candidate contaminate | both runs share mutable vectors/jobs | isolated restored databases and frozen manifests |
-| Mocked success | fake repositories pass while RLS/locks/operators fail | real PostgreSQL + `pgvector` for storage gates |
-| Cross-profile correction mutates target | B's stronger evidence supersedes A automatically | A/B/C ownership fixtures and target-row version checks |
-| Provider variability hides regression | model change shifts identity/verdict output | record provider, model, prompt revision, and local contract hash; use repeated/paired runs |
-| Confidence looks precise but is miscalibrated | the `0.7` gate activates high-confidence false support for one model or domain | human labels, reliability buckets, ECE/Brier, threshold sweep, and per-slice false-activation reporting |
-| LLM judge prefers presentation or first position | the judge selects V2.4 because of wording or A/B order rather than correctness | normalize and blind outputs, run A/B and B/A, report flip rate, and use human active-state adjudication as the oracle |
-| Efficiency hides review displacement | fewer provider turns lower cost but push many correct writes into manual review | report review rate and unnecessary holds beside conversations, turns, tokens, latency, and placement accuracy |
-| Security corpus overfits keywords | detector passes benchmark but quarantines ordinary security prose | include quoted/adversarial minimal pairs and measure pass/guarded/quarantine confusion separately |
-| Source fixtures miss shared adoption | revision tests pass for one profile but leave another profile's unsupported Relationship active | use A/B/C adoption fixtures and verify effective support/status/search state for every dependent owner |
-| Migration fixture misses partial-vector bias | only a fully completed backfill is tested, so mixed lexical/vector RRF ships unnoticed | pause jobs at several keysets and assert the complete team vector branch remains disabled |
-| Load test corrupts production | evaluation endpoints run on real teams | isolated credentials/database and production feature gate off |
-| Single-node benchmark hides cluster failure | local HNSW passes while a standby is stale or one shard lacks the index | topology manifest plus replica/shard parity, lag, failover, and plan gates |
+| Unsafe corpus input | Historical data contains encoded or injected text. | Normalize only documented safe cases, run real scanner and model-only audit, fail closed. |
+| Seed semantic drift | Proposal generator changes content/qrels while making V2 valid. | Source lock plus detailed projection/hash comparison before evaluation. |
+| False pass from mock | Import test checks a stub rather than server behavior. | Use public MCP calls against real Compose PostgreSQL/service. |
+| Search race | Retrieval starts before required derived documents are current. | Poll submission status and fail the import gate on pending/failed timeout. |
+| Cross-team leakage | Eval client reads another profile’s submission or evidence. | Dedicated team/profile tests under RLS and public status boundary. |
+| Credential exposure | Evaluation artifacts capture live keys. | Store credential/profile files only in ignored restricted paths; never print or commit them. |
+| Score-only decision | Retrieval score hides rejected/quarantined corpus rows. | Publish terminal-state counts and treat ingestion failure as a hard gate. |
 
 ## Evaluation Acceptance
 
-1. no run finalizes with nonterminal placement/embedding work
-2. all manifests are complete and comparable
-3. hard semantic/isolation invariants run before quality scoring
-4. HNSW is always compared with exact team-filtered results
-5. concurrent read/write load includes tenant skew and hub graphs
-6. invalid assessor output proves same-history bounded correction, terminal
-   exhaustion after five malformed turns, and zero partial semantic commit
-7. failure injection and recovery produce canonical expected outcomes
-8. RRF enabled/disabled profiles, deterministic reranking, and cross-profile
-   conflict preference are evaluated separately
-9. every advertised PostgreSQL topology passes the same semantic, tenant,
-    exact/ANN, connection-budget, backup, and failover gates
-10. the assessor contract contains bounded security signals but no model
-    schema version, stored-knowledge alignment, or stored Relationship IDs
-11. source revision activation, automatic pending-state transition, and stale-token rejection
-    pass with same-team cross-profile adopters
-12. three-profile Conflict cases pass placement-open/nightly-resolve,
-    copied-source, missing-time, deadline, stale-version, lease-recovery, and
-    bitemporal slices
-13. no evaluation can pass with a cross-profile placement mutation, deadline-only
-    winner, wrong reviewer closure, or false suppression of an
-    unrelated/historical support path
-14. Relationship projection tests prove resumable text convergence, fair
-    asynchronous re-embedding, team-wide vector activation, and unchanged
-    Evidence/embedding/index contracts
-15. paired V2.3/V2.4 runs use the same pinned 1k corpus and frozen manifest,
-    with human adjudication for every active-state disagreement
-16. scripted and real-host multi-round tests prove the five-turn same-history
-    correction bound, separate durable provider retries, and
-    persisted-assessment reuse after restart, lease reclaim, and commit retry
-17. confidence reliability, threshold-sweep results, token/call/latency savings,
-    and review burden are reported separately
-18. V2.4 migration tests prove zero rescoring, lifecycle/search mutation,
-    embedding work, or re-embedding
+1. the V2 seed passes real contract/scanner validation;
+2. its detailed V1/V2 comparison passes before any live run;
+3. every live corpus row reaches an acceptable terminal submission/search state;
+4. baseline, candidate, and comparison artifacts are reproducible from their
+   manifests;
+5. security E2E uses a real local service and live credential;
+6. no raw evidence, provider response, or credential enters committed output;
+7. recall metrics and submission outcomes are reported together; and
+8. a failing required security, seed, import, or scoring gate cannot produce a
+   release-ready result.
+

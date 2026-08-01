@@ -1,6 +1,6 @@
 # Quick Start
 
-This is the local PostgreSQL setup and `dense-mem.v2.3.2` smoke test. Use a
+This is the local PostgreSQL setup and `dense-mem.v2.4` smoke test. Use a
 pinned release that advertises that contract.
 
 ## Local Shape
@@ -37,7 +37,7 @@ cp .env.example .env
 ```
 
 Verify the release tag, artifact checksum/signature, and release notes. Stop if
-the release does not advertise `dense-mem.v2.3.2` and PostgreSQL authority.
+the release does not advertise `dense-mem.v2.4` and PostgreSQL authority.
 
 ### Upgrading an existing installation
 
@@ -59,11 +59,12 @@ Relationship-only vectors to warm asynchronously behind the team-wide vector
 gate. Follow
 [Relationship projection upgrade](Operations-Runbook#relationship-projection-upgrade).
 
-Only after that prerequisite is complete, apply the
-[V2.4 integrated-assessor placement upgrade](Operations-Runbook#v24-integrated-assessor-placement-upgrade).
-The V2.4 migration adds placement/review state but does not rescore legacy
-knowledge, change search projections, enqueue embedding jobs, or re-embed data.
-Do not run mixed-version API or placement workers in either cutover.
+Only after that prerequisite is complete, apply the V2.4 secure-submission
+upgrade. It stages safe legacy queued/processing work, preserves accepted
+semantic state, terminalizes unresolved legacy review work, and replaces the
+public placement/review loop with server-owned submissions. It does not rescore
+accepted legacy knowledge or re-embed data. Do not run mixed-version API or
+workers in the cutover.
 
 ## 2. Configure Required Values
 
@@ -126,9 +127,10 @@ export DENSE_MEM_API_KEY="dm_..."
 Follow [MCP Clients](MCP-Clients) and connect the LLM host. The host initializes
 the server and calls `tools/list`; verify:
 
-- contract `dense-mem.v2.3.2`
-- `remember` accepts evidence plus optional hints
-- `get_memory_placement` returns processing and search state
+- contract `dense-mem.v2.4`
+- `remember` requires evidence plus exact span-grounded proposals
+- `get_submission_status` returns owner-scoped processing and search state
+- `get_memory_placement` and `resolve_memory_placement` are absent
 - `retract_evidence` is visible to a write-scoped key
 - `recall_memory` returns ranked Evidence contexts plus
   `related_relationships[]`, `related_communities[]`, `conflicts[]`,
@@ -153,12 +155,12 @@ Remember that I prefer concise explanations with concrete examples.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Ask["remember"] --> Intake["ingest_id + queued"]
-  Intake --> Poll["get_memory_placement"]
+  Ask["remember with exact-span proposal"] --> Intake["submission_id + queued"]
+  Intake --> Poll["get_submission_status"]
   Poll --> State{"processing_state"}
-  State -- awaiting_review --> User["Present exact question"]
-  User --> Resolve["resolve_memory_placement"]
-  Resolve --> Poll
+  State -- queued/processing --> Poll
+  State -- rejected --> New["Submit new complete evidence/proposal if appropriate"]
+  State -- quarantined --> Isolated["Do not use content; optional fresh replacement"]
   State -- failed --> Diagnose["Use safe error and correlation ID"]
   State -- completed --> Search{"search_state"}
   Search -- pending --> Recall["Recall may use current<br/>full-text/adjacency state"]
@@ -169,16 +171,13 @@ flowchart LR
 
 Valid outcomes:
 
-- `relationship_active` with effective support
-- `relationship_pending_evidence` retained but excluded from active/default recall
-- owner-scoped review for support confidence, identity, predicate, same-owner
-  conflict, scope, or time
-- an open team Conflict case for a material cross-profile disagreement; placement
-  may still complete while that case awaits nightly review
-- explicit rejected/quarantined/failed outcome
+- completed canonical promotion with active eligible support
+- explicit rejected, quarantined, or failed terminal outcome
+- a separate search state: pending/current/not_required/failed
+- no client review task, placement selection, or quarantine-release action
 
-The authoritative categories are in
-[Technical Reference](Technical-Reference#placement-contract).
+The authoritative submission contract is in
+[Technical Reference](Technical-Reference#get_submission_status).
 
 ## 7. Recall And Trace
 

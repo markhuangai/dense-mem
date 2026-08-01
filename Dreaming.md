@@ -44,6 +44,12 @@ multiply dream weight. Dreaming may use only the preferred position of a
 `resolved` Conflict case, with all source Relationship IDs. An `open` or
 `overdue` cross-profile case is excluded rather than used as a guessed premise.
 
+Input Relationships remain profile-owned evidence records, but input selection
+is team-wide. A Relationship may point from Person A's Entity to Person B's
+Entity when both endpoints are in the same team and the registered predicate
+allows their endpoint kinds. Endpoint provenance and a source record's owner
+do not limit team visibility of a generated Hypothesis.
+
 A pending Relationship is eligible only when:
 
 ```text
@@ -120,7 +126,7 @@ in `remember`.
 | --- | --- |
 | `proposed` | new and available for review |
 | `reinforced` | still useful after feedback or a later generation cycle |
-| `stale` | source state changed or the idea no longer applies |
+| `stale` | a same-team reviewer marked the idea no longer current |
 | `rejected` | explicitly rejected |
 | `submitted` | new evidence was sent to `remember`; placement outcome remains separate |
 
@@ -160,11 +166,13 @@ worth seeking new evidence for.
 The scheduler:
 
 1. finds due teams from database-backed effective configuration
-2. acquires a unique team/time-window PostgreSQL lease
-3. records a cycle run before generation
-4. enforces input, output, token, duration, and concurrency budgets
-5. records success, partial rejection, failure, or cancellation
-6. never uses Redis as the only run record
+2. opens a cycle only during the exact configured local minute
+3. claims one canonical team/date window in PostgreSQL with system context
+4. records a `missed` run instead of generating late only when this scheduler
+   process observed that team's enabled schedule before or during that window
+5. enforces input, output, token, duration, and concurrency budgets
+6. records success, partial rejection, failure, cancellation, or missed state
+7. never uses Redis as the only run record
 
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
@@ -186,6 +194,56 @@ sequenceDiagram
 
 Redis may coordinate distributed rate limits or wake workers. PostgreSQL owns
 leases, cycle results, and Hypotheses.
+
+## Team Ownership, Feedback, And Configuration
+
+A scheduled cycle is a system-only transaction. The scheduler fixes the team
+context; no request can select system mode or substitute another team. Its
+canonical `dream_cycle_runs` row has no initiating profile, and generated
+Hypotheses have no creating profile. They are shared team outputs. Historical
+per-profile duplicate rows are retained as canonical aliases for provenance,
+but are not listed as separate runs or Hypotheses.
+
+Any authenticated same-team profile with `write` scope may reinforce, mark
+stale, or reject a shared Hypothesis, even if another profile owns every source
+Relationship. Every decision appends an actor-attributed feedback event.
+`confirm_true` and `confirm_false` additionally require independent evidence
+and invoke normal `remember` as the acting profile; the Hypothesis itself never
+becomes evidence. `confirm_false` does not reject the Hypothesis. After its
+independent evidence is accepted for processing, it records the decision and
+moves the Hypothesis to `submitted` with the linked ingest, leaving the normal
+evidence pipeline to determine any durable correction.
+
+`DREAMING_START_TIME_LOCAL` is interpreted in the general `APP_TIMEZONE`.
+There is no late catch-up: a deployment, restart, or enablement after the
+scheduled minute neither runs nor fabricates a `missed` record for that window.
+If this scheduler process observed the enabled team before the window and a due
+call loses the minute-boundary race before it can claim it, the next scheduler
+pass records the same window as `missed` instead of silently dropping it.
+
+The Control portal exposes only these Dreaming settings:
+
+- `DREAMING_ENABLED`
+- `DREAMING_FORCE_ENABLED`
+- `DREAMING_START_TIME_LOCAL`
+- `DREAMING_MAX_OUTPUTS`
+
+If `DREAMING_START_TIME_LOCAL` falls in a spring-forward DST gap, that local
+date is recorded as `missed`; the scheduler never runs it early or late. A
+fall-back repeated minute still has one canonical team/date window, so it runs
+at most once.
+
+Effective enablement is deterministic:
+
+1. a globally disabled schedule disables every team, regardless of force or a
+   team override;
+2. a globally enabled and force-enabled schedule enables every team and ignores
+   a team override;
+3. otherwise, a team's optional `dreaming.enabled` override wins, falling back
+   to globally enabled.
+
+Reflect and re-evaluate are not Dreaming phases or settings. Loading Dreams in
+either portal is read-only and never reruns or re-evaluates a Hypothesis.
 
 Configuration names and defaults belong in
 [Configuration](Configuration#dreaming).
@@ -263,16 +321,16 @@ primary Relationship ranking when dreaming is enabled for the team. This is a
 server-side policy decision, not a request flag. Hypotheses never enter the
 primary result list.
 
-A Hypothesis becomes stale when:
-
-- a source Relationship is retracted, superseded, disputed, or hidden
-- a source pending Relationship becomes rejected or its ambiguity reopens
-- a source revision changes and regeneration does not reinforce the idea
-- a retention rule expires it
-- a client marks it stale
-
-Staleness preserves the ledger record but excludes it from normal related
-Hypothesis retrieval.
+A Hypothesis becomes stale only when a same-team write-authorized client marks
+it stale. There is no background reflect or re-evaluate phase that rewrites
+existing Hypothesis state. Related-Hypothesis recall checks its stored source
+versions and eligibility against current same-team Relationships, and omits a
+Hypothesis whose source is missing, changed, inactive, unsupported, or
+challenged. That is a read-only filter: it does not transition the stored
+Hypothesis to `stale`, so list, get, and status preserve lifecycle history.
+Source version checks still reject a generated item whose input changed before
+persistence. Staleness preserves the ledger record but excludes it from normal
+related Hypothesis retrieval.
 
 ## Risks And Mitigations
 
@@ -287,6 +345,8 @@ Hypothesis retrieval.
 | Primary recall contamination | Hypothesis is ranked with Evidence | separate table, response field, and query path |
 | Source drift | sources change between generation and persistence | store and compare source IDs/versions in the PostgreSQL transaction |
 | Duplicate cycles | two replicas generate the same window | unique team/window run key, durable lease, and normalized Hypothesis dedupe |
+| Late scheduler start | a restart or enablement after the configured minute fabricates a permanent run record | do not run or record that historical window; only an already armed scheduler window may become `missed` |
+| Cross-profile feedback loses attribution | a team member changes a shared Hypothesis without provenance | authorize by authenticated team and write scope, then append an actor-attributed feedback event |
 | Profile copies amplify speculation | A/B/C repeat one source and make a dream appear stronger | semantic grouping plus original source-group dedupe |
 | Identity disagreement seeds false link | unresolved A/B split is treated as a stable endpoint | exclude unresolved cross-profile conflict groups |
 
@@ -301,9 +361,12 @@ Hypothesis retrieval.
 5. primary recall never contains Hypotheses
 6. confirmation without new evidence fails
 7. submitted evidence enters the normal strict `remember` pipeline
-8. source changes can stale but never delete Hypothesis history
+8. source changes prevent a stale in-flight output from persisting but never
+   rewrite Hypothesis history
 9. cycle retries do not duplicate run or Hypothesis records
 10. equivalent authored Relationships do not multiply dream weight
 11. unresolved cross-profile conflict sets are not dream premises
 12. review expiry never creates a Hypothesis, support link, or active
     Relationship directly
+13. a scheduled cycle is team-owned and has no initiating or creating profile
+14. a late scheduler start records `missed` rather than running catch-up work

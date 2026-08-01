@@ -153,11 +153,107 @@ Group mappings connect provider group values to Dense-Mem teams:
 | Role | Dense-Mem profile role, either member or manager. Manager role grants the `/ui` Team tab for that team. |
 | Status | Disable a mapping without deleting it. |
 
+### Microsoft Entra ID / Azure AD SCIM Directory Automation
+
+One Dense-Mem deployment is one organization boundary. An Entra provider can
+have one SCIM connector. The connector provisions durable users, groups, and
+group memberships; it does not create a second organization or a second
+authorization store.
+
+Set up the provider first, using the tenant's discovered OIDC issuer, the
+application client ID, the Entra tenant ID, and `oid` as the stable identity
+claim. Register the normal user callback:
+
+```text
+https://<dense-mem-user-host>/ui/api/sso/callback
+```
+
+Then configure a directory connector from that provider's SSO panel. Dense-Mem
+shows the connector ID and its bearer token plus OAuth client credentials once.
+Store those values in the Entra provisioning application or a secret manager;
+they cannot be read back from Dense-Mem. Rotate them from the control portal if
+they are lost or suspected exposed.
+
+Set `SCIM_PUBLIC_BASE_URL` to the dedicated HTTPS base URL that fronts the main
+listener. The connector's SCIM base is:
+
+```text
+https://<scim-host>/scim/v2/<connector-id>
+```
+
+The OAuth client-credentials token endpoint is:
+
+```text
+https://<scim-host>/scim/oauth/token
+```
+
+The SCIM service accepts either the connector bearer token or an OAuth access
+token issued for that connector. It supports SCIM 2.0 `Users` and `Groups`,
+including PATCH and exact equality filters used by ordinary Entra provisioning.
+Bulk provisioning, a gallery-specific shortcut, workload identity federation,
+and multiple connectors for one provider are not part of this version.
+
+Configure a full-match RE2 pattern with named `team` and `role` captures, then
+map each allowed role capture to a Dense-Mem member or manager entitlement. For
+example:
+
+```text
+^ActiveDirectoryGroup(?P<team>.+?)(?P<role>Readonly|Member|Manager)Permission$
+```
+
+With the matching entitlement map, a group named
+`ActiveDirectoryGroupResearchManagerPermission` can create or bind the `Research` team and
+grant its current members manager access. The connector previews its plan before
+activation and enforces the configured auto-team cap.
+
+The lifecycle is deliberate:
+
+1. `disabled` has no directory authority.
+2. `observe` accepts provisioning state and shows the proposed bindings,
+   candidates, and durable issues without changing authorization.
+3. `active` requires the current preview version and applies that initial
+   reconciliation atomically. SCIM becomes the authority for that provider's
+   user/team entitlements.
+
+While a connector is active, the OIDC login proves the user identity only.
+Dense-Mem does not grant user-portal teams from OIDC group claims, UserInfo, or
+a configured Graph/groups endpoint. It requires an active SCIM user and a
+current durable SCIM membership that matches the team profile. Existing user
+sessions and SSO-owned API keys perform that same durable check, so removing a
+membership or deactivating a SCIM user denies access on the next request.
+
+The connector treats the external group ID as durable. A later display-name
+rename never rebinds a group, moves a team, renames a team, or changes a role.
+An exact manual group-to-team mapping wins over automation. Otherwise, an
+unambiguous normalized active team name can be previewed as an exact-name
+binding; a newly created directory team stays marked directory-managed. Removing
+a group archives only a directory-created team. Exact-name, manual, and adopted
+teams remain active but lose the removed directory access. An operator may adopt
+a directory-created team to make it manual before that removal.
+
+### Control Portal SSO
+
+The control portal keeps the break-glass `CONTROL_PORTAL_TOKEN`, and can also
+use an enabled OIDC provider plus explicitly configured control-admin group IDs.
+Set `CONTROL_PUBLIC_BASE_URL` to the dedicated HTTPS administrative ingress and
+register this separate callback with the selected provider:
+
+```text
+https://<control-host>/control/auth/callback
+```
+
+Control-group membership is not a user-team mapping. It grants only control
+portal access. A control SSO session is checked against the active configured
+admin group on every use; when its provider has an active SCIM connector, the
+identity must also remain an active SCIM user. Keep the control listener private
+or behind dedicated administrative ingress, and retain the break-glass token
+outside browser-accessible configuration.
+
 ### Generic OIDC Group And Role Mapping
 
-Dense-Mem is not tied to a specific SSO vendor. Any OIDC provider can work when
-it can provide stable group, role, or entitlement values through one of these
-paths:
+Dense-Mem is not tied to a specific SSO vendor. A provider without an active
+SCIM connector can use stable group, role, or entitlement values through one of
+these paths:
 
 - ID-token claims
 - UserInfo claims

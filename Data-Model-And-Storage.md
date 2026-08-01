@@ -130,6 +130,10 @@ flowchart LR
 | `relationship_conflict_positions` | current bounded grouping of authored Relationship IDs/versions into equivalent case positions without merging ownership |
 | `relationship_conflict_events` | append-only open, membership, evaluation, resolve, reopen, overdue, and dismiss history |
 | `relationship_conflict_review_runs` | durable per-team/local-date nightly reservation, lease, retry, and bounded outcome counts |
+| `relationship_conflict_ai_assessment_attempts` / `_events` | durable reservation/completion state plus append-only audit for one bounded overdue verifier assessment per case version, model, policy, and local date; stores only safe outcome metadata and a response hash |
+| `relationship_conflict_resolution_plans` | version-CAS resolution intent, method, effective-time basis, and `resolution_pending`/applied state so a high-fanout case has no partial lifecycle changes |
+| `relationship_conflict_evidence_derivations` | immutable lineage from a retracted losing fragment to its system-owned deletion-only replacement fragment |
+| `relationship_conflict_derived_evidence_tasks` | durable leased retry state, atomically created with a resolution for each retracted losing fragment before its deletion-only replacement is staged |
 | `hypotheses` | dream output isolated from active knowledge |
 | `search_documents` | rebuildable compact text and vector-ready metadata for authorized retrieval |
 | `embedding_jobs` | durable, leased work to bring a search document to the current embedding contract |
@@ -603,7 +607,13 @@ sequenceDiagram
   N->>P: Claim due team cases with SKIP LOCKED lease
   N->>P: Reload authoritative supports/versions/time
   N->>P: Lock case and member Relationship versions
-  N->>P: Resolve with Relationship transitions, overdue/requeue, dismiss, or no-op
+  alt deterministic winner
+    N->>P: Resolve with Relationship transitions, lifecycle, or dismiss/no-op
+  else unchanged overdue case
+    N->>P: Commit local-date assessment reservation and bounded dossier
+    N->>N: Call configured verifier outside the transaction
+    N->>P: Complete assessment by case-version CAS; resolve, requeue, or LWW fallback
+  end
 ```
 
 The due index begins with `(team_id, status, next_review_at)` and covers only
@@ -614,15 +624,26 @@ local_run_date)` durably, claims bounded team-local batches with `FOR UPDATE
 SKIP LOCKED`, and recovers expired leases. A stale claimed version becomes a
 no-op and is re-evaluated from the current row rather than overwriting it.
 
-The worker invokes the versioned deterministic resolver and calls no
-model/provider. Failure leaves the case due and unresolved. A resolved case
-updates the case row, appends the case event, sets losing Relationship
-`status=superseded` and `valid_to`, appends Relationship transition events, and
-enqueues rebuildable search/read-model work in one transaction. Final recall
-checks current Relationship eligibility and the current Conflict case during
-support-path hydration so a stale vector cannot reintroduce a suppressed current
-path. The job never deletes evidence or changes support links, ownership, author
-attribution, Entity resolution, or source history.
+The worker invokes the versioned deterministic resolver first. An unchanged
+overdue case may reserve one bounded AI assessment for its local date, commit,
+then call the configured verifier outside the authoritative transaction. The
+closed schema permits only a supplied position or abstention; server policy
+accepts a selection at confidence `>= 0.70`. Abstention, or five failed local
+days for the same case version/model/policy tuple, uses authority-then-accepted-
+time last-write-wins. Failure leaves the case due and unresolved until that
+bounded fallback applies. A resolved case updates the case row, appends the case
+event, sets losing Relationship `status=superseded` and `valid_to`, retracts a
+losing fragment through the lifecycle ledger only when it has no support path
+outside the active case, appends Relationship transition events, and enqueues
+rebuildable search/read-model work plus a leased deletion-only derivation task in
+one transaction. The task is retried by the nightly job until it stages the
+inferred replacement through the normal placement queue; that fragment is not
+searchable and cannot form a Relationship. A shared fragment remains in its
+existing search/support paths while the losing Relationship is suppressed. Final
+recall checks current Relationship eligibility and the current Conflict case
+during support-path hydration so a stale vector cannot reintroduce a suppressed
+current path. The job never rewrites raw evidence, ownership, author attribution,
+Entity resolution, or source history.
 
 Conflict-case lifecycle and evidence policy belong in
 [Conflicts And Corrections](Conflicts-And-Corrections#durable-team-conflict-cases).

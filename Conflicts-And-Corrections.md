@@ -273,10 +273,12 @@ cross-profile `resolve` command; automatic resolution belongs to nightly review.
 
 ## Nightly Conflict Review
 
-The nightly job is the deterministic Conflict maintainer. It reviews known open
-or overdue cases, repairs membership, resolves qualifying cases, and closes stale
-Relationship episodes. It does not scan all old Relationships by age and it does
-not call a model.
+The nightly job is the Conflict maintainer. It reviews known open or overdue
+cases, repairs membership, deterministically resolves qualifying cases, and
+closes stale Relationship episodes. It does not scan old Relationships by age.
+For an unchanged `overdue` case that still has no deterministic winner, it may
+run one bounded AI assessment through the configured verifier; the model only
+proposes a supplied position and never writes durable state.
 
 For each case whose `next_review_at` is due, whether before or after
 `review_due_at`, the job:
@@ -289,11 +291,32 @@ For each case whose `next_review_at` is due, whether before or after
    current pre-TTL or post-TTL phase
 5. marks the case `overdue`, appends an escalation event, and schedules the next
    nightly check when no unique position qualifies
-6. dismisses a case only when committed lifecycle/source changes leave no
+6. for an overdue case, reserves at most one `(case version, model, policy,
+   local date)` assessment, commits that reservation, and then sends the bounded
+   current dossier to the verifier outside the database transaction
+7. accepts only a closed-schema selection of a supplied position at confidence
+   `>= 0.70`; an explicit abstention immediately uses deterministic
+   last-write-wins: strongest authority, then latest Dense-Mem accepted support,
+   then a stable position-ID tie break
+8. records provider, schema, context, or token-bound failures without persisting
+   provider text; after five failed local-day attempts for the unchanged
+   `(case version, model, policy)` tuple, uses the same last-write-wins fallback
+9. dismisses a case only when committed lifecycle/source changes leave no
    material disagreement
-7. when resolving, locks and updates the losing Relationship rows, appends
-   transition events, marks the case resolved, appends the Conflict event, and
-   queues rebuildable search/read-model refresh work in one transaction
+10. when resolving, locks and updates the losing Relationship rows, retracts
+    only losing evidence fragments that support no Relationship outside the
+    active case through audited system-owned lifecycle operations, marks the case
+    resolved, appends Conflict/transition events, and queues rebuildable
+    search/read-model refresh work in one transaction
+
+An abandoned assessment reservation expires only after its local date ends and
+then counts as a failed attempt. A case-version change supersedes reserved work;
+a stale completion cannot apply. The assessor receives server-owned position
+metadata (authority, independent source groups, distinct-owner counts, accepted
+and effective time) and effective evidence only. It receives neither profile
+identities nor authority to choose an ID that was not in that dossier.
+Evidence without a durable Conflict case does not become stale merely because of
+its age or lack of a later source revision.
 
 The review deadline comes from the versioned team policy. Reaching it is not
 evidence and does not force a winner; it only enables the lower automatic
@@ -307,10 +330,17 @@ UPDATE SKIP LOCKED` claims, bounded retries, and lease recovery.
 
 The job may update conflict workflow rows, losing Relationship `status` and
 `valid_to`, append Relationship transition events, and enqueue rebuildable search
-state. It may not edit or delete evidence, observations, verification events,
-RelationshipCrossReferences, support links, Relationship ownership, author
-attribution, Entity resolution, or source history. Operators inspect an overdue
-case or submit new evidence; they do not repair it with direct SQL.
+state. For a successfully resolved overdue case it may also retract a losing
+evidence fragment with an audited system actor and stage an inferred,
+deletion-only replacement through the normal placement queue, but only when that
+fragment has no support path outside the active case. A shared fragment remains
+searchable and keeps its unrelated support; the losing Relationship is still
+suppressed. The replacement is not searchable and cannot project a Relationship
+or vote in a future conflict. If staging it fails, the old evidence remains
+inactive and the failure is durably visible. The job never rewrites raw evidence
+text, observations, verification events, ownership, author attribution, Entity
+resolution, or source history. Operators inspect an overdue case or submit new
+evidence; they do not repair it with direct SQL.
 Defaults and bounded overrides belong in
 [Configuration](Configuration#conflict-review).
 
@@ -598,13 +628,19 @@ this page owns how the client sees and resolves uncertainty.
 17. another writer's response creates that writer's evidence-backed
     Relationship and cannot act as a bare vote
 18. placement creates or updates Conflict cases but does not resolve them
-19. nightly review is the only automatic Conflict resolver and model-free
-20. deadline expiry without one qualifying position produces `overdue`, not an
-    invented winner
+19. nightly review is the only automatic Conflict resolver; it uses a bounded
+    verifier proposal only for unchanged overdue cases and server policy remains
+    the durable authority
+20. deadline expiry without one qualifying position produces `overdue`; an
+    explicit AI abstention or five failed local-day assessments uses the audited
+    authority-then-accepted-time last-write-wins fallback
 21. the nightly job may close losing Relationship episodes with audited
-    `status=superseded` and `valid_to` updates, but cannot mutate raw evidence,
-    support links, ownership, author attribution, Entity resolution, or source
-    history
+    `status=superseded` and `valid_to` updates, retract only case-exclusive
+    losing evidence through the lifecycle ledger, and atomically persist one
+    leased, retryable deletion-only derivation task for each retracted fragment;
+    the task stages the inferred replacement through normal placement. It cannot
+    rewrite raw evidence, ownership, author attribution, Entity resolution, or
+    source history
 22. selecting a server-supplied Entity or predicate option reuses the persisted
     assessment and makes zero assessor calls
 23. accept, correct, and confirm-new-Entity actions require exact new evidence;

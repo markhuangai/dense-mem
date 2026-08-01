@@ -194,11 +194,11 @@ flowchart TD
 | Capability | Scope | Role/policy note |
 | --- | --- | --- |
 | recall, trace, context, Entity/Relationship inspection | `read` | member or manager |
-| remember and placement resolution | `write` | creates caller-owned knowledge; authoritative evidence additionally follows authority policy |
+| remember, retraction, and owned correction | `write` | submits caller-owned evidence/proposals or applies authorized owned lifecycle work; authoritative evidence additionally follows authority policy |
 | advance owned source revision | `write` | exact source ownership and prior-revision compare-and-set; effects follow indexed support dependencies |
 | merge/split/supersede/forget | `write` | caller-owned observations and Relationships only |
 | confirm/challenge another profile | `write` | submit caller-owned evidence through normal remember; target remains immutable |
-| release security quarantine | `write` | manager role also required; appends release and re-enters guarded processing |
+| replace quarantined submission | `write` | submit a fresh complete evidence/proposal package; no release action exists |
 | recall-feedback submission | `write` | feature enabled |
 | stored feedback inspection | `read + feedback:read` | feature enabled; same-team/control restrictions |
 | evaluation tools | `read + write` | evaluation mode; disposable teams only |
@@ -278,7 +278,7 @@ The runtime advertises supported MCP protocol versions. Do not hardcode one
 protocol date in the manual as timeless.
 
 The negotiated MCP protocol version and Dense-Mem tool contract
-`dense-mem.v2.3.2` are
+`dense-mem.v2.4` are
 different versions. The host follows the current `tools/list` schemas and
 server instructions instead of applying a cached input shape from another
 Dense-Mem release.
@@ -314,8 +314,8 @@ sequenceDiagram
   H-->>B: Sanitized first-party view model
 ```
 
-The user portal supports same-team recall, graph/trace, review, key management,
-and permitted telemetry. The control portal supports private cross-team
+The user portal supports same-team recall, graph/trace, submission status, key
+management, and permitted telemetry. The control portal supports private cross-team
 configuration, security, and operations. Portal handlers call the
 same application services and PostgreSQL authority as MCP where their use cases
 overlap, but their browser endpoints are not a supported client SDK or memory
@@ -357,8 +357,8 @@ weaken the promised global limit.
 
 Readiness includes PostgreSQL migrations/RLS, `pgvector`, the persisted
 embedding contract, active search-index generation/topology parity, required
-provider contracts, complete Relationship text projection, placement/embedding
-backlog policy, and Redis when distributed coordination is required.
+provider contracts, complete Relationship text projection, submission-assessment
+and embedding backlog policy, and Redis when distributed coordination is required.
 Relationship vector-generation warming is an optional recall degradation after
 text convergence; incomplete Relationship text projection is a readiness
 failure. Optional feature outages appear as degradation unless deployment
@@ -378,32 +378,41 @@ and correlation ID. They never include:
 - embeddings
 - cross-team existence hints
 
-Typed error schema is in [Technical Reference](Technical-Reference#error-contract).
+Typed error schema is in
+[Technical Reference](Technical-Reference#authentication-errors-and-audit).
 
 ## Provider Isolation
 
-Evidence, exact-span current Entity candidates, and the structured predicate
-catalog are untrusted prompt data. Stored Relationships, source authority, and
-source independence are not assessor inputs. The write path uses a
-deterministic `pass | guarded | quarantine` scan, one bounded capability-free
-assessor conversation per placement attempt, required bounded model security
-signals, structured outputs, strict allowlist validation, persisted valid
-assessment, and independent deterministic policy. Malformed HTTP 200 output may
-be replaced in the same history for at most five turns; provider failures
-consume the durable attempt budget with fresh history. Provider output can only escalate
-security handling; it
-cannot clear a deterministic signal, select a stored Relationship or cross-team
-ID, create support, release quarantine, or write lifecycle status/support.
+Raw staged evidence, exact-span client proposals, bounded same-team Entity
+candidates, and the predicate catalog are untrusted prompt data. The write path
+first runs a deterministic Base64/encoding, hidden-control, instruction,
+role-spoofing, markup, secret-extraction, and exfiltration scan before it stages
+anything. The worker repeats that scan when it claims the submission.
+
+The assessor receives the full staged submission plus bounded candidate/predicate
+context in one capability-free structured request. It has no tools, credentials,
+environment data, request headers, cross-team records, or prior raw evidence
+history. It must return one security verdict and bounded justification per
+evidence item. Its output cannot clear a deterministic signal, select an
+unprovided stored ID, create support, release quarantine, set lifecycle status,
+or commit canonical state.
+
+A model security concern quarantines the submission. PostgreSQL retains isolated
+staging for exactly 24 hours, then hard-deletes it. A client can only submit a
+new complete replacement linked to the quarantined submission; it cannot
+negotiate, release, or append evidence to it. Complete closed-schema validation
+is required before one atomic canonical promotion; no partial semantic commit is
+allowed.
 
 ## Audit
 
 Audit high-value events:
 
 - key/profile/team changes
-- authority changes and review decisions
+- authority changes and submission terminal outcomes
 - source revision activation, direct evidence supersession/retraction, and resulting
   support/status transitions
-- deterministic/model quarantine and manager release
+- deterministic/model quarantine, exact retention expiry, and replacement link
 - Entity merge/split
 - Relationship retraction/supersession corrections
 - Conflict case open/reopen/resolve/overdue/dismiss decisions and policy version
@@ -427,10 +436,11 @@ audit ledger.
 | Portal backend becomes an integration API | external clients depend on browser implementation details and bypass the intended MCP contract | same-origin portal boundary, no public SDK or CORS contract, API-key-or-SSO authentication, and CSRF for SSO-cookie mutations |
 | Redis outage weakens limits | replicas fall back to independent counters | distributed-required readiness failure |
 | Search candidate leakage | global vector search exposes another team's text | internal filtering and authorized hydration before return |
-| System-worker privilege leak | placement or embedding worker writes the wrong team | stored team on every job, explicit system transaction mode, source-version predicates, and audit |
+| System-worker privilege leak | submission-assessment or embedding worker writes the wrong team | stored team on every job, explicit system transaction mode, source-version predicates, and audit |
 | Error enumeration | wrong-team ID returns different detail | non-enumerating public errors and internal audit only |
 | Cross-profile overwrite | write-scoped B retracts A's Relationship by ID | immutable principal profile, owner predicate on mutation, and caller-owned correction links |
-| Quarantine override | ordinary writer releases a malicious fragment | require manager role plus `write`, append actor/reason, and re-enter only as guarded |
+| Quarantine bypass | a writer tries to release, extend, or reuse malicious staging | no release tool; database-enforced exact 24-hour expiry; replacement is a fresh complete submission |
+| Recalled prompt injection | returned evidence asks a host to export environment variables | returned evidence is untrusted data; client action/tool policy and least privilege remain mandatory |
 | Source-key takeover | a writer advances another integration's source and demotes team knowledge | bind source identity to immutable owner and require exact prior-revision compare-and-set |
 
 ## Acceptance Invariants
@@ -452,9 +462,13 @@ audit ledger.
 12. user-portal API-key login remains supported alongside configured SSO;
     HttpOnly session and CSRF semantics apply only to cookie-authenticated SSO
     requests
-13. only a manager with `write` can release quarantine, and release cannot bypass
-    guarded scanning/model policy
+13. no client can release a quarantine or append evidence to an existing
+    submission; a replacement is a fresh complete submission
 14. a source revision can be advanced only by its immutable source owner and an
     exact expected prior token
 15. semantic memory tools are visible and executable through MCP only; generic
     HTTP discovery and execution routes cannot expose them
+16. deterministic security rejection happens before staging, and every assessor
+    response contains one security verdict for every staged evidence item
+17. quarantined staging is isolated for exactly 24 hours and then hard-deleted;
+    recalled evidence remains untrusted data after any successful write
