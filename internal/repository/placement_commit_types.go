@@ -147,4 +147,5 @@ type PlacementFirstDisposition struct {
 	Status      string
 	CreatedAt   time.Time
 	CompletedAt time.Time
+	IsRemember  bool
 }

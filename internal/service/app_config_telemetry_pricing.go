@@ -54,24 +54,40 @@ func (s *AppConfigServiceImpl) TelemetryPricingRuntimeConfig(ctx context.Context
 	return cloneTelemetryPricingRuntimeConfig(cache.telemetry.Effective), nil
 }
 
+// CachedTelemetryPricingRuntimeConfig returns the latest in-process rate card
+// without refreshing configuration from storage. Provider paths use this
+// snapshot so telemetry can never add a database round trip to a model call.
+func (s *AppConfigServiceImpl) CachedTelemetryPricingRuntimeConfig() (domain.TelemetryPricingRuntimeConfig, bool) {
+	if s == nil {
+		return domain.TelemetryPricingRuntimeConfig{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cache == nil {
+		return domain.TelemetryPricingRuntimeConfig{}, false
+	}
+	return cloneTelemetryPricingRuntimeConfig(s.cache.telemetry.Effective), true
+}
+
 func telemetryPricingRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (domain.TelemetryPricingConfigSettings, error) {
-	values := make(map[string]string, len(editableTelemetryPricingConfigKeys()))
+	runtime := domain.TelemetryPricingRuntimeConfig{}
+	items := make([]domain.TelemetryPricingConfigItem, 0, len(editableTelemetryPricingConfigKeys()))
 	for _, key := range editableTelemetryPricingConfigKeys() {
-		values[key] = strings.TrimSpace(entries[key].Value)
-	}
-	normalized, err := normalizeTelemetryPricingConfigValues(values)
-	if err != nil {
-		return domain.TelemetryPricingConfigSettings{}, err
-	}
-	runtime := domain.TelemetryPricingRuntimeConfig{
-		VerifierInputUSDPerMillionTokens:  telemetryPricePointer(normalized[domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens]),
-		VerifierOutputUSDPerMillionTokens: telemetryPricePointer(normalized[domain.AppConfigTelemetryCostVerifierOutputUSDPerMillionTokens]),
-		EmbeddingInputUSDPerMillionTokens: telemetryPricePointer(normalized[domain.AppConfigTelemetryCostEmbeddingInputUSDPerMillionTokens]),
-	}
-	items := []domain.TelemetryPricingConfigItem{
-		telemetryPricingConfigItem(entries, domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens, telemetryPriceEffectiveValue(runtime.VerifierInputUSDPerMillionTokens)),
-		telemetryPricingConfigItem(entries, domain.AppConfigTelemetryCostVerifierOutputUSDPerMillionTokens, telemetryPriceEffectiveValue(runtime.VerifierOutputUSDPerMillionTokens)),
-		telemetryPricingConfigItem(entries, domain.AppConfigTelemetryCostEmbeddingInputUSDPerMillionTokens, telemetryPriceEffectiveValue(runtime.EmbeddingInputUSDPerMillionTokens)),
+		normalized, err := normalizeTelemetryPricingConfigValue(key, entries[key].Value)
+		if err != nil {
+			items = append(items, telemetryPricingConfigItem(entries, key, "", strings.TrimPrefix(err.Error(), ErrInvalidAppConfig.Error()+": ")))
+			continue
+		}
+		price := telemetryPricePointer(normalized)
+		switch key {
+		case domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens:
+			runtime.VerifierInputUSDPerMillionTokens = price
+		case domain.AppConfigTelemetryCostVerifierOutputUSDPerMillionTokens:
+			runtime.VerifierOutputUSDPerMillionTokens = price
+		case domain.AppConfigTelemetryCostEmbeddingInputUSDPerMillionTokens:
+			runtime.EmbeddingInputUSDPerMillionTokens = price
+		}
+		items = append(items, telemetryPricingConfigItem(entries, key, normalized, ""))
 	}
 	return domain.TelemetryPricingConfigSettings{
 		UpdateTime: entries[domain.AppConfigUpdateTimeKey].Value,
@@ -93,18 +109,25 @@ func normalizeTelemetryPricingConfigValues(values map[string]string) (map[string
 		if _, ok := allowed[key]; !ok {
 			return nil, fmt.Errorf("%w: unknown key %s", ErrInvalidAppConfig, key)
 		}
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			normalized[key] = ""
-			continue
+		normalizedValue, err := normalizeTelemetryPricingConfigValue(key, value)
+		if err != nil {
+			return nil, err
 		}
-		parsed, err := strconv.ParseFloat(trimmed, 64)
-		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed < 0 || parsed > maxTelemetryCostUSDPerMillionTokens {
-			return nil, fmt.Errorf("%w: %s must be a number between 0 and %d", ErrInvalidAppConfig, key, maxTelemetryCostUSDPerMillionTokens)
-		}
-		normalized[key] = strconv.FormatFloat(parsed, 'f', -1, 64)
+		normalized[key] = normalizedValue
 	}
 	return normalized, nil
+}
+
+func normalizeTelemetryPricingConfigValue(key, value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", nil
+	}
+	parsed, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed < 0 || parsed > maxTelemetryCostUSDPerMillionTokens {
+		return "", fmt.Errorf("%w: %s must be a number between 0 and %d", ErrInvalidAppConfig, key, maxTelemetryCostUSDPerMillionTokens)
+	}
+	return strconv.FormatFloat(parsed, 'f', -1, 64), nil
 }
 
 func editableTelemetryPricingConfigKeys() []string {
@@ -123,20 +146,14 @@ func telemetryPricePointer(value string) *float64 {
 	return &parsed
 }
 
-func telemetryPriceEffectiveValue(value *float64) string {
-	if value == nil {
-		return ""
-	}
-	return strconv.FormatFloat(*value, 'f', -1, 64)
-}
-
-func telemetryPricingConfigItem(entries map[string]domain.AppConfigEntry, key, effective string) domain.TelemetryPricingConfigItem {
+func telemetryPricingConfigItem(entries map[string]domain.AppConfigEntry, key, effective, validationError string) domain.TelemetryPricingConfigItem {
 	entry := entries[key]
 	return domain.TelemetryPricingConfigItem{
-		Key:            key,
-		Value:          strings.TrimSpace(entry.Value),
-		EffectiveValue: effective,
-		UpdatedAt:      entry.UpdatedAt,
+		Key:             key,
+		Value:           strings.TrimSpace(entry.Value),
+		EffectiveValue:  effective,
+		ValidationError: validationError,
+		UpdatedAt:       entry.UpdatedAt,
 	}
 }
 

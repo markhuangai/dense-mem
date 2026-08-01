@@ -151,10 +151,11 @@ type TelemetryPricingConfigSettings struct {
 
 // TelemetryPricingConfigItem is one editable telemetry pricing entry.
 type TelemetryPricingConfigItem struct {
-	Key            string    `json:"key"`
-	Value          string    `json:"value"`
-	EffectiveValue string    `json:"effective_value"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	Key             string    `json:"key"`
+	Value           string    `json:"value"`
+	EffectiveValue  string    `json:"effective_value"`
+	ValidationError string    `json:"validation_error,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // TelemetryPricingRuntimeConfig is the effective pricing used to estimate

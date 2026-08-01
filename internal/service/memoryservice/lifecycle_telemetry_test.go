@@ -30,6 +30,7 @@ func TestLifecycleRecordsFirstDispositionFromResolution(t *testing.T) {
 				Status:      string(domain.PlacementRunCompleted),
 				CreatedAt:   createdAt,
 				CompletedAt: createdAt.Add(2 * time.Second),
+				IsRemember:  true,
 			},
 		},
 	}
@@ -58,4 +59,39 @@ func TestLifecycleRecordsFirstDispositionFromResolution(t *testing.T) {
 		}
 	}
 	t.Fatal("resolution did not record a remember first-disposition metric")
+}
+
+func TestLifecycleDoesNotRecordInternalFirstDisposition(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	metrics := observability.NewPrometheusMetrics()
+	placement := &lifecyclePlacementStub{
+		result: &repository.ResolvePlacementReviewResult{
+			DecisionID: "internal-first-disposition",
+			IngestID:   uuid.NewString(),
+			Status:     string(domain.PlacementRunCompleted),
+			FirstDisposition: &repository.PlacementFirstDisposition{
+				Status:      string(domain.PlacementRunCompleted),
+				CreatedAt:   time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC),
+				CompletedAt: time.Date(2026, 7, 31, 12, 0, 2, 0, time.UTC),
+			},
+		},
+	}
+	svc := NewLifecycleService(LifecycleDependencies{Placement: placement, Metrics: metrics})
+
+	_, err := svc.ResolveMemoryPlacement(authenticatedRememberContext(teamID, profileID, keyID), ResolveMemoryPlacementRequest{
+		ContractVersion:      domain.ContractVersion,
+		Action:               domain.ResolveReject,
+		IngestID:             placement.result.IngestID,
+		PlacementItemID:      uuid.NewString(),
+		PlacementItemVersion: 1,
+		Message:              "not durable memory",
+		IdempotencyKey:       "internal-first-disposition",
+	})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.NotContains(t, recorder.Body.String(), "densemem_remember_first_disposition_total{")
 }

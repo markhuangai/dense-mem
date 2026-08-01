@@ -268,7 +268,7 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 }
 
 func (s *semanticAssessmentPlacementWorkerService) recordFirstDisposition(ctx context.Context, run repository.PlacementRun, disposition *repository.PlacementFirstDisposition) {
-	if disposition == nil {
+	if disposition == nil || !disposition.IsRemember {
 		return
 	}
 	metricCtx := observability.WithMetricIdentity(ctx, run.TeamID, run.OwnerProfileID)

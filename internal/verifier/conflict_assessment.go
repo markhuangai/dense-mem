@@ -342,7 +342,7 @@ func (v *OpenAIVerifier) AssessRelationshipConflict(ctx context.Context, req Con
 		if err != nil {
 			return ConflictAssessmentResponse{}, err
 		}
-		if result.Usage != nil && result.Usage.PromptTokens > int64(v.assessmentLimits.MaxInputTokens) {
+		if result.ReportedUsage != nil && result.ReportedUsage.PromptTokens > int64(v.assessmentLimits.MaxInputTokens) {
 			return ConflictAssessmentResponse{}, &MalformedResponseError{
 				Provider:     openAIVerifierProvider,
 				Message:      "provider reported input tokens beyond conflict assessment limit",
@@ -352,7 +352,7 @@ func (v *OpenAIVerifier) AssessRelationshipConflict(ctx context.Context, req Con
 		}
 		responseErrors := []SemanticValidationError{}
 		response := ConflictAssessmentResponse{}
-		if result.Usage != nil && result.Usage.CompletionTokens > int64(v.assessmentLimits.MaxOutputTokens) {
+		if result.ReportedUsage != nil && result.ReportedUsage.CompletionTokens > int64(v.assessmentLimits.MaxOutputTokens) {
 			responseErrors = append(responseErrors, SemanticValidationError{
 				Field:   "output_tokens",
 				Message: fmt.Sprintf("provider reported more than the allowed %d tokens", v.assessmentLimits.MaxOutputTokens),
@@ -368,8 +368,8 @@ func (v *OpenAIVerifier) AssessRelationshipConflict(ctx context.Context, req Con
 		}
 		if len(responseErrors) == 0 {
 			response.InputTokens = inputTokens
-			if result.Usage != nil && result.Usage.PromptTokens > 0 {
-				response.InputTokens = int(result.Usage.PromptTokens)
+			if result.ReportedUsage != nil && result.ReportedUsage.PromptTokens > 0 {
+				response.InputTokens = int(result.ReportedUsage.PromptTokens)
 			}
 			response.ProviderTurns = turn
 			return response, nil

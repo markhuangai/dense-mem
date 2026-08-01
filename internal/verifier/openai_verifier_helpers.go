@@ -2,10 +2,25 @@ package verifier
 
 import "strings"
 
+const (
+	maxOpenAIValidationSummaryErrors = 100
+	maxOpenAIValidationSummaryRunes  = 2_048
+	openAIValidationSummaryOmission  = "additional validation errors were omitted"
+)
+
 func openAIValidationSummary(errs []SemanticValidationError) string {
-	parts := make([]string, 0, len(errs))
-	for _, err := range errs {
+	parts := make([]string, 0, min(len(errs), maxOpenAIValidationSummaryErrors))
+	for index, err := range errs {
+		if index == maxOpenAIValidationSummaryErrors {
+			parts = append(parts, openAIValidationSummaryOmission)
+			break
+		}
 		parts = append(parts, err.Error())
 	}
-	return strings.Join(parts, "; ")
+	summary := strings.Join(parts, "; ")
+	if len([]rune(summary)) <= maxOpenAIValidationSummaryRunes {
+		return summary
+	}
+	prefixRunes := maxOpenAIValidationSummaryRunes - len([]rune(openAIValidationSummaryOmission)) - len([]rune("; "))
+	return string([]rune(summary)[:prefixRunes]) + "; " + openAIValidationSummaryOmission
 }

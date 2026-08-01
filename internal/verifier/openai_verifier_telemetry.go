@@ -2,15 +2,31 @@ package verifier
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
+
+type openAIStructuredChatResult struct {
+	Content string
+	// Usage is populated only when both token sides can be priced.
+	Usage *openAIVerifierUsage
+	// ReportedUsage retains raw provider values for token-budget enforcement.
+	ReportedUsage *openAIVerifierUsage
+}
+
+func openAIVerifierUsageSupportsPricing(usage *openAIVerifierUsage) bool {
+	return usage != nil && usage.PromptTokens > 0 && usage.CompletionTokens > 0
+}
 
 func (v *OpenAIVerifier) recordVerifierProviderUsage(ctx context.Context, model string, usage *openAIVerifierUsage) {
 	if usage == nil {
 		return
 	}
 	observability.RecordVerifierTokens(ctx, v.metrics, model, usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens)
+	if !openAIVerifierUsageSupportsPricing(usage) {
+		return
+	}
 	observability.RecordAIOperationUsage(ctx, v.metrics, observability.AIOperationUsage{
 		Component:    observability.AIComponentVerifier,
 		Model:        model,
@@ -24,11 +40,16 @@ func (v *OpenAIVerifier) recordVerifierMissingUsage(ctx context.Context, model s
 	observability.RecordAIOperationUnpriced(ctx, v.metrics, observability.AIComponentVerifier, model, "missing_usage")
 }
 
-func (v *OpenAIVerifier) recordVerifierTokenizerUsage(ctx context.Context, model string, messages []openAIVerifierMessage, content string) {
+func (v *OpenAIVerifier) recordVerifierTokenizerUsage(ctx context.Context, model string, request openAIVerifierRequest, content string) {
 	if !observability.HasAIOperation(ctx) {
 		return
 	}
-	inputTokens, err := semanticAssessmentMessageTokens(messages, v.assessmentLimits.Tokenizer)
+	requestJSON, err := json.Marshal(request)
+	if err != nil {
+		observability.RecordAIOperationUnpriced(ctx, v.metrics, observability.AIComponentVerifier, model, "tokenizer_error")
+		return
+	}
+	inputTokens, err := CountTokens(string(requestJSON), v.assessmentLimits.Tokenizer)
 	if err != nil {
 		observability.RecordAIOperationUnpriced(ctx, v.metrics, observability.AIComponentVerifier, model, "tokenizer_error")
 		return

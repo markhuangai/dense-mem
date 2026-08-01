@@ -1,10 +1,12 @@
 -- +goose Up
 -- +goose StatementBegin
 
--- Lock/rewrite: this only inserts three config rows and updates update_time;
--- it performs no table rewrite or backfill. RLS policies are unchanged because
--- the migration uses the existing system transaction mode. Down removes these
--- rate values, so export any operator-entered values before a downgrade.
+-- Lock/rewrite: this inserts three config rows after the legacy skip repair and updates update_time; it
+-- performs no table rewrite. Historical marker recovery is intentionally
+-- performed in bounded, retryable system transactions by the application so a
+-- migration does not hold an unbounded transaction on placement history.
+-- RLS policies are unchanged because the migration uses the existing system
+-- transaction mode.
 SELECT set_config('app.tx_mode', 'system', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);

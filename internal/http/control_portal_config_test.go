@@ -690,10 +690,11 @@ func TestControlPortalTelemetryPricingConfigFlows(t *testing.T) {
 		telemetrySettings: &domain.TelemetryPricingConfigSettings{
 			UpdateTime: now.Format(time.RFC3339Nano),
 			Items: []domain.TelemetryPricingConfigItem{{
-				Key:            domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens,
-				Value:          "1.25",
-				EffectiveValue: "1.25",
-				UpdatedAt:      now,
+				Key:             domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens,
+				Value:           "1.25",
+				EffectiveValue:  "1.25",
+				ValidationError: "",
+				UpdatedAt:       now,
 			}},
 			Effective: domain.TelemetryPricingRuntimeConfig{
 				VerifierInputUSDPerMillionTokens:  &verifierInput,
@@ -724,6 +725,13 @@ func TestControlPortalTelemetryPricingConfigFlows(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"verifier_model":"configured-verifier"`)
 	require.Contains(t, rec.Body.String(), `"embedding_model":"configured-embedding"`)
 	require.Contains(t, rec.Body.String(), `"verifier_input_usd_per_million_tokens":1.25`)
+	require.NotContains(t, rec.Body.String(), `"validation_error"`)
+
+	appConfig.telemetrySettings.Items[0].ValidationError = "rate must be repaired"
+	rec = do(http.MethodGet, "/control/api/config/telemetry-pricing", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"validation_error":"rate must be repaired"`)
+	appConfig.telemetrySettings.Items[0].ValidationError = ""
 
 	rec = do(http.MethodPatch, "/control/api/config/telemetry-pricing", `{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS","value":"3"}]}`)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -737,6 +745,19 @@ func TestControlPortalTelemetryPricingConfigFlows(t *testing.T) {
 		require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 		require.Equal(t, "3", appConfig.telemetryValues[domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens])
 	}
+	for _, body := range []string{
+		`{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS"}]}`,
+		`{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS","rate":"4"}]}`,
+		`{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS","value":null}]}`,
+	} {
+		rec = do(http.MethodPatch, "/control/api/config/telemetry-pricing", body)
+		require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		require.Equal(t, "3", appConfig.telemetryValues[domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens])
+	}
+
+	rec = do(http.MethodPatch, "/control/api/config/telemetry-pricing", `{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS","value":""}]}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "", appConfig.telemetryValues[domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens])
 
 	appConfig.updateErr = service.ErrInvalidAppConfig
 	rec = do(http.MethodPatch, "/control/api/config/telemetry-pricing", `{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS","value":"-1"}]}`)

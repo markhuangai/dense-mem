@@ -67,9 +67,25 @@ func TestTelemetryCostCardsAreOperatorOnly(t *testing.T) {
 	require.Equal(t, "USD", verifierCost.Unit)
 	require.Contains(t, verifierCost.Query, `component="verifier"`)
 
-	profileBackgroundCost := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(TelemetryScope{Type: "profile"}, nil, "1h", true), "background_embedding_cost_usd")
+	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	profileID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	profileBackgroundCost := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(TelemetryScope{
+		Type:      "profile",
+		TeamID:    &teamID,
+		ProfileID: &profileID,
+	}, nil, "1h", true), "background_embedding_cost_usd")
 	require.NotNil(t, profileBackgroundCost)
 	require.Equal(t, "Background embedding cost (team-only)", profileBackgroundCost.Label)
+	require.Contains(t, profileBackgroundCost.Query, `team_id="11111111-1111-4111-8111-111111111111"`)
+	require.NotContains(t, profileBackgroundCost.Query, `profile_id="22222222-2222-4222-8222-222222222222"`)
+
+	unscopedProfileBackgroundCost := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(TelemetryScope{
+		Type:      "profile",
+		ProfileID: &profileID,
+	}, nil, "1h", true), "background_embedding_cost_usd")
+	require.NotNil(t, unscopedProfileBackgroundCost)
+	require.Equal(t, "Background embedding cost", unscopedProfileBackgroundCost.Label)
+	require.Contains(t, unscopedProfileBackgroundCost.Query, `profile_id="22222222-2222-4222-8222-222222222222"`)
 }
 
 func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {

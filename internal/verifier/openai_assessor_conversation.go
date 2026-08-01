@@ -489,7 +489,7 @@ func semanticAssessmentResponseForCorrection(
 	result openAIStructuredChatResult,
 	limits SemanticAssessmentLimits,
 ) (SemanticAssessmentResponse, []SemanticValidationError, string) {
-	if result.Usage != nil && result.Usage.CompletionTokens > int64(limits.MaxOutputTokens) {
+	if result.ReportedUsage != nil && result.ReportedUsage.CompletionTokens > int64(limits.MaxOutputTokens) {
 		return SemanticAssessmentResponse{}, []SemanticValidationError{semanticErr(
 			"output_tokens",
 			fmt.Sprintf("provider reported more than the allowed %d tokens", limits.MaxOutputTokens),

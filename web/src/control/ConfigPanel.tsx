@@ -442,20 +442,22 @@ function ConfigField({
   const pricing = item.key.startsWith("TELEMETRY_COST_");
   const numeric = pricing || item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" || item.key === "EVALUATION_EXPORT_MAX_PAGE_SIZE";
   const time = item.key === "DREAMING_START_TIME_LOCAL" || item.key === "COMMUNITY_DETECTION_START_TIME_LOCAL";
-  const min = pricing || item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric ? 1 : undefined;
+  const min = item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric && !pricing ? 1 : undefined;
   return (
     <>
       <label htmlFor={item.key}>{label}</label>
       <input
         id={item.key}
-        type={time ? "time" : numeric ? "number" : "text"}
-        step={pricing ? "any" : undefined}
+        type={time ? "time" : pricing ? "text" : numeric ? "number" : "text"}
+        inputMode={pricing ? "decimal" : undefined}
         min={min}
-        max={pricing ? 1000000 : item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : item.key === "EVALUATION_EXPORT_MAX_PAGE_SIZE" ? 500 : undefined}
+        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : item.key === "EVALUATION_EXPORT_MAX_PAGE_SIZE" ? 500 : undefined}
         placeholder={CONFIG_PLACEHOLDERS[item.key] ?? ""}
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        aria-invalid={item.validation_error ? true : undefined}
       />
+      {item.validation_error && <p className="field-error span" role="alert">{item.validation_error}</p>}
     </>
   );
 }

@@ -200,6 +200,7 @@ export type SSOConfigItem = {
   key: string;
   value: string;
   effective_value: string;
+  validation_error?: string;
   updated_at: string;
 };
 

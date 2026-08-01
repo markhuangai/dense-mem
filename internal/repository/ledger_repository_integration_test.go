@@ -135,6 +135,7 @@ func ledgerAppDSN(t *testing.T, dsn string) string {
 func truncateLedgerFixtures(tx *gorm.DB) error {
 	return tx.Exec(`
 		TRUNCATE
+			telemetry_first_disposition_backfill_state,
 			v2_compatibility_markers,
 			v2_migration_operator_actions,
 			v2_migration_gate_results,

@@ -188,22 +188,23 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 		"actor":            actorMetadata,
 	}
 	created, err := s.ledger.CreateIngest(ctx, repository.CreateIngestInput{
-		TeamID:         actor.TeamID.String(),
-		OwnerProfileID: actor.ProfileID.String(),
-		IdempotencyKey: strings.TrimSpace(req.IdempotencyKey),
-		RequestHash:    requestHash,
-		SourceSummary:  sourceSummary(req.Evidence),
-		Status:         status,
-		Proposal:       proposal,
-		Metadata:       metadata,
-		Evidence:       normalized,
+		TeamID:            actor.TeamID.String(),
+		OwnerProfileID:    actor.ProfileID.String(),
+		IdempotencyKey:    strings.TrimSpace(req.IdempotencyKey),
+		RequestHash:       requestHash,
+		SourceSummary:     sourceSummary(req.Evidence),
+		Status:            status,
+		TelemetryRemember: true,
+		Proposal:          proposal,
+		Metadata:          metadata,
+		Evidence:          normalized,
 	})
 	if err != nil {
 		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
 		return nil, translateRememberLedgerError(err)
 	}
 	observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "ok")
-	if disposition := created.FirstDisposition; disposition != nil {
+	if disposition := created.FirstDisposition; disposition != nil && disposition.IsRemember {
 		observability.RecordRememberFirstDisposition(ctx, s.metrics, disposition.CompletedAt.Sub(disposition.CreatedAt), disposition.Status)
 	}
 	return rememberResultFromLedger(created, correlationID), nil

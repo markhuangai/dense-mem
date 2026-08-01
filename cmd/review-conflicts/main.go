@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/operatorcli"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
@@ -117,7 +118,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	ledger := repository.NewLedgerRepository(pgClient.GetDB(), postgres.NewRLS())
 	assessmentLimits := verifier.SemanticAssessmentLimitsForConfig(&runtimeConfig)
 	provider := verifier.NewOpenAIVerifierWithAssessmentLimits(&runtimeConfig, nil, assessmentLimits)
-	runner, err := conflictreview.NewRunner(ledger, provider, cfg.timezone, assessmentLimits)
+	runner, err := conflictreview.NewRunner(ledger, provider, cfg.timezone, assessmentLimits, observability.NoopDiscoverabilityMetrics())
 	if err != nil {
 		return fmt.Errorf("build conflict review runner: %w", err)
 	}

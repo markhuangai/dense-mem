@@ -188,7 +188,7 @@ func (s *lifecycleService) resolvePlacementReview(
 	if err != nil {
 		return nil, err
 	}
-	if resolved.FirstDisposition != nil {
+	if resolved.FirstDisposition != nil && resolved.FirstDisposition.IsRemember {
 		observability.RecordRememberFirstDisposition(ctx, s.metrics, resolved.FirstDisposition.CompletedAt.Sub(resolved.FirstDisposition.CreatedAt), resolved.FirstDisposition.Status)
 	}
 	return &ResolveMemoryPlacementResult{

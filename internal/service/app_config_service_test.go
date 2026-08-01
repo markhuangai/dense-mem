@@ -331,6 +331,54 @@ func TestAppConfigServiceTelemetryPricingSettingsDefaultsAndUpdate(t *testing.T)
 	assert.Equal(t, 1.25, *runtime.VerifierInputUSDPerMillionTokens)
 }
 
+func TestAppConfigServiceCachedTelemetryPricingRuntimeConfigDoesNotReadRepository(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	repo := newAppConfigRepoStub(now, map[string]string{
+		domain.AppConfigUpdateTimeKey:                                 now.Format(time.RFC3339Nano),
+		domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens: "1.25",
+	})
+	svc := NewAppConfigService(repo, nil)
+	svc.now = func() time.Time { return now }
+
+	_, ok := svc.CachedTelemetryPricingRuntimeConfig()
+	assert.False(t, ok)
+
+	_, err := svc.TelemetryPricingRuntimeConfig(ctx)
+	require.NoError(t, err)
+	updateTimeCalls := repo.updateTimeCalls
+	listCalls := repo.listCalls
+
+	runtime, ok := svc.CachedTelemetryPricingRuntimeConfig()
+	require.True(t, ok)
+	require.NotNil(t, runtime.VerifierInputUSDPerMillionTokens)
+	assert.Equal(t, 1.25, *runtime.VerifierInputUSDPerMillionTokens)
+	assert.Equal(t, updateTimeCalls, repo.updateTimeCalls)
+	assert.Equal(t, listCalls, repo.listCalls)
+}
+
+func TestAppConfigServiceTreatsInvalidStoredTelemetryPricingAsUnpriced(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	repo := newAppConfigRepoStub(now, map[string]string{
+		domain.AppConfigUpdateTimeKey:                                 now.Format(time.RFC3339Nano),
+		domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens: "not-a-number",
+	})
+	svc := NewAppConfigService(repo, nil)
+	svc.now = func() time.Time { return now }
+
+	_, err := svc.GetGeneralSettings(ctx)
+	require.NoError(t, err)
+
+	settings, err := svc.GetTelemetryPricingSettings(ctx)
+	require.NoError(t, err)
+	item := telemetryPricingConfigItemForTest(settings, domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens)
+	require.Equal(t, "not-a-number", item.Value)
+	require.Empty(t, item.EffectiveValue)
+	require.Equal(t, "TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS must be a number between 0 and 1000000", item.ValidationError)
+	require.Nil(t, settings.Effective.VerifierInputUSDPerMillionTokens)
+}
+
 func TestAppConfigServiceSSOCookieSecureEffectiveDefault(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)

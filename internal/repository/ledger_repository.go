@@ -37,15 +37,16 @@ type LedgerRepository interface {
 }
 
 type CreateIngestInput struct {
-	TeamID         string
-	OwnerProfileID string
-	IdempotencyKey string
-	RequestHash    string
-	SourceSummary  string
-	Status         string
-	Proposal       map[string]any
-	Metadata       map[string]any
-	Evidence       []EvidenceInput
+	TeamID            string
+	OwnerProfileID    string
+	IdempotencyKey    string
+	RequestHash       string
+	SourceSummary     string
+	Status            string
+	TelemetryRemember bool
+	Proposal          map[string]any
+	Metadata          map[string]any
+	Evidence          []EvidenceInput
 }
 
 type GetPlacementRunInput struct {
@@ -609,7 +610,7 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 	if err != nil {
 		return "", false, err
 	}
-	metadata, err := marshalJSON(input.Metadata)
+	metadata, err := marshalJSON(knowledgeIngestMetadata(input))
 	if err != nil {
 		return "", false, err
 	}
@@ -694,6 +695,25 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 		return "", false, err
 	}
 	return ingestID, true, rows.Err()
+}
+
+const (
+	ingestMetadataTelemetryOriginKey      = "_dense_mem_telemetry_origin"
+	ingestMetadataTelemetryOriginRemember = "remember"
+)
+
+func knowledgeIngestMetadata(input CreateIngestInput) map[string]any {
+	metadata := make(map[string]any, len(input.Metadata)+1)
+	for key, value := range input.Metadata {
+		if key == ingestMetadataTelemetryOriginKey {
+			continue
+		}
+		metadata[key] = value
+	}
+	if input.TelemetryRemember {
+		metadata[ingestMetadataTelemetryOriginKey] = ingestMetadataTelemetryOriginRemember
+	}
+	return metadata
 }
 
 func selectKnowledgeIngestByIdempotency(ctx context.Context, tx *gorm.DB, input CreateIngestInput) (string, string, error) {

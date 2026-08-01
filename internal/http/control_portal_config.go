@@ -267,7 +267,10 @@ func (h *controlPortalHandler) updateTelemetryPricingConfig(c echo.Context) erro
 	}
 	values := make(map[string]string, len(body.Items))
 	for _, item := range body.Items {
-		values[item.Key] = item.Value
+		if item.Value == nil {
+			return httperr.New(httperr.VALIDATION_ERROR, "telemetry pricing value is required")
+		}
+		values[item.Key] = *item.Value
 	}
 	settings, err := h.appConfig.UpdateTelemetryPricingSettings(c.Request().Context(), values, "control", c.RealIP(), "")
 	if err != nil {
@@ -308,7 +311,12 @@ type controlEvaluationConfigRequest struct {
 }
 
 type controlTelemetryPricingConfigRequest struct {
-	Items []controlSSOConfigItemRequest `json:"items"`
+	Items []controlTelemetryPricingConfigItemRequest `json:"items"`
+}
+
+type controlTelemetryPricingConfigItemRequest struct {
+	Key   string  `json:"key"`
+	Value *string `json:"value"`
 }
 
 type controlSSOConfigItemRequest struct {
@@ -372,10 +380,11 @@ type controlTelemetryPricingRuntimeConfig struct {
 }
 
 type controlSSOConfigItemResponse struct {
-	Key            string `json:"key"`
-	Value          string `json:"value"`
-	EffectiveValue string `json:"effective_value"`
-	UpdatedAt      string `json:"updated_at"`
+	Key             string `json:"key"`
+	Value           string `json:"value"`
+	EffectiveValue  string `json:"effective_value"`
+	ValidationError string `json:"validation_error,omitempty"`
+	UpdatedAt       string `json:"updated_at"`
 }
 
 func toControlGeneralConfig(settings *domain.GeneralConfigSettings) controlGeneralConfigResponse {
@@ -532,10 +541,11 @@ func toControlTelemetryPricingConfig(settings *domain.TelemetryPricingConfigSett
 	response.Items = make([]controlSSOConfigItemResponse, 0, len(settings.Items))
 	for _, item := range settings.Items {
 		response.Items = append(response.Items, controlSSOConfigItemResponse{
-			Key:            item.Key,
-			Value:          item.Value,
-			EffectiveValue: item.EffectiveValue,
-			UpdatedAt:      item.UpdatedAt.Format(time.RFC3339),
+			Key:             item.Key,
+			Value:           item.Value,
+			EffectiveValue:  item.EffectiveValue,
+			ValidationError: item.ValidationError,
+			UpdatedAt:       item.UpdatedAt.Format(time.RFC3339),
 		})
 	}
 	response.Effective.VerifierInputUSDPerMillionTokens = settings.Effective.VerifierInputUSDPerMillionTokens

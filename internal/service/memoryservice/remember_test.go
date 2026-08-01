@@ -143,6 +143,7 @@ func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T)
 	if input.IdempotencyKey != "remember-idem" || input.RequestHash == "" {
 		t.Fatalf("idempotency/hash not set: %#v", input)
 	}
+	require.True(t, input.TelemetryRemember)
 	if got := input.Evidence[0].Content; got != "  exact evidence bytes stay intact  " {
 		t.Fatalf("content = %q", got)
 	}
