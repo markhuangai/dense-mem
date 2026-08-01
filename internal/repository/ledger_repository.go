@@ -33,19 +33,20 @@ type LedgerRepository interface {
 	AppendSecurityEvent(ctx context.Context, input SecurityEventInput) (string, error)
 	AppendPlacementOutcome(ctx context.Context, input PlacementOutcomeInput) (string, error)
 	ClaimNextPlacementRun(ctx context.Context, teamID string, workerID string, lease time.Duration) (*PlacementRun, error)
-	FinishPlacementRun(ctx context.Context, teamID string, placementRunID string, workerID string, status string, message string) error
+	FinishPlacementRun(ctx context.Context, teamID string, placementRunID string, workerID string, status string, message string) (*PlacementFirstDisposition, error)
 }
 
 type CreateIngestInput struct {
-	TeamID         string
-	OwnerProfileID string
-	IdempotencyKey string
-	RequestHash    string
-	SourceSummary  string
-	Status         string
-	Proposal       map[string]any
-	Metadata       map[string]any
-	Evidence       []EvidenceInput
+	TeamID            string
+	OwnerProfileID    string
+	IdempotencyKey    string
+	RequestHash       string
+	SourceSummary     string
+	Status            string
+	TelemetryRemember bool
+	Proposal          map[string]any
+	Metadata          map[string]any
+	Evidence          []EvidenceInput
 }
 
 type GetPlacementRunInput struct {
@@ -99,15 +100,16 @@ type SecuritySignalInput struct {
 }
 
 type CreateIngestResult struct {
-	TeamID         string
-	OwnerProfileID string
-	IngestID       string
-	PlacementRunID string
-	Status         string
-	Existing       bool
-	Proposal       map[string]any
-	Evidence       []EvidenceFragment
-	Items          []PlacementItem
+	TeamID           string
+	OwnerProfileID   string
+	IngestID         string
+	PlacementRunID   string
+	Status           string
+	Existing         bool
+	Proposal         map[string]any
+	Evidence         []EvidenceFragment
+	Items            []PlacementItem
+	FirstDisposition *PlacementFirstDisposition
 }
 
 type EvidenceFragment struct {
@@ -228,7 +230,7 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 			result = loaded
 			return nil
 		}
-		placementRunID, err := insertPlacementRun(ctx, tx, input, ingestID)
+		placementRunID, createdAt, completedAt, err := insertPlacementRun(ctx, tx, input, ingestID)
 		if err != nil {
 			return err
 		}
@@ -285,15 +287,32 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 		if err := applyDirectEvidenceSupersessions(ctx, tx, input, ingestID, evidence); err != nil {
 			return err
 		}
+		var firstDisposition *PlacementFirstDisposition
+		if completedAt != nil {
+			firstDisposition, err = appendPlacementFirstDisposition(
+				ctx,
+				tx,
+				input.TeamID,
+				input.OwnerProfileID,
+				placementRunID,
+				input.Status,
+				createdAt,
+				*completedAt,
+			)
+			if err != nil {
+				return err
+			}
+		}
 		result = &CreateIngestResult{
-			TeamID:         input.TeamID,
-			OwnerProfileID: input.OwnerProfileID,
-			IngestID:       ingestID,
-			PlacementRunID: placementRunID,
-			Status:         input.Status,
-			Proposal:       input.Proposal,
-			Evidence:       evidence,
-			Items:          items,
+			TeamID:           input.TeamID,
+			OwnerProfileID:   input.OwnerProfileID,
+			IngestID:         ingestID,
+			PlacementRunID:   placementRunID,
+			Status:           input.Status,
+			Proposal:         input.Proposal,
+			Evidence:         evidence,
+			Items:            items,
+			FirstDisposition: firstDisposition,
 		}
 		return nil
 	})
@@ -424,27 +443,28 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 	return run, nil
 }
 
-func (r *LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID string, placementRunID string, workerID string, status string, message string) error {
+func (r *LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID string, placementRunID string, workerID string, status string, message string) (*PlacementFirstDisposition, error) {
 	teamID = strings.TrimSpace(teamID)
 	placementRunID = strings.TrimSpace(placementRunID)
 	workerID = strings.TrimSpace(workerID)
 	status = strings.TrimSpace(status)
 	if _, err := uuid.Parse(teamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
+		return nil, fmt.Errorf("team_id is required: %w", err)
 	}
 	if _, err := uuid.Parse(placementRunID); err != nil {
-		return fmt.Errorf("placement_run_id is required: %w", err)
+		return nil, fmt.Errorf("placement_run_id is required: %w", err)
 	}
 	if workerID == "" {
-		return errors.New("worker_id is required")
+		return nil, errors.New("worker_id is required")
 	}
 	if status != string(domain.PlacementRunCompleted) &&
 		status != string(domain.PlacementRunFailed) &&
 		status != string(domain.PlacementRunQuarantined) {
-		return fmt.Errorf("unsupported placement status %q", status)
+		return nil, fmt.Errorf("unsupported placement status %q", status)
 	}
+	var firstDisposition *PlacementFirstDisposition
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
-		result := tx.WithContext(ctx).Exec(`
+		rows, err := tx.WithContext(ctx).Raw(`
 			UPDATE placement_runs
 			SET status = ?,
 			    error = ?,
@@ -457,19 +477,36 @@ func (r *LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID st
 			  AND worker_id = ?
 			  AND lease_until IS NOT NULL
 			  AND lease_until > now()
-		`, status, strings.TrimSpace(message), teamID, placementRunID, workerID)
-		if result.Error != nil {
-			return result.Error
+			RETURNING owner_profile_id::text, created_at, completed_at
+		`, status, strings.TrimSpace(message), teamID, placementRunID, workerID).Rows()
+		if err != nil {
+			return err
 		}
-		if result.RowsAffected != 1 {
+		defer rows.Close()
+		if !rows.Next() {
+			if err := rows.Err(); err != nil {
+				return err
+			}
 			return fmt.Errorf("%w: placement run is not actively leased by worker", ErrPlacementLeaseConflict)
 		}
-		return nil
+		var ownerProfileID string
+		var createdAt, completedAt time.Time
+		if err := rows.Scan(&ownerProfileID, &createdAt, &completedAt); err != nil {
+			return err
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		firstDisposition, err = appendPlacementFirstDisposition(ctx, tx, teamID, ownerProfileID, placementRunID, status, createdAt, completedAt)
+		return err
 	})
 	if err != nil {
-		return fmt.Errorf("ledger: finish placement run: %w", err)
+		return nil, fmt.Errorf("ledger: finish placement run: %w", err)
 	}
-	return nil
+	return firstDisposition, nil
 }
 
 func (r *LedgerRepositoryImpl) withTeamProfileTx(ctx context.Context, teamID, profileID string, fn func(tx *gorm.DB) error) error {
@@ -573,7 +610,7 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 	if err != nil {
 		return "", false, err
 	}
-	metadata, err := marshalJSON(input.Metadata)
+	metadata, err := marshalJSON(knowledgeIngestMetadata(input))
 	if err != nil {
 		return "", false, err
 	}
@@ -660,6 +697,25 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 	return ingestID, true, rows.Err()
 }
 
+const (
+	ingestMetadataTelemetryOriginKey      = "_dense_mem_telemetry_origin"
+	ingestMetadataTelemetryOriginRemember = "remember"
+)
+
+func knowledgeIngestMetadata(input CreateIngestInput) map[string]any {
+	metadata := make(map[string]any, len(input.Metadata)+1)
+	for key, value := range input.Metadata {
+		if key == ingestMetadataTelemetryOriginKey {
+			continue
+		}
+		metadata[key] = value
+	}
+	if input.TelemetryRemember {
+		metadata[ingestMetadataTelemetryOriginKey] = ingestMetadataTelemetryOriginRemember
+	}
+	return metadata
+}
+
 func selectKnowledgeIngestByIdempotency(ctx context.Context, tx *gorm.DB, input CreateIngestInput) (string, string, error) {
 	row := tx.WithContext(ctx).Raw(`
 		SELECT ingest_id::text, request_hash
@@ -677,7 +733,7 @@ func selectKnowledgeIngestByIdempotency(ctx context.Context, tx *gorm.DB, input 
 	return ingestID, requestHash, nil
 }
 
-func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string) (string, error) {
+func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string) (string, time.Time, *time.Time, error) {
 	completedExpr := "NULL"
 	if input.Status == string(domain.PlacementRunQuarantined) {
 		completedExpr = "now()"
@@ -688,20 +744,29 @@ func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInpu
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?, %s
 		)
-		RETURNING placement_run_id::text
+		RETURNING placement_run_id::text, created_at, completed_at
 	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.Status).Rows()
 	if err != nil {
-		return "", err
+		return "", time.Time{}, nil, err
 	}
 	defer rows.Close()
 	if !rows.Next() {
-		return "", sql.ErrNoRows
+		return "", time.Time{}, nil, sql.ErrNoRows
 	}
 	var placementRunID string
-	if err := rows.Scan(&placementRunID); err != nil {
-		return "", err
+	var createdAt time.Time
+	var completedAt sql.NullTime
+	if err := rows.Scan(&placementRunID, &createdAt, &completedAt); err != nil {
+		return "", time.Time{}, nil, err
 	}
-	return placementRunID, rows.Err()
+	if err := rows.Err(); err != nil {
+		return "", time.Time{}, nil, err
+	}
+	if completedAt.Valid {
+		completed := completedAt.Time.UTC()
+		return placementRunID, createdAt.UTC(), &completed, nil
+	}
+	return placementRunID, createdAt.UTC(), nil, nil
 }
 
 func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string, index int, item EvidenceInput, source *SourceRevisionResult) (EvidenceFragment, error) {

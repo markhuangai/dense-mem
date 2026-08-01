@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -25,6 +26,7 @@ func NewRunner(
 	provider Provider,
 	timezone string,
 	limits verifier.SemanticAssessmentLimits,
+	metrics observability.DiscoverabilityMetrics,
 ) (*Runner, error) {
 	if ledger == nil {
 		return nil, errors.New("conflict review runner: ledger is required")
@@ -32,6 +34,7 @@ func NewRunner(
 	service, err := New(Dependencies{
 		Repository: ledger,
 		Provider:   provider,
+		Metrics:    metrics,
 		Timezone:   timezone,
 		Limits:     limits,
 	})

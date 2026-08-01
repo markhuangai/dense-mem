@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -62,6 +63,31 @@ func TestOpenAIVerifierAdapterHelpers(t *testing.T) {
 		{Message: "duplicate response"},
 	})
 	require.Equal(t, "relationships[0].predicate: is required; duplicate response", summary)
+}
+
+func TestOpenAIValidationSummaryIsBounded(t *testing.T) {
+	t.Run("error count", func(t *testing.T) {
+		errs := make([]SemanticValidationError, maxOpenAIValidationSummaryErrors+1)
+		for index := range errs {
+			errs[index] = SemanticValidationError{Field: fmt.Sprintf("item[%d]", index), Message: "is invalid"}
+		}
+
+		summary := openAIValidationSummary(errs)
+
+		assert.Contains(t, summary, openAIValidationSummaryOmission)
+		assert.NotContains(t, summary, fmt.Sprintf("item[%d]", maxOpenAIValidationSummaryErrors))
+	})
+
+	t.Run("rune length", func(t *testing.T) {
+		summary := openAIValidationSummary([]SemanticValidationError{{
+			Field:   strings.Repeat("界", maxOpenAIValidationSummaryRunes),
+			Message: "is invalid",
+		}})
+
+		assert.LessOrEqual(t, len([]rune(summary)), maxOpenAIValidationSummaryRunes)
+		assert.True(t, utf8.ValidString(summary))
+		assert.True(t, strings.HasSuffix(summary, openAIValidationSummaryOmission))
+	})
 }
 
 func TestOpenAIVerifierAssessSemanticStopsBeforeCorrectionExceedsInputBudget(t *testing.T) {

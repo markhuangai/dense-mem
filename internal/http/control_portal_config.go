@@ -243,6 +243,45 @@ func (h *controlPortalHandler) updateEvaluationConfig(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlEvaluationConfig(settings)})
 }
 
+func (h *controlPortalHandler) getTelemetryPricingConfig(c echo.Context) error {
+	if h.appConfig == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
+	}
+	settings, err := h.appConfig.GetTelemetryPricingSettings(c.Request().Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlTelemetryPricingConfig(settings, h.verifierModel, h.embeddingModel)})
+}
+
+func (h *controlPortalHandler) updateTelemetryPricingConfig(c echo.Context) error {
+	if h.appConfig == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
+	}
+	var body controlTelemetryPricingConfigRequest
+	if err := c.Bind(&body); err != nil {
+		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
+	}
+	if len(body.Items) == 0 {
+		return httperr.New(httperr.VALIDATION_ERROR, "at least one telemetry pricing item is required")
+	}
+	values := make(map[string]string, len(body.Items))
+	for _, item := range body.Items {
+		if item.Value == nil {
+			return httperr.New(httperr.VALIDATION_ERROR, "telemetry pricing value is required")
+		}
+		values[item.Key] = *item.Value
+	}
+	settings, err := h.appConfig.UpdateTelemetryPricingSettings(c.Request().Context(), values, "control", c.RealIP(), "")
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidAppConfig) {
+			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
+		}
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlTelemetryPricingConfig(settings, h.verifierModel, h.embeddingModel)})
+}
+
 type controlGeneralConfigRequest struct {
 	Items []controlSSOConfigItemRequest `json:"items"`
 }
@@ -269,6 +308,15 @@ type controlRecallFeedbackConfigRequest struct {
 
 type controlEvaluationConfigRequest struct {
 	Items []controlSSOConfigItemRequest `json:"items"`
+}
+
+type controlTelemetryPricingConfigRequest struct {
+	Items []controlTelemetryPricingConfigItemRequest `json:"items"`
+}
+
+type controlTelemetryPricingConfigItemRequest struct {
+	Key   string  `json:"key"`
+	Value *string `json:"value"`
 }
 
 type controlSSOConfigItemRequest struct {
@@ -317,11 +365,26 @@ type controlEvaluationConfigResponse struct {
 	Effective  domain.EvaluationRuntimeConfig `json:"effective"`
 }
 
+type controlTelemetryPricingConfigResponse struct {
+	UpdateTime string                               `json:"update_time"`
+	Items      []controlSSOConfigItemResponse       `json:"items"`
+	Effective  controlTelemetryPricingRuntimeConfig `json:"effective"`
+}
+
+type controlTelemetryPricingRuntimeConfig struct {
+	VerifierModel                     string   `json:"verifier_model"`
+	EmbeddingModel                    string   `json:"embedding_model"`
+	VerifierInputUSDPerMillionTokens  *float64 `json:"verifier_input_usd_per_million_tokens"`
+	VerifierOutputUSDPerMillionTokens *float64 `json:"verifier_output_usd_per_million_tokens"`
+	EmbeddingInputUSDPerMillionTokens *float64 `json:"embedding_input_usd_per_million_tokens"`
+}
+
 type controlSSOConfigItemResponse struct {
-	Key            string `json:"key"`
-	Value          string `json:"value"`
-	EffectiveValue string `json:"effective_value"`
-	UpdatedAt      string `json:"updated_at"`
+	Key             string `json:"key"`
+	Value           string `json:"value"`
+	EffectiveValue  string `json:"effective_value"`
+	ValidationError string `json:"validation_error,omitempty"`
+	UpdatedAt       string `json:"updated_at"`
 }
 
 func toControlGeneralConfig(settings *domain.GeneralConfigSettings) controlGeneralConfigResponse {
@@ -461,4 +524,32 @@ func toControlEvaluationConfig(settings *domain.EvaluationConfigSettings) contro
 		Items:      items,
 		Effective:  settings.Effective,
 	}
+}
+
+func toControlTelemetryPricingConfig(settings *domain.TelemetryPricingConfigSettings, verifierModel, embeddingModel string) controlTelemetryPricingConfigResponse {
+	response := controlTelemetryPricingConfigResponse{
+		Items: []controlSSOConfigItemResponse{},
+		Effective: controlTelemetryPricingRuntimeConfig{
+			VerifierModel:  verifierModel,
+			EmbeddingModel: embeddingModel,
+		},
+	}
+	if settings == nil {
+		return response
+	}
+	response.UpdateTime = settings.UpdateTime
+	response.Items = make([]controlSSOConfigItemResponse, 0, len(settings.Items))
+	for _, item := range settings.Items {
+		response.Items = append(response.Items, controlSSOConfigItemResponse{
+			Key:             item.Key,
+			Value:           item.Value,
+			EffectiveValue:  item.EffectiveValue,
+			ValidationError: item.ValidationError,
+			UpdatedAt:       item.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	response.Effective.VerifierInputUSDPerMillionTokens = settings.Effective.VerifierInputUSDPerMillionTokens
+	response.Effective.VerifierOutputUSDPerMillionTokens = settings.Effective.VerifierOutputUSDPerMillionTokens
+	response.Effective.EmbeddingInputUSDPerMillionTokens = settings.Effective.EmbeddingInputUSDPerMillionTokens
+	return response
 }

@@ -45,6 +45,49 @@ func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *te
 	require.Contains(t, string(payload), `"state_series"`)
 }
 
+func TestTelemetryCostCardsAreOperatorOnly(t *testing.T) {
+	scope := TelemetryScope{Type: "system"}
+	operatorIDs := telemetryQuerySpecIDs(telemetryWindowedCardSpecsForAudience(scope, nil, "1h", true))
+	userIDs := telemetryQuerySpecIDs(telemetryWindowedCardSpecsForAudience(scope, nil, "1h", false))
+
+	require.Subset(t, operatorIDs, []string{
+		"ai_cost_usd",
+		"verifier_cost_usd",
+		"recall_embedding_cost_usd",
+		"background_embedding_cost_usd",
+		"ai_unpriced_operations",
+	})
+	for _, id := range []string{"ai_cost_usd", "verifier_cost_usd", "recall_embedding_cost_usd", "background_embedding_cost_usd", "ai_unpriced_operations"} {
+		require.NotContains(t, userIDs, id)
+	}
+
+	operator := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", true)
+	verifierCost := telemetryQuerySpecByID(operator, "verifier_cost_usd")
+	require.NotNil(t, verifierCost)
+	require.Equal(t, "USD", verifierCost.Unit)
+	require.Contains(t, verifierCost.Query, `component="verifier"`)
+
+	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	profileID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	profileBackgroundCost := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(TelemetryScope{
+		Type:      "profile",
+		TeamID:    &teamID,
+		ProfileID: &profileID,
+	}, nil, "1h", true), "background_embedding_cost_usd")
+	require.NotNil(t, profileBackgroundCost)
+	require.Equal(t, "Background embedding cost (team-only)", profileBackgroundCost.Label)
+	require.Contains(t, profileBackgroundCost.Query, `team_id="11111111-1111-4111-8111-111111111111"`)
+	require.NotContains(t, profileBackgroundCost.Query, `profile_id="22222222-2222-4222-8222-222222222222"`)
+
+	unscopedProfileBackgroundCost := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(TelemetryScope{
+		Type:      "profile",
+		ProfileID: &profileID,
+	}, nil, "1h", true), "background_embedding_cost_usd")
+	require.NotNil(t, unscopedProfileBackgroundCost)
+	require.Equal(t, "Background embedding cost", unscopedProfileBackgroundCost.Label)
+	require.Contains(t, unscopedProfileBackgroundCost.Query, `profile_id="22222222-2222-4222-8222-222222222222"`)
+}
+
 func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	profileID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
@@ -438,6 +481,15 @@ func telemetryQuerySpecIDs(specs []telemetryQuerySpec) []string {
 		ids = append(ids, spec.ID)
 	}
 	return ids
+}
+
+func telemetryQuerySpecByID(specs []telemetryQuerySpec, id string) *telemetryQuerySpec {
+	for i := range specs {
+		if specs[i].ID == id {
+			return &specs[i]
+		}
+	}
+	return nil
 }
 
 func mustMarshalStringMap(t *testing.T, value map[string]string) string {

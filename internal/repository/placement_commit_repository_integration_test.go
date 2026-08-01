@@ -151,6 +151,7 @@ func TestPlacementSemanticCommitWritesStateSearchAndOutcomeAtomically(t *testing
 			FROM placement_outcomes
 			WHERE team_id = ?::uuid
 			  AND placement_run_id = ?::uuid
+			  AND outcome_kind <> 'telemetry_first_disposition'
 		`, teamID, ingest.PlacementRunID).Scan(&outcomeCount).Error
 	})
 	require.NoError(t, err)
@@ -737,6 +738,7 @@ func TestPlacementSemanticCommitSupersedesStaleSourceWithoutSemanticRows(t *test
 			FROM placement_outcomes
 			WHERE team_id = ?::uuid
 			  AND placement_run_id = ?::uuid
+			  AND outcome_kind <> 'telemetry_first_disposition'
 		`, teamID, ingest.PlacementRunID).Row().Scan(&outcomeCount, &outcomeStatus)
 	})
 	require.NoError(t, err)

@@ -289,6 +289,96 @@ func TestAppConfigServiceEvaluationSettingsDefaultsAndUpdate(t *testing.T) {
 	assert.Equal(t, 250, runtime.ExportMaxPageSize)
 }
 
+func TestAppConfigServiceTelemetryPricingSettingsDefaultsAndUpdate(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	repo := newAppConfigRepoStub(now, map[string]string{
+		domain.AppConfigUpdateTimeKey: now.Format(time.RFC3339Nano),
+	})
+	svc := NewAppConfigService(repo, nil)
+	svc.now = func() time.Time { return now }
+
+	settings, err := svc.GetTelemetryPricingSettings(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, telemetryPricingConfigItemForTest(settings, domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens).EffectiveValue)
+	assert.Nil(t, settings.Effective.VerifierInputUSDPerMillionTokens)
+	assert.Nil(t, settings.Effective.VerifierOutputUSDPerMillionTokens)
+	assert.Nil(t, settings.Effective.EmbeddingInputUSDPerMillionTokens)
+
+	now = now.Add(time.Minute)
+	updated, err := svc.UpdateTelemetryPricingSettings(ctx, map[string]string{
+		domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens:  "1.25",
+		domain.AppConfigTelemetryCostVerifierOutputUSDPerMillionTokens: "2.5",
+		domain.AppConfigTelemetryCostEmbeddingInputUSDPerMillionTokens: "0.1",
+	}, "control", "127.0.0.1", "corr")
+	require.NoError(t, err)
+	assert.Equal(t, "1.25", telemetryPricingConfigItemForTest(updated, domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens).EffectiveValue)
+	assert.Equal(t, "2.5", telemetryPricingConfigItemForTest(updated, domain.AppConfigTelemetryCostVerifierOutputUSDPerMillionTokens).EffectiveValue)
+	assert.Equal(t, "0.1", telemetryPricingConfigItemForTest(updated, domain.AppConfigTelemetryCostEmbeddingInputUSDPerMillionTokens).EffectiveValue)
+
+	runtime, err := svc.TelemetryPricingRuntimeConfig(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, runtime.VerifierInputUSDPerMillionTokens)
+	require.NotNil(t, runtime.VerifierOutputUSDPerMillionTokens)
+	require.NotNil(t, runtime.EmbeddingInputUSDPerMillionTokens)
+	assert.Equal(t, 1.25, *runtime.VerifierInputUSDPerMillionTokens)
+	assert.Equal(t, 2.5, *runtime.VerifierOutputUSDPerMillionTokens)
+	assert.Equal(t, 0.1, *runtime.EmbeddingInputUSDPerMillionTokens)
+
+	*runtime.VerifierInputUSDPerMillionTokens = 99
+	runtime, err = svc.TelemetryPricingRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1.25, *runtime.VerifierInputUSDPerMillionTokens)
+}
+
+func TestAppConfigServiceCachedTelemetryPricingRuntimeConfigDoesNotReadRepository(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	repo := newAppConfigRepoStub(now, map[string]string{
+		domain.AppConfigUpdateTimeKey:                                 now.Format(time.RFC3339Nano),
+		domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens: "1.25",
+	})
+	svc := NewAppConfigService(repo, nil)
+	svc.now = func() time.Time { return now }
+
+	_, ok := svc.CachedTelemetryPricingRuntimeConfig()
+	assert.False(t, ok)
+
+	_, err := svc.TelemetryPricingRuntimeConfig(ctx)
+	require.NoError(t, err)
+	updateTimeCalls := repo.updateTimeCalls
+	listCalls := repo.listCalls
+
+	runtime, ok := svc.CachedTelemetryPricingRuntimeConfig()
+	require.True(t, ok)
+	require.NotNil(t, runtime.VerifierInputUSDPerMillionTokens)
+	assert.Equal(t, 1.25, *runtime.VerifierInputUSDPerMillionTokens)
+	assert.Equal(t, updateTimeCalls, repo.updateTimeCalls)
+	assert.Equal(t, listCalls, repo.listCalls)
+}
+
+func TestAppConfigServiceTreatsInvalidStoredTelemetryPricingAsUnpriced(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	repo := newAppConfigRepoStub(now, map[string]string{
+		domain.AppConfigUpdateTimeKey:                                 now.Format(time.RFC3339Nano),
+		domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens: "not-a-number",
+	})
+	svc := NewAppConfigService(repo, nil)
+	svc.now = func() time.Time { return now }
+
+	_, err := svc.GetGeneralSettings(ctx)
+	require.NoError(t, err)
+
+	settings, err := svc.GetTelemetryPricingSettings(ctx)
+	require.NoError(t, err)
+	item := telemetryPricingConfigItemForTest(settings, domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens)
+	require.Equal(t, "not-a-number", item.Value)
+	require.Empty(t, item.EffectiveValue)
+	require.Equal(t, "TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS must be a number between 0 and 1000000", item.ValidationError)
+	require.Nil(t, settings.Effective.VerifierInputUSDPerMillionTokens)
+}
+
 func TestAppConfigServiceSSOCookieSecureEffectiveDefault(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
@@ -515,6 +605,13 @@ func TestAppConfigServiceValidation(t *testing.T) {
 
 	_, err = svc.UpdateEvaluationSettings(ctx, map[string]string{domain.AppConfigEvaluationExportMaxPage: "501"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	for _, value := range []string{"-1", "NaN", "Inf", "1000000.01"} {
+		_, err = svc.UpdateTelemetryPricingSettings(ctx, map[string]string{domain.AppConfigTelemetryCostVerifierInputUSDPerMillionTokens: value}, "control", "", "")
+		require.ErrorIs(t, err, ErrInvalidAppConfig)
+	}
+	_, err = svc.UpdateTelemetryPricingSettings(ctx, map[string]string{"unknown": "1"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
 }
 
 func TestAppConfigServiceAuditNoopAndUnavailableBranches(t *testing.T) {
@@ -560,6 +657,7 @@ func TestAppConfigServiceAuditNoopAndUnavailableBranches(t *testing.T) {
 	assert.Nil(t, operationLogSettingsPayload(nil))
 	assert.Nil(t, recallFeedbackSettingsPayload(nil))
 	assert.Nil(t, evaluationSettingsPayload(nil))
+	assert.Nil(t, telemetryPricingSettingsPayload(nil))
 }
 
 func TestAppConfigServiceUnavailableMethods(t *testing.T) {
@@ -589,6 +687,10 @@ func TestAppConfigServiceUnavailableMethods(t *testing.T) {
 	_, err = svc.GetEvaluationSettings(ctx)
 	require.ErrorContains(t, err, "app config service is unavailable")
 	_, err = svc.EvaluationRuntimeConfig(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.GetTelemetryPricingSettings(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.TelemetryPricingRuntimeConfig(ctx)
 	require.ErrorContains(t, err, "app config service is unavailable")
 }
 
@@ -672,6 +774,9 @@ func newAppConfigRepoStub(now time.Time, values map[string]string) *appConfigRep
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
 	for _, key := range editableEvaluationConfigKeys() {
+		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
+	}
+	for _, key := range editableTelemetryPricingConfigKeys() {
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
 	entries[domain.AppConfigUpdateTimeKey] = domain.AppConfigEntry{Key: domain.AppConfigUpdateTimeKey, Value: now.Format(time.RFC3339Nano), UpdatedAt: now}
@@ -787,6 +892,15 @@ func evaluationConfigItemForTest(settings *domain.EvaluationConfigSettings, key 
 		}
 	}
 	return domain.EvaluationConfigItem{}
+}
+
+func telemetryPricingConfigItemForTest(settings *domain.TelemetryPricingConfigSettings, key string) domain.TelemetryPricingConfigItem {
+	for _, item := range settings.Items {
+		if item.Key == key {
+			return item
+		}
+	}
+	return domain.TelemetryPricingConfigItem{}
 }
 
 type appConfigAuditStub struct {

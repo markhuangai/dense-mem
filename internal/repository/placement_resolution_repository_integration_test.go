@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestPlacementResolutionSelectPredicateRequeuesOwnerScopedReview(t *testing.T) {
@@ -517,6 +519,8 @@ func TestPlacementResolutionRejectIsTerminalAndIdempotent(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "completed", first.Status)
+	require.NotNil(t, first.FirstDisposition)
+	assert.Equal(t, string(domain.PlacementRunCompleted), first.FirstDisposition.Status)
 
 	retry, err := ledgerRepo.ResolvePlacementReview(ctx, ResolvePlacementReviewInput{
 		TeamID:               teamID,
@@ -531,6 +535,7 @@ func TestPlacementResolutionRejectIsTerminalAndIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, retry.Existing)
 	require.Equal(t, first.DecisionID, retry.DecisionID)
+	assert.Nil(t, retry.FirstDisposition)
 
 	_, err = ledgerRepo.ResolvePlacementReview(ctx, ResolvePlacementReviewInput{
 		TeamID:               teamID,
@@ -545,6 +550,7 @@ func TestPlacementResolutionRejectIsTerminalAndIdempotent(t *testing.T) {
 	require.ErrorIs(t, err, ErrIdempotencyConflict)
 
 	var runStatus, itemStatus, itemCategory, outcomeStatus string
+	var firstDispositionCount int64
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Raw(`
 			SELECT run.status, item.status, item.category
@@ -558,18 +564,29 @@ func TestPlacementResolutionRejectIsTerminalAndIdempotent(t *testing.T) {
 		`, teamID, ingest.PlacementRunID, ingest.Items[0].PlacementItemID).Row().Scan(
 			&runStatus, &itemStatus, &itemCategory,
 		))
-		return tx.Raw(`
+		if err := tx.Raw(`
 			SELECT status
 			FROM placement_outcomes
 			WHERE team_id = ?::uuid
 			  AND outcome_id = ?::uuid
-		`, teamID, first.DecisionID).Scan(&outcomeStatus).Error
+		`, teamID, first.DecisionID).Scan(&outcomeStatus).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT count(*)
+			FROM placement_outcomes
+			WHERE team_id = ?::uuid
+			  AND placement_run_id = ?::uuid
+			  AND outcome_kind = 'telemetry_first_disposition'
+			  AND status = 'completed'
+		`, teamID, ingest.PlacementRunID).Scan(&firstDispositionCount).Error
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "completed", runStatus)
 	assert.Equal(t, "completed", itemStatus)
 	assert.Equal(t, "candidate", itemCategory)
 	assert.Equal(t, "rejected", outcomeStatus)
+	assert.Equal(t, int64(1), firstDispositionCount)
 }
 
 func TestPlacementResolutionReleaseQuarantineRequeuesGuarded(t *testing.T) {

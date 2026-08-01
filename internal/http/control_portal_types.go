@@ -37,4 +37,6 @@ type controlPortalHandler struct {
 	directory       *service.DirectoryIdentityService
 	controlIdentity *service.ControlIdentityService
 	appConfig       service.AppConfigService
+	verifierModel   string
+	embeddingModel  string
 }

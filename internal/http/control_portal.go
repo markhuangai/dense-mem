@@ -122,7 +122,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), telemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config}
+	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
 	if telemetry.ControlIdentity != nil {
 		registerControlIdentityRoutes(e, control)
 	}
@@ -174,6 +174,8 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		api.PATCH("/config/recall-feedback", control.updateRecallFeedbackConfig)
 		api.GET("/config/evaluation", control.getEvaluationConfig)
 		api.PATCH("/config/evaluation", control.updateEvaluationConfig)
+		api.GET("/config/telemetry-pricing", control.getTelemetryPricingConfig)
+		api.PATCH("/config/telemetry-pricing", control.updateTelemetryPricingConfig)
 	}
 	if telemetry.SSO != nil {
 		api.GET("/sso/providers", control.listSSOProviders)
@@ -727,6 +729,7 @@ func controlTelemetryFilter(c echo.Context) (service.TelemetryFilter, error) {
 		Scope:     scope,
 		TeamID:    teamID,
 		ProfileID: profileID,
+		Audience:  service.TelemetryAudienceOperator,
 	}, nil
 }
 

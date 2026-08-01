@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -32,9 +33,14 @@ type Provider interface {
 	ModelName() string
 }
 
+type metricsProvider interface {
+	SetMetrics(observability.DiscoverabilityMetrics)
+}
+
 type Dependencies struct {
 	Repository Repository
 	Provider   Provider
+	Metrics    observability.DiscoverabilityMetrics
 	Timezone   string
 	Limits     verifier.SemanticAssessmentLimits
 	Now        func() time.Time
@@ -69,6 +75,13 @@ func New(deps Dependencies) (*Service, error) {
 	now := deps.Now
 	if now == nil {
 		now = time.Now
+	}
+	metrics := deps.Metrics
+	if metrics == nil {
+		metrics = observability.NoopDiscoverabilityMetrics()
+	}
+	if provider, ok := deps.Provider.(metricsProvider); ok {
+		provider.SetMetrics(metrics)
 	}
 	return &Service{
 		repository: deps.Repository,
@@ -146,7 +159,9 @@ func (s *Service) ReviewRelationshipConflictCase(
 		return s.recordAssessmentFailure(ctx, result, input, reservation, dossier, "dossier_bound_exceeded")
 	}
 
-	response, err := s.provider.AssessRelationshipConflict(ctx, prepared)
+	providerCtx := observability.WithMetricIdentity(ctx, input.TeamID, "")
+	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationConflictReview, 1)
+	response, err := s.provider.AssessRelationshipConflict(providerCtx, prepared)
 	if err != nil {
 		return s.recordAssessmentFailure(ctx, result, input, reservation, dossier, conflictAssessmentFailureClass(err))
 	}

@@ -58,9 +58,11 @@ func (r *LedgerRepositoryImpl) CommitPlacementSemanticResult(
 				if outcomeErr != nil {
 					return outcomeErr
 				}
-				if finishErr := finishPlacementRunIfTerminal(ctx, tx, input, string(domain.PlacementRunFailed)); finishErr != nil {
+				firstDisposition, finishErr := finishPlacementRunIfTerminal(ctx, tx, input, string(domain.PlacementRunFailed))
+				if finishErr != nil {
 					return finishErr
 				}
+				result.FirstDisposition = firstDisposition
 				result.Status = "superseded"
 				result.OutcomeID = outcomeID
 				return nil
@@ -222,9 +224,11 @@ func (r *LedgerRepositoryImpl) CommitPlacementSemanticResult(
 		}); err != nil {
 			return err
 		}
-		if err := finishPlacementRunIfTerminal(ctx, tx, input, runStatus); err != nil {
+		firstDisposition, err := finishPlacementRunIfTerminal(ctx, tx, input, runStatus)
+		if err != nil {
 			return err
 		}
+		result.FirstDisposition = firstDisposition
 		result.Status = input.Status
 		result.OutcomeID = outcomeID
 		return nil

@@ -3,6 +3,9 @@ package conflictreview
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -85,6 +89,51 @@ func TestServiceUsesLastWriteWinsAfterExplicitAbstention(t *testing.T) {
 	require.Len(t, repo.applyInputs, 1)
 	assert.Equal(t, "last_write_wins", repo.applyInputs[0].Method)
 	assert.Equal(t, conflictReviewTestPositionAID, repo.applyInputs[0].PreferredPositionID)
+}
+
+func TestServiceAttributesProviderUsageToConflictReview(t *testing.T) {
+	rate := 1_000_000.0
+	metrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(context.Context) (observability.AIPricing, error) {
+		return observability.AIPricing{
+			VerifierInputUSDPerMillionTokens:  &rate,
+			VerifierOutputUSDPerMillionTokens: &rate,
+		}, nil
+	}))
+	repo := newConflictReviewRepositoryStub(t)
+	provider := &conflictReviewProviderStub{
+		recordUsage: true,
+		response: verifier.ConflictAssessmentResponse{
+			Decision:      verifier.ConflictAssessmentDecisionSelect,
+			PositionID:    pointer(conflictReviewTestPositionBID),
+			Confidence:    0.91,
+			Rationale:     "The supplied evidence supports this position.",
+			ProviderTurns: 1,
+		},
+	}
+	service, err := New(Dependencies{
+		Repository: repo,
+		Provider:   provider,
+		Metrics:    metrics,
+		Timezone:   "UTC",
+		Limits:     verifier.DefaultSemanticAssessmentLimits(),
+	})
+	require.NoError(t, err)
+
+	_, err = service.ReviewRelationshipConflictCase(context.Background(), conflictReviewInput())
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+		if strings.HasPrefix(line, "densemem_ai_operation_cost_usd_total{") &&
+			strings.Contains(line, `operation="conflict_review"`) &&
+			strings.Contains(line, `component="verifier"`) &&
+			strings.Contains(line, `team_id="`+conflictReviewTestTeamID+`"`) &&
+			strings.Contains(line, `profile_id="unknown"`) {
+			return
+		}
+	}
+	t.Fatal("conflict review provider cost was not attributed to the team")
 }
 
 func TestServiceUsesLastWriteWinsAfterFifthFailedAssessment(t *testing.T) {
@@ -338,11 +387,11 @@ func TestNewRejectsInvalidConflictReviewDependencies(t *testing.T) {
 
 func TestNewRunnerRejectsInvalidDependencies(t *testing.T) {
 	provider := &conflictReviewProviderStub{}
-	_, err := NewRunner(nil, provider, "UTC", verifier.DefaultSemanticAssessmentLimits())
+	_, err := NewRunner(nil, provider, "UTC", verifier.DefaultSemanticAssessmentLimits(), nil)
 	require.EqualError(t, err, "conflict review runner: ledger is required")
 
 	ledger := newConflictReviewRunLedgerStub(t)
-	_, err = NewRunner(ledger, emptyModelConflictReviewProvider{}, "UTC", verifier.DefaultSemanticAssessmentLimits())
+	_, err = NewRunner(ledger, emptyModelConflictReviewProvider{}, "UTC", verifier.DefaultSemanticAssessmentLimits(), nil)
 	require.EqualError(t, err, "conflict review service: provider model is required")
 }
 
@@ -356,7 +405,7 @@ func TestRunnerExecutesConflictReviewLifecycle(t *testing.T) {
 			Rationale:  "The supplied evidence supports this position.",
 		},
 	}
-	runner, err := NewRunner(ledger, provider, "UTC", verifier.DefaultSemanticAssessmentLimits())
+	runner, err := NewRunner(ledger, provider, "UTC", verifier.DefaultSemanticAssessmentLimits(), nil)
 	require.NoError(t, err)
 
 	run, claimed, err := runner.ReserveRelationshipConflictReviewRun(context.Background(), repository.ConflictReviewRunInput{
@@ -707,14 +756,29 @@ func (s *conflictReviewRepositoryStub) RecordConflictDerivedEvidenceFailure(_ co
 }
 
 type conflictReviewProviderStub struct {
-	response verifier.ConflictAssessmentResponse
-	err      error
-	requests []verifier.ConflictAssessmentRequest
+	response    verifier.ConflictAssessmentResponse
+	err         error
+	requests    []verifier.ConflictAssessmentRequest
+	metrics     observability.DiscoverabilityMetrics
+	recordUsage bool
 }
 
-func (s *conflictReviewProviderStub) AssessRelationshipConflict(_ context.Context, request verifier.ConflictAssessmentRequest) (verifier.ConflictAssessmentResponse, error) {
+func (s *conflictReviewProviderStub) AssessRelationshipConflict(ctx context.Context, request verifier.ConflictAssessmentRequest) (verifier.ConflictAssessmentResponse, error) {
 	s.requests = append(s.requests, request)
+	if s.recordUsage {
+		observability.RecordAIOperationUsage(ctx, s.metrics, observability.AIOperationUsage{
+			Component:    observability.AIComponentVerifier,
+			Model:        s.ModelName(),
+			InputTokens:  4,
+			OutputTokens: 2,
+			Source:       observability.AITokenSourceProvider,
+		})
+	}
 	return s.response, s.err
+}
+
+func (s *conflictReviewProviderStub) SetMetrics(metrics observability.DiscoverabilityMetrics) {
+	s.metrics = metrics
 }
 
 func (s *conflictReviewProviderStub) ModelName() string {

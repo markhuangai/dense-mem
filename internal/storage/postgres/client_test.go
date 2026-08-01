@@ -162,9 +162,10 @@ func TestMigratorRunUpAppliesPostCutoverCleanupAfterEmbeddingRetry(t *testing.T)
 	require.NoError(t, m.RunUp(ctx), "repeat RunUp should remain idempotent")
 }
 
-// TestMigratorRunDownRejectsTeamOwnedDreaming verifies the latest migration
-// boundary is intentionally irreversible.
-func TestMigratorRunDownRejectsTeamOwnedDreaming(t *testing.T) {
+// TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrganizationIdentity
+// verifies the reversible telemetry migrations do not weaken the upstream
+// irreversible migration boundary.
+func TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrganizationIdentity(t *testing.T) {
 	ctx := context.Background()
 
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
@@ -172,14 +173,52 @@ func TestMigratorRunDownRejectsTeamOwnedDreaming(t *testing.T) {
 
 	m := NewMigratorWithDB(sqlDB)
 
-	// First run up
-	err := m.RunUp(ctx)
-	require.NoError(t, err, "RunUp should succeed")
+	require.NoError(t, m.RunUp(ctx), "RunUp should succeed")
 
-	// The latest ownership migration is intentionally irreversible.
-	err = m.RunDown(ctx)
+	var pricingCount int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM app_config
+		WHERE key IN (
+			'TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS',
+			'TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS',
+			'TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS'
+		)
+	`).Scan(&pricingCount))
+	assert.Equal(t, 3, pricingCount)
+
+	require.NoError(t, m.RunDown(ctx), "telemetry marker index migration should be reversible")
+	assert.False(t, indexExists(t, ctx, sqlDB, "placement_outcomes_telemetry_first_disposition_unique"))
+	assert.False(t, indexExists(t, ctx, sqlDB, "knowledge_ingests_telemetry_remember_backfill_idx"))
+	assert.False(t, tableExists(t, ctx, sqlDB, "telemetry_first_disposition_backfill_state"))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM app_config
+		WHERE key IN (
+			'TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS',
+			'TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS',
+			'TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS'
+		)
+	`).Scan(&pricingCount))
+	assert.Equal(t, 3, pricingCount)
+
+	require.NoError(t, m.RunDown(ctx), "telemetry pricing migration should be reversible")
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM app_config
+		WHERE key IN (
+			'TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS',
+			'TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS',
+			'TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS'
+		)
+	`).Scan(&pricingCount))
+	assert.Zero(t, pricingCount)
+
+	require.NoError(t, m.RunDown(ctx), "legacy telemetry version repair down should be a no-op")
+
+	err := m.RunDown(ctx)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "2026073102_team_owned_dreaming is irreversible")
+	assert.Contains(t, err.Error(), "2026073103_organization_directory_identity is irreversible")
 }
 
 func TestSearchStorageMigrationAllowsIndexGenerationLifecycleOnly(t *testing.T) {

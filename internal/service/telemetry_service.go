@@ -20,6 +20,11 @@ import (
 
 const TelemetryRetentionDays = 30
 
+const (
+	TelemetryAudienceOperator = "operator"
+	TelemetryAudienceUser     = "user"
+)
+
 var telemetryWindows = map[string]struct {
 	Duration time.Duration
 	Step     time.Duration
@@ -43,6 +48,7 @@ type TelemetryFilter struct {
 	Scope     string
 	TeamID    *uuid.UUID
 	ProfileID *uuid.UUID
+	Audience  string
 }
 
 type TelemetrySnapshot struct {
@@ -136,6 +142,7 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 	if err != nil {
 		return nil, err
 	}
+	includeCost := strings.EqualFold(strings.TrimSpace(filter.Audience), TelemetryAudienceOperator)
 
 	nowFn := time.Now
 	if s != nil && s.now != nil {
@@ -143,6 +150,8 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 	}
 	to := nowFn().UTC()
 	from := to.Add(-windowDef.Duration)
+	initialWindowedCards := telemetryEmptyCardsFromSpecs(telemetryWindowedCardSpecsForAudience(scope, nil, windowKey, includeCost))
+	initialCurrentCards := telemetryEmptyCardsFromSpecs(telemetryCurrentCardSpecs(scope, nil))
 	snapshot := &TelemetrySnapshot{
 		Available: false,
 		Window: TelemetryWindow{
@@ -153,9 +162,9 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 			RetentionDays: TelemetryRetentionDays,
 		},
 		Scope:          scope,
-		Cards:          telemetryEmptyCards(),
-		WindowedCards:  telemetryEmptyWindowedCards(),
-		CurrentCards:   telemetryEmptyCurrentCards(),
+		Cards:          appendTelemetryCards(initialWindowedCards, initialCurrentCards),
+		WindowedCards:  initialWindowedCards,
+		CurrentCards:   initialCurrentCards,
 		Series:         telemetryEmptySeries(),
 		ActivitySeries: telemetryEmptyActivitySeries(),
 		StateSeries:    telemetryEmptyStateSeries(),
@@ -170,7 +179,7 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 
 	baseLabels := s.telemetryBaseLabels()
 	selector := telemetrySelector(scope, baseLabels)
-	windowedCardSpecs := telemetryWindowedCardSpecs(scope, baseLabels, windowKey)
+	windowedCardSpecs := telemetryWindowedCardSpecsForAudience(scope, baseLabels, windowKey, includeCost)
 	windowedCards := make([]TelemetryCard, 0, len(windowedCardSpecs))
 	for _, spec := range windowedCardSpecs {
 		scalar, queryErr := s.queryInstant(queryCtx, spec.Query)
@@ -274,7 +283,11 @@ func telemetryCardSpecs(scope TelemetryScope, baseLabels map[string]string, wind
 }
 
 func telemetryWindowedCardSpecs(scope TelemetryScope, baseLabels map[string]string, window string) []telemetryQuerySpec {
-	return []telemetryQuerySpec{
+	return telemetryWindowedCardSpecsForAudience(scope, baseLabels, window, false)
+}
+
+func telemetryWindowedCardSpecsForAudience(scope TelemetryScope, baseLabels map[string]string, window string, includeCost bool) []telemetryQuerySpec {
+	specs := []telemetryQuerySpec{
 		{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Query: telemetryIncrease("densemem_http_requests_total", scope, baseLabels, nil, window)},
 		{ID: "http_errors", Label: "HTTP errors", Unit: "requests", Query: telemetryIncrease("densemem_http_requests_total", scope, baseLabels, map[string]string{"status_class": "~\"4xx|5xx\""}, window)},
 		{ID: "embedding_requests", Label: "Embedding requests", Unit: "requests", Query: telemetrySparseCounterIncrease("densemem_embedding_requests_total", scope, baseLabels, nil, window)},
@@ -297,7 +310,36 @@ func telemetryWindowedCardSpecs(scope TelemetryScope, baseLabels map[string]stri
 		{ID: "avg_embedding_latency", Label: "Avg embedding latency", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_embedding_duration_seconds", scope, baseLabels, nil, window, 1000)},
 		{ID: "avg_verifier_latency", Label: "Avg verifier latency", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_verifier_duration_seconds", scope, baseLabels, nil, window, 1000)},
 		{ID: "avg_conflict_review_duration", Label: "Avg conflict review", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_conflict_review_duration_seconds", scope, baseLabels, nil, window, 1000)},
+		{ID: "remember_acknowledgements", Label: "Remember acknowledgements", Unit: "requests", Query: telemetrySparseCounterIncrease("densemem_remember_acknowledgements_total", scope, baseLabels, nil, window)},
+		{ID: "avg_remember_acknowledgement_latency", Label: "Avg remember acknowledgement", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_remember_acknowledgement_duration_seconds", scope, baseLabels, nil, window, 1000)},
+		{ID: "p95_remember_acknowledgement_latency", Label: "P95 remember acknowledgement", Unit: "ms", Query: telemetryHistogramQuantile("densemem_remember_acknowledgement_duration_seconds", scope, baseLabels, nil, window, 0.95, 1000)},
+		{ID: "remember_first_dispositions", Label: "First remember dispositions", Unit: "requests", Query: telemetrySparseCounterIncrease("densemem_remember_first_disposition_total", scope, baseLabels, nil, window)},
+		{ID: "p95_remember_first_disposition_latency", Label: "P95 first disposition", Unit: "ms", Query: telemetryHistogramQuantile("densemem_remember_first_disposition_duration_seconds", scope, baseLabels, nil, window, 0.95, 1000)},
 	}
+	if !includeCost {
+		return specs
+	}
+	return append(specs,
+		telemetryQuerySpec{ID: "ai_cost_usd", Label: "AI cost", Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, nil, window)},
+		telemetryQuerySpec{ID: "verifier_cost_usd", Label: "Verifier cost", Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, map[string]string{"component": observability.AIComponentVerifier}, window)},
+		telemetryQuerySpec{ID: "recall_embedding_cost_usd", Label: "Recall embedding cost", Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, map[string]string{"operation": observability.AIOperationRecallEmbedding}, window)},
+		telemetryQuerySpec{ID: "background_embedding_cost_usd", Label: telemetryBackgroundEmbeddingCostLabel(scope), Unit: "USD", Query: telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", telemetryBackgroundEmbeddingCostScope(scope), baseLabels, map[string]string{"operation": observability.AIOperationBackgroundEmbedding}, window)},
+		telemetryQuerySpec{ID: "ai_unpriced_operations", Label: "Unpriced AI operations", Unit: "operations", Query: telemetrySparseCounterIncrease("densemem_ai_operation_unpriced_total", scope, baseLabels, nil, window)},
+	)
+}
+
+func telemetryBackgroundEmbeddingCostLabel(scope TelemetryScope) string {
+	if telemetryBackgroundEmbeddingCostScope(scope).Type == "team" && (scope.Type == "profile" || scope.Type == "self") {
+		return "Background embedding cost (team-only)"
+	}
+	return "Background embedding cost"
+}
+
+func telemetryBackgroundEmbeddingCostScope(scope TelemetryScope) TelemetryScope {
+	if (scope.Type != "profile" && scope.Type != "self") || scope.TeamID == nil || *scope.TeamID == uuid.Nil {
+		return scope
+	}
+	return TelemetryScope{Type: "team", TeamID: scope.TeamID}
 }
 
 func telemetryCurrentCardSpecs(scope TelemetryScope, baseLabels map[string]string) []telemetryQuerySpec {

@@ -28,8 +28,9 @@ type CompletePlacementReviewInput struct {
 }
 
 type CompletePlacementReviewResult struct {
-	Status    string
-	OutcomeID string
+	Status           string
+	OutcomeID        string
+	FirstDisposition *PlacementFirstDisposition
 }
 
 type RequeuePlacementReviewInput struct {
@@ -49,8 +50,9 @@ type RequeuePlacementReviewInput struct {
 }
 
 type RequeuePlacementReviewResult struct {
-	Status    string
-	OutcomeID string
+	Status           string
+	OutcomeID        string
+	FirstDisposition *PlacementFirstDisposition
 }
 
 func (r *LedgerRepositoryImpl) CompletePlacementReviewResult(
@@ -76,9 +78,11 @@ func (r *LedgerRepositoryImpl) CompletePlacementReviewResult(
 				if outcomeErr != nil {
 					return outcomeErr
 				}
-				if finishErr := finishPlacementRunIfTerminal(ctx, tx, scope, string(domain.PlacementRunFailed)); finishErr != nil {
+				firstDisposition, finishErr := finishPlacementRunIfTerminal(ctx, tx, scope, string(domain.PlacementRunFailed))
+				if finishErr != nil {
 					return finishErr
 				}
+				result.FirstDisposition = firstDisposition
 				result.Status = "superseded"
 				result.OutcomeID = outcomeID
 				return nil
@@ -133,9 +137,11 @@ func (r *LedgerRepositoryImpl) CompletePlacementReviewResult(
 		}); err != nil {
 			return err
 		}
-		if err := finishPlacementRunIfTerminal(ctx, tx, scope, runStatus); err != nil {
+		firstDisposition, err := finishPlacementRunIfTerminal(ctx, tx, scope, runStatus)
+		if err != nil {
 			return err
 		}
+		result.FirstDisposition = firstDisposition
 		result.OutcomeID = outcomeID
 		return nil
 	})
@@ -168,9 +174,11 @@ func (r *LedgerRepositoryImpl) RequeuePlacementReviewResult(
 				if outcomeErr != nil {
 					return outcomeErr
 				}
-				if finishErr := finishPlacementRunIfTerminal(ctx, tx, scope, string(domain.PlacementRunFailed)); finishErr != nil {
+				firstDisposition, finishErr := finishPlacementRunIfTerminal(ctx, tx, scope, string(domain.PlacementRunFailed))
+				if finishErr != nil {
 					return finishErr
 				}
+				result.FirstDisposition = firstDisposition
 				result.Status = "superseded"
 				result.OutcomeID = outcomeID
 				return nil

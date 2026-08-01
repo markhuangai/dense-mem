@@ -87,15 +87,17 @@ type openAIEmbeddingRequest struct {
 	Dimensions int      `json:"dimensions"`
 }
 
+type openAIEmbeddingUsage struct {
+	PromptTokens int64 `json:"prompt_tokens"`
+	TotalTokens  int64 `json:"total_tokens"`
+}
+
 // openAIEmbeddingResponse represents the response from the OpenAI embeddings API.
 type openAIEmbeddingResponse struct {
 	Data []struct {
 		Embedding []float32 `json:"embedding"`
 	} `json:"data"`
-	Usage *struct {
-		PromptTokens int64 `json:"prompt_tokens"`
-		TotalTokens  int64 `json:"total_tokens"`
-	} `json:"usage"`
+	Usage *openAIEmbeddingUsage `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -170,6 +172,9 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 				RetryAfter: retryAfterDuration(resp.Header.Get("Retry-After")),
 			}
 		}
+		if resp.StatusCode == http.StatusOK {
+			observability.RecordAIOperationUnpriced(ctx, p.metrics, observability.AIComponentEmbedding, p.model, "missing_usage")
+		}
 		return nil, "", &ProviderError{
 			Provider: "openai",
 			Message:  "failed to decode response",
@@ -188,6 +193,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 			RetryAfter: retryAfterDuration(resp.Header.Get("Retry-After")),
 		}
 	}
+	p.recordEmbeddingUsage(ctx, respBody.Usage, len(texts))
 
 	if len(respBody.Data) != len(texts) {
 		return nil, "", &ProviderError{
@@ -207,11 +213,27 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	for i, d := range respBody.Data {
 		result[i] = d.Embedding
 	}
-	if respBody.Usage != nil {
-		observability.RecordEmbeddingTokens(ctx, p.metrics, p.model, respBody.Usage.PromptTokens, respBody.Usage.TotalTokens)
-	}
 
 	return result, p.model, nil
+}
+
+func (p *OpenAIEmbeddingProvider) recordEmbeddingUsage(ctx context.Context, usage *openAIEmbeddingUsage, itemCount int) {
+	if usage == nil {
+		observability.RecordAIOperationUnpriced(ctx, p.metrics, observability.AIComponentEmbedding, p.model, "missing_usage")
+		return
+	}
+	inputTokens := usage.PromptTokens
+	if inputTokens == 0 && usage.TotalTokens > 0 {
+		inputTokens = usage.TotalTokens
+	}
+	observability.RecordEmbeddingTokens(ctx, p.metrics, p.model, usage.PromptTokens, usage.TotalTokens)
+	observability.RecordAIOperationUsage(ctx, p.metrics, observability.AIOperationUsage{
+		Component:   observability.AIComponentEmbedding,
+		Model:       p.model,
+		InputTokens: inputTokens,
+		ItemCount:   itemCount,
+		Source:      observability.AITokenSourceProvider,
+	})
 }
 
 func nonJSONHTTPMessage(body []byte) string {

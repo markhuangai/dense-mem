@@ -15,6 +15,9 @@ let rpcID = 0;
 const runID = `conflict-e2e-${Date.now()}`;
 const olderEffectiveAt = "2026-07-20T00:00:00Z";
 const newerEffectiveAt = "2026-07-22T00:00:00Z";
+const primaryProjectName = `ConflictE2E ${runID} project`;
+const postgresName = `ConflictE2E ${runID} PostgreSQL`;
+const graphDBName = `ConflictE2E ${runID} GraphDB`;
 
 const profileA = await createProfile("Conflict E2E A");
 const profileB = await createProfile("Conflict E2E B");
@@ -22,11 +25,11 @@ const profileC = await createProfile("Conflict E2E C");
 
 const first = await rememberAndWait(profileA.apiKey, {
   idempotencyKey: `${runID}:a`,
-  evidence: `ConflictE2E ${runID}: Effective ${newerEffectiveAt}, Dense-Mem primary database is PostgreSQL according to profile A.`,
+  evidence: `ConflictE2E ${runID}: Effective ${newerEffectiveAt}, ${primaryProjectName} primary database is ${postgresName} according to profile A.`,
   sourceGroup: `${runID}:source:a`,
   validFrom: newerEffectiveAt,
-  subject: { ref: "project", name: "Dense-Mem", kind: "project" },
-  object: { ref: "postgres", name: "PostgreSQL", kind: "product" },
+  subject: { ref: "project", name: primaryProjectName, kind: "project" },
+  object: { ref: "postgres", name: postgresName, kind: "product" },
   relationshipID: "rel:primary-db-a",
 });
 const firstTrace = await mcpTool(profileA.apiKey, "trace_memory", {
@@ -41,11 +44,11 @@ if (!subjectEntityID || !postgresEntityID) {
 
 const second = await rememberAndWait(profileB.apiKey, {
   idempotencyKey: `${runID}:b`,
-  evidence: `ConflictE2E ${runID}: Effective ${olderEffectiveAt}, Dense-Mem primary database is GraphDB according to profile B.`,
+  evidence: `ConflictE2E ${runID}: Effective ${olderEffectiveAt}, ${primaryProjectName} primary database is ${graphDBName} according to profile B.`,
   sourceGroup: `${runID}:source:b`,
   validFrom: olderEffectiveAt,
-  subject: { ref: "project", name: "Dense-Mem", kind: "project", knownEntityID: subjectEntityID },
-  object: { ref: "graphdb", name: "GraphDB", kind: "product" },
+  subject: { ref: "project", name: primaryProjectName, kind: "project", knownEntityID: subjectEntityID },
+  object: { ref: "graphdb", name: graphDBName, kind: "product" },
   relationshipID: "rel:primary-db-b",
 });
 
@@ -58,11 +61,11 @@ if (!conflictID || !Number.isInteger(conflictVersion) || conflictVersion < 1) {
 
 await rememberAndWait(profileC.apiKey, {
   idempotencyKey: `${runID}:c`,
-  evidence: `ConflictE2E ${runID}: Effective ${newerEffectiveAt}, Dense-Mem primary database is PostgreSQL according to profile C.`,
+  evidence: `ConflictE2E ${runID}: Effective ${newerEffectiveAt}, ${primaryProjectName} primary database is ${postgresName} according to profile C.`,
   sourceGroup: `${runID}:source:c`,
   validFrom: newerEffectiveAt,
-  subject: { ref: "project", name: "Dense-Mem", kind: "project", knownEntityID: subjectEntityID },
-  object: { ref: "postgres", name: "PostgreSQL", kind: "product", knownEntityID: postgresEntityID },
+  subject: { ref: "project", name: primaryProjectName, kind: "project", knownEntityID: subjectEntityID },
+  object: { ref: "postgres", name: postgresName, kind: "product", knownEntityID: postgresEntityID },
   relationshipID: "rel:primary-db-c",
   conflictContext: { conflict_id: conflictID, expected_version: conflictVersion },
 });
@@ -246,13 +249,15 @@ async function waitForConflictID(apiKey, query, conflictID, status) {
 async function resolveOverdueConflictThroughVerifier() {
   const marker = `OverdueConflictE2E ${runID}`;
   const overdueProjectName = `${marker} project`;
+  const overduePostgresName = `${marker} PostgreSQL`;
+  const overdueGraphDBName = `${marker} GraphDB`;
   const firstOverdue = await rememberAndWait(profileA.apiKey, {
     idempotencyKey: `${runID}:overdue:a`,
-    evidence: `${marker}: ${overdueProjectName} primary database is PostgreSQL according to profile A.`,
+    evidence: `${marker}: ${overdueProjectName} primary database is ${overduePostgresName} according to profile A.`,
     sourceGroup: `${runID}:overdue:source:a`,
     authority: "primary",
     subject: { ref: "overdue-project", name: overdueProjectName, kind: "project" },
-    object: { ref: "overdue-postgres", name: "PostgreSQL", kind: "product" },
+    object: { ref: "overdue-postgres", name: overduePostgresName, kind: "product" },
     relationshipID: "rel:overdue-primary-db-a",
   });
   const overdueTrace = await mcpTool(profileA.apiKey, "trace_memory", {
@@ -270,11 +275,11 @@ async function resolveOverdueConflictThroughVerifier() {
 
   const secondOverdue = await rememberAndWait(profileB.apiKey, {
     idempotencyKey: `${runID}:overdue:b`,
-    evidence: `${marker}: ${overdueProjectName} primary database is GraphDB according to profile B.`,
+    evidence: `${marker}: ${overdueProjectName} primary database is ${overdueGraphDBName} according to profile B.`,
     sourceGroup: `${runID}:overdue:source:b`,
     authority: "primary",
     subject: { ref: "overdue-project", name: overdueProjectName, kind: "project", knownEntityID: overdueSubjectEntityID },
-    object: { ref: "overdue-graphdb", name: "GraphDB", kind: "product" },
+    object: { ref: "overdue-graphdb", name: overdueGraphDBName, kind: "product" },
     relationshipID: "rel:overdue-primary-db-b",
   });
   const openOverdueConflict = await waitForRelationshipConflict(profileB.apiKey, secondOverdue.relationshipID, "open");

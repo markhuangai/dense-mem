@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +41,34 @@ func TestSemanticAssessmentWorkerPersistsOnceAndReusesAcrossClaimRetry(t *testin
 	assert.Equal(t, true, commit.commits[1].Payload["assessment_reused"])
 	assert.Equal(t, ledger.run.PlacementRunID, commit.commits[1].PlacementRunID)
 	assert.Empty(t, catalog.entityMatches.Matches)
+}
+
+func TestSemanticAssessmentWorkerRecordsFirstDispositionOnlyForRemember(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		isRemember bool
+	}{
+		{name: "remember", isRemember: true},
+		{name: "internal ingest", isRemember: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metrics := observability.NewPrometheusMetrics()
+			ledger, _, _, _, _, worker := semanticAssessmentWorkerFixtureWithMetrics(t, metrics)
+			implementation, ok := worker.(*semanticAssessmentPlacementWorkerService)
+			require.True(t, ok)
+			implementation.recordFirstDisposition(context.Background(), *ledger.run, &repository.PlacementFirstDisposition{
+				Status:      "completed",
+				CreatedAt:   time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC),
+				CompletedAt: time.Date(2026, 7, 31, 12, 0, 1, 0, time.UTC),
+				IsRemember:  test.isRemember,
+			})
+
+			recorder := httptest.NewRecorder()
+			metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+			gotMetric := strings.Contains(recorder.Body.String(), "densemem_remember_first_disposition_total{")
+			assert.Equal(t, test.isRemember, gotMetric)
+		})
+	}
 }
 
 func TestSemanticAssessmentWorkerReusesPersistedAssessmentAfterCommitFailure(t *testing.T) {
@@ -652,9 +683,9 @@ func (s *semanticAssessmentWorkerLedgerStub) ClaimNextPlacementRun(context.Conte
 	return s.run, nil
 }
 
-func (s *semanticAssessmentWorkerLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) error {
+func (s *semanticAssessmentWorkerLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) (*repository.PlacementFirstDisposition, error) {
 	s.finishCalls++
-	return s.finishErr
+	return nil, s.finishErr
 }
 
 type semanticAssessmentWorkerAssessmentStub struct {

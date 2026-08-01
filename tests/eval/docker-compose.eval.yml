@@ -19,6 +19,7 @@ services:
       - ${V1_COMPOSE_DATA_DIR:-./tests/eval/runtime/v1}/redis:/data
 
   prometheus:
+    user: "0:0"
     volumes:
       - ${V1_COMPOSE_DATA_DIR:-./tests/eval/runtime/v1}/prometheus:/prometheus
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro

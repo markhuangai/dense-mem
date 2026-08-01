@@ -269,6 +269,7 @@ func userPortalTelemetryFilter(principal *httpmw.Principal, window, requestedSco
 		Scope:     scope,
 		TeamID:    &teamID,
 		ProfileID: profileID,
+		Audience:  service.TelemetryAudienceUser,
 	}, nil
 }
 

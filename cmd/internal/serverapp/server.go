@@ -176,12 +176,33 @@ func RunActiveServer(
 
 	discoverabilityMetrics := observability.NoopDiscoverabilityMetrics()
 	var (
-		telemetryReader        service.TelemetryReader
-		telemetryHTTPMetrics   observability.HTTPMetrics
-		telemetryScrapeHandler nethttp.Handler
+		telemetryReader                service.TelemetryReader
+		telemetryHTTPMetrics           observability.HTTPMetrics
+		telemetryScrapeHandler         nethttp.Handler
+		pricingRefreshCancel           context.CancelFunc
+		firstDispositionBackfillCancel context.CancelFunc
 	)
 	if cfg.GetTelemetryEnabled() {
-		prometheusMetrics := observability.NewPrometheusMetrics()
+		if err := refreshTelemetryPricingCache(startupCtx, appConfigService); err != nil {
+			logger.Warn("telemetry pricing snapshot unavailable at startup", observability.String("reason", "configuration_refresh_failed"))
+		}
+		pricingRefreshCtx, cancel := context.WithCancel(context.Background())
+		pricingRefreshCancel = cancel
+		go refreshTelemetryPricingCacheUntilCanceled(pricingRefreshCtx, appConfigService, logger)
+		firstDispositionBackfillCtx, cancel := context.WithCancel(context.Background())
+		firstDispositionBackfillCancel = cancel
+		service.NewPlacementFirstDispositionBackfillService(ledgerRepo, logger).Start(firstDispositionBackfillCtx)
+		prometheusMetrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(ctx context.Context) (observability.AIPricing, error) {
+			pricing, ok := appConfigService.CachedTelemetryPricingRuntimeConfig()
+			if !ok {
+				return observability.AIPricing{}, errors.New("telemetry pricing snapshot unavailable")
+			}
+			return observability.AIPricing{
+				VerifierInputUSDPerMillionTokens:  pricing.VerifierInputUSDPerMillionTokens,
+				VerifierOutputUSDPerMillionTokens: pricing.VerifierOutputUSDPerMillionTokens,
+				EmbeddingInputUSDPerMillionTokens: pricing.EmbeddingInputUSDPerMillionTokens,
+			}, nil
+		}))
 		discoverabilityMetrics = prometheusMetrics
 		telemetryHTTPMetrics = prometheusMetrics
 		telemetryScrapeHandler = prometheusMetrics.Handler()
@@ -200,23 +221,25 @@ func RunActiveServer(
 	assessmentLimits := verifier.SemanticAssessmentLimitsForConfig(&cfg)
 	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, assessmentLimits)
 	verifierProvider.SetMetrics(discoverabilityMetrics)
-	conflictReviewRunner, err := conflictreview.NewRunner(ledgerRepo, verifierProvider, cfg.GetAppTimezone(), assessmentLimits)
+	conflictReviewRunner, err := conflictreview.NewRunner(ledgerRepo, verifierProvider, cfg.GetAppTimezone(), assessmentLimits, discoverabilityMetrics)
 	if err != nil {
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
 
-	rememberSvc := memoryservice.NewRememberService(memoryservice.RememberDependencies{Ledger: ledgerRepo})
+	rememberSvc := memoryservice.NewRememberService(memoryservice.RememberDependencies{Ledger: ledgerRepo, Metrics: discoverabilityMetrics})
 	recallSvc := memoryservice.NewRecallService(memoryservice.RecallDependencies{
 		Search:          searchRepo,
 		Provider:        retryEmbedder,
 		Hypotheses:      semanticRepo,
 		Communities:     semanticRepo,
 		CommunityConfig: appConfigService,
+		Metrics:         discoverabilityMetrics,
 	})
 	lifecycleSvc := memoryservice.NewLifecycleService(memoryservice.LifecycleDependencies{
 		Semantic:  semanticRepo,
 		Placement: ledgerRepo,
 		Evidence:  ledgerRepo,
+		Metrics:   discoverabilityMetrics,
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
@@ -470,6 +493,12 @@ func RunActiveServer(
 	workerCancel()
 	dreamSchedulerCancel()
 	conflictReviewCancel()
+	if pricingRefreshCancel != nil {
+		pricingRefreshCancel()
+	}
+	if firstDispositionBackfillCancel != nil {
+		firstDispositionBackfillCancel()
+	}
 	if err := http.ShutdownServer(e, logger); err != nil {
 		logger.Error("server shutdown error", err)
 	}
@@ -504,6 +533,33 @@ func RunActiveServer(
 	defer recallFeedbackShutdownCancel()
 	if err := recallFeedbackEventService.Shutdown(recallFeedbackShutdownCtx); err != nil {
 		log.Printf("recall feedback event shutdown error: %v", err)
+	}
+}
+
+const telemetryPricingRefreshTimeout = 5 * time.Second
+
+func refreshTelemetryPricingCache(ctx context.Context, appConfigService *service.AppConfigServiceImpl) error {
+	if appConfigService == nil {
+		return errors.New("telemetry pricing configuration is unavailable")
+	}
+	refreshCtx, cancel := context.WithTimeout(ctx, telemetryPricingRefreshTimeout)
+	defer cancel()
+	_, err := appConfigService.TelemetryPricingRuntimeConfig(refreshCtx)
+	return err
+}
+
+func refreshTelemetryPricingCacheUntilCanceled(ctx context.Context, appConfigService *service.AppConfigServiceImpl, logger observability.LogProvider) {
+	ticker := time.NewTicker(service.DefaultAppConfigCacheCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := refreshTelemetryPricingCache(ctx, appConfigService); err != nil {
+				logger.Warn("telemetry pricing snapshot refresh failed", observability.String("reason", "configuration_refresh_failed"))
+			}
+		}
 	}
 }
 

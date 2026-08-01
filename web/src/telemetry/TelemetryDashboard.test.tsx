@@ -23,6 +23,11 @@ describe("TelemetryDashboard helpers", () => {
     expect(formatTelemetryAxisTick(8.5, "percent")).toBe("8.5%");
   });
 
+  it("formats USD telemetry as currency", () => {
+    expect(formatTelemetryCardValue({ unit: "USD", value: 0.0042, available: true })).toBe("$0.004200");
+    expect(formatTelemetryAxisTick(12.5, "USD")).toBe("$12.5");
+  });
+
   it("uses the selected telemetry window as empty chart axis data", () => {
     const points = telemetryChartPoints([], "2026-05-02T12:00:00Z", "2026-05-02T13:00:00Z");
 

@@ -102,11 +102,6 @@ type openAIVerifierAPIResponse struct {
 	} `json:"error"`
 }
 
-type openAIStructuredChatResult struct {
-	Content string
-	Usage   *openAIVerifierUsage
-}
-
 type semanticAssessmentCorrectionSpan struct {
 	Start                 int     `json:"start"`
 	End                   int     `json:"end"`
@@ -350,8 +345,8 @@ func (v *OpenAIVerifier) AssessSemantic(ctx context.Context, req SemanticAssessm
 		if err != nil {
 			return SemanticAssessmentResponse{}, err
 		}
-		if providerResult.Usage != nil &&
-			providerResult.Usage.PromptTokens > int64(v.assessmentLimits.MaxInputTokens) {
+		if providerResult.ReportedUsage != nil &&
+			providerResult.ReportedUsage.PromptTokens > int64(v.assessmentLimits.MaxInputTokens) {
 			observability.RecordAssessorValidationFailure(v.metrics, "input_budget")
 			return SemanticAssessmentResponse{}, &MalformedResponseError{
 				Provider:     openAIVerifierProvider,
@@ -368,9 +363,9 @@ func (v *OpenAIVerifier) AssessSemantic(ctx context.Context, req SemanticAssessm
 		)
 		if len(responseErrors) == 0 {
 			response.InputTokens = inputTokens
-			if providerResult.Usage != nil &&
-				providerResult.Usage.PromptTokens > 0 {
-				response.InputTokens = int(providerResult.Usage.PromptTokens)
+			if providerResult.ReportedUsage != nil &&
+				providerResult.ReportedUsage.PromptTokens > 0 {
+				response.InputTokens = int(providerResult.ReportedUsage.PromptTokens)
 			}
 			response.ProviderTurns = turn
 			return response, nil
@@ -522,6 +517,9 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 
 	apiResp, err := decodeOpenAIVerifierAPIResponse(httpResp.Body)
 	if err != nil {
+		if httpResp.StatusCode == http.StatusOK {
+			v.recordVerifierMissingUsage(ctx, v.model)
+		}
 		latencyOutcome = "malformed"
 		return Response{}, &MalformedResponseError{
 			Provider: openAIVerifierProvider,
@@ -551,8 +549,12 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 			Message:  msg,
 		}
 	}
+	v.recordVerifierProviderUsage(ctx, v.model, apiResp.Usage)
 
 	if len(apiResp.Choices) == 0 {
+		if !openAIVerifierUsageSupportsPricing(apiResp.Usage) {
+			v.recordVerifierMissingUsage(ctx, v.model)
+		}
 		latencyOutcome = "malformed"
 		return Response{}, &MalformedResponseError{
 			Provider: openAIVerifierProvider,
@@ -561,6 +563,13 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 	}
 
 	rawContent := apiResp.Choices[0].Message.Content
+	if !openAIVerifierUsageSupportsPricing(apiResp.Usage) {
+		if strings.TrimSpace(rawContent) == "" {
+			v.recordVerifierMissingUsage(ctx, v.model)
+		} else {
+			v.recordVerifierTokenizerUsage(ctx, v.model, chatReq, rawContent)
+		}
+	}
 
 	var result openAIVerifierResult
 	if err := json.Unmarshal([]byte(rawContent), &result); err != nil {
@@ -605,9 +614,6 @@ func (v *OpenAIVerifier) Verify(ctx context.Context, req Request) (Response, err
 		}
 	}
 
-	if apiResp.Usage != nil {
-		observability.RecordVerifierTokens(ctx, v.metrics, v.model, apiResp.Usage.PromptTokens, apiResp.Usage.CompletionTokens, apiResp.Usage.TotalTokens)
-	}
 	latencyOutcome = "ok"
 	return Response{
 		Verdict:    result.Verdict,
@@ -706,6 +712,9 @@ func (v *OpenAIVerifier) openAIStructuredChatJSON(
 
 	apiResp, err := decodeOpenAIVerifierAPIResponse(httpResp.Body)
 	if err != nil {
+		if httpResp.StatusCode == http.StatusOK {
+			v.recordVerifierMissingUsage(ctx, model)
+		}
 		latencyOutcome = "malformed"
 		return "", &MalformedResponseError{
 			Provider: openAIVerifierProvider,
@@ -733,18 +742,27 @@ func (v *OpenAIVerifier) openAIStructuredChatJSON(
 			Message:  msg,
 		}
 	}
+	v.recordVerifierProviderUsage(ctx, model, apiResp.Usage)
 	if len(apiResp.Choices) == 0 {
+		if !openAIVerifierUsageSupportsPricing(apiResp.Usage) {
+			v.recordVerifierMissingUsage(ctx, model)
+		}
 		latencyOutcome = "malformed"
 		return "", &MalformedResponseError{
 			Provider: openAIVerifierProvider,
 			Message:  "no choices in response",
 		}
 	}
-	if apiResp.Usage != nil {
-		observability.RecordVerifierTokens(ctx, v.metrics, model, apiResp.Usage.PromptTokens, apiResp.Usage.CompletionTokens, apiResp.Usage.TotalTokens)
+	content := apiResp.Choices[0].Message.Content
+	if !openAIVerifierUsageSupportsPricing(apiResp.Usage) {
+		if strings.TrimSpace(content) == "" {
+			v.recordVerifierMissingUsage(ctx, model)
+		} else {
+			v.recordVerifierTokenizerUsage(ctx, model, chatReq, content)
+		}
 	}
 	latencyOutcome = "ok"
-	return apiResp.Choices[0].Message.Content, nil
+	return content, nil
 }
 
 func (v *OpenAIVerifier) openAIStructuredChatJSONWithUsage(
@@ -874,6 +892,9 @@ func (v *OpenAIVerifier) openAIStructuredChatMessagesJSONWithUsage(
 
 	apiResp, err := decodeOpenAIVerifierAPIResponse(httpResp.Body)
 	if err != nil {
+		if httpResp.StatusCode == http.StatusOK {
+			v.recordVerifierMissingUsage(ctx, model)
+		}
 		latencyOutcome = "provider_error"
 		return openAIStructuredChatResult{}, &ProviderError{
 			Provider:     openAIVerifierProvider,
@@ -881,7 +902,16 @@ func (v *OpenAIVerifier) openAIStructuredChatMessagesJSONWithUsage(
 			FailureClass: ProviderFailureClassProtocol,
 		}
 	}
+	reportedUsage := apiResp.Usage
+	usage := reportedUsage
+	if !openAIVerifierUsageSupportsPricing(usage) {
+		usage = nil
+	}
+	v.recordVerifierProviderUsage(ctx, model, reportedUsage)
 	if len(apiResp.Choices) == 0 {
+		if usage == nil {
+			v.recordVerifierMissingUsage(ctx, model)
+		}
 		latencyOutcome = "provider_error"
 		return openAIStructuredChatResult{}, &ProviderError{
 			Provider:     openAIVerifierProvider,
@@ -891,6 +921,9 @@ func (v *OpenAIVerifier) openAIStructuredChatMessagesJSONWithUsage(
 	}
 	content := apiResp.Choices[0].Message.Content
 	if strings.TrimSpace(content) == "" {
+		if usage == nil {
+			v.recordVerifierMissingUsage(ctx, model)
+		}
 		latencyOutcome = "provider_error"
 		return openAIStructuredChatResult{}, &ProviderError{
 			Provider:     openAIVerifierProvider,
@@ -898,22 +931,15 @@ func (v *OpenAIVerifier) openAIStructuredChatMessagesJSONWithUsage(
 			FailureClass: ProviderFailureClassProtocol,
 		}
 	}
-	if apiResp.Usage != nil {
-		observability.RecordVerifierTokens(ctx, v.metrics, model, apiResp.Usage.PromptTokens, apiResp.Usage.CompletionTokens, apiResp.Usage.TotalTokens)
+	if usage == nil {
+		v.recordVerifierTokenizerUsage(ctx, model, chatReq, content)
 	}
 	latencyOutcome = "ok"
 	return openAIStructuredChatResult{
-		Content: content,
-		Usage:   apiResp.Usage,
+		Content:       content,
+		Usage:         usage,
+		ReportedUsage: reportedUsage,
 	}, nil
-}
-
-func openAIValidationSummary(errs []SemanticValidationError) string {
-	parts := make([]string, 0, len(errs))
-	for _, err := range errs {
-		parts = append(parts, err.Error())
-	}
-	return strings.Join(parts, "; ")
 }
 
 func openAIVerifierTemperature(disabled bool) *float64 {

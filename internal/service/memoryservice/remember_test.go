@@ -143,6 +143,7 @@ func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T)
 	if input.IdempotencyKey != "remember-idem" || input.RequestHash == "" {
 		t.Fatalf("idempotency/hash not set: %#v", input)
 	}
+	require.True(t, input.TelemetryRemember)
 	if got := input.Evidence[0].Content; got != "  exact evidence bytes stay intact  " {
 		t.Fatalf("content = %q", got)
 	}
@@ -555,6 +556,6 @@ func (s *rememberLedgerStub) ClaimNextPlacementRun(context.Context, string, stri
 	return nil, errors.New("unexpected ClaimNextPlacementRun")
 }
 
-func (s *rememberLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) error {
-	return errors.New("unexpected FinishPlacementRun")
+func (s *rememberLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) (*repository.PlacementFirstDisposition, error) {
+	return nil, errors.New("unexpected FinishPlacementRun")
 }

@@ -135,6 +135,7 @@ func ledgerAppDSN(t *testing.T, dsn string) string {
 func truncateLedgerFixtures(tx *gorm.DB) error {
 	return tx.Exec(`
 		TRUNCATE
+			telemetry_first_disposition_backfill_state,
 			v2_compatibility_markers,
 			v2_migration_operator_actions,
 			v2_migration_gate_results,
@@ -974,11 +975,12 @@ func TestLedgerPlacementClaimIsTeamLocal(t *testing.T) {
 	assert.Equal(t, 1, claimed.Attempts)
 	require.NotNil(t, claimed.LeaseUntil)
 
-	err = repo.FinishPlacementRun(ctx, teamA, claimed.PlacementRunID, "worker-b", "completed", "")
+	_, err = repo.FinishPlacementRun(ctx, teamA, claimed.PlacementRunID, "worker-b", "completed", "")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPlacementLeaseConflict), fmt.Sprintf("err=%v", err))
 
-	require.NoError(t, repo.FinishPlacementRun(ctx, teamA, claimed.PlacementRunID, "worker-a", "completed", ""))
+	_, err = repo.FinishPlacementRun(ctx, teamA, claimed.PlacementRunID, "worker-a", "completed", "")
+	require.NoError(t, err)
 }
 
 func insertPredicateDefinitionForTest(db *gorm.DB, predicateKey string) error {

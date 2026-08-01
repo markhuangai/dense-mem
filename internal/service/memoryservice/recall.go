@@ -12,6 +12,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -38,6 +39,7 @@ type RecallDependencies struct {
 	Hypotheses      RecallHypothesisRepository
 	Communities     RecallCommunityRepository
 	CommunityConfig RecallCommunityConfigProvider
+	Metrics         observability.DiscoverabilityMetrics
 }
 
 type RecallSearchRepository interface {
@@ -64,15 +66,21 @@ type recallService struct {
 	hypotheses      RecallHypothesisRepository
 	communities     RecallCommunityRepository
 	communityConfig RecallCommunityConfigProvider
+	metrics         observability.DiscoverabilityMetrics
 }
 
 func NewRecallService(deps RecallDependencies) RecallService {
+	metrics := deps.Metrics
+	if metrics == nil {
+		metrics = observability.NoopDiscoverabilityMetrics()
+	}
 	return &recallService{
 		search:          deps.Search,
 		provider:        deps.Provider,
 		hypotheses:      deps.Hypotheses,
 		communities:     deps.Communities,
 		communityConfig: deps.CommunityConfig,
+		metrics:         metrics,
 	}
 }
 
@@ -203,7 +211,7 @@ type RecallSearchStates struct {
 	Relationships string `json:"relationships"`
 }
 
-func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallResult, error) {
+func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *RecallResult, err error) {
 	if s.search == nil {
 		return nil, errors.New("recall: search repository is required")
 	}
@@ -214,6 +222,18 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallR
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
 		return nil, ErrRecallAuthContext
 	}
+	started := time.Now()
+	defer func() {
+		outcome := "ok"
+		resultCount := 0
+		if err != nil {
+			outcome = "error"
+		}
+		if result != nil {
+			resultCount = len(result.Results)
+		}
+		observability.RecordRecall(ctx, s.metrics, float64(time.Since(started).Microseconds())/1000, resultCount, outcome)
+	}()
 	req = normalizeRecallRequest(req)
 	contract, err := s.search.GetActiveSearchContract(ctx)
 	if err != nil {
@@ -222,7 +242,8 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallR
 	degradations := []RecallDegradationResult{}
 	queryEmbedding := []float32(nil)
 	if req.Query != "" {
-		vector, vectorDegradation := s.queryEmbedding(ctx, contract, req.Query)
+		embedCtx := observability.WithAIOperation(ctx, observability.AIOperationRecallEmbedding, 1)
+		vector, vectorDegradation := s.queryEmbedding(embedCtx, contract, req.Query)
 		queryEmbedding = vector
 		if vectorDegradation != nil {
 			degradations = append(degradations, *vectorDegradation)
@@ -242,7 +263,7 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallR
 	if err != nil {
 		return nil, err
 	}
-	result := recallResultFromRepository(recalled, degradations)
+	result = recallResultFromRepository(recalled, degradations)
 	relationships, relationshipState, relationshipDegradation := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req, queryEmbedding)
 	result.RelatedRelationships = relationships
 	result.SearchStates.Relationships = relationshipState

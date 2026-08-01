@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +132,111 @@ func TestPrometheusMetricsRecordsUnknownLabelsAndHelpers(t *testing.T) {
 		}
 	}
 	requirePrometheusMetricLabels(t, body, "densemem_dream_feedback_total", `decision="unknown"`, `outcome="unknown"`, `from_status="unknown"`)
+}
+
+func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
+	verifierInputPrice := 2.0
+	verifierOutputPrice := 4.0
+	embeddingInputPrice := 1.5
+	metrics := NewPrometheusMetrics(AIPricingResolverFunc(func(context.Context) (AIPricing, error) {
+		return AIPricing{
+			VerifierInputUSDPerMillionTokens:  &verifierInputPrice,
+			VerifierOutputUSDPerMillionTokens: &verifierOutputPrice,
+			EmbeddingInputUSDPerMillionTokens: &embeddingInputPrice,
+		}, nil
+	}))
+	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	profileID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{TeamID: teamID, ProfileID: profileID})
+
+	RecordRememberAcknowledgement(ctx, metrics, 120*time.Millisecond, "ok")
+	RecordRememberFirstDisposition(ctx, metrics, 3*time.Second, "completed")
+	RecordAIOperationUsage(
+		WithAIOperation(ctx, AIOperationPlacementAssessment, 1),
+		metrics,
+		AIOperationUsage{
+			Component:    AIComponentVerifier,
+			Model:        "configured-verifier",
+			InputTokens:  1_000_000,
+			OutputTokens: 500_000,
+			ItemCount:    2,
+			Source:       AITokenSourceProvider,
+		},
+	)
+	RecordAIOperationUsage(
+		WithAIOperation(ctx, AIOperationRecallEmbedding, 1),
+		metrics,
+		AIOperationUsage{
+			Component:   AIComponentEmbedding,
+			Model:       "configured-embedding",
+			InputTokens: 2_000_000,
+			Source:      AITokenSourceTokenizer,
+		},
+	)
+
+	identity := []string{teamID.String(), profileID.String()}
+	body := scrapePrometheusMetrics(t, metrics)
+	if got := prometheusCounterValue(t, body, "densemem_remember_acknowledgements_total", append(identity, "outcome=\"ok\"")...); got != 1 {
+		t.Fatalf("remember acknowledgements = %v; want 1", got)
+	}
+	if got := prometheusCounterValue(t, body, "densemem_remember_first_disposition_total", append(identity, "status=\"completed\"")...); got != 1 {
+		t.Fatalf("first dispositions = %v; want 1", got)
+	}
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_cost_usd_total", append(identity, "operation=\"placement_assessment\"", "component=\"verifier\"", "model=\"configured-verifier\"", "source=\"provider\"")...); got != 4 {
+		t.Fatalf("verifier cost = %v; want 4", got)
+	}
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_cost_usd_total", append(identity, "operation=\"recall_embedding\"", "component=\"embedding\"", "model=\"configured-embedding\"", "source=\"tokenizer\"")...); got != 3 {
+		t.Fatalf("embedding cost = %v; want 3", got)
+	}
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_items_total", append(identity, "operation=\"placement_assessment\"", "component=\"verifier\"", "model=\"configured-verifier\"", "source=\"provider\"")...); got != 2 {
+		t.Fatalf("verifier item count = %v; want 2", got)
+	}
+
+	requirePrometheusMetricLabels(t, body, "densemem_remember_acknowledgement_duration_seconds_bucket", `outcome="ok"`)
+	requirePrometheusMetricLabels(t, body, "densemem_remember_first_disposition_duration_seconds_bucket", `status="completed"`)
+}
+
+func TestPrometheusMetricsMarksUnpricedAndKeepsWorkerIdentity(t *testing.T) {
+	metrics := NewPrometheusMetrics()
+	teamID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
+	profileID := uuid.MustParse("44444444-4444-4444-8444-444444444444")
+	ctx := WithMetricIdentity(context.Background(), teamID.String(), profileID.String())
+	operationCtx := WithAIOperation(ctx, AIOperationBackgroundEmbedding, 3)
+
+	RecordAIOperationUsage(operationCtx, metrics, AIOperationUsage{
+		Component:   AIComponentEmbedding,
+		Model:       "configured-embedding",
+		InputTokens: 12,
+		Source:      AITokenSourceProvider,
+	})
+	RecordAIOperationUsage(operationCtx, metrics, AIOperationUsage{
+		Component:    AIComponentEmbedding,
+		Model:        "configured-embedding",
+		InputTokens:  12,
+		OutputTokens: 1,
+		Source:       AITokenSourceProvider,
+	})
+	RecordAIOperationUsage(context.Background(), metrics, AIOperationUsage{
+		Component:   AIComponentEmbedding,
+		Model:       "untagged",
+		InputTokens: 12,
+		Source:      AITokenSourceProvider,
+	})
+
+	identity := []string{teamID.String(), profileID.String()}
+	body := scrapePrometheusMetrics(t, metrics)
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_unpriced_total", append(identity, "operation=\"background_embedding\"", "component=\"embedding\"", "model=\"configured-embedding\"", "reason=\"pricing_unavailable\"")...); got != 1 {
+		t.Fatalf("pricing-unavailable count = %v; want 1", got)
+	}
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_unpriced_total", append(identity, "operation=\"background_embedding\"", "component=\"embedding\"", "model=\"configured-embedding\"", "reason=\"invalid_usage\"")...); got != 1 {
+		t.Fatalf("invalid-usage count = %v; want 1", got)
+	}
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_items_total", append(identity, "operation=\"background_embedding\"", "component=\"embedding\"", "model=\"configured-embedding\"", "source=\"provider\"")...); got != 3 {
+		t.Fatalf("background item count = %v; want 3", got)
+	}
+	if strings.Contains(body, "untagged") {
+		t.Fatal("untagged AI operation should not create a metric")
+	}
 }
 
 func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testing.T) {
@@ -303,6 +409,32 @@ func requirePrometheusMetricLabels(t *testing.T, body, metric string, labels ...
 		}
 	}
 	t.Fatalf("scraped metrics missing %s label tuple %v\n%s", metric, labels, body)
+}
+
+func prometheusCounterValue(t *testing.T, body, metric string, labels ...string) float64 {
+	t.Helper()
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, metric+"{") {
+			continue
+		}
+		matched := true
+		for _, label := range labels {
+			if !strings.Contains(line, label) {
+				matched = false
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		value, err := strconv.ParseFloat(line[strings.LastIndex(line, " ")+1:], 64)
+		if err != nil {
+			t.Fatalf("parse %s value from %q: %v", metric, line, err)
+		}
+		return value
+	}
+	t.Fatalf("scraped metrics missing %s label tuple %v\n%s", metric, labels, body)
+	return 0
 }
 
 func exerciseNilMetricHelpers(ctx context.Context) {

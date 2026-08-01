@@ -14,6 +14,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -30,6 +31,7 @@ type LifecycleDependencies struct {
 	Semantic  LifecycleSemanticRepository
 	Placement LifecyclePlacementRepository
 	Evidence  LifecycleEvidenceRepository
+	Metrics   observability.DiscoverabilityMetrics
 }
 
 type LifecycleSemanticRepository interface {
@@ -49,10 +51,15 @@ type lifecycleService struct {
 	semantic  LifecycleSemanticRepository
 	placement LifecyclePlacementRepository
 	evidence  LifecycleEvidenceRepository
+	metrics   observability.DiscoverabilityMetrics
 }
 
 func NewLifecycleService(deps LifecycleDependencies) LifecycleService {
-	return &lifecycleService{semantic: deps.Semantic, placement: deps.Placement, evidence: deps.Evidence}
+	metrics := deps.Metrics
+	if metrics == nil {
+		metrics = observability.NoopDiscoverabilityMetrics()
+	}
+	return &lifecycleService{semantic: deps.Semantic, placement: deps.Placement, evidence: deps.Evidence, metrics: metrics}
 }
 
 type ResolveMemoryPlacementRequest struct {
@@ -180,6 +187,9 @@ func (s *lifecycleService) resolvePlacementReview(
 	})
 	if err != nil {
 		return nil, err
+	}
+	if resolved.FirstDisposition != nil && resolved.FirstDisposition.IsRemember {
+		observability.RecordRememberFirstDisposition(ctx, s.metrics, resolved.FirstDisposition.CompletedAt.Sub(resolved.FirstDisposition.CreatedAt), resolved.FirstDisposition.Status)
 	}
 	return &ResolveMemoryPlacementResult{
 		DecisionID:        resolved.DecisionID,
