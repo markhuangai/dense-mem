@@ -816,7 +816,7 @@ func publicIPRateLimitMiddleware(subjectNamespace string, svc service.RateLimitS
 			subject := subjectNamespace + ":ip:" + c.RealIP()
 			allowed, remaining, resetAt, err := svc.Check(c.Request().Context(), subject, routePath, limit)
 			if err != nil {
-				c.Logger().Errorf("public ip rate limit check failed: %v", err)
+				c.Logger().Error("public ip rate limit check failed")
 				return next(c)
 			}
 			c.Response().Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))
