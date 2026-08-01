@@ -50,7 +50,7 @@ func TestControlPortalSSOProviderAndMappingFlows(t *testing.T) {
 	require.Equal(t, nethttp.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"name":"Enterprise IdP"`)
 
-	createBody := `{"name":"Azure","kind":"azure_ad","issuer_url":"https://login.microsoftonline.com/tenant/v2.0","client_id":"azure-client","client_secret_env":"AZURE_SECRET","scopes":["profile","openid"],"group_claims":["groups"],"enabled":true}`
+	createBody := `{"name":"Azure","kind":"azure_ad","issuer_url":"https://login.microsoftonline.com/tenant/v2.0","tenant_id":"tenant","client_id":"azure-client","client_secret_env":"AZURE_SECRET","scopes":["profile","openid"],"group_claims":["groups"],"enabled":true}`
 	rec = serveControlSSO(server, nethttp.MethodPost, "/control/api/sso/providers", createBody)
 	require.Equal(t, nethttp.StatusCreated, rec.Code)
 	require.Contains(t, rec.Body.String(), `"kind":"azure_ad"`)
@@ -738,6 +738,14 @@ func (r *httpSSORepoStub) ListMappingsForGroups(_ context.Context, providerID uu
 		items = append(items, &copy)
 	}
 	return items, nil
+}
+
+func (r *httpSSORepoStub) DirectoryAuthorityActive(context.Context, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
+func (r *httpSSORepoStub) DirectoryTeamProfileEntitled(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string) (bool, error) {
+	return false, nil
 }
 
 func (r *httpSSORepoStub) UpsertIdentity(_ context.Context, identity *domain.SSOIdentity) error {

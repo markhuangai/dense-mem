@@ -84,7 +84,7 @@ func TestTelemetryFirstDispositionMigrationRebuildsInvalidConcurrentIndex(t *tes
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	runGooseUpTo(t, ctx, sqlDB, 2026073104)
+	runGooseUpTo(t, ctx, sqlDB, 2026073105)
 	insertDuplicateTelemetryFirstDispositionMarkers(t, ctx, sqlDB)
 
 	m := NewMigratorWithDB(sqlDB)

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -27,6 +28,14 @@ import (
 
 type userPortalAuthRepo struct {
 	key *domain.APIKey
+}
+
+type failingPublicRateLimitService struct {
+	err error
+}
+
+func (s failingPublicRateLimitService) Check(context.Context, string, string, int) (bool, int, time.Time, error) {
+	return false, 0, time.Time{}, s.err
 }
 
 func (r *userPortalAuthRepo) CreateStandardKey(context.Context, *domain.APIKey) error { return nil }
@@ -392,6 +401,22 @@ func TestUserPortalGraphUsesAuthenticatedTeamScope(t *testing.T) {
 	require.Equal(t, 50, graph.query.Limit)
 	require.Equal(t, []string{"entity", "value"}, graph.query.Types)
 	require.Equal(t, "memory", graph.query.Query)
+}
+
+func TestPublicIPRateLimitFailureDoesNotLogRawError(t *testing.T) {
+	e := echo.New()
+	var logs bytes.Buffer
+	e.Logger.SetOutput(&logs)
+	e.GET("/rate-limited", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	}, publicIPRateLimitMiddleware("test", failingPublicRateLimitService{err: errors.New("postgres password=not-safe-to-log")}, &config.Config{RateLimitPerMinute: 1}))
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rate-limited", nil))
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	require.Contains(t, logs.String(), "public ip rate limit check failed")
+	require.NotContains(t, logs.String(), "postgres password=not-safe-to-log")
 }
 
 func TestUserPortalGraphRequiresReadScope(t *testing.T) {

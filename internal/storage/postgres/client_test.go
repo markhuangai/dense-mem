@@ -162,10 +162,10 @@ func TestMigratorRunUpAppliesPostCutoverCleanupAfterEmbeddingRetry(t *testing.T)
 	require.NoError(t, m.RunUp(ctx), "repeat RunUp should remain idempotent")
 }
 
-// TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingTeamOwnedDreaming
+// TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrganizationIdentity
 // verifies the reversible telemetry migrations do not weaken the upstream
 // irreversible migration boundary.
-func TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingTeamOwnedDreaming(t *testing.T) {
+func TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrganizationIdentity(t *testing.T) {
 	ctx := context.Background()
 
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
@@ -216,10 +216,9 @@ func TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingTeamO
 
 	require.NoError(t, m.RunDown(ctx), "legacy telemetry version repair down should be a no-op")
 
-	// The team-owned dreaming migration remains intentionally irreversible.
 	err := m.RunDown(ctx)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "2026073102_team_owned_dreaming is irreversible")
+	assert.Contains(t, err.Error(), "2026073103_organization_directory_identity is irreversible")
 }
 
 func TestSearchStorageMigrationAllowsIndexGenerationLifecycleOnly(t *testing.T) {

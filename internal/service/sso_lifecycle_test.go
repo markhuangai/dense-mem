@@ -323,6 +323,7 @@ func TestSSOProviderAndMappingManagement(t *testing.T) {
 		Name:      "Azure",
 		Kind:      domain.SSOProviderKindAzureAD,
 		IssuerURL: "https://login.example.com/",
+		TenantID:  "tenant-id",
 		ClientID:  "client-id",
 	})
 	require.NoError(t, err)

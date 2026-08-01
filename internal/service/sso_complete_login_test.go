@@ -140,3 +140,155 @@ func TestSSOCompleteLoginCreatesSession(t *testing.T) {
 	require.NotNil(t, repo.createdSession)
 	assert.Equal(t, now.Add(time.Hour), repo.createdSession.ExpiresAt)
 }
+
+func TestSSOCompleteLoginUsesDurableDirectoryProfilesWhenDirectoryAuthorityIsActive(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	providerID := uuid.New()
+	identityID := uuid.New()
+	directoryTeamID := uuid.New()
+	claimOnlyTeamID := uuid.New()
+	directoryProfileID := uuid.New()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	tokenTenantID := "tenant-id"
+
+	var oidcServer *httptest.Server
+	oidcServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 oidcServer.URL,
+				"authorization_endpoint": oidcServer.URL + "/authorize",
+				"token_endpoint":         oidcServer.URL + "/token",
+				"jwks_uri":               oidcServer.URL + "/jwks",
+				"userinfo_endpoint":      oidcServer.URL + "/userinfo",
+			}))
+		case "/jwks":
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{rsaJWK(&privateKey.PublicKey, "test-key")}}))
+		case "/token":
+			idToken := signedOIDCToken(t, privateKey, "test-key", map[string]any{
+				"iss":   oidcServer.URL,
+				"sub":   "entra-user-1",
+				"oid":   "entra-user-1",
+				"tid":   tokenTenantID,
+				"aud":   "client-id",
+				"exp":   now.Add(time.Hour).Unix(),
+				"iat":   now.Add(-time.Minute).Unix(),
+				"nonce": "nonce-123",
+				"email": "alex@example.test",
+				"name":  "Alex Entra",
+			})
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "access-token",
+				"token_type":   "Bearer",
+				"expires_in":   3600,
+				"id_token":     idToken,
+			}))
+		case "/userinfo":
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"sub": "entra-user-1"}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer oidcServer.Close()
+
+	repo := &ssoRepositoryStub{
+		t:                        t,
+		directoryAuthorityActive: true,
+		upsertIdentityID:         identityID,
+		providers: map[uuid.UUID]*domain.SSOProvider{
+			providerID: {
+				ID:             providerID,
+				Name:           "Directory authority",
+				Kind:           domain.SSOProviderKindAzureAD,
+				IssuerURL:      oidcServer.URL,
+				TenantID:       "tenant-id",
+				ClientID:       "client-id",
+				GroupsEndpoint: "https://graph.example.test/groups",
+				Enabled:        true,
+			},
+		},
+		consumableState: &domain.SSOOAuthState{
+			StateHash:    HashSSOToken("state-token"),
+			ProviderID:   providerID,
+			PKCEVerifier: "pkce-verifier",
+			Nonce:        "nonce-123",
+			RedirectPath: "/ui/knowledge",
+			ExpiresAt:    now.Add(time.Minute),
+		},
+		mappings: []*domain.SSOGroupMapping{{
+			ProviderID: providerID,
+			TeamID:     claimOnlyTeamID,
+			TeamName:   "Claim Only",
+			GroupID:    "entra-claim-only-manager",
+			Scopes:     []string{APIKeyScopeRead, APIKeyScopeWrite},
+			Role:       APIKeyRoleManager,
+			Enabled:    true,
+		}},
+		teamProfiles: []*domain.SSOTeamProfile{{
+			Team: domain.Profile{ID: directoryTeamID, Name: "Research"},
+			Profile: domain.APIKey{
+				ID:            directoryProfileID,
+				TeamID:        directoryTeamID,
+				AuthSource:    "sso",
+				SSOIdentityID: &identityID,
+				SSOProviderID: &providerID,
+				SSOSubject:    "entra-user-1",
+				SSOGroupID:    "entra-research-manager",
+				Scopes:        []string{APIKeyScopeRead, APIKeyScopeWrite},
+				Role:          APIKeyRoleManager,
+			},
+		}},
+		directoryProfileEntitled: map[uuid.UUID]bool{directoryProfileID: true},
+	}
+	resolver := &ssoGroupResolverStub{groups: []string{"entra-claim-only-manager"}}
+	svc := NewSSOService(repo, SSOConfig{
+		HTTPClient:    oidcServer.Client(),
+		GroupResolver: resolver,
+		SessionTTL:    time.Hour,
+		Now:           func() time.Time { return now },
+	})
+
+	result, err := svc.CompleteLogin(ctx, "state-token", "auth-code", "https://app.example.com/ui/api/sso/callback")
+
+	require.NoError(t, err)
+	require.Len(t, result.Session.Teams, 1)
+	assert.Equal(t, directoryTeamID, result.Session.Selected.Team.ID)
+	assert.Equal(t, directoryTeamID, result.Session.Teams[0].Team.ID)
+	assert.Zero(t, resolver.calls)
+	assert.Zero(t, repo.mappingLookupCalls)
+	assert.Zero(t, repo.upsertProfileCalls)
+	assert.Nil(t, repo.savedCache)
+	assert.Equal(t, []uuid.UUID{directoryProfileID}, repo.directoryProfileEntitledCalls)
+
+	repo.providers[providerID].TenantID = ""
+	repo.consumableState = &domain.SSOOAuthState{
+		StateHash:    HashSSOToken("legacy-state-token"),
+		ProviderID:   providerID,
+		PKCEVerifier: "pkce-verifier",
+		Nonce:        "nonce-123",
+		RedirectPath: "/ui/knowledge",
+		ExpiresAt:    now.Add(time.Minute),
+	}
+	legacyResult, err := svc.CompleteLogin(ctx, "legacy-state-token", "auth-code", "https://app.example.com/ui/api/sso/callback")
+	require.NoError(t, err)
+	require.Len(t, legacyResult.Session.Teams, 1)
+	assert.Equal(t, directoryTeamID, legacyResult.Session.Selected.Team.ID)
+
+	repo.providers[providerID].TenantID = "tenant-id"
+	tokenTenantID = "other-tenant"
+	repo.consumableState = &domain.SSOOAuthState{
+		StateHash:    HashSSOToken("wrong-tenant-state-token"),
+		ProviderID:   providerID,
+		PKCEVerifier: "pkce-verifier",
+		Nonce:        "nonce-123",
+		RedirectPath: "/ui/knowledge",
+		ExpiresAt:    now.Add(time.Minute),
+	}
+	_, err = svc.CompleteLogin(ctx, "wrong-tenant-state-token", "auth-code", "https://app.example.com/ui/api/sso/callback")
+	require.ErrorContains(t, err, "tenant")
+}

@@ -9,6 +9,8 @@ type ConfigTab = "general" | "sso" | "dreaming" | "community" | "operation-logs"
 const CONFIG_LABELS: Record<string, string> = {
   APP_TIMEZONE: "Timezone",
   SSO_PUBLIC_BASE_URL: "Public base URL",
+  SCIM_PUBLIC_BASE_URL: "SCIM ingress URL",
+  CONTROL_PUBLIC_BASE_URL: "Control portal ingress URL",
   SSO_ENTITLEMENT_CACHE_TTL_SECONDS: "Entitlement cache TTL",
   SSO_SESSION_TTL_SECONDS: "Session TTL",
   SSO_STATE_TTL_SECONDS: "OAuth state TTL",
@@ -34,6 +36,8 @@ const CONFIG_LABELS: Record<string, string> = {
 
 const CONFIG_PLACEHOLDERS: Record<string, string> = {
   APP_TIMEZONE: "Local",
+  SCIM_PUBLIC_BASE_URL: "https://memory.example.com",
+  CONTROL_PUBLIC_BASE_URL: "https://control.example.com",
   SSO_ENTITLEMENT_CACHE_TTL_SECONDS: "300",
   SSO_SESSION_TTL_SECONDS: "28800",
   SSO_STATE_TTL_SECONDS: "600",

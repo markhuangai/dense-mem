@@ -40,7 +40,15 @@ func (s *SSOService) reconcileCurrentSessionTeamProfiles(ctx context.Context, id
 		s.debugSSOFailure("sso current session provider lookup failed", err, ssoUUIDLogAttr("provider_id", identity.ProviderID), ssoHashLogAttr("subject", identity.Subject))
 		return false, err
 	}
-	if provider == nil || !provider.Enabled {
+	if provider == nil || !provider.Enabled || provider.RetiredAt != nil {
+		return false, nil
+	}
+	directoryAuthority, err := s.repo.DirectoryAuthorityActive(ctx, identity.ProviderID)
+	if err != nil {
+		s.debugSSOFailure("sso current session directory authority lookup failed", err, ssoUUIDLogAttr("provider_id", identity.ProviderID), ssoHashLogAttr("subject", identity.Subject))
+		return false, err
+	}
+	if directoryAuthority {
 		return false, nil
 	}
 	cache, err := s.repo.GetEntitlementCache(ctx, identity.ProviderID, identity.Subject)

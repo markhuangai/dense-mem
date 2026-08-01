@@ -448,16 +448,20 @@ func TestControlPortalAuthAndOrigin(t *testing.T) {
 	req.Header.Set("Origin", "http://192.168.1.253:8090")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusNoContent, rec.Code)
-	require.Equal(t, "http://192.168.1.253:8090", rec.Header().Get("Access-Control-Allow-Origin"))
+	require.Equal(t, http.StatusForbidden, rec.Code)
 
 	req = httptest.NewRequest(http.MethodGet, "/control/api/session", nil)
 	req.Header.Set("X-Control-Portal-Token", "secret")
 	req.Header.Set("Origin", "https://example.com")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/session", nil)
+	req.Header.Set("X-Control-Portal-Token", "secret")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "https://example.com", rec.Header().Get("Access-Control-Allow-Origin"))
 }
 
 func TestControlPortalMetrics(t *testing.T) {

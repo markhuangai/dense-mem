@@ -8,6 +8,8 @@ const (
 	AppConfigTimezone = "APP_TIMEZONE"
 
 	AppConfigSSOPublicBaseURL              = "SSO_PUBLIC_BASE_URL"
+	AppConfigSCIMPublicBaseURL             = "SCIM_PUBLIC_BASE_URL"
+	AppConfigControlPublicBaseURL          = "CONTROL_PUBLIC_BASE_URL"
 	AppConfigSSOEntitlementCacheTTLSeconds = "SSO_ENTITLEMENT_CACHE_TTL_SECONDS"
 	AppConfigSSOSessionTTLSeconds          = "SSO_SESSION_TTL_SECONDS"
 	AppConfigSSOStateTTLSeconds            = "SSO_STATE_TTL_SECONDS"

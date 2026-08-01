@@ -122,9 +122,12 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), telemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, health: health, sso: telemetry.SSO, appConfig: telemetry.Config, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
+	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
+	if telemetry.ControlIdentity != nil {
+		registerControlIdentityRoutes(e, control)
+	}
 	api := e.Group("/control/api")
-	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc))
+	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc, telemetry.ControlIdentity))
 	api.Use(httpmw.TelemetryHTTPMiddleware(telemetry.HTTPMetrics))
 	api.GET("/session", control.session)
 	api.GET("/metrics", control.getMetrics)
@@ -183,6 +186,22 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		api.POST("/sso/providers/:providerId/mappings", control.createSSOMapping)
 		api.PATCH("/sso/providers/:providerId/mappings/:mappingId", control.updateSSOMapping)
 		api.DELETE("/sso/providers/:providerId/mappings/:mappingId", control.deleteSSOMapping)
+	}
+	if telemetry.Directory != nil {
+		api.GET("/sso/directory/connectors", control.listDirectoryConnectors)
+		api.GET("/sso/providers/:providerId/directory-connector", control.getDirectoryConnector)
+		api.POST("/sso/providers/:providerId/directory-connector", control.createDirectoryConnector)
+		api.PATCH("/sso/directory/connectors/:connectorId", control.updateDirectoryConnector)
+		api.POST("/sso/directory/connectors/:connectorId/credentials/rotate", control.rotateDirectoryCredentials)
+		api.GET("/sso/directory/connectors/:connectorId/preview", control.previewDirectoryConnector)
+		api.POST("/sso/directory/connectors/:connectorId/status", control.setDirectoryConnectorStatus)
+		api.POST("/sso/directory/connectors/:connectorId/groups/:groupId/adopt", control.adoptDirectoryGroupTeam)
+	}
+	if telemetry.ControlIdentity != nil {
+		api.GET("/sso/providers/:providerId/control-admin-groups", control.listControlAdminGroups)
+		api.POST("/sso/providers/:providerId/control-admin-groups", control.createControlAdminGroup)
+		api.PATCH("/sso/providers/:providerId/control-admin-groups/:groupId", control.updateControlAdminGroup)
+		api.DELETE("/sso/providers/:providerId/control-admin-groups/:groupId", control.deleteControlAdminGroup)
 	}
 
 	if staticDir := defaultPortalStaticDir(); staticDir != "" {
@@ -730,41 +749,6 @@ func telemetryScrapeTokenMiddleware(token string) echo.MiddlewareFunc {
 			}
 			return next(c)
 		}
-	}
-}
-
-func controlPortalMiddleware(token string, securitySvc service.SecurityService) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			origin := c.Request().Header.Get(echo.HeaderOrigin)
-			if origin != "" {
-				c.Response().Header().Set(echo.HeaderVary, echo.HeaderOrigin)
-				c.Response().Header().Set(echo.HeaderAccessControlAllowOrigin, origin)
-				c.Response().Header().Set(echo.HeaderAccessControlAllowHeaders, "Authorization, Content-Type, X-Control-Portal-Token")
-				c.Response().Header().Set(echo.HeaderAccessControlAllowMethods, "GET, POST, PATCH, DELETE, OPTIONS")
-			}
-			if c.Request().Method == nethttp.MethodOptions {
-				return c.NoContent(nethttp.StatusNoContent)
-			}
-			if !controlTokenMatches(c.Request(), token) {
-				recordControlAuthFailure(c, securitySvc)
-				return httperr.New(httperr.AUTH_INVALID, "invalid control portal token")
-			}
-			ctx := context.WithValue(c.Request().Context(), controlPortalActorContextKey{}, controlPortalActorFromRequest(c.Request()))
-			c.SetRequest(c.Request().WithContext(ctx))
-			return next(c)
-		}
-	}
-}
-
-func recordControlAuthFailure(c echo.Context, securitySvc service.SecurityService) {
-	if securitySvc == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), "control", "AUTH_INVALID"); err != nil {
-		c.Logger().Errorf("control security auth failure record failed: %v", err)
 	}
 }
 

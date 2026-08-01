@@ -157,6 +157,8 @@ type controlSSOProviderRequest struct {
 	Name            string   `json:"name"`
 	Kind            string   `json:"kind"`
 	IssuerURL       string   `json:"issuer_url"`
+	TenantID        string   `json:"tenant_id"`
+	IdentityClaim   string   `json:"identity_claim"`
 	ClientID        string   `json:"client_id"`
 	ClientSecretEnv string   `json:"client_secret_env"`
 	Scopes          []string `json:"scopes"`
@@ -176,6 +178,8 @@ func (r controlSSOProviderRequest) toDomain(id uuid.UUID) domain.SSOProvider {
 		Name:            r.Name,
 		Kind:            domain.SSOProviderKind(r.Kind),
 		IssuerURL:       r.IssuerURL,
+		TenantID:        r.TenantID,
+		IdentityClaim:   r.IdentityClaim,
 		ClientID:        r.ClientID,
 		ClientSecretEnv: r.ClientSecretEnv,
 		Scopes:          append([]string(nil), r.Scopes...),
@@ -217,6 +221,8 @@ type controlSSOProviderResponse struct {
 	Name            string    `json:"name"`
 	Kind            string    `json:"kind"`
 	IssuerURL       string    `json:"issuer_url"`
+	TenantID        string    `json:"tenant_id"`
+	IdentityClaim   string    `json:"identity_claim"`
 	ClientID        string    `json:"client_id"`
 	ClientSecretEnv string    `json:"client_secret_env"`
 	Scopes          []string  `json:"scopes"`
@@ -237,6 +243,8 @@ func toControlSSOProvider(provider *domain.SSOProvider) controlSSOProviderRespon
 		Name:            provider.Name,
 		Kind:            string(provider.Kind),
 		IssuerURL:       provider.IssuerURL,
+		TenantID:        provider.TenantID,
+		IdentityClaim:   provider.IdentityClaim,
 		ClientID:        provider.ClientID,
 		ClientSecretEnv: provider.ClientSecretEnv,
 		Scopes:          append([]string{}, provider.Scopes...),
@@ -259,6 +267,8 @@ type controlSSOGroupMappingResponse struct {
 	Scopes     []string  `json:"scopes"`
 	Role       string    `json:"role"`
 	Enabled    bool      `json:"enabled"`
+	Origin     string    `json:"origin"`
+	RetiredAt  *string   `json:"retired_at"`
 	CreatedAt  string    `json:"created_at"`
 	UpdatedAt  string    `json:"updated_at"`
 }
@@ -266,6 +276,11 @@ type controlSSOGroupMappingResponse struct {
 func toControlSSOGroupMapping(mapping *domain.SSOGroupMapping) controlSSOGroupMappingResponse {
 	if mapping == nil {
 		return controlSSOGroupMappingResponse{}
+	}
+	var retiredAt *string
+	if mapping.RetiredAt != nil {
+		formatted := mapping.RetiredAt.Format(time.RFC3339)
+		retiredAt = &formatted
 	}
 	return controlSSOGroupMappingResponse{
 		ID:         mapping.ID,
@@ -277,6 +292,8 @@ func toControlSSOGroupMapping(mapping *domain.SSOGroupMapping) controlSSOGroupMa
 		Scopes:     append([]string{}, mapping.Scopes...),
 		Role:       mapping.Role,
 		Enabled:    mapping.Enabled,
+		Origin:     mapping.Origin,
+		RetiredAt:  retiredAt,
 		CreatedAt:  mapping.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:  mapping.UpdatedAt.Format(time.RFC3339),
 	}

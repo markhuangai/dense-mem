@@ -19,7 +19,9 @@ import {
 } from "lucide-react";
 import {
   ControlApi,
+  ControlIdentityProvider,
   Team,
+  listControlIdentityProviders,
 } from "./api";
 import { TeamProfilesPanel } from "./control/TeamProfilesPanel";
 import { TeamOverviewPanel, TeamWorkspaceShell } from "./control/TeamWorkspace";
@@ -41,15 +43,53 @@ const THEME_STORAGE_KEY = "denseMem.controlTheme";
 
 type LoadState = "idle" | "loading" | "error";
 type Theme = "light" | "dark";
+type AuthMode = "none" | "token" | "sso";
 type PortalTab = "teams" | "metrics" | "recall-feedback" | "logs" | "security" | "sso" | "config";
 
 export function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
   const [draftToken, setDraftToken] = useState(token);
+  const [authMode, setAuthMode] = useState<AuthMode>(() => token ? "token" : "none");
+  const [ssoProviders, setSSOProviders] = useState<ControlIdentityProvider[]>([]);
   const [authError, setAuthError] = useState("");
   const [theme, setTheme] = useState<Theme>(() => readTheme());
 
-  const api = useMemo(() => (token ? new ControlApi(token) : null), [token]);
+  const api = useMemo(() => {
+    if (authMode === "token" && token) {
+      return new ControlApi(token);
+    }
+    if (authMode === "sso") {
+      return new ControlApi();
+    }
+    return null;
+  }, [authMode, token]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listControlIdentityProviders()
+      .then((providers) => {
+        if (!cancelled) {
+          setSSOProviders(providers);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSSOProviders([]);
+        }
+      });
+    if (!token) {
+      void new ControlApi().session()
+        .then(() => {
+          if (!cancelled) {
+            setAuthMode("sso");
+          }
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   function toggleTheme() {
     setTheme((current) => {
@@ -71,16 +111,25 @@ export function App() {
       await nextApi.session();
       sessionStorage.setItem(TOKEN_STORAGE_KEY, nextToken);
       setToken(nextToken);
+      setAuthMode("token");
       setAuthError("");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Authentication failed.");
     }
   }
 
-  function clearToken() {
+  async function signOut() {
+    if (authMode === "sso") {
+      try {
+        await new ControlApi().logoutControlSSO();
+      } catch {
+        setAuthError("Control SSO sign-out could not be confirmed. Clear the browser session before signing in again.");
+      }
+    }
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     setToken("");
     setDraftToken("");
+    setAuthMode("none");
   }
 
   if (!api) {
@@ -114,11 +163,26 @@ export function App() {
           <ShieldCheck size={17} aria-hidden="true" />
           Unlock
         </button>
+        {ssoProviders.length > 0 && (
+          <div className="button-row">
+            {ssoProviders.map((provider) => (
+              <button
+                className="ghost-button"
+                key={provider.id}
+                type="button"
+                onClick={() => window.location.assign(`/control/auth/start/${encodeURIComponent(provider.id)}`)}
+              >
+                <ShieldCheck size={17} aria-hidden="true" />
+                Sign in with {provider.name}
+              </button>
+            ))}
+          </div>
+        )}
       </AuthShell>
     );
   }
 
-  return <Portal api={api} theme={theme} onToggleTheme={toggleTheme} onSignOut={clearToken} />;
+  return <Portal api={api} theme={theme} onToggleTheme={toggleTheme} onSignOut={() => void signOut()} />;
 }
 
 function Portal({
