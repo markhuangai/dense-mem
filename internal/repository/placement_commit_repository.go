@@ -37,205 +37,218 @@ func (r *LedgerRepositoryImpl) CommitPlacementSemanticResult(
 	if err := validateCommitPlacementSemanticInput(input); err != nil {
 		return nil, err
 	}
-	result := &CommitPlacementSemanticResult{}
+	var result *CommitPlacementSemanticResult
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := lockPlacementRunForCommit(ctx, tx, input); err != nil {
-			return err
-		}
-		if err := lockPlacementItemForCommit(ctx, tx, input); err != nil {
-			return err
-		}
-		placementFragmentID, err := loadPlacementItemFragmentID(ctx, tx, input)
-		if err != nil {
-			return err
-		}
-		if err := lockEvidenceLifecycleTargetIDs(ctx, tx, input.TeamID, []string{placementFragmentID}); err != nil {
-			return err
-		}
-		if err := ensurePlacementItemCurrent(ctx, tx, input); err != nil {
-			if errors.Is(err, ErrPlacementStaleSource) {
-				outcomeID, outcomeErr := appendSupersededPlacementOutcome(ctx, tx, input)
-				if outcomeErr != nil {
-					return outcomeErr
-				}
-				firstDisposition, finishErr := finishPlacementRunIfTerminal(ctx, tx, input, string(domain.PlacementRunFailed))
-				if finishErr != nil {
-					return finishErr
-				}
-				result.FirstDisposition = firstDisposition
-				result.Status = "superseded"
-				result.OutcomeID = outcomeID
-				return nil
+		var commitErr error
+		result, commitErr = r.commitPlacementSemanticResultInTx(ctx, tx, input)
+		return commitErr
+	})
+	if err != nil {
+		return nil, fmt.Errorf("placement commit: %w", err)
+	}
+	return result, nil
+}
+
+func (r *LedgerRepositoryImpl) commitPlacementSemanticResultInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	input CommitPlacementSemanticInput,
+) (*CommitPlacementSemanticResult, error) {
+	result := &CommitPlacementSemanticResult{}
+	if err := lockPlacementRunForCommit(ctx, tx, input); err != nil {
+		return nil, err
+	}
+	if err := lockPlacementItemForCommit(ctx, tx, input); err != nil {
+		return nil, err
+	}
+	placementFragmentID, err := loadPlacementItemFragmentID(ctx, tx, input)
+	if err != nil {
+		return nil, err
+	}
+	if err := lockEvidenceLifecycleTargetIDs(ctx, tx, input.TeamID, []string{placementFragmentID}); err != nil {
+		return nil, err
+	}
+	if err := ensurePlacementItemCurrent(ctx, tx, input); err != nil {
+		if errors.Is(err, ErrPlacementStaleSource) {
+			outcomeID, outcomeErr := appendSupersededPlacementOutcome(ctx, tx, input)
+			if outcomeErr != nil {
+				return nil, outcomeErr
 			}
-			return err
-		}
-		deletionOnly, err := isConflictResolutionDeletionOnlyFragment(ctx, tx, input.TeamID, placementFragmentID)
-		if err != nil {
-			return err
-		}
-		if !deletionOnly {
-			if err := ensureRelationshipConflictContextsCurrent(ctx, tx, input); err != nil {
-				return err
+			firstDisposition, finishErr := finishPlacementRunIfTerminal(ctx, tx, input, string(domain.PlacementRunFailed))
+			if finishErr != nil {
+				return nil, finishErr
 			}
+			result.FirstDisposition = firstDisposition
+			result.Status = "superseded"
+			result.OutcomeID = outcomeID
+			return result, nil
 		}
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
-			return err
+		return nil, err
+	}
+	deletionOnly, err := isConflictResolutionDeletionOnlyFragment(ctx, tx, input.TeamID, placementFragmentID)
+	if err != nil {
+		return nil, err
+	}
+	if !deletionOnly {
+		if err := ensureRelationshipConflictContextsCurrent(ctx, tx, input); err != nil {
+			return nil, err
 		}
-		if placementEvidenceSearchableStatus(input.Status) && !deletionOnly {
-			document, err := upsertPlacementItemEvidenceSearchDocument(
-				ctx,
-				tx,
-				input,
-				placementFragmentID,
-				r.embeddingJobMaxAttempts,
-			)
+	}
+	if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+		return nil, err
+	}
+	if placementEvidenceSearchableStatus(input.Status) && !deletionOnly {
+		document, err := upsertPlacementItemEvidenceSearchDocument(
+			ctx,
+			tx,
+			input,
+			placementFragmentID,
+			r.embeddingJobMaxAttempts,
+		)
+		if err != nil {
+			return nil, err
+		}
+		appendPlacementSearchDocument(result, document)
+	}
+	if !deletionOnly {
+		entitiesByRef := make(map[string]string, len(input.EntityResolutions))
+		for _, resolution := range input.EntityResolutions {
+			resolutionID, entityID, err := insertPlacementEntityResolution(ctx, tx, input, resolution)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			appendPlacementSearchDocument(result, document)
+			result.EntityResolutionIDs = append(result.EntityResolutionIDs, resolutionID)
+			if entityID != "" {
+				entitiesByRef[resolution.MentionRef] = entityID
+			}
+			if resolution.Action == string(domain.EntityResolutionAmbiguous) {
+				taskID, err := insertEntityReviewTask(ctx, tx, input, resolution, resolutionID)
+				if err != nil {
+					return nil, err
+				}
+				appendPlacementReviewTaskID(result, taskID)
+			}
 		}
-		if !deletionOnly {
-			entitiesByRef := make(map[string]string, len(input.EntityResolutions))
-			for _, resolution := range input.EntityResolutions {
-				resolutionID, entityID, err := insertPlacementEntityResolution(ctx, tx, input, resolution)
-				if err != nil {
-					return err
-				}
-				result.EntityResolutionIDs = append(result.EntityResolutionIDs, resolutionID)
-				if entityID != "" {
-					entitiesByRef[resolution.MentionRef] = entityID
-				}
-				if resolution.Action == string(domain.EntityResolutionAmbiguous) {
-					taskID, err := insertEntityReviewTask(ctx, tx, input, resolution, resolutionID)
-					if err != nil {
-						return err
-					}
-					appendPlacementReviewTaskID(result, taskID)
-				}
-			}
-			for _, observation := range input.RelationshipObservations {
-				decision, err := relationshipDecisionFromPlacementObservation(ctx, tx, input, observation, entitiesByRef)
-				if err != nil {
-					if errors.Is(err, errPlacementPredicateReview) {
-						review, reviewErr := insertRelationshipPredicateReview(ctx, tx, input, observation, err.Error())
-						if reviewErr != nil {
-							return reviewErr
-						}
-						appendPlacementRelationshipResult(result, review)
-						appendPlacementReviewTaskID(result, review.ReviewTaskID)
-						continue
-					}
-					if !errors.Is(err, errPlacementUnresolvedEndpoint) {
-						return err
-					}
-					review, reviewErr := insertRelationshipDependencyReview(ctx, tx, input, observation, err.Error())
+		for _, observation := range input.RelationshipObservations {
+			decision, err := relationshipDecisionFromPlacementObservation(ctx, tx, input, observation, entitiesByRef)
+			if err != nil {
+				if errors.Is(err, errPlacementPredicateReview) {
+					review, reviewErr := insertRelationshipPredicateReview(ctx, tx, input, observation, err.Error())
 					if reviewErr != nil {
-						return reviewErr
+						return nil, reviewErr
 					}
 					appendPlacementRelationshipResult(result, review)
 					appendPlacementReviewTaskID(result, review.ReviewTaskID)
 					continue
 				}
-				if observation.ConflictContext != nil {
-					if err := requireRelationshipConflictContextMatchesDecision(ctx, tx, input.TeamID, *observation.ConflictContext, decision); err != nil {
-						return err
-					}
+				if !errors.Is(err, errPlacementUnresolvedEndpoint) {
+					return nil, err
 				}
-				if err := applyPlacementRelationshipDecision(
-					ctx,
-					tx,
-					input,
-					decision,
-					observation.CorrectionTarget,
-					observation.ConflictContext,
-					placementFragmentID,
-					r.embeddingJobMaxAttempts,
-					ConflictRuntimeConfig{
-						ReviewTTLDays: r.conflictReviewTTLDays,
-						Timezone:      r.conflictReviewTimezone,
-					},
-					result,
-				); err != nil {
-					return err
+				review, reviewErr := insertRelationshipDependencyReview(ctx, tx, input, observation, err.Error())
+				if reviewErr != nil {
+					return nil, reviewErr
+				}
+				appendPlacementRelationshipResult(result, review)
+				appendPlacementReviewTaskID(result, review.ReviewTaskID)
+				continue
+			}
+			if observation.ConflictContext != nil {
+				if err := requireRelationshipConflictContextMatchesDecision(ctx, tx, input.TeamID, *observation.ConflictContext, decision); err != nil {
+					return nil, err
 				}
 			}
-			for _, review := range input.RelationshipReviews {
-				recorded, err := insertRelationshipReview(ctx, tx, input, review)
-				if err != nil {
-					return err
-				}
-				appendPlacementRelationshipResult(result, recorded)
-				appendPlacementReviewTaskID(result, recorded.ReviewTaskID)
-			}
-			for _, decision := range input.RelationshipDecisions {
-				if err := applyPlacementRelationshipDecision(
-					ctx,
-					tx,
-					input,
-					withPlacementDecisionScope(input, decision),
-					nil,
-					nil,
-					placementFragmentID,
-					r.embeddingJobMaxAttempts,
-					ConflictRuntimeConfig{
-						ReviewTTLDays: r.conflictReviewTTLDays,
-						Timezone:      r.conflictReviewTimezone,
-					},
-					result,
-				); err != nil {
-					return err
-				}
+			if err := applyPlacementRelationshipDecision(
+				ctx,
+				tx,
+				input,
+				decision,
+				observation.CorrectionTarget,
+				observation.ConflictContext,
+				placementFragmentID,
+				r.embeddingJobMaxAttempts,
+				ConflictRuntimeConfig{
+					ReviewTTLDays: r.conflictReviewTTLDays,
+					Timezone:      r.conflictReviewTimezone,
+				},
+				result,
+			); err != nil {
+				return nil, err
 			}
 		}
-		payload := placementCommitPayload(input.Payload, result)
-		if deletionOnly {
-			payload["conflict_resolution_deletion_only"] = true
-			payload["semantic_projection"] = "not_allowed"
-			input.Category = "candidate"
+		for _, review := range input.RelationshipReviews {
+			recorded, err := insertRelationshipReview(ctx, tx, input, review)
+			if err != nil {
+				return nil, err
+			}
+			appendPlacementRelationshipResult(result, recorded)
+			appendPlacementReviewTaskID(result, recorded.ReviewTaskID)
 		}
-		itemStatus := string(domain.PlacementRunCompleted)
-		runStatus := string(domain.PlacementRunCompleted)
-		if len(result.ReviewTaskIDs) > 0 {
-			itemStatus = string(domain.PlacementRunAwaitingReview)
-			runStatus = string(domain.PlacementRunAwaitingReview)
-			input.Category = "candidate"
+		for _, decision := range input.RelationshipDecisions {
+			if err := applyPlacementRelationshipDecision(
+				ctx,
+				tx,
+				input,
+				withPlacementDecisionScope(input, decision),
+				nil,
+				nil,
+				placementFragmentID,
+				r.embeddingJobMaxAttempts,
+				ConflictRuntimeConfig{
+					ReviewTTLDays: r.conflictReviewTTLDays,
+					Timezone:      r.conflictReviewTimezone,
+				},
+				result,
+			); err != nil {
+				return nil, err
+			}
 		}
-		outcomeID, err := insertPlacementOutcome(ctx, tx, PlacementOutcomeInput{
-			TeamID:             input.TeamID,
-			OwnerProfileID:     input.OwnerProfileID,
-			PlacementRunID:     input.PlacementRunID,
-			PlacementItemID:    input.PlacementItemID,
-			OutcomeKind:        input.OutcomeKind,
-			Status:             input.Status,
-			Payload:            payload,
-			UpdateItemStatus:   itemStatus,
-			UpdateItemCategory: input.Category,
-		})
-		if err != nil {
-			return err
-		}
-		if err := updatePlacementItemOutcome(ctx, tx, PlacementOutcomeInput{
-			TeamID:             input.TeamID,
-			OwnerProfileID:     input.OwnerProfileID,
-			PlacementItemID:    input.PlacementItemID,
-			UpdateItemStatus:   itemStatus,
-			UpdateItemCategory: input.Category,
-			Payload:            payload,
-		}); err != nil {
-			return err
-		}
-		firstDisposition, err := finishPlacementRunIfTerminal(ctx, tx, input, runStatus)
-		if err != nil {
-			return err
-		}
-		result.FirstDisposition = firstDisposition
-		result.Status = input.Status
-		result.OutcomeID = outcomeID
-		return nil
+	}
+	payload := placementCommitPayload(input.Payload, result)
+	if deletionOnly {
+		payload["conflict_resolution_deletion_only"] = true
+		payload["semantic_projection"] = "not_allowed"
+		input.Category = "candidate"
+	}
+	itemStatus := string(domain.PlacementRunCompleted)
+	runStatus := string(domain.PlacementRunCompleted)
+	if len(result.ReviewTaskIDs) > 0 {
+		itemStatus = string(domain.PlacementRunAwaitingReview)
+		runStatus = string(domain.PlacementRunAwaitingReview)
+		input.Category = "candidate"
+	}
+	outcomeID, err := insertPlacementOutcome(ctx, tx, PlacementOutcomeInput{
+		TeamID:             input.TeamID,
+		OwnerProfileID:     input.OwnerProfileID,
+		PlacementRunID:     input.PlacementRunID,
+		PlacementItemID:    input.PlacementItemID,
+		OutcomeKind:        input.OutcomeKind,
+		Status:             input.Status,
+		Payload:            payload,
+		UpdateItemStatus:   itemStatus,
+		UpdateItemCategory: input.Category,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("placement commit: %w", err)
+		return nil, err
 	}
+	if err := updatePlacementItemOutcome(ctx, tx, PlacementOutcomeInput{
+		TeamID:             input.TeamID,
+		OwnerProfileID:     input.OwnerProfileID,
+		PlacementItemID:    input.PlacementItemID,
+		UpdateItemStatus:   itemStatus,
+		UpdateItemCategory: input.Category,
+		Payload:            payload,
+	}); err != nil {
+		return nil, err
+	}
+	if !input.DeferRunFinalization {
+		firstDisposition, err := finishPlacementRunIfTerminal(ctx, tx, input, runStatus)
+		if err != nil {
+			return nil, err
+		}
+		result.FirstDisposition = firstDisposition
+	}
+	result.Status = input.Status
+	result.OutcomeID = outcomeID
 	return result, nil
 }
 
@@ -273,6 +286,7 @@ func normalizeCommitPlacementSemanticInput(input CommitPlacementSemanticInput) C
 		resolution.CanonicalName = strings.TrimSpace(resolution.CanonicalName)
 		resolution.FragmentID = strings.TrimSpace(resolution.FragmentID)
 		resolution.AssessmentID = strings.TrimSpace(resolution.AssessmentID)
+		resolution.SubmissionAssessmentID = strings.TrimSpace(resolution.SubmissionAssessmentID)
 		resolution.SemanticReviewKind = strings.TrimSpace(resolution.SemanticReviewKind)
 		resolution.ReviewQuestion = strings.TrimSpace(resolution.ReviewQuestion)
 		resolution.ReviewGuidance = strings.TrimSpace(resolution.ReviewGuidance)
@@ -399,12 +413,10 @@ func placementCommitNeedsPlacementFragmentID(input CommitPlacementSemanticInput)
 }
 
 func validatePlacementEntityResolutionInput(input PlacementEntityResolutionInput) error {
-	if input.AssessmentID != "" {
-		if _, err := uuid.Parse(input.AssessmentID); err != nil {
-			return fmt.Errorf("entity resolution assessment_id is invalid: %w", err)
-		}
+	if err := validateAssessmentReferences(input.AssessmentID, input.SubmissionAssessmentID); err != nil {
+		return err
 	}
-	if err := validateSemanticReviewDetails(input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
+	if err := validateSemanticReviewDetails(input.AssessmentID, input.SubmissionAssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
 		return err
 	}
 	if input.MentionRef == "" {
@@ -443,6 +455,7 @@ func normalizePlacementRelationshipDecisionInput(input PlacementRelationshipDeci
 	input.Model = strings.TrimSpace(input.Model)
 	input.ResponseHash = strings.TrimSpace(input.ResponseHash)
 	input.AssessmentID = strings.TrimSpace(input.AssessmentID)
+	input.SubmissionAssessmentID = strings.TrimSpace(input.SubmissionAssessmentID)
 	input.AssessmentPolicyVersion = strings.TrimSpace(input.AssessmentPolicyVersion)
 	input.GateResult = strings.TrimSpace(input.GateResult)
 	input.SemanticReviewKind = strings.TrimSpace(input.SemanticReviewKind)
@@ -485,10 +498,10 @@ func normalizePlacementRelationshipDecisionInput(input PlacementRelationshipDeci
 }
 
 func validatePlacementRelationshipDecisionInput(input PlacementRelationshipDecisionInput) error {
-	if err := validateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
+	if err := validateAssessmentDecisionAudit(input.AssessmentID, input.SubmissionAssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
 		return err
 	}
-	if err := validateSemanticReviewDetails(input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
+	if err := validateSemanticReviewDetails(input.AssessmentID, input.SubmissionAssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
 		return err
 	}
 	if input.SubjectRef == "" {
@@ -737,16 +750,16 @@ func insertPlacementEntityResolution(
 		INSERT INTO entity_resolution_events (
 		    team_id, ingest_id, placement_item_id, owner_profile_id, mention_ref,
 		    action, entity_id, fragment_id, span_start, span_end, verifier_result, metadata,
-		    assessment_id
+		    assessment_id, submission_assessment_id
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, NULLIF(?, '')::uuid,
-		    NULLIF(?, '')::uuid, ?, ?, ?::jsonb, ?::jsonb, NULLIF(?, '')::uuid
+		    NULLIF(?, '')::uuid, ?, ?, ?::jsonb, ?::jsonb, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid
 		)
 		RETURNING resolution_event_id::text
 	`, commit.TeamID, commit.IngestID, commit.PlacementItemID, commit.OwnerProfileID,
 		input.MentionRef, input.Action, entityID, input.FragmentID,
 		intPointerArg(input.SpanStart), intPointerArg(input.SpanEnd),
-		string(verifierResult), string(metadata), input.AssessmentID).Rows()
+		string(verifierResult), string(metadata), input.AssessmentID, input.SubmissionAssessmentID).Rows()
 	if err != nil {
 		return "", "", err
 	}
@@ -854,6 +867,7 @@ func relationshipDecisionFromPlacementObservation(
 		ObservationMetadata:     input.ObservationMetadata,
 		RelationshipMetadata:    input.RelationshipMetadata,
 		AssessmentID:            input.AssessmentID,
+		SubmissionAssessmentID:  input.SubmissionAssessmentID,
 		AssessmentPolicyVersion: input.AssessmentPolicyVersion,
 		ThresholdUsed:           input.ThresholdUsed,
 		GateResult:              input.GateResult,

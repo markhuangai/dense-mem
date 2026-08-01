@@ -27,8 +27,8 @@ const (
 	DefaultAIVerifierMaxCandidateContextTokens = 50000
 	DefaultAIVerifierTokenizer                 = "o200k_base"
 	DefaultMemoryAutoWriteConfidenceThreshold  = 0.7
-	DefaultMemoryPlacementWorkerCount          = 1
-	DefaultMemoryPlacementPollSeconds          = 5
+	DefaultSubmissionAssessmentWorkerCount     = 1
+	DefaultSubmissionAssessmentPollSeconds     = 5
 	DefaultConflictReviewTTLDays               = 7
 	DefaultConflictReviewStartTime             = "04:00"
 )
@@ -157,8 +157,8 @@ type Config struct {
 	AIVerifierTokenizer                   string
 	MemoryAutoWriteConfidenceThreshold    float64
 	memoryAutoWriteConfidenceThresholdSet bool
-	MemoryPlacementWorkerCount            int
-	MemoryPlacementPollSeconds            int
+	SubmissionAssessmentWorkerCount       int
+	SubmissionAssessmentPollSeconds       int
 	PromoteTxTimeoutSeconds               int
 	MemoryPackImportHistoryDays           int
 	ControlHTTPAddr                       string
@@ -259,17 +259,17 @@ func (c *Config) GetAIVerifierTimeoutSeconds() int {
 	return 60
 }
 func (c *Config) GetAIVerifierMaxConcurrency() int { return c.AIVerifierMaxConcurrency }
-func (c *Config) GetMemoryPlacementWorkerCount() int {
-	if c.MemoryPlacementWorkerCount <= 0 {
-		return DefaultMemoryPlacementWorkerCount
+func (c *Config) GetSubmissionAssessmentWorkerCount() int {
+	if c.SubmissionAssessmentWorkerCount <= 0 {
+		return DefaultSubmissionAssessmentWorkerCount
 	}
-	return c.MemoryPlacementWorkerCount
+	return c.SubmissionAssessmentWorkerCount
 }
-func (c *Config) GetMemoryPlacementPollSeconds() int {
-	if c.MemoryPlacementPollSeconds <= 0 {
-		return DefaultMemoryPlacementPollSeconds
+func (c *Config) GetSubmissionAssessmentPollSeconds() int {
+	if c.SubmissionAssessmentPollSeconds <= 0 {
+		return DefaultSubmissionAssessmentPollSeconds
 	}
-	return c.MemoryPlacementPollSeconds
+	return c.SubmissionAssessmentPollSeconds
 }
 func (c *Config) GetPromoteTxTimeoutSeconds() int     { return c.PromoteTxTimeoutSeconds }
 func (c *Config) GetMemoryPackImportHistoryDays() int { return c.MemoryPackImportHistoryDays }
@@ -546,8 +546,8 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"AI_VERIFIER_MAX_INPUT_TOKENS", DefaultAIVerifierMaxInputTokens, func(c *Config, value int) { c.AIVerifierMaxInputTokens = value }},
 		{"AI_VERIFIER_MAX_OUTPUT_TOKENS", DefaultAIVerifierMaxOutputTokens, func(c *Config, value int) { c.AIVerifierMaxOutputTokens = value }},
 		{"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", DefaultAIVerifierMaxCandidateContextTokens, func(c *Config, value int) { c.AIVerifierMaxCandidateContextTokens = value }},
-		{"MEMORY_PLACEMENT_WORKER_COUNT", DefaultMemoryPlacementWorkerCount, func(c *Config, value int) { c.MemoryPlacementWorkerCount = value }},
-		{"MEMORY_PLACEMENT_POLL_SECONDS", DefaultMemoryPlacementPollSeconds, func(c *Config, value int) { c.MemoryPlacementPollSeconds = value }},
+		{"SUBMISSION_ASSESSMENT_WORKER_COUNT", DefaultSubmissionAssessmentWorkerCount, func(c *Config, value int) { c.SubmissionAssessmentWorkerCount = value }},
+		{"SUBMISSION_ASSESSMENT_POLL_SECONDS", DefaultSubmissionAssessmentPollSeconds, func(c *Config, value int) { c.SubmissionAssessmentPollSeconds = value }},
 	}); err != nil {
 		return cfg, err
 	}
@@ -644,8 +644,8 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"AI_VERIFIER_MAX_INPUT_TOKENS", cfg.AIVerifierMaxInputTokens},
 		{"AI_VERIFIER_MAX_OUTPUT_TOKENS", cfg.AIVerifierMaxOutputTokens},
 		{"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", cfg.AIVerifierMaxCandidateContextTokens},
-		{"MEMORY_PLACEMENT_WORKER_COUNT", cfg.MemoryPlacementWorkerCount},
-		{"MEMORY_PLACEMENT_POLL_SECONDS", cfg.MemoryPlacementPollSeconds},
+		{"SUBMISSION_ASSESSMENT_WORKER_COUNT", cfg.SubmissionAssessmentWorkerCount},
+		{"SUBMISSION_ASSESSMENT_POLL_SECONDS", cfg.SubmissionAssessmentPollSeconds},
 		{"PROMOTE_TX_TIMEOUT_SECONDS", cfg.PromoteTxTimeoutSeconds},
 		{"CONFLICT_REVIEW_TTL_DAYS", cfg.ConflictReviewTTLDays},
 		{"CONFLICT_REVIEW_MAX_CONCURRENCY", cfg.ConflictReviewMaxConcurrency},
@@ -682,10 +682,10 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 			Message: fmt.Sprintf("must be less than or equal to AI_API_EMBEDDING_MAX_CONCURRENCY, got %d > %d", cfg.EmbeddingWorkerCount, cfg.AIEmbeddingMaxConcurrency),
 		}
 	}
-	if cfg.MemoryPlacementWorkerCount > cfg.AIVerifierMaxConcurrency {
+	if cfg.SubmissionAssessmentWorkerCount > cfg.AIVerifierMaxConcurrency {
 		return cfg, &ValidationError{
-			Field:   "MEMORY_PLACEMENT_WORKER_COUNT",
-			Message: fmt.Sprintf("must be less than or equal to AI_VERIFIER_MAX_CONCURRENCY, got %d > %d", cfg.MemoryPlacementWorkerCount, cfg.AIVerifierMaxConcurrency),
+			Field:   "SUBMISSION_ASSESSMENT_WORKER_COUNT",
+			Message: fmt.Sprintf("must be less than or equal to AI_VERIFIER_MAX_CONCURRENCY, got %d > %d", cfg.SubmissionAssessmentWorkerCount, cfg.AIVerifierMaxConcurrency),
 		}
 	}
 	if cfg.AIVerifierMaxCandidateContextTokens > cfg.AIVerifierMaxInputTokens {

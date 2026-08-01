@@ -5,15 +5,24 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateSemanticReviewDetailsRequiresSelectableOptions(t *testing.T) {
-	if err := validateSemanticReviewDetails("assessment-1", "identity", "Choose an entity.", nil, "Select a supplied option."); err == nil {
+	if err := validateSemanticReviewDetails("", uuid.NewString(), "identity", "Choose an entity.", nil, "Select a supplied option."); err == nil {
 		t.Fatal("validateSemanticReviewDetails() accepted an identity review without options")
 	}
-	if err := validateSemanticReviewDetails("assessment-1", "scope", "Provide evidence.", []map[string]any{{"action": "submit_new_evidence"}}, "Submit exact evidence."); err != nil {
+	if err := validateSemanticReviewDetails("", uuid.NewString(), "scope", "Provide evidence.", []map[string]any{{"action": "submit_new_evidence"}}, "Submit exact evidence."); err != nil {
 		t.Fatalf("validateSemanticReviewDetails() error = %v", err)
 	}
+}
+
+func TestValidateAssessmentReferencesRequiresOneProvenanceSource(t *testing.T) {
+	placementAssessmentID := uuid.NewString()
+	submissionAssessmentID := uuid.NewString()
+	require.Error(t, validateAssessmentReferences(placementAssessmentID, submissionAssessmentID))
+	require.NoError(t, validateAssessmentReferences(placementAssessmentID, ""))
+	require.NoError(t, validateAssessmentReferences("", submissionAssessmentID))
 }
 
 func TestSemanticAssessmentKnownEntityInputValidation(t *testing.T) {

@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
 const MaxCorpusContentCodepoints = 999
@@ -25,7 +27,7 @@ func LoadSeedManifest(path string) (*SeedManifest, error) {
 	if strings.TrimSpace(manifest.SchemaVersion) == "" {
 		return nil, errors.New("seed manifest missing schema_version")
 	}
-	if manifest.SchemaVersion != SeedSchemaVersion {
+	if manifest.SchemaVersion != SeedSchemaVersionV1 && manifest.SchemaVersion != SeedSchemaVersionV2 {
 		return nil, fmt.Errorf("unsupported seed schema_version %q", manifest.SchemaVersion)
 	}
 	if strings.TrimSpace(manifest.SeedID) == "" {
@@ -33,6 +35,12 @@ func LoadSeedManifest(path string) (*SeedManifest, error) {
 	}
 	if strings.TrimSpace(manifest.CorpusFile) == "" || strings.TrimSpace(manifest.CasesFile) == "" || strings.TrimSpace(manifest.QrelsFile) == "" {
 		return nil, errors.New("seed manifest must set corpus_file, cases_file, and qrels_file")
+	}
+	if manifest.SchemaVersion == SeedSchemaVersionV2 {
+		if strings.TrimSpace(manifest.ParentSeedID) == "" || strings.TrimSpace(manifest.ParentSeedHash) == "" ||
+			strings.TrimSpace(manifest.Generator) == "" || strings.TrimSpace(manifest.ProposalAuditReportFile) == "" {
+			return nil, errors.New("v2 seed manifest must set parent seed identity, generator, and proposal audit report")
+		}
 	}
 	return &manifest, nil
 }
@@ -53,6 +61,14 @@ func LoadCorpus(manifestPath string, manifest *SeedManifest) ([]CorpusItem, erro
 		if strings.TrimSpace(item.Content) == "" {
 			return nil, fmt.Errorf("corpus row %d missing content", i+1)
 		}
+		if manifest.SchemaVersion == SeedSchemaVersionV2 && len(item.Proposal) == 0 {
+			return nil, fmt.Errorf("corpus row %d missing submission proposal", i+1)
+		}
+		if manifest.SchemaVersion == SeedSchemaVersionV2 {
+			if err := validateCorpusSubmission(item); err != nil {
+				return nil, fmt.Errorf("corpus row %d source_doc_id %q submission proposal: %w", i+1, item.SourceDocID, err)
+			}
+		}
 		if contentLen := utf8.RuneCountInString(item.Content); contentLen > MaxCorpusContentCodepoints {
 			return nil, fmt.Errorf("corpus row %d content has %d code points; max is %d", i+1, contentLen, MaxCorpusContentCodepoints)
 		}
@@ -62,6 +78,44 @@ func LoadCorpus(manifestPath string, manifest *SeedManifest) ([]CorpusItem, erro
 		seen[item.SourceDocID] = struct{}{}
 	}
 	return items, nil
+}
+
+func validateCorpusSubmission(item CorpusItem) error {
+	if _, err := memoryservice.ScanSubmissionEvidence(item.Content); err != nil {
+		return fmt.Errorf("evidence: %w", err)
+	}
+	entities, ok := corpusProposalMaps(item.Proposal["entities"])
+	if !ok {
+		return errors.New("proposal.entities must be an array of objects")
+	}
+	relationships, ok := corpusProposalMaps(item.Proposal["relationships"])
+	if !ok {
+		return errors.New("proposal.relationships must be an array of objects")
+	}
+	if err := memoryservice.ValidateSubmissionProposal(memoryservice.RememberRequest{
+		Evidence:          []memoryservice.RememberEvidenceInput{{Content: item.Content}},
+		EntityHints:       entities,
+		RelationshipHints: relationships,
+	}); err != nil {
+		return fmt.Errorf("proposal: %w", err)
+	}
+	return nil
+}
+
+func corpusProposalMaps(value any) ([]map[string]any, bool) {
+	items, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		fields, ok := item.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, fields)
+	}
+	return out, true
 }
 
 func LoadCases(manifestPath string, manifest *SeedManifest) ([]Case, error) {

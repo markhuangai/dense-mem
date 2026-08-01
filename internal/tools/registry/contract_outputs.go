@@ -507,8 +507,8 @@ func resolveDreamFeedbackContractOutput(res *dreamservice.ResolveFeedbackResult)
 	}
 	out["hypothesis_id"] = res.Dream.DreamID
 	out["status"] = string(res.Dream.Status)
-	if res.Memory != nil && strings.TrimSpace(res.Memory.IngestID) != "" {
-		out["ingest_id"] = res.Memory.IngestID
+	if res.Memory != nil && strings.TrimSpace(res.Memory.SubmissionID) != "" {
+		out["submission_id"] = res.Memory.SubmissionID
 	}
 	return out
 }
@@ -617,18 +617,18 @@ func importMemoryPackContractOutput(res *skillpackservice.ImportResult) map[stri
 		return map[string]any{
 			"import_id":        "",
 			"processing_state": "failed",
-			"ingest_ids":       []any{},
+			"submission_ids":   []any{},
 			"omissions":        []any{},
 		}
 	}
-	ingestIDs := []string{}
-	if strings.TrimSpace(res.IngestID) != "" {
-		ingestIDs = append(ingestIDs, res.IngestID)
+	submissionIDs := []string{}
+	if strings.TrimSpace(res.SubmissionID) != "" {
+		submissionIDs = append(submissionIDs, res.SubmissionID)
 	}
 	return map[string]any{
 		"import_id":        res.ImportID,
 		"processing_state": memoryPackProcessingState(res),
-		"ingest_ids":       ingestIDs,
+		"submission_ids":   submissionIDs,
 		"omissions":        importMemoryPackOmissionsContractOutput(res.Items),
 	}
 }
@@ -701,14 +701,16 @@ func memoryPackProcessingState(res *skillpackservice.ImportResult) string {
 		return "failed"
 	case domain.SkillPackImportStatusInspecting:
 		return "processing"
-	case domain.SkillPackImportStatusApplied:
-		if strings.TrimSpace(res.IngestID) != "" {
+	case domain.SkillPackImportStatusSubmitted:
+		if strings.TrimSpace(res.SubmissionID) != "" {
 			return "queued"
 		}
+	case domain.SkillPackImportStatusApplied:
 		return "completed"
 	default:
 		return "completed"
 	}
+	return "completed"
 }
 
 func rollbackBlockersContractOutput(conflicts []string) []map[string]any {

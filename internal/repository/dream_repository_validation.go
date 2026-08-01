@@ -266,17 +266,17 @@ func normalizeSubmitHypothesisInput(input SubmitHypothesisInput) SubmitHypothesi
 	input.ActorProfileID = strings.TrimSpace(input.ActorProfileID)
 	input.HypothesisID = strings.TrimSpace(input.HypothesisID)
 	input.Decision = strings.TrimSpace(input.Decision)
-	input.SubmittedIngestID = strings.TrimSpace(input.SubmittedIngestID)
+	input.SubmittedSubmissionID = strings.TrimSpace(input.SubmittedSubmissionID)
 	input.InvalidatedReason = strings.TrimSpace(input.InvalidatedReason)
 	return input
 }
 
 func validateSubmitHypothesisInput(input SubmitHypothesisInput) error {
 	for label, value := range map[string]string{
-		"team_id":             input.TeamID,
-		"actor_profile_id":    input.ActorProfileID,
-		"hypothesis_id":       input.HypothesisID,
-		"submitted_ingest_id": input.SubmittedIngestID,
+		"team_id":                 input.TeamID,
+		"actor_profile_id":        input.ActorProfileID,
+		"hypothesis_id":           input.HypothesisID,
+		"submitted_submission_id": input.SubmittedSubmissionID,
 	} {
 		if _, err := uuid.Parse(value); err != nil {
 			return fmt.Errorf("%s is required: %w", label, err)

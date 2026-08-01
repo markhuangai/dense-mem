@@ -211,6 +211,7 @@ type ApplyRelationshipDecisionInput struct {
 	ObservationMetadata     map[string]any
 	RelationshipMetadata    map[string]any
 	AssessmentID            string
+	SubmissionAssessmentID  string
 	AssessmentPolicyVersion string
 	ThresholdUsed           *float64
 	GateResult              string

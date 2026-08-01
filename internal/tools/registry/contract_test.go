@@ -71,16 +71,17 @@ func TestContractRememberBoundaryContent(t *testing.T) {
 	input := map[string]any{
 		"evidence": []any{
 			map[string]any{
-				"content": strings.Repeat("a", memoryEntryMaxLength),
+				"content": "Dense-Mem uses PostgreSQL." + strings.Repeat("a", memoryEntryMaxLength-len("Dense-Mem uses PostgreSQL.")),
 			},
 		},
+		"proposal": validSpanGroundedProposal(),
 	}
 	if err := ValidateContractInput(remember, input, []string{"write"}); err != nil {
 		t.Fatalf("boundary content rejected: %v", err)
 	}
 	input["evidence"] = []any{
 		map[string]any{
-			"content": strings.Repeat("a", memoryEntryMaxLength+1),
+			"content": "Dense-Mem uses PostgreSQL." + strings.Repeat("a", memoryEntryMaxLength-len("Dense-Mem uses PostgreSQL.")+1),
 		},
 	}
 	err = ValidateContractInput(remember, input, []string{"write"})
@@ -135,7 +136,7 @@ func TestContractCatalogMetadata(t *testing.T) {
 	}
 	for _, name := range []string{
 		ToolRemember,
-		ToolResolveMemoryPlacement,
+		ToolGetSubmissionStatus,
 		ToolCorrectEntityResolution,
 		ToolRecallMemory,
 		ToolTraceMemory,
@@ -191,475 +192,69 @@ func TestRememberRejectsMixedSourceRevisionBatch(t *testing.T) {
 				"source_revision": "rev-2",
 			},
 		},
+		"proposal": validSpanGroundedProposal(),
 	}, []string{"write"})
 	if err == nil || !strings.Contains(err.Error(), "revision fields must match") {
 		t.Fatalf("ValidateContractInput err = %v, want mixed source revision rejection", err)
 	}
 }
 
-func TestRelationshipProposalsRequireExactlyOneObject(t *testing.T) {
+func TestRememberRequiresSpanGroundedProposal(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseInput := map[string]any{
-		"evidence": []any{
-			map[string]any{"content": "Dense-Mem uses PostgreSQL."},
-		},
+	valid := map[string]any{
+		"evidence": []any{map[string]any{"content": "Dense-Mem uses PostgreSQL."}},
+		"proposal": validSpanGroundedProposal(),
 	}
-	baseProposal := map[string]any{
-		"proposal_id": "rel-1",
-		"subject_ref": "entity-1",
-		"predicate":   "uses",
-		"evidence": []any{
-			map[string]any{"evidence_index": 0, "start": 10, "end": 25},
-		},
+	if err := ValidateContractInput(remember, valid, []string{"write"}); err != nil {
+		t.Fatalf("valid span-grounded proposal rejected: %v", err)
 	}
-
-	cases := []struct {
-		name     string
-		proposal map[string]any
-	}{
-		{
-			name:     "missing object",
-			proposal: cloneMap(baseProposal),
-		},
-		{
-			name: "both object forms",
-			proposal: mergeMap(baseProposal, map[string]any{
-				"object_ref": "entity-2",
-				"object_value": map[string]any{
-					"type":  "string",
-					"value": "PostgreSQL",
-				},
-			}),
-		},
+	missingProposal := cloneMap(valid)
+	delete(missingProposal, "proposal")
+	if err := ValidateContractInput(remember, missingProposal, []string{"write"}); err == nil || !strings.Contains(err.Error(), "proposal") {
+		t.Fatalf("missing proposal error = %v", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			input := cloneMap(baseInput)
-			input["proposal"] = map[string]any{
-				"entities": []any{
-					map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
-				},
-				"relationships": []any{tc.proposal},
-			}
-			err := ValidateContractInput(remember, input, []string{"write"})
-			if err == nil || !strings.Contains(err.Error(), "exactly one of object_ref or object_value") {
-				t.Fatalf("ValidateContractInput err = %v, want object choice error", err)
-			}
-		})
+	badEntitySpan := cloneMap(valid)
+	badEntitySpan["proposal"] = validSpanGroundedProposal()
+	badEntitySpan["proposal"].(map[string]any)["entities"].([]any)[0].(map[string]any)["evidence"] = []any{map[string]any{"evidence_index": 0, "start": 1, "end": 10}}
+	if err := ValidateContractInput(remember, badEntitySpan, []string{"write"}); err == nil || !strings.Contains(err.Error(), "name must match") {
+		t.Fatalf("bad entity span error = %v", err)
+	}
+	legacyReviewHint := cloneMap(valid)
+	legacyReviewHint["proposal"] = validSpanGroundedProposal()
+	legacyReviewHint["proposal"].(map[string]any)["relationships"].([]any)[0].(map[string]any)["correction_target"] = map[string]any{"relationship_id": uuid.NewString(), "expected_version": 1}
+	if err := ValidateContractInput(remember, legacyReviewHint, []string{"write"}); err == nil || !strings.Contains(err.Error(), "correction_target") {
+		t.Fatalf("legacy review hint error = %v", err)
 	}
 }
 
-func TestRelationshipProposalCorrectionTargetRequiresCompleteShape(t *testing.T) {
-	remember, err := requireTool(toolMap(t), ToolRemember)
-	if err != nil {
-		t.Fatal(err)
-	}
-	evidence := []any{
-		map[string]any{"content": "Dense-Mem uses PostgreSQL."},
-	}
-	entities := []any{
-		map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
-		map[string]any{"ref": "entity-2", "name": "PostgreSQL"},
-	}
-	baseProposal := map[string]any{
-		"proposal_id": "rel-1",
-		"subject_ref": "entity-1",
-		"predicate":   "uses",
-		"object_ref":  "entity-2",
-		"evidence": []any{
-			map[string]any{"evidence_index": 0, "start": 0, "end": 25},
-		},
-	}
-
-	cases := []struct {
-		name   string
-		target map[string]any
-	}{
-		{
-			name: "missing relationship id",
-			target: map[string]any{
-				"expected_version": 1,
-			},
-		},
-		{
-			name: "missing expected version",
-			target: map[string]any{
-				"relationship_id": uuid.NewString(),
-			},
-		},
-		{
-			name: "zero expected version",
-			target: map[string]any{
-				"relationship_id":  uuid.NewString(),
-				"expected_version": 0,
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			proposal := cloneMap(baseProposal)
-			proposal["correction_target"] = tc.target
-			input := map[string]any{
-				"evidence": evidence,
-				"proposal": map[string]any{
-					"entities":      entities,
-					"relationships": []any{proposal},
-				},
-			}
-			err := ValidateContractInput(remember, input, []string{"write"})
-			if err == nil || !strings.Contains(err.Error(), "correction_target") {
-				t.Fatalf("ValidateContractInput err = %v, want correction_target error", err)
-			}
-		})
-	}
-}
-
-func TestRelationshipProposalConflictContextRequiresCompleteShape(t *testing.T) {
-	remember, err := requireTool(toolMap(t), ToolRemember)
-	if err != nil {
-		t.Fatal(err)
-	}
-	evidence := []any{
-		map[string]any{"content": "Dense-Mem uses PostgreSQL."},
-	}
-	entities := []any{
-		map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
-		map[string]any{"ref": "entity-2", "name": "PostgreSQL"},
-	}
-	baseProposal := map[string]any{
-		"proposal_id": "rel-1",
-		"subject_ref": "entity-1",
-		"predicate":   "uses",
-		"object_ref":  "entity-2",
-		"evidence": []any{
-			map[string]any{"evidence_index": 0, "start": 0, "end": 25},
-		},
-	}
-
-	cases := []struct {
-		name    string
-		context map[string]any
-	}{
-		{
-			name: "missing conflict id",
-			context: map[string]any{
-				"expected_version": 1,
-			},
-		},
-		{
-			name: "missing expected version",
-			context: map[string]any{
-				"conflict_id": uuid.NewString(),
-			},
-		},
-		{
-			name: "zero expected version",
-			context: map[string]any{
-				"conflict_id":      uuid.NewString(),
-				"expected_version": 0,
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			proposal := cloneMap(baseProposal)
-			proposal["conflict_context"] = tc.context
-			input := map[string]any{
-				"evidence": evidence,
-				"proposal": map[string]any{
-					"entities":      entities,
-					"relationships": []any{proposal},
-				},
-			}
-			err := ValidateContractInput(remember, input, []string{"write"})
-			if err == nil || !strings.Contains(err.Error(), "conflict_context") {
-				t.Fatalf("ValidateContractInput err = %v, want conflict_context error", err)
-			}
-		})
-	}
-
-	validProposal := cloneMap(baseProposal)
-	validProposal["conflict_context"] = map[string]any{
-		"conflict_id":      uuid.NewString(),
-		"expected_version": 1,
-	}
-	validInput := map[string]any{
-		"evidence": evidence,
-		"proposal": map[string]any{
-			"entities":      entities,
-			"relationships": []any{validProposal},
-		},
-	}
-	if err := ValidateContractInput(remember, validInput, []string{"write"}); err != nil {
-		t.Fatalf("ValidateContractInput valid conflict_context err = %v", err)
-	}
-}
-
-func TestRelationshipProposalValidityFieldsBelongToRelationship(t *testing.T) {
-	remember, err := requireTool(toolMap(t), ToolRemember)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseInput := map[string]any{
-		"evidence": []any{
-			map[string]any{"content": "Dense-Mem uses PostgreSQL after July 2026."},
-		},
-		"proposal": map[string]any{
-			"entities": []any{
-				map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
-			},
-			"relationships": []any{
-				map[string]any{
-					"proposal_id":    "rel-1",
-					"subject_ref":    "entity-1",
-					"predicate":      "uses",
-					"object_value":   map[string]any{"type": "string", "value": "PostgreSQL"},
-					"valid_from":     "2026-07-01T00:00:00Z",
-					"valid_to":       "2026-12-31T00:00:00Z",
-					"client_comment": "from release planning evidence",
-					"evidence": []any{
-						map[string]any{"evidence_index": 0, "start": 10, "end": 20},
-					},
-				},
-			},
-		},
-	}
-	if err := ValidateContractInput(remember, baseInput, []string{"write"}); err != nil {
-		t.Fatalf("relationship-level validity fields rejected: %v", err)
-	}
-
-	invertedInput := cloneMap(baseInput)
-	invertedInput["proposal"] = map[string]any{
+func validSpanGroundedProposal() map[string]any {
+	return map[string]any{
 		"entities": []any{
-			map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
+			map[string]any{"ref": "entity:dense-mem", "name": "Dense-Mem", "entity_kind": "project", "evidence": []any{map[string]any{"evidence_index": 0, "start": 0, "end": 9}}},
+			map[string]any{"ref": "entity:postgres", "name": "PostgreSQL", "entity_kind": "product", "evidence": []any{map[string]any{"evidence_index": 0, "start": 15, "end": 25}}},
 		},
 		"relationships": []any{
 			map[string]any{
-				"proposal_id":  "rel-1",
-				"subject_ref":  "entity-1",
-				"predicate":    "uses",
-				"object_value": map[string]any{"type": "string", "value": "PostgreSQL"},
-				"valid_from":   "2026-12-31T00:00:00Z",
-				"valid_to":     "2026-07-01T00:00:00Z",
-				"evidence": []any{
-					map[string]any{"evidence_index": 0, "start": 10, "end": 20},
-				},
+				"proposal_id": "rel:uses",
+				"subject_ref": "entity:dense-mem",
+				"predicate":   map[string]any{"surface": "uses", "evidence_index": 0, "start": 10, "end": 14},
+				"object_ref":  "entity:postgres",
+				"polarity":    "+",
+				"modality":    "statement",
+				"evidence":    []any{map[string]any{"evidence_index": 0, "start": 0, "end": 26}},
 			},
 		},
-	}
-	err = ValidateContractInput(remember, invertedInput, []string{"write"})
-	if err == nil || !strings.Contains(err.Error(), "valid_to") {
-		t.Fatalf("ValidateContractInput err = %v, want inverted validity rejection", err)
-	}
-
-	badInput := cloneMap(baseInput)
-	badInput["proposal"] = map[string]any{
-		"entities": []any{
-			map[string]any{"ref": "entity-1", "name": "Dense-Mem"},
-		},
-		"relationships": []any{
-			map[string]any{
-				"proposal_id":  "rel-1",
-				"subject_ref":  "entity-1",
-				"predicate":    "uses",
-				"object_value": map[string]any{"type": "string", "value": "PostgreSQL"},
-				"evidence": []any{
-					map[string]any{
-						"evidence_index": 0,
-						"start":          10,
-						"end":            20,
-						"valid_from":     "2026-07-01T00:00:00Z",
-					},
-				},
-			},
-		},
-	}
-	err = ValidateContractInput(remember, badInput, []string{"write"})
-	if err == nil {
-		t.Fatal("evidence-level valid_from accepted")
 	}
 }
 
-func TestResolveMemoryPlacementActionRequiredFields(t *testing.T) {
-	resolve, err := requireTool(toolMap(t), ToolResolveMemoryPlacement)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := map[string]any{"idempotency_key": "resolution-1"}
-	evidence := []any{map[string]any{"content": "The user supplied authoritative resolution evidence."}}
-	cases := []struct {
-		name    string
-		action  string
-		valid   map[string]any
-		missing string
-	}{
-		{
-			name:    "acknowledge requires ingest",
-			action:  string(domain.ResolveAcknowledge),
-			valid:   map[string]any{"ingest_id": "ing-1"},
-			missing: "ingest_id",
-		},
-		{
-			name:   "select entity requires mention and candidate",
-			action: string(domain.ResolveSelectEntity),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"entity_ref":             "person-1",
-				"candidate_entity_id":    "ent-1",
-			},
-			missing: "candidate_entity_id",
-		},
-		{
-			name:   "confirm new entity requires evidence",
-			action: string(domain.ResolveConfirmNewEntity),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"entity_ref":             "person-1",
-				"evidence":               evidence,
-			},
-			missing: "evidence",
-		},
-		{
-			name:   "select predicate requires predicate version",
-			action: string(domain.ResolveSelectPredicate),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"observation_id":         "obs-1",
-				"predicate_key":          "works_on",
-				"predicate_version":      float64(1),
-			},
-			missing: "predicate_version",
-		},
-		{
-			name:   "accept requires evidence",
-			action: string(domain.ResolveAccept),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"evidence":               evidence,
-			},
-			missing: "evidence",
-		},
-		{
-			name:   "reject requires reason",
-			action: string(domain.ResolveReject),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"message":                "not supported by the source",
-			},
-			missing: "message",
-		},
-		{
-			name:   "correct requires evidence",
-			action: string(domain.ResolveCorrect),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"evidence":               evidence,
-			},
-			missing: "evidence",
-		},
-		{
-			name:   "release quarantine requires reason",
-			action: string(domain.ResolveReleaseQuarantine),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"message":                "manager reviewed quarantine signal",
-			},
-			missing: "message",
-		},
-		{
-			name:   "forget requires relationship target",
-			action: string(domain.ResolveForget),
-			valid: map[string]any{
-				"relationship_id": "rel-1",
-				"message":         "user requested retraction",
-				"evidence":        evidence,
-			},
-			missing: "relationship_id",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			valid := mergeMap(base, tc.valid)
-			valid["action"] = tc.action
-			if err := ValidateContractInput(resolve, valid, []string{"write"}); err != nil {
-				t.Fatalf("valid action rejected: %v", err)
-			}
-
-			invalid := cloneMap(valid)
-			missing := tc.missing
-			delete(invalid, tc.missing)
-			err := ValidateContractInput(resolve, invalid, []string{"write"})
-			if err == nil || !strings.Contains(err.Error(), missing+" is required") {
-				t.Fatalf("missing %s err = %v", missing, err)
-			}
-		})
-	}
-}
-
-func TestResolveMemoryPlacementRejectsLegacyNestedDecision(t *testing.T) {
-	resolve, err := requireTool(toolMap(t), ToolResolveMemoryPlacement)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := map[string]any{
-		"action":                 string(domain.ResolveSelectEntity),
-		"idempotency_key":        "resolution-1",
-		"ingest_id":              "ing-1",
-		"placement_item_id":      "item-1",
-		"placement_item_version": float64(1),
-		"entity_ref":             "person-1",
-		"candidate_entity_id":    "ent-1",
-		"decision": map[string]any{
-			"mention_ref": "person-1",
-			"entity_id":   "ent-1",
-		},
-	}
-	err = ValidateContractInput(resolve, input, []string{"write"})
-	if err == nil || !strings.Contains(err.Error(), "decision") {
-		t.Fatalf("legacy nested decision err = %v", err)
-	}
-}
-
-func TestResolveMemoryPlacementReviewActionsRequireItemVersion(t *testing.T) {
-	resolve, err := requireTool(toolMap(t), ToolResolveMemoryPlacement)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, action := range []domain.ResolveAction{
-		domain.ResolveSelectEntity,
-		domain.ResolveConfirmNewEntity,
-		domain.ResolveSelectPredicate,
-		domain.ResolveAccept,
-		domain.ResolveReject,
-		domain.ResolveCorrect,
-		domain.ResolveReleaseQuarantine,
-	} {
-		input := map[string]any{
-			"action":            string(action),
-			"idempotency_key":   "resolution-1",
-			"ingest_id":         "ing-1",
-			"placement_item_id": "item-1",
-		}
-		err := ValidateContractInput(resolve, input, []string{"write"})
-		if err == nil || !strings.Contains(err.Error(), "placement_item_version is required") {
-			t.Fatalf("%s missing placement_item_version err = %v", action, err)
+func TestContractOmitsPlacementReviewTools(t *testing.T) {
+	tools := toolMap(t)
+	for _, legacy := range []string{"get_memory_placement", "resolve_memory_placement"} {
+		if _, exists := tools[legacy]; exists {
+			t.Fatalf("contract exposes legacy tool %s", legacy)
 		}
 	}
 }
@@ -712,7 +307,7 @@ func TestCanonicalInputFieldNames(t *testing.T) {
 		forbidden []string
 	}{
 		{ToolRemember, []string{"evidence", "proposal"}, []string{"contract_version", "entity_hints", "relationship_hints"}},
-		{ToolResolveMemoryPlacement, []string{"placement_item_version", "entity_ref", "candidate_entity_id", "message"}, []string{"contract_version", "decision", "reason"}},
+		{ToolGetSubmissionStatus, []string{"submission_id"}, []string{"contract_version", "ingest_id", "placement_item_id"}},
 		{ToolCorrectEntityResolution, []string{"operation", "owned_observation_ids", "impact_token"}, []string{"action", "selected_observation_ids", "plan_token"}},
 		{ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, []string{"include_evidence", "use_communities"}},
 		{ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, []string{"max_chars"}},
@@ -968,31 +563,5 @@ func TestPredicateOptionsContract(t *testing.T) {
 	}
 	if err := validateSchemaValue("current_cardinality", "latest", cardinality); err == nil {
 		t.Fatal("current_cardinality accepted non-wiki value")
-	}
-}
-
-func TestPlacementReviewOptionSchemaRequiresOneCompleteOptionShape(t *testing.T) {
-	schema := placementReviewOptionSchema()
-	valid := []map[string]any{
-		{"entity_id": "entity-1", "canonical_name": "Dense-Mem", "kind": "product"},
-		{"predicate_key": "works_on", "version": 1, "aliases": []string{"works on"}},
-		{"action": "submit_new_evidence"},
-	}
-	for _, option := range valid {
-		if err := validateSchemaValue("option", option, schema); err != nil {
-			t.Fatalf("validateSchemaValue(%#v) error = %v", option, err)
-		}
-	}
-	for _, option := range []map[string]any{
-		{},
-		{"entity_id": "entity-1"},
-		{"entity_id": "entity-1", "canonical_name": "Dense-Mem", "kind": "product", "action": "submit_new_evidence"},
-	} {
-		if err := validateSchemaValue("option", option, schema); err == nil {
-			t.Fatalf("validateSchemaValue(%#v) accepted incomplete or mixed option", option)
-		}
-	}
-	if got := placementReviewTaskArraySchema()["maxItems"]; got != 300 {
-		t.Fatalf("review task maxItems = %#v, want 300", got)
 	}
 }

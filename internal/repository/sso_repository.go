@@ -352,7 +352,7 @@ func (r *SSORepositoryImpl) CreateMapping(ctx context.Context, mapping *domain.S
 		}
 		rows, err := tx.Raw(`
 			INSERT INTO sso_group_mappings (id, provider_id, team_id, group_id, group_name, scopes, role, enabled, origin, retired_at, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'manual', CASE WHEN $8 THEN NULL ELSE $9 END, $9, $9)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'manual', CASE WHEN $8 THEN NULL::timestamptz ELSE $9::timestamptz END, $9, $9)
 			ON CONFLICT (provider_id, team_id, group_id) DO UPDATE
 			SET group_name = EXCLUDED.group_name,
 			    scopes = EXCLUDED.scopes,

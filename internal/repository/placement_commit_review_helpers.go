@@ -214,10 +214,10 @@ func insertRelationshipPredicateReview(
 }
 
 func validatePlacementRelationshipReviewInput(input PlacementRelationshipReviewInput) error {
-	if err := validateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, false); err != nil {
+	if err := validateAssessmentDecisionAudit(input.AssessmentID, "", input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, false); err != nil {
 		return err
 	}
-	if err := validateSemanticReviewDetails(input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
+	if err := validateSemanticReviewDetails(input.AssessmentID, "", input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
 		return err
 	}
 	if input.Ref == "" {

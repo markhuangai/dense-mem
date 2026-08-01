@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	errActiveWorkerProfileListFailed = errors.New("active worker profile list failed")
-	errSemanticPlacementWorkerFailed = errors.New("semantic placement worker failed")
-	errEmbeddingWorkerFailed         = errors.New("embedding worker failed")
+	errActiveWorkerProfileListFailed    = errors.New("active worker profile list failed")
+	errSubmissionAssessmentWorkerFailed = errors.New("submission assessment worker failed")
+	errEmbeddingWorkerFailed            = errors.New("embedding worker failed")
 )
 
 type activeWorkerProfileLister interface {

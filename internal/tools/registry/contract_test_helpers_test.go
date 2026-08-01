@@ -50,43 +50,41 @@ func contractInvokeContext(scopes ...string) context.Context {
 }
 
 type stubRememberService struct {
-	req          memoryservice.RememberRequest
-	placementReq memoryservice.GetMemoryPlacementRequest
+	req       memoryservice.RememberRequest
+	statusReq memoryservice.GetSubmissionStatusRequest
 }
 
 func (s *stubRememberService) Remember(_ context.Context, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
 	s.req = req
 	return &memoryservice.RememberResult{
-		IngestID:          "ingest-canonical",
-		ProcessingState:   string(domain.PlacementRunQueued),
+		SubmissionID:      "submission-canonical",
+		ProcessingState:   string(domain.SubmissionQueued),
 		CheckAfterSeconds: 60,
-		StatusTool:        ToolGetMemoryPlacement,
+		StatusTool:        ToolGetSubmissionStatus,
 		CorrelationID:     "corr-canonical",
 	}, nil
 }
 
-func (s *stubRememberService) GetMemoryPlacement(
+func (s *stubRememberService) GetSubmissionStatus(
 	_ context.Context,
-	req memoryservice.GetMemoryPlacementRequest,
-) (*memoryservice.PlacementRunResult, error) {
-	s.placementReq = req
-	return &memoryservice.PlacementRunResult{
-		IngestID:        req.IngestID,
-		ProcessingState: string(domain.PlacementRunCompleted),
+	req memoryservice.GetSubmissionStatusRequest,
+) (*memoryservice.SubmissionStatusResult, error) {
+	s.statusReq = req
+	return &memoryservice.SubmissionStatusResult{
+		SubmissionID:    req.SubmissionID,
+		ProcessingState: string(domain.SubmissionCompleted),
 		SearchState:     string(domain.SearchProjectionNotRequired),
-		Items: []memoryservice.PlacementItemResult{{
-			ItemID:                "item-canonical",
-			EvidenceID:            "evidence-canonical",
-			SupersededEvidenceIDs: []string{},
-			Version:               3,
-			EvidenceIndex:         0,
-			Category:              string(domain.EvidenceProcessed),
-			SearchState:           string(domain.SearchProjectionNotRequired),
-			RelationshipOutcomes:  []memoryservice.RelationshipOutcomeRef{},
-			ReviewTasks:           []memoryservice.PlacementReviewTaskRef{},
-			Errors:                []memoryservice.PlacementError{},
+		Evidence: []repository.SubmissionEvidenceStatus{{
+			EvidenceIndex: 0,
+			Status:        "accepted",
+			SearchState:   string(domain.SearchProjectionNotRequired),
 		}},
-		Errors: []memoryservice.PlacementError{},
+		RelationshipOutcomes: []repository.SubmissionRelationshipOutcome{{
+			ProposalID:     "rel-canonical",
+			RelationshipID: "relationship-canonical",
+			Status:         "accepted",
+		}},
+		Errors: []repository.SubmissionStatusError{},
 	}, nil
 }
 

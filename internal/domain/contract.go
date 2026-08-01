@@ -182,6 +182,19 @@ const (
 	PlacementRunFailed         PlacementRunStatus = "failed"
 )
 
+// SubmissionStatus is the public lifecycle for evidence that has not yet
+// become canonical memory. It intentionally has no client-review state.
+type SubmissionStatus string
+
+const (
+	SubmissionQueued      SubmissionStatus = "queued"
+	SubmissionProcessing  SubmissionStatus = "processing"
+	SubmissionCompleted   SubmissionStatus = "completed"
+	SubmissionRejected    SubmissionStatus = "rejected"
+	SubmissionQuarantined SubmissionStatus = "quarantined"
+	SubmissionFailed      SubmissionStatus = "failed"
+)
+
 type SearchProjectionState string
 
 const (
@@ -451,6 +464,17 @@ func PlacementRunStatuses() []string {
 		string(PlacementRunAwaitingReview),
 		string(PlacementRunCompleted),
 		string(PlacementRunFailed),
+	}
+}
+
+func SubmissionStatuses() []string {
+	return []string{
+		string(SubmissionQueued),
+		string(SubmissionProcessing),
+		string(SubmissionCompleted),
+		string(SubmissionRejected),
+		string(SubmissionQuarantined),
+		string(SubmissionFailed),
 	}
 }
 

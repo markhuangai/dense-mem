@@ -160,6 +160,7 @@ func normalizeApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInpu
 	input.Model = strings.TrimSpace(input.Model)
 	input.ResponseHash = strings.TrimSpace(input.ResponseHash)
 	input.AssessmentID = strings.TrimSpace(input.AssessmentID)
+	input.SubmissionAssessmentID = strings.TrimSpace(input.SubmissionAssessmentID)
 	input.AssessmentPolicyVersion = strings.TrimSpace(input.AssessmentPolicyVersion)
 	input.GateResult = strings.TrimSpace(input.GateResult)
 	input.SemanticReviewKind = strings.TrimSpace(input.SemanticReviewKind)
@@ -286,10 +287,10 @@ func validateApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInput
 	if input.Confidence != nil && (*input.Confidence < 0 || *input.Confidence > 1) {
 		return errors.New("confidence must be between 0 and 1")
 	}
-	if err := validateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
+	if err := validateAssessmentDecisionAudit(input.AssessmentID, input.SubmissionAssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
 		return err
 	}
-	if err := validateSemanticReviewDetails(input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
+	if err := validateSemanticReviewDetails(input.AssessmentID, input.SubmissionAssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
 		return err
 	}
 	if input.ValidFrom != nil && input.ValidTo != nil && input.ValidTo.Before(*input.ValidFrom) {

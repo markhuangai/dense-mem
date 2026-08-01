@@ -226,7 +226,10 @@ func RunActiveServer(
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
 
-	rememberSvc := memoryservice.NewRememberService(memoryservice.RememberDependencies{Ledger: ledgerRepo, Metrics: discoverabilityMetrics})
+	rememberSvc := memoryservice.NewRememberService(memoryservice.RememberDependencies{
+		Submissions: ledgerRepo,
+		Metrics:     discoverabilityMetrics,
+	})
 	recallSvc := memoryservice.NewRecallService(memoryservice.RecallDependencies{
 		Search:          searchRepo,
 		Provider:        retryEmbedder,
@@ -236,10 +239,8 @@ func RunActiveServer(
 		Metrics:         discoverabilityMetrics,
 	})
 	lifecycleSvc := memoryservice.NewLifecycleService(memoryservice.LifecycleDependencies{
-		Semantic:  semanticRepo,
-		Placement: ledgerRepo,
-		Evidence:  ledgerRepo,
-		Metrics:   discoverabilityMetrics,
+		Semantic: semanticRepo,
+		Evidence: ledgerRepo,
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
@@ -460,9 +461,9 @@ func RunActiveServer(
 		discoverabilityMetrics,
 		assessmentLimits,
 		config.MemoryAutoWriteConfidenceThresholdFor(&cfg),
-		activePlacementLease(cfg.GetAIVerifierTimeoutSeconds(), cfg.GetPromoteTxTimeoutSeconds()),
-		cfg.GetMemoryPlacementWorkerCount(),
-		time.Duration(cfg.GetMemoryPlacementPollSeconds())*time.Second,
+		activeSubmissionAssessmentLease(cfg.GetAIVerifierTimeoutSeconds(), cfg.GetPromoteTxTimeoutSeconds()),
+		cfg.GetSubmissionAssessmentWorkerCount(),
+		time.Duration(cfg.GetSubmissionAssessmentPollSeconds())*time.Second,
 		cfg.GetEmbeddingWorkerCount(),
 		cfg.GetEmbeddingBatchSize(),
 		time.Duration(cfg.GetEmbeddingJobPollSeconds())*time.Second,
@@ -877,40 +878,36 @@ func startActiveWorkers(
 	metrics observability.DiscoverabilityMetrics,
 	assessmentLimits verifier.SemanticAssessmentLimits,
 	globalConfidenceThreshold float64,
-	placementLease time.Duration,
-	placementWorkerCount int,
-	placementPollInterval time.Duration,
+	assessmentLease time.Duration,
+	assessmentWorkerCount int,
+	assessmentPollInterval time.Duration,
 	embeddingWorkerCount int,
 	embeddingBatchSize int,
 	embeddingPollInterval time.Duration,
 ) {
 	hostname, _ := os.Hostname()
 	baseWorkerID := fmt.Sprintf("active-%s-%d", hostname, os.Getpid())
-	reviewExpiry := memoryservice.NewSemanticAssessmentReviewExpiryThrottle(ledger, time.Minute)
 	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
-		name:         "placement",
+		name:         "submission",
 		baseWorkerID: baseWorkerID,
-		count:        placementWorkerCount,
-		pollInterval: placementPollInterval,
+		count:        assessmentWorkerCount,
+		pollInterval: assessmentPollInterval,
 		profiles:     profiles,
 		logger:       logger,
-		workerError:  errSemanticPlacementWorkerFailed,
+		workerError:  errSubmissionAssessmentWorkerFailed,
 		work: func(ctx context.Context, teamID string, workerID string) (bool, error) {
-			worker := memoryservice.NewSemanticAssessmentPlacementWorkerService(memoryservice.SemanticAssessmentPlacementWorkerDependencies{
-				Ledger:                    ledger,
-				Assessments:               ledger,
-				ReviewExpiry:              reviewExpiry,
-				Commit:                    ledger,
+			worker := memoryservice.NewSubmissionAssessmentWorkerService(memoryservice.SubmissionAssessmentWorkerDependencies{
+				Submissions:               ledger,
 				Catalog:                   semantic,
 				Provider:                  assessor,
 				Limits:                    assessmentLimits,
 				GlobalConfidenceThreshold: globalConfidenceThreshold,
-				Metrics:                   metrics,
 				TeamID:                    teamID,
 				WorkerID:                  workerID,
-				Lease:                     placementLease,
+				Lease:                     assessmentLease,
+				Metrics:                   metrics,
 			})
-			return worker.ProcessNextSemanticAssessmentPlacement(ctx)
+			return worker.ProcessNextSubmissionAssessment(ctx)
 		},
 	})
 	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
@@ -936,7 +933,7 @@ func startActiveWorkers(
 	})
 }
 
-func activePlacementLease(verifierTimeoutSeconds int, commitTimeoutSeconds int) time.Duration {
+func activeSubmissionAssessmentLease(verifierTimeoutSeconds int, commitTimeoutSeconds int) time.Duration {
 	if verifierTimeoutSeconds <= 0 {
 		verifierTimeoutSeconds = 60
 	}

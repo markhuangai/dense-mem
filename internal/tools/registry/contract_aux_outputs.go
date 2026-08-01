@@ -41,7 +41,7 @@ func resolveDreamFeedbackOutputSchema() map[string]any {
 		map[string]any{
 			"hypothesis_id": schemaString("Hypothesis ID.", 128),
 			"status":        schemaEnum(domain.HypothesisStatuses()),
-			"ingest_id":     schemaString("Placement run ID for submitted evidence.", 128),
+			"submission_id": schemaString("Submission ID for server-owned assessment.", 128),
 		},
 	)
 }
@@ -106,11 +106,11 @@ func inspectMemoryPackOutputSchema() map[string]any {
 
 func importMemoryPackOutputSchema() map[string]any {
 	return closedObject(
-		[]string{"import_id", "processing_state", "ingest_ids", "omissions"},
+		[]string{"import_id", "processing_state", "submission_ids", "omissions"},
 		map[string]any{
 			"import_id":        schemaString("Memory-pack import ledger ID.", 128),
 			"processing_state": schemaEnum([]string{"queued", "processing", "completed", "failed"}),
-			"ingest_ids":       stringArraySchema("Placement run ID staged by import.", 500, 128),
+			"submission_ids":   stringArraySchema("Submission ID staged by import.", 500, 128),
 			"omissions":        array(memoryPackOmissionSchema(), 0, 500),
 		},
 	)

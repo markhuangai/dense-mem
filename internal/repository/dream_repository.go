@@ -185,6 +185,7 @@ type HypothesisRecord struct {
 	GeneratorVersion      string
 	InvalidatedReason     string
 	SubmittedIngestID     string
+	SubmittedSubmissionID string
 	SubmittedAt           *time.Time
 	Payload               map[string]any
 	CreatedAt             time.Time
@@ -221,12 +222,12 @@ type UpdateHypothesisStatusInput struct {
 }
 
 type SubmitHypothesisInput struct {
-	TeamID            string
-	ActorProfileID    string
-	HypothesisID      string
-	Decision          string
-	SubmittedIngestID string
-	InvalidatedReason string
+	TeamID                string
+	ActorProfileID        string
+	HypothesisID          string
+	Decision              string
+	SubmittedSubmissionID string
+	InvalidatedReason     string
 }
 
 var _ DreamRepository = (*SemanticRepositoryImpl)(nil)
@@ -240,17 +241,17 @@ func insertHypothesisFeedbackEvent(
 	actorProfileID string,
 	decision string,
 	feedback string,
-	submittedIngestID string,
+	submittedSubmissionID string,
 ) error {
 	return tx.WithContext(ctx).Exec(`
 		INSERT INTO hypothesis_feedback_events (
 		    team_id, hypothesis_id, actor_profile_id, decision, feedback,
-		    submitted_ingest_id
+		    submitted_submission_id
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?, COALESCE(NULLIF(?, ''), ''),
 		    NULLIF(?, '')::uuid
 		)
-	`, teamID, hypothesisID, actorProfileID, decision, feedback, submittedIngestID).Error
+	`, teamID, hypothesisID, actorProfileID, decision, feedback, submittedSubmissionID).Error
 }
 
 func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input DreamInputListInput) ([]DreamInput, error) {
@@ -416,7 +417,7 @@ func (r *SemanticRepositoryImpl) upsertHypothesis(
 			          ARRAY(SELECT source_owner_id::text FROM unnest(source_owner_profile_ids) AS source_owner(source_owner_id)),
 			          COALESCE(content_hash, ''), COALESCE(cycle_run_id::text, ''),
 			          generator_kind, generator_version, invalidated_reason,
-			          COALESCE(submitted_ingest_id::text, ''), submitted_at,
+			          COALESCE(submitted_ingest_id::text, ''), COALESCE(submitted_submission_id::text, ''), submitted_at,
 			          payload, created_at, updated_at
 		`, input.TeamID, input.CreatedByProfileID, input.Statement, input.Rationale,
 			input.Likelihood, input.Confidence, input.SubjectEntityID, input.PredicateKey,
@@ -652,7 +653,8 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 		rows, err := tx.WithContext(ctx).Raw(hypothesisUpdateReturningSQL(`
 			UPDATE hypotheses
 			SET status = 'submitted',
-			    submitted_ingest_id = ?::uuid,
+			    submitted_ingest_id = NULL,
+			    submitted_submission_id = ?::uuid,
 			    submitted_at = now(),
 			    invalidated_reason = CASE WHEN ? <> '' THEN ? ELSE invalidated_reason END,
 			    updated_at = now()
@@ -664,7 +666,7 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 			      WHERE team_id = ?::uuid
 			        AND hypothesis_id = ?::uuid
 			  ), ?::uuid)
-		`), input.SubmittedIngestID, input.InvalidatedReason, input.InvalidatedReason,
+		`), input.SubmittedSubmissionID, input.InvalidatedReason, input.InvalidatedReason,
 			input.TeamID, input.TeamID, input.HypothesisID, input.HypothesisID).Rows()
 		if err != nil {
 			return err
@@ -682,7 +684,7 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 			return err
 		}
 		if err := insertHypothesisFeedbackEvent(ctx, tx, input.TeamID, loaded.HypothesisID,
-			input.ActorProfileID, input.Decision, input.InvalidatedReason, input.SubmittedIngestID); err != nil {
+			input.ActorProfileID, input.Decision, input.InvalidatedReason, input.SubmittedSubmissionID); err != nil {
 			return err
 		}
 		record = loaded

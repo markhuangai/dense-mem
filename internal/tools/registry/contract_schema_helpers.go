@@ -115,15 +115,3 @@ func publicErrorCodes() []string {
 		string(domain.ErrorDegraded),
 	}
 }
-
-func placementErrorArraySchema() map[string]any {
-	return array(closedObject(
-		[]string{"code", "message", "retryable"},
-		map[string]any{
-			"code":        schemaString("Typed placement error code.", 128),
-			"message":     schemaString("Bounded safe placement error.", 512),
-			"retryable":   map[string]any{"type": "boolean"},
-			"review_task": nullableString("Review task handle when client action is possible.", 128),
-		},
-	), 0, 50)
-}

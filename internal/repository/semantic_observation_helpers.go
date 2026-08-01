@@ -65,15 +65,15 @@ func insertVerificationEvent(ctx context.Context, tx *gorm.DB, input ApplyRelati
 		INSERT INTO verification_events (
 		    team_id, observation_id, owner_profile_id, evidence_verdict,
 		    confidence, rationale, model, response_hash, metadata,
-		    assessment_id, assessment_policy_version, threshold_used, gate_result
+		    assessment_id, submission_assessment_id, assessment_policy_version, threshold_used, gate_result
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?::jsonb,
-		    NULLIF(?, '')::uuid, NULLIF(?, ''), ?, NULLIF(?, '')
+		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, NULLIF(?, ''), ?, NULLIF(?, '')
 		)
 		RETURNING verification_event_id::text
 	`, input.TeamID, observationID, input.OwnerProfileID, input.EvidenceVerdict,
 		confidenceArg(input.Confidence), input.Rationale, input.Model, input.ResponseHash,
-		string(metadata), input.AssessmentID, input.AssessmentPolicyVersion,
+		string(metadata), input.AssessmentID, input.SubmissionAssessmentID, input.AssessmentPolicyVersion,
 		confidenceArg(input.ThresholdUsed), input.GateResult).Rows()
 	if err != nil {
 		return "", err

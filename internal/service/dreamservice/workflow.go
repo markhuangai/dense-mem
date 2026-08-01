@@ -671,12 +671,12 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 			return nil, err
 		}
 		updated, err := s.deps.Store.SubmitHypothesis(ctx, repository.SubmitHypothesisInput{
-			TeamID:            teamID,
-			ActorProfileID:    actorProfileID,
-			HypothesisID:      dreamID,
-			Decision:          decision,
-			SubmittedIngestID: remember.IngestID,
-			InvalidatedReason: req.Feedback,
+			TeamID:                teamID,
+			ActorProfileID:        actorProfileID,
+			HypothesisID:          dreamID,
+			Decision:              decision,
+			SubmittedSubmissionID: remember.SubmissionID,
+			InvalidatedReason:     req.Feedback,
 		})
 		return s.feedbackResult(ctx, decision, dream, updated, remember, err)
 	default:

@@ -109,8 +109,8 @@ func TestMemoryPackImportSelectedSubsetUsesDestinationOwnerAndSourceProvenance(t
 		},
 	})
 	remember := &rememberStub{result: &memoryservice.RememberResult{
-		IngestID:        "ingest-subset",
-		ProcessingState: string(domain.PlacementRunQueued),
+		SubmissionID:    "submission-subset",
+		ProcessingState: string(domain.SubmissionQueued),
 	}}
 	result, err := NewMemoryPackService(MemoryPackDependencies{
 		Remember: remember,
@@ -130,10 +130,10 @@ func TestMemoryPackImportSelectedSubsetUsesDestinationOwnerAndSourceProvenance(t
 	if err != nil {
 		t.Fatalf("Import selected subset: %v", err)
 	}
-	if result.AppliedCount != 1 || result.SkippedCount != 1 {
+	if result.Status != domain.SkillPackImportStatusSubmitted || result.SubmissionID != "submission-subset" || result.AppliedCount != 0 || result.SkippedCount != 1 {
 		t.Fatalf("subset import counts = %#v", result)
 	}
-	if result.Items[0].Status != "skipped" || result.Items[1].Status != "staged" || result.Items[1].PlacementItemID != "" {
+	if result.Items[0].Status != "skipped" || result.Items[1].Status != "submitted" || result.Items[1].PlacementItemID != "" {
 		t.Fatalf("subset import items = %#v", result.Items)
 	}
 	if len(remember.reqs) != 1 || len(remember.reqs[0].Evidence) != 1 {
@@ -215,15 +215,15 @@ func TestMemoryPackLedgerHardFailuresRemainVisible(t *testing.T) {
 	}
 }
 
-func TestMemoryPackExistingImportUsesSummaryIngestFallback(t *testing.T) {
+func TestMemoryPackExistingImportUsesSummarySubmissionFallback(t *testing.T) {
 	record := &domain.SkillPackImport{
 		ImportID:     "import-existing",
-		Status:       domain.SkillPackImportStatusApplied,
-		AppliedCount: 1,
-		Summary:      map[string]any{"ingest_id": "summary-ingest"},
+		Status:       domain.SkillPackImportStatusSubmitted,
+		AppliedCount: 0,
+		Summary:      map[string]any{"submission_id": "summary-submission"},
 	}
 	result := importResultFromExisting(record, "hash", ModeReview)
-	if result.IngestID != "summary-ingest" {
+	if result.SubmissionID != "summary-submission" {
 		t.Fatalf("existing import result = %#v", result)
 	}
 }

@@ -152,7 +152,7 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 	RecordRememberAcknowledgement(ctx, metrics, 120*time.Millisecond, "ok")
 	RecordRememberFirstDisposition(ctx, metrics, 3*time.Second, "completed")
 	RecordAIOperationUsage(
-		WithAIOperation(ctx, AIOperationPlacementAssessment, 1),
+		WithAIOperation(ctx, AIOperationSubmissionAssessment, 1),
 		metrics,
 		AIOperationUsage{
 			Component:    AIComponentVerifier,
@@ -182,13 +182,13 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 	if got := prometheusCounterValue(t, body, "densemem_remember_first_disposition_total", append(identity, "status=\"completed\"")...); got != 1 {
 		t.Fatalf("first dispositions = %v; want 1", got)
 	}
-	if got := prometheusCounterValue(t, body, "densemem_ai_operation_cost_usd_total", append(identity, "operation=\"placement_assessment\"", "component=\"verifier\"", "model=\"configured-verifier\"", "source=\"provider\"")...); got != 4 {
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_cost_usd_total", append(identity, "operation=\"submission_assessment\"", "component=\"verifier\"", "model=\"configured-verifier\"", "source=\"provider\"")...); got != 4 {
 		t.Fatalf("verifier cost = %v; want 4", got)
 	}
 	if got := prometheusCounterValue(t, body, "densemem_ai_operation_cost_usd_total", append(identity, "operation=\"recall_embedding\"", "component=\"embedding\"", "model=\"configured-embedding\"", "source=\"tokenizer\"")...); got != 3 {
 		t.Fatalf("embedding cost = %v; want 3", got)
 	}
-	if got := prometheusCounterValue(t, body, "densemem_ai_operation_items_total", append(identity, "operation=\"placement_assessment\"", "component=\"verifier\"", "model=\"configured-verifier\"", "source=\"provider\"")...); got != 2 {
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_items_total", append(identity, "operation=\"submission_assessment\"", "component=\"verifier\"", "model=\"configured-verifier\"", "source=\"provider\"")...); got != 2 {
 		t.Fatalf("verifier item count = %v; want 2", got)
 	}
 

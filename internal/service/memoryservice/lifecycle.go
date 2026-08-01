@@ -14,7 +14,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -22,25 +21,17 @@ import (
 var ErrLifecycleAuthContext = errors.New("memory lifecycle: authenticated actor context is required")
 
 type LifecycleService interface {
-	ResolveMemoryPlacement(ctx context.Context, req ResolveMemoryPlacementRequest) (*ResolveMemoryPlacementResult, error)
 	CorrectEntityResolution(ctx context.Context, req CorrectEntityResolutionRequest) (*CorrectEntityResolutionResult, error)
 	RetractEvidence(ctx context.Context, req RetractEvidenceRequest) (*RetractEvidenceResult, error)
 }
 
 type LifecycleDependencies struct {
-	Semantic  LifecycleSemanticRepository
-	Placement LifecyclePlacementRepository
-	Evidence  LifecycleEvidenceRepository
-	Metrics   observability.DiscoverabilityMetrics
+	Semantic LifecycleSemanticRepository
+	Evidence LifecycleEvidenceRepository
 }
 
 type LifecycleSemanticRepository interface {
-	RetractRelationship(ctx context.Context, input repository.RetractRelationshipInput) (*repository.RelationshipTransitionResult, error)
 	CorrectEntityResolution(ctx context.Context, input repository.CorrectEntityResolutionInput) (*repository.CorrectEntityResolutionResult, error)
-}
-
-type LifecyclePlacementRepository interface {
-	ResolvePlacementReview(ctx context.Context, input repository.ResolvePlacementReviewInput) (*repository.ResolvePlacementReviewResult, error)
 }
 
 type LifecycleEvidenceRepository interface {
@@ -48,43 +39,12 @@ type LifecycleEvidenceRepository interface {
 }
 
 type lifecycleService struct {
-	semantic  LifecycleSemanticRepository
-	placement LifecyclePlacementRepository
-	evidence  LifecycleEvidenceRepository
-	metrics   observability.DiscoverabilityMetrics
+	semantic LifecycleSemanticRepository
+	evidence LifecycleEvidenceRepository
 }
 
 func NewLifecycleService(deps LifecycleDependencies) LifecycleService {
-	metrics := deps.Metrics
-	if metrics == nil {
-		metrics = observability.NoopDiscoverabilityMetrics()
-	}
-	return &lifecycleService{semantic: deps.Semantic, placement: deps.Placement, evidence: deps.Evidence, metrics: metrics}
-}
-
-type ResolveMemoryPlacementRequest struct {
-	ContractVersion      string                  `json:"contract_version"`
-	Action               domain.ResolveAction    `json:"action"`
-	IngestID             string                  `json:"ingest_id,omitempty"`
-	PlacementItemID      string                  `json:"placement_item_id,omitempty"`
-	PlacementItemVersion int                     `json:"placement_item_version,omitempty"`
-	ObservationID        string                  `json:"observation_id,omitempty"`
-	RelationshipID       string                  `json:"relationship_id,omitempty"`
-	EntityRef            string                  `json:"entity_ref,omitempty"`
-	CandidateEntityID    string                  `json:"candidate_entity_id,omitempty"`
-	PredicateKey         string                  `json:"predicate_key,omitempty"`
-	PredicateVersion     int                     `json:"predicate_version,omitempty"`
-	Message              string                  `json:"message,omitempty"`
-	Evidence             []RememberEvidenceInput `json:"evidence,omitempty"`
-	IdempotencyKey       string                  `json:"idempotency_key,omitempty"`
-}
-
-type ResolveMemoryPlacementResult struct {
-	DecisionID        string `json:"decision_id,omitempty"`
-	IngestID          string `json:"ingest_id,omitempty"`
-	ProcessingState   string `json:"processing_state"`
-	ImpactSummary     string `json:"impact_summary,omitempty"`
-	CheckAfterSeconds int    `json:"check_after_seconds,omitempty"`
+	return &lifecycleService{semantic: deps.Semantic, evidence: deps.Evidence}
 }
 
 type CorrectEntityResolutionRequest struct {
@@ -125,117 +85,6 @@ type RetractEvidenceResult struct {
 	RetainedActiveRelationshipCount int      `json:"retained_active_relationship_count"`
 }
 
-func (s *lifecycleService) ResolveMemoryPlacement(
-	ctx context.Context,
-	req ResolveMemoryPlacementRequest,
-) (*ResolveMemoryPlacementResult, error) {
-	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
-		return nil, fmt.Errorf("memory lifecycle: invalid contract_version %q", req.ContractVersion)
-	}
-	actor, ok := requestctx.ActorProfileFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
-		return nil, ErrLifecycleAuthContext
-	}
-	if strings.TrimSpace(req.IdempotencyKey) == "" {
-		return nil, errors.New("memory lifecycle: idempotency_key is required")
-	}
-	switch req.Action {
-	case domain.ResolveForget:
-		return s.forgetRelationship(ctx, actor, req)
-	case domain.ResolveAcknowledge,
-		domain.ResolveSelectEntity,
-		domain.ResolveConfirmNewEntity,
-		domain.ResolveSelectPredicate,
-		domain.ResolveAccept,
-		domain.ResolveReject,
-		domain.ResolveCorrect,
-		domain.ResolveReleaseQuarantine:
-		return s.resolvePlacementReview(ctx, actor, req)
-	default:
-		return nil, fmt.Errorf("memory lifecycle: unsupported action %q", req.Action)
-	}
-}
-
-func (s *lifecycleService) resolvePlacementReview(
-	ctx context.Context,
-	actor requestctx.ActorProfile,
-	req ResolveMemoryPlacementRequest,
-) (*ResolveMemoryPlacementResult, error) {
-	if s.placement == nil {
-		return nil, errors.New("memory lifecycle: placement repository is required")
-	}
-	credential, _ := requestctx.ActorCredentialFromContext(ctx)
-	if req.Action == domain.ResolveReleaseQuarantine && !lifecycleCanReleaseQuarantine(credential.Role) {
-		return nil, errors.New("memory lifecycle: manager role is required to release quarantine")
-	}
-	resolved, err := s.placement.ResolvePlacementReview(ctx, repository.ResolvePlacementReviewInput{
-		TeamID:               actor.TeamID.String(),
-		OwnerProfileID:       actor.ProfileID.String(),
-		ActorRole:            credential.Role,
-		Action:               string(req.Action),
-		IngestID:             req.IngestID,
-		PlacementItemID:      req.PlacementItemID,
-		PlacementItemVersion: req.PlacementItemVersion,
-		ObservationID:        req.ObservationID,
-		EntityRef:            req.EntityRef,
-		CandidateEntityID:    req.CandidateEntityID,
-		PredicateKey:         req.PredicateKey,
-		PredicateVersion:     req.PredicateVersion,
-		Message:              req.Message,
-		Evidence:             lifecycleEvidenceFromRequest(req.Evidence),
-		IdempotencyKey:       req.IdempotencyKey,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if resolved.FirstDisposition != nil && resolved.FirstDisposition.IsRemember {
-		observability.RecordRememberFirstDisposition(ctx, s.metrics, resolved.FirstDisposition.CompletedAt.Sub(resolved.FirstDisposition.CreatedAt), resolved.FirstDisposition.Status)
-	}
-	return &ResolveMemoryPlacementResult{
-		DecisionID:        resolved.DecisionID,
-		IngestID:          resolved.IngestID,
-		ProcessingState:   resolved.Status,
-		ImpactSummary:     resolved.ImpactSummary,
-		CheckAfterSeconds: resolved.CheckAfterSeconds,
-	}, nil
-}
-
-func (s *lifecycleService) forgetRelationship(
-	ctx context.Context,
-	actor requestctx.ActorProfile,
-	req ResolveMemoryPlacementRequest,
-) (*ResolveMemoryPlacementResult, error) {
-	if s.semantic == nil {
-		return nil, errors.New("memory lifecycle: semantic repository is required")
-	}
-	relationshipID := strings.TrimSpace(req.RelationshipID)
-	if relationshipID == "" {
-		return nil, errors.New("memory lifecycle: relationship_id is required")
-	}
-	reason := strings.TrimSpace(req.Message)
-	if reason == "" {
-		return nil, errors.New("memory lifecycle: message is required")
-	}
-	if len(req.Evidence) == 0 {
-		return nil, errors.New("memory lifecycle: evidence is required")
-	}
-	transition, err := s.semantic.RetractRelationship(ctx, repository.RetractRelationshipInput{
-		TeamID:         actor.TeamID.String(),
-		OwnerProfileID: actor.ProfileID.String(),
-		RelationshipID: relationshipID,
-		Reason:         reason,
-		IdempotencyKey: strings.TrimSpace(req.IdempotencyKey),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &ResolveMemoryPlacementResult{
-		DecisionID:      transition.TransitionID,
-		ProcessingState: string(domain.PlacementRunCompleted),
-		ImpactSummary:   fmt.Sprintf("relationship %s retracted from active semantic graph; nodes and append-only history preserved", relationshipID),
-	}, nil
-}
-
 func (s *lifecycleService) CorrectEntityResolution(
 	ctx context.Context,
 	req CorrectEntityResolutionRequest,
@@ -250,6 +99,10 @@ func (s *lifecycleService) CorrectEntityResolution(
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
 		return nil, ErrLifecycleAuthContext
 	}
+	evidence, err := correctionEvidenceFromRequest(req.Evidence)
+	if err != nil {
+		return nil, err
+	}
 	result, err := s.semantic.CorrectEntityResolution(ctx, repository.CorrectEntityResolutionInput{
 		TeamID:                 actor.TeamID.String(),
 		OwnerProfileID:         actor.ProfileID.String(),
@@ -259,7 +112,7 @@ func (s *lifecycleService) CorrectEntityResolution(
 		SelectedObservationIDs: req.OwnedObservationIDs,
 		DryRun:                 req.DryRun,
 		PlanToken:              req.ImpactToken,
-		Evidence:               correctionEvidenceFromRequest(req.Evidence),
+		Evidence:               evidence,
 		IdempotencyKey:         req.IdempotencyKey,
 	})
 	if err != nil {
@@ -345,12 +198,15 @@ func translateEvidenceLifecycleError(err error) error {
 	}
 }
 
-func correctionEvidenceFromRequest(evidence []RememberEvidenceInput) []repository.CorrectionEvidenceInput {
+func correctionEvidenceFromRequest(evidence []RememberEvidenceInput) ([]repository.CorrectionEvidenceInput, error) {
 	if len(evidence) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]repository.CorrectionEvidenceInput, 0, len(evidence))
 	for _, item := range evidence {
+		if _, err := ScanSubmissionEvidence(item.Content); err != nil {
+			return nil, err
+		}
 		out = append(out, repository.CorrectionEvidenceInput{
 			Content:     item.Content,
 			SourceType:  item.SourceType,
@@ -359,7 +215,7 @@ func correctionEvidenceFromRequest(evidence []RememberEvidenceInput) []repositor
 			Metadata:    item.Metadata,
 		})
 	}
-	return out
+	return out, nil
 }
 
 func correctionEvidenceSourceGroup(item RememberEvidenceInput) string {
@@ -370,43 +226,4 @@ func correctionEvidenceSourceGroup(item RememberEvidenceInput) string {
 		return value
 	}
 	return strings.TrimSpace(item.Source)
-}
-
-func lifecycleEvidenceFromRequest(evidence []RememberEvidenceInput) []repository.EvidenceInput {
-	if len(evidence) == 0 {
-		return nil
-	}
-	out := make([]repository.EvidenceInput, 0, len(evidence))
-	sourceRevisionHashes := sourceRevisionContentHashes(evidence)
-	for _, item := range evidence {
-		scan := scanEvidence(item.Content)
-		authority, metadata := ledgerAuthorityAndMetadata(item.Authority, item.Metadata)
-		metadata = evidenceProcessingIntentMetadata(metadata, item)
-		out = append(out, repository.EvidenceInput{
-			Content:                       item.Content,
-			SourceType:                    evidenceSourceType(item.SourceType),
-			Authority:                     authority,
-			SourceRef:                     strings.TrimSpace(item.Source),
-			SourceKey:                     strings.TrimSpace(item.SourceKey),
-			SourceRevisionToken:           strings.TrimSpace(item.SourceRevision),
-			ExpectedPreviousRevisionToken: strings.TrimSpace(item.PreviousSourceRevision),
-			SourceRevisionContentHash:     sourceRevisionHashes[sourceRevisionBatchKey(item)],
-			SourceRevisionEnvelope:        sourceRevisionEnvelope(item),
-			SupersedesEvidenceIDs:         append([]string(nil), item.SupersedesEvidenceIDs...),
-			IdempotencyKey:                strings.TrimSpace(item.IdempotencyKey),
-			Labels:                        append([]string(nil), item.Labels...),
-			Metadata:                      metadata,
-			InitialEvent:                  &scan,
-		})
-	}
-	return out
-}
-
-func lifecycleCanReleaseQuarantine(role string) bool {
-	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "manager", "system":
-		return true
-	default:
-		return false
-	}
 }

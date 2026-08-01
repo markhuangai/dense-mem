@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"unicode/utf8"
 )
 
 func newEvalHarnessServer(t *testing.T, handler http.Handler) *httptest.Server {
@@ -67,4 +68,32 @@ func newEvalHarnessServer(t *testing.T, handler http.Handler) *httptest.Server {
 			},
 		})
 	}))
+}
+
+func submissionTestCorpusItem(sourceDocID, content string) CorpusItem {
+	end := utf8.RuneCountInString(content)
+	span := map[string]any{"evidence_index": 0, "start": 0, "end": end}
+	return CorpusItem{
+		SourceDocID: sourceDocID,
+		Content:     content,
+		Proposal: map[string]any{
+			"entities": []map[string]any{{
+				"ref":      "entity_1",
+				"name":     content,
+				"evidence": []map[string]any{span},
+			}},
+			"relationships": []map[string]any{{
+				"proposal_id": "relationship_1",
+				"subject_ref": "entity_1",
+				"object_ref":  "entity_1",
+				"predicate": map[string]any{
+					"surface":        content,
+					"evidence_index": 0,
+					"start":          0,
+					"end":            end,
+				},
+				"evidence": []map[string]any{span},
+			}},
+		},
+	}
 }

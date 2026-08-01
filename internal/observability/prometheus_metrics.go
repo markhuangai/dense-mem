@@ -182,11 +182,11 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		}, append(identityLabels(), "outcome")),
 		rememberFirstDisposition: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_remember_first_disposition_total",
-			Help: "First terminal placement disposition per remembered request.",
+			Help: "First terminal submission disposition per remembered request.",
 		}, append(identityLabels(), "status")),
 		rememberFirstDispositionDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "densemem_remember_first_disposition_duration_seconds",
-			Help:    "Elapsed time from durable staging to first terminal placement disposition.",
+			Help:    "Elapsed time from durable staging to first terminal submission disposition.",
 			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600, 1800, 3600},
 		}, append(identityLabels(), "status")),
 		aiOperationTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -344,7 +344,7 @@ func (m *PrometheusMetrics) ObserveRememberFirstDisposition(ctx context.Context,
 	if durationSeconds < 0 {
 		return
 	}
-	labels := append(identityValues(ctx), normalizePlacementStatus(status))
+	labels := append(identityValues(ctx), normalizeRememberFirstDispositionStatus(status))
 	m.rememberFirstDisposition.WithLabelValues(labels...).Inc()
 	m.rememberFirstDispositionDur.WithLabelValues(labels...).Observe(durationSeconds)
 }

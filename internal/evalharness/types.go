@@ -2,28 +2,38 @@ package evalharness
 
 import "time"
 
-const SeedSchemaVersion = "dense-mem.eval.seed.v1"
+const (
+	SeedSchemaVersionV1 = "dense-mem.eval.seed.v1"
+	SeedSchemaVersionV2 = "dense-mem.eval.seed.v2"
+	// SeedSchemaVersion is retained for fixtures and callers that exercise the
+	// immutable v1 corpus. New submission-ready seeds use SeedSchemaVersionV2.
+	SeedSchemaVersion = SeedSchemaVersionV1
+)
 
 // SeedManifest describes a local-only evaluation seed pack.
 type SeedManifest struct {
-	SchemaVersion        string         `json:"schema_version"`
-	SeedID               string         `json:"seed_id"`
-	Description          string         `json:"description,omitempty"`
-	GeneratedAt          string         `json:"generated_at,omitempty"`
-	CorpusFile           string         `json:"corpus_file"`
-	CasesFile            string         `json:"cases_file"`
-	QrelsFile            string         `json:"qrels_file"`
-	AnswersFile          string         `json:"answers_file,omitempty"`
-	HardNegativesFile    string         `json:"hard_negatives_file,omitempty"`
-	TransformsFile       string         `json:"transforms_file,omitempty"`
-	DreamsFile           string         `json:"dreams_file,omitempty"`
-	LicensesFile         string         `json:"licenses_file,omitempty"`
-	ValidationReportFile string         `json:"validation_report_file,omitempty"`
-	EmbeddingProvider    string         `json:"embedding_provider,omitempty"`
-	EmbeddingModel       string         `json:"embedding_model,omitempty"`
-	EmbeddingDimensions  int            `json:"embedding_dimensions,omitempty"`
-	Counts               map[string]int `json:"counts,omitempty"`
-	Sources              []SeedSource   `json:"sources,omitempty"`
+	SchemaVersion           string         `json:"schema_version"`
+	SeedID                  string         `json:"seed_id"`
+	Description             string         `json:"description,omitempty"`
+	GeneratedAt             string         `json:"generated_at,omitempty"`
+	CorpusFile              string         `json:"corpus_file"`
+	CasesFile               string         `json:"cases_file"`
+	QrelsFile               string         `json:"qrels_file"`
+	AnswersFile             string         `json:"answers_file,omitempty"`
+	HardNegativesFile       string         `json:"hard_negatives_file,omitempty"`
+	TransformsFile          string         `json:"transforms_file,omitempty"`
+	DreamsFile              string         `json:"dreams_file,omitempty"`
+	LicensesFile            string         `json:"licenses_file,omitempty"`
+	ValidationReportFile    string         `json:"validation_report_file,omitempty"`
+	ProposalAuditReportFile string         `json:"proposal_audit_report_file,omitempty"`
+	ParentSeedID            string         `json:"parent_seed_id,omitempty"`
+	ParentSeedHash          string         `json:"parent_seed_hash,omitempty"`
+	Generator               string         `json:"generator,omitempty"`
+	EmbeddingProvider       string         `json:"embedding_provider,omitempty"`
+	EmbeddingModel          string         `json:"embedding_model,omitempty"`
+	EmbeddingDimensions     int            `json:"embedding_dimensions,omitempty"`
+	Counts                  map[string]int `json:"counts,omitempty"`
+	Sources                 []SeedSource   `json:"sources,omitempty"`
 }
 
 type SeedSource struct {
@@ -37,6 +47,7 @@ type CorpusItem struct {
 	SourceDocID   string         `json:"source_doc_id"`
 	Title         string         `json:"title,omitempty"`
 	Content       string         `json:"content"`
+	Proposal      map[string]any `json:"proposal,omitempty"`
 	SourceDataset string         `json:"source_dataset,omitempty"`
 	SourceType    string         `json:"source_type,omitempty"`
 	Authority     string         `json:"authority,omitempty"`
@@ -252,7 +263,7 @@ type RunConfig struct {
 	ImportSeed             bool   `json:"import_seed"`
 	ImportRoute            string `json:"import_route,omitempty"`
 	ImportConcurrency      int    `json:"import_concurrency,omitempty"`
-	PlacementTimeout       string `json:"placement_timeout,omitempty"`
+	SubmissionTimeout      string `json:"submission_timeout,omitempty"`
 	ResumeSourceDocIDsPath string `json:"resume_source_doc_ids_path,omitempty"`
 	TracesPath             string `json:"traces_path,omitempty"`
 	MappingPath            string `json:"mapping_path,omitempty"`

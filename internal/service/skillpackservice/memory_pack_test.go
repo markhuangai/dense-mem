@@ -64,10 +64,10 @@ func TestMemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 		},
 	}}
 	remember := &rememberStub{result: &memoryservice.RememberResult{
-		IngestID:          "ingest-canonical",
-		ProcessingState:   string(domain.PlacementRunQueued),
+		SubmissionID:      "submission-canonical",
+		ProcessingState:   string(domain.SubmissionQueued),
 		CheckAfterSeconds: 15,
-		StatusTool:        "get_memory_placement",
+		StatusTool:        "get_submission_status",
 	}}
 	ledger := newLedgerStub()
 	svc := NewMemoryPackService(MemoryPackDependencies{
@@ -121,7 +121,7 @@ func TestMemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
-	if imported.Status != domain.SkillPackImportStatusApplied || imported.IngestID != "ingest-canonical" || imported.AppliedCount != 1 {
+	if imported.Status != domain.SkillPackImportStatusSubmitted || imported.SubmissionID != "submission-canonical" || imported.AppliedCount != 0 {
 		t.Fatalf("import result = %#v", imported)
 	}
 	if remember.calls != 1 {
@@ -142,11 +142,11 @@ func TestMemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 		t.Fatalf("trust boundary metadata = %#v", metadata)
 	}
 	hint := req.RelationshipHints[0]
-	if hint["source_relationship_id"] != "rel-uses-postgres" {
+	if hint["proposal_id"] != "rel-uses-postgres" || hint["subject_ref"] == "" || hint["object_ref"] == "" {
 		t.Fatalf("relationship hint = %#v", hint)
 	}
-	hintEvidence, ok := hint["evidence"].([]map[string]any)
-	if !ok || len(hintEvidence) != 1 || hintEvidence[0]["evidence_index"] != 0 {
+	hintEvidence, ok := hint["evidence"].([]any)
+	if !ok || len(hintEvidence) != 1 || hintEvidence[0].(map[string]any)["evidence_index"] != 0 {
 		t.Fatalf("relationship hint evidence = %#v", hint["evidence"])
 	}
 
@@ -155,7 +155,7 @@ func TestMemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 		t.Fatalf("ledger import = %#v", created)
 	}
 	changes := ledger.changes[ledgerKey(teamID.String(), imported.ImportID)]
-	if len(changes) != 1 || changes[0].EntityType != "v2_ingest" {
+	if len(changes) != 1 || changes[0].EntityType != "submission" || changes[0].EntityID != "submission-canonical" {
 		t.Fatalf("ledger changes = %#v", changes)
 	}
 
@@ -167,8 +167,8 @@ func TestMemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import retry: %v", err)
 	}
-	if retried.ImportID != imported.ImportID || retried.IngestID != imported.IngestID {
-		t.Fatalf("retry import = %#v want import_id=%s ingest_id=%s", retried, imported.ImportID, imported.IngestID)
+	if retried.ImportID != imported.ImportID || retried.SubmissionID != imported.SubmissionID {
+		t.Fatalf("retry import = %#v want import_id=%s submission_id=%s", retried, imported.ImportID, imported.SubmissionID)
 	}
 	if remember.calls != 1 {
 		t.Fatalf("Remember calls after retry = %d, want 1", remember.calls)
@@ -707,7 +707,7 @@ func TestMemoryPackImportReviewOnlyAndRecoverableFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import change ledger failure: %v", err)
 	}
-	if changeLedgerFailed.Status != "change_ledger_failed" || changeLedgerFailed.IngestID == "" {
+	if changeLedgerFailed.Status != "change_ledger_failed" || changeLedgerFailed.SubmissionID == "" {
 		t.Fatalf("change ledger failure result = %#v", changeLedgerFailed)
 	}
 
@@ -747,7 +747,7 @@ func TestMemoryPackImportUsesLegacySourceAndValueHints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import legacy source: %v", err)
 	}
-	if legacyResult.Status != domain.SkillPackImportStatusApplied || remember.reqs[0].Evidence[0].Source != "legacy" {
+	if legacyResult.Status != domain.SkillPackImportStatusSubmitted || remember.reqs[0].Evidence[0].Source != "legacy" {
 		t.Fatalf("legacy import result=%#v request=%#v", legacyResult, remember.reqs)
 	}
 
@@ -774,7 +774,7 @@ func TestMemoryPackImportUsesLegacySourceAndValueHints(t *testing.T) {
 	}
 	hint := valueRemember.reqs[0].RelationshipHints[0]
 	objectValue, ok := hint["object_value"].(map[string]any)
-	if valueResult.Status != domain.SkillPackImportStatusApplied || !ok || objectValue["type"] != "date" {
+	if valueResult.Status != domain.SkillPackImportStatusSubmitted || !ok || objectValue["type"] != "date" {
 		t.Fatalf("value import result=%#v hint=%#v", valueResult, hint)
 	}
 	if valueRemember.reqs[0].Evidence[0].Authority != "authoritative" || !strings.HasPrefix(valueRemember.reqs[0].Evidence[0].Source, "memory_pack:") {
@@ -863,13 +863,14 @@ func TestMemoryPackRollbackBlocksCrossOwnerAndSemanticEffects(t *testing.T) {
 		ImportID:       "import-staged",
 		TeamID:         teamID.String(),
 		OwnerProfileID: ownerID.String(),
-		Status:         domain.SkillPackImportStatusApplied,
+		Status:         domain.SkillPackImportStatusSubmitted,
+		SubmissionID:   "submission-canonical",
 	}
 	ledger.changes[ledgerKey(teamID.String(), "import-staged")] = []domain.SkillPackImportChange{{
 		ImportID:   "import-staged",
 		TeamID:     teamID.String(),
-		EntityType: "v2_ingest",
-		EntityID:   "ingest-canonical",
+		EntityType: "submission",
+		EntityID:   "submission-canonical",
 		Action:     domain.SkillPackChangeActionLinked,
 	}}
 	svc := NewMemoryPackService(MemoryPackDependencies{Ledger: ledger})
@@ -893,33 +894,15 @@ func TestMemoryPackRollbackBlocksCrossOwnerAndSemanticEffects(t *testing.T) {
 		t.Fatalf("blocked rollback = %#v", blocked)
 	}
 
-	safe, err := svc.Rollback(authenticatedMemoryPackContext(teamID, ownerID, uuid.New()), RollbackRequest{
+	submitted, err := svc.Rollback(authenticatedMemoryPackContext(teamID, ownerID, uuid.New()), RollbackRequest{
 		ImportID: "import-staged",
 		DryRun:   true,
 	})
 	if err != nil {
-		t.Fatalf("staged dry-run rollback: %v", err)
+		t.Fatalf("submitted dry-run rollback: %v", err)
 	}
-	if safe.Status != "safe" || !safe.DryRun || ledger.imports[ledgerKey(teamID.String(), "import-staged")].Status != domain.SkillPackImportStatusApplied {
-		t.Fatalf("safe rollback = %#v record = %#v", safe, ledger.imports[ledgerKey(teamID.String(), "import-staged")])
-	}
-	if safe.ImpactToken == "" {
-		t.Fatalf("safe rollback missing impact token: %#v", safe)
-	}
-
-	rolledBack, err := svc.Rollback(authenticatedMemoryPackContext(teamID, ownerID, uuid.New()), RollbackRequest{
-		ImportID:    "import-staged",
-		Confirm:     true,
-		ImpactToken: safe.ImpactToken,
-	})
-	if err != nil {
-		t.Fatalf("staged confirmed rollback: %v", err)
-	}
-	if rolledBack.Status != domain.SkillPackImportStatusRolledBack || rolledBack.DryRun || rolledBack.RevertedCount != 1 {
-		t.Fatalf("confirmed rollback = %#v", rolledBack)
-	}
-	if ledger.imports[ledgerKey(teamID.String(), "import-staged")].Status != domain.SkillPackImportStatusRolledBack {
-		t.Fatalf("ledger status = %#v", ledger.imports[ledgerKey(teamID.String(), "import-staged")])
+	if submitted.Status != "blocked" || len(submitted.Conflicts) != 1 || !strings.Contains(submitted.Conflicts[0], "submission status") {
+		t.Fatalf("submitted rollback = %#v", submitted)
 	}
 }
 

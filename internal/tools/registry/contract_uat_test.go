@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
-
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
@@ -17,7 +15,6 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
-	correctionTargetID := uuid.NewString()
 	remember, ok := reg.Get(ToolRemember)
 	if !ok {
 		t.Fatal("BuildActive did not register remember")
@@ -29,27 +26,7 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 		"evidence": []any{
 			map[string]any{"content": "Dense-Mem uses PostgreSQL.", "idempotency_key": "eval:doc-alpha"},
 		},
-		"proposal": map[string]any{
-			"entities": []any{
-				map[string]any{"ref": "entity:dense-mem", "name": "Dense-Mem", "entity_kind": "project"},
-				map[string]any{"ref": "entity:postgres", "name": "PostgreSQL", "entity_kind": "product"},
-			},
-			"relationships": []any{
-				map[string]any{
-					"proposal_id": "rel:uses",
-					"subject_ref": "entity:dense-mem",
-					"predicate":   "uses",
-					"object_ref":  "entity:postgres",
-					"correction_target": map[string]any{
-						"relationship_id":  correctionTargetID,
-						"expected_version": 2,
-					},
-					"evidence": []any{
-						map[string]any{"evidence_index": 0, "start": 0, "end": 25},
-					},
-				},
-			},
-		},
+		"proposal": validSpanGroundedProposal(),
 	})
 	if err != nil {
 		t.Fatalf("remember.Invoke: %v", err)
@@ -57,10 +34,10 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	if err := ValidateInput(Tool{InputSchema: remember.OutputSchema}, out); err != nil {
 		t.Fatalf("validate output: %v", err)
 	}
-	if out["ingest_id"] != "ingest-canonical" {
-		t.Fatalf("ingest_id = %#v, want ingest-canonical", out["ingest_id"])
+	if out["submission_id"] != "submission-canonical" {
+		t.Fatalf("submission_id = %#v, want submission-canonical", out["submission_id"])
 	}
-	if out["processing_state"] != string(domain.PlacementRunQueued) || out["correlation_id"] != "corr-canonical" {
+	if out["processing_state"] != string(domain.SubmissionQueued) || out["correlation_id"] != "corr-canonical" {
 		t.Fatalf("output = %#v", out)
 	}
 	if stub.req.ContractVersion != domain.ContractVersion || len(stub.req.Evidence) != 1 {
@@ -77,14 +54,6 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	}
 	if len(stub.req.RelationshipHints) != 1 || stub.req.RelationshipHints[0]["proposal_id"] != "rel:uses" {
 		t.Fatalf("relationship hints = %#v", stub.req.RelationshipHints)
-	}
-	target, ok := stub.req.RelationshipHints[0]["correction_target"].(map[string]any)
-	if !ok {
-		t.Fatalf("correction target hint = %#v", stub.req.RelationshipHints[0]["correction_target"])
-	}
-	version, versionOK := schemaNumber(target["expected_version"])
-	if target["relationship_id"] != correctionTargetID || !versionOK || int(version) != 2 {
-		t.Fatalf("correction target hint = %#v", stub.req.RelationshipHints[0]["correction_target"])
 	}
 }
 

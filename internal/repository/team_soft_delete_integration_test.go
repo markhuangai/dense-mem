@@ -258,6 +258,46 @@ func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 	assert.Nil(t, loadedArchived)
 }
 
+func TestSSOCreateMappingSetsRetirementState(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "sso-create-mapping-retirement")
+	repo := NewSSORepository(appDB, rls)
+	provider := &domain.SSOProvider{
+		Name:         "sso-create-mapping-retirement",
+		Kind:         domain.SSOProviderKindGenericOIDC,
+		IssuerURL:    "https://idp.example.test",
+		ClientID:     "client",
+		Enabled:      true,
+		GroupsScopes: []string{},
+	}
+	require.NoError(t, repo.CreateProvider(ctx, provider))
+
+	active := &domain.SSOGroupMapping{
+		ProviderID: provider.ID,
+		TeamID:     uuid.MustParse(teamID),
+		GroupID:    "active-group",
+		GroupName:  "Active Group",
+		Scopes:     []string{"read"},
+		Role:       "member",
+		Enabled:    true,
+	}
+	disabled := &domain.SSOGroupMapping{
+		ProviderID: provider.ID,
+		TeamID:     uuid.MustParse(teamID),
+		GroupID:    "disabled-group",
+		GroupName:  "Disabled Group",
+		Scopes:     []string{"read"},
+		Role:       "member",
+		Enabled:    false,
+	}
+	require.NoError(t, repo.CreateMapping(ctx, active))
+	require.NoError(t, repo.CreateMapping(ctx, disabled))
+	require.Nil(t, active.RetiredAt)
+	require.NotNil(t, disabled.RetiredAt)
+}
+
 func TestActiveTeamMutationGuardSerializesWithTeamDelete(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

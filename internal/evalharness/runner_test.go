@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,6 +31,81 @@ func TestRunValidateWritesArtifacts(t *testing.T) {
 		if !fileExists(filepath.Join(out, name)) {
 			t.Fatalf("missing artifact %s", name)
 		}
+	}
+}
+
+func TestRunValidateBindsV2AuditRowsToExactCorpus(t *testing.T) {
+	dir := writeEvalFixture(t)
+	manifestPath := filepath.Join(dir, "seed_manifest.json")
+	suitePath := filepath.Join(dir, "suite.jsonl")
+	manifest := SeedManifest{
+		SchemaVersion:           SeedSchemaVersionV2,
+		SeedID:                  "fixture-v2",
+		CorpusFile:              "corpus.jsonl",
+		CasesFile:               "cases.jsonl",
+		QrelsFile:               "qrels.jsonl",
+		ValidationReportFile:    "validation_report.json",
+		ProposalAuditReportFile: "proposal_audit_report.json",
+		ParentSeedID:            "fixture-v1",
+		ParentSeedHash:          "sha256:parent",
+		Generator:               "fixture-generator",
+	}
+	if err := writeJSONFile(manifestPath, manifest); err != nil {
+		t.Fatalf("write v2 manifest: %v", err)
+	}
+	seedHash, err := SeedHash(manifestPath, &manifest)
+	if err != nil {
+		t.Fatalf("hash v2 seed: %v", err)
+	}
+	if err := writeJSONFile(filepath.Join(dir, manifest.ValidationReportFile), seedValidationReport{
+		SchemaVersion: "dense-mem.eval.validation.v1",
+		SeedID:        manifest.SeedID,
+		Status:        "passed",
+		SeedHash:      seedHash,
+	}); err != nil {
+		t.Fatalf("write validation report: %v", err)
+	}
+	corpus, err := proposalAuditCorpusRows(manifestPath, manifest.CorpusFile)
+	if err != nil {
+		t.Fatalf("read audit corpus: %v", err)
+	}
+	policyHash := "sha256:audit-policy"
+	auditRows := []proposalAuditRow{corpus["doc-alpha"], corpus["doc-beta"]}
+	for index := range auditRows {
+		auditRows[index].AuditPolicySHA256 = policyHash
+	}
+	report := proposalAuditReport{
+		SchemaVersion:     "dense-mem.eval.proposal_audit.v1",
+		SeedID:            manifest.SeedID,
+		ParentSeedHash:    manifest.ParentSeedHash,
+		AuditMode:         "model_only",
+		AuditPolicySHA256: policyHash,
+		Status:            "passed",
+		AuditedRows:       len(auditRows),
+		Rows:              auditRows,
+	}
+	if err := writeJSONFile(filepath.Join(dir, manifest.ProposalAuditReportFile), report); err != nil {
+		t.Fatalf("write audit report: %v", err)
+	}
+
+	if _, err := Run(context.Background(), RunOptions{
+		Mode:             "validate",
+		SeedManifestPath: manifestPath,
+		SuitePath:        suitePath,
+	}); err != nil {
+		t.Fatalf("validate exact v2 audit: %v", err)
+	}
+
+	report.Rows[0].ProposalSHA256 = "sha256:substituted"
+	if err := writeJSONFile(filepath.Join(dir, manifest.ProposalAuditReportFile), report); err != nil {
+		t.Fatalf("rewrite audit report: %v", err)
+	}
+	if _, err := Run(context.Background(), RunOptions{
+		Mode:             "validate",
+		SeedManifestPath: manifestPath,
+		SuitePath:        suitePath,
+	}); err == nil || !strings.Contains(err.Error(), "does not match the exact corpus") {
+		t.Fatalf("validate substituted v2 audit err = %v", err)
 	}
 }
 
@@ -185,10 +259,10 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 		"eval:doc-beta":  "frag-beta",
 	}
 	var rememberCalls int
-	var placementPolls int
+	var submissionPolls int
 	var recallCalls int
 	var controlPatched bool
-	placementIngests := map[string]bool{}
+	submissionIDs := map[string]bool{}
 
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -213,30 +287,27 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			evidence := input["evidence"].([]any)
 			firstEvidence := evidence[0].(map[string]any)
 			idempotencyKey := firstEvidence["idempotency_key"].(string)
-			id, ok := rememberIDs[idempotencyKey]
+			_, ok := rememberIDs[idempotencyKey]
 			if !ok {
 				t.Fatalf("remember input = %#v", input)
 			}
+			if input["idempotency_key"] != idempotencyKey {
+				t.Fatalf("remember idempotency key = %#v; want %q", input["idempotency_key"], idempotencyKey)
+			}
 			rememberCalls++
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ingest_id": strings.TrimPrefix(idempotencyKey, "eval:"),
-				"status":    "queued",
-				"evidence":  []map[string]any{{"id": id}},
-			})
-		case "tool:get_memory_placement":
+			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-" + strings.TrimPrefix(idempotencyKey, "eval:"), "processing_state": "queued"})
+		case "tool:get_submission_status":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				t.Fatalf("decode placement body: %v", err)
+				t.Fatalf("decode submission body: %v", err)
 			}
-			ingestID, _ := input["ingest_id"].(string)
-			if ingestID != "doc-alpha" && ingestID != "doc-beta" {
-				t.Fatalf("placement input = %#v", input)
+			submissionID, _ := input["submission_id"].(string)
+			if submissionID != "submission-doc-alpha" && submissionID != "submission-doc-beta" {
+				t.Fatalf("submission input = %#v", input)
 			}
-			placementIngests[ingestID] = true
-			placementPolls++
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"placement": map[string]any{"status": "completed"},
-			})
+			submissionIDs[submissionID] = true
+			submissionPolls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"processing_state": "completed", "search_state": "current"})
 		case "tool:eval_list_knowledge_refs":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"items": []map[string]any{
@@ -260,7 +331,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"query": input["query"],
 				"ranked_refs": []map[string]any{{
-					"type": "fragment",
+					"type": "evidence",
 					"id":   refID,
 					"rank": 1,
 				}},
@@ -290,11 +361,11 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 	if summary.ScoredCaseCount != 2 || summary.AverageRecallAtK != 1 || summary.AverageMRR != 1 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	if !controlPatched || rememberCalls != 2 || placementPolls != 2 || recallCalls != 2 {
-		t.Fatalf("control/remember/placement/recall calls = %v/%d/%d/%d", controlPatched, rememberCalls, placementPolls, recallCalls)
+	if !controlPatched || rememberCalls != 2 || submissionPolls != 2 || recallCalls != 2 {
+		t.Fatalf("control/remember/submission/recall calls = %v/%d/%d/%d", controlPatched, rememberCalls, submissionPolls, recallCalls)
 	}
-	if !placementIngests["doc-alpha"] || !placementIngests["doc-beta"] {
-		t.Fatalf("placement ingests = %#v; want doc-alpha and doc-beta", placementIngests)
+	if !submissionIDs["submission-doc-alpha"] || !submissionIDs["submission-doc-beta"] {
+		t.Fatalf("submission IDs = %#v; want both submissions", submissionIDs)
 	}
 }
 
@@ -307,11 +378,11 @@ func TestRunRejectsInvalidOptionsAndSuite(t *testing.T) {
 		{name: "bad mode", opts: RunOptions{Mode: "smoke"}},
 		{name: "missing seed", opts: RunOptions{Mode: "validate", SuitePath: filepath.Join(dir, "suite.jsonl")}},
 		{name: "missing suite", opts: RunOptions{Mode: "validate", SeedManifestPath: filepath.Join(dir, "seed_manifest.json")}},
-		{name: "negative placement timeout", opts: RunOptions{
-			Mode:             "validate",
-			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
-			SuitePath:        filepath.Join(dir, "suite.jsonl"),
-			PlacementTimeout: -time.Second,
+		{name: "negative submission timeout", opts: RunOptions{
+			Mode:              "validate",
+			SeedManifestPath:  filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:         filepath.Join(dir, "suite.jsonl"),
+			SubmissionTimeout: -time.Second,
 		}},
 		{name: "resume outside import mode", opts: RunOptions{
 			Mode:                   "validate",
@@ -914,49 +985,4 @@ func TestScoreTracesScoresDreamRefsSeparately(t *testing.T) {
 	if summary.Slices["dream_neighbor_hypothesis"].DreamScoredCaseCount != 1 || summary.Slices["dream_neighbor_hypothesis"].AverageDreamBadAtK != 1 {
 		t.Fatalf("slice summary = %+v", summary.Slices)
 	}
-}
-
-func writeEvalFixture(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	manifest := SeedManifest{
-		SchemaVersion: SeedSchemaVersion,
-		SeedID:        "fixture",
-		CorpusFile:    "corpus.jsonl",
-		CasesFile:     "cases.jsonl",
-		QrelsFile:     "qrels.jsonl",
-	}
-	if err := writeJSONFile(filepath.Join(dir, "seed_manifest.json"), manifest); err != nil {
-		t.Fatalf("write manifest: %v", err)
-	}
-	if err := writeJSONL(filepath.Join(dir, "corpus.jsonl"), []CorpusItem{
-		{SourceDocID: "doc-alpha", Content: "Alpha is the first Greek letter."},
-		{SourceDocID: "doc-beta", Content: "Beta is the second Greek letter."},
-	}); err != nil {
-		t.Fatalf("write corpus: %v", err)
-	}
-	if err := writeJSONL(filepath.Join(dir, "cases.jsonl"), []Case{
-		{CaseID: "case-1", Query: "What is alpha?", Slices: []string{"direct"}, Limit: 2},
-		{CaseID: "case-2", Query: "What is beta?", Slices: []string{"direct"}, Limit: 2},
-	}); err != nil {
-		t.Fatalf("write cases: %v", err)
-	}
-	if err := writeJSONL(filepath.Join(dir, "qrels.jsonl"), []QRel{
-		{CaseID: "case-1", RequiredRefs: []Ref{{Type: "source_doc", SourceDocID: "doc-alpha", Grade: 1}}},
-		{CaseID: "case-2", RequiredRefs: []Ref{{Type: "source_doc", SourceDocID: "doc-beta", Grade: 1}}},
-	}); err != nil {
-		t.Fatalf("write qrels: %v", err)
-	}
-	if err := writeJSONL(filepath.Join(dir, "suite.jsonl"), []SuiteCase{
-		{CaseID: "case-1"},
-		{CaseID: "case-2"},
-	}); err != nil {
-		t.Fatalf("write suite: %v", err)
-	}
-	return dir
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

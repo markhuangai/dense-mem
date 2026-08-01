@@ -4,6 +4,7 @@ import "time"
 
 const (
 	SkillPackImportStatusInspecting  = "inspecting"
+	SkillPackImportStatusSubmitted   = "submitted"
 	SkillPackImportStatusApplied     = "applied"
 	SkillPackImportStatusFailed      = "failed"
 	SkillPackImportStatusRolledBack  = "rolled_back"
@@ -26,6 +27,7 @@ type SkillPackImport struct {
 	Name               string         `json:"name"`
 	Mode               string         `json:"mode"`
 	Status             string         `json:"status"`
+	SubmissionID       string         `json:"submission_id,omitempty"`
 	IngestID           string         `json:"ingest_id,omitempty"`
 	PlacementRunID     string         `json:"placement_run_id,omitempty"`
 	ItemCount          int            `json:"item_count"`

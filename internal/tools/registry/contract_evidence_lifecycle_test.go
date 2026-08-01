@@ -15,10 +15,11 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 	targetB := uuid.NewString()
 	valid := map[string]any{
 		"evidence": []any{map[string]any{
-			"content":                 "Dense-Mem now uses the replacement evidence.",
+			"content":                 "A uses B.",
 			"idempotency_key":         "replacement-a",
 			"supersedes_evidence_ids": []any{targetA},
 		}},
+		"proposal": directSupersessionProposal(),
 	}
 	require.NoError(t, ValidateContractInput(remember, valid, []string{"write"}))
 
@@ -32,7 +33,7 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 			input: map[string]any{"evidence": []any{map[string]any{
 				"content":                 "Replacement without an evidence retry key.",
 				"supersedes_evidence_ids": []any{targetA},
-			}}},
+			}}, "proposal": directSupersessionProposal()},
 			want: "idempotency_key is required",
 		},
 		{
@@ -40,7 +41,7 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 			input: map[string]any{"evidence": []any{
 				map[string]any{"content": "First replacement.", "idempotency_key": "replacement-a", "supersedes_evidence_ids": []any{targetA}},
 				map[string]any{"content": "Second replacement.", "idempotency_key": "replacement-a", "supersedes_evidence_ids": []any{targetB}},
-			}},
+			}, "proposal": directSupersessionProposal()},
 			want: "duplicates evidence[0] direct supersession",
 		},
 		{
@@ -48,7 +49,7 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 			input: map[string]any{"evidence": []any{
 				map[string]any{"content": "First replacement.", "idempotency_key": "replacement-a", "supersedes_evidence_ids": []any{targetA}},
 				map[string]any{"content": "Second replacement.", "idempotency_key": "replacement-b", "supersedes_evidence_ids": []any{targetA}},
-			}},
+			}, "proposal": directSupersessionProposal()},
 			want: "duplicates target from evidence[0]",
 		},
 		{
@@ -60,7 +61,7 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 				"source_key":               "wiki:lifecycle",
 				"source_revision":          "rev-2",
 				"previous_source_revision": "rev-1",
-			}}},
+			}}, "proposal": directSupersessionProposal()},
 			want: "cannot be combined with previous_source_revision",
 		},
 	}
@@ -69,6 +70,22 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 			err := ValidateContractInput(remember, tc.input, []string{"write"})
 			require.ErrorContains(t, err, tc.want)
 		})
+	}
+}
+
+func directSupersessionProposal() map[string]any {
+	return map[string]any{
+		"entities": []any{
+			map[string]any{"ref": "a", "name": "A", "evidence": []any{map[string]any{"evidence_index": 0, "start": 0, "end": 1}}},
+			map[string]any{"ref": "b", "name": "B", "evidence": []any{map[string]any{"evidence_index": 0, "start": 7, "end": 8}}},
+		},
+		"relationships": []any{map[string]any{
+			"proposal_id": "uses",
+			"subject_ref": "a",
+			"predicate":   map[string]any{"surface": "uses", "evidence_index": 0, "start": 2, "end": 6},
+			"object_ref":  "b",
+			"evidence":    []any{map[string]any{"evidence_index": 0, "start": 0, "end": 9}},
+		}},
 	}
 }
 

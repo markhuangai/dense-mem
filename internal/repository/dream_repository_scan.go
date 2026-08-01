@@ -42,7 +42,7 @@ func hypothesisSelectSQL(where string) string {
 		       ARRAY(SELECT source_owner_id::text FROM unnest(source_owner_profile_ids) AS source_owner(source_owner_id)),
 		       COALESCE(content_hash, ''), COALESCE(cycle_run_id::text, ''),
 		       generator_kind, generator_version, invalidated_reason,
-		       COALESCE(submitted_ingest_id::text, ''), submitted_at,
+		       COALESCE(submitted_ingest_id::text, ''), COALESCE(submitted_submission_id::text, ''), submitted_at,
 		       payload, created_at, updated_at
 		FROM hypotheses
 	` + where
@@ -58,7 +58,7 @@ func hypothesisUpdateReturningSQL(update string) string {
 		          ARRAY(SELECT source_owner_id::text FROM unnest(source_owner_profile_ids) AS source_owner(source_owner_id)),
 		          COALESCE(content_hash, ''), COALESCE(cycle_run_id::text, ''),
 		          generator_kind, generator_version, invalidated_reason,
-		          COALESCE(submitted_ingest_id::text, ''), submitted_at,
+		          COALESCE(submitted_ingest_id::text, ''), COALESCE(submitted_submission_id::text, ''), submitted_at,
 		          payload, created_at, updated_at
 	`
 }
@@ -107,6 +107,7 @@ func scanHypothesisRecord(rows *sql.Rows) (*HypothesisRecord, error) {
 		&record.GeneratorVersion,
 		&record.InvalidatedReason,
 		&record.SubmittedIngestID,
+		&record.SubmittedSubmissionID,
 		&submittedAt,
 		&payloadRaw,
 		&record.CreatedAt,

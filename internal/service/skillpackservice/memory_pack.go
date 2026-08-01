@@ -233,7 +233,16 @@ func (s *memoryPackService) Import(ctx context.Context, req ImportRequest) (*Imp
 		return nil, err
 	}
 
-	rememberReq, itemResults := rememberRequestFromPack(importID, loaded, req.Mode, selected, decisions)
+	rememberReq, itemResults, err := rememberRequestFromPack(importID, loaded, req.Mode, selected, decisions)
+	if err != nil {
+		status := domain.SkillPackImportStatusFailed
+		summary := MemoryPackImportSummary(loaded, req.Mode, "", itemResults)
+		summary["error"] = err.Error()
+		if updateErr := s.deps.Ledger.UpdateImportStatus(ctx, actor.TeamID.String(), importID, status, 0, len(itemResults), summary); updateErr != nil {
+			return nil, errors.Join(err, updateErr)
+		}
+		return &ImportResult{ImportID: importID, ArtifactHash: loaded.hash, Mode: req.Mode, Status: status, Error: err.Error(), Items: itemResults}, nil
+	}
 	if len(rememberReq.Evidence) == 0 {
 		status := domain.SkillPackImportStatusNeedsReview
 		summary := MemoryPackImportSummary(loaded, req.Mode, "", itemResults)
@@ -257,30 +266,35 @@ func (s *memoryPackService) Import(ctx context.Context, req ImportRequest) (*Imp
 		_ = s.deps.Ledger.UpdateImportStatus(ctx, actor.TeamID.String(), importID, status, 0, len(itemResults), summary)
 		return &ImportResult{ImportID: importID, ArtifactHash: loaded.hash, Mode: req.Mode, Status: status, Error: err.Error(), Items: itemResults}, nil
 	}
-	applied, skipped := MemoryPackImportCounts(itemResults)
-	summary := MemoryPackImportSummary(loaded, req.Mode, remember.IngestID, itemResults)
-	status := domain.SkillPackImportStatusApplied
-	if applied == 0 {
+	submitted, skipped := MemoryPackImportCounts(itemResults)
+	for index := range itemResults {
+		if itemResults[index].Status == "staged" {
+			itemResults[index].Status = "submitted"
+		}
+	}
+	summary := MemoryPackImportSummary(loaded, req.Mode, remember.SubmissionID, itemResults)
+	status := domain.SkillPackImportStatusSubmitted
+	if submitted == 0 {
 		status = domain.SkillPackImportStatusNeedsReview
 	}
-	if err := s.deps.Ledger.UpdateImportStatus(ctx, actor.TeamID.String(), importID, status, applied, skipped, summary); err != nil {
+	if err := s.deps.Ledger.UpdateImportStatus(ctx, actor.TeamID.String(), importID, status, 0, skipped, summary); err != nil {
 		return &ImportResult{
 			ImportID:     importID,
 			ArtifactHash: loaded.hash,
 			Mode:         req.Mode,
 			Status:       "status_update_failed",
-			IngestID:     remember.IngestID,
+			SubmissionID: remember.SubmissionID,
 			Error:        err.Error(),
 			Items:        itemResults,
 		}, nil
 	}
-	if err := s.appendImportChanges(ctx, actor.TeamID.String(), importID, remember.IngestID, itemResults); err != nil {
+	if err := s.appendImportChanges(ctx, actor.TeamID.String(), importID, remember.SubmissionID); err != nil {
 		return &ImportResult{
 			ImportID:     importID,
 			ArtifactHash: loaded.hash,
 			Mode:         req.Mode,
 			Status:       "change_ledger_failed",
-			IngestID:     remember.IngestID,
+			SubmissionID: remember.SubmissionID,
 			Error:        err.Error(),
 			Items:        itemResults,
 		}, nil
@@ -290,10 +304,10 @@ func (s *memoryPackService) Import(ctx context.Context, req ImportRequest) (*Imp
 		ArtifactHash:      loaded.hash,
 		Mode:              req.Mode,
 		Status:            status,
-		IngestID:          remember.IngestID,
+		SubmissionID:      remember.SubmissionID,
 		CheckAfterSeconds: remember.CheckAfterSeconds,
 		StatusTool:        remember.StatusTool,
-		AppliedCount:      applied,
+		AppliedCount:      0,
 		SkippedCount:      skipped,
 		Items:             itemResults,
 		DecisionsRequired: inspection.DecisionsRequired,
@@ -332,7 +346,7 @@ func (s *memoryPackService) Rollback(ctx context.Context, req RollbackRequest) (
 		ImportID:      importID,
 		Status:        "safe",
 		DryRun:        true,
-		ImpactSummary: "rollback can mark this memory-pack import as rolled back; staged placement evidence remains append-only and semantic effects are not deleted",
+		ImpactSummary: "rollback can mark this memory-pack import as rolled back; staged submission evidence remains append-only and semantic effects are not deleted",
 		ImpactToken:   impactToken,
 	}
 	if req.DryRun || !req.Confirm {

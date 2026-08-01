@@ -210,7 +210,7 @@ func TestAuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 	}
 	feedback := resolveDreamFeedbackContractOutput(&dreamservice.ResolveFeedbackResult{
 		Dream:  dream,
-		Memory: &memoryservice.RememberResult{IngestID: "ingest-canonical"},
+		Memory: &memoryservice.RememberResult{SubmissionID: "submission-canonical"},
 	})
 	if err := ValidateInput(Tool{InputSchema: resolveDreamFeedbackOutputSchema()}, feedback); err != nil {
 		t.Fatalf("dream feedback output validation failed: %v; output=%#v", err, feedback)
@@ -281,9 +281,9 @@ func TestAuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 	}
 
 	imported := importMemoryPackContractOutput(&skillpackservice.ImportResult{
-		ImportID: "import-1",
-		Status:   domain.SkillPackImportStatusApplied,
-		IngestID: "ingest-1",
+		ImportID:     "import-1",
+		Status:       domain.SkillPackImportStatusSubmitted,
+		SubmissionID: "submission-1",
 		Items: []skillpackservice.ImportItemResult{
 			{ItemID: "item-skipped", Status: "skipped", Decision: "skip"},
 			{ItemID: "item-failed", Status: "failed", Error: "provider unavailable"},
@@ -409,8 +409,8 @@ func TestMemoryPackContractOutputsMapCurrentLifecycleStates(t *testing.T) {
 			want: "completed",
 		},
 		{
-			name: "queued with staged evidence",
-			res:  &skillpackservice.ImportResult{ImportID: "import-queued", Status: domain.SkillPackImportStatusApplied, IngestID: "ingest-queued"},
+			name: "queued with staged submission",
+			res:  &skillpackservice.ImportResult{ImportID: "import-queued", Status: domain.SkillPackImportStatusSubmitted, SubmissionID: "submission-queued"},
 			want: "queued",
 		},
 		{
@@ -531,36 +531,12 @@ func TestContractValidationEdgeBranches(t *testing.T) {
 	}
 
 	evidence := []any{map[string]any{"content": "Dense-Mem uses PostgreSQL."}}
-	proposal := map[string]any{
-		"entities": []any{
-			map[string]any{"ref": "project_1"},
-			map[string]any{"ref": "db_1"},
-		},
-		"relationships": []any{map[string]any{
-			"proposal_id": "rel-1",
-			"subject_ref": "project_1",
-			"object_value": map[string]any{
-				"type":  "number",
-				"value": 1.5,
-			},
-			"evidence": []any{map[string]any{
-				"evidence_index": 0,
-				"start":          0,
-				"end":            9,
-			}},
-			"correction_target": map[string]any{
-				"relationship_id":  "rel-old",
-				"expected_version": 2,
-			},
-			"valid_from": "2026-07-01T00:00:00Z",
-			"valid_to":   "2026-07-02T00:00:00Z",
-		}},
-	}
+	proposal := validSpanGroundedProposal()
 	if err := validateProposalReferencesAndSpans(proposal, evidence); err != nil {
 		t.Fatalf("valid proposal rejected: %v", err)
 	}
-	badProposal := cloneMap(proposal)
-	badProposal["relationships"] = []any{map[string]any{"proposal_id": "rel-1", "subject_ref": "missing", "object_ref": "db_1"}}
+	badProposal := validSpanGroundedProposal()
+	badProposal["relationships"].([]any)[0].(map[string]any)["subject_ref"] = "missing"
 	if err := validateProposalReferencesAndSpans(badProposal, evidence); err == nil {
 		t.Fatal("unknown subject ref accepted")
 	}

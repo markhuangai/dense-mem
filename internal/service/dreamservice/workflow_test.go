@@ -379,7 +379,7 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
 	hypothesisID := uuid.NewString()
-	ingestID := uuid.NewString()
+	submissionID := uuid.NewString()
 	repo := &dreamRepositoryStub{
 		getRecord: repository.HypothesisRecord{
 			TeamID:             teamID.String(),
@@ -393,8 +393,8 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 		},
 	}
 	remember := &rememberServiceStub{result: &memoryservice.RememberResult{
-		IngestID:        ingestID,
-		ProcessingState: string(domain.PlacementRunQueued),
+		SubmissionID:    submissionID,
+		ProcessingState: string(domain.SubmissionQueued),
 	}}
 	svc := New(Dependencies{
 		Store:     repo,
@@ -430,7 +430,7 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, res.Memory)
-	require.Equal(t, ingestID, res.Memory.IngestID)
+	require.Equal(t, submissionID, res.Memory.SubmissionID)
 	require.NotNil(t, res.Dream)
 	assert.Equal(t, domain.DreamStatusSubmitted, res.Dream.Status)
 	require.Len(t, remember.requests, 1)
@@ -439,7 +439,7 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	assert.Equal(t, hypothesisID, remember.requests[0].Evidence[0].Metadata["hypothesis_id"])
 	assert.Equal(t, teamID.String(), repo.submitInput.TeamID)
 	assert.Equal(t, ownerID.String(), repo.submitInput.ActorProfileID)
-	assert.Equal(t, ingestID, repo.submitInput.SubmittedIngestID)
+	assert.Equal(t, submissionID, repo.submitInput.SubmittedSubmissionID)
 }
 
 func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
@@ -507,8 +507,8 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &dreamRepositoryStub{getRecord: baseRecord}
 			remember := &rememberServiceStub{result: &memoryservice.RememberResult{
-				IngestID:        uuid.NewString(),
-				ProcessingState: string(domain.PlacementRunQueued),
+				SubmissionID:    uuid.NewString(),
+				ProcessingState: string(domain.SubmissionQueued),
 			}}
 			svc := New(Dependencies{
 				Store:     repo,
@@ -902,7 +902,7 @@ func (s *dreamRepositoryStub) SubmitHypothesis(_ context.Context, input reposito
 	}
 	record := s.getRecord
 	record.Status = string(domain.DreamStatusSubmitted)
-	record.SubmittedIngestID = input.SubmittedIngestID
+	record.SubmittedSubmissionID = input.SubmittedSubmissionID
 	record.InvalidatedReason = input.InvalidatedReason
 	return &record, nil
 }
@@ -969,12 +969,12 @@ func (s *rememberServiceStub) Remember(_ context.Context, req memoryservice.Reme
 		return s.result, nil
 	}
 	return &memoryservice.RememberResult{
-		IngestID:        uuid.NewString(),
-		ProcessingState: string(domain.PlacementRunQueued),
+		SubmissionID:    uuid.NewString(),
+		ProcessingState: string(domain.SubmissionQueued),
 	}, nil
 }
 
-func (s *rememberServiceStub) GetMemoryPlacement(context.Context, memoryservice.GetMemoryPlacementRequest) (*memoryservice.PlacementRunResult, error) {
+func (s *rememberServiceStub) GetSubmissionStatus(context.Context, memoryservice.GetSubmissionStatusRequest) (*memoryservice.SubmissionStatusResult, error) {
 	if s.err != nil {
 		return nil, s.err
 	}

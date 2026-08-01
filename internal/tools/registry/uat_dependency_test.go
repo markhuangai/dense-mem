@@ -31,13 +31,9 @@ func TestBuildActiveExecutableToolsRequireDependencies(t *testing.T) {
 			},
 		},
 		{
-			name: ToolResolveMemoryPlacement,
+			name: ToolGetSubmissionStatus,
 			args: map[string]any{
-				"action":          string(domain.ResolveForget),
-				"relationship_id": "relationship-canonical",
-				"message":         "forget this relationship",
-				"idempotency_key": "forget-1",
-				"evidence":        []any{map[string]any{"content": "forget"}},
+				"submission_id": "submission-canonical",
 			},
 		},
 		{

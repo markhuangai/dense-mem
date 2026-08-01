@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,9 +16,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string, selected map[string]bool, decisions map[string]string) (memoryservice.RememberRequest, []ImportItemResult) {
+func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string, selected map[string]bool, decisions map[string]string) (memoryservice.RememberRequest, []ImportItemResult, error) {
 	evidenceByID := MemoryPackEvidenceByID(loaded.artifact)
 	evidence := []memoryservice.RememberEvidenceInput{}
+	entityHints := []map[string]any{}
 	relationshipHints := []map[string]any{}
 	results := make([]ImportItemResult, 0, len(loaded.artifact.Relationships))
 	for _, item := range loaded.artifact.Relationships {
@@ -41,7 +43,10 @@ func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string
 		evidenceIndex := len(evidence)
 		result.EvidenceIndex = evidenceIndex
 		result.Status = "staged"
-		content := MemoryPackEvidenceContent(loaded.artifact, item, evidenceByID)
+		content, entities, relationship, err := memoryPackSubmissionMaterial(importID, loaded.artifact, item, evidenceByID, evidenceIndex)
+		if err != nil {
+			return memoryservice.RememberRequest{}, results, fmt.Errorf("memory pack import item %s: %w", item.ItemID, err)
+		}
 		evidence = append(evidence, memoryservice.RememberEvidenceInput{
 			Content:        content,
 			SourceType:     MemoryPackSourceType,
@@ -64,19 +69,21 @@ func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string
 				"trusted_mode_forces_status":       false,
 			},
 		})
-		relationshipHints = append(relationshipHints, MemoryPackRelationshipHint(item, evidenceIndex))
+		entityHints = append(entityHints, entities...)
+		relationshipHints = append(relationshipHints, relationship)
 		results = append(results, result)
 	}
 	return memoryservice.RememberRequest{
 		ContractVersion:   domain.ContractVersion,
 		Evidence:          evidence,
+		EntityHints:       entityHints,
 		RelationshipHints: relationshipHints,
 		IdempotencyKey:    "memory-pack:" + importID,
-	}, results
+	}, results, nil
 }
 
-func (s *memoryPackService) appendImportChanges(ctx context.Context, teamID, importID, ingestID string, items []ImportItemResult) error {
-	if ingestID == "" {
+func (s *memoryPackService) appendImportChanges(ctx context.Context, teamID, importID, submissionID string) error {
+	if submissionID == "" {
 		return nil
 	}
 	now := s.now().UTC()
@@ -84,43 +91,20 @@ func (s *memoryPackService) appendImportChanges(ctx context.Context, teamID, imp
 		ChangeID:   uuid.NewString(),
 		ImportID:   importID,
 		TeamID:     teamID,
-		EntityType: "v2_ingest",
-		EntityID:   ingestID,
+		EntityType: "submission",
+		EntityID:   submissionID,
 		Action:     domain.SkillPackChangeActionLinked,
 		AfterState: map[string]any{
-			"ingest_id": ingestID,
+			"submission_id": submissionID,
 		},
 		CreatedAt: now,
 	}); err != nil {
 		return err
 	}
-	for _, item := range items {
-		if item.PlacementItemID == "" {
-			continue
-		}
-		if err := s.deps.Ledger.AppendChange(ctx, domain.SkillPackImportChange{
-			ChangeID:   uuid.NewString(),
-			ImportID:   importID,
-			TeamID:     teamID,
-			EntityType: "v2_placement_item",
-			EntityID:   item.PlacementItemID,
-			Action:     domain.SkillPackChangeActionLinked,
-			AfterState: map[string]any{
-				"ingest_id":              ingestID,
-				"placement_item_id":      item.PlacementItemID,
-				"memory_pack_item_id":    item.ItemID,
-				"source_relationship_id": item.SourceRelationshipID,
-				"evidence_index":         item.EvidenceIndex,
-			},
-			CreatedAt: now,
-		}); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
-func MemoryPackImportSummary(loaded loadedArtifact, mode string, ingestID string, items []ImportItemResult) map[string]any {
+func MemoryPackImportSummary(loaded loadedArtifact, mode string, submissionID string, items []ImportItemResult) map[string]any {
 	out := map[string]any{
 		"contract_version": domain.ContractVersion,
 		"artifact_format":  loaded.format,
@@ -130,8 +114,8 @@ func MemoryPackImportSummary(loaded loadedArtifact, mode string, ingestID string
 		"legacy_artifact":  loaded.legacy,
 		"items":            items,
 	}
-	if ingestID != "" {
-		out["ingest_id"] = ingestID
+	if submissionID != "" {
+		out["submission_id"] = submissionID
 	}
 	return out
 }
@@ -142,12 +126,12 @@ func importResultFromExisting(record *domain.SkillPackImport, hash string, mode 
 		ArtifactHash: hash,
 		Mode:         mode,
 		Status:       record.Status,
-		IngestID:     record.IngestID,
+		SubmissionID: record.SubmissionID,
 		AppliedCount: record.AppliedCount,
 		SkippedCount: record.SkippedCount,
 	}
-	if ingestID, _ := record.Summary["ingest_id"].(string); result.IngestID == "" {
-		result.IngestID = ingestID
+	if submissionID, _ := record.Summary["submission_id"].(string); result.SubmissionID == "" {
+		result.SubmissionID = submissionID
 	}
 	return result
 }
@@ -222,6 +206,9 @@ func rollbackConflicts(record *domain.SkillPackImport, changes []domain.SkillPac
 	if record.Status == domain.SkillPackImportStatusRolledBack {
 		return []string{"import is already rolled back"}
 	}
+	if record.Status == domain.SkillPackImportStatusSubmitted {
+		return []string{"import is still represented by a submission; check its submission status before lifecycle changes"}
+	}
 	for _, change := range changes {
 		if change.EntityType == "relationship" || change.EntityType == "fact" || change.EntityType == "claim" {
 			return []string{"import has semantic graph effects; rollback requires lifecycle dependency checks"}
@@ -242,9 +229,9 @@ func rollbackImpactToken(record *domain.SkillPackImport, changes []domain.SkillP
 
 func MemoryPackEvidenceContent(artifact MemoryPackArtifact, item MemoryPackRelationship, evidence map[string]MemoryPackEvidence) string {
 	var b strings.Builder
-	_, _ = fmt.Fprintf(&b, "Memory pack %q proposes a relationship: %s %s %s.", artifact.Name, item.Subject.DisplayName, item.PredicateKey, MemoryPackEndpointText(item.Object))
+	b.WriteString(memoryPackRelationshipLead(item))
 	if item.SourceRelationshipID != "" {
-		_, _ = fmt.Fprintf(&b, "\nSource relationship %s version %d is provenance only.", item.SourceRelationshipID, item.SourceRelationshipVersion)
+		_, _ = fmt.Fprintf(&b, "\nMemory pack %q records source relationship %s version %d as provenance only.", artifact.Name, item.SourceRelationshipID, item.SourceRelationshipVersion)
 	}
 	for _, evidenceID := range item.SupportEvidenceIDs {
 		supportEvidence, ok := evidence[evidenceID]
@@ -256,33 +243,118 @@ func MemoryPackEvidenceContent(artifact MemoryPackArtifact, item MemoryPackRelat
 	return b.String()
 }
 
-func MemoryPackRelationshipHint(item MemoryPackRelationship, evidenceIndex int) map[string]any {
-	hint := map[string]any{
-		"ref":                         item.ItemID,
-		"subject_ref":                 item.Subject.Ref,
-		"subject_name":                item.Subject.DisplayName,
-		"predicate":                   item.PredicateKey,
-		"predicate_version":           item.PredicateVersion,
-		"source_relationship_id":      item.SourceRelationshipID,
-		"source_relationship_version": item.SourceRelationshipVersion,
-		"source_owner_profile_id":     item.SourceOwnerProfileID,
-		"evidence": []map[string]any{{
+func memoryPackSubmissionMaterial(
+	importID string,
+	artifact MemoryPackArtifact,
+	item MemoryPackRelationship,
+	evidence map[string]MemoryPackEvidence,
+	evidenceIndex int,
+) (string, []map[string]any, map[string]any, error) {
+	subject := strings.TrimSpace(item.Subject.DisplayName)
+	predicate := strings.TrimSpace(item.PredicateKey)
+	object := strings.TrimSpace(MemoryPackEndpointText(item.Object))
+	if subject == "" || predicate == "" || object == "" {
+		return "", nil, nil, errors.New("subject, predicate, and object text are required")
+	}
+	lead := memoryPackRelationshipLead(item)
+	content := MemoryPackEvidenceContent(artifact, item, evidence)
+	subjectStart := 0
+	subjectEnd := len([]rune(subject))
+	predicateStart := subjectEnd + 1
+	predicateEnd := predicateStart + len([]rune(predicate))
+	objectStart := predicateEnd + 1
+	objectEnd := objectStart + len([]rune(object))
+	leadEnd := len([]rune(lead))
+
+	subjectRef := "memory_pack:" + importID + ":" + item.ItemID + ":subject"
+	entities := []map[string]any{memoryPackEntityProposal(subjectRef, subject, item.Subject.SourceID, evidenceIndex, subjectStart, subjectEnd)}
+	relationship := map[string]any{
+		"proposal_id": item.ItemID,
+		"subject_ref": subjectRef,
+		"predicate": map[string]any{
+			"surface":        predicate,
 			"evidence_index": evidenceIndex,
-			"quote":          MemoryPackEndpointText(item.Object),
+			"start":          predicateStart,
+			"end":            predicateEnd,
+		},
+		"polarity": memoryPackPolarity(item.Polarity),
+		"modality": "statement",
+		"evidence": []any{map[string]any{
+			"evidence_index": evidenceIndex,
+			"start":          0,
+			"end":            leadEnd,
 		}},
 	}
 	if item.Object.Kind == "value" {
-		hint["object_value"] = map[string]any{
-			"ref":       item.Object.Ref,
-			"type":      item.Object.ValueType,
-			"value":     item.Object.Value,
-			"source_id": item.Object.SourceID,
+		value, err := memoryPackObjectValue(item.Object)
+		if err != nil {
+			return "", nil, nil, err
 		}
+		relationship["object_value"] = value
 	} else {
-		hint["object_ref"] = item.Object.Ref
-		hint["object_name"] = item.Object.DisplayName
+		objectRef := "memory_pack:" + importID + ":" + item.ItemID + ":object"
+		entities = append(entities, memoryPackEntityProposal(objectRef, object, item.Object.SourceID, evidenceIndex, objectStart, objectEnd))
+		relationship["object_ref"] = objectRef
 	}
-	return hint
+	return content, entities, relationship, nil
+}
+
+func memoryPackRelationshipLead(item MemoryPackRelationship) string {
+	return strings.TrimSpace(item.Subject.DisplayName) + " " + strings.TrimSpace(item.PredicateKey) + " " + strings.TrimSpace(MemoryPackEndpointText(item.Object)) + "."
+}
+
+func memoryPackEntityProposal(ref, name, knownEntityID string, evidenceIndex, start, end int) map[string]any {
+	proposal := map[string]any{
+		"ref":  ref,
+		"name": name,
+		"evidence": []any{map[string]any{
+			"evidence_index": evidenceIndex,
+			"start":          start,
+			"end":            end,
+		}},
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(knownEntityID)); err == nil {
+		proposal["known_entity_id"] = strings.TrimSpace(knownEntityID)
+	}
+	return proposal
+}
+
+func memoryPackObjectValue(endpoint MemoryPackEndpoint) (map[string]any, error) {
+	valueType := strings.TrimSpace(endpoint.ValueType)
+	value := strings.TrimSpace(endpoint.Value)
+	if valueType == "" || value == "" {
+		return nil, errors.New("value type and value are required")
+	}
+	var parsed any = value
+	switch valueType {
+	case string(domain.ValueTypeNumber):
+		parsedNumber, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return nil, fmt.Errorf("number value is invalid: %w", err)
+		}
+		parsed = parsedNumber
+	case string(domain.ValueTypeBoolean):
+		parsedBoolean, err := strconv.ParseBool(value)
+		if err != nil {
+			return nil, fmt.Errorf("boolean value is invalid: %w", err)
+		}
+		parsed = parsedBoolean
+	case string(domain.ValueTypeString), string(domain.ValueTypeDate), string(domain.ValueTypeDateTime):
+	default:
+		return nil, fmt.Errorf("value type %q is unsupported", valueType)
+	}
+	return map[string]any{
+		"type":    valueType,
+		"value":   parsed,
+		"display": value,
+	}, nil
+}
+
+func memoryPackPolarity(value string) string {
+	if strings.TrimSpace(value) == "-" {
+		return "-"
+	}
+	return "+"
 }
 
 func MemoryPackEvidenceByID(artifact MemoryPackArtifact) map[string]MemoryPackEvidence {

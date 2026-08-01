@@ -1,7 +1,7 @@
-# Eval-only persistence override for the root docker-compose.yml.
+# Submission-evaluation persistence override for the root docker-compose.yml.
 #
 # Use with:
-#   docker compose -p densemem_eval_full \
+#   docker compose -p densemem_eval_submission \
 #     -f docker-compose.yml \
 #     -f tests/eval/docker-compose.eval.yml up -d --build
 
@@ -12,14 +12,14 @@ services:
 
   postgres:
     volumes:
-      - ${V1_COMPOSE_DATA_DIR:-./tests/eval/runtime/v1}/postgres:/var/lib/postgresql
+      - ${EVAL_COMPOSE_DATA_DIR:-./tests/eval/runtime/v2}/postgres:/var/lib/postgresql
 
   redis:
     volumes:
-      - ${V1_COMPOSE_DATA_DIR:-./tests/eval/runtime/v1}/redis:/data
+      - ${EVAL_COMPOSE_DATA_DIR:-./tests/eval/runtime/v2}/redis:/data
 
   prometheus:
     user: "0:0"
     volumes:
-      - ${V1_COMPOSE_DATA_DIR:-./tests/eval/runtime/v1}/prometheus:/prometheus
+      - ${EVAL_COMPOSE_DATA_DIR:-./tests/eval/runtime/v2}/prometheus:/prometheus
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro

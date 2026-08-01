@@ -8,7 +8,7 @@
     "input": {
       "evidence": [
         {
-          "content": "Dense-Mem durable authority is PostgreSQL with pgvector.",
+          "content": "Dense-Mem uses PostgreSQL.",
           "source_type": "manual",
           "source": "architecture review",
           "source_group": "wiki:target-architecture",
@@ -23,93 +23,60 @@
             "ref": "entity:dense-mem",
             "name": "Dense-Mem",
             "entity_kind": "project",
-            "known_entity_id": null
+            "known_entity_id": null,
+            "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]
+          },
+          {
+            "ref": "entity:postgres",
+            "name": "PostgreSQL",
+            "entity_kind": "product",
+            "evidence": [{"evidence_index": 0, "start": 15, "end": 25}]
           }
         ],
         "relationships": [
           {
             "proposal_id": "rel:authority",
             "subject_ref": "entity:dense-mem",
-            "predicate": "uses_durable_authority",
-            "object_value": {
-              "type": "string",
-              "value": "PostgreSQL with pgvector"
-            },
+            "predicate": {"surface": "uses", "evidence_index": 0, "start": 10, "end": 14},
+            "object_ref": "entity:postgres",
             "polarity": "+",
             "modality": "statement",
             "evidence": [
-              {"evidence_index": 0, "start": 31, "end": 56}
+              {"evidence_index": 0, "start": 0, "end": 26}
             ]
           }
         ]
       }
     },
     "output": {
-      "ingest_id": "ing-1",
+      "submission_id": "submission-1",
       "processing_state": "queued",
       "check_after_seconds": 3,
-      "status_tool": "get_memory_placement",
+      "status_tool": "get_submission_status",
       "correlation_id": "req-1"
     }
   },
   {
-    "name": "valid placement poll",
-    "tool": "get_memory_placement",
+    "name": "valid submission status",
+    "tool": "get_submission_status",
     "contract_version": "dense-mem.v2.4",
     "scopes": ["read"],
     "valid": true,
-    "input": {"ingest_id": "ing-1"},
+    "input": {"submission_id": "submission-1"},
     "output": {
-      "ingest_id": "ing-1",
+      "submission_id": "submission-1",
       "processing_state": "completed",
       "search_state": "current",
-      "items": [
+      "evidence": [
         {
-          "item_id": "item-1",
-          "evidence_id": "ev-1",
-	      "superseded_evidence_ids": [],
-          "version": 1,
           "evidence_index": 0,
-          "category": "evidence_processed",
+          "status": "accepted",
           "search_state": "current",
-          "relationship_outcomes": [
-            {
-              "proposal_id": "rel:authority",
-              "observation_id": "obs-1",
-              "relationship_id": "rel-1",
-              "owner_profile_id": "profile-a",
-              "relationship_status": "active",
-              "category": "relationship_accepted",
-              "reason": "Entailed authoritative evidence."
-            }
-          ],
-          "review_tasks": [],
-          "errors": []
+          "reason_code": "assessed_and_promoted"
         }
       ],
+      "relationship_outcomes": [{"proposal_id": "rel:authority", "relationship_id": "rel-1", "status": "accepted", "reason_code": "assessed_and_promoted"}],
       "errors": []
-    }
-  },
-  {
-    "name": "valid placement entity resolution",
-    "tool": "resolve_memory_placement",
-    "contract_version": "dense-mem.v2.4",
-    "scopes": ["write"],
-    "valid": true,
-    "input": {
-      "ingest_id": "ing-1",
-      "placement_item_id": "item-1",
-      "placement_item_version": 1,
-      "action": "select_entity",
-      "entity_ref": "person-1",
-      "candidate_entity_id": "ent-1",
-      "idempotency_key": "resolve-1"
-    },
-    "output": {
-      "decision_id": "decision-1",
-      "ingest_id": "ing-1",
-      "processing_state": "queued",
-      "check_after_seconds": 3
     }
   },
   {
@@ -351,7 +318,7 @@
       "conflict_decisions": [{"item_id": "rel-1", "decision": "import_for_review"}],
       "idempotency_key": "import-1"
     },
-    "output": {"import_id": "import-1", "processing_state": "queued", "ingest_ids": ["ing-1"], "omissions": []}
+    "output": {"import_id": "import-1", "processing_state": "queued", "submission_ids": ["submission-1"], "omissions": []}
   },
   {
     "name": "valid memory pack rollback dry run",
@@ -376,7 +343,7 @@
     "scopes": ["write"],
     "valid": false,
     "want_error": "unknown field: tier",
-    "input": {"tier": "fact", "evidence": [{"content": "Clients cannot choose fact tier."}]}
+    "input": {"tier": "fact", "evidence": [{"content": "Dense-Mem uses PostgreSQL."}], "proposal": {"entities": [{"ref": "entity:dense-mem", "name": "Dense-Mem", "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]}, {"ref": "entity:postgres", "name": "PostgreSQL", "evidence": [{"evidence_index": 0, "start": 15, "end": 25}]}], "relationships": [{"proposal_id": "rel:uses", "subject_ref": "entity:dense-mem", "predicate": {"surface": "uses", "evidence_index": 0, "start": 10, "end": 14}, "object_ref": "entity:postgres", "evidence": [{"evidence_index": 0, "start": 0, "end": 26}]}]}}
   },
   {
     "name": "legacy remember hint fields rejected",
@@ -385,7 +352,7 @@
     "scopes": ["write"],
     "valid": false,
     "want_error": "unknown field: entity_hints",
-    "input": {"evidence": [{"content": "Legacy aliases must not remain frozen."}], "entity_hints": []}
+    "input": {"evidence": [{"content": "Dense-Mem uses PostgreSQL."}], "entity_hints": [], "proposal": {"entities": [{"ref": "entity:dense-mem", "name": "Dense-Mem", "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]}, {"ref": "entity:postgres", "name": "PostgreSQL", "evidence": [{"evidence_index": 0, "start": 15, "end": 25}]}], "relationships": [{"proposal_id": "rel:uses", "subject_ref": "entity:dense-mem", "predicate": {"surface": "uses", "evidence_index": 0, "start": 10, "end": 14}, "object_ref": "entity:postgres", "evidence": [{"evidence_index": 0, "start": 0, "end": 26}]}]}}
   },
   {
     "name": "missing required evidence",
@@ -406,22 +373,22 @@
     "input": {
       "evidence": [{"content": "A uses B."}],
       "proposal": {
-        "entities": [{"ref": "a", "name": "A"}, {"ref": "b", "name": "B"}],
+        "entities": [{"ref": "a", "name": "A", "evidence": [{"evidence_index": 0, "start": 0, "end": 1}]}, {"ref": "b", "name": "B", "evidence": [{"evidence_index": 0, "start": 7, "end": 8}]}],
         "relationships": [
-          {"proposal_id": "r1", "subject_ref": "a", "predicate": "uses", "object_ref": "b", "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]},
-          {"proposal_id": "r1", "subject_ref": "a", "predicate": "uses", "object_ref": "b", "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]}
+          {"proposal_id": "r1", "subject_ref": "a", "predicate": {"surface": "uses", "evidence_index": 0, "start": 2, "end": 6}, "object_ref": "b", "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]},
+          {"proposal_id": "r1", "subject_ref": "a", "predicate": {"surface": "uses", "evidence_index": 0, "start": 2, "end": 6}, "object_ref": "b", "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]}
         ]
       }
     }
   },
   {
-    "name": "out of allowlist resolution action",
-    "tool": "resolve_memory_placement",
+    "name": "submission status requires submission id",
+    "tool": "get_submission_status",
     "contract_version": "dense-mem.v2.4",
-    "scopes": ["write"],
+    "scopes": ["read"],
     "valid": false,
-    "want_error": "action must be one of",
-    "input": {"action": "supersede_other_profile", "idempotency_key": "resolve-1"}
+    "want_error": "submission_id is required",
+    "input": {}
   },
   {
     "name": "wrong contract version",
@@ -476,7 +443,8 @@
     "valid": false,
     "want_error": "source_key and source_revision must appear together",
     "input": {
-      "evidence": [{"content": "A source key needs a revision.", "source_key": "wiki:target-architecture"}]
+      "evidence": [{"content": "Dense-Mem uses PostgreSQL.", "source_key": "wiki:target-architecture"}],
+      "proposal": {"entities": [{"ref": "entity:dense-mem", "name": "Dense-Mem", "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]}, {"ref": "entity:postgres", "name": "PostgreSQL", "evidence": [{"evidence_index": 0, "start": 15, "end": 25}]}], "relationships": [{"proposal_id": "rel:uses", "subject_ref": "entity:dense-mem", "predicate": {"surface": "uses", "evidence_index": 0, "start": 10, "end": 14}, "object_ref": "entity:postgres", "evidence": [{"evidence_index": 0, "start": 0, "end": 26}]}]}
     }
   },
   {

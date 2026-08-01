@@ -33,11 +33,11 @@ func TestWorkerConcurrencyDefaults(t *testing.T) {
 	if got := cfg.GetEmbeddingJobPollSeconds(); got != DefaultEmbeddingJobPollSeconds {
 		t.Fatalf("GetEmbeddingJobPollSeconds() = %d, want %d", got, DefaultEmbeddingJobPollSeconds)
 	}
-	if got := cfg.GetMemoryPlacementWorkerCount(); got != DefaultMemoryPlacementWorkerCount {
-		t.Fatalf("GetMemoryPlacementWorkerCount() = %d, want %d", got, DefaultMemoryPlacementWorkerCount)
+	if got := cfg.GetSubmissionAssessmentWorkerCount(); got != DefaultSubmissionAssessmentWorkerCount {
+		t.Fatalf("GetSubmissionAssessmentWorkerCount() = %d, want %d", got, DefaultSubmissionAssessmentWorkerCount)
 	}
-	if got := cfg.GetMemoryPlacementPollSeconds(); got != DefaultMemoryPlacementPollSeconds {
-		t.Fatalf("GetMemoryPlacementPollSeconds() = %d, want %d", got, DefaultMemoryPlacementPollSeconds)
+	if got := cfg.GetSubmissionAssessmentPollSeconds(); got != DefaultSubmissionAssessmentPollSeconds {
+		t.Fatalf("GetSubmissionAssessmentPollSeconds() = %d, want %d", got, DefaultSubmissionAssessmentPollSeconds)
 	}
 }
 
@@ -82,8 +82,8 @@ func TestLoadWorkerConcurrencyOverrides(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 	os.Setenv("AI_VERIFIER_MAX_CONCURRENCY", "30")
-	os.Setenv("MEMORY_PLACEMENT_WORKER_COUNT", "30")
-	os.Setenv("MEMORY_PLACEMENT_POLL_SECONDS", "7")
+	os.Setenv("SUBMISSION_ASSESSMENT_WORKER_COUNT", "30")
+	os.Setenv("SUBMISSION_ASSESSMENT_POLL_SECONDS", "7")
 	os.Setenv("AI_API_EMBEDDING_MAX_CONCURRENCY", "8")
 	os.Setenv("EMBEDDING_WORKER_COUNT", "2")
 	os.Setenv("EMBEDDING_BATCH_SIZE", "128")
@@ -93,11 +93,11 @@ func TestLoadWorkerConcurrencyOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() returned unexpected error: %v", err)
 	}
-	if cfg.GetAIVerifierMaxConcurrency() != 30 || cfg.GetMemoryPlacementWorkerCount() != 30 {
-		t.Fatalf("placement/verifier concurrency = %d/%d, want 30/30", cfg.GetMemoryPlacementWorkerCount(), cfg.GetAIVerifierMaxConcurrency())
+	if cfg.GetAIVerifierMaxConcurrency() != 30 || cfg.GetSubmissionAssessmentWorkerCount() != 30 {
+		t.Fatalf("submission assessor/verifier concurrency = %d/%d, want 30/30", cfg.GetSubmissionAssessmentWorkerCount(), cfg.GetAIVerifierMaxConcurrency())
 	}
-	if cfg.GetMemoryPlacementPollSeconds() != 7 {
-		t.Fatalf("placement poll = %d, want 7", cfg.GetMemoryPlacementPollSeconds())
+	if cfg.GetSubmissionAssessmentPollSeconds() != 7 {
+		t.Fatalf("submission assessment poll = %d, want 7", cfg.GetSubmissionAssessmentPollSeconds())
 	}
 	if cfg.GetAIEmbeddingMaxConcurrency() != 8 || cfg.GetEmbeddingWorkerCount() != 2 {
 		t.Fatalf("embedding worker/provider concurrency = %d/%d, want 2/8", cfg.GetEmbeddingWorkerCount(), cfg.GetAIEmbeddingMaxConcurrency())

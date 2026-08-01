@@ -16,12 +16,12 @@ import (
 )
 
 type HTTPClient struct {
-	BaseURL          string
-	APIKey           string
-	ControlURL       string
-	ControlToken     string
-	PlacementTimeout time.Duration
-	Client           *http.Client
+	BaseURL           string
+	APIKey            string
+	ControlURL        string
+	ControlToken      string
+	SubmissionTimeout time.Duration
+	Client            *http.Client
 }
 
 type HTTPStatusError struct {
@@ -140,33 +140,36 @@ func (c *HTTPClient) ImportCorpusFileWithConcurrency(ctx context.Context, path s
 }
 
 func (c *HTTPClient) importCorpusFileSequential(ctx context.Context, path string, keepSourceDocIDs, skipSourceDocIDs map[string]struct{}) (KnowledgeMapping, int, error) {
-	mapping := newKnowledgeMapping()
+	submitted := map[string]struct{}{}
 	count := 0
 	err := scanCorpusFile(path, func(item CorpusItem) error {
 		if shouldSkipCorpusItem(item, skipSourceDocIDs) {
 			count++
 			return nil
 		}
-		itemMapping, err := c.importCorpusItem(ctx, item)
-		if err != nil {
+		if err := c.submitCorpusItem(ctx, item); err != nil {
 			return err
 		}
-		mergeFilteredKnowledgeMapping(&mapping, itemMapping, keepSourceDocIDs)
+		submitted[strings.TrimSpace(item.SourceDocID)] = struct{}{}
 		count++
 		return nil
 	})
+	if err != nil {
+		return newKnowledgeMapping(), count, err
+	}
+	mapping, err := c.exportSubmittedKnowledgeMapping(ctx, submitted, keepSourceDocIDs)
 	return mapping, count, err
 }
 
 func (c *HTTPClient) importCorpusFileConcurrent(ctx context.Context, path string, concurrency int, keepSourceDocIDs, skipSourceDocIDs map[string]struct{}) (KnowledgeMapping, int, error) {
-	mapping := newKnowledgeMapping()
+	submitted := map[string]struct{}{}
 	scheduleCtx, stopScheduling := context.WithCancel(ctx)
 	defer stopScheduling()
 
 	type importResult struct {
-		mapping KnowledgeMapping
-		skipped bool
-		err     error
+		sourceDocID string
+		skipped     bool
+		err         error
 	}
 	type importJob struct {
 		item    CorpusItem
@@ -189,9 +192,9 @@ func (c *HTTPClient) importCorpusFileConcurrent(ctx context.Context, path string
 					}
 					continue
 				}
-				itemMapping, err := c.importCorpusItem(ctx, job.item)
+				err := c.submitCorpusItem(ctx, job.item)
 				select {
-				case results <- importResult{mapping: itemMapping, err: err}:
+				case results <- importResult{sourceDocID: strings.TrimSpace(job.item.SourceDocID), err: err}:
 				case <-ctx.Done():
 					return
 				}
@@ -234,19 +237,20 @@ func (c *HTTPClient) importCorpusFileConcurrent(ctx context.Context, path string
 			}
 			continue
 		}
-		mergeFilteredKnowledgeMapping(&mapping, result.mapping, keepSourceDocIDs)
+		submitted[result.sourceDocID] = struct{}{}
 		count++
 	}
 	if firstErr != nil {
-		return mapping, count, firstErr
+		return newKnowledgeMapping(), count, firstErr
 	}
 	if scanErr != nil {
-		return mapping, count, scanErr
+		return newKnowledgeMapping(), count, scanErr
 	}
 	if err := ctx.Err(); err != nil {
-		return mapping, count, err
+		return newKnowledgeMapping(), count, err
 	}
-	return mapping, count, nil
+	mapping, err := c.exportSubmittedKnowledgeMapping(ctx, submitted, keepSourceDocIDs)
+	return mapping, count, err
 }
 
 func shouldSkipCorpusItem(item CorpusItem, skipSourceDocIDs map[string]struct{}) bool {
@@ -258,15 +262,13 @@ func shouldSkipCorpusItem(item CorpusItem, skipSourceDocIDs map[string]struct{})
 }
 
 func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, corpus []CorpusItem, concurrency int) (KnowledgeMapping, error) {
-	mapping := newKnowledgeMapping()
 	groups := corpusImportGroups(corpus)
 	if concurrency <= 1 || len(groups) <= 1 {
-		groupMapping, err := c.importCorpusGroup(ctx, corpus)
+		submitted, err := c.submitCorpusGroup(ctx, corpus)
 		if err != nil {
-			return mapping, err
+			return newKnowledgeMapping(), err
 		}
-		mergeKnowledgeMapping(&mapping, groupMapping)
-		return mapping, nil
+		return c.exportSubmittedKnowledgeMapping(ctx, submitted, nil)
 	}
 	if concurrency > len(groups) {
 		concurrency = len(groups)
@@ -276,8 +278,8 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, corpus []C
 	defer stopScheduling()
 
 	type importResult struct {
-		mapping KnowledgeMapping
-		err     error
+		submitted map[string]struct{}
+		err       error
 	}
 
 	jobs := make(chan []CorpusItem)
@@ -288,9 +290,9 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, corpus []C
 		go func() {
 			defer wg.Done()
 			for group := range jobs {
-				itemMapping, err := c.importCorpusGroup(ctx, group)
+				submitted, err := c.submitCorpusGroup(ctx, group)
 				select {
-				case results <- importResult{mapping: itemMapping, err: err}:
+				case results <- importResult{submitted: submitted, err: err}:
 				case <-ctx.Done():
 					return
 				}
@@ -314,6 +316,7 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, corpus []C
 		close(results)
 	}()
 
+	submitted := map[string]struct{}{}
 	var firstErr error
 	for result := range results {
 		if result.err != nil {
@@ -323,15 +326,15 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, corpus []C
 			}
 			continue
 		}
-		mergeKnowledgeMapping(&mapping, result.mapping)
+		mergeSubmittedSourceDocIDs(submitted, result.submitted)
 	}
 	if firstErr != nil {
-		return mapping, firstErr
+		return newKnowledgeMapping(), firstErr
 	}
 	if err := ctx.Err(); err != nil {
-		return mapping, err
+		return newKnowledgeMapping(), err
 	}
-	return mapping, nil
+	return c.exportSubmittedKnowledgeMapping(ctx, submitted, nil)
 }
 
 func scanCorpusFile(path string, fn func(CorpusItem) error) error {
@@ -386,19 +389,21 @@ func decodeCorpusItem(line []byte) (CorpusItem, error) {
 	return item, nil
 }
 
-func (c *HTTPClient) importCorpusGroup(ctx context.Context, corpus []CorpusItem) (KnowledgeMapping, error) {
-	mapping := newKnowledgeMapping()
+func (c *HTTPClient) submitCorpusGroup(ctx context.Context, corpus []CorpusItem) (map[string]struct{}, error) {
+	submitted := make(map[string]struct{}, len(corpus))
 	for _, item := range corpus {
-		itemMapping, err := c.importCorpusItem(ctx, item)
-		if err != nil {
-			return mapping, err
+		if err := c.submitCorpusItem(ctx, item); err != nil {
+			return submitted, err
 		}
-		mergeKnowledgeMapping(&mapping, itemMapping)
+		submitted[strings.TrimSpace(item.SourceDocID)] = struct{}{}
 	}
-	return mapping, nil
+	return submitted, nil
 }
-func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (KnowledgeMapping, error) {
-	mapping := newKnowledgeMapping()
+
+func (c *HTTPClient) submitCorpusItem(ctx context.Context, item CorpusItem) error {
+	if len(item.Proposal) == 0 {
+		return fmt.Errorf("import %s: submission proposal is required", item.SourceDocID)
+	}
 	evidence := map[string]any{
 		"content":         item.Content,
 		"source":          firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
@@ -406,35 +411,23 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 		"labels":          item.Labels,
 		"metadata":        seedMetadata(item),
 	}
-	input := map[string]any{"evidence": []map[string]any{evidence}}
+	input := map[string]any{
+		"evidence":        []map[string]any{evidence},
+		"proposal":        item.Proposal,
+		"idempotency_key": "eval:" + item.SourceDocID,
+	}
 	var out map[string]any
 	if err := c.callToolWithRetry(ctx, "remember", input, &out); err != nil {
-		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
+		return fmt.Errorf("import %s: %w", item.SourceDocID, err)
 	}
-	fragmentID := fragmentIDFromRemember(out)
-	evidenceID := evidenceIDFromRemember(out)
-	if fragmentID == "" && evidenceID != "" && !isRememberOutput(out) {
-		fragmentID = evidenceID
+	submissionID := stringValue(out["submission_id"])
+	if submissionID == "" {
+		return fmt.Errorf("import %s: remember response missing submission_id", item.SourceDocID)
 	}
-	if ingestID := stringValue(out["ingest_id"]); ingestID != "" {
-		placement, err := c.WaitForMemoryPlacementResult(ctx, ingestID, c.placementTimeout())
-		if err != nil {
-			return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
-		}
-		if evidenceID == "" {
-			evidenceID = evidenceIDFromPlacement(placement)
-		}
+	if _, err := c.WaitForSubmissionResult(ctx, submissionID, c.submissionTimeout()); err != nil {
+		return fmt.Errorf("import %s: %w", item.SourceDocID, err)
 	}
-	if fragmentID == "" && evidenceID == "" {
-		return mapping, fmt.Errorf("import %s: remember response missing fragment or evidence id", item.SourceDocID)
-	}
-	if fragmentID != "" {
-		addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
-	}
-	if evidenceID != "" {
-		addSourceMapping(&mapping, Ref{Type: "evidence", ID: evidenceID, SourceDocID: item.SourceDocID}, fragmentID == "")
-	}
-	return mapping, nil
+	return nil
 }
 
 func corpusImportGroups(corpus []CorpusItem) [][]CorpusItem {
@@ -466,13 +459,13 @@ func corpusImportGroupKey(item CorpusItem) string {
 	return "item:" + sourceDocID
 }
 
-func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string, timeout time.Duration) error {
-	_, err := c.WaitForMemoryPlacementResult(ctx, ingestID, timeout)
+func (c *HTTPClient) WaitForSubmission(ctx context.Context, submissionID string, timeout time.Duration) error {
+	_, err := c.WaitForSubmissionResult(ctx, submissionID, timeout)
 	return err
 }
 
-func (c *HTTPClient) WaitForMemoryPlacementResult(ctx context.Context, ingestID string, timeout time.Duration) (map[string]any, error) {
-	if strings.TrimSpace(ingestID) == "" {
+func (c *HTTPClient) WaitForSubmissionResult(ctx context.Context, submissionID string, timeout time.Duration) (map[string]any, error) {
+	if strings.TrimSpace(submissionID) == "" {
 		return nil, nil
 	}
 	if timeout <= 0 {
@@ -482,38 +475,38 @@ func (c *HTTPClient) WaitForMemoryPlacementResult(ctx context.Context, ingestID 
 	defer cancel()
 	for {
 		var out map[string]any
-		if err := c.callToolWithRetry(waitCtx, "get_memory_placement", map[string]any{"ingest_id": ingestID}, &out); err != nil {
+		if err := c.callToolWithRetry(waitCtx, "get_submission_status", map[string]any{"submission_id": submissionID}, &out); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				return nil, fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
+				return nil, fmt.Errorf("submission %s did not complete within %s", submissionID, timeout)
 			}
 			return nil, err
 		}
-		status := placementProcessingState(out)
+		status := submissionProcessingState(out)
 		switch status {
-		case "completed", "awaiting_review":
-			searchState := placementSearchState(out)
+		case "completed":
+			searchState := submissionSearchState(out)
 			switch searchState {
-			case "", "current", "not_required":
+			case "current", "not_required":
 				return out, nil
 			case "pending":
 			case "failed":
-				if cause := placementErrorMessage(out); cause != "" {
-					return nil, fmt.Errorf("memory placement %s search_state failed: %s", ingestID, cause)
+				if cause := submissionErrorCode(out); cause != "" {
+					return nil, fmt.Errorf("submission %s search_state failed: %s", submissionID, cause)
 				}
-				return nil, fmt.Errorf("memory placement %s search_state failed", ingestID)
+				return nil, fmt.Errorf("submission %s search_state failed", submissionID)
 			default:
-				return nil, fmt.Errorf("memory placement %s returned unknown search_state %q", ingestID, searchState)
+				return nil, fmt.Errorf("submission %s returned unknown search_state %q", submissionID, searchState)
 			}
-		case "failed", "guarded", "quarantined":
-			if cause := placementErrorMessage(out); cause != "" {
-				return nil, fmt.Errorf("memory placement %s %s: %s", ingestID, status, cause)
+		case "rejected", "quarantined", "failed":
+			if cause := submissionErrorCode(out); cause != "" {
+				return nil, fmt.Errorf("submission %s %s: %s", submissionID, status, cause)
 			}
-			return nil, fmt.Errorf("memory placement %s %s", ingestID, status)
+			return nil, fmt.Errorf("submission %s %s", submissionID, status)
 		}
 		select {
 		case <-waitCtx.Done():
 			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-				return nil, fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
+				return nil, fmt.Errorf("submission %s did not complete within %s", submissionID, timeout)
 			}
 			return nil, waitCtx.Err()
 		case <-time.After(time.Second):
@@ -521,11 +514,36 @@ func (c *HTTPClient) WaitForMemoryPlacementResult(ctx context.Context, ingestID 
 	}
 }
 
-func (c *HTTPClient) placementTimeout() time.Duration {
-	if c.PlacementTimeout > 0 {
-		return c.PlacementTimeout
+func (c *HTTPClient) submissionTimeout() time.Duration {
+	if c.SubmissionTimeout > 0 {
+		return c.SubmissionTimeout
 	}
 	return 2 * time.Minute
+}
+
+func (c *HTTPClient) exportSubmittedKnowledgeMapping(ctx context.Context, submitted, keepSourceDocIDs map[string]struct{}) (KnowledgeMapping, error) {
+	if len(submitted) == 0 {
+		return newKnowledgeMapping(), nil
+	}
+	exported, err := c.ExportKnowledgeMapping(ctx, 100)
+	if err != nil {
+		return newKnowledgeMapping(), err
+	}
+	scope := submitted
+	if len(keepSourceDocIDs) > 0 {
+		scope = keepSourceDocIDs
+	}
+	mapping := newKnowledgeMapping()
+	mergeFilteredKnowledgeMapping(&mapping, exported, scope)
+	return mapping, nil
+}
+
+func mergeSubmittedSourceDocIDs(dst, src map[string]struct{}) {
+	for sourceDocID := range src {
+		if sourceDocID != "" {
+			dst[sourceDocID] = struct{}{}
+		}
+	}
 }
 
 func (c *HTTPClient) ExportEvidenceMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
@@ -803,40 +821,6 @@ func knowledgeItemID(kind string, item map[string]any) string {
 	default:
 		return stringValue(item["id"])
 	}
-}
-
-func fragmentIDFromRemember(out map[string]any) string {
-	fragment, _ := out["fragment"].(map[string]any)
-	return firstNonEmpty(stringValue(fragment["id"]), stringValue(fragment["fragment_id"]))
-}
-
-func evidenceIDFromRemember(out map[string]any) string {
-	if id := stringValue(out["evidence_id"]); id != "" {
-		return id
-	}
-	evidence, _ := out["evidence"].([]any)
-	if len(evidence) == 0 {
-		return ""
-	}
-	first, _ := evidence[0].(map[string]any)
-	return firstNonEmpty(stringValue(first["evidence_id"]), stringValue(first["id"]), stringValue(first["fragment_id"]))
-}
-
-func isRememberOutput(out map[string]any) bool {
-	return stringValue(out["processing_state"]) != "" ||
-		stringValue(out["status_tool"]) != "" ||
-		stringValue(out["correlation_id"]) != ""
-}
-
-func evidenceIDFromPlacement(out map[string]any) string {
-	items, _ := out["items"].([]any)
-	for _, raw := range items {
-		item, _ := raw.(map[string]any)
-		if id := firstNonEmpty(stringValue(item["evidence_id"]), stringValue(item["id"]), stringValue(item["fragment_id"])); id != "" {
-			return id
-		}
-	}
-	return evidenceIDFromRemember(out)
 }
 
 func traceFromToolOutput(tc Case, out map[string]any) RecallTrace {

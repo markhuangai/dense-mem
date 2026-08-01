@@ -56,8 +56,8 @@ func clearEnv() {
 		"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_BYTES",
 		"AI_ASSESSOR_MODEL",
 		"AI_ASSESSOR_MAX_INPUT_TOKENS",
-		"MEMORY_PLACEMENT_WORKER_COUNT",
-		"MEMORY_PLACEMENT_POLL_SECONDS",
+		"SUBMISSION_ASSESSMENT_WORKER_COUNT",
+		"SUBMISSION_ASSESSMENT_POLL_SECONDS",
 		"PROMOTE_TX_TIMEOUT_SECONDS",
 		"MEMORY_PACK_IMPORT_HISTORY_DAYS",
 		"CONTROL_HTTP_ADDR",
@@ -162,11 +162,11 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.GetEmbeddingJobPollSeconds() != DefaultEmbeddingJobPollSeconds {
 		t.Errorf("EmbeddingJobPollSeconds default = %d, want %d", cfg.GetEmbeddingJobPollSeconds(), DefaultEmbeddingJobPollSeconds)
 	}
-	if cfg.GetMemoryPlacementWorkerCount() != DefaultMemoryPlacementWorkerCount {
-		t.Errorf("MemoryPlacementWorkerCount default = %d, want %d", cfg.GetMemoryPlacementWorkerCount(), DefaultMemoryPlacementWorkerCount)
+	if cfg.GetSubmissionAssessmentWorkerCount() != DefaultSubmissionAssessmentWorkerCount {
+		t.Errorf("SubmissionAssessmentWorkerCount default = %d, want %d", cfg.GetSubmissionAssessmentWorkerCount(), DefaultSubmissionAssessmentWorkerCount)
 	}
-	if cfg.GetMemoryPlacementPollSeconds() != DefaultMemoryPlacementPollSeconds {
-		t.Errorf("MemoryPlacementPollSeconds default = %d, want %d", cfg.GetMemoryPlacementPollSeconds(), DefaultMemoryPlacementPollSeconds)
+	if cfg.GetSubmissionAssessmentPollSeconds() != DefaultSubmissionAssessmentPollSeconds {
+		t.Errorf("SubmissionAssessmentPollSeconds default = %d, want %d", cfg.GetSubmissionAssessmentPollSeconds(), DefaultSubmissionAssessmentPollSeconds)
 	}
 	budget := AIVerifierAssessmentBudgetFor(&cfg)
 	if budget.MaxInputTokens != DefaultAIVerifierMaxInputTokens ||

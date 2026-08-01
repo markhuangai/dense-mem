@@ -3,18 +3,19 @@ package repository
 import "time"
 
 type CommitPlacementSemanticInput struct {
-	TeamID           string
-	OwnerProfileID   string
-	IngestID         string
-	PlacementRunID   string
-	PlacementItemID  string
-	WorkerID         string
-	ExpectedAttempts int
-	OutcomeKind      string
-	Status           string
-	Category         string
-	Payload          map[string]any
-	RetryAfter       time.Duration
+	TeamID               string
+	OwnerProfileID       string
+	IngestID             string
+	PlacementRunID       string
+	PlacementItemID      string
+	WorkerID             string
+	ExpectedAttempts     int
+	OutcomeKind          string
+	Status               string
+	Category             string
+	Payload              map[string]any
+	RetryAfter           time.Duration
+	DeferRunFinalization bool
 
 	EntityResolutions        []PlacementEntityResolutionInput
 	RelationshipObservations []PlacementRelationshipDecisionInput
@@ -23,22 +24,23 @@ type CommitPlacementSemanticInput struct {
 }
 
 type PlacementEntityResolutionInput struct {
-	MentionRef         string
-	Action             string
-	EntityID           string
-	EntityKind         string
-	CanonicalName      string
-	FragmentID         string
-	SpanStart          *int
-	SpanEnd            *int
-	IdentityContext    map[string]any
-	VerifierResult     map[string]any
-	Metadata           map[string]any
-	AssessmentID       string
-	SemanticReviewKind string
-	ReviewQuestion     string
-	ReviewOptions      []map[string]any
-	ReviewGuidance     string
+	MentionRef             string
+	Action                 string
+	EntityID               string
+	EntityKind             string
+	CanonicalName          string
+	FragmentID             string
+	SpanStart              *int
+	SpanEnd                *int
+	IdentityContext        map[string]any
+	VerifierResult         map[string]any
+	Metadata               map[string]any
+	AssessmentID           string
+	SubmissionAssessmentID string
+	SemanticReviewKind     string
+	ReviewQuestion         string
+	ReviewOptions          []map[string]any
+	ReviewGuidance         string
 }
 
 type PlacementRelationshipDecisionInput struct {
@@ -67,6 +69,7 @@ type PlacementRelationshipDecisionInput struct {
 	ObservationMetadata     map[string]any
 	RelationshipMetadata    map[string]any
 	AssessmentID            string
+	SubmissionAssessmentID  string
 	AssessmentPolicyVersion string
 	ThresholdUsed           *float64
 	GateResult              string

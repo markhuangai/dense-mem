@@ -50,7 +50,7 @@ func TestAIOperationContextUsesBoundedLabels(t *testing.T) {
 		{name: "source", got: normalizeAITokenSource("unbounded-source")},
 		{name: "reason", got: normalizeAIUnpricedReason("unbounded-reason")},
 		{name: "remember outcome", got: normalizeRememberOutcome("unbounded-outcome")},
-		{name: "placement status", got: normalizePlacementStatus("unbounded-status")},
+		{name: "submission status", got: normalizeRememberFirstDispositionStatus("unbounded-status")},
 	} {
 		if test.got != unknownMetricLabel {
 			t.Errorf("%s label = %q; want %q", test.name, test.got, unknownMetricLabel)

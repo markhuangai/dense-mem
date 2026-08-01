@@ -13,7 +13,7 @@ const (
 	MemoryPackFormat    = "dense-mem.memory-pack.v2.4"
 	memoryPackV23Format = "dense-mem.memory-pack.v2.3"
 
-	MemoryPackSourceType = "memory_pack"
+	MemoryPackSourceType = "document"
 	MemoryPackLabel      = "memory_pack_import"
 )
 
@@ -151,7 +151,7 @@ type ImportResult struct {
 	ArtifactHash      string             `json:"artifact_hash"`
 	Mode              string             `json:"mode"`
 	Status            string             `json:"status"`
-	IngestID          string             `json:"ingest_id,omitempty"`
+	SubmissionID      string             `json:"submission_id,omitempty"`
 	CheckAfterSeconds int                `json:"check_after_seconds,omitempty"`
 	StatusTool        string             `json:"status_tool,omitempty"`
 	AppliedCount      int                `json:"applied_count"`

@@ -281,10 +281,23 @@ func validateRelationshipObjectChoiceIn(raw any, path string) error {
 func validateProposalReferencesAndSpans(proposal map[string]any, evidence []any) error {
 	entityRefs := map[string]struct{}{}
 	entities, _ := proposal["entities"].([]any)
-	for _, raw := range entities {
+	for i, raw := range entities {
 		entity, _ := objectFields(raw)
 		ref, _ := entity["ref"].(string)
 		entityRefs[ref] = struct{}{}
+		spans, _ := entity["evidence"].([]any)
+		if len(spans) != 1 {
+			return fmt.Errorf("proposal.entities[%d].evidence requires exactly one span", i)
+		}
+		span, _ := objectFields(spans[0])
+		surface, err := validateEvidenceSpanInput(span, evidence, fmt.Sprintf("proposal.entities[%d].evidence[0]", i))
+		if err != nil {
+			return err
+		}
+		name, _ := entity["name"].(string)
+		if surface != name {
+			return fmt.Errorf("proposal.entities[%d].name must match its exact evidence span", i)
+		}
 	}
 	relationships, _ := proposal["relationships"].([]any)
 	for i, raw := range relationships {
@@ -298,21 +311,23 @@ func validateProposalReferencesAndSpans(proposal map[string]any, evidence []any)
 				return fmt.Errorf("proposal.relationships[%d].%s references unknown Entity ref %q", i, field, ref)
 			}
 		}
+		predicate, ok := objectFields(relationship["predicate"])
+		if !ok {
+			return fmt.Errorf("proposal.relationships[%d].predicate is required", i)
+		}
+		predicateSurface, err := validateEvidenceSpanInput(predicate, evidence, fmt.Sprintf("proposal.relationships[%d].predicate", i))
+		if err != nil {
+			return err
+		}
+		expectedSurface, _ := predicate["surface"].(string)
+		if predicateSurface != expectedSurface {
+			return fmt.Errorf("proposal.relationships[%d].predicate.surface must match its exact evidence span", i)
+		}
 		spans, _ := relationship["evidence"].([]any)
 		for j, rawSpan := range spans {
 			span, _ := objectFields(rawSpan)
-			indexNumber, _ := schemaNumber(span["evidence_index"])
-			index := int(indexNumber)
-			if index < 0 || index >= len(evidence) {
-				return fmt.Errorf("proposal.relationships[%d].evidence[%d].evidence_index is outside submitted evidence", i, j)
-			}
-			startNumber, _ := schemaNumber(span["start"])
-			endNumber, _ := schemaNumber(span["end"])
-			start, end := int(startNumber), int(endNumber)
-			evidenceItem, _ := objectFields(evidence[index])
-			content, _ := evidenceItem["content"].(string)
-			if start < 0 || end <= start || end > utf8.RuneCountInString(content) {
-				return fmt.Errorf("proposal.relationships[%d].evidence[%d] has invalid code-point span", i, j)
+			if _, err := validateEvidenceSpanInput(span, evidence, fmt.Sprintf("proposal.relationships[%d].evidence[%d]", i, j)); err != nil {
+				return err
 			}
 		}
 		if objectValue, ok := objectFields(relationship["object_value"]); ok {
@@ -320,21 +335,33 @@ func validateProposalReferencesAndSpans(proposal map[string]any, evidence []any)
 				return err
 			}
 		}
-		if target, ok := objectFields(relationship["correction_target"]); ok {
-			if err := validateCorrectionTarget(target, fmt.Sprintf("proposal.relationships[%d].correction_target", i)); err != nil {
-				return err
-			}
-		}
-		if context, ok := objectFields(relationship["conflict_context"]); ok {
-			if err := validateConflictContext(context, fmt.Sprintf("proposal.relationships[%d].conflict_context", i)); err != nil {
-				return err
-			}
-		}
-		if err := validateRelationshipValidityWindow(relationship, fmt.Sprintf("proposal.relationships[%d]", i)); err != nil {
-			return err
-		}
 	}
 	return nil
+}
+
+func validateEvidenceSpanInput(span map[string]any, evidence []any, path string) (string, error) {
+	indexNumber, ok := schemaNumber(span["evidence_index"])
+	if !ok || indexNumber < 0 || indexNumber != float64(int(indexNumber)) {
+		return "", fmt.Errorf("%s.evidence_index is invalid", path)
+	}
+	index := int(indexNumber)
+	if index >= len(evidence) {
+		return "", fmt.Errorf("%s.evidence_index is outside submitted evidence", path)
+	}
+	startNumber, startOK := schemaNumber(span["start"])
+	endNumber, endOK := schemaNumber(span["end"])
+	if !startOK || !endOK || startNumber < 0 || endNumber <= startNumber ||
+		startNumber != float64(int(startNumber)) || endNumber != float64(int(endNumber)) {
+		return "", fmt.Errorf("%s has invalid code-point span", path)
+	}
+	evidenceItem, _ := objectFields(evidence[index])
+	content, _ := evidenceItem["content"].(string)
+	start, end := int(startNumber), int(endNumber)
+	runes := []rune(content)
+	if end > len(runes) {
+		return "", fmt.Errorf("%s has invalid code-point span", path)
+	}
+	return string(runes[start:end]), nil
 }
 
 func validateRelationshipValidityWindow(relationship map[string]any, path string) error {

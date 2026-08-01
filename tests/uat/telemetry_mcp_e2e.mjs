@@ -36,23 +36,16 @@ await controlJSON("/control/api/config/telemetry-pricing", {
   }),
 });
 
-const remember = await mcpTool("remember", {
-  evidence: [{
-    content: `Telemetry E2E ${runID}: Dense-Mem stages exact evidence before semantic processing.`,
-    source_type: "document",
-    source: `telemetry:${runID}`,
-    source_group: `telemetry:${runID}`,
-    idempotency_key: runID,
-  }],
-});
-const ingestID = String(remember.ingest_id ?? "");
-if (!ingestID) {
-  throw new Error("remember did not return an ingest_id");
+const evidence = `Dense-Mem uses PostgreSQL. Telemetry E2E ${runID}.`;
+const remember = await mcpTool("remember", submissionArguments(evidence));
+const submissionID = String(remember.submission_id ?? "");
+if (!submissionID) {
+  throw new Error("remember did not return a submission_id");
 }
 
-const placementStatus = await waitForFirstDisposition(ingestID);
+const submissionStatus = await waitForFirstDisposition(submissionID);
 await mcpTool("recall_memory", {
-  query: `Telemetry E2E ${runID} exact evidence`,
+  query: `Dense-Mem PostgreSQL Telemetry E2E ${runID}`,
   limit: 5,
 });
 
@@ -60,7 +53,7 @@ const signals = await waitForTelemetrySignals();
 console.log(JSON.stringify({
   status: "ok",
   run_id: runID,
-  placement_status: placementStatus,
+  submission_status: submissionStatus,
   remember_acknowledgements: signals.rememberAcknowledgements,
   first_dispositions: signals.firstDispositions,
   recalls: signals.recalls,
@@ -102,17 +95,54 @@ async function mcpTool(name, args) {
   return JSON.parse(text);
 }
 
-async function waitForFirstDisposition(ingestID) {
-  let lastStatus = "";
+function submissionArguments(content) {
+  const fullSpan = { evidence_index: 0, start: 0, end: [...content].length };
+  const spanFor = (surface) => {
+    const start = content.indexOf(surface);
+    if (start < 0) {
+      throw new Error(`surface ${surface} is not in evidence`);
+    }
+    return { evidence_index: 0, start, end: start + [...surface].length };
+  };
+  return {
+    evidence: [{
+      content,
+      source_type: "document",
+      source: `telemetry:${runID}`,
+      source_group: `telemetry:${runID}`,
+      idempotency_key: runID,
+    }],
+    proposal: {
+      entities: [
+        { ref: "subject", name: "Dense-Mem", entity_kind: "project", evidence: [spanFor("Dense-Mem")] },
+        { ref: "object", name: "PostgreSQL", entity_kind: "product", evidence: [spanFor("PostgreSQL")] },
+      ],
+      relationships: [{
+        proposal_id: "relationship_1",
+        subject_ref: "subject",
+        object_ref: "object",
+        predicate: { surface: "uses", ...spanFor("uses") },
+        evidence: [fullSpan],
+      }],
+    },
+  };
+}
+
+async function waitForFirstDisposition(submissionID) {
+  let lastSubmission = {};
   for (let attempt = 0; attempt < 150; attempt += 1) {
-    const placement = await mcpTool("get_memory_placement", { ingest_id: ingestID });
-    lastStatus = String(placement.processing_state ?? "");
-    if (["completed", "awaiting_review", "failed", "quarantined"].includes(lastStatus)) {
-      return lastStatus;
+    const submission = await mcpTool("get_submission_status", { submission_id: submissionID });
+    lastSubmission = submission;
+    const processingState = String(submission.processing_state ?? "");
+    if (processingState === "completed" && ["current", "not_required"].includes(String(submission.search_state ?? ""))) {
+      return processingState;
+    }
+    if (["rejected", "failed", "quarantined"].includes(processingState)) {
+      throw new Error(`submission reached ${processingState}: ${JSON.stringify(submission)}`);
     }
     await delay(2_000);
   }
-  throw new Error(`timed out waiting for first disposition (last status: ${lastStatus || "unknown"})`);
+  throw new Error(`timed out waiting for first submission disposition: ${JSON.stringify(lastSubmission)}`);
 }
 
 async function waitForTelemetrySignals() {

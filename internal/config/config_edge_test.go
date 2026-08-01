@@ -45,12 +45,12 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 			os.Setenv("AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", "11")
 		}, "AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS"},
 		{"unsupported verifier tokenizer", func() { os.Setenv("AI_VERIFIER_TOKENIZER", "unknown") }, "AI_VERIFIER_TOKENIZER"},
-		{"invalid placement worker count", func() { os.Setenv("MEMORY_PLACEMENT_WORKER_COUNT", "bad") }, "MEMORY_PLACEMENT_WORKER_COUNT"},
-		{"placement workers exceed verifier", func() {
+		{"invalid submission assessment worker count", func() { os.Setenv("SUBMISSION_ASSESSMENT_WORKER_COUNT", "bad") }, "SUBMISSION_ASSESSMENT_WORKER_COUNT"},
+		{"submission assessment workers exceed verifier", func() {
 			os.Setenv("AI_VERIFIER_MAX_CONCURRENCY", "1")
-			os.Setenv("MEMORY_PLACEMENT_WORKER_COUNT", "2")
-		}, "MEMORY_PLACEMENT_WORKER_COUNT"},
-		{"invalid placement poll", func() { os.Setenv("MEMORY_PLACEMENT_POLL_SECONDS", "bad") }, "MEMORY_PLACEMENT_POLL_SECONDS"},
+			os.Setenv("SUBMISSION_ASSESSMENT_WORKER_COUNT", "2")
+		}, "SUBMISSION_ASSESSMENT_WORKER_COUNT"},
+		{"invalid submission assessment poll", func() { os.Setenv("SUBMISSION_ASSESSMENT_POLL_SECONDS", "bad") }, "SUBMISSION_ASSESSMENT_POLL_SECONDS"},
 		{"invalid promote timeout", func() { os.Setenv("PROMOTE_TX_TIMEOUT_SECONDS", "bad") }, "PROMOTE_TX_TIMEOUT_SECONDS"},
 		{"invalid conflict ttl", func() { os.Setenv("CONFLICT_REVIEW_TTL_DAYS", "bad") }, "CONFLICT_REVIEW_TTL_DAYS"},
 		{"zero conflict ttl", func() { os.Setenv("CONFLICT_REVIEW_TTL_DAYS", "0") }, "CONFLICT_REVIEW_TTL_DAYS"},

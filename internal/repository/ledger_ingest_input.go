@@ -13,6 +13,8 @@ import (
 const maxEvidenceItems = 100
 
 func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
+	input.IngestID = strings.TrimSpace(input.IngestID)
+	input.PlacementRunID = strings.TrimSpace(input.PlacementRunID)
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
@@ -23,6 +25,8 @@ func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
 		input.Status = string(domain.PlacementRunQueued)
 	}
 	for i := range input.Evidence {
+		input.Evidence[i].FragmentID = strings.TrimSpace(input.Evidence[i].FragmentID)
+		input.Evidence[i].PlacementItemID = strings.TrimSpace(input.Evidence[i].PlacementItemID)
 		input.Evidence[i].ContentHash = strings.TrimSpace(input.Evidence[i].ContentHash)
 		if input.Evidence[i].ContentHash == "" && input.Evidence[i].Content != "" {
 			input.Evidence[i].ContentHash = sha256Hex(input.Evidence[i].Content)
@@ -50,6 +54,16 @@ func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
 }
 
 func validateCreateIngestInput(input CreateIngestInput) error {
+	if input.IngestID != "" {
+		if _, err := uuid.Parse(input.IngestID); err != nil {
+			return fmt.Errorf("ingest_id is invalid: %w", err)
+		}
+	}
+	if input.PlacementRunID != "" {
+		if _, err := uuid.Parse(input.PlacementRunID); err != nil {
+			return fmt.Errorf("placement_run_id is invalid: %w", err)
+		}
+	}
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
 	}
@@ -58,6 +72,7 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 	}
 	if input.Status != string(domain.PlacementRunQueued) &&
 		input.Status != string(domain.PlacementRunGuarded) &&
+		input.Status != string(domain.PlacementRunProcessing) &&
 		input.Status != string(domain.PlacementRunQuarantined) {
 		return fmt.Errorf("unsupported ingest status %q", input.Status)
 	}
@@ -72,7 +87,27 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 	}
 	directTargets := make(map[string]int)
 	directIdempotencyKeys := make(map[string]int)
+	fragmentIDs := make(map[string]int)
+	placementItemIDs := make(map[string]int)
 	for i, item := range input.Evidence {
+		if item.FragmentID != "" {
+			if _, err := uuid.Parse(item.FragmentID); err != nil {
+				return fmt.Errorf("evidence[%d].fragment_id is invalid: %w", i, err)
+			}
+			if previous, exists := fragmentIDs[item.FragmentID]; exists {
+				return fmt.Errorf("evidence[%d].fragment_id duplicates evidence[%d]", i, previous)
+			}
+			fragmentIDs[item.FragmentID] = i
+		}
+		if item.PlacementItemID != "" {
+			if _, err := uuid.Parse(item.PlacementItemID); err != nil {
+				return fmt.Errorf("evidence[%d].placement_item_id is invalid: %w", i, err)
+			}
+			if previous, exists := placementItemIDs[item.PlacementItemID]; exists {
+				return fmt.Errorf("evidence[%d].placement_item_id duplicates evidence[%d]", i, previous)
+			}
+			placementItemIDs[item.PlacementItemID] = i
+		}
 		if strings.TrimSpace(item.Content) == "" {
 			return fmt.Errorf("evidence[%d].content is required", i)
 		}

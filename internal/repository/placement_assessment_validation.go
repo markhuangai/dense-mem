@@ -10,25 +10,25 @@ import (
 )
 
 func validateAssessmentDecisionAudit(
-	assessmentID, policyVersion string,
+	assessmentID, submissionAssessmentID, policyVersion string,
 	threshold *float64,
 	gateResult string,
 	suppressSupport bool,
 ) error {
-	if assessmentID == "" {
+	if err := validateAssessmentReferences(assessmentID, submissionAssessmentID); err != nil {
+		return err
+	}
+	if !hasAssessmentReference(assessmentID, submissionAssessmentID) {
 		if policyVersion != "" || threshold != nil || gateResult != "" || suppressSupport {
-			return errors.New("assessment audit fields require assessment_id")
+			return errors.New("assessment audit fields require an assessment reference")
 		}
 		return nil
 	}
-	if _, err := uuid.Parse(assessmentID); err != nil {
-		return fmt.Errorf("assessment_id is invalid: %w", err)
-	}
 	if policyVersion == "" {
-		return errors.New("assessment_policy_version is required with assessment_id")
+		return errors.New("assessment_policy_version is required with an assessment reference")
 	}
 	if threshold == nil || *threshold < 0 || *threshold > 1 {
-		return errors.New("threshold_used must be between 0 and 1 with assessment_id")
+		return errors.New("threshold_used must be between 0 and 1 with an assessment reference")
 	}
 	switch gateResult {
 	case "meets_write_threshold", "below_write_threshold", "not_applicable":
@@ -42,15 +42,18 @@ func validateAssessmentDecisionAudit(
 }
 
 func validateSemanticReviewDetails(
-	assessmentID, kind, question string,
+	assessmentID, submissionAssessmentID, kind, question string,
 	options []map[string]any,
 	guidance string,
 ) error {
 	if kind == "" && question == "" && len(options) == 0 && guidance == "" {
 		return nil
 	}
-	if assessmentID == "" {
-		return errors.New("semantic review details require assessment_id")
+	if err := validateAssessmentReferences(assessmentID, submissionAssessmentID); err != nil {
+		return err
+	}
+	if !hasAssessmentReference(assessmentID, submissionAssessmentID) {
+		return errors.New("semantic review details require an assessment reference")
 	}
 	switch kind {
 	case "support_confidence", "identity", "predicate", "scope", "time":
@@ -70,6 +73,27 @@ func validateSemanticReviewDetails(
 		return errors.New("semantic review guidance must be at most 2000 characters")
 	}
 	return nil
+}
+
+func validateAssessmentReferences(assessmentID, submissionAssessmentID string) error {
+	if assessmentID != "" && submissionAssessmentID != "" {
+		return errors.New("assessment and submission_assessment_id are mutually exclusive")
+	}
+	if assessmentID != "" {
+		if _, err := uuid.Parse(assessmentID); err != nil {
+			return fmt.Errorf("assessment_id is invalid: %w", err)
+		}
+	}
+	if submissionAssessmentID != "" {
+		if _, err := uuid.Parse(submissionAssessmentID); err != nil {
+			return fmt.Errorf("submission_assessment_id is invalid: %w", err)
+		}
+	}
+	return nil
+}
+
+func hasAssessmentReference(assessmentID, submissionAssessmentID string) bool {
+	return assessmentID != "" || submissionAssessmentID != ""
 }
 
 func statusForVerdict(verdict string) string {

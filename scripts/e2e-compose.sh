@@ -270,7 +270,7 @@ prepare_e2e_environment() {
       "AI_API_EMBEDDING_DIMENSIONS=1536" \
       "AI_VERIFIER_MODEL=dense-mem-e2e-verifier" \
       "EMBEDDING_WORKER_COUNT=1" \
-      "MEMORY_PLACEMENT_WORKER_COUNT=1" >> "$E2E_ENV_FILE"
+      "SUBMISSION_ASSESSMENT_WORKER_COUNT=1" >> "$E2E_ENV_FILE"
   else
     if [[ ! -f "$ROOT_ENV_SOURCE_FILE" ]]; then
       echo "Missing environment source at ${ROOT_ENV_SOURCE_FILE}; compose e2e uses the supplied local environment file." >&2
@@ -632,6 +632,13 @@ node "$ROOT_DIR/tests/uat/team_dreaming_e2e.mjs")"
 printf '%s\n' "$dream_json"
 dream_statement="$(printf '%s' "$dream_json" | json_field statement)"
 
+echo "Running compose-backed MCP submission-security e2e."
+DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
+DENSE_MEM_USER_URL="$USER_URL" \
+DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
+DENSE_MEM_E2E_TEAM_ID="$team_id" \
+node "$ROOT_DIR/tests/uat/conflict_mcp_e2e.mjs"
+
 echo "Running compose-backed telemetry MCP e2e."
 DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
 DENSE_MEM_USER_URL="$USER_URL" \
@@ -647,15 +654,3 @@ else
   echo "Running compose-backed Playwright tests."
   run_compose_playwright_tests
 fi
-
-echo "Running compose-backed MCP conflict e2e."
-echo "Seeding isolated conflict e2e team through the compose server container."
-conflict_seed_json="$(compose exec -T server /app/provision-team --name "Conflict E2E Team" --description "compose conflict e2e seed" --rate-limit 300)"
-conflict_team_id="$(printf '%s' "$conflict_seed_json" | json_field team_id)"
-DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
-DENSE_MEM_USER_URL="$USER_URL" \
-DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
-DENSE_MEM_E2E_TEAM_ID="$conflict_team_id" \
-DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
-DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
-node "$ROOT_DIR/tests/uat/conflict_mcp_e2e.mjs"

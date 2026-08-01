@@ -56,14 +56,14 @@ func (s *rememberStub) Remember(_ context.Context, req memoryservice.RememberReq
 		return s.result, nil
 	}
 	return &memoryservice.RememberResult{
-		IngestID:        "ingest-canonical",
-		ProcessingState: string(domain.PlacementRunQueued),
-		StatusTool:      "get_memory_placement",
+		SubmissionID:    "submission-canonical",
+		ProcessingState: string(domain.SubmissionQueued),
+		StatusTool:      "get_submission_status",
 	}, nil
 }
 
-func (s *rememberStub) GetMemoryPlacement(_ context.Context, req memoryservice.GetMemoryPlacementRequest) (*memoryservice.PlacementRunResult, error) {
-	return &memoryservice.PlacementRunResult{IngestID: req.IngestID, ProcessingState: string(domain.PlacementRunQueued)}, nil
+func (s *rememberStub) GetSubmissionStatus(_ context.Context, req memoryservice.GetSubmissionStatusRequest) (*memoryservice.SubmissionStatusResult, error) {
+	return &memoryservice.SubmissionStatusResult{SubmissionID: req.SubmissionID, ProcessingState: string(domain.SubmissionQueued)}, nil
 }
 
 type ledgerStub struct {
@@ -110,8 +110,8 @@ func (s *ledgerStub) UpdateImportStatus(_ context.Context, teamID, importID, sta
 	record.AppliedCount = appliedCount
 	record.SkippedCount = skippedCount
 	record.Summary = summary
-	if ingestID, _ := summary["ingest_id"].(string); ingestID != "" {
-		record.IngestID = ingestID
+	if submissionID, _ := summary["submission_id"].(string); submissionID != "" {
+		record.SubmissionID = submissionID
 	}
 	s.imports[key] = record
 	return nil

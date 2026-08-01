@@ -2,7 +2,12 @@ package evalharness
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,7 +26,7 @@ type RunOptions struct {
 	ControlToken           string
 	ImportSeed             bool
 	ImportConcurrency      int
-	PlacementTimeout       time.Duration
+	SubmissionTimeout      time.Duration
 	ResumeSourceDocIDsPath string
 	TracesPath             string
 	MappingPath            string
@@ -51,11 +56,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if strings.TrimSpace(opts.ResumeSourceDocIDsPath) != "" && (mode != "import" || !opts.ImportSeed) {
 		return Summary{}, fmt.Errorf("resume source document IDs require import mode with --import-seed")
 	}
-	if opts.PlacementTimeout < 0 {
-		return Summary{}, fmt.Errorf("placement timeout must not be negative")
+	if opts.SubmissionTimeout < 0 {
+		return Summary{}, fmt.Errorf("submission timeout must not be negative")
 	}
-	if opts.PlacementTimeout == 0 {
-		opts.PlacementTimeout = 2 * time.Minute
+	if opts.SubmissionTimeout == 0 {
+		opts.SubmissionTimeout = 2 * time.Minute
 	}
 	runID := opts.RunID
 	if runID == "" {
@@ -114,7 +119,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		ImportSeed:             opts.ImportSeed,
 		ImportRoute:            importRoute,
 		ImportConcurrency:      opts.ImportConcurrency,
-		PlacementTimeout:       opts.PlacementTimeout.String(),
+		SubmissionTimeout:      opts.SubmissionTimeout.String(),
 		ResumeSourceDocIDsPath: opts.ResumeSourceDocIDsPath,
 		TracesPath:             opts.TracesPath,
 		MappingPath:            opts.MappingPath,
@@ -158,11 +163,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		}
 	} else {
 		client := &HTTPClient{
-			BaseURL:          opts.BaseURL,
-			APIKey:           opts.APIKey,
-			ControlURL:       opts.ControlURL,
-			ControlToken:     opts.ControlToken,
-			PlacementTimeout: opts.PlacementTimeout,
+			BaseURL:           opts.BaseURL,
+			APIKey:            opts.APIKey,
+			ControlURL:        opts.ControlURL,
+			ControlToken:      opts.ControlToken,
+			SubmissionTimeout: opts.SubmissionTimeout,
 		}
 		if err := client.EnableEvaluationMode(ctx, opts.MaxPageSize); err != nil {
 			return Summary{}, err
@@ -201,11 +206,6 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 					return Summary{}, err
 				}
 				mergeKnowledgeMapping(&mapping, imported)
-				exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
-				if err != nil {
-					return Summary{}, err
-				}
-				mergeFilteredKnowledgeMapping(&mapping, exported, keepSourceDocIDs)
 			} else {
 				imported, err := client.ImportCorpusWithConcurrency(ctx, corpus, opts.ImportConcurrency)
 				if err != nil {
@@ -220,7 +220,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 				}
 			}
 		}
-		if !mappingLoadedFromPath && mode != "import" {
+		if !mappingLoadedFromPath && !opts.ImportSeed && mode != "import" {
 			exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
 			if err != nil {
 				return Summary{}, err
@@ -397,6 +397,9 @@ func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []Cor
 	if err := validateSeedValidationReport(manifestPath, manifest, seedHash); err != nil {
 		return err
 	}
+	if err := validateProposalAuditReport(manifestPath, manifest, len(corpus)); err != nil {
+		return err
+	}
 	caseIndex := IndexCases(cases)
 	qrelIndex := IndexQrels(qrels)
 	if len(qrelIndex) != len(qrels) {
@@ -464,6 +467,35 @@ type seedValidationReport struct {
 	SeedHash      string `json:"seed_hash"`
 }
 
+type proposalAuditReport struct {
+	SchemaVersion       string             `json:"schema_version"`
+	SeedID              string             `json:"seed_id"`
+	ParentSeedHash      string             `json:"parent_seed_hash"`
+	AuditMode           string             `json:"audit_mode"`
+	AuditPolicySHA256   string             `json:"audit_policy_sha256"`
+	Status              string             `json:"status"`
+	AuditedRows         int                `json:"audited_rows"`
+	WarningCount        int                `json:"warning_count"`
+	RegenerationCount   int                `json:"regeneration_count"`
+	TransportRetryCount int                `json:"transport_retry_count"`
+	Rows                []proposalAuditRow `json:"rows"`
+}
+
+type proposalAuditRow struct {
+	SourceDocID       string `json:"source_doc_id"`
+	EvidenceSHA256    string `json:"evidence_sha256"`
+	ProposalSHA256    string `json:"proposal_sha256"`
+	AuditPolicySHA256 string `json:"audit_policy_sha256"`
+	Regenerations     int    `json:"regenerations"`
+	TransportRetries  int    `json:"transport_retries"`
+}
+
+type proposalAuditCorpusRow struct {
+	SourceDocID string          `json:"source_doc_id"`
+	Content     string          `json:"content"`
+	Proposal    json.RawMessage `json:"proposal"`
+}
+
 func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, seedHash string) error {
 	if manifest == nil {
 		return nil
@@ -492,6 +524,119 @@ func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, s
 		return fmt.Errorf("validation report seed_hash %q does not match current seed hash %q", report.SeedHash, seedHash)
 	}
 	return nil
+}
+
+func validateProposalAuditReport(manifestPath string, manifest *SeedManifest, corpusRows int) error {
+	if manifest == nil || manifest.SchemaVersion != SeedSchemaVersionV2 {
+		return nil
+	}
+	var report proposalAuditReport
+	if err := readJSONFile(resolveSeedPath(manifestPath, manifest.ProposalAuditReportFile), &report); err != nil {
+		return fmt.Errorf("read proposal audit report: %w", err)
+	}
+	if report.SchemaVersion != "dense-mem.eval.proposal_audit.v1" {
+		return fmt.Errorf("proposal audit report schema_version %q is unsupported", report.SchemaVersion)
+	}
+	if report.SeedID != manifest.SeedID || report.ParentSeedHash != manifest.ParentSeedHash {
+		return errors.New("proposal audit report does not match the v2 seed parent")
+	}
+	if report.AuditMode != "model_only" || report.Status != "passed" || report.AuditedRows != corpusRows || report.WarningCount != 0 {
+		return errors.New("proposal audit report must be a warning-free model-only audit of every corpus row")
+	}
+	if report.RegenerationCount < 0 || report.RegenerationCount > corpusRows*3 {
+		return errors.New("proposal audit report regeneration_count is out of bounds")
+	}
+	if report.AuditPolicySHA256 == "" || len(report.Rows) != corpusRows {
+		return errors.New("proposal audit report must bind every corpus row to one audit policy")
+	}
+	corpus, err := proposalAuditCorpusRows(manifestPath, manifest.CorpusFile)
+	if err != nil {
+		return fmt.Errorf("read proposal audit corpus: %w", err)
+	}
+	if len(corpus) != corpusRows {
+		return errors.New("proposal audit corpus row count does not match loaded corpus")
+	}
+	seen := make(map[string]struct{}, len(report.Rows))
+	totalRegenerations := 0
+	totalTransportRetries := 0
+	for index, row := range report.Rows {
+		if row.SourceDocID == "" || row.Regenerations < 0 || row.TransportRetries < 0 {
+			return fmt.Errorf("proposal audit row %d is invalid", index+1)
+		}
+		if _, exists := seen[row.SourceDocID]; exists {
+			return fmt.Errorf("proposal audit row %d duplicates source_doc_id %q", index+1, row.SourceDocID)
+		}
+		seen[row.SourceDocID] = struct{}{}
+		expected, exists := corpus[row.SourceDocID]
+		if !exists {
+			return fmt.Errorf("proposal audit row %d references unknown source_doc_id %q", index+1, row.SourceDocID)
+		}
+		if row.EvidenceSHA256 != expected.EvidenceSHA256 || row.ProposalSHA256 != expected.ProposalSHA256 ||
+			row.AuditPolicySHA256 != report.AuditPolicySHA256 {
+			return fmt.Errorf("proposal audit row %d does not match the exact corpus evidence, proposal, or audit policy", index+1)
+		}
+		totalRegenerations += row.Regenerations
+		totalTransportRetries += row.TransportRetries
+	}
+	if len(seen) != len(corpus) {
+		return errors.New("proposal audit report does not cover every corpus row")
+	}
+	if totalRegenerations != report.RegenerationCount || totalTransportRetries != report.TransportRetryCount {
+		return errors.New("proposal audit report totals do not match its row records")
+	}
+	return nil
+}
+
+func proposalAuditCorpusRows(manifestPath, corpusFile string) (map[string]proposalAuditRow, error) {
+	path := resolveSeedPath(manifestPath, corpusFile)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	rows := make(map[string]proposalAuditRow)
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	lineNumber := 0
+	for scanner.Scan() {
+		lineNumber++
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 || line[0] == '#' {
+			continue
+		}
+		var row proposalAuditCorpusRow
+		if err := json.Unmarshal(line, &row); err != nil {
+			return nil, fmt.Errorf("%s:%d: %w", path, lineNumber, err)
+		}
+		if strings.TrimSpace(row.SourceDocID) == "" || row.Content == "" || len(row.Proposal) == 0 {
+			return nil, fmt.Errorf("%s:%d: source_doc_id, content, and proposal are required", path, lineNumber)
+		}
+		if !json.Valid(row.Proposal) {
+			return nil, fmt.Errorf("%s:%d: proposal is invalid JSON", path, lineNumber)
+		}
+		if _, exists := rows[row.SourceDocID]; exists {
+			return nil, fmt.Errorf("%s:%d: duplicate source_doc_id %q", path, lineNumber, row.SourceDocID)
+		}
+		rows[row.SourceDocID] = proposalAuditRow{
+			SourceDocID:    row.SourceDocID,
+			EvidenceSHA256: sha256Text(row.Content),
+			ProposalSHA256: sha256Bytes(row.Proposal),
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return rows, nil
+}
+
+func sha256Text(value string) string {
+	return sha256Bytes([]byte(value))
+}
+
+func sha256Bytes(value []byte) string {
+	digest := sha256.Sum256(value)
+	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
 func sourceDocIDIndexForExpectedDreams(dreams []ExpectedDream) map[string]struct{} {

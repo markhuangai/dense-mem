@@ -37,6 +37,8 @@ type LedgerRepository interface {
 }
 
 type CreateIngestInput struct {
+	IngestID          string
+	PlacementRunID    string
 	TeamID            string
 	OwnerProfileID    string
 	IdempotencyKey    string
@@ -56,6 +58,8 @@ type GetPlacementRunInput struct {
 }
 
 type EvidenceInput struct {
+	FragmentID                    string
+	PlacementItemID               string
 	Content                       string
 	ContentHash                   string
 	SourceType                    string
@@ -618,10 +622,10 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH inserted AS (
 				INSERT INTO knowledge_ingests (
-				    team_id, owner_profile_id, idempotency_key, request_hash,
+				    ingest_id, team_id, owner_profile_id, idempotency_key, request_hash,
 				    source_summary, status, proposal, metadata
 				) VALUES (
-				    ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb, ?::jsonb
+				    COALESCE(NULLIF(?, '')::uuid, gen_random_uuid()), ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb, ?::jsonb
 				)
 				ON CONFLICT (team_id, owner_profile_id, idempotency_key)
 				WHERE idempotency_key <> ''
@@ -636,7 +640,7 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 			  AND owner_profile_id = ?::uuid
 			  AND idempotency_key = ?
 			LIMIT 1
-		`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash,
+		`, input.IngestID, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash,
 			input.SourceSummary, input.Status, string(proposal), string(metadata),
 			input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Rows()
 		if err != nil {
@@ -676,12 +680,12 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO knowledge_ingests (
-		    team_id, owner_profile_id, request_hash, source_summary, status, proposal, metadata
+		    ingest_id, team_id, owner_profile_id, request_hash, source_summary, status, proposal, metadata
 		) VALUES (
-		    ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb, ?::jsonb
+		    COALESCE(NULLIF(?, '')::uuid, gen_random_uuid()), ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb, ?::jsonb
 		)
 		RETURNING ingest_id::text
-	`, input.TeamID, input.OwnerProfileID, input.RequestHash, input.SourceSummary,
+	`, input.IngestID, input.TeamID, input.OwnerProfileID, input.RequestHash, input.SourceSummary,
 		input.Status, string(proposal), string(metadata)).Rows()
 	if err != nil {
 		return "", false, err
@@ -740,12 +744,12 @@ func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInpu
 	}
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
 		INSERT INTO placement_runs (
-		    team_id, ingest_id, owner_profile_id, status, completed_at
+		    placement_run_id, team_id, ingest_id, owner_profile_id, status, completed_at
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, %s
+		    COALESCE(NULLIF(?, '')::uuid, gen_random_uuid()), ?::uuid, ?::uuid, ?::uuid, ?, %s
 		)
 		RETURNING placement_run_id::text, created_at, completed_at
-	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.Status).Rows()
+	`, completedExpr), input.PlacementRunID, input.TeamID, ingestID, input.OwnerProfileID, input.Status).Rows()
 	if err != nil {
 		return "", time.Time{}, nil, err
 	}
@@ -782,15 +786,15 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_fragments (
-		    team_id, ingest_id, owner_profile_id, evidence_index, content,
+		    fragment_id, team_id, ingest_id, owner_profile_id, evidence_index, content,
 		    content_hash, source_type, authority, source_ref, source_id,
 		    source_revision_id, labels, metadata
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?,
+		    COALESCE(NULLIF(?, '')::uuid, gen_random_uuid()), ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?,
 		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?::jsonb
 		)
 	RETURNING fragment_id::text, authority
-	`, input.TeamID, ingestID, input.OwnerProfileID, index, item.Content, item.ContentHash,
+	`, item.FragmentID, input.TeamID, ingestID, input.OwnerProfileID, index, item.Content, item.ContentHash,
 		item.SourceType, item.Authority, item.SourceRef, sourceID, sourceRevisionID,
 		pqStringArray(item.Labels), string(metadata)).Rows()
 	if err != nil {
@@ -822,13 +826,13 @@ func insertPlacementItem(ctx context.Context, tx *gorm.DB, input CreateIngestInp
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO placement_items (
-		    team_id, placement_run_id, ingest_id, owner_profile_id, fragment_id,
+		    placement_item_id, team_id, placement_run_id, ingest_id, owner_profile_id, fragment_id,
 		    evidence_index, status, category
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?
+		    COALESCE(NULLIF(?, '')::uuid, gen_random_uuid()), ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?
 		)
 		RETURNING placement_item_id::text, claim_key::text, version
-	`, input.TeamID, placementRunID, ingestID, input.OwnerProfileID, fragment.FragmentID, fragment.EvidenceIndex, status, category).Rows()
+	`, item.PlacementItemID, input.TeamID, placementRunID, ingestID, input.OwnerProfileID, fragment.FragmentID, fragment.EvidenceIndex, status, category).Rows()
 	if err != nil {
 		return PlacementItem{}, err
 	}

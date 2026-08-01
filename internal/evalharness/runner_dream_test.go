@@ -29,8 +29,8 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 	if err := writeJSONL(filepath.Join(dir, "corpus.jsonl"), []CorpusItem{
-		{SourceDocID: "doc-employer", Content: "Employer fact source."},
-		{SourceDocID: "doc-location", Content: "Location fact source."},
+		submissionTestCorpusItem("doc-employer", "Employer fact source."),
+		submissionTestCorpusItem("doc-location", "Location fact source."),
 	}); err != nil {
 		t.Fatalf("write corpus: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 	}
 	if err := writeJSONL(filepath.Join(dir, "qrels.jsonl"), []QRel{{
 		CaseID:            "case-dream",
-		RequiredRefs:      []Ref{{Type: "fragment", SourceDocID: "doc-employer", Grade: 1}},
+		RequiredRefs:      []Ref{{Type: "evidence", SourceDocID: "doc-employer", Grade: 1}},
 		RequiredDreamRefs: []Ref{{Type: "dream", SourceDocID: "expected-dream", Grade: 1}},
 	}}); err != nil {
 		t.Fatalf("write qrels: %v", err)
@@ -51,8 +51,8 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 		CaseID:      "case-dream",
 		Hypothesis:  "Employment may explain the location period.",
 		SourceRefs: []Ref{
-			{Type: "fragment", SourceDocID: "doc-employer"},
-			{Type: "fragment", SourceDocID: "doc-location"},
+			{Type: "evidence", SourceDocID: "doc-employer"},
+			{Type: "evidence", SourceDocID: "doc-location"},
 		},
 	}}); err != nil {
 		t.Fatalf("write expected dreams: %v", err)
@@ -62,8 +62,8 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 	}
 
 	rememberIDs := map[string]string{
-		"eval:doc-employer": "frag-employer",
-		"eval:doc-location": "frag-location",
+		"eval:doc-employer": "evidence-employer",
+		"eval:doc-location": "evidence-location",
 	}
 	var dreamCycleCalled bool
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,19 +78,13 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 			evidence := input["evidence"].([]any)
 			firstEvidence := evidence[0].(map[string]any)
 			idempotencyKey := firstEvidence["idempotency_key"].(string)
-			id, ok := rememberIDs[idempotencyKey]
+			_, ok := rememberIDs[idempotencyKey]
 			if !ok {
 				t.Fatalf("remember input = %#v", input)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ingest_id": strings.TrimPrefix(idempotencyKey, "eval:"),
-				"status":    "queued",
-				"evidence":  []map[string]any{{"id": id}},
-			})
-		case "tool:get_memory_placement":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"placement": map[string]any{"status": "completed"},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-" + strings.TrimPrefix(idempotencyKey, "eval:"), "processing_state": "queued"})
+		case "tool:get_submission_status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"processing_state": "completed", "search_state": "current"})
 		case "tool:eval_run_dream_cycle":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -108,7 +102,7 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 			refs := seed["source_refs"].([]any)
 			firstRef := refs[0].(map[string]any)
 			secondRef := refs[1].(map[string]any)
-			if firstRef["type"] != "fragment" || firstRef["id"] != "frag-employer" || secondRef["id"] != "frag-location" {
+			if firstRef["type"] != "evidence" || firstRef["id"] != "evidence-employer" || secondRef["id"] != "evidence-location" {
 				t.Fatalf("seed refs = %#v", refs)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"run_id": "run-dream"})
@@ -118,11 +112,11 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 				t.Fatalf("decode list body: %v", err)
 			}
 			switch input["type"] {
-			case "fragment":
+			case "evidence":
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"items": []map[string]any{
-						{"fragment_id": "frag-employer", "metadata": map[string]any{"source_doc_id": "doc-employer"}},
-						{"fragment_id": "frag-location", "metadata": map[string]any{"source_doc_id": "doc-location"}},
+						{"id": "evidence-employer", "metadata": map[string]any{"source_doc_id": "doc-employer"}},
+						{"id": "evidence-location", "metadata": map[string]any{"source_doc_id": "doc-location"}},
 					},
 					"next_cursor": "",
 					"has_more":    false,
@@ -132,8 +126,8 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 					"items": []map[string]any{{
 						"dream_id": "dream-expected",
 						"source_refs": []map[string]any{
-							{"type": "fragment", "id": "frag-employer"},
-							{"type": "fragment", "id": "frag-location"},
+							{"type": "evidence", "id": "evidence-employer"},
+							{"type": "evidence", "id": "evidence-location"},
 						},
 					}},
 					"next_cursor": "",
@@ -150,8 +144,8 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"query": "which hypothesis?",
 				"ranked_refs": []map[string]any{{
-					"type": "fragment",
-					"id":   "frag-employer",
+					"type": "evidence",
+					"id":   "evidence-employer",
 					"rank": 1,
 				}},
 				"dream_refs": []map[string]any{{

@@ -7,58 +7,58 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func TestBuildActiveWiresExecutableGetMemoryPlacement(t *testing.T) {
+func TestBuildActiveWiresExecutableGetSubmissionStatus(t *testing.T) {
 	stub := &stubRememberService{}
 	reg, err := BuildActive(Dependencies{Remember: stub})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
-	placement, ok := reg.Get(ToolGetMemoryPlacement)
+	placement, ok := reg.Get(ToolGetSubmissionStatus)
 	if !ok {
-		t.Fatal("BuildActive did not register get_memory_placement")
+		t.Fatal("BuildActive did not register get_submission_status")
 	}
 	if placement.Invoke == nil {
-		t.Fatal("BuildActive get_memory_placement invoker is nil")
+		t.Fatal("BuildActive get_submission_status invoker is nil")
 	}
 	out, err := placement.Invoke(contractInvokeContext("read"), "ignored-profile", map[string]any{
-		"ingest_id": "ingest-canonical",
+		"submission_id": "submission-canonical",
 	})
 	if err != nil {
-		t.Fatalf("get_memory_placement.Invoke: %v", err)
+		t.Fatalf("get_submission_status.Invoke: %v", err)
 	}
 	if err := ValidateInput(Tool{InputSchema: placement.OutputSchema}, out); err != nil {
 		t.Fatalf("validate output: %v", err)
 	}
-	if out["ingest_id"] != "ingest-canonical" || out["processing_state"] != string(domain.PlacementRunCompleted) {
-		t.Fatalf("placement output = %#v", out)
+	if out["submission_id"] != "submission-canonical" || out["processing_state"] != string(domain.SubmissionCompleted) {
+		t.Fatalf("submission status output = %#v", out)
 	}
-	items, ok := out["items"].([]any)
+	items, ok := out["evidence"].([]any)
 	if !ok || len(items) != 1 {
-		t.Fatalf("placement items = %#v", out["items"])
+		t.Fatalf("submission evidence = %#v", out["evidence"])
 	}
 	item, ok := items[0].(map[string]any)
-	if !ok || item["version"] != float64(3) {
-		t.Fatalf("placement item = %#v", items[0])
+	if !ok || item["evidence_index"] != float64(0) {
+		t.Fatalf("submission evidence item = %#v", items[0])
 	}
-	if stub.placementReq.IngestID != "ingest-canonical" {
-		t.Fatalf("stub placement request not populated: %#v", stub.placementReq)
+	if stub.statusReq.SubmissionID != "submission-canonical" {
+		t.Fatalf("stub status request not populated: %#v", stub.statusReq)
 	}
 }
 
-func TestBuildActiveGetMemoryPlacementRejectsTenantOverride(t *testing.T) {
+func TestBuildActiveGetSubmissionStatusRejectsTenantOverride(t *testing.T) {
 	reg, err := BuildActive(Dependencies{Remember: &stubRememberService{}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
-	placement, ok := reg.Get(ToolGetMemoryPlacement)
+	placement, ok := reg.Get(ToolGetSubmissionStatus)
 	if !ok {
-		t.Fatal("BuildActive did not register get_memory_placement")
+		t.Fatal("BuildActive did not register get_submission_status")
 	}
 	_, err = placement.Invoke(contractInvokeContext("read"), "ignored-profile", map[string]any{
-		"team_id":   "attacker-team",
-		"ingest_id": "ingest-canonical",
+		"team_id":       "attacker-team",
+		"submission_id": "submission-canonical",
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
-		t.Fatalf("get_memory_placement.Invoke err = %v, want tenant override rejection", err)
+		t.Fatalf("get_submission_status.Invoke err = %v, want tenant override rejection", err)
 	}
 }
