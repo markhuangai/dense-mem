@@ -84,7 +84,7 @@ func (h *controlPortalHandler) completeControlIdentityLogin(c echo.Context) erro
 	nethttp.SetCookie(c.Response(), &nethttp.Cookie{
 		Name:     service.ControlCSRFCookieName,
 		Value:    result.CSRFToken,
-		Path:     "/control",
+		Path:     "/",
 		MaxAge:   maxAge,
 		HttpOnly: false,
 		Secure:   secure,

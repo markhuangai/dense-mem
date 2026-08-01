@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
@@ -26,6 +27,8 @@ type DirectorySCIMConfig struct {
 	PublicBaseURL string
 	RuntimeConfig service.SSORuntimeConfigProvider
 	Security      service.SecurityService
+	RateLimitSvc  service.RateLimitServiceInterface
+	Config        config.ConfigProvider
 }
 
 type directorySCIMContextKey struct{}
@@ -49,9 +52,10 @@ func RegisterDirectorySCIM(e *echo.Echo, directory *service.DirectoryIdentitySer
 	if err != nil {
 		return err
 	}
-	e.POST("/scim/oauth/token", h.oauthToken)
-	e.Any("/scim/v2/:connectorId", h.serve)
-	e.Any("/scim/v2/:connectorId/*", h.serve)
+	rateLimit := publicIPRateLimitMiddleware("directory-scim", cfg.RateLimitSvc, cfg.Config)
+	e.POST("/scim/oauth/token", h.oauthToken, rateLimit)
+	e.Any("/scim/v2/:connectorId", h.serve, rateLimit)
+	e.Any("/scim/v2/:connectorId/*", h.serve, rateLimit)
 	return nil
 }
 

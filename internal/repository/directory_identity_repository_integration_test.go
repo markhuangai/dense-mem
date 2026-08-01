@@ -427,6 +427,16 @@ func TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates(t *testing.T) {
 	require.Equal(t, group.ID, groups[0].ID)
 	require.Equal(t, []domain.DirectoryUser{*alpha}, groups[0].Members)
 
+	groups, total, err = directoryRepo.ListDirectoryGroupsPage(ctx, connector.ID, domain.DirectoryPageRequest{
+		FilterField: "displayName",
+		FilterValue: "researchmember",
+		Limit:       1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Len(t, groups, 1)
+	require.Equal(t, group.ID, groups[0].ID)
+
 	_, _, err = directoryRepo.ListDirectoryUsersPage(ctx, connector.ID, domain.DirectoryPageRequest{FilterField: "id", FilterValue: "not-a-uuid", Limit: 1})
 	require.ErrorIs(t, err, ErrDirectoryInvalidValue)
 	_, err = directoryRepo.CreateDirectoryUser(ctx, domain.DirectoryUser{
@@ -443,6 +453,49 @@ func TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates(t *testing.T) {
 		Active:      true,
 	}, nil)
 	require.ErrorIs(t, err, ErrDirectoryResourceConflict)
+}
+
+func TestSSOListMappingsExcludesRetiredMappings(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	ssoRepo := NewSSORepository(appDB, rls)
+	provider := &domain.SSOProvider{
+		Name:         "mapping list provider",
+		Kind:         domain.SSOProviderKindGenericOIDC,
+		IssuerURL:    "https://idp.example.test",
+		ClientID:     "mapping-list-client",
+		Enabled:      true,
+		GroupsScopes: []string{},
+	}
+	require.NoError(t, ssoRepo.CreateProvider(ctx, provider))
+
+	activeTeamID := uuid.New()
+	retiredTeamID := uuid.New()
+	activeMappingID := uuid.New()
+	retiredMappingID := uuid.New()
+	now := time.Now().UTC()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO teams (id, name, description, metadata, config, status, created_at, updated_at)
+			VALUES ($1, 'Active mapping team', '', '{}'::jsonb, '{}'::jsonb, 'active', $2, $2),
+			       ($3, 'Retired mapping team', '', '{}'::jsonb, '{}'::jsonb, 'active', $2, $2)
+		`, activeTeamID, now, retiredTeamID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO sso_group_mappings (
+				id, provider_id, team_id, group_id, group_name, scopes, role, enabled, origin, retired_at, created_at, updated_at
+			) VALUES
+				($1, $2, $3, 'active-group', 'Active group', ARRAY['read']::text[], 'member', true, 'manual', NULL, $5, $5),
+				($4, $2, $6, 'retired-group', 'Retired group', ARRAY['read']::text[], 'member', false, 'manual', $5, $5, $5)
+		`, activeMappingID, provider.ID, activeTeamID, retiredMappingID, now, retiredTeamID).Error
+	}))
+
+	mappings, err := ssoRepo.ListMappings(ctx, provider.ID)
+	require.NoError(t, err)
+	require.Len(t, mappings, 1)
+	require.Equal(t, activeMappingID, mappings[0].ID)
 }
 
 func TestDirectoryReconcileFenceAndDisableRetireOnlyDirectoryGrants(t *testing.T) {

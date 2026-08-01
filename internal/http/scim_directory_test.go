@@ -15,10 +15,13 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/config"
 	cryptoutil "github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
+	"github.com/markhuangai/dense-mem/internal/storage/inmem"
 )
 
 func TestDirectorySCIMUserLifecycleAndConnectorIsolation(t *testing.T) {
@@ -167,6 +170,16 @@ func TestDirectorySCIMGroupAndOAuthLifecycle(t *testing.T) {
 	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
 	require.Contains(t, response.Body.String(), `"totalResults":2`)
 	require.Contains(t, response.Body.String(), `"userName":"bea@example.com"`)
+	request = httptest.NewRequest(nethttp.MethodGet, "/scim/v2/"+connectorID.String()+"/Users", nil)
+	request.Header.Set(echo.HeaderAuthorization, "Bearer "+bearerToken)
+	response = httptest.NewRecorder()
+	e.ServeHTTP(response, request)
+	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
+	var defaultPage struct {
+		Resources []json.RawMessage `json:"Resources"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &defaultPage))
+	require.Len(t, defaultPage.Resources, 2)
 	groupBody := `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"externalId":"entra-research-manager","displayName":"ResearchManager","members":[{"value":"` + firstUserID + `"},{"value":"` + secondUserID + `"}]}`
 	request = httptest.NewRequest(nethttp.MethodPost, "/scim/v2/"+connectorID.String()+"/Groups", strings.NewReader(groupBody))
 	request.Header.Set(echo.HeaderAuthorization, "Bearer "+bearerToken)
@@ -340,6 +353,62 @@ func TestDirectorySCIMRejectsMalformedOrUnauthorizedRequestsWithoutLeakingState(
 	response = httptest.NewRecorder()
 	runtimeFailure.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusInternalServerError, response.Code)
+}
+
+func TestDirectorySCIMRoutesAreRateLimited(t *testing.T) {
+	t.Parallel()
+
+	connectorID := uuid.New()
+	repo := &directorySCIMRepositoryStub{
+		connector: &domain.DirectoryConnector{ID: connectorID, ProviderID: uuid.New(), Status: domain.DirectoryConnectorObserve},
+		users:     make(map[uuid.UUID]*domain.DirectoryUser),
+		groups:    make(map[uuid.UUID]*domain.DirectoryGroup),
+	}
+	directory := service.NewDirectoryIdentityService(repo, service.DirectoryIdentityConfig{})
+	e := echo.New()
+	e.HTTPErrorHandler = httperr.ErrorHandler
+	require.NoError(t, RegisterDirectorySCIM(e, directory, DirectorySCIMConfig{
+		RateLimitSvc: service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		Config:       &config.Config{RateLimitPerMinute: 1},
+	}))
+
+	for _, testCase := range []struct {
+		name    string
+		method  string
+		path    string
+		request func(*nethttp.Request)
+	}{
+		{
+			name:   "token",
+			method: nethttp.MethodPost,
+			path:   "/scim/oauth/token",
+			request: func(request *nethttp.Request) {
+				request.SetBasicAuth("missing", "wrong")
+			},
+		},
+		{
+			name:    "protocol",
+			method:  nethttp.MethodGet,
+			path:    "/scim/v2/" + connectorID.String() + "/Users",
+			request: func(*nethttp.Request) {},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := httptest.NewRequest(testCase.method, testCase.path, nil)
+			testCase.request(request)
+			response := httptest.NewRecorder()
+			e.ServeHTTP(response, request)
+			require.NotEqual(t, nethttp.StatusTooManyRequests, response.Code, response.Body.String())
+			require.Equal(t, "1", response.Header().Get("X-RateLimit-Limit"))
+
+			request = httptest.NewRequest(testCase.method, testCase.path, nil)
+			testCase.request(request)
+			response = httptest.NewRecorder()
+			e.ServeHTTP(response, request)
+			require.Equal(t, nethttp.StatusTooManyRequests, response.Code, response.Body.String())
+			require.NotEmpty(t, response.Header().Get("Retry-After"))
+		})
+	}
 }
 
 type directorySCIMRepositoryStub struct {

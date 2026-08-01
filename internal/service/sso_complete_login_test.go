@@ -151,6 +151,7 @@ func TestSSOCompleteLoginUsesDurableDirectoryProfilesWhenDirectoryAuthorityIsAct
 	directoryProfileID := uuid.New()
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
+	tokenTenantID := "tenant-id"
 
 	var oidcServer *httptest.Server
 	oidcServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +172,7 @@ func TestSSOCompleteLoginUsesDurableDirectoryProfilesWhenDirectoryAuthorityIsAct
 				"iss":   oidcServer.URL,
 				"sub":   "entra-user-1",
 				"oid":   "entra-user-1",
-				"tid":   "tenant-id",
+				"tid":   tokenTenantID,
 				"aud":   "client-id",
 				"exp":   now.Add(time.Hour).Unix(),
 				"iat":   now.Add(-time.Minute).Unix(),
@@ -277,4 +278,17 @@ func TestSSOCompleteLoginUsesDurableDirectoryProfilesWhenDirectoryAuthorityIsAct
 	require.NoError(t, err)
 	require.Len(t, legacyResult.Session.Teams, 1)
 	assert.Equal(t, directoryTeamID, legacyResult.Session.Selected.Team.ID)
+
+	repo.providers[providerID].TenantID = "tenant-id"
+	tokenTenantID = "other-tenant"
+	repo.consumableState = &domain.SSOOAuthState{
+		StateHash:    HashSSOToken("wrong-tenant-state-token"),
+		ProviderID:   providerID,
+		PKCEVerifier: "pkce-verifier",
+		Nonce:        "nonce-123",
+		RedirectPath: "/ui/knowledge",
+		ExpiresAt:    now.Add(time.Minute),
+	}
+	_, err = svc.CompleteLogin(ctx, "wrong-tenant-state-token", "auth-code", "https://app.example.com/ui/api/sso/callback")
+	require.ErrorContains(t, err, "tenant")
 }

@@ -166,7 +166,7 @@ func TestDirectorySCIMFilteringErrorsAndSmallHelpers(t *testing.T) {
 	require.True(t, directorySCIMUserMatches(user, filter))
 	require.False(t, directorySCIMGroupMatches(group, filter))
 
-	request = httptest.NewRequest(nethttp.MethodGet, "/Groups?filter=displayName%20eq%20%22Research%22", nil)
+	request = httptest.NewRequest(nethttp.MethodGet, "/Groups?filter=displayName%20eq%20%22research%22", nil)
 	filter, err = directoryParseSCIMFilter(request, "displayName", "id")
 	require.NoError(t, err)
 	require.True(t, directorySCIMGroupMatches(group, filter))

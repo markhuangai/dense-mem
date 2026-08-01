@@ -115,7 +115,7 @@ func directorySCIMGroupMatches(group domain.DirectoryGroup, filter directorySCIM
 	case "":
 		return true
 	case "displayName":
-		return group.DisplayName == filter.value
+		return strings.EqualFold(group.DisplayName, filter.value)
 	case "externalId":
 		return group.ExternalID == filter.value
 	case "id":

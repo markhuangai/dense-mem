@@ -151,7 +151,7 @@ func directoryGroupPageFilter(request domain.DirectoryPageRequest) (string, []an
 	case "":
 		return "", nil, nil
 	case "displayName":
-		return " AND display_name = $2", []any{request.FilterValue}, nil
+		return " AND lower(display_name) = lower($2)", []any{request.FilterValue}, nil
 	case "externalId":
 		return " AND external_id = $2", []any{request.FilterValue}, nil
 	case "id":

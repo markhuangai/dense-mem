@@ -139,7 +139,7 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 		}
 		if cookie.Name == service.ControlCSRFCookieName {
 			require.True(t, cookie.Secure)
-			require.Equal(t, "/control", cookie.Path)
+			require.Equal(t, "/", cookie.Path)
 		}
 	}
 	require.NotEmpty(t, sessionToken)

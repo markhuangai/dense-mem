@@ -277,6 +277,7 @@ func disableDirectoryProvisioningForProviderTx(tx *gorm.DB, providerID uuid.UUID
 }
 
 func lockDirectoryConnectorForProviderTx(tx *gorm.DB, providerID uuid.UUID) error {
+	// The selected rows are intentionally discarded; the FOR UPDATE locks serialize mapping changes with reconciliation.
 	rows, err := tx.Raw(`
 		SELECT id
 		FROM sso_directory_connectors
@@ -313,6 +314,7 @@ func (r *SSORepositoryImpl) ListMappings(ctx context.Context, providerID uuid.UU
 			FROM sso_group_mappings m
 			LEFT JOIN teams t ON t.id = m.team_id
 			WHERE m.provider_id = $1
+				AND m.retired_at IS NULL
 			ORDER BY t.name ASC, m.group_name ASC, m.group_id ASC
 		`, providerID).Rows()
 		if err != nil {
@@ -422,7 +424,7 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 			FOR UPDATE
 		`, mapping.ID, mapping.ProviderID).Row().Scan(&currentTeamID, &origin)
 		if err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				return gorm.ErrRecordNotFound
 			}
 			return err
@@ -476,7 +478,7 @@ func (r *SSORepositoryImpl) DeleteMapping(ctx context.Context, providerID, id uu
 			WHERE id = $1 AND provider_id = $2
 			FOR UPDATE
 		`, id, providerID).Row().Scan(&teamID, &origin); err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				return gorm.ErrRecordNotFound
 			}
 			return err
