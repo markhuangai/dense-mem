@@ -49,6 +49,7 @@ type DirectoryConnector struct {
 	OAuthClientID         string
 	OAuthClientSecretHash string
 	LastActivationAt      *time.Time
+	ReconcileVersion      int64
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
 }
@@ -104,6 +105,7 @@ type DirectoryPreviewCandidate struct {
 	GroupID       uuid.UUID                `json:"group_id"`
 	ExternalID    string                   `json:"external_id"`
 	DisplayName   string                   `json:"display_name"`
+	TeamID        uuid.UUID                `json:"team_id"`
 	TeamName      string                   `json:"team_name"`
 	Entitlement   DirectoryRoleEntitlement `json:"entitlement"`
 	BindingOrigin DirectoryBindingOrigin   `json:"binding_origin"`
@@ -113,6 +115,13 @@ type DirectoryPreview struct {
 	Version    string                      `json:"version"`
 	Candidates []DirectoryPreviewCandidate `json:"candidates"`
 	Issues     []DirectoryIssue            `json:"issues"`
+}
+
+type DirectoryPageRequest struct {
+	FilterField string
+	FilterValue string
+	Offset      int
+	Limit       int
 }
 
 type DirectoryTeam struct {
@@ -157,6 +166,7 @@ type DirectoryProfileGrant struct {
 type DirectoryReconcilePlan struct {
 	ConnectorID              uuid.UUID
 	ProviderID               uuid.UUID
+	ReconcileVersion         int64
 	Bindings                 []DirectoryBindingAction
 	DisableDirectoryGroupIDs []string
 	ArchiveDirectoryTeamIDs  []uuid.UUID

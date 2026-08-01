@@ -724,6 +724,9 @@ func normalizeSSOConfigValues(values map[string]string) (map[string]string, erro
 				if (key == domain.AppConfigSCIMPublicBaseURL || key == domain.AppConfigControlPublicBaseURL) && parsed.Scheme != "https" {
 					return nil, fmt.Errorf("%w: %s must use https", ErrInvalidAppConfig, key)
 				}
+				if parsed.User != nil {
+					return nil, fmt.Errorf("%w: %s must not include credentials", ErrInvalidAppConfig, key)
+				}
 				if parsed.RawQuery != "" || parsed.Fragment != "" {
 					return nil, fmt.Errorf("%w: %s must not include query or fragment", ErrInvalidAppConfig, key)
 				}

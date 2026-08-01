@@ -187,7 +187,7 @@ func (s *SSOService) ListProviders(ctx context.Context) ([]*domain.SSOProvider, 
 }
 
 func (s *SSOService) CreateProvider(ctx context.Context, provider domain.SSOProvider) (*domain.SSOProvider, error) {
-	if err := normalizeSSOProvider(&provider); err != nil {
+	if err := normalizeSSOProviderForWrite(&provider); err != nil {
 		s.debugSSOProviderFailure("sso create provider validation failed", err, &provider)
 		return nil, err
 	}
@@ -204,7 +204,7 @@ func (s *SSOService) UpdateProvider(ctx context.Context, provider domain.SSOProv
 		s.debugSSOProviderFailure("sso update provider validation failed", err, &provider)
 		return nil, err
 	}
-	if err := normalizeSSOProvider(&provider); err != nil {
+	if err := normalizeSSOProviderForWrite(&provider); err != nil {
 		s.debugSSOProviderFailure("sso update provider validation failed", err, &provider)
 		return nil, err
 	}

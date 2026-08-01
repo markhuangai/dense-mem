@@ -233,7 +233,7 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
         )}
       </section>
 
-      {selectedProvider && <DirectoryAutomationPanel api={api} provider={selectedProvider} teams={teams} />}
+	      {selectedProvider && <DirectoryAutomationPanel key={selectedProvider.id} api={api} provider={selectedProvider} teams={teams} />}
     </>
   );
 }
@@ -257,7 +257,12 @@ function SSOProviderForm({
       <select
         id="sso-provider-kind"
         value={draft.kind}
-        onChange={(event) => onChange({ ...draft, kind: event.target.value as SSOProviderInput["kind"] })}
+	        onChange={(event) => {
+	          const kind = event.target.value as SSOProviderInput["kind"];
+	          const previousDefault = draft.kind === "azure_ad" ? "oid" : "sub";
+	          const nextDefault = kind === "azure_ad" ? "oid" : "sub";
+	          onChange({ ...draft, kind, identity_claim: draft.identity_claim === previousDefault ? nextDefault : draft.identity_claim });
+	        }}
       >
         <option value="azure_ad">Azure AD</option>
         <option value="pingone">PingOne</option>

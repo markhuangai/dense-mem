@@ -301,7 +301,8 @@ function cookieFromResponse(response, name) {
   if (!cookie) {
     throw new Error(`${name} was not set after OIDC callback`);
   }
-  return cookie.slice(0, cookie.indexOf(";"));
+  const separator = cookie.indexOf(";");
+  return separator === -1 ? cookie : cookie.slice(0, separator);
 }
 
 function safeURL(value) {

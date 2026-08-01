@@ -246,6 +246,7 @@ export type DirectoryPreview = {
     group_id: string;
     external_id: string;
     display_name: string;
+    team_id: string;
     team_name: string;
     entitlement: DirectoryRoleEntitlement;
     binding_origin: string;
@@ -604,7 +605,7 @@ export class ControlApi {
   }
 
   session(): Promise<ControlSession> {
-    return this.request<ControlSession>("/session");
+    return this.requestEnvelope<ControlSession>("/session");
   }
 
   listTeams(): Promise<Page<Team>> {

@@ -36,10 +36,12 @@ func TestOrganizationDirectoryIdentityMigrationSeedsConfigAndBackfillsLegacyAzur
 	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026073103))
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		var identityClaim string
-		if err := tx.QueryRowContext(ctx, `SELECT identity_claim FROM sso_providers WHERE id = $1`, providerID).Scan(&identityClaim); err != nil {
+		var tenantID string
+		if err := tx.QueryRowContext(ctx, `SELECT identity_claim, tenant_id FROM sso_providers WHERE id = $1`, providerID).Scan(&identityClaim, &tenantID); err != nil {
 			return err
 		}
 		require.Equal(t, "sub", identityClaim)
+		require.Empty(t, tenantID)
 		for _, key := range []string{"SCIM_PUBLIC_BASE_URL", "CONTROL_PUBLIC_BASE_URL"} {
 			var value string
 			if err := tx.QueryRowContext(ctx, `SELECT value FROM app_config WHERE key = $1`, key).Scan(&value); err != nil {

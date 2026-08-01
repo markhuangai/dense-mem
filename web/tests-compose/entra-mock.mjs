@@ -59,7 +59,7 @@ createServer({ cert: certificate, key: privateKey }, (request, response) => {
         expires_in: 3600,
         id_token: signedIDToken(issued.clientID, issued.nonce),
       });
-    });
+    }).catch(() => sendJSON(response, 400, { error: "invalid_request" }));
   }
   if (request.method === "GET" && url.pathname === "/userinfo") {
     return sendJSON(response, 200, identityClaims(""));

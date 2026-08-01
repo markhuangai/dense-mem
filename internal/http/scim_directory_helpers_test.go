@@ -129,6 +129,18 @@ func TestDirectorySCIMPatchAndConversionHelpers(t *testing.T) {
 	require.Equal(t, "bea@example.test", parsedUser.Email)
 	require.Equal(t, "Bea Example", parsedUser.DisplayName)
 
+	parsedUser, err = directoryUserFromSCIM(scim.ResourceAttributes{
+		"userName": "ada@example.test",
+		"name":     map[string]interface{}{"givenName": "Ada", "familyName": "Lovelace"},
+	}, domain.DirectoryUser{})
+	require.NoError(t, err)
+	require.Empty(t, parsedUser.DisplayName)
+	_, err = directoryUserFromSCIM(scim.ResourceAttributes{
+		"userName": "ada@example.test",
+		"name":     "not-an-object",
+	}, domain.DirectoryUser{})
+	require.Error(t, err)
+
 	parsedGroup, parsedMembers, err := directoryGroupFromSCIM(scim.ResourceAttributes{
 		"displayName": "Research",
 		"externalId":  "entra-research",
@@ -252,7 +264,7 @@ func TestDirectorySCIMHelperValidationBoundaries(t *testing.T) {
 	require.Equal(t, "fallback@example.test", parsedUser.Email)
 	require.True(t, parsedUser.Active)
 	_, err = directoryUserFromSCIM(scim.ResourceAttributes{"userName": "alex@example.test", "active": "yes"}, domain.DirectoryUser{})
-	require.NoError(t, err)
+	require.Error(t, err)
 
 	_, _, err = directoryGroupFromSCIM(scim.ResourceAttributes{"externalId": "entra-group"}, domain.DirectoryGroup{})
 	require.Error(t, err)
@@ -308,7 +320,7 @@ func TestDirectorySCIMHelperValidationBoundaries(t *testing.T) {
 	require.Nil(t, directorySCIMGetError("missing", nil))
 	require.Nil(t, directorySCIMMutationError(nil))
 	require.Error(t, directorySCIMMutationError(errors.New("duplicate conflict")))
-	require.Equal(t, scimerrors.ScimErrorUniqueness, directorySCIMMutationError(errors.New("duplicate key value violates unique constraint")))
+	require.Equal(t, scimerrors.ScimErrorUniqueness, directorySCIMMutationError(service.ErrDirectoryResourceConflict))
 	require.Error(t, directorySCIMMutationError(errors.New("unexpected storage failure")))
 	_, err = directoryMemberIDFromPath("members[value eq not-a-string]")
 	require.Error(t, err)

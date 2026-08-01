@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	nethttp "net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +25,7 @@ const directorySCIMMaxResults = 100
 type DirectorySCIMConfig struct {
 	PublicBaseURL string
 	RuntimeConfig service.SSORuntimeConfigProvider
+	Security      service.SecurityService
 }
 
 type directorySCIMContextKey struct{}
@@ -34,6 +34,7 @@ type directorySCIMHandler struct {
 	directory           *service.DirectoryIdentityService
 	publicBaseURL       string
 	runtimeConfigSource service.SSORuntimeConfigProvider
+	security            service.SecurityService
 }
 
 // RegisterDirectorySCIM exposes one authenticated SCIM endpoint per configured provider connector.
@@ -62,6 +63,7 @@ func newDirectorySCIMHandler(directory *service.DirectoryIdentityService, cfg Di
 		directory:           directory,
 		publicBaseURL:       strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/"),
 		runtimeConfigSource: cfg.RuntimeConfig,
+		security:            cfg.Security,
 	}, nil
 }
 
@@ -129,12 +131,17 @@ func (h *directorySCIMHandler) oauthToken(c echo.Context) error {
 	}
 	token, expiresAt, err := h.directory.IssueOAuthToken(c.Request().Context(), clientID, clientSecret)
 	if err != nil {
-		return directoryOAuthError(c, nethttp.StatusUnauthorized, "invalid_client")
+		if errors.Is(err, service.ErrDirectoryCredentialInvalid) {
+			recordDirectoryOAuthAuthFailure(c, h.security)
+			return directoryOAuthError(c, nethttp.StatusUnauthorized, "invalid_client")
+		}
+		return directoryOAuthError(c, nethttp.StatusInternalServerError, "server_error")
 	}
 	expiresIn := int(time.Until(expiresAt).Seconds())
 	if expiresIn < 1 {
 		expiresIn = 1
 	}
+	directoryOAuthNoStore(c)
 	return c.JSON(nethttp.StatusOK, map[string]any{
 		"access_token": token,
 		"token_type":   "Bearer",
@@ -143,7 +150,24 @@ func (h *directorySCIMHandler) oauthToken(c echo.Context) error {
 }
 
 func directoryOAuthError(c echo.Context, status int, code string) error {
+	directoryOAuthNoStore(c)
 	return c.JSON(status, map[string]string{"error": code})
+}
+
+func directoryOAuthNoStore(c echo.Context) {
+	c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
+	c.Response().Header().Set("Pragma", "no-cache")
+}
+
+func recordDirectoryOAuthAuthFailure(c echo.Context, securitySvc service.SecurityService) {
+	if securitySvc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), "scim", "AUTH_INVALID"); err != nil {
+		c.Logger().Error("directory oauth security auth failure record failed")
+	}
 }
 
 func (h *directorySCIMHandler) serve(c echo.Context) error {
@@ -156,7 +180,13 @@ func (h *directorySCIMHandler) serve(c echo.Context) error {
 		return directorySCIMError(c, scimerrors.ScimError{Status: nethttp.StatusUnauthorized})
 	}
 	valid, err := h.directory.AuthenticateSCIM(c.Request().Context(), connectorID, rawToken)
-	if err != nil || !valid {
+	if err != nil {
+		if errors.Is(err, service.ErrDirectoryCredentialInvalid) || errors.Is(err, service.ErrDirectoryConnectorDisabled) || errors.Is(err, service.ErrDirectoryResourceNotFound) {
+			return directorySCIMError(c, scimerrors.ScimError{Status: nethttp.StatusUnauthorized})
+		}
+		return directorySCIMError(c, scimerrors.ScimErrorInternal)
+	}
+	if !valid {
 		return directorySCIMError(c, scimerrors.ScimError{Status: nethttp.StatusUnauthorized})
 	}
 
@@ -175,7 +205,9 @@ func (h *directorySCIMHandler) serve(c echo.Context) error {
 		if err != nil {
 			return directorySCIMError(c, scimerrors.ScimErrorInternal)
 		}
-		publicBaseURL = strings.TrimRight(strings.TrimSpace(runtime.SCIMPublicBaseURL), "/")
+		if runtimeBaseURL := strings.TrimRight(strings.TrimSpace(runtime.SCIMPublicBaseURL), "/"); runtimeBaseURL != "" {
+			publicBaseURL = runtimeBaseURL
+		}
 	}
 	baseURL := ""
 	if publicBaseURL != "" {
@@ -230,7 +262,7 @@ func (h directorySCIMUserResourceHandler) Create(request *nethttp.Request, attri
 	if err != nil {
 		return scim.Resource{}, err
 	}
-	stored, err := h.directory.UpsertUser(request.Context(), connectorID, user)
+	stored, err := h.directory.CreateUser(request.Context(), connectorID, user)
 	if err != nil {
 		return scim.Resource{}, directorySCIMMutationError(err)
 	}
@@ -254,21 +286,21 @@ func (h directorySCIMUserResourceHandler) GetAll(request *nethttp.Request, param
 	if err != nil {
 		return scim.Page{}, scimerrors.ScimErrorInternal
 	}
-	users, err := h.directory.ListUsers(request.Context(), connectorID)
-	if err != nil {
-		return scim.Page{}, scimerrors.ScimErrorInternal
-	}
 	filter, err := directoryParseSCIMFilter(request, "userName", "externalId", "id")
 	if err != nil {
 		return scim.Page{}, err
 	}
+	users, total, err := h.directory.ListUsersPage(request.Context(), connectorID, directorySCIMPageRequest(filter, params))
+	if err != nil {
+		return scim.Page{}, directorySCIMListError(err)
+	}
 	resources := make([]scim.Resource, 0, len(users))
 	for _, user := range users {
-		if user != nil && directorySCIMUserMatches(*user, filter) {
+		if user != nil {
 			resources = append(resources, directorySCIMUserResource(*user))
 		}
 	}
-	return directorySCIMPage(resources, params), nil
+	return scim.Page{TotalResults: total, Resources: resources}, nil
 }
 
 func (h directorySCIMUserResourceHandler) Replace(request *nethttp.Request, id string, attributes scim.ResourceAttributes) (scim.Resource, error) {
@@ -280,7 +312,7 @@ func (h directorySCIMUserResourceHandler) Replace(request *nethttp.Request, id s
 	if err != nil {
 		return scim.Resource{}, directorySCIMGetError(id, err)
 	}
-	user, err := directoryUserFromSCIM(attributes, *existing)
+	user, err := directoryUserFromSCIM(attributes, domain.DirectoryUser{ID: existing.ID, ExternalID: existing.ExternalID, Active: true})
 	if err != nil {
 		return scim.Resource{}, err
 	}
@@ -336,7 +368,7 @@ func (h directorySCIMGroupResourceHandler) Create(request *nethttp.Request, attr
 	if err != nil {
 		return scim.Resource{}, err
 	}
-	stored, err := h.directory.UpsertGroupWithMembers(request.Context(), connectorID, group, members)
+	stored, err := h.directory.CreateGroupWithMembers(request.Context(), connectorID, group, members)
 	if err != nil {
 		return scim.Resource{}, directorySCIMMutationError(err)
 	}
@@ -364,21 +396,21 @@ func (h directorySCIMGroupResourceHandler) GetAll(request *nethttp.Request, para
 	if err != nil {
 		return scim.Page{}, scimerrors.ScimErrorInternal
 	}
-	groups, err := h.directory.ListGroups(request.Context(), connectorID)
-	if err != nil {
-		return scim.Page{}, scimerrors.ScimErrorInternal
-	}
 	filter, err := directoryParseSCIMFilter(request, "displayName", "externalId", "id")
 	if err != nil {
 		return scim.Page{}, err
 	}
+	groups, total, err := h.directory.ListGroupsPage(request.Context(), connectorID, directorySCIMPageRequest(filter, params))
+	if err != nil {
+		return scim.Page{}, directorySCIMListError(err)
+	}
 	resources := make([]scim.Resource, 0, len(groups))
 	for _, group := range groups {
-		if group != nil && directorySCIMGroupMatches(*group, filter) {
+		if group != nil {
 			resources = append(resources, directorySCIMGroupResource(*group))
 		}
 	}
-	return directorySCIMPage(resources, params), nil
+	return scim.Page{TotalResults: total, Resources: resources}, nil
 }
 
 func (h directorySCIMGroupResourceHandler) Replace(request *nethttp.Request, id string, attributes scim.ResourceAttributes) (scim.Resource, error) {
@@ -390,7 +422,7 @@ func (h directorySCIMGroupResourceHandler) Replace(request *nethttp.Request, id 
 	if err != nil {
 		return scim.Resource{}, directorySCIMGetError(id, err)
 	}
-	group, members, err := directoryGroupFromSCIM(attributes, *existing)
+	group, members, err := directoryGroupFromSCIM(attributes, domain.DirectoryGroup{ID: existing.ID, ExternalID: existing.ExternalID, Active: true})
 	if err != nil {
 		return scim.Resource{}, err
 	}
@@ -460,20 +492,46 @@ func directoryUserFromSCIM(attributes scim.ResourceAttributes, base domain.Direc
 		return domain.DirectoryUser{}, scimerrors.ScimErrorInvalidValue
 	}
 	user.UserName = userName
-	if externalID, present := directorySCIMString(attributes["externalId"]); present {
+	if value, present := attributes["externalId"]; present {
+		externalID, ok := directorySCIMString(value)
+		if !ok {
+			return domain.DirectoryUser{}, scimerrors.ScimErrorInvalidValue
+		}
 		user.ExternalID = externalID
 	}
-	if active, present := directorySCIMBool(attributes["active"]); present {
+	if value, present := attributes["active"]; present {
+		active, ok := directorySCIMBool(value)
+		if !ok {
+			return domain.DirectoryUser{}, scimerrors.ScimErrorInvalidValue
+		}
 		user.Active = active
 	} else if base.ID == uuid.Nil {
 		user.Active = true
 	}
-	if displayName, present := directorySCIMString(attributes["displayName"]); present {
+	if value, present := attributes["displayName"]; present {
+		displayName, ok := directorySCIMString(value)
+		if !ok {
+			return domain.DirectoryUser{}, scimerrors.ScimErrorInvalidValue
+		}
 		user.DisplayName = displayName
-	} else if formatted, present := directorySCIMNestedString(attributes["name"], "formatted"); present {
-		user.DisplayName = formatted
+	} else if value, present := attributes["name"]; present {
+		name, ok := value.(map[string]interface{})
+		if !ok {
+			return domain.DirectoryUser{}, scimerrors.ScimErrorInvalidValue
+		}
+		if formattedValue, formattedPresent := name["formatted"]; formattedPresent {
+			formatted, ok := directorySCIMString(formattedValue)
+			if !ok {
+				return domain.DirectoryUser{}, scimerrors.ScimErrorInvalidValue
+			}
+			user.DisplayName = formatted
+		}
 	}
-	if email, present := directorySCIMEmail(attributes["emails"]); present {
+	if value, present := attributes["emails"]; present {
+		email, ok := directorySCIMEmail(value)
+		if !ok {
+			return domain.DirectoryUser{}, scimerrors.ScimErrorInvalidValue
+		}
 		user.Email = email
 	}
 	return user, nil
@@ -486,10 +544,18 @@ func directoryGroupFromSCIM(attributes scim.ResourceAttributes, base domain.Dire
 		return domain.DirectoryGroup{}, nil, scimerrors.ScimErrorInvalidValue
 	}
 	group.DisplayName = displayName
-	if externalID, present := directorySCIMString(attributes["externalId"]); present {
+	if value, present := attributes["externalId"]; present {
+		externalID, ok := directorySCIMString(value)
+		if !ok {
+			return domain.DirectoryGroup{}, nil, scimerrors.ScimErrorInvalidValue
+		}
 		group.ExternalID = externalID
 	}
-	if active, present := directorySCIMBool(attributes["active"]); present {
+	if value, present := attributes["active"]; present {
+		active, ok := directorySCIMBool(value)
+		if !ok {
+			return domain.DirectoryGroup{}, nil, scimerrors.ScimErrorInvalidValue
+		}
 		group.Active = active
 	} else if base.ID == uuid.Nil {
 		group.Active = true
@@ -709,259 +775,4 @@ func directoryPatchGroupAttributes(group domain.DirectoryGroup, members []uuid.U
 		members = replacement
 	}
 	return group, directoryUniqueUserIDs(members), nil
-}
-
-func directorySCIMUserResource(user domain.DirectoryUser) scim.Resource {
-	attributes := scim.ResourceAttributes{
-		"userName":    user.UserName,
-		"displayName": user.DisplayName,
-		"active":      user.Active,
-	}
-	if user.Email != "" {
-		attributes["emails"] = []interface{}{map[string]interface{}{"value": user.Email, "type": "work", "primary": true}}
-	}
-	return directorySCIMResource(user.ID, user.ExternalID, attributes, user.CreatedAt, user.UpdatedAt)
-}
-
-func directorySCIMGroupResource(group domain.DirectoryGroup) scim.Resource {
-	attributes := scim.ResourceAttributes{"displayName": group.DisplayName}
-	members := make([]interface{}, 0, len(group.Members))
-	for _, member := range group.Members {
-		members = append(members, map[string]interface{}{"value": member.ID.String(), "display": member.DisplayName, "type": "User"})
-	}
-	if len(members) > 0 {
-		attributes["members"] = members
-	}
-	return directorySCIMResource(group.ID, group.ExternalID, attributes, group.CreatedAt, group.UpdatedAt)
-}
-
-func directorySCIMResource(id uuid.UUID, externalID string, attributes scim.ResourceAttributes, createdAt, updatedAt time.Time) scim.Resource {
-	resource := scim.Resource{ID: id.String(), Attributes: attributes, Meta: scim.Meta{Created: &createdAt, LastModified: &updatedAt}}
-	if externalID != "" {
-		resource.ExternalID = optional.NewString(externalID)
-	}
-	return resource
-}
-
-type directorySCIMFilter struct {
-	field string
-	value string
-}
-
-func directoryParseSCIMFilter(request *nethttp.Request, allowed ...string) (directorySCIMFilter, error) {
-	raw := strings.TrimSpace(request.URL.Query().Get("filter"))
-	if raw == "" {
-		return directorySCIMFilter{}, nil
-	}
-	parts := strings.SplitN(raw, " eq ", 2)
-	if len(parts) != 2 {
-		return directorySCIMFilter{}, scimerrors.ScimErrorInvalidFilter
-	}
-	field := strings.TrimSpace(parts[0])
-	allowedField := false
-	for _, candidate := range allowed {
-		if field == candidate {
-			allowedField = true
-			break
-		}
-	}
-	if !allowedField {
-		return directorySCIMFilter{}, scimerrors.ScimErrorInvalidFilter
-	}
-	value, err := strconv.Unquote(strings.TrimSpace(parts[1]))
-	if err != nil {
-		return directorySCIMFilter{}, scimerrors.ScimErrorInvalidFilter
-	}
-	return directorySCIMFilter{field: field, value: value}, nil
-}
-
-func directorySCIMUserMatches(user domain.DirectoryUser, filter directorySCIMFilter) bool {
-	switch filter.field {
-	case "":
-		return true
-	case "userName":
-		return user.UserName == filter.value
-	case "externalId":
-		return user.ExternalID == filter.value
-	case "id":
-		return user.ID.String() == filter.value
-	default:
-		return false
-	}
-}
-
-func directorySCIMGroupMatches(group domain.DirectoryGroup, filter directorySCIMFilter) bool {
-	switch filter.field {
-	case "":
-		return true
-	case "displayName":
-		return group.DisplayName == filter.value
-	case "externalId":
-		return group.ExternalID == filter.value
-	case "id":
-		return group.ID.String() == filter.value
-	default:
-		return false
-	}
-}
-
-func directorySCIMPage(resources []scim.Resource, params scim.ListRequestParams) scim.Page {
-	total := len(resources)
-	start := params.StartIndex - 1
-	if start < 0 {
-		start = 0
-	}
-	if start >= total || params.Count == 0 {
-		return scim.Page{TotalResults: total, Resources: []scim.Resource{}}
-	}
-	end := start + params.Count
-	if end > total {
-		end = total
-	}
-	return scim.Page{TotalResults: total, Resources: resources[start:end]}
-}
-
-func directorySCIMString(value interface{}) (string, bool) {
-	text, ok := value.(string)
-	if !ok {
-		return "", false
-	}
-	return strings.TrimSpace(text), true
-}
-
-func directorySCIMBool(value interface{}) (bool, bool) {
-	result, ok := value.(bool)
-	return result, ok
-}
-
-func directorySCIMNestedString(value interface{}, key string) (string, bool) {
-	attributes, ok := value.(map[string]interface{})
-	if !ok {
-		return "", false
-	}
-	return directorySCIMString(attributes[key])
-}
-
-func directorySCIMEmail(value interface{}) (string, bool) {
-	items, ok := value.([]interface{})
-	if !ok {
-		return "", false
-	}
-	fallback := ""
-	for _, item := range items {
-		attributes, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		email, ok := directorySCIMString(attributes["value"])
-		if !ok || email == "" {
-			continue
-		}
-		if primary, present := directorySCIMBool(attributes["primary"]); present && primary {
-			return email, true
-		}
-		if fallback == "" {
-			fallback = email
-		}
-	}
-	return fallback, fallback != ""
-}
-
-func directorySCIMMemberIDs(value interface{}) ([]uuid.UUID, error) {
-	if value == nil {
-		return []uuid.UUID{}, nil
-	}
-	items, ok := value.([]interface{})
-	if !ok {
-		return nil, scimerrors.ScimErrorInvalidValue
-	}
-	members := make([]uuid.UUID, 0, len(items))
-	for _, item := range items {
-		attributes, ok := item.(map[string]interface{})
-		if !ok {
-			return nil, scimerrors.ScimErrorInvalidValue
-		}
-		rawID, ok := directorySCIMString(attributes["value"])
-		if !ok {
-			return nil, scimerrors.ScimErrorInvalidValue
-		}
-		memberID, err := uuid.Parse(rawID)
-		if err != nil {
-			return nil, scimerrors.ScimErrorInvalidValue
-		}
-		members = append(members, memberID)
-	}
-	return directoryUniqueUserIDs(members), nil
-}
-
-func directorySCIMGetError(id string, err error) error {
-	if err == nil {
-		return nil
-	}
-	if strings.Contains(strings.ToLower(err.Error()), "not found") {
-		return scimerrors.ScimErrorResourceNotFound(id)
-	}
-	return scimerrors.ScimErrorInternal
-}
-
-func directorySCIMMutationError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, service.ErrDirectoryConnectorDisabled) {
-		return scimerrors.ScimError{Status: nethttp.StatusForbidden}
-	}
-	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "external_id is immutable") || strings.Contains(message, "conflict") || strings.Contains(message, "duplicate key") || strings.Contains(message, "unique constraint") {
-		return scimerrors.ScimErrorUniqueness
-	}
-	if strings.Contains(message, "required") || strings.Contains(message, "must belong") {
-		return scimerrors.ScimErrorInvalidValue
-	}
-	return scimerrors.ScimErrorInternal
-}
-
-func directoryUserIDs(users []domain.DirectoryUser) []uuid.UUID {
-	result := make([]uuid.UUID, 0, len(users))
-	for _, user := range users {
-		if user.ID != uuid.Nil {
-			result = append(result, user.ID)
-		}
-	}
-	return directoryUniqueUserIDs(result)
-}
-
-func directoryUniqueUserIDs(values []uuid.UUID) []uuid.UUID {
-	seen := make(map[uuid.UUID]struct{}, len(values))
-	result := make([]uuid.UUID, 0, len(values))
-	for _, value := range values {
-		if value == uuid.Nil {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
-func directoryRemoveUserID(values []uuid.UUID, target uuid.UUID) []uuid.UUID {
-	result := make([]uuid.UUID, 0, len(values))
-	for _, value := range values {
-		if value != target {
-			result = append(result, value)
-		}
-	}
-	return result
-}
-
-func directoryMemberIDFromPath(path string) (uuid.UUID, error) {
-	value := strings.TrimSuffix(strings.TrimPrefix(path, "members[value eq "), "]")
-	value, err := strconv.Unquote(strings.TrimSpace(value))
-	if err != nil {
-		return uuid.Nil, err
-	}
-	return uuid.Parse(value)
 }

@@ -77,9 +77,6 @@ func (r *SSORepositoryImpl) DirectoryTeamProfileEntitled(ctx context.Context, pr
 }
 
 func (r *SSORepositoryImpl) UpsertIdentity(ctx context.Context, identity *domain.SSOIdentity) error {
-	if identity.ID == uuid.Nil {
-		identity.ID = uuid.New()
-	}
 	now := time.Now().UTC()
 	if identity.LastLoginAt == nil {
 		identity.LastLoginAt = &now
@@ -88,7 +85,6 @@ func (r *SSORepositoryImpl) UpsertIdentity(ctx context.Context, identity *domain
 	if identity.ExternalID == "" {
 		identity.ExternalID = identity.Subject
 	}
-	identity.Active = true
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		directoryAuthority, err := directoryAuthorityActiveTx(tx, identity.ProviderID)
 		if err != nil {
@@ -103,7 +99,7 @@ func (r *SSORepositoryImpl) UpsertIdentity(ctx context.Context, identity *domain
 			return err
 		}
 		if externalFound && subjectFound && externalMatch != subjectMatch {
-			return fmt.Errorf("sso subject conflicts with a different external identity")
+			return ErrSSOIdentityConflict
 		}
 		if externalFound {
 			identity.ID = externalMatch
@@ -123,13 +119,16 @@ func (r *SSORepositoryImpl) UpsertIdentity(ctx context.Context, identity *domain
 			}
 		}
 		if !externalFound && !subjectFound {
+			if identity.ID == uuid.Nil {
+				identity.ID = uuid.New()
+			}
 			return tx.Raw(`
 				INSERT INTO sso_identities (
 					id, provider_id, subject, external_id, email, display_name, active,
 					last_login_at, last_entitlement_check_at, created_at, updated_at
 				) VALUES ($1, $2, $3, $4, $5, $6, true, $7, $8, $9, $9)
-				RETURNING id, created_at, updated_at
-			`, identity.ID, identity.ProviderID, identity.Subject, identity.ExternalID, identity.Email, identity.DisplayName, identity.LastLoginAt, identity.LastEntitlementCheckAt, now).Row().Scan(&identity.ID, &identity.CreatedAt, &identity.UpdatedAt)
+				RETURNING id, active, created_at, updated_at
+			`, identity.ID, identity.ProviderID, identity.Subject, identity.ExternalID, identity.Email, identity.DisplayName, identity.LastLoginAt, identity.LastEntitlementCheckAt, now).Row().Scan(&identity.ID, &identity.Active, &identity.CreatedAt, &identity.UpdatedAt)
 		}
 		return tx.Raw(`
 			UPDATE sso_identities
@@ -142,8 +141,8 @@ func (r *SSORepositoryImpl) UpsertIdentity(ctx context.Context, identity *domain
 			    last_entitlement_check_at = $6,
 			    updated_at = $7
 			WHERE id = $8 AND provider_id = $9
-			RETURNING id, created_at, updated_at
-		`, identity.Subject, identity.ExternalID, identity.Email, identity.DisplayName, identity.LastLoginAt, identity.LastEntitlementCheckAt, now, identity.ID, identity.ProviderID, directoryAuthority).Row().Scan(&identity.ID, &identity.CreatedAt, &identity.UpdatedAt)
+			RETURNING id, active, created_at, updated_at
+		`, identity.Subject, identity.ExternalID, identity.Email, identity.DisplayName, identity.LastLoginAt, identity.LastEntitlementCheckAt, now, identity.ID, identity.ProviderID, directoryAuthority).Row().Scan(&identity.ID, &identity.Active, &identity.CreatedAt, &identity.UpdatedAt)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to upsert sso identity: %w", err)

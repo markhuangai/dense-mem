@@ -232,9 +232,13 @@ func TestDirectoryReconcilePlanReportsInvalidCapacityAndStrongestGrant(t *testin
 	require.Equal(t, firstGroupID, preview.Candidates[0].GroupID)
 
 	member := domain.DirectoryProfileGrant{Entitlement: domain.DirectoryRoleEntitlement{Role: APIKeyRoleMember, Scopes: []string{APIKeyScopeRead}}}
-	manager := domain.DirectoryProfileGrant{Entitlement: domain.DirectoryRoleEntitlement{Role: APIKeyRoleManager, Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite}}}
-	require.Equal(t, manager, strongestDirectoryGrant(member, manager))
-	require.Equal(t, manager, strongestDirectoryGrant(manager, member))
+	manager := domain.DirectoryProfileGrant{Entitlement: domain.DirectoryRoleEntitlement{Role: APIKeyRoleManager, Scopes: []string{APIKeyScopeWrite}}}
+	winner := strongestDirectoryGrant(member, manager)
+	require.Equal(t, APIKeyRoleManager, winner.Entitlement.Role)
+	require.Equal(t, []string{APIKeyScopeRead, APIKeyScopeWrite}, winner.Entitlement.Scopes)
+	winner = strongestDirectoryGrant(manager, member)
+	require.Equal(t, APIKeyRoleManager, winner.Entitlement.Role)
+	require.Equal(t, []string{APIKeyScopeRead, APIKeyScopeWrite}, winner.Entitlement.Scopes)
 }
 
 func TestDirectoryIdentityServiceProvisioningGuardsAndDeterministicHelpers(t *testing.T) {

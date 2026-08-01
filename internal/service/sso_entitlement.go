@@ -25,7 +25,7 @@ func (s *SSOService) ValidateAPIKeyPrincipal(ctx context.Context, key *domain.AP
 		s.debugSSOFailure("sso api key validation provider lookup failed", err, ssoAPIKeyLogAttrs(key)...)
 		return nil, err
 	}
-	if provider == nil || !provider.Enabled {
+	if provider == nil || !provider.Enabled || provider.RetiredAt != nil {
 		s.debugSSOProviderFailure("sso api key validation provider disabled", ErrSSOProviderDisabled, provider, ssoAPIKeyLogAttrs(key)...)
 		return nil, ErrSSOProviderDisabled
 	}

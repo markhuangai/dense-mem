@@ -35,6 +35,9 @@ SET identity_claim = 'sub'
 WHERE kind = 'azure_ad'
   AND identity_claim = '';
 
+-- Existing Azure rows retain an empty tenant_id for compatibility. Their OIDC
+-- issuer remains verified at login; new provider writes require a tenant binding.
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sso_identities_provider_external_id_unique
     ON sso_identities(provider_id, external_id)
     WHERE external_id <> '';
@@ -62,6 +65,7 @@ CREATE TABLE IF NOT EXISTS sso_directory_connectors (
     oauth_client_id TEXT NOT NULL DEFAULT '',
     oauth_client_secret_hash TEXT NOT NULL DEFAULT '',
     last_activation_at TIMESTAMPTZ NULL,
+    reconcile_version BIGINT NOT NULL DEFAULT 1 CHECK (reconcile_version >= 1),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (char_length(group_pattern) <= 1024),
@@ -318,7 +322,7 @@ CREATE POLICY teams_directory_system_update ON teams
 
 DO $$
 BEGIN
-    RAISE EXCEPTION '2026073103_organization_directory_identity is irreversible once directory state exists; use a forward migration or restore from backup';
+    RAISE EXCEPTION '2026073103_organization_directory_identity is irreversible; use a forward migration or restore from backup';
 END $$;
 
 -- +goose StatementEnd

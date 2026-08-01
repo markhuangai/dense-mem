@@ -27,12 +27,15 @@ func (r *DirectoryIdentityRepositoryImpl) applyDirectoryReconcilePlan(ctx contex
 		return fmt.Errorf("directory reconcile plan requires connector and provider IDs")
 	}
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		connector, err := getDirectoryConnectorTx(tx, plan.ConnectorID)
+		connector, err := getDirectoryConnectorTx(tx, plan.ConnectorID, true)
 		if err != nil {
 			return err
 		}
 		if connector == nil || connector.ProviderID != plan.ProviderID {
 			return gorm.ErrRecordNotFound
+		}
+		if plan.ReconcileVersion > 0 && connector.ReconcileVersion != plan.ReconcileVersion {
+			return ErrDirectoryReconcileStale
 		}
 		if activate {
 			if connector.Status != domain.DirectoryConnectorObserve {
@@ -41,12 +44,27 @@ func (r *DirectoryIdentityRepositoryImpl) applyDirectoryReconcilePlan(ctx contex
 			now := time.Now().UTC()
 			if err := tx.Exec(`
 				UPDATE sso_directory_connectors
-				SET status = 'active', last_activation_at = $1, updated_at = $1
+				SET status = 'active',
+				    last_activation_at = $1,
+				    reconcile_version = reconcile_version + 1,
+				    updated_at = $1
 				WHERE id = $2
 			`, now, plan.ConnectorID).Error; err != nil {
 				return err
 			}
+			if err := tx.Exec(`
+				UPDATE sso_identities i
+				SET active = u.active,
+				    updated_at = $1
+				FROM sso_directory_users u
+				WHERE u.connector_id = $2
+				  AND i.id = u.identity_id
+				  AND i.provider_id = $3
+			`, now, plan.ConnectorID, plan.ProviderID).Error; err != nil {
+				return err
+			}
 			connector.Status = domain.DirectoryConnectorActive
+			connector.ReconcileVersion++
 		}
 		if connector.Status != domain.DirectoryConnectorActive {
 			return fmt.Errorf("directory connector is not active")
@@ -153,6 +171,13 @@ func (r *DirectoryIdentityRepositoryImpl) applyDirectoryReconcilePlan(ctx contex
 
 func (r *DirectoryIdentityRepositoryImpl) AdoptDirectoryTeam(ctx context.Context, connectorID, groupID, teamID uuid.UUID) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		connector, err := getDirectoryConnectorTx(tx, connectorID, true)
+		if err != nil {
+			return err
+		}
+		if connector == nil {
+			return gorm.ErrRecordNotFound
+		}
 		var boundTeamID uuid.UUID
 		if err := tx.Raw(`
 			SELECT team_id
@@ -183,11 +208,14 @@ func (r *DirectoryIdentityRepositoryImpl) AdoptDirectoryTeam(ctx context.Context
 		if res.RowsAffected == 0 {
 			return fmt.Errorf("directory team cannot be adopted")
 		}
-		return tx.Exec(`
+		if err := tx.Exec(`
 			UPDATE sso_directory_group_bindings
 			SET origin = 'adopted', updated_at = $1
 			WHERE connector_id = $2 AND group_id = $3
-		`, now, connectorID, groupID).Error
+		`, now, connectorID, groupID).Error; err != nil {
+			return err
+		}
+		return bumpDirectoryConnectorReconcileVersionTx(tx, connectorID, now)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to adopt directory team: %w", err)
@@ -195,14 +223,18 @@ func (r *DirectoryIdentityRepositoryImpl) AdoptDirectoryTeam(ctx context.Context
 	return nil
 }
 
-func getDirectoryConnectorTx(tx *gorm.DB, connectorID uuid.UUID) (*domain.DirectoryConnector, error) {
+func getDirectoryConnectorTx(tx *gorm.DB, connectorID uuid.UUID, forUpdate ...bool) (*domain.DirectoryConnector, error) {
+	lockClause := ""
+	if len(forUpdate) > 0 && forUpdate[0] {
+		lockClause = " FOR UPDATE"
+	}
 	rows, err := tx.Raw(`
 		SELECT id, provider_id, status, group_pattern, role_entitlements::text, max_auto_teams,
 		       credential_version, bearer_token_hash, oauth_client_id, oauth_client_secret_hash,
-		       last_activation_at, created_at, updated_at
+		       last_activation_at, reconcile_version, created_at, updated_at
 		FROM sso_directory_connectors
 		WHERE id = $1
-	`, connectorID).Rows()
+	`+lockClause, connectorID).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -261,14 +293,64 @@ func listDirectoryGroupsTx(tx *gorm.DB, connectorID uuid.UUID) ([]domain.Directo
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	for index := range items {
-		members, err := listDirectoryGroupMembersTx(tx, connectorID, items[index].ID)
-		if err != nil {
-			return nil, err
-		}
-		items[index].Members = members
+	if err := populateDirectoryGroupMembersTx(tx, connectorID, items); err != nil {
+		return nil, err
 	}
 	return items, nil
+}
+
+func populateDirectoryGroupMembersTx(tx *gorm.DB, connectorID uuid.UUID, groups []domain.DirectoryGroup) error {
+	if len(groups) == 0 {
+		return nil
+	}
+	groupIDs := make([]uuid.UUID, 0, len(groups))
+	membersByGroup := make(map[uuid.UUID][]domain.DirectoryUser, len(groups))
+	for _, group := range groups {
+		groupIDs = append(groupIDs, group.ID)
+		membersByGroup[group.ID] = []domain.DirectoryUser{}
+	}
+	rows, err := tx.Raw(`
+		SELECT m.group_id,
+		       u.id, u.connector_id, u.external_id, u.user_name, u.email, u.display_name,
+		       u.active, u.identity_id, u.created_at, u.updated_at
+		FROM sso_directory_group_memberships m
+		JOIN sso_directory_users u
+		  ON u.connector_id = m.connector_id AND u.id = m.user_id
+		WHERE m.connector_id = $1
+		  AND m.group_id = ANY($2::uuid[])
+		ORDER BY m.group_id, lower(u.user_name), u.id
+	`, connectorID, pq.Array(groupIDs)).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var groupID uuid.UUID
+		var user domain.DirectoryUser
+		if err := rows.Scan(
+			&groupID,
+			&user.ID,
+			&user.ConnectorID,
+			&user.ExternalID,
+			&user.UserName,
+			&user.Email,
+			&user.DisplayName,
+			&user.Active,
+			&user.IdentityID,
+			&user.CreatedAt,
+			&user.UpdatedAt,
+		); err != nil {
+			return err
+		}
+		membersByGroup[groupID] = append(membersByGroup[groupID], user)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for index := range groups {
+		groups[index].Members = membersByGroup[groups[index].ID]
+	}
+	return nil
 }
 
 func listDirectoryBindingsTx(tx *gorm.DB, connectorID uuid.UUID) ([]domain.DirectoryGroupBinding, error) {
@@ -469,7 +551,6 @@ func revokeMissingDirectoryProfilesTx(ctx context.Context, tx *gorm.DB, provider
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 	type profileRef struct {
 		id, teamID, identityID uuid.UUID
 	}
@@ -477,6 +558,7 @@ func revokeMissingDirectoryProfilesTx(ctx context.Context, tx *gorm.DB, provider
 	for rows.Next() {
 		var item profileRef
 		if err := rows.Scan(&item.id, &item.teamID, &item.identityID); err != nil {
+			_ = rows.Close()
 			return err
 		}
 		if _, found := desired[directoryProfileGrantKey(item.identityID, item.teamID)]; !found {
@@ -484,6 +566,10 @@ func revokeMissingDirectoryProfilesTx(ctx context.Context, tx *gorm.DB, provider
 		}
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
 		return err
 	}
 	for _, item := range stale {
@@ -514,12 +600,15 @@ func directoryProfileName(email, displayName string, identityID uuid.UUID) strin
 		name = strings.TrimSpace(email)
 	}
 	if name == "" {
-		name = "directory-" + identityID.String()
+		name = "directory"
 	}
-	if len(name) > 100 {
-		name = name[:100]
+	suffix := " (" + identityID.String() + ")"
+	limit := 100 - len([]rune(suffix))
+	characters := []rune(name)
+	if len(characters) > limit {
+		name = string(characters[:limit])
 	}
-	return name
+	return name + suffix
 }
 
 func directoryUUIDStrings(values []uuid.UUID) []string {

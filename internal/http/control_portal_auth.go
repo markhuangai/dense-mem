@@ -110,14 +110,7 @@ func controlPortalRequestOrigin(request *nethttp.Request) string {
 	if request.TLS != nil {
 		scheme = "https"
 	}
-	if forwarded := strings.TrimSpace(strings.Split(request.Header.Get("X-Forwarded-Proto"), ",")[0]); forwarded != "" {
-		scheme = forwarded
-	}
-	host := request.Host
-	if forwarded := strings.TrimSpace(strings.Split(request.Header.Get("X-Forwarded-Host"), ",")[0]); forwarded != "" {
-		host = forwarded
-	}
-	return controlPortalOrigin(scheme + "://" + host)
+	return controlPortalOrigin(scheme + "://" + request.Host)
 }
 
 func controlPortalOrigin(value string) string {

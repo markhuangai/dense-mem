@@ -107,9 +107,13 @@ func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.
 	if err := idToken.Claims(&raw); err != nil {
 		return oidcLoginClaims{}, fmt.Errorf("failed to parse oidc claims: %w", err)
 	}
+	externalID, err := oidcIdentityValue(raw, ssoProvider, idToken.Subject)
+	if err != nil {
+		return oidcLoginClaims{}, err
+	}
 	claims := oidcLoginClaims{
 		Subject:           idToken.Subject,
-		ExternalID:        oidcIdentityValue(raw, ssoProvider, idToken.Subject),
+		ExternalID:        externalID,
 		TenantID:          firstClaimString(raw, "tid"),
 		Email:             firstClaimString(raw, "email", "preferred_username", "upn"),
 		DisplayName:       firstClaimString(raw, "name", "display_name"),
@@ -157,8 +161,9 @@ func readOIDCClaims(ctx context.Context, provider *oidc.Provider, token *oauth2.
 	return claims, nil
 }
 
-func oidcIdentityValue(raw map[string]json.RawMessage, provider domain.SSOProvider, fallback string) string {
+func oidcIdentityValue(raw map[string]json.RawMessage, provider domain.SSOProvider, fallback string) (string, error) {
 	claim := strings.TrimSpace(provider.IdentityClaim)
+	explicit := claim != ""
 	if claim == "" {
 		claim = "sub"
 		if provider.Kind == domain.SSOProviderKindAzureAD {
@@ -166,13 +171,16 @@ func oidcIdentityValue(raw map[string]json.RawMessage, provider domain.SSOProvid
 		}
 	}
 	if claim == "sub" {
-		return fallback
+		return fallback, nil
 	}
 	value := firstClaimString(raw, claim)
 	if value == "" {
-		return fallback
+		if explicit {
+			return "", fmt.Errorf("configured oidc identity claim %q is missing", claim)
+		}
+		return fallback, nil
 	}
-	return value
+	return value, nil
 }
 
 func rawClaimNames(raw map[string]json.RawMessage) []string {
@@ -670,6 +678,16 @@ func normalizeSSOProvider(provider *domain.SSOProvider) error {
 		provider.GroupClaims = []string{"groups"}
 	}
 	provider.GroupsScopes = dedupeStrings(provider.GroupsScopes)
+	return nil
+}
+
+func normalizeSSOProviderForWrite(provider *domain.SSOProvider) error {
+	if err := normalizeSSOProvider(provider); err != nil {
+		return err
+	}
+	if provider.Kind == domain.SSOProviderKindAzureAD && provider.TenantID == "" {
+		return fmt.Errorf("sso tenant_id is required for azure_ad providers")
+	}
 	return nil
 }
 

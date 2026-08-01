@@ -99,15 +99,30 @@ func TestNormalizeSSOProviderAndMapping(t *testing.T) {
 		Name:      " Enterprise ",
 		Kind:      domain.SSOProviderKindAzureAD,
 		IssuerURL: "https://login.example.com/",
+		TenantID:  "tenant-id",
 		ClientID:  " client-id ",
 		Scopes:    []string{"email", "openid", "email"},
 	}
 	require.NoError(t, normalizeSSOProvider(&provider))
+	require.NoError(t, normalizeSSOProviderForWrite(&provider))
 	assert.Equal(t, "Enterprise", provider.Name)
 	assert.Equal(t, "https://login.example.com", provider.IssuerURL)
 	assert.Equal(t, "client-id", provider.ClientID)
 	assert.Equal(t, []string{"email", "openid"}, provider.Scopes)
 	assert.Equal(t, []string{"groups"}, provider.GroupClaims)
+
+	legacyAzure := domain.SSOProvider{
+		Name:      "Legacy Azure",
+		Kind:      domain.SSOProviderKindAzureAD,
+		IssuerURL: "https://login.microsoftonline.com/tenant/v2.0",
+		ClientID:  "legacy-client",
+		Enabled:   true,
+	}
+	require.NoError(t, normalizeSSOProvider(&legacyAzure))
+	require.True(t, ssoProviderReadyForPublicLogin(&legacyAzure))
+	require.ErrorContains(t, normalizeSSOProviderForWrite(&legacyAzure), "tenant_id is required")
+	legacyAzure.TenantID = "tenant-id"
+	require.NoError(t, normalizeSSOProviderForWrite(&legacyAzure))
 
 	badProvider := domain.SSOProvider{Name: "Bad", Kind: domain.SSOProviderKindAzureAD, IssuerURL: "http://example.com", ClientID: "client"}
 	require.Error(t, normalizeSSOProvider(&badProvider))
@@ -117,9 +132,9 @@ func TestNormalizeSSOProviderAndMapping(t *testing.T) {
 	require.Error(t, normalizeSSOProvider(&badProvider))
 	badProvider = domain.SSOProvider{Name: "Bad", Kind: domain.SSOProviderKindAzureAD, IssuerURL: "https://login.example.com"}
 	require.Error(t, normalizeSSOProvider(&badProvider))
-	badProvider = domain.SSOProvider{Name: "Bad", Kind: domain.SSOProviderKindAzureAD, IssuerURL: "https://login.example.com", ClientID: "client", GroupsEndpoint: "http://graph.example.com/groups"}
+	badProvider = domain.SSOProvider{Name: "Bad", Kind: domain.SSOProviderKindAzureAD, IssuerURL: "https://login.example.com", TenantID: "tenant-id", ClientID: "client", GroupsEndpoint: "http://graph.example.com/groups"}
 	require.ErrorContains(t, normalizeSSOProvider(&badProvider), "groups_endpoint must be an absolute https URL")
-	badProvider = domain.SSOProvider{Name: "Bad", Kind: domain.SSOProviderKindAzureAD, IssuerURL: "https://login.example.com", ClientID: "client", GroupsEndpoint: "https://user:pass@graph.example.com/groups"}
+	badProvider = domain.SSOProvider{Name: "Bad", Kind: domain.SSOProviderKindAzureAD, IssuerURL: "https://login.example.com", TenantID: "tenant-id", ClientID: "client", GroupsEndpoint: "https://user:pass@graph.example.com/groups"}
 	require.ErrorContains(t, normalizeSSOProvider(&badProvider), "groups_endpoint must not include credentials")
 
 	provider = domain.SSOProvider{Name: "Ping", Kind: domain.SSOProviderKindPingOne, IssuerURL: "https://ping.example.com", ClientID: "client", Scopes: []string{"email"}}

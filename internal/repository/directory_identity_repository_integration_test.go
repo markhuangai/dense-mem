@@ -327,3 +327,249 @@ func TestDirectoryGroupAndMembershipUpsertIsAtomic(t *testing.T) {
 	require.Len(t, stored.Members, 1)
 	require.Equal(t, user.ID, stored.Members[0].ID)
 }
+
+func TestDirectoryPageQueriesAreScopedAndRejectDuplicateCreates(t *testing.T) {
+	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	ssoRepo := NewSSORepository(appDB, rls)
+	provider := &domain.SSOProvider{
+		Name:         "directory page provider",
+		Kind:         domain.SSOProviderKindGenericOIDC,
+		IssuerURL:    "https://idp.example.test",
+		ClientID:     "directory-page-client",
+		Enabled:      true,
+		GroupsScopes: []string{},
+	}
+	require.NoError(t, ssoRepo.CreateProvider(ctx, provider))
+	directoryRepo := NewDirectoryIdentityRepository(appDB, rls)
+	connector := &domain.DirectoryConnector{
+		ProviderID:        provider.ID,
+		Status:            domain.DirectoryConnectorObserve,
+		GroupPattern:      "^(?P<team>.+?)(?P<role>Member)$",
+		RoleEntitlements:  map[string]domain.DirectoryRoleEntitlement{"Member": {Role: "member", Scopes: []string{"read"}}},
+		MaxAutoTeams:      5,
+		CredentialVersion: 1,
+	}
+	require.NoError(t, directoryRepo.CreateDirectoryConnector(ctx, connector))
+
+	alpha, err := directoryRepo.CreateDirectoryUser(ctx, domain.DirectoryUser{
+		ConnectorID: connector.ID,
+		ExternalID:  "entra-alpha",
+		UserName:    "alpha@example.test",
+		DisplayName: "Alpha",
+		Active:      true,
+	})
+	require.NoError(t, err)
+	beta, err := directoryRepo.CreateDirectoryUser(ctx, domain.DirectoryUser{
+		ConnectorID: connector.ID,
+		ExternalID:  "entra-beta",
+		UserName:    "beta@example.test",
+		DisplayName: "Beta",
+		Active:      true,
+	})
+	require.NoError(t, err)
+	group, err := directoryRepo.CreateDirectoryGroupWithMembers(ctx, domain.DirectoryGroup{
+		ConnectorID: connector.ID,
+		ExternalID:  "entra-research",
+		DisplayName: "ResearchMember",
+		Active:      true,
+	}, []uuid.UUID{alpha.ID})
+	require.NoError(t, err)
+
+	otherProvider := &domain.SSOProvider{
+		Name:         "other directory page provider",
+		Kind:         domain.SSOProviderKindGenericOIDC,
+		IssuerURL:    "https://other-idp.example.test",
+		ClientID:     "other-directory-page-client",
+		Enabled:      true,
+		GroupsScopes: []string{},
+	}
+	require.NoError(t, ssoRepo.CreateProvider(ctx, otherProvider))
+	otherConnector := &domain.DirectoryConnector{
+		ProviderID:        otherProvider.ID,
+		Status:            domain.DirectoryConnectorObserve,
+		GroupPattern:      "^(?P<team>.+?)(?P<role>Member)$",
+		RoleEntitlements:  map[string]domain.DirectoryRoleEntitlement{"Member": {Role: "member", Scopes: []string{"read"}}},
+		MaxAutoTeams:      5,
+		CredentialVersion: 1,
+	}
+	require.NoError(t, directoryRepo.CreateDirectoryConnector(ctx, otherConnector))
+	_, err = directoryRepo.CreateDirectoryUser(ctx, domain.DirectoryUser{
+		ConnectorID: otherConnector.ID,
+		ExternalID:  "entra-other",
+		UserName:    "other@example.test",
+		DisplayName: "Other",
+		Active:      true,
+	})
+	require.NoError(t, err)
+
+	users, total, err := directoryRepo.ListDirectoryUsersPage(ctx, connector.ID, domain.DirectoryPageRequest{
+		FilterField: "userName",
+		FilterValue: "ALPHA@example.test",
+		Limit:       1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Len(t, users, 1)
+	require.Equal(t, alpha.ID, users[0].ID)
+
+	users, total, err = directoryRepo.ListDirectoryUsersPage(ctx, connector.ID, domain.DirectoryPageRequest{Offset: 1, Limit: 1})
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	require.Len(t, users, 1)
+	require.Equal(t, beta.ID, users[0].ID)
+
+	groups, total, err := directoryRepo.ListDirectoryGroupsPage(ctx, connector.ID, domain.DirectoryPageRequest{Limit: 1})
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Len(t, groups, 1)
+	require.Equal(t, group.ID, groups[0].ID)
+	require.Equal(t, []domain.DirectoryUser{*alpha}, groups[0].Members)
+
+	_, _, err = directoryRepo.ListDirectoryUsersPage(ctx, connector.ID, domain.DirectoryPageRequest{FilterField: "id", FilterValue: "not-a-uuid", Limit: 1})
+	require.ErrorIs(t, err, ErrDirectoryInvalidValue)
+	_, err = directoryRepo.CreateDirectoryUser(ctx, domain.DirectoryUser{
+		ConnectorID: connector.ID,
+		ExternalID:  alpha.ExternalID,
+		UserName:    alpha.UserName,
+		Active:      true,
+	})
+	require.ErrorIs(t, err, ErrDirectoryResourceConflict)
+	_, err = directoryRepo.CreateDirectoryGroupWithMembers(ctx, domain.DirectoryGroup{
+		ConnectorID: connector.ID,
+		ExternalID:  group.ExternalID,
+		DisplayName: group.DisplayName,
+		Active:      true,
+	}, nil)
+	require.ErrorIs(t, err, ErrDirectoryResourceConflict)
+}
+
+func TestDirectoryReconcileFenceAndDisableRetireOnlyDirectoryGrants(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	ssoRepo := NewSSORepository(appDB, rls)
+	provider := &domain.SSOProvider{
+		Name:         "directory fence provider",
+		Kind:         domain.SSOProviderKindGenericOIDC,
+		IssuerURL:    "https://idp.example.test",
+		ClientID:     "directory-fence-client",
+		Enabled:      true,
+		GroupsScopes: []string{},
+	}
+	require.NoError(t, ssoRepo.CreateProvider(ctx, provider))
+	directoryRepo := NewDirectoryIdentityRepository(appDB, rls)
+	connector := &domain.DirectoryConnector{
+		ProviderID:        provider.ID,
+		Status:            domain.DirectoryConnectorActive,
+		GroupPattern:      "^(?P<team>.+?)(?P<role>Manager)$",
+		RoleEntitlements:  map[string]domain.DirectoryRoleEntitlement{"Manager": {Role: "manager", Scopes: []string{"read", "write"}}},
+		MaxAutoTeams:      5,
+		CredentialVersion: 1,
+	}
+	require.NoError(t, directoryRepo.CreateDirectoryConnector(ctx, connector))
+	staleVersion := connector.ReconcileVersion
+	user, err := directoryRepo.UpsertDirectoryUser(ctx, domain.DirectoryUser{
+		ConnectorID: connector.ID,
+		ExternalID:  "entra-fence-user",
+		UserName:    "fence@example.test",
+		DisplayName: "Fence User",
+		Active:      true,
+	})
+	require.NoError(t, err)
+	require.ErrorIs(t, directoryRepo.ApplyDirectoryReconcilePlan(ctx, domain.DirectoryReconcilePlan{
+		ConnectorID:      connector.ID,
+		ProviderID:       provider.ID,
+		ReconcileVersion: staleVersion,
+	}), ErrDirectoryReconcileStale)
+
+	group, err := directoryRepo.UpsertDirectoryGroup(ctx, domain.DirectoryGroup{
+		ConnectorID: connector.ID,
+		ExternalID:  "entra-fence-group",
+		DisplayName: "ResearchManager",
+		Active:      true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, directoryRepo.ReplaceDirectoryGroupMembers(ctx, connector.ID, group.ID, []uuid.UUID{user.ID}))
+	current, err := directoryRepo.GetDirectoryConnector(ctx, connector.ID)
+	require.NoError(t, err)
+	directoryTeamID := uuid.New()
+	require.NoError(t, directoryRepo.ApplyDirectoryReconcilePlan(ctx, domain.DirectoryReconcilePlan{
+		ConnectorID:          connector.ID,
+		ProviderID:           provider.ID,
+		ReconcileVersion:     current.ReconcileVersion,
+		DirectoryIdentityIDs: []uuid.UUID{user.IdentityID},
+		Bindings: []domain.DirectoryBindingAction{{
+			GroupID:         group.ID,
+			GroupExternalID: group.ExternalID,
+			TeamID:          directoryTeamID,
+			TeamName:        "Directory Research",
+			CreateTeam:      true,
+			Origin:          domain.DirectoryBindingCreated,
+			Entitlement:     domain.DirectoryRoleEntitlement{Role: "manager", Scopes: []string{"read", "write"}},
+		}},
+		ProfileGrants: []domain.DirectoryProfileGrant{{
+			IdentityID:      user.IdentityID,
+			TeamID:          directoryTeamID,
+			Subject:         user.ExternalID,
+			DisplayName:     user.DisplayName,
+			GroupExternalID: group.ExternalID,
+			Entitlement:     domain.DirectoryRoleEntitlement{Role: "manager", Scopes: []string{"read", "write"}},
+		}},
+	}))
+
+	manualTeamID := uuid.New()
+	manualMappingID := uuid.New()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		now := time.Now().UTC()
+		if err := tx.Exec(`
+			INSERT INTO teams (id, name, description, metadata, config, status, created_at, updated_at)
+			VALUES ($1, 'Manual directory exception', '', '{}'::jsonb, '{}'::jsonb, 'active', $2, $2)
+		`, manualTeamID, now).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO sso_group_mappings (
+				id, provider_id, team_id, group_id, group_name, scopes, role, enabled, origin, retired_at, created_at, updated_at
+			) VALUES ($1, $2, $3, 'manual-exception', 'Manual exception', ARRAY['read']::text[], 'member', true, 'manual', NULL, $4, $4)
+		`, manualMappingID, provider.ID, manualTeamID, now).Error
+	}))
+
+	require.NoError(t, directoryRepo.SetDirectoryConnectorStatus(ctx, connector.ID, domain.DirectoryConnectorDisabled, nil))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var directoryEnabled, directoryRetired, manualEnabled, manualRetired, profileRevoked bool
+		if err := tx.Raw(`
+			SELECT enabled, retired_at IS NOT NULL
+			FROM sso_group_mappings
+			WHERE provider_id = $1 AND team_id = $2 AND group_id = $3
+		`, provider.ID, directoryTeamID, group.ExternalID).Row().Scan(&directoryEnabled, &directoryRetired); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT enabled, retired_at IS NOT NULL
+			FROM sso_group_mappings
+			WHERE id = $1
+		`, manualMappingID).Row().Scan(&manualEnabled, &manualRetired); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT revoked_at IS NOT NULL
+			FROM team_profiles
+			WHERE team_id = $1 AND sso_identity_id = $2
+		`, directoryTeamID, user.IdentityID).Row().Scan(&profileRevoked); err != nil {
+			return err
+		}
+		require.False(t, directoryEnabled)
+		require.True(t, directoryRetired)
+		require.True(t, manualEnabled)
+		require.False(t, manualRetired)
+		require.True(t, profileRevoked)
+		return nil
+	}))
+
+	stored, err := directoryRepo.GetDirectoryConnector(ctx, connector.ID)
+	require.NoError(t, err)
+	require.Equal(t, domain.DirectoryConnectorDisabled, stored.Status)
+	require.Greater(t, stored.ReconcileVersion, current.ReconcileVersion)
+}

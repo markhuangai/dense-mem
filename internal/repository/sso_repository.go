@@ -15,7 +15,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-var ErrDirectoryIdentityNotProvisioned = errors.New("directory identity is not provisioned and active")
+var (
+	ErrDirectoryIdentityNotProvisioned = errors.New("directory identity is not provisioned and active")
+	ErrDirectoryManagedMapping         = errors.New("directory-managed sso mappings are read-only")
+	ErrSSOIdentityConflict             = errors.New("sso identity conflicts with a different external identity")
+)
 
 type SSORepository interface {
 	ListProviders(ctx context.Context) ([]*domain.SSOProvider, error)
@@ -221,6 +225,15 @@ func (r *SSORepositoryImpl) DeleteProvider(ctx context.Context, id uuid.UUID) er
 
 func disableDirectoryProvisioningForProviderTx(tx *gorm.DB, providerID uuid.UUID, now time.Time) error {
 	if err := tx.Exec(`
+		UPDATE sso_directory_connectors
+		SET status = 'disabled',
+		    reconcile_version = reconcile_version + 1,
+		    updated_at = $1
+		WHERE provider_id = $2
+	`, now, providerID).Error; err != nil {
+		return err
+	}
+	if err := tx.Exec(`
 		DELETE FROM sso_directory_oauth_tokens
 		WHERE connector_id IN (
 			SELECT id
@@ -230,9 +243,64 @@ func disableDirectoryProvisioningForProviderTx(tx *gorm.DB, providerID uuid.UUID
 	`, providerID).Error; err != nil {
 		return err
 	}
+	if err := tx.Exec(`
+		UPDATE sso_group_mappings
+		SET enabled = false,
+		    retired_at = COALESCE(retired_at, $1),
+		    updated_at = $1
+		WHERE provider_id = $2
+		  AND origin = 'directory'
+	`, now, providerID).Error; err != nil {
+		return err
+	}
+	if err := tx.Exec(`
+		UPDATE team_profiles p
+		SET revoked_at = $1,
+		    sso_entitlement_status = 'denied',
+		    sso_last_entitlement_checked_at = $1,
+		    updated_at = $1
+		WHERE p.auth_source = 'sso'
+		  AND p.sso_provider_id = $2
+		  AND p.revoked_at IS NULL
+		  AND EXISTS (
+			SELECT 1
+			FROM sso_group_mappings m
+			WHERE m.provider_id = p.sso_provider_id
+			  AND m.team_id = p.team_id
+			  AND m.group_id = p.sso_group_id
+			  AND m.origin = 'directory'
+		  )
+	`, now, providerID).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+func lockDirectoryConnectorForProviderTx(tx *gorm.DB, providerID uuid.UUID) error {
+	rows, err := tx.Raw(`
+		SELECT id
+		FROM sso_directory_connectors
+		WHERE provider_id = $1
+		FOR UPDATE
+	`, providerID).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func bumpDirectoryConnectorReconcileVersionForProviderTx(tx *gorm.DB, providerID uuid.UUID, now time.Time) error {
 	return tx.Exec(`
 		UPDATE sso_directory_connectors
-		SET status = 'disabled', updated_at = $1
+		SET reconcile_version = reconcile_version + 1,
+		    updated_at = $1
 		WHERE provider_id = $2
 	`, now, providerID).Error
 }
@@ -274,13 +342,62 @@ func (r *SSORepositoryImpl) CreateMapping(ctx context.Context, mapping *domain.S
 	mapping.CreatedAt = now
 	mapping.UpdatedAt = now
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := lockDirectoryConnectorForProviderTx(tx, mapping.ProviderID); err != nil {
+			return err
+		}
 		if err := setActiveSSOTeamMutationScope(ctx, tx, mapping.TeamID.String()); err != nil {
 			return err
 		}
-		return tx.Exec(`
+		rows, err := tx.Raw(`
 			INSERT INTO sso_group_mappings (id, provider_id, team_id, group_id, group_name, scopes, role, enabled, origin, retired_at, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'manual', NULL, $9, $9)
-		`, mapping.ID, mapping.ProviderID, mapping.TeamID, mapping.GroupID, mapping.GroupName, pq.Array(mapping.Scopes), mapping.Role, mapping.Enabled, now).Error
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'manual', CASE WHEN $8 THEN NULL ELSE $9 END, $9, $9)
+			ON CONFLICT (provider_id, team_id, group_id) DO UPDATE
+			SET group_name = EXCLUDED.group_name,
+			    scopes = EXCLUDED.scopes,
+			    role = EXCLUDED.role,
+			    enabled = EXCLUDED.enabled,
+			    retired_at = CASE WHEN EXCLUDED.enabled THEN NULL ELSE COALESCE(sso_group_mappings.retired_at, EXCLUDED.updated_at) END,
+			    updated_at = EXCLUDED.updated_at
+			WHERE sso_group_mappings.origin = 'manual'
+			RETURNING id, created_at, updated_at, retired_at
+		`, mapping.ID, mapping.ProviderID, mapping.TeamID, mapping.GroupID, mapping.GroupName, pq.Array(mapping.Scopes), mapping.Role, mapping.Enabled, now).Rows()
+		if err != nil {
+			return err
+		}
+		if rows.Next() {
+			if err := rows.Scan(&mapping.ID, &mapping.CreatedAt, &mapping.UpdatedAt, &mapping.RetiredAt); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+			mapping.Origin = "manual"
+			return bumpDirectoryConnectorReconcileVersionForProviderTx(tx, mapping.ProviderID, now)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		var origin string
+		if err := tx.Raw(`
+			SELECT origin
+			FROM sso_group_mappings
+			WHERE provider_id = $1 AND team_id = $2 AND group_id = $3
+		`, mapping.ProviderID, mapping.TeamID, mapping.GroupID).Row().Scan(&origin); err != nil {
+			return err
+		}
+		if origin != "manual" {
+			return ErrDirectoryManagedMapping
+		}
+		return gorm.ErrRecordNotFound
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create sso group mapping: %w", err)
@@ -292,6 +409,9 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 	now := time.Now().UTC()
 	mapping.UpdatedAt = now
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := lockDirectoryConnectorForProviderTx(tx, mapping.ProviderID); err != nil {
+			return err
+		}
 		var currentTeamID string
 		var origin string
 		err := tx.Raw(`
@@ -307,11 +427,11 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 			}
 			return err
 		}
+		if origin != "manual" {
+			return ErrDirectoryManagedMapping
+		}
 		if err := setActiveSSOTeamMutationScope(ctx, tx, currentTeamID); err != nil {
 			return err
-		}
-		if origin != "manual" {
-			return fmt.Errorf("directory-managed sso mappings are read-only")
 		}
 		if err := setActiveSSOTeamMutationScope(ctx, tx, mapping.TeamID.String()); err != nil {
 			return err
@@ -334,7 +454,7 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 		if res.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		return nil
+		return bumpDirectoryConnectorReconcileVersionForProviderTx(tx, mapping.ProviderID, now)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update sso group mapping: %w", err)
@@ -345,10 +465,32 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 func (r *SSORepositoryImpl) DeleteMapping(ctx context.Context, providerID, id uuid.UUID) error {
 	now := time.Now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := lockDirectoryConnectorForProviderTx(tx, providerID); err != nil {
+			return err
+		}
+		var teamID string
+		var origin string
+		if err := tx.Raw(`
+			SELECT team_id::text, origin
+			FROM sso_group_mappings
+			WHERE id = $1 AND provider_id = $2
+			FOR UPDATE
+		`, id, providerID).Row().Scan(&teamID, &origin); err != nil {
+			if err == sql.ErrNoRows {
+				return gorm.ErrRecordNotFound
+			}
+			return err
+		}
+		if origin != "manual" {
+			return ErrDirectoryManagedMapping
+		}
+		if err := setActiveSSOTeamMutationScope(ctx, tx, teamID); err != nil {
+			return err
+		}
 		res := tx.Exec(`
 			UPDATE sso_group_mappings
 			SET enabled = false, retired_at = COALESCE(retired_at, $1), updated_at = $1
-			WHERE id = $2 AND provider_id = $3 AND origin = 'manual'
+			WHERE id = $2 AND provider_id = $3
 		`, now, id, providerID)
 		if res.Error != nil {
 			return res.Error
@@ -356,7 +498,7 @@ func (r *SSORepositoryImpl) DeleteMapping(ctx context.Context, providerID, id uu
 		if res.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		return nil
+		return bumpDirectoryConnectorReconcileVersionForProviderTx(tx, providerID, now)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete sso group mapping: %w", err)
@@ -722,220 +864,4 @@ func (r *SSORepositoryImpl) DeleteExpiredSessions(ctx context.Context, now time.
 		return fmt.Errorf("failed to delete expired sso sessions: %w", err)
 	}
 	return nil
-}
-
-func scanSSOProvider(rows *sql.Rows) (*domain.SSOProvider, error) {
-	var provider domain.SSOProvider
-	var kind string
-	if err := rows.Scan(
-		&provider.ID,
-		&provider.Name,
-		&kind,
-		&provider.IssuerURL,
-		&provider.TenantID,
-		&provider.IdentityClaim,
-		&provider.ClientID,
-		&provider.ClientSecretEnv,
-		pq.Array(&provider.Scopes),
-		pq.Array(&provider.GroupClaims),
-		&provider.GroupsEndpoint,
-		pq.Array(&provider.GroupsScopes),
-		&provider.Enabled,
-		&provider.RetiredAt,
-		&provider.CreatedAt,
-		&provider.UpdatedAt,
-	); err != nil {
-		return nil, err
-	}
-	provider.Kind = domain.SSOProviderKind(kind)
-	return &provider, nil
-}
-
-func scanSSOGroupMapping(rows *sql.Rows) (*domain.SSOGroupMapping, error) {
-	var mapping domain.SSOGroupMapping
-	if err := rows.Scan(
-		&mapping.ID,
-		&mapping.ProviderID,
-		&mapping.TeamID,
-		&mapping.TeamName,
-		&mapping.GroupID,
-		&mapping.GroupName,
-		pq.Array(&mapping.Scopes),
-		&mapping.Role,
-		&mapping.Enabled,
-		&mapping.Origin,
-		&mapping.RetiredAt,
-		&mapping.CreatedAt,
-		&mapping.UpdatedAt,
-	); err != nil {
-		return nil, err
-	}
-	return &mapping, nil
-}
-
-func scanSSOIdentity(rows *sql.Rows) (*domain.SSOIdentity, error) {
-	var identity domain.SSOIdentity
-	if err := rows.Scan(
-		&identity.ID,
-		&identity.ProviderID,
-		&identity.Subject,
-		&identity.ExternalID,
-		&identity.Email,
-		&identity.DisplayName,
-		&identity.Active,
-		&identity.LastLoginAt,
-		&identity.LastEntitlementCheckAt,
-		&identity.CreatedAt,
-		&identity.UpdatedAt,
-	); err != nil {
-		return nil, err
-	}
-	return &identity, nil
-}
-
-func scanSSOEntitlementCache(rows *sql.Rows) (*domain.SSOEntitlementCache, error) {
-	var cache domain.SSOEntitlementCache
-	if err := rows.Scan(
-		&cache.ProviderID,
-		&cache.Subject,
-		pq.Array(&cache.Groups),
-		&cache.Status,
-		&cache.CheckedAt,
-		&cache.ExpiresAt,
-		&cache.Error,
-	); err != nil {
-		return nil, err
-	}
-	return &cache, nil
-}
-
-func scanSSOOAuthState(rows *sql.Rows) (*domain.SSOOAuthState, error) {
-	var state domain.SSOOAuthState
-	if err := rows.Scan(
-		&state.StateHash,
-		&state.ProviderID,
-		&state.PKCEVerifier,
-		&state.Nonce,
-		&state.RedirectPath,
-		&state.ExpiresAt,
-		&state.CreatedAt,
-	); err != nil {
-		return nil, err
-	}
-	return &state, nil
-}
-
-func scanSSOSession(rows *sql.Rows) (*domain.SSOSession, error) {
-	var session domain.SSOSession
-	if err := rows.Scan(
-		&session.SessionHash,
-		&session.IdentityID,
-		&session.ProviderID,
-		&session.TeamProfileID,
-		&session.TeamID,
-		&session.CSRFHash,
-		&session.ExpiresAt,
-		&session.CreatedAt,
-		&session.LastSeenAt,
-	); err != nil {
-		return nil, err
-	}
-	return &session, nil
-}
-
-func scanSSOAPIKey(rows *sql.Rows) (*domain.APIKey, error) {
-	var key domain.APIKey
-	if err := rows.Scan(
-		&key.ID,
-		&key.TeamID,
-		&key.Label,
-		pq.Array(&key.Scopes),
-		&key.Role,
-		&key.RateLimit,
-		&key.LastUsedAt,
-		&key.ExpiresAt,
-		&key.CreatedAt,
-		&key.RevokedAt,
-		&key.AuthSource,
-		&key.SSOIdentityID,
-		&key.SSOProviderID,
-		&key.SSOSubject,
-		&key.SSOEmail,
-		&key.SSOGroupID,
-		&key.SSOEntitlementStatus,
-		&key.SSOLastEntitlementCheckedAt,
-		&key.SSOLastLoginAt,
-	); err != nil {
-		return nil, err
-	}
-	key.ProfileID = key.TeamID
-	key.Name = key.Label
-	return &key, nil
-}
-
-func scanSSOAPIKeyWithTeamName(rows *sql.Rows) (*domain.APIKey, error) {
-	var key domain.APIKey
-	if err := rows.Scan(
-		&key.ID,
-		&key.TeamID,
-		&key.TeamName,
-		&key.Label,
-		pq.Array(&key.Scopes),
-		&key.Role,
-		&key.RateLimit,
-		&key.LastUsedAt,
-		&key.ExpiresAt,
-		&key.CreatedAt,
-		&key.RevokedAt,
-		&key.AuthSource,
-		&key.SSOIdentityID,
-		&key.SSOProviderID,
-		&key.SSOSubject,
-		&key.SSOEmail,
-		&key.SSOGroupID,
-		&key.SSOEntitlementStatus,
-		&key.SSOLastEntitlementCheckedAt,
-		&key.SSOLastLoginAt,
-	); err != nil {
-		return nil, err
-	}
-	key.ProfileID = key.TeamID
-	key.Name = key.Label
-	return &key, nil
-}
-
-func scanSSOTeamProfile(rows *sql.Rows) (*domain.SSOTeamProfile, error) {
-	var item domain.SSOTeamProfile
-	if err := rows.Scan(
-		&item.Team.ID,
-		&item.Team.Name,
-		&item.Team.Description,
-		&item.Team.CreatedAt,
-		&item.Team.UpdatedAt,
-		&item.Profile.ID,
-		&item.Profile.TeamID,
-		&item.Profile.Label,
-		pq.Array(&item.Profile.Scopes),
-		&item.Profile.Role,
-		&item.Profile.RateLimit,
-		&item.Profile.LastUsedAt,
-		&item.Profile.ExpiresAt,
-		&item.Profile.CreatedAt,
-		&item.Profile.RevokedAt,
-		&item.Profile.AuthSource,
-		&item.Profile.SSOIdentityID,
-		&item.Profile.SSOProviderID,
-		&item.Profile.SSOSubject,
-		&item.Profile.SSOEmail,
-		&item.Profile.SSOGroupID,
-		&item.Profile.SSOEntitlementStatus,
-		&item.Profile.SSOLastEntitlementCheckedAt,
-		&item.Profile.SSOLastLoginAt,
-	); err != nil {
-		return nil, err
-	}
-	item.Profile.ProfileID = item.Profile.TeamID
-	item.Profile.TeamName = item.Team.Name
-	item.Profile.Name = item.Profile.Label
-	return &item, nil
 }

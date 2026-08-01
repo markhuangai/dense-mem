@@ -50,6 +50,7 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 			idToken := controlHTTPSignedOIDCToken(t, privateKey, "control-http-key", map[string]any{
 				"iss":    oidcServer.URL,
 				"sub":    "entra-http-admin",
+				"tid":    "tenant-id",
 				"aud":    "control-http-client",
 				"exp":    now.Add(time.Hour).Unix(),
 				"iat":    now.Add(-time.Minute).Unix(),
@@ -79,6 +80,7 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 		Name:      "Microsoft Entra ID",
 		Kind:      domain.SSOProviderKindAzureAD,
 		IssuerURL: oidcServer.URL,
+		TenantID:  "tenant-id",
 		ClientID:  "control-http-client",
 		Enabled:   true,
 	}
@@ -133,6 +135,11 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 		if cookie.Name == service.ControlSessionCookieName {
 			sessionToken = cookie.Value
 			require.True(t, cookie.Secure)
+			require.Equal(t, "/", cookie.Path)
+		}
+		if cookie.Name == service.ControlCSRFCookieName {
+			require.True(t, cookie.Secure)
+			require.Equal(t, "/control", cookie.Path)
 		}
 	}
 	require.NotEmpty(t, sessionToken)
@@ -167,6 +174,7 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusNoContent, response.Code, response.Body.String())
 	require.Equal(t, service.HashSSOToken(sessionToken), repo.deletedSession)
+	requireControlIdentityCookiesCleared(t, response.Result().Cookies())
 
 	request = httptest.NewRequest(nethttp.MethodGet, "/control/auth/callback?error=access_denied", nil)
 	response = httptest.NewRecorder()
@@ -268,13 +276,31 @@ func TestControlIdentityHTTPHandlersValidateInputAndFailSafely(t *testing.T) {
 
 	logoutFailure := service.NewControlIdentityService(controlIdentityLogoutFailureRepository{}, nil, service.ControlIdentityConfig{})
 	handler.controlIdentity = logoutFailure
-	c, _ = controlDirectoryContext(nethttp.MethodPost, "", nil)
+	c, logoutFailureRec := controlDirectoryContext(nethttp.MethodPost, "", nil)
 	c.Request().AddCookie(&nethttp.Cookie{Name: service.ControlSessionCookieName, Value: "session"})
 	require.Error(t, handler.logoutControlIdentity(c))
+	requireControlIdentityCookiesCleared(t, logoutFailureRec.Result().Cookies())
 	handler.controlIdentity = readyUnavailable
 	c, rec := controlDirectoryContext(nethttp.MethodPost, "", nil)
 	require.NoError(t, handler.logoutControlIdentity(c))
 	require.Equal(t, nethttp.StatusNoContent, rec.Code)
+}
+
+func requireControlIdentityCookiesCleared(t *testing.T, cookies []*nethttp.Cookie) {
+	t.Helper()
+	require.Len(t, cookies, 4)
+	cleared := make(map[string]bool, len(cookies))
+	for _, cookie := range cookies {
+		require.Empty(t, cookie.Value)
+		require.Equal(t, -1, cookie.MaxAge)
+		cleared[cookie.Name+"|"+cookie.Path] = true
+	}
+	require.Equal(t, map[string]bool{
+		service.ControlSessionCookieName + "|/":        true,
+		service.ControlSessionCookieName + "|/control": true,
+		service.ControlCSRFCookieName + "|/":           true,
+		service.ControlCSRFCookieName + "|/control":    true,
+	}, cleared)
 }
 
 type controlIdentityHTTPRuntime struct {

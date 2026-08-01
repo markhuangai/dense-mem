@@ -171,6 +171,7 @@ func TestSSOCompleteLoginUsesDurableDirectoryProfilesWhenDirectoryAuthorityIsAct
 				"iss":   oidcServer.URL,
 				"sub":   "entra-user-1",
 				"oid":   "entra-user-1",
+				"tid":   "tenant-id",
 				"aud":   "client-id",
 				"exp":   now.Add(time.Hour).Unix(),
 				"iat":   now.Add(-time.Minute).Unix(),
@@ -204,6 +205,7 @@ func TestSSOCompleteLoginUsesDurableDirectoryProfilesWhenDirectoryAuthorityIsAct
 				Name:           "Directory authority",
 				Kind:           domain.SSOProviderKindAzureAD,
 				IssuerURL:      oidcServer.URL,
+				TenantID:       "tenant-id",
 				ClientID:       "client-id",
 				GroupsEndpoint: "https://graph.example.test/groups",
 				Enabled:        true,
@@ -261,4 +263,18 @@ func TestSSOCompleteLoginUsesDurableDirectoryProfilesWhenDirectoryAuthorityIsAct
 	assert.Zero(t, repo.upsertProfileCalls)
 	assert.Nil(t, repo.savedCache)
 	assert.Equal(t, []uuid.UUID{directoryProfileID}, repo.directoryProfileEntitledCalls)
+
+	repo.providers[providerID].TenantID = ""
+	repo.consumableState = &domain.SSOOAuthState{
+		StateHash:    HashSSOToken("legacy-state-token"),
+		ProviderID:   providerID,
+		PKCEVerifier: "pkce-verifier",
+		Nonce:        "nonce-123",
+		RedirectPath: "/ui/knowledge",
+		ExpiresAt:    now.Add(time.Minute),
+	}
+	legacyResult, err := svc.CompleteLogin(ctx, "legacy-state-token", "auth-code", "https://app.example.com/ui/api/sso/callback")
+	require.NoError(t, err)
+	require.Len(t, legacyResult.Session.Teams, 1)
+	assert.Equal(t, directoryTeamID, legacyResult.Session.Selected.Team.ID)
 }

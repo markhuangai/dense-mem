@@ -134,7 +134,7 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
       setError("Refresh the directory preview before activating the connector.");
       return;
     }
-    if (status === "disabled" && !window.confirm("Disable directory automation? Existing directory-created teams remain unchanged until a later reconciliation.")) {
+	    if (status === "disabled" && !window.confirm("Disable directory automation? Existing directory-created teams remain, while directory grants are revoked until a later activation.")) {
       return;
     }
     setLoading(true);
@@ -171,7 +171,8 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
 
   async function addAdminGroup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!adminGroupID.trim()) {
+	    const groupID = adminGroupID.trim();
+	    if (!groupID) {
       setError("Control admin group ID is required.");
       return;
     }
@@ -180,8 +181,8 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
     setMessage("");
     try {
       const created = await api.createControlAdminGroup(provider.id, {
-        group_id: adminGroupID,
-        group_name: adminGroupName,
+	        group_id: groupID,
+	        group_name: adminGroupName.trim(),
         enabled: true,
       });
       setAdminGroups((current) => [...current, created]);
@@ -217,7 +218,7 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
     if (!connector) {
       return;
     }
-    const team = teams.find((item) => item.name === candidate.team_name);
+	    const team = teams.find((item) => item.id === candidate.team_id);
     if (!team) {
       setError("The directory-created team is not available in this control session.");
       return;

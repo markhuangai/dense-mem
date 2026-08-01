@@ -38,7 +38,7 @@ func normalizeDirectoryConnector(connector *domain.DirectoryConnector) error {
 	if !strings.HasPrefix(connector.GroupPattern, "^") || !strings.HasSuffix(connector.GroupPattern, "$") {
 		return fmt.Errorf("directory group_pattern must be anchored with ^ and $")
 	}
-	re, err := regexp.Compile(connector.GroupPattern)
+	re, err := directoryGroupPatternRegexp(connector.GroupPattern)
 	if err != nil {
 		return fmt.Errorf("directory group_pattern is invalid: %w", err)
 	}
@@ -57,6 +57,10 @@ func normalizeDirectoryConnector(connector *domain.DirectoryConnector) error {
 	}
 	connector.RoleEntitlements = entitlements
 	return nil
+}
+
+func directoryGroupPatternRegexp(pattern string) (*regexp.Regexp, error) {
+	return regexp.Compile("^(?:" + pattern + ")$")
 }
 
 func namedSubexpressionCount(re *regexp.Regexp, name string) int {

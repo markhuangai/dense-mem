@@ -75,7 +75,7 @@ func (h *controlPortalHandler) completeControlIdentityLogin(c echo.Context) erro
 	nethttp.SetCookie(c.Response(), &nethttp.Cookie{
 		Name:     service.ControlSessionCookieName,
 		Value:    result.SessionToken,
-		Path:     "/control",
+		Path:     "/",
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   secure,
@@ -94,14 +94,17 @@ func (h *controlPortalHandler) completeControlIdentityLogin(c echo.Context) erro
 }
 
 func (h *controlPortalHandler) logoutControlIdentity(c echo.Context) error {
+	var logoutErr error
 	if cookie, err := c.Cookie(service.ControlSessionCookieName); err == nil {
-		if err := h.controlIdentity.Logout(c.Request().Context(), cookie.Value); err != nil {
-			return controlIdentityHTTPError(err)
-		}
+		logoutErr = h.controlIdentity.Logout(c.Request().Context(), cookie.Value)
 	}
 	secure := h.controlIdentity.CookieSecure(c.Request().Context())
-	for _, name := range []string{service.ControlSessionCookieName, service.ControlCSRFCookieName} {
-		nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: name, Value: "", Path: "/control", MaxAge: -1, HttpOnly: name == service.ControlSessionCookieName, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
+	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: service.ControlSessionCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
+	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: service.ControlSessionCookieName, Value: "", Path: "/control", MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
+	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: service.ControlCSRFCookieName, Value: "", Path: "/control", MaxAge: -1, HttpOnly: false, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
+	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: service.ControlCSRFCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: false, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
+	if logoutErr != nil {
+		return controlIdentityHTTPError(logoutErr)
 	}
 	return c.NoContent(nethttp.StatusNoContent)
 }

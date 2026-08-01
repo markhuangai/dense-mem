@@ -308,7 +308,7 @@ func RunActiveServer(
 	e.Use(middleware.CorrelationIDMiddleware())
 	e.Use(middleware.ClientIPMiddleware())
 	e.Use(middleware.SecurityBanMiddleware(securityService))
-	if err := http.RegisterDirectorySCIM(e, directoryIdentityService, http.DirectorySCIMConfig{RuntimeConfig: appConfigService}); err != nil {
+	if err := http.RegisterDirectorySCIM(e, directoryIdentityService, http.DirectorySCIMConfig{RuntimeConfig: appConfigService, Security: securityService}); err != nil {
 		log.Fatalf("failed to register directory SCIM routes: %v", err)
 	}
 	runtimeCtx.Echo = e

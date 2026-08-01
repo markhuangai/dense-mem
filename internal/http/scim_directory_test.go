@@ -56,11 +56,21 @@ func TestDirectorySCIMUserLifecycleAndConnectorIsolation(t *testing.T) {
 	require.NotEmpty(t, created.ID)
 	require.Equal(t, "entra-user-1", created.External)
 
+	duplicateBody := `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"externalId":"entra-user-1","userName":"alex@example.com","displayName":"Unexpected overwrite","active":true}`
+	request = httptest.NewRequest(nethttp.MethodPost, "/scim/v2/"+connectorID.String()+"/Users", strings.NewReader(duplicateBody))
+	request.Header.Set(echo.HeaderAuthorization, "Bearer "+bearerToken)
+	request.Header.Set(echo.HeaderContentType, "application/scim+json")
+	response = httptest.NewRecorder()
+	e.ServeHTTP(response, request)
+	require.Equal(t, nethttp.StatusConflict, response.Code, response.Body.String())
+
 	request = httptest.NewRequest(nethttp.MethodGet, "/scim/v2/"+connectorID.String()+"/Users/"+created.ID, nil)
 	request.Header.Set(echo.HeaderAuthorization, "Bearer "+bearerToken)
 	response = httptest.NewRecorder()
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
+	userID, err := uuid.Parse(created.ID)
+	require.NoError(t, err)
 	require.Contains(t, response.Body.String(), `"displayName":"Alex Example"`)
 
 	replacement := `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"externalId":"entra-user-1","userName":"alex@example.com","displayName":"Alex Updated","active":true}`
@@ -70,8 +80,9 @@ func TestDirectorySCIMUserLifecycleAndConnectorIsolation(t *testing.T) {
 	response = httptest.NewRecorder()
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
+	require.Empty(t, repo.users[userID].Email)
 
-	request = httptest.NewRequest(nethttp.MethodGet, "/scim/v2/"+connectorID.String()+"/Users?filter=userName%20eq%20%22alex@example.com%22", nil)
+	request = httptest.NewRequest(nethttp.MethodGet, "/scim/v2/"+connectorID.String()+"/Users?filter=userName%20eq%20%22ALEX@example.com%22", nil)
 	request.Header.Set(echo.HeaderAuthorization, "Bearer "+bearerToken)
 	response = httptest.NewRecorder()
 	e.ServeHTTP(response, request)
@@ -89,8 +100,6 @@ func TestDirectorySCIMUserLifecycleAndConnectorIsolation(t *testing.T) {
 	response = httptest.NewRecorder()
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
-	userID, err := uuid.Parse(created.ID)
-	require.NoError(t, err)
 	require.False(t, repo.users[userID].Active)
 
 	request = httptest.NewRequest(nethttp.MethodDelete, "/scim/v2/"+connectorID.String()+"/Users/"+created.ID, nil)
@@ -151,11 +160,18 @@ func TestDirectorySCIMGroupAndOAuthLifecycle(t *testing.T) {
 
 	firstUserID := createUser("entra-user-1", "alex@example.com")
 	secondUserID := createUser("entra-user-2", "bea@example.com")
+	request := httptest.NewRequest(nethttp.MethodGet, "/scim/v2/"+connectorID.String()+"/Users?startIndex=2&count=1", nil)
+	request.Header.Set(echo.HeaderAuthorization, "Bearer "+bearerToken)
+	response := httptest.NewRecorder()
+	e.ServeHTTP(response, request)
+	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), `"totalResults":2`)
+	require.Contains(t, response.Body.String(), `"userName":"bea@example.com"`)
 	groupBody := `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"externalId":"entra-research-manager","displayName":"ResearchManager","members":[{"value":"` + firstUserID + `"},{"value":"` + secondUserID + `"}]}`
-	request := httptest.NewRequest(nethttp.MethodPost, "/scim/v2/"+connectorID.String()+"/Groups", strings.NewReader(groupBody))
+	request = httptest.NewRequest(nethttp.MethodPost, "/scim/v2/"+connectorID.String()+"/Groups", strings.NewReader(groupBody))
 	request.Header.Set(echo.HeaderAuthorization, "Bearer "+bearerToken)
 	request.Header.Set(echo.HeaderContentType, "application/scim+json")
-	response := httptest.NewRecorder()
+	response = httptest.NewRecorder()
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusCreated, response.Code, response.Body.String())
 	var groupResource struct {
@@ -165,6 +181,13 @@ func TestDirectorySCIMGroupAndOAuthLifecycle(t *testing.T) {
 	groupID, err := uuid.Parse(groupResource.ID)
 	require.NoError(t, err)
 	require.Len(t, repo.groups[groupID].Members, 2)
+
+	request = httptest.NewRequest(nethttp.MethodPost, "/scim/v2/"+connectorID.String()+"/Groups", strings.NewReader(groupBody))
+	request.Header.Set(echo.HeaderAuthorization, "Bearer "+bearerToken)
+	request.Header.Set(echo.HeaderContentType, "application/scim+json")
+	response = httptest.NewRecorder()
+	e.ServeHTTP(response, request)
+	require.Equal(t, nethttp.StatusConflict, response.Code, response.Body.String())
 
 	request = httptest.NewRequest(nethttp.MethodGet, "/scim/v2/"+connectorID.String()+"/Groups/"+groupResource.ID, nil)
 	request.Header.Set(echo.HeaderAuthorization, "Bearer "+bearerToken)
@@ -228,6 +251,8 @@ func TestDirectorySCIMGroupAndOAuthLifecycle(t *testing.T) {
 	response = httptest.NewRecorder()
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
+	require.Equal(t, "no-store", response.Header().Get(echo.HeaderCacheControl))
+	require.Equal(t, "no-cache", response.Header().Get("Pragma"))
 	var tokenResponse struct {
 		AccessToken string `json:"access_token"`
 	}
@@ -432,7 +457,7 @@ func (r *directorySCIMRepositoryStub) DeleteExpiredDirectoryOAuthTokens(_ contex
 func (r *directorySCIMRepositoryStub) UpsertDirectoryUser(_ context.Context, user domain.DirectoryUser) (*domain.DirectoryUser, error) {
 	if user.ID == uuid.Nil {
 		for _, existing := range r.users {
-			if existing.ExternalID != "" && existing.ExternalID == user.ExternalID {
+			if existing.ConnectorID == user.ConnectorID && existing.ExternalID != "" && existing.ExternalID == user.ExternalID {
 				user.ID = existing.ID
 				break
 			}
@@ -449,6 +474,18 @@ func (r *directorySCIMRepositoryStub) UpsertDirectoryUser(_ context.Context, use
 	return &copy, nil
 }
 
+func (r *directorySCIMRepositoryStub) CreateDirectoryUser(ctx context.Context, user domain.DirectoryUser) (*domain.DirectoryUser, error) {
+	for _, existing := range r.users {
+		if existing.ConnectorID != user.ConnectorID {
+			continue
+		}
+		if (user.ExternalID != "" && existing.ExternalID == user.ExternalID) || strings.EqualFold(existing.UserName, user.UserName) {
+			return nil, repository.ErrDirectoryResourceConflict
+		}
+	}
+	return r.UpsertDirectoryUser(ctx, user)
+}
+
 func (r *directorySCIMRepositoryStub) GetDirectoryUser(_ context.Context, connectorID, userID uuid.UUID) (*domain.DirectoryUser, error) {
 	if r.connector == nil || r.connector.ID != connectorID || r.users[userID] == nil {
 		return nil, nil
@@ -463,11 +500,36 @@ func (r *directorySCIMRepositoryStub) ListDirectoryUsers(_ context.Context, conn
 	}
 	users := make([]*domain.DirectoryUser, 0, len(r.users))
 	for _, user := range r.users {
+		if user.ConnectorID != connectorID {
+			continue
+		}
 		copy := *user
 		users = append(users, &copy)
 	}
 	sort.Slice(users, func(i, j int) bool { return users[i].UserName < users[j].UserName })
 	return users, nil
+}
+
+func (r *directorySCIMRepositoryStub) ListDirectoryUsersPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryUser, int, error) {
+	users, err := r.ListDirectoryUsers(ctx, connectorID)
+	if err != nil {
+		return nil, 0, err
+	}
+	filtered := make([]*domain.DirectoryUser, 0, len(users))
+	for _, user := range users {
+		if user != nil && directorySCIMUserMatches(*user, directorySCIMFilter{field: request.FilterField, value: request.FilterValue}) {
+			filtered = append(filtered, user)
+		}
+	}
+	total := len(filtered)
+	if request.Offset >= total || request.Limit == 0 {
+		return []*domain.DirectoryUser{}, total, nil
+	}
+	end := request.Offset + request.Limit
+	if end > total {
+		end = total
+	}
+	return filtered[request.Offset:end], total, nil
 }
 
 func (r *directorySCIMRepositoryStub) UpsertDirectoryGroup(_ context.Context, group domain.DirectoryGroup) (*domain.DirectoryGroup, error) {
@@ -490,6 +552,15 @@ func (r *directorySCIMRepositoryStub) UpsertDirectoryGroupWithMembers(ctx contex
 	return r.GetDirectoryGroup(ctx, stored.ConnectorID, stored.ID)
 }
 
+func (r *directorySCIMRepositoryStub) CreateDirectoryGroupWithMembers(ctx context.Context, group domain.DirectoryGroup, memberIDs []uuid.UUID) (*domain.DirectoryGroup, error) {
+	for _, existing := range r.groups {
+		if existing.ConnectorID == group.ConnectorID && group.ExternalID != "" && existing.ExternalID == group.ExternalID {
+			return nil, repository.ErrDirectoryResourceConflict
+		}
+	}
+	return r.UpsertDirectoryGroupWithMembers(ctx, group, memberIDs)
+}
+
 func (r *directorySCIMRepositoryStub) GetDirectoryGroup(_ context.Context, connectorID, groupID uuid.UUID) (*domain.DirectoryGroup, error) {
 	if r.connector == nil || r.connector.ID != connectorID || r.groups[groupID] == nil {
 		return nil, nil
@@ -505,12 +576,37 @@ func (r *directorySCIMRepositoryStub) ListDirectoryGroups(_ context.Context, con
 	}
 	groups := make([]*domain.DirectoryGroup, 0, len(r.groups))
 	for _, group := range r.groups {
+		if group.ConnectorID != connectorID {
+			continue
+		}
 		copy := *group
 		copy.Members = append([]domain.DirectoryUser(nil), group.Members...)
 		groups = append(groups, &copy)
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].DisplayName < groups[j].DisplayName })
 	return groups, nil
+}
+
+func (r *directorySCIMRepositoryStub) ListDirectoryGroupsPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryGroup, int, error) {
+	groups, err := r.ListDirectoryGroups(ctx, connectorID)
+	if err != nil {
+		return nil, 0, err
+	}
+	filtered := make([]*domain.DirectoryGroup, 0, len(groups))
+	for _, group := range groups {
+		if group != nil && directorySCIMGroupMatches(*group, directorySCIMFilter{field: request.FilterField, value: request.FilterValue}) {
+			filtered = append(filtered, group)
+		}
+	}
+	total := len(filtered)
+	if request.Offset >= total || request.Limit == 0 {
+		return []*domain.DirectoryGroup{}, total, nil
+	}
+	end := request.Offset + request.Limit
+	if end > total {
+		end = total
+	}
+	return filtered[request.Offset:end], total, nil
 }
 
 func (r *directorySCIMRepositoryStub) ReplaceDirectoryGroupMembers(_ context.Context, connectorID, groupID uuid.UUID, memberIDs []uuid.UUID) error {

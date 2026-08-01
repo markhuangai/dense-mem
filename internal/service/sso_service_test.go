@@ -158,6 +158,7 @@ func TestSSOListEnabledProvidersRequiresPublicLoginReadiness(t *testing.T) {
 	ctx := context.Background()
 	readyID := uuid.New()
 	secretReadyID := uuid.New()
+	legacyAzureID := uuid.New()
 	missingSecretID := uuid.New()
 	invalidID := uuid.New()
 	disabledID := uuid.New()
@@ -178,6 +179,14 @@ func TestSSOListEnabledProvidersRequiresPublicLoginReadiness(t *testing.T) {
 	secretReady.ID = secretReadyID
 	secretReady.Name = "Secret OIDC"
 	secretReady.ClientSecretEnv = secretEnv
+	legacyAzure := domain.SSOProvider{
+		ID:        legacyAzureID,
+		Name:      "Legacy Azure",
+		Kind:      domain.SSOProviderKindAzureAD,
+		IssuerURL: "https://login.microsoftonline.com/tenant/v2.0",
+		ClientID:  "legacy-client",
+		Enabled:   true,
+	}
 	missingSecret := ready
 	missingSecret.ID = missingSecretID
 	missingSecret.Name = "Missing Secret"
@@ -196,6 +205,7 @@ func TestSSOListEnabledProvidersRequiresPublicLoginReadiness(t *testing.T) {
 		providerList: []*domain.SSOProvider{
 			&ready,
 			&secretReady,
+			&legacyAzure,
 			&missingSecret,
 			&invalid,
 			&disabled,
@@ -205,9 +215,10 @@ func TestSSOListEnabledProvidersRequiresPublicLoginReadiness(t *testing.T) {
 	svc := NewSSOService(repo, SSOConfig{PublicBaseURL: "https://portal.example.com"})
 	providers, err := svc.ListEnabledProviders(ctx)
 	require.NoError(t, err)
-	require.Len(t, providers, 2)
+	require.Len(t, providers, 3)
 	assert.Equal(t, readyID, providers[0].ID)
 	assert.Equal(t, secretReadyID, providers[1].ID)
+	assert.Equal(t, legacyAzureID, providers[2].ID)
 
 	withoutBaseURL := NewSSOService(repo, SSOConfig{})
 	providers, err = withoutBaseURL.ListEnabledProviders(ctx)

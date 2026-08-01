@@ -49,6 +49,7 @@ func TestControlIdentityServiceAdminGroupsAndOIDCLogin(t *testing.T) {
 				"iss":    oidcServer.URL,
 				"sub":    "entra-control-user",
 				"oid":    "entra-control-user",
+				"tid":    "tenant-id",
 				"aud":    "control-client",
 				"exp":    now.Add(time.Hour).Unix(),
 				"iat":    now.Add(-time.Minute).Unix(),
@@ -78,6 +79,7 @@ func TestControlIdentityServiceAdminGroupsAndOIDCLogin(t *testing.T) {
 		Name:      "Microsoft Entra ID",
 		Kind:      domain.SSOProviderKindAzureAD,
 		IssuerURL: oidcServer.URL,
+		TenantID:  "tenant-id",
 		ClientID:  "control-client",
 		Enabled:   true,
 	}
