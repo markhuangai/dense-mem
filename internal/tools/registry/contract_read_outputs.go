@@ -130,10 +130,25 @@ func hypothesisSchema() map[string]any {
 			"source_relationship_ids":           stringArraySchema("Source Relationship ID.", 200, 128),
 			"source_candidate_relationship_ids": stringArraySchema("Source candidate Relationship ID.", 200, 128),
 			"source_versions":                   versionMapSchema(),
+			"derivations":                       array(dreamDerivationSchema(), 0, 2),
 			"generator_kind":                    schemaEnum([]string{"deterministic", "provider"}),
 			"generator_version":                 schemaString("Dream generator version.", 128),
 			"status":                            schemaEnum(domain.HypothesisStatuses()),
 			"created_at":                        map[string]any{"type": "string", "format": "date-time"},
+		},
+	)
+}
+
+func dreamDerivationSchema() map[string]any {
+	return closedObject(
+		[]string{"premise_position", "relationship_id", "relationship_version", "source_group_key", "quote", "authority"},
+		map[string]any{
+			"premise_position":     map[string]any{"type": "integer", "minimum": 1, "maximum": 2},
+			"relationship_id":      schemaString("Source Relationship ID.", 128),
+			"relationship_version": map[string]any{"type": "integer", "minimum": 1},
+			"source_group_key":     schemaString("Current source group key.", 256),
+			"quote":                schemaString("Exact cited premise excerpt.", 4000),
+			"authority":            schemaEnum([]string{"authoritative", "primary", "secondary", "inferred", "unknown"}),
 		},
 	)
 }

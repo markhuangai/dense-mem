@@ -547,6 +547,11 @@ require_env_value AI_API_URL >/dev/null
 require_env_value AI_API_KEY >/dev/null
 require_env_value AI_API_EMBEDDING_MODEL >/dev/null
 require_env_value AI_API_EMBEDDING_DIMENSIONS >/dev/null
+if [[ "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
+  require_env_value AI_VERIFIER_API_URL >/dev/null
+  require_env_value AI_VERIFIER_API_KEY >/dev/null
+  require_env_value AI_VERIFIER_MODEL >/dev/null
+fi
 CONTROL_TOKEN="$(require_env_value CONTROL_PORTAL_TOKEN)"
 TELEMETRY_SCRAPE_TOKEN="$(require_env_value TELEMETRY_SCRAPE_TOKEN)"
 
@@ -565,11 +570,11 @@ if [[ "$E2E_MODE" == "entra_scim" ]]; then
 elif [[ "${DENSE_MEM_E2E_SKIP_PRECHECKS:-0}" == "1" ]]; then
   echo "Skipping disposable PostgreSQL prechecks by DENSE_MEM_E2E_SKIP_PRECHECKS."
 else
-  echo "Running disposable PostgreSQL SSO and Dreams regressions."
+  echo "Running disposable PostgreSQL SSO and evidence-grounded Dreams regressions."
   DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test \
     ./internal/repository \
     ./internal/http \
-    -run '^(TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited|TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration)$' \
+    -run '^(TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment|TestScheduledDreamRecoveryFencesExpiredLease|TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited|TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration)$' \
     -count=1
 fi
 

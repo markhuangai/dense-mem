@@ -12,7 +12,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-const lockTimeout = 30 * time.Second
+const (
+	manualDreamCycleLease     = 30 * time.Second
+	scheduledDreamCycleLease  = 15 * time.Minute
+	scheduledRecoveryAttempts = 3
+)
 
 type service struct {
 	deps Dependencies
@@ -27,7 +31,7 @@ func New(deps Dependencies) Service {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	if deps.Generator == nil {
-		deps.Generator = NewHeuristicGenerator("")
+		deps.Generator = unavailableGenerator{}
 	}
 	if deps.ScheduledStore == nil {
 		if store, ok := deps.Store.(repository.ScheduledDreamRepository); ok {
@@ -49,6 +53,13 @@ func (s *service) RunScheduledCycle(ctx context.Context, teamID string, windowAt
 		return nil, fmt.Errorf("scheduled dreaming cycle: scheduled dream repository is required")
 	}
 	return s.runScheduledCycle(ctx, teamID, windowAt)
+}
+
+func (s *service) RecoverScheduledCycle(ctx context.Context, teamID string) (*RunCycleResult, error) {
+	if s.deps.ScheduledStore == nil {
+		return nil, fmt.Errorf("recover scheduled dreaming cycle: scheduled dream repository is required")
+	}
+	return s.recoverScheduledCycle(ctx, teamID)
 }
 
 func (s *service) RecordMissedScheduledCycle(ctx context.Context, teamID, runDate string) (*RunCycleResult, error) {

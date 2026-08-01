@@ -206,6 +206,7 @@ function DreamTable({ dreams, sort }: { dreams: Dream[]; sort: DreamSort }) {
             <th>{dreamDateHeader(sort)}</th>
             <th>Status</th>
             <th>Hypothesis</th>
+            <th>Evidence</th>
             <th>Confidence</th>
             <th>Run</th>
           </tr>
@@ -225,6 +226,7 @@ function DreamTable({ dreams, sort }: { dreams: Dream[]; sort: DreamSort }) {
                   )}
                 </div>
               </td>
+              <td><DreamEvidenceSummary dream={dream} /></td>
               <td>{Math.round(dream.confidence * 100)}%</td>
               <td><code>{dream.cycle_run_id?.slice(0, 8) || "-"}</code></td>
             </tr>
@@ -232,6 +234,25 @@ function DreamTable({ dreams, sort }: { dreams: Dream[]; sort: DreamSort }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function DreamEvidenceSummary({ dream }: { dream: Dream }) {
+  const derivations = dream.derivations ?? [];
+  if (derivations.length === 0) {
+    return <span className="form-meta">No cited excerpts</span>;
+  }
+  return (
+    <span>
+      {derivations.length} cited excerpt{derivations.length === 1 ? "" : "s"}
+      <InfoTooltip label={`Evidence used for ${dream.hypothesis}`}>
+        {derivations.map((derivation, index) => (
+          <span key={`${derivation.relationship_id}-${derivation.premise_position}-${index}`}>
+            Premise {derivation.premise_position} · {derivation.authority} · “{derivation.quote}”
+          </span>
+        ))}
+      </InfoTooltip>
+    </span>
   );
 }
 
@@ -252,9 +273,12 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
           <tr>
             <th>Started</th>
             <th>Status</th>
-            <th>Inputs</th>
+            <th><MetricLabel label="Eligible" detail="Relationships with current, valid evidence. This is not the number of AI calls." /></th>
+            <th><MetricLabel label="Paths" detail="Direct A → B → C paths actually sent to the AI provider." /></th>
+            <th><MetricLabel label="AI" detail="Valid possible-relationship proposals returned by the provider." /></th>
             <th>Created</th>
-            <th>Rejected</th>
+            <th><MetricLabel label="Rejected" detail="Provider proposals rejected by current target or source policy after validation." /></th>
+            <th>Outcome</th>
           </tr>
         </thead>
         <tbody>
@@ -263,14 +287,51 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
               <td>{formatDate(run.started_at)}</td>
               <td><span className={runStatusClass(run.status)}>{run.status}</span></td>
               <td>{run.input_relationships}</td>
+              <td>{run.attempted_paths ?? 0}</td>
+              <td>{run.provider_proposals ?? 0}</td>
               <td>{run.created_dreams}</td>
               <td>{run.rejected_dreams}</td>
+              <td>{runOutcome(run)}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
   );
+}
+
+function MetricLabel({ label, detail }: { label: string; detail: string }) {
+  return (
+    <span>
+      {label} <InfoTooltip label={`${label} meaning`}>{detail}</InfoTooltip>
+    </span>
+  );
+}
+
+function runOutcome(run: DreamRun): string {
+  const outcomes = run.outcome_summary;
+  if (!outcomes) {
+    return "-";
+  }
+  if ((outcomes.provider_failed ?? 0) > 0) {
+    return "Provider call failed";
+  }
+  if ((outcomes.attempted_paths ?? 0) === 0) {
+    if ((outcomes.blocked_targets ?? 0) > 0) {
+      return `${outcomes.blocked_targets} target${outcomes.blocked_targets === 1 ? "" : "s"} already exist`;
+    }
+    if ((outcomes.previously_assessed_paths ?? 0) > 0) {
+      return "All paths already assessed";
+    }
+    return "No eligible two-hop path";
+  }
+  if ((outcomes.policy_rejections ?? 0) > 0) {
+    return `${outcomes.policy_rejections} blocked during persistence`;
+  }
+  if ((outcomes.provider_proposals ?? 0) === 0) {
+    return "Provider returned no supported relationship";
+  }
+  return "Provider result stored";
 }
 
 function sourceLabel(source: string): string {
@@ -297,7 +358,7 @@ function dreamStatusClass(status: string): string {
 }
 
 function runStatusClass(status: string): string {
-  if (status === "error") {
+  if (status === "error" || status === "failed") {
     return "status-pill error";
   }
   if (status === "skipped") {

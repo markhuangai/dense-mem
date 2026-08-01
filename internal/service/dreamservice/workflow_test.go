@@ -12,11 +12,10 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-func TestRunCycleUsesAuthenticatedActorAndCandidateSafeInputs(t *testing.T) {
+func TestRunCycleDoesNotTurnOneCandidateIntoAHeuristicDream(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
 	runID := uuid.NewString()
@@ -44,6 +43,9 @@ func TestRunCycleUsesAuthenticatedActorAndCandidateSafeInputs(t *testing.T) {
 			PredicateVersion: 1,
 			ObjectEntityID:   objectID,
 			ObjectName:       "PostgreSQL",
+			SubjectKind:      "project",
+			ObjectKind:       "product",
+			Evidence:         []repository.DreamEvidence{{Content: "Dense-Mem may use PostgreSQL.", Authority: "primary"}},
 		}},
 	}
 	svc := New(Dependencies{
@@ -61,16 +63,11 @@ func TestRunCycleUsesAuthenticatedActorAndCandidateSafeInputs(t *testing.T) {
 	require.Equal(t, "completed", result.Status)
 	require.Equal(t, runID, result.RunID)
 	require.Equal(t, teamID.String(), result.TeamID)
-	require.Len(t, repo.upserts, 1)
+	assert.Empty(t, repo.upserts)
 	assert.Equal(t, teamID.String(), repo.listInput.TeamID)
 	assert.Equal(t, teamID.String(), repo.claimInput.TeamID)
 	assert.Equal(t, ownerID.String(), repo.claimInput.InitiatedByProfileID)
-	assert.Equal(t, teamID.String(), repo.upserts[0].TeamID)
-	assert.Equal(t, ownerID.String(), repo.upserts[0].CreatedByProfileID)
-	assert.Equal(t, runID, repo.upserts[0].RunID)
-	assert.Equal(t, sourceID, repo.upserts[0].SourceRefs[0]["id"])
-	assert.Equal(t, 3, repo.upserts[0].SourceVersions[sourceID])
-	assert.Equal(t, 1, repo.completeInput.CreatedHypotheses)
+	assert.Equal(t, 0, repo.completeInput.CreatedHypotheses)
 }
 
 func TestRunCyclePersistsValidatedProviderHypothesis(t *testing.T) {
@@ -78,9 +75,10 @@ func TestRunCyclePersistsValidatedProviderHypothesis(t *testing.T) {
 	ownerID := uuid.New()
 	runID := uuid.NewString()
 	subjectID := uuid.NewString()
+	middleID := uuid.NewString()
 	objectID := uuid.NewString()
-	activeSourceID := uuid.NewString()
-	candidateSourceID := uuid.NewString()
+	activeSourceID := "relationship_a"
+	candidateSourceID := "relationship_b"
 	repo := &dreamRepositoryStub{
 		run: repository.DreamCycleRun{
 			TeamID:               teamID.String(),
@@ -100,36 +98,42 @@ func TestRunCyclePersistsValidatedProviderHypothesis(t *testing.T) {
 				SubjectName:      "Dense-Mem",
 				PredicateKey:     "works_on",
 				PredicateVersion: 1,
-				ObjectEntityID:   objectID,
+				ObjectEntityID:   middleID,
 				ObjectName:       "PostgreSQL",
+				SubjectKind:      "project",
+				ObjectKind:       "product",
+				Evidence:         []repository.DreamEvidence{{Content: "Dense-Mem works on PostgreSQL.", Authority: "primary"}},
 			},
 			{
 				RelationshipID:   candidateSourceID,
 				OwnerProfileID:   ownerID.String(),
 				Version:          4,
 				Status:           "pending_evidence",
-				SubjectEntityID:  subjectID,
-				SubjectName:      "Dense-Mem",
-				PredicateKey:     "uses",
+				SubjectEntityID:  middleID,
+				SubjectName:      "PostgreSQL",
+				PredicateKey:     "informs",
 				PredicateVersion: 1,
 				ObjectEntityID:   objectID,
-				ObjectName:       "PostgreSQL",
+				ObjectName:       "Search freshness",
+				SubjectKind:      "product",
+				ObjectKind:       "concept",
+				Evidence:         []repository.DreamEvidence{{Content: "PostgreSQL informs search freshness.", Authority: "primary"}},
 			},
 		},
+		predicates: []repository.DreamTargetPredicate{{
+			PredicateKey: "uses", Version: 1, AllowedSubjectKinds: []string{"project"}, AllowedObjectKinds: []string{"concept"}, RelationshipKind: "state", CurrentCardinality: "many",
+		}},
 	}
 	generator := &dreamGeneratorStub{
 		model: "provider-canonical",
 		generated: []GeneratedDream{{
-			Hypothesis:       "Dense-Mem may use PostgreSQL.",
-			Rationale:        "Active and candidate inputs point at a possible durable dependency.",
-			SubjectEntityID:  subjectID,
-			PredicateKey:     "uses",
-			PredicateVersion: 1,
-			ObjectEntityID:   objectID,
-			SourceRefs: []domain.DreamSourceRef{
-				{Type: "relationship", ID: activeSourceID},
-				{Type: "candidate_relationship", ID: candidateSourceID},
-			},
+			PathRef:         "path_1",
+			PredicateRef:    "predicate_1",
+			EvidenceRefs:    []string{"evidence_1", "evidence_2"},
+			Hypothesis:      "Dense-Mem may use search freshness.",
+			Rationale:       "Active and candidate inputs point at a possible durable dependency.",
+			WhatIf:          "What if the connection needs independent confirmation?",
+			PossibleOutcome: "Collect independent evidence before accepting it.",
 		}},
 	}
 	svc := New(Dependencies{
@@ -144,7 +148,7 @@ func TestRunCyclePersistsValidatedProviderHypothesis(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.Status)
 	require.Equal(t, 1, generator.calls)
-	require.Len(t, generator.lastReq.Inputs, 2)
+	require.Len(t, generator.lastReq.Paths, 1)
 	require.Len(t, repo.upserts, 1)
 	assert.Equal(t, "provider", repo.upserts[0].GeneratorKind)
 	assert.Equal(t, "provider-canonical", repo.upserts[0].GeneratorVersion)
@@ -162,8 +166,10 @@ func TestRunCycleRejectsMalformedProviderOutputWithoutFallback(t *testing.T) {
 	ownerID := uuid.New()
 	runID := uuid.NewString()
 	subjectID := uuid.NewString()
+	middleID := uuid.NewString()
 	objectID := uuid.NewString()
-	sourceID := uuid.NewString()
+	sourceID := "relationship_a"
+	secondSourceID := "relationship_b"
 	repo := &dreamRepositoryStub{
 		run: repository.DreamCycleRun{
 			TeamID:               teamID.String(),
@@ -173,36 +179,26 @@ func TestRunCycleRejectsMalformedProviderOutputWithoutFallback(t *testing.T) {
 			Status:               "running",
 			Claimed:              true,
 		},
-		inputs: []repository.DreamInput{{
-			RelationshipID:   sourceID,
-			OwnerProfileID:   ownerID.String(),
-			Version:          1,
-			Status:           "pending_evidence",
-			SubjectEntityID:  subjectID,
-			SubjectName:      "Dense-Mem",
-			PredicateKey:     "uses",
-			PredicateVersion: 1,
-			ObjectEntityID:   objectID,
-			ObjectName:       "PostgreSQL",
-		}},
+		inputs: []repository.DreamInput{
+			{RelationshipID: sourceID, OwnerProfileID: ownerID.String(), Version: 1, Status: "active", SubjectEntityID: subjectID, SubjectName: "Dense-Mem", SubjectKind: "project", PredicateKey: "works_on", PredicateVersion: 1, ObjectEntityID: middleID, ObjectName: "PostgreSQL", ObjectKind: "product", Evidence: []repository.DreamEvidence{{Content: "Dense-Mem works on PostgreSQL.", Authority: "primary"}}},
+			{RelationshipID: secondSourceID, OwnerProfileID: ownerID.String(), Version: 1, Status: "pending_evidence", SubjectEntityID: middleID, SubjectName: "PostgreSQL", SubjectKind: "product", PredicateKey: "informs", PredicateVersion: 1, ObjectEntityID: objectID, ObjectName: "Search freshness", ObjectKind: "concept", Evidence: []repository.DreamEvidence{{Content: "PostgreSQL informs search freshness.", Authority: "primary"}}},
+		},
+		predicates: []repository.DreamTargetPredicate{{PredicateKey: "uses", Version: 1, AllowedSubjectKinds: []string{"project"}, AllowedObjectKinds: []string{"concept"}, RelationshipKind: "state", CurrentCardinality: "many"}},
 	}
 	generator := &dreamGeneratorStub{
 		model: "provider-canonical",
 		generated: []GeneratedDream{
 			{
-				Hypothesis: "Missing source should be rejected.",
-				SourceRefs: []domain.DreamSourceRef{
-					{Type: "candidate_relationship", ID: "missing-source"},
-				},
+				PathRef:      "unknown_path",
+				PredicateRef: "predicate_1",
+				EvidenceRefs: []string{"evidence_1", "evidence_2"},
+				Hypothesis:   "Missing source should be rejected.",
 			},
 			{
-				Hypothesis:      "Unknown endpoint should be rejected.",
-				SubjectEntityID: uuid.NewString(),
-				PredicateKey:    "uses",
-				ObjectEntityID:  objectID,
-				SourceRefs: []domain.DreamSourceRef{
-					{Type: "candidate_relationship", ID: sourceID},
-				},
+				PathRef:      "path_1",
+				PredicateRef: "unknown_predicate",
+				EvidenceRefs: []string{"evidence_1", "evidence_2"},
+				Hypothesis:   "Unknown predicate should be rejected.",
 			},
 		},
 	}
@@ -220,6 +216,36 @@ func TestRunCycleRejectsMalformedProviderOutputWithoutFallback(t *testing.T) {
 	assert.Empty(t, repo.upserts)
 	assert.Equal(t, 0, repo.completeInput.CreatedHypotheses)
 	assert.Equal(t, 2, repo.completeInput.RejectedHypotheses)
+}
+
+func TestGenerateDreamProposalsRetainsProviderFailureDiagnostics(t *testing.T) {
+	teamID := uuid.New()
+	subjectID := uuid.NewString()
+	middleID := uuid.NewString()
+	objectID := uuid.NewString()
+	repo := &dreamRepositoryStub{
+		inputs: []repository.DreamInput{
+			{RelationshipID: "relationship_a", Version: 1, Status: "active", SubjectEntityID: subjectID, SubjectName: "Dense-Mem", SubjectKind: "project", PredicateKey: "works_on", PredicateVersion: 1, ObjectEntityID: middleID, ObjectName: "PostgreSQL", ObjectKind: "product", Evidence: []repository.DreamEvidence{{Content: "Dense-Mem works on PostgreSQL.", Authority: "primary"}}},
+			{RelationshipID: "relationship_b", Version: 1, Status: "active", SubjectEntityID: middleID, SubjectName: "PostgreSQL", SubjectKind: "product", PredicateKey: "informs", PredicateVersion: 1, ObjectEntityID: objectID, ObjectName: "Search freshness", ObjectKind: "concept", Evidence: []repository.DreamEvidence{{Content: "PostgreSQL informs search freshness.", Authority: "primary"}}},
+		},
+		predicates: []repository.DreamTargetPredicate{{PredicateKey: "uses", Version: 1, AllowedSubjectKinds: []string{"project"}, AllowedObjectKinds: []string{"concept"}}},
+	}
+	svc := New(Dependencies{
+		Store:     repo,
+		Generator: &dreamGeneratorStub{model: "provider-canonical", err: errors.New("provider unavailable")},
+	}).(*service)
+
+	generation, err := svc.generateDreamProposals(context.Background(), teamID.String(), repo.inputs, 5)
+
+	require.EqualError(t, err, "provider unavailable")
+	assert.True(t, generation.providerFailed)
+	assert.Equal(t, "provider-canonical", generation.model)
+	require.Len(t, generation.paths, 1)
+	assert.Equal(t, 1, generation.candidatePaths)
+	result := &RunCycleResult{}
+	applyDreamGenerationDiagnostics(result, generation, len(repo.inputs), 0, 0)
+	assert.Equal(t, 1, result.AttemptedPaths)
+	assert.Equal(t, 1, result.OutcomeSummary["provider_failed"])
 }
 
 func TestRunCycleMaterializesSeedHypothesesWithoutGenerator(t *testing.T) {
@@ -277,6 +303,7 @@ func TestRunCycleMaterializesSeedHypothesesWithoutGenerator(t *testing.T) {
 	assert.Equal(t, 0, generator.calls)
 	require.Len(t, repo.upserts, 1)
 	assert.Equal(t, "Dense-Mem may use PostgreSQL.", repo.upserts[0].Statement)
+	assert.Equal(t, "evaluation_seed", repo.upserts[0].GeneratorKind)
 	assert.Equal(t, "What if PostgreSQL is the durable store?", repo.upserts[0].Payload["what_if"])
 	assert.Equal(t, "Ask for independent evidence before acceptance.", repo.upserts[0].Payload["possible_outcome"])
 	require.NotNil(t, repo.upserts[0].Likelihood)
@@ -332,6 +359,14 @@ func TestReadPathsRefreshAndMapHypotheses(t *testing.T) {
 				"type": "candidate_relationship",
 				"id":   "source-1",
 			}},
+			Derivations: []repository.DreamDerivationSource{{
+				PremisePosition:     1,
+				RelationshipID:      "source-1",
+				RelationshipVersion: 2,
+				SourceGroupKey:      "doc:architecture",
+				Quote:               "Dense-Mem uses PostgreSQL for durable memory.",
+				Authority:           "primary",
+			}},
 			Payload: map[string]any{
 				"what_if":          "What if PostgreSQL is durable memory?",
 				"possible_outcome": "Request confirmation.",
@@ -354,6 +389,8 @@ func TestReadPathsRefreshAndMapHypotheses(t *testing.T) {
 	assert.Equal(t, hypothesisID, listed[0].DreamID)
 	assert.Equal(t, "What if PostgreSQL is durable memory?", listed[0].WhatIf)
 	assert.Equal(t, []domain.DreamSourceRef{{Type: "candidate_relationship", ID: "source-1"}}, listed[0].SourceRefs)
+	require.Len(t, listed[0].Derivations, 1)
+	assert.Equal(t, "Dense-Mem uses PostgreSQL for durable memory.", listed[0].Derivations[0].Quote)
 
 	got, err := svc.Get(ctx, "ignored-profile", hypothesisID)
 	require.NoError(t, err)
@@ -535,19 +572,41 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 func TestRunCycleControlAndErrorBranches(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
-	sourceID := uuid.NewString()
-	candidateInput := repository.DreamInput{
-		RelationshipID:   sourceID,
+	subjectID := uuid.NewString()
+	middleID := uuid.NewString()
+	objectID := uuid.NewString()
+	firstInput := repository.DreamInput{
+		RelationshipID:   "relationship_a",
+		OwnerProfileID:   ownerID.String(),
+		Version:          1,
+		Status:           "active",
+		SubjectEntityID:  subjectID,
+		SubjectName:      "Dense-Mem",
+		SubjectKind:      "project",
+		PredicateKey:     "works_on",
+		PredicateVersion: 1,
+		ObjectEntityID:   middleID,
+		ObjectName:       "PostgreSQL",
+		ObjectKind:       "product",
+		Evidence:         []repository.DreamEvidence{{Content: "Dense-Mem works on PostgreSQL.", Authority: "primary"}},
+	}
+	secondInput := repository.DreamInput{
+		RelationshipID:   "relationship_b",
 		OwnerProfileID:   ownerID.String(),
 		Version:          1,
 		Status:           "pending_evidence",
-		SubjectEntityID:  uuid.NewString(),
-		SubjectName:      "Dense-Mem",
-		PredicateKey:     "uses",
+		SubjectEntityID:  middleID,
+		SubjectName:      "PostgreSQL",
+		SubjectKind:      "product",
+		PredicateKey:     "informs",
 		PredicateVersion: 1,
-		ObjectEntityID:   uuid.NewString(),
-		ObjectName:       "PostgreSQL",
+		ObjectEntityID:   objectID,
+		ObjectName:       "Search freshness",
+		ObjectKind:       "concept",
+		Evidence:         []repository.DreamEvidence{{Content: "PostgreSQL informs search freshness.", Authority: "primary"}},
 	}
+	predicates := []repository.DreamTargetPredicate{{PredicateKey: "uses", Version: 1, AllowedSubjectKinds: []string{"project"}, AllowedObjectKinds: []string{"concept"}, RelationshipKind: "state", CurrentCardinality: "many"}}
+	generator := &dreamGeneratorStub{generated: []GeneratedDream{{PathRef: "path_1", PredicateRef: "predicate_1", EvidenceRefs: []string{"evidence_1", "evidence_2"}, Hypothesis: "Dense-Mem may use search freshness.", Rationale: "The two premises support a possibility.", WhatIf: "What if it needs independent confirmation?", PossibleOutcome: "Collect independent evidence."}}}
 
 	tests := []struct {
 		name            string
@@ -604,7 +663,7 @@ func TestRunCycleControlAndErrorBranches(t *testing.T) {
 		{
 			name:            "exact existing relationship is rejected without failing cycle",
 			cfg:             domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC"},
-			repo:            &dreamRepositoryStub{inputs: []repository.DreamInput{candidateInput}, upsertErr: repository.ErrDreamExactRelationshipExists},
+			repo:            &dreamRepositoryStub{inputs: []repository.DreamInput{firstInput, secondInput}, predicates: predicates, upsertErr: repository.ErrDreamExactRelationshipExists},
 			wantStatus:      "completed",
 			wantComplete:    "completed",
 			wantRejected:    1,
@@ -613,7 +672,7 @@ func TestRunCycleControlAndErrorBranches(t *testing.T) {
 		{
 			name:            "unexpected upsert error fails cycle and records failed completion",
 			cfg:             domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC"},
-			repo:            &dreamRepositoryStub{inputs: []repository.DreamInput{candidateInput}, upsertErr: errors.New("write failed")},
+			repo:            &dreamRepositoryStub{inputs: []repository.DreamInput{firstInput, secondInput}, predicates: predicates, upsertErr: errors.New("write failed")},
 			wantStatus:      "error",
 			wantErr:         "write failed",
 			wantComplete:    "failed",
@@ -625,6 +684,7 @@ func TestRunCycleControlAndErrorBranches(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := New(Dependencies{
 				Store:     tc.repo,
+				Generator: generator,
 				AppConfig: cycleAppConfigStub{cfg: tc.cfg},
 				Now:       func() time.Time { return time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC) },
 			})
@@ -731,252 +791,4 @@ func TestStatusAndHelperEdgeCases(t *testing.T) {
 	require.Nil(t, optionalProbability(0))
 	require.NotNil(t, optionalProbability(2))
 	assert.Equal(t, 1.0, *optionalProbability(2))
-}
-
-func dreamTestContext(teamID uuid.UUID, ownerID uuid.UUID) context.Context {
-	return requestctx.WithActorCredential(
-		requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
-			TeamID:    teamID,
-			ProfileID: ownerID,
-		}),
-		requestctx.ActorCredential{
-			KeyID:      uuid.New(),
-			AuthMethod: "api_key",
-			Role:       "member",
-		},
-	)
-}
-
-type dreamRepositoryStub struct {
-	inputs        []repository.DreamInput
-	run           repository.DreamCycleRun
-	getRecord     repository.HypothesisRecord
-	listRecords   []repository.HypothesisRecord
-	recallRecords []repository.HypothesisRecord
-	listInput     repository.DreamInputListInput
-	claimInput    repository.DreamCycleClaimInput
-	completeInput repository.DreamCycleCompleteInput
-	missedInput   repository.DreamCycleClaimInput
-	upserts       []repository.UpsertHypothesisInput
-	submitInput   repository.SubmitHypothesisInput
-	updateInput   repository.UpdateHypothesisStatusInput
-	err           error
-	claimErr      error
-	completeErr   error
-	listInputsErr error
-	upsertErr     error
-	listErr       error
-	getErr        error
-	recallErr     error
-	updateErr     error
-	submitErr     error
-	latestErr     error
-}
-
-func (s *dreamRepositoryStub) ClaimDreamCycle(_ context.Context, input repository.DreamCycleClaimInput) (*repository.DreamCycleRun, error) {
-	s.claimInput = input
-	if s.claimErr != nil {
-		return nil, s.claimErr
-	}
-	if s.err != nil {
-		return nil, s.err
-	}
-	run := s.run
-	if run.RunID == "" {
-		run.RunID = uuid.NewString()
-		run.TeamID = input.TeamID
-		run.InitiatedByProfileID = input.InitiatedByProfileID
-		run.RunDate = input.RunDate
-		run.WindowKey = input.WindowKey
-		run.Status = "running"
-		run.Claimed = true
-	}
-	return &run, nil
-}
-
-func (s *dreamRepositoryStub) CompleteDreamCycle(_ context.Context, input repository.DreamCycleCompleteInput) error {
-	s.completeInput = input
-	if s.completeErr != nil {
-		return s.completeErr
-	}
-	return s.err
-}
-
-func (s *dreamRepositoryStub) ListDreamInputs(_ context.Context, input repository.DreamInputListInput) ([]repository.DreamInput, error) {
-	s.listInput = input
-	if s.listInputsErr != nil {
-		return nil, s.listInputsErr
-	}
-	return append([]repository.DreamInput(nil), s.inputs...), s.err
-}
-
-func (s *dreamRepositoryStub) UpsertHypothesis(_ context.Context, input repository.UpsertHypothesisInput) (*repository.HypothesisRecord, bool, error) {
-	s.upserts = append(s.upserts, input)
-	if s.upsertErr != nil {
-		return nil, false, s.upsertErr
-	}
-	if s.err != nil {
-		return nil, false, s.err
-	}
-	return &repository.HypothesisRecord{
-		TeamID:             input.TeamID,
-		HypothesisID:       uuid.NewString(),
-		CreatedByProfileID: input.CreatedByProfileID,
-		Status:             string(domain.DreamStatusProposed),
-		Statement:          input.Statement,
-		CycleRunID:         input.RunID,
-		ContentHash:        input.ContentHash,
-		SourceRefs:         input.SourceRefs,
-		CreatedAt:          time.Now().UTC(),
-		UpdatedAt:          time.Now().UTC(),
-	}, true, nil
-}
-
-func (s *dreamRepositoryStub) ListHypotheses(context.Context, repository.ListHypothesesInput) ([]repository.HypothesisRecord, string, error) {
-	if s.listErr != nil {
-		return nil, "", s.listErr
-	}
-	if s.err != nil {
-		return nil, "", s.err
-	}
-	if len(s.listRecords) > 0 {
-		return append([]repository.HypothesisRecord(nil), s.listRecords...), "", nil
-	}
-	if s.getRecord.HypothesisID == "" {
-		return nil, "", nil
-	}
-	return []repository.HypothesisRecord{s.getRecord}, "", nil
-}
-
-func (s *dreamRepositoryStub) GetHypothesis(context.Context, repository.GetHypothesisInput) (*repository.HypothesisRecord, error) {
-	if s.getErr != nil {
-		return nil, s.getErr
-	}
-	if s.err != nil {
-		return nil, s.err
-	}
-	if s.getRecord.HypothesisID == "" {
-		return nil, repository.ErrDreamHypothesisNotFound
-	}
-	record := s.getRecord
-	return &record, nil
-}
-
-func (s *dreamRepositoryStub) RecallHypotheses(context.Context, repository.RecallHypothesesInput) ([]repository.HypothesisRecord, error) {
-	if s.recallErr != nil {
-		return nil, s.recallErr
-	}
-	if s.err != nil {
-		return nil, s.err
-	}
-	if len(s.recallRecords) > 0 {
-		return append([]repository.HypothesisRecord(nil), s.recallRecords...), nil
-	}
-	if s.getRecord.HypothesisID == "" {
-		return nil, nil
-	}
-	return []repository.HypothesisRecord{s.getRecord}, nil
-}
-
-func (s *dreamRepositoryStub) UpdateHypothesisStatus(_ context.Context, input repository.UpdateHypothesisStatusInput) (*repository.HypothesisRecord, error) {
-	s.updateInput = input
-	if s.updateErr != nil {
-		return nil, s.updateErr
-	}
-	if s.err != nil {
-		return nil, s.err
-	}
-	record := s.getRecord
-	record.Status = input.Status
-	record.InvalidatedReason = input.InvalidatedReason
-	return &record, nil
-}
-
-func (s *dreamRepositoryStub) SubmitHypothesis(_ context.Context, input repository.SubmitHypothesisInput) (*repository.HypothesisRecord, error) {
-	s.submitInput = input
-	if s.submitErr != nil {
-		return nil, s.submitErr
-	}
-	if s.err != nil {
-		return nil, s.err
-	}
-	record := s.getRecord
-	record.Status = string(domain.DreamStatusSubmitted)
-	record.SubmittedIngestID = input.SubmittedIngestID
-	record.InvalidatedReason = input.InvalidatedReason
-	return &record, nil
-}
-
-func (s *dreamRepositoryStub) ListDreamCyclesForTeam(context.Context, string, int) ([]repository.DreamCycleRun, error) {
-	if s.latestErr != nil {
-		return nil, s.latestErr
-	}
-	if s.err != nil {
-		return nil, s.err
-	}
-	if s.run.RunID == "" {
-		return nil, nil
-	}
-	return []repository.DreamCycleRun{s.run}, nil
-}
-
-func (s *dreamRepositoryStub) CountHypotheses(context.Context, string, string) (int, error) {
-	if s.err != nil {
-		return 0, s.err
-	}
-	if s.getRecord.HypothesisID != "" && s.getRecord.Status == string(domain.DreamStatusProposed) {
-		return 1, nil
-	}
-	return 0, nil
-}
-
-func (s *dreamRepositoryStub) ClaimScheduledDreamCycle(ctx context.Context, input repository.DreamCycleClaimInput) (*repository.DreamCycleRun, error) {
-	return s.ClaimDreamCycle(ctx, input)
-}
-
-func (s *dreamRepositoryStub) CompleteScheduledDreamCycle(ctx context.Context, input repository.DreamCycleCompleteInput) error {
-	return s.CompleteDreamCycle(ctx, input)
-}
-
-func (s *dreamRepositoryStub) UpsertScheduledHypothesis(ctx context.Context, input repository.UpsertHypothesisInput) (*repository.HypothesisRecord, bool, error) {
-	return s.UpsertHypothesis(ctx, input)
-}
-
-func (s *dreamRepositoryStub) RecordMissedScheduledDreamCycle(_ context.Context, input repository.DreamCycleClaimInput) (*repository.DreamCycleRun, error) {
-	s.missedInput = input
-	return &repository.DreamCycleRun{
-		TeamID:    input.TeamID,
-		RunID:     uuid.NewString(),
-		RunDate:   input.RunDate,
-		WindowKey: input.WindowKey,
-		Status:    "missed",
-		Claimed:   true,
-	}, nil
-}
-
-type rememberServiceStub struct {
-	requests []memoryservice.RememberRequest
-	result   *memoryservice.RememberResult
-	err      error
-}
-
-func (s *rememberServiceStub) Remember(_ context.Context, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
-	s.requests = append(s.requests, req)
-	if s.err != nil {
-		return nil, s.err
-	}
-	if s.result != nil {
-		return s.result, nil
-	}
-	return &memoryservice.RememberResult{
-		IngestID:        uuid.NewString(),
-		ProcessingState: string(domain.PlacementRunQueued),
-	}, nil
-}
-
-func (s *rememberServiceStub) GetMemoryPlacement(context.Context, memoryservice.GetMemoryPlacementRequest) (*memoryservice.PlacementRunResult, error) {
-	if s.err != nil {
-		return nil, s.err
-	}
-	return nil, errors.New("not implemented")
 }

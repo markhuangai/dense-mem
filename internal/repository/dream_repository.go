@@ -2,12 +2,12 @@ package repository
 
 import (
 	"context"
-	"database/sql"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -19,6 +19,8 @@ var (
 	ErrDreamHypothesisNotFound      = errors.New("dream hypothesis not found")
 	ErrDreamSourceStale             = errors.New("dream source is stale")
 	ErrDreamExactRelationshipExists = errors.New("dream exact relationship already exists")
+	ErrDreamExactHypothesisExists   = errors.New("dream exact hypothesis already exists")
+	ErrDreamCycleLeaseLost          = errors.New("dream cycle lease is no longer current")
 )
 
 const hypothesisSourceIneligiblePredicateSQL = `EXISTS (
@@ -56,181 +58,169 @@ const hypothesisSourceIneligiblePredicateSQL = `EXISTS (
 	       AND cr.target_relationship_id = r.relationship_id
 	       AND cr.kind = 'challenges'
 	   )
+) OR ` + hypothesisExactDerivationIneligiblePredicateSQL
+
+const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_kind <> 'provider'
+	OR NOT EXISTS (
+		SELECT 1
+		FROM hypothesis_derivation_sources derivation
+		WHERE derivation.team_id = hypotheses.team_id
+		  AND derivation.hypothesis_id = hypotheses.hypothesis_id
+		  AND derivation.premise_position = 1
+	)
+	OR NOT EXISTS (
+		SELECT 1
+		FROM hypothesis_derivation_sources derivation
+		WHERE derivation.team_id = hypotheses.team_id
+		  AND derivation.hypothesis_id = hypotheses.hypothesis_id
+		  AND derivation.premise_position = 2
+	)
+	OR EXISTS (
+		SELECT 1
+		FROM hypothesis_derivation_sources derivation
+		LEFT JOIN relationship_records relationship
+		  ON relationship.team_id = derivation.team_id
+		 AND relationship.relationship_id = derivation.relationship_id
+		WHERE derivation.team_id = hypotheses.team_id
+		  AND derivation.hypothesis_id = hypotheses.hypothesis_id
+		  AND NOT COALESCE(
+			relationship.relationship_id IS NOT NULL
+			AND relationship.identity_alias_of_relationship_id IS NULL
+			AND relationship.version = derivation.relationship_version
+			AND EXISTS (
+				SELECT 1
+				FROM entity_records subject_entity
+				WHERE subject_entity.team_id = relationship.team_id
+				  AND subject_entity.entity_id = relationship.subject_entity_id
+				  AND subject_entity.status = 'active'
+			)
+			AND (
+				relationship.object_entity_id IS NULL
+				OR EXISTS (
+					SELECT 1
+					FROM entity_records object_entity
+					WHERE object_entity.team_id = relationship.team_id
+					  AND object_entity.entity_id = relationship.object_entity_id
+					  AND object_entity.status = 'active'
+				)
+			)
+			AND NOT EXISTS (
+				SELECT 1
+				FROM relationship_cross_references cross_reference
+				WHERE cross_reference.team_id = relationship.team_id
+				  AND cross_reference.target_relationship_id = relationship.relationship_id
+				  AND cross_reference.kind = 'challenges'
+			)
+			AND NOT EXISTS (
+				SELECT 1
+				FROM review_tasks review
+				WHERE review.team_id = relationship.team_id
+				  AND review.relationship_id = relationship.relationship_id
+				  AND review.status IN ('open', 'acknowledged')
+			)
+			AND (
+				(
+					relationship.status = 'active'
+					AND derivation.support_id IS NOT NULL
+					AND EXISTS (
+						SELECT 1
+						FROM relationship_evidence_supports support
+						JOIN evidence_fragments fragment
+						  ON fragment.team_id = support.team_id
+						 AND fragment.fragment_id = support.fragment_id
+						LEFT JOIN evidence_sources source
+						  ON source.team_id = support.team_id
+						 AND source.source_id = support.source_id
+						WHERE support.team_id = derivation.team_id
+						  AND support.support_id = derivation.support_id
+						  AND support.relationship_id = derivation.relationship_id
+						  AND support.fragment_id = derivation.fragment_id
+						  AND support.source_id IS NOT DISTINCT FROM derivation.source_id
+						  AND support.source_revision_id IS NOT DISTINCT FROM derivation.source_revision_id
+						  AND support.source_group_key = derivation.source_group_key
+						  AND support.span_start = derivation.span_start
+						  AND support.span_end = derivation.span_end
+						  AND support.authority = derivation.authority
+						  AND substring(fragment.content FROM support.span_start + 1 FOR support.span_end - support.span_start) = derivation.quote
+						  AND COALESCE((
+							SELECT decision.decision
+							FROM relationship_support_decision_events decision
+							WHERE decision.team_id = support.team_id
+							  AND decision.support_id = support.support_id
+							ORDER BY decision.created_at DESC, decision.support_decision_id DESC
+							LIMIT 1
+						), '') IN ('grant', 'reinstate')
+						  AND NOT EXISTS (
+							SELECT 1
+							FROM evidence_quarantines quarantine
+							WHERE quarantine.team_id = support.team_id
+							  AND quarantine.fragment_id = support.fragment_id
+							  AND quarantine.status = 'active'
+						)
+						  AND NOT EXISTS (
+							SELECT 1
+							FROM evidence_lifecycle_events lifecycle
+							WHERE lifecycle.team_id = support.team_id
+							  AND lifecycle.target_fragment_id = support.fragment_id
+						)
+						  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
+					)
+				)
+				OR (
+					relationship.status = 'pending_evidence'
+					AND derivation.observation_id IS NOT NULL
+					AND EXISTS (
+						SELECT 1
+						FROM relationship_observations observation
+						JOIN verification_events verification
+						  ON verification.team_id = observation.team_id
+						 AND verification.observation_id = observation.observation_id
+						JOIN placement_assessments assessment
+						  ON assessment.team_id = verification.team_id
+						 AND assessment.assessment_id = verification.assessment_id
+						JOIN review_tasks review
+						  ON review.team_id = verification.team_id
+						 AND review.assessment_id = verification.assessment_id
+						JOIN LATERAL jsonb_array_elements(observation.evidence) evidence(value) ON true
+						JOIN evidence_fragments fragment
+						  ON fragment.team_id = observation.team_id
+						 AND evidence.value->>'fragment_id' = fragment.fragment_id::text
+						LEFT JOIN evidence_sources source
+						  ON source.team_id = fragment.team_id
+						 AND source.source_id = fragment.source_id
+						WHERE observation.team_id = derivation.team_id
+						  AND observation.observation_id = derivation.observation_id
+						  AND observation.relationship_id = derivation.relationship_id
+						  AND verification.evidence_verdict IN ('insufficient', 'entailed')
+						  AND verification.gate_result = 'below_write_threshold'
+						  AND review.status = 'expired'
+						  AND fragment.fragment_id = derivation.fragment_id
+						  AND fragment.source_id IS NOT DISTINCT FROM derivation.source_id
+						  AND fragment.source_revision_id IS NOT DISTINCT FROM derivation.source_revision_id
+						  AND COALESCE(NULLIF(fragment.source_ref, ''), 'pending_observation') = derivation.source_group_key
+						  AND fragment.authority = derivation.authority
+						  AND evidence.value->>'start' = derivation.span_start::text
+						  AND evidence.value->>'end' = derivation.span_end::text
+						  AND substring(fragment.content FROM derivation.span_start + 1 FOR derivation.span_end - derivation.span_start) = derivation.quote
+						  AND NOT EXISTS (
+							SELECT 1
+							FROM evidence_quarantines quarantine
+							WHERE quarantine.team_id = fragment.team_id
+							  AND quarantine.fragment_id = fragment.fragment_id
+							  AND quarantine.status = 'active'
+						)
+						  AND NOT EXISTS (
+							SELECT 1
+							FROM evidence_lifecycle_events lifecycle
+							WHERE lifecycle.team_id = fragment.team_id
+							  AND lifecycle.target_fragment_id = fragment.fragment_id
+						)
+						  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
+					)
+				)
+			), false)
+	)
 )`
-
-type DreamRepository interface {
-	ClaimDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error)
-	CompleteDreamCycle(ctx context.Context, input DreamCycleCompleteInput) error
-	ListDreamInputs(ctx context.Context, input DreamInputListInput) ([]DreamInput, error)
-	UpsertHypothesis(ctx context.Context, input UpsertHypothesisInput) (*HypothesisRecord, bool, error)
-	ListHypotheses(ctx context.Context, input ListHypothesesInput) ([]HypothesisRecord, string, error)
-	GetHypothesis(ctx context.Context, input GetHypothesisInput) (*HypothesisRecord, error)
-	RecallHypotheses(ctx context.Context, input RecallHypothesesInput) ([]HypothesisRecord, error)
-	UpdateHypothesisStatus(ctx context.Context, input UpdateHypothesisStatusInput) (*HypothesisRecord, error)
-	SubmitHypothesis(ctx context.Context, input SubmitHypothesisInput) (*HypothesisRecord, error)
-	CountHypotheses(ctx context.Context, teamID, status string) (int, error)
-	ListDreamCyclesForTeam(ctx context.Context, teamID string, limit int) ([]DreamCycleRun, error)
-}
-
-// ScheduledDreamRepository is deliberately separate from DreamRepository's
-// authenticated actor methods. Only the scheduler receives this system-mode
-// port, so a request cannot select system mutation mode.
-type ScheduledDreamRepository interface {
-	ClaimScheduledDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error)
-	CompleteScheduledDreamCycle(ctx context.Context, input DreamCycleCompleteInput) error
-	UpsertScheduledHypothesis(ctx context.Context, input UpsertHypothesisInput) (*HypothesisRecord, bool, error)
-	RecordMissedScheduledDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error)
-}
-
-type DreamCycleClaimInput struct {
-	TeamID               string
-	InitiatedByProfileID string
-	RunDate              string
-	WindowKey            string
-	LeaseUntil           time.Time
-	SourceSnapshot       []map[string]any
-}
-
-type DreamCycleCompleteInput struct {
-	TeamID               string
-	InitiatedByProfileID string
-	RunID                string
-	Status               string
-	InputCount           int
-	CreatedHypotheses    int
-	RejectedHypotheses   int
-	SourceSnapshot       []map[string]any
-	Error                string
-}
-
-type DreamCycleRun struct {
-	TeamID               string
-	RunID                string
-	InitiatedByProfileID string
-	RunDate              string
-	WindowKey            string
-	Status               string
-	InputCount           int
-	CreatedHypotheses    int
-	RejectedHypotheses   int
-	Error                string
-	StartedAt            time.Time
-	CompletedAt          *time.Time
-	Claimed              bool
-}
-
-type DreamInputListInput struct {
-	TeamID string
-	Limit  int
-}
-
-type DreamInput struct {
-	RelationshipID     string
-	OwnerProfileID     string
-	Version            int
-	Status             string
-	SubjectEntityID    string
-	SubjectName        string
-	PredicateKey       string
-	PredicateVersion   int
-	ObjectEntityID     string
-	ObjectValueID      string
-	ObjectName         string
-	RelationshipKind   string
-	CurrentCardinality string
-}
-
-type UpsertHypothesisInput struct {
-	TeamID                string
-	CreatedByProfileID    string
-	RunID                 string
-	Statement             string
-	Rationale             string
-	Likelihood            *float64
-	Confidence            *float64
-	SubjectEntityID       string
-	PredicateKey          string
-	PredicateVersion      int
-	ObjectEntityID        string
-	ObjectValueID         string
-	SourceRefs            []map[string]any
-	SourceVersions        map[string]int
-	SourceOwnerProfileIDs []string
-	ContentHash           string
-	GeneratorKind         string
-	GeneratorVersion      string
-	Payload               map[string]any
-}
-
-type HypothesisRecord struct {
-	TeamID                string
-	HypothesisID          string
-	CreatedByProfileID    string
-	Status                string
-	Statement             string
-	Rationale             string
-	Likelihood            *float64
-	Confidence            *float64
-	SubjectEntityID       string
-	PredicateKey          string
-	PredicateVersion      int
-	ObjectEntityID        string
-	ObjectValueID         string
-	SourceRefs            []map[string]any
-	SourceVersions        map[string]int
-	SourceOwnerProfileIDs []string
-	ContentHash           string
-	CycleRunID            string
-	GeneratorKind         string
-	GeneratorVersion      string
-	InvalidatedReason     string
-	SubmittedIngestID     string
-	SubmittedAt           *time.Time
-	Payload               map[string]any
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
-}
-
-type ListHypothesesInput struct {
-	TeamID    string
-	Status    string
-	Limit     int
-	Cursor    string
-	Sort      string
-	Direction string
-}
-
-type GetHypothesisInput struct {
-	TeamID       string
-	HypothesisID string
-}
-
-type RecallHypothesesInput struct {
-	TeamID string
-	Query  string
-	Limit  int
-}
-
-type UpdateHypothesisStatusInput struct {
-	TeamID            string
-	ActorProfileID    string
-	HypothesisID      string
-	Status            string
-	Decision          string
-	InvalidatedReason string
-}
-
-type SubmitHypothesisInput struct {
-	TeamID            string
-	ActorProfileID    string
-	HypothesisID      string
-	Decision          string
-	SubmittedIngestID string
-	InvalidatedReason string
-}
-
-var _ DreamRepository = (*SemanticRepositoryImpl)(nil)
-var _ ScheduledDreamRepository = (*SemanticRepositoryImpl)(nil)
 
 func insertHypothesisFeedbackEvent(
 	ctx context.Context,
@@ -261,20 +251,77 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 	var inputs []DreamInput
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
-				SELECT r.relationship_id::text,
-				       r.owner_profile_id::text,
-				       r.version,
-				       r.status,
+			WITH latest_support_decision AS (
+				SELECT DISTINCT ON (support_id)
+				       support_id, decision
+				FROM relationship_support_decision_events
+				WHERE team_id = ?::uuid
+				ORDER BY support_id, created_at DESC, support_decision_id DESC
+			), effective_support AS (
+				SELECT support.relationship_id, count(*)::int AS support_count
+				FROM relationship_evidence_supports support
+				JOIN latest_support_decision decision
+				  ON decision.support_id = support.support_id
+				LEFT JOIN evidence_quarantines quarantine
+				  ON quarantine.team_id = support.team_id
+				 AND quarantine.fragment_id = support.fragment_id
+				 AND quarantine.status = 'active'
+				LEFT JOIN evidence_lifecycle_events lifecycle
+				  ON lifecycle.team_id = support.team_id
+				 AND lifecycle.target_fragment_id = support.fragment_id
+				LEFT JOIN evidence_sources source
+				  ON source.team_id = support.team_id
+				 AND source.source_id = support.source_id
+				WHERE support.team_id = ?::uuid
+				  AND decision.decision IN ('grant', 'reinstate')
+				  AND quarantine.quarantine_id IS NULL
+				  AND lifecycle.lifecycle_event_id IS NULL
+				  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
+				GROUP BY support.relationship_id
+			), eligible_pending AS (
+				SELECT DISTINCT ON (observation.relationship_id)
+				       observation.relationship_id
+				FROM relationship_observations observation
+				JOIN verification_events verification
+				  ON verification.team_id = observation.team_id
+				 AND verification.observation_id = observation.observation_id
+				JOIN placement_assessments assessment
+				  ON assessment.team_id = verification.team_id
+				 AND assessment.assessment_id = verification.assessment_id
+				JOIN review_tasks review
+				  ON review.team_id = verification.team_id
+				 AND review.assessment_id = verification.assessment_id
+				WHERE observation.team_id = ?::uuid
+				  AND observation.relationship_id IS NOT NULL
+				  AND verification.evidence_verdict IN ('insufficient', 'entailed')
+				  AND verification.gate_result = 'below_write_threshold'
+				  AND review.status = 'expired'
+				ORDER BY observation.relationship_id, verification.created_at DESC, verification.verification_event_id DESC
+			)
+			SELECT r.relationship_id::text,
+			       r.owner_profile_id::text,
+			       r.version,
+			       r.status,
 			       r.subject_entity_id::text,
 			       COALESCE(subject_name.display_name, '') AS subject_name,
+			       subject_entity.entity_kind AS subject_kind,
 			       r.predicate_key,
 			       r.predicate_version,
 			       COALESCE(r.object_entity_id::text, '') AS object_entity_id,
 			       COALESCE(r.object_value_id::text, '') AS object_value_id,
 			       COALESCE(object_name.display_name, value.display, '') AS object_name,
+			       COALESCE(object_entity.entity_kind, value.value_type, '') AS object_kind,
 			       r.relationship_kind,
 			       r.current_cardinality
 			FROM relationship_records r
+			JOIN entity_records subject_entity
+			  ON subject_entity.team_id = r.team_id
+			 AND subject_entity.entity_id = r.subject_entity_id
+			 AND subject_entity.status = 'active'
+			LEFT JOIN entity_records object_entity
+			  ON object_entity.team_id = r.team_id
+			 AND object_entity.entity_id = r.object_entity_id
+			 AND object_entity.status = 'active'
 			LEFT JOIN entity_names subject_name
 			  ON subject_name.team_id = r.team_id
 			 AND subject_name.entity_id = r.subject_entity_id
@@ -288,37 +335,38 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 			LEFT JOIN value_records value
 			  ON value.team_id = r.team_id
 			 AND value.value_id = r.object_value_id
+			LEFT JOIN effective_support support
+			  ON support.relationship_id = r.relationship_id
+			LEFT JOIN eligible_pending pending
+			  ON pending.relationship_id = r.relationship_id
 			WHERE r.team_id = ?::uuid
-				  AND (
-				    (r.status = 'active' AND r.support_count > 0)
-				    OR (
-				      r.status = 'pending_evidence'
-				      AND EXISTS (
-			        SELECT 1
-			        FROM relationship_observations o
-			        JOIN verification_events v
-			          ON v.team_id = o.team_id
-			         AND v.observation_id = o.observation_id
-			        WHERE o.team_id = r.team_id
-			          AND o.relationship_id = r.relationship_id
-			          AND v.evidence_verdict = 'insufficient'
-			      )
-			    )
+			  AND r.identity_alias_of_relationship_id IS NULL
+			  AND (
+			    (r.status = 'active' AND COALESCE(support.support_count, 0) > 0)
+			    OR (r.status = 'pending_evidence' AND pending.relationship_id IS NOT NULL)
 			  )
 			  AND NOT EXISTS (
 			    SELECT 1
-			    FROM relationship_cross_references cr
-			    WHERE cr.team_id = r.team_id
-			      AND cr.target_relationship_id = r.relationship_id
-			      AND cr.kind = 'challenges'
+			    FROM relationship_cross_references cross_reference
+			    WHERE cross_reference.team_id = r.team_id
+			      AND cross_reference.target_relationship_id = r.relationship_id
+			      AND cross_reference.kind = 'challenges'
 			  )
+			  AND NOT EXISTS (
+			    SELECT 1
+			    FROM review_tasks review
+			    WHERE review.team_id = r.team_id
+			      AND review.relationship_id = r.relationship_id
+			      AND review.status IN ('open', 'acknowledged')
+			  )
+			  AND (r.object_entity_id IS NULL OR object_entity.entity_id IS NOT NULL)
 			ORDER BY r.updated_at DESC, r.relationship_id
 			LIMIT ?
-		`, input.TeamID, input.Limit).Rows()
+		`, input.TeamID, input.TeamID, input.TeamID, input.TeamID, input.Limit).Rows()
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		candidates := make([]DreamInput, 0, input.Limit)
 		for rows.Next() {
 			var item DreamInput
 			if err := rows.Scan(
@@ -328,114 +376,19 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 				&item.Status,
 				&item.SubjectEntityID,
 				&item.SubjectName,
+				&item.SubjectKind,
 				&item.PredicateKey,
 				&item.PredicateVersion,
 				&item.ObjectEntityID,
 				&item.ObjectValueID,
 				&item.ObjectName,
+				&item.ObjectKind,
 				&item.RelationshipKind,
 				&item.CurrentCardinality,
 			); err != nil {
 				return err
 			}
-			inputs = append(inputs, item)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, fmt.Errorf("dream: list inputs: %w", err)
-	}
-	return inputs, nil
-}
-
-func (r *SemanticRepositoryImpl) UpsertHypothesis(
-	ctx context.Context,
-	input UpsertHypothesisInput,
-) (*HypothesisRecord, bool, error) {
-	return r.upsertHypothesis(ctx, input, false)
-}
-
-func (r *SemanticRepositoryImpl) UpsertScheduledHypothesis(
-	ctx context.Context,
-	input UpsertHypothesisInput,
-) (*HypothesisRecord, bool, error) {
-	return r.upsertHypothesis(ctx, input, true)
-}
-
-func (r *SemanticRepositoryImpl) upsertHypothesis(
-	ctx context.Context,
-	input UpsertHypothesisInput,
-	system bool,
-) (*HypothesisRecord, bool, error) {
-	input = normalizeUpsertHypothesisInput(input)
-	if err := validateUpsertHypothesisInput(input, system); err != nil {
-		return nil, false, err
-	}
-	var record *HypothesisRecord
-	inserted := false
-	err := r.withDreamWriteTx(ctx, input.TeamID, input.CreatedByProfileID, system, func(tx *gorm.DB) error {
-		if err := validateHypothesisEndpoints(ctx, tx, input); err != nil {
-			return err
-		}
-		if err := validateHypothesisSources(ctx, tx, input); err != nil {
-			return err
-		}
-		sourceRefs, err := marshalJSONArray(input.SourceRefs)
-		if err != nil {
-			return err
-		}
-		sourceVersions, err := marshalIntMapJSON(input.SourceVersions)
-		if err != nil {
-			return err
-		}
-		payload, err := marshalJSON(input.Payload)
-		if err != nil {
-			return err
-		}
-		rows, err := tx.WithContext(ctx).Raw(`
-			INSERT INTO hypotheses (
-			    team_id, created_by_profile_id, status, statement, rationale,
-			    likelihood, confidence, subject_entity_id, predicate_key,
-			    predicate_version, object_entity_id, object_value_id,
-			    source_refs, source_versions, source_owner_profile_ids,
-			    content_hash, cycle_run_id, generator_kind, generator_version,
-			    payload
-			) VALUES (
-			    ?::uuid, NULLIF(?, '')::uuid, 'proposed', ?, ?, ?, ?, ?::uuid, ?, ?,
-			    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?::jsonb, ?::jsonb,
-			    ?::uuid[], ?, ?::uuid, ?, ?, ?::jsonb
-			)
-			ON CONFLICT (team_id, content_hash)
-			WHERE content_hash IS NOT NULL AND canonical_hypothesis_id IS NULL
-			DO NOTHING
-			RETURNING team_id::text, hypothesis_id::text, COALESCE(created_by_profile_id::text, ''),
-			          status, statement, rationale, likelihood, confidence,
-			          subject_entity_id::text, predicate_key, predicate_version,
-			          COALESCE(object_entity_id::text, ''), COALESCE(object_value_id::text, ''),
-			          source_refs, source_versions,
-			          ARRAY(SELECT source_owner_id::text FROM unnest(source_owner_profile_ids) AS source_owner(source_owner_id)),
-			          COALESCE(content_hash, ''), COALESCE(cycle_run_id::text, ''),
-			          generator_kind, generator_version, invalidated_reason,
-			          COALESCE(submitted_ingest_id::text, ''), submitted_at,
-			          payload, created_at, updated_at
-		`, input.TeamID, input.CreatedByProfileID, input.Statement, input.Rationale,
-			input.Likelihood, input.Confidence, input.SubjectEntityID, input.PredicateKey,
-			input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
-			string(sourceRefs), string(sourceVersions), pq.Array(input.SourceOwnerProfileIDs),
-			input.ContentHash, input.RunID, input.GeneratorKind, input.GeneratorVersion,
-			string(payload)).Rows()
-		if err != nil {
-			return err
-		}
-		if rows.Next() {
-			loaded, err := scanHypothesisRecord(rows)
-			_ = rows.Close()
-			if err != nil {
-				return err
-			}
-			record = loaded
-			inserted = true
-			return nil
+			candidates = append(candidates, item)
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
@@ -444,13 +397,69 @@ func (r *SemanticRepositoryImpl) upsertHypothesis(
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		record, err = reinforceHypothesisByHash(ctx, tx, input)
-		return err
+		for _, item := range candidates {
+			evidence, err := listDreamInputEvidence(ctx, tx, input.TeamID, item)
+			if err != nil {
+				return err
+			}
+			if len(evidence) == 0 {
+				continue
+			}
+			item.Evidence = evidence
+			inputs = append(inputs, item)
+		}
+		return nil
 	})
 	if err != nil {
-		return nil, false, fmt.Errorf("dream: upsert hypothesis: %w", err)
+		return nil, fmt.Errorf("dream: list inputs: %w", err)
 	}
-	return record, inserted, nil
+	return inputs, nil
+}
+
+func (r *SemanticRepositoryImpl) ListDreamTargetPredicates(ctx context.Context, teamID string) ([]DreamTargetPredicate, error) {
+	teamID = strings.TrimSpace(teamID)
+	if _, err := uuid.Parse(teamID); err != nil {
+		return nil, fmt.Errorf("team_id is required: %w", err)
+	}
+	predicates := []DreamTargetPredicate{}
+	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
+		rows, err := tx.WithContext(ctx).Raw(`
+			SELECT DISTINCT ON (predicate_key)
+			       predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
+			       relationship_kind, current_cardinality
+			FROM team_predicate_definitions
+			WHERE team_id = ?::uuid
+			  AND lifecycle_state = 'active'
+			ORDER BY predicate_key, version DESC
+		`, teamID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var predicate DreamTargetPredicate
+			var subjectKinds pq.StringArray
+			var objectKinds pq.StringArray
+			if err := rows.Scan(
+				&predicate.PredicateKey,
+				&predicate.Version,
+				&subjectKinds,
+				&objectKinds,
+				&predicate.RelationshipKind,
+				&predicate.CurrentCardinality,
+			); err != nil {
+				return err
+			}
+			predicate.AllowedSubjectKinds = append([]string(nil), subjectKinds...)
+			predicate.AllowedObjectKinds = append([]string(nil), objectKinds...)
+			predicates = append(predicates, predicate)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dream: list target predicates: %w", err)
+	}
+	return predicates, nil
 }
 
 func (r *SemanticRepositoryImpl) ListHypotheses(
@@ -483,9 +492,15 @@ func (r *SemanticRepositoryImpl) ListHypotheses(
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
 		records, err = scanHypothesisRecords(rows)
-		return err
+		closeErr := rows.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		return hydrateDreamHypothesisDerivations(ctx, tx, input.TeamID, records)
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("dream: list hypotheses: %w", err)
@@ -523,16 +538,24 @@ func (r *SemanticRepositoryImpl) GetHypothesis(ctx context.Context, input GetHyp
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
 		if !rows.Next() {
+			_ = rows.Close()
 			return ErrDreamHypothesisNotFound
 		}
 		loaded, err := scanHypothesisRecord(rows)
 		if err != nil {
+			_ = rows.Close()
 			return err
 		}
-		record = loaded
-		return rows.Err()
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		records := []HypothesisRecord{*loaded}
+		if err := hydrateDreamHypothesisDerivations(ctx, tx, input.TeamID, records); err != nil {
+			return err
+		}
+		record = &records[0]
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dream: get hypothesis: %w", err)
@@ -570,9 +593,15 @@ func (r *SemanticRepositoryImpl) RecallHypotheses(ctx context.Context, input Rec
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
 		records, err = scanHypothesisRecords(rows)
-		return err
+		closeErr := rows.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		return hydrateDreamHypothesisDerivations(ctx, tx, input.TeamID, records)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dream: recall hypotheses: %w", err)
@@ -717,14 +746,12 @@ func validateHypothesisEndpoints(ctx context.Context, tx *gorm.DB, input UpsertH
 		SELECT COUNT(*)
 		FROM relationship_records
 		WHERE team_id = ?::uuid
+		  AND identity_alias_of_relationship_id IS NULL
 		  AND subject_entity_id = ?::uuid
-		  AND predicate_key = ?
-		  AND predicate_version = ?
+		  AND lower(btrim(predicate_key)) = lower(btrim(?))
 		  AND object_entity_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
 		  AND object_value_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
-		  AND status = 'active'
-		  AND support_count > 0
-	`, input.TeamID, input.SubjectEntityID, input.PredicateKey, input.PredicateVersion,
+	`, input.TeamID, input.SubjectEntityID, input.PredicateKey,
 		input.ObjectEntityID, input.ObjectValueID).Scan(&existing).Error; err != nil {
 		return err
 	}
@@ -734,53 +761,29 @@ func validateHypothesisEndpoints(ctx context.Context, tx *gorm.DB, input UpsertH
 	return nil
 }
 
-func validateHypothesisSources(ctx context.Context, tx *gorm.DB, input UpsertHypothesisInput) error {
-	for relationshipID, wantVersion := range input.SourceVersions {
-		if _, err := uuid.Parse(relationshipID); err != nil {
-			return fmt.Errorf("source relationship %q is invalid: %w", relationshipID, err)
-		}
-		var gotVersion int
-		var eligible bool
-		err := tx.WithContext(ctx).Raw(`
-			SELECT r.version,
-			       (
-			         (
-			           (r.status = 'active' AND r.support_count > 0)
-			           OR (
-			             r.status = 'pending_evidence'
-			             AND EXISTS (
-			               SELECT 1
-			               FROM relationship_observations o
-			               JOIN verification_events v
-			                 ON v.team_id = o.team_id
-			                AND v.observation_id = o.observation_id
-			               WHERE o.team_id = r.team_id
-			                 AND o.relationship_id = r.relationship_id
-			                 AND v.evidence_verdict = 'insufficient'
-			             )
-			           )
-			         )
-			         AND NOT EXISTS (
-			           SELECT 1
-			           FROM relationship_cross_references cr
-			           WHERE cr.team_id = r.team_id
-			             AND cr.target_relationship_id = r.relationship_id
-			             AND cr.kind = 'challenges'
-			         )
-			       ) AS eligible
-			FROM relationship_records r
-			WHERE r.team_id = ?::uuid
-			  AND r.relationship_id = ?::uuid
-		`, input.TeamID, relationshipID).Row().Scan(&gotVersion, &eligible)
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("%w: %s", ErrDreamSourceStale, relationshipID)
-		}
-		if err != nil {
-			return err
-		}
-		if gotVersion != wantVersion || !eligible {
-			return fmt.Errorf("%w: %s", ErrDreamSourceStale, relationshipID)
-		}
+func validateHypothesisTargetAbsent(ctx context.Context, tx *gorm.DB, input UpsertHypothesisInput) error {
+	var existing int64
+	if err := tx.WithContext(ctx).Raw(`
+		SELECT COUNT(*)
+		FROM hypotheses
+		WHERE team_id = ?::uuid
+		  AND canonical_hypothesis_id IS NULL
+		  AND (
+		    target_identity = ?
+		    OR (
+		      target_identity IS NULL
+		      AND subject_entity_id = ?::uuid
+		      AND lower(btrim(predicate_key)) = lower(btrim(?))
+		      AND object_entity_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
+		      AND object_value_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
+		    )
+		  )
+	`, input.TeamID, input.TargetIdentity, input.SubjectEntityID, input.PredicateKey,
+		input.ObjectEntityID, input.ObjectValueID).Scan(&existing).Error; err != nil {
+		return err
+	}
+	if existing > 0 {
+		return ErrDreamExactHypothesisExists
 	}
 	return nil
 }
@@ -794,6 +797,21 @@ func marshalIntMapJSON(value map[string]int) ([]byte, error) {
 		return nil, fmt.Errorf("marshal json: %w", err)
 	}
 	return data, nil
+}
+
+func hypothesisTargetIdentity(teamID, subjectEntityID, predicateKey, objectEntityID, objectValueID string) string {
+	object := "value:" + strings.TrimSpace(objectValueID)
+	if strings.TrimSpace(objectEntityID) != "" {
+		object = "entity:" + strings.TrimSpace(objectEntityID)
+	}
+	raw := strings.Join([]string{
+		strings.TrimSpace(teamID),
+		strings.TrimSpace(subjectEntityID),
+		strings.ToLower(strings.TrimSpace(predicateKey)),
+		object,
+	}, "\x00")
+	sum := sha256.Sum256([]byte(raw))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func reinforceHypothesisByHash(
@@ -824,10 +842,7 @@ func reinforceHypothesisByHash(
 
 func loadDreamCycleByWindow(ctx context.Context, tx *gorm.DB, teamID, windowKey string) (*DreamCycleRun, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT team_id::text, run_id::text, COALESCE(initiated_by_profile_id::text, ''),
-		       run_date, window_key, status, input_count,
-		       created_hypotheses, rejected_hypotheses, error,
-		       started_at, completed_at
+		SELECT `+dreamCycleRunSelectColumns+`
 		FROM dream_cycle_runs
 		WHERE team_id = ?::uuid
 		  AND canonical_run_id IS NULL

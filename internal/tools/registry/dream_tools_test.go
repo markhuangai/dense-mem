@@ -49,6 +49,10 @@ func TestBuildActiveDreamToolsInvokeAndValidate(t *testing.T) {
 	if !ok || hypothesis["hypothesis_id"] != "dream-1" {
 		t.Fatalf("get_dream hypothesis = %v, want dream-1", getOut["hypothesis"])
 	}
+	derivations, ok := hypothesis["derivations"].([]map[string]any)
+	if !ok || len(derivations) != 1 || derivations[0]["quote"] != "A affects B." {
+		t.Fatalf("get_dream derivations = %#v", hypothesis["derivations"])
+	}
 	if _, err := getTool.Invoke(ctx, "profile-dream", map[string]any{}); err == nil || !strings.Contains(err.Error(), "hypothesis_id is required") {
 		t.Fatalf("get_dream missing id err = %v", err)
 	}

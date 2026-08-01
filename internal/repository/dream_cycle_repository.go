@@ -28,21 +28,20 @@ func (r *SemanticRepositoryImpl) claimDreamCycle(ctx context.Context, input Drea
 	}
 	var run *DreamCycleRun
 	err = r.withDreamWriteTx(ctx, input.TeamID, input.InitiatedByProfileID, system, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
+		query := `
 			INSERT INTO dream_cycle_runs (
-			    team_id, initiated_by_profile_id, run_date, window_key, lease_until,
-			    source_snapshot
+			    team_id, initiated_by_profile_id, run_date, window_key, scheduled_for,
+			    status, lease_token, lease_until, attempt_count, source_snapshot
 			) VALUES (
-			    ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?::jsonb
+			    ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, 'running', ?::uuid, ?, 1,
+			    ?::jsonb
 			)
 			ON CONFLICT (team_id, window_key)
 			WHERE canonical_run_id IS NULL
 			DO NOTHING
-			RETURNING team_id::text, run_id::text, COALESCE(initiated_by_profile_id::text, ''),
-			          run_date, window_key, status, input_count,
-			          created_hypotheses, rejected_hypotheses, error,
-			          started_at, completed_at
-		`, input.TeamID, input.InitiatedByProfileID, input.RunDate, input.WindowKey,
+			RETURNING ` + dreamCycleRunSelectColumns
+		rows, err := tx.WithContext(ctx).Raw(query, input.TeamID, input.InitiatedByProfileID,
+			input.RunDate, input.WindowKey, input.ScheduledFor, input.LeaseToken,
 			input.LeaseUntil, string(snapshot)).Rows()
 		if err != nil {
 			return err
@@ -81,6 +80,72 @@ func (r *SemanticRepositoryImpl) claimDreamCycle(ctx context.Context, input Drea
 	return run, nil
 }
 
+func (r *SemanticRepositoryImpl) ClaimRecoverableScheduledDreamCycle(
+	ctx context.Context,
+	input DreamCycleRecoveryClaimInput,
+) (*DreamCycleRun, error) {
+	input = normalizeDreamCycleRecoveryClaimInput(input)
+	if err := validateDreamCycleRecoveryClaimInput(input); err != nil {
+		return nil, err
+	}
+	var run *DreamCycleRun
+	err := r.withDreamWriteTx(ctx, input.TeamID, "", true, func(tx *gorm.DB) error {
+		if err := failExhaustedScheduledDreamRecoveries(ctx, tx, input.TeamID, input.MaxAttempts); err != nil {
+			return err
+		}
+		query := `
+			WITH candidate AS (
+				SELECT run_id
+				FROM dream_cycle_runs
+				WHERE team_id = ?::uuid
+				  AND canonical_run_id IS NULL
+				  AND status = 'running'
+				  AND scheduled_for IS NOT NULL
+				  AND lease_until IS NOT NULL
+				  AND lease_until <= now()
+				  AND attempt_count < ?
+				ORDER BY lease_until, started_at, run_id
+				LIMIT 1
+				FOR UPDATE SKIP LOCKED
+			)
+			UPDATE dream_cycle_runs run
+			SET lease_token = ?::uuid,
+			    lease_until = ?,
+			    attempt_count = run.attempt_count + 1,
+			    started_at = now(),
+			    completed_at = NULL,
+			    error = '',
+			    updated_at = now()
+			FROM candidate
+			WHERE run.team_id = ?::uuid
+			  AND run.run_id = candidate.run_id
+			RETURNING ` + dreamCycleRunColumns("run")
+		rows, err := tx.WithContext(ctx).Raw(query, input.TeamID, input.MaxAttempts,
+			input.LeaseToken, input.LeaseUntil, input.TeamID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		if !rows.Next() {
+			return rows.Err()
+		}
+		loaded, err := scanDreamCycleRun(rows)
+		if err != nil {
+			return err
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		loaded.Claimed = true
+		run = loaded
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dream: claim recoverable scheduled cycle: %w", err)
+	}
+	return run, nil
+}
+
 func (r *SemanticRepositoryImpl) CompleteDreamCycle(ctx context.Context, input DreamCycleCompleteInput) error {
 	return r.completeDreamCycle(ctx, input, false)
 }
@@ -99,6 +164,10 @@ func (r *SemanticRepositoryImpl) completeDreamCycle(ctx context.Context, input D
 		return err
 	}
 	err = r.withDreamWriteTx(ctx, input.TeamID, input.InitiatedByProfileID, system, func(tx *gorm.DB) error {
+		outcomeSummary, err := marshalDreamOutcomeSummary(input.OutcomeSummary)
+		if err != nil {
+			return err
+		}
 		res := tx.WithContext(ctx).Exec(`
 			UPDATE dream_cycle_runs
 			SET status = ?,
@@ -106,14 +175,27 @@ func (r *SemanticRepositoryImpl) completeDreamCycle(ctx context.Context, input D
 			    created_hypotheses = ?,
 			    rejected_hypotheses = ?,
 			    source_snapshot = ?::jsonb,
+			    provider_model = ?,
+			    provider_turns = ?,
+			    provider_input_tokens = ?,
+			    provider_output_tokens = ?,
+			    attempted_paths = ?,
+			    provider_proposals = ?,
+			    outcome_summary = ?::jsonb,
 			    error = ?,
 			    lease_until = NULL,
 			    completed_at = now(),
 			    updated_at = now()
 			WHERE team_id = ?::uuid
 			  AND run_id = ?::uuid
+			  AND status = 'running'
+			  AND lease_token = ?::uuid
+			  AND lease_until > now()
 		`, input.Status, input.InputCount, input.CreatedHypotheses, input.RejectedHypotheses,
-			string(snapshot), input.Error, input.TeamID, input.RunID)
+			string(snapshot), input.ProviderModel, input.ProviderTurns,
+			input.ProviderInputTokens, input.ProviderOutputTokens, input.AttemptedPaths,
+			input.ProviderProposals, string(outcomeSummary), input.Error, input.TeamID,
+			input.RunID, input.LeaseToken)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -131,6 +213,30 @@ func (r *SemanticRepositoryImpl) completeDreamCycle(ctx context.Context, input D
 	return nil
 }
 
+func requireCurrentDreamCycleLease(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	runID string,
+	leaseToken string,
+) error {
+	var currentRunID string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT run_id::text
+		FROM dream_cycle_runs
+		WHERE team_id = ?::uuid
+		  AND run_id = ?::uuid
+		  AND status = 'running'
+		  AND lease_token = ?::uuid
+		  AND lease_until > now()
+		FOR UPDATE
+	`, teamID, runID, leaseToken).Row().Scan(&currentRunID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrDreamCycleLeaseLost
+	}
+	return err
+}
+
 func (r *SemanticRepositoryImpl) RecordMissedScheduledDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error) {
 	input = normalizeDreamCycleClaimInput(input)
 	if err := validateDreamCycleClaimInput(input, true); err != nil {
@@ -142,22 +248,20 @@ func (r *SemanticRepositoryImpl) RecordMissedScheduledDreamCycle(ctx context.Con
 	}
 	var run *DreamCycleRun
 	err = r.withDreamWriteTx(ctx, input.TeamID, "", true, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
+		query := `
 			INSERT INTO dream_cycle_runs (
-			    team_id, run_date, window_key, status, source_snapshot,
+			    team_id, run_date, window_key, scheduled_for, status, source_snapshot,
 			    completed_at, error
 			) VALUES (
-			    ?::uuid, ?, ?, 'missed', ?::jsonb, now(),
+			    ?::uuid, ?, ?, ?, 'missed', ?::jsonb, now(),
 			    'scheduler was not running during the configured window'
 			)
 			ON CONFLICT (team_id, window_key)
 			WHERE canonical_run_id IS NULL
 			DO NOTHING
-			RETURNING team_id::text, run_id::text, COALESCE(initiated_by_profile_id::text, ''),
-			          run_date, window_key, status, input_count,
-			          created_hypotheses, rejected_hypotheses, error,
-			          started_at, completed_at
-		`, input.TeamID, input.RunDate, input.WindowKey, string(snapshot)).Rows()
+			RETURNING ` + dreamCycleRunSelectColumns
+		rows, err := tx.WithContext(ctx).Raw(query, input.TeamID, input.RunDate,
+			input.WindowKey, input.ScheduledFor, string(snapshot)).Rows()
 		if err != nil {
 			return err
 		}
@@ -200,10 +304,79 @@ func (r *SemanticRepositoryImpl) RecordMissedScheduledDreamCycle(ctx context.Con
 	return run, nil
 }
 
+func failExhaustedScheduledDreamRecoveries(ctx context.Context, tx *gorm.DB, teamID string, maxAttempts int) error {
+	rows, err := tx.WithContext(ctx).Raw(`
+		UPDATE dream_cycle_runs
+		SET status = 'failed',
+		    error = 'scheduled dream recovery attempts exhausted',
+		    lease_until = NULL,
+		    completed_at = now(),
+		    updated_at = now(),
+		    outcome_summary = outcome_summary || jsonb_build_object('recovery_exhausted', 1)
+		WHERE team_id = ?::uuid
+		  AND canonical_run_id IS NULL
+		  AND status = 'running'
+		  AND scheduled_for IS NOT NULL
+		  AND lease_until IS NOT NULL
+		  AND lease_until <= now()
+		  AND attempt_count >= ?
+		RETURNING run_id::text, input_count, created_hypotheses, rejected_hypotheses
+	`, teamID, maxAttempts).Rows()
+	if err != nil {
+		return err
+	}
+	failedRuns := make([]struct {
+		runID    string
+		inputs   int
+		created  int
+		rejected int
+	}, 0)
+	for rows.Next() {
+		var runID string
+		var inputCount, created, rejected int
+		if err := rows.Scan(&runID, &inputCount, &created, &rejected); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		failedRuns = append(failedRuns, struct {
+			runID    string
+			inputs   int
+			created  int
+			rejected int
+		}{runID: runID, inputs: inputCount, created: created, rejected: rejected})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, failed := range failedRuns {
+		if err := insertScheduledDreamAudit(ctx, tx, DreamCycleCompleteInput{
+			TeamID:             teamID,
+			RunID:              failed.runID,
+			Status:             "failed",
+			InputCount:         failed.inputs,
+			CreatedHypotheses:  failed.created,
+			RejectedHypotheses: failed.rejected,
+			Error:              "scheduled dream recovery attempts exhausted",
+			OutcomeSummary:     map[string]int{"recovery_exhausted": 1},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func insertScheduledDreamAudit(ctx context.Context, tx *gorm.DB, input DreamCycleCompleteInput) error {
 	operation := "dream_cycle_completed"
 	if input.Status == "missed" {
 		operation = "dream_cycle_missed"
+	}
+	outcomeSummary, err := marshalDreamOutcomeSummary(input.OutcomeSummary)
+	if err != nil {
+		return err
 	}
 	return tx.WithContext(ctx).Exec(`
 		INSERT INTO audit_log (
@@ -215,12 +388,24 @@ func insertScheduledDreamAudit(ctx context.Context, tx *gorm.DB, input DreamCycl
 		        'status', ?::text,
 		        'input_relationships', ?::integer,
 		        'created_dreams', ?::integer,
-		        'rejected_dreams', ?::integer
+		        'rejected_dreams', ?::integer,
+		        'attempted_paths', ?::integer,
+		        'provider_proposals', ?::integer,
+		        'outcomes', ?::jsonb
 		    ),
 		    'system', jsonb_build_object('scheduled', true)
 		)
 	`, input.TeamID, operation, input.RunID, input.Status, input.InputCount,
-		input.CreatedHypotheses, input.RejectedHypotheses).Error
+		input.CreatedHypotheses, input.RejectedHypotheses, input.AttemptedPaths,
+		input.ProviderProposals, string(outcomeSummary)).Error
+}
+
+func marshalDreamOutcomeSummary(summary map[string]int) ([]byte, error) {
+	value := make(map[string]any, len(summary))
+	for key, count := range summary {
+		value[key] = count
+	}
+	return marshalJSON(value)
 }
 
 func (r *SemanticRepositoryImpl) withDreamWriteTx(

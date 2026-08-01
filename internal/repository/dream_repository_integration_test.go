@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"sync"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
+func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
@@ -22,26 +23,20 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	semanticRepo := NewSemanticRepository(appDB, rls)
 
-	denseMem := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
-	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
-	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
-		"dream candidate source", "Dense-Mem may use PostgreSQL.")
-	candidate := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
-		TeamID:          teamID,
-		OwnerProfileID:  ownerID,
-		IngestID:        ingest.IngestID,
-		SubjectEntityID: denseMem.EntityID,
-		PredicateKey:    "uses",
-		ObjectEntityID:  postgres.EntityID,
-		EvidenceVerdict: "insufficient",
-	})
-	require.NotNil(t, candidate.Relationship)
+	app := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
+	runtime := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "Runtime")
+	database := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
+	first := createActiveDreamRelationship(t, ctx, ledgerRepo, semanticRepo, teamID, ownerID,
+		"dream-app-runtime", "Dense-Mem uses Runtime.", app.EntityID, runtime.EntityID, "dream:app-runtime")
+	second := createActiveDreamRelationship(t, ctx, ledgerRepo, semanticRepo, teamID, ownerID,
+		"dream-runtime-database", "Runtime uses PostgreSQL.", runtime.EntityID, database.EntityID, "dream:runtime-database")
 
 	run, err := semanticRepo.ClaimDreamCycle(ctx, DreamCycleClaimInput{
 		TeamID:               teamID,
 		InitiatedByProfileID: ownerID,
 		RunDate:              "2026-07-17",
 		WindowKey:            "manual:dream-lifecycle",
+		LeaseToken:           uuid.NewString(),
 		LeaseUntil:           time.Now().UTC().Add(time.Minute),
 	})
 	require.NoError(t, err)
@@ -49,55 +44,182 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 
 	inputs, err := semanticRepo.ListDreamInputs(ctx, DreamInputListInput{TeamID: teamID, Limit: 10})
 	require.NoError(t, err)
-	assertDreamInput(t, inputs, candidate.Relationship.RelationshipID, "pending_evidence")
+	firstInput := requireDreamInput(t, inputs, first.Relationship.RelationshipID)
+	secondInput := requireDreamInput(t, inputs, second.Relationship.RelationshipID)
+	require.Equal(t, "active", firstInput.Status)
+	require.Equal(t, "active", secondInput.Status)
+	require.Len(t, firstInput.Evidence, 1)
+	require.Len(t, secondInput.Evidence, 1)
 
-	proposal := UpsertHypothesisInput{
+	proposal := evidenceGroundedDreamProposal(teamID, ownerID, run.RunID, firstInput, secondInput,
+		app.EntityID, database.EntityID, "uses", "Dense-Mem may transitively depend on PostgreSQL.")
+	path := DreamPathEvaluationInput{
+		FirstRelationshipID:       firstInput.RelationshipID,
+		FirstRelationshipVersion:  firstInput.Version,
+		SecondRelationshipID:      secondInput.RelationshipID,
+		SecondRelationshipVersion: secondInput.Version,
+	}
+	persisted, err := semanticRepo.PersistDreamGeneration(ctx, DreamGenerationPersistInput{
 		TeamID:             teamID,
 		CreatedByProfileID: ownerID,
 		RunID:              run.RunID,
-		Statement:          "Dense-Mem may use PostgreSQL.",
-		Rationale:          "The candidate needs independent evidence before semantic commitment.",
-		SubjectEntityID:    denseMem.EntityID,
-		PredicateKey:       "uses",
-		PredicateVersion:   1,
-		ObjectEntityID:     postgres.EntityID,
-		SourceRefs: []map[string]any{{
-			"type": "candidate_relationship",
-			"id":   candidate.Relationship.RelationshipID,
-		}},
-		SourceVersions:        map[string]int{candidate.Relationship.RelationshipID: candidate.Relationship.Version},
-		SourceOwnerProfileIDs: []string{ownerID},
-		ContentHash:           "sha256:dream-candidate-postgres",
-		GeneratorKind:         "test",
-		GeneratorVersion:      "test-dream",
-	}
-	record, inserted, err := semanticRepo.UpsertHypothesis(ctx, proposal)
+		LeaseToken:         run.LeaseToken,
+		ProviderModel:      "test-provider",
+		Proposals:          []UpsertHypothesisInput{proposal},
+		EvaluatedPaths:     []DreamPathEvaluationInput{path},
+	})
 	require.NoError(t, err)
-	require.True(t, inserted)
-	require.Equal(t, ownerID, record.CreatedByProfileID)
+	require.Equal(t, 1, persisted.Created)
+	require.Zero(t, persisted.Rejected)
 
-	record, inserted, err = semanticRepo.UpsertHypothesis(ctx, proposal)
+	available, err := semanticRepo.ListAvailableDreamTargets(ctx, teamID, []DreamTargetCandidate{
+		{
+			PathRef:         "path_existing",
+			PredicateRef:    "predicate_existing",
+			SubjectEntityID: app.EntityID,
+			PredicateKey:    "uses",
+			ObjectEntityID:  runtime.EntityID,
+		},
+		{
+			PathRef:         "path_hypothesis",
+			PredicateRef:    "predicate_hypothesis",
+			SubjectEntityID: app.EntityID,
+			PredicateKey:    "uses",
+			ObjectEntityID:  database.EntityID,
+		},
+		{
+			PathRef:         "path_available_first",
+			PredicateRef:    "predicate_available_first",
+			SubjectEntityID: app.EntityID,
+			PredicateKey:    "enables",
+			ObjectEntityID:  database.EntityID,
+		},
+		{
+			PathRef:         "path_available_second",
+			PredicateRef:    "predicate_available_second",
+			SubjectEntityID: app.EntityID,
+			PredicateKey:    "enables",
+			ObjectEntityID:  database.EntityID,
+		},
+	})
 	require.NoError(t, err)
-	require.False(t, inserted)
-	require.Equal(t, "reinforced", record.Status)
+	require.Equal(t, []DreamTargetCandidate{
+		{
+			PathRef:         "path_available_first",
+			PredicateRef:    "predicate_available_first",
+			SubjectEntityID: app.EntityID,
+			PredicateKey:    "enables",
+			ObjectEntityID:  database.EntityID,
+		},
+		{
+			PathRef:         "path_available_second",
+			PredicateRef:    "predicate_available_second",
+			SubjectEntityID: app.EntityID,
+			PredicateKey:    "enables",
+			ObjectEntityID:  database.EntityID,
+		},
+	}, available, "one set query preserves every available path/predicate pair")
+
+	records, _, err := semanticRepo.ListHypotheses(ctx, ListHypothesesInput{TeamID: teamID, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	record := records[0]
+	require.Equal(t, ownerID, record.CreatedByProfileID)
+	require.Len(t, record.Derivations, 2)
+	assert.Equal(t, firstInput.Evidence[0].Content, record.Derivations[0].Quote)
+	assert.Equal(t, secondInput.Evidence[0].Content, record.Derivations[1].Quote)
+	assert.Equal(t, firstInput.RelationshipID, record.Derivations[0].RelationshipID)
+	assert.Equal(t, secondInput.RelationshipID, record.Derivations[1].RelationshipID)
+
+	loaded, err := semanticRepo.GetHypothesis(ctx, GetHypothesisInput{TeamID: teamID, HypothesisID: record.HypothesisID})
+	require.NoError(t, err)
+	require.Len(t, loaded.Derivations, 2)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE hypotheses
+			SET target_identity = NULL
+			WHERE team_id = ?::uuid
+			  AND hypothesis_id = ?::uuid
+		`, teamID, record.HypothesisID).Error
+	}))
+	available, err = semanticRepo.ListAvailableDreamTargets(ctx, teamID, []DreamTargetCandidate{{
+		PathRef:         "path_legacy_hypothesis",
+		PredicateRef:    "predicate_legacy_hypothesis",
+		SubjectEntityID: app.EntityID,
+		PredicateKey:    "uses",
+		ObjectEntityID:  database.EntityID,
+	}})
+	require.NoError(t, err)
+	assert.Empty(t, available, "a legacy hypothesis without target identity still blocks the exact target")
+	recalled, err := semanticRepo.RecallHypotheses(ctx, RecallHypothesesInput{TeamID: teamID, Query: "Dense-Mem", Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, recalled, 1, "a current exact derivation is recallable")
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO relationship_support_decision_events (
+			    team_id, support_id, relationship_id, owner_profile_id,
+			    actor_profile_id, decision, reason, metadata
+			) VALUES (
+			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+			    'revoke', 'recall derivation regression', '{}'::jsonb
+			)
+		`, teamID, record.Derivations[0].SupportID, firstInput.RelationshipID, ownerID, ownerID).Error
+	}))
+	recalled, err = semanticRepo.RecallHypotheses(ctx, RecallHypothesesInput{TeamID: teamID, Query: "Dense-Mem", Limit: 10})
+	require.NoError(t, err)
+	assert.Empty(t, recalled, "revoking an exact cited support hides the hypothesis from recall")
+
+	unassessed, err := semanticRepo.ListUnassessedDreamPaths(ctx, teamID, []DreamPathEvaluationInput{path})
+	require.NoError(t, err)
+	require.Empty(t, unassessed, "the exact relationship-version pair is evaluated once")
+
+	_, err = semanticRepo.UpdateHypothesisStatus(ctx, UpdateHypothesisStatusInput{
+		TeamID:         teamID,
+		ActorProfileID: ownerID,
+		HypothesisID:   record.HypothesisID,
+		Status:         "rejected",
+		Decision:       "reject",
+	})
+	require.NoError(t, err)
+	available, err = semanticRepo.ListAvailableDreamTargets(ctx, teamID, []DreamTargetCandidate{{
+		PathRef:         "path_1",
+		PredicateRef:    "predicate_uses",
+		SubjectEntityID: app.EntityID,
+		PredicateKey:    "uses",
+		ObjectEntityID:  database.EntityID,
+	}})
+	require.NoError(t, err)
+	assert.Empty(t, available, "a rejected hypothesis still blocks the exact target")
+
+	pending := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID, "dream-pending-target", "Dense-Mem may work on PostgreSQL.").IngestID,
+		SubjectEntityID: app.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  database.EntityID,
+		EvidenceVerdict: "insufficient",
+	})
+	require.Equal(t, "pending_evidence", pending.Relationship.Status)
+	available, err = semanticRepo.ListAvailableDreamTargets(ctx, teamID, []DreamTargetCandidate{{
+		PathRef:         "path_2",
+		PredicateRef:    "predicate_works_on",
+		SubjectEntityID: app.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  database.EntityID,
+	}})
+	require.NoError(t, err)
+	assert.Empty(t, available, "a pending relationship still blocks the exact target")
 
 	require.NoError(t, semanticRepo.CompleteDreamCycle(ctx, DreamCycleCompleteInput{
 		TeamID:               teamID,
 		InitiatedByProfileID: ownerID,
 		RunID:                run.RunID,
+		LeaseToken:           run.LeaseToken,
 		Status:               "completed",
 		InputCount:           len(inputs),
 		CreatedHypotheses:    1,
 	}))
-
-	recalled, err := semanticRepo.RecallHypotheses(ctx, RecallHypothesesInput{
-		TeamID: teamID,
-		Query:  "PostgreSQL",
-		Limit:  10,
-	})
-	require.NoError(t, err)
-	require.Len(t, recalled, 1)
-	require.Equal(t, record.HypothesisID, recalled[0].HypothesisID)
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
@@ -106,29 +228,78 @@ func TestDreamRepositoryCandidateSafeHypothesisLifecycle(t *testing.T) {
 			    updated_at = now()
 			WHERE team_id = ?::uuid
 			  AND relationship_id = ?::uuid
-		`, teamID, candidate.Relationship.RelationshipID).Error
+		`, teamID, firstInput.RelationshipID).Error
 	}))
+	path.FirstRelationshipVersion++
+	unassessed, err = semanticRepo.ListUnassessedDreamPaths(ctx, teamID, []DreamPathEvaluationInput{path})
+	require.NoError(t, err)
+	require.Equal(t, []DreamPathEvaluationInput{path}, unassessed, "a source version change permits reassessment")
+}
 
-	recalled, err = semanticRepo.RecallHypotheses(ctx, RecallHypothesesInput{
-		TeamID: teamID,
-		Query:  "PostgreSQL",
-		Limit:  10,
+func TestScheduledDreamRecoveryFencesExpiredLease(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "dream-recovery-team")
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	scheduledFor := time.Now().UTC().Truncate(time.Minute)
+	firstLeaseToken := uuid.NewString()
+	claimed, err := semanticRepo.ClaimScheduledDreamCycle(ctx, DreamCycleClaimInput{
+		TeamID:       teamID,
+		RunDate:      scheduledFor.Format("2006-01-02"),
+		WindowKey:    scheduledFor.Format("2006-01-02"),
+		ScheduledFor: &scheduledFor,
+		LeaseToken:   firstLeaseToken,
+		LeaseUntil:   time.Now().UTC().Add(-time.Minute),
 	})
 	require.NoError(t, err)
-	require.Empty(t, recalled)
+	require.True(t, claimed.Claimed)
+	stalePersistence := DreamGenerationPersistInput{
+		TeamID:        teamID,
+		RunID:         claimed.RunID,
+		LeaseToken:    firstLeaseToken,
+		ProviderModel: "test-provider",
+		EvaluatedPaths: []DreamPathEvaluationInput{{
+			FirstRelationshipID:       uuid.NewString(),
+			FirstRelationshipVersion:  1,
+			SecondRelationshipID:      uuid.NewString(),
+			SecondRelationshipVersion: 1,
+		}},
+	}
+	_, err = semanticRepo.PersistScheduledDreamGeneration(ctx, stalePersistence)
+	require.ErrorIs(t, err, ErrDreamCycleLeaseLost, "an expired worker must not persist output before recovery")
 
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		var status string
-		if err := tx.Raw(`
-			SELECT status
-			FROM hypotheses
-			WHERE team_id = ?::uuid
-			  AND hypothesis_id = ?::uuid
-		`, teamID, record.HypothesisID).Row().Scan(&status); err != nil {
-			return err
-		}
-		assert.Equal(t, "reinforced", status)
-		return nil
+	recovered, err := semanticRepo.ClaimRecoverableScheduledDreamCycle(ctx, DreamCycleRecoveryClaimInput{
+		TeamID:      teamID,
+		LeaseToken:  uuid.NewString(),
+		LeaseUntil:  time.Now().UTC().Add(time.Minute),
+		MaxAttempts: 3,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, recovered)
+	require.True(t, recovered.Claimed)
+	require.Equal(t, claimed.RunID, recovered.RunID)
+	require.Equal(t, 2, recovered.AttemptCount)
+	require.NotEqual(t, firstLeaseToken, recovered.LeaseToken)
+	_, err = semanticRepo.PersistScheduledDreamGeneration(ctx, stalePersistence)
+	require.ErrorIs(t, err, ErrDreamCycleLeaseLost, "a reclaimed lease must fence stale provider output")
+
+	err = semanticRepo.CompleteScheduledDreamCycle(ctx, DreamCycleCompleteInput{
+		TeamID:     teamID,
+		RunID:      claimed.RunID,
+		LeaseToken: firstLeaseToken,
+		Status:     "completed",
+	})
+	require.ErrorIs(t, err, sql.ErrNoRows, "the expired worker must not complete a reclaimed run")
+	require.NoError(t, semanticRepo.CompleteScheduledDreamCycle(ctx, DreamCycleCompleteInput{
+		TeamID:     teamID,
+		RunID:      recovered.RunID,
+		LeaseToken: recovered.LeaseToken,
+		Status:     "completed",
+		OutcomeSummary: map[string]int{
+			"eligible_relationships": 0,
+		},
 	}))
 }
 
@@ -197,10 +368,10 @@ func TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited(t *testing.T) {
 	hypothesis, inserted, err := semanticRepo.UpsertScheduledHypothesis(ctx, UpsertHypothesisInput{
 		TeamID:           teamID,
 		RunID:            runID,
-		Statement:        "Dense-Mem may use PostgreSQL after independent evidence.",
-		Rationale:        "Team-visible candidate relationship needs confirmation.",
+		Statement:        "Dense-Mem may work on PostgreSQL after independent evidence.",
+		Rationale:        "Team ownership is the behavior under test; evidence-grounded proposals use the provider path.",
 		SubjectEntityID:  denseMem.EntityID,
-		PredicateKey:     "uses",
+		PredicateKey:     "works_on",
 		PredicateVersion: 1,
 		ObjectEntityID:   postgres.EntityID,
 		SourceRefs: []map[string]any{{
@@ -210,7 +381,7 @@ func TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited(t *testing.T) {
 		SourceVersions:        map[string]int{candidate.Relationship.RelationshipID: candidate.Relationship.Version},
 		SourceOwnerProfileIDs: []string{creatorID},
 		ContentHash:           "sha256:scheduled-team-hypothesis",
-		GeneratorKind:         "test",
+		GeneratorKind:         "evaluation_seed",
 		GeneratorVersion:      "test-dream",
 	})
 	require.NoError(t, err)
@@ -394,13 +565,109 @@ func TestUpdateHypothesisStatusValidationBindsDecisionToStatus(t *testing.T) {
 	}
 }
 
-func assertDreamInput(t *testing.T, inputs []DreamInput, relationshipID, status string) {
+func createActiveDreamRelationship(
+	t *testing.T,
+	ctx context.Context,
+	ledgerRepo *LedgerRepositoryImpl,
+	semanticRepo *SemanticRepositoryImpl,
+	teamID string,
+	ownerID string,
+	idempotencyKey string,
+	content string,
+	subjectEntityID string,
+	objectEntityID string,
+	sourceGroupKey string,
+) *RelationshipDecisionResult {
+	t.Helper()
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID, idempotencyKey, content)
+	result := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        ingest.IngestID,
+		SubjectEntityID: subjectEntityID,
+		PredicateKey:    "uses",
+		ObjectEntityID:  objectEntityID,
+		EvidenceVerdict: "entailed",
+		Support: &EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: sourceGroupKey,
+			SpanStart:      0,
+			SpanEnd:        len([]rune(content)),
+			Authority:      "primary",
+		},
+	})
+	require.Equal(t, "active", result.Relationship.Status)
+	require.NotEmpty(t, result.SupportID)
+	return result
+}
+
+func requireDreamInput(t *testing.T, inputs []DreamInput, relationshipID string) DreamInput {
 	t.Helper()
 	for _, input := range inputs {
 		if input.RelationshipID == relationshipID {
-			assert.Equal(t, status, input.Status)
-			return
+			return input
 		}
 	}
 	t.Fatalf("missing dream input %s in %+v", relationshipID, inputs)
+	return DreamInput{}
+}
+
+func evidenceGroundedDreamProposal(
+	teamID string,
+	ownerID string,
+	runID string,
+	first DreamInput,
+	second DreamInput,
+	subjectEntityID string,
+	objectEntityID string,
+	predicateKey string,
+	statement string,
+) UpsertHypothesisInput {
+	firstEvidence := first.Evidence[0]
+	secondEvidence := second.Evidence[0]
+	return UpsertHypothesisInput{
+		TeamID:             teamID,
+		CreatedByProfileID: ownerID,
+		RunID:              runID,
+		Statement:          statement,
+		Rationale:          "The provider joined the two supplied relationship premises without adding evidence.",
+		SubjectEntityID:    subjectEntityID,
+		PredicateKey:       predicateKey,
+		PredicateVersion:   1,
+		ObjectEntityID:     objectEntityID,
+		SourceRefs: []map[string]any{
+			{"type": "relationship", "id": first.RelationshipID},
+			{"type": "relationship", "id": second.RelationshipID},
+		},
+		SourceVersions: map[string]int{
+			first.RelationshipID:  first.Version,
+			second.RelationshipID: second.Version,
+		},
+		SourceOwnerProfileIDs: []string{ownerID},
+		ContentHash:           "sha256:" + uuid.NewString(),
+		GeneratorKind:         "provider",
+		GeneratorVersion:      "test-provider",
+		Derivations: []DreamDerivationSource{
+			dreamDerivationFromEvidence(1, first, firstEvidence),
+			dreamDerivationFromEvidence(2, second, secondEvidence),
+		},
+	}
+}
+
+func dreamDerivationFromEvidence(position int, input DreamInput, evidence DreamEvidence) DreamDerivationSource {
+	return DreamDerivationSource{
+		PremisePosition:     position,
+		RelationshipID:      input.RelationshipID,
+		RelationshipVersion: input.Version,
+		SupportID:           evidence.SupportID,
+		ObservationID:       evidence.ObservationID,
+		FragmentID:          evidence.FragmentID,
+		SourceID:            evidence.SourceID,
+		SourceRevisionID:    evidence.SourceRevisionID,
+		SourceGroupKey:      evidence.SourceGroupKey,
+		SpanStart:           evidence.SpanStart,
+		SpanEnd:             evidence.SpanEnd,
+		Quote:               evidence.Content,
+		Authority:           evidence.Authority,
+	}
 }

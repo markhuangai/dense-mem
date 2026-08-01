@@ -250,7 +250,7 @@ func RunActiveServer(
 		Profiles:       profileService,
 		Locker:         dreamservice.NewPostgresCycleLocker(),
 		Postgres:       pgDB.GetDB(),
-		Generator:      dreamservice.NewHeuristicGenerator(""),
+		Generator:      dreamservice.NewProviderGenerator(verifierProvider),
 		Metrics:        discoverabilityMetrics,
 	})
 	controlDreamSvc := dreamservice.NewControl(dreamservice.ControlDependencies{

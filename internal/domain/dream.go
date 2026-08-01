@@ -31,36 +31,48 @@ type DreamSourceRef struct {
 	ID   string `json:"id"`
 }
 
+// DreamDerivation is an exact source excerpt cited by a Dream proposal. It is
+// provenance for a possible relationship, never evidence for accepted memory.
+type DreamDerivation struct {
+	PremisePosition     int    `json:"premise_position"`
+	RelationshipID      string `json:"relationship_id"`
+	RelationshipVersion int    `json:"relationship_version"`
+	SourceGroupKey      string `json:"source_group_key"`
+	Quote               string `json:"quote"`
+	Authority           string `json:"authority"`
+}
+
 // Dream is a generated, reviewable hypothesis. It is not evidence and must not
 // be treated as a fact or claim until human feedback routes it through the
 // normal memory pipeline.
 type Dream struct {
-	DreamID                        string           `json:"dream_id"`
-	TeamID                         string           `json:"team_id"`
-	Hypothesis                     string           `json:"hypothesis"`
-	WhatIf                         string           `json:"what_if"`
-	PossibleOutcome                string           `json:"possible_outcome"`
-	Rationale                      string           `json:"rationale"`
-	Likelihood                     float64          `json:"likelihood"`
-	Confidence                     float64          `json:"confidence"`
-	SourceOwnerProfileIDs          []string         `json:"source_owner_profile_ids,omitempty"`
-	SubjectEntityID                string           `json:"subject_entity_id,omitempty"`
-	PredicateKey                   string           `json:"predicate_key,omitempty"`
-	ObjectEntityID                 string           `json:"object_entity_id,omitempty"`
-	ObjectValueID                  string           `json:"object_value_id,omitempty"`
-	SourceRelationshipIDs          []string         `json:"source_relationship_ids,omitempty"`
-	SourceCandidateRelationshipIDs []string         `json:"source_candidate_relationship_ids,omitempty"`
-	SourceVersions                 map[string]int   `json:"source_versions,omitempty"`
-	GeneratorKind                  string           `json:"generator_kind,omitempty"`
-	GeneratorVersion               string           `json:"generator_version,omitempty"`
-	Status                         DreamStatus      `json:"status"`
-	CycleRunID                     string           `json:"cycle_run_id,omitempty"`
-	GeneratorModel                 string           `json:"generator_model,omitempty"`
-	ContentHash                    string           `json:"content_hash,omitempty"`
-	SourceRefs                     []DreamSourceRef `json:"source_refs,omitempty"`
-	InvalidatedReason              string           `json:"invalidated_reason,omitempty"`
-	CreatedAt                      time.Time        `json:"created_at"`
-	UpdatedAt                      time.Time        `json:"updated_at"`
+	DreamID                        string            `json:"dream_id"`
+	TeamID                         string            `json:"team_id"`
+	Hypothesis                     string            `json:"hypothesis"`
+	WhatIf                         string            `json:"what_if"`
+	PossibleOutcome                string            `json:"possible_outcome"`
+	Rationale                      string            `json:"rationale"`
+	Likelihood                     float64           `json:"likelihood"`
+	Confidence                     float64           `json:"confidence"`
+	SourceOwnerProfileIDs          []string          `json:"source_owner_profile_ids,omitempty"`
+	SubjectEntityID                string            `json:"subject_entity_id,omitempty"`
+	PredicateKey                   string            `json:"predicate_key,omitempty"`
+	ObjectEntityID                 string            `json:"object_entity_id,omitempty"`
+	ObjectValueID                  string            `json:"object_value_id,omitempty"`
+	SourceRelationshipIDs          []string          `json:"source_relationship_ids,omitempty"`
+	SourceCandidateRelationshipIDs []string          `json:"source_candidate_relationship_ids,omitempty"`
+	SourceVersions                 map[string]int    `json:"source_versions,omitempty"`
+	GeneratorKind                  string            `json:"generator_kind,omitempty"`
+	GeneratorVersion               string            `json:"generator_version,omitempty"`
+	Status                         DreamStatus       `json:"status"`
+	CycleRunID                     string            `json:"cycle_run_id,omitempty"`
+	GeneratorModel                 string            `json:"generator_model,omitempty"`
+	ContentHash                    string            `json:"content_hash,omitempty"`
+	SourceRefs                     []DreamSourceRef  `json:"source_refs,omitempty"`
+	Derivations                    []DreamDerivation `json:"derivations,omitempty"`
+	InvalidatedReason              string            `json:"invalidated_reason,omitempty"`
+	CreatedAt                      time.Time         `json:"created_at"`
+	UpdatedAt                      time.Time         `json:"updated_at"`
 }
 
 // DreamingConfigSettings is the editable global runtime configuration for the
