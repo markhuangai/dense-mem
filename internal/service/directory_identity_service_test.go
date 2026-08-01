@@ -75,7 +75,7 @@ func TestDirectoryIdentityServiceLifecycleCredentialsAndReconciliation(t *testin
 	require.NoError(t, err)
 	require.True(t, valid)
 
-	user, err := svc.UpsertUser(ctx, created.ID, domain.DirectoryUser{
+	user, err := svc.CreateUser(ctx, created.ID, domain.DirectoryUser{
 		ExternalID:  "  entra-user-1  ",
 		UserName:    "  alex@example.com ",
 		Email:       "  alex@example.com ",
@@ -86,20 +86,34 @@ func TestDirectoryIdentityServiceLifecycleCredentialsAndReconciliation(t *testin
 	require.NoError(t, err)
 	require.Equal(t, "entra-user-1", user.ExternalID)
 	require.Equal(t, "alex@example.com", user.UserName)
+	require.Equal(t, 1, repo.createdUsers)
 
-	group, err := svc.UpsertGroup(ctx, created.ID, domain.DirectoryGroup{
+	group, err := svc.CreateGroupWithMembers(ctx, created.ID, domain.DirectoryGroup{
 		ExternalID:  "entra-research-manager",
 		DisplayName: "ResearchManager",
 		Active:      true,
-	})
+	}, nil)
 	require.NoError(t, err)
+	require.Equal(t, 1, repo.createdGroups)
 	require.NoError(t, svc.ReplaceGroupMembers(ctx, created.ID, group.ID, []uuid.UUID{user.ID, user.ID}))
 	users, err := svc.ListUsers(ctx, created.ID)
 	require.NoError(t, err)
 	require.Len(t, users, 1)
+	userPageRequest := domain.DirectoryPageRequest{FilterField: "userName", FilterValue: user.UserName, Limit: 1}
+	pagedUsers, totalUsers, err := svc.ListUsersPage(ctx, created.ID, userPageRequest)
+	require.NoError(t, err)
+	require.Len(t, pagedUsers, 1)
+	require.Equal(t, 1, totalUsers)
+	require.Equal(t, userPageRequest, repo.lastUserPageRequest)
 	groups, err := svc.ListGroups(ctx, created.ID)
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
+	groupPageRequest := domain.DirectoryPageRequest{FilterField: "displayName", FilterValue: group.DisplayName, Limit: 1}
+	pagedGroups, totalGroups, err := svc.ListGroupsPage(ctx, created.ID, groupPageRequest)
+	require.NoError(t, err)
+	require.Len(t, pagedGroups, 1)
+	require.Equal(t, 1, totalGroups)
+	require.Equal(t, groupPageRequest, repo.lastGroupPageRequest)
 
 	preview, err := svc.Preview(ctx, created.ID)
 	require.NoError(t, err)
@@ -341,6 +355,10 @@ func TestDirectoryIdentityServiceSurfacesRepositoryFailures(t *testing.T) {
 		_, err := svc.UpsertUser(ctx, connectorID, domain.DirectoryUser{UserName: "alex@example.test"})
 		return err
 	})
+	assertFailure("create user", func(svc *DirectoryIdentityService, _ *directoryIdentityServiceRepository, connectorID uuid.UUID) error {
+		_, err := svc.CreateUser(ctx, connectorID, domain.DirectoryUser{UserName: "alex@example.test"})
+		return err
+	})
 	assertFailure("get user", func(svc *DirectoryIdentityService, _ *directoryIdentityServiceRepository, connectorID uuid.UUID) error {
 		_, err := svc.GetUser(ctx, connectorID, uuid.New())
 		return err
@@ -349,8 +367,16 @@ func TestDirectoryIdentityServiceSurfacesRepositoryFailures(t *testing.T) {
 		_, err := svc.ListUsers(ctx, connectorID)
 		return err
 	})
+	assertFailure("list users page", func(svc *DirectoryIdentityService, _ *directoryIdentityServiceRepository, connectorID uuid.UUID) error {
+		_, _, err := svc.ListUsersPage(ctx, connectorID, domain.DirectoryPageRequest{Limit: 1})
+		return err
+	})
 	assertFailure("upsert group", func(svc *DirectoryIdentityService, _ *directoryIdentityServiceRepository, connectorID uuid.UUID) error {
 		_, err := svc.UpsertGroup(ctx, connectorID, domain.DirectoryGroup{DisplayName: "ResearchManager"})
+		return err
+	})
+	assertFailure("create group", func(svc *DirectoryIdentityService, _ *directoryIdentityServiceRepository, connectorID uuid.UUID) error {
+		_, err := svc.CreateGroupWithMembers(ctx, connectorID, domain.DirectoryGroup{DisplayName: "ResearchManager"}, nil)
 		return err
 	})
 	assertFailure("get group", func(svc *DirectoryIdentityService, _ *directoryIdentityServiceRepository, connectorID uuid.UUID) error {
@@ -359,6 +385,10 @@ func TestDirectoryIdentityServiceSurfacesRepositoryFailures(t *testing.T) {
 	})
 	assertFailure("list groups", func(svc *DirectoryIdentityService, _ *directoryIdentityServiceRepository, connectorID uuid.UUID) error {
 		_, err := svc.ListGroups(ctx, connectorID)
+		return err
+	})
+	assertFailure("list groups page", func(svc *DirectoryIdentityService, _ *directoryIdentityServiceRepository, connectorID uuid.UUID) error {
+		_, _, err := svc.ListGroupsPage(ctx, connectorID, domain.DirectoryPageRequest{Limit: 1})
 		return err
 	})
 	assertFailure("replace members", func(svc *DirectoryIdentityService, _ *directoryIdentityServiceRepository, connectorID uuid.UUID) error {
@@ -404,15 +434,19 @@ func directoryConnectorForServiceTest(providerID uuid.UUID) domain.DirectoryConn
 
 type directoryIdentityServiceRepository struct {
 	repository.DirectoryIdentityRepository
-	connectors      map[uuid.UUID]*domain.DirectoryConnector
-	users           map[uuid.UUID]*domain.DirectoryUser
-	groups          map[uuid.UUID]*domain.DirectoryGroup
-	oauthTokens     map[string]directoryOAuthToken
-	now             func() time.Time
-	appliedPlans    []domain.DirectoryReconcilePlan
-	activationPlans []domain.DirectoryReconcilePlan
-	adoptions       []directoryTeamAdoption
-	failureMethod   string
+	connectors           map[uuid.UUID]*domain.DirectoryConnector
+	users                map[uuid.UUID]*domain.DirectoryUser
+	groups               map[uuid.UUID]*domain.DirectoryGroup
+	oauthTokens          map[string]directoryOAuthToken
+	now                  func() time.Time
+	appliedPlans         []domain.DirectoryReconcilePlan
+	activationPlans      []domain.DirectoryReconcilePlan
+	adoptions            []directoryTeamAdoption
+	createdUsers         int
+	createdGroups        int
+	lastUserPageRequest  domain.DirectoryPageRequest
+	lastGroupPageRequest domain.DirectoryPageRequest
+	failureMethod        string
 }
 
 type directoryOAuthToken struct {
@@ -563,10 +597,27 @@ func (r *directoryIdentityServiceRepository) DeleteExpiredDirectoryOAuthTokens(_
 	return nil
 }
 
+func (r *directoryIdentityServiceRepository) CreateDirectoryUser(ctx context.Context, user domain.DirectoryUser) (*domain.DirectoryUser, error) {
+	if err := r.failure("create user"); err != nil {
+		return nil, err
+	}
+	for _, existing := range r.users {
+		if existing.ConnectorID == user.ConnectorID && ((user.ExternalID != "" && existing.ExternalID == user.ExternalID) || strings.EqualFold(existing.UserName, user.UserName)) {
+			return nil, repository.ErrDirectoryResourceConflict
+		}
+	}
+	r.createdUsers++
+	return r.storeDirectoryUser(user)
+}
+
 func (r *directoryIdentityServiceRepository) UpsertDirectoryUser(_ context.Context, user domain.DirectoryUser) (*domain.DirectoryUser, error) {
 	if err := r.failure("upsert user"); err != nil {
 		return nil, err
 	}
+	return r.storeDirectoryUser(user)
+}
+
+func (r *directoryIdentityServiceRepository) storeDirectoryUser(user domain.DirectoryUser) (*domain.DirectoryUser, error) {
 	if user.ID == uuid.Nil {
 		for _, existing := range r.users {
 			if existing.ConnectorID == user.ConnectorID && existing.ExternalID == user.ExternalID && user.ExternalID != "" {
@@ -611,6 +662,18 @@ func (r *directoryIdentityServiceRepository) ListDirectoryUsers(_ context.Contex
 	return items, nil
 }
 
+func (r *directoryIdentityServiceRepository) ListDirectoryUsersPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryUser, int, error) {
+	if err := r.failure("list users page"); err != nil {
+		return nil, 0, err
+	}
+	r.lastUserPageRequest = request
+	users, err := r.ListDirectoryUsers(ctx, connectorID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return users, len(users), nil
+}
+
 func (r *directoryIdentityServiceRepository) UpsertDirectoryGroup(_ context.Context, group domain.DirectoryGroup) (*domain.DirectoryGroup, error) {
 	if err := r.failure("upsert group"); err != nil {
 		return nil, err
@@ -629,6 +692,26 @@ func (r *directoryIdentityServiceRepository) UpsertDirectoryGroup(_ context.Cont
 	}
 	r.groups[group.ID] = cloneDirectoryGroup(&group)
 	return cloneDirectoryGroup(&group), nil
+}
+
+func (r *directoryIdentityServiceRepository) CreateDirectoryGroupWithMembers(ctx context.Context, group domain.DirectoryGroup, memberIDs []uuid.UUID) (*domain.DirectoryGroup, error) {
+	if err := r.failure("create group"); err != nil {
+		return nil, err
+	}
+	for _, existing := range r.groups {
+		if existing.ConnectorID == group.ConnectorID && group.ExternalID != "" && existing.ExternalID == group.ExternalID {
+			return nil, repository.ErrDirectoryResourceConflict
+		}
+	}
+	r.createdGroups++
+	stored, err := r.UpsertDirectoryGroup(ctx, group)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.ReplaceDirectoryGroupMembers(ctx, stored.ConnectorID, stored.ID, memberIDs); err != nil {
+		return nil, err
+	}
+	return r.GetDirectoryGroup(ctx, stored.ConnectorID, stored.ID)
 }
 
 func (r *directoryIdentityServiceRepository) UpsertDirectoryGroupWithMembers(ctx context.Context, group domain.DirectoryGroup, memberIDs []uuid.UUID) (*domain.DirectoryGroup, error) {
@@ -665,6 +748,18 @@ func (r *directoryIdentityServiceRepository) ListDirectoryGroups(_ context.Conte
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].DisplayName < items[j].DisplayName })
 	return items, nil
+}
+
+func (r *directoryIdentityServiceRepository) ListDirectoryGroupsPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryGroup, int, error) {
+	if err := r.failure("list groups page"); err != nil {
+		return nil, 0, err
+	}
+	r.lastGroupPageRequest = request
+	groups, err := r.ListDirectoryGroups(ctx, connectorID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return groups, len(groups), nil
 }
 
 func (r *directoryIdentityServiceRepository) ReplaceDirectoryGroupMembers(_ context.Context, connectorID, groupID uuid.UUID, memberIDs []uuid.UUID) error {

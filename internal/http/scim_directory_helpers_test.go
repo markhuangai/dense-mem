@@ -322,6 +322,8 @@ func TestDirectorySCIMHelperValidationBoundaries(t *testing.T) {
 	require.Error(t, directorySCIMMutationError(errors.New("duplicate conflict")))
 	require.Equal(t, scimerrors.ScimErrorUniqueness, directorySCIMMutationError(service.ErrDirectoryResourceConflict))
 	require.Error(t, directorySCIMMutationError(errors.New("unexpected storage failure")))
+	require.Equal(t, scimerrors.ScimErrorInvalidFilter, directorySCIMListError(service.ErrDirectoryInvalidValue))
+	require.Equal(t, scimerrors.ScimErrorInternal, directorySCIMListError(errors.New("unexpected storage failure")))
 	_, err = directoryMemberIDFromPath("members[value eq not-a-string]")
 	require.Error(t, err)
 
