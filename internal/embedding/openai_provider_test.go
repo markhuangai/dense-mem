@@ -199,6 +199,32 @@ func TestOpenAIProviderMarksMalformedSuccessfulResponseUnpriced(t *testing.T) {
 	t.Fatal("malformed successful provider response did not produce an unpriced observation")
 }
 
+func TestOpenAIProviderDoesNotMarkMalformedProviderErrorUnpriced(t *testing.T) {
+	metrics := observability.NewPrometheusMetrics()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte("{"))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL:                  srv.URL,
+		AIAPIKey:                  "key",
+		AIEmbeddingModel:          "embedding-model",
+		AIEmbeddingDimensions:     2,
+		AIEmbeddingTimeoutSeconds: 5,
+	}, srv.Client())
+	p.SetMetrics(metrics)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationRecallEmbedding, 1)
+	_, _, err := p.Embed(ctx, "malformed provider error")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "status=429")
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	assert.NotContains(t, recorder.Body.String(), `reason="missing_usage"`)
+}
+
 func TestOpenAIProvider_Non200Response(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

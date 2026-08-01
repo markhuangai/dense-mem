@@ -172,7 +172,9 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 				RetryAfter: retryAfterDuration(resp.Header.Get("Retry-After")),
 			}
 		}
-		observability.RecordAIOperationUnpriced(ctx, p.metrics, observability.AIComponentEmbedding, p.model, "missing_usage")
+		if resp.StatusCode == http.StatusOK {
+			observability.RecordAIOperationUnpriced(ctx, p.metrics, observability.AIComponentEmbedding, p.model, "missing_usage")
+		}
 		return nil, "", &ProviderError{
 			Provider: "openai",
 			Message:  "failed to decode response",
