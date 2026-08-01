@@ -17,9 +17,6 @@ CREATE TABLE IF NOT EXISTS telemetry_first_disposition_backfill_state (
     )
 );
 
-ALTER TABLE telemetry_first_disposition_backfill_state
-    ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ NULL;
-
 ALTER TABLE telemetry_first_disposition_backfill_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE telemetry_first_disposition_backfill_state FORCE ROW LEVEL SECURITY;
 
@@ -31,14 +28,33 @@ CREATE POLICY telemetry_first_disposition_backfill_state_system_access
     USING (current_setting('app.tx_mode', true) = 'system')
     WITH CHECK (current_setting('app.tx_mode', true) = 'system');
 
--- A failed concurrent build leaves an invalid index with the same name. A
--- replayed migration must remove that object before rebuilding it; a valid
--- partial build is also safe to replace because marker writers retain their
--- existing idempotency key during the rebuild.
-DROP INDEX CONCURRENTLY IF EXISTS placement_outcomes_telemetry_first_disposition_unique;
-CREATE UNIQUE INDEX CONCURRENTLY placement_outcomes_telemetry_first_disposition_unique
+-- A failed concurrent build leaves an invalid index with the same name. Park
+-- only that invalid object so a valid index continues enforcing uniqueness.
+DROP INDEX CONCURRENTLY IF EXISTS placement_outcomes_telemetry_first_disposition_invalid;
+
+-- +goose StatementBegin
+DO $telemetry_first_disposition_index$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_index idx
+        JOIN pg_class cls ON cls.oid = idx.indexrelid
+        JOIN pg_namespace nsp ON nsp.oid = cls.relnamespace
+        WHERE nsp.nspname = 'public'
+          AND cls.relname = 'placement_outcomes_telemetry_first_disposition_unique'
+          AND NOT idx.indisvalid
+    ) THEN
+        EXECUTE 'ALTER INDEX public.placement_outcomes_telemetry_first_disposition_unique RENAME TO placement_outcomes_telemetry_first_disposition_invalid';
+    END IF;
+END
+$telemetry_first_disposition_index$;
+-- +goose StatementEnd
+
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS placement_outcomes_telemetry_first_disposition_unique
     ON placement_outcomes(team_id, placement_run_id)
     WHERE outcome_kind = 'telemetry_first_disposition';
+
+DROP INDEX CONCURRENTLY IF EXISTS placement_outcomes_telemetry_first_disposition_invalid;
 
 -- The recovery scan is origin-scoped and keyset ordered by this partial index.
 -- Legacy Remember ingests predate the explicit telemetry-origin marker, but

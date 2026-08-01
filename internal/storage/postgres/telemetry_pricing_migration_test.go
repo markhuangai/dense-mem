@@ -112,6 +112,27 @@ func TestTelemetryFirstDispositionMigrationRebuildsInvalidConcurrentIndex(t *tes
 		WHERE index_class.relname = 'placement_outcomes_telemetry_first_disposition_unique'
 	`).Scan(&indexValid))
 	assert.True(t, indexValid)
+	assert.False(t, indexExists(t, ctx, sqlDB, "placement_outcomes_telemetry_first_disposition_invalid"))
+}
+
+func TestTelemetryFirstDispositionMigrationPreservesValidConcurrentIndex(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026073105)
+	_, err := sqlDB.ExecContext(ctx, `
+		CREATE UNIQUE INDEX CONCURRENTLY placement_outcomes_telemetry_first_disposition_unique
+		ON placement_outcomes(team_id, placement_run_id)
+		WHERE outcome_kind = 'telemetry_first_disposition'
+	`)
+	require.NoError(t, err)
+
+	beforeOID := telemetryFirstDispositionIndexOID(t, ctx, sqlDB)
+	m := NewMigratorWithDB(sqlDB)
+	require.NoError(t, m.RunUp(ctx))
+
+	assert.Equal(t, beforeOID, telemetryFirstDispositionIndexOID(t, ctx, sqlDB))
 }
 
 func TestTeamOwnedDreamingRepairHandlesLegacyTelemetryVersionSkip(t *testing.T) {
@@ -212,4 +233,15 @@ func insertDuplicateTelemetryFirstDispositionMarkers(t *testing.T, ctx context.C
 		`, teamID, runID, ownerID)
 		return err
 	}))
+}
+
+func telemetryFirstDispositionIndexOID(t *testing.T, ctx context.Context, db *sql.DB) string {
+	t.Helper()
+	var oid string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT oid::text
+		FROM pg_class
+		WHERE relname = 'placement_outcomes_telemetry_first_disposition_unique'
+	`).Scan(&oid))
+	return oid
 }
