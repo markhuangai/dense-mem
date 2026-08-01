@@ -188,14 +188,8 @@ func TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingTeamO
 	assert.Equal(t, 3, pricingCount)
 
 	require.NoError(t, m.RunDown(ctx), "telemetry marker index migration should be reversible")
-	var markerIndexCount int
-	require.NoError(t, sqlDB.QueryRowContext(ctx, `
-		SELECT count(*)
-		FROM pg_indexes
-		WHERE schemaname = 'public'
-		  AND indexname = 'placement_outcomes_telemetry_first_disposition_unique'
-	`).Scan(&markerIndexCount))
-	assert.Zero(t, markerIndexCount)
+	assert.False(t, indexExists(t, ctx, sqlDB, "placement_outcomes_telemetry_first_disposition_unique"))
+	assert.False(t, indexExists(t, ctx, sqlDB, "knowledge_ingests_telemetry_remember_backfill_idx"))
 	assert.False(t, tableExists(t, ctx, sqlDB, "telemetry_first_disposition_backfill_state"))
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
 		SELECT count(*)

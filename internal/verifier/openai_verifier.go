@@ -892,7 +892,9 @@ func (v *OpenAIVerifier) openAIStructuredChatMessagesJSONWithUsage(
 
 	apiResp, err := decodeOpenAIVerifierAPIResponse(httpResp.Body)
 	if err != nil {
-		v.recordVerifierMissingUsage(ctx, model)
+		if httpResp.StatusCode == http.StatusOK {
+			v.recordVerifierMissingUsage(ctx, model)
+		}
 		latencyOutcome = "provider_error"
 		return openAIStructuredChatResult{}, &ProviderError{
 			Provider:     openAIVerifierProvider,

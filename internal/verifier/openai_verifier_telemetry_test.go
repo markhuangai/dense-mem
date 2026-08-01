@@ -80,6 +80,74 @@ func TestOpenAIStructuredChatUsesTokenizerForIncompleteProviderUsage(t *testing.
 	}
 }
 
+func TestOpenAIStructuredChatDoesNotMarkMissingUsageForMalformedProviderError(t *testing.T) {
+	metrics := observability.NewPrometheusMetrics()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, err := w.Write([]byte("{not-json"))
+		require.NoError(t, err)
+	}))
+	defer srv.Close()
+
+	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	v.SetMetrics(metrics)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationPlacementAssessment, 1)
+	_, err := v.openAIStructuredChatMessagesJSONWithUsage(
+		ctx,
+		"assessor-model",
+		"schema",
+		map[string]any{},
+		[]openAIVerifierMessage{{Role: "user", Content: `{}`}},
+	)
+	require.ErrorIs(t, err, ErrVerifierProvider)
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	_, found := verifierMetricLineValue(
+		recorder.Body.String(),
+		"densemem_ai_operation_unpriced_total",
+		`operation="placement_assessment"`,
+		`component="verifier"`,
+		`model="assessor-model"`,
+		`reason="missing_usage"`,
+	)
+	assert.False(t, found, "non-OK provider responses must not count as missing usage")
+}
+
+func TestOpenAIStructuredChatMarksMissingUsageForMalformedOKResponse(t *testing.T) {
+	metrics := observability.NewPrometheusMetrics()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, err := w.Write([]byte("{not-json"))
+		require.NoError(t, err)
+	}))
+	defer srv.Close()
+
+	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	v.SetMetrics(metrics)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationPlacementAssessment, 1)
+	_, err := v.openAIStructuredChatMessagesJSONWithUsage(
+		ctx,
+		"assessor-model",
+		"schema",
+		map[string]any{},
+		[]openAIVerifierMessage{{Role: "user", Content: `{}`}},
+	)
+	require.ErrorIs(t, err, ErrVerifierProvider)
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	got, found := verifierMetricLineValue(
+		recorder.Body.String(),
+		"densemem_ai_operation_unpriced_total",
+		`operation="placement_assessment"`,
+		`component="verifier"`,
+		`model="assessor-model"`,
+		`reason="missing_usage"`,
+	)
+	require.True(t, found, "malformed 200 OK responses without usage should remain unpriced")
+	assert.Equal(t, float64(1), got)
+}
+
 func TestRecordVerifierTokenizerUsageIncludesStructuredSchema(t *testing.T) {
 	metrics := observability.NewPrometheusMetrics()
 	v := NewOpenAIVerifier(newTestVerifierConfig("", "", "assessor-model"), nil)

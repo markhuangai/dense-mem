@@ -47,6 +47,10 @@ func (s *placementFirstDispositionBackfillStub) BackfillPlacementFirstDispositio
 ) (repository.PlacementFirstDispositionBackfillResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.calls >= len(s.results) {
+		s.calls++
+		return repository.PlacementFirstDispositionBackfillResult{SweepComplete: true}, nil
+	}
 	result := s.results[s.calls]
 	s.calls++
 	return result, nil

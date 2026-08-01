@@ -127,7 +127,7 @@ func TestTeamOwnedDreamingRepairHandlesLegacyTelemetryVersionSkip(t *testing.T) 
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO app_config (key, value)
 			VALUES
-				('TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS', ''),
+				('TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS', '3.50'),
 				('TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS', ''),
 				('TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS', '')
 			ON CONFLICT (key) DO NOTHING
@@ -161,6 +161,14 @@ func TestTeamOwnedDreamingRepairHandlesLegacyTelemetryVersionSkip(t *testing.T) 
 		)
 	`).Scan(&pricingCount))
 	assert.Equal(t, 3, pricingCount)
+
+	var verifierInputRate string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT value
+		FROM app_config
+		WHERE key = 'TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS'
+	`).Scan(&verifierInputRate))
+	assert.Equal(t, "3.50", verifierInputRate, "the repair path must not overwrite operator pricing")
 }
 
 func insertDuplicateTelemetryFirstDispositionMarkers(t *testing.T, ctx context.Context, db *sql.DB) {

@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -79,11 +80,12 @@ func TestOpenAIValidationSummaryIsBounded(t *testing.T) {
 
 	t.Run("rune length", func(t *testing.T) {
 		summary := openAIValidationSummary([]SemanticValidationError{{
-			Field:   strings.Repeat("field", maxOpenAIValidationSummaryRunes),
+			Field:   strings.Repeat("界", maxOpenAIValidationSummaryRunes),
 			Message: "is invalid",
 		}})
 
 		assert.LessOrEqual(t, len([]rune(summary)), maxOpenAIValidationSummaryRunes)
+		assert.True(t, utf8.ValidString(summary))
 		assert.True(t, strings.HasSuffix(summary, openAIValidationSummaryOmission))
 	})
 }
