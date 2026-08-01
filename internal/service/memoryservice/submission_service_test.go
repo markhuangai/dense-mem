@@ -28,8 +28,11 @@ func TestRememberSubmissionStagesValidatedProposalBeforeProcessing(t *testing.T)
 	}}
 	metrics := observability.NewPrometheusMetrics()
 	svc := NewRememberService(RememberDependencies{Submissions: stub, Metrics: metrics})
+	ctx := requestctx.WithActorCredential(authenticatedRememberContext(teamID, profileID, keyID), requestctx.ActorCredential{
+		KeyID: keyID, AuthMethod: "api_key", Role: "member", Scopes: []string{"read", "write"},
+	})
 
-	result, err := svc.Remember(authenticatedRememberContext(teamID, profileID, keyID), validSubmissionRememberRequest())
+	result, err := svc.Remember(ctx, validSubmissionRememberRequest())
 	require.NoError(t, err)
 	require.Equal(t, stub.created.SubmissionID, result.SubmissionID)
 	require.Equal(t, string(domain.SubmissionQueued), result.ProcessingState)
@@ -38,6 +41,11 @@ func TestRememberSubmissionStagesValidatedProposalBeforeProcessing(t *testing.T)
 	require.Equal(t, profileID.String(), stub.createInput.OwnerProfileID)
 	require.Equal(t, "Dense-Mem uses PostgreSQL.", stub.createInput.Evidence[0].Content)
 	require.Equal(t, "rel:uses", stub.createInput.Proposal["relationships"].([]map[string]any)[0]["proposal_id"])
+	require.Equal(t, keyID.String(), stub.createInput.ActorCredentialID)
+	require.Equal(t, "api_key", stub.createInput.ActorAuthMethod)
+	require.Equal(t, "member", stub.createInput.ActorRole)
+	require.Equal(t, []string{"read", "write"}, stub.createInput.ActorScopes)
+	require.Equal(t, "corr-canonical", stub.createInput.CorrelationID)
 
 	recorder := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))

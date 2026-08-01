@@ -16,6 +16,7 @@ const (
 	ToolRemember                    = "remember"
 	ToolGetSubmissionStatus         = "get_submission_status"
 	ToolRetractEvidence             = "retract_evidence"
+	ToolRetractRelationship         = "retract_relationship"
 	ToolCorrectEntityResolution     = "correct_entity_resolution"
 	ToolRecallMemory                = "recall_memory"
 	ToolTraceMemory                 = "trace_memory"
@@ -36,6 +37,7 @@ var contractToolNames = []string{
 	ToolRemember,
 	ToolGetSubmissionStatus,
 	ToolRetractEvidence,
+	ToolRetractRelationship,
 	ToolCorrectEntityResolution,
 	ToolRecallMemory,
 	ToolTraceMemory,
@@ -74,6 +76,13 @@ func ContractTools() []Tool {
 			[]string{"write"},
 			retractEvidenceInputSchema(),
 			retractEvidenceOutputSchema(),
+		),
+		contractTool(
+			ToolRetractRelationship,
+			"Retract one caller-owned Relationship while preserving append-only transition provenance.",
+			[]string{"write"},
+			retractRelationshipInputSchema(),
+			retractRelationshipOutputSchema(),
 		),
 		contractTool(
 			ToolCorrectEntityResolution,
@@ -222,6 +231,26 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				req.ContractVersion = domain.ContractVersion
 				res, err := deps.Lifecycle.RetractEvidence(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return structToMap(res)
+			}
+		case ToolRetractRelationship:
+			tool := tools[i]
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+				if deps.Lifecycle == nil {
+					return nil, ErrToolUnavailable
+				}
+				if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
+					return nil, fmt.Errorf("retract_relationship: invalid input: %w", err)
+				}
+				var req memoryservice.RetractRelationshipRequest
+				if err := remapInput(input, &req); err != nil {
+					return nil, fmt.Errorf("retract_relationship: invalid input: %w", err)
+				}
+				req.ContractVersion = domain.ContractVersion
+				res, err := deps.Lifecycle.RetractRelationship(ctx, req)
 				if err != nil {
 					return nil, err
 				}

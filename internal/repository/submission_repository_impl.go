@@ -426,9 +426,65 @@ func (r *LedgerRepositoryImpl) CleanupExpiredSubmissions(ctx context.Context, no
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	var deleted int64
+	var processed int64
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		type expiredSubmission struct {
+			teamID       string
+			ownerID      string
+			submissionID string
+		}
 		rows, err := tx.WithContext(ctx).Raw(`
+			WITH expired AS MATERIALIZED (
+				SELECT team_id, owner_profile_id, submission_id
+				FROM submission_runs
+				WHERE status = 'processing'
+				  AND attempts >= max_attempts
+				  AND lease_until <= ?
+				ORDER BY lease_until, submission_id
+				LIMIT ?
+				FOR UPDATE SKIP LOCKED
+			)
+			UPDATE submission_runs AS submission
+			SET status = 'failed', lease_until = NULL, worker_id = '',
+				error_code = 'lease_expired_final_attempt', completed_at = ?, updated_at = ?
+			FROM expired
+			WHERE submission.team_id = expired.team_id
+			  AND submission.submission_id = expired.submission_id
+			RETURNING submission.team_id::text, submission.owner_profile_id::text, submission.submission_id::text
+		`, now, limit, now, now).Rows()
+		if err != nil {
+			return err
+		}
+		finalized := make([]expiredSubmission, 0, limit)
+		for rows.Next() {
+			item := expiredSubmission{}
+			if err := rows.Scan(&item.teamID, &item.ownerID, &item.submissionID); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			finalized = append(finalized, item)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		for _, item := range finalized {
+			if err := insertSubmissionOutcome(ctx, tx, item.teamID, item.ownerID, item.submissionID, nil, "", "failed", "lease_expired_final_attempt", map[string]any{"search_state": string(domain.SearchProjectionNotRequired)}); err != nil {
+				return err
+			}
+			if err := deleteSubmissionStage(ctx, tx, item.teamID, item.submissionID); err != nil {
+				return err
+			}
+		}
+		processed += int64(len(finalized))
+		remaining := limit - len(finalized)
+		if remaining == 0 {
+			return nil
+		}
+		rows, err = tx.WithContext(ctx).Raw(`
 			WITH expired AS MATERIALIZED (
 				SELECT team_id, submission_id
 				FROM submission_runs
@@ -441,25 +497,30 @@ func (r *LedgerRepositoryImpl) CleanupExpiredSubmissions(ctx context.Context, no
 			USING expired
 			WHERE submission.team_id = expired.team_id AND submission.submission_id = expired.submission_id
 			RETURNING 1
-		`, now, limit).Rows()
+		`, now, remaining).Rows()
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			deleted++
+			processed++
 		}
 		return rows.Err()
 	})
 	if err != nil {
 		return 0, fmt.Errorf("submission cleanup: %w", err)
 	}
-	return deleted, nil
+	return processed, nil
 }
 
 func normalizeCreateSubmissionInput(input CreateSubmissionInput) CreateSubmissionInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.ActorCredentialID = strings.TrimSpace(input.ActorCredentialID)
+	input.ActorAuthMethod = strings.TrimSpace(input.ActorAuthMethod)
+	input.ActorRole = strings.TrimSpace(input.ActorRole)
+	input.ActorScopes = normalizeSubmissionActorScopes(input.ActorScopes)
+	input.CorrelationID = strings.TrimSpace(input.CorrelationID)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.RequestHash = strings.TrimSpace(input.RequestHash)
 	input.SourceSummary = strings.TrimSpace(input.SourceSummary)
@@ -493,6 +554,28 @@ func normalizeCreateSubmissionInput(input CreateSubmissionInput) CreateSubmissio
 func validateCreateSubmissionInput(input CreateSubmissionInput) error {
 	if err := validateSubmissionIdentity(input.TeamID, input.OwnerProfileID, uuid.Nil.String()); err != nil {
 		return err
+	}
+	if input.ActorCredentialID != "" {
+		credentialID, err := uuid.Parse(input.ActorCredentialID)
+		if err != nil || credentialID == uuid.Nil {
+			return errors.New("actor_credential_id is invalid")
+		}
+		if input.ActorAuthMethod == "" || input.ActorRole == "" {
+			return errors.New("actor credential provenance is incomplete")
+		}
+	} else if input.ActorAuthMethod != "" || input.ActorRole != "" || len(input.ActorScopes) > 0 {
+		return errors.New("actor credential provenance requires actor_credential_id")
+	}
+	if len(input.ActorAuthMethod) > 64 || len(input.ActorRole) > 64 || len(input.CorrelationID) > 512 {
+		return errors.New("submission actor provenance exceeds bounds")
+	}
+	if len(input.ActorScopes) > 64 {
+		return errors.New("submission actor scopes exceed bounds")
+	}
+	for _, scope := range input.ActorScopes {
+		if len(scope) > 64 {
+			return errors.New("submission actor scope exceeds bounds")
+		}
 	}
 	if input.IdempotencyKey != "" && input.RequestHash == "" {
 		return errors.New("request_hash is required when idempotency_key is set")

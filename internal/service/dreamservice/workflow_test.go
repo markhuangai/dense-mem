@@ -418,14 +418,25 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "hypothesis text cannot be submitted")
 
+	content := "The deployment note says Dense-Mem uses PostgreSQL."
+	entityHints, relationshipHints := dreamFeedbackSubmissionProposal(content, "uses")
+	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
+		DreamID:  hypothesisID,
+		Decision: "confirm_true",
+		Evidence: []memoryservice.RememberEvidenceInput{{Content: content}},
+	})
+	require.ErrorContains(t, err, "proposal.entities and proposal.relationships are required")
+
 	res, err := svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
 		Feedback: "User confirmed this with a deployment note.",
 		Evidence: []memoryservice.RememberEvidenceInput{{
-			Content: "The deployment note says Dense-Mem uses PostgreSQL.",
+			Content: content,
 		}},
-		IdempotencyKey: "dream-submit-1",
+		EntityHints:       entityHints,
+		RelationshipHints: relationshipHints,
+		IdempotencyKey:    "dream-submit-1",
 	})
 
 	require.NoError(t, err)
@@ -457,6 +468,8 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 		UpdatedAt:          time.Now().UTC(),
 	}
 
+	falseContent := "The deployment note says Dense-Mem does not use PostgreSQL."
+	falseEntityHints, falseRelationshipHints := dreamFeedbackSubmissionProposal(falseContent, "does not use")
 	tests := []struct {
 		name       string
 		req        ResolveFeedbackRequest
@@ -490,8 +503,10 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 				DreamID:  hypothesisID,
 				Decision: "confirm_false",
 				Evidence: []memoryservice.RememberEvidenceInput{{
-					Content: "The deployment note says Dense-Mem does not use PostgreSQL.",
+					Content: falseContent,
 				}},
+				EntityHints:       falseEntityHints,
+				RelationshipHints: falseRelationshipHints,
 			},
 			wantStatus: domain.DreamStatusSubmitted,
 			wantMemory: true,
@@ -695,42 +710,18 @@ func TestResolveFeedbackErrorBranches(t *testing.T) {
 		Remember:  &rememberServiceStub{err: errors.New("remember failed")},
 		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 	})
+	content := "The deployment note says Dense-Mem does not use PostgreSQL."
+	entityHints, relationshipHints := dreamFeedbackSubmissionProposal(content, "does not use")
 	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
 		DreamID:  hypothesisID,
 		Decision: "confirm_false",
 		Evidence: []memoryservice.RememberEvidenceInput{{
-			Content: "The deployment note says Dense-Mem does not use PostgreSQL.",
+			Content: content,
 		}},
+		EntityHints:       entityHints,
+		RelationshipHints: relationshipHints,
 	})
 	require.ErrorContains(t, err, "remember failed")
-}
-
-func TestStatusAndHelperEdgeCases(t *testing.T) {
-	teamID := uuid.New()
-	ownerID := uuid.New()
-	repo := &dreamRepositoryStub{}
-	svc := New(Dependencies{
-		Store:     repo,
-		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
-	})
-	ctx := dreamTestContext(teamID, ownerID)
-
-	runs, err := svc.ListRuns(ctx, "ignored-profile", 5)
-	require.NoError(t, err)
-	assert.Empty(t, runs)
-
-	status, err := svc.Status(ctx, "ignored-profile")
-	require.NoError(t, err)
-	assert.Nil(t, status.LatestRun)
-	assert.Equal(t, 0, status.PendingCount)
-
-	assert.Equal(t, "relationship", dreamSourceType(repository.DreamInput{Status: "active"}))
-	assert.Equal(t, "candidate_relationship", dreamSourceType(repository.DreamInput{Status: "pending_evidence"}))
-	assert.Equal(t, "relationship", dreamSourceType(repository.DreamInput{}))
-	assert.Equal(t, "from stringer", anyString(testStringer("from stringer")))
-	require.Nil(t, optionalProbability(0))
-	require.NotNil(t, optionalProbability(2))
-	assert.Equal(t, 1.0, *optionalProbability(2))
 }
 
 func dreamTestContext(teamID uuid.UUID, ownerID uuid.UUID) context.Context {

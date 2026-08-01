@@ -142,7 +142,8 @@ func TestMemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 		t.Fatalf("trust boundary metadata = %#v", metadata)
 	}
 	hint := req.RelationshipHints[0]
-	if hint["proposal_id"] != "rel-uses-postgres" || hint["subject_ref"] == "" || hint["object_ref"] == "" {
+	wantToken := memoryPackSubmissionToken(imported.ImportID, "rel-uses-postgres")
+	if hint["proposal_id"] != wantToken || hint["subject_ref"] != wantToken+":subject" || hint["object_ref"] != wantToken+":object" {
 		t.Fatalf("relationship hint = %#v", hint)
 	}
 	hintEvidence, ok := hint["evidence"].([]any)
@@ -172,6 +173,46 @@ func TestMemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 	}
 	if remember.calls != 1 {
 		t.Fatalf("Remember calls after retry = %d, want 1", remember.calls)
+	}
+}
+
+func TestMemoryPackImportUsesBoundedSubmissionTokensForArbitraryItemIDs(t *testing.T) {
+	itemID := strings.Repeat("unsafe item / ", 16) + "\U0001f4a5"
+	artifactJSON := testArtifactJSON(t, MemoryPackArtifact{
+		Format:    MemoryPackFormat,
+		PackID:    "pack-unsafe-item-id",
+		Name:      "Unsafe item id",
+		CreatedAt: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		Relationships: []MemoryPackRelationship{{
+			ItemID:           itemID,
+			Subject:          MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Dense-Mem"},
+			PredicateKey:     "uses",
+			PredicateVersion: 1,
+			Object:           MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "PostgreSQL"},
+		}},
+	})
+	remember := &rememberStub{}
+	result, err := NewMemoryPackService(MemoryPackDependencies{Remember: remember, Ledger: newLedgerStub()}).Import(
+		authenticatedMemoryPackContext(uuid.New(), uuid.New(), uuid.New()),
+		ImportRequest{ArtifactJSON: artifactJSON, Mode: ModeReview},
+	)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Status != domain.SkillPackImportStatusSubmitted || len(remember.reqs) != 1 {
+		t.Fatalf("import result=%#v requests=%#v", result, remember.reqs)
+	}
+	request := remember.reqs[0]
+	if err := memoryservice.ValidateSubmissionProposal(request); err != nil {
+		t.Fatalf("memory-pack submission proposal is invalid: %v", err)
+	}
+	token := memoryPackSubmissionToken(result.ImportID, itemID)
+	hint := request.RelationshipHints[0]
+	if hint["proposal_id"] != token || hint["subject_ref"] != token+":subject" || hint["object_ref"] != token+":object" {
+		t.Fatalf("unsafe item id leaked into proposal identifier: %#v", hint)
+	}
+	if got := request.Evidence[0].Metadata["memory_pack_item_id"]; got != itemID {
+		t.Fatalf("raw item id provenance = %#v, want %q", got, itemID)
 	}
 }
 
@@ -873,7 +914,11 @@ func TestMemoryPackRollbackBlocksCrossOwnerAndSemanticEffects(t *testing.T) {
 		EntityID:   "submission-canonical",
 		Action:     domain.SkillPackChangeActionLinked,
 	}}
-	svc := NewMemoryPackService(MemoryPackDependencies{Ledger: ledger})
+	remember := &rememberStub{status: &memoryservice.SubmissionStatusResult{
+		SubmissionID:    "submission-canonical",
+		ProcessingState: string(domain.SubmissionQueued),
+	}}
+	svc := NewMemoryPackService(MemoryPackDependencies{Remember: remember, Ledger: ledger})
 
 	_, err := svc.Rollback(authenticatedMemoryPackContext(teamID, otherOwnerID, uuid.New()), RollbackRequest{
 		ImportID: "import-semantic",

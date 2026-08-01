@@ -1,8 +1,12 @@
 package memoryservice
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -184,7 +188,7 @@ func submissionAssessmentRequiredProposal(proposal submissionAssessmentProposal)
 				End:        span.End,
 			})
 		}
-		required.Relationships = append(required.Relationships, verifier.SubmissionAssessmentRequiredRelationship{
+		requiredRelationship := verifier.SubmissionAssessmentRequiredRelationship{
 			ProposalID:          relationship.ProposalID,
 			SubjectRef:          relationship.SubjectRef,
 			OriginalPredicate:   relationship.Predicate,
@@ -196,9 +200,85 @@ func submissionAssessmentRequiredProposal(proposal submissionAssessmentProposal)
 			Polarity:            relationship.Polarity,
 			Modality:            relationship.Modality,
 			Evidence:            evidence,
-		})
+		}
+		if value, ok := submissionProposalObjectValue(relationship.ObjectValue); ok {
+			requiredRelationship.ObjectValueType = value.ValueType
+			requiredRelationship.ObjectValueCanonical = value.CanonicalValue
+			requiredRelationship.ObjectValueDisplay = value.Display
+			requiredRelationship.ObjectValueUnit = value.Unit
+		}
+		required.Relationships = append(required.Relationships, requiredRelationship)
 	}
 	return required
+}
+
+func submissionProposalObjectValue(fields map[string]any) (*verifier.SemanticAssessmentValue, bool) {
+	if fields == nil {
+		return nil, false
+	}
+	valueType := submissionProposalString(fields, "type")
+	raw, exists := fields["value"]
+	if !exists {
+		return nil, false
+	}
+	canonical, ok := submissionProposalCanonicalValue(raw)
+	if !ok {
+		return nil, false
+	}
+	value := &verifier.SemanticAssessmentValue{ValueType: valueType, CanonicalValue: canonical}
+	for _, field := range []struct {
+		name   string
+		target **string
+	}{
+		{name: "display", target: &value.Display},
+		{name: "unit", target: &value.Unit},
+	} {
+		rawText, exists := fields[field.name]
+		if !exists {
+			continue
+		}
+		text, ok := rawText.(string)
+		if !ok {
+			return nil, false
+		}
+		text = strings.TrimSpace(text)
+		*field.target = &text
+	}
+	return value, true
+}
+
+func submissionProposalCanonicalValue(raw any) (string, bool) {
+	switch value := raw.(type) {
+	case string:
+		return value, true
+	case bool:
+		return strconv.FormatBool(value), true
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return "", false
+		}
+		return strconv.FormatFloat(value, 'f', -1, 64), true
+	case float32:
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return "", false
+		}
+		return strconv.FormatFloat(float64(value), 'f', -1, 32), true
+	case int:
+		return strconv.Itoa(value), true
+	case int32:
+		return strconv.FormatInt(int64(value), 10), true
+	case int64:
+		return strconv.FormatInt(value, 10), true
+	case json.Number:
+		text := value.String()
+		parsed, err := strconv.ParseFloat(text, 64)
+		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+			return "", false
+		}
+		return text, true
+	default:
+		return "", false
+	}
 }
 
 func submissionAssessmentEntityCandidate(candidate repository.SemanticReviewEntityCandidate) verifier.SemanticAssessmentEntityCandidate {

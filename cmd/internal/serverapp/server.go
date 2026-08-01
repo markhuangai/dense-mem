@@ -887,6 +887,13 @@ func startActiveWorkers(
 ) {
 	hostname, _ := os.Hostname()
 	baseWorkerID := fmt.Sprintf("active-%s-%d", hostname, os.Getpid())
+	startSubmissionCleanupWorker(ctx, submissionCleanupWorkerConfig{
+		pollInterval: assessmentPollInterval,
+		logger:       logger,
+		cleanup: func(ctx context.Context) (int64, error) {
+			return ledger.CleanupExpiredSubmissions(ctx, time.Now().UTC(), 100)
+		},
+	})
 	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
 		name:         "submission",
 		baseWorkerID: baseWorkerID,

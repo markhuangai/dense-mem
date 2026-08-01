@@ -143,6 +143,67 @@ func TestLifecycleRetractEvidenceUsesAuthenticatedOwner(t *testing.T) {
 	require.ErrorIs(t, err, ErrLifecycleAuthContext)
 }
 
+func TestLifecycleRetractRelationshipUsesAuthenticatedOwnerAndBoundsErrors(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	relationshipID := uuid.NewString()
+	semantic := &lifecycleSemanticStub{retractResult: &repository.RelationshipTransitionResult{
+		TransitionID:   "transition-canonical",
+		RelationshipID: relationshipID,
+		FromStatus:     string(domain.RelationshipStatusActive),
+		ToStatus:       string(domain.RelationshipStatusRetracted),
+	}}
+	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic})
+	request := RetractRelationshipRequest{
+		ContractVersion: domain.ContractVersion,
+		RelationshipID:  relationshipID,
+		Reason:          "entered in error",
+		IdempotencyKey:  "relationship-retract-1",
+	}
+	result, err := svc.RetractRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), request)
+	require.NoError(t, err)
+	require.Equal(t, "transition-canonical", result.TransitionID)
+	require.Equal(t, relationshipID, result.RelationshipID)
+	require.Equal(t, teamID.String(), semantic.retractInput.TeamID)
+	require.Equal(t, profileID.String(), semantic.retractInput.OwnerProfileID)
+	require.Equal(t, request.IdempotencyKey, semantic.retractInput.IdempotencyKey)
+
+	for _, tc := range []struct {
+		name     string
+		repoErr  error
+		wantCode httperr.ErrorCode
+	}{
+		{name: "owner mismatch is bounded", repoErr: repository.ErrSemanticOwnerMismatch, wantCode: httperr.NOT_FOUND},
+		{name: "inactive team is bounded", repoErr: repository.ErrTeamInactive, wantCode: httperr.NOT_FOUND},
+		{name: "idempotency conflict is bounded", repoErr: repository.ErrSemanticIdempotencyConflict, wantCode: httperr.CONFLICT},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{retractErr: tc.repoErr}}).RetractRelationship(
+				authenticatedRememberContext(teamID, profileID, uuid.New()), request,
+			)
+			var apiErr *httperr.APIError
+			require.ErrorAs(t, err, &apiErr)
+			require.Equal(t, tc.wantCode, apiErr.Code)
+		})
+	}
+
+	_, err = NewLifecycleService(LifecycleDependencies{}).RetractRelationship(
+		authenticatedRememberContext(teamID, profileID, uuid.New()), request,
+	)
+	require.ErrorContains(t, err, "semantic repository is required")
+	_, err = svc.RetractRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), RetractRelationshipRequest{
+		ContractVersion: "invalid", RelationshipID: relationshipID, Reason: "entered in error", IdempotencyKey: "relationship-retract-2",
+	})
+	require.ErrorContains(t, err, "invalid contract_version")
+	_, err = svc.RetractRelationship(context.Background(), request)
+	require.ErrorIs(t, err, ErrLifecycleAuthContext)
+	generic := errors.New("semantic unavailable")
+	_, err = NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{retractErr: generic}}).RetractRelationship(
+		authenticatedRememberContext(teamID, profileID, uuid.New()), request,
+	)
+	require.ErrorIs(t, err, generic)
+}
+
 func TestRetractEvidenceRequestHashCanonicalizesEvidenceIDs(t *testing.T) {
 	firstEvidenceID := uuid.NewString()
 	secondEvidenceID := uuid.NewString()
@@ -205,7 +266,10 @@ func TestLifecycleRetractEvidenceValidatesDependenciesAndMapsRepositoryErrors(t 
 type lifecycleSemanticStub struct {
 	correctInput  repository.CorrectEntityResolutionInput
 	correctResult *repository.CorrectEntityResolutionResult
+	retractInput  repository.RetractRelationshipInput
+	retractResult *repository.RelationshipTransitionResult
 	err           error
+	retractErr    error
 }
 
 func (s *lifecycleSemanticStub) CorrectEntityResolution(
@@ -220,6 +284,20 @@ func (s *lifecycleSemanticStub) CorrectEntityResolution(
 		return nil, errors.New("missing correct result")
 	}
 	return s.correctResult, nil
+}
+
+func (s *lifecycleSemanticStub) RetractRelationship(
+	_ context.Context,
+	input repository.RetractRelationshipInput,
+) (*repository.RelationshipTransitionResult, error) {
+	s.retractInput = input
+	if s.retractErr != nil {
+		return nil, s.retractErr
+	}
+	if s.retractResult == nil {
+		return nil, errors.New("missing retract relationship result")
+	}
+	return s.retractResult, nil
 }
 
 type lifecycleEvidenceStub struct {

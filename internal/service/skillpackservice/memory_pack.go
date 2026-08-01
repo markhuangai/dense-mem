@@ -205,6 +205,10 @@ func (s *memoryPackService) Import(ctx context.Context, req ImportRequest) (*Imp
 	decisions := MemoryPackDecisionSet(req.ConflictDecisions)
 	importID := MemoryPackImportID(actor.TeamID.String(), actor.ProfileID.String(), loaded.hash, req.Mode)
 	if existing, err := s.deps.Ledger.GetImport(ctx, actor.TeamID.String(), importID); err == nil && existing != nil && existing.ImportID != "" {
+		existing, err = s.reconcileSubmittedImport(ctx, existing)
+		if err != nil {
+			return nil, err
+		}
 		return importResultFromExisting(existing, loaded.hash, req.Mode), nil
 	}
 
@@ -332,6 +336,10 @@ func (s *memoryPackService) Rollback(ctx context.Context, req RollbackRequest) (
 	}
 	if record.OwnerProfileID != "" && record.OwnerProfileID != actor.ProfileID.String() {
 		return nil, errors.New("memory pack rollback: import owner mismatch")
+	}
+	record, err = s.reconcileSubmittedImport(ctx, record)
+	if err != nil {
+		return nil, err
 	}
 	changes, err := s.deps.Ledger.ListChanges(ctx, actor.TeamID.String(), importID)
 	if err != nil {

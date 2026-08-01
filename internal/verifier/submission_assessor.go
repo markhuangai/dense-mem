@@ -60,17 +60,20 @@ type SubmissionAssessmentRequiredEntity struct {
 }
 
 type SubmissionAssessmentRequiredRelationship struct {
-	ProposalID          string
-	SubjectRef          string
-	OriginalPredicate   string
-	PredicateEvidenceID string
-	PredicateStart      int
-	PredicateEnd        int
-	ObjectRef           string
-	ObjectValueType     string
-	Polarity            string
-	Modality            string
-	Evidence            []SemanticAssessmentEvidenceSpan
+	ProposalID           string
+	SubjectRef           string
+	OriginalPredicate    string
+	PredicateEvidenceID  string
+	PredicateStart       int
+	PredicateEnd         int
+	ObjectRef            string
+	ObjectValueType      string
+	ObjectValueCanonical string
+	ObjectValueDisplay   *string
+	ObjectValueUnit      *string
+	Polarity             string
+	Modality             string
+	Evidence             []SemanticAssessmentEvidenceSpan
 }
 
 func SubmissionAssessmentResponseSchema() map[string]any {
@@ -331,6 +334,15 @@ func normalizeSubmissionAssessmentRequiredProposal(
 		relationship.PredicateEvidenceID = strings.TrimSpace(relationship.PredicateEvidenceID)
 		relationship.ObjectRef = strings.TrimSpace(relationship.ObjectRef)
 		relationship.ObjectValueType = strings.TrimSpace(relationship.ObjectValueType)
+		relationship.ObjectValueCanonical = strings.TrimSpace(relationship.ObjectValueCanonical)
+		if relationship.ObjectValueDisplay != nil {
+			value := strings.TrimSpace(*relationship.ObjectValueDisplay)
+			relationship.ObjectValueDisplay = &value
+		}
+		if relationship.ObjectValueUnit != nil {
+			value := strings.TrimSpace(*relationship.ObjectValueUnit)
+			relationship.ObjectValueUnit = &value
+		}
 		relationship.Polarity = strings.TrimSpace(relationship.Polarity)
 		relationship.Modality = strings.TrimSpace(relationship.Modality)
 		if relationship.ProposalID == "" || len([]rune(relationship.ProposalID)) > 128 {
@@ -349,8 +361,13 @@ func normalizeSubmissionAssessmentRequiredProposal(
 			if _, exists := entities[relationship.ObjectRef]; !exists {
 				errs = append(errs, semanticErr(field+".object_ref", "is unknown"))
 			}
-		} else if !semanticOneOf(relationship.ObjectValueType, domain.ValueTypes()...) {
-			errs = append(errs, semanticErr(field+".object_value_type", "is unsupported"))
+		} else {
+			if !semanticOneOf(relationship.ObjectValueType, domain.ValueTypes()...) {
+				errs = append(errs, semanticErr(field+".object_value_type", "is unsupported"))
+			}
+			if relationship.ObjectValueCanonical == "" {
+				errs = append(errs, semanticErr(field+".object_value.canonical_value", "is required"))
+			}
 		}
 		predicateEvidence, exists := evidenceByID[relationship.PredicateEvidenceID]
 		if !exists {
@@ -464,7 +481,18 @@ func submissionAssessmentRequiredObjectMatches(
 	if expected.ObjectRef != "" {
 		return actual.ObjectRef != nil && *actual.ObjectRef == expected.ObjectRef && actual.ObjectValue == nil
 	}
-	return actual.ObjectRef == nil && actual.ObjectValue != nil && actual.ObjectValue.ValueType == expected.ObjectValueType
+	return actual.ObjectRef == nil && actual.ObjectValue != nil &&
+		actual.ObjectValue.ValueType == expected.ObjectValueType &&
+		actual.ObjectValue.CanonicalValue == expected.ObjectValueCanonical &&
+		submissionAssessmentNullableValueMatches(expected.ObjectValueDisplay, actual.ObjectValue.Display) &&
+		submissionAssessmentNullableValueMatches(expected.ObjectValueUnit, actual.ObjectValue.Unit)
+}
+
+func submissionAssessmentNullableValueMatches(expected, actual *string) bool {
+	if expected == nil || actual == nil {
+		return expected == nil && actual == nil
+	}
+	return *expected == *actual
 }
 
 func submissionAssessmentRequiredEvidenceMatches(

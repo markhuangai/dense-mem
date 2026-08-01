@@ -106,10 +106,31 @@ func TestSubmissionAssessmentRejectionPolicyRejectsUnsafeAssessorResults(t *test
 }
 
 func TestSubmissionAssessmentSupportAndPromotionHelpersFailClosed(t *testing.T) {
-	valueExpected := submissionAssessmentRelationshipProposal{ObjectValue: map[string]any{"type": "string"}}
-	require.True(t, submissionRelationshipObjectMatches(valueExpected, verifier.SemanticAssessmentRelationshipResult{ObjectValue: &verifier.SemanticAssessmentValue{ValueType: "string"}}))
+	display := "PostgreSQL"
+	unit := "database"
+	valueExpected := submissionAssessmentRelationshipProposal{ObjectValue: map[string]any{
+		"type": "string", "value": "PostgreSQL", "display": display, "unit": unit,
+	}}
+	require.True(t, submissionRelationshipObjectMatches(valueExpected, verifier.SemanticAssessmentRelationshipResult{ObjectValue: &verifier.SemanticAssessmentValue{
+		ValueType: "string", CanonicalValue: "PostgreSQL", Display: &display, Unit: &unit,
+	}}))
+	require.False(t, submissionRelationshipObjectMatches(valueExpected, verifier.SemanticAssessmentRelationshipResult{ObjectValue: &verifier.SemanticAssessmentValue{
+		ValueType: "string", CanonicalValue: "MySQL", Display: &display, Unit: &unit,
+	}}))
 	wrongObject := "entity"
 	require.False(t, submissionRelationshipObjectMatches(valueExpected, verifier.SemanticAssessmentRelationshipResult{ObjectRef: &wrongObject}))
+	refExpected := submissionAssessmentRelationshipProposal{ObjectRef: "entity:object"}
+	matchingObject := "entity:object"
+	require.True(t, submissionRelationshipObjectMatches(refExpected, verifier.SemanticAssessmentRelationshipResult{ObjectRef: &matchingObject}))
+	require.False(t, submissionRelationshipObjectMatches(refExpected, verifier.SemanticAssessmentRelationshipResult{}))
+	require.False(t, submissionRelationshipObjectMatches(submissionAssessmentRelationshipProposal{ObjectValue: map[string]any{"type": "string"}}, verifier.SemanticAssessmentRelationshipResult{
+		ObjectValue: &verifier.SemanticAssessmentValue{ValueType: "string"},
+	}))
+	require.True(t, submissionOptionalValueMatches(nil, nil))
+	require.False(t, submissionOptionalValueMatches(nil, &display))
+	require.False(t, submissionOptionalValueMatches(&display, nil))
+	mismatch := "MySQL"
+	require.False(t, submissionOptionalValueMatches(&display, &mismatch))
 	require.True(t, submissionRelationshipSpansMatch(
 		[]submissionProposalSpan{{EvidenceIndex: 0, Start: 0, End: 1}},
 		[]verifier.SemanticAssessmentEvidenceSpan{{EvidenceID: "evidence:0", Start: 0, End: 1}},

@@ -34,6 +34,11 @@ type SubmissionRepository interface {
 type CreateSubmissionInput struct {
 	TeamID                          string
 	OwnerProfileID                  string
+	ActorCredentialID               string
+	ActorAuthMethod                 string
+	ActorRole                       string
+	ActorScopes                     []string
+	CorrelationID                   string
 	IdempotencyKey                  string
 	RequestHash                     string
 	SourceSummary                   string
@@ -68,6 +73,11 @@ type Submission struct {
 	TeamID                          string
 	SubmissionID                    string
 	OwnerProfileID                  string
+	ActorCredentialID               string
+	ActorAuthMethod                 string
+	ActorRole                       string
+	ActorScopes                     []string
+	CorrelationID                   string
 	RequestHash                     string
 	SourceSummary                   string
 	CreatedAt                       time.Time

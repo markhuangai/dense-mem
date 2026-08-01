@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -132,6 +133,133 @@ func TestSubmissionRepositoryIdempotencyAndReplacementOwnership(t *testing.T) {
 		Evidence: []SubmissionEvidenceInput{{Content: "foreign", Authority: "primary"}}, ReplacesQuarantinedSubmissionID: foreignQuarantine,
 	})
 	require.ErrorIs(t, err, ErrSubmissionNotFound)
+}
+
+func TestSubmissionRepositoryPersistsAuthenticatedSubmissionProvenance(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-provenance-input-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-provenance-input-owner")
+	credentialID := uuid.NewString()
+	repo := NewLedgerRepository(appDB, rls)
+
+	created, err := repo.CreateSubmission(ctx, CreateSubmissionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, RequestHash: "sha256:submission-provenance-input",
+		ActorCredentialID: credentialID, ActorAuthMethod: "api_key", ActorRole: "member",
+		ActorScopes: []string{"write", "read", "write"}, CorrelationID: "corr-submission-provenance",
+		Proposal: map[string]any{"entities": []any{}, "relationships": []any{}},
+		Evidence: []SubmissionEvidenceInput{{Content: "Submission provenance is durable.", Authority: "primary"}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, credentialID, created.ActorCredentialID)
+	require.Equal(t, "api_key", created.ActorAuthMethod)
+	require.Equal(t, "member", created.ActorRole)
+	require.Equal(t, []string{"read", "write"}, created.ActorScopes)
+	require.Equal(t, "corr-submission-provenance", created.CorrelationID)
+}
+
+func TestSubmissionRepositoryFinalExpiredLeaseIsTerminalized(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-expired-final-attempt-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-expired-final-attempt-owner")
+	repo := NewLedgerRepository(appDB, rls)
+
+	created, err := repo.CreateSubmission(ctx, CreateSubmissionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, RequestHash: "sha256:expired-final-attempt",
+		Proposal: map[string]any{"entities": []any{}, "relationships": []any{}},
+		Evidence: []SubmissionEvidenceInput{{Content: "This attempt will expire.", Authority: "primary"}},
+	})
+	require.NoError(t, err)
+	claim, err := repo.ClaimNextSubmission(ctx, teamID, "expired-final-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+
+	expiredAt := time.Now().UTC().Add(-time.Minute)
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE submission_runs
+			SET attempts = max_attempts, lease_until = ?, worker_id = 'expired-final-worker', status = 'processing'
+			WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND submission_id = ?::uuid
+		`, expiredAt, teamID, ownerID, created.SubmissionID).Error
+	}))
+
+	processed, err := repo.CleanupExpiredSubmissions(ctx, time.Now().UTC(), 100)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, processed)
+	status, err := repo.GetSubmissionStatus(ctx, GetSubmissionStatusInput{TeamID: teamID, OwnerProfileID: ownerID, SubmissionID: created.SubmissionID})
+	require.NoError(t, err)
+	require.Equal(t, string(domain.SubmissionFailed), status.ProcessingState)
+	require.Contains(t, status.Errors, SubmissionStatusError{Code: "lease_expired_final_attempt"})
+	var stagedEvidence, stagedProposals int
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT count(*)::int FROM submission_staged_evidence WHERE team_id = ?::uuid AND submission_id = ?::uuid`, teamID, created.SubmissionID).Scan(&stagedEvidence).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`SELECT count(*)::int FROM submission_staged_proposals WHERE team_id = ?::uuid AND submission_id = ?::uuid`, teamID, created.SubmissionID).Scan(&stagedProposals).Error
+	}))
+	require.Zero(t, stagedEvidence)
+	require.Zero(t, stagedProposals)
+	claim, err = repo.ClaimNextSubmission(ctx, teamID, "next-worker", time.Minute)
+	require.NoError(t, err)
+	require.Nil(t, claim)
+}
+
+func TestSubmissionRepositoryConcurrentIdempotencyReturnsExistingSubmission(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-idempotency-race-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-idempotency-race-owner")
+	repo := NewLedgerRepository(appDB, rls)
+	input := CreateSubmissionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "submission-race", RequestHash: "sha256:submission-race",
+		Proposal: map[string]any{"entities": []any{}, "relationships": []any{}},
+		Evidence: []SubmissionEvidenceInput{{Content: "Concurrent submission evidence.", Authority: "primary"}},
+	}
+
+	const workers = 16
+	start := make(chan struct{})
+	type outcome struct {
+		submission *Submission
+		err        error
+	}
+	outcomes := make(chan outcome, workers)
+	var group sync.WaitGroup
+	for range workers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			submission, err := repo.CreateSubmission(ctx, input)
+			outcomes <- outcome{submission: submission, err: err}
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(outcomes)
+
+	submissionIDs := map[string]struct{}{}
+	for result := range outcomes {
+		require.NoError(t, result.err)
+		require.NotNil(t, result.submission)
+		submissionIDs[result.submission.SubmissionID] = struct{}{}
+	}
+	require.Len(t, submissionIDs, 1)
+	var runCount, stagedEvidenceCount int
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT count(*)::int FROM submission_runs
+			WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = 'submission-race'
+		`, teamID, ownerID).Scan(&runCount).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`SELECT count(*)::int FROM submission_staged_evidence WHERE team_id = ?::uuid`, teamID).Scan(&stagedEvidenceCount).Error
+	}))
+	require.Equal(t, 1, runCount)
+	require.Equal(t, 1, stagedEvidenceCount)
 }
 
 func TestSubmissionSearchProjectionState(t *testing.T) {

@@ -92,6 +92,27 @@ func TestSubmissionAssessmentWorkerPromotesValidatedSubmissionAndReusesAssessmen
 	require.Equal(t, "rel:uses", response.RelationshipResults[0].Ref)
 }
 
+func TestSubmissionCanonicalIngestCarriesAuthenticatedSubmissionProvenance(t *testing.T) {
+	repo, _, _, _ := submissionAssessmentWorkerFixture(t)
+	repo.staged.ActorCredentialID = uuid.NewString()
+	repo.staged.ActorAuthMethod = "api_key"
+	repo.staged.ActorRole = "member"
+	repo.staged.ActorScopes = []string{"read", "write"}
+	repo.staged.CorrelationID = "corr-submission-provenance"
+
+	canonical, _, err := submissionCanonicalIngest(repo.staged)
+	require.NoError(t, err)
+	actor, ok := canonical.Metadata["actor"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, repo.staged.TeamID, actor["team_id"])
+	require.Equal(t, repo.staged.OwnerProfileID, actor["profile_id"])
+	require.Equal(t, repo.staged.ActorCredentialID, actor["credential_id"])
+	require.Equal(t, repo.staged.ActorAuthMethod, actor["auth_method"])
+	require.Equal(t, repo.staged.ActorRole, actor["role"])
+	require.Equal(t, []string{"read", "write"}, actor["scopes"])
+	require.Equal(t, repo.staged.CorrelationID, actor["correlation_id"])
+}
+
 func TestSubmissionAssessmentWorkerQuarantinesDeterministicAndAssessorSecurityConcerns(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
@@ -187,13 +208,6 @@ func TestSubmissionAssessmentWorkerHandlesDependencyAndRepositoryFailures(t *tes
 			wantErr: "submission repository",
 		},
 		{
-			name: "cleanup",
-			mutate: func(repo *submissionAssessmentWorkerRepositoryStub, _ *submissionAssessmentWorkerCatalogStub, _ *submissionAssessmentWorkerProviderStub, _ *submissionAssessmentWorkerService) {
-				repo.cleanupErr = errors.New("cleanup unavailable")
-			},
-			wantErr: "cleanup expired submissions",
-		},
-		{
 			name: "no claim",
 			mutate: func(repo *submissionAssessmentWorkerRepositoryStub, _ *submissionAssessmentWorkerCatalogStub, _ *submissionAssessmentWorkerProviderStub, _ *submissionAssessmentWorkerService) {
 				repo.claimNil = true
@@ -218,10 +232,11 @@ func TestSubmissionAssessmentWorkerHandlesDependencyAndRepositoryFailures(t *tes
 			mutate: func(_ *submissionAssessmentWorkerRepositoryStub, catalog *submissionAssessmentWorkerCatalogStub, _ *submissionAssessmentWorkerProviderStub, _ *submissionAssessmentWorkerService) {
 				catalog.entityErr = errors.New("catalog unavailable")
 			},
-			wantErr: "submission contract is invalid",
+			wantErr: "submission catalog unavailable",
 			assert: func(t *testing.T, repo *submissionAssessmentWorkerRepositoryStub) {
-				require.Len(t, repo.completions, 1)
-				require.Equal(t, "deterministic_submission_contract", repo.completions[0].ReasonCode)
+				require.Len(t, repo.requeues, 1)
+				require.Equal(t, "catalog_unavailable", repo.requeues[0].ReasonCode)
+				require.Empty(t, repo.completions)
 			},
 		},
 		{

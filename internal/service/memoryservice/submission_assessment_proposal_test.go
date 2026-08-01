@@ -1,12 +1,87 @@
 package memoryservice
 
 import (
+	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
+
+func TestSubmissionProposalObjectValuePreservesJSONNumberPrecision(t *testing.T) {
+	value, ok := submissionProposalObjectValue(map[string]any{
+		"type":  "number",
+		"value": json.Number("9007199254740993"),
+	})
+	require.True(t, ok)
+	require.Equal(t, "9007199254740993", value.CanonicalValue)
+}
+
+func TestSubmissionProposalObjectValueAcceptsOnlyFiniteScalarBindings(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		raw  any
+		want string
+		ok   bool
+	}{
+		{name: "string", raw: "PostgreSQL", want: "PostgreSQL", ok: true},
+		{name: "bool", raw: true, want: "true", ok: true},
+		{name: "float64", raw: 1.25, want: "1.25", ok: true},
+		{name: "float32", raw: float32(2.5), want: "2.5", ok: true},
+		{name: "int", raw: 3, want: "3", ok: true},
+		{name: "int32", raw: int32(4), want: "4", ok: true},
+		{name: "int64", raw: int64(5), want: "5", ok: true},
+		{name: "json number", raw: json.Number("6.75"), want: "6.75", ok: true},
+		{name: "nan", raw: math.NaN()},
+		{name: "infinity", raw: math.Inf(1)},
+		{name: "out of range json number", raw: json.Number("1e1000")},
+		{name: "object", raw: map[string]any{}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			got, ok := submissionProposalCanonicalValue(testCase.raw)
+			require.Equal(t, testCase.ok, ok)
+			if testCase.ok {
+				require.Equal(t, testCase.want, got)
+			}
+		})
+	}
+
+	for _, fields := range []map[string]any{
+		nil,
+		{"type": "string"},
+		{"type": "string", "value": "PostgreSQL", "display": 1},
+		{"type": "string", "value": "PostgreSQL", "unit": 1},
+	} {
+		value, ok := submissionProposalObjectValue(fields)
+		require.False(t, ok)
+		require.Nil(t, value)
+	}
+
+	value, ok := submissionProposalObjectValue(map[string]any{
+		"type": "string", "value": "PostgreSQL", "display": " PostgreSQL ", "unit": " database ",
+	})
+	require.True(t, ok)
+	require.Equal(t, "PostgreSQL", *value.Display)
+	require.Equal(t, "database", *value.Unit)
+}
+
+func TestSubmissionAssessmentRequiredProposalBindsCompleteObjectValue(t *testing.T) {
+	display := "PostgreSQL"
+	unit := "database"
+	required := submissionAssessmentRequiredProposal(submissionAssessmentProposal{Relationships: []submissionAssessmentRelationshipProposal{{
+		ProposalID: "relationship", ObjectValue: map[string]any{
+			"type": "string", "value": "PostgreSQL", "display": display, "unit": unit,
+		},
+	}}})
+	require.Len(t, required.Relationships, 1)
+	got := required.Relationships[0]
+	require.Equal(t, "string", got.ObjectValueType)
+	require.Equal(t, "PostgreSQL", got.ObjectValueCanonical)
+	require.Equal(t, &display, got.ObjectValueDisplay)
+	require.Equal(t, &unit, got.ObjectValueUnit)
+}
 
 func TestSubmissionStageRememberRequestRevalidatesStoredProposal(t *testing.T) {
 	request := submissionContractValidRequest()

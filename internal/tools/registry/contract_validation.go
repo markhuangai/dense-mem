@@ -152,7 +152,7 @@ func validateDreamFeedback(args map[string]any) error {
 	decision, _ := args["decision"].(string)
 	switch decision {
 	case "confirm_true", "confirm_false":
-		if err := validateRequiredFields(args, "evidence"); err != nil {
+		if err := validateRequiredFields(args, "evidence", "proposal"); err != nil {
 			return err
 		}
 		evidence, _ := args["evidence"].([]any)

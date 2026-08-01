@@ -296,6 +296,15 @@ func TestSemanticRelationshipLifecycleAndRLS(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrSemanticOwnerMismatch), err)
 
+	_, err = semanticRepo.RetractRelationship(ctx, RetractRelationshipInput{
+		TeamID:         teamA,
+		OwnerProfileID: ownerA,
+		RelationshipID: uuid.NewString(),
+		Reason:         "missing relationship",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrSemanticOwnerMismatch), err)
+
 	candidateIngest := createSemanticIngest(t, ctx, ledgerRepo, teamA, ownerA,
 		"dense mem may use postgres", "Dense-Mem may use PostgreSQL.")
 	candidate := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{

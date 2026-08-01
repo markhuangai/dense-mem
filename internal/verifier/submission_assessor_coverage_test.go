@@ -216,8 +216,22 @@ func TestSubmissionRequiredProposalNormalizationRejectsUnsafeBindings(t *testing
 		require.Contains(t, joined, want)
 	}
 
-	valueType := SubmissionAssessmentRequiredRelationship{ObjectValueType: "string"}
-	require.True(t, submissionAssessmentRequiredObjectMatches(valueType, SemanticAssessmentRelationshipResult{ObjectValue: &SemanticAssessmentValue{ValueType: "string"}}))
+	display := "PostgreSQL"
+	unit := "database"
+	valueType := SubmissionAssessmentRequiredRelationship{
+		ObjectValueType: "string", ObjectValueCanonical: "PostgreSQL", ObjectValueDisplay: &display, ObjectValueUnit: &unit,
+	}
+	require.True(t, submissionAssessmentRequiredObjectMatches(valueType, SemanticAssessmentRelationshipResult{ObjectValue: &SemanticAssessmentValue{
+		ValueType: "string", CanonicalValue: "PostgreSQL", Display: &display, Unit: &unit,
+	}}))
+	require.False(t, submissionAssessmentRequiredObjectMatches(valueType, SemanticAssessmentRelationshipResult{ObjectValue: &SemanticAssessmentValue{
+		ValueType: "string", CanonicalValue: "MySQL", Display: &display, Unit: &unit,
+	}}))
+	require.True(t, submissionAssessmentNullableValueMatches(nil, nil))
+	require.False(t, submissionAssessmentNullableValueMatches(nil, &display))
+	require.False(t, submissionAssessmentNullableValueMatches(&display, nil))
+	otherDisplay := "MySQL"
+	require.False(t, submissionAssessmentNullableValueMatches(&display, &otherDisplay))
 	require.False(t, submissionAssessmentRequiredEvidenceMatches([]SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 0, End: 1}}, nil))
 	require.Nil(t, prefixSubmissionSecurityErrors("security", nil))
 }

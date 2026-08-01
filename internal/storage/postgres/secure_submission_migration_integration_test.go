@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -21,10 +22,22 @@ func TestSecureSubmissionMigrationStagesLegacyWorkAndTerminalizesItsShell(t *tes
 	runGooseUpTo(t, ctx, sqlDB, 2026073103)
 	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
 	queued := insertSecureSubmissionLegacyFixture(t, ctx, sqlDB, teamID, profileID, "queued")
+	setSecureSubmissionLegacyProposal(t, ctx, sqlDB, teamID, queued.ingestID, `{
+		"entity_hints": [
+			{"ref":"legacy:subject","name":"Legacy","evidence":[{"evidence_index":0,"start":0,"end":6}]},
+			{"ref":"legacy:object","name":"Ada","evidence":[{"evidence_index":0,"start":13,"end":16}]}
+		],
+		"relationship_hints": [{
+			"proposal_id":"legacy:names","subject_ref":"legacy:subject","object_ref":"legacy:object",
+			"predicate":{"surface":"names","evidence_index":0,"start":7,"end":12},
+			"evidence":[{"evidence_index":0,"start":0,"end":17}]
+		}]
+	}`)
+	incompatible := insertSecureSubmissionLegacyFixture(t, ctx, sqlDB, teamID, profileID, "queued")
 	awaiting := insertSecureSubmissionLegacyFixture(t, ctx, sqlDB, teamID, profileID, "awaiting_review")
 
 	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026080102))
+	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026080103))
 
 	var (
 		submissionStatus         string
@@ -41,6 +54,12 @@ func TestSecureSubmissionMigrationStagesLegacyWorkAndTerminalizesItsShell(t *tes
 		canonicalPromotionCount  int
 		entityAssessmentFK       bool
 		verificationAssessmentFK bool
+		proposalRaw              []byte
+		actorAuthMethod          string
+		incompatibleStatus       string
+		incompatibleErrorCode    string
+		incompatibleStagedCount  int
+		incompatibleIngestStatus string
 	)
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		if err := tx.QueryRowContext(ctx, `
@@ -55,6 +74,40 @@ func TestSecureSubmissionMigrationStagesLegacyWorkAndTerminalizesItsShell(t *tes
 			FROM submission_staged_evidence
 			WHERE team_id = $1::uuid AND submission_id = $2::uuid AND evidence_index = 0
 		`, teamID, queued.ingestID).Scan(&stagedSourceKey, &stagedRevision, &stagedGroup); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `
+			SELECT proposal
+			FROM submission_staged_proposals
+			WHERE team_id = $1::uuid AND submission_id = $2::uuid
+		`, teamID, queued.ingestID).Scan(&proposalRaw); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `
+			SELECT actor_auth_method
+			FROM submission_runs
+			WHERE team_id = $1::uuid AND submission_id = $2::uuid
+		`, teamID, queued.ingestID).Scan(&actorAuthMethod); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `
+			SELECT status, error_code
+			FROM submission_runs
+			WHERE team_id = $1::uuid AND submission_id = $2::uuid
+		`, teamID, incompatible.ingestID).Scan(&incompatibleStatus, &incompatibleErrorCode); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `
+			SELECT count(*)
+			FROM submission_staged_evidence
+			WHERE team_id = $1::uuid AND submission_id = $2::uuid
+		`, teamID, incompatible.ingestID).Scan(&incompatibleStagedCount); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `
+			SELECT status FROM knowledge_ingests
+			WHERE team_id = $1::uuid AND ingest_id = $2::uuid
+		`, teamID, incompatible.ingestID).Scan(&incompatibleIngestStatus); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `
@@ -123,6 +176,13 @@ func TestSecureSubmissionMigrationStagesLegacyWorkAndTerminalizesItsShell(t *tes
 	}))
 
 	assert.Equal(t, "queued", submissionStatus)
+	var proposal map[string]any
+	require.NoError(t, json.Unmarshal(proposalRaw, &proposal))
+	assert.Contains(t, proposal, "entities")
+	assert.Contains(t, proposal, "relationships")
+	assert.NotContains(t, proposal, "entity_hints")
+	assert.NotContains(t, proposal, "relationship_hints")
+	assert.Empty(t, actorAuthMethod)
 	assert.Equal(t, queued.sourceKey, stagedSourceKey)
 	assert.Equal(t, "rev-1", stagedRevision)
 	assert.Equal(t, "legacy:source-group", stagedGroup)
@@ -136,6 +196,22 @@ func TestSecureSubmissionMigrationStagesLegacyWorkAndTerminalizesItsShell(t *tes
 	assert.Zero(t, canonicalPromotionCount)
 	assert.True(t, entityAssessmentFK)
 	assert.True(t, verificationAssessmentFK)
+	assert.Equal(t, "failed", incompatibleStatus)
+	assert.Equal(t, "legacy_proposal_incompatible", incompatibleErrorCode)
+	assert.Zero(t, incompatibleStagedCount)
+	assert.Equal(t, "failed", incompatibleIngestStatus)
+}
+
+func setSecureSubmissionLegacyProposal(t *testing.T, ctx context.Context, db *sql.DB, teamID, ingestID, proposal string) {
+	t.Helper()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE knowledge_ingests
+			SET proposal = $3::jsonb
+			WHERE team_id = $1::uuid AND ingest_id = $2::uuid
+		`, teamID, ingestID, proposal)
+		return err
+	}))
 }
 
 func TestSecureSubmissionMigrationRefusesUnfinishedLegacySearchOutput(t *testing.T) {
@@ -254,7 +330,7 @@ func insertSecureSubmissionLegacyFixture(
 				evidence_index, content, content_hash, source_type, authority, source_ref, metadata
 			) VALUES (
 				$1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid,
-				0, 'Legacy source names Ada.', 'sha256:legacy-fragment', 'document', 'primary', 'legacy-source',
+				0, 'Legacy names Ada.', 'sha256:legacy-fragment', 'document', 'primary', 'legacy-source',
 				'{"contract_source_group":"legacy:source-group","evidence_idempotency_key":"legacy-evidence"}'::jsonb
 			)
 		`, teamID, fixture.fragmentID, fixture.ingestID, profileID, sourceID, revisionID); err != nil {

@@ -41,10 +41,13 @@ func insertSubmissionRun(ctx context.Context, tx *gorm.DB, input CreateSubmissio
 	if input.IdempotencyKey == "" {
 		row := tx.WithContext(ctx).Raw(`
 			INSERT INTO submission_runs (
-				team_id, owner_profile_id, request_hash, source_summary, status, replaces_quarantined_submission_id
-			) VALUES (?::uuid, ?::uuid, ?, ?, 'queued', NULLIF(?, '')::uuid)
+				team_id, owner_profile_id, actor_credential_id, actor_auth_method, actor_role, actor_scopes, correlation_id,
+				request_hash, source_summary, status, replaces_quarantined_submission_id
+			) VALUES (?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?, ?, 'queued', NULLIF(?, '')::uuid)
 			RETURNING submission_id::text
-		`, input.TeamID, input.OwnerProfileID, input.RequestHash, input.SourceSummary, input.ReplacesQuarantinedSubmissionID).Row()
+		`, input.TeamID, input.OwnerProfileID, input.ActorCredentialID, input.ActorAuthMethod, input.ActorRole,
+			pqStringArray(input.ActorScopes), input.CorrelationID, input.RequestHash, input.SourceSummary,
+			input.ReplacesQuarantinedSubmissionID).Row()
 		var submissionID string
 		if err := row.Scan(&submissionID); err != nil {
 			return "", false, err
@@ -52,40 +55,59 @@ func insertSubmissionRun(ctx context.Context, tx *gorm.DB, input CreateSubmissio
 		return submissionID, true, nil
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		WITH inserted AS (
-			INSERT INTO submission_runs (
-				team_id, owner_profile_id, idempotency_key, request_hash, source_summary, status,
-				replaces_quarantined_submission_id
-			) VALUES (?::uuid, ?::uuid, ?, ?, ?, 'queued', NULLIF(?, '')::uuid)
-			ON CONFLICT (team_id, owner_profile_id, idempotency_key)
-			WHERE idempotency_key <> ''
-			DO NOTHING
-			RETURNING submission_id::text, request_hash, true AS created
-		)
-		SELECT submission_id, request_hash, created FROM inserted
-		UNION ALL
-		SELECT submission_id::text, request_hash, false AS created
-		FROM submission_runs
-		WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
-		LIMIT 1
-	`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash, input.SourceSummary,
-		input.ReplacesQuarantinedSubmissionID, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Rows()
+		INSERT INTO submission_runs (
+			team_id, owner_profile_id, actor_credential_id, actor_auth_method, actor_role, actor_scopes, correlation_id,
+			idempotency_key, request_hash, source_summary, status,
+			replaces_quarantined_submission_id
+		) VALUES (?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?, ?, ?, 'queued', NULLIF(?, '')::uuid)
+		ON CONFLICT (team_id, owner_profile_id, idempotency_key)
+		WHERE idempotency_key <> ''
+		DO NOTHING
+		RETURNING submission_id::text, request_hash
+	`, input.TeamID, input.OwnerProfileID, input.ActorCredentialID, input.ActorAuthMethod, input.ActorRole,
+		pqStringArray(input.ActorScopes), input.CorrelationID, input.IdempotencyKey, input.RequestHash,
+		input.SourceSummary, input.ReplacesQuarantinedSubmissionID).Rows()
 	if err != nil {
 		return "", false, err
 	}
-	defer rows.Close()
-	if !rows.Next() {
-		return "", false, rows.Err()
+	if rows.Next() {
+		var submissionID, requestHash string
+		if err := rows.Scan(&submissionID, &requestHash); err != nil {
+			_ = rows.Close()
+			return "", false, err
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return "", false, err
+		}
+		if err := rows.Close(); err != nil {
+			return "", false, err
+		}
+		if requestHash != input.RequestHash {
+			return "", false, ErrSubmissionConflict
+		}
+		return submissionID, true, nil
 	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return "", false, err
+	}
+	if err := rows.Close(); err != nil {
+		return "", false, err
+	}
+	row := tx.WithContext(ctx).Raw(`
+		SELECT submission_id::text, request_hash
+		FROM submission_runs
+		WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
+	`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Row()
 	var submissionID, requestHash string
-	var created bool
-	if err := rows.Scan(&submissionID, &requestHash, &created); err != nil {
+	if err := row.Scan(&submissionID, &requestHash); err != nil {
 		return "", false, err
 	}
 	if requestHash != input.RequestHash {
 		return "", false, ErrSubmissionConflict
 	}
-	return submissionID, created, rows.Err()
+	return submissionID, false, nil
 }
 
 func insertSubmissionProposal(ctx context.Context, tx *gorm.DB, teamID, ownerID, submissionID string, proposal map[string]any) error {
@@ -131,7 +153,8 @@ func loadSubmission(
 	includeEvidence bool,
 ) (*Submission, error) {
 	row := tx.WithContext(ctx).Raw(`
-	SELECT submission_id::text, request_hash, source_summary, created_at, status, attempts, max_attempts, lease_until, worker_id,
+	SELECT submission_id::text, COALESCE(actor_credential_id::text, ''), actor_auth_method, actor_role, actor_scopes, correlation_id,
+	       request_hash, source_summary, created_at, status, attempts, max_attempts, lease_until, worker_id,
 		       error_code, COALESCE(canonical_ingest_id::text, ''),
 		       COALESCE(replaces_quarantined_submission_id::text, ''), quarantine_expires_at
 		FROM submission_runs
@@ -139,10 +162,13 @@ func loadSubmission(
 	`, teamID, ownerID, submissionID).Row()
 	loaded := &Submission{TeamID: teamID, OwnerProfileID: ownerID, Proposal: map[string]any{}, Evidence: []SubmissionEvidence{}, Outcomes: []SubmissionOutcome{}}
 	var leaseUntil, expiresAt sql.NullTime
-	if err := row.Scan(&loaded.SubmissionID, &loaded.RequestHash, &loaded.SourceSummary, &loaded.CreatedAt, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &leaseUntil,
+	var actorScopes pq.StringArray
+	if err := row.Scan(&loaded.SubmissionID, &loaded.ActorCredentialID, &loaded.ActorAuthMethod, &loaded.ActorRole, &actorScopes, &loaded.CorrelationID,
+		&loaded.RequestHash, &loaded.SourceSummary, &loaded.CreatedAt, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &leaseUntil,
 		&loaded.WorkerID, &loaded.ErrorCode, &loaded.CanonicalIngestID, &loaded.ReplacesQuarantinedSubmissionID, &expiresAt); err != nil {
 		return nil, err
 	}
+	loaded.ActorScopes = append([]string(nil), actorScopes...)
 	if leaseUntil.Valid {
 		loaded.LeaseUntil = &leaseUntil.Time
 	}
@@ -196,6 +222,24 @@ func loadSubmission(
 		}
 	}
 	return loaded, nil
+}
+
+func normalizeSubmissionActorScopes(scopes []string) []string {
+	seen := make(map[string]struct{}, len(scopes))
+	normalized := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			continue
+		}
+		if _, exists := seen[scope]; exists {
+			continue
+		}
+		seen[scope] = struct{}{}
+		normalized = append(normalized, scope)
+	}
+	sort.Strings(normalized)
+	return normalized
 }
 
 func loadSubmissionStatus(ctx context.Context, tx *gorm.DB, teamID, ownerID, submissionID string) (*SubmissionStatus, error) {

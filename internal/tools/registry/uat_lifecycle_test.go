@@ -49,6 +49,86 @@ func TestBuildActiveWiresExecutableRetractEvidence(t *testing.T) {
 	}
 }
 
+func TestBuildActiveWiresExecutableRetractRelationship(t *testing.T) {
+	stub := &stubLifecycleService{}
+	reg, err := BuildActive(Dependencies{Lifecycle: stub})
+	if err != nil {
+		t.Fatalf("BuildActive: %v", err)
+	}
+	retract, ok := reg.Get(ToolRetractRelationship)
+	if !ok {
+		t.Fatal("BuildActive did not register retract_relationship")
+	}
+	out, err := retract.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
+		"relationship_id": "relationship-canonical",
+		"reason":          "entered in error",
+		"idempotency_key": "relationship-retract-1",
+	})
+	if err != nil {
+		t.Fatalf("retract_relationship.Invoke: %v", err)
+	}
+	if err := ValidateInput(Tool{InputSchema: retract.OutputSchema}, out); err != nil {
+		t.Fatalf("validate output: %v", err)
+	}
+	if out["relationship_id"] != "relationship-canonical" || out["to_status"] != string(domain.RelationshipStatusRetracted) {
+		t.Fatalf("retract relationship output = %#v", out)
+	}
+	if stub.retractRelationshipReq.RelationshipID != "relationship-canonical" {
+		t.Fatalf("stub relationship retraction request not populated: %#v", stub.retractRelationshipReq)
+	}
+}
+
+func TestBuildActiveRetractRelationshipReportsDependencyValidationAndServiceErrors(t *testing.T) {
+	input := map[string]any{
+		"relationship_id": "relationship-canonical",
+		"reason":          "entered in error",
+		"idempotency_key": "relationship-retract-errors-1",
+	}
+
+	unavailableRegistry, err := BuildActive(Dependencies{})
+	if err != nil {
+		t.Fatalf("BuildActive unavailable: %v", err)
+	}
+	unavailable, ok := unavailableRegistry.Get(ToolRetractRelationship)
+	if !ok {
+		t.Fatal("BuildActive did not register retract_relationship")
+	}
+	_, err = unavailable.Invoke(contractInvokeContext("write"), "ignored-profile", input)
+	if !errors.Is(err, ErrToolUnavailable) {
+		t.Fatalf("unavailable retract relationship error = %v", err)
+	}
+
+	registry, err := BuildActive(Dependencies{Lifecycle: &stubLifecycleService{}})
+	if err != nil {
+		t.Fatalf("BuildActive lifecycle: %v", err)
+	}
+	retract, ok := registry.Get(ToolRetractRelationship)
+	if !ok {
+		t.Fatal("BuildActive did not register retract_relationship")
+	}
+	_, err = retract.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
+		"relationship_id": "relationship-canonical",
+		"idempotency_key": "relationship-retract-errors-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "retract_relationship: invalid input") {
+		t.Fatalf("invalid retract relationship error = %v", err)
+	}
+
+	serviceErr := errors.New("relationship lifecycle unavailable")
+	failingRegistry, err := BuildActive(Dependencies{Lifecycle: &stubLifecycleService{retractRelationshipErr: serviceErr}})
+	if err != nil {
+		t.Fatalf("BuildActive failing lifecycle: %v", err)
+	}
+	retry, ok := failingRegistry.Get(ToolRetractRelationship)
+	if !ok {
+		t.Fatal("BuildActive did not register retract_relationship")
+	}
+	_, err = retry.Invoke(contractInvokeContext("write"), "ignored-profile", input)
+	if !errors.Is(err, serviceErr) {
+		t.Fatalf("service retract relationship error = %v", err)
+	}
+}
+
 func TestBuildActiveRetractEvidenceReportsDependencyValidationAndServiceErrors(t *testing.T) {
 	input := map[string]any{
 		"evidence_ids":    []any{"evidence-canonical"},
@@ -161,9 +241,11 @@ func TestBuildActiveCorrectEntityResolutionRejectsTenantOverride(t *testing.T) {
 }
 
 type stubLifecycleService struct {
-	correctReq memoryservice.CorrectEntityResolutionRequest
-	retractReq memoryservice.RetractEvidenceRequest
-	retractErr error
+	correctReq             memoryservice.CorrectEntityResolutionRequest
+	retractReq             memoryservice.RetractEvidenceRequest
+	retractRelationshipReq memoryservice.RetractRelationshipRequest
+	retractErr             error
+	retractRelationshipErr error
 }
 
 func (s *stubLifecycleService) CorrectEntityResolution(
@@ -197,5 +279,21 @@ func (s *stubLifecycleService) RetractEvidence(
 		AffectedRelationshipCount:       1,
 		PendingRelationshipCount:        1,
 		RetainedActiveRelationshipCount: 0,
+	}, nil
+}
+
+func (s *stubLifecycleService) RetractRelationship(
+	_ context.Context,
+	req memoryservice.RetractRelationshipRequest,
+) (*memoryservice.RetractRelationshipResult, error) {
+	s.retractRelationshipReq = req
+	if s.retractRelationshipErr != nil {
+		return nil, s.retractRelationshipErr
+	}
+	return &memoryservice.RetractRelationshipResult{
+		TransitionID:   "relationship-transition-canonical",
+		RelationshipID: req.RelationshipID,
+		FromStatus:     string(domain.RelationshipStatusActive),
+		ToStatus:       string(domain.RelationshipStatusRetracted),
 	}, nil
 }

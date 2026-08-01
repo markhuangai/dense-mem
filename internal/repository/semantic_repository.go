@@ -344,6 +344,9 @@ func (r *SemanticRepositoryImpl) RetractRelationship(
 			return nil
 		}
 		current, err := loadRelationshipRecord(ctx, tx, input.TeamID, input.RelationshipID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrSemanticOwnerMismatch
+		}
 		if err != nil {
 			return err
 		}

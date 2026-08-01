@@ -659,13 +659,18 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-		remember, err := s.deps.Remember.Remember(ctx, memoryservice.RememberRequest{
+		rememberRequest := memoryservice.RememberRequest{
 			ContractVersion:   domain.ContractVersion,
 			Evidence:          evidence,
 			EntityHints:       req.EntityHints,
 			RelationshipHints: req.RelationshipHints,
 			IdempotencyKey:    dreamFeedbackIdempotency(req, dreamID, decision),
-		})
+		}
+		if err := memoryservice.ValidateSubmissionProposal(rememberRequest); err != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
+			return nil, err
+		}
+		remember, err := s.deps.Remember.Remember(ctx, rememberRequest)
 		if err != nil {
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err

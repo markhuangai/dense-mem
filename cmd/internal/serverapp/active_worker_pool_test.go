@@ -34,6 +34,36 @@ func TestActiveWorkerCountUsesConfiguredConcurrency(t *testing.T) {
 	}
 }
 
+func TestSubmissionCleanupWorkerRunsWithoutActiveTeams(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := make(chan struct{}, 1)
+	finished := make(chan struct{})
+	go func() {
+		runSubmissionCleanupWorker(ctx, submissionCleanupWorkerConfig{
+			pollInterval: time.Hour,
+			logger:       observability.New(slog.LevelError),
+			cleanup: func(context.Context) (int64, error) {
+				calls <- struct{}{}
+				return 1, nil
+			},
+		})
+		close(finished)
+	}()
+
+	select {
+	case <-calls:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for cleanup independent of active-team enumeration")
+	}
+	cancel()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup worker did not stop after cancellation")
+	}
+}
+
 func TestActiveTeamDispatcherProbesIdleTeamOncePerPoll(t *testing.T) {
 	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
 	dispatcher := newActiveTeamDispatcher(5 * time.Second)

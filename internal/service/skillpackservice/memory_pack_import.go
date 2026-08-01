@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -54,7 +55,7 @@ func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string
 			Authority:      MemoryPackAuthority(mode),
 			SourceKey:      "memory_pack:" + loaded.hash,
 			SourceRevision: loaded.hash,
-			IdempotencyKey: importID + ":" + item.ItemID,
+			IdempotencyKey: "memory-pack-item:" + memoryPackSubmissionToken(importID, item.ItemID),
 			Labels:         []string{MemoryPackLabel},
 			Metadata: map[string]any{
 				"memory_pack_import_id":            importID,
@@ -136,6 +137,128 @@ func importResultFromExisting(record *domain.SkillPackImport, hash string, mode 
 	return result
 }
 
+func (s *memoryPackService) reconcileSubmittedImport(ctx context.Context, record *domain.SkillPackImport) (*domain.SkillPackImport, error) {
+	if record == nil || record.Status != domain.SkillPackImportStatusSubmitted {
+		return record, nil
+	}
+	if s.deps.Remember == nil {
+		return nil, errors.New("memory pack import: remember service is required to reconcile submitted import")
+	}
+	submissionID := strings.TrimSpace(record.SubmissionID)
+	if submissionID == "" {
+		if summarySubmissionID, _ := record.Summary["submission_id"].(string); summarySubmissionID != "" {
+			submissionID = summarySubmissionID
+		}
+	}
+	if submissionID == "" {
+		return nil, errors.New("memory pack import: submitted import is missing submission_id")
+	}
+	status, err := s.deps.Remember.GetSubmissionStatus(ctx, memoryservice.GetSubmissionStatusRequest{
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    submissionID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("memory pack import: get submission status: %w", err)
+	}
+	if status == nil {
+		return nil, errors.New("memory pack import: get submission status returned no result")
+	}
+	processingState := strings.TrimSpace(status.ProcessingState)
+	importStatus, terminal, err := memoryPackImportStatusForSubmission(processingState)
+	if err != nil {
+		return nil, err
+	}
+	summary := cloneMemoryPackSummary(record.Summary)
+	summary["submission_id"] = submissionID
+	summary["submission_processing_state"] = processingState
+	appliedCount := record.AppliedCount
+	skippedCount := record.SkippedCount
+	if terminal && importStatus == domain.SkillPackImportStatusApplied {
+		appliedCount, skippedCount = memoryPackSummaryCounts(summary, record.ItemCount, record.SkippedCount)
+		memoryPackSummarySetItemStatus(summary, "submitted", "applied")
+	}
+	if terminal && importStatus == domain.SkillPackImportStatusFailed {
+		appliedCount = 0
+		memoryPackSummarySetItemStatus(summary, "submitted", "failed")
+	}
+	if err := s.deps.Ledger.UpdateImportStatus(ctx, record.TeamID, record.ImportID, importStatus, appliedCount, skippedCount, summary); err != nil {
+		return nil, err
+	}
+	record.Status = importStatus
+	record.SubmissionID = submissionID
+	record.AppliedCount = appliedCount
+	record.SkippedCount = skippedCount
+	record.Summary = summary
+	return record, nil
+}
+
+func memoryPackImportStatusForSubmission(processingState string) (string, bool, error) {
+	switch processingState {
+	case string(domain.SubmissionQueued), string(domain.SubmissionProcessing):
+		return domain.SkillPackImportStatusSubmitted, false, nil
+	case string(domain.SubmissionCompleted):
+		return domain.SkillPackImportStatusApplied, true, nil
+	case string(domain.SubmissionRejected), string(domain.SubmissionQuarantined), string(domain.SubmissionFailed):
+		return domain.SkillPackImportStatusFailed, true, nil
+	default:
+		return "", false, fmt.Errorf("memory pack import: unsupported submission processing state %q", processingState)
+	}
+}
+
+func cloneMemoryPackSummary(summary map[string]any) map[string]any {
+	cloned := make(map[string]any, len(summary)+2)
+	for key, value := range summary {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func memoryPackSummaryCounts(summary map[string]any, itemCount, skippedCount int) (int, int) {
+	items := memoryPackSummaryItems(summary)
+	if len(items) == 0 {
+		return max(itemCount-skippedCount, 0), skippedCount
+	}
+	applied := 0
+	skipped := 0
+	for _, item := range items {
+		if item.Status == "skipped" {
+			skipped++
+			continue
+		}
+		applied++
+	}
+	return applied, skipped
+}
+
+func memoryPackSummarySetItemStatus(summary map[string]any, from, to string) {
+	items := memoryPackSummaryItems(summary)
+	if len(items) == 0 {
+		return
+	}
+	for index := range items {
+		if items[index].Status == from {
+			items[index].Status = to
+		}
+	}
+	summary["items"] = items
+}
+
+func memoryPackSummaryItems(summary map[string]any) []ImportItemResult {
+	raw, ok := summary["items"]
+	if !ok || raw == nil {
+		return nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var items []ImportItemResult
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil
+	}
+	return items
+}
+
 func MemoryPackImportCounts(items []ImportItemResult) (int, int) {
 	applied := 0
 	skipped := 0
@@ -209,6 +332,9 @@ func rollbackConflicts(record *domain.SkillPackImport, changes []domain.SkillPac
 	if record.Status == domain.SkillPackImportStatusSubmitted {
 		return []string{"import is still represented by a submission; check its submission status before lifecycle changes"}
 	}
+	if record.Status == domain.SkillPackImportStatusApplied {
+		return []string{"import has applied semantic effects; rollback requires lifecycle dependency checks"}
+	}
 	for _, change := range changes {
 		if change.EntityType == "relationship" || change.EntityType == "fact" || change.EntityType == "claim" {
 			return []string{"import has semantic graph effects; rollback requires lifecycle dependency checks"}
@@ -266,10 +392,11 @@ func memoryPackSubmissionMaterial(
 	objectEnd := objectStart + len([]rune(object))
 	leadEnd := len([]rune(lead))
 
-	subjectRef := "memory_pack:" + importID + ":" + item.ItemID + ":subject"
+	proposalToken := memoryPackSubmissionToken(importID, item.ItemID)
+	subjectRef := proposalToken + ":subject"
 	entities := []map[string]any{memoryPackEntityProposal(subjectRef, subject, item.Subject.SourceID, evidenceIndex, subjectStart, subjectEnd)}
 	relationship := map[string]any{
-		"proposal_id": item.ItemID,
+		"proposal_id": proposalToken,
 		"subject_ref": subjectRef,
 		"predicate": map[string]any{
 			"surface":        predicate,
@@ -292,11 +419,16 @@ func memoryPackSubmissionMaterial(
 		}
 		relationship["object_value"] = value
 	} else {
-		objectRef := "memory_pack:" + importID + ":" + item.ItemID + ":object"
+		objectRef := proposalToken + ":object"
 		entities = append(entities, memoryPackEntityProposal(objectRef, object, item.Object.SourceID, evidenceIndex, objectStart, objectEnd))
 		relationship["object_ref"] = objectRef
 	}
 	return content, entities, relationship, nil
+}
+
+func memoryPackSubmissionToken(importID, itemID string) string {
+	sum := sha256.Sum256([]byte("dense-mem:memory-pack-submission-item:v1\x00" + importID + "\x00" + itemID))
+	return "memory_pack:" + hex.EncodeToString(sum[:16])
 }
 
 func memoryPackRelationshipLead(item MemoryPackRelationship) string {

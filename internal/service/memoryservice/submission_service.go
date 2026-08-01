@@ -58,6 +58,11 @@ func (s *rememberService) rememberSubmission(ctx context.Context, req RememberRe
 	created, err := s.submissions.CreateSubmission(ctx, repository.CreateSubmissionInput{
 		TeamID:                          actor.TeamID.String(),
 		OwnerProfileID:                  actor.ProfileID.String(),
+		ActorCredentialID:               credential.KeyID.String(),
+		ActorAuthMethod:                 credential.AuthMethod,
+		ActorRole:                       credential.Role,
+		ActorScopes:                     append([]string(nil), credential.Scopes...),
+		CorrelationID:                   correlation.FromContext(ctx),
 		IdempotencyKey:                  strings.TrimSpace(req.IdempotencyKey),
 		RequestHash:                     requestHash,
 		SourceSummary:                   sourceSummary(req.Evidence),

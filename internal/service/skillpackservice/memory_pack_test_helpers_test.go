@@ -40,10 +40,13 @@ func (s *semanticReaderStub) TraceRelationship(_ context.Context, input reposito
 }
 
 type rememberStub struct {
-	calls  int
-	reqs   []memoryservice.RememberRequest
-	result *memoryservice.RememberResult
-	err    error
+	calls      int
+	reqs       []memoryservice.RememberRequest
+	result     *memoryservice.RememberResult
+	err        error
+	status     *memoryservice.SubmissionStatusResult
+	statusErr  error
+	statusReqs []memoryservice.GetSubmissionStatusRequest
 }
 
 func (s *rememberStub) Remember(_ context.Context, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
@@ -63,6 +66,13 @@ func (s *rememberStub) Remember(_ context.Context, req memoryservice.RememberReq
 }
 
 func (s *rememberStub) GetSubmissionStatus(_ context.Context, req memoryservice.GetSubmissionStatusRequest) (*memoryservice.SubmissionStatusResult, error) {
+	s.statusReqs = append(s.statusReqs, req)
+	if s.statusErr != nil {
+		return nil, s.statusErr
+	}
+	if s.status != nil {
+		return s.status, nil
+	}
 	return &memoryservice.SubmissionStatusResult{SubmissionID: req.SubmissionID, ProcessingState: string(domain.SubmissionQueued)}, nil
 }
 

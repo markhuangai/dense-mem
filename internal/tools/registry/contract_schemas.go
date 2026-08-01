@@ -185,6 +185,14 @@ func retractEvidenceInputSchema() map[string]any {
 	})
 }
 
+func retractRelationshipInputSchema() map[string]any {
+	return contractInput([]string{"relationship_id", "reason", "idempotency_key"}, map[string]any{
+		"relationship_id": schemaString("Caller-owned Relationship ID to retract.", 128),
+		"reason":          nonEmptyStringSchema("Required bounded retraction reason.", 1000),
+		"idempotency_key": nonEmptyStringSchema("Retraction retry key scoped to team and profile.", 128),
+	})
+}
+
 func correctEntityResolutionInputSchema() map[string]any {
 	return contractInput(
 		[]string{"operation", "source_entity_id", "target_entity_id", "owned_observation_ids", "evidence", "dry_run", "idempotency_key"},
@@ -438,6 +446,18 @@ func retractEvidenceOutputSchema() map[string]any {
 			"affected_relationship_count":        map[string]any{"type": "integer", "minimum": 0},
 			"pending_relationship_count":         map[string]any{"type": "integer", "minimum": 0},
 			"retained_active_relationship_count": map[string]any{"type": "integer", "minimum": 0},
+		},
+	)
+}
+
+func retractRelationshipOutputSchema() map[string]any {
+	return closedObject(
+		[]string{"transition_id", "relationship_id", "from_status", "to_status"},
+		map[string]any{
+			"transition_id":   schemaString("Append-only Relationship transition ID.", 128),
+			"relationship_id": schemaString("Retracted Relationship ID.", 128),
+			"from_status":     schemaEnum(domain.RelationshipStatuses()),
+			"to_status":       schemaEnum(domain.RelationshipStatuses()),
 		},
 	)
 }

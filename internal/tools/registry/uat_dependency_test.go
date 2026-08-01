@@ -220,11 +220,32 @@ func TestBuildActiveWiresExecutableDreamTools(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "evidence is required") {
 		t.Fatalf("resolve_dream_feedback missing evidence err = %v", err)
 	}
+	_, err = resolve.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
+		"hypothesis_id": "dream-v2",
+		"decision":      "confirm_true",
+		"evidence": []any{
+			map[string]any{"content": "A deployment note independently confirms Dense-Mem uses PostgreSQL."},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "proposal is required") {
+		t.Fatalf("resolve_dream_feedback missing proposal err = %v", err)
+	}
 	resolveOut, err := resolve.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
 		"hypothesis_id": "dream-v2",
 		"decision":      "confirm_true",
 		"evidence": []any{
 			map[string]any{"content": "A deployment note independently confirms Dense-Mem uses PostgreSQL."},
+		},
+		"proposal": map[string]any{
+			"entities": []any{
+				map[string]any{"ref": "dream:subject", "name": "Dense-Mem", "evidence": []any{map[string]any{"evidence_index": 0, "start": 41, "end": 50}}},
+				map[string]any{"ref": "dream:object", "name": "PostgreSQL", "evidence": []any{map[string]any{"evidence_index": 0, "start": 56, "end": 66}}},
+			},
+			"relationships": []any{map[string]any{
+				"proposal_id": "dream:relationship", "subject_ref": "dream:subject", "object_ref": "dream:object",
+				"predicate": map[string]any{"surface": "uses", "evidence_index": 0, "start": 51, "end": 55},
+				"evidence":  []any{map[string]any{"evidence_index": 0, "start": 0, "end": 67}},
+			}},
 		},
 	})
 	if err != nil {

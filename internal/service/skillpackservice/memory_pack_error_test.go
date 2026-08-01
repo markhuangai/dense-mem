@@ -196,7 +196,7 @@ func TestMemoryPackLedgerHardFailuresRemainVisible(t *testing.T) {
 		ImportID:       importID,
 		TeamID:         teamID.String(),
 		OwnerProfileID: ownerID.String(),
-		Status:         domain.SkillPackImportStatusApplied,
+		Status:         domain.SkillPackImportStatusFailed,
 	}
 	markSvc := NewMemoryPackService(MemoryPackDependencies{Ledger: markLedger})
 	dryRun, err := markSvc.Rollback(

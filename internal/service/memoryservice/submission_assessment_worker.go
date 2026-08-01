@@ -109,9 +109,6 @@ func (s *submissionAssessmentWorkerService) ProcessNextSubmissionAssessment(ctx 
 	if err := s.validateDependencies(); err != nil {
 		return false, err
 	}
-	if _, err := s.submissions.CleanupExpiredSubmissions(ctx, s.now().UTC(), 100); err != nil {
-		return false, fmt.Errorf("submission assessment worker: cleanup expired submissions: %w", err)
-	}
 	claim, err := s.submissions.ClaimNextSubmission(ctx, s.teamID, s.workerID, s.lease)
 	if err != nil {
 		return false, fmt.Errorf("submission assessment worker: claim: %w", err)
@@ -141,6 +138,9 @@ func (s *submissionAssessmentWorkerService) ProcessNextSubmissionAssessment(ctx 
 
 	request, proposal, err := s.buildRequest(ctx, staged)
 	if err != nil {
+		if errors.Is(err, errSubmissionAssessmentCatalogUnavailable) {
+			return true, errors.Join(errors.New("submission catalog unavailable"), s.requeue(ctx, *claim, "catalog_unavailable"))
+		}
 		return true, errors.Join(errors.New("submission contract is invalid"), s.reject(ctx, *claim, staged, proposal, "deterministic_submission_contract"))
 	}
 	assessment, response, err := s.loadOrAssess(ctx, *claim, request)
@@ -199,7 +199,7 @@ func (s *submissionAssessmentWorkerService) buildRequest(
 	}
 	groups, truncated, err := s.prefetchEntityCandidates(ctx, staged, proposal)
 	if err != nil {
-		return verifier.SemanticAssessmentRequest{}, proposal, err
+		return verifier.SemanticAssessmentRequest{}, proposal, fmt.Errorf("%w: entity candidates: %w", errSubmissionAssessmentCatalogUnavailable, err)
 	}
 	queryParts := make([]string, 0, len(staged.Evidence))
 	for _, evidence := range staged.Evidence {
@@ -212,7 +212,7 @@ func (s *submissionAssessmentWorkerService) buildRequest(
 		Limit:          verifier.SemanticAssessmentMaxPredicateOptions,
 	})
 	if err != nil {
-		return verifier.SemanticAssessmentRequest{}, proposal, err
+		return verifier.SemanticAssessmentRequest{}, proposal, fmt.Errorf("%w: predicate options: %w", errSubmissionAssessmentCatalogUnavailable, err)
 	}
 	options := make([]verifier.SemanticAssessmentPredicateOption, 0, len(predicates))
 	for _, predicate := range predicates {
@@ -376,7 +376,10 @@ func (s *submissionAssessmentWorkerService) prefetchEntityCandidates(
 	return ordered, truncated, nil
 }
 
-var errStoredSubmissionAssessmentInvalid = errors.New("stored submission assessment is invalid")
+var (
+	errStoredSubmissionAssessmentInvalid      = errors.New("stored submission assessment is invalid")
+	errSubmissionAssessmentCatalogUnavailable = errors.New("submission assessment catalog unavailable")
+)
 
 func (s *submissionAssessmentWorkerService) loadOrAssess(
 	ctx context.Context,
@@ -676,19 +679,6 @@ func submissionAssessmentRejectionReason(
 	return ""
 }
 
-func submissionRelationshipObjectMatches(
-	expected submissionAssessmentRelationshipProposal,
-	result verifier.SemanticAssessmentRelationshipResult,
-) bool {
-	if expected.ObjectRef != "" {
-		return result.ObjectRef != nil && *result.ObjectRef == expected.ObjectRef && result.ObjectValue == nil
-	}
-	if result.ObjectRef != nil || result.ObjectValue == nil || expected.ObjectValue == nil {
-		return false
-	}
-	return result.ObjectValue.ValueType == submissionProposalString(expected.ObjectValue, "type")
-}
-
 func submissionRelationshipSpansMatch(
 	expected []submissionProposalSpan,
 	actual []verifier.SemanticAssessmentEvidenceSpan,
@@ -916,6 +906,15 @@ func submissionCanonicalIngest(staged *repository.Submission) (repository.Create
 		Metadata: map[string]any{
 			"contract_version": domain.ContractVersion,
 			"submission_id":    staged.SubmissionID,
+			"actor": map[string]any{
+				"team_id":        staged.TeamID,
+				"profile_id":     staged.OwnerProfileID,
+				"credential_id":  staged.ActorCredentialID,
+				"auth_method":    staged.ActorAuthMethod,
+				"role":           staged.ActorRole,
+				"scopes":         append([]string(nil), staged.ActorScopes...),
+				"correlation_id": staged.CorrelationID,
+			},
 		},
 		Evidence: make([]repository.EvidenceInput, 0, len(remember.Evidence)),
 	}

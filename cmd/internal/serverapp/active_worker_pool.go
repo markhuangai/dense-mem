@@ -13,6 +13,7 @@ import (
 var (
 	errActiveWorkerProfileListFailed    = errors.New("active worker profile list failed")
 	errSubmissionAssessmentWorkerFailed = errors.New("submission assessment worker failed")
+	errSubmissionCleanupFailed          = errors.New("submission cleanup failed")
 	errEmbeddingWorkerFailed            = errors.New("embedding worker failed")
 )
 
@@ -39,6 +40,14 @@ type activeTeamWorkResult struct {
 	err    error
 }
 
+type submissionCleanupFunc func(context.Context) (int64, error)
+
+type submissionCleanupWorkerConfig struct {
+	pollInterval time.Duration
+	logger       observability.LogProvider
+	cleanup      submissionCleanupFunc
+}
+
 func activeWorkerCount(configured int) int {
 	if configured <= 0 {
 		return 1
@@ -48,6 +57,39 @@ func activeWorkerCount(configured int) int {
 
 func startActiveTeamWorkerPool(ctx context.Context, cfg activeTeamWorkerPoolConfig) {
 	go runActiveTeamWorkerPool(ctx, cfg)
+}
+
+func startSubmissionCleanupWorker(ctx context.Context, cfg submissionCleanupWorkerConfig) {
+	go runSubmissionCleanupWorker(ctx, cfg)
+}
+
+func runSubmissionCleanupWorker(ctx context.Context, cfg submissionCleanupWorkerConfig) {
+	if cfg.cleanup == nil {
+		return
+	}
+	pollInterval := cfg.pollInterval
+	if pollInterval <= 0 {
+		pollInterval = time.Second
+	}
+	run := func() {
+		if ctx.Err() != nil {
+			return
+		}
+		if _, err := cfg.cleanup(ctx); err != nil && ctx.Err() == nil && cfg.logger != nil {
+			cfg.logger.Error("submission cleanup failed", errSubmissionCleanupFailed)
+		}
+	}
+	run()
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
 }
 
 func runActiveTeamWorkerPool(ctx context.Context, cfg activeTeamWorkerPoolConfig) {

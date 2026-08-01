@@ -23,6 +23,7 @@ var ErrLifecycleAuthContext = errors.New("memory lifecycle: authenticated actor 
 type LifecycleService interface {
 	CorrectEntityResolution(ctx context.Context, req CorrectEntityResolutionRequest) (*CorrectEntityResolutionResult, error)
 	RetractEvidence(ctx context.Context, req RetractEvidenceRequest) (*RetractEvidenceResult, error)
+	RetractRelationship(ctx context.Context, req RetractRelationshipRequest) (*RetractRelationshipResult, error)
 }
 
 type LifecycleDependencies struct {
@@ -32,6 +33,7 @@ type LifecycleDependencies struct {
 
 type LifecycleSemanticRepository interface {
 	CorrectEntityResolution(ctx context.Context, input repository.CorrectEntityResolutionInput) (*repository.CorrectEntityResolutionResult, error)
+	RetractRelationship(ctx context.Context, input repository.RetractRelationshipInput) (*repository.RelationshipTransitionResult, error)
 }
 
 type LifecycleEvidenceRepository interface {
@@ -83,6 +85,20 @@ type RetractEvidenceResult struct {
 	AffectedRelationshipCount       int      `json:"affected_relationship_count"`
 	PendingRelationshipCount        int      `json:"pending_relationship_count"`
 	RetainedActiveRelationshipCount int      `json:"retained_active_relationship_count"`
+}
+
+type RetractRelationshipRequest struct {
+	ContractVersion string `json:"contract_version"`
+	RelationshipID  string `json:"relationship_id"`
+	Reason          string `json:"reason"`
+	IdempotencyKey  string `json:"idempotency_key"`
+}
+
+type RetractRelationshipResult struct {
+	TransitionID   string `json:"transition_id"`
+	RelationshipID string `json:"relationship_id"`
+	FromStatus     string `json:"from_status"`
+	ToStatus       string `json:"to_status"`
 }
 
 func (s *lifecycleService) CorrectEntityResolution(
@@ -168,6 +184,38 @@ func (s *lifecycleService) RetractEvidence(
 	}, nil
 }
 
+func (s *lifecycleService) RetractRelationship(
+	ctx context.Context,
+	req RetractRelationshipRequest,
+) (*RetractRelationshipResult, error) {
+	if s.semantic == nil {
+		return nil, errors.New("memory lifecycle: semantic repository is required")
+	}
+	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
+		return nil, fmt.Errorf("memory lifecycle: invalid contract_version %q", req.ContractVersion)
+	}
+	actor, ok := requestctx.ActorProfileFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+		return nil, ErrLifecycleAuthContext
+	}
+	result, err := s.semantic.RetractRelationship(ctx, repository.RetractRelationshipInput{
+		TeamID:         actor.TeamID.String(),
+		OwnerProfileID: actor.ProfileID.String(),
+		RelationshipID: req.RelationshipID,
+		Reason:         req.Reason,
+		IdempotencyKey: req.IdempotencyKey,
+	})
+	if err != nil {
+		return nil, translateRelationshipLifecycleError(err)
+	}
+	return &RetractRelationshipResult{
+		TransitionID:   result.TransitionID,
+		RelationshipID: result.RelationshipID,
+		FromStatus:     result.FromStatus,
+		ToStatus:       result.ToStatus,
+	}, nil
+}
+
 func retractEvidenceRequestHash(req RetractEvidenceRequest) (string, error) {
 	evidenceIDs := make([]string, len(req.EvidenceIDs))
 	for index, evidenceID := range req.EvidenceIDs {
@@ -193,6 +241,17 @@ func translateEvidenceLifecycleError(err error) error {
 		return httperr.New(httperr.NOT_FOUND, "evidence not found")
 	case errors.Is(err, repository.ErrEvidenceLifecycleConflict), errors.Is(err, repository.ErrIdempotencyConflict):
 		return httperr.New(httperr.CONFLICT, "evidence lifecycle conflict")
+	default:
+		return err
+	}
+}
+
+func translateRelationshipLifecycleError(err error) error {
+	switch {
+	case errors.Is(err, repository.ErrSemanticOwnerMismatch), errors.Is(err, repository.ErrTeamInactive):
+		return httperr.New(httperr.NOT_FOUND, "relationship not found")
+	case errors.Is(err, repository.ErrSemanticIdempotencyConflict):
+		return httperr.New(httperr.CONFLICT, "relationship lifecycle conflict")
 	default:
 		return err
 	}
