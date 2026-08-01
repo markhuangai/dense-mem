@@ -41,6 +41,17 @@ func New(deps Dependencies) Service {
 	return &service{deps: deps, now: now}
 }
 
+func (s *service) cycleLease(scheduled bool) time.Duration {
+	lease := manualDreamCycleLease
+	if scheduled {
+		lease = scheduledDreamCycleLease
+	}
+	if s.deps.ProviderCycleLease > lease {
+		return s.deps.ProviderCycleLease
+	}
+	return lease
+}
+
 func (s *service) RunCycle(ctx context.Context, _ string, req RunCycleRequest) (*RunCycleResult, error) {
 	if s.deps.Store == nil {
 		return nil, fmt.Errorf("dreaming cycle: dream repository is required")

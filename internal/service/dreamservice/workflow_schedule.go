@@ -57,7 +57,7 @@ func (s *service) recoverScheduledCycle(ctx context.Context, teamID string) (*Ru
 	claimed, err := s.deps.ScheduledStore.ClaimRecoverableScheduledDreamCycle(ctx, repository.DreamCycleRecoveryClaimInput{
 		TeamID:      teamID,
 		LeaseToken:  uuid.NewString(),
-		LeaseUntil:  started.Add(scheduledDreamCycleLease),
+		LeaseUntil:  started.Add(s.cycleLease(true)),
 		MaxAttempts: scheduledRecoveryAttempts,
 	})
 	if err != nil {
@@ -106,17 +106,24 @@ func (s *service) recordMissedScheduledCycle(ctx context.Context, teamID, runDat
 	if !cfg.Enabled {
 		return &RunCycleResult{TeamID: teamID, RunDate: runDate, Status: "skipped"}, nil
 	}
-	scheduledFor, _ := scheduledWindowAtTime(s.now(), cfg)
+	scheduledFor, hasScheduledFor := scheduledWindowAtTime(s.now(), cfg)
 	run, err := s.deps.ScheduledStore.RecordMissedScheduledDreamCycle(ctx, repository.DreamCycleClaimInput{
 		TeamID:       teamID,
 		RunDate:      runDate,
 		WindowKey:    runDate,
-		ScheduledFor: &scheduledFor,
+		ScheduledFor: optionalScheduledFor(scheduledFor, hasScheduledFor),
 	})
 	if err != nil {
 		return nil, translateDreamRepositoryError(err)
 	}
 	return cycleRunResult(run), nil
+}
+
+func optionalScheduledFor(scheduledFor time.Time, ok bool) *time.Time {
+	if !ok {
+		return nil
+	}
+	return &scheduledFor
 }
 
 func normalizeScheduledRunDate(runDate string) (string, error) {

@@ -131,9 +131,9 @@ func TestBuildDreamPathsCapsAllowedPredicatesDeterministically(t *testing.T) {
 	require.Len(t, paths, 1)
 	require.Len(t, paths[0].AllowedPredicates, maxDreamAllowedPredicatesPerPath)
 	assert.Equal(t, "predicate_000", paths[0].AllowedPredicates[0].PredicateKey)
-	assert.Equal(t, "predicate_099", paths[0].AllowedPredicates[maxDreamAllowedPredicatesPerPath-1].PredicateKey)
+	assert.Equal(t, fmt.Sprintf("predicate_%03d", maxDreamAllowedPredicatesPerPath-1), paths[0].AllowedPredicates[maxDreamAllowedPredicatesPerPath-1].PredicateKey)
 	assert.Equal(t, "predicate_1", paths[0].AllowedPredicates[0].PredicateRef)
-	assert.Equal(t, "predicate_100", paths[0].AllowedPredicates[maxDreamAllowedPredicatesPerPath-1].PredicateRef)
+	assert.Equal(t, fmt.Sprintf("predicate_%d", maxDreamAllowedPredicatesPerPath), paths[0].AllowedPredicates[maxDreamAllowedPredicatesPerPath-1].PredicateRef)
 }
 
 func TestDreamPathProposalKeepsExactDerivationsAndFiltersUnavailableTargets(t *testing.T) {
@@ -183,6 +183,7 @@ func TestDreamPathProposalKeepsExactDerivationsAndFiltersUnavailableTargets(t *t
 	evaluations := dreamPathEvaluationInputs(append(paths, DreamPath{}))
 	require.Len(t, evaluations, 1)
 	assert.Equal(t, "relationship-a-b", evaluations[0].FirstRelationshipID)
+	assert.Len(t, evaluations[0].AllowedPredicateFingerprint, 64)
 	assert.Equal(t, paths, dreamPathsForEvaluationInputs(paths, evaluations))
 	assert.Empty(t, dreamPathsForEvaluationInputs(paths, nil))
 
@@ -192,6 +193,35 @@ func TestDreamPathProposalKeepsExactDerivationsAndFiltersUnavailableTargets(t *t
 	require.Len(t, filtered, 1)
 	require.Len(t, filtered[0].AllowedPredicates, 1)
 	assert.Equal(t, targets[0].PredicateRef, filtered[0].AllowedPredicates[0].PredicateRef)
+	filteredEvaluations := dreamPathEvaluationInputs(filtered)
+	require.Len(t, filteredEvaluations, 1)
+	assert.NotEqual(t, evaluations[0].AllowedPredicateFingerprint, filteredEvaluations[0].AllowedPredicateFingerprint)
+}
+
+func TestBuildDreamPathsSkipsInvalidSecondPremisesAndUsesNonDurableDisplayFallbacks(t *testing.T) {
+	inputs := testDreamPathInputs()
+	first := inputs[0]
+	selfLoop := inputs[1]
+	selfLoop.RelationshipID = "relationship-b-b"
+	selfLoop.ObjectEntityID = selfLoop.SubjectEntityID
+	selfLoop.ObjectName = "B"
+	missingEndpoint := inputs[1]
+	missingEndpoint.RelationshipID = "relationship-b-missing"
+	missingEndpoint.ObjectEntityID = ""
+	missingEndpoint.ObjectValueID = ""
+	missingEndpoint.ObjectName = ""
+
+	predicates := testDreamPathPredicates()
+	assert.Empty(t, buildDreamPaths([]repository.DreamInput{first, selfLoop, missingEndpoint}, predicates, 1))
+
+	inputs[0].ObjectName = ""
+	inputs[1].ObjectName = ""
+	paths := buildDreamPaths(inputs, predicates, 1)
+	require.Len(t, paths, 1)
+	assert.Equal(t, "unnamed product", paths[0].Middle.Display)
+	assert.Equal(t, "unnamed concept", paths[0].Object.Display)
+	assert.NotEqual(t, inputs[0].ObjectEntityID, paths[0].Middle.Display)
+	assert.NotEqual(t, inputs[1].ObjectEntityID, paths[0].Object.Display)
 }
 
 func testDreamPathInputs() []repository.DreamInput {

@@ -397,11 +397,12 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 		if err := rows.Close(); err != nil {
 			return err
 		}
+		evidenceByRelationship, err := listDreamInputEvidenceBatch(ctx, tx, input.TeamID, candidates)
+		if err != nil {
+			return err
+		}
 		for _, item := range candidates {
-			evidence, err := listDreamInputEvidence(ctx, tx, input.TeamID, item)
-			if err != nil {
-				return err
-			}
+			evidence := evidenceByRelationship[item.RelationshipID]
 			if len(evidence) == 0 {
 				continue
 			}

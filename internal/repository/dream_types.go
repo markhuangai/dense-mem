@@ -163,10 +163,11 @@ type DreamTargetCandidate struct {
 }
 
 type DreamPathEvaluationInput struct {
-	FirstRelationshipID       string
-	FirstRelationshipVersion  int
-	SecondRelationshipID      string
-	SecondRelationshipVersion int
+	FirstRelationshipID         string
+	FirstRelationshipVersion    int
+	SecondRelationshipID        string
+	SecondRelationshipVersion   int
+	AllowedPredicateFingerprint string
 }
 
 type DreamPathEvaluationRecordInput struct {

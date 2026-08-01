@@ -62,6 +62,12 @@ func TestRecordMissedScheduledCycleUsesDSTGapRunDate(t *testing.T) {
 	require.Equal(t, "2026-03-08", repo.missedInput.WindowKey)
 }
 
+func TestOptionalScheduledForLeavesUnresolvedWindowUnset(t *testing.T) {
+	require.Nil(t, optionalScheduledFor(time.Time{}, false))
+	window := time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC)
+	require.Equal(t, &window, optionalScheduledFor(window, true))
+}
+
 func TestScheduledCycleSkipsDisabledAndNonDueWindows(t *testing.T) {
 	teamID := uuid.New()
 	windowAt := time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC)

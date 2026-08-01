@@ -200,7 +200,7 @@ func (r *SemanticRepositoryImpl) completeDreamCycle(ctx context.Context, input D
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return sql.ErrNoRows
+			return ErrDreamCycleLeaseLost
 		}
 		if system {
 			return insertScheduledDreamAudit(ctx, tx, input)
@@ -371,7 +371,10 @@ func failExhaustedScheduledDreamRecoveries(ctx context.Context, tx *gorm.DB, tea
 
 func insertScheduledDreamAudit(ctx context.Context, tx *gorm.DB, input DreamCycleCompleteInput) error {
 	operation := "dream_cycle_completed"
-	if input.Status == "missed" {
+	switch input.Status {
+	case "failed":
+		operation = "dream_cycle_failed"
+	case "missed":
 		operation = "dream_cycle_missed"
 	}
 	outcomeSummary, err := marshalDreamOutcomeSummary(input.OutcomeSummary)

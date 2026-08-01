@@ -23,20 +23,22 @@ import (
 var ErrDreamAuthContext = errors.New("dream: authenticated actor context is required")
 
 type dreamGenerationResult struct {
-	proposals                 []repository.UpsertHypothesisInput
-	rejected                  int
-	paths                     []DreamPath
-	model                     string
-	candidatePaths            int
-	candidateTargets          int
-	availableTargets          int
-	previouslyAssessedPaths   int
-	providerTurns             int
-	providerInputTokens       int
-	providerOutputTokens      int
-	providerProposals         int
-	providerFailed            bool
-	persistencePolicyRejected int
+	proposals                  []repository.UpsertHypothesisInput
+	rejected                   int
+	paths                      []DreamPath
+	model                      string
+	candidatePaths             int
+	candidateTargets           int
+	availableTargets           int
+	previouslyAssessedPaths    int
+	targetLookupFailed         bool
+	pathAssessmentLookupFailed bool
+	providerTurns              int
+	providerInputTokens        int
+	providerOutputTokens       int
+	providerProposals          int
+	providerFailed             bool
+	persistencePolicyRejected  int
 }
 
 func (s *service) runTeamCycle(
@@ -69,10 +71,9 @@ func (s *service) runTeamCycle(
 	if req.Manual {
 		windowKey = "manual:" + uuid.NewString()
 	}
-	leaseDuration := manualDreamCycleLease
+	leaseDuration := s.cycleLease(scheduled)
 	var scheduledFor *time.Time
 	if scheduled {
-		leaseDuration = scheduledDreamCycleLease
 		window := scheduledWindowAt.UTC()
 		scheduledFor = &window
 	}
@@ -141,6 +142,7 @@ func (s *service) runClaimedTeamCycle(
 		result.CompletedAt = s.now().UTC()
 		result.Status = "error"
 		result.Error = err.Error()
+		result.OutcomeSummary = map[string]int{"input_selection_error": 1}
 		completeErr := s.completeTeamCycle(ctx, scheduled, repository.DreamCycleCompleteInput{
 			TeamID:               teamID,
 			InitiatedByProfileID: initiatedByProfileID,
@@ -225,12 +227,18 @@ func applyDreamGenerationDiagnostics(
 	result.ProviderOutputTokens = generation.providerOutputTokens
 	result.AttemptedPaths = len(generation.paths)
 	result.ProviderProposals = generation.providerProposals
+	blockedTargets := max(0, generation.candidateTargets-generation.availableTargets)
+	if generation.targetLookupFailed {
+		blockedTargets = 0
+	}
 	result.OutcomeSummary = map[string]int{
 		"eligible_relationships":     inputRelationships,
 		"two_hop_paths":              generation.candidatePaths,
 		"candidate_targets":          generation.candidateTargets,
-		"blocked_targets":            max(0, generation.candidateTargets-generation.availableTargets),
+		"blocked_targets":            blockedTargets,
 		"previously_assessed_paths":  generation.previouslyAssessedPaths,
+		"target_lookup_error":        boolToInt(generation.targetLookupFailed),
+		"path_assessment_error":      boolToInt(generation.pathAssessmentLookupFailed),
 		"attempted_paths":            len(generation.paths),
 		"provider_proposals":         generation.providerProposals,
 		"provider_failed":            boolToInt(generation.providerFailed),
@@ -376,7 +384,8 @@ func (s *service) generateDreamProposals(
 		result.candidateTargets = len(targets)
 		availableTargets, err := s.deps.Store.ListAvailableDreamTargets(ctx, teamID, targets)
 		if err != nil {
-			return dreamGenerationResult{}, err
+			result.targetLookupFailed = true
+			return result, err
 		}
 		result.availableTargets = len(availableTargets)
 		paths = dreamPathsForAvailableTargets(paths, availableTargets)
@@ -385,7 +394,8 @@ func (s *service) generateDreamProposals(
 		beforeAssessment := len(paths)
 		unassessed, err := s.deps.Store.ListUnassessedDreamPaths(ctx, teamID, dreamPathEvaluationInputs(paths))
 		if err != nil {
-			return dreamGenerationResult{}, err
+			result.pathAssessmentLookupFailed = true
+			return result, err
 		}
 		paths = dreamPathsForEvaluationInputs(paths, unassessed)
 		result.previouslyAssessedPaths = beforeAssessment - len(paths)
@@ -875,12 +885,16 @@ func floatPtrValue(value *float64) float64 {
 	return *value
 }
 
-func dreamDisplay(name string, fallback string) string {
+func dreamDisplay(name string, kind string) string {
 	name = strings.TrimSpace(name)
 	if name != "" {
 		return name
 	}
-	return fallback
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		return "unnamed node"
+	}
+	return "unnamed " + kind
 }
 
 func firstNonEmpty(values ...string) string {

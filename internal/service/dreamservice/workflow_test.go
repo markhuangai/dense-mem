@@ -70,6 +70,62 @@ func TestRunCycleDoesNotTurnOneCandidateIntoAHeuristicDream(t *testing.T) {
 	assert.Equal(t, 0, repo.completeInput.CreatedHypotheses)
 }
 
+func TestRunCycleUsesProviderConversationLease(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	now := time.Date(2026, 7, 17, 3, 0, 0, 0, time.UTC)
+	providerLease := 6*time.Minute + 30*time.Second
+	repo := &dreamRepositoryStub{}
+	svc := New(Dependencies{
+		Store:              repo,
+		ProviderCycleLease: providerLease,
+		AppConfig:          cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
+		Now:                func() time.Time { return now },
+	})
+
+	_, err := svc.RunCycle(dreamTestContext(teamID, ownerID), "ignored-profile", RunCycleRequest{Manual: true})
+	require.NoError(t, err)
+	assert.Equal(t, now.Add(providerLease), repo.claimInput.LeaseUntil)
+}
+
+func TestRunCycleReturnsInputSelectionOutcome(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	svc := New(Dependencies{
+		Store:     &dreamRepositoryStub{listInputsErr: errors.New("list inputs failed")},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
+	})
+
+	result, err := svc.RunCycle(dreamTestContext(teamID, ownerID), "ignored-profile", RunCycleRequest{Manual: true})
+	require.ErrorContains(t, err, "list inputs failed")
+	require.NotNil(t, result)
+	assert.Equal(t, map[string]int{"input_selection_error": 1}, result.OutcomeSummary)
+}
+
+func TestGenerateDreamProposalsRetainsFailedLookupDiagnostics(t *testing.T) {
+	inputs := testDreamPathInputs()
+	predicates := testDreamPathPredicates()
+
+	t.Run("target lookup", func(t *testing.T) {
+		svc := New(Dependencies{Store: &dreamRepositoryStub{predicates: predicates, targetsErr: errors.New("target lookup failed")}}).(*service)
+		result, err := svc.generateDreamProposals(context.Background(), uuid.NewString(), inputs, 1)
+		require.ErrorContains(t, err, "target lookup failed")
+		assert.Equal(t, 1, result.candidatePaths)
+		assert.Equal(t, 2, result.candidateTargets)
+		assert.True(t, result.targetLookupFailed)
+	})
+
+	t.Run("path assessment lookup", func(t *testing.T) {
+		svc := New(Dependencies{Store: &dreamRepositoryStub{predicates: predicates, pathAssessErr: errors.New("assessment lookup failed")}}).(*service)
+		result, err := svc.generateDreamProposals(context.Background(), uuid.NewString(), inputs, 1)
+		require.ErrorContains(t, err, "assessment lookup failed")
+		assert.Equal(t, 1, result.candidatePaths)
+		assert.Equal(t, 2, result.candidateTargets)
+		assert.False(t, result.targetLookupFailed)
+		assert.True(t, result.pathAssessmentLookupFailed)
+	})
+}
+
 func TestRunCyclePersistsValidatedProviderHypothesis(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()

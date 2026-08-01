@@ -30,6 +30,15 @@ func TestPrepareDreamGenerationRequestRequiresEvidenceGroundedDirectedPath(t *te
 	assert.Contains(t, openAIValidationSummary(errs), "complete excerpts")
 }
 
+func TestOpenAIVerifierClassifiesInvalidDreamRequest(t *testing.T) {
+	provider := NewOpenAIVerifier(newTestVerifierConfig("http://127.0.0.1", "key", "dream-model"), nil)
+	_, err := provider.GenerateDreams(context.Background(), DreamGenerationRequest{})
+	require.Error(t, err)
+	var providerErr *ProviderError
+	require.ErrorAs(t, err, &providerErr)
+	assert.Equal(t, ProviderFailureClassRequestInvalid, providerErr.FailureClass)
+}
+
 func TestPrepareDreamGenerationRequestNormalizesBoundsAndRejectsDurableReferences(t *testing.T) {
 	request := dreamGenerationTestRequest(t)
 	request.RequestID = "  dream-request-1  "
@@ -235,7 +244,11 @@ func TestDecodeDreamGenerationResponseRequiresCompleteBoundedJSON(t *testing.T) 
 func TestOpenAIVerifierGeneratesEvidenceGroundedDream(t *testing.T) {
 	var received openAIVerifierRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		require.NoError(t, json.NewDecoder(request.Body).Decode(&received))
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		assert.Equal(t, DreamGenerationSchemaName, received.ResponseFormat.JSONSchema.Name)
 		assert.Contains(t, received.Messages[0].Content, "evidence-grounded relationship hypothesis generator")
 		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
@@ -266,7 +279,11 @@ func TestOpenAIVerifierRegeneratesCompleteDreamResponseAfterValidationFailure(t 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		calls++
 		if calls == 2 {
-			require.NoError(t, json.NewDecoder(request.Body).Decode(&secondRequest))
+			if err := json.NewDecoder(request.Body).Decode(&secondRequest); err != nil {
+				t.Errorf("decode correction request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 		}
 		content := `{"request_id":"dream-request-1","proposals":[{"path_ref":"path-1","predicate_ref":"predicate-uses","statement":"A may use C.","rationale":"The two supplied premises make this a possibility.","what_if":"What if independent evidence confirms the connection?","possible_outcome":"Collect independent evidence before accepting it.","likelihood":0.45,"confidence":0.51,"evidence_refs":["evidence-a","unknown-evidence"]}]}`
 		if calls == 2 {
@@ -284,6 +301,8 @@ func TestOpenAIVerifierRegeneratesCompleteDreamResponseAfterValidationFailure(t 
 	require.NoError(t, err)
 	assert.Equal(t, 2, calls)
 	assert.Equal(t, 2, response.ProviderTurns)
+	assert.Equal(t, 84, response.InputTokens)
+	assert.Equal(t, 36, response.OutputTokens)
 	assert.Equal(t, []string{"evidence-a", "evidence-b"}, response.Proposals[0].EvidenceRefs)
 	require.Len(t, secondRequest.Messages, 4)
 	assert.Contains(t, secondRequest.Messages[3].Content, "validation_errors")

@@ -13,6 +13,75 @@ import (
 	"gorm.io/gorm"
 )
 
+const testDreamPathPredicateFingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+const changedTestDreamPathPredicateFingerprint = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+
+func TestStaleDreamSourceErrorMapsMissingRelationship(t *testing.T) {
+	require.ErrorIs(t, staleDreamSourceError(sql.ErrNoRows, uuid.NewString()), ErrDreamSourceStale)
+}
+
+func TestDreamInputsIncludeExpiredPendingEvidence(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "dream-pending-input-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "dream-pending-input-owner")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	denseMem := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
+	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
+	content := "Dense-Mem may use PostgreSQL after independent review."
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID, "dream-pending-input", content)
+	assessment, _, err := ledgerRepo.PersistPlacementAssessment(ctx, placementAssessmentPersistInput(teamID, ownerID, ingest.Items[0]))
+	require.NoError(t, err)
+	threshold := 0.8
+	pending := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:                  teamID,
+		OwnerProfileID:          ownerID,
+		IngestID:                ingest.IngestID,
+		PlacementItemID:         ingest.Items[0].PlacementItemID,
+		SubjectEntityID:         denseMem.EntityID,
+		PredicateKey:            "uses",
+		ObjectEntityID:          postgres.EntityID,
+		EvidenceVerdict:         "insufficient",
+		AssessmentID:            assessment.AssessmentID,
+		AssessmentPolicyVersion: AssessmentPolicyVersion,
+		ThresholdUsed:           &threshold,
+		GateResult:              "below_write_threshold",
+		Support: &EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: "pending_observation",
+			SpanStart:      0,
+			SpanEnd:        len([]rune(content)),
+			Authority:      "primary",
+		},
+	})
+	require.Equal(t, "pending_evidence", pending.Relationship.Status)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO review_tasks (
+			    team_id, owner_profile_id, ingest_id, placement_item_id,
+			    relationship_id, observation_id, task_type, status, reason,
+			    payload, dedupe_key, assessment_id
+			) VALUES (
+			    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+			    ?::uuid, ?::uuid, 'relationship_needs_review', 'expired', 'support_confidence',
+			    '{}'::jsonb, '', ?::uuid
+			)
+		`, teamID, ownerID, ingest.IngestID, ingest.Items[0].PlacementItemID,
+			pending.Relationship.RelationshipID, pending.ObservationID, assessment.AssessmentID).Error
+	}))
+
+	inputs, err := semanticRepo.ListDreamInputs(ctx, DreamInputListInput{TeamID: teamID, Limit: 10})
+	require.NoError(t, err)
+	input := requireDreamInput(t, inputs, pending.Relationship.RelationshipID)
+	assert.Equal(t, "pending_evidence", input.Status)
+	require.Len(t, input.Evidence, 1)
+	assert.Equal(t, content, input.Evidence[0].Content)
+	assert.Equal(t, pending.ObservationID, input.Evidence[0].ObservationID)
+}
+
 func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -20,6 +89,8 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "dream-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "dream-owner")
+	otherTeamID := createLedgerTeam(t, adminDB, rls, "other-dream-team")
+	otherOwnerID := createLedgerProfile(t, adminDB, rls, otherTeamID, "other-dream-owner")
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	semanticRepo := NewSemanticRepository(appDB, rls)
 
@@ -53,11 +124,16 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 
 	proposal := evidenceGroundedDreamProposal(teamID, ownerID, run.RunID, firstInput, secondInput,
 		app.EntityID, database.EntityID, "uses", "Dense-Mem may transitively depend on PostgreSQL.")
+	missingSecondPremise := normalizeUpsertHypothesisInput(proposal)
+	missingSecondPremise.Derivations = append([]DreamDerivationSource(nil), proposal.Derivations...)
+	missingSecondPremise.Derivations[1].PremisePosition = 1
+	require.ErrorContains(t, validateUpsertHypothesisInput(missingSecondPremise, false), "cover both premise positions")
 	path := DreamPathEvaluationInput{
-		FirstRelationshipID:       firstInput.RelationshipID,
-		FirstRelationshipVersion:  firstInput.Version,
-		SecondRelationshipID:      secondInput.RelationshipID,
-		SecondRelationshipVersion: secondInput.Version,
+		FirstRelationshipID:         firstInput.RelationshipID,
+		FirstRelationshipVersion:    firstInput.Version,
+		SecondRelationshipID:        secondInput.RelationshipID,
+		SecondRelationshipVersion:   secondInput.Version,
+		AllowedPredicateFingerprint: testDreamPathPredicateFingerprint,
 	}
 	persisted, err := semanticRepo.PersistDreamGeneration(ctx, DreamGenerationPersistInput{
 		TeamID:             teamID,
@@ -71,6 +147,24 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	require.NoError(t, err)
 	require.Equal(t, 1, persisted.Created)
 	require.Zero(t, persisted.Rejected)
+
+	var hiddenDerivations, hiddenEvaluations int
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, otherTeamID, otherOwnerID, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT count(*)
+			FROM hypothesis_derivation_sources
+			WHERE team_id = ?::uuid
+		`, teamID).Scan(&hiddenDerivations).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT count(*)
+			FROM dream_path_evaluations
+			WHERE team_id = ?::uuid
+		`, teamID).Scan(&hiddenEvaluations).Error
+	}))
+	assert.Zero(t, hiddenDerivations)
+	assert.Zero(t, hiddenEvaluations)
 
 	available, err := semanticRepo.ListAvailableDreamTargets(ctx, teamID, []DreamTargetCandidate{
 		{
@@ -172,6 +266,11 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	unassessed, err := semanticRepo.ListUnassessedDreamPaths(ctx, teamID, []DreamPathEvaluationInput{path})
 	require.NoError(t, err)
 	require.Empty(t, unassessed, "the exact relationship-version pair is evaluated once")
+	predicateChangedPath := path
+	predicateChangedPath.AllowedPredicateFingerprint = changedTestDreamPathPredicateFingerprint
+	unassessed, err = semanticRepo.ListUnassessedDreamPaths(ctx, teamID, []DreamPathEvaluationInput{predicateChangedPath})
+	require.NoError(t, err)
+	require.Equal(t, []DreamPathEvaluationInput{predicateChangedPath}, unassessed, "a predicate allowlist change permits reassessment")
 
 	_, err = semanticRepo.UpdateHypothesisStatus(ctx, UpdateHypothesisStatusInput{
 		TeamID:         teamID,
@@ -261,10 +360,11 @@ func TestScheduledDreamRecoveryFencesExpiredLease(t *testing.T) {
 		LeaseToken:    firstLeaseToken,
 		ProviderModel: "test-provider",
 		EvaluatedPaths: []DreamPathEvaluationInput{{
-			FirstRelationshipID:       uuid.NewString(),
-			FirstRelationshipVersion:  1,
-			SecondRelationshipID:      uuid.NewString(),
-			SecondRelationshipVersion: 1,
+			FirstRelationshipID:         uuid.NewString(),
+			FirstRelationshipVersion:    1,
+			SecondRelationshipID:        uuid.NewString(),
+			SecondRelationshipVersion:   1,
+			AllowedPredicateFingerprint: testDreamPathPredicateFingerprint,
 		}},
 	}
 	_, err = semanticRepo.PersistScheduledDreamGeneration(ctx, stalePersistence)
@@ -291,7 +391,7 @@ func TestScheduledDreamRecoveryFencesExpiredLease(t *testing.T) {
 		LeaseToken: firstLeaseToken,
 		Status:     "completed",
 	})
-	require.ErrorIs(t, err, sql.ErrNoRows, "the expired worker must not complete a reclaimed run")
+	require.ErrorIs(t, err, ErrDreamCycleLeaseLost, "the expired worker must not complete a reclaimed run")
 	require.NoError(t, semanticRepo.CompleteScheduledDreamCycle(ctx, DreamCycleCompleteInput{
 		TeamID:     teamID,
 		RunID:      recovered.RunID,

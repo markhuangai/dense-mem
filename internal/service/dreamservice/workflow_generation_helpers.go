@@ -1,47 +1,11 @@
 package dreamservice
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
-
-func dreamGeneratorInputs(inputs []repository.DreamInput) []DreamInput {
-	out := make([]DreamInput, 0, len(inputs))
-	for _, input := range inputs {
-		out = append(out, DreamInput{
-			Type:      dreamSourceType(input),
-			ID:        input.RelationshipID,
-			Subject:   dreamDisplay(input.SubjectName, input.SubjectEntityID),
-			Predicate: input.PredicateKey,
-			Object:    dreamDisplay(input.ObjectName, firstNonEmpty(input.ObjectEntityID, input.ObjectValueID)),
-			Status:    input.Status,
-		})
-	}
-	return out
-}
-
-func dreamProposalsFromCandidates(inputs []repository.DreamInput, maxOutputs int) []repository.UpsertHypothesisInput {
-	out := make([]repository.UpsertHypothesisInput, 0, maxOutputs)
-	for _, input := range inputs {
-		if input.Status != "pending_evidence" {
-			continue
-		}
-		proposal := dreamProposalFromInput(input, fmt.Sprintf(
-			"%s may %s %s.",
-			dreamDisplay(input.SubjectName, input.SubjectEntityID),
-			strings.ReplaceAll(input.PredicateKey, "_", " "),
-			dreamDisplay(input.ObjectName, firstNonEmpty(input.ObjectEntityID, input.ObjectValueID)),
-		))
-		out = append(out, proposal)
-		if len(out) >= maxOutputs {
-			break
-		}
-	}
-	return out
-}
 
 func dreamProposalsFromGenerated(
 	generated []GeneratedDream,

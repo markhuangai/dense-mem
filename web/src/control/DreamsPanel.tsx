@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ControlApi, Dream, DreamQuery, DreamRun, DreamSort, DreamStatus, Team } from "../api";
 import { InfoTooltip, LoadingState, SectionHeading } from "../ui/components";
+import { DreamEvidenceSummary, MetricLabel, runOutcome, runStatusClass } from "../ui/dreams";
 import { formatDate, readError } from "./utils";
 
 const DREAM_STATUSES = ["", "proposed", "reinforced", "stale", "rejected", "submitted"];
@@ -200,7 +201,7 @@ function StatusItem({ label, value }: { label: string; value: string | number })
 
 function DreamTable({ dreams, sort }: { dreams: Dream[]; sort: DreamSort }) {
   return (
-    <div className="table-wrap">
+    <div className="table-wrap dream-table-wrap">
       <table className="data-table dreams-table">
         <thead>
           <tr>
@@ -235,25 +236,6 @@ function DreamTable({ dreams, sort }: { dreams: Dream[]; sort: DreamSort }) {
         </tbody>
       </table>
     </div>
-  );
-}
-
-function DreamEvidenceSummary({ dream }: { dream: Dream }) {
-  const derivations = dream.derivations ?? [];
-  if (derivations.length === 0) {
-    return <span className="form-meta">No cited excerpts</span>;
-  }
-  return (
-    <span>
-      {derivations.length} cited excerpt{derivations.length === 1 ? "" : "s"}
-      <InfoTooltip label={`Evidence used for ${dream.hypothesis}`}>
-        {derivations.map((derivation, index) => (
-          <span key={`${derivation.relationship_id}-${derivation.premise_position}-${index}`}>
-            Premise {derivation.premise_position} · {derivation.authority} · “{derivation.quote}”
-          </span>
-        ))}
-      </InfoTooltip>
-    </span>
   );
 }
 
@@ -301,40 +283,6 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
   );
 }
 
-function MetricLabel({ label, detail }: { label: string; detail: string }) {
-  return (
-    <span>
-      {label} <InfoTooltip label={`${label} meaning`}>{detail}</InfoTooltip>
-    </span>
-  );
-}
-
-function runOutcome(run: DreamRun): string {
-  const outcomes = run.outcome_summary;
-  if (!outcomes) {
-    return "-";
-  }
-  if ((outcomes.provider_failed ?? 0) > 0) {
-    return "Provider call failed";
-  }
-  if ((outcomes.attempted_paths ?? 0) === 0) {
-    if ((outcomes.blocked_targets ?? 0) > 0) {
-      return `${outcomes.blocked_targets} target${outcomes.blocked_targets === 1 ? "" : "s"} already exist`;
-    }
-    if ((outcomes.previously_assessed_paths ?? 0) > 0) {
-      return "All paths already assessed";
-    }
-    return "No eligible two-hop path";
-  }
-  if ((outcomes.policy_rejections ?? 0) > 0) {
-    return `${outcomes.policy_rejections} blocked during persistence`;
-  }
-  if ((outcomes.provider_proposals ?? 0) === 0) {
-    return "Provider returned no supported relationship";
-  }
-  return "Provider result stored";
-}
-
 function runLabel(run: DreamRun): string {
   return `${run.status} ${formatDate(run.started_at)}`;
 }
@@ -360,14 +308,4 @@ function dreamStatusClass(status: string): string {
     default:
       return "status-pill neutral";
   }
-}
-
-function runStatusClass(status: string): string {
-  if (status === "error" || status === "failed") {
-    return "status-pill error";
-  }
-  if (status === "skipped") {
-    return "status-pill warning";
-  }
-  return "status-pill";
 }

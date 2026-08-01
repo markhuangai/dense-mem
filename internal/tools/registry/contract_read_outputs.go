@@ -130,7 +130,7 @@ func hypothesisSchema() map[string]any {
 			"source_relationship_ids":           stringArraySchema("Source Relationship ID.", 200, 128),
 			"source_candidate_relationship_ids": stringArraySchema("Source candidate Relationship ID.", 200, 128),
 			"source_versions":                   versionMapSchema(),
-			"derivations":                       array(dreamDerivationSchema(), 0, 2),
+			"derivations":                       array(dreamDerivationSchema(), 0, 4),
 			"generator_kind":                    schemaEnum([]string{"deterministic", "provider"}),
 			"generator_version":                 schemaString("Dream generator version.", 128),
 			"status":                            schemaEnum(domain.HypothesisStatuses()),

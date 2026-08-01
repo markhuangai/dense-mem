@@ -1,6 +1,8 @@
 package dreamservice
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -40,7 +42,7 @@ func buildDreamPaths(inputs []repository.DreamInput, predicates []repository.Dre
 			ref = fmt.Sprintf("node_%d", nextNodeRef)
 			nodeRefs[key] = ref
 		}
-		return DreamPathNode{Ref: ref, ID: id, Display: dreamDisplay(display, id), Kind: kind}
+		return DreamPathNode{Ref: ref, ID: id, Display: dreamDisplay(display, kind), Kind: kind}
 	}
 	predicateRefs := map[string]string{}
 	nextPredicateRef := 0
@@ -64,7 +66,11 @@ func buildDreamPaths(inputs []repository.DreamInput, predicates []repository.Dre
 			continue
 		}
 		for _, second := range bySubject[first.ObjectEntityID] {
-			if first.RelationshipID == second.RelationshipID || second.ObjectEntityID == first.SubjectEntityID || len(second.Evidence) == 0 {
+			if first.RelationshipID == second.RelationshipID ||
+				second.ObjectEntityID == "" && second.ObjectValueID == "" ||
+				second.ObjectEntityID != "" && second.SubjectEntityID == second.ObjectEntityID ||
+				second.ObjectEntityID == first.SubjectEntityID ||
+				len(second.Evidence) == 0 {
 				continue
 			}
 			if first.Status != "active" && second.Status != "active" {
@@ -354,10 +360,11 @@ func dreamPathEvaluationInputs(paths []DreamPath) []repository.DreamPathEvaluati
 			continue
 		}
 		inputs = append(inputs, repository.DreamPathEvaluationInput{
-			FirstRelationshipID:       path.Premises[0].Input.RelationshipID,
-			FirstRelationshipVersion:  path.Premises[0].Input.Version,
-			SecondRelationshipID:      path.Premises[1].Input.RelationshipID,
-			SecondRelationshipVersion: path.Premises[1].Input.Version,
+			FirstRelationshipID:         path.Premises[0].Input.RelationshipID,
+			FirstRelationshipVersion:    path.Premises[0].Input.Version,
+			SecondRelationshipID:        path.Premises[1].Input.RelationshipID,
+			SecondRelationshipVersion:   path.Premises[1].Input.Version,
+			AllowedPredicateFingerprint: dreamAllowedPredicateFingerprint(path.AllowedPredicates),
 		})
 	}
 	return inputs
@@ -382,7 +389,25 @@ func dreamPathsForEvaluationInputs(paths []DreamPath, allowed []repository.Dream
 }
 
 func dreamPathEvaluationKey(input repository.DreamPathEvaluationInput) string {
-	return fmt.Sprintf("%s:%d:%s:%d", input.FirstRelationshipID, input.FirstRelationshipVersion, input.SecondRelationshipID, input.SecondRelationshipVersion)
+	return fmt.Sprintf("%s:%d:%s:%d:%s", input.FirstRelationshipID, input.FirstRelationshipVersion, input.SecondRelationshipID, input.SecondRelationshipVersion, input.AllowedPredicateFingerprint)
+}
+
+func dreamAllowedPredicateFingerprint(predicates []repository.DreamTargetPredicate) string {
+	keys := make(map[string]struct{}, len(predicates))
+	for _, predicate := range predicates {
+		key := strings.ToLower(strings.TrimSpace(predicate.PredicateKey))
+		if key == "" || predicate.Version < 1 {
+			continue
+		}
+		keys[fmt.Sprintf("%s\x00%d", key, predicate.Version)] = struct{}{}
+	}
+	ordered := make([]string, 0, len(keys))
+	for key := range keys {
+		ordered = append(ordered, key)
+	}
+	sort.Strings(ordered)
+	sum := sha256.Sum256([]byte(strings.Join(ordered, "\x00")))
+	return hex.EncodeToString(sum[:])
 }
 
 func dreamTargetCandidates(paths []DreamPath) []repository.DreamTargetCandidate {

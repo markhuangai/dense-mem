@@ -49,16 +49,17 @@ type Generator interface {
 }
 
 type Dependencies struct {
-	Remember       memoryservice.RememberService
-	Store          repository.DreamRepository
-	ScheduledStore repository.ScheduledDreamRepository
-	AppConfig      AppConfig
-	Profiles       ProfileService
-	Locker         CycleLocker
-	Postgres       *gorm.DB
-	Generator      Generator
-	Metrics        observability.DiscoverabilityMetrics
-	Now            func() time.Time
+	Remember           memoryservice.RememberService
+	Store              repository.DreamRepository
+	ScheduledStore     repository.ScheduledDreamRepository
+	AppConfig          AppConfig
+	Profiles           ProfileService
+	Locker             CycleLocker
+	Postgres           *gorm.DB
+	Generator          Generator
+	Metrics            observability.DiscoverabilityMetrics
+	ProviderCycleLease time.Duration
+	Now                func() time.Time
 }
 
 type Service interface {

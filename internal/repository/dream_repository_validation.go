@@ -292,10 +292,12 @@ func validateUpsertHypothesisInput(input UpsertHypothesisInput, system bool) err
 	if input.GeneratorKind != "evaluation_seed" && len(input.Derivations) == 0 {
 		return errors.New("derivations are required")
 	}
+	premisePositions := make(map[int]struct{}, 2)
 	for index, derivation := range input.Derivations {
 		if derivation.PremisePosition != 1 && derivation.PremisePosition != 2 {
 			return fmt.Errorf("derivations[%d].premise_position must be 1 or 2", index)
 		}
+		premisePositions[derivation.PremisePosition] = struct{}{}
 		if _, err := uuid.Parse(strings.TrimSpace(derivation.RelationshipID)); err != nil {
 			return fmt.Errorf("derivations[%d].relationship_id is invalid: %w", index, err)
 		}
@@ -348,6 +350,9 @@ func validateUpsertHypothesisInput(input UpsertHypothesisInput, system bool) err
 		default:
 			return fmt.Errorf("derivations[%d].authority is unsupported", index)
 		}
+	}
+	if input.GeneratorKind != "evaluation_seed" && len(premisePositions) != 2 {
+		return errors.New("dream derivations must cover both premise positions")
 	}
 	return nil
 }

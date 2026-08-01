@@ -21,7 +21,7 @@ const (
 	DreamGenerationMaxEvidencePerPremise   = 2
 	DreamGenerationMaxEvidenceContentRunes = 4_000
 	DreamGenerationMaxOutputs              = 50
-	DreamGenerationMaxStatementRunes       = 2_000
+	DreamGenerationMaxStatementRunes       = 1_000
 	DreamGenerationMaxRationaleRunes       = 1_000
 	DreamGenerationMaxOutcomeRunes         = 1_000
 )
@@ -553,7 +553,8 @@ func looksLikeUUID(value string) bool {
 			}
 			continue
 		}
-		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') && !(r >= 'A' && r <= 'F') {
+		isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+		if !isHex {
 			return false
 		}
 	}
@@ -568,7 +569,7 @@ func (v *OpenAIVerifier) GenerateDreams(ctx context.Context, req DreamGeneration
 		return DreamGenerationResponse{}, &ProviderError{
 			Provider:     openAIVerifierProvider,
 			Message:      "invalid dream generation request: " + openAIValidationSummary(validationErrors),
-			FailureClass: ProviderFailureClassProviderUnavailable,
+			FailureClass: ProviderFailureClassRequestInvalid,
 		}
 	}
 	payload, err := json.Marshal(prepared)
@@ -576,6 +577,8 @@ func (v *OpenAIVerifier) GenerateDreams(ctx context.Context, req DreamGeneration
 		return DreamGenerationResponse{}, &ProviderError{Provider: openAIVerifierProvider, Message: "failed to marshal dream generation request", Cause: err, FailureClass: ProviderFailureClassProviderUnavailable}
 	}
 	messages := []openAIVerifierMessage{{Role: "system", Content: dreamGenerationSystemPrompt}, {Role: "user", Content: string(payload)}}
+	totalInputTokens := 0
+	totalOutputTokens := 0
 	for turn := 1; turn <= SemanticAssessmentMaxProviderTurns; turn++ {
 		inputTokens, err := semanticAssessmentMessageTokens(messages, v.assessmentLimits.Tokenizer)
 		if err != nil {
@@ -588,6 +591,22 @@ func (v *OpenAIVerifier) GenerateDreams(ctx context.Context, req DreamGeneration
 		if err != nil {
 			return DreamGenerationResponse{}, err
 		}
+		outputTokens, err := CountTokens(result.Content, v.assessmentLimits.Tokenizer)
+		if err != nil {
+			return DreamGenerationResponse{}, &ProviderError{Provider: openAIVerifierProvider, Message: "failed to count dream generation output tokens", Cause: err, FailureClass: ProviderFailureClassProviderUnavailable}
+		}
+		turnInputTokens := inputTokens
+		turnOutputTokens := outputTokens
+		if result.ReportedUsage != nil {
+			if result.ReportedUsage.PromptTokens > 0 {
+				turnInputTokens = int(result.ReportedUsage.PromptTokens)
+			}
+			if result.ReportedUsage.CompletionTokens > 0 {
+				turnOutputTokens = int(result.ReportedUsage.CompletionTokens)
+			}
+		}
+		totalInputTokens += turnInputTokens
+		totalOutputTokens += turnOutputTokens
 		responseErrors := []SemanticValidationError{}
 		response := DreamGenerationResponse{}
 		if result.ReportedUsage != nil && result.ReportedUsage.PromptTokens > int64(v.assessmentLimits.MaxInputTokens) {
@@ -605,10 +624,8 @@ func (v *OpenAIVerifier) GenerateDreams(ctx context.Context, req DreamGeneration
 			}
 		}
 		if len(responseErrors) == 0 {
-			response.InputTokens = inputTokens
-			if result.ReportedUsage != nil && result.ReportedUsage.PromptTokens > 0 {
-				response.InputTokens = int(result.ReportedUsage.PromptTokens)
-			}
+			response.InputTokens = totalInputTokens
+			response.OutputTokens = totalOutputTokens
 			response.ProviderTurns = turn
 			return response, nil
 		}

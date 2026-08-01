@@ -47,6 +47,8 @@ type dreamRepositoryStub struct {
 	claimErr        error
 	completeErr     error
 	listInputsErr   error
+	targetsErr      error
+	pathAssessErr   error
 	upsertErr       error
 	listErr         error
 	getErr          error
@@ -101,6 +103,9 @@ func (s *dreamRepositoryStub) ListDreamTargetPredicates(context.Context, string)
 }
 
 func (s *dreamRepositoryStub) ListAvailableDreamTargets(_ context.Context, _ string, targets []repository.DreamTargetCandidate) ([]repository.DreamTargetCandidate, error) {
+	if s.targetsErr != nil {
+		return nil, s.targetsErr
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -108,6 +113,9 @@ func (s *dreamRepositoryStub) ListAvailableDreamTargets(_ context.Context, _ str
 }
 
 func (s *dreamRepositoryStub) ListUnassessedDreamPaths(_ context.Context, _ string, paths []repository.DreamPathEvaluationInput) ([]repository.DreamPathEvaluationInput, error) {
+	if s.pathAssessErr != nil {
+		return nil, s.pathAssessErr
+	}
 	if s.err != nil {
 		return nil, s.err
 	}

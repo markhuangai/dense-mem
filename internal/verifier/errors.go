@@ -14,6 +14,7 @@ const (
 	ProviderFailureClassHTTPUnexpected      = "http_unexpected"
 	ProviderFailureClassTransport           = "transport"
 	ProviderFailureClassProtocol            = "provider_protocol"
+	ProviderFailureClassRequestInvalid      = "request_invalid"
 	ProviderFailureClassProviderUnavailable = "provider_unavailable"
 
 	providerFailureMaxRetryAfter = 5 * time.Minute

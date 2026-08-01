@@ -75,10 +75,18 @@ const failedProviderRun: DreamRun = {
   status: "failed",
 };
 
+const emptyProviderRun: DreamRun = {
+  ...failedProviderRun,
+  run_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  provider_proposals: 0,
+  outcome_summary: {},
+  status: "completed",
+};
+
 describe("ControlDreamsPanel", () => {
   it("loads team-owned outputs and paginates without a re-evaluation request", async () => {
     const getTeamDreamingStatus = vi.fn(async () => status);
-    const listTeamDreamingRuns = vi.fn(async () => [failedProviderRun]);
+    const listTeamDreamingRuns = vi.fn(async () => [failedProviderRun, emptyProviderRun]);
     const listTeamDreams = vi.fn(async () => ({ items: [dream], next_cursor: "next-page" }));
     const api = {
       getTeamDreamingStatus,
@@ -91,6 +99,7 @@ describe("ControlDreamsPanel", () => {
     expect(await screen.findByText("A team-scoped control dream")).toBeInTheDocument();
     expect(screen.getByText("2 cited excerpts")).toBeInTheDocument();
     expect(screen.getByText("Provider call failed")).toBeInTheDocument();
+    expect(screen.getByText("Provider returned no supported relationship")).toBeInTheDocument();
     expect(screen.getByText("failed")).toHaveClass("error");
     expect(getTeamDreamingStatus).toHaveBeenCalledWith(team.id);
     expect(listTeamDreamingRuns).toHaveBeenCalledWith(team.id, 10);

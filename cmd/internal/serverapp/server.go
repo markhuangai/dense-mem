@@ -252,6 +252,8 @@ func RunActiveServer(
 		Postgres:       pgDB.GetDB(),
 		Generator:      dreamservice.NewProviderGenerator(verifierProvider),
 		Metrics:        discoverabilityMetrics,
+		ProviderCycleLease: time.Duration(cfg.GetAIVerifierTimeoutSeconds())*
+			time.Second*time.Duration(verifier.SemanticAssessmentMaxProviderTurns) + time.Minute,
 	})
 	controlDreamSvc := dreamservice.NewControl(dreamservice.ControlDependencies{
 		Store:     semanticRepo,

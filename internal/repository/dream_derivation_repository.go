@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -141,7 +142,7 @@ func dreamSourceRelationshipEligible(
 }
 
 func staleDreamSourceError(err error, relationshipID string) error {
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: %s", ErrDreamSourceStale, relationshipID)
 	}
 	return err
