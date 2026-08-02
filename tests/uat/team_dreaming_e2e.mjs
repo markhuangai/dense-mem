@@ -63,9 +63,8 @@ console.log(JSON.stringify({
 }, null, 2));
 
 function nextScheduledUTCMinute() {
-  const target = new Date(Date.now() + 4 * 60_000);
-  target.setUTCSeconds(0, 0);
-  return target;
+  const minimum = Date.now() + 4 * 60_000;
+  return new Date(Math.ceil(minimum / 60_000) * 60_000);
 }
 
 function formatDate(value) {
