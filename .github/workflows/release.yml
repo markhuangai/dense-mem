@@ -185,7 +185,7 @@ jobs:
     needs:
       - prepare-release
       - create-release-tag
-    runs-on: docker-runner
+    runs-on: rootless-docker
 
     env:
       REGISTRY: ghcr.io
