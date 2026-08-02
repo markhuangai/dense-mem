@@ -125,15 +125,26 @@ seed dataset per V1 runtime.
 
 ## Provision the eval team once
 
-After migrations finish, provision a dedicated team and keep its ignored
-credential file under the V1 runtime:
+After startup migrations finish, provision a dedicated team through the private
+control API and keep its ignored credential file under the V1 runtime:
 
 ```bash
-docker compose -p densemem_eval_full \
-  -f docker-compose.yml \
-  -f tests/eval/docker-compose.eval.yml \
-  run --rm --no-deps server \
-  /app/provision-profile --name dense-mem-eval-v1 \
+control_token="${CONTROL_PORTAL_TOKEN:?export CONTROL_PORTAL_TOKEN first}"
+team_json="$(curl -fsS -X POST http://127.0.0.1:8090/control/api/teams \
+  -H "Authorization: Bearer ${control_token}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"dense-mem-eval-v1"}')"
+team_id="$(jq -r '.data.id' <<<"${team_json}")"
+
+key_json="$(curl -fsS -X POST \
+  "http://127.0.0.1:8090/control/api/teams/${team_id}/profiles" \
+  -H "Authorization: Bearer ${control_token}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"eval profile"}')"
+api_key="$(jq -r '.data.api_key' <<<"${key_json}")"
+
+jq -n --arg team_id "${team_id}" --arg api_key "${api_key}" \
+  '{team_id: $team_id, api_key: $api_key}' \
   > tests/eval/runtime/v1/eval_profile.json
 
 chmod 600 tests/eval/runtime/v1/eval_profile.json

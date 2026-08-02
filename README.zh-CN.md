@@ -75,7 +75,6 @@ cp .env.example .env
 ${EDITOR:-vi} .env
 
 docker compose up -d
-docker compose exec server /app/provision-team --name "primary-memory"
 ```
 
 基础 stack 使用带 pgvector 的 PostgreSQL 作为持久权威。正常运行时保持 `NEO4J_*`
@@ -86,6 +85,37 @@ MCP:            http://127.0.0.1:8080/mcp
 用户门户:       http://127.0.0.1:8080/ui
 控制门户:       http://127.0.0.1:8090/
 ```
+
+使用 `CONTROL_PORTAL_TOKEN` 打开控制门户，然后创建团队及其第一个 profile/API key。
+控制面自动化使用同一个私有 API：
+
+```bash
+control_token="<.env 中的 CONTROL_PORTAL_TOKEN>"
+
+curl -fsS -X POST http://127.0.0.1:8090/control/api/teams \
+  -H "Authorization: Bearer ${control_token}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"primary-memory"}'
+
+curl -fsS -X POST http://127.0.0.1:8090/control/api/teams/<team-id>/profiles \
+  -H "Authorization: Bearer ${control_token}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"default profile"}'
+```
+
+正式镜像只包含一个项目可执行文件 `/app/server`。它会在开始提供服务前，借助数据库
+session lock 自动执行待处理的 PostgreSQL migration，因此 Compose 不需要单独的
+migration 容器。共享同一个可写 primary 的多个 server replica 会串行执行该启动步骤。
+滚动发布期间，migration 必须与上一版应用保持向后兼容；彼此独立的数据库仍需分别由
+连接到该数据库的 server 完成 migration。管理操作通过私有控制门户/API 完成；dreaming
+和自动 conflict review 仍由 server 后台 worker 执行。
+
+镜像 healthcheck 为默认的 30 分钟 migration 窗口保留启动宽限期，并在首次检查成功后
+进入正常检测。若将 `POSTGRES_MIGRATION_TIMEOUT_SECONDS` 设为大于 1800，应把部署的
+healthcheck start period 同步调整到至少相同时间。
+
+RC 标签为 `vX.Y.Z-rc.N` 和 `demo-vX.Y.Z-rc.N`。稳定版标签为 `vX.Y.Z`、
+`latest` 和 `demo-vX.Y.Z`；不提供滚动 demo 标签。
 
 启动时必须配置完整的 embedding 和 verifier：`AI_API_URL`、
 `AI_API_KEY`、`AI_API_EMBEDDING_MODEL`、`AI_API_EMBEDDING_DIMENSIONS`、

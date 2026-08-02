@@ -6,7 +6,6 @@ cd "${ROOT_DIR}"
 
 npm ci --prefix .lint
 npm run --prefix .lint lint:lines
-
 packages="$(
 	git ls-files '*.go' |
 		grep -Ev '^(tests/uat|tests/eval/runtime)/' |

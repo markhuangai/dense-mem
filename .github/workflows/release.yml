@@ -27,6 +27,7 @@ jobs:
     outputs:
       source_tag: ${{ steps.version.outputs.source_tag }}
       release_tag: ${{ steps.version.outputs.release_tag }}
+      source_commit: ${{ steps.version.outputs.source_commit }}
 
     steps:
       - name: Checkout repository
@@ -130,18 +131,61 @@ jobs:
               echo "::error::release_tag already exists at ${release_commit}, expected ${source_commit}"
               exit 1
             fi
-          else
-            git tag "${RELEASE_TAG}" "${source_commit}"
-            git push origin "refs/tags/${RELEASE_TAG}"
           fi
 
           echo "source_tag=${SOURCE_TAG}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "source_commit=${source_commit}" >> "$GITHUB_OUTPUT"
 
-  promote-image:
-    name: Promote Docker image
+  create-release-tag:
+    name: Create stable Git tag
     needs: prepare-release
-    runs-on: rootless-docker
+    permissions:
+      contents: write
+    runs-on: docker-runner
+
+    steps:
+      - name: Checkout RC source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-release.outputs.source_commit }}
+          fetch-depth: 0
+
+      - name: Create stable tag idempotently
+        shell: bash
+        env:
+          SOURCE_TAG: ${{ needs.prepare-release.outputs.source_tag }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          SOURCE_COMMIT: ${{ needs.prepare-release.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force origin '+refs/tags/*:refs/tags/*'
+          current_source_commit="$(git rev-list -n 1 "${SOURCE_TAG}")"
+          if [[ "${current_source_commit}" != "${SOURCE_COMMIT}" ]]; then
+            echo "::error::${SOURCE_TAG} moved to ${current_source_commit}; expected ${SOURCE_COMMIT}"
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            release_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+            if [[ "${release_commit}" != "${SOURCE_COMMIT}" ]]; then
+              echo "::error::${RELEASE_TAG} exists at ${release_commit}; expected ${SOURCE_COMMIT}"
+              exit 1
+            fi
+            echo "${RELEASE_TAG} already points to ${SOURCE_COMMIT}."
+            exit 0
+          fi
+
+          git tag "${RELEASE_TAG}" "${SOURCE_COMMIT}"
+          git push origin "refs/tags/${RELEASE_TAG}"
+
+  promote-images:
+    name: Promote release and demo images
+    needs:
+      - prepare-release
+      - create-release-tag
+    runs-on: docker-runner
 
     env:
       REGISTRY: ghcr.io
@@ -176,18 +220,38 @@ jobs:
           source_ref="${image}:${{ needs.prepare-release.outputs.source_tag }}"
           release_ref="${image}:${{ needs.prepare-release.outputs.release_tag }}"
           latest_ref="${image}:latest"
+          demo_source_ref="${image}:demo-${{ needs.prepare-release.outputs.source_tag }}"
+          demo_release_ref="${image}:demo-${{ needs.prepare-release.outputs.release_tag }}"
 
-          docker buildx imagetools inspect "${source_ref}" >/dev/null
           docker buildx imagetools create \
             -t "${release_ref}" \
             -t "${latest_ref}" \
             "${source_ref}"
+          docker buildx imagetools create \
+            -t "${demo_release_ref}" \
+            "${demo_source_ref}"
+
+          source_digest="$(docker buildx imagetools inspect --raw "${source_ref}" | sha256sum | awk '{print $1}')"
+          release_digest="$(docker buildx imagetools inspect --raw "${release_ref}" | sha256sum | awk '{print $1}')"
+          latest_digest="$(docker buildx imagetools inspect --raw "${latest_ref}" | sha256sum | awk '{print $1}')"
+          demo_source_digest="$(docker buildx imagetools inspect --raw "${demo_source_ref}" | sha256sum | awk '{print $1}')"
+          demo_release_digest="$(docker buildx imagetools inspect --raw "${demo_release_ref}" | sha256sum | awk '{print $1}')"
+
+          if [[ "${source_digest}" != "${release_digest}" || "${source_digest}" != "${latest_digest}" ]]; then
+            echo "::error::stable release image tags do not match ${source_ref}"
+            exit 1
+          fi
+          if [[ "${demo_source_digest}" != "${demo_release_digest}" ]]; then
+            echo "::error::stable demo image tag does not match ${demo_source_ref}"
+            exit 1
+          fi
 
   create-github-release:
     name: Create GitHub Release
     needs:
       - prepare-release
-      - promote-image
+      - create-release-tag
+      - promote-images
     runs-on: docker-runner
 
     steps:

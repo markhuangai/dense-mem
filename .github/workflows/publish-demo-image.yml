@@ -4,18 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release or prerelease Git tag to publish, without refs/tags/ (example: v1.0.0 or v1.0.0-rc.0)"
+        description: "Existing prerelease Git tag to publish, without refs/tags/ (example: v1.0.0-rc.0)"
         required: true
         type: string
   workflow_call:
     inputs:
       tag:
-        description: "Existing release or prerelease Git tag to publish, without refs/tags/ (example: v1.0.0 or v1.0.0-rc.0)"
+        description: "Existing prerelease Git tag to publish, without refs/tags/ (example: v1.0.0-rc.0)"
         required: true
         type: string
-  push:
-    tags:
-      - "v*.*.*"
 
 permissions:
   contents: read
@@ -30,7 +27,7 @@ jobs:
     runs-on: rootless-docker
 
     steps:
-      - name: Resolve release tag
+      - name: Validate prerelease tag
         id: version
         shell: bash
         env:
@@ -44,8 +41,8 @@ jobs:
             tag="${GITHUB_REF_NAME}"
           fi
 
-          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$ ]]; then
-            echo "::error::publish-demo-image only builds release or prerelease tags like v1.0.0 or v1.0.0-rc.0"
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-.+$ ]]; then
+            echo "::error::publish-demo-image only builds prerelease tags like v1.0.0-rc.0"
             exit 1
           fi
 
@@ -56,6 +53,13 @@ jobs:
         with:
           ref: refs/tags/${{ steps.version.outputs.tag }}
           fetch-depth: 0
+
+      - name: Resolve image source metadata
+        id: source
+        shell: bash
+        run: |
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "created=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set image name
         id: image
@@ -84,7 +88,6 @@ jobs:
           context: git
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=demo
             type=raw,value=demo-${{ steps.version.outputs.tag }}
 
       - name: Build and push demo image
@@ -97,5 +100,9 @@ jobs:
           provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            IMAGE_VERSION=demo-${{ steps.version.outputs.tag }}
+            IMAGE_REVISION=${{ steps.source.outputs.revision }}
+            IMAGE_CREATED=${{ steps.source.outputs.created }}
+          cache-from: type=gha,scope=dense-mem-demo
+          cache-to: type=gha,mode=max,scope=dense-mem-demo

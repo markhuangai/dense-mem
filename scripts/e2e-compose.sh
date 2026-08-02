@@ -19,7 +19,6 @@ E2E_BIND_DIR=""
 E2E_ENTRA_DIR=""
 E2E_ENTRA_PORT=""
 E2E_FILE_ID=""
-E2E_MIGRATE_IMAGE=""
 E2E_SERVER_IMAGE=""
 E2E_PLAYWRIGHT_CONTAINER=""
 
@@ -73,7 +72,9 @@ json_field() {
 let input = "";
 process.stdin.on("data", chunk => input += chunk);
 process.stdin.on("end", () => {
-  const value = JSON.parse(input)[process.argv[1]];
+  const value = process.argv[1]
+    .split(".")
+    .reduce((current, key) => current?.[key], JSON.parse(input));
   if (value === undefined || value === null || value === "") {
     process.exit(1);
   }
@@ -281,6 +282,9 @@ prepare_e2e_environment() {
       { print }
     ' "$ROOT_ENV_SOURCE_FILE" >> "$E2E_ENV_FILE"
   fi
+  printf '%s\n' \
+    "CONFLICT_REVIEW_START_TIME_LOCAL=00:00" \
+    "CONFLICT_REVIEW_JITTER_SECONDS=0" >> "$E2E_ENV_FILE"
   ROOT_ENV_FILE="$E2E_ENV_FILE"
 }
 
@@ -290,10 +294,10 @@ prepare_e2e_compose_files() {
     return 1
   fi
   E2E_COMPOSE_FILE="${ROOT_DIR}/docker-compose.e2e-${E2E_FILE_ID}.yml"
-  node - "$COMPOSE_SOURCE_FILE" "$E2E_COMPOSE_FILE" "$E2E_ENV_FILE" "$E2E_PROMETHEUS_DIR" "$ROOT_DIR" "$E2E_MIGRATE_IMAGE" "$E2E_SERVER_IMAGE" "$E2E_MARKER" <<'NODE'
+  node - "$COMPOSE_SOURCE_FILE" "$E2E_COMPOSE_FILE" "$E2E_ENV_FILE" "$E2E_PROMETHEUS_DIR" "$ROOT_DIR" "$E2E_SERVER_IMAGE" "$E2E_MARKER" <<'NODE'
 const fs = require("node:fs");
 
-const [sourcePath, destinationPath, envFile, prometheusDir, worktreeRoot, migrateImage, serverImage, marker] = process.argv.slice(2);
+const [sourcePath, destinationPath, envFile, prometheusDir, worktreeRoot, serverImage, marker] = process.argv.slice(2);
 let compose = fs.readFileSync(sourcePath, "utf8");
 
 function replaceRequired(pattern, replacement, label, expectedCount) {
@@ -309,8 +313,7 @@ function replaceRequired(pattern, replacement, label, expectedCount) {
 }
 
 replaceRequired(/^(\s*-\s*)\.env\s*$/gm, (_, prefix) => `${prefix}${envFile}`, "env_file");
-replaceRequired(/^(\s*context:\s*)\.\s*$/gm, (_, prefix) => `${prefix}${worktreeRoot}`, "build context", 2);
-replaceRequired(/^(\s*image:\s*)densemem:latest\s*$/gm, (_, prefix) => `${prefix}${migrateImage}`, "migrate image", 1);
+replaceRequired(/^(\s*context:\s*)\.\s*$/gm, (_, prefix) => `${prefix}${worktreeRoot}`, "build context", 1);
 replaceRequired(/^(\s*image:\s*)ghcr\.io\/z-m-huang\/dense-mem:latest\s*$/gm, (_, prefix) => `${prefix}${serverImage}`, "server image", 1);
 replaceRequired(
   /^(\s*)-\s+\.\/?prometheus\.yml:\/etc\/prometheus\/prometheus\.yml:ro\s*$/m,
@@ -330,7 +333,7 @@ replaceRequired(
 
 fs.writeFileSync(destinationPath, `${marker}\n${compose}`);
 NODE
-  if ! grep -F -- "$E2E_ENV_FILE" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "${E2E_PROMETHEUS_DIR}/prometheus.yml:/etc/prometheus/prometheus.yml:ro" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "${E2E_PROMETHEUS_DIR}/telemetry-scrape-token" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "context: ${ROOT_DIR}" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "$E2E_MIGRATE_IMAGE" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "$E2E_SERVER_IMAGE" "$E2E_COMPOSE_FILE" >/dev/null; then
+  if ! grep -F -- "$E2E_ENV_FILE" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "${E2E_PROMETHEUS_DIR}/prometheus.yml:/etc/prometheus/prometheus.yml:ro" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "${E2E_PROMETHEUS_DIR}/telemetry-scrape-token" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "context: ${ROOT_DIR}" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "$E2E_SERVER_IMAGE" "$E2E_COMPOSE_FILE" >/dev/null; then
     echo "Generated compose file did not contain the expected E2E substitutions." >&2
     return 1
   fi
@@ -400,14 +403,39 @@ restore_root_files() {
 }
 
 remove_e2e_images() {
-  local image
-  for image in "$E2E_MIGRATE_IMAGE" "$E2E_SERVER_IMAGE"; do
-    if [[ -n "$image" ]] && docker image inspect "$image" >/dev/null 2>&1; then
-      if ! docker image rm "$image" >/dev/null; then
-        echo "Failed to remove e2e image ${image}." >&2
-      fi
+  if [[ -n "$E2E_SERVER_IMAGE" ]] && docker image inspect "$E2E_SERVER_IMAGE" >/dev/null 2>&1; then
+    if ! docker image rm "$E2E_SERVER_IMAGE" >/dev/null; then
+      echo "Failed to remove e2e image ${E2E_SERVER_IMAGE}." >&2
     fi
-  done
+  fi
+}
+
+create_control_team() {
+  local name="$1"
+  local description="$2"
+  local payload
+  local response
+  payload="$(node -e 'process.stdout.write(JSON.stringify({name: process.argv[1], description: process.argv[2]}))' "$name" "$description")"
+  response="$(curl -fsS \
+    -H "Authorization: Bearer ${CONTROL_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data "$payload" \
+    "${CONTROL_URL}/control/api/teams")"
+  CREATED_TEAM_ID="$(printf '%s' "$response" | json_field data.id)"
+}
+
+create_control_profile() {
+  local team_id="$1"
+  local name="$2"
+  local payload
+  local response
+  payload="$(node -e 'process.stdout.write(JSON.stringify({name: process.argv[1], rate_limit: 300}))' "$name")"
+  response="$(curl -fsS \
+    -H "Authorization: Bearer ${CONTROL_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data "$payload" \
+    "${CONTROL_URL}/control/api/teams/${team_id}/profiles")"
+  CREATED_API_KEY="$(printf '%s' "$response" | json_field data.api_key)"
 }
 
 remove_e2e_playwright_container() {
@@ -503,7 +531,6 @@ fi
 E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-$(date -u +%Y%m%d%H%M%S)-$$}"
 E2E_FILE_ID="$(sanitize_project_name "$E2E_RUN_ID")"
 COMPOSE_PROJECT_NAME="$(sanitize_project_name "${DENSE_MEM_E2E_PROJECT_NAME:-densemem-e2e-${E2E_RUN_ID}}")"
-E2E_MIGRATE_IMAGE="densemem-e2e-${E2E_FILE_ID}-migrate:latest"
 E2E_SERVER_IMAGE="densemem-e2e-${E2E_FILE_ID}-server:latest"
 # Docker Desktop may need a bind-mountable directory outside a /tmp worktree.
 E2E_BIND_DIR="${DENSE_MEM_E2E_BIND_DIR:-${COMPOSE_SOURCE_DIR}}"
@@ -555,12 +582,23 @@ fi
 CONTROL_TOKEN="$(require_env_value CONTROL_PORTAL_TOKEN)"
 TELEMETRY_SCRAPE_TOKEN="$(require_env_value TELEMETRY_SCRAPE_TOKEN)"
 
+DOCKER_PLUGIN_SOURCE_CONFIG="${DOCKER_CONFIG:-${HOME}/.docker}"
 if [[ -z "${DENSE_MEM_E2E_DOCKER_CONFIG:-}" ]]; then
   mkdir "${TEMP_DIR}/docker-config"
   printf '{}\n' > "${TEMP_DIR}/docker-config/config.json"
+  if [[ -x "${DOCKER_PLUGIN_SOURCE_CONFIG}/cli-plugins/docker-buildx" ]]; then
+    mkdir "${TEMP_DIR}/docker-config/cli-plugins"
+    ln -s \
+      "${DOCKER_PLUGIN_SOURCE_CONFIG}/cli-plugins/docker-buildx" \
+      "${TEMP_DIR}/docker-config/cli-plugins/docker-buildx"
+  fi
   export DOCKER_CONFIG="${TEMP_DIR}/docker-config"
 else
   export DOCKER_CONFIG="$DENSE_MEM_E2E_DOCKER_CONFIG"
+fi
+if ! docker buildx version >/dev/null 2>&1; then
+  echo "Docker Buildx is required for compose e2e image builds." >&2
+  exit 1
 fi
 export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
@@ -620,10 +658,11 @@ if [[ "$E2E_MODE" == "entra_scim" ]]; then
   exit 0
 fi
 
-echo "Seeding e2e team through the compose server container."
-seed_json="$(compose exec -T server /app/provision-team --name "E2E Team" --description "compose e2e seed" --rate-limit 300)"
-team_id="$(printf '%s' "$seed_json" | json_field team_id)"
-api_key="$(printf '%s' "$seed_json" | json_field api_key)"
+echo "Seeding e2e team through the private control API."
+create_control_team "E2E Team" "compose e2e seed"
+team_id="$CREATED_TEAM_ID"
+create_control_profile "$team_id" "E2E Profile"
+api_key="$CREATED_API_KEY"
 
 echo "Running compose-backed scheduled team dreaming e2e."
 dream_json="$(DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
@@ -654,9 +693,9 @@ else
 fi
 
 echo "Running compose-backed MCP conflict e2e."
-echo "Seeding isolated conflict e2e team through the compose server container."
-conflict_seed_json="$(compose exec -T server /app/provision-team --name "Conflict E2E Team" --description "compose conflict e2e seed" --rate-limit 300)"
-conflict_team_id="$(printf '%s' "$conflict_seed_json" | json_field team_id)"
+echo "Seeding isolated conflict e2e team through the private control API."
+create_control_team "Conflict E2E Team" "compose conflict e2e seed"
+conflict_team_id="$CREATED_TEAM_ID"
 DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
 DENSE_MEM_USER_URL="$USER_URL" \
 DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \

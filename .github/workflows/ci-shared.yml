@@ -55,6 +55,11 @@ jobs:
           printf '%s\n' "${packages}"
           go test ${packages}
 
+      - name: Run concurrent startup migration test
+        run: >-
+          go test -tags=integration ./internal/storage/postgres
+          -run '^TestMigratorRunUpSerializesConcurrentStartup$' -count=1
+
       - name: Run unit coverage gate
         shell: bash
         run: |
