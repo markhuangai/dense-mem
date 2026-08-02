@@ -410,6 +410,81 @@ func TestSubmissionPromotionLinksSemanticEventsToSubmissionAssessment(t *testing
 	require.Equal(t, 1, verificationEventCount)
 }
 
+func TestSubmissionPromotionResolvedPredicateBypassesAmbiguousAliasLookup(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-resolved-predicate-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-resolved-predicate-owner")
+	repo := NewLedgerRepository(appDB, rls)
+	ensureSubmissionPromotionSearchContract(t, ctx, adminDB, rls)
+
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		if err := ensureSemanticRefs(ctx, tx, teamID, ownerID); err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO team_predicate_definitions (
+				team_id, predicate_key, version, aliases, allowed_subject_kinds,
+				allowed_object_kinds, relationship_kind, current_cardinality,
+				lifecycle_state, origin, metadata
+			) VALUES
+				(?::uuid, 'resolved_submission_is', 1, ARRAY['is'], ARRAY['other'], ARRAY['other'], 'state', 'many', 'active', 'test', '{}'::jsonb),
+				(?::uuid, 'alias_submission_is', 1, ARRAY['is'], ARRAY['other'], ARRAY['other'], 'state', 'many', 'active', 'test', '{}'::jsonb)
+		`, teamID, teamID).Error
+	}))
+
+	createPromotion := func(idempotencyKey string) PromoteSubmissionInput {
+		requestHash := "sha256:" + idempotencyKey
+		created, err := repo.CreateSubmission(ctx, CreateSubmissionInput{
+			TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: idempotencyKey, RequestHash: requestHash, SourceSummary: "submission predicate alias",
+			Proposal: map[string]any{"entities": []any{}, "relationships": []any{}},
+			Evidence: []SubmissionEvidenceInput{{Content: "Dense-Mem uses PostgreSQL.", SourceType: "document", Authority: "primary"}},
+		})
+		require.NoError(t, err)
+		claim, err := repo.ClaimNextSubmission(ctx, teamID, "resolved-predicate-worker", time.Minute)
+		require.NoError(t, err)
+		require.NotNil(t, claim)
+
+		promotion := testSubmissionPromotionInput(teamID, ownerID, created.SubmissionID, claim.Attempts, "resolved-predicate-worker", requestHash, "submission predicate alias")
+		fragment := promotion.Canonical.Evidence[0]
+		confidence := 0.99
+		subjectStart, subjectEnd := 0, 9
+		objectStart, objectEnd := 15, 25
+		promotion.Commits[0].EntityResolutions = []PlacementEntityResolutionInput{
+			{MentionRef: "subject", Action: string(domain.EntityResolutionCreate), EntityKind: string(domain.EntityKindOther), CanonicalName: "Dense-Mem", FragmentID: fragment.FragmentID, SpanStart: &subjectStart, SpanEnd: &subjectEnd, VerifierResult: map[string]any{}, Metadata: map[string]any{}},
+			{MentionRef: "object", Action: string(domain.EntityResolutionCreate), EntityKind: string(domain.EntityKindOther), CanonicalName: "PostgreSQL", FragmentID: fragment.FragmentID, SpanStart: &objectStart, SpanEnd: &objectEnd, VerifierResult: map[string]any{}, Metadata: map[string]any{}},
+		}
+		promotion.Commits[0].RelationshipObservations = []PlacementRelationshipDecisionInput{{
+			Ref: "relationship", SubjectRef: "subject", OriginalPredicate: "is", PredicateKey: "resolved_submission_is", PredicateVersion: 1,
+			ObjectRef: "object", EvidenceVerdict: string(domain.VerificationEntailed), Confidence: &confidence,
+			Support: &EvidenceSupportInput{FragmentID: fragment.FragmentID, SourceGroupKey: "submission-resolved-predicate", SpanStart: 0, SpanEnd: len(fragment.Content), Quote: fragment.Content, Authority: "primary"},
+		}}
+		return promotion
+	}
+
+	ambiguous := createPromotion("submission-predicate-ambiguous")
+	ambiguous.Commits[0].RelationshipObservations[0].PredicateCandidate = &PlacementPredicateCandidateInput{
+		PredicateKey: "resolved_submission_is", PredicateVersion: 1, RelationshipKind: "state",
+	}
+	_, err := repo.PromoteSubmission(ctx, ambiguous)
+	require.ErrorIs(t, err, ErrSubmissionConflict)
+
+	exact := createPromotion("submission-predicate-exact")
+	_, err = repo.PromoteSubmission(ctx, exact)
+	require.NoError(t, err)
+
+	var relationshipCount int
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)::int
+			FROM relationship_records
+			WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND predicate_key = 'resolved_submission_is'
+		`, teamID, ownerID).Scan(&relationshipCount).Error
+	}))
+	require.Equal(t, 1, relationshipCount)
+}
+
 func TestSubmissionPromotionRollsBackCanonicalWritesOnSemanticFailure(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

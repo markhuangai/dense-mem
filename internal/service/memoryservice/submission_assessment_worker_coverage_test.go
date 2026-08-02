@@ -165,6 +165,7 @@ func TestSubmissionAssessmentSupportAndPromotionHelpersFailClosed(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, promotion.Commits, 1)
 	require.Equal(t, "assessment-1", promotion.Commits[0].EntityResolutions[0].SubmissionAssessmentID)
+	require.Nil(t, promotion.Commits[0].RelationshipObservations[0].PredicateCandidate)
 	novelPredicate := submissionAssessmentWorkerValidResponse(request, provider.subjectID, provider.objectID)
 	novelPredicate.RelationshipResults[0].PredicateStatus = "needs_review"
 	novelPredicate.RelationshipResults[0].PredicateKey = nil

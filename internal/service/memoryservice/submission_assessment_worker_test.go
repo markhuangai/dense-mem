@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -258,7 +259,7 @@ func TestSubmissionAssessmentWorkerHandlesDependencyAndRepositoryFailures(t *tes
 			wantErr: "submission promotion failed",
 			assert: func(t *testing.T, repo *submissionAssessmentWorkerRepositoryStub) {
 				require.Len(t, repo.requeues, 1)
-				require.Equal(t, "atomic_promotion", repo.requeues[0].ReasonCode)
+				require.Equal(t, "atomic_promotion_unknown", repo.requeues[0].ReasonCode)
 			},
 		},
 	} {
@@ -277,6 +278,26 @@ func TestSubmissionAssessmentWorkerHandlesDependencyAndRepositoryFailures(t *tes
 			if testCase.assert != nil {
 				testCase.assert(t, repo)
 			}
+		})
+	}
+}
+
+func TestSubmissionPromotionFailureReason(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "submission lease conflict", err: repository.ErrSubmissionLeaseConflict, want: "atomic_promotion_submission_lease_conflict"},
+		{name: "submission conflict", err: repository.ErrSubmissionConflict, want: "atomic_promotion_submission_conflict"},
+		{name: "placement lease lost", err: repository.ErrPlacementLeaseLost, want: "atomic_promotion_placement_lease_lost"},
+		{name: "source revision conflict", err: repository.ErrSourceRevisionConflict, want: "atomic_promotion_source_revision_conflict"},
+		{name: "postgres sqlstate", err: &pgconn.PgError{Code: "23514", Message: "private database detail"}, want: "atomic_promotion_sqlstate_23514"},
+		{name: "invalid postgres sqlstate", err: &pgconn.PgError{Code: "bad!", Message: "private database detail"}, want: "atomic_promotion_unknown"},
+		{name: "unknown", err: errors.New("private database detail"), want: "atomic_promotion_unknown"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Equal(t, testCase.want, submissionPromotionFailureReason(testCase.err))
 		})
 	}
 }
