@@ -121,6 +121,11 @@ independent databases must each be migrated by a server connected to that
 database. Administration stays on the private control portal/API, while dreaming
 and automatic conflict review run as server background workers.
 
+The image healthcheck allows the default 30-minute migration window and becomes
+active after its first success. If `POSTGRES_MIGRATION_TIMEOUT_SECONDS` is set
+above 1800, override the deployment healthcheck start period to at least the
+same duration.
+
 Release candidates use `vX.Y.Z-rc.N` and `demo-vX.Y.Z-rc.N`. Stable releases use
 `vX.Y.Z`, `latest`, and `demo-vX.Y.Z`; there is no rolling demo tag.
 

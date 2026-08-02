@@ -87,7 +87,7 @@ EXPOSE 8080 8090
 
 # /health is a liveness probe (process up); /ready flips to 503 on transient
 # dependency blips which would force Docker to restart a healthy container.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30m --retries=3 \
     CMD sh -c 'addr="${HTTP_ADDR:-:8080}"; port="${addr##*:}"; wget --quiet -O /dev/null "http://127.0.0.1:${port}/health"' || exit 1
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

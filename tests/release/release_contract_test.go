@@ -36,19 +36,126 @@ func TestPublishWorkflowsHaveOneAutomaticOwner(t *testing.T) {
 	assert.Contains(t, demo, "type=raw,value=demo-${{ steps.version.outputs.tag }}")
 }
 
-func TestStableReleasePreflightsBothImagesBeforeTagging(t *testing.T) {
-	workflow := string(readRepoFile(t, ".github/workflows/release.yml"))
-	preflight := strings.Index(workflow, "  preflight-images:")
-	createTag := strings.Index(workflow, "  create-release-tag:")
-	promote := strings.Index(workflow, "  promote-images:")
+func TestImageBuildJobsUseRootlessDockerRunnerOnly(t *testing.T) {
+	rootlessJobs := map[string]bool{
+		".github/workflows/ci-shared.yml/container-images":      false,
+		".github/workflows/publish-demo-image.yml/publish-demo": false,
+		".github/workflows/publish-image.yml/publish":           false,
+	}
 
-	require.GreaterOrEqual(t, preflight, 0)
-	require.Greater(t, createTag, preflight)
-	require.Greater(t, promote, createTag)
-	assert.Contains(t, workflow, "--variant release")
-	assert.Contains(t, workflow, "--variant demo")
-	assert.Contains(t, workflow, "demo-${{ needs.prepare-release.outputs.release_tag }}")
-	assert.NotContains(t, workflow, "demo_ref=\"${image}:demo\"")
+	paths, err := filepath.Glob(filepath.Join(repoRoot(t), ".github", "workflows", "*.yml"))
+	require.NoError(t, err)
+	for _, path := range paths {
+		var workflow struct {
+			Jobs map[string]struct {
+				RunsOn string `yaml:"runs-on"`
+			} `yaml:"jobs"`
+		}
+		require.NoError(t, yaml.Unmarshal(readFile(t, path), &workflow))
+		relativePath, err := filepath.Rel(repoRoot(t), path)
+		require.NoError(t, err)
+		for jobName, job := range workflow.Jobs {
+			if job.RunsOn == "" {
+				continue
+			}
+			key := filepath.ToSlash(relativePath) + "/" + jobName
+			expectedRunner := "docker-runner"
+			if _, buildsImage := rootlessJobs[key]; buildsImage {
+				expectedRunner = "rootless-docker"
+				rootlessJobs[key] = true
+			}
+			assert.Equal(t, expectedRunner, job.RunsOn, key)
+		}
+	}
+	for key, seen := range rootlessJobs {
+		assert.True(t, seen, key)
+	}
+}
+
+func TestStableReleasePreflightsBothImagesBeforeTagging(t *testing.T) {
+	contents := readRepoFile(t, ".github/workflows/release.yml")
+	var workflow struct {
+		Jobs map[string]struct {
+			Needs yaml.Node `yaml:"needs"`
+			Steps []struct {
+				Name string         `yaml:"name"`
+				With map[string]any `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	require.NoError(t, yaml.Unmarshal(contents, &workflow))
+
+	createTag, ok := workflow.Jobs["create-release-tag"]
+	require.True(t, ok)
+	var createTagNeeds []string
+	require.NoError(t, createTag.Needs.Decode(&createTagNeeds))
+	assert.Contains(t, createTagNeeds, "preflight-images")
+
+	promote, ok := workflow.Jobs["promote-images"]
+	require.True(t, ok)
+	var promoteNeeds []string
+	require.NoError(t, promote.Needs.Decode(&promoteNeeds))
+	assert.Contains(t, promoteNeeds, "create-release-tag")
+
+	preflight, ok := workflow.Jobs["preflight-images"]
+	require.True(t, ok)
+	checkoutFound := false
+	for _, step := range preflight.Steps {
+		if step.Name != "Checkout RC source" {
+			continue
+		}
+		checkoutFound = true
+		persistCredentials, configured := step.With["persist-credentials"]
+		require.True(t, configured)
+		assert.Equal(t, false, persistCredentials)
+	}
+	require.True(t, checkoutFound)
+
+	text := string(contents)
+	assert.Contains(t, text, "--variant release")
+	assert.Contains(t, text, "--variant demo")
+	assert.Contains(t, text, "demo-${{ needs.prepare-release.outputs.release_tag }}")
+	assert.NotContains(t, text, "demo_ref=\"${image}:demo\"")
+}
+
+func TestPublishVerificationUsesEnvironmentBoundary(t *testing.T) {
+	tests := []struct {
+		path     string
+		stepName string
+	}{
+		{path: ".github/workflows/publish-image.yml", stepName: "Verify published image"},
+		{path: ".github/workflows/publish-demo-image.yml", stepName: "Verify published demo image"},
+	}
+
+	for _, tc := range tests {
+		t.Run(filepath.Base(tc.path), func(t *testing.T) {
+			var workflow struct {
+				Jobs map[string]struct {
+					Steps []struct {
+						Name string            `yaml:"name"`
+						Env  map[string]string `yaml:"env"`
+						Run  string            `yaml:"run"`
+					} `yaml:"steps"`
+				} `yaml:"jobs"`
+			}
+			require.NoError(t, yaml.Unmarshal(readRepoFile(t, tc.path), &workflow))
+
+			found := false
+			for _, job := range workflow.Jobs {
+				for _, step := range job.Steps {
+					if step.Name != tc.stepName {
+						continue
+					}
+					found = true
+					assert.Contains(t, step.Env, "IMAGE_NAME")
+					assert.Contains(t, step.Env, "REVISION")
+					assert.Contains(t, step.Env, "TAG")
+					assert.NotContains(t, step.Run, "${{")
+				}
+			}
+			require.True(t, found)
+		})
+	}
 }
 
 func TestDockerfilesBuildOneProjectExecutable(t *testing.T) {
@@ -66,6 +173,7 @@ func TestDockerfilesBuildOneProjectExecutable(t *testing.T) {
 			contents := string(readRepoFile(t, tc.path))
 			assert.Equal(t, 1, strings.Count(contents, "go build "))
 			assert.Contains(t, contents, tc.binaryPath)
+			assert.Contains(t, contents, "--start-period=30m")
 			assert.NotContains(t, contents, "/out/migrate")
 			assert.NotContains(t, contents, "/out/review-conflicts")
 			assert.NotContains(t, contents, "/out/provision-profile")

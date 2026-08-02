@@ -357,7 +357,7 @@ async function runAutomaticConflictReview(conflictID) {
     }
     if (attempt % 5 === 0) {
       markConflictReviewDue(conflictID);
-      requeueCompletedConflictReviewRun();
+      requeueCompletedConflictReviewRun(conflictID);
     }
     await delay(2_000);
   }
@@ -381,16 +381,23 @@ function markConflictReviewDue(conflictID) {
   `);
 }
 
-function requeueCompletedConflictReviewRun() {
+function requeueCompletedConflictReviewRun(conflictID) {
   postgresQuery(`
-    UPDATE relationship_conflict_review_runs
+    UPDATE relationship_conflict_review_runs AS review_run
     SET status = 'failed',
         lease_until = NULL,
         completed_at = NULL,
         last_error = 'compose e2e automatic review requeue',
         updated_at = now()
-    WHERE team_id = ${sqlLiteral(teamID)}::uuid
-      AND status = 'completed';
+    WHERE review_run.team_id = ${sqlLiteral(teamID)}::uuid
+      AND review_run.status = 'completed'
+      AND EXISTS (
+        SELECT 1
+        FROM relationship_conflict_cases AS conflict
+        WHERE conflict.team_id = review_run.team_id
+          AND conflict.conflict_id = ${sqlLiteral(conflictID)}::uuid
+          AND conflict.last_review_run_id = review_run.review_run_id
+      );
   `);
 }
 

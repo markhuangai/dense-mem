@@ -48,18 +48,23 @@ BANNED_APP_PATHS = {
     "app/review-conflicts",
 }
 
+COMMAND_TIMEOUT_SECONDS = 300
+EXPORT_TIMEOUT_SECONDS = 300
+REMOVE_TIMEOUT_SECONDS = 60
+
 
 class VerificationError(RuntimeError):
     pass
 
 
-def command(*args: str) -> str:
+def command(*args: str, timeout: float = COMMAND_TIMEOUT_SECONDS) -> str:
     completed = subprocess.run(
         args,
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        timeout=timeout,
     )
     return completed.stdout
 
@@ -301,6 +306,7 @@ def export_rootfs(image: str, platform: str, destination: str) -> None:
                 ("docker", "export", container_id),
                 check=True,
                 stdout=output,
+                timeout=EXPORT_TIMEOUT_SECONDS,
             )
     finally:
         subprocess.run(
@@ -308,6 +314,7 @@ def export_rootfs(image: str, platform: str, destination: str) -> None:
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            timeout=REMOVE_TIMEOUT_SECONDS,
         )
 
 
@@ -370,9 +377,17 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+def cli() -> int:
     try:
-        sys.exit(main())
-    except (VerificationError, subprocess.CalledProcessError) as error:
+        return main()
+    except (
+        VerificationError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+    ) as error:
         print(f"image verification failed: {error}", file=sys.stderr)
-        sys.exit(1)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(cli())

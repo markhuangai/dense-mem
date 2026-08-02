@@ -110,6 +110,10 @@ migration 容器。共享同一个可写 primary 的多个 server replica 会串
 连接到该数据库的 server 完成 migration。管理操作通过私有控制门户/API 完成；dreaming
 和自动 conflict review 仍由 server 后台 worker 执行。
 
+镜像 healthcheck 为默认的 30 分钟 migration 窗口保留启动宽限期，并在首次检查成功后
+进入正常检测。若将 `POSTGRES_MIGRATION_TIMEOUT_SECONDS` 设为大于 1800，应把部署的
+healthcheck start period 同步调整到至少相同时间。
+
 RC 标签为 `vX.Y.Z-rc.N` 和 `demo-vX.Y.Z-rc.N`。稳定版标签为 `vX.Y.Z`、
 `latest` 和 `demo-vX.Y.Z`；不提供滚动 demo 标签。
 

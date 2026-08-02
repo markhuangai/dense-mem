@@ -109,11 +109,15 @@ jobs:
 
       - name: Verify published demo image
         shell: bash
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          REVISION: ${{ steps.source.outputs.revision }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           python3 scripts/verify-container-image.py \
-            --image "${{ steps.image.outputs.name }}:demo-${{ steps.version.outputs.tag }}" \
+            --image "${IMAGE_NAME}:demo-${TAG}" \
             --variant demo \
             --platform linux/amd64 \
             --platform linux/arm64 \
             --max-compressed-bytes 22000000 \
-            --revision "${{ steps.source.outputs.revision }}"
+            --revision "${REVISION}"

@@ -55,9 +55,9 @@ await assertFeedbackActor(hypothesisID, reviewer.profileID);
 assertContainsDream(controlDreams.data?.items, hypothesisID, statement, "control portal API");
 const userDreams = await userJSON("/ui/api/dreams?limit=10");
 assertEvidenceDerivedDream(assertContainsDream(userDreams.data?.items, hypothesisID, statement, "user portal API"), seeded, "user portal API");
-const listOutput = await mcpTool(apiKey, "list_dreams", { limit: 10 });
+const listOutput = await mcpTool(apiKey, "list_dreams", { limit: 10 }, true);
 assertContainsDream(listOutput.dreams, hypothesisID, statement, "MCP list_dreams");
-const getOutput = await mcpTool(apiKey, "get_dream", { hypothesis_id: hypothesisID });
+const getOutput = await mcpTool(apiKey, "get_dream", { hypothesis_id: hypothesisID }, true);
 assertEvidenceDerivedDream(getOutput.hypothesis, seeded, "MCP get_dream");
 
 console.log(JSON.stringify({
@@ -87,7 +87,7 @@ async function updateControlConfig(path, items) {
   await controlJSON(path, {
     method: "PATCH",
     body: JSON.stringify({ items }),
-  });
+  }, true);
 }
 
 async function waitForScheduledRun() {
@@ -353,7 +353,7 @@ async function assertFeedbackActor(hypothesisID, profileID) {
   assertEqual(decision, "reinforce", "feedback decision");
 }
 
-async function controlJSON(path, options = {}) {
+async function controlJSON(path, options = {}, retryTransport = (options.method ?? "GET") === "GET") {
   return httpJSON(`${controlURL}/control/api${path}`, {
     ...options,
     headers: {
@@ -361,7 +361,7 @@ async function controlJSON(path, options = {}) {
       "Content-Type": "application/json",
       ...(options.headers ?? {}),
     },
-  });
+  }, retryTransport);
 }
 
 async function userJSON(path) {
@@ -369,10 +369,10 @@ async function userJSON(path) {
     headers: {
       Authorization: `Bearer ${apiKey}`,
     },
-  });
+  }, true);
 }
 
-async function mcpTool(token, name, args) {
+async function mcpTool(token, name, args, retryTransport = false) {
   const response = await httpJSON(`${userURL}/mcp`, {
     method: "POST",
     headers: {
@@ -385,7 +385,7 @@ async function mcpTool(token, name, args) {
       method: "tools/call",
       params: { name, arguments: args },
     }),
-  });
+  }, retryTransport);
   if (response.error) {
     throw new Error(`MCP ${name} error: ${JSON.stringify(response.error)}`);
   }
@@ -396,14 +396,15 @@ async function mcpTool(token, name, args) {
   return JSON.parse(text);
 }
 
-async function httpJSON(url, options) {
+async function httpJSON(url, options, retryTransport = false) {
   let response;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  const attempts = retryTransport ? 3 : 1;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       response = await fetch(url, options);
       break;
     } catch (error) {
-      if (attempt === 2) {
+      if (attempt === attempts - 1) {
         throw error;
       }
       await delay(1_000);

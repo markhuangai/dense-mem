@@ -32,8 +32,9 @@ func TestDockerComposeDemoRequiresVersionedImage(t *testing.T) {
 	compose := readComposeExample(t, "docker-compose.demo.yml")
 	demo := requireComposeService(t, compose, "demo")
 
-	assert.Contains(t, demo.Image, "DENSE_MEM_DEMO_IMAGE:?")
-	assert.Contains(t, text, "demo-vX.Y.Z")
+	assert.Contains(t, demo.Image, "DENSE_MEM_DEMO_REPOSITORY")
+	assert.Contains(t, demo.Image, ":demo-v${DENSE_MEM_DEMO_VERSION:?")
+	assert.NotContains(t, text, "DENSE_MEM_DEMO_IMAGE")
 	assert.NotContains(t, text, "dense-mem:demo\n")
 }
 

@@ -140,7 +140,7 @@ jobs:
   preflight-images:
     name: Preflight RC images
     needs: prepare-release
-    runs-on: rootless-docker
+    runs-on: docker-runner
     permissions:
       contents: read
       packages: read
@@ -153,6 +153,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-release.outputs.source_commit }}
+          persist-credentials: false
 
       - name: Set image name
         id: image
@@ -246,7 +247,7 @@ jobs:
     needs:
       - prepare-release
       - create-release-tag
-    runs-on: rootless-docker
+    runs-on: docker-runner
 
     env:
       REGISTRY: ghcr.io
