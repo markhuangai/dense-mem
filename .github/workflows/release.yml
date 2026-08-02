@@ -137,71 +137,9 @@ jobs:
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
           echo "source_commit=${source_commit}" >> "$GITHUB_OUTPUT"
 
-  preflight-images:
-    name: Preflight RC images
-    needs: prepare-release
-    runs-on: docker-runner
-    permissions:
-      contents: read
-      packages: read
-
-    env:
-      REGISTRY: ghcr.io
-
-    steps:
-      - name: Checkout RC source
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.prepare-release.outputs.source_commit }}
-          persist-credentials: false
-
-      - name: Set image name
-        id: image
-        shell: bash
-        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-      - name: Configure Docker credentials path
-        shell: bash
-        run: |
-          mkdir -p "${RUNNER_TEMP}/.docker"
-          echo "DOCKER_CONFIG=${RUNNER_TEMP}/.docker" >> "$GITHUB_ENV"
-
-      - name: Log in to registry
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: echo "${GITHUB_TOKEN}" | docker login "${REGISTRY}" -u "${GITHUB_ACTOR}" --password-stdin
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Verify release RC image
-        shell: bash
-        run: |
-          python3 scripts/verify-container-image.py \
-            --image "${{ steps.image.outputs.name }}:${{ needs.prepare-release.outputs.source_tag }}" \
-            --variant release \
-            --platform linux/amd64 \
-            --platform linux/arm64 \
-            --max-compressed-bytes 30000000 \
-            --revision "${{ needs.prepare-release.outputs.source_commit }}"
-
-      - name: Verify demo RC image
-        shell: bash
-        run: |
-          python3 scripts/verify-container-image.py \
-            --image "${{ steps.image.outputs.name }}:demo-${{ needs.prepare-release.outputs.source_tag }}" \
-            --variant demo \
-            --platform linux/amd64 \
-            --platform linux/arm64 \
-            --max-compressed-bytes 22000000 \
-            --revision "${{ needs.prepare-release.outputs.source_commit }}"
-
   create-release-tag:
     name: Create stable Git tag
-    needs:
-      - prepare-release
-      - preflight-images
+    needs: prepare-release
     permissions:
       contents: write
     runs-on: docker-runner

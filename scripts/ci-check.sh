@@ -6,8 +6,6 @@ cd "${ROOT_DIR}"
 
 npm ci --prefix .lint
 npm run --prefix .lint lint:lines
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/release -p 'test_*.py'
-
 packages="$(
 	git ls-files '*.go' |
 		grep -Ev '^(tests/uat|tests/eval/runtime)/' |

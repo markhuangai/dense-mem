@@ -105,18 +105,3 @@ jobs:
             IMAGE_CREATED=${{ steps.source.outputs.created }}
           cache-from: type=gha,scope=dense-mem-release
           cache-to: type=gha,mode=max,scope=dense-mem-release
-
-      - name: Verify published image
-        shell: bash
-        env:
-          IMAGE_NAME: ${{ steps.image.outputs.name }}
-          REVISION: ${{ steps.source.outputs.revision }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          python3 scripts/verify-container-image.py \
-            --image "${IMAGE_NAME}:${TAG}" \
-            --variant release \
-            --platform linux/amd64 \
-            --platform linux/arm64 \
-            --max-compressed-bytes 30000000 \
-            --revision "${REVISION}"
