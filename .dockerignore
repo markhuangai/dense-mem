@@ -31,7 +31,7 @@ migrate
 README.md
 LICENSE
 
-# Tests (not compiled into cmd/server or cmd/migrate binaries)
+# Tests (not compiled into the server binaries)
 tests/
 
 # IDE
@@ -52,5 +52,5 @@ temp/
 *.tmp
 
 # Node artifacts (none expected, but mirror .gitignore)
-node_modules/
+**/node_modules/
 bun.lockb

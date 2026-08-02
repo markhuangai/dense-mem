@@ -20,10 +20,21 @@ func TestDockerComposeBaseExample_LocalOnly(t *testing.T) {
 	assert.NotContains(t, text, "\n      HTTP_ADDR:")
 	assert.NotContains(t, text, "traefik")
 	assert.NotContains(t, compose.Services, "redis")
+	assert.NotContains(t, compose.Services, "migrate")
 	assert.NotContains(t, compose.Services, removedGraphServiceName())
 	assert.NotContains(t, server.Environment, removedGraphEnvKey())
 	assert.NotContains(t, server.Environment, "AI_REVIEWER_MODEL")
 	assert.Contains(t, server.Environment["AI_VERIFIER_MODEL"], "AI_VERIFIER_MODEL must be set")
+}
+
+func TestDockerComposeDemoRequiresVersionedImage(t *testing.T) {
+	text := readExample(t, "docker-compose.demo.yml")
+	compose := readComposeExample(t, "docker-compose.demo.yml")
+	demo := requireComposeService(t, compose, "demo")
+
+	assert.Contains(t, demo.Image, "DENSE_MEM_DEMO_IMAGE:?")
+	assert.Contains(t, text, "demo-vX.Y.Z")
+	assert.NotContains(t, text, "dense-mem:demo\n")
 }
 
 func TestDockerComposeExpertExample_HasOptionalProfiles(t *testing.T) {

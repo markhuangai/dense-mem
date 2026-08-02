@@ -13,9 +13,6 @@ on:
         description: "Existing prerelease Git tag to publish, without refs/tags/ (example: v1.0.0-rc.0)"
         required: true
         type: string
-  push:
-    tags:
-      - "v*.*.*-*"
 
 permissions:
   contents: read
@@ -57,6 +54,13 @@ jobs:
           ref: refs/tags/${{ steps.version.outputs.tag }}
           fetch-depth: 0
 
+      - name: Resolve image source metadata
+        id: source
+        shell: bash
+        run: |
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "created=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Set image name
         id: image
         run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
@@ -95,5 +99,20 @@ jobs:
           provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            IMAGE_VERSION=${{ steps.version.outputs.tag }}
+            IMAGE_REVISION=${{ steps.source.outputs.revision }}
+            IMAGE_CREATED=${{ steps.source.outputs.created }}
+          cache-from: type=gha,scope=dense-mem-release
+          cache-to: type=gha,mode=max,scope=dense-mem-release
+
+      - name: Verify published image
+        shell: bash
+        run: |
+          python3 scripts/verify-container-image.py \
+            --image "${{ steps.image.outputs.name }}:${{ steps.version.outputs.tag }}" \
+            --variant release \
+            --platform linux/amd64 \
+            --platform linux/arm64 \
+            --max-compressed-bytes 30000000 \
+            --revision "${{ steps.source.outputs.revision }}"

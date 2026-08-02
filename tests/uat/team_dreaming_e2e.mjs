@@ -397,7 +397,18 @@ async function mcpTool(token, name, args) {
 }
 
 async function httpJSON(url, options) {
-  const response = await fetch(url, options);
+  let response;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      response = await fetch(url, options);
+      break;
+    } catch (error) {
+      if (attempt === 2) {
+        throw error;
+      }
+      await delay(1_000);
+    }
+  }
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} ${url}: ${redactHTTPBody(text)}`);

@@ -83,7 +83,6 @@ cp .env.example .env
 ${EDITOR:-vi} .env
 
 docker compose up -d
-docker compose exec server /app/provision-team --name "primary-memory"
 ```
 
 The base stack uses PostgreSQL with pgvector as the durable authority. Leave
@@ -95,6 +94,35 @@ MCP:            http://127.0.0.1:8080/mcp
 User portal:    http://127.0.0.1:8080/ui
 Control portal: http://127.0.0.1:8090/
 ```
+
+Open the control portal with `CONTROL_PORTAL_TOKEN`, then create a team and its
+first profile/API key. For control-plane automation, use the same private API:
+
+```bash
+control_token="<CONTROL_PORTAL_TOKEN from .env>"
+
+curl -fsS -X POST http://127.0.0.1:8090/control/api/teams \
+  -H "Authorization: Bearer ${control_token}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"primary-memory"}'
+
+curl -fsS -X POST http://127.0.0.1:8090/control/api/teams/<team-id>/profiles \
+  -H "Authorization: Bearer ${control_token}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"default profile"}'
+```
+
+The release image contains one project executable, `/app/server`. It applies
+pending PostgreSQL migrations under a database session lock before serving, so
+the Compose stack does not need a separate migration container. Multiple server
+replicas that share one writable primary serialize this startup step. Keep
+rolling-deployment migrations backward compatible with the previous app version;
+independent databases must each be migrated by a server connected to that
+database. Administration stays on the private control portal/API, while dreaming
+and automatic conflict review run as server background workers.
+
+Release candidates use `vX.Y.Z-rc.N` and `demo-vX.Y.Z-rc.N`. Stable releases use
+`vX.Y.Z`, `latest`, and `demo-vX.Y.Z`; there is no rolling demo tag.
 
 The server requires complete embedding and verifier configuration at
 startup: `AI_API_URL`, `AI_API_KEY`, `AI_API_EMBEDDING_MODEL`,

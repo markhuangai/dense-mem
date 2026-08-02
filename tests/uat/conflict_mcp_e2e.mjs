@@ -9,6 +9,7 @@ const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const placementTimeoutSeconds = positiveIntEnv("DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS", 720, 30, 1800);
+const conflictReviewTimeoutSeconds = positiveIntEnv("DENSE_MEM_E2E_CONFLICT_REVIEW_TIMEOUT_SECONDS", 240, 60, 600);
 
 let rpcID = 0;
 
@@ -70,14 +71,9 @@ await rememberAndWait(profileC.apiKey, {
   conflictContext: { conflict_id: conflictID, expected_version: conflictVersion },
 });
 
-const reviewNow = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
-const review = runConflictReview(reviewNow);
-if (review.status !== "completed" || review.resolved_cases < 1) {
-  throw new Error(`conflict reviewer did not resolve a case: ${JSON.stringify(review)}`);
-}
-const resolved = (review.results ?? []).find((item) => item.conflict_id === conflictID);
-if (!resolved || resolved.outcome !== "resolve") {
-  throw new Error(`conflict reviewer did not resolve ${conflictID}: ${JSON.stringify(review)}`);
+const review = await runAutomaticConflictReview(conflictID);
+if (review.status !== "resolved") {
+  throw new Error(`automatic conflict reviewer did not resolve ${conflictID}: ${JSON.stringify(review)}`);
 }
 
 const resolvedConflict = await waitForRelationshipConflict(profileB.apiKey, second.relationshipID, "resolved");
@@ -293,24 +289,18 @@ async function resolveOverdueConflictThroughVerifier() {
     throw new Error(`overdue conflict did not contain the two tied positions: ${JSON.stringify(openOverdueConflict)}`);
   }
 
-  const overdueReviewDueAt = Date.parse(stringAt(openOverdueConflict, ["review_due_at"]));
-  if (!Number.isFinite(overdueReviewDueAt)) {
+  if (!Number.isFinite(Date.parse(stringAt(openOverdueConflict, ["review_due_at"])))) {
     throw new Error(`overdue conflict did not return a valid review_due_at: ${JSON.stringify(openOverdueConflict)}`);
   }
-  const overdueReviewNow = new Date(overdueReviewDueAt + 1_000).toISOString().replace(/\.\d{3}Z$/, "Z");
-  const overdueReview = runConflictReview(overdueReviewNow);
-  if (overdueReview.status !== "completed") {
+  const overdueReview = await runAutomaticConflictReview(overdueConflictID);
+  if (overdueReview.status !== "resolved" || overdueReview.planStatus !== "applied") {
     throw new Error(`overdue conflict reviewer did not complete: ${JSON.stringify(overdueReview)}`);
   }
-  const resolution = (overdueReview.results ?? []).find((item) => item.conflict_id === overdueConflictID);
-  if (!resolution || resolution.outcome !== "resolve") {
-    throw new Error(`overdue conflict did not resolve: ${JSON.stringify(overdueReview)}`);
+  if (!["ai", "last_write_wins"].includes(overdueReview.method)) {
+    throw new Error(`overdue conflict used an unexpected resolution method: ${JSON.stringify(overdueReview)}`);
   }
-  if (!["ai", "last_write_wins"].includes(resolution.resolution_method)) {
-    throw new Error(`overdue conflict used an unexpected resolution method: ${JSON.stringify(resolution)}`);
-  }
-  if (!resolution.assessment_attempt_id || !Array.isArray(resolution.retracted_evidence_ids) || resolution.retracted_evidence_ids.length === 0) {
-    throw new Error(`overdue conflict did not record assessment/retraction lineage: ${JSON.stringify(resolution)}`);
+  if (!overdueReview.assessmentAttemptID || overdueReview.derivationCount < 1) {
+    throw new Error(`overdue conflict did not record assessment/retraction lineage: ${JSON.stringify(overdueReview)}`);
   }
 
   await waitForConflictID(profileA.apiKey, marker, overdueConflictID, "resolved");
@@ -322,10 +312,89 @@ async function resolveOverdueConflictThroughVerifier() {
   if (supersededCount !== 1) {
     throw new Error(`overdue conflict did not suppress exactly one losing relationship: ${JSON.stringify(overdueTraces)}`);
   }
-  return { conflictID: overdueConflictID, method: resolution.resolution_method };
+  return { conflictID: overdueConflictID, method: overdueReview.method };
 }
 
-function runConflictReview(now) {
+async function runAutomaticConflictReview(conflictID) {
+  markConflictReviewDue(conflictID);
+
+  let last = {};
+  const attempts = Math.ceil((conflictReviewTimeoutSeconds * 1000) / 2_000);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const row = postgresQuery(`
+      SELECT conflict.status,
+             COALESCE(plan.method, ''),
+             COALESCE(plan.assessment_attempt_id::text, ''),
+             COALESCE(plan.status, ''),
+             (
+               SELECT count(*)
+               FROM relationship_conflict_evidence_derivations derivation
+               WHERE derivation.team_id = conflict.team_id
+                 AND derivation.conflict_id = conflict.conflict_id
+             )
+      FROM relationship_conflict_cases conflict
+      LEFT JOIN LATERAL (
+        SELECT method, assessment_attempt_id, status
+        FROM relationship_conflict_resolution_plans
+        WHERE team_id = conflict.team_id
+          AND conflict_id = conflict.conflict_id
+        ORDER BY created_at DESC, resolution_plan_id DESC
+        LIMIT 1
+      ) plan ON true
+      WHERE conflict.team_id = ${sqlLiteral(teamID)}::uuid
+        AND conflict.conflict_id = ${sqlLiteral(conflictID)}::uuid;
+    `);
+    const [status, method, assessmentAttemptID, planStatus, derivationCountRaw] = row.split("|");
+    last = {
+      status,
+      method,
+      assessmentAttemptID,
+      planStatus,
+      derivationCount: Number(derivationCountRaw),
+    };
+    if (status === "resolved") {
+      return last;
+    }
+    if (attempt % 5 === 0) {
+      markConflictReviewDue(conflictID);
+      requeueCompletedConflictReviewRun();
+    }
+    await delay(2_000);
+  }
+  throw new Error(`timed out waiting for automatic conflict review ${conflictID}: ${JSON.stringify(last)}`);
+}
+
+function markConflictReviewDue(conflictID) {
+  postgresQuery(`
+    UPDATE relationship_conflict_cases
+    SET review_due_at = clock_timestamp() - interval '1 second',
+        next_review_at = clock_timestamp() - interval '1 second',
+        attempts = 0,
+        lease_worker_id = '',
+        lease_until = NULL,
+        last_error = '',
+        updated_at = now()
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND conflict_id = ${sqlLiteral(conflictID)}::uuid
+      AND status IN ('open', 'overdue')
+      AND (lease_until IS NULL OR lease_until < clock_timestamp());
+  `);
+}
+
+function requeueCompletedConflictReviewRun() {
+  postgresQuery(`
+    UPDATE relationship_conflict_review_runs
+    SET status = 'failed',
+        lease_until = NULL,
+        completed_at = NULL,
+        last_error = 'compose e2e automatic review requeue',
+        updated_at = now()
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND status = 'completed';
+  `);
+}
+
+function postgresQuery(sql) {
   const result = spawnSync("docker", [
     "compose",
     "-p",
@@ -334,29 +403,24 @@ function runConflictReview(now) {
     composeFile,
     "exec",
     "-T",
-    "server",
-    "/app/docker-entrypoint.sh",
-    "/app/review-conflicts",
-    "--team-id",
-    teamID,
-    "--now",
-    now,
-    "--timezone",
-    "UTC",
-    "--worker-id",
-    `e2e-conflict-review-${Date.now()}`,
+    "postgres",
+    "sh",
+    "-ec",
+    'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
+    "conflict-e2e",
+    sql,
   ], {
     cwd: fileURLToPath(new URL("../..", import.meta.url)),
     encoding: "utf8",
   });
   if (result.status !== 0) {
-    throw new Error(`review-conflicts failed (${result.status}): ${result.stderr || result.stdout}`);
+    throw new Error(`postgres query failed (${result.status}): ${result.stderr || result.stdout}`);
   }
-  try {
-    return JSON.parse(result.stdout);
-  } catch (error) {
-    throw new Error(`review-conflicts returned non-JSON output: ${error.message}: ${result.stdout}`);
-  }
+  return result.stdout.trim();
+}
+
+function sqlLiteral(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
 }
 
 async function mcpTool(apiKey, name, args) {

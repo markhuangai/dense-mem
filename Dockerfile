@@ -1,12 +1,14 @@
+# syntax=docker/dockerfile:1
+
 # ============================================================================
 # Web portal build stage
 # ============================================================================
-FROM node:22-alpine AS web-builder
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web-builder
 
 WORKDIR /web
 
 COPY web/package.json web/package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm,sharing=locked npm ci
 
 COPY web/ ./
 RUN npm run build
@@ -14,7 +16,10 @@ RUN npm run build
 # ============================================================================
 # Build stage
 # ============================================================================
-FROM golang:1.26.4-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 RUN apk add --no-cache git ca-certificates
 
@@ -22,37 +27,17 @@ WORKDIR /src
 
 # Module download in its own layer so source edits do not bust the cache.
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked go mod download
 
 COPY . .
 
 # CGO=0 produces a static binary that runs on alpine without libc shims.
 # -trimpath strips build-host paths; -ldflags="-s -w" drops symbol + DWARF
 # tables (smaller image, no debugger support in prod).
-RUN CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server && \
-    CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
-    CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" -o /out/provision-profile ./cmd/provision-profile && \
-    CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" -o /out/list-profiles ./cmd/list-profiles && \
-    CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" -o /out/delete-profile ./cmd/delete-profile && \
-    CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" -o /out/list-keys ./cmd/list-keys && \
-    CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" -o /out/delete-key ./cmd/delete-key && \
-    CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" -o /out/rotate-key ./cmd/rotate-key && \
-    CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" -o /out/review-conflicts ./cmd/review-conflicts && \
-    cp /out/provision-profile /out/provision-team && \
-    cp /out/list-profiles /out/list-teams && \
-    cp /out/delete-profile /out/delete-team && \
-    cp /out/list-keys /out/list-team-profiles && \
-    cp /out/delete-key /out/delete-team-profile && \
-    cp /out/rotate-key /out/rotate-team-profile-key
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
 # ============================================================================
 # Runtime stage
@@ -82,20 +67,6 @@ RUN apk add --no-cache ca-certificates tzdata wget && \
 WORKDIR /app
 
 COPY --from=builder /out/server  /app/server
-COPY --from=builder /out/migrate /app/migrate
-COPY --from=builder /out/provision-profile /app/provision-profile
-COPY --from=builder /out/provision-team /app/provision-team
-COPY --from=builder /out/list-profiles /app/list-profiles
-COPY --from=builder /out/list-teams /app/list-teams
-COPY --from=builder /out/delete-profile /app/delete-profile
-COPY --from=builder /out/delete-team /app/delete-team
-COPY --from=builder /out/list-keys /app/list-keys
-COPY --from=builder /out/list-team-profiles /app/list-team-profiles
-COPY --from=builder /out/delete-key /app/delete-key
-COPY --from=builder /out/delete-team-profile /app/delete-team-profile
-COPY --from=builder /out/rotate-key /app/rotate-key
-COPY --from=builder /out/review-conflicts /app/review-conflicts
-COPY --from=builder /out/rotate-team-profile-key /app/rotate-team-profile-key
 
 # migrator.go discovers migrations via cwd-relative walk; WORKDIR=/app plus
 # this copy satisfies Strategy 1 in getMigrationsDir().
