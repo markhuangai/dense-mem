@@ -800,42 +800,47 @@ func submissionPromotionInput(
 			predicateKey = submitted.PredicateCandidate.PredicateKey
 			predicateVersion = 1
 			candidate = &repository.PlacementPredicateCandidateInput{
-				PredicateKey:     predicateKey,
-				PredicateVersion: predicateVersion,
-				RelationshipKind: submitted.PredicateCandidate.RelationshipKind,
+				PredicateKey:                predicateKey,
+				PredicateVersion:            predicateVersion,
+				RelationshipKind:            submitted.PredicateCandidate.RelationshipKind,
+				RegisterSubmissionPredicate: true,
 			}
 		default:
 			return repository.PromoteSubmissionInput{}, errors.New("unsupported predicate status")
 		}
 		confidence := result.Confidence
+		observationMetadata := map[string]any{
+			"semantic_contract": domain.ContractVersion,
+			"assessment_id":     assessment.AssessmentID,
+			"submission_id":     staged.SubmissionID,
+			"modality":          result.Modality,
+			"scope_status":      result.ScopeStatus,
+			"temporal_verdict":  result.TemporalVerdict,
+		}
+		if submitted.PredicateCandidate != nil {
+			observationMetadata["assessor_predicate_candidate_key"] = submitted.PredicateCandidate.PredicateKey
+		}
 		observations = append(observations, repository.PlacementRelationshipDecisionInput{
-			Ref:                result.Ref,
-			SubjectRef:         result.SubjectRef,
-			OriginalPredicate:  result.OriginalPredicate,
-			PredicateKey:       predicateKey,
-			PredicateVersion:   predicateVersion,
-			PredicateCandidate: candidate,
-			ObjectRef:          objectRef,
-			ObjectValue:        objectValue,
-			Polarity:           result.Polarity,
-			ScopeKey:           semanticAssessmentScopeKey(result),
-			ValidFrom:          validFrom,
-			ValidTo:            validTo,
-			EvidenceVerdict:    result.EvidenceVerdict,
-			Confidence:         &confidence,
-			Rationale:          result.Rationale,
-			Model:              assessment.Model,
-			ResponseHash:       assessment.ResponseHash,
-			Support:            support,
-			Supports:           additional,
-			ObservationMetadata: map[string]any{
-				"semantic_contract": domain.ContractVersion,
-				"assessment_id":     assessment.AssessmentID,
-				"submission_id":     staged.SubmissionID,
-				"modality":          result.Modality,
-				"scope_status":      result.ScopeStatus,
-				"temporal_verdict":  result.TemporalVerdict,
-			},
+			Ref:                 result.Ref,
+			SubjectRef:          result.SubjectRef,
+			OriginalPredicate:   result.OriginalPredicate,
+			PredicateKey:        predicateKey,
+			PredicateVersion:    predicateVersion,
+			PredicateCandidate:  candidate,
+			ObjectRef:           objectRef,
+			ObjectValue:         objectValue,
+			Polarity:            result.Polarity,
+			ScopeKey:            semanticAssessmentScopeKey(result),
+			ValidFrom:           validFrom,
+			ValidTo:             validTo,
+			EvidenceVerdict:     result.EvidenceVerdict,
+			Confidence:          &confidence,
+			Rationale:           result.Rationale,
+			Model:               assessment.Model,
+			ResponseHash:        assessment.ResponseHash,
+			Support:             support,
+			Supports:            additional,
+			ObservationMetadata: observationMetadata,
 			RelationshipMetadata: map[string]any{
 				"assessment_response_hash": assessment.ResponseHash,
 			},

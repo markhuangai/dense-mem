@@ -165,6 +165,17 @@ func TestSubmissionAssessmentSupportAndPromotionHelpersFailClosed(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, promotion.Commits, 1)
 	require.Equal(t, "assessment-1", promotion.Commits[0].EntityResolutions[0].SubmissionAssessmentID)
+	novelPredicate := submissionAssessmentWorkerValidResponse(request, provider.subjectID, provider.objectID)
+	novelPredicate.RelationshipResults[0].PredicateStatus = "needs_review"
+	novelPredicate.RelationshipResults[0].PredicateKey = nil
+	novelPredicate.RelationshipResults[0].PredicateVersion = nil
+	novelPredicate.RelationshipResults[0].PredicateCandidate = &verifier.SubmissionPredicateCandidate{PredicateKey: "novel_relation", RelationshipKind: "state"}
+	novelPromotion, err := submissionPromotionInput(repo.claim, repo.staged, proposal, request, novelPredicate, assessment, 0.7, "worker", time.Minute)
+	require.NoError(t, err)
+	novelCandidate := novelPromotion.Commits[0].RelationshipObservations[0].PredicateCandidate
+	require.NotNil(t, novelCandidate)
+	require.True(t, novelCandidate.RegisterSubmissionPredicate)
+	require.Equal(t, "novel_relation", novelPromotion.Commits[0].RelationshipObservations[0].ObservationMetadata["assessor_predicate_candidate_key"])
 	_, err = submissionPromotionInput(repo.claim, nil, proposal, request, response, assessment, 0.7, "worker", time.Minute)
 	require.ErrorContains(t, err, "staged submission and assessment are required")
 

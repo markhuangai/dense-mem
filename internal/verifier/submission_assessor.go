@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -193,6 +194,17 @@ func PrepareSubmissionAssessmentResponse(
 		}
 	}
 
+	securityAssessmentErrors := validateSubmissionSecurityAssessments(req, response.SecurityAssessments)
+	if len(securityAssessmentErrors) == 0 && response.HasSecurityConcern() {
+		if concernEnvelopeErrors := validateSubmissionAssessmentSecurityConcernEnvelope(req, response, limits); len(concernEnvelopeErrors) > 0 {
+			return response, concernEnvelopeErrors
+		}
+		// Quarantined evidence has no usable semantic output; retain only validated security findings.
+		response.EntityResults = []SemanticAssessmentEntityResult{}
+		response.RelationshipResults = []SubmissionAssessmentRelationshipResult{}
+		return finalizeSubmissionAssessmentResponse(response, limits)
+	}
+
 	semanticRelationships := make([]SemanticAssessmentRelationshipResult, 0, len(response.RelationshipResults))
 	for _, relationship := range response.RelationshipResults {
 		semanticRelationships = append(semanticRelationships, relationship.SemanticAssessmentRelationshipResult)
@@ -210,8 +222,8 @@ func PrepareSubmissionAssessmentResponse(
 	}
 
 	errs := append([]SemanticValidationError{}, semanticErrors...)
-	errs = append(errs, validateSubmissionSecurityAssessments(req, response.SecurityAssessments)...)
-	errs = append(errs, validateSubmissionPredicateCandidates(response.RelationshipResults)...)
+	errs = append(errs, securityAssessmentErrors...)
+	errs = append(errs, validateSubmissionPredicateCandidates(req.PredicateOptions, response.RelationshipResults)...)
 	errs = append(errs, validateSubmissionAssessmentRequiredProposal(
 		req.RequiredSubmissionProposal,
 		response.EntityResults,
@@ -220,6 +232,38 @@ func PrepareSubmissionAssessmentResponse(
 	if len(errs) > 0 {
 		return response, errs
 	}
+	return finalizeSubmissionAssessmentResponse(response, limits)
+}
+
+func validateSubmissionAssessmentSecurityConcernEnvelope(
+	req SemanticAssessmentRequest,
+	response SubmissionAssessmentResponse,
+	limits SemanticAssessmentLimits,
+) []SemanticValidationError {
+	var errs []SemanticValidationError
+	if response.RequestID == "" || len([]rune(response.RequestID)) > 128 {
+		errs = append(errs, semanticErr("request_id", "is required and must be at most 128 characters"))
+	}
+	if response.RequestID != req.RequestID {
+		errs = append(errs, semanticErr("request_id", fmt.Sprintf("expected %q", req.RequestID)))
+	}
+	if response.EntityResults == nil {
+		errs = append(errs, semanticErr("entity_results", "is required"))
+	} else if len(response.EntityResults) > limits.MaxEntityResults {
+		errs = append(errs, semanticErr("entity_results", fmt.Sprintf("must contain at most %d entries", limits.MaxEntityResults)))
+	}
+	if response.RelationshipResults == nil {
+		errs = append(errs, semanticErr("relationship_results", "is required"))
+	} else if len(response.RelationshipResults) > limits.MaxRelationshipResults {
+		errs = append(errs, semanticErr("relationship_results", fmt.Sprintf("must contain at most %d entries", limits.MaxRelationshipResults)))
+	}
+	return errs
+}
+
+func finalizeSubmissionAssessmentResponse(
+	response SubmissionAssessmentResponse,
+	limits SemanticAssessmentLimits,
+) (SubmissionAssessmentResponse, []SemanticValidationError) {
 	canonical, err := json.Marshal(response)
 	if err != nil {
 		return response, []SemanticValidationError{semanticErr("response", "cannot be normalized")}
@@ -235,7 +279,10 @@ func PrepareSubmissionAssessmentResponse(
 	return response, nil
 }
 
-func validateSubmissionPredicateCandidates(results []SubmissionAssessmentRelationshipResult) []SemanticValidationError {
+func validateSubmissionPredicateCandidates(
+	predicateOptions []SemanticAssessmentPredicateOption,
+	results []SubmissionAssessmentRelationshipResult,
+) []SemanticValidationError {
 	var errs []SemanticValidationError
 	for index := range results {
 		result := &results[index]
@@ -258,9 +305,48 @@ func validateSubmissionPredicateCandidates(results []SubmissionAssessmentRelatio
 			if !semanticOneOf(result.PredicateCandidate.RelationshipKind, domain.RelationshipKinds()...) {
 				errs = append(errs, semanticErr(field+".relationship_kind", "is unsupported"))
 			}
+			if submissionPredicateCandidateMatchesOption(result.PredicateCandidate.PredicateKey, predicateOptions) {
+				errs = append(errs, semanticErr(field+".predicate_key", "must identify a new predicate; a supplied predicate key or alias requires resolved"))
+			}
 		}
 	}
 	return errs
+}
+
+func submissionPredicateCandidateMatchesOption(candidate string, options []SemanticAssessmentPredicateOption) bool {
+	for _, option := range options {
+		if candidate == option.PredicateKey {
+			return true
+		}
+		for _, alias := range option.Aliases {
+			if candidate == submissionPredicateAliasKey(alias) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func submissionPredicateAliasKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var out []rune
+	lastUnderscore := false
+	for _, runeValue := range value {
+		if unicode.IsLetter(runeValue) || unicode.IsDigit(runeValue) {
+			out = append(out, runeValue)
+			lastUnderscore = false
+			continue
+		}
+		if len(out) == 0 || lastUnderscore {
+			continue
+		}
+		out = append(out, '_')
+		lastUnderscore = true
+	}
+	for len(out) > 0 && out[len(out)-1] == '_' {
+		out = out[:len(out)-1]
+	}
+	return string(out)
 }
 
 func submissionPredicateKeyAllowed(value string) bool {

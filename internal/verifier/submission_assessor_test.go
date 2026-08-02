@@ -64,6 +64,85 @@ func TestSubmissionAssessmentRejectsUnknownAndCrossEvidenceSecuritySignals(t *te
 	}
 }
 
+func TestSubmissionAssessmentSecurityConcernDiscardsSemanticOutput(t *testing.T) {
+	req, limits := semanticAssessmentTestRequest(t)
+	req.RequiredSubmissionProposal = submissionAssessmentTestRequiredProposal()
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+
+	response := submissionAssessmentTestResponse()
+	response.SecurityAssessments[0] = SubmissionSecurityAssessment{
+		EvidenceID: "ev-1",
+		Verdict:    "concern",
+		Signals: []SemanticSecuritySignal{{
+			EvidenceID: "ev-1",
+			Kind:       "tool_exfiltration",
+			Start:      0,
+			End:        4,
+		}},
+		Justification: "The evidence contains an active request to use a tool for data exfiltration.",
+	}
+	response.RelationshipResults[0].PredicateStatus = "needs_review"
+	response.RelationshipResults[0].PredicateKey = nil
+	response.RelationshipResults[0].PredicateVersion = nil
+	response.RelationshipResults[0].PredicateCandidate = &SubmissionPredicateCandidate{
+		PredicateKey:     "works_on",
+		RelationshipKind: "state",
+	}
+
+	validated, validationErrors := PrepareSubmissionAssessmentResponse(prepared, response, limits)
+	if len(validationErrors) != 0 {
+		t.Fatalf("PrepareSubmissionAssessmentResponse() errors = %#v", validationErrors)
+	}
+	if !validated.HasSecurityConcern() {
+		t.Fatal("validated concern response unexpectedly has no security concern")
+	}
+	if len(validated.EntityResults) != 0 || len(validated.RelationshipResults) != 0 {
+		t.Fatalf("validated concern response retained semantic output: %#v", validated)
+	}
+	if validated.OutputTokens <= 0 {
+		t.Fatalf("OutputTokens = %d, want positive", validated.OutputTokens)
+	}
+}
+
+func TestSubmissionAssessmentSecurityConcernStillRequiresSecurityEnvelope(t *testing.T) {
+	req, limits := semanticAssessmentTestRequest(t)
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+
+	validConcern := func() SubmissionAssessmentResponse {
+		response := submissionAssessmentTestResponse()
+		response.SecurityAssessments[0] = SubmissionSecurityAssessment{
+			EvidenceID: "ev-1",
+			Verdict:    "concern",
+			Signals: []SemanticSecuritySignal{{
+				EvidenceID: "ev-1",
+				Kind:       "tool_exfiltration",
+				Start:      0,
+				End:        4,
+			}},
+			Justification: "The evidence contains an active tool-exfiltration instruction.",
+		}
+		return response
+	}
+
+	response := validConcern()
+	response.RequestID = "different-request"
+	if _, validationErrors := PrepareSubmissionAssessmentResponse(prepared, response, limits); len(validationErrors) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(validationErrors), "expected") {
+		t.Fatalf("PrepareSubmissionAssessmentResponse() errors = %#v, want request binding rejection", validationErrors)
+	}
+
+	response = validConcern()
+	response.SecurityAssessments[0].Signals[0].End = 100
+	if _, validationErrors := PrepareSubmissionAssessmentResponse(prepared, response, limits); len(validationErrors) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(validationErrors), "span") {
+		t.Fatalf("PrepareSubmissionAssessmentResponse() errors = %#v, want exact signal span rejection", validationErrors)
+	}
+}
+
 func TestSubmissionAssessmentRequiresExactClientProposalCorrespondence(t *testing.T) {
 	req, limits := semanticAssessmentTestRequest(t)
 	req.RequiredSubmissionProposal = submissionAssessmentTestRequiredProposal()

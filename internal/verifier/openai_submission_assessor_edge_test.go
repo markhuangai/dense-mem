@@ -62,6 +62,100 @@ func TestOpenAIVerifierAssessSubmissionCorrectsClientProposalCorrespondence(t *t
 	assert.Contains(t, correction.Instruction, "submitted-proposal correspondence errors")
 }
 
+func TestOpenAIVerifierAssessSubmissionCorrectsKnownPredicateMarkedNovel(t *testing.T) {
+	var requests []openAIVerifierRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request openAIVerifierRequest
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+			http.Error(w, "invalid assessor request", http.StatusBadRequest)
+			return
+		}
+		requests = append(requests, request)
+		assert.Contains(t, request.Messages[0].Content, "genuinely new, evidence-grounded lower_snake_case normalization")
+
+		response := submissionAssessmentTestResponse()
+		if len(requests) == 1 {
+			response.RelationshipResults[0].PredicateStatus = "needs_review"
+			response.RelationshipResults[0].PredicateKey = nil
+			response.RelationshipResults[0].PredicateVersion = nil
+			response.RelationshipResults[0].PredicateCandidate = &SubmissionPredicateCandidate{
+				PredicateKey: "works_on", RelationshipKind: "state",
+			}
+		}
+		content, err := json.Marshal(response)
+		if !assert.NoError(t, err) {
+			http.Error(w, "invalid assessor response", http.StatusInternalServerError)
+			return
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
+		}))
+	}))
+	defer srv.Close()
+
+	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	req, _ := semanticAssessmentTestRequest(t)
+	response, err := v.AssessSubmission(context.Background(), req)
+	require.NoError(t, err)
+	require.Len(t, requests, 2)
+	require.Equal(t, 2, response.ProviderTurns)
+
+	var correction semanticAssessmentCorrection
+	require.NoError(t, json.Unmarshal([]byte(requests[1].Messages[3].Content), &correction))
+	require.Contains(t, semanticAssessmentJoinedErrors(correction.ValidationErrors), "must identify a new predicate")
+}
+
+func TestOpenAIVerifierAssessSubmissionAcceptsValidatedSecurityConcernBeforeSemanticNormalization(t *testing.T) {
+	var requests []openAIVerifierRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request openAIVerifierRequest
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+			http.Error(w, "invalid assessor request", http.StatusBadRequest)
+			return
+		}
+		requests = append(requests, request)
+
+		response := submissionAssessmentTestResponse()
+		response.SecurityAssessments[0] = SubmissionSecurityAssessment{
+			EvidenceID: "ev-1",
+			Verdict:    "concern",
+			Signals: []SemanticSecuritySignal{{
+				EvidenceID: "ev-1",
+				Kind:       "tool_exfiltration",
+				Start:      0,
+				End:        4,
+			}},
+			Justification: "The evidence contains an active request to use a tool for data exfiltration.",
+		}
+		response.RelationshipResults[0].PredicateStatus = "needs_review"
+		response.RelationshipResults[0].PredicateKey = nil
+		response.RelationshipResults[0].PredicateVersion = nil
+		response.RelationshipResults[0].PredicateCandidate = &SubmissionPredicateCandidate{
+			PredicateKey:     "works_on",
+			RelationshipKind: "state",
+		}
+		content, err := json.Marshal(response)
+		if !assert.NoError(t, err) {
+			http.Error(w, "invalid assessor response", http.StatusInternalServerError)
+			return
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
+		}))
+	}))
+	defer srv.Close()
+
+	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	req, _ := semanticAssessmentTestRequest(t)
+	req.RequiredSubmissionProposal = submissionAssessmentTestRequiredProposal()
+	response, err := v.AssessSubmission(context.Background(), req)
+	require.NoError(t, err)
+	require.Len(t, requests, 1)
+	require.True(t, response.HasSecurityConcern())
+	require.Empty(t, response.EntityResults)
+	require.Empty(t, response.RelationshipResults)
+}
+
 func TestOpenAIVerifierAssessSubmissionRejectsUnpricedReportedInputOverage(t *testing.T) {
 	response := submissionAssessmentTestResponse()
 	content, err := json.Marshal(response)

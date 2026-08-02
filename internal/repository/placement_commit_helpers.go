@@ -372,6 +372,9 @@ func resolvePlacementPredicateCandidate(
 	decision ApplyRelationshipDecisionInput,
 	candidate PlacementPredicateCandidateInput,
 ) (ApplyRelationshipDecisionInput, error) {
+	if candidate.RegisterSubmissionPredicate {
+		return resolveSubmissionPlacementPredicateCandidate(ctx, tx, decision, candidate)
+	}
 	canonicalKey := canonicalGeneratedPredicateKey(candidate.PredicateKey)
 	canonicalOriginal := canonicalGeneratedPredicateKey(decision.OriginalPredicate)
 	matches, err := loadPlacementPredicateMatches(

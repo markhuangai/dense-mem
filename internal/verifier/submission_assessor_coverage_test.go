@@ -37,7 +37,7 @@ func TestSubmissionAssessmentDecodeAndPredicateValidationBoundaries(t *testing.T
 	invalidCandidate := needsReview
 	invalidCandidate.PredicateCandidate = &SubmissionPredicateCandidate{PredicateKey: "Invalid Key", RelationshipKind: "unsupported"}
 
-	errs := validateSubmissionPredicateCandidates([]SubmissionAssessmentRelationshipResult{resolved, needsReview, invalidCandidate})
+	errs := validateSubmissionPredicateCandidates(nil, []SubmissionAssessmentRelationshipResult{resolved, needsReview, invalidCandidate})
 	joined := semanticAssessmentJoinedErrors(errs)
 	require.Contains(t, joined, "must be null for resolved")
 	require.Contains(t, joined, "is required for a novel predicate")
@@ -50,6 +50,14 @@ func TestSubmissionAssessmentDecodeAndPredicateValidationBoundaries(t *testing.T
 	for _, key := range []string{"", "_leading", "trailing_", "two-dashes", "Upper", strings.Repeat("a", 65)} {
 		require.False(t, submissionPredicateKeyAllowed(key), key)
 	}
+
+	knownCandidate := needsReview
+	knownCandidate.PredicateCandidate = &SubmissionPredicateCandidate{PredicateKey: "works_on", RelationshipKind: "state"}
+	knownErrs := validateSubmissionPredicateCandidates([]SemanticAssessmentPredicateOption{{
+		PredicateKey: "works_on",
+		Aliases:      []string{"works on"},
+	}}, []SubmissionAssessmentRelationshipResult{knownCandidate})
+	require.Contains(t, semanticAssessmentJoinedErrors(knownErrs), "must identify a new predicate")
 }
 
 func TestSubmissionRequiredProposalAndCorrespondenceValidationBoundaries(t *testing.T) {
@@ -191,6 +199,18 @@ func TestSubmissionAssessmentRawResponseAndCorrectionBoundaries(t *testing.T) {
 	_, validationErrors, stage = submissionAssessmentResponseForCorrection(prepared, openAIStructuredChatResult{Content: string(raw)}, limits)
 	require.Equal(t, "response_contract", stage)
 	require.Contains(t, semanticAssessmentJoinedErrors(validationErrors), "submitted entity ref")
+
+	knownPredicate := submissionAssessmentTestResponse()
+	knownPredicate.RelationshipResults[0].PredicateStatus = "needs_review"
+	knownPredicate.RelationshipResults[0].PredicateKey = nil
+	knownPredicate.RelationshipResults[0].PredicateVersion = nil
+	knownPredicate.RelationshipResults[0].PredicateCandidate = &SubmissionPredicateCandidate{PredicateKey: "works_on", RelationshipKind: "state"}
+	knownRaw, err := json.Marshal(knownPredicate)
+	require.NoError(t, err)
+	prepared.RequiredSubmissionProposal = nil
+	_, validationErrors, stage = submissionAssessmentResponseForCorrection(prepared, openAIStructuredChatResult{Content: string(knownRaw)}, limits)
+	require.Equal(t, "response_contract", stage)
+	require.Contains(t, semanticAssessmentJoinedErrors(validationErrors), "must identify a new predicate")
 
 	semanticRelationships := submissionSemanticRelationships(response.RelationshipResults)
 	require.Equal(t, response.RelationshipResults[0].Ref, semanticRelationships[0].Ref)

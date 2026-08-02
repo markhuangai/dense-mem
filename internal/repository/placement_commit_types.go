@@ -81,9 +81,10 @@ type PlacementRelationshipDecisionInput struct {
 }
 
 type PlacementPredicateCandidateInput struct {
-	PredicateKey     string
-	PredicateVersion int
-	RelationshipKind string
+	PredicateKey                string
+	PredicateVersion            int
+	RelationshipKind            string
+	RegisterSubmissionPredicate bool
 }
 
 type PlacementRelationshipReviewInput struct {

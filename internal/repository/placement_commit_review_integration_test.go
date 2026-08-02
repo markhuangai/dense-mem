@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -443,6 +444,70 @@ func TestPlacementSemanticCommitRoutesUnsafePredicateCollisionToReview(t *testin
 	assert.Equal(t, domain.PredicatePolicyVersion, taskPolicy)
 	assert.Equal(t, 1, verificationCount)
 	assert.Equal(t, "awaiting_review", itemStatus)
+}
+
+func TestPlacementSemanticCommitRegistersSubmissionPredicateCollisionWithoutReview(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "placement-submission-predicate-collision", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "placement-submission-predicate-collision-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "placement-submission-predicate-collision-owner")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "concept", "Blindness")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "place", "southern Sudan")
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"placement submission predicate collision", "Blindness is thought to be common in southern Sudan.")
+	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-submission-predicate-collision", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	committed, err := ledgerRepo.CommitPlacementSemanticResult(ctx, CommitPlacementSemanticInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		IngestID:         ingest.IngestID,
+		PlacementRunID:   ingest.PlacementRunID,
+		PlacementItemID:  ingest.Items[0].PlacementItemID,
+		WorkerID:         "worker-submission-predicate-collision",
+		ExpectedAttempts: claimed.Attempts,
+		EntityResolutions: []PlacementEntityResolutionInput{
+			{MentionRef: "subject", Action: "reuse", EntityID: subject.EntityID},
+			{MentionRef: "object", Action: "reuse", EntityID: object.EntityID},
+		},
+		RelationshipObservations: []PlacementRelationshipDecisionInput{{
+			Ref:               "rel-submission-collision",
+			SubjectRef:        "subject",
+			OriginalPredicate: "is thought to be common in",
+			PredicateKey:      "works_on",
+			PredicateVersion:  1,
+			PredicateCandidate: &PlacementPredicateCandidateInput{
+				PredicateKey:                "works_on",
+				PredicateVersion:            1,
+				RelationshipKind:            "state",
+				RegisterSubmissionPredicate: true,
+			},
+			ObjectRef:       "object",
+			EvidenceVerdict: "entailed",
+			Confidence:      float64Pointer(0.9),
+			Rationale:       "The evidence states the relationship.",
+			Model:           "test-verifier",
+			ResponseHash:    "sha256:submission-predicate-collision",
+			Support: &EvidenceSupportInput{
+				FragmentID:     ingest.Evidence[0].FragmentID,
+				SourceGroupKey: "conversation:submission-predicate-collision",
+				SpanStart:      0,
+				SpanEnd:        len("Blindness is thought to be common in southern Sudan."),
+				Quote:          "Blindness is thought to be common in southern Sudan.",
+				Authority:      "primary",
+			},
+		}},
+	})
+	require.NoError(t, err)
+	require.Empty(t, committed.ReviewTaskIDs)
+	require.Len(t, committed.RelationshipResults, 1)
+	require.NotNil(t, committed.RelationshipResults[0].Relationship)
+	assert.True(t, strings.HasPrefix(committed.RelationshipResults[0].Relationship.PredicateKey, "works_on__state_"))
 }
 
 func float64Pointer(value float64) *float64 {
