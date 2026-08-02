@@ -12,6 +12,7 @@ const (
 	AIOperationPlacementAssessment  = "placement_assessment"
 	AIOperationSubmissionAssessment = "submission_assessment"
 	AIOperationConflictReview       = "conflict_review"
+	AIOperationDreamGeneration      = "dream_generation"
 	AIOperationRecallEmbedding      = "recall_embedding"
 	AIOperationBackgroundEmbedding  = "background_embedding"
 
@@ -124,7 +125,7 @@ func metricUUIDLabel(value string) string {
 
 func normalizeAIOperation(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case AIOperationPlacementAssessment, AIOperationSubmissionAssessment, AIOperationConflictReview, AIOperationRecallEmbedding, AIOperationBackgroundEmbedding:
+	case AIOperationPlacementAssessment, AIOperationSubmissionAssessment, AIOperationConflictReview, AIOperationDreamGeneration, AIOperationRecallEmbedding, AIOperationBackgroundEmbedding:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return unknownMetricLabel

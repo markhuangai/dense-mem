@@ -173,7 +173,7 @@ func TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrgan
 
 	m := NewMigratorWithDB(sqlDB)
 
-	require.NoError(t, m.RunUp(ctx), "RunUp should succeed")
+	runGooseUpTo(t, ctx, sqlDB, 2026073106)
 
 	var pricingCount int
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
@@ -282,8 +282,7 @@ func TestSemanticLedgerMigrationUpgradesPopulated1703(t *testing.T) {
 	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
 	insertMigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "primary")
 
-	m := NewMigratorWithDB(sqlDB)
-	require.NoError(t, m.RunUp(ctx))
+	runGooseUpTo(t, ctx, sqlDB, 2026071704)
 
 	_, err := sqlDB.ExecContext(ctx, `
 		INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)

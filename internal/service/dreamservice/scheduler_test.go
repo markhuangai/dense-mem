@@ -393,6 +393,7 @@ type schedulerDreamStub struct {
 	cfgByTeam        map[string]EffectiveConfig
 	cfgErrs          map[string]error
 	scheduledErrs    map[string]error
+	recoveryErrs     map[string]error
 	missedErrs       map[string]error
 	scheduledStatus  string
 	missedStatus     string
@@ -400,6 +401,7 @@ type schedulerDreamStub struct {
 	missedTeams      []string
 	scheduledWindows []time.Time
 	missedRunDates   []string
+	recoveryTeams    []string
 }
 
 func (s *schedulerDreamStub) RunCycle(context.Context, string, RunCycleRequest) (*RunCycleResult, error) {
@@ -417,6 +419,14 @@ func (s *schedulerDreamStub) RunScheduledCycle(_ context.Context, teamID string,
 		status = "completed"
 	}
 	return &RunCycleResult{RunID: uuid.NewString(), TeamID: teamID, Status: status}, nil
+}
+
+func (s *schedulerDreamStub) RecoverScheduledCycle(_ context.Context, teamID string) (*RunCycleResult, error) {
+	s.recoveryTeams = append(s.recoveryTeams, teamID)
+	if err := s.recoveryErrs[teamID]; err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 func (s *schedulerDreamStub) RecordMissedScheduledCycle(_ context.Context, teamID, runDate string) (*RunCycleResult, error) {

@@ -191,10 +191,18 @@ func TestAuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 		},
 		SourceOwnerProfileIDs: []string{"owner-1"},
 		SourceVersions:        map[string]int{"rel-1": 2},
-		GeneratorKind:         "provider",
-		GeneratorVersion:      "gpt-4.1-mini",
-		Status:                domain.DreamStatusProposed,
-		CreatedAt:             now,
+		Derivations: []domain.DreamDerivation{{
+			PremisePosition:     1,
+			RelationshipID:      "rel-1",
+			RelationshipVersion: 2,
+			SourceGroupKey:      "source-group-1",
+			Quote:               "Dense-Mem may add cutover telemetry.",
+			Authority:           "primary",
+		}},
+		GeneratorKind:    "provider",
+		GeneratorVersion: "gpt-4.1-mini",
+		Status:           domain.DreamStatusProposed,
+		CreatedAt:        now,
 	}
 
 	listDreams := listDreamsContractOutput([]*domain.Dream{dream}, "next-dream")
@@ -207,6 +215,10 @@ func TestAuxiliaryContractOutputsMapPublicShapes(t *testing.T) {
 	}
 	if dreamOut["generator_kind"] != "provider" || dreamOut["source_owner_profile_ids"].([]string)[0] != "owner-1" {
 		t.Fatalf("dream output = %#v", dreamOut)
+	}
+	derivations := dreamOut["derivations"].([]map[string]any)
+	if len(derivations) != 1 || derivations[0]["relationship_id"] != "rel-1" {
+		t.Fatalf("dream derivations = %#v", derivations)
 	}
 	feedback := resolveDreamFeedbackContractOutput(&dreamservice.ResolveFeedbackResult{
 		Dream:  dream,
@@ -539,12 +551,6 @@ func TestContractValidationEdgeBranches(t *testing.T) {
 	badProposal["relationships"].([]any)[0].(map[string]any)["subject_ref"] = "missing"
 	if err := validateProposalReferencesAndSpans(badProposal, evidence); err == nil {
 		t.Fatal("unknown subject ref accepted")
-	}
-	if _, err := contractOptionalTime(12, "valid_from"); err == nil {
-		t.Fatal("non-string optional time accepted")
-	}
-	if _, err := contractOptionalTime("not-time", "valid_from"); err == nil {
-		t.Fatal("invalid optional time accepted")
 	}
 	if err := validateTypedValue(map[string]any{"type": "boolean", "value": "true"}, "value"); err == nil {
 		t.Fatal("boolean typed value accepted string")

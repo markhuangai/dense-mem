@@ -151,7 +151,7 @@ BEGIN
         FROM submission_runs
         WHERE idempotency_key = 'legacy-upgrade:' || submission_id::text
     ) THEN
-        RAISE EXCEPTION 'cannot roll back 2026080103: legacy proposal repair is irreversible';
+        RAISE EXCEPTION 'cannot roll back 2026080105: legacy proposal repair is irreversible';
     END IF;
     IF EXISTS (
         SELECT 1
@@ -162,7 +162,7 @@ BEGIN
            OR cardinality(actor_scopes) <> 0
            OR correlation_id <> ''
     ) THEN
-        RAISE EXCEPTION 'cannot roll back 2026080103: authenticated submission provenance exists';
+        RAISE EXCEPTION 'cannot roll back 2026080105: authenticated submission provenance exists';
     END IF;
 END $$;
 

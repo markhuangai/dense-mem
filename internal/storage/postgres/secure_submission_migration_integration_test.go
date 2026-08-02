@@ -37,7 +37,7 @@ func TestSecureSubmissionMigrationStagesLegacyWorkAndTerminalizesItsShell(t *tes
 	awaiting := insertSecureSubmissionLegacyFixture(t, ctx, sqlDB, teamID, profileID, "awaiting_review")
 
 	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026080103))
+	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026080105))
 
 	var (
 		submissionStatus         string

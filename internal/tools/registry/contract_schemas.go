@@ -145,30 +145,6 @@ func submissionPredicateProposalSchema() map[string]any {
 	)
 }
 
-func relationshipCorrectionTargetSchema() map[string]any {
-	return map[string]any{
-		"type":                 "object",
-		"additionalProperties": false,
-		"required":             []string{"relationship_id", "expected_version"},
-		"properties": map[string]any{
-			"relationship_id":  schemaString("Same-team Relationship target.", 128),
-			"expected_version": map[string]any{"type": "integer", "minimum": 1},
-		},
-	}
-}
-
-func relationshipConflictContextSchema() map[string]any {
-	return map[string]any{
-		"type":                 "object",
-		"additionalProperties": false,
-		"required":             []string{"conflict_id", "expected_version"},
-		"properties": map[string]any{
-			"conflict_id":      schemaString("Same-team open Conflict case.", 128),
-			"expected_version": map[string]any{"type": "integer", "minimum": 1},
-		},
-	}
-}
-
 func getSubmissionStatusInputSchema() map[string]any {
 	return contractInput([]string{"submission_id"}, map[string]any{
 		"submission_id": schemaString("Submission ID returned by remember.", 128),

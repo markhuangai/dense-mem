@@ -54,8 +54,8 @@ func TestSubmissionAssessmentDecodeAndPredicateValidationBoundaries(t *testing.T
 	knownCandidate := needsReview
 	knownCandidate.PredicateCandidate = &SubmissionPredicateCandidate{PredicateKey: "works_on", RelationshipKind: "state"}
 	knownErrs := validateSubmissionPredicateCandidates([]SemanticAssessmentPredicateOption{{
-		PredicateKey: "works_on",
-		Aliases:      []string{"works on"},
+		PredicateKey: "contributes_to",
+		Aliases:      []string{" Works-On "},
 	}}, []SubmissionAssessmentRelationshipResult{knownCandidate})
 	require.Contains(t, semanticAssessmentJoinedErrors(knownErrs), "must identify a new predicate")
 }

@@ -14,12 +14,32 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
 var ErrDreamAuthContext = errors.New("dream: authenticated actor context is required")
+
+type dreamGenerationResult struct {
+	proposals                  []repository.UpsertHypothesisInput
+	rejected                   int
+	paths                      []DreamPath
+	model                      string
+	candidatePaths             int
+	candidateTargets           int
+	availableTargets           int
+	previouslyAssessedPaths    int
+	targetLookupFailed         bool
+	pathAssessmentLookupFailed bool
+	providerTurns              int
+	providerInputTokens        int
+	providerOutputTokens       int
+	providerProposals          int
+	providerFailed             bool
+	persistencePolicyRejected  int
+}
 
 func (s *service) runTeamCycle(
 	ctx context.Context,
@@ -51,12 +71,20 @@ func (s *service) runTeamCycle(
 	if req.Manual {
 		windowKey = "manual:" + uuid.NewString()
 	}
+	leaseDuration := s.cycleLease(scheduled)
+	var scheduledFor *time.Time
+	if scheduled {
+		window := scheduledWindowAt.UTC()
+		scheduledFor = &window
+	}
 	claimInput := repository.DreamCycleClaimInput{
 		TeamID:               teamID,
 		InitiatedByProfileID: initiatedByProfileID,
 		RunDate:              runDate,
 		WindowKey:            windowKey,
-		LeaseUntil:           started.Add(lockTimeout),
+		ScheduledFor:         scheduledFor,
+		LeaseToken:           uuid.NewString(),
+		LeaseUntil:           started.Add(leaseDuration),
 	}
 	var (
 		claimed *repository.DreamCycleRun
@@ -80,6 +108,31 @@ func (s *service) runTeamCycle(
 		result.Status = "skipped"
 		return result, nil
 	}
+	return s.runClaimedTeamCycle(ctx, teamID, initiatedByProfileID, cfg, req, scheduled, result, claimed)
+}
+
+func (s *service) runClaimedTeamCycle(
+	ctx context.Context,
+	teamID string,
+	initiatedByProfileID string,
+	cfg EffectiveConfig,
+	req RunCycleRequest,
+	scheduled bool,
+	result *RunCycleResult,
+	claimed *repository.DreamCycleRun,
+) (*RunCycleResult, error) {
+	if claimed == nil {
+		return result, errors.New("dreaming cycle: missing durable claim")
+	}
+	result.RunID = claimed.RunID
+	result.RunDate = claimed.RunDate
+	result.AttemptCount = claimed.AttemptCount
+	if !claimed.StartedAt.IsZero() {
+		result.StartedAt = claimed.StartedAt
+	}
+	if claimed.ScheduledFor != nil {
+		result.ScheduledFor = *claimed.ScheduledFor
+	}
 	inputs, err := s.deps.Store.ListDreamInputs(ctx, repository.DreamInputListInput{
 		TeamID: teamID,
 		Limit:  cfg.MaxOutputs * 4,
@@ -89,11 +142,14 @@ func (s *service) runTeamCycle(
 		result.CompletedAt = s.now().UTC()
 		result.Status = "error"
 		result.Error = err.Error()
+		result.OutcomeSummary = map[string]int{"input_selection_error": 1}
 		completeErr := s.completeTeamCycle(ctx, scheduled, repository.DreamCycleCompleteInput{
 			TeamID:               teamID,
 			InitiatedByProfileID: initiatedByProfileID,
 			RunID:                claimed.RunID,
+			LeaseToken:           claimed.LeaseToken,
 			Status:               "failed",
+			OutcomeSummary:       map[string]int{"input_selection_error": 1},
 			Error:                result.Error,
 		})
 		if completeErr != nil {
@@ -101,11 +157,12 @@ func (s *service) runTeamCycle(
 		}
 		return result, err
 	}
-	created, rejected, runErr := s.persistHypotheses(ctx, teamID, initiatedByProfileID, claimed.RunID, inputs, req.SeedDreams, cfg.MaxOutputs, scheduled)
+	created, rejected, generation, runErr := s.persistHypotheses(ctx, teamID, initiatedByProfileID, claimed.RunID, claimed.LeaseToken, inputs, req.SeedDreams, cfg.MaxOutputs, scheduled)
 	result.CompletedAt = s.now().UTC()
 	result.InputRelationships = len(inputs)
 	result.CreatedDreams = created
 	result.RejectedDreams = rejected
+	applyDreamGenerationDiagnostics(result, generation, len(inputs), created, rejected)
 	result.Status = "completed"
 	completeStatus := "completed"
 	if runErr != nil {
@@ -118,11 +175,19 @@ func (s *service) runTeamCycle(
 		TeamID:               teamID,
 		InitiatedByProfileID: initiatedByProfileID,
 		RunID:                claimed.RunID,
+		LeaseToken:           claimed.LeaseToken,
 		Status:               completeStatus,
 		InputCount:           len(inputs),
 		CreatedHypotheses:    created,
 		RejectedHypotheses:   rejected,
 		SourceSnapshot:       dreamInputSnapshot(inputs),
+		ProviderModel:        result.ProviderModel,
+		ProviderTurns:        result.ProviderTurns,
+		ProviderInputTokens:  result.ProviderInputTokens,
+		ProviderOutputTokens: result.ProviderOutputTokens,
+		AttemptedPaths:       result.AttemptedPaths,
+		ProviderProposals:    result.ProviderProposals,
+		OutcomeSummary:       result.OutcomeSummary,
 		Error:                result.Error,
 	}); err != nil && runErr == nil {
 		err = translateDreamRepositoryError(err)
@@ -146,6 +211,51 @@ func (s *service) completeTeamCycle(ctx context.Context, scheduled bool, input r
 	return nil
 }
 
+func applyDreamGenerationDiagnostics(
+	result *RunCycleResult,
+	generation dreamGenerationResult,
+	inputRelationships int,
+	created int,
+	rejected int,
+) {
+	if result == nil {
+		return
+	}
+	result.ProviderModel = generation.model
+	result.ProviderTurns = generation.providerTurns
+	result.ProviderInputTokens = generation.providerInputTokens
+	result.ProviderOutputTokens = generation.providerOutputTokens
+	result.AttemptedPaths = len(generation.paths)
+	result.ProviderProposals = generation.providerProposals
+	blockedTargets := max(0, generation.candidateTargets-generation.availableTargets)
+	if generation.targetLookupFailed {
+		blockedTargets = 0
+	}
+	result.OutcomeSummary = map[string]int{
+		"eligible_relationships":     inputRelationships,
+		"two_hop_paths":              generation.candidatePaths,
+		"candidate_targets":          generation.candidateTargets,
+		"blocked_targets":            blockedTargets,
+		"previously_assessed_paths":  generation.previouslyAssessedPaths,
+		"target_lookup_error":        boolToInt(generation.targetLookupFailed),
+		"path_assessment_error":      boolToInt(generation.pathAssessmentLookupFailed),
+		"attempted_paths":            len(generation.paths),
+		"provider_proposals":         generation.providerProposals,
+		"provider_failed":            boolToInt(generation.providerFailed),
+		"invalid_provider_proposals": generation.rejected,
+		"policy_rejections":          generation.persistencePolicyRejected,
+		"created_hypotheses":         created,
+		"rejected_hypotheses":        rejected,
+	}
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 func normalizeDreamTeamID(teamID string) (string, error) {
 	teamID = strings.TrimSpace(teamID)
 	if _, err := uuid.Parse(teamID); err != nil {
@@ -166,11 +276,12 @@ func (s *service) persistHypotheses(
 	teamID string,
 	createdByProfileID string,
 	runID string,
+	leaseToken string,
 	inputs []repository.DreamInput,
 	seeds []SeedDream,
 	maxOutputs int,
 	scheduled bool,
-) (int, int, error) {
+) (int, int, dreamGenerationResult, error) {
 	if maxOutputs <= 0 {
 		maxOutputs = DefaultMaxOutputs
 	}
@@ -180,21 +291,49 @@ func (s *service) persistHypotheses(
 	}
 	proposals := []repository.UpsertHypothesisInput{}
 	generatedRejected := 0
-	generatedAttempted := false
+	generatedPaths := []DreamPath{}
+	generatorModel := ""
+	generation := dreamGenerationResult{}
 	if len(seeds) > 0 {
 		proposals = dreamProposalsFromSeeds(seeds, byID, maxOutputs)
 	} else {
-		var err error
-		proposals, generatedRejected, generatedAttempted, err = s.generateDreamProposals(ctx, teamID, inputs, byID, maxOutputs)
+		generated, err := s.generateDreamProposals(ctx, teamID, inputs, maxOutputs)
+		generation = generated
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, generation, err
 		}
-	}
-	if len(proposals) == 0 && len(seeds) == 0 && !generatedAttempted {
-		proposals = dreamProposalsFromCandidates(inputs, maxOutputs)
+		proposals = generated.proposals
+		generatedRejected = generated.rejected
+		generatedPaths = generated.paths
+		generatorModel = generated.model
 	}
 	created := 0
 	rejected := generatedRejected
+	if len(generatedPaths) > 0 {
+		input := repository.DreamGenerationPersistInput{
+			TeamID:             teamID,
+			CreatedByProfileID: createdByProfileID,
+			RunID:              runID,
+			LeaseToken:         leaseToken,
+			ProviderModel:      generatorModel,
+			Proposals:          proposals,
+			EvaluatedPaths:     dreamPathEvaluationInputs(generatedPaths),
+		}
+		var (
+			persisted repository.DreamGenerationPersistResult
+			err       error
+		)
+		if scheduled {
+			persisted, err = s.deps.ScheduledStore.PersistScheduledDreamGeneration(ctx, input)
+		} else {
+			persisted, err = s.deps.Store.PersistDreamGeneration(ctx, input)
+		}
+		if err != nil {
+			return 0, rejected, generation, err
+		}
+		generation.persistencePolicyRejected = persisted.Rejected
+		return persisted.Created, rejected + persisted.Rejected, generation, nil
+	}
 	for _, proposal := range proposals {
 		proposal.TeamID = teamID
 		proposal.CreatedByProfileID = createdByProfileID
@@ -211,317 +350,95 @@ func (s *service) persistHypotheses(
 		}
 		if err != nil {
 			if errors.Is(err, repository.ErrDreamExactRelationshipExists) ||
+				errors.Is(err, repository.ErrDreamExactHypothesisExists) ||
 				errors.Is(err, repository.ErrDreamSourceStale) {
 				rejected++
 				continue
 			}
-			return created, rejected, err
+			return created, rejected, generation, err
 		}
 		if record != nil && inserted {
 			created++
 		}
 	}
-	return created, rejected, nil
+	return created, rejected, generation, nil
 }
 
 func (s *service) generateDreamProposals(
 	ctx context.Context,
 	teamID string,
 	inputs []repository.DreamInput,
-	byID map[string]repository.DreamInput,
 	maxOutputs int,
-) ([]repository.UpsertHypothesisInput, int, bool, error) {
+) (dreamGenerationResult, error) {
 	if len(inputs) == 0 || s.deps.Generator == nil {
-		return nil, 0, false, nil
+		return dreamGenerationResult{}, nil
+	}
+	predicates, err := s.deps.Store.ListDreamTargetPredicates(ctx, teamID)
+	if err != nil {
+		return dreamGenerationResult{}, err
+	}
+	paths := buildDreamPaths(inputs, predicates, maxOutputs)
+	result := dreamGenerationResult{candidatePaths: len(paths)}
+	if len(paths) > 0 {
+		targets := dreamTargetCandidates(paths)
+		result.candidateTargets = len(targets)
+		availableTargets, err := s.deps.Store.ListAvailableDreamTargets(ctx, teamID, targets)
+		if err != nil {
+			result.targetLookupFailed = true
+			return result, err
+		}
+		result.availableTargets = len(availableTargets)
+		paths = dreamPathsForAvailableTargets(paths, availableTargets)
+	}
+	if len(paths) > 0 {
+		beforeAssessment := len(paths)
+		unassessed, err := s.deps.Store.ListUnassessedDreamPaths(ctx, teamID, dreamPathEvaluationInputs(paths))
+		if err != nil {
+			result.pathAssessmentLookupFailed = true
+			return result, err
+		}
+		paths = dreamPathsForEvaluationInputs(paths, unassessed)
+		result.previouslyAssessedPaths = beforeAssessment - len(paths)
+	}
+	if len(paths) == 0 {
+		return result, nil
 	}
 	generator := s.deps.Generator
 	model := generator.Model()
-	generated, err := generator.Generate(ctx, teamID, GenerateRequest{
+	if strings.TrimSpace(model) == "" {
+		result.paths = paths
+		result.providerFailed = true
+		return result, ErrDreamProviderUnavailable
+	}
+	result.paths = paths
+	result.model = model
+	ctx = observability.WithMetricIdentity(ctx, teamID, "")
+	ctx = observability.WithAIOperation(ctx, observability.AIOperationDreamGeneration, len(paths))
+	request := GenerateRequest{
 		MaxOutputs:     maxOutputs,
-		Inputs:         dreamGeneratorInputs(inputs),
+		Paths:          paths,
 		GeneratorModel: model,
-	})
+	}
+	var diagnostics GenerationDiagnostics
+	var generated []GeneratedDream
+	if generatorWithDiagnostics, ok := generator.(DiagnosticsGenerator); ok {
+		generated, diagnostics, err = generatorWithDiagnostics.GenerateWithDiagnostics(ctx, teamID, request)
+	} else {
+		generated, err = generator.Generate(ctx, teamID, request)
+		diagnostics.ProviderProposals = len(generated)
+	}
 	if err != nil {
-		return nil, 0, true, err
+		result.providerFailed = true
+		return result, err
 	}
-	proposals, rejected := dreamProposalsFromGenerated(generated, byID, maxOutputs, model)
-	return proposals, rejected, len(generated) > 0, nil
-}
-
-func dreamGeneratorInputs(inputs []repository.DreamInput) []DreamInput {
-	out := make([]DreamInput, 0, len(inputs))
-	for _, input := range inputs {
-		out = append(out, DreamInput{
-			Type:      dreamSourceType(input),
-			ID:        input.RelationshipID,
-			Subject:   dreamDisplay(input.SubjectName, input.SubjectEntityID),
-			Predicate: input.PredicateKey,
-			Object:    dreamDisplay(input.ObjectName, firstNonEmpty(input.ObjectEntityID, input.ObjectValueID)),
-			Status:    input.Status,
-		})
-	}
-	return out
-}
-
-func dreamProposalsFromCandidates(inputs []repository.DreamInput, maxOutputs int) []repository.UpsertHypothesisInput {
-	out := make([]repository.UpsertHypothesisInput, 0, maxOutputs)
-	for _, input := range inputs {
-		if input.Status != "pending_evidence" {
-			continue
-		}
-		proposal := dreamProposalFromInput(input, fmt.Sprintf(
-			"%s may %s %s.",
-			dreamDisplay(input.SubjectName, input.SubjectEntityID),
-			strings.ReplaceAll(input.PredicateKey, "_", " "),
-			dreamDisplay(input.ObjectName, firstNonEmpty(input.ObjectEntityID, input.ObjectValueID)),
-		))
-		out = append(out, proposal)
-		if len(out) >= maxOutputs {
-			break
-		}
-	}
-	return out
-}
-
-func dreamProposalsFromGenerated(
-	generated []GeneratedDream,
-	inputs map[string]repository.DreamInput,
-	maxOutputs int,
-	generatorModel string,
-) ([]repository.UpsertHypothesisInput, int) {
-	out := make([]repository.UpsertHypothesisInput, 0, maxOutputs)
-	rejected := 0
-	allowed := buildDreamEndpointAllowlist(inputs)
-	for _, item := range generated {
-		statement := strings.TrimSpace(item.Hypothesis)
-		if statement == "" {
-			rejected++
-			continue
-		}
-		sources, ok := dreamInputsFromRefs(item.SourceRefs, inputs)
-		if !ok {
-			rejected++
-			continue
-		}
-		proposal := dreamProposalFromSources(sources, statement)
-		proposal.Rationale = strings.TrimSpace(item.Rationale)
-		if proposal.Rationale == "" {
-			proposal.Rationale = "Provider proposed an edge-shaped hypothesis from eligible Relationship inputs."
-		}
-		proposal.Likelihood = optionalProbability(item.Likelihood)
-		proposal.Confidence = optionalProbability(item.Confidence)
-		proposal.Payload["what_if"] = strings.TrimSpace(item.WhatIf)
-		proposal.Payload["possible_outcome"] = strings.TrimSpace(item.PossibleOutcome)
-		proposal.GeneratorKind = "provider"
-		proposal.GeneratorVersion = firstNonEmpty(generatorModel, "dream-v2.provider")
-		if !applyGeneratedTarget(&proposal, item, allowed) {
-			rejected++
-			continue
-		}
-		proposal.ContentHash = hypothesisContentHash(proposal)
-		out = append(out, proposal)
-		if len(out) >= maxOutputs {
-			break
-		}
-	}
-	return out, rejected
-}
-
-func dreamProposalsFromSeeds(
-	seeds []SeedDream,
-	inputs map[string]repository.DreamInput,
-	maxOutputs int,
-) []repository.UpsertHypothesisInput {
-	out := make([]repository.UpsertHypothesisInput, 0, maxOutputs)
-	for _, seed := range seeds {
-		statement := strings.TrimSpace(seed.Hypothesis)
-		if statement == "" {
-			continue
-		}
-		sourceInput, ok := firstDreamSeedSource(seed.SourceRefs, inputs)
-		if !ok {
-			continue
-		}
-		proposal := dreamProposalFromInput(sourceInput, statement)
-		proposal.Rationale = strings.TrimSpace(seed.Rationale)
-		proposal.Likelihood = optionalProbability(seed.Likelihood)
-		proposal.Confidence = optionalProbability(seed.Confidence)
-		proposal.Payload["what_if"] = strings.TrimSpace(seed.WhatIf)
-		proposal.Payload["possible_outcome"] = strings.TrimSpace(seed.PossibleOutcome)
-		out = append(out, proposal)
-		if len(out) >= maxOutputs {
-			break
-		}
-	}
-	return out
-}
-
-func dreamProposalFromInput(input repository.DreamInput, statement string) repository.UpsertHypothesisInput {
-	return dreamProposalFromSources([]repository.DreamInput{input}, statement)
-}
-
-func dreamProposalFromSources(sources []repository.DreamInput, statement string) repository.UpsertHypothesisInput {
-	input := sources[0]
-	sourceRefs := make([]map[string]any, 0, len(sources))
-	sourceVersions := make(map[string]int, len(sources))
-	sourceOwnerProfileIDs := make([]string, 0, len(sources))
-	seenOwners := map[string]struct{}{}
-	sourceStatuses := make([]string, 0, len(sources))
-	for _, source := range sources {
-		sourceRefs = append(sourceRefs, map[string]any{
-			"type": dreamSourceType(source),
-			"id":   source.RelationshipID,
-		})
-		sourceVersions[source.RelationshipID] = source.Version
-		if source.OwnerProfileID != "" {
-			if _, ok := seenOwners[source.OwnerProfileID]; !ok {
-				seenOwners[source.OwnerProfileID] = struct{}{}
-				sourceOwnerProfileIDs = append(sourceOwnerProfileIDs, source.OwnerProfileID)
-			}
-		}
-		sourceStatuses = append(sourceStatuses, source.Status)
-	}
-	input = preferredDreamTargetSource(sources)
-	payload := map[string]any{
-		"source_statuses": sourceStatuses,
-	}
-	proposal := repository.UpsertHypothesisInput{
-		Statement:             strings.TrimSpace(statement),
-		Rationale:             "Eligible pending relationship needs independent evidence before semantic commitment.",
-		SubjectEntityID:       input.SubjectEntityID,
-		PredicateKey:          input.PredicateKey,
-		PredicateVersion:      input.PredicateVersion,
-		ObjectEntityID:        input.ObjectEntityID,
-		ObjectValueID:         input.ObjectValueID,
-		SourceRefs:            sourceRefs,
-		SourceVersions:        sourceVersions,
-		SourceOwnerProfileIDs: sourceOwnerProfileIDs,
-		GeneratorKind:         "deterministic",
-		GeneratorVersion:      "dream-v2.candidate-safe",
-		Payload:               payload,
-	}
-	proposal.ContentHash = hypothesisContentHash(proposal)
-	return proposal
-}
-
-func dreamSourceType(input repository.DreamInput) string {
-	switch input.Status {
-	case "pending_evidence":
-		return "candidate_relationship"
-	default:
-		return "relationship"
-	}
-}
-
-func preferredDreamTargetSource(sources []repository.DreamInput) repository.DreamInput {
-	for _, source := range sources {
-		if source.Status == "pending_evidence" {
-			return source
-		}
-	}
-	return sources[0]
-}
-
-func dreamInputsFromRefs(
-	refs []domain.DreamSourceRef,
-	inputs map[string]repository.DreamInput,
-) ([]repository.DreamInput, bool) {
-	out := make([]repository.DreamInput, 0, len(refs))
-	seen := map[string]struct{}{}
-	for _, ref := range refs {
-		switch ref.Type {
-		case "relationship", "candidate_relationship":
-		default:
-			return nil, false
-		}
-		input, ok := inputs[ref.ID]
-		if !ok {
-			return nil, false
-		}
-		if _, ok := seen[input.RelationshipID]; ok {
-			continue
-		}
-		seen[input.RelationshipID] = struct{}{}
-		out = append(out, input)
-	}
-	return out, len(out) > 0
-}
-
-type dreamEndpointSet struct {
-	entities map[string]struct{}
-	values   map[string]struct{}
-}
-
-func buildDreamEndpointAllowlist(inputs map[string]repository.DreamInput) dreamEndpointSet {
-	allowed := dreamEndpointSet{
-		entities: map[string]struct{}{},
-		values:   map[string]struct{}{},
-	}
-	for _, input := range inputs {
-		if input.SubjectEntityID != "" {
-			allowed.entities[input.SubjectEntityID] = struct{}{}
-		}
-		if input.ObjectEntityID != "" {
-			allowed.entities[input.ObjectEntityID] = struct{}{}
-		}
-		if input.ObjectValueID != "" {
-			allowed.values[input.ObjectValueID] = struct{}{}
-		}
-	}
-	return allowed
-}
-
-func applyGeneratedTarget(
-	proposal *repository.UpsertHypothesisInput,
-	item GeneratedDream,
-	allowed dreamEndpointSet,
-) bool {
-	if item.SubjectEntityID != "" {
-		if _, ok := allowed.entities[item.SubjectEntityID]; !ok {
-			return false
-		}
-		proposal.SubjectEntityID = strings.TrimSpace(item.SubjectEntityID)
-	}
-	if item.PredicateKey != "" {
-		proposal.PredicateKey = strings.TrimSpace(item.PredicateKey)
-	}
-	if item.PredicateVersion > 0 {
-		proposal.PredicateVersion = item.PredicateVersion
-	}
-	if item.ObjectEntityID != "" || item.ObjectValueID != "" {
-		if (item.ObjectEntityID == "") == (item.ObjectValueID == "") {
-			return false
-		}
-		if item.ObjectEntityID != "" {
-			if _, ok := allowed.entities[item.ObjectEntityID]; !ok {
-				return false
-			}
-			proposal.ObjectEntityID = strings.TrimSpace(item.ObjectEntityID)
-			proposal.ObjectValueID = ""
-		}
-		if item.ObjectValueID != "" {
-			if _, ok := allowed.values[item.ObjectValueID]; !ok {
-				return false
-			}
-			proposal.ObjectEntityID = ""
-			proposal.ObjectValueID = strings.TrimSpace(item.ObjectValueID)
-		}
-	}
-	return proposal.SubjectEntityID != "" &&
-		proposal.PredicateKey != "" &&
-		(proposal.ObjectEntityID != "") != (proposal.ObjectValueID != "")
-}
-
-func firstDreamSeedSource(refs []domain.DreamSourceRef, inputs map[string]repository.DreamInput) (repository.DreamInput, bool) {
-	for _, ref := range refs {
-		switch ref.Type {
-		case "relationship", "candidate_relationship":
-			if input, ok := inputs[ref.ID]; ok {
-				return input, true
-			}
-		}
-	}
-	return repository.DreamInput{}, false
+	proposals, rejected := dreamProposalsFromPaths(generated, paths, maxOutputs, model)
+	result.proposals = proposals
+	result.rejected = rejected
+	result.providerTurns = diagnostics.ProviderTurns
+	result.providerInputTokens = diagnostics.ProviderInputTokens
+	result.providerOutputTokens = diagnostics.ProviderOutputTokens
+	result.providerProposals = diagnostics.ProviderProposals
+	return result, nil
 }
 
 func (s *service) listDreams(ctx context.Context, opts ListOptions) ([]*domain.Dream, string, error) {
@@ -789,10 +706,26 @@ func dreamRecord(record *repository.HypothesisRecord) *domain.Dream {
 		GeneratorModel:                 firstNonEmpty(record.GeneratorVersion, record.GeneratorKind),
 		ContentHash:                    record.ContentHash,
 		SourceRefs:                     dreamSourceRefs(record.SourceRefs),
+		Derivations:                    dreamDerivations(record.Derivations),
 		InvalidatedReason:              record.InvalidatedReason,
 		CreatedAt:                      record.CreatedAt,
 		UpdatedAt:                      record.UpdatedAt,
 	}
+}
+
+func dreamDerivations(derivations []repository.DreamDerivationSource) []domain.DreamDerivation {
+	out := make([]domain.DreamDerivation, 0, len(derivations))
+	for _, derivation := range derivations {
+		out = append(out, domain.DreamDerivation{
+			PremisePosition:     derivation.PremisePosition,
+			RelationshipID:      derivation.RelationshipID,
+			RelationshipVersion: derivation.RelationshipVersion,
+			SourceGroupKey:      derivation.SourceGroupKey,
+			Quote:               derivation.Quote,
+			Authority:           derivation.Authority,
+		})
+	}
+	return out
 }
 
 func dreamSourceIDs(refs []map[string]any, candidates bool) []string {
@@ -827,18 +760,42 @@ func cycleRunResult(run *repository.DreamCycleRun) *RunCycleResult {
 	if run.CompletedAt != nil {
 		completed = *run.CompletedAt
 	}
-	return &RunCycleResult{
-		RunID:              run.RunID,
-		TeamID:             run.TeamID,
-		RunDate:            run.RunDate,
-		StartedAt:          run.StartedAt,
-		CompletedAt:        completed,
-		InputRelationships: run.InputCount,
-		CreatedDreams:      run.CreatedHypotheses,
-		RejectedDreams:     run.RejectedHypotheses,
-		Status:             run.Status,
-		Error:              run.Error,
+	scheduledFor := time.Time{}
+	if run.ScheduledFor != nil {
+		scheduledFor = *run.ScheduledFor
 	}
+	return &RunCycleResult{
+		RunID:                run.RunID,
+		TeamID:               run.TeamID,
+		RunDate:              run.RunDate,
+		StartedAt:            run.StartedAt,
+		CompletedAt:          completed,
+		InputRelationships:   run.InputCount,
+		CreatedDreams:        run.CreatedHypotheses,
+		RejectedDreams:       run.RejectedHypotheses,
+		ScheduledFor:         scheduledFor,
+		AttemptCount:         run.AttemptCount,
+		ProviderModel:        run.ProviderModel,
+		ProviderTurns:        run.ProviderTurns,
+		ProviderInputTokens:  run.ProviderInputTokens,
+		ProviderOutputTokens: run.ProviderOutputTokens,
+		AttemptedPaths:       run.AttemptedPaths,
+		ProviderProposals:    run.ProviderProposals,
+		OutcomeSummary:       copyDreamOutcomeSummary(run.OutcomeSummary),
+		Status:               run.Status,
+		Error:                run.Error,
+	}
+}
+
+func copyDreamOutcomeSummary(in map[string]int) map[string]int {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 func dreamSourceRefs(values []map[string]any) []domain.DreamSourceRef {
@@ -933,12 +890,16 @@ func floatPtrValue(value *float64) float64 {
 	return *value
 }
 
-func dreamDisplay(name string, fallback string) string {
+func dreamDisplay(name string, kind string) string {
 	name = strings.TrimSpace(name)
 	if name != "" {
 		return name
 	}
-	return fallback
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		return "unnamed node"
+	}
+	return "unnamed " + kind
 }
 
 func firstNonEmpty(values ...string) string {

@@ -3,13 +3,34 @@ package repository
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 
 	"github.com/lib/pq"
 )
 
+var dreamCycleRunSelectColumns = dreamCycleRunColumns("")
+
+func dreamCycleRunColumns(alias string) string {
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	return fmt.Sprintf(`%[1]steam_id::text, %[1]srun_id::text,
+       COALESCE(%[1]sinitiated_by_profile_id::text, ''), %[1]srun_date, %[1]swindow_key,
+       %[1]sstatus, %[1]sscheduled_for, COALESCE(%[1]slease_token::text, ''), %[1]slease_until,
+       %[1]sattempt_count, %[1]sinput_count, %[1]screated_hypotheses, %[1]srejected_hypotheses,
+       %[1]sprovider_model, %[1]sprovider_turns, %[1]sprovider_input_tokens,
+       %[1]sprovider_output_tokens, %[1]sattempted_paths, %[1]sprovider_proposals,
+       %[1]soutcome_summary, %[1]serror, %[1]sstarted_at, %[1]scompleted_at`, prefix)
+}
+
 func scanDreamCycleRun(rows *sql.Rows) (*DreamCycleRun, error) {
 	var run DreamCycleRun
+	var scheduledFor sql.NullTime
+	var leaseToken sql.NullString
+	var leaseUntil sql.NullTime
 	var completed sql.NullTime
+	var outcomeSummaryRaw []byte
 	if err := rows.Scan(
 		&run.TeamID,
 		&run.RunID,
@@ -17,9 +38,20 @@ func scanDreamCycleRun(rows *sql.Rows) (*DreamCycleRun, error) {
 		&run.RunDate,
 		&run.WindowKey,
 		&run.Status,
+		&scheduledFor,
+		&leaseToken,
+		&leaseUntil,
+		&run.AttemptCount,
 		&run.InputCount,
 		&run.CreatedHypotheses,
 		&run.RejectedHypotheses,
+		&run.ProviderModel,
+		&run.ProviderTurns,
+		&run.ProviderInputTokens,
+		&run.ProviderOutputTokens,
+		&run.AttemptedPaths,
+		&run.ProviderProposals,
+		&outcomeSummaryRaw,
 		&run.Error,
 		&run.StartedAt,
 		&completed,
@@ -29,6 +61,17 @@ func scanDreamCycleRun(rows *sql.Rows) (*DreamCycleRun, error) {
 	if completed.Valid {
 		run.CompletedAt = &completed.Time
 	}
+	if scheduledFor.Valid {
+		run.ScheduledFor = &scheduledFor.Time
+	}
+	if leaseToken.Valid {
+		run.LeaseToken = leaseToken.String
+	}
+	if leaseUntil.Valid {
+		run.LeaseUntil = &leaseUntil.Time
+	}
+	run.OutcomeSummary = map[string]int{}
+	_ = json.Unmarshal(outcomeSummaryRaw, &run.OutcomeSummary)
 	return &run, nil
 }
 
@@ -40,7 +83,7 @@ func hypothesisSelectSQL(where string) string {
 		       COALESCE(predicate_version, 0), COALESCE(object_entity_id::text, ''),
 		       COALESCE(object_value_id::text, ''), source_refs, source_versions,
 		       ARRAY(SELECT source_owner_id::text FROM unnest(source_owner_profile_ids) AS source_owner(source_owner_id)),
-		       COALESCE(content_hash, ''), COALESCE(cycle_run_id::text, ''),
+		       COALESCE(content_hash, ''), COALESCE(target_identity, ''), COALESCE(cycle_run_id::text, ''),
 		       generator_kind, generator_version, invalidated_reason,
 		       COALESCE(submitted_ingest_id::text, ''), COALESCE(submitted_submission_id::text, ''), submitted_at,
 		       payload, created_at, updated_at
@@ -56,7 +99,7 @@ func hypothesisUpdateReturningSQL(update string) string {
 		          COALESCE(predicate_version, 0), COALESCE(object_entity_id::text, ''),
 		          COALESCE(object_value_id::text, ''), source_refs, source_versions,
 		          ARRAY(SELECT source_owner_id::text FROM unnest(source_owner_profile_ids) AS source_owner(source_owner_id)),
-		          COALESCE(content_hash, ''), COALESCE(cycle_run_id::text, ''),
+		          COALESCE(content_hash, ''), COALESCE(target_identity, ''), COALESCE(cycle_run_id::text, ''),
 		          generator_kind, generator_version, invalidated_reason,
 		          COALESCE(submitted_ingest_id::text, ''), COALESCE(submitted_submission_id::text, ''), submitted_at,
 		          payload, created_at, updated_at
@@ -102,6 +145,7 @@ func scanHypothesisRecord(rows *sql.Rows) (*HypothesisRecord, error) {
 		&sourceVersionsRaw,
 		&ownerIDs,
 		&record.ContentHash,
+		&record.TargetIdentity,
 		&record.CycleRunID,
 		&record.GeneratorKind,
 		&record.GeneratorVersion,

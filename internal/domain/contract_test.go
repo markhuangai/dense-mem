@@ -109,6 +109,9 @@ func TestContractEnums(t *testing.T) {
 	if slices.Contains(PlacementRunStatuses(), "stale") {
 		t.Fatal("PlacementRunStatuses contains non-canonical stale state")
 	}
+	if got, want := SubmissionStatuses(), []string{"queued", "processing", "completed", "rejected", "quarantined", "failed"}; !slices.Equal(got, want) {
+		t.Fatalf("SubmissionStatuses = %#v, want %#v", got, want)
+	}
 	for _, state := range []string{"not_required", "pending", "current", "failed"} {
 		if !slices.Contains(SearchProjectionStates(), state) {
 			t.Fatalf("SearchProjectionStates missing %s", state)

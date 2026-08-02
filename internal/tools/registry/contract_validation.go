@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"time"
 	"unicode/utf8"
 )
 
@@ -362,65 +361,6 @@ func validateEvidenceSpanInput(span map[string]any, evidence []any, path string)
 		return "", fmt.Errorf("%s has invalid code-point span", path)
 	}
 	return string(runes[start:end]), nil
-}
-
-func validateRelationshipValidityWindow(relationship map[string]any, path string) error {
-	validFrom, err := contractOptionalTime(relationship["valid_from"], path+".valid_from")
-	if err != nil {
-		return err
-	}
-	validTo, err := contractOptionalTime(relationship["valid_to"], path+".valid_to")
-	if err != nil {
-		return err
-	}
-	if validFrom != nil && validTo != nil && validTo.Before(*validFrom) {
-		return fmt.Errorf("%s.valid_to must not be before valid_from", path)
-	}
-	return nil
-}
-
-func contractOptionalTime(raw any, path string) (*time.Time, error) {
-	if raw == nil {
-		return nil, nil
-	}
-	text, ok := raw.(string)
-	if !ok {
-		return nil, fmt.Errorf("%s must be an RFC3339 timestamp", path)
-	}
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil, nil
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, text)
-	if err != nil {
-		return nil, fmt.Errorf("%s must be an RFC3339 timestamp", path)
-	}
-	parsed = parsed.UTC()
-	return &parsed, nil
-}
-
-func validateCorrectionTarget(target map[string]any, path string) error {
-	relationshipID, _ := target["relationship_id"].(string)
-	if strings.TrimSpace(relationshipID) == "" {
-		return fmt.Errorf("%s.relationship_id is required", path)
-	}
-	version, ok := schemaNumber(target["expected_version"])
-	if !ok || int(version) < 1 {
-		return fmt.Errorf("%s.expected_version must be a positive integer", path)
-	}
-	return nil
-}
-
-func validateConflictContext(context map[string]any, path string) error {
-	conflictID, _ := context["conflict_id"].(string)
-	if strings.TrimSpace(conflictID) == "" {
-		return fmt.Errorf("%s.conflict_id is required", path)
-	}
-	version, ok := schemaNumber(context["expected_version"])
-	if !ok || int(version) < 1 {
-		return fmt.Errorf("%s.expected_version must be a positive integer", path)
-	}
-	return nil
 }
 
 func validateTypedValue(value map[string]any, path string) error {

@@ -251,8 +251,10 @@ func RunActiveServer(
 		Profiles:       profileService,
 		Locker:         dreamservice.NewPostgresCycleLocker(),
 		Postgres:       pgDB.GetDB(),
-		Generator:      dreamservice.NewHeuristicGenerator(""),
+		Generator:      dreamservice.NewProviderGenerator(verifierProvider),
 		Metrics:        discoverabilityMetrics,
+		ProviderCycleLease: time.Duration(cfg.GetAIVerifierTimeoutSeconds())*
+			time.Second*time.Duration(verifier.SemanticAssessmentMaxProviderTurns) + time.Minute,
 	})
 	controlDreamSvc := dreamservice.NewControl(dreamservice.ControlDependencies{
 		Store:     semanticRepo,
