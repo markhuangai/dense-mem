@@ -9,6 +9,8 @@ services:
   server:
     environment:
       RATE_LIMIT_PER_MINUTE: "200000"
+      AI_VERIFIER_MAX_CONCURRENCY: "${AI_VERIFIER_MAX_CONCURRENCY:-5}"
+      SUBMISSION_ASSESSMENT_WORKER_COUNT: "${SUBMISSION_ASSESSMENT_WORKER_COUNT:-1}"
 
   postgres:
     volumes:

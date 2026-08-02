@@ -420,6 +420,9 @@ prepare_identity() {
     --arg embedding_dimensions "${embedding_dimensions}" \
     --arg embedding_endpoint_sha256 "${endpoint_hash}" \
     --arg assessor_model "${AI_VERIFIER_MODEL:-}" \
+    --arg assessor_max_concurrency "${AI_VERIFIER_MAX_CONCURRENCY:-5}" \
+    --arg submission_assessment_worker_count "${SUBMISSION_ASSESSMENT_WORKER_COUNT:-1}" \
+    --arg import_concurrency "${IMPORT_CONCURRENCY}" \
     --arg team_id "${EVAL_TEAM_ID}" \
     --arg release_gate_policy_sha256 "${release_policy_hash}" \
     --arg runner_sha256 "sha256:$(sha256sum "${RUNNER}" | awk '{print $1}')" \
@@ -432,6 +435,9 @@ prepare_identity() {
       embedding_dimensions: ($embedding_dimensions | tonumber),
       embedding_endpoint_sha256: $embedding_endpoint_sha256,
       assessor_model: $assessor_model,
+      assessor_max_concurrency: ($assessor_max_concurrency | tonumber),
+      submission_assessment_worker_count: ($submission_assessment_worker_count | tonumber),
+      import_concurrency: ($import_concurrency | tonumber),
       team_id: $team_id,
       release_gate_policy_sha256: $release_gate_policy_sha256,
       runner_sha256: $runner_sha256,

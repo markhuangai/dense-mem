@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -95,6 +96,47 @@ func TestRunValidateBindsV2AuditRowsToExactCorpus(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("validate exact v2 audit: %v", err)
 	}
+
+	t.Run("agent curated", func(t *testing.T) {
+		const protocolFile = "agent_curation_protocol.md"
+		protocol := []byte("# Agent curation protocol\n\nThe curator selects one directly supported relationship per evidence item.\n")
+		if err := os.WriteFile(filepath.Join(dir, protocolFile), protocol, 0o600); err != nil {
+			t.Fatalf("write agent curation protocol: %v", err)
+		}
+
+		curated := report
+		curated.AuditMode = "agent_curated"
+		curated.CurationProtocol = "dense-mem.eval.agent_curation.v1"
+		curated.CurationProtocolFile = protocolFile
+		curated.CurationProtocolSHA = sha256Bytes(protocol)
+		curated.CuratedRows = len(curated.Rows)
+		if err := writeJSONFile(filepath.Join(dir, manifest.ProposalAuditReportFile), curated); err != nil {
+			t.Fatalf("write agent-curated report: %v", err)
+		}
+		if _, err := Run(context.Background(), RunOptions{
+			Mode:             "validate",
+			SeedManifestPath: manifestPath,
+			SuitePath:        suitePath,
+		}); err != nil {
+			t.Fatalf("validate agent-curated v2 audit: %v", err)
+		}
+
+		curated.CurationProtocolSHA = ""
+		if err := writeJSONFile(filepath.Join(dir, manifest.ProposalAuditReportFile), curated); err != nil {
+			t.Fatalf("rewrite invalid agent-curated report: %v", err)
+		}
+		if _, err := Run(context.Background(), RunOptions{
+			Mode:             "validate",
+			SeedManifestPath: manifestPath,
+			SuitePath:        suitePath,
+		}); err == nil || !strings.Contains(err.Error(), "must bind every corpus row") {
+			t.Fatalf("validate invalid agent-curated v2 audit err = %v", err)
+		}
+
+		if err := writeJSONFile(filepath.Join(dir, manifest.ProposalAuditReportFile), report); err != nil {
+			t.Fatalf("restore model-only report: %v", err)
+		}
+	})
 
 	report.Rows[0].ProposalSHA256 = "sha256:substituted"
 	if err := writeJSONFile(filepath.Join(dir, manifest.ProposalAuditReportFile), report); err != nil {

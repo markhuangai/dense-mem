@@ -468,17 +468,21 @@ type seedValidationReport struct {
 }
 
 type proposalAuditReport struct {
-	SchemaVersion       string             `json:"schema_version"`
-	SeedID              string             `json:"seed_id"`
-	ParentSeedHash      string             `json:"parent_seed_hash"`
-	AuditMode           string             `json:"audit_mode"`
-	AuditPolicySHA256   string             `json:"audit_policy_sha256"`
-	Status              string             `json:"status"`
-	AuditedRows         int                `json:"audited_rows"`
-	WarningCount        int                `json:"warning_count"`
-	RegenerationCount   int                `json:"regeneration_count"`
-	TransportRetryCount int                `json:"transport_retry_count"`
-	Rows                []proposalAuditRow `json:"rows"`
+	SchemaVersion        string             `json:"schema_version"`
+	SeedID               string             `json:"seed_id"`
+	ParentSeedHash       string             `json:"parent_seed_hash"`
+	AuditMode            string             `json:"audit_mode"`
+	AuditPolicySHA256    string             `json:"audit_policy_sha256"`
+	CurationProtocol     string             `json:"curation_protocol,omitempty"`
+	CurationProtocolFile string             `json:"curation_protocol_file,omitempty"`
+	CurationProtocolSHA  string             `json:"curation_protocol_sha256,omitempty"`
+	CuratedRows          int                `json:"curated_rows,omitempty"`
+	Status               string             `json:"status"`
+	AuditedRows          int                `json:"audited_rows"`
+	WarningCount         int                `json:"warning_count"`
+	RegenerationCount    int                `json:"regeneration_count"`
+	TransportRetryCount  int                `json:"transport_retry_count"`
+	Rows                 []proposalAuditRow `json:"rows"`
 }
 
 type proposalAuditRow struct {
@@ -540,8 +544,27 @@ func validateProposalAuditReport(manifestPath string, manifest *SeedManifest, co
 	if report.SeedID != manifest.SeedID || report.ParentSeedHash != manifest.ParentSeedHash {
 		return errors.New("proposal audit report does not match the v2 seed parent")
 	}
-	if report.AuditMode != "model_only" || report.Status != "passed" || report.AuditedRows != corpusRows || report.WarningCount != 0 {
-		return errors.New("proposal audit report must be a warning-free model-only audit of every corpus row")
+	if report.Status != "passed" || report.AuditedRows != corpusRows || report.WarningCount != 0 {
+		return errors.New("proposal audit report must be warning-free and cover every corpus row")
+	}
+	switch report.AuditMode {
+	case "model_only":
+		if report.CurationProtocol != "" || report.CurationProtocolFile != "" || report.CurationProtocolSHA != "" || report.CuratedRows != 0 {
+			return errors.New("model-only proposal audit report cannot include agent curation metadata")
+		}
+	case "agent_curated":
+		if report.CurationProtocol != "dense-mem.eval.agent_curation.v1" || report.CurationProtocolFile == "" || report.CurationProtocolSHA == "" || report.CuratedRows != corpusRows {
+			return errors.New("agent-curated proposal audit report must bind every corpus row to the curation protocol")
+		}
+		protocol, err := os.ReadFile(resolveSeedPath(manifestPath, report.CurationProtocolFile))
+		if err != nil {
+			return fmt.Errorf("read agent curation protocol: %w", err)
+		}
+		if report.CurationProtocolSHA != sha256Bytes(protocol) {
+			return errors.New("agent-curated proposal audit report curation protocol hash does not match")
+		}
+	default:
+		return fmt.Errorf("proposal audit report audit_mode %q is unsupported", report.AuditMode)
 	}
 	if report.RegenerationCount < 0 || report.RegenerationCount > corpusRows*3 {
 		return errors.New("proposal audit report regeneration_count is out of bounds")

@@ -21,36 +21,39 @@ are local-only and ignored by git.
 ## V2 seed and its V1 comparison
 
 `public_6axis_1k_v2` is a submission-ready derivation of the immutable
-`public_6axis_1k_v1` corpus. It retains the V1 suite and qrels, but adds a
-client proposal to every evidence row and applies narrowly logged security
-normalizations where required.
+`public_6axis_1k_v1` corpus. Its canonical source is
+`curation/public_6axis_1k_v2/`: an agent-authored relationship ledger,
+curation protocol, source-locked replacement manifest, and compiler lock.
+The compiler resolves only the curator's explicit surfaces into exact spans;
+it never selects or repairs a relationship.
 
 | Check | Result |
 | --- | --- |
 | Parent seed hash | `sha256:eb09124331228e59898a93740104ab978b9974e3ebf7f7fc2e09728ef95b3d78` |
-| V2 seed hash | `sha256:79c2c519c55b5e4335fb1b9eceba8a714a2311265348bd8ec3db33aa69b91966` |
 | Corpus rows | 1,000 |
 | Cases / qrels | 206 / 206, byte-identical to V1 |
 | Row order and non-content projection | Equal |
 | Runtime proposal + deterministic scan validation | Passed |
-| Model-only semantic proposal audit | 1,000 rows, 0 warnings, 102 bounded regenerations |
+| Relationship curation | 1,000 directly supported, agent-curated proposals |
+| Source-locked replacements | 9 QASPER fragments without a relationship |
+| Compiler dependencies | Hash-locked before generation |
 | Security normalizations | 295, recorded by source ID and hashes only |
 
-The ignored `comparison_report.json` lists every normalization without raw
-evidence. The current derivation recorded 270 LongMemEval synthetic transcript
-header removals, 22 UTF-8 mojibake repairs, one hidden-control removal, one
-terminal control-directive removal, and one active imperative-override-clause
-redaction. It also verifies that copied answers, cases, qrels, transforms,
-licenses, and suite bytes match V1.
+Generated packs remain ignored. A rebuild verifies the immutable V1 parent
+hash, the locked QASPER archive for each replacement, exact code-point spans,
+the deterministic security scan, and byte identity for copied answers, cases,
+qrels, transforms, licenses, and suite artifacts. It writes the current V2
+seed hash to `validation_report.json`; do not treat a generated local pack as
+the canonical source.
 
-The evaluator binds every model-audit record to its exact corpus
-`source_doc_id`, evidence SHA-256, raw proposal SHA-256, and audit-policy hash.
-A report with a substituted row, duplicated ID, incomplete coverage, or
-incorrect totals fails before it contacts Dense-Mem.
+The evaluator binds every curation record to its exact corpus `source_doc_id`,
+evidence SHA-256, proposal SHA-256, and curation-protocol hash. A substituted
+row, duplicated ID, incomplete coverage, or incorrect total fails before it
+contacts Dense-Mem. A mismatched compiler lock stops seed compilation.
 
-The seed audit creates semantically grounded client proposals only after the
-deterministic write-time scan passes. The live Dense-Mem assessor remains the
-authoritative security and normalization decision during import.
+The client submits a semantically grounded proposal with each evidence item
+after its deterministic write-time scan passes. The live Dense-Mem assessor
+remains the authoritative semantic and security decision during import.
 
 Use these local paths when the generated seed is available:
 
@@ -119,10 +122,17 @@ canonical mapping, then runs the recall suite.
 SEED="${SEED}" \
 SUITE="${SUITE}" \
 EVAL_DATA_DIR="$(realpath -m tests/eval/runtime/v2)" \
-IMPORT_CONCURRENCY=3 \
+AI_VERIFIER_MAX_CONCURRENCY=15 \
+SUBMISSION_ASSESSMENT_WORKER_COUNT=15 \
+IMPORT_CONCURRENCY=15 \
 SUBMISSION_TIMEOUT=10m \
 tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 ```
+
+`SUBMISSION_ASSESSMENT_WORKER_COUNT` must not exceed
+`AI_VERIFIER_MAX_CONCURRENCY`. The monitor records both values and import
+concurrency in the runtime identity, so a changed topology requires a fresh
+runtime rather than silently reusing prior results.
 
 The monitor uses the top-level `eval:<source_doc_id>` idempotency key, so a
 resume can safely reconstruct mapping artifacts without duplicating a completed

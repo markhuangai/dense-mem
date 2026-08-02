@@ -1,0 +1,8 @@
+{
+  "files": {
+    "tests/eval/scripts/compile_agent_curated_seed.py": "sha256:58154dba0a011c81b11e960910faa81b9c92b2250a9c6db58efbfefe428a34f2",
+    "tests/eval/scripts/derive_submission_v2_seed.py": "sha256:e1e8592f4d3ad757ac6cf5e2c4b1248280659c559be76eddde2e8b16dd1de47f",
+    "tests/eval/scripts/prepare_public_semantic_eval.py": "sha256:02353c1b74edc76bdbcb9f5d19809e07da36cbaf6365590f9a0fe8f77aecdd52"
+  },
+  "schema_version": "dense-mem.eval.compiler_lock.v1"
+}
