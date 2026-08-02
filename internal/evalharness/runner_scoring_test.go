@@ -315,3 +315,47 @@ func TestCompareSummariesRejectsSeedMismatch(t *testing.T) {
 		t.Fatal("CompareSummaries expected seed mismatch error")
 	}
 }
+
+func TestScoreTracesScoresDreamRefsSeparately(t *testing.T) {
+	suite := []SuiteCase{{CaseID: "case-1", Slices: []string{"dream_neighbor_hypothesis"}}}
+	cases := map[string]Case{
+		"case-1": {CaseID: "case-1", Query: "which hypothesis?", Limit: 2, IncludeDreams: true},
+	}
+	qrels := map[string]QRel{
+		"case-1": {
+			CaseID:            "case-1",
+			RequiredRefs:      []Ref{{Type: "fact", SourceDocID: "doc-fact"}},
+			RequiredDreamRefs: []Ref{{Type: "dream", SourceDocID: "dream-good"}},
+			BadDreamRefs:      []Ref{{Type: "dream", SourceDocID: "dream-bad"}},
+		},
+	}
+	traces := []RecallTrace{{
+		CaseID:     "case-1",
+		Query:      "which hypothesis?",
+		RankedRefs: []Ref{{Type: "fact", ID: "fact-1"}},
+		DreamRefs:  []Ref{{Type: "dream", ID: "dream-1"}, {Type: "dream", ID: "dream-bad-1"}},
+	}}
+	mapping := KnowledgeMapping{BySourceDocID: map[string]Ref{
+		"doc-fact":   {Type: "fact", ID: "fact-1", SourceDocID: "doc-fact"},
+		"dream-good": {Type: "dream", ID: "dream-1", SourceDocID: "dream-good"},
+		"dream-bad":  {Type: "dream", ID: "dream-bad-1", SourceDocID: "dream-bad"},
+	}}
+
+	scores, summary, err := ScoreTraces("run-1", "baseline", "seed-1", "sha256:test", "suite.jsonl", suite, cases, qrels, traces, mapping)
+	if err != nil {
+		t.Fatalf("ScoreTraces: %v", err)
+	}
+	score := scores[0]
+	if score.RecallAtK != 1 || score.BadAtK != 0 {
+		t.Fatalf("memory score = %+v", score)
+	}
+	if !score.DreamScored || score.DreamRecallAtK != 1 || score.DreamBadAtK != 1 || score.DreamFirstRequiredRank != 1 || score.DreamFirstBadRank != 2 {
+		t.Fatalf("dream score = %+v", score)
+	}
+	if summary.DreamScoredCaseCount != 1 || summary.AverageDreamRecallAtK != 1 || summary.AverageDreamBadAtK != 1 || summary.DreamRequiredRank1Rate != 1 {
+		t.Fatalf("dream summary = %+v", summary)
+	}
+	if summary.Slices["dream_neighbor_hypothesis"].DreamScoredCaseCount != 1 || summary.Slices["dream_neighbor_hypothesis"].AverageDreamBadAtK != 1 {
+		t.Fatalf("slice summary = %+v", summary.Slices)
+	}
+}
