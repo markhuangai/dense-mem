@@ -27,14 +27,15 @@ func TestDockerComposeBaseExample_LocalOnly(t *testing.T) {
 	assert.Contains(t, server.Environment["AI_VERIFIER_MODEL"], "AI_VERIFIER_MODEL must be set")
 }
 
-func TestDockerComposeDemoRequiresVersionedImage(t *testing.T) {
+func TestDockerComposeDemoPinsVersionedImage(t *testing.T) {
 	text := readExample(t, "docker-compose.demo.yml")
 	compose := readComposeExample(t, "docker-compose.demo.yml")
 	demo := requireComposeService(t, compose, "demo")
 
-	assert.Contains(t, demo.Image, "DENSE_MEM_DEMO_REPOSITORY")
-	assert.Contains(t, demo.Image, ":demo-v${DENSE_MEM_DEMO_VERSION:?")
+	assert.Equal(t, "ghcr.io/markhuangai/dense-mem:demo-v2.4.1", demo.Image)
 	assert.NotContains(t, text, "DENSE_MEM_DEMO_IMAGE")
+	assert.NotContains(t, text, "DENSE_MEM_DEMO_VERSION")
+	assert.NotContains(t, text, "DENSE_MEM_DEMO_REPOSITORY")
 	assert.NotContains(t, text, "dense-mem:demo\n")
 }
 
