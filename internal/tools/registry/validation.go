@@ -40,6 +40,9 @@ func ValidateInput(tool Tool, args map[string]any) error {
 			return err
 		}
 	}
+	if schemaEnforcesOneOf(schema) {
+		return validateSchemaValue("input", args, schema)
+	}
 	return nil
 }
 
@@ -75,6 +78,9 @@ func validateSchemaValue(name string, value any, schema map[string]any) error {
 			}
 		}
 		if matches != 1 {
+			if message, ok := schema["x-one-of-error"].(string); ok && message != "" {
+				return fmt.Errorf("%s", message)
+			}
 			return fmt.Errorf("%s must match exactly one allowed shape", name)
 		}
 	}

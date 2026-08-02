@@ -296,7 +296,7 @@ func getDreamInputSchema() map[string]any {
 }
 
 func resolveDreamFeedbackInputSchema() map[string]any {
-	return contractInput([]string{"hypothesis_id", "decision"}, map[string]any{
+	schema := contractInput([]string{"hypothesis_id", "decision"}, map[string]any{
 		"hypothesis_id": schemaString("Hypothesis ID.", 128),
 		"decision": schemaEnum([]string{
 			"reinforce",
@@ -307,11 +307,28 @@ func resolveDreamFeedbackInputSchema() map[string]any {
 		}),
 		"reason":   schemaString("Bounded lifecycle feedback reason.", 1000),
 		"evidence": evidenceArraySchema(),
-		"proposal": closedObject(nil, map[string]any{
+		"proposal": closedObject([]string{"entities", "relationships"}, map[string]any{
 			"entities":      entityProposalArraySchema(),
 			"relationships": relationshipProposalArraySchema(),
 		}),
 	})
+	schema["oneOf"] = []any{
+		map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{"decision": schemaEnum([]string{"confirm_true", "confirm_false"})},
+			"required":             []string{"evidence", "proposal"},
+			"additionalProperties": true,
+		},
+		map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{"decision": schemaEnum([]string{"reinforce", "stale", "reject"})},
+			"required":             []string{"reason"},
+			"additionalProperties": true,
+		},
+	}
+	schema["x-enforce-one-of"] = true
+	schema["x-one-of-error"] = "confirm_true and confirm_false: evidence is required and proposal is required; other decisions: reason is required"
+	return schema
 }
 
 func findMemoryPackCandidatesInputSchema() map[string]any {

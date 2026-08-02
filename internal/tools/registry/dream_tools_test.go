@@ -78,6 +78,37 @@ func TestBuildActiveDreamToolsInvokeAndValidate(t *testing.T) {
 	}
 }
 
+func TestResolveDreamFeedbackInputSchemaIsDecisionConditional(t *testing.T) {
+	schema := resolveDreamFeedbackInputSchema()
+	tool := Tool{InputSchema: schema}
+
+	if err := ValidateInput(tool, map[string]any{
+		"hypothesis_id": "dream-1",
+		"decision":      "confirm_true",
+	}); err == nil || !strings.Contains(err.Error(), "evidence is required and proposal is required") {
+		t.Fatalf("confirmation without submission input error = %v", err)
+	}
+
+	if err := ValidateInput(tool, map[string]any{
+		"hypothesis_id": "dream-1",
+		"decision":      "reject",
+		"reason":        "The premise is no longer applicable.",
+	}); err != nil {
+		t.Fatalf("lifecycle feedback input validation: %v", err)
+	}
+
+	if err := ValidateInput(tool, map[string]any{
+		"hypothesis_id": "dream-1",
+		"decision":      "confirm_false",
+		"evidence": []any{
+			map[string]any{"content": "Dense-Mem uses PostgreSQL."},
+		},
+		"proposal": validSpanGroundedProposal(),
+	}); err != nil {
+		t.Fatalf("confirmation feedback input validation: %v", err)
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
