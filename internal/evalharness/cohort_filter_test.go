@@ -79,6 +79,31 @@ func TestValidateV2CohortDerivationRejectsChangedRetainedEvidence(t *testing.T) 
 	}
 }
 
+func TestValidateV2CohortDerivationRejectsWhitespaceChangedRetainedJSONL(t *testing.T) {
+	opts := writeV2CohortValidationFixture(t)
+	filteredManifest, err := LoadSeedManifest(opts.FilteredManifestPath)
+	if err != nil {
+		t.Fatalf("load filtered manifest: %v", err)
+	}
+	corpusPath := filepath.Join(filepath.Dir(opts.FilteredManifestPath), filteredManifest.CorpusFile)
+	rawCorpus, err := os.ReadFile(corpusPath)
+	if err != nil {
+		t.Fatalf("read filtered corpus: %v", err)
+	}
+	if err := os.WriteFile(corpusPath, []byte("  "+strings.TrimSpace(string(rawCorpus))+"  \n"), 0o644); err != nil {
+		t.Fatalf("rewrite filtered corpus with whitespace: %v", err)
+	}
+	lock := cohortFilterLockForFixture(t, opts, []string{"doc-2"}, []string{"case-2"})
+	if err := writeJSONFile(opts.CohortLockPath, lock); err != nil {
+		t.Fatalf("write lock: %v", err)
+	}
+
+	_, err = ValidateV2CohortDerivation(opts)
+	if err == nil || !strings.Contains(err.Error(), "not byte-identical") {
+		t.Fatalf("whitespace changed retained evidence error = %v", err)
+	}
+}
+
 func writeV2CohortValidationFixture(t *testing.T) V2CohortValidationOptions {
 	t.Helper()
 	root := t.TempDir()

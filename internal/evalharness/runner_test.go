@@ -186,7 +186,7 @@ func TestRunWritesGateResultAndFailsThreshold(t *testing.T) {
 }
 
 func TestRunBaselineLiveHTTPFlow(t *testing.T) {
-	dir := writeEvalFixture(t)
+	dir := writeV2EvalImportFixture(t)
 	rememberIDs := map[string]string{
 		"eval:doc-alpha": "frag-alpha",
 		"eval:doc-beta":  "frag-beta",

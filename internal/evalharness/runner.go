@@ -88,6 +88,13 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, expectedDreams, suite, seedHash); err != nil {
 		return Summary{}, err
 	}
+	if opts.ImportSeed && mode != "validate" && manifest.SchemaVersion != SeedSchemaVersionV2 {
+		return Summary{}, fmt.Errorf(
+			"seed schema_version %q cannot be imported through the required flat relationship contract; use a %q seed",
+			manifest.SchemaVersion,
+			SeedSchemaVersionV2,
+		)
+	}
 	inputSummary := Summary{
 		RunID:           runID,
 		Mode:            mode,

@@ -835,11 +835,11 @@ func dreamSubmissionEvidence(
 	}
 	out := make([]memoryservice.RememberEvidenceInput, 0, len(req.Evidence))
 	for i, item := range req.Evidence {
-		item.Content = strings.TrimSpace(item.Content)
-		if item.Content == "" {
+		content := strings.TrimSpace(item.Content)
+		if content == "" {
 			return nil, fmt.Errorf("resolve dream feedback: evidence[%d].content is required", i)
 		}
-		if strings.EqualFold(item.Content, strings.TrimSpace(record.Statement)) {
+		if strings.EqualFold(content, strings.TrimSpace(record.Statement)) {
 			return nil, errors.New("resolve dream feedback: hypothesis text cannot be submitted as its own evidence")
 		}
 		if item.SourceType == "" {

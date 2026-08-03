@@ -27,6 +27,27 @@ func TestRememberValidatesFlatRelationshipSemanticInvariants(t *testing.T) {
 			want: "relationships[1].ref: duplicate ref",
 		},
 		{
+			name: "blank relationship ref",
+			input: func() map[string]any {
+				input := validFlatRelationshipSubmission()
+				relationship(input)["ref"] = " \t"
+				return input
+			},
+			want: "relationships[0].ref: must not be blank",
+		},
+		{
+			name: "trim-equivalent relationship refs",
+			input: func() map[string]any {
+				input := validFlatRelationshipSubmission()
+				relationships := input["relationships"].([]any)
+				duplicate := cloneMap(relationship(input))
+				duplicate["ref"] = " uses-postgresql "
+				input["relationships"] = append(relationships, duplicate)
+				return input
+			},
+			want: "relationships[1].ref: duplicate ref \"uses-postgresql\"",
+		},
+		{
 			name: "duplicate support span",
 			input: func() map[string]any {
 				input := validFlatRelationshipSubmission()

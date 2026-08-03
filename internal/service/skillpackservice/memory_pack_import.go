@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -342,6 +343,9 @@ func memoryPackCanonicalValue(endpoint MemoryPackEndpoint) (any, error) {
 		value, err := strconv.ParseFloat(endpoint.Value, 64)
 		if err != nil {
 			return nil, fmt.Errorf("memory pack value %q must be a number", endpoint.Value)
+		}
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, fmt.Errorf("memory pack value %q must be finite", endpoint.Value)
 		}
 		return value, nil
 	case string(domain.ValueTypeBoolean):

@@ -11,7 +11,7 @@ import (
 )
 
 func TestRunImportModeImportsWithoutRecall(t *testing.T) {
-	dir := writeEvalFixture(t)
+	dir := writeV2EvalImportFixture(t)
 	rememberIDs := map[string]string{
 		"eval:doc-alpha": "evidence-alpha",
 		"eval:doc-beta":  "evidence-beta",
@@ -38,6 +38,10 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 			id, ok := rememberIDs[idempotencyKey]
 			if !ok {
 				t.Fatalf("remember input = %#v", input)
+			}
+			relationships, ok := input["relationships"].([]any)
+			if !ok || len(relationships) != 1 {
+				t.Fatalf("remember relationships = %#v", input["relationships"])
 			}
 			rememberCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -125,7 +129,7 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 }
 
 func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T) {
-	dir := writeEvalFixture(t)
+	dir := writeV2EvalImportFixture(t)
 	resumePath := filepath.Join(dir, "completed_source_doc_ids.txt")
 	if err := os.WriteFile(resumePath, []byte("doc-alpha\ndoc-beta\n"), 0o644); err != nil {
 		t.Fatalf("write resume checkpoint: %v", err)
@@ -199,5 +203,107 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T
 	}
 	if config.ImportRoute != "remember" || config.ResumeSourceDocIDsPath != resumePath {
 		t.Fatalf("run config = %+v", config)
+	}
+}
+
+func TestRunRejectsV1SeedImportBeforeExternalCalls(t *testing.T) {
+	dir := writeEvalFixture(t)
+	var requests int
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		requests++
+		t.Fatal("V1 import must fail before any external call")
+	}))
+	defer server.Close()
+
+	_, err := Run(context.Background(), RunOptions{
+		Mode:             "import",
+		SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
+		SuitePath:        filepath.Join(dir, "suite.jsonl"),
+		BaseURL:          server.URL,
+		ControlURL:       server.URL,
+		ImportSeed:       true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot be imported through the required flat relationship contract") {
+		t.Fatalf("Run V1 import error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("external requests = %d, want 0", requests)
+	}
+}
+
+func writeV2EvalImportFixture(t *testing.T) string {
+	t.Helper()
+	dir := writeEvalFixture(t)
+	manifestPath := filepath.Join(dir, "seed_manifest.json")
+	manifest, err := LoadSeedManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("load fixture manifest: %v", err)
+	}
+	corpus, err := LoadCorpus(manifestPath, manifest)
+	if err != nil {
+		t.Fatalf("load fixture corpus: %v", err)
+	}
+	manifest.SchemaVersion = SeedSchemaVersionV2
+	manifest.RelationshipCount = len(corpus)
+	for i := range corpus {
+		corpus[i].Relationships = []any{evalImportRelationship(t, corpus[i].Content, "relationship-"+corpus[i].SourceDocID)}
+	}
+	if err := writeJSONL(filepath.Join(dir, manifest.CorpusFile), corpus); err != nil {
+		t.Fatalf("write V2 fixture corpus: %v", err)
+	}
+	if err := writeJSONFile(manifestPath, manifest); err != nil {
+		t.Fatalf("write V2 fixture manifest: %v", err)
+	}
+	return dir
+}
+
+func evalImportRelationship(t *testing.T, content, ref string) map[string]any {
+	t.Helper()
+	runes := []rune(content)
+	firstSpace := -1
+	secondSpace := -1
+	for index, value := range runes {
+		if value != ' ' {
+			continue
+		}
+		if firstSpace < 0 {
+			firstSpace = index
+			continue
+		}
+		secondSpace = index
+		break
+	}
+	if firstSpace <= 0 || secondSpace <= firstSpace+1 || secondSpace+1 >= len(runes) {
+		t.Fatal("eval import fixture content must contain subject, predicate, and object")
+	}
+	objectEnd := len(runes)
+	for objectEnd > secondSpace+1 && strings.ContainsRune(".!?", runes[objectEnd-1]) {
+		objectEnd--
+	}
+	if objectEnd <= secondSpace+1 {
+		t.Fatal("eval import fixture content must contain an object")
+	}
+	subjectEnd := firstSpace
+	predicateStart := firstSpace + 1
+	predicateEnd := secondSpace
+	objectStart := secondSpace + 1
+	return map[string]any{
+		"ref": ref,
+		"subject": map[string]any{
+			"name": string(runes[:subjectEnd]), "entity_kind": "other",
+			"span": map[string]any{"evidence_index": 0, "start": 0, "end": subjectEnd},
+		},
+		"predicate": map[string]any{
+			"proposed_key": strings.ToLower(string(runes[predicateStart:predicateEnd])),
+			"surface":      string(runes[predicateStart:predicateEnd]),
+			"span":         map[string]any{"evidence_index": 0, "start": predicateStart, "end": predicateEnd},
+		},
+		"object": map[string]any{"entity": map[string]any{
+			"name": string(runes[objectStart:objectEnd]), "entity_kind": "other",
+			"span": map[string]any{"evidence_index": 0, "start": objectStart, "end": objectEnd},
+		}},
+		"polarity": "+",
+		"modality": "statement",
+		"supports": []any{map[string]any{"evidence_index": 0, "start": 0, "end": len(runes)}},
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -264,6 +265,9 @@ func validateMemoryPackRelationship(item MemoryPackRelationship) error {
 	}
 	if strings.TrimSpace(item.PredicateKey) == "" {
 		return errors.New("predicate_key is required")
+	}
+	if utf8.RuneCountInString(item.PredicateKey) > 128 {
+		return errors.New("predicate_key exceeds 128 characters")
 	}
 	if item.PredicateVersion < 1 {
 		return errors.New("predicate_version must be greater than zero")

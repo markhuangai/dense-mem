@@ -348,12 +348,14 @@ func validateSubmittedRelationships(raw any, evidence []any, path string) error 
 			continue
 		}
 		ref, _ := relationship["ref"].(string)
-		if ref != "" {
-			if _, exists := seenRefs[ref]; exists {
-				return fmt.Errorf("%s[%d].ref: duplicate ref %q", path, index, ref)
-			}
-			seenRefs[ref] = struct{}{}
+		normalizedRef := strings.TrimSpace(ref)
+		if normalizedRef == "" {
+			return fmt.Errorf("%s[%d].ref: must not be blank", path, index)
 		}
+		if _, exists := seenRefs[normalizedRef]; exists {
+			return fmt.Errorf("%s[%d].ref: duplicate ref %q", path, index, normalizedRef)
+		}
+		seenRefs[normalizedRef] = struct{}{}
 		if err := validateSubmittedRelationship(relationship, evidence, fmt.Sprintf("%s[%d]", path, index)); err != nil {
 			return err
 		}

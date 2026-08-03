@@ -337,7 +337,8 @@ func loadCohortJSONLRows(path, keyField string) ([]cohortJSONLRow, error) {
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
-		line := bytes.TrimSpace(scanner.Bytes())
+		rawLine := append([]byte(nil), scanner.Bytes()...)
+		line := bytes.TrimSpace(rawLine)
 		if len(line) == 0 || bytes.HasPrefix(line, []byte("#")) {
 			continue
 		}
@@ -357,7 +358,7 @@ func loadCohortJSONLRows(path, keyField string) ([]cohortJSONLRow, error) {
 			return nil, fmt.Errorf("%s:%d: duplicate %s %q", path, lineNo, keyField, key)
 		}
 		seen[key] = struct{}{}
-		rows = append(rows, cohortJSONLRow{Key: key, Raw: append([]byte(nil), line...)})
+		rows = append(rows, cohortJSONLRow{Key: key, Raw: rawLine})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
