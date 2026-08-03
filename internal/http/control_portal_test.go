@@ -436,7 +436,7 @@ func TestControlPortalRejectsUnsafeConfig(t *testing.T) {
 	require.ErrorContains(t, err, "token")
 }
 
-func TestControlPortalAuthAndOrigin(t *testing.T) {
+func TestControlPortalAuthIgnoresOrigin(t *testing.T) {
 	_, _, server := testControlServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/control/api/session", nil)
@@ -448,14 +448,15 @@ func TestControlPortalAuthAndOrigin(t *testing.T) {
 	req.Header.Set("Origin", "http://192.168.1.253:8090")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
 
 	req = httptest.NewRequest(http.MethodGet, "/control/api/session", nil)
 	req.Header.Set("X-Control-Portal-Token", "secret")
 	req.Header.Set("Origin", "https://example.com")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Empty(t, rec.Header().Get("Access-Control-Allow-Origin"))
 
 	req = httptest.NewRequest(http.MethodGet, "/control/api/session", nil)
 	req.Header.Set("X-Control-Portal-Token", "secret")

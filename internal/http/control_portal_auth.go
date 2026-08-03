@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	nethttp "net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -40,25 +39,6 @@ func controlPortalMiddleware(token string, securitySvc service.SecurityService, 
 	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			origin := c.Request().Header.Get(echo.HeaderOrigin)
-			if origin != "" {
-				requestedOrigin := controlPortalOrigin(origin)
-				allowedOrigin, bootstrap := controlPortalConfiguredOrigin(c.Request().Context(), identityService)
-				if allowedOrigin == "" && bootstrap {
-					allowedOrigin = controlPortalRequestOrigin(c.Request())
-				}
-				if requestedOrigin == "" || allowedOrigin == "" || requestedOrigin != allowedOrigin {
-					return httperr.New(httperr.FORBIDDEN, "control portal origin is not allowed")
-				}
-				c.Response().Header().Set(echo.HeaderVary, echo.HeaderOrigin)
-				c.Response().Header().Set(echo.HeaderAccessControlAllowOrigin, origin)
-				c.Response().Header().Set(echo.HeaderAccessControlAllowCredentials, "true")
-				c.Response().Header().Set(echo.HeaderAccessControlAllowHeaders, "Authorization, Content-Type, X-Control-Portal-Token, "+service.ControlCSRFHeaderName)
-				c.Response().Header().Set(echo.HeaderAccessControlAllowMethods, "GET, POST, PATCH, DELETE, OPTIONS")
-			}
-			if c.Request().Method == nethttp.MethodOptions {
-				return c.NoContent(nethttp.StatusNoContent)
-			}
 			actor := ""
 			if controlTokenMatches(c.Request(), token) {
 				actor = controlPortalActorFromRequest(c.Request())
@@ -81,59 +61,6 @@ func controlPortalMiddleware(token string, securitySvc service.SecurityService, 
 			return next(c)
 		}
 	}
-}
-
-func controlPortalAllowedOrigin(ctx context.Context, identityService *service.ControlIdentityService) string {
-	origin, _ := controlPortalConfiguredOrigin(ctx, identityService)
-	return origin
-}
-
-func controlPortalConfiguredOrigin(ctx context.Context, identityService *service.ControlIdentityService) (string, bool) {
-	if identityService == nil {
-		return "", false
-	}
-	baseURL, err := identityService.ControlPublicBaseURL(ctx)
-	if err != nil {
-		return "", false
-	}
-	if strings.TrimSpace(baseURL) == "" {
-		return "", true
-	}
-	return controlPortalOrigin(baseURL), false
-}
-
-func controlPortalRequestOrigin(request *nethttp.Request) string {
-	if request == nil {
-		return ""
-	}
-	scheme := "http"
-	if request.TLS != nil {
-		scheme = "https"
-	}
-	return controlPortalOrigin(scheme + "://" + request.Host)
-}
-
-func controlPortalOrigin(value string) string {
-	parsed, err := url.Parse(strings.TrimSpace(value))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil {
-		return ""
-	}
-	scheme := strings.ToLower(parsed.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return ""
-	}
-	host := strings.ToLower(parsed.Hostname())
-	if host == "" {
-		return ""
-	}
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
-	}
-	port := parsed.Port()
-	if port != "" && !(scheme == "http" && port == "80") && !(scheme == "https" && port == "443") {
-		host += ":" + port
-	}
-	return scheme + "://" + host
 }
 
 func recordControlAuthFailure(c echo.Context, securitySvc service.SecurityService) {

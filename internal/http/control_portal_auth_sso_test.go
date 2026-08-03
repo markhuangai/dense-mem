@@ -17,11 +17,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
-func TestControlPortalMiddlewareUsesConfiguredControlOrigin(t *testing.T) {
+func TestControlPortalMiddlewareIgnoresOriginBehindTLSProxy(t *testing.T) {
 	t.Parallel()
 
 	identity := service.NewControlIdentityService(nil, nil, service.ControlIdentityConfig{
-		RuntimeConfig: controlIdentityHTTPRuntime{config: service.SSORuntimeConfig{ControlPublicBaseURL: "https://control.example.test"}},
+		RuntimeConfig: controlIdentityHTTPRuntime{config: service.SSORuntimeConfig{}},
 	})
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
@@ -30,21 +30,15 @@ func TestControlPortalMiddlewareUsesConfiguredControlOrigin(t *testing.T) {
 		return c.String(nethttp.StatusOK, controlPortalActorFromContext(c.Request().Context()))
 	})
 
-	request := httptest.NewRequest(nethttp.MethodOptions, "/session", nil)
-	request.Header.Set(echo.HeaderOrigin, "https://control.example.test")
-	response := httptest.NewRecorder()
-	e.ServeHTTP(response, request)
-	require.Equal(t, nethttp.StatusNoContent, response.Code)
-	require.Equal(t, "https://control.example.test", response.Header().Get(echo.HeaderAccessControlAllowOrigin))
-	require.Contains(t, response.Header().Get(echo.HeaderAccessControlAllowHeaders), service.ControlCSRFHeaderName)
-
-	request = httptest.NewRequest(nethttp.MethodGet, "/session", nil)
+	request := httptest.NewRequest(nethttp.MethodGet, "http://dense-mem:8090/session", nil)
 	request.Header.Set(echo.HeaderOrigin, "https://control.example.test")
 	request.Header.Set("X-Control-Portal-Token", "secret")
-	response = httptest.NewRecorder()
+	response := httptest.NewRecorder()
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
 	require.Equal(t, "control_portal:x-control-portal-token", response.Body.String())
+	require.Empty(t, response.Header().Get(echo.HeaderAccessControlAllowOrigin))
+	require.Empty(t, response.Header().Get(echo.HeaderAccessControlAllowCredentials))
 
 	request = httptest.NewRequest(nethttp.MethodGet, "/session", nil)
 	request.Header.Set(echo.HeaderAuthorization, "Bearer secret")
@@ -52,65 +46,6 @@ func TestControlPortalMiddlewareUsesConfiguredControlOrigin(t *testing.T) {
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
 	require.Equal(t, "control_portal:authorization-bearer", response.Body.String())
-
-	request = httptest.NewRequest(nethttp.MethodGet, "/session", nil)
-	request.Header.Set(echo.HeaderOrigin, "https://untrusted.example.test")
-	request.Header.Set("X-Control-Portal-Token", "secret")
-	response = httptest.NewRecorder()
-	e.ServeHTTP(response, request)
-	require.Equal(t, nethttp.StatusForbidden, response.Code)
-}
-
-func TestControlPortalAllowedOriginFailsClosed(t *testing.T) {
-	t.Parallel()
-
-	identity := service.NewControlIdentityService(nil, nil, service.ControlIdentityConfig{
-		RuntimeConfig: controlIdentityHTTPRuntime{err: errors.New("config unavailable")},
-	})
-	require.Empty(t, controlPortalAllowedOrigin(context.Background(), identity))
-	require.Empty(t, controlPortalAllowedOrigin(context.Background(), nil))
-	require.Equal(t, "control_portal", controlPortalActorFromContext(context.Background()))
-}
-
-func TestControlPortalMiddlewareBootstrapsOnlySameOriginAndNormalizesDefaultPorts(t *testing.T) {
-	t.Parallel()
-
-	bootstrap := service.NewControlIdentityService(nil, nil, service.ControlIdentityConfig{
-		RuntimeConfig: controlIdentityHTTPRuntime{config: service.SSORuntimeConfig{}},
-	})
-	e := echo.New()
-	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.Use(controlPortalMiddleware("secret", nil, bootstrap))
-	e.POST("/config", func(c echo.Context) error { return c.NoContent(nethttp.StatusNoContent) })
-
-	request := httptest.NewRequest(nethttp.MethodPost, "http://control.example.test/config", nil)
-	request.Header.Set(echo.HeaderOrigin, "http://control.example.test")
-	request.Header.Set("X-Control-Portal-Token", "secret")
-	response := httptest.NewRecorder()
-	e.ServeHTTP(response, request)
-	require.Equal(t, nethttp.StatusNoContent, response.Code)
-	require.Equal(t, "http://control.example.test", response.Header().Get(echo.HeaderAccessControlAllowOrigin))
-
-	request = httptest.NewRequest(nethttp.MethodPost, "http://control.example.test/config", nil)
-	request.Header.Set(echo.HeaderOrigin, "https://untrusted.example.test")
-	request.Header.Set("X-Control-Portal-Token", "secret")
-	response = httptest.NewRecorder()
-	e.ServeHTTP(response, request)
-	require.Equal(t, nethttp.StatusForbidden, response.Code)
-
-	configured := service.NewControlIdentityService(nil, nil, service.ControlIdentityConfig{
-		RuntimeConfig: controlIdentityHTTPRuntime{config: service.SSORuntimeConfig{ControlPublicBaseURL: "https://control.example.test:443"}},
-	})
-	e = echo.New()
-	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.Use(controlPortalMiddleware("secret", nil, configured))
-	e.GET("/session", func(c echo.Context) error { return c.NoContent(nethttp.StatusNoContent) })
-	request = httptest.NewRequest(nethttp.MethodGet, "https://control.example.test/session", nil)
-	request.Header.Set(echo.HeaderOrigin, "https://control.example.test")
-	request.Header.Set("X-Control-Portal-Token", "secret")
-	response = httptest.NewRecorder()
-	e.ServeHTTP(response, request)
-	require.Equal(t, nethttp.StatusNoContent, response.Code)
 }
 
 func TestControlPortalMiddlewareAcceptsCurrentSSOSessionAndRecordsSafeFailures(t *testing.T) {
@@ -155,11 +90,8 @@ func TestControlPortalMiddlewareAcceptsCurrentSSOSessionAndRecordsSafeFailures(t
 	require.Equal(t, nethttp.StatusUnauthorized, response.Code)
 	require.Equal(t, 1, recorder.calls)
 
+	require.Equal(t, "control_portal", controlPortalActorFromContext(context.Background()))
 	require.Equal(t, "control_portal", controlPortalActorFromRequest(httptest.NewRequest(nethttp.MethodGet, "/", nil)))
-	invalidOrigin := service.NewControlIdentityService(nil, nil, service.ControlIdentityConfig{
-		RuntimeConfig: controlIdentityHTTPRuntime{config: service.SSORuntimeConfig{ControlPublicBaseURL: "://invalid"}},
-	})
-	require.Empty(t, controlPortalAllowedOrigin(context.Background(), invalidOrigin))
 	require.Nil(t, controlDirectoryServiceError(nil))
 	require.Nil(t, controlIdentityHTTPError(nil))
 	directoryErr := controlDirectoryServiceError(errors.New("directory constraint failed: duplicate key value violates unique constraint \"credential_secret\""))
