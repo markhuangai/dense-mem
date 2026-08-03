@@ -303,6 +303,103 @@ func TestSearchReadinessAndBinaryHNSWPlan(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestRecallRelationshipsUses4096BinaryHNSW(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-relationship-binary-hnsw-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-relationship-binary-hnsw-owner")
+	searchRepo := NewSearchRepository(appDB, rls)
+	contractID := insertSearchTestContract(t, adminDB, rls, "search-relationship-binary-hnsw", 4096, "binary_hnsw", searchTestBinaryHNSWIndexName)
+	createSearchTestBinaryHNSWIndex(t, adminDB, rls, contractID, 4096)
+
+	ready, err := searchRepo.CheckSearchReadiness(ctx)
+	require.NoError(t, err)
+	require.True(t, ready.Ready, "readiness reasons: %+v", ready.Reasons)
+	require.NotNil(t, ready.Contract)
+	assert.Equal(t, string(domain.VectorIndexBinaryHNSW), ready.Contract.IndexStrategy)
+
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Mika")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense Mem")
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"relationship binary hnsw recall", "Mika works on Dense Mem.")
+	decision := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        ingest.IngestID,
+		SubjectEntityID: subject.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     ingest.Evidence[0].FragmentID,
+			SourceGroupKey: "recall:relationship-binary-hnsw",
+			SpanStart:      0,
+			SpanEnd:        len("Mika works on Dense Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+
+	generationID := uuid.NewString()
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO search_projection_generations (
+			    team_id, projection_generation_id, source_kind, generation,
+			    projection_format_version, state, eligible_count, projected_count,
+			    current_vector_count, failed_job_count, completed_at, activated_at
+			) VALUES (
+			    ?::uuid, ?::uuid, 'relationship', 1,
+			    2, 'current', 1, 1,
+			    1, 0, now(), now()
+			)
+		`, teamID, generationID).Error
+	}))
+	doc, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID:                 teamID,
+		OwnerProfileID:         ownerID,
+		SourceKind:             "relationship",
+		SourceID:               decision.Relationship.RelationshipID,
+		SourceVersion:          int64(decision.Relationship.Version),
+		ProjectionGenerationID: generationID,
+		DocumentText:           "relationship\nsubject: Mika\npredicate: works on\nobject: Dense Mem\npolarity: positive",
+	})
+	require.NoError(t, err)
+	queryVector := unitSearchVector(4096, 0)
+	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+		doc.SearchDocumentID: queryVector,
+	})
+
+	input := RecallRelationshipsInput{
+		TeamID:         teamID,
+		Query:          "unmatchedtoken",
+		QueryEmbedding: queryVector,
+		Limit:          2,
+	}
+	var vectorHits []SearchHit
+	var queryEFSearch string
+	err = searchRepo.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
+		vectorHits, err = searchRecallRelationshipVector(ctx, tx, input, ready.Contract, input.Limit)
+		if err != nil {
+			return err
+		}
+		return tx.Raw(`SHOW hnsw.ef_search`).Row().Scan(&queryEFSearch)
+	})
+	require.NoError(t, err)
+	require.Len(t, vectorHits, 1)
+	assert.Equal(t, doc.SearchDocumentID, vectorHits[0].SearchDocumentID)
+	assert.Equal(t, "200", queryEFSearch)
+
+	recall, err := searchRepo.RecallRelationships(ctx, input)
+	require.NoError(t, err)
+	require.False(t, recall.VectorOmitted)
+	assert.Equal(t, string(domain.SearchProjectionCurrent), recall.SearchState)
+	require.Len(t, recall.Results, 1)
+	assert.Equal(t, decision.Relationship.RelationshipID, recall.Results[0].RelationshipID)
+	assert.Equal(t, []string{ingest.Evidence[0].FragmentID}, recall.Results[0].EvidenceIDs)
+}
+
 func createSearchTestBinaryHNSWIndex(
 	t *testing.T,
 	db *gorm.DB,

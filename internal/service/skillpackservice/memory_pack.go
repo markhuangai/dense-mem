@@ -237,7 +237,9 @@ func (s *memoryPackService) Import(ctx context.Context, req ImportRequest) (*Imp
 	if err != nil {
 		summary := MemoryPackImportSummary(loaded, req.Mode, "", itemResults)
 		summary["error"] = err.Error()
-		_ = s.deps.Ledger.UpdateImportStatus(ctx, actor.TeamID.String(), importID, domain.SkillPackImportStatusFailed, 0, len(itemResults), summary)
+		if statusErr := s.deps.Ledger.UpdateImportStatus(ctx, actor.TeamID.String(), importID, domain.SkillPackImportStatusFailed, 0, len(itemResults), summary); statusErr != nil {
+			return nil, errors.Join(err, statusErr)
+		}
 		return nil, err
 	}
 	if len(rememberReq.Evidence) == 0 {

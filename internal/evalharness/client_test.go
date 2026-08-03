@@ -177,7 +177,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{
 		SourceDocID:   "doc-alpha",
 		Title:         "Alpha",
-		Content:       "Alpha content",
+		Content:       "Alpha uses Beta.",
 		SourceDataset: "fixture",
 		Metadata:      map[string]any{"topic": "letters"},
 		Relationships: flatRelationships,
