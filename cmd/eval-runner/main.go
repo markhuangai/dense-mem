@@ -124,7 +124,8 @@ func main() {
 		if err != nil {
 			exitf("compare V2 cohort: %v", err)
 		}
-		fmt.Printf("v2_cohort_comparison=passed baseline_seed_hash=%s candidate_seed_hash=%s cases=%d recall_delta=%.4f mrr_delta=%.4f ndcg_delta=%.4f bad_at_k_delta=%.4f\n",
+		fmt.Printf("v2_cohort_comparison=%s baseline_seed_hash=%s candidate_seed_hash=%s cases=%d recall_delta=%.4f mrr_delta=%.4f ndcg_delta=%.4f bad_at_k_delta=%.4f\n",
+			comparison.Status,
 			comparison.BaselineSeedHash,
 			comparison.CandidateSeedHash,
 			comparison.RetainedCaseCount,

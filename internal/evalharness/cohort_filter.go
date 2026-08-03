@@ -156,6 +156,9 @@ func loadCohortFilterLock(path string) (cohortFilterLock, string, error) {
 			return cohortFilterLock{}, "", fmt.Errorf("cohort lock expected_counts.%s is required", name)
 		}
 	}
+	if lock.ExpectedCounts["cases"] == 0 {
+		return cohortFilterLock{}, "", fmt.Errorf("cohort lock expected_counts.cases must be positive")
+	}
 	hash, err := sha256File(path)
 	if err != nil {
 		return cohortFilterLock{}, "", err

@@ -21,6 +21,9 @@ func CompareV2CohortRunDirs(opts V2CohortComparisonOptions) (V2CohortComparison,
 	if err != nil {
 		return V2CohortComparison{}, fmt.Errorf("validate V2 cohort: %w", err)
 	}
+	if cohort.RetainedCaseCount <= 0 {
+		return V2CohortComparison{}, fmt.Errorf("validated V2 cohort must retain at least one case")
+	}
 	baseline, err := readComparisonSummary("baseline", opts.BaselineRunDir)
 	if err != nil {
 		return V2CohortComparison{}, err

@@ -116,6 +116,16 @@ func TestCompareV2CohortRunDirsRejectsUnboundOrPartialRunSummary(t *testing.T) {
 			},
 			want: "scored case count",
 		},
+		{
+			name: "candidate case count mismatch",
+			baseline: func(report V2CohortValidationReport) Summary {
+				return Summary{SeedHash: report.FilteredSeedHash, CaseCount: report.RetainedCaseCount, ScoredCaseCount: report.RetainedCaseCount}
+			},
+			candidate: func(report V2CohortValidationReport) Summary {
+				return Summary{SeedHash: report.DerivedSeedHash, CaseCount: report.RetainedCaseCount - 1, ScoredCaseCount: report.RetainedCaseCount - 1}
+			},
+			want: "case count",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -169,6 +179,20 @@ func TestValidateV2CohortDerivationRejectsCohortLockHashMismatch(t *testing.T) {
 	_, err := ValidateV2CohortDerivation(opts)
 	if err == nil || !strings.Contains(err.Error(), "filtered_seed_hash") {
 		t.Fatalf("cohort lock hash mismatch error = %v", err)
+	}
+}
+
+func TestValidateV2CohortDerivationRejectsZeroCaseCohortLock(t *testing.T) {
+	opts := writeV2CohortValidationFixture(t)
+	lock := cohortFilterLockForFixture(t, opts, []string{"doc-2"}, []string{"case-2"})
+	lock.ExpectedCounts["cases"] = 0
+	if err := writeJSONFile(opts.CohortLockPath, lock); err != nil {
+		t.Fatalf("write lock: %v", err)
+	}
+
+	_, err := ValidateV2CohortDerivation(opts)
+	if err == nil || !strings.Contains(err.Error(), "expected_counts.cases must be positive") {
+		t.Fatalf("zero-case cohort lock error = %v", err)
 	}
 }
 

@@ -380,10 +380,11 @@ func TestRecallRelationshipsUses4096BinaryHNSW(t *testing.T) {
 	var vectorHits []SearchHit
 	var queryEFSearch string
 	err = searchRepo.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
-		vectorHits, err = searchRecallRelationshipVector(ctx, tx, input, ready.Contract, input.Limit)
-		if err != nil {
-			return err
+		hits, hitErr := searchRecallRelationshipVector(ctx, tx, input, ready.Contract, input.Limit)
+		if hitErr != nil {
+			return hitErr
 		}
+		vectorHits = hits
 		return tx.Raw(`SHOW hnsw.ef_search`).Row().Scan(&queryEFSearch)
 	})
 	require.NoError(t, err)
