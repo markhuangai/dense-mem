@@ -80,6 +80,29 @@ func TestSemanticAssessmentEntityResolutionGuards(t *testing.T) {
 	assert.Equal(t, []map[string]any{{"action": "submit_new_evidence"}}, resolutions[0].ReviewOptions)
 }
 
+func TestClientProposedPredicateKeysIgnoresInvalidAndDuplicateHints(t *testing.T) {
+	proposal := map[string]any{"relationship_hints": []any{
+		map[string]any{"predicate": map[string]any{"proposed_key": "works_on"}},
+		map[string]any{"predicate": map[string]any{"proposed_key": " works_on "}},
+		map[string]any{"predicate": map[string]any{"proposed_key": ""}},
+		map[string]any{"predicate": "not-an-object"},
+		map[string]any{"predicate": map[string]any{"proposed_key": "depends_on"}},
+	}}
+
+	assert.Equal(t, []string{"works_on", "depends_on"}, clientProposedPredicateKeys(proposal))
+}
+
+func TestSemanticAssessmentPreflightErrorIsNilSafeAndUnwrapsCause(t *testing.T) {
+	var nilPreflight *semanticAssessmentPreflightError
+	assert.Equal(t, "semantic assessment preflight failed", nilPreflight.Error())
+	assert.NoError(t, nilPreflight.Unwrap())
+
+	cause := errors.New("candidate lookup failed")
+	preflight := &semanticAssessmentPreflightError{stage: "candidate_prefetch", err: cause}
+	assert.Equal(t, cause.Error(), preflight.Error())
+	assert.ErrorIs(t, preflight, cause)
+}
+
 func TestSemanticAssessmentEntityResolutionHonorsApprovedCurrentSelection(t *testing.T) {
 	fragment := repository.EvidenceFragment{FragmentID: uuid.NewString(), Content: "Mark works on Dense-Mem."}
 	selectedID := uuid.NewString()
@@ -376,6 +399,37 @@ func TestSemanticAssessmentKnownEntityHintsUseOneBatchLookup(t *testing.T) {
 		*ledger.run,
 		fragment,
 		proposal,
+		"evidence:0",
+	)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, groups, 2)
+	assert.Equal(t, 1, catalog.knownCandidateCalls)
+	assert.ElementsMatch(t, []string{firstID, secondID}, catalog.knownCandidateIDs)
+
+	catalog.knownCandidateCalls = 0
+	flatProposal := map[string]any{"relationship_hints": []any{map[string]any{
+		"ref": "evidence-is-durable",
+		"subject": map[string]any{
+			"name": "Evidence", "entity_kind": "concept", "known_entity_id": firstID,
+			"span": map[string]any{"evidence_index": 0, "start": 0, "end": 8},
+		},
+		"predicate": map[string]any{
+			"proposed_key": "is", "surface": "is",
+			"span": map[string]any{"evidence_index": 0, "start": 9, "end": 11},
+		},
+		"object": map[string]any{"entity": map[string]any{
+			"name": "durable", "entity_kind": "concept", "known_entity_id": secondID,
+			"span": map[string]any{"evidence_index": 0, "start": 12, "end": 19},
+		}},
+		"polarity": "+", "modality": "statement",
+		"supports": []any{map[string]any{"evidence_index": 0, "start": 0, "end": 19}},
+	}}}
+	groups, truncated, err = service.prefetchEntityCandidates(
+		context.Background(),
+		*ledger.run,
+		fragment,
+		flatProposal,
 		"evidence:0",
 	)
 	require.NoError(t, err)

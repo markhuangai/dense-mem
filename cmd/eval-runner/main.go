@@ -16,16 +16,34 @@ func main() {
 	var opts evalharness.RunOptions
 	var baselineRun string
 	var candidateRun string
-	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, or compare")
-	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path (required except in compare mode)")
-	flag.StringVar(&opts.SuitePath, "suite", "", "suite JSONL path (required except in compare mode)")
+	var relationshipLedgerPath string
+	var derivedSeedID string
+	var parentV1ManifestPath string
+	var parentV1SuitePath string
+	var filteredV1ManifestPath string
+	var filteredV1SuitePath string
+	var derivedV2ManifestPath string
+	var derivedV2SuitePath string
+	var cohortLockPath string
+	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, compare, derive-v2, or validate-v2-cohort")
+	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path (source seed for derive-v2; required except in compare mode)")
+	flag.StringVar(&opts.SuitePath, "suite", "", "suite JSONL path (source suite for derive-v2; required except in compare mode)")
 	flag.StringVar(&opts.OutDir, "out", "", "output run directory")
+	flag.StringVar(&relationshipLedgerPath, "relationship-ledger", "", "relationship ledger JSONL path required for derive-v2")
+	flag.StringVar(&derivedSeedID, "derived-seed-id", "public_6axis_1k_v2", "derived seed ID for derive-v2")
+	flag.StringVar(&parentV1ManifestPath, "parent-v1-seed", "", "unfiltered V1 manifest required for validate-v2-cohort")
+	flag.StringVar(&parentV1SuitePath, "parent-v1-suite", "", "unfiltered V1 suite required for validate-v2-cohort")
+	flag.StringVar(&filteredV1ManifestPath, "filtered-v1-seed", "", "filtered V1 manifest required for validate-v2-cohort")
+	flag.StringVar(&filteredV1SuitePath, "filtered-v1-suite", "", "filtered V1 suite required for validate-v2-cohort")
+	flag.StringVar(&derivedV2ManifestPath, "derived-v2-seed", "", "derived V2 manifest required for validate-v2-cohort")
+	flag.StringVar(&derivedV2SuitePath, "derived-v2-suite", "", "derived V2 suite required for validate-v2-cohort")
+	flag.StringVar(&cohortLockPath, "cohort-lock", "", "committed cohort lock for derive-v2 excluded ledger rows and validate-v2-cohort")
 	flag.StringVar(&opts.BaseURL, "base-url", env("DENSE_MEM_BASE_URL", "http://127.0.0.1:8080"), "Dense-Mem HTTP base URL")
 	flag.StringVar(&opts.APIKey, "api-key", env("DENSE_MEM_API_KEY", ""), "read/write API key")
 	flag.StringVar(&opts.ControlURL, "control-url", env("DENSE_MEM_CONTROL_URL", "http://127.0.0.1:8090"), "control portal base URL")
 	flag.StringVar(&opts.ControlToken, "control-token", env("DENSE_MEM_CONTROL_TOKEN", ""), "control portal token")
 	flag.BoolVar(&opts.ImportSeed, "import-seed", false, "import corpus through remember before running cases")
-	flag.IntVar(&opts.ImportConcurrency, "import-concurrency", envInt("DENSE_MEM_EVAL_IMPORT_CONCURRENCY", 1), "maximum concurrent seed import requests")
+	flag.IntVar(&opts.ImportConcurrency, "import-concurrency", importConcurrencyDefault(), "maximum concurrent seed import requests (1-10)")
 	flag.DurationVar(&opts.PlacementTimeout, "placement-timeout", envDuration("DENSE_MEM_EVAL_PLACEMENT_TIMEOUT", 2*time.Minute), "maximum time to wait for each memory placement")
 	flag.StringVar(&opts.ResumeSourceDocIDsPath, "resume-source-doc-ids", env("DENSE_MEM_EVAL_RESUME_SOURCE_DOC_IDS", ""), "newline-delimited source document IDs with completed placements")
 	flag.StringVar(&opts.TracesPath, "traces", "", "offline recall_traces.jsonl path to score instead of running live")
@@ -86,6 +104,52 @@ func main() {
 			)
 		}
 		fmt.Println(msg)
+		return
+	}
+	if opts.Mode == "derive-v2" {
+		report, err := evalharness.DeriveV2Seed(evalharness.DeriveV2SeedOptions{
+			SourceManifestPath:     opts.SeedManifestPath,
+			SourceSuitePath:        opts.SuitePath,
+			RelationshipLedgerPath: relationshipLedgerPath,
+			CohortLockPath:         cohortLockPath,
+			OutputDir:              opts.OutDir,
+			SeedID:                 derivedSeedID,
+		})
+		if err != nil {
+			exitf("derive V2 seed: %v", err)
+		}
+		fmt.Printf("derived_seed_id=%s seed_hash=%s corpus=%d relationships=%d contract_validated=%d out=%s\n",
+			report.DerivedSeedID,
+			report.DerivedSeedHash,
+			report.CorpusCount,
+			report.RelationshipCount,
+			report.ContractValidatedCount,
+			opts.OutDir,
+		)
+		return
+	}
+	if opts.Mode == "validate-v2-cohort" {
+		report, err := evalharness.ValidateV2CohortDerivation(evalharness.V2CohortValidationOptions{
+			ParentManifestPath:   parentV1ManifestPath,
+			ParentSuitePath:      parentV1SuitePath,
+			FilteredManifestPath: filteredV1ManifestPath,
+			FilteredSuitePath:    filteredV1SuitePath,
+			DerivedManifestPath:  derivedV2ManifestPath,
+			DerivedSuitePath:     derivedV2SuitePath,
+			CohortLockPath:       cohortLockPath,
+		})
+		if err != nil {
+			exitf("validate V2 cohort: %v", err)
+		}
+		fmt.Printf("v2_cohort_validation=passed parent_seed_hash=%s filtered_seed_hash=%s derived_seed_hash=%s corpus=%d cases=%d relationships=%d contract_validated=%d\n",
+			report.ParentSeedHash,
+			report.FilteredSeedHash,
+			report.DerivedSeedHash,
+			report.RetainedCorpusCount,
+			report.RetainedCaseCount,
+			report.RelationshipCount,
+			report.ContractValidatedCount,
+		)
 		return
 	}
 	if opts.OutDir == "" {
@@ -189,6 +253,10 @@ func envInt(key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func importConcurrencyDefault() int {
+	return envInt("DENSE_MEM_EVAL_IMPORT_CONCURRENCY", evalharness.DefaultImportConcurrency)
 }
 
 func envDuration(key string, fallback time.Duration) time.Duration {

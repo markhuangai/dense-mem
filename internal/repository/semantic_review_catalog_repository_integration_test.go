@@ -114,6 +114,17 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	assert.NotEmpty(t, assessmentOptions[0].AllowedObjectKinds)
 	assert.Equal(t, "active", assessmentOptions[0].LifecycleState)
 
+	proposedKeyOptions, err := repo.ListSemanticAssessmentPredicateOptions(ctx, SemanticAssessmentPredicateOptionsInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerB,
+		QueryText:      "unrelated retrieval wording",
+		ProposedKeys:   []string{"is working on"},
+		Limit:          100,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, proposedKeyOptions)
+	assert.Equal(t, "works_on", proposedKeyOptions[0].PredicateKey)
+
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO team_predicate_definitions (

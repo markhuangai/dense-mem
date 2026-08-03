@@ -33,6 +33,7 @@ func loadActiveSearchContractInTx(ctx context.Context, tx *gorm.DB) (*ActiveSear
 		    generation.operator_class,
 		    generation.indexed_expression,
 		    generation.physical_index_name,
+		    generation.query_ef_search,
 		    generation.exact_max_rows,
 		    generation.candidate_limit,
 		    generation.allow_exact_fallback
@@ -60,6 +61,7 @@ func loadActiveSearchContractInTx(ctx context.Context, tx *gorm.DB) (*ActiveSear
 		&contract.OperatorClass,
 		&contract.IndexedExpression,
 		&contract.PhysicalIndexName,
+		&contract.QueryEFSearch,
 		&contract.ExactMaxRows,
 		&contract.CandidateLimit,
 		&contract.AllowExactFallback,

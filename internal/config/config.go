@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 const (
@@ -370,6 +372,12 @@ func (c *Config) ValidateServerStartup() error {
 		return &ValidationError{
 			Field:   "AI_API_EMBEDDING_DIMENSIONS",
 			Message: "required for server startup",
+		}
+	}
+	if c.AIEmbeddingDimensions > domain.MaxEmbeddingDimensions {
+		return &ValidationError{
+			Field:   "AI_API_EMBEDDING_DIMENSIONS",
+			Message: fmt.Sprintf("must be at most %d", domain.MaxEmbeddingDimensions),
 		}
 	}
 	return nil
@@ -814,6 +822,12 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 			return cfg, &ValidationError{
 				Field:   "AI_API_EMBEDDING_DIMENSIONS",
 				Message: "required for embedding configuration (all-or-nothing)",
+			}
+		}
+		if cfg.AIEmbeddingDimensions > domain.MaxEmbeddingDimensions {
+			return cfg, &ValidationError{
+				Field:   "AI_API_EMBEDDING_DIMENSIONS",
+				Message: fmt.Sprintf("must be at most %d", domain.MaxEmbeddingDimensions),
 			}
 		}
 	}

@@ -79,17 +79,18 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 
 	out := filepath.Join(dir, "import-run")
 	summary, err := Run(context.Background(), RunOptions{
-		Mode:             "import",
-		SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
-		SuitePath:        filepath.Join(dir, "suite.jsonl"),
-		BaseURL:          server.URL,
-		APIKey:           "api-key",
-		ControlURL:       server.URL,
-		ControlToken:     "control-token",
-		ImportSeed:       true,
-		MaxPageSize:      50,
-		OutDir:           out,
-		RunID:            "import-test",
+		Mode:              "import",
+		SeedManifestPath:  filepath.Join(dir, "seed_manifest.json"),
+		SuitePath:         filepath.Join(dir, "suite.jsonl"),
+		BaseURL:           server.URL,
+		APIKey:            "api-key",
+		ControlURL:        server.URL,
+		ControlToken:      "control-token",
+		ImportSeed:        true,
+		ImportConcurrency: 1,
+		MaxPageSize:       50,
+		OutDir:            out,
+		RunID:             "import-test",
 	})
 	if err != nil {
 		t.Fatalf("Run import: %v", err)
@@ -174,6 +175,7 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T
 		ControlURL:             server.URL,
 		ControlToken:           "control-token",
 		ImportSeed:             true,
+		ImportConcurrency:      1,
 		ResumeSourceDocIDsPath: resumePath,
 		OutDir:                 out,
 	})

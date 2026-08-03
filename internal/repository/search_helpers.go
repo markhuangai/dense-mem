@@ -234,12 +234,6 @@ func searchMissingIndexCompatibility(contract *ActiveSearchContract, indexDefini
 		{name: "current search-state predicate", token: "search_state = 'current'"},
 		{name: "non-null embedding predicate", token: "embedding is not null"},
 	}
-	if token := searchIndexExpressionToken(contract); token != "" {
-		requirements = append(requirements, struct {
-			name  string
-			token string
-		}{name: "indexed expression", token: token})
-	}
 	missing := make([]string, 0)
 	for _, requirement := range requirements {
 		if requirement.token == "" {
@@ -250,16 +244,36 @@ func searchMissingIndexCompatibility(contract *ActiveSearchContract, indexDefini
 			missing = append(missing, requirement.name)
 		}
 	}
+	if !searchIndexExpressionCompatible(contract, indexDefinition) {
+		missing = append(missing, "indexed expression")
+	}
 	return missing
+}
+
+func searchIndexExpressionCompatible(contract *ActiveSearchContract, indexDefinition string) bool {
+	token := searchIndexExpressionToken(contract)
+	if token == "" {
+		return true
+	}
+	normalized := strings.Join(strings.Fields(strings.ToLower(indexDefinition)), " ")
+	if contract.IndexStrategy != string(domain.VectorIndexBinaryHNSW) {
+		return strings.Contains(normalized, token)
+	}
+	canonical := strings.NewReplacer("(", "", ")", "", " ", "").Replace(normalized)
+	return strings.Contains(canonical, fmt.Sprintf("binary_quantizeembedding::bit%d", contract.EmbeddingDimensions))
 }
 
 func searchIndexExpressionToken(contract *ActiveSearchContract) string {
 	expression := strings.ToLower(strings.TrimSpace(contract.IndexedExpression))
 	switch {
+	case strings.Contains(expression, "binary_quantize") && strings.Contains(expression, "bit("):
+		return fmt.Sprintf("binary_quantize(embedding)::bit(%d)", contract.EmbeddingDimensions)
 	case strings.Contains(expression, "halfvec"):
 		return fmt.Sprintf("halfvec(%d)", contract.EmbeddingDimensions)
 	case strings.Contains(expression, "vector("):
 		return fmt.Sprintf("vector(%d)", contract.EmbeddingDimensions)
+	case contract.IndexStrategy == string(domain.VectorIndexBinaryHNSW):
+		return fmt.Sprintf("binary_quantize(embedding)::bit(%d)", contract.EmbeddingDimensions)
 	case contract.IndexStrategy == string(domain.VectorIndexHalfvecHNSW):
 		return fmt.Sprintf("halfvec(%d)", contract.EmbeddingDimensions)
 	case expression != "":

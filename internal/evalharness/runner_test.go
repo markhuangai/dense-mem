@@ -33,6 +33,13 @@ func TestRunValidateWritesArtifacts(t *testing.T) {
 			t.Fatalf("missing artifact %s", name)
 		}
 	}
+	var config RunConfig
+	if err := readJSONFile(filepath.Join(out, "run_config.json"), &config); err != nil {
+		t.Fatalf("read run config: %v", err)
+	}
+	if config.ImportConcurrency != DefaultImportConcurrency {
+		t.Fatalf("default import concurrency = %d, want %d", config.ImportConcurrency, DefaultImportConcurrency)
+	}
 }
 
 func TestRunBaselineWithTraceFileWritesArtifactsAndComparison(t *testing.T) {
@@ -312,6 +319,12 @@ func TestRunRejectsInvalidOptionsAndSuite(t *testing.T) {
 			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
 			SuitePath:        filepath.Join(dir, "suite.jsonl"),
 			PlacementTimeout: -time.Second,
+		}},
+		{name: "import concurrency over provider cap", opts: RunOptions{
+			Mode:              "validate",
+			SeedManifestPath:  filepath.Join(dir, "seed_manifest.json"),
+			SuitePath:         filepath.Join(dir, "suite.jsonl"),
+			ImportConcurrency: MaxImportConcurrency + 1,
 		}},
 		{name: "resume outside import mode", opts: RunOptions{
 			Mode:                   "validate",

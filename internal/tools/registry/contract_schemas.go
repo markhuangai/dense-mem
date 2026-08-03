@@ -19,13 +19,10 @@ func contractInput(required []string, properties map[string]any) map[string]any 
 }
 
 func rememberInputSchema() map[string]any {
-	return contractInput([]string{"evidence"}, map[string]any{
+	return contractInput([]string{"evidence", "relationships"}, map[string]any{
 		"evidence":        evidenceArraySchema(),
+		"relationships":   relationshipSubmissionArraySchema(),
 		"idempotency_key": schemaString("Ingest retry key scoped to team and profile.", 128),
-		"proposal": closedObject(nil, map[string]any{
-			"entities":      entityProposalArraySchema(),
-			"relationships": relationshipProposalArraySchema(),
-		}),
 	})
 }
 
@@ -58,83 +55,119 @@ func evidenceArraySchema() map[string]any {
 	}
 }
 
-func entityProposalArraySchema() map[string]any {
+func relationshipSubmissionArraySchema() map[string]any {
 	return map[string]any{
 		"type":     "array",
-		"maxItems": 100,
-		"items": map[string]any{
-			"type":     "object",
-			"required": []string{"ref", "name"},
-			"properties": map[string]any{
-				"ref":              nonEmptyStringSchema("Client-local Entity proposal ref.", 128),
-				"name":             nonEmptyStringSchema("Evidence-supported name.", 256),
-				"entity_kind":      schemaEnum(domain.EntityKinds()),
-				"aliases":          stringArraySchema("Evidence-supported alias.", 20, 256),
-				"identity_context": boundedMap("Evidence-supported identity discriminators."),
-				"known_entity_id":  nullableString("Server-issued Entity candidate hint.", 128),
-			},
-			"additionalProperties": false,
-		},
+		"minItems": 1,
+		"maxItems": 200,
+		"items":    relationshipSubmissionSchema(),
 	}
 }
 
-func relationshipProposalArraySchema() map[string]any {
+func relationshipSubmissionSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"ref", "subject", "predicate", "object", "polarity", "modality", "supports"},
+		"properties": map[string]any{
+			"ref":               nonEmptyStringSchema("Client-local Relationship proposal ref.", 128),
+			"subject":           inlineRelationshipEntitySchema("Evidence-supported subject Entity."),
+			"predicate":         relationshipPredicateSchema(),
+			"object":            relationshipObjectSchema(),
+			"polarity":          schemaEnum([]string{"+", "-"}),
+			"modality":          schemaEnum([]string{"statement", "question", "proposal", "speculation", "quoted"}),
+			"valid_from":        nullableDateTime("Evidence-supported validity start."),
+			"valid_to":          nullableDateTime("Evidence-supported validity end."),
+			"correction_target": relationshipCorrectionTargetSchema(),
+			"conflict_context":  relationshipConflictContextSchema(),
+			"client_comment":    nullableString("Non-authoritative extraction note.", 1000),
+			"supports":          relationshipSupportArraySchema(),
+		},
+		"additionalProperties": false,
+	}
+}
+
+func inlineRelationshipEntitySchema(description string) map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"name", "entity_kind", "span"},
+		"properties": map[string]any{
+			"name":            nonEmptyStringSchema(description, 256),
+			"entity_kind":     schemaEnum(domain.EntityKinds()),
+			"known_entity_id": nullableString("Server-issued Entity candidate hint.", 128),
+			"span":            relationshipSpanSchema(),
+		},
+		"additionalProperties": false,
+	}
+}
+
+func relationshipPredicateSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"proposed_key", "surface", "span"},
+		"properties": map[string]any{
+			"proposed_key": nonEmptyStringSchema("Best-effort team predicate key proposal.", 128),
+			"surface":      nonEmptyStringSchema("Exact predicate surface from submitted evidence.", 256),
+			"span":         relationshipSpanSchema(),
+		},
+		"additionalProperties": false,
+	}
+}
+
+func relationshipObjectSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"oneOf": []any{
+			map[string]any{
+				"required": []string{"entity"},
+				"not":      map[string]any{"required": []string{"value"}},
+			},
+			map[string]any{
+				"required": []string{"value"},
+				"not":      map[string]any{"required": []string{"entity"}},
+			},
+		},
+		"properties": map[string]any{
+			"entity": inlineRelationshipEntitySchema("Evidence-supported object Entity."),
+			"value":  relationshipValueSchema(),
+		},
+		"additionalProperties": false,
+	}
+}
+
+func relationshipValueSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"type", "value", "surface", "span"},
+		"properties": map[string]any{
+			"type":    schemaEnum(domain.ValueTypes()),
+			"value":   map[string]any{"type": []any{"string", "number", "boolean"}},
+			"surface": nonEmptyStringSchema("Exact typed Value surface from submitted evidence.", 1024),
+			"span":    relationshipSpanSchema(),
+			"display": schemaString("Optional display form from submitted evidence.", 1024),
+			"unit":    schemaString("Optional unit from submitted evidence.", 128),
+		},
+		"additionalProperties": false,
+	}
+}
+
+func relationshipSupportArraySchema() map[string]any {
 	return map[string]any{
 		"type":     "array",
-		"maxItems": 200,
-		"items": map[string]any{
-			"type":     "object",
-			"required": []string{"proposal_id", "subject_ref", "predicate", "evidence"},
-			"oneOf": []any{
-				map[string]any{
-					"required": []string{"object_ref"},
-					"not":      map[string]any{"required": []string{"object_value"}},
-				},
-				map[string]any{
-					"required": []string{"object_value"},
-					"not":      map[string]any{"required": []string{"object_ref"}},
-				},
-			},
-			"properties": map[string]any{
-				"proposal_id": nonEmptyStringSchema("Client-local Relationship proposal ref.", 128),
-				"subject_ref": nonEmptyStringSchema("Entity proposal ref.", 128),
-				"predicate":   nonEmptyStringSchema("Registered predicate name.", 128),
-				"object_ref":  schemaString("Entity proposal ref.", 128),
-				"object_value": map[string]any{
-					"type":                 "object",
-					"additionalProperties": false,
-					"properties": map[string]any{
-						"type":    schemaEnum(domain.ValueTypes()),
-						"value":   map[string]any{"type": []any{"string", "number", "boolean"}},
-						"display": schemaString("Optional display form.", 1024),
-						"unit":    schemaString("Optional unit.", 128),
-					},
-					"required": []string{"type", "value"},
-				},
-				"polarity":          schemaEnum([]string{"+", "-"}),
-				"modality":          schemaEnum([]string{"statement", "question", "proposal", "speculation", "quoted"}),
-				"valid_from":        nullableDateTime("Evidence-supported validity start."),
-				"valid_to":          nullableDateTime("Evidence-supported validity end."),
-				"correction_target": relationshipCorrectionTargetSchema(),
-				"conflict_context":  relationshipConflictContextSchema(),
-				"client_comment":    nullableString("Non-authoritative extraction note.", 1000),
-				"evidence": map[string]any{
-					"type":     "array",
-					"minItems": 1,
-					"maxItems": 20,
-					"items": map[string]any{
-						"type":                 "object",
-						"required":             []string{"evidence_index", "start", "end"},
-						"additionalProperties": false,
-						"properties": map[string]any{
-							"evidence_index": map[string]any{"type": "integer", "minimum": 0},
-							"start":          map[string]any{"type": "integer", "minimum": 0},
-							"end":            map[string]any{"type": "integer", "minimum": 0},
-						},
-					},
-				},
-			},
-			"additionalProperties": false,
+		"minItems": 1,
+		"maxItems": 20,
+		"items":    relationshipSpanSchema(),
+	}
+}
+
+func relationshipSpanSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"required":             []string{"evidence_index", "start", "end"},
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"evidence_index": map[string]any{"type": "integer", "minimum": 0},
+			"start":          map[string]any{"type": "integer", "minimum": 0},
+			"end":            map[string]any{"type": "integer", "minimum": 0},
 		},
 	}
 }
@@ -320,12 +353,9 @@ func resolveDreamFeedbackInputSchema() map[string]any {
 			"confirm_true",
 			"confirm_false",
 		}),
-		"reason":   schemaString("Bounded lifecycle feedback reason.", 1000),
-		"evidence": evidenceArraySchema(),
-		"proposal": closedObject(nil, map[string]any{
-			"entities":      entityProposalArraySchema(),
-			"relationships": relationshipProposalArraySchema(),
-		}),
+		"reason":        schemaString("Bounded lifecycle feedback reason.", 1000),
+		"evidence":      evidenceArraySchema(),
+		"relationships": relationshipSubmissionArraySchema(),
 	})
 }
 

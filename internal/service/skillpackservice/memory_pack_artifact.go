@@ -278,6 +278,9 @@ func validateMemoryPackRelationship(item MemoryPackRelationship) error {
 		if strings.TrimSpace(item.Object.Value) == "" || strings.TrimSpace(item.Object.ValueType) == "" {
 			return errors.New("object value and value_type are required")
 		}
+		if _, err := memoryPackCanonicalValue(item.Object); err != nil {
+			return err
+		}
 	} else if strings.TrimSpace(item.Object.DisplayName) == "" {
 		return errors.New("object display_name is required")
 	}

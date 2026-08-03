@@ -329,6 +329,7 @@ func (s *semanticAssessmentPlacementWorkerService) buildRequest(
 		TeamID:         run.TeamID,
 		OwnerProfileID: run.OwnerProfileID,
 		QueryText:      fragment.Content,
+		ProposedKeys:   clientProposedPredicateKeys(proposal),
 		Limit:          verifier.SemanticAssessmentMaxPredicateOptions,
 	})
 	if err != nil {
@@ -659,18 +660,6 @@ type semanticAssessmentTrustedRelationshipContext struct {
 func assessmentClientProposalWithoutTrustedContext(proposal map[string]any) map[string]any {
 	cloned := cloneAssessmentProposal(proposal)
 	for _, relationship := range placementReviewObjectArray(cloned, "relationship_hints", "relationships") {
-		_, hasCorrection := relationship["correction_target"]
-		_, hasConflict := relationship["conflict_context"]
-		if hasCorrection || hasConflict {
-			proposalID := reviewFirstNonEmpty(
-				reviewString(relationship, "proposal_id"),
-				reviewString(relationship, "ref"),
-				reviewString(relationship, "legacy_id"),
-			)
-			if proposalID != "" {
-				relationship["proposal_id"] = proposalID
-			}
-		}
 		delete(relationship, "correction_target")
 		delete(relationship, "conflict_context")
 	}
@@ -708,15 +697,15 @@ func semanticAssessmentTrustedRelationshipContexts(
 			continue
 		}
 		proposalID := reviewFirstNonEmpty(
-			reviewString(relationship, "proposal_id"),
 			reviewString(relationship, "ref"),
+			reviewString(relationship, "proposal_id"),
 			reviewString(relationship, "legacy_id"),
 		)
 		if proposalID == "" {
-			return nil, nil, errors.New("trusted relationship context proposal_id is required")
+			return nil, nil, errors.New("trusted relationship context ref is required")
 		}
 		if _, exists := contexts[proposalID]; exists {
-			return nil, nil, errors.New("trusted relationship context proposal_id is duplicated")
+			return nil, nil, errors.New("trusted relationship context ref is duplicated")
 		}
 		context := semanticAssessmentTrustedRelationshipContext{}
 		if hasCorrection {

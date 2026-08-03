@@ -31,6 +31,21 @@ type RunOptions struct {
 	Gates                  GateOptions
 }
 
+const (
+	DefaultImportConcurrency = 10
+	MaxImportConcurrency     = 10
+)
+
+func normalizeImportConcurrency(value int) (int, error) {
+	if value <= 0 {
+		return DefaultImportConcurrency, nil
+	}
+	if value > MaxImportConcurrency {
+		return 0, fmt.Errorf("import concurrency must be between 1 and %d", MaxImportConcurrency)
+	}
+	return value, nil
+}
+
 func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	mode := strings.TrimSpace(opts.Mode)
 	if mode == "" {
@@ -57,6 +72,11 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if opts.PlacementTimeout == 0 {
 		opts.PlacementTimeout = 2 * time.Minute
 	}
+	importConcurrency, err := normalizeImportConcurrency(opts.ImportConcurrency)
+	if err != nil {
+		return Summary{}, err
+	}
+	opts.ImportConcurrency = importConcurrency
 	runID := opts.RunID
 	if runID == "" {
 		runID = newRunID(mode)
@@ -395,6 +415,9 @@ func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []Cor
 		return err
 	}
 	if err := validateSeedValidationReport(manifestPath, manifest, seedHash); err != nil {
+		return err
+	}
+	if err := validateV2CorpusRelationships(manifest, corpus); err != nil {
 		return err
 	}
 	caseIndex := IndexCases(cases)

@@ -2,12 +2,9 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
-	"strings"
 
-	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 
@@ -214,7 +211,7 @@ func searchRecallRelationshipVector(
 	switch contract.IndexStrategy {
 	case string(domain.VectorIndexExact):
 		return searchRecallRelationshipExactVector(ctx, tx, input, contract, limit)
-	case string(domain.VectorIndexVectorHNSW), string(domain.VectorIndexHalfvecHNSW):
+	case string(domain.VectorIndexVectorHNSW), string(domain.VectorIndexHalfvecHNSW), string(domain.VectorIndexBinaryHNSW):
 		return searchRecallRelationshipANNVector(ctx, tx, input, contract, limit)
 	default:
 		return nil, fmt.Errorf("%w: unsupported relationship recall vector index strategy %q", ErrSearchContractMismatch, contract.IndexStrategy)
@@ -382,6 +379,9 @@ func searchRecallRelationshipANNVector(
 		return nil, err
 	}
 	candidateLimit := recallANNCandidateLimit(contract, limit)
+	if err := setRecallANNQueryEFSearch(ctx, tx, contract, candidateLimit); err != nil {
+		return nil, err
+	}
 	query := fmt.Sprintf(`
 		WITH generation_count AS (
 		    SELECT count(*) AS value
@@ -917,40 +917,6 @@ func hydrateRecallRelationshipEquivalents(ctx context.Context, tx *gorm.DB, inpu
 		hits[relationshipID] = hit
 	}
 	return rows.Err()
-}
-
-func normalizeRecallRelationshipsInput(input RecallRelationshipsInput) RecallRelationshipsInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.Query = strings.TrimSpace(input.Query)
-	input.KnownRelationshipIDs = normalizeRecallUUIDList(input.KnownRelationshipIDs)
-	input.ExpandFromEntityIDs = normalizeRecallUUIDList(input.ExpandFromEntityIDs)
-	if input.Limit <= 0 {
-		input.Limit = defaultRelationshipRecallLimit
-	}
-	if input.Limit > maxRelationshipRecallLimit {
-		input.Limit = maxRelationshipRecallLimit
-	}
-	return input
-}
-
-func validateRecallRelationshipsInput(input RecallRelationshipsInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if input.Query == "" && len(input.ExpandFromEntityIDs) == 0 {
-		return errors.New("query or expand_from_entity_ids is required")
-	}
-	for label, values := range map[string][]string{
-		"known_relationship_ids": input.KnownRelationshipIDs,
-		"expand_from_entity_ids": input.ExpandFromEntityIDs,
-	} {
-		for _, value := range values {
-			if _, err := uuid.Parse(value); err != nil {
-				return fmt.Errorf("%s contains invalid UUID %q: %w", label, value, err)
-			}
-		}
-	}
-	return nil
 }
 
 func addRecallRelationshipBranch(acc map[string]*relationshipRecallCandidate, hits []SearchHit, knownRelationships map[string]struct{}, weight float64) {

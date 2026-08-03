@@ -467,6 +467,7 @@ func RunActiveServer(
 		time.Duration(cfg.GetMemoryPlacementPollSeconds())*time.Second,
 		cfg.GetEmbeddingWorkerCount(),
 		cfg.GetEmbeddingBatchSize(),
+		activeEmbeddingLease(cfg.GetAIEmbeddingTimeoutSeconds()),
 		time.Duration(cfg.GetEmbeddingJobPollSeconds())*time.Second,
 	)
 	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
@@ -884,6 +885,7 @@ func startActiveWorkers(
 	placementPollInterval time.Duration,
 	embeddingWorkerCount int,
 	embeddingBatchSize int,
+	embeddingLease time.Duration,
 	embeddingPollInterval time.Duration,
 ) {
 	hostname, _ := os.Hostname()
@@ -931,6 +933,7 @@ func startActiveWorkers(
 				TeamID:    teamID,
 				WorkerID:  workerID,
 				BatchSize: embeddingBatchSize,
+				Lease:     embeddingLease,
 			})
 			result, err := worker.ProcessNextBatch(ctx)
 			return result.Claimed > 0, err
@@ -946,6 +949,17 @@ func activePlacementLease(verifierTimeoutSeconds int, commitTimeoutSeconds int) 
 		commitTimeoutSeconds = 10
 	}
 	lease := time.Duration((verifierTimeoutSeconds*memoryservice.SemanticPlacementMaxAssessorTurns)+commitTimeoutSeconds+30) * time.Second
+	if lease < 5*time.Minute {
+		return 5 * time.Minute
+	}
+	return lease
+}
+
+func activeEmbeddingLease(embeddingTimeoutSeconds int) time.Duration {
+	if embeddingTimeoutSeconds <= 0 {
+		embeddingTimeoutSeconds = 30
+	}
+	lease := time.Duration(embeddingTimeoutSeconds*(embedding.DefaultRetryEmbeddingMaxRetries+1)+30) * time.Second
 	if lease < 5*time.Minute {
 		return 5 * time.Minute
 	}

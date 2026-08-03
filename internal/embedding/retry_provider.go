@@ -10,6 +10,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
+// DefaultRetryEmbeddingMaxRetries is the retry count after the first attempt.
+const DefaultRetryEmbeddingMaxRetries = 3
+
 // RetryEmbeddingProvider wraps an EmbeddingProviderInterface with retry logic.
 // It implements bounded exponential backoff with jitter for transient errors.
 type RetryEmbeddingProvider struct {
@@ -33,13 +36,13 @@ var _ EmbeddingProviderInterface = (*RetryEmbeddingProvider)(nil)
 
 // NewRetryEmbeddingProvider creates a new retry wrapper around the given provider.
 // The retry configuration is fixed at:
-// - maxRetries: 3
+// - maxRetries: DefaultRetryEmbeddingMaxRetries
 // - baseDelay: 200ms
 // - maxDelay: 5s
 func NewRetryEmbeddingProvider(inner EmbeddingProviderInterface, logger observability.LogProvider) *RetryEmbeddingProvider {
 	return &RetryEmbeddingProvider{
 		inner:      inner,
-		maxRetries: 3,
+		maxRetries: DefaultRetryEmbeddingMaxRetries,
 		baseDelay:  200 * time.Millisecond,
 		maxDelay:   5 * time.Second,
 		logger:     logger,
@@ -55,7 +58,7 @@ func NewRetryEmbeddingProviderWithKey(inner EmbeddingProviderInterface, logger o
 
 func NewRetryEmbeddingProviderWithKeyAndOptions(inner EmbeddingProviderInterface, logger observability.LogProvider, apiKey string, opts RetryEmbeddingOptions) *RetryEmbeddingProvider {
 	if opts.MaxRetries <= 0 {
-		opts.MaxRetries = 3
+		opts.MaxRetries = DefaultRetryEmbeddingMaxRetries
 	}
 	if opts.BaseDelay <= 0 {
 		opts.BaseDelay = 200 * time.Millisecond

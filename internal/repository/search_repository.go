@@ -32,6 +32,39 @@ type SearchRepositoryImpl struct {
 
 var _ SearchRepository = (*SearchRepositoryImpl)(nil)
 
+type searchPhysicalIndexState struct {
+	Exists     bool
+	Valid      bool
+	Definition string
+}
+
+func loadSearchPhysicalIndexState(
+	ctx context.Context,
+	db *gorm.DB,
+	indexName string,
+) (searchPhysicalIndexState, error) {
+	var state searchPhysicalIndexState
+	err := db.WithContext(ctx).Raw(`
+		SELECT index_meta.indisvalid,
+		       pg_get_indexdef(index_meta.indexrelid)
+		FROM pg_class AS index_class
+		JOIN pg_namespace AS index_schema
+		  ON index_schema.oid = index_class.relnamespace
+		JOIN pg_index AS index_meta
+		  ON index_meta.indexrelid = index_class.oid
+		WHERE index_schema.nspname = current_schema()
+		  AND index_class.relname = ?
+	`, indexName).Row().Scan(&state.Valid, &state.Definition)
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, gorm.ErrRecordNotFound) {
+		return state, nil
+	}
+	if err != nil {
+		return searchPhysicalIndexState{}, err
+	}
+	state.Exists = true
+	return state, nil
+}
+
 func NewSearchRepository(db *gorm.DB, rls *postgres.RLS) *SearchRepositoryImpl {
 	return NewSearchRepositoryWithEmbeddingJobMaxAttempts(db, rls, defaultEmbeddingJobMaxAttempts)
 }
@@ -70,6 +103,7 @@ func (r *SearchRepositoryImpl) GetActiveSearchContract(ctx context.Context) (*Ac
 		    generation.operator_class,
 		    generation.indexed_expression,
 		    generation.physical_index_name,
+		    generation.query_ef_search,
 		    generation.exact_max_rows,
 		    generation.candidate_limit,
 		    generation.allow_exact_fallback
@@ -97,6 +131,7 @@ func (r *SearchRepositoryImpl) GetActiveSearchContract(ctx context.Context) (*Ac
 		&contract.OperatorClass,
 		&contract.IndexedExpression,
 		&contract.PhysicalIndexName,
+		&contract.QueryEFSearch,
 		&contract.ExactMaxRows,
 		&contract.CandidateLimit,
 		&contract.AllowExactFallback,
@@ -137,24 +172,23 @@ func (r *SearchRepositoryImpl) CheckSearchReadiness(ctx context.Context) (*Searc
 		})
 	}
 	if contract.IndexStrategy != string(domain.VectorIndexExact) {
-		var indexDefinition string
-		if err := db.WithContext(ctx).Raw(`
-			SELECT COALESCE((
-			    SELECT indexdef
-			    FROM pg_indexes
-			    WHERE schemaname = current_schema()
-			      AND indexname = ?
-			), '')
-			`, contract.PhysicalIndexName).Scan(&indexDefinition).Error; err != nil {
+		indexState, err := loadSearchPhysicalIndexState(ctx, db, contract.PhysicalIndexName)
+		if err != nil {
 			return nil, fmt.Errorf("search: readiness index check: %w", err)
 		}
-		if indexDefinition == "" {
+		if !indexState.Exists {
 			readiness.Ready = false
 			readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
 				Code:    "missing_physical_index",
 				Message: fmt.Sprintf("physical index %q is missing", contract.PhysicalIndexName),
 			})
-		} else if missing := searchMissingIndexCompatibility(contract, indexDefinition); len(missing) > 0 {
+		} else if !indexState.Valid {
+			readiness.Ready = false
+			readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
+				Code:    "invalid_physical_index",
+				Message: fmt.Sprintf("physical index %q is invalid", contract.PhysicalIndexName),
+			})
+		} else if missing := searchMissingIndexCompatibility(contract, indexState.Definition); len(missing) > 0 {
 			readiness.Ready = false
 			readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
 				Code: "incompatible_physical_index",

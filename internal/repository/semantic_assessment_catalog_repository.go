@@ -179,9 +179,9 @@ func validateSemanticAssessmentKnownEntityInput(input SemanticAssessmentKnownEnt
 }
 
 // ListSemanticAssessmentPredicateOptions returns active registered definitions
-// only. Exact key/alias wording present in the evidence sorts before lexical
-// relevance; the assessor may select a supplied definition or abstain, never
-// register one.
+// only. Client-proposed key/alias matches sort before evidence wording and
+// lexical relevance; the assessor may select a supplied definition or abstain,
+// never register one.
 func (r *SemanticRepositoryImpl) ListSemanticAssessmentPredicateOptions(
 	ctx context.Context,
 	input SemanticAssessmentPredicateOptionsInput,
@@ -201,12 +201,26 @@ func (r *SemanticRepositoryImpl) ListSemanticAssessmentPredicateOptions(
 			    FROM team_predicate_definitions
 			    WHERE team_id = ?::uuid
 			    ORDER BY predicate_key, version DESC
+			), proposed_terms AS (
+			    SELECT DISTINCT btrim(regexp_replace(lower(replace(term, '_', ' ')), '[[:space:]]+', ' ', 'g')) AS term
+			    FROM unnest(?::text[]) AS proposed(term)
+			    WHERE btrim(term) <> ''
 			), evidence_terms AS (
 			    SELECT DISTINCT evidence_term.term
 			    FROM unnest(tsvector_to_array(to_tsvector('english', ?)))
 			         AS evidence_term(term)
 			), ranked AS (
 			    SELECT latest.*,
+			           CASE WHEN EXISTS (
+			                         SELECT 1
+			                         FROM proposed_terms
+			                         WHERE proposed_terms.term = btrim(regexp_replace(lower(replace(latest.predicate_key, '_', ' ')), '[[:space:]]+', ' ', 'g'))
+			                            OR EXISTS (
+			                                SELECT 1
+			                                FROM unnest(latest.aliases) AS alias(value)
+			                                WHERE proposed_terms.term = btrim(regexp_replace(lower(replace(alias.value, '_', ' ')), '[[:space:]]+', ' ', 'g'))
+			                            )
+			                    ) THEN 0 ELSE 1 END AS proposed_rank,
 			           CASE WHEN strpos(lower(?), lower(replace(latest.predicate_key, '_', ' '))) > 0
 			                     OR EXISTS (
 			                         SELECT 1 FROM unnest(latest.aliases) AS alias(value)
@@ -229,13 +243,14 @@ func (r *SemanticRepositoryImpl) ListSemanticAssessmentPredicateOptions(
 			       allowed_object_kinds, relationship_kind, current_cardinality,
 			       lifecycle_state
 			FROM ranked
-			ORDER BY exact_rank ASC,
+			ORDER BY proposed_rank ASC,
+			         exact_rank ASC,
 			         relevance DESC,
 			         CASE WHEN origin = 'built_in' THEN 0 ELSE 1 END,
 			         created_at DESC,
 			         predicate_key ASC
 			LIMIT ?
-		`, input.TeamID, input.QueryText, input.QueryText, input.QueryText, input.Limit).Rows()
+		`, input.TeamID, pq.Array(input.ProposedKeys), input.QueryText, input.QueryText, input.QueryText, input.Limit).Rows()
 		if err != nil {
 			return err
 		}

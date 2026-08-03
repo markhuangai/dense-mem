@@ -407,6 +407,9 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 		"metadata":        seedMetadata(item),
 	}
 	input := map[string]any{"evidence": []map[string]any{evidence}}
+	if len(item.Relationships) > 0 {
+		input["relationships"] = item.Relationships
+	}
 	var out map[string]any
 	if err := c.callToolWithRetry(ctx, "remember", input, &out); err != nil {
 		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)

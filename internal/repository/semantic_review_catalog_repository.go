@@ -456,6 +456,20 @@ func normalizeSemanticAssessmentPredicateOptionsInput(input SemanticAssessmentPr
 	if len(queryRunes) > 32000 {
 		input.QueryText = string(queryRunes[:32000])
 	}
+	seen := make(map[string]struct{}, len(input.ProposedKeys))
+	proposedKeys := make([]string, 0, len(input.ProposedKeys))
+	for _, key := range input.ProposedKeys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		proposedKeys = append(proposedKeys, key)
+	}
+	input.ProposedKeys = proposedKeys
 	input.Limit = normalizeReviewOptionLimit(input.Limit)
 	return input
 }
@@ -466,6 +480,14 @@ func validateSemanticAssessmentPredicateOptionsInput(input SemanticAssessmentPre
 	}
 	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
 		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	if len(input.ProposedKeys) > 200 {
+		return fmt.Errorf("proposed_keys must contain at most 200 entries")
+	}
+	for _, key := range input.ProposedKeys {
+		if len([]rune(key)) > 128 {
+			return fmt.Errorf("proposed_key must be at most 128 characters")
+		}
 	}
 	return nil
 }

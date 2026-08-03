@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -15,7 +17,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string, selected map[string]bool, decisions map[string]string) (memoryservice.RememberRequest, []ImportItemResult) {
+func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string, selected map[string]bool, decisions map[string]string) (memoryservice.RememberRequest, []ImportItemResult, error) {
 	evidenceByID := MemoryPackEvidenceByID(loaded.artifact)
 	evidence := []memoryservice.RememberEvidenceInput{}
 	relationshipHints := []map[string]any{}
@@ -42,6 +44,13 @@ func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string
 		result.EvidenceIndex = evidenceIndex
 		result.Status = "staged"
 		content := MemoryPackEvidenceContent(loaded.artifact, item, evidenceByID)
+		if contentRunes := utf8.RuneCountInString(content); contentRunes > 999 {
+			return memoryservice.RememberRequest{}, results, fmt.Errorf(
+				"memory pack item %q produces evidence with %d code points; max is 999",
+				item.ItemID,
+				contentRunes,
+			)
+		}
 		evidence = append(evidence, memoryservice.RememberEvidenceInput{
 			Content:        content,
 			SourceType:     MemoryPackSourceType,
@@ -64,7 +73,11 @@ func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string
 				"trusted_mode_forces_status":       false,
 			},
 		})
-		relationshipHints = append(relationshipHints, MemoryPackRelationshipHint(item, evidenceIndex))
+		hint, err := MemoryPackRelationshipHint(loaded.artifact, item, evidenceIndex)
+		if err != nil {
+			return memoryservice.RememberRequest{}, results, err
+		}
+		relationshipHints = append(relationshipHints, hint)
 		results = append(results, result)
 	}
 	return memoryservice.RememberRequest{
@@ -72,7 +85,7 @@ func rememberRequestFromPack(importID string, loaded loadedArtifact, mode string
 		Evidence:          evidence,
 		RelationshipHints: relationshipHints,
 		IdempotencyKey:    "memory-pack:" + importID,
-	}, results
+	}, results, nil
 }
 
 func (s *memoryPackService) appendImportChanges(ctx context.Context, teamID, importID, ingestID string, items []ImportItemResult) error {
@@ -242,7 +255,7 @@ func rollbackImpactToken(record *domain.SkillPackImport, changes []domain.SkillP
 
 func MemoryPackEvidenceContent(artifact MemoryPackArtifact, item MemoryPackRelationship, evidence map[string]MemoryPackEvidence) string {
 	var b strings.Builder
-	_, _ = fmt.Fprintf(&b, "Memory pack %q proposes a relationship: %s %s %s.", artifact.Name, item.Subject.DisplayName, item.PredicateKey, MemoryPackEndpointText(item.Object))
+	b.WriteString(memoryPackRelationshipStatement(artifact, item))
 	if item.SourceRelationshipID != "" {
 		_, _ = fmt.Fprintf(&b, "\nSource relationship %s version %d is provenance only.", item.SourceRelationshipID, item.SourceRelationshipVersion)
 	}
@@ -256,33 +269,90 @@ func MemoryPackEvidenceContent(artifact MemoryPackArtifact, item MemoryPackRelat
 	return b.String()
 }
 
-func MemoryPackRelationshipHint(item MemoryPackRelationship, evidenceIndex int) map[string]any {
+func memoryPackRelationshipStatement(artifact MemoryPackArtifact, item MemoryPackRelationship) string {
+	return fmt.Sprintf(
+		"Memory pack %q proposes a relationship: %s %s %s.",
+		artifact.Name,
+		item.Subject.DisplayName,
+		item.PredicateKey,
+		MemoryPackEndpointText(item.Object),
+	)
+}
+
+func MemoryPackRelationshipHint(artifact MemoryPackArtifact, item MemoryPackRelationship, evidenceIndex int) (map[string]any, error) {
+	prefix := fmt.Sprintf("Memory pack %q proposes a relationship: ", artifact.Name)
+	subject := item.Subject.DisplayName
+	predicate := item.PredicateKey
+	objectText := MemoryPackEndpointText(item.Object)
+	subjectStart := len([]rune(prefix))
+	subjectEnd := subjectStart + len([]rune(subject))
+	predicateStart := subjectEnd + 1
+	predicateEnd := predicateStart + len([]rune(predicate))
+	objectStart := predicateEnd + 1
+	objectEnd := objectStart + len([]rune(objectText))
+	polarity := strings.TrimSpace(item.Polarity)
+	if polarity == "" {
+		polarity = "+"
+	}
+	span := func(start, end int) map[string]any {
+		return map[string]any{"evidence_index": evidenceIndex, "start": start, "end": end}
+	}
 	hint := map[string]any{
-		"ref":                         item.ItemID,
-		"subject_ref":                 item.Subject.Ref,
-		"subject_name":                item.Subject.DisplayName,
-		"predicate":                   item.PredicateKey,
-		"predicate_version":           item.PredicateVersion,
-		"source_relationship_id":      item.SourceRelationshipID,
-		"source_relationship_version": item.SourceRelationshipVersion,
-		"source_owner_profile_id":     item.SourceOwnerProfileID,
-		"evidence": []map[string]any{{
-			"evidence_index": evidenceIndex,
-			"quote":          MemoryPackEndpointText(item.Object),
-		}},
+		"ref": item.ItemID,
+		"subject": map[string]any{
+			"name":        subject,
+			"entity_kind": string(domain.EntityKindOther),
+			"span":        span(subjectStart, subjectEnd),
+		},
+		"predicate": map[string]any{
+			"proposed_key": predicate,
+			"surface":      predicate,
+			"span":         span(predicateStart, predicateEnd),
+		},
+		"polarity": polarity,
+		"modality": "proposal",
+		"supports": []map[string]any{span(subjectStart, objectEnd)},
 	}
 	if item.Object.Kind == "value" {
-		hint["object_value"] = map[string]any{
-			"ref":       item.Object.Ref,
-			"type":      item.Object.ValueType,
-			"value":     item.Object.Value,
-			"source_id": item.Object.SourceID,
+		canonicalValue, err := memoryPackCanonicalValue(item.Object)
+		if err != nil {
+			return nil, err
 		}
+		hint["object"] = map[string]any{"value": map[string]any{
+			"type":    item.Object.ValueType,
+			"value":   canonicalValue,
+			"surface": objectText,
+			"span":    span(objectStart, objectEnd),
+		}}
 	} else {
-		hint["object_ref"] = item.Object.Ref
-		hint["object_name"] = item.Object.DisplayName
+		hint["object"] = map[string]any{"entity": map[string]any{
+			"name":        objectText,
+			"entity_kind": string(domain.EntityKindOther),
+			"span":        span(objectStart, objectEnd),
+		}}
 	}
-	return hint
+	return hint, nil
+}
+
+func memoryPackCanonicalValue(endpoint MemoryPackEndpoint) (any, error) {
+	switch endpoint.ValueType {
+	case string(domain.ValueTypeString), string(domain.ValueTypeDate), string(domain.ValueTypeDateTime):
+		return endpoint.Value, nil
+	case string(domain.ValueTypeNumber):
+		value, err := strconv.ParseFloat(endpoint.Value, 64)
+		if err != nil {
+			return nil, fmt.Errorf("memory pack value %q must be a number", endpoint.Value)
+		}
+		return value, nil
+	case string(domain.ValueTypeBoolean):
+		value, err := strconv.ParseBool(endpoint.Value)
+		if err != nil {
+			return nil, fmt.Errorf("memory pack value %q must be a boolean", endpoint.Value)
+		}
+		return value, nil
+	default:
+		return nil, fmt.Errorf("memory pack value type %q is unsupported", endpoint.ValueType)
+	}
 }
 
 func MemoryPackEvidenceByID(artifact MemoryPackArtifact) map[string]MemoryPackEvidence {

@@ -1,6 +1,6 @@
 [
   {
-    "name": "valid remember with source revision and proposal",
+    "name": "valid remember with source revision and relationships",
     "tool": "remember",
     "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
@@ -17,32 +17,35 @@
           "idempotency_key": "ev-1"
         }
       ],
-      "proposal": {
-        "entities": [
-          {
-            "ref": "entity:dense-mem",
+      "relationships": [
+        {
+          "ref": "rel:authority",
+          "subject": {
             "name": "Dense-Mem",
             "entity_kind": "project",
-            "known_entity_id": null
-          }
-        ],
-        "relationships": [
-          {
-            "proposal_id": "rel:authority",
-            "subject_ref": "entity:dense-mem",
-            "predicate": "uses_durable_authority",
-            "object_value": {
+            "known_entity_id": null,
+            "span": {"evidence_index": 0, "start": 0, "end": 9}
+          },
+          "predicate": {
+            "proposed_key": "uses_durable_authority",
+            "surface": "durable authority",
+            "span": {"evidence_index": 0, "start": 10, "end": 27}
+          },
+          "object": {
+            "value": {
               "type": "string",
-              "value": "PostgreSQL with pgvector"
-            },
-            "polarity": "+",
-            "modality": "statement",
-            "evidence": [
-              {"evidence_index": 0, "start": 31, "end": 56}
-            ]
-          }
-        ]
-      }
+              "value": "PostgreSQL with pgvector",
+              "surface": "PostgreSQL with pgvector",
+              "span": {"evidence_index": 0, "start": 31, "end": 55}
+            }
+          },
+          "polarity": "+",
+          "modality": "statement",
+          "supports": [
+            {"evidence_index": 0, "start": 0, "end": 56}
+          ]
+        }
+      ]
     },
     "output": {
       "ingest_id": "ing-1",
@@ -376,7 +379,17 @@
     "scopes": ["write"],
     "valid": false,
     "want_error": "unknown field: tier",
-    "input": {"tier": "fact", "evidence": [{"content": "Clients cannot choose fact tier."}]}
+    "input": {
+      "tier": "fact",
+      "evidence": [{"content": "Dense-Mem uses PostgreSQL."}],
+      "relationships": [{
+        "ref": "rel:uses",
+        "subject": {"name": "Dense-Mem", "entity_kind": "project", "span": {"evidence_index": 0, "start": 0, "end": 9}},
+        "predicate": {"proposed_key": "uses", "surface": "uses", "span": {"evidence_index": 0, "start": 10, "end": 14}},
+        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product", "span": {"evidence_index": 0, "start": 15, "end": 25}}},
+        "polarity": "+", "modality": "statement", "supports": [{"evidence_index": 0, "start": 0, "end": 26}]
+      }]
+    }
   },
   {
     "name": "legacy remember hint fields rejected",
@@ -385,7 +398,17 @@
     "scopes": ["write"],
     "valid": false,
     "want_error": "unknown field: entity_hints",
-    "input": {"evidence": [{"content": "Legacy aliases must not remain frozen."}], "entity_hints": []}
+    "input": {
+      "evidence": [{"content": "Dense-Mem uses PostgreSQL."}],
+      "entity_hints": [],
+      "relationships": [{
+        "ref": "rel:uses",
+        "subject": {"name": "Dense-Mem", "entity_kind": "project", "span": {"evidence_index": 0, "start": 0, "end": 9}},
+        "predicate": {"proposed_key": "uses", "surface": "uses", "span": {"evidence_index": 0, "start": 10, "end": 14}},
+        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product", "span": {"evidence_index": 0, "start": 15, "end": 25}}},
+        "polarity": "+", "modality": "statement", "supports": [{"evidence_index": 0, "start": 0, "end": 26}]
+      }]
+    }
   },
   {
     "name": "missing required evidence",
@@ -397,7 +420,7 @@
     "input": {}
   },
   {
-    "name": "duplicate relationship proposal id",
+    "name": "duplicate relationship ref",
     "tool": "remember",
     "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
@@ -405,13 +428,22 @@
     "want_error": "duplicate ref",
     "input": {
       "evidence": [{"content": "A uses B."}],
-      "proposal": {
-        "entities": [{"ref": "a", "name": "A"}, {"ref": "b", "name": "B"}],
-        "relationships": [
-          {"proposal_id": "r1", "subject_ref": "a", "predicate": "uses", "object_ref": "b", "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]},
-          {"proposal_id": "r1", "subject_ref": "a", "predicate": "uses", "object_ref": "b", "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]}
-        ]
-      }
+      "relationships": [
+        {
+          "ref": "r1",
+          "subject": {"name": "A", "entity_kind": "other", "span": {"evidence_index": 0, "start": 0, "end": 1}},
+          "predicate": {"proposed_key": "uses", "surface": "uses", "span": {"evidence_index": 0, "start": 2, "end": 6}},
+          "object": {"entity": {"name": "B", "entity_kind": "other", "span": {"evidence_index": 0, "start": 7, "end": 8}}},
+          "polarity": "+", "modality": "statement", "supports": [{"evidence_index": 0, "start": 0, "end": 9}]
+        },
+        {
+          "ref": "r1",
+          "subject": {"name": "A", "entity_kind": "other", "span": {"evidence_index": 0, "start": 0, "end": 1}},
+          "predicate": {"proposed_key": "uses", "surface": "uses", "span": {"evidence_index": 0, "start": 2, "end": 6}},
+          "object": {"entity": {"name": "B", "entity_kind": "other", "span": {"evidence_index": 0, "start": 7, "end": 8}}},
+          "polarity": "+", "modality": "statement", "supports": [{"evidence_index": 0, "start": 0, "end": 9}]
+        }
+      ]
     }
   },
   {
@@ -476,7 +508,17 @@
     "valid": false,
     "want_error": "source_key and source_revision must appear together",
     "input": {
-      "evidence": [{"content": "A source key needs a revision.", "source_key": "wiki:target-architecture"}]
+      "evidence": [
+        {"content": "A source key needs a revision.", "source_key": "wiki:target-architecture"},
+        {"content": "Dense-Mem uses PostgreSQL."}
+      ],
+      "relationships": [{
+        "ref": "rel:uses",
+        "subject": {"name": "Dense-Mem", "entity_kind": "project", "span": {"evidence_index": 1, "start": 0, "end": 9}},
+        "predicate": {"proposed_key": "uses", "surface": "uses", "span": {"evidence_index": 1, "start": 10, "end": 14}},
+        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product", "span": {"evidence_index": 1, "start": 15, "end": 25}}},
+        "polarity": "+", "modality": "statement", "supports": [{"evidence_index": 1, "start": 0, "end": 26}]
+      }]
     }
   },
   {

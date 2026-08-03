@@ -403,6 +403,35 @@ func placementReviewEntityHints(proposal map[string]any) map[string]placementRev
 			Evidence:        placementReviewEvidenceSpanHints(raw),
 		}
 	}
+	for index, relationship := range placementReviewObjectArray(proposal, "relationship_hints", "relationships") {
+		relationshipRef := reviewFirstNonEmpty(
+			reviewString(relationship, "ref"),
+			reviewString(relationship, "proposal_id"),
+			fmt.Sprintf("relationship:%d", index),
+		)
+		addInlineEntity := func(role string, raw any) {
+			entity, ok := reviewMap(raw)
+			if !ok {
+				return
+			}
+			name := reviewString(entity, "name")
+			if name == "" {
+				return
+			}
+			ref := relationshipRef + ":" + role
+			out[ref] = placementReviewEntityHint{
+				Ref:           ref,
+				Name:          name,
+				EntityKind:    reviewFirstNonEmpty(reviewString(entity, "entity_kind"), string(domain.EntityKindOther)),
+				KnownEntityID: reviewString(entity, "known_entity_id"),
+				Evidence:      placementReviewEvidenceSpanHints(entity),
+			}
+		}
+		addInlineEntity("subject", relationship["subject"])
+		if object, ok := reviewMap(relationship["object"]); ok {
+			addInlineEntity("object", object["entity"])
+		}
+	}
 	return out
 }
 
@@ -526,7 +555,13 @@ type placementReviewEvidenceSpanHint struct {
 }
 
 func placementReviewEvidenceSpanHints(raw map[string]any) []placementReviewEvidenceSpanHint {
-	spans := placementReviewObjectArray(raw, "evidence")
+	spans := append(
+		placementReviewObjectArray(raw, "evidence"),
+		placementReviewObjectArray(raw, "supports")...,
+	)
+	if span, ok := reviewMap(raw["span"]); ok {
+		spans = append(spans, span)
+	}
 	out := make([]placementReviewEvidenceSpanHint, 0, len(spans))
 	for _, span := range spans {
 		index, hasIndex := reviewInt(span, "evidence_index")
@@ -545,7 +580,7 @@ func placementReviewEvidenceSpanHints(raw map[string]any) []placementReviewEvide
 }
 
 func placementReviewRelationshipSpan(raw map[string]any, fragment repository.EvidenceFragment) (placementReviewSpan, bool) {
-	spans := placementReviewObjectArray(raw, "evidence")
+	spans := placementReviewObjectArray(raw, "supports", "evidence")
 	for _, span := range spans {
 		index, hasIndex := reviewInt(span, "evidence_index")
 		if hasIndex && index != fragment.EvidenceIndex {

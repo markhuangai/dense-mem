@@ -676,6 +676,7 @@ func TestSearchReadinessAndHNSWPlan(t *testing.T) {
 	query, err := vectorLiteral(unitSearchVector(3, 0))
 	require.NoError(t, err)
 	var recallHits []SearchHit
+	var queryEFSearch string
 	err = repo.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
 		var err error
 		recallHits, err = searchRecallVector(ctx, tx, RecallEvidenceInput{
@@ -683,12 +684,16 @@ func TestSearchReadinessAndHNSWPlan(t *testing.T) {
 			QueryEmbedding: unitSearchVector(3, 0),
 			Limit:          2,
 		}, ready.Contract, 2)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.Raw(`SHOW hnsw.ef_search`).Row().Scan(&queryEFSearch)
 	})
 	require.NoError(t, err)
 	require.Len(t, recallHits, 2)
 	assert.Equal(t, doc.SearchDocumentID, recallHits[0].SearchDocumentID)
 	assert.Less(t, recallHits[0].Distance, recallHits[1].Distance)
+	assert.Equal(t, "200", queryEFSearch)
 
 	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Exec(`SET LOCAL enable_seqscan = off`).Error)
@@ -856,6 +861,9 @@ func insertSearchTestContractWithOptions(
 	case "halfvec_hnsw":
 		operatorClass = "halfvec_cosine_ops"
 		indexedExpression = fmt.Sprintf("embedding::halfvec(%d)", dimensions)
+	case "binary_hnsw":
+		operatorClass = "bit_hamming_ops"
+		indexedExpression = fmt.Sprintf("binary_quantize(embedding)::bit(%d)", dimensions)
 	}
 	err := rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
 		if err := tx.Exec(`

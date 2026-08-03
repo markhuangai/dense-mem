@@ -2,28 +2,36 @@ package evalharness
 
 import "time"
 
-const SeedSchemaVersion = "dense-mem.eval.seed.v1"
+const (
+	SeedSchemaVersion   = "dense-mem.eval.seed.v1"
+	SeedSchemaVersionV2 = "dense-mem.eval.seed.v2"
+)
 
 // SeedManifest describes a local-only evaluation seed pack.
 type SeedManifest struct {
-	SchemaVersion        string         `json:"schema_version"`
-	SeedID               string         `json:"seed_id"`
-	Description          string         `json:"description,omitempty"`
-	GeneratedAt          string         `json:"generated_at,omitempty"`
-	CorpusFile           string         `json:"corpus_file"`
-	CasesFile            string         `json:"cases_file"`
-	QrelsFile            string         `json:"qrels_file"`
-	AnswersFile          string         `json:"answers_file,omitempty"`
-	HardNegativesFile    string         `json:"hard_negatives_file,omitempty"`
-	TransformsFile       string         `json:"transforms_file,omitempty"`
-	DreamsFile           string         `json:"dreams_file,omitempty"`
-	LicensesFile         string         `json:"licenses_file,omitempty"`
-	ValidationReportFile string         `json:"validation_report_file,omitempty"`
-	EmbeddingProvider    string         `json:"embedding_provider,omitempty"`
-	EmbeddingModel       string         `json:"embedding_model,omitempty"`
-	EmbeddingDimensions  int            `json:"embedding_dimensions,omitempty"`
-	Counts               map[string]int `json:"counts,omitempty"`
-	Sources              []SeedSource   `json:"sources,omitempty"`
+	SchemaVersion          string         `json:"schema_version"`
+	SeedID                 string         `json:"seed_id"`
+	Description            string         `json:"description,omitempty"`
+	GeneratedAt            string         `json:"generated_at,omitempty"`
+	CorpusFile             string         `json:"corpus_file"`
+	CasesFile              string         `json:"cases_file"`
+	QrelsFile              string         `json:"qrels_file"`
+	AnswersFile            string         `json:"answers_file,omitempty"`
+	HardNegativesFile      string         `json:"hard_negatives_file,omitempty"`
+	TransformsFile         string         `json:"transforms_file,omitempty"`
+	DreamsFile             string         `json:"dreams_file,omitempty"`
+	LicensesFile           string         `json:"licenses_file,omitempty"`
+	ValidationReportFile   string         `json:"validation_report_file,omitempty"`
+	EmbeddingProvider      string         `json:"embedding_provider,omitempty"`
+	EmbeddingModel         string         `json:"embedding_model,omitempty"`
+	EmbeddingDimensions    int            `json:"embedding_dimensions,omitempty"`
+	ParentSeedID           string         `json:"parent_seed_id,omitempty"`
+	ParentSeedHash         string         `json:"parent_seed_hash,omitempty"`
+	EvidenceIdentityHash   string         `json:"evidence_identity_hash,omitempty"`
+	RelationshipLedgerHash string         `json:"relationship_ledger_hash,omitempty"`
+	RelationshipCount      int            `json:"relationship_count,omitempty"`
+	Counts                 map[string]int `json:"counts,omitempty"`
+	Sources                []SeedSource   `json:"sources,omitempty"`
 }
 
 type SeedSource struct {
@@ -43,6 +51,67 @@ type CorpusItem struct {
 	SourceQuality float64        `json:"source_quality,omitempty"`
 	Labels        []string       `json:"labels,omitempty"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
+	Relationships []any          `json:"relationships,omitempty"`
+}
+
+// DeriveV2SeedOptions identifies the immutable V1 inputs and a relationship
+// ledger used to create one local-only V2 seed directory.
+type DeriveV2SeedOptions struct {
+	SourceManifestPath     string
+	SourceSuitePath        string
+	RelationshipLedgerPath string
+	CohortLockPath         string
+	OutputDir              string
+	SeedID                 string
+}
+
+// V2CohortValidationOptions binds the filtered V1 cohort, its immutable
+// unfiltered parent, and a V2 derivation to the committed cohort lock.
+type V2CohortValidationOptions struct {
+	ParentManifestPath   string
+	ParentSuitePath      string
+	FilteredManifestPath string
+	FilteredSuitePath    string
+	DerivedManifestPath  string
+	DerivedSuitePath     string
+	CohortLockPath       string
+}
+
+// V2CohortValidationReport records the complete parent V1 -> filtered V1 ->
+// V2 evidence-preservation validation without local filesystem paths.
+type V2CohortValidationReport struct {
+	SchemaVersion          string   `json:"schema_version"`
+	Status                 string   `json:"status"`
+	CohortLockHash         string   `json:"cohort_lock_hash"`
+	ParentSeedHash         string   `json:"parent_seed_hash"`
+	FilteredSeedHash       string   `json:"filtered_seed_hash"`
+	DerivedSeedHash        string   `json:"derived_seed_hash"`
+	RemovedSourceDocIDs    []string `json:"removed_source_doc_ids"`
+	DroppedCaseIDs         []string `json:"dropped_case_ids"`
+	RetainedCorpusCount    int      `json:"retained_corpus_count"`
+	RetainedCaseCount      int      `json:"retained_case_count"`
+	RelationshipCount      int      `json:"relationship_count"`
+	ContractValidatedCount int      `json:"contract_validated_count"`
+}
+
+// V2DerivationReport records the evidence-preservation and contract checks for
+// a locally derived V2 seed without storing source filesystem paths.
+type V2DerivationReport struct {
+	SchemaVersion             string   `json:"schema_version"`
+	Status                    string   `json:"status"`
+	ParentSeedID              string   `json:"parent_seed_id"`
+	ParentSeedHash            string   `json:"parent_seed_hash"`
+	DerivedSeedID             string   `json:"derived_seed_id"`
+	DerivedSeedHash           string   `json:"derived_seed_hash"`
+	EvidenceIdentityHash      string   `json:"evidence_identity_hash"`
+	CorpusCount               int      `json:"corpus_count"`
+	RelationshipCount         int      `json:"relationship_count"`
+	ContractValidatedCount    int      `json:"contract_validated_count"`
+	FallbackRelationshipCount int      `json:"fallback_relationship_count,omitempty"`
+	FallbackSourceDocIDs      []string `json:"fallback_source_doc_ids,omitempty"`
+	CopiedArtifactHashes      []string `json:"copied_artifact_hashes"`
+	SuiteHash                 string   `json:"suite_hash"`
+	ExcludedLedgerRows        int      `json:"excluded_ledger_rows,omitempty"`
 }
 
 type Case struct {

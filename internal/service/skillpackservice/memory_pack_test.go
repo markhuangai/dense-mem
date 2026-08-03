@@ -142,12 +142,38 @@ func TestMemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 		t.Fatalf("trust boundary metadata = %#v", metadata)
 	}
 	hint := req.RelationshipHints[0]
-	if hint["source_relationship_id"] != "rel-uses-postgres" {
+	if hint["ref"] == "" || hint["modality"] != "proposal" {
 		t.Fatalf("relationship hint = %#v", hint)
 	}
-	hintEvidence, ok := hint["evidence"].([]map[string]any)
-	if !ok || len(hintEvidence) != 1 || hintEvidence[0]["evidence_index"] != 0 {
-		t.Fatalf("relationship hint evidence = %#v", hint["evidence"])
+	if _, exists := hint["source_relationship_id"]; exists {
+		t.Fatalf("relationship hint retained legacy provenance field: %#v", hint)
+	}
+	subject, subjectOK := hint["subject"].(map[string]any)
+	predicate, predicateOK := hint["predicate"].(map[string]any)
+	object, objectOK := hint["object"].(map[string]any)
+	entity, entityOK := object["entity"].(map[string]any)
+	supports, supportsOK := hint["supports"].([]map[string]any)
+	if !subjectOK || !predicateOK || !objectOK || !entityOK || !supportsOK || len(supports) != 1 {
+		t.Fatalf("flat relationship hint = %#v", hint)
+	}
+	if predicate["proposed_key"] != "uses" || predicate["surface"] != "uses" || subject["name"] != "Dense-Mem" || entity["name"] != "PostgreSQL" {
+		t.Fatalf("relationship fields = %#v", hint)
+	}
+	for _, field := range []string{"span"} {
+		for _, component := range []map[string]any{subject, predicate, entity} {
+			span, ok := component[field].(map[string]any)
+			if !ok || span["evidence_index"] != 0 {
+				t.Fatalf("component span = %#v", component[field])
+			}
+		}
+	}
+	runes := []rune(req.Evidence[0].Content)
+	spanText := func(component map[string]any) string {
+		span := component["span"].(map[string]any)
+		return string(runes[span["start"].(int):span["end"].(int)])
+	}
+	if spanText(subject) != "Dense-Mem" || spanText(predicate) != "uses" || spanText(entity) != "PostgreSQL" {
+		t.Fatalf("relationship component spans are not exact: %#v", hint)
 	}
 
 	created := ledger.imports[ledgerKey(teamID.String(), imported.ImportID)]
@@ -172,6 +198,35 @@ func TestMemoryPackExportInspectAndImportStagesRemember(t *testing.T) {
 	}
 	if remember.calls != 1 {
 		t.Fatalf("Remember calls after retry = %d, want 1", remember.calls)
+	}
+}
+
+func TestRememberRequestFromPackRejectsGeneratedEvidenceOver999CodePoints(t *testing.T) {
+	artifact := MemoryPackArtifact{
+		Name: "large support",
+		Relationships: []MemoryPackRelationship{{
+			ItemID:             "relationship-1",
+			PredicateKey:       "uses",
+			PredicateVersion:   1,
+			Subject:            MemoryPackEndpoint{Ref: "subject", Kind: "entity", DisplayName: "Alpha"},
+			Object:             MemoryPackEndpoint{Ref: "object", Kind: "entity", DisplayName: "Beta"},
+			SupportEvidenceIDs: []string{"support-1"},
+		}},
+		Evidence: []MemoryPackEvidence{{
+			EvidenceID: "support-1",
+			Content:    strings.Repeat("界", 999),
+		}},
+	}
+
+	_, _, err := rememberRequestFromPack(
+		"import-1",
+		loadedArtifact{artifact: artifact, hash: "artifact-hash"},
+		ModeReview,
+		map[string]bool{"relationship-1": true},
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "max is 999") {
+		t.Fatalf("rememberRequestFromPack error = %v, want generated evidence size failure", err)
 	}
 }
 
@@ -773,8 +828,9 @@ func TestMemoryPackImportUsesLegacySourceAndValueHints(t *testing.T) {
 		t.Fatalf("Import value hint: %v", err)
 	}
 	hint := valueRemember.reqs[0].RelationshipHints[0]
-	objectValue, ok := hint["object_value"].(map[string]any)
-	if valueResult.Status != domain.SkillPackImportStatusApplied || !ok || objectValue["type"] != "date" {
+	object, objectOK := hint["object"].(map[string]any)
+	objectValue, ok := object["value"].(map[string]any)
+	if valueResult.Status != domain.SkillPackImportStatusApplied || !objectOK || !ok || objectValue["type"] != "date" || objectValue["surface"] != "2026-07-17" {
 		t.Fatalf("value import result=%#v hint=%#v", valueResult, hint)
 	}
 	if valueRemember.reqs[0].Evidence[0].Authority != "authoritative" || !strings.HasPrefix(valueRemember.reqs[0].Evidence[0].Source, "memory_pack:") {

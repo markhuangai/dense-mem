@@ -65,21 +65,6 @@ func (r *SearchRepositoryImpl) EnsureActiveSearchContract(
 	if err := validateEnsureActiveSearchContractInput(input); err != nil {
 		return nil, err
 	}
-	if active, err := r.GetActiveSearchContract(ctx); err == nil {
-		if err := r.requireSingleActiveEmbeddingContract(ctx); err != nil {
-			return nil, err
-		}
-		if err := validateActiveContractMatchesConfig(active, input); err != nil {
-			return nil, err
-		}
-		created, err := r.ensureSearchPhysicalIndex(ctx, active)
-		if err != nil {
-			return nil, err
-		}
-		return &EnsureActiveSearchContractResult{Contract: active, CreatedPhysicalIndex: created}, nil
-	} else if !errors.Is(err, ErrSearchContractMismatch) {
-		return nil, err
-	}
 
 	result := &EnsureActiveSearchContractResult{}
 	var generation searchIndexGenerationDefinition
@@ -100,7 +85,7 @@ func (r *SearchRepositoryImpl) EnsureActiveSearchContract(
 		return nil, err
 	}
 
-	if generation.AnnStrategy != string(domain.VectorIndexExact) {
+	if generation.AnnStrategy != string(domain.VectorIndexExact) && generation.ActivationState == string(domain.SearchIndexGenerationBuilding) {
 		if err := r.createSearchPhysicalIndex(ctx, generation); err != nil {
 			_ = r.markSearchGenerationFailed(ctx, generation.SearchIndexGenerationID, err)
 			return nil, err
@@ -120,26 +105,15 @@ func (r *SearchRepositoryImpl) EnsureActiveSearchContract(
 	if err := validateActiveContractMatchesConfig(active, input); err != nil {
 		return nil, err
 	}
+	if active.IndexStrategy != string(domain.VectorIndexExact) {
+		created, err := r.ensureSearchPhysicalIndex(ctx, active)
+		if err != nil {
+			return nil, err
+		}
+		result.CreatedPhysicalIndex = result.CreatedPhysicalIndex || created
+	}
 	result.Contract = active
 	return result, nil
-}
-
-func (r *SearchRepositoryImpl) requireSingleActiveEmbeddingContract(ctx context.Context) error {
-	var count int64
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		return tx.WithContext(ctx).Raw(`
-			SELECT count(*)
-			FROM embedding_contracts
-			WHERE lifecycle_state = 'active'
-		`).Scan(&count).Error
-	})
-	if err != nil {
-		return err
-	}
-	if count != 1 {
-		return fmt.Errorf("%w: expected one active embedding contract, found %d", ErrSearchContractMismatch, count)
-	}
-	return nil
 }
 
 func normalizeEnsureActiveSearchContractInput(input EnsureActiveSearchContractInput) EnsureActiveSearchContractInput {
@@ -174,8 +148,8 @@ func validateEnsureActiveSearchContractInput(input EnsureActiveSearchContractInp
 	if input.Model == "" {
 		return errors.New("model is required")
 	}
-	if input.Dimensions < 1 || input.Dimensions > 16000 {
-		return errors.New("dimensions must be between 1 and 16000")
+	if input.Dimensions < 1 || input.Dimensions > domain.MaxEmbeddingDimensions {
+		return fmt.Errorf("dimensions must be between 1 and %d", domain.MaxEmbeddingDimensions)
 	}
 	if input.VectorNormalization != "provider" && input.VectorNormalization != "unit" && input.VectorNormalization != "none" {
 		return fmt.Errorf("unsupported vector_normalization %q", input.VectorNormalization)
@@ -349,6 +323,12 @@ func ensureSearchGenerationInTx(
 	input EnsureActiveSearchContractInput,
 ) (searchIndexGenerationDefinition, bool, error) {
 	spec := deriveSearchGenerationSpec(contract.EmbeddingContractID, input)
+	if err := tx.WithContext(ctx).Exec(
+		`SELECT pg_advisory_xact_lock(hashtext(?))`,
+		"search-index-generation:"+contract.EmbeddingContractID,
+	).Error; err != nil {
+		return searchIndexGenerationDefinition{}, false, fmt.Errorf("search bootstrap: lock search generation: %w", err)
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT search_index_generation_id::text, generation,
 		       embedding_contract_id::text, embedding_dimensions,
@@ -366,6 +346,9 @@ func ensureSearchGenerationInTx(
 	defer rows.Close()
 
 	var latest *searchIndexGenerationDefinition
+	var matchingActive *searchIndexGenerationDefinition
+	var matchingBuilding *searchIndexGenerationDefinition
+	activeCount := 0
 	for rows.Next() {
 		generation, err := scanSearchGenerationDefinition(rows)
 		if err != nil {
@@ -374,16 +357,34 @@ func ensureSearchGenerationInTx(
 		if latest == nil {
 			latest = &generation
 		}
-		if generation.ActivationState == string(domain.SearchIndexGenerationActive) ||
-			generation.ActivationState == string(domain.SearchIndexGenerationBuilding) {
+		switch generation.ActivationState {
+		case string(domain.SearchIndexGenerationActive):
+			activeCount++
+			if err := validateSearchGenerationMatchesSpec(generation, spec); err == nil && matchingActive == nil {
+				matching := generation
+				matchingActive = &matching
+			}
+		case string(domain.SearchIndexGenerationBuilding):
 			if err := validateSearchGenerationMatchesSpec(generation, spec); err != nil {
 				return searchIndexGenerationDefinition{}, false, err
 			}
-			return generation, false, nil
+			if matchingBuilding == nil {
+				matching := generation
+				matchingBuilding = &matching
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return searchIndexGenerationDefinition{}, false, err
+	}
+	if activeCount > 1 {
+		return searchIndexGenerationDefinition{}, false, fmt.Errorf("%w: expected one active search generation, found %d", ErrSearchContractMismatch, activeCount)
+	}
+	if matchingBuilding != nil {
+		return *matchingBuilding, false, nil
+	}
+	if matchingActive != nil {
+		return *matchingActive, false, nil
 	}
 
 	nextGeneration := 1
@@ -431,6 +432,7 @@ func validateSearchGenerationMatchesSpec(
 		generation.IndexedExpression != spec.IndexedExpression ||
 		!searchPhysicalIndexNameMatchesSpec(generation.PhysicalIndexName, spec) ||
 		generation.EmbeddingDimensions != spec.EmbeddingDimensions ||
+		generation.QueryEFSearch != spec.QueryEFSearch ||
 		generation.ExactMaxRows != spec.ExactMaxRows ||
 		generation.CandidateLimit != spec.CandidateLimit ||
 		generation.AllowExactFallback != spec.AllowExactFallback {
@@ -467,6 +469,13 @@ func deriveSearchGenerationSpec(
 		spec.AnnStrategy = string(domain.VectorIndexHalfvecHNSW)
 		spec.OperatorClass = "halfvec_cosine_ops"
 		spec.IndexedExpression = fmt.Sprintf("embedding::halfvec(%d)", input.Dimensions)
+	case input.Dimensions <= domain.MaxEmbeddingDimensions:
+		spec.AnnStrategy = string(domain.VectorIndexBinaryHNSW)
+		spec.OperatorClass = "bit_hamming_ops"
+		spec.IndexedExpression = fmt.Sprintf("binary_quantize(embedding)::bit(%d)", input.Dimensions)
+	}
+	if spec.AnnStrategy != string(domain.VectorIndexExact) && spec.QueryEFSearch < spec.CandidateLimit {
+		spec.QueryEFSearch = spec.CandidateLimit
 	}
 	if spec.AnnStrategy != string(domain.VectorIndexExact) {
 		spec.PhysicalIndexName = derivedSearchIndexName(contractID, input.Dimensions, spec.AnnStrategy)
@@ -481,22 +490,18 @@ func (r *SearchRepositoryImpl) ensureSearchPhysicalIndex(
 	if contract.IndexStrategy == string(domain.VectorIndexExact) {
 		return false, nil
 	}
-	var indexDefinition string
 	db, err := r.database()
 	if err != nil {
 		return false, err
 	}
-	if err := db.WithContext(ctx).Raw(`
-		SELECT COALESCE((
-		    SELECT indexdef
-		    FROM pg_indexes
-		    WHERE schemaname = current_schema()
-		      AND indexname = ?
-		), '')
-	`, contract.PhysicalIndexName).Scan(&indexDefinition).Error; err != nil {
+	indexState, err := loadSearchPhysicalIndexState(ctx, db, contract.PhysicalIndexName)
+	if err != nil {
 		return false, fmt.Errorf("search bootstrap: check physical index: %w", err)
 	}
-	if indexDefinition != "" {
+	if indexState.Exists {
+		if !indexState.Valid {
+			return false, fmt.Errorf("%w: physical index %q is invalid", ErrSearchContractMismatch, contract.PhysicalIndexName)
+		}
 		return false, nil
 	}
 	generation := searchIndexGenerationDefinition{
@@ -509,7 +514,7 @@ func (r *SearchRepositoryImpl) ensureSearchPhysicalIndex(
 		PhysicalIndexName:       contract.PhysicalIndexName,
 		HNSWM:                   searchDefaultHNSWM,
 		HNSWEFConstruction:      searchDefaultHNSWEFConstruction,
-		QueryEFSearch:           searchDefaultQueryEFSearch,
+		QueryEFSearch:           contract.QueryEFSearch,
 	}
 	if err := r.createSearchPhysicalIndex(ctx, generation); err != nil {
 		return false, err
@@ -527,15 +532,23 @@ func (r *SearchRepositoryImpl) createSearchPhysicalIndex(
 	if _, err := uuid.Parse(generation.EmbeddingContractID); err != nil {
 		return fmt.Errorf("search bootstrap: invalid embedding contract id: %w", err)
 	}
-	if generation.EmbeddingDimensions < 1 || generation.EmbeddingDimensions > 4000 {
+	if generation.EmbeddingDimensions < 1 || generation.EmbeddingDimensions > domain.MaxEmbeddingDimensions {
 		return fmt.Errorf("search bootstrap: HNSW dimensions out of range: %d", generation.EmbeddingDimensions)
 	}
 	expression := ""
 	switch generation.AnnStrategy {
 	case string(domain.VectorIndexVectorHNSW):
+		if generation.EmbeddingDimensions > 2000 {
+			return fmt.Errorf("search bootstrap: vector HNSW dimensions out of range: %d", generation.EmbeddingDimensions)
+		}
 		expression = fmt.Sprintf("embedding::vector(%d)", generation.EmbeddingDimensions)
 	case string(domain.VectorIndexHalfvecHNSW):
+		if generation.EmbeddingDimensions > 4000 {
+			return fmt.Errorf("search bootstrap: halfvec HNSW dimensions out of range: %d", generation.EmbeddingDimensions)
+		}
 		expression = fmt.Sprintf("embedding::halfvec(%d)", generation.EmbeddingDimensions)
+	case string(domain.VectorIndexBinaryHNSW):
+		expression = fmt.Sprintf("binary_quantize(embedding)::bit(%d)", generation.EmbeddingDimensions)
 	default:
 		return fmt.Errorf("search bootstrap: unsupported ann strategy %q", generation.AnnStrategy)
 	}
@@ -546,6 +559,36 @@ func (r *SearchRepositoryImpl) createSearchPhysicalIndex(
 	sqlDB, err := r.sqlDB()
 	if err != nil {
 		return err
+	}
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("search bootstrap: acquire physical-index connection: %w", err)
+	}
+	defer conn.Close()
+	lockKey := "search-physical-index:" + indexName
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtext($1))`, lockKey); err != nil {
+		return fmt.Errorf("search bootstrap: lock physical index %q: %w", indexName, err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, lockKey)
+	}()
+	var existingValid bool
+	err = conn.QueryRowContext(ctx, `
+		SELECT index_meta.indisvalid
+		FROM pg_class AS index_class
+		JOIN pg_namespace AS index_schema ON index_schema.oid = index_class.relnamespace
+		JOIN pg_index AS index_meta ON index_meta.indexrelid = index_class.oid
+		WHERE index_schema.nspname = current_schema()
+		  AND index_class.relname = $1
+	`, indexName).Scan(&existingValid)
+	if err == nil {
+		if !existingValid {
+			return fmt.Errorf("%w: physical index %q is invalid", ErrSearchContractMismatch, indexName)
+		}
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("search bootstrap: check physical index %q: %w", indexName, err)
 	}
 	ddl := fmt.Sprintf(`
 		CREATE INDEX CONCURRENTLY IF NOT EXISTS %s
@@ -559,7 +602,7 @@ func (r *SearchRepositoryImpl) createSearchPhysicalIndex(
 	`, pq.QuoteIdentifier(indexName), expression, generation.OperatorClass,
 		searchDefaultHNSWM, searchDefaultHNSWEFConstruction,
 		generation.EmbeddingContractID, generation.EmbeddingDimensions)
-	if _, err := sqlDB.ExecContext(ctx, ddl); err != nil {
+	if _, err := conn.ExecContext(ctx, ddl); err != nil {
 		return fmt.Errorf("search bootstrap: create physical index %q: %w", indexName, err)
 	}
 	return nil
@@ -581,6 +624,37 @@ func validateSearchIndexName(name string) (string, error) {
 
 func (r *SearchRepositoryImpl) activateSearchGeneration(ctx context.Context, generationID string) error {
 	return r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		var embeddingContractID string
+		var state string
+		if err := tx.WithContext(ctx).Raw(`
+			SELECT embedding_contract_id::text, activation_state
+			FROM search_index_generations
+			WHERE search_index_generation_id = ?::uuid
+			FOR UPDATE
+		`, generationID).Row().Scan(&embeddingContractID, &state); err != nil {
+			return fmt.Errorf("search bootstrap: load generation for activation: %w", err)
+		}
+		if state == string(domain.SearchIndexGenerationActive) {
+			return nil
+		}
+		if state != string(domain.SearchIndexGenerationBuilding) {
+			return fmt.Errorf("%w: search generation %s is %s, expected building", ErrSearchContractMismatch, generationID, state)
+		}
+		if err := tx.WithContext(ctx).Exec(
+			`SELECT pg_advisory_xact_lock(hashtext(?))`,
+			"search-index-generation:"+embeddingContractID,
+		).Error; err != nil {
+			return fmt.Errorf("search bootstrap: lock generation activation: %w", err)
+		}
+		if err := tx.WithContext(ctx).Exec(`
+			UPDATE search_index_generations
+			SET activation_state = 'deprecated'
+			WHERE embedding_contract_id = ?::uuid
+			  AND search_index_generation_id <> ?::uuid
+			  AND activation_state = 'active'
+		`, embeddingContractID, generationID).Error; err != nil {
+			return err
+		}
 		return tx.WithContext(ctx).Exec(`
 			UPDATE search_index_generations
 			SET activation_state = 'active',

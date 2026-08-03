@@ -27,6 +27,18 @@ func TestActivePlacementLeaseCoversVerifierAndCommitWindow(t *testing.T) {
 	}
 }
 
+func TestActiveEmbeddingLeaseCoversRetryWindow(t *testing.T) {
+	if got := activeEmbeddingLease(30); got != 5*time.Minute {
+		t.Fatalf("lease = %s, want 5m minimum", got)
+	}
+	if got := activeEmbeddingLease(120); got != 8*time.Minute+30*time.Second {
+		t.Fatalf("lease = %s, want four embedding attempts plus buffer", got)
+	}
+	if got := activeEmbeddingLease(600); got != 40*time.Minute+30*time.Second {
+		t.Fatalf("lease = %s, want four embedding attempts plus buffer", got)
+	}
+}
+
 func TestConflictReviewDueForTeamHonorsLocalStartAndJitter(t *testing.T) {
 	cfg := testConflictReviewConfig(t, "UTC", "04:00", "0")
 	before := time.Date(2026, 7, 25, 3, 59, 59, 0, time.UTC)

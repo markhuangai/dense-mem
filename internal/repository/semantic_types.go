@@ -145,6 +145,7 @@ type SemanticAssessmentPredicateOptionsInput struct {
 	TeamID         string
 	OwnerProfileID string
 	QueryText      string
+	ProposedKeys   []string
 	Limit          int
 }
 

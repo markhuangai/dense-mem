@@ -37,6 +37,7 @@ type ActiveSearchContract struct {
 	OperatorClass           string
 	IndexedExpression       string
 	PhysicalIndexName       string
+	QueryEFSearch           int
 	ExactMaxRows            int
 	CandidateLimit          int
 	AllowExactFallback      bool

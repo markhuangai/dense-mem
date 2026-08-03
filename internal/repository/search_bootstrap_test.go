@@ -36,12 +36,20 @@ func TestDeriveSearchGenerationSpecFromEmbeddingDimensions(t *testing.T) {
 			wantPhysicalName:  "search_001122334455_3072_halfvec_hnsw_idx",
 		},
 		{
-			name:              "over hnsw limit exact",
-			dimensions:        5000,
-			wantStrategy:      string(domain.VectorIndexExact),
-			wantOperatorClass: "",
-			wantExpression:    "",
-			wantPhysicalName:  "",
+			name:              "4096 binary hnsw",
+			dimensions:        4096,
+			wantStrategy:      string(domain.VectorIndexBinaryHNSW),
+			wantOperatorClass: "bit_hamming_ops",
+			wantExpression:    "binary_quantize(embedding)::bit(4096)",
+			wantPhysicalName:  "search_001122334455_4096_binary_hnsw_idx",
+		},
+		{
+			name:              "16000 binary hnsw",
+			dimensions:        16000,
+			wantStrategy:      string(domain.VectorIndexBinaryHNSW),
+			wantOperatorClass: "bit_hamming_ops",
+			wantExpression:    "binary_quantize(embedding)::bit(16000)",
+			wantPhysicalName:  "search_001122334455_16000_binary_hnsw_idx",
 		},
 	}
 
@@ -58,6 +66,21 @@ func TestDeriveSearchGenerationSpecFromEmbeddingDimensions(t *testing.T) {
 			assert.Equal(t, tt.wantPhysicalName, spec.PhysicalIndexName)
 		})
 	}
+}
+
+func TestDeriveSearchGenerationSpecRaisesQueryEFSearchToCandidateLimit(t *testing.T) {
+	spec := deriveSearchGenerationSpec(
+		"00112233-4455-6677-8899-aabbccddeeff",
+		normalizeEnsureActiveSearchContractInput(EnsureActiveSearchContractInput{
+			Model:          "test-model",
+			Dimensions:     4096,
+			CandidateLimit: 240,
+			ExactMaxRows:   10000,
+		}),
+	)
+
+	assert.Equal(t, string(domain.VectorIndexBinaryHNSW), spec.AnnStrategy)
+	assert.Equal(t, 240, spec.QueryEFSearch)
 }
 
 func TestValidateActiveContractMatchesConfigAcceptsLegacyPhysicalIndexName(t *testing.T) {
@@ -136,4 +159,21 @@ func TestValidateSearchGenerationMatchesSpecAcceptsLegacyPhysicalIndexName(t *te
 	require.ErrorIs(t, err, ErrSearchContractMismatch)
 	assert.Contains(t, err.Error(), generation.PhysicalIndexName)
 	assert.Contains(t, err.Error(), spec.PhysicalIndexName)
+}
+
+func TestSearchIndexExpressionCompatibleCanonicalizesBinaryQuantizeParentheses(t *testing.T) {
+	contract := &ActiveSearchContract{
+		EmbeddingDimensions: 4096,
+		IndexStrategy:       string(domain.VectorIndexBinaryHNSW),
+		IndexedExpression:   "binary_quantize(embedding)::bit(4096)",
+	}
+
+	assert.True(t, searchIndexExpressionCompatible(contract, `
+		CREATE INDEX search_binary_idx ON public.search_documents
+		USING hnsw (((binary_quantize(embedding))::bit(4096)) bit_hamming_ops)
+	`))
+	assert.False(t, searchIndexExpressionCompatible(contract, `
+		CREATE INDEX search_binary_idx ON public.search_documents
+		USING hnsw (((binary_quantize(embedding))::bit(4000)) bit_hamming_ops)
+	`))
 }
