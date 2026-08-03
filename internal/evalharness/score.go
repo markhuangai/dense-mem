@@ -330,10 +330,14 @@ func CompareSummaries(baseline, candidate Summary) (Comparison, error) {
 	if baseline.SeedHash != candidate.SeedHash {
 		return Comparison{}, fmt.Errorf("seed hash mismatch: baseline %s candidate %s", baseline.SeedHash, candidate.SeedHash)
 	}
+	return comparisonForSummaries(baseline, candidate, baseline.SeedHash), nil
+}
+
+func comparisonForSummaries(baseline, candidate Summary, seedHash string) Comparison {
 	return Comparison{
 		BaselineRunID:       baseline.RunID,
 		CandidateRunID:      candidate.RunID,
-		SeedHash:            baseline.SeedHash,
+		SeedHash:            seedHash,
 		RecallDelta:         candidate.AverageRecallAtK - baseline.AverageRecallAtK,
 		MRRDelta:            candidate.AverageMRR - baseline.AverageMRR,
 		NDCGDelta:           candidate.AverageNDCGAtK - baseline.AverageNDCGAtK,
@@ -350,7 +354,7 @@ func CompareSummaries(baseline, candidate Summary) (Comparison, error) {
 		DreamMRRDelta:       candidate.AverageDreamMRR - baseline.AverageDreamMRR,
 		DreamNDCGDelta:      candidate.AverageDreamNDCGAtK - baseline.AverageDreamNDCGAtK,
 		DreamBadAtKDelta:    candidate.AverageDreamBadAtK - baseline.AverageDreamBadAtK,
-	}, nil
+	}
 }
 
 func EvaluateGates(summary Summary, gates GateOptions) GateResult {

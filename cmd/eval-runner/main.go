@@ -25,19 +25,19 @@ func main() {
 	var derivedV2ManifestPath string
 	var derivedV2SuitePath string
 	var cohortLockPath string
-	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, compare, derive-v2, or validate-v2-cohort")
-	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path (source seed for derive-v2; required except in compare mode)")
-	flag.StringVar(&opts.SuitePath, "suite", "", "suite JSONL path (source suite for derive-v2; required except in compare mode)")
+	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, compare, compare-v2-cohort, derive-v2, or validate-v2-cohort")
+	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path (source seed for derive-v2; required except in compare modes)")
+	flag.StringVar(&opts.SuitePath, "suite", "", "suite JSONL path (source suite for derive-v2; required except in compare modes)")
 	flag.StringVar(&opts.OutDir, "out", "", "output run directory")
 	flag.StringVar(&relationshipLedgerPath, "relationship-ledger", "", "relationship ledger JSONL path required for derive-v2")
 	flag.StringVar(&derivedSeedID, "derived-seed-id", "public_6axis_1k_v2", "derived seed ID for derive-v2")
-	flag.StringVar(&parentV1ManifestPath, "parent-v1-seed", "", "unfiltered V1 manifest required for validate-v2-cohort")
-	flag.StringVar(&parentV1SuitePath, "parent-v1-suite", "", "unfiltered V1 suite required for validate-v2-cohort")
-	flag.StringVar(&filteredV1ManifestPath, "filtered-v1-seed", "", "filtered V1 manifest required for validate-v2-cohort")
-	flag.StringVar(&filteredV1SuitePath, "filtered-v1-suite", "", "filtered V1 suite required for validate-v2-cohort")
-	flag.StringVar(&derivedV2ManifestPath, "derived-v2-seed", "", "derived V2 manifest required for validate-v2-cohort")
-	flag.StringVar(&derivedV2SuitePath, "derived-v2-suite", "", "derived V2 suite required for validate-v2-cohort")
-	flag.StringVar(&cohortLockPath, "cohort-lock", "", "committed cohort lock for derive-v2 excluded ledger rows and validate-v2-cohort")
+	flag.StringVar(&parentV1ManifestPath, "parent-v1-seed", "", "unfiltered V1 manifest required for V2 cohort validation or comparison")
+	flag.StringVar(&parentV1SuitePath, "parent-v1-suite", "", "unfiltered V1 suite required for V2 cohort validation or comparison")
+	flag.StringVar(&filteredV1ManifestPath, "filtered-v1-seed", "", "filtered V1 manifest required for V2 cohort validation or comparison")
+	flag.StringVar(&filteredV1SuitePath, "filtered-v1-suite", "", "filtered V1 suite required for V2 cohort validation or comparison")
+	flag.StringVar(&derivedV2ManifestPath, "derived-v2-seed", "", "derived V2 manifest required for V2 cohort validation or comparison")
+	flag.StringVar(&derivedV2SuitePath, "derived-v2-suite", "", "derived V2 suite required for V2 cohort validation or comparison")
+	flag.StringVar(&cohortLockPath, "cohort-lock", "", "committed cohort lock for derive-v2, V2 cohort validation, or V2 cohort comparison")
 	flag.StringVar(&opts.BaseURL, "base-url", env("DENSE_MEM_BASE_URL", "http://127.0.0.1:8080"), "Dense-Mem HTTP base URL")
 	flag.StringVar(&opts.APIKey, "api-key", env("DENSE_MEM_API_KEY", ""), "read/write API key")
 	flag.StringVar(&opts.ControlURL, "control-url", env("DENSE_MEM_CONTROL_URL", "http://127.0.0.1:8090"), "control portal base URL")
@@ -104,6 +104,35 @@ func main() {
 			)
 		}
 		fmt.Println(msg)
+		return
+	}
+	if opts.Mode == "compare-v2-cohort" {
+		comparison, err := evalharness.CompareV2CohortRunDirs(evalharness.V2CohortComparisonOptions{
+			Cohort: evalharness.V2CohortValidationOptions{
+				ParentManifestPath:   parentV1ManifestPath,
+				ParentSuitePath:      parentV1SuitePath,
+				FilteredManifestPath: filteredV1ManifestPath,
+				FilteredSuitePath:    filteredV1SuitePath,
+				DerivedManifestPath:  derivedV2ManifestPath,
+				DerivedSuitePath:     derivedV2SuitePath,
+				CohortLockPath:       cohortLockPath,
+			},
+			BaselineRunDir:  baselineRun,
+			CandidateRunDir: candidateRun,
+			OutDir:          opts.OutDir,
+		})
+		if err != nil {
+			exitf("compare V2 cohort: %v", err)
+		}
+		fmt.Printf("v2_cohort_comparison=passed baseline_seed_hash=%s candidate_seed_hash=%s cases=%d recall_delta=%.4f mrr_delta=%.4f ndcg_delta=%.4f bad_at_k_delta=%.4f\n",
+			comparison.BaselineSeedHash,
+			comparison.CandidateSeedHash,
+			comparison.RetainedCaseCount,
+			comparison.Comparison.RecallDelta,
+			comparison.Comparison.MRRDelta,
+			comparison.Comparison.NDCGDelta,
+			comparison.Comparison.BadAtKDelta,
+		)
 		return
 	}
 	if opts.Mode == "derive-v2" {

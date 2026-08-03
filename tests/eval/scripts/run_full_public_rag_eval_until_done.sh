@@ -6,7 +6,8 @@ cd "${ROOT_DIR}"
 
 : "${SEED:?Set SEED to the seed_manifest.json path}"
 : "${SUITE:?Set SUITE to the suite JSONL path}"
-: "${RELEASE_GATE_POLICY:?Set RELEASE_GATE_POLICY to the committed release gate policy path}"
+RELEASE_GATE_POLICY="${RELEASE_GATE_POLICY:-}"
+ALLOW_UNGATED_EVALUATION="${ALLOW_UNGATED_EVALUATION:-0}"
 
 if [[ ! -f "${SEED}" ]]; then
   echo "seed manifest not found: ${SEED}" >&2
@@ -16,14 +17,28 @@ if [[ ! -f "${SUITE}" ]]; then
   echo "suite not found: ${SUITE}" >&2
   exit 2
 fi
-if [[ ! -f "${RELEASE_GATE_POLICY}" ]]; then
+if [[ "${ALLOW_UNGATED_EVALUATION}" != "0" && "${ALLOW_UNGATED_EVALUATION}" != "1" ]]; then
+  echo "ALLOW_UNGATED_EVALUATION must be 0 or 1" >&2
+  exit 2
+fi
+if [[ -z "${RELEASE_GATE_POLICY}" && "${ALLOW_UNGATED_EVALUATION}" != "1" ]]; then
+  echo "set RELEASE_GATE_POLICY or explicitly set ALLOW_UNGATED_EVALUATION=1" >&2
+  exit 2
+fi
+if [[ -n "${RELEASE_GATE_POLICY}" && "${ALLOW_UNGATED_EVALUATION}" == "1" ]]; then
+  echo "RELEASE_GATE_POLICY and ALLOW_UNGATED_EVALUATION=1 cannot be combined" >&2
+  exit 2
+fi
+if [[ -n "${RELEASE_GATE_POLICY}" && ! -f "${RELEASE_GATE_POLICY}" ]]; then
   echo "release gate policy not found: ${RELEASE_GATE_POLICY}" >&2
   exit 2
 fi
 
 SEED="$(realpath "${SEED}")"
 SUITE="$(realpath "${SUITE}")"
-RELEASE_GATE_POLICY="$(realpath "${RELEASE_GATE_POLICY}")"
+if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
+  RELEASE_GATE_POLICY="$(realpath "${RELEASE_GATE_POLICY}")"
+fi
 V1_DATA_DIR="$(realpath -m "${V1_DATA_DIR:-tests/eval/runtime/v1}")"
 export V1_COMPOSE_DATA_DIR="$(realpath -m "${V1_COMPOSE_DATA_DIR:-${V1_DATA_DIR}}")"
 
@@ -98,6 +113,8 @@ load_env() {
   local eval_prometheus_port="${PROMETHEUS_PORT}"
   local eval_prometheus_container_name="${PROMETHEUS_CONTAINER_NAME}"
   local eval_compose_data_dir="${V1_COMPOSE_DATA_DIR}"
+  local requested_release_gate_policy="${RELEASE_GATE_POLICY}"
+  local requested_allow_ungated_evaluation="${ALLOW_UNGATED_EVALUATION}"
   local requested_api_key="${DENSE_MEM_API_KEY:-}"
   local requested_control_token="${DENSE_MEM_CONTROL_TOKEN:-}"
   local requested_team_id="${EVAL_TEAM_ID:-}"
@@ -117,6 +134,8 @@ load_env() {
   export PROMETHEUS_PORT="${eval_prometheus_port}"
   export PROMETHEUS_CONTAINER_NAME="${eval_prometheus_container_name}"
   export V1_COMPOSE_DATA_DIR="${eval_compose_data_dir}"
+  export RELEASE_GATE_POLICY="${requested_release_gate_policy}"
+  export ALLOW_UNGATED_EVALUATION="${requested_allow_ungated_evaluation}"
   if [[ -n "${requested_api_key}" ]]; then
     export DENSE_MEM_API_KEY="${requested_api_key}"
   fi
@@ -468,12 +487,17 @@ write_status() {
 }
 
 validate_release_gate_seed() {
-  "${RUNNER}" \
-    --mode validate \
-    --seed "${SEED}" \
-    --suite "${SUITE}" \
-    --release-gate-policy "${RELEASE_GATE_POLICY}" \
+  local -a args=(
+    "${RUNNER}"
+    --mode validate
+    --seed "${SEED}"
+    --suite "${SUITE}"
     --out "${VALIDATION_DIR}"
+  )
+  if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
+    args+=(--release-gate-policy "${RELEASE_GATE_POLICY}")
+  fi
+  "${args[@]}"
 
   SEED_HASH="$(jq -r '.seed_hash' "${VALIDATION_DIR}/summary.json")"
   export SEED_HASH
@@ -487,7 +511,10 @@ prepare_identity() {
     EMBEDDING_DIMENSIONS="3072"
   fi
   EMBEDDING_ENDPOINT_HASH="$(printf '%s' "${AI_API_URL:-}" | sha256sum | awk '{print $1}')"
-  RELEASE_GATE_POLICY_HASH="$(canonical_json_sha256 "${RELEASE_GATE_POLICY}")"
+  RELEASE_GATE_POLICY_HASH=""
+  if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
+    RELEASE_GATE_POLICY_HASH="$(canonical_json_sha256 "${RELEASE_GATE_POLICY}")"
+  fi
   RUNNER_HASH="sha256:$(sha256sum "${RUNNER}" | awk '{print $1}')"
   export SUITE_HASH RELEASE_GATE_POLICY_HASH RUNNER_HASH
 
@@ -613,17 +640,27 @@ run_baseline() {
       log "baseline_seed_hash_mismatch path=${BASELINE_DIR}/summary.json"
       return 1
     fi
-    if [[ ! -s "${BASELINE_DIR}/release_gate_result.json" ]]; then
-      log "baseline_gate_result_missing policy=${RELEASE_GATE_POLICY}"
-      return 1
-    fi
-    if [[ "$(jq -r '.release_gate_policy_path // empty' "${BASELINE_DIR}/run_config.json")" != "${RELEASE_GATE_POLICY}" ]]; then
-      log "baseline_gate_policy_mismatch policy=${RELEASE_GATE_POLICY}"
-      return 1
-    fi
-    if [[ "$(jq -r '.release_gate_policy_sha256 // empty' "${BASELINE_DIR}/run_config.json")" != "${RELEASE_GATE_POLICY_HASH}" ]]; then
-      log "baseline_gate_policy_hash_mismatch policy=${RELEASE_GATE_POLICY}"
-      return 1
+    local baseline_policy_path baseline_policy_hash
+    baseline_policy_path="$(jq -r '.release_gate_policy_path // empty' "${BASELINE_DIR}/run_config.json")"
+    baseline_policy_hash="$(jq -r '.release_gate_policy_sha256 // empty' "${BASELINE_DIR}/run_config.json")"
+    if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
+      if [[ ! -s "${BASELINE_DIR}/release_gate_result.json" ]]; then
+        log "baseline_gate_result_missing policy=${RELEASE_GATE_POLICY}"
+        return 1
+      fi
+      if [[ "${baseline_policy_path}" != "${RELEASE_GATE_POLICY}" ]]; then
+        log "baseline_gate_policy_mismatch policy=${RELEASE_GATE_POLICY}"
+        return 1
+      fi
+      if [[ "${baseline_policy_hash}" != "${RELEASE_GATE_POLICY_HASH}" ]]; then
+        log "baseline_gate_policy_hash_mismatch policy=${RELEASE_GATE_POLICY}"
+        return 1
+      fi
+    else
+      if [[ -s "${BASELINE_DIR}/release_gate_result.json" || -n "${baseline_policy_path}" || -n "${baseline_policy_hash}" ]]; then
+        log "baseline_unexpected_release_gate_artifacts"
+        return 1
+      fi
     fi
     if [[ "$(jq -r '.mapping_sha256 // empty' "${BASELINE_DIR}/run_config.json")" != "${import_mapping_hash}" ]]; then
       log "baseline_mapping_hash_mismatch path=${BASELINE_DIR}/run_config.json"
@@ -642,7 +679,8 @@ run_baseline() {
       log "baseline_mapping_artifact_mismatch path=${BASELINE_DIR}/knowledge_mapping.json"
       return 1
     fi
-    if [[ "$(jq -r '.passed // false' "${BASELINE_DIR}/release_gate_result.json")" != "true" ]]; then
+    if [[ -n "${RELEASE_GATE_POLICY}" &&
+      "$(jq -r '.passed // false' "${BASELINE_DIR}/release_gate_result.json")" != "true" ]]; then
       log "baseline_gate_result_not_passed path=${BASELINE_DIR}/release_gate_result.json"
       return 1
     fi
@@ -659,8 +697,10 @@ run_baseline() {
     --out "${BASELINE_DIR}"
     --mapping "${IMPORT_DIR}/knowledge_mapping.json"
     --max-page-size 500
-    --release-gate-policy "${RELEASE_GATE_POLICY}"
   )
+  if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
+    baseline_args+=(--release-gate-policy "${RELEASE_GATE_POLICY}")
+  fi
 
   log "starting_baseline_eval"
   if ! "${baseline_args[@]}"; then

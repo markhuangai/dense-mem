@@ -109,6 +109,19 @@ go run ./cmd/eval-runner \
   --cohort-lock tests/eval/source_locks/public_6axis_1k_v2_cohort.json
 
 go run ./cmd/eval-runner \
+  --mode compare-v2-cohort \
+  --baseline-run path/to/filtered_v1_baseline \
+  --candidate-run path/to/public_6axis_1k_v2_baseline \
+  --parent-v1-seed tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json \
+  --parent-v1-suite tests/eval/suites/public_6axis_1k_v1.jsonl \
+  --filtered-v1-seed path/to/filtered_public_6axis_1k_v1/seed_manifest.json \
+  --filtered-v1-suite path/to/filtered_public_6axis_1k_v1/suite.jsonl \
+  --derived-v2-seed path/to/public_6axis_1k_v2/seed_manifest.json \
+  --derived-v2-suite path/to/public_6axis_1k_v2/suite.jsonl \
+  --cohort-lock tests/eval/source_locks/public_6axis_1k_v2_cohort.json \
+  --out path/to/v1_v2_comparison
+
+go run ./cmd/eval-runner \
   --mode validate \
   --seed path/to/public_6axis_1k_v2/seed_manifest.json \
   --suite path/to/public_6axis_1k_v2/suite.jsonl \
@@ -121,6 +134,15 @@ ledger rows, and any source IDs that needed a documented sentence-bounded
 fallback proposal. A fallback changes only the non-authoritative client
 proposal; it never changes evidence, and the assessor still normalizes it to
 an active team predicate or returns `needs_review`.
+
+Generic `compare` remains same-seed only. `compare-v2-cohort` is the explicit
+cross-seed path: it reruns cohort validation, binds the V1 and V2 run summaries
+to the validated filtered and derived hashes, requires every retained case to
+be scored, and writes `v2_cohort_comparison.json` with the cohort provenance.
+The persistent monitor requires a release policy by default. A derived V2
+comparison run must set `ALLOW_UNGATED_EVALUATION=1` and omit
+`RELEASE_GATE_POLICY`; this records ordinary candidate metrics without
+presenting the result as a release-gate decision.
 
 ## Use the approved local seed
 

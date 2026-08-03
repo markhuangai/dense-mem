@@ -332,7 +332,7 @@ type RunConfig struct {
 type Comparison struct {
 	BaselineRunID       string  `json:"baseline_run_id"`
 	CandidateRunID      string  `json:"candidate_run_id"`
-	SeedHash            string  `json:"seed_hash"`
+	SeedHash            string  `json:"seed_hash,omitempty"`
 	RecallDelta         float64 `json:"recall_delta"`
 	MRRDelta            float64 `json:"mrr_delta"`
 	NDCGDelta           float64 `json:"ndcg_delta"`
@@ -349,6 +349,29 @@ type Comparison struct {
 	DreamMRRDelta       float64 `json:"dream_mrr_delta"`
 	DreamNDCGDelta      float64 `json:"dream_ndcg_delta"`
 	DreamBadAtKDelta    float64 `json:"dream_bad_at_k_delta"`
+}
+
+// V2CohortComparisonOptions identifies a V1/V2 run pair and the evidence
+// inputs required to prove that their different seed hashes are comparable.
+type V2CohortComparisonOptions struct {
+	Cohort          V2CohortValidationOptions
+	BaselineRunDir  string
+	CandidateRunDir string
+	OutDir          string
+}
+
+// V2CohortComparison records a V1/V2 comparison with its validated evidence
+// cohort rather than treating intentionally different seed hashes as equal.
+type V2CohortComparison struct {
+	SchemaVersion     string                   `json:"schema_version"`
+	Status            string                   `json:"status"`
+	Cohort            V2CohortValidationReport `json:"cohort"`
+	BaselineRunID     string                   `json:"baseline_run_id"`
+	CandidateRunID    string                   `json:"candidate_run_id"`
+	BaselineSeedHash  string                   `json:"baseline_seed_hash"`
+	CandidateSeedHash string                   `json:"candidate_seed_hash"`
+	RetainedCaseCount int                      `json:"retained_case_count"`
+	Comparison        Comparison               `json:"comparison"`
 }
 
 type GateOptions struct {

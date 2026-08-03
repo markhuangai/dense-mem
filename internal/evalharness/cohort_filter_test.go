@@ -28,6 +28,123 @@ func TestValidateV2CohortDerivationProvesDeclaredCohortAndV2Identity(t *testing.
 	}
 }
 
+func TestCompareV2CohortRunDirsProvesCohortBeforeComparingDifferentSeedHashes(t *testing.T) {
+	cohortOpts := writeV2CohortValidationFixture(t)
+	cohort, err := ValidateV2CohortDerivation(cohortOpts)
+	if err != nil {
+		t.Fatalf("ValidateV2CohortDerivation: %v", err)
+	}
+	root := t.TempDir()
+	baselineDir := filepath.Join(root, "baseline")
+	candidateDir := filepath.Join(root, "candidate")
+	if err := writeJSONFile(filepath.Join(baselineDir, "summary.json"), Summary{
+		RunID:            "v1-baseline",
+		SeedHash:         cohort.FilteredSeedHash,
+		CaseCount:        cohort.RetainedCaseCount,
+		ScoredCaseCount:  cohort.RetainedCaseCount,
+		AverageRecallAtK: 0.50,
+	}); err != nil {
+		t.Fatalf("write baseline summary: %v", err)
+	}
+	if err := writeJSONFile(filepath.Join(candidateDir, "summary.json"), Summary{
+		RunID:            "v2-baseline",
+		SeedHash:         cohort.DerivedSeedHash,
+		CaseCount:        cohort.RetainedCaseCount,
+		ScoredCaseCount:  cohort.RetainedCaseCount,
+		AverageRecallAtK: 0.75,
+	}); err != nil {
+		t.Fatalf("write candidate summary: %v", err)
+	}
+
+	comparison, err := CompareV2CohortRunDirs(V2CohortComparisonOptions{
+		Cohort:          cohortOpts,
+		BaselineRunDir:  baselineDir,
+		CandidateRunDir: candidateDir,
+		OutDir:          filepath.Join(root, "comparison"),
+	})
+	if err != nil {
+		t.Fatalf("CompareV2CohortRunDirs: %v", err)
+	}
+	if comparison.Status != "passed" || comparison.Cohort.Status != "passed" {
+		t.Fatalf("comparison = %+v", comparison)
+	}
+	if comparison.Comparison.SeedHash != "" || comparison.Comparison.RecallDelta != 0.25 {
+		t.Fatalf("comparison metrics = %+v", comparison.Comparison)
+	}
+	if comparison.BaselineSeedHash != cohort.FilteredSeedHash || comparison.CandidateSeedHash != cohort.DerivedSeedHash {
+		t.Fatalf("comparison seed hashes = %q, %q", comparison.BaselineSeedHash, comparison.CandidateSeedHash)
+	}
+	if _, err := os.Stat(filepath.Join(root, "comparison", "v2_cohort_comparison.json")); err != nil {
+		t.Fatalf("missing V2 cohort comparison artifact: %v", err)
+	}
+}
+
+func TestCompareV2CohortRunDirsRejectsUnboundOrPartialRunSummary(t *testing.T) {
+	tests := []struct {
+		name      string
+		baseline  func(V2CohortValidationReport) Summary
+		candidate func(V2CohortValidationReport) Summary
+		want      string
+	}{
+		{
+			name: "baseline seed mismatch",
+			baseline: func(report V2CohortValidationReport) Summary {
+				return Summary{SeedHash: "sha256:wrong", CaseCount: report.RetainedCaseCount, ScoredCaseCount: report.RetainedCaseCount}
+			},
+			candidate: func(report V2CohortValidationReport) Summary {
+				return Summary{SeedHash: report.DerivedSeedHash, CaseCount: report.RetainedCaseCount, ScoredCaseCount: report.RetainedCaseCount}
+			},
+			want: "does not match validated cohort seed hash",
+		},
+		{
+			name: "candidate seed mismatch",
+			baseline: func(report V2CohortValidationReport) Summary {
+				return Summary{SeedHash: report.FilteredSeedHash, CaseCount: report.RetainedCaseCount, ScoredCaseCount: report.RetainedCaseCount}
+			},
+			candidate: func(report V2CohortValidationReport) Summary {
+				return Summary{SeedHash: "sha256:wrong", CaseCount: report.RetainedCaseCount, ScoredCaseCount: report.RetainedCaseCount}
+			},
+			want: "does not match validated cohort seed hash",
+		},
+		{
+			name: "candidate partial scoring",
+			baseline: func(report V2CohortValidationReport) Summary {
+				return Summary{SeedHash: report.FilteredSeedHash, CaseCount: report.RetainedCaseCount, ScoredCaseCount: report.RetainedCaseCount}
+			},
+			candidate: func(report V2CohortValidationReport) Summary {
+				return Summary{SeedHash: report.DerivedSeedHash, CaseCount: report.RetainedCaseCount, ScoredCaseCount: report.RetainedCaseCount - 1}
+			},
+			want: "scored case count",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cohortOpts := writeV2CohortValidationFixture(t)
+			cohort, err := ValidateV2CohortDerivation(cohortOpts)
+			if err != nil {
+				t.Fatalf("ValidateV2CohortDerivation: %v", err)
+			}
+			root := t.TempDir()
+			baselineDir := filepath.Join(root, "baseline")
+			candidateDir := filepath.Join(root, "candidate")
+			if err := writeJSONFile(filepath.Join(baselineDir, "summary.json"), tt.baseline(cohort)); err != nil {
+				t.Fatalf("write baseline summary: %v", err)
+			}
+			if err := writeJSONFile(filepath.Join(candidateDir, "summary.json"), tt.candidate(cohort)); err != nil {
+				t.Fatalf("write candidate summary: %v", err)
+			}
+			_, err = CompareV2CohortRunDirs(V2CohortComparisonOptions{
+				Cohort:          cohortOpts,
+				BaselineRunDir:  baselineDir,
+				CandidateRunDir: candidateDir,
+			})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("CompareV2CohortRunDirs error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateV2CohortDerivationRejectsUndeclaredExclusion(t *testing.T) {
 	opts := writeV2CohortValidationFixture(t)
 	lock := cohortFilterLockForFixture(t, opts, nil, []string{"case-2"})
