@@ -96,6 +96,13 @@ func (r *LedgerRepositoryImpl) CompletePlacementReviewResult(
 			return err
 		}
 		if input.SecurityQuarantine != nil {
+			placementFragmentID, err := loadPlacementItemFragmentID(ctx, tx, scope)
+			if err != nil {
+				return err
+			}
+			if placementFragmentID != input.SecurityQuarantine.FragmentID {
+				return errors.New("security quarantine fragment must match placement item")
+			}
 			securityInput := SecurityEventInput{
 				TeamID:             input.TeamID,
 				OwnerProfileID:     input.OwnerProfileID,
