@@ -6,6 +6,7 @@ cd "${ROOT_DIR}"
 
 npm ci --prefix .lint
 npm run --prefix .lint lint:lines
+bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
 packages="$(
 	git ls-files '*.go' |
 		grep -Ev '^(tests/uat|tests/eval/runtime)/' |
