@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	securityScanPolicyVersion  = "dense-mem.remember-intake-security.v1"
-	securityScanPolicyManifest = "dense-mem.remember-intake-security.v1|base64,data_uri,pem,jwt_json,folded_base64,hidden_controls,combining_marks,markup,control_role,chat_role_marker,override,secret,password_secret,tool_exfiltration,provider_bound_proposal"
-	securityScanPolicyHash     = "sha256:83fa4c3b9f8ac9587ee0ce2c5fbcb63cec54321c7b99927cefe60a02ca18e235"
+	securityScanPolicyVersion  = "dense-mem.remember-intake-security.v2"
+	securityScanPolicyManifest = "dense-mem.remember-intake-security.v2|base64,data_uri,pem,jwt_json,folded_base64,normalized_hidden_controls,hidden_control_flood,combining_marks,markup,control_role,chat_role_marker,override,secret,password_secret,directive_tool_exfiltration,provider_bound_proposal"
+	securityScanPolicyHash     = "sha256:4c1e282b6305d318e0ce46137ad24a2af1269a63a274326b2bdd9fe4ec2dffa1"
 
 	SubmissionSecurityErrorEncodedEvidence = "encoded_evidence_not_allowed"
 	SubmissionSecurityErrorRejected        = "evidence_security_rejected"
@@ -32,6 +32,7 @@ const (
 	submissionSecurityMaxDecodedBytes      = 4 << 10
 	submissionSecurityMinBase64TokenLength = 16
 	submissionSecurityMinFoldedBase64Part  = 4
+	submissionSecurityHiddenControlFlood   = 4
 )
 
 var (
@@ -45,12 +46,14 @@ var (
 	markupPattern      = regexp.MustCompile(`(?is)<!--|<\s*(?:script|iframe|object|embed|meta|svg)\b|\bon[a-z]{3,32}\s*=`)
 	controlRolePattern = regexp.MustCompile(`(?im)(?:^|[\r\n])[[:space:]]*(?:system|developer)[[:space:]]*:|<\|[[:space:]]*(?:system|developer)[[:space:]]*\|>|<<[[:space:]]*(?:sys|system|developer)[[:space:]]*>>`)
 
-	secretExtractionPattern = regexp.MustCompile(`(?is)\b(?:reveal|show|send|dump|print|exfiltrate|return)\b.{0,100}\b(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b|\b(?:please[[:space:]_-]+)?output\b[[:space:]_-]+(?:(?:all|the|your|any|raw|secret|hidden|system|environment|api|access|auth|session|credential|cookie|token)[[:space:]_-]+)*(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b`)
-	toolExfiltrationPattern = regexp.MustCompile(`(?is)\b(?:use[[:space:]_-]*(?:your[[:space:]_-]*)?tools?|curl|wget|fetch|post|send|upload|exfiltrate|transmit|make[[:space:]_-]*(?:an[[:space:]_-]*)?(?:http[[:space:]_-]*|network[[:space:]_-]*)?request|call[[:space:]_-]*(?:an[[:space:]_-]*)?api)\b.{0,180}(?:https?://|webhook|endpoint|external|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?)`)
-	identifierHexPattern    = regexp.MustCompile(`(?i)^(?:sha(?:1|224|256|384|512):)?(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{56}|[0-9a-f]{64}|[0-9a-f]{96}|[0-9a-f]{128})$`)
-	uuidPattern             = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	ulidPattern             = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
-	overridePattern         = regexp.MustCompile(buildOverridePattern())
+	secretExtractionPattern    = regexp.MustCompile(`(?is)\b(?:reveal|show|send|dump|print|exfiltrate|return)\b.{0,100}\b(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b|\b(?:please[[:space:]_-]+)?output\b[[:space:]_-]+(?:(?:all|the|your|any|raw|secret|hidden|system|environment|api|access|auth|session|credential|cookie|token)[[:space:]_-]+)*(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b`)
+	toolExfiltrationPattern    = regexp.MustCompile(`(?is)\b(?:use[[:space:]_-]*(?:your[[:space:]_-]*)?tools?|curl|wget|fetch|post|send|upload|exfiltrate|transmit|make[[:space:]_-]*(?:an[[:space:]_-]*)?(?:http[[:space:]_-]*|network[[:space:]_-]*)?request|call[[:space:]_-]*(?:an[[:space:]_-]*)?api)\b.{0,180}(?:https?://|webhook|endpoint|external|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?)`)
+	toolDirectiveSuffixPattern = regexp.MustCompile(`(?is)(?:\b(?:please|kindly)|\b(?:can|could|would|will|shall|may)[[:space:]]+you|\byou[[:space:]]+(?:must|should|need(?:[[:space:]]+to)?|are[[:space:]]+to)|\b(?:i|we)[[:space:]]+(?:need|want|require)[[:space:]]+you(?:[[:space:]]+to)?|\b(?:try|attempt)[[:space:]]+to|\bassistant[,:]?)\s*$`)
+	toolDirectiveStartPattern  = regexp.MustCompile(`(?is)(?:^|[\r\n.!?])[[:space:]>#*\-]*$`)
+	identifierHexPattern       = regexp.MustCompile(`(?i)^(?:sha(?:1|224|256|384|512):)?(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{56}|[0-9a-f]{64}|[0-9a-f]{96}|[0-9a-f]{128})$`)
+	uuidPattern                = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	ulidPattern                = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
+	overridePattern            = regexp.MustCompile(buildOverridePattern())
 )
 
 // SubmissionSecurityError contains a bounded code only. It is safe to expose
@@ -322,7 +325,7 @@ func normalizedSecurityView(view securityView) securityView {
 	for index, value := range []rune(view.text) {
 		normalized := strings.ToLower(norm.NFKC.String(string(value)))
 		for _, normalizedRune := range normalized {
-			if unicode.Is(unicode.Mn, normalizedRune) {
+			if unicode.Is(unicode.Mn, normalizedRune) || hiddenControlRune(normalizedRune) {
 				continue
 			}
 			text.WriteRune(normalizedRune)
@@ -761,14 +764,7 @@ func dangerousSubmissionSignals(view securityView, decoded bool) []SubmissionSec
 	if view.text == "" {
 		return nil
 	}
-	signals := make([]SubmissionSecuritySignal, 0, 5)
-	for index, value := range []rune(view.text) {
-		if hiddenControlRune(value) {
-			if signal, ok := signalForSourceSpan(view, view.spans[index], "hidden_control_markup", ruleID(decoded, "hidden_unicode_control"), "critical", false); ok {
-				signals = append(signals, signal)
-			}
-		}
-	}
+	signals := hiddenControlFloodSignals(view, decoded)
 	normalized := normalizedSecurityView(view)
 	for _, pattern := range []struct {
 		pattern  *regexp.Regexp
@@ -783,6 +779,9 @@ func dangerousSubmissionSignals(view securityView, decoded bool) []SubmissionSec
 		{toolExfiltrationPattern, "tool_exfiltration", "tool_exfiltration", "critical"},
 	} {
 		for _, location := range pattern.pattern.FindAllStringIndex(normalized.text, -1) {
+			if pattern.rule == "tool_exfiltration" && !toolExfiltrationIsDirective(normalized.text, location[0]) {
+				continue
+			}
 			kind := pattern.kind
 			if decoded && kind == "instruction_override" {
 				kind = "obfuscated_instruction"
@@ -793,6 +792,54 @@ func dangerousSubmissionSignals(view securityView, decoded bool) []SubmissionSec
 		}
 	}
 	return signals
+}
+
+func hiddenControlFloodSignals(view securityView, decoded bool) []SubmissionSecuritySignal {
+	runes := []rune(view.text)
+	start, count := -1, 0
+	for index, value := range runes {
+		if hiddenControlRune(value) {
+			if start < 0 {
+				start = index
+			}
+			count++
+			continue
+		}
+		if signal, ok := hiddenControlFloodSignal(view, start, index, count, decoded); ok {
+			return []SubmissionSecuritySignal{signal}
+		}
+		start, count = -1, 0
+	}
+	if signal, ok := hiddenControlFloodSignal(view, start, len(runes), count, decoded); ok {
+		return []SubmissionSecuritySignal{signal}
+	}
+	return nil
+}
+
+func hiddenControlFloodSignal(view securityView, start, end, count int, decoded bool) (SubmissionSecuritySignal, bool) {
+	if start < 0 || count < submissionSecurityHiddenControlFlood || end <= start || end > len(view.spans) {
+		return SubmissionSecuritySignal{}, false
+	}
+	return signalForSourceSpan(
+		view,
+		sourceSpan{start: view.spans[start].start, end: view.spans[end-1].end},
+		"hidden_control_markup",
+		ruleID(decoded, "hidden_unicode_control_flood"),
+		"critical",
+		false,
+	)
+}
+
+func toolExfiltrationIsDirective(text string, start int) bool {
+	if start < 0 || start > len(text) {
+		return false
+	}
+	prefix := text[:start]
+	if toolDirectiveStartPattern.MatchString(prefix) || toolDirectiveSuffixPattern.MatchString(prefix) {
+		return true
+	}
+	trimmed := strings.TrimRightFunc(prefix, unicode.IsSpace)
+	return strings.HasSuffix(trimmed, `"`) || strings.HasSuffix(trimmed, "'") || strings.HasSuffix(trimmed, "`")
 }
 
 func hiddenControlRune(value rune) bool {
