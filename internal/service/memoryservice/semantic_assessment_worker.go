@@ -175,6 +175,12 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 	if !ok {
 		return true, errors.Join(errors.New("semantic assessment worker: no claimable placement item"), s.retryOrFail(ctx, *run, repository.PlacementItem{}, "placement_item", false, false))
 	}
+	if scan, err := ScanSubmissionEvidence(fragment.Content); err != nil {
+		if appendErr := s.recordDeterministicSecuritySignals(ctx, *run, fragment, scan); appendErr != nil {
+			return true, errors.Join(appendErr, s.retryOrFail(ctx, *run, item, "deterministic_security_scan", false, false))
+		}
+		return true, s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewQuarantined), "quarantined", "deterministic_security_scan")
+	}
 
 	request, err := s.buildRequest(ctx, *run, item, fragment, placement.Proposal)
 	if err != nil {

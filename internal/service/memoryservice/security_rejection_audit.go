@@ -1,0 +1,92 @@
+package memoryservice
+
+import (
+	"context"
+	"errors"
+	"strings"
+
+	"github.com/google/uuid"
+
+	"github.com/markhuangai/dense-mem/internal/correlation"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
+)
+
+var ErrSecurityAuditPersistence = errors.New("memory security: audit persistence failed")
+
+// SecurityRejectionAuditor records a pre-staging rejection without accepting
+// or retaining the rejected evidence in the knowledge ledger.
+type SecurityRejectionAuditor interface {
+	RecordSecurityRejection(ctx context.Context, input SecurityRejectionAuditInput) error
+}
+
+// SecurityRejectionAuditInput intentionally excludes evidence, decoded text,
+// content hashes, provider data, and credential material.
+type SecurityRejectionAuditInput struct {
+	EventID          string
+	TeamID           string
+	ActorProfileID   string
+	ActorRole        string
+	CorrelationID    string
+	Surface          string
+	ReasonCode       string
+	EvidenceCount    int
+	PolicyVersion    string
+	PolicyHash       string
+	Signals          []SecurityRejectionAuditSignal
+	SignalsTruncated bool
+}
+
+type SecurityRejectionAuditSignal struct {
+	EvidenceIndex int
+	Kind          string
+	RuleID        string
+	Severity      string
+	SpanStart     int
+	SpanEnd       int
+}
+
+func recordSubmissionSecurityRejection(
+	ctx context.Context,
+	auditor SecurityRejectionAuditor,
+	actor requestctx.ActorProfile,
+	surface string,
+	scan SubmissionSecurityBatchScan,
+	rejection error,
+) error {
+	if auditor == nil {
+		return ErrSecurityAuditPersistence
+	}
+	credential, _ := requestctx.ActorCredentialFromContext(ctx)
+	signals := make([]SecurityRejectionAuditSignal, 0, len(scan.Signals))
+	for _, signal := range scan.Signals {
+		signals = append(signals, SecurityRejectionAuditSignal{
+			EvidenceIndex: signal.EvidenceIndex,
+			Kind:          signal.Kind,
+			RuleID:        signal.RuleID,
+			Severity:      signal.Severity,
+			SpanStart:     signal.Start,
+			SpanEnd:       signal.End,
+		})
+	}
+	reason := SubmissionSecurityErrorRejected
+	if typed, ok := rejection.(*SubmissionSecurityError); ok && strings.TrimSpace(typed.Code) != "" {
+		reason = typed.Code
+	}
+	if err := auditor.RecordSecurityRejection(ctx, SecurityRejectionAuditInput{
+		EventID:          uuid.NewString(),
+		TeamID:           actor.TeamID.String(),
+		ActorProfileID:   actor.ProfileID.String(),
+		ActorRole:        strings.TrimSpace(credential.Role),
+		CorrelationID:    correlation.FromContext(ctx),
+		Surface:          strings.TrimSpace(surface),
+		ReasonCode:       reason,
+		EvidenceCount:    len(scan.Items),
+		PolicyVersion:    securityScanPolicyVersion,
+		PolicyHash:       securityScanPolicyHash,
+		Signals:          signals,
+		SignalsTruncated: scan.SignalsTruncated,
+	}); err != nil {
+		return ErrSecurityAuditPersistence
+	}
+	return nil
+}

@@ -31,6 +31,7 @@ type LifecycleDependencies struct {
 	Semantic  LifecycleSemanticRepository
 	Placement LifecyclePlacementRepository
 	Evidence  LifecycleEvidenceRepository
+	Auditor   SecurityRejectionAuditor
 	Metrics   observability.DiscoverabilityMetrics
 }
 
@@ -51,6 +52,7 @@ type lifecycleService struct {
 	semantic  LifecycleSemanticRepository
 	placement LifecyclePlacementRepository
 	evidence  LifecycleEvidenceRepository
+	auditor   SecurityRejectionAuditor
 	metrics   observability.DiscoverabilityMetrics
 }
 
@@ -59,7 +61,7 @@ func NewLifecycleService(deps LifecycleDependencies) LifecycleService {
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
-	return &lifecycleService{semantic: deps.Semantic, placement: deps.Placement, evidence: deps.Evidence, metrics: metrics}
+	return &lifecycleService{semantic: deps.Semantic, placement: deps.Placement, evidence: deps.Evidence, auditor: deps.Auditor, metrics: metrics}
 }
 
 type ResolveMemoryPlacementRequest struct {
@@ -168,6 +170,9 @@ func (s *lifecycleService) resolvePlacementReview(
 	if req.Action == domain.ResolveReleaseQuarantine && !lifecycleCanReleaseQuarantine(credential.Role) {
 		return nil, errors.New("memory lifecycle: manager role is required to release quarantine")
 	}
+	if err := s.rejectUnsafeLifecycleEvidence(ctx, actor, "resolve_memory_placement", req.Evidence); err != nil {
+		return nil, err
+	}
 	resolved, err := s.placement.ResolvePlacementReview(ctx, repository.ResolvePlacementReviewInput{
 		TeamID:               actor.TeamID.String(),
 		OwnerProfileID:       actor.ProfileID.String(),
@@ -249,6 +254,9 @@ func (s *lifecycleService) CorrectEntityResolution(
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
 		return nil, ErrLifecycleAuthContext
+	}
+	if err := s.rejectUnsafeLifecycleEvidence(ctx, actor, "correct_entity_resolution", req.Evidence); err != nil {
+		return nil, err
 	}
 	result, err := s.semantic.CorrectEntityResolution(ctx, repository.CorrectEntityResolutionInput{
 		TeamID:                 actor.TeamID.String(),
@@ -362,6 +370,29 @@ func correctionEvidenceFromRequest(evidence []RememberEvidenceInput) []repositor
 	return out
 }
 
+func (s *lifecycleService) rejectUnsafeLifecycleEvidence(
+	ctx context.Context,
+	actor requestctx.ActorProfile,
+	surface string,
+	evidence []RememberEvidenceInput,
+) error {
+	if len(evidence) == 0 {
+		return nil
+	}
+	contents := make([]string, 0, len(evidence))
+	for _, item := range evidence {
+		contents = append(contents, item.Content)
+	}
+	scan, err := ScanSubmissionBatch(contents)
+	if err == nil {
+		return nil
+	}
+	if auditErr := recordSubmissionSecurityRejection(ctx, s.auditor, actor, surface, scan, err); auditErr != nil {
+		return auditErr
+	}
+	return err
+}
+
 func correctionEvidenceSourceGroup(item RememberEvidenceInput) string {
 	if value := strings.TrimSpace(item.SourceGroup); value != "" {
 		return value
@@ -379,7 +410,7 @@ func lifecycleEvidenceFromRequest(evidence []RememberEvidenceInput) []repository
 	out := make([]repository.EvidenceInput, 0, len(evidence))
 	sourceRevisionHashes := sourceRevisionContentHashes(evidence)
 	for _, item := range evidence {
-		scan := scanEvidence(item.Content)
+		event := submissionSecurityPassEvent()
 		authority, metadata := ledgerAuthorityAndMetadata(item.Authority, item.Metadata)
 		metadata = evidenceProcessingIntentMetadata(metadata, item)
 		out = append(out, repository.EvidenceInput{
@@ -396,7 +427,7 @@ func lifecycleEvidenceFromRequest(evidence []RememberEvidenceInput) []repository
 			IdempotencyKey:                strings.TrimSpace(item.IdempotencyKey),
 			Labels:                        append([]string(nil), item.Labels...),
 			Metadata:                      metadata,
-			InitialEvent:                  &scan,
+			InitialEvent:                  &event,
 		})
 	}
 	return out
