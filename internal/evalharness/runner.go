@@ -33,7 +33,7 @@ type RunOptions struct {
 
 const (
 	DefaultImportConcurrency = 10
-	MaxImportConcurrency     = 10
+	MaxImportConcurrency     = 30
 )
 
 func normalizeImportConcurrency(value int) (int, error) {

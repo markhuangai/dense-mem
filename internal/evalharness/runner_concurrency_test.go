@@ -10,8 +10,8 @@ func TestNormalizeImportConcurrency(t *testing.T) {
 	}{
 		{input: 0, want: DefaultImportConcurrency},
 		{input: 1, want: 1},
-		{input: MaxImportConcurrency, want: MaxImportConcurrency},
-		{input: MaxImportConcurrency + 1, wantErr: true},
+		{input: 30, want: 30},
+		{input: 31, wantErr: true},
 	}
 	for _, tt := range tests {
 		got, err := normalizeImportConcurrency(tt.input)

@@ -43,7 +43,7 @@ func main() {
 	flag.StringVar(&opts.ControlURL, "control-url", env("DENSE_MEM_CONTROL_URL", "http://127.0.0.1:8090"), "control portal base URL")
 	flag.StringVar(&opts.ControlToken, "control-token", env("DENSE_MEM_CONTROL_TOKEN", ""), "control portal token")
 	flag.BoolVar(&opts.ImportSeed, "import-seed", false, "import corpus through remember before running cases")
-	flag.IntVar(&opts.ImportConcurrency, "import-concurrency", importConcurrencyDefault(), "maximum concurrent seed import requests (1-10)")
+	flag.IntVar(&opts.ImportConcurrency, "import-concurrency", importConcurrencyDefault(), fmt.Sprintf("maximum concurrent seed import requests (1-%d)", evalharness.MaxImportConcurrency))
 	flag.DurationVar(&opts.PlacementTimeout, "placement-timeout", envDuration("DENSE_MEM_EVAL_PLACEMENT_TIMEOUT", 2*time.Minute), "maximum time to wait for each memory placement")
 	flag.StringVar(&opts.ResumeSourceDocIDsPath, "resume-source-doc-ids", env("DENSE_MEM_EVAL_RESUME_SOURCE_DOC_IDS", ""), "newline-delimited source document IDs with completed placements")
 	flag.StringVar(&opts.TracesPath, "traces", "", "offline recall_traces.jsonl path to score instead of running live")
