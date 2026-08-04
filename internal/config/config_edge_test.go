@@ -20,6 +20,12 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 		{"invalid sse max duration", func() { os.Setenv("SSE_MAX_DURATION_SECONDS", "bad") }, "SSE_MAX_DURATION_SECONDS"},
 		{"invalid sse streams", func() { os.Setenv("SSE_MAX_CONCURRENT_STREAMS", "bad") }, "SSE_MAX_CONCURRENT_STREAMS"},
 		{"invalid embedding dimensions", func() { os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "bad") }, "AI_API_EMBEDDING_DIMENSIONS"},
+		{"embedding dimensions exceed supported max", func() {
+			os.Setenv("AI_API_URL", "https://example.com/v1")
+			os.Setenv("AI_API_KEY", "sk-test")
+			os.Setenv("AI_API_EMBEDDING_MODEL", "embedding-model")
+			os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "16001")
+		}, "AI_API_EMBEDDING_DIMENSIONS"},
 		{"invalid embedding timeout", func() { os.Setenv("AI_API_EMBEDDING_TIMEOUT_SECONDS", "bad") }, "AI_API_EMBEDDING_TIMEOUT_SECONDS"},
 		{"invalid embedding concurrency", func() { os.Setenv("AI_API_EMBEDDING_MAX_CONCURRENCY", "bad") }, "AI_API_EMBEDDING_MAX_CONCURRENCY"},
 		{"zero embedding concurrency", func() { os.Setenv("AI_API_EMBEDDING_MAX_CONCURRENCY", "0") }, "AI_API_EMBEDDING_MAX_CONCURRENCY"},
@@ -105,6 +111,23 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsMaximumEmbeddingDimensions(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("AI_API_URL", "https://example.com/v1")
+	os.Setenv("AI_API_KEY", "sk-test")
+	os.Setenv("AI_API_EMBEDDING_MODEL", "embedding-model")
+	os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "16000")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+	if cfg.AIEmbeddingDimensions != 16000 {
+		t.Fatalf("AIEmbeddingDimensions = %d, want 16000", cfg.AIEmbeddingDimensions)
+	}
+}
+
 func TestValidateServerStartupRemainingRequiredFields(t *testing.T) {
 	cfg := Config{
 		AIAPIURL:              "https://example.com/v1",
@@ -122,6 +145,7 @@ func TestValidateServerStartupRemainingRequiredFields(t *testing.T) {
 		{"missing api key", func(c *Config) { c.AIAPIKey = "" }, "AI_API_KEY"},
 		{"missing embedding model", func(c *Config) { c.AIEmbeddingModel = "" }, "AI_API_EMBEDDING_MODEL"},
 		{"missing embedding dimensions", func(c *Config) { c.AIEmbeddingDimensions = 0 }, "AI_API_EMBEDDING_DIMENSIONS"},
+		{"embedding dimensions exceed supported max", func(c *Config) { c.AIEmbeddingDimensions = 16001 }, "AI_API_EMBEDDING_DIMENSIONS"},
 		{"missing verifier model", func(c *Config) { c.AIVerifierModel = "" }, "AI_VERIFIER_MODEL"},
 	}
 

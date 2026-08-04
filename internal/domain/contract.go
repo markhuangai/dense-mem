@@ -209,10 +209,13 @@ const (
 
 type VectorIndexStrategy string
 
+const MaxEmbeddingDimensions = 16000
+
 const (
 	VectorIndexExact       VectorIndexStrategy = "exact"
 	VectorIndexVectorHNSW  VectorIndexStrategy = "vector_hnsw"
 	VectorIndexHalfvecHNSW VectorIndexStrategy = "halfvec_hnsw"
+	VectorIndexBinaryHNSW  VectorIndexStrategy = "binary_hnsw"
 )
 
 type EmbeddingJobStatus string
@@ -484,6 +487,7 @@ func VectorIndexStrategies() []string {
 		string(VectorIndexExact),
 		string(VectorIndexVectorHNSW),
 		string(VectorIndexHalfvecHNSW),
+		string(VectorIndexBinaryHNSW),
 	}
 }
 

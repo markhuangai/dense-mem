@@ -72,6 +72,78 @@ rejects any corpus row above 999 Unicode code points. Legacy `claims` and
 `auto_promote` fields are rejected because they bypass production extraction
 and placement.
 
+## Issue #149 V2 relationship derivation
+
+`public_6axis_1k_v2` is derived from the selected V1 cohort; it never replaces
+or normalizes corpus evidence. It adds a flat `relationships` array to each
+corpus row, so each imported `remember` request has the evidence plus its
+client relationship proposal. The derive command copies every manifest-declared
+evaluation artifact and the suite byte-for-byte, verifies the evidence identity
+hash, and validates every generated row with the current public `remember`
+contract before writing the V2 directory.
+
+Before a V2 seed is imported, `validate-v2-cohort` binds the filtered V1
+cohort to the frozen 1k V1 source through the committed cohort lock. It hard
+fails if a source row or case is omitted without declaration, a retained JSONL
+row changes or is reordered, a copied sidecar changes, or either seed hash
+differs from the declared cohort.
+
+```bash
+go run ./cmd/eval-runner \
+  --mode derive-v2 \
+  --seed path/to/public_6axis_1k_v1/seed_manifest.json \
+  --suite path/to/public_6axis_1k_v1/suite.jsonl \
+  --relationship-ledger path/to/relationship_ledger.jsonl \
+  --cohort-lock tests/eval/source_locks/public_6axis_1k_v2_cohort.json \
+  --derived-seed-id public_6axis_1k_v2 \
+  --out path/to/public_6axis_1k_v2
+
+go run ./cmd/eval-runner \
+  --mode validate-v2-cohort \
+  --parent-v1-seed tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json \
+  --parent-v1-suite tests/eval/suites/public_6axis_1k_v1.jsonl \
+  --filtered-v1-seed path/to/filtered_public_6axis_1k_v1/seed_manifest.json \
+  --filtered-v1-suite path/to/filtered_public_6axis_1k_v1/suite.jsonl \
+  --derived-v2-seed path/to/public_6axis_1k_v2/seed_manifest.json \
+  --derived-v2-suite path/to/public_6axis_1k_v2/suite.jsonl \
+  --cohort-lock tests/eval/source_locks/public_6axis_1k_v2_cohort.json
+
+go run ./cmd/eval-runner \
+  --mode compare-v2-cohort \
+  --baseline-run path/to/filtered_v1_baseline \
+  --candidate-run path/to/public_6axis_1k_v2_baseline \
+  --parent-v1-seed tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json \
+  --parent-v1-suite tests/eval/suites/public_6axis_1k_v1.jsonl \
+  --filtered-v1-seed path/to/filtered_public_6axis_1k_v1/seed_manifest.json \
+  --filtered-v1-suite path/to/filtered_public_6axis_1k_v1/suite.jsonl \
+  --derived-v2-seed path/to/public_6axis_1k_v2/seed_manifest.json \
+  --derived-v2-suite path/to/public_6axis_1k_v2/suite.jsonl \
+  --cohort-lock tests/eval/source_locks/public_6axis_1k_v2_cohort.json \
+  --out path/to/v1_v2_comparison
+
+go run ./cmd/eval-runner \
+  --mode validate \
+  --seed path/to/public_6axis_1k_v2/seed_manifest.json \
+  --suite path/to/public_6axis_1k_v2/suite.jsonl \
+  --out path/to/v2-validation
+```
+
+The output `v2_derivation_report.json` records the parent seed hash, evidence
+identity hash, copied-artifact hashes, relationship contract count, excluded
+ledger rows, and any source IDs that needed a documented sentence-bounded
+fallback proposal. A fallback changes only the non-authoritative client
+proposal; it never changes evidence, and the assessor still normalizes it to
+an active team predicate or returns `needs_review`.
+
+Generic `compare` remains same-seed only. `compare-v2-cohort` is the explicit
+cross-seed path: it reruns cohort validation, binds the V1 and V2 run summaries
+to the validated filtered and derived hashes, requires every retained case to
+be scored, and writes `v2_cohort_comparison.json` with the cohort provenance.
+The persistent monitor requires a release policy by default. A derived V2
+comparison run must set `ALLOW_UNGATED_EVALUATION=1` and omit
+`RELEASE_GATE_POLICY`; this records ordinary candidate metrics without
+presenting the result as a release-gate decision.
+
 ## Use the approved local seed
 
 The hard gate consumes the existing approved `public_6axis_1k_v1` seed and
@@ -185,10 +257,14 @@ waits for terminal placement, and then runs the baseline recall suite:
 SEED="${SEED}" \
 SUITE="${SUITE}" \
 RELEASE_GATE_POLICY="${RELEASE_GATE}" \
-IMPORT_CONCURRENCY=3 \
+IMPORT_CONCURRENCY=10 \
 PLACEMENT_TIMEOUT=10m \
 tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 ```
+
+The runner and monitor default to 10 concurrent import requests and reject a
+higher value. The eval-only Compose overlay also limits embedding requests and
+embedding workers to 10.
 
 The monitor polls every 60 seconds by default. `SLEEP_SECONDS` changes only
 the monitor cadence; it does not cap graph relationships or placement work.

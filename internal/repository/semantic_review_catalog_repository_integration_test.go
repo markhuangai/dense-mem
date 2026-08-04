@@ -120,6 +120,40 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 			    team_id, predicate_key, version, aliases, allowed_subject_kinds,
 			    allowed_object_kinds, relationship_kind, current_cardinality,
 			    lifecycle_state, origin, metadata
+			) VALUES (
+			    ?::uuid, 'working_on_project', 1, ARRAY['working on project']::text[],
+			    ARRAY['person','organization','project','product','other']::text[],
+			    ARRAY['project','product','organization','concept','other']::text[],
+			    'state', 'many', 'active', 'built_in', '{"source":"test"}'::jsonb
+			)
+		`, teamID).Error
+	}))
+
+	proposedKeyOptions, err := repo.ListSemanticAssessmentPredicateOptions(ctx, SemanticAssessmentPredicateOptionsInput{
+		TeamID:         teamID,
+		OwnerProfileID: ownerB,
+		QueryText:      "Mark is working on project Dense-Mem.",
+		ProposedKeys:   []string{"is working on"},
+		Limit:          100,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, proposedKeyOptions)
+	assert.Equal(t, "works_on", proposedKeyOptions[0].PredicateKey)
+	competingIndex := -1
+	for index, option := range proposedKeyOptions {
+		if option.PredicateKey == "working_on_project" {
+			competingIndex = index
+			break
+		}
+	}
+	assert.Greater(t, competingIndex, 0)
+
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO team_predicate_definitions (
+			    team_id, predicate_key, version, aliases, allowed_subject_kinds,
+			    allowed_object_kinds, relationship_kind, current_cardinality,
+			    lifecycle_state, origin, metadata
 			)
 			SELECT team_id, predicate_key, version + 1, aliases, allowed_subject_kinds,
 			       allowed_object_kinds, relationship_kind, current_cardinality,

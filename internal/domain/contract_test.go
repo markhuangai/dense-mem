@@ -127,7 +127,7 @@ func TestContractEnums(t *testing.T) {
 			t.Fatalf("SearchIndexGenerationStates missing %s", state)
 		}
 	}
-	for _, strategy := range []string{"exact", "vector_hnsw", "halfvec_hnsw"} {
+	for _, strategy := range []string{"exact", "vector_hnsw", "halfvec_hnsw", "binary_hnsw"} {
 		if !slices.Contains(VectorIndexStrategies(), strategy) {
 			t.Fatalf("VectorIndexStrategies missing %s", strategy)
 		}

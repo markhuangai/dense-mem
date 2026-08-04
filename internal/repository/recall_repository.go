@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -175,7 +176,7 @@ func searchRecallVector(
 	switch contract.IndexStrategy {
 	case string(domain.VectorIndexExact):
 		return searchRecallExactVector(ctx, tx, input, contract, limit)
-	case string(domain.VectorIndexVectorHNSW), string(domain.VectorIndexHalfvecHNSW):
+	case string(domain.VectorIndexVectorHNSW), string(domain.VectorIndexHalfvecHNSW), string(domain.VectorIndexBinaryHNSW):
 		return searchRecallANNVector(ctx, tx, input, contract, limit)
 	default:
 		return nil, fmt.Errorf("%w: unsupported recall vector index strategy %q", ErrSearchContractMismatch, contract.IndexStrategy)
@@ -243,6 +244,9 @@ func searchRecallANNVector(
 		return nil, err
 	}
 	candidateLimit := recallANNCandidateLimit(contract, limit)
+	if err := setRecallANNQueryEFSearch(ctx, tx, contract, candidateLimit); err != nil {
+		return nil, err
+	}
 	query := fmt.Sprintf(`
 		WITH ann_candidates AS MATERIALIZED (
 			SELECT team_id, search_document_id
@@ -293,14 +297,22 @@ func recallANNDistanceExpression(contract *ActiveSearchContract) (string, error)
 	if contract == nil {
 		return "", fmt.Errorf("%w: active search contract is required", ErrSearchContractMismatch)
 	}
-	if contract.EmbeddingDimensions < 1 || contract.EmbeddingDimensions > 4000 {
+	if contract.EmbeddingDimensions < 1 || contract.EmbeddingDimensions > domain.MaxEmbeddingDimensions {
 		return "", fmt.Errorf("%w: ANN dimensions out of range: %d", ErrSearchContractMismatch, contract.EmbeddingDimensions)
 	}
 	switch contract.IndexStrategy {
 	case string(domain.VectorIndexVectorHNSW):
+		if contract.EmbeddingDimensions > 2000 {
+			return "", fmt.Errorf("%w: vector ANN dimensions out of range: %d", ErrSearchContractMismatch, contract.EmbeddingDimensions)
+		}
 		return fmt.Sprintf("embedding::vector(%d) <=> ?::vector(%d)", contract.EmbeddingDimensions, contract.EmbeddingDimensions), nil
 	case string(domain.VectorIndexHalfvecHNSW):
+		if contract.EmbeddingDimensions > 4000 {
+			return "", fmt.Errorf("%w: halfvec ANN dimensions out of range: %d", ErrSearchContractMismatch, contract.EmbeddingDimensions)
+		}
 		return fmt.Sprintf("embedding::halfvec(%d) <=> ?::halfvec(%d)", contract.EmbeddingDimensions, contract.EmbeddingDimensions), nil
+	case string(domain.VectorIndexBinaryHNSW):
+		return fmt.Sprintf("binary_quantize(embedding)::bit(%d) <~> binary_quantize(?::vector)::bit(%d)", contract.EmbeddingDimensions, contract.EmbeddingDimensions), nil
 	default:
 		return "", fmt.Errorf("%w: unsupported recall ANN strategy %q", ErrSearchContractMismatch, contract.IndexStrategy)
 	}
@@ -326,6 +338,29 @@ func recallANNCandidateLimit(contract *ActiveSearchContract, limit int) int {
 		return recallOverfetchCap
 	}
 	return candidateLimit
+}
+
+func recallANNQueryEFSearch(contract *ActiveSearchContract, candidateLimit int) int {
+	queryEFSearch := searchDefaultQueryEFSearch
+	if contract != nil && contract.QueryEFSearch > 0 {
+		queryEFSearch = contract.QueryEFSearch
+	}
+	if candidateLimit > queryEFSearch {
+		return candidateLimit
+	}
+	return queryEFSearch
+}
+
+func setRecallANNQueryEFSearch(
+	ctx context.Context,
+	tx *gorm.DB,
+	contract *ActiveSearchContract,
+	candidateLimit int,
+) error {
+	return tx.WithContext(ctx).Exec(
+		`SELECT set_config('hnsw.ef_search', ?, true)`,
+		strconv.Itoa(recallANNQueryEFSearch(contract, candidateLimit)),
+	).Error
 }
 
 func recallEventAt(validAt, knownAt *time.Time) *time.Time {

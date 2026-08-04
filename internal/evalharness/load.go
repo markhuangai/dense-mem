@@ -25,7 +25,7 @@ func LoadSeedManifest(path string) (*SeedManifest, error) {
 	if strings.TrimSpace(manifest.SchemaVersion) == "" {
 		return nil, errors.New("seed manifest missing schema_version")
 	}
-	if manifest.SchemaVersion != SeedSchemaVersion {
+	if manifest.SchemaVersion != SeedSchemaVersion && manifest.SchemaVersion != SeedSchemaVersionV2 {
 		return nil, fmt.Errorf("unsupported seed schema_version %q", manifest.SchemaVersion)
 	}
 	if strings.TrimSpace(manifest.SeedID) == "" {
@@ -58,6 +58,9 @@ func LoadCorpus(manifestPath string, manifest *SeedManifest) ([]CorpusItem, erro
 		}
 		if _, ok := seen[item.SourceDocID]; ok {
 			return nil, fmt.Errorf("duplicate corpus source_doc_id %q", item.SourceDocID)
+		}
+		if manifest.SchemaVersion == SeedSchemaVersionV2 && len(item.Relationships) == 0 {
+			return nil, fmt.Errorf("corpus row %d missing relationships for V2 seed", i+1)
 		}
 		seen[item.SourceDocID] = struct{}{}
 	}

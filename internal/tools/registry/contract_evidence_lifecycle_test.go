@@ -20,6 +20,7 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 			"supersedes_evidence_ids": []any{targetA},
 		}},
 	}
+	valid = withRequiredFlatRelationship(valid)
 	require.NoError(t, ValidateContractInput(remember, valid, []string{"write"}))
 
 	tests := []struct {
@@ -66,7 +67,7 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateContractInput(remember, tc.input, []string{"write"})
+			err := ValidateContractInput(remember, withRequiredFlatRelationship(tc.input), []string{"write"})
 			require.ErrorContains(t, err, tc.want)
 		})
 	}

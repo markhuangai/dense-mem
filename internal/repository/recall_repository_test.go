@@ -147,10 +147,24 @@ func TestRecallANNHelpersUseDerivedContract(t *testing.T) {
 	require.Equal(t, 80, recallANNCandidateLimit(&ActiveSearchContract{CandidateLimit: 20}, 80))
 	require.Equal(t, recallOverfetchCap, recallANNCandidateLimit(&ActiveSearchContract{CandidateLimit: 1000}, 80))
 
+	binaryContract := &ActiveSearchContract{
+		EmbeddingDimensions: 4096,
+		IndexStrategy:       string(domain.VectorIndexBinaryHNSW),
+	}
+	binaryExpression, err := recallANNDistanceExpression(binaryContract)
+	require.NoError(t, err)
+	require.Equal(t, "binary_quantize(embedding)::bit(4096) <~> binary_quantize(?::vector)::bit(4096)", binaryExpression)
+
 	_, err = recallANNDistanceExpression(&ActiveSearchContract{
 		EmbeddingDimensions: 5000,
 		IndexStrategy:       string(domain.VectorIndexHalfvecHNSW),
 	})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrSearchContractMismatch), "err=%v", err)
+}
+
+func TestRecallANNQueryEFSearchCoversCandidateLimit(t *testing.T) {
+	require.Equal(t, 200, recallANNQueryEFSearch(&ActiveSearchContract{QueryEFSearch: 40}, 200))
+	require.Equal(t, 240, recallANNQueryEFSearch(&ActiveSearchContract{QueryEFSearch: 240}, 200))
+	require.Equal(t, searchDefaultQueryEFSearch, recallANNQueryEFSearch(nil, 0))
 }

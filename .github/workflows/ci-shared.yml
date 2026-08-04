@@ -37,6 +37,9 @@ jobs:
       - name: Run repository lint
         run: npm run --prefix .lint lint:lines
 
+      - name: Run evaluation monitor shell test
+        run: bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
+
       - name: Run Go tests
         shell: bash
         run: |

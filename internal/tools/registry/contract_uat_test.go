@@ -25,32 +25,14 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	if remember.Invoke == nil {
 		t.Fatal("BuildActive remember invoker is nil")
 	}
-	out, err := remember.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
-		"evidence": []any{
-			map[string]any{"content": "Dense-Mem uses PostgreSQL.", "idempotency_key": "eval:doc-alpha"},
-		},
-		"proposal": map[string]any{
-			"entities": []any{
-				map[string]any{"ref": "entity:dense-mem", "name": "Dense-Mem", "entity_kind": "project"},
-				map[string]any{"ref": "entity:postgres", "name": "PostgreSQL", "entity_kind": "product"},
-			},
-			"relationships": []any{
-				map[string]any{
-					"proposal_id": "rel:uses",
-					"subject_ref": "entity:dense-mem",
-					"predicate":   "uses",
-					"object_ref":  "entity:postgres",
-					"correction_target": map[string]any{
-						"relationship_id":  correctionTargetID,
-						"expected_version": 2,
-					},
-					"evidence": []any{
-						map[string]any{"evidence_index": 0, "start": 0, "end": 25},
-					},
-				},
-			},
-		},
-	})
+	input := validFlatRelationshipSubmission()
+	input["evidence"].([]any)[0].(map[string]any)["idempotency_key"] = "eval:doc-alpha"
+	relationship(input)["ref"] = "rel:uses"
+	relationship(input)["correction_target"] = map[string]any{
+		"relationship_id":  correctionTargetID,
+		"expected_version": 2,
+	}
+	out, err := remember.Invoke(contractInvokeContext("write"), "ignored-profile", input)
 	if err != nil {
 		t.Fatalf("remember.Invoke: %v", err)
 	}
@@ -72,11 +54,15 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	if stub.req.Evidence[0].Content != "Dense-Mem uses PostgreSQL." {
 		t.Fatalf("evidence content = %q", stub.req.Evidence[0].Content)
 	}
-	if len(stub.req.EntityHints) != 2 || stub.req.EntityHints[0]["ref"] != "entity:dense-mem" {
+	if len(stub.req.EntityHints) != 0 {
 		t.Fatalf("entity hints = %#v", stub.req.EntityHints)
 	}
-	if len(stub.req.RelationshipHints) != 1 || stub.req.RelationshipHints[0]["proposal_id"] != "rel:uses" {
+	if len(stub.req.RelationshipHints) != 1 || stub.req.RelationshipHints[0]["ref"] != "rel:uses" {
 		t.Fatalf("relationship hints = %#v", stub.req.RelationshipHints)
+	}
+	predicate, ok := stub.req.RelationshipHints[0]["predicate"].(map[string]any)
+	if !ok || predicate["proposed_key"] != "uses" {
+		t.Fatalf("predicate hint = %#v", stub.req.RelationshipHints[0]["predicate"])
 	}
 	target, ok := stub.req.RelationshipHints[0]["correction_target"].(map[string]any)
 	if !ok {

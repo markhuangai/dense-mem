@@ -12,7 +12,7 @@ import (
 func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 	dir := t.TempDir()
 	manifest := SeedManifest{
-		SchemaVersion: SeedSchemaVersion,
+		SchemaVersion: SeedSchemaVersionV2,
 		SeedID:        "dream-live-fixture",
 		CorpusFile:    "corpus.jsonl",
 		CasesFile:     "cases.jsonl",
@@ -29,8 +29,8 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 	if err := writeJSONL(filepath.Join(dir, "corpus.jsonl"), []CorpusItem{
-		{SourceDocID: "doc-employer", Content: "Employer fact source."},
-		{SourceDocID: "doc-location", Content: "Location fact source."},
+		{SourceDocID: "doc-employer", Content: "Employer fact source.", Relationships: []any{evalImportRelationship(t, "Employer fact source.", "relationship-doc-employer")}},
+		{SourceDocID: "doc-location", Content: "Location fact source.", Relationships: []any{evalImportRelationship(t, "Location fact source.", "relationship-doc-location")}},
 	}); err != nil {
 		t.Fatalf("write corpus: %v", err)
 	}

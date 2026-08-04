@@ -279,16 +279,29 @@ func TestSemanticAssessmentCommitInputAppliesInclusiveConfidenceGate(t *testing.
 }
 
 func TestSemanticAssessmentRequestKeepsTrustedRelationshipContextServerSide(t *testing.T) {
-	_, _, _, _, _, worker := semanticAssessmentWorkerFixture(t)
+	_, _, _, catalog, _, worker := semanticAssessmentWorkerFixture(t)
 	service := worker.(*semanticAssessmentPlacementWorkerService)
 	ledger := service.ledger.(*semanticAssessmentWorkerLedgerStub)
 	fragment := ledger.placement.Evidence[0]
 	targetID := uuid.NewString()
 	conflictID := uuid.NewString()
-	proposalID := "proposal:durable"
+	proposalID := "relationship:durable"
 	relationship := map[string]any{
-		"proposal_id": proposalID,
-		"evidence": []any{map[string]any{
+		"ref": proposalID,
+		"subject": map[string]any{
+			"name": "Evidence", "entity_kind": "concept",
+			"span": map[string]any{"evidence_index": fragment.EvidenceIndex, "start": 0, "end": 8},
+		},
+		"predicate": map[string]any{
+			"proposed_key": "is", "surface": "is",
+			"span": map[string]any{"evidence_index": fragment.EvidenceIndex, "start": 9, "end": 11},
+		},
+		"object": map[string]any{"entity": map[string]any{
+			"name": "durable", "entity_kind": "concept",
+			"span": map[string]any{"evidence_index": fragment.EvidenceIndex, "start": 12, "end": 19},
+		}},
+		"polarity": "+", "modality": "statement",
+		"supports": []any{map[string]any{
 			"evidence_index": fragment.EvidenceIndex,
 			"start":          0,
 			"end":            len([]rune(fragment.Content)),
@@ -303,6 +316,14 @@ func TestSemanticAssessmentRequestKeepsTrustedRelationshipContextServerSide(t *t
 		},
 	}
 	proposal := map[string]any{"relationship_hints": []any{relationship}}
+	catalog.predicateOptions = []repository.SemanticReviewPredicateCandidate{
+		{
+			PredicateKey: "is", Version: 1, Aliases: []string{"is"},
+			AllowedSubjectKinds: []string{"concept"}, AllowedObjectKinds: []string{"concept"},
+			RelationshipKind: "state", CurrentCardinality: "many", LifecycleState: "active",
+		},
+		{PredicateKey: "retired", Version: 1, LifecycleState: "deprecated"},
+	}
 
 	request, err := service.buildRequest(context.Background(), *ledger.run, ledger.placement.Items[0], fragment, proposal)
 	require.NoError(t, err)
@@ -316,15 +337,52 @@ func TestSemanticAssessmentRequestKeepsTrustedRelationshipContextServerSide(t *t
 
 	providerRelationship := placementReviewObjectArray(request.ClientProposal, "relationship_hints")
 	require.Len(t, providerRelationship, 1)
-	assert.Equal(t, proposalID, providerRelationship[0]["proposal_id"])
+	assert.Equal(t, proposalID, providerRelationship[0]["ref"])
+	assert.NotContains(t, providerRelationship[0], "proposal_id")
+	predicate, ok := reviewMap(providerRelationship[0]["predicate"])
+	require.True(t, ok)
+	assert.Equal(t, "is", predicate["proposed_key"])
 	assert.NotContains(t, providerRelationship[0], "correction_target")
 	assert.NotContains(t, providerRelationship[0], "conflict_context")
+	require.Len(t, catalog.predicateOptionInputs, 1)
+	assert.Equal(t, []string{"is"}, catalog.predicateOptionInputs[0].ProposedKeys)
+	require.Len(t, request.PredicateOptions, 1)
+	assert.Equal(t, "is", request.PredicateOptions[0].PredicateKey)
+	assert.Equal(t, []string{"concept"}, request.PredicateOptions[0].AllowedSubjectKinds)
 	payload, err := json.Marshal(request)
 	require.NoError(t, err)
 	assert.NotContains(t, string(payload), targetID)
 	assert.NotContains(t, string(payload), conflictID)
 	assert.Contains(t, relationship, "correction_target", "the immutable stored proposal must remain intact")
 	assert.Contains(t, relationship, "conflict_context", "the immutable stored proposal must remain intact")
+}
+
+func TestSemanticAssessmentBuildRequestFailsClosedForTrustedContextAndPredicateCatalog(t *testing.T) {
+	ledger, _, _, catalog, _, worker := semanticAssessmentWorkerFixture(t)
+	service := worker.(*semanticAssessmentPlacementWorkerService)
+	fragment := ledger.placement.Evidence[0]
+	badTrustedContext := map[string]any{"relationship_hints": []any{map[string]any{
+		"ref": "relationship",
+		"supports": []any{map[string]any{
+			"evidence_index": fragment.EvidenceIndex,
+			"start":          0,
+			"end":            len([]rune(fragment.Content)),
+		}},
+		"correction_target": map[string]any{
+			"relationship_id":  "",
+			"expected_version": 1,
+		},
+	}}}
+
+	_, err := service.buildRequest(context.Background(), *ledger.run, ledger.placement.Items[0], fragment, badTrustedContext)
+	require.ErrorContains(t, err, "semantic assessment trusted relationship context is invalid")
+	stage, terminal := semanticAssessmentPreflightFailure(err)
+	assert.True(t, terminal)
+	assert.Equal(t, "trusted_context_validation", stage)
+
+	catalog.predicateOptionsErr = errors.New("predicate catalogue unavailable")
+	_, err = service.buildRequest(context.Background(), *ledger.run, ledger.placement.Items[0], fragment, map[string]any{})
+	require.ErrorContains(t, err, "load predicate options: predicate catalogue unavailable")
 }
 
 func TestSemanticAssessmentCommitInputReattachesTrustedRelationshipContext(t *testing.T) {
@@ -762,14 +820,15 @@ func (s *semanticAssessmentWorkerCommitStub) RequeuePlacementReviewResult(_ cont
 }
 
 type semanticAssessmentWorkerCatalogStub struct {
-	entityMatches       repository.SemanticAssessmentEntityMatchResult
-	entityMatchesErr    error
-	knownCandidates     map[string][]repository.SemanticReviewEntityCandidate
-	knownCandidateErr   error
-	knownCandidateCalls int
-	knownCandidateIDs   []string
-	predicateOptions    []repository.SemanticReviewPredicateCandidate
-	predicateOptionsErr error
+	entityMatches         repository.SemanticAssessmentEntityMatchResult
+	entityMatchesErr      error
+	knownCandidates       map[string][]repository.SemanticReviewEntityCandidate
+	knownCandidateErr     error
+	knownCandidateCalls   int
+	knownCandidateIDs     []string
+	predicateOptions      []repository.SemanticReviewPredicateCandidate
+	predicateOptionsErr   error
+	predicateOptionInputs []repository.SemanticAssessmentPredicateOptionsInput
 }
 
 func (s *semanticAssessmentWorkerCatalogStub) ListSemanticAssessmentEntityMatches(context.Context, repository.SemanticAssessmentEntityMatchInput) (repository.SemanticAssessmentEntityMatchResult, error) {
@@ -789,7 +848,8 @@ func (s *semanticAssessmentWorkerCatalogStub) ListSemanticAssessmentKnownEntitie
 	return candidates, nil
 }
 
-func (s *semanticAssessmentWorkerCatalogStub) ListSemanticAssessmentPredicateOptions(context.Context, repository.SemanticAssessmentPredicateOptionsInput) ([]repository.SemanticReviewPredicateCandidate, error) {
+func (s *semanticAssessmentWorkerCatalogStub) ListSemanticAssessmentPredicateOptions(_ context.Context, input repository.SemanticAssessmentPredicateOptionsInput) ([]repository.SemanticReviewPredicateCandidate, error) {
+	s.predicateOptionInputs = append(s.predicateOptionInputs, input)
 	if s.predicateOptionsErr != nil {
 		return nil, s.predicateOptionsErr
 	}

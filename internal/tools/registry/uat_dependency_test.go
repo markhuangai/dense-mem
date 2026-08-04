@@ -224,13 +224,10 @@ func TestBuildActiveWiresExecutableDreamTools(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "evidence is required") {
 		t.Fatalf("resolve_dream_feedback missing evidence err = %v", err)
 	}
-	resolveOut, err := resolve.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
-		"hypothesis_id": "dream-v2",
-		"decision":      "confirm_true",
-		"evidence": []any{
-			map[string]any{"content": "A deployment note independently confirms Dense-Mem uses PostgreSQL."},
-		},
-	})
+	resolveInput := validFlatRelationshipSubmission()
+	resolveInput["hypothesis_id"] = "dream-v2"
+	resolveInput["decision"] = "confirm_true"
+	resolveOut, err := resolve.Invoke(contractInvokeContext("write"), "ignored-profile", resolveInput)
 	if err != nil {
 		t.Fatalf("resolve_dream_feedback.Invoke: %v", err)
 	}
@@ -242,8 +239,11 @@ func TestBuildActiveWiresExecutableDreamTools(t *testing.T) {
 		t.Fatalf("resolve_dream_feedback output = %#v request = %#v", resolveOut, dreams.lastResolveReq)
 	}
 	if len(dreams.lastResolveReq.Evidence) != 1 ||
-		dreams.lastResolveReq.Evidence[0].Content != "A deployment note independently confirms Dense-Mem uses PostgreSQL." {
+		dreams.lastResolveReq.Evidence[0].Content != "Dense-Mem uses PostgreSQL." {
 		t.Fatalf("resolve_dream_feedback evidence = %#v", dreams.lastResolveReq.Evidence)
+	}
+	if len(dreams.lastResolveReq.RelationshipHints) != 1 || dreams.lastResolveReq.RelationshipHints[0]["ref"] != "uses-postgresql" {
+		t.Fatalf("resolve_dream_feedback relationships = %#v", dreams.lastResolveReq.RelationshipHints)
 	}
 	if dreams.lastResolveReq.DreamID != "dream-v2" {
 		t.Fatalf("resolve_dream_feedback dream id = %q", dreams.lastResolveReq.DreamID)

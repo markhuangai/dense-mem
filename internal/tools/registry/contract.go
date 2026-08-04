@@ -621,17 +621,7 @@ func validateRemember(args map[string]any) error {
 	if err := validateDirectEvidenceSupersessions(evidence); err != nil {
 		return err
 	}
-	proposal, _ := objectFields(args["proposal"])
-	if err := validateUniqueObjectRefsIn(proposal["entities"], "proposal.entities", "ref"); err != nil {
-		return err
-	}
-	if err := validateUniqueObjectRefsIn(proposal["relationships"], "proposal.relationships", "proposal_id"); err != nil {
-		return err
-	}
-	if err := validateRelationshipObjectChoiceIn(proposal["relationships"], "proposal.relationships"); err != nil {
-		return err
-	}
-	return validateProposalReferencesAndSpans(proposal, evidence)
+	return validateSubmittedRelationships(args["relationships"], evidence, "relationships")
 }
 
 func validateRecall(args map[string]any) error {

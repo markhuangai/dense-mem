@@ -1,0 +1,29 @@
+{
+  "schema_version": "dense-mem.eval.cohort_filter.v1",
+  "seed_id": "public_6axis_1k_v1",
+  "parent_seed_hash": "sha256:eb09124331228e59898a93740104ab978b9974e3ebf7f7fc2e09728ef95b3d78",
+  "filtered_seed_hash": "sha256:51a38b8f62b536414d15bd857a59d15017a21de5747fc391d351c6ac1e9a9643",
+  "removed_source_doc_ids": [
+    "public_6axis_v1:qasper:dev:1601.02403:7697baf8d8d582c1f664a614f6332121061f87db:gold:1:0",
+    "public_6axis_v1:qasper:dev:1603.01514:0fc2b5bc2ead08a6fe0280fb3a47477c6df1587c:distractor:1:0",
+    "public_6axis_v1:qasper:dev:1603.01514:111afb77cfbf4c98e0458606378fa63a0e965e36:distractor:1:0",
+    "public_6axis_v1:qasper:dev:1603.01514:4986f420884f917d1f60d3cea04dc8e64d3b5bf1:distractor:1:0",
+    "public_6axis_v1:qasper:dev:1603.01514:50cc6c5f2dcf5fb87b56007f6a825fa7c90b64ed:distractor:1:0",
+    "public_6axis_v1:qasper:dev:1603.01514:6568a31241167f618ef5ede939053feaa2fb0d7e:distractor:1:0",
+    "public_6axis_v1:qasper:dev:1603.01514:6bf5620f295b5243230bc97b340fae6e92304595:distractor:1:0",
+    "public_6axis_v1:qasper:dev:1603.01514:747b847d687f703cc20a87877c5b138f26ff137d:distractor:1:0",
+    "public_6axis_v1:qasper:dev:1605.07333:6cd8bad8a031ce6d802ded90f9754088e0c8d653:gold:1:0"
+  ],
+  "dropped_case_ids": [
+    "public_6axis_v1:qasper:dev:1601.02403:7697baf8d8d582c1f664a614f6332121061f87db",
+    "public_6axis_v1:qasper:dev:1605.07333:6cd8bad8a031ce6d802ded90f9754088e0c8d653"
+  ],
+  "expected_counts": {
+    "corpus": 991,
+    "cases": 204,
+    "qrels": 204,
+    "answers": 204,
+    "transforms": 204
+  },
+  "invariant": "Retained corpus, cases, qrels, answers, transforms, and licenses records are byte-identical to the parent artifact. The V2 derivation may add only relationships properties to retained corpus rows."
+}

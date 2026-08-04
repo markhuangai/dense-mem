@@ -511,14 +511,41 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "hypothesis text cannot be submitted")
 
+	evidenceContent := " The deployment note says Dense-Mem uses PostgreSQL. "
+	relationshipHint := map[string]any{
+		"ref": "uses-postgresql",
+		"subject": map[string]any{
+			"name":        "Dense-Mem",
+			"entity_kind": "project",
+			"span":        map[string]any{"evidence_index": 0, "start": 26, "end": 35},
+		},
+		"predicate": map[string]any{
+			"proposed_key": "uses",
+			"surface":      "uses",
+			"span":         map[string]any{"evidence_index": 0, "start": 36, "end": 40},
+		},
+		"object": map[string]any{"entity": map[string]any{
+			"name":        "PostgreSQL",
+			"entity_kind": "product",
+			"span":        map[string]any{"evidence_index": 0, "start": 41, "end": 51},
+		}},
+		"polarity": "+",
+		"modality": "statement",
+		"supports": []any{map[string]any{
+			"evidence_index": 0,
+			"start":          1,
+			"end":            52,
+		}},
+	}
 	res, err := svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
 		Feedback: "User confirmed this with a deployment note.",
 		Evidence: []memoryservice.RememberEvidenceInput{{
-			Content: "The deployment note says Dense-Mem uses PostgreSQL.",
+			Content: evidenceContent,
 		}},
-		IdempotencyKey: "dream-submit-1",
+		RelationshipHints: []map[string]any{relationshipHint},
+		IdempotencyKey:    "dream-submit-1",
 	})
 
 	require.NoError(t, err)
@@ -529,6 +556,8 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	require.Len(t, remember.requests, 1)
 	assert.Equal(t, domain.ContractVersion, remember.requests[0].ContractVersion)
 	assert.Equal(t, "dream-submit-1", remember.requests[0].IdempotencyKey)
+	assert.Equal(t, evidenceContent, remember.requests[0].Evidence[0].Content)
+	assert.Equal(t, []map[string]any{relationshipHint}, remember.requests[0].RelationshipHints)
 	assert.Equal(t, hypothesisID, remember.requests[0].Evidence[0].Metadata["hypothesis_id"])
 	assert.Equal(t, teamID.String(), repo.submitInput.TeamID)
 	assert.Equal(t, ownerID.String(), repo.submitInput.ActorProfileID)

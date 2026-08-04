@@ -22,12 +22,7 @@ func rememberRequestFromContractInput(input map[string]any) (memoryservice.Remem
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		req.IdempotencyKey = rememberIngestIdempotencyKey(req.Evidence)
 	}
-	proposal, ok := objectFields(input["proposal"])
-	if !ok {
-		return req, nil
-	}
-	req.EntityHints = objectArray(proposal["entities"])
-	req.RelationshipHints = objectArray(proposal["relationships"])
+	req.RelationshipHints = objectArray(input["relationships"])
 	return req, nil
 }
 
@@ -38,12 +33,7 @@ func resolveDreamFeedbackRequestFromContractInput(input map[string]any) (dreamse
 	}
 	req.DreamID = stringInput(input["hypothesis_id"])
 	req.Feedback = stringInput(input["reason"])
-	proposal, ok := objectFields(input["proposal"])
-	if !ok {
-		return req, nil
-	}
-	req.EntityHints = objectArray(proposal["entities"])
-	req.RelationshipHints = objectArray(proposal["relationships"])
+	req.RelationshipHints = objectArray(input["relationships"])
 	return req, nil
 }
 

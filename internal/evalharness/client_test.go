@@ -18,6 +18,23 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	var rememberCalls int
 	var placementPolls int
 	var exportCursors []string
+	flatRelationships := []any{map[string]any{
+		"ref": "relationship_1",
+		"subject": map[string]any{
+			"name": "Alpha", "entity_kind": "other",
+			"span": map[string]any{"evidence_index": 0, "start": 0, "end": 5},
+		},
+		"predicate": map[string]any{
+			"proposed_key": "uses", "surface": "uses",
+			"span": map[string]any{"evidence_index": 0, "start": 6, "end": 10},
+		},
+		"object": map[string]any{"entity": map[string]any{
+			"name": "Beta", "entity_kind": "other",
+			"span": map[string]any{"evidence_index": 0, "start": 11, "end": 15},
+		}},
+		"polarity": "+", "modality": "statement",
+		"supports": []any{map[string]any{"evidence_index": 0, "start": 0, "end": 15}},
+	}}
 
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Content-Type") != "application/json" {
@@ -50,6 +67,15 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			}
 			if _, ok := input["auto_promote"]; ok {
 				t.Fatalf("remember input contains auto_promote: %#v", input)
+			}
+			relationships, ok := input["relationships"].([]any)
+			if !ok || len(relationships) != 1 {
+				t.Fatalf("remember relationships = %#v", input["relationships"])
+			}
+			relationship := relationships[0].(map[string]any)
+			predicate := relationship["predicate"].(map[string]any)
+			if relationship["ref"] != "relationship_1" || predicate["proposed_key"] != "uses" {
+				t.Fatalf("remember relationship = %#v", relationship)
 			}
 			rememberCalls++
 			evidence := input["evidence"].([]any)
@@ -151,9 +177,10 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{
 		SourceDocID:   "doc-alpha",
 		Title:         "Alpha",
-		Content:       "Alpha content",
+		Content:       "Alpha uses Beta.",
 		SourceDataset: "fixture",
 		Metadata:      map[string]any{"topic": "letters"},
+		Relationships: flatRelationships,
 	}})
 	if err != nil {
 		t.Fatalf("ImportCorpus: %v", err)
