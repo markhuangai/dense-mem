@@ -1,8 +1,8 @@
 # Memory Write Pipeline
 
-Dense-Mem accepts a complete, client-generated structural proposal with exact
-evidence. The server owns every durable decision. There is no client review
-loop, placement selection, or request for follow-up evidence.
+Dense-Mem accepts exact evidence plus a complete client-generated relationship
+array. The server owns every durable decision. There is no client review loop,
+placement selection, or request for follow-up evidence.
 
 The public write contract is dense-mem.v2.4. Discover the current schema with
 MCP tools/list; this page explains the lifecycle behind remember and
@@ -13,7 +13,7 @@ get_submission_status.
 ~~~mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Client["Client"] --> Remember["remember: evidence + exact-span proposal"]
+  Client["Client"] --> Remember["remember: evidence + exact-span relationships"]
   Remember --> Scan{"Deterministic scan"}
   Scan -- reject --> Reject["Safe write error; nothing staged"]
   Scan -- pass --> Stage["Isolated PostgreSQL submission"]
@@ -37,14 +37,17 @@ the evidence has become active memory or that an embedding is current.
 
 ## Client Submission Contract
 
-The client must split source material into the smallest meaningful Entity names
-and supply the proposed Relationships that it wants assessed. A proposal is
-required, not an optional hint.
+The client supplies a nonempty top-level `relationships` array; it is required,
+not an optional hint. An evidence item is currently bounded to 999 characters,
+and one item can support multiple distinct propositions, so there is no fixed
+single relationship object or separate cross-referenced `proposal.entities`
+object.
 
-Each Entity has exactly one evidence span. Each predicate has an exact surface
-and span. Each Relationship cites spans covering its subject, predicate, and
-Entity or typed Value object. Offsets are zero-based Unicode code-point offsets,
-with an inclusive start and exclusive end.
+Each relationship is self-contained. Its inline subject and object Entity (or
+typed Value), predicate, and supports have exact evidence spans. Offsets are
+zero-based Unicode code-point positions, with an inclusive start and exclusive
+end. Every component span must be covered by a support span in the same evidence
+item.
 
 ~~~json
 {
@@ -53,38 +56,39 @@ with an inclusive start and exclusive end.
     "source_type": "manual",
     "idempotency_key": "storage-architecture-20260801"
   }],
-  "proposal": {
-    "entities": [
-      {
-        "ref": "subject",
+  "relationships": [{
+      "ref": "uses-postgresql",
+      "subject": {
         "name": "Dense-Mem",
         "entity_kind": "project",
-        "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]
+        "span": {"evidence_index": 0, "start": 0, "end": 9}
       },
-      {
-        "ref": "object",
+      "predicate": {
+        "proposed_key": "uses",
+        "surface": "uses",
+        "span": {"evidence_index": 0, "start": 10, "end": 14}
+      },
+      "object": {"entity": {
         "name": "PostgreSQL",
         "entity_kind": "product",
-        "evidence": [{"evidence_index": 0, "start": 15, "end": 25}]
-      }
-    ],
-    "relationships": [{
-      "proposal_id": "uses",
-      "subject_ref": "subject",
-      "predicate": {"surface": "uses", "evidence_index": 0, "start": 10, "end": 14},
-      "object_ref": "object",
+        "span": {"evidence_index": 0, "start": 15, "end": 25}
+      }},
       "polarity": "+",
       "modality": "statement",
-      "evidence": [{"evidence_index": 0, "start": 0, "end": 26}]
-    }]
-  }
+      "supports": [{"evidence_index": 0, "start": 0, "end": 26}]
+  }]
 }
 ~~~
 
-The client may offer a same-team known_entity_id as a candidate hint, but
-cannot choose canonical IDs, lifecycle state, support, a predicate definition,
-or any acceptance outcome. Values must be typed; a string display or unit must
-also be exact evidence text.
+The client makes its best effort to set `predicate.proposed_key` to a matching
+team predicate. It is a suggestion, not authority. The predicate `surface` and
+the typed Value `surface`, display, or unit must equal their exact submitted
+evidence spans. `object` contains exactly one of `entity` or `value`; a
+typed Value includes its type, canonical value, surface, and span.
+
+The client may offer a same-team `known_entity_id` inside an inline Entity as a
+candidate hint, but cannot choose canonical IDs, lifecycle state, support,
+predicate registration, or any acceptance outcome.
 
 The source and lifecycle fields on evidence retain their normal ownership,
 idempotency, and source-revision rules. A direct replacement of owned current
@@ -119,7 +123,7 @@ Passing evidence is stored only in the submission staging boundary:
 ~~~text
 submission_runs
   ├── exact staged evidence
-  ├── client proposal
+  ├── client relationships
   ├── attempts, lease, and bounded error code
   ├── assessor response and per-item outcomes
   └── optional replacement link
@@ -138,28 +142,35 @@ PostgreSQL RLS.
 ## Server-Owned Assessment
 
 The worker loads the complete staged submission, a bounded list of same-team
-Entity candidates, and the team predicate catalog. It sends them to one
+Entity candidates, and the active team predicate catalog. It sends them to one
 capability-free assessor request.
 
 The assessor receives:
 
-- the full exact staged evidence and the client proposal
-- bounded Entity candidates and predicate options for normalization
+- the full exact staged evidence and the raw client relationship proposals,
+  including every client `predicate.proposed_key`
+- bounded Entity candidates and active predicate options for normalization
 - no tools, credentials, environment variables, network capability, or request
   headers
 - no prior raw evidence history, cross-team data, or authority to select stored
   IDs outside its supplied options
 
-The response is a closed schema. It must contain one security verdict, signals,
-and bounded justification for every evidence item; normalized Entity and
-Relationship results; and either a registered predicate result or a
-well-formed novel predicate candidate. The provider cannot clear a deterministic
-security signal, decide durable status, create support outside the evidence, or
-override authenticated ownership.
+The predicate catalog is selected deterministically: exact key or alias matches
+first, then structured relevance/rank. The request records whether that catalog
+is complete for the decision; truncation must not turn an existing predicate
+into a false new one.
 
-The assessor may identify a new predicate. After server validation, the server
-registers that predicate atomically with the accepted semantic commit. Clients
-do not receive a predicate-review task.
+The response is a closed schema. It must contain one security verdict, signals,
+and bounded justification for every evidence item plus normalized Entity and
+Relationship results. A predicate result can select only an allowlisted active
+predicate or return a typed registration-required result. The provider cannot
+clear a deterministic security signal, decide durable status, create support
+outside the evidence, create or activate a predicate, or override authenticated
+ownership.
+
+A registration-required result follows the controlled, auditable predicate
+workflow. It does not make a raw client or assessor predicate durable, and
+clients do not receive a predicate-review task.
 
 Malformed, incomplete, duplicate, out-of-allowlist, or otherwise invalid
 responses do not produce a partial semantic commit. The worker uses bounded
@@ -172,7 +183,8 @@ On a clean valid assessment, one PostgreSQL transaction:
 
 1. creates canonical evidence and observations;
 2. applies Entity/Value/Relationship and lifecycle decisions;
-3. registers a validated new predicate when needed;
+3. consumes only a predicate decision already validated by the controlled
+   registration workflow;
 4. records assessment outcomes and audit history;
 5. creates derived full-text/vector search work; and
 6. marks the submission completed.
@@ -205,7 +217,7 @@ The status is owner-scoped and contains safe, bounded state only:
 | quarantined | Security concern; isolated staged data expires after 24 hours. | Do not use it; optionally submit a replacement. |
 | failed | Required worker/provider/persistence work exhausted its bounded retry policy. | Diagnose using safe error/correlation context, then submit anew if appropriate. |
 
-Status also reports per-evidence outcomes, per-proposal Relationship outcomes,
+Status also reports per-evidence outcomes and per-relationship outcomes,
 bounded error codes, quarantine_expires_at when applicable, and search state.
 search_state=pending means canonical promotion may be complete while a derived
 embedding is still being built. current and not_required are ready for the
@@ -248,7 +260,7 @@ do not run legacy placement workers or expose legacy placement tools.
 
 ## Acceptance Checks
 
-1. a missing or span-mismatched proposal is rejected before staging;
+1. a missing or span-mismatched relationship is rejected before staging;
 2. Base64 and injection evidence are rejected before staging;
 3. staged content cannot enter recall or search before atomic promotion;
 4. every assessor response covers every evidence item with a security verdict;
@@ -257,6 +269,6 @@ do not run legacy placement workers or expose legacy placement tools.
    atomically;
 7. status never exposes a review task or raw assessor/prompt content;
 8. quarantined staging is removed only after its exact 24-hour retention;
-9. a new predicate is registered only through a validated server commit; and
+9. a predicate is added or activated only through the controlled validated
+   registration workflow; and
 10. recall remains evidence-first and treats returned content as untrusted.
-

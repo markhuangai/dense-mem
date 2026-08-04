@@ -39,6 +39,11 @@ cp .env.example .env
 Verify the release tag, artifact checksum/signature, and release notes. Stop if
 the release does not advertise `dense-mem.v2.4` and PostgreSQL authority.
 
+Release candidates use `vX.Y.Z-rc.N` for the release image and
+`demo-vX.Y.Z-rc.N` for the demo image. Stable promotion reuses those exact
+manifests as `vX.Y.Z` plus `latest`, and as `demo-vX.Y.Z`; no rolling `demo` tag
+is published.
+
 ### Upgrading an existing installation
 
 An installation upgrading from a version earlier than `2.1.1` must first
@@ -98,6 +103,13 @@ curl -fsS http://127.0.0.1:8080/ready
 Continue only when readiness confirms PostgreSQL migrations, `pgvector`,
 embedding/assessor contracts, and required coordination.
 
+The image contains one project executable, `/app/server`. It obtains a
+PostgreSQL session lock and applies pending migrations before opening the HTTP
+listeners, so no separate migration container is required. Replicas sharing
+one writable primary serialize this step. Keep migrations backward compatible
+during rolling deployment, and start a server against every independent
+database.
+
 Local surfaces:
 
 ```text
@@ -108,15 +120,28 @@ Control portal: http://127.0.0.1:8090/
 
 ## 4. Create A Team And Key
 
-Use the exact release's CLI and verify `--help`:
+Open the private control portal with `CONTROL_PORTAL_TOKEN`, create a team, then
+create its first profile/API key. Automation may call the same private control
+API:
 
 ```bash
-docker compose exec server /app/provision-team \
-  --name "primary-memory"
+control_token="<CONTROL_PORTAL_TOKEN from .env>"
+
+team_json="$(curl -fsS -X POST http://127.0.0.1:8090/control/api/teams \
+  -H "Authorization: Bearer ${control_token}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"primary-memory"}')"
+team_id="$(printf '%s' "$team_json" | jq -r '.data.id')"
+
+curl -fsS -X POST \
+  "http://127.0.0.1:8090/control/api/teams/${team_id}/profiles" \
+  -H "Authorization: Bearer ${control_token}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"default profile"}'
 ```
 
-The image may also expose `/app/provision-profile` as a compatibility name.
-Store the one-time raw key in a secret manager:
+The release image does not include standalone administration commands. Store
+the one-time raw key returned by the portal/API in a secret manager:
 
 ```bash
 export DENSE_MEM_API_KEY="dm_..."

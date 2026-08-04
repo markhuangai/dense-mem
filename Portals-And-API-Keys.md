@@ -167,23 +167,27 @@ Use cases:
 
 ## Create And Rotate
 
-The supported release may provide operator CLIs such as:
+Deployment operators create teams and profiles through the private control
+portal or its authenticated API. For example:
 
 ```bash
-docker compose exec server /app/provision-team --name "primary-memory"
-docker compose exec server /app/list-teams
-docker compose exec server /app/list-team-profiles --team-id "<team-id>"
-docker compose exec server /app/rotate-team-profile-key \
-  --team-id "<team-id>" \
-  --profile-id "<profile-id>"
+control_token="<CONTROL_PORTAL_TOKEN>"
+
+curl -fsS -X POST http://127.0.0.1:8090/control/api/teams \
+  -H "Authorization: Bearer ${control_token}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"primary-memory"}'
 ```
 
-Validate available flags with `--help` on the exact image. The raw key is
-returned once; store it in a secret manager.
+Create the first profile from the returned team ID at
+`POST /control/api/teams/{team_id}/profiles`. The raw key is returned once;
+store it in a secret manager. Release images do not contain standalone
+provisioning, listing, deletion, rotation, migration, or conflict-review
+commands.
 
 Team managers create and rotate profile keys through the Team tab. SSO members
 use the My key tab subject to their current entitlement. Deployment operators
-may use the release's supported provisioning CLI on the private host.
+use the control portal/API on the private listener.
 
 Do not place raw keys in command history on shared machines; prefer a protected
 input/file mechanism supported by the client.

@@ -29,92 +29,105 @@ or update a Relationship.
 
 ## Eligible Inputs
 
-Dreaming may read:
+Input selection is team-wide, but it starts with current evidence-backed
+Relationship records rather than with free-form summaries. A source must be
+one of the following:
 
-- compact active Relationships with effective support
-- a `pending_evidence` Relationship only when its final schema-valid assessment
-  is `insufficient` or `entailed` below the positive-support threshold and its
-  seven-day semantic review has expired
-- existing resolved Entity and typed-Value endpoints referenced by those
-  Relationships
-- registered predicate definitions
+- an `active` Relationship with at least one currently granted/reinstated
+  support whose fragment is not quarantined, retracted, or superseded and whose
+  source revision is current;
+- a `pending_evidence` Relationship whose final schema-valid assessment is
+  `insufficient` or below the write threshold, with its required semantic
+  review expired; or
+- neither is eligible when its endpoints are inactive, its Relationship has a
+  challenge or open review, or it has no usable exact excerpt.
 
-Equivalent cross-profile Relationships are grouped so copied positions do not
-multiply dream weight. Dreaming may use only the preferred position of a
-`resolved` Conflict case, with all source Relationship IDs. An `open` or
-`overdue` cross-profile case is excluded rather than used as a guessed premise.
-
-Input Relationships remain profile-owned evidence records, but input selection
-is team-wide. A Relationship may point from Person A's Entity to Person B's
-Entity when both endpoints are in the same team and the registered predicate
-allows their endpoint kinds. Endpoint provenance and a source record's owner
-do not limit team visibility of a generated Hypothesis.
-
-A pending Relationship is eligible only when:
+The server then constructs only direct, directed two-edge paths:
 
 ```text
-status = pending_evidence
-subject Entity already exists
-object Entity or Value already exists
-predicate is registered and valid for both endpoint kinds
-final schema-valid assessment is insufficient or entailed below threshold
-the associated semantic review is expired
-no identity, predicate, scope, or temporal ambiguity is open
+A -- existing relationship r1 --> B -- existing relationship r2 --> C
 ```
 
-Context retained after an unavailable assessor or invalid provider response is
-not yet an eligible pending Relationship. Dense-Mem keeps that context in the
-placement ledger, but dreaming cannot use it until normal assessment produces a
-valid material result and the review window closes. This prevents provider
-failure text from becoming a speculation seed.
+`A`, `B`, and `C` are existing Entity or typed-Value endpoints. `r1` and `r2`
+must be distinct, `A` cannot equal `C`, and at least one premise is active.
+Two pending premises never form a path. The server filters the registered
+target predicates by the kinds of `A` and `C` before a provider sees a path.
 
-Dreaming must exclude quarantined, disputed, rejected, retracted, superseded,
-ambiguous, and review-held records. It must also exclude records whose only
-support comes from a non-current source revision, even while the replacement
-revision is still quarantined or awaiting placement.
+The server does not infer a third fact while assembling context. It selects
+existing nodes, existing Relationship edges, their exact evidence excerpts, and
+an allowlist of possible target predicates. A provider may then choose to make
+no proposal.
+
+Equivalent cross-profile Relationships are grouped so copied positions do not
+multiply dream weight. An unresolved conflict, quarantine, retraction,
+supersession, stale source revision, or review-held record is excluded instead
+of being used as a guessed premise.
+
+### What the AI receives
+
+The provider receives a bounded request-local view, never the database graph or
+durable identifiers.
+
+| Item | Sent to the provider | Not sent |
+| --- | --- | --- |
+| Path nodes | opaque refs such as `node_1`, display text, and endpoint kind | Entity/Value IDs, team ID, profile IDs |
+| Each premise | opaque `premise_ref` and `relationship_ref`, predicate label, relationship version/status, and opaque direction refs | Relationship ID, owner, support count, lifecycle history |
+| Evidence | one or two exact quoted excerpts per premise, each with an opaque `evidence_ref` and authority | fragment/support/observation/source/revision IDs, source-group key |
+| Possible target | opaque `predicate_ref`, registered predicate label, kind, and cardinality | arbitrary verbs, registry mutation, a target ID |
+| Request bounds | opaque request/path refs and `max_outputs` | prior Dream text, generated evidence, cross-team context |
+
+Each exact excerpt is bounded to 4,000 runes. The provider is instructed to
+treat excerpts as untrusted data, not instructions. It may only return a
+possible `A -- allowed predicate --> C` relationship for a supplied path and
+must cite at least one supplied excerpt from **each** premise.
 
 ## Allowed Output
 
-A dream may propose only a possible registered predicate between server-supplied
-existing endpoint IDs:
+A Dream is a provider proposal about a possible registered predicate between
+server-supplied existing endpoints. The persisted result retains the exact
+cited derivations; it does not turn them into new evidence:
 
 ```json
 {
-  "hypothesis_id": "hyp_01J...",
-  "team_id": "team-1",
-  "source_owner_profile_ids": ["profile-a", "profile-b"],
-  "subject_entity_id": "ent_dense_mem",
-  "predicate_key": "benefits_from",
-  "object_entity_id": "ent_search_freshness",
-  "object_value_id": null,
-  "statement": "Dense-Mem may benefit from explicit search freshness.",
-  "rationale": "Active recall and embedding-job Relationships suggest a useful connection.",
+  "dream_id": "…",
+  "hypothesis": "Dense-Mem may use PostgreSQL.",
+  "rationale": "The two supplied premises make this a possible dependency.",
   "likelihood": 0.68,
   "confidence": 0.61,
-  "source_relationship_ids": ["r_recall", "r_embedding_job"],
-  "source_pending_relationship_ids": ["r_pending_freshness"],
-  "source_versions": {
-    "r_recall": 4,
-    "r_embedding_job": 2,
-    "r_pending_freshness": 1
-  },
   "generator_kind": "provider",
-  "generator_version": "dream-v2",
+  "generator_version": "configured-verifier-model",
+  "derivations": [
+    {
+      "premise_position": 1,
+      "relationship_version": 4,
+      "quote": "Dense-Mem uses the Runtime service.",
+      "authority": "primary"
+    },
+    {
+      "premise_position": 2,
+      "relationship_version": 2,
+      "quote": "The Runtime service uses PostgreSQL.",
+      "authority": "primary"
+    }
+  ],
   "status": "proposed",
-  "created_at": "2026-07-11T00:00:00Z"
+  "created_at": "2026-08-01T03:00:00Z"
 }
 ```
 
-Exactly one object form is set. All endpoint, predicate, and source IDs come
-from immutable server allowlists and must belong to the same team.
+The provider response contains only `path_ref`, `predicate_ref`, statement,
+rationale, optional what-if/outcome text, probabilities, and cited
+`evidence_refs`. The server resolves those opaque refs and decides whether to
+persist. Exactly one object form is set. All durable endpoints, predicates,
+and source records are server-selected and same-team.
 
 The generator cannot output:
 
 - a new Entity, Value, name, alias, or ID
 - an unknown predicate or registry change
 - a Relationship, support link, verification verdict, or status change
-- evidence text claiming that the Hypothesis proves itself
-- a source ID outside the supplied input set
+- new evidence, a rewritten quote, or a claim that the Hypothesis proves itself
+- a durable ID or reference outside the supplied request-local allowlist
 
 If the idea requires a concept that has no existing semantic node, the dream
 item is rejected. A later user may introduce that concept through real evidence
@@ -125,7 +138,7 @@ in `remember`.
 | Status | Meaning |
 | --- | --- |
 | `proposed` | new and available for review |
-| `reinforced` | still useful after feedback or a later generation cycle |
+| `reinforced` | still useful after explicit same-team feedback; automatic generation never reinforces a duplicate |
 | `stale` | a same-team reviewer marked the idea no longer current |
 | `rejected` | explicitly rejected |
 | `submitted` | new evidence was sent to `remember`; placement outcome remains separate |
@@ -140,39 +153,60 @@ outcome.
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
   Start["Start team dream cycle"] --> Read["Read bounded eligible inputs<br/>in one PostgreSQL snapshot"]
-  Read --> Groups["Build diverse connected groups"]
-  Groups --> Generate["Generate structured edge-shaped ideas"]
+  Read --> Paths["Build direct A → B → C paths<br/>with exact evidence excerpts"]
+  Paths --> Target["Block any existing A → predicate → C<br/>Relationship or Hypothesis"]
+  Target --> Prior["Skip an already evaluated<br/>relationship/version pair"]
+  Prior --> Generate["Required AI provider receives<br/>opaque refs + exact excerpts"]
   Generate --> Schema{"Closed schema valid?"}
-  Schema -- No --> Reject["Reject generated item"]
-  Schema -- Yes --> Allow{"All IDs allowed and<br/>nodes/predicate still exist?"}
+  Schema -- No --> Regenerate["Bounded complete regeneration"]
+  Regenerate --> Schema
+  Schema -- Yes --> Allow{"Path/predicate/citations still<br/>match the server allowlist?"}
   Allow -- No --> Reject
-  Allow -- Yes --> Existing{"Exact active Relationship<br/>already exists?"}
+  Allow -- Yes --> Existing{"Target and sources still current<br/>inside one PostgreSQL transaction?"}
   Existing -- Yes --> Reject
-  Existing -- No --> Recheck["Recheck source versions"]
-  Recheck --> Dedup["Deduplicate normalized identity<br/>and source set"]
-  Dedup --> Persist["Persist Hypothesis and cycle result"]
+  Existing -- No --> Persist["Atomically persist Hypothesis, exact derivations,<br/>and evaluated relationship/version paths"]
 ```
 
-The generator receives compact current rows, not full evidence or assessor
-rationales. Source Relationship IDs explain origin but are not confirming
-evidence. A pending source remains visibly identified as pending.
+The normal production generator is provider-backed. There is no heuristic
+fallback. An unavailable provider, malformed complete response, or exhausted
+regeneration attempt fails the run and creates no partial semantic output.
 
-An exact pending Relationship may be the target of the Hypothesis. Dreaming
-still does not change that Relationship; it only records why the possibility may be
-worth seeking new evidence for.
+`evaluation_seed` is a separately feature-gated evaluation harness input for
+scoring expected fixtures. It cannot run as a scheduled production cycle and
+is excluded from normal related-Hypothesis recall. It is not an exception to
+the production AI/evidence contract above.
+
+An exact target is unavailable when a non-aliased Relationship exists in **any**
+status or when a non-aliased Hypothesis exists in **any** status. This includes
+pending, rejected, stale, and submitted rows. Dreaming does not reinforce,
+reopen, or add provenance to that target; it rejects the generated duplicate.
+
+After a valid provider response, the ordered exact source pair
+`(r1 ID/version, r2 ID/version)` is recorded even if the provider returns no
+proposal. The same pair is not sent again unless a source Relationship version
+changes. A transport or malformed-response failure does not mark a path as
+evaluated, so a later scheduled run can retry it.
 
 ## Scheduling And Concurrency
 
 The scheduler:
 
 1. finds due teams from database-backed effective configuration
-2. opens a cycle only during the exact configured local minute
-3. claims one canonical team/date window in PostgreSQL with system context
+2. may wake every minute to inspect configuration and expired leases, but calls
+   the AI provider only for the exact configured local minute or a durable
+   expired-lease recovery
+3. claims one canonical team/date window in PostgreSQL with a fenced lease token
 4. records a `missed` run instead of generating late only when this scheduler
    process observed that team's enabled schedule before or during that window
 5. enforces input, output, token, duration, and concurrency budgets
 6. records success, partial rejection, failure, cancellation, or missed state
 7. never uses Redis as the only run record
+
+An expired scheduled lease may be recovered at most three times. The worker
+must present the current, unexpired lease token in the same transaction that
+persists generated output and again when it completes the run. A stale worker
+cannot commit a late provider response after a recovery worker has claimed the
+same run.
 
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
@@ -180,20 +214,37 @@ sequenceDiagram
   participant S as Scheduler
   participant P as PostgreSQL
   participant D as Dream service
-  participant A as Optional AI provider
+  participant A as Required AI provider
 
   S->>P: Claim due team and window
   P-->>S: Durable cycle_run_id and eligible IDs
-  S->>D: Build bounded structured context
-  opt Provider-backed generation
-    D->>A: Existing endpoints, predicates, and source IDs
-    A-->>D: Structured Hypothesis proposals
-  end
-  D->>P: Validate IDs/versions and persist accepted Hypotheses
+  S->>D: Build bounded A → B → C evidence paths
+  D->>A: Opaque refs, allowed predicates, exact excerpts
+  A-->>D: Structured possible-relationship proposals
+  D->>P: Validate current target/sources and atomically persist
 ```
 
 Redis may coordinate distributed rate limits or wake workers. PostgreSQL owns
 leases, cycle results, and Hypotheses.
+
+### Run diagnostics
+
+The Control and user panels expose the fields needed to interpret a completed
+run:
+
+| Field | Meaning |
+| --- | --- |
+| Eligible / `input_relationships` | evidence-backed Relationship inputs; **not** AI calls |
+| Paths / `attempted_paths` | direct A → B → C paths actually sent to the provider |
+| AI / `provider_proposals` | schema-valid possible relationships returned by the provider |
+| Created | proposals accepted after current target and source checks |
+| Rejected | provider proposals blocked by those checks or malformed at the policy boundary |
+| Outcome | no path, all target-blocked/already assessed, provider returned no proposal, provider failed, or persistence was blocked |
+
+For example, the previous `Inputs 40 / Created 0 / Rejected 10` meant the old
+implementation selected forty Relationship rows but made ten discarded
+heuristic attempts. It was not evidence that forty AI calls ran. The current
+implementation records actual paths and provider diagnostics instead.
 
 ## Team Ownership, Feedback, And Configuration
 
@@ -219,7 +270,9 @@ There is no late catch-up: a deployment, restart, or enablement after the
 scheduled minute neither runs nor fabricates a `missed` record for that window.
 If this scheduler process observed the enabled team before the window and a due
 call loses the minute-boundary race before it can claim it, the next scheduler
-pass records the same window as `missed` instead of silently dropping it.
+pass records the same window as `missed` instead of silently dropping it. This
+is separate from recovery of a run that was already durably claimed and whose
+lease later expired.
 
 The Control portal exposes only these Dreaming settings:
 
@@ -257,6 +310,9 @@ The feature uses:
 - `resolve_dream_feedback`
 
 Exact public schemas belong in [Technical Reference](Technical-Reference).
+`list_dreams` is a compact summary; `get_dream` returns the exact cited
+derivations for review. Both portal lists show the cited-excerpt count and its
+quotes to authorized same-team users.
 Feedback such as reject or stale changes only Hypothesis lifecycle.
 
 ### Submit new evidence
@@ -324,8 +380,8 @@ primary result list.
 A Hypothesis becomes stale only when a same-team write-authorized client marks
 it stale. There is no background reflect or re-evaluate phase that rewrites
 existing Hypothesis state. Related-Hypothesis recall checks its stored source
-versions and eligibility against current same-team Relationships, and omits a
-Hypothesis whose source is missing, changed, inactive, unsupported, or
+versions and exact cited support against current same-team Relationships, and
+omits a Hypothesis whose source is missing, changed, inactive, unsupported, or
 challenged. That is a read-only filter: it does not transition the stored
 Hypothesis to `stale`, so list, get, and status preserve lifecycle history.
 Source version checks still reject a generated item whose input changed before
@@ -342,9 +398,12 @@ related Hypothesis retrieval.
 | Provider failure becomes a seed | invalid assessor output is treated as an assessed pending Relationship | require a final schema-valid assessment plus an expired semantic review for pending-input eligibility |
 | Expiry becomes promotion | an unanswered review directly creates a Hypothesis or active edge | expiry changes only review state; Dream may later read an already resolved pending Relationship and still emits Hypothesis only |
 | Circular evidence | generated statement is submitted as its own proof | require independent user/external evidence and reject Hypothesis/source text as support |
+| AI invents a premise | provider fabricates an entity, evidence, or relation to make a plausible link | server builds paths first; opaque refs, closed schema, exact two-premise citations, and current-state revalidation reject it |
 | Primary recall contamination | Hypothesis is ranked with Evidence | separate table, response field, and query path |
-| Source drift | sources change between generation and persistence | store and compare source IDs/versions in the PostgreSQL transaction |
-| Duplicate cycles | two replicas generate the same window | unique team/window run key, durable lease, and normalized Hypothesis dedupe |
+| Source drift | sources change between generation and persistence | store exact derivations and compare source IDs/versions/support eligibility in the PostgreSQL transaction |
+| Duplicate target | a rejected or stale target is generated again because it is not active | all-status Relationship and Hypothesis target checks before the provider call and at persistence |
+| Repeated provider cost | the same source pair is sent every day | append-only exact ordered relationship/version path evaluation; only a version change unlocks reassessment |
+| Stale recovered worker | an old provider call writes output after its lease is reclaimed | fenced token and unexpired lease checks inside the persistence and completion transactions |
 | Late scheduler start | a restart or enablement after the configured minute fabricates a permanent run record | do not run or record that historical window; only an already armed scheduler window may become `missed` |
 | Cross-profile feedback loses attribution | a team member changes a shared Hypothesis without provenance | authorize by authenticated team and write scope, then append an actor-attributed feedback event |
 | Profile copies amplify speculation | A/B/C repeat one source and make a dream appear stronger | semantic grouping plus original source-group dedupe |
@@ -363,10 +422,19 @@ related Hypothesis retrieval.
 7. submitted evidence enters the normal strict `remember` pipeline
 8. source changes prevent a stale in-flight output from persisting but never
    rewrite Hypothesis history
-9. cycle retries do not duplicate run or Hypothesis records
-10. equivalent authored Relationships do not multiply dream weight
-11. unresolved cross-profile conflict sets are not dream premises
-12. review expiry never creates a Hypothesis, support link, or active
+9. each normal provider request is only a direct A → B → C path with at least
+   one active premise and citations from exact evidence on both edges
+10. the provider receives no durable IDs or source-group keys and cannot add
+    new evidence, nodes, predicates, Relationships, or lifecycle state
+11. a Relationship or Hypothesis target in any status blocks automatic creation
+    of the same target, with no automatic reinforce/reopen/provenance mutation
+12. an exact ordered source relationship/version pair is assessed at most once;
+    invalid or failed provider responses do not consume that assessment
+13. cycle retries do not duplicate run or Hypothesis records, and a stale lease
+    cannot commit provider output
+14. equivalent authored Relationships do not multiply dream weight
+15. unresolved cross-profile conflict sets are not dream premises
+16. review expiry never creates a Hypothesis, support link, or active
     Relationship directly
-13. a scheduled cycle is team-owned and has no initiating or creating profile
-14. a late scheduler start records `missed` rather than running catch-up work
+17. a scheduled cycle is team-owned and has no initiating or creating profile
+18. a late scheduler start records `missed` rather than running catch-up work

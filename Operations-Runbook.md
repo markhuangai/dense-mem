@@ -96,7 +96,8 @@ Before user traffic:
 1. keep main/control listeners private
 2. create production secrets outside the repository
 3. create/upgrade PostgreSQL and install the supported `pgvector` extension
-4. run migrations with the migration role
+4. start one release server against the writable primary and wait for its
+   session-locked startup migrations to finish
 5. validate the configured single/HA/distributed PostgreSQL topology and total
    connection budget
 6. verify cluster-safe composite tenant keys and runtime-role/RLS behavior with
@@ -113,10 +114,11 @@ Before user traffic:
 
 ### Migration startup progress
 
-Server, demo-server, and the standalone migration command log `running postgres
-migrations` at the start of a migration run and `postgres migrations still
-running` every 10 seconds until it completes. The heartbeat includes
-`direction`, `elapsed_seconds`, and `timeout_seconds`.
+The release and demo server log `running postgres migrations` at the start of a
+migration run and `postgres migrations still running` every 10 seconds until it
+completes. The heartbeat includes `direction`, `elapsed_seconds`, and
+`timeout_seconds`. Release images do not ship a standalone migration command or
+separate migration container.
 
 `POSTGRES_MIGRATION_TIMEOUT_SECONDS` defaults to 1800 seconds and is bounded
 to 1–86400 seconds. The five-minute preflight and post-migration checks remain
@@ -127,6 +129,35 @@ A heartbeat means the migration run is still active and may be executing DDL or
 waiting on a PostgreSQL lock. Do not restart it solely because heartbeats appear.
 If elapsed time approaches the configured deadline, inspect migration status and
 authorized database lock/transaction state before choosing a recovery action.
+
+Concurrent replicas connected to the same writable primary serialize this work
+with a PostgreSQL session lock. A replica waits rather than applying the same
+migration concurrently. Keep migrations compatible with the previous binary for
+rolling deployments. Independent databases do not share that lock; each must be
+started and migrated separately.
+
+The image healthcheck uses a 30-minute startup grace matching the default
+migration timeout. Docker ignores failed probes during that grace and switches
+to normal failure counting after the first successful probe. If
+`POSTGRES_MIGRATION_TIMEOUT_SECONDS` is raised above 1800, override the
+deployment healthcheck start period to at least the same duration.
+
+### Release image contents
+
+The release runtime contains `/app/server`, PostgreSQL migrations, and both
+static portal bundles. The demo runtime contains `/app/demo-server`, migrations,
+and only the user bundle. Administration uses the private control portal/API;
+dreaming and Conflict review remain background workers in the server process.
+
+Use immutable tags in deployment configuration:
+
+| Channel | Release image | Demo image |
+| --- | --- | --- |
+| release candidate | `vX.Y.Z-rc.N` | `demo-vX.Y.Z-rc.N` |
+| stable | `vX.Y.Z` or `latest` | `demo-vX.Y.Z` |
+
+There is no rolling `demo` tag. Stable tags promote the already-published RC
+manifests without rebuilding them.
 
 Public exposure belongs in
 [Public HTTPS And Redis](Public-HTTPS-And-Redis).

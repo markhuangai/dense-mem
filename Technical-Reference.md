@@ -15,8 +15,8 @@ memory API.
 
 ## Contract Principles
 
-1. Remember requires exact evidence and a span-grounded Entity/Relationship
-   proposal.
+1. Remember requires exact evidence and a nonempty span-grounded
+   `relationships` array.
 2. The server, not the client or assessor, owns canonical IDs, predicate
    registration, support, lifecycle state, status, and durable commits.
 3. A client polls a submission; it never resolves a placement review or supplies
@@ -41,7 +41,7 @@ scope.
 
 | Tool | Scope | Purpose |
 | --- | --- | --- |
-| remember | write | Stage exact evidence plus required span-grounded proposals for server-owned assessment. |
+| remember | write | Stage exact evidence plus required span-grounded relationships for server-owned assessment. |
 | get_submission_status | read | Poll an owner-scoped submission lifecycle. No client review action exists. |
 | retract_evidence | write | Retract caller-owned current evidence while preserving append-only provenance. |
 | correct_entity_resolution | write | Dry-run or apply a caller-owned Entity merge or split. |
@@ -91,7 +91,7 @@ tool-executor route.
 - A request cannot select team_id or owner_profile_id.
 - A client-supplied ID hint is revalidated against authenticated team and state.
 - Idempotency keys are scoped to team, profile, and operation.
-- All proposal offsets are Unicode code-point positions: start is inclusive and
+- All relationship offsets are Unicode code-point positions: start is inclusive and
   end is exclusive.
 - A model provider does not receive credentials, request headers, environment
   data, tool access, or cross-team data.
@@ -100,9 +100,11 @@ tool-executor route.
 
 ### Request
 
-remember requires evidence and proposal. The client constructs the smallest
-Entity names, predicate surfaces, and Relationships it can ground in the exact
-evidence.
+remember requires evidence and a top-level nonempty `relationships` array. The
+client constructs the smallest inline Entity names, predicate surfaces, and
+Relationships it can ground in the exact evidence. An evidence item is currently
+bounded to 999 characters, so each array entry is self-contained rather than
+referencing a fixed proposal object.
 
 ~~~json
 {
@@ -112,51 +114,45 @@ evidence.
     "source": "architecture-note",
     "idempotency_key": "architecture-note-20260801"
   }],
-  "proposal": {
-    "entities": [
-      {
-        "ref": "dense_mem",
+  "relationships": [{
+      "ref": "uses-postgresql",
+      "subject": {
         "name": "Dense-Mem",
         "entity_kind": "project",
         "known_entity_id": null,
-        "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]
+        "span": {"evidence_index": 0, "start": 0, "end": 9}
       },
-      {
-        "ref": "postgres",
+      "predicate": {
+        "proposed_key": "uses",
+        "surface": "uses",
+        "span": {"evidence_index": 0, "start": 10, "end": 14}
+      },
+      "object": {"entity": {
         "name": "PostgreSQL",
         "entity_kind": "product",
         "known_entity_id": null,
-        "evidence": [{"evidence_index": 0, "start": 15, "end": 25}]
-      }
-    ],
-    "relationships": [{
-      "proposal_id": "uses",
-      "subject_ref": "dense_mem",
-      "predicate": {
-        "surface": "uses",
-        "evidence_index": 0,
-        "start": 10,
-        "end": 14
-      },
-      "object_ref": "postgres",
+        "span": {"evidence_index": 0, "start": 15, "end": 25}
+      }},
       "polarity": "+",
       "modality": "statement",
-      "evidence": [{"evidence_index": 0, "start": 0, "end": 26}]
-    }]
-  },
+      "supports": [{"evidence_index": 0, "start": 0, "end": 26}]
+  }],
   "idempotency_key": "architecture-submission-20260801"
 }
 ~~~
 
-Each Entity has exactly one span and its name must equal that span. A predicate
-surface must equal its stated span. A Relationship has either object_ref or a
-typed object_value, never both. Its cited evidence must cover the Entity and
-predicate spans. A string Value display or unit also has to be exact submitted
-evidence.
+Each inline Entity has exactly one span and its name must equal that span. A
+predicate surface must equal its stated span. A Relationship `object` has exactly
+one of `entity` or typed `value`, never both. Its `supports` spans cover the
+subject, predicate, and object spans within the same evidence item. A string
+Value surface, display, or unit also has to be exact submitted evidence.
 
-The client can provide a same-team known_entity_id candidate hint; null means no
-hint. It cannot create an Entity ID, register a predicate, name a durable
-Relationship ID, set confidence, set status, or alter support.
+The client makes its best effort to provide a matching
+`predicate.proposed_key`. The server forwards it unchanged to the assessor with
+a bounded active team predicate catalog; it does not make the suggestion
+authoritative. The client can provide a same-team `known_entity_id` candidate
+hint, but cannot create an Entity ID, register or activate a predicate, name a
+durable Relationship ID, set confidence, set status, or alter support.
 
 ### Evidence fields
 
@@ -218,7 +214,7 @@ visibility does not grant access to another profile's submission.
     "search_state": "current"
   }],
   "relationship_outcomes": [{
-    "proposal_id": "uses",
+    "relationship_ref": "uses-postgresql",
     "relationship_id": "rel_01J...",
     "status": "accepted"
   }],
@@ -265,19 +261,23 @@ and exfiltration or tool-invocation instructions before any submission is
 stored. It normalizes bounded common encodings and is repeated by the worker.
 
 A passed submission receives one capability-free assessor request containing the
-full staged evidence, exact proposal, bounded Entity candidates, and the team
-predicate catalog. The closed response contains:
+full staged evidence, raw client relationships, bounded Entity candidates, and
+the active team predicate catalog. The client predicate proposal is forwarded
+unchanged. The catalog is selected deterministically with exact key/alias
+matches first and relevance/rank after that; completeness is explicit. The
+closed response contains:
 
 - one security verdict, signals, and bounded justification for each evidence
   item;
 - normalized Entity and Relationship results; and
-- a registered predicate choice or a well-formed novel predicate candidate.
+- an allowlisted existing predicate choice or a typed registration-required
+  result.
 
 The assessor cannot clear a deterministic signal, choose an unprovided stored
-ID, access tools or secrets, set durable state, or commit a record. A clean
-validated novel predicate is registered by the server atomically with promotion.
-A security concern quarantines the submission; an invalid assessor response
-cannot cause a partial semantic commit.
+ID, access tools or secrets, set durable state, create or activate a predicate,
+or commit a record. Predicate registration is a separate validated, auditable
+server workflow. A security concern quarantines the submission; an invalid
+assessor response cannot cause a partial semantic commit.
 
 ## Evidence Lifecycle and Corrections
 
@@ -340,7 +340,7 @@ not the audit ledger.
 ## Contract Acceptance
 
 1. tools/list and tools/call share registry, contract, feature, and scope checks;
-2. remember rejects missing or span-inexact proposals;
+2. remember rejects missing or span-inexact relationships;
 3. deterministic security rejection creates no canonical or staged submission;
 4. every assessor response covers every staged evidence item with security
    justification;
@@ -351,4 +351,3 @@ not the audit ledger.
 9. provider output never overrides authentication, server policy, or durable
    ownership; and
 10. public errors and logs remain bounded and secret-safe.
-

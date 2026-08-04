@@ -84,6 +84,22 @@ Dependency direction is inward: transports call application services;
 application services apply domain policy through ports; adapters implement
 storage, provider, and coordination ports.
 
+The release image has one Dense-Mem executable. The control and user portals
+are static bundles served by that process, not separate services or binaries:
+
+```text
+/app/
+  server                 release executable
+  migrations/postgres/  startup migration inputs
+  web/dist/              private control-portal bundle
+  web/user-dist/         user-portal bundle
+```
+
+The demo image follows the same rule with `/app/demo-server`, migrations, and
+the user bundle; it does not contain the private control bundle. Former
+operator and manual conflict-review command packages are removed from source
+and are not shipped in either runtime image.
+
 ```text
 cmd/server/
   composition root
@@ -152,14 +168,13 @@ sequenceDiagram
   participant H as HTTP
 
   S->>S: Load and validate configuration
-  S->>P: Connect and validate authority state
-  S->>H: Start health and control surfaces
-  S->>P: Apply compatible schema migrations
-  S->>P: Validate pgvector, embedding contract, and search-index generation
+  S->>P: Connect and validate writer topology
+  S->>P: Acquire session lock and apply compatible schema migrations
+  S->>P: Validate pgvector, authority state, embedding contract, and search-index generation
   S->>R: Build required coordination backend
   S->>A: Validate configured provider contracts
   S->>W: Start placement, embedding, Conflict review, cleanup, and optional schedulers
-  S->>H: Enable main data plane
+  S->>H: Start control and main listeners
   H-->>S: Serve until termination
   S->>H: Stop accepting traffic
   S->>W: Drain or release work safely
@@ -170,6 +185,12 @@ PostgreSQL authority validation is a readiness gate. Redis is a gate only when
 distributed coordination is required or explicitly configured as mandatory. A
 multi-instance deployment cannot silently fall back to process-local limits or
 leases.
+
+Migrations finish before either HTTP listener serves traffic. Replicas sharing
+one writable PostgreSQL primary serialize startup migration work through the
+database session lock. Rolling deployments must keep every migration compatible
+with the previous application version; each independent database still needs a
+server connected to it to run the same startup gate.
 
 Provider readiness distinguishes required operations: an unavailable assessor
 may make write placement not-ready while authorized trace reads can still

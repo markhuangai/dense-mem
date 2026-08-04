@@ -19,18 +19,19 @@ The release retrieval gate is the public six-axis 1k corpus:
 | qasper | QASPER | Paper QA evidence retrieval. |
 | longmem_oracle | LongMemEval-S cleaned | Long-memory chat recall. |
 
-The historical V1 seed preserves corpus identity but cannot enter the new
-submission API because it lacks required exact-span proposals. The V2 seed is a
-source-locked, auditable derivative of that V1 corpus.
+The historical V1 seed cannot enter the new submission API because it lacks
+required exact-span relationship properties. The #149 V2 seed is a
+source-locked derivative of a declared V1 cohort: every retained evidence item
+is identical to V1, and V2 adds only the required `relationships` property.
 
 ~~~text
-V1 source-locked corpus
-  -> deterministic safe-content normalization
-  -> exact-span proposal generation
-  -> model-only security/conformance audit
-  -> real Go scanner + proposal validation
-  -> detailed V1/V2 comparison
-  -> live submission import and retrieval evaluation
+V1 source-locked cohort
+  -> declared relationship-ineligible exclusions
+  -> retain evidence and source metadata unchanged
+  -> add exact-span relationships array
+  -> real Go relationship validation
+  -> retained-evidence identity comparison
+  -> live write-time scanner, assessor, and retrieval evaluation
 ~~~
 
 ## V1-to-V2 Seed Comparison Gate
@@ -43,52 +44,63 @@ The comparison reports, without exposing raw restricted corpus content:
 | Check | Required result |
 | --- | --- |
 | Source lock | V1 manifest/hash matches the approved source. |
-| Count and order | Same corpus row count and source_doc_id order. |
-| Metadata projections | Suite, qrels, licenses, transforms, and non-content metadata are unchanged. |
-| Content normalization | Every changed row has a documented safe deterministic operation and before/after hash. |
-| Proposal audit | Every V2 row has a complete exact-span proposal accepted by the real Go contract validator. |
-| Security audit | Every V2 row has a passed model-only security/conformance decision. |
-| Regeneration | Regeneration warnings/failures are zero or explicitly fail the gate. |
+| Cohort | A committed cohort lock binds the frozen source and filtered cohort hashes. For #149, it explicitly declares nine corpus rows with no directly supported Relationship and their two dependent QASPER cases before either run. |
+| Count and order | The retained V1 and V2 corpus rows have the same count and source_doc_id order. |
+| Evidence identity | Every retained V1/V2 evidence item has the same ID, content hash, and source metadata. Any evidence difference is a hard failure. |
+| Metadata projections | Retained suite, qrels, licenses, transforms, and non-content metadata are unchanged. |
+| Relationship-property audit | Every V2 row has a nonempty exact-span `relationships` array accepted by the real Go contract validator. |
+| Deterministic security gate | The live V2 import passes every row through the same write-time scanner used by production before assessment. |
+| Relationship provenance | The manifest records its parent seed ID/hash, retained-evidence identity hash, relationship-ledger hash, and relationship count without recording raw restricted corpus content. The local derivation report records copied-artifact/suite hashes plus fallback source IDs and excluded-ledger count. |
 
-The comparison is not a retrieval-score comparison. It establishes that the V2
-corpus is a usable semantic equivalent of V1 before measuring live system
-behavior.
+The comparison is not a retrieval-score comparison. It proves that V1 and V2
+measure the same retained evidence cohort before measuring live system behavior.
 
 ## V2 Seed Generation
 
-The V2 generator keeps a parent source hash, generator version, normalization
-report, and proposal audit report in its manifest. It may make only bounded
-deterministic content repairs needed for the current security contract, such as
-removing hidden controls or a known terminal control directive from a
-LongMemEval chat wrapper. It must not silently rewrite answer, suite, qrel,
-license, or transform projections.
+The committed cohort lock records the declared exclusions and binds both V1
+hashes. The V2 manifest keeps the parent V1 ID/hash, evidence-identity hash,
+relationship-ledger hash, and relationship count; its local derivation report
+records copied-artifact/suite hashes, fallback source IDs, and the
+excluded-ledger count. The executable cohort validator proves that each
+retained V1 row and copied sidecar is unchanged before it accepts the V2
+derivation. It must not normalize, repair, truncate, or otherwise rewrite
+retained evidence, source metadata, answers, suite rows, qrels, licenses, or
+transforms.
 
-It produces a smallest meaningful lexical Entity/Relationship proposal for each
-corpus item. The generator does not decide canonical IDs or accepted semantic
-state.
+It adds one or more self-contained relationship proposals to each retained
+corpus item. An evidence item is currently bounded to 999 characters, so a
+single fixed proposal is insufficient: `relationships` is an array and every
+entry supplies its own inline subject, predicate, object, and support spans.
+The generator does not decide canonical IDs, predicate registration, or
+accepted semantic state.
+
+If a historical ledger selection is no longer span-grounded in the frozen V1
+evidence, the generator records that source ID and uses a sentence-bounded
+best-effort client proposal instead. This changes only the non-authoritative
+proposal; it never changes the evidence and remains subject to normal assessor
+normalization or `needs_review`.
 
 Before release use, every row is checked by the same Go code as production:
 
-1. the deterministic evidence scanner must pass;
-2. the required proposal must satisfy exact Unicode code-point span rules;
-3. the source metadata and source revision rules must be valid; and
-4. the manifest and suite cross-checks must pass.
+1. the required relationships must satisfy exact Unicode code-point span rules;
+2. the source metadata and source revision rules must be valid; and
+3. the manifest and suite cross-checks must pass.
 
-## Model-Only Seed Audit
+The normal live import then runs the deterministic evidence scanner before the
+assessor sees the client relationship proposals.
 
-The generator runs a separate model-only security/conformance audit for all V2
-rows. Its narrow job is to detect prompt-injection/security concerns in the
-proposed evidence package; it does not normalize semantic meaning or choose
-server state.
+## Relationship-Property Audit
 
-The audit uses strict structured output and records only row ID, hashes, policy
-version, verdict, bounded category, and retry count in its local checkpoint.
-It does not write raw evidence, credentials, prompts, or provider responses to
-review artifacts.
+The generator validates every V2 relationship property with the production Go
+contract before release use. Its local derivation report records only parent and
+derived seed hashes, the evidence-identity hash, aggregate corpus/relationship/
+contract-validation counts, copied-artifact/suite hashes, fallback source IDs,
+and excluded-ledger count. It does not write raw evidence, credentials, prompts,
+or provider responses to review artifacts.
 
-A non-passing verdict, warning, incomplete checkpoint, transport retry that
-does not recover, or schema mismatch fails seed generation. An unaudited
-deterministic-only output is for local development and is not a release seed.
+An incomplete checkpoint, schema mismatch, evidence-identity mismatch, or real
+Go contract failure stops seed generation. The live assessor remains the
+security and semantic-normalization authority during actual import.
 
 ## Live Import and Retrieval Run
 
@@ -111,6 +123,19 @@ times out, cannot reach a current/not_required required search state, or cannot
 produce its canonical mapping. It does not fake a successful row with a mock or
 manual database write.
 
+A quarantined placement is terminal only for retry accounting: the monitor does
+not resend it and records it separately. After every row is terminal, the
+monitor may retain complete deterministic scores for a V1/V2 diagnostic
+comparison, but writes a failed `import_gate_result.json` with
+`status: "comparison_only"`. That result is never release-ready, even when the
+retrieval-metric `release_gate_result.json` passes.
+
+Any terminal import/placement-monitor failure overwrites
+`import_gate_result.json` with `status: "failed"`, `passed: false`, and a
+bounded reason. When PostgreSQL counts cannot be read, the count fields are
+`null` and `counts_observed` is `false`; a prior passing count must never be
+presented as current.
+
 Run outputs contain mapping hashes, run identity, model/configuration
 fingerprints, scorer versions, submission terminal-state counts, search-state
 counts, recall traces, score summaries, and safe bounded errors. Credentials and
@@ -118,21 +143,68 @@ raw provider data remain outside artifacts.
 
 ## Baseline, Candidate, and Comparison
 
-Run a baseline and candidate against the same validated V2 seed, same suite,
-and isolated runtime identity. Then compare their generated summaries:
+For #149, run the pre-change baseline against the validated filtered V1 cohort,
+then run the post-change candidate against V2 with the same retained cohort and
+suite. The evidence-identity comparison is the apples-to-apples guard; the run
+comparison then measures the behavioral effect of adding relationships.
 
 ~~~bash
-go run ./cmd/eval-runner --mode baseline   --seed "$SEED" --suite "$SUITE" --out "$BASELINE_OUT"
+go run ./cmd/eval-runner \
+  --mode baseline \
+  --seed "$FILTERED_V1_SEED" \
+  --suite "$FILTERED_V1_SUITE" \
+  --out "$V1_BASELINE_OUT"
 
-go run ./cmd/eval-runner --mode candidate   --seed "$SEED" --suite "$SUITE" --out "$CANDIDATE_OUT"
+go run ./cmd/eval-runner \
+  --mode candidate \
+  --seed "$V2_SEED" \
+  --suite "$V2_SUITE" \
+  --out "$V2_CANDIDATE_OUT"
 
-go run ./cmd/eval-runner --mode compare   --baseline-run "$BASELINE_OUT"   --candidate-run "$CANDIDATE_OUT"   --out "$COMPARISON_OUT"
+go run ./cmd/eval-runner \
+  --mode compare-v2-cohort \
+  --baseline-run "$V1_BASELINE_OUT" \
+  --candidate-run "$V2_CANDIDATE_OUT" \
+  --parent-v1-seed "$PARENT_V1_SEED" \
+  --parent-v1-suite "$PARENT_V1_SUITE" \
+  --filtered-v1-seed "$FILTERED_V1_SEED" \
+  --filtered-v1-suite "$FILTERED_V1_SUITE" \
+  --derived-v2-seed "$V2_SEED" \
+  --derived-v2-suite "$V2_SUITE" \
+  --cohort-lock "$COHORT_LOCK" \
+  --out "$V1_V2_COMPARISON_OUT"
 ~~~
+
+Generic `compare` accepts only two runs with the same seed hash. It must not be
+used for this V1-to-V2 comparison.
 
 The comparison reports recall@k, MRR, nDCG, bad-at-k, rank-one rates, and
 available context/evidence/dream dimensions. Its interpretation must include
 submission acceptance/rejection/quarantine counts and retrieval degradations;
 a good score does not excuse unsafe or incomplete ingestion.
+
+`import_gate_result.json` records corpus acceptance separately from the
+retrieval-metric `release_gate_result.json`. Both must pass for a release-ready
+evaluation. A complete score artifact with `comparison_only` import status may
+be used only to diagnose a V1/V2 delta, and the PR must label it non-release-
+ready.
+
+## Issue #149 Recorded V1/V2 Outcome
+
+The 2026-08-04 run validated the retained 991-document, 204-case cohort and
+its 991 V2 relationship properties before import. The retained-evidence
+identity comparison passed.
+
+| Run | Terminal placement result | Scoring / gate interpretation |
+| --- | --- | --- |
+| V1 pre-change baseline | 413 completed, 577 awaiting review, 1 quarantined, 0 failed | All 204 cases scored and the retrieval-metric policy passed, but the import gate is `comparison_only`; V1 is not release-ready. |
+| V2 relationship-property run | 17 completed, 974 awaiting review, 0 quarantined, 0 failed | All 204 cases scored and the import gate passed. This run explicitly opted into ungated scoring for cohort comparison, so it is not a release-gate decision. |
+
+The lock-bound `compare-v2-cohort` result passed. Recall@k, MRR, and bad@k
+were unchanged; overall nDCG changed by -0.0001429747 and evidence-only nDCG
+by -0.0003070194. The comparison therefore establishes the measured effect of
+the relationship property without treating either the V1 comparison-only run or
+the V2 ungated run as a release approval.
 
 ## Local E2E Security Gate
 
@@ -143,7 +215,8 @@ ephemeral credential to prove the public integration path:
    tools;
 2. a safe span-grounded remember call completes and its search state converges;
 3. Base64 evidence is rejected before a submission is staged;
-4. prompt-injection evidence is rejected before a submission is staged;
+4. role-control and prompt-injection evidence are rejected before a submission
+   is staged;
 5. another profile cannot fetch the first profile’s submission status;
 6. recall/trace preserve evidence-first output and flag returned evidence as
    untrusted data; and
@@ -175,7 +248,8 @@ safe baseline record.
 Every run records:
 
 - seed and suite IDs/hashes;
-- parent V1 source hash and V2 normalization/audit policy hashes;
+- for V2, parent V1 ID/hash, retained-evidence identity hash,
+  relationship-ledger hash, and relationship count;
 - generator and runner versions;
 - contract version;
 - local server image/revision and relevant provider configuration fingerprints;
@@ -190,8 +264,8 @@ erase a pre-existing runtime with a different identity.
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Unsafe corpus input | Historical data contains encoded or injected text. | Normalize only documented safe cases, run real scanner and model-only audit, fail closed. |
-| Seed semantic drift | Proposal generator changes content/qrels while making V2 valid. | Source lock plus detailed projection/hash comparison before evaluation. |
+| Unsafe corpus input | Historical data contains encoded or injected text. | Keep retained evidence unchanged, run the real scanner, then require a live assessor disposition during import. |
+| Seed semantic drift | Proposal generation changes evidence or cohort while making V2 valid. | Source lock, explicit exclusions, and retained-evidence identity comparison before evaluation. |
 | False pass from mock | Import test checks a stub rather than server behavior. | Use public MCP calls against real Compose PostgreSQL/service. |
 | Search race | Retrieval starts before required derived documents are current. | Poll submission status and fail the import gate on pending/failed timeout. |
 | Cross-team leakage | Eval client reads another profile’s submission or evidence. | Dedicated team/profile tests under RLS and public status boundary. |
@@ -210,4 +284,3 @@ erase a pre-existing runtime with a different identity.
 7. recall metrics and submission outcomes are reported together; and
 8. a failing required security, seed, import, or scoring gate cannot produce a
    release-ready result.
-
