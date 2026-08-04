@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +16,8 @@ import (
 )
 
 const SemanticReviewResponseSchemaName = "dense_mem_v2_semantic_review_response"
+
+var semanticHiddenControlMarkupPattern = regexp.MustCompile(`(?is)<!--|<\s*(?:script|iframe|object|embed|meta|svg)\b|\bon[a-z]{3,32}\s*=`)
 
 type SemanticReviewRequest struct {
 	RequestID                string                            `json:"request_id"`
@@ -230,13 +233,37 @@ func ValidateSemanticReviewResponse(req SemanticReviewRequest, resp SemanticRevi
 		if !semanticSecurityKindAllowed(signal.Kind) {
 			errs = append(errs, semanticErr(fmt.Sprintf("security_signals[%d].kind", i), "unsupported security signal kind"))
 		}
-		if _, err := semanticExactSpanQuote(evidence.Content, signal.Start, signal.End, ""); err != nil {
+		quote, err := semanticExactSpanQuote(evidence.Content, signal.Start, signal.End, "")
+		if err != nil {
 			errs = append(errs, semanticErr(fmt.Sprintf("security_signals[%d].span", i), err.Error()))
+		} else if !semanticSecuritySignalSpanMatchesKind(signal.Kind, quote) {
+			errs = append(errs, semanticErr(fmt.Sprintf("security_signals[%d].span", i), "hidden_control_markup requires a hidden control or active markup"))
 		}
 	}
 	errs = append(errs, validateSemanticEntityResults(req, resp.EntityResults)...)
 	errs = append(errs, validateSemanticRelationshipResults(req, resp.RelationshipResults)...)
 	return errs
+}
+
+func semanticSecuritySignalSpanMatchesKind(kind, quote string) bool {
+	if strings.TrimSpace(kind) != "hidden_control_markup" {
+		return true
+	}
+	if semanticHiddenControlMarkupPattern.MatchString(quote) {
+		return true
+	}
+	for _, value := range quote {
+		if semanticHiddenControlRune(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func semanticHiddenControlRune(value rune) bool {
+	return value == '\u200b' || value == '\u200c' || value == '\u200d' || value == '\u200e' || value == '\u200f' ||
+		value == '\u2060' || value >= '\u202a' && value <= '\u202e' || value >= '\u2066' && value <= '\u2069' ||
+		unicode.IsControl(value) && value != '\n' && value != '\r' && value != '\t'
 }
 
 func SemanticReviewResponseSchema() map[string]any {
