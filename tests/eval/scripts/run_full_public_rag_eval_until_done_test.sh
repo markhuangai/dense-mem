@@ -45,6 +45,29 @@ jq -e '
   .reasons == []
 ' "${IMPORT_GATE_RESULT}" >/dev/null
 
+write_import_gate_result "" "" "" "" "" "" "" "" "" "placement_or_fragment_count_failed"
+jq -e '
+  .status == "failed" and
+  .passed == false and
+  .counts_observed == false and
+  .fragments == null and
+  .latest_placements == null and
+  .terminal == null and
+  .reasons == ["placement_or_fragment_count_failed"]
+' "${IMPORT_GATE_RESULT}" >/dev/null
+
+write_import_gate_result 992 992 413 578 0 0 0 0 2 "dataset_count_exceeds_target"
+jq -e '
+  .status == "failed" and
+  .passed == false and
+  .counts_observed == true and
+  .fragments == 992 and
+  .latest_placements == 992 and
+  .terminal == 991 and
+  .historical_attempts == 2 and
+  .reasons == ["dataset_count_exceeds_target"]
+' "${IMPORT_GATE_RESULT}" >/dev/null
+
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "${RUNNER}"
 chmod +x "${RUNNER}"
 runner_hash_before="$(sha256sum "${RUNNER}" | awk '{print $1}')"

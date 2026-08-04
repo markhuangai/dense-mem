@@ -496,24 +496,41 @@ write_placement_summary() {
 }
 
 write_import_gate_result() {
-  local fragments="$1" latest="$2" completed="$3" awaiting_review="$4" quarantined="$5" failed="$6" queued="$7" processing="$8" attempts="$9"
-  local terminal passed status reason tmp
-  terminal="$(terminal_placement_count "${completed}" "${awaiting_review}" "${quarantined}")"
+  local fragments="$1" latest="$2" completed="$3" awaiting_review="$4" quarantined="$5" failed="$6" queued="$7" processing="$8" attempts="$9" forced_reason="${10:-}"
+  local terminal passed status reason counts_observed="true" tmp
 
-  if [[ "${latest}" == "${TARGET}" && "${fragments}" == "${TARGET}" && "${terminal}" == "${TARGET}" && "${failed}" == "0" && "${queued}" == "0" && "${processing}" == "0" ]]; then
-    if [[ "${quarantined}" == "0" ]]; then
-      passed="true"
-      status="passed"
-      reason=""
-    else
-      passed="false"
-      status="comparison_only"
-      reason="quarantined_placements"
+  if [[ -n "${forced_reason}" ]]; then
+    if [[ ! "${forced_reason}" =~ ^[a-z0-9_]+$ ]]; then
+      echo "invalid import gate failure reason: ${forced_reason}" >&2
+      return 1
     fi
-  else
     passed="false"
     status="failed"
-    reason="incomplete_or_failed_placements"
+    reason="${forced_reason}"
+    if [[ -z "${fragments}" ]]; then
+      terminal=""
+      counts_observed="false"
+    else
+      terminal="$(terminal_placement_count "${completed}" "${awaiting_review}" "${quarantined}")"
+    fi
+  else
+    terminal="$(terminal_placement_count "${completed}" "${awaiting_review}" "${quarantined}")"
+
+    if [[ "${latest}" == "${TARGET}" && "${fragments}" == "${TARGET}" && "${terminal}" == "${TARGET}" && "${failed}" == "0" && "${queued}" == "0" && "${processing}" == "0" ]]; then
+      if [[ "${quarantined}" == "0" ]]; then
+        passed="true"
+        status="passed"
+        reason=""
+      else
+        passed="false"
+        status="comparison_only"
+        reason="quarantined_placements"
+      fi
+    else
+      passed="false"
+      status="failed"
+      reason="incomplete_or_failed_placements"
+    fi
   fi
 
   tmp="$(mktemp "${IMPORT_GATE_RESULT}.tmp.XXXXXX")"
@@ -521,6 +538,7 @@ write_import_gate_result() {
     --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg status "${status}" \
     --argjson passed "${passed}" \
+    --argjson counts_observed "${counts_observed}" \
     --arg target "${TARGET}" \
     --arg fragments "${fragments}" \
     --arg latest "${latest}" \
@@ -533,22 +551,25 @@ write_import_gate_result() {
     --arg processing "${processing}" \
     --arg attempts "${attempts}" \
     --arg reason "${reason}" \
-    '{
+    'def optional_count:
+       if . == "" then null else tonumber end;
+     {
       schema_version: 1,
       generated_at: $generated_at,
       status: $status,
       passed: $passed,
+      counts_observed: $counts_observed,
       target: ($target | tonumber),
-      fragments: ($fragments | tonumber),
-      latest_placements: ($latest | tonumber),
-      completed: ($completed | tonumber),
-      awaiting_review: ($awaiting_review | tonumber),
-      quarantined: ($quarantined | tonumber),
-      terminal: ($terminal | tonumber),
-      failed: ($failed | tonumber),
-      queued: ($queued | tonumber),
-      processing: ($processing | tonumber),
-      historical_attempts: ($attempts | tonumber),
+      fragments: ($fragments | optional_count),
+      latest_placements: ($latest | optional_count),
+      completed: ($completed | optional_count),
+      awaiting_review: ($awaiting_review | optional_count),
+      quarantined: ($quarantined | optional_count),
+      terminal: ($terminal | optional_count),
+      failed: ($failed | optional_count),
+      queued: ($queued | optional_count),
+      processing: ($processing | optional_count),
+      historical_attempts: ($attempts | optional_count),
       reasons: (if $reason == "" then [] else [$reason] end)
     }' > "${tmp}"
   mv "${tmp}" "${IMPORT_GATE_RESULT}"
@@ -869,6 +890,7 @@ main() {
       log "placement_or_fragment_count_failed failures=${count_failures}/${MAX_COUNT_FAILURES}"
       if [[ "${count_failures}" -ge "${MAX_COUNT_FAILURES}" ]]; then
         log "max_count_failures_reached failures=${count_failures}"
+        write_import_gate_result "" "" "" "" "" "" "" "" "" "placement_or_fragment_count_failed"
         return 1
       fi
       sleep "${SLEEP_SECONDS}"
@@ -878,6 +900,7 @@ main() {
     for value in "${latest}" "${completed}" "${awaiting_review}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "${fragments}"; do
       if ! [[ "${value}" =~ ^[0-9]+$ ]]; then
         log "non_numeric_monitor_count value=${value}"
+        write_import_gate_result "" "" "" "" "" "" "" "" "" "non_numeric_monitor_count"
         return 1
       fi
     done
@@ -902,6 +925,7 @@ main() {
 
     if [[ "${latest}" -gt "${TARGET}" || "${fragments}" -gt "${TARGET}" ]]; then
       log "dataset_count_exceeds_target latest=${latest}/${TARGET} fragments=${fragments}/${TARGET}; refusing_eval"
+      write_import_gate_result "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "dataset_count_exceeds_target"
       write_status "failed" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "$(live_import_pid || true)" "${rate_per_minute}" "${eta_seconds}"
       return 1
     fi
@@ -918,6 +942,7 @@ main() {
       if [[ ! -s "${IMPORT_DIR}/knowledge_mapping.json" || ! -s "${IMPORT_DIR}/summary.json" ]]; then
         if [[ "${restarts}" -ge "${MAX_IMPORT_RESTARTS}" ]]; then
           log "max_import_restarts_reached while finalizing artifacts"
+          write_import_gate_result "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "import_artifacts_missing"
           return 1
         fi
         restarts=$((restarts + 1))
@@ -953,6 +978,7 @@ main() {
     else
       if [[ "${restarts}" -ge "${MAX_IMPORT_RESTARTS}" ]]; then
         log "max_import_restarts_reached restarts=${restarts} terminal=${terminal}/${TARGET}"
+        write_import_gate_result "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "max_import_restarts_reached"
         write_status "failed" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
         return 1
       fi
