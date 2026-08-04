@@ -67,7 +67,7 @@ if (!safeIngestID) {
   throw new Error("safe remember did not return an ingest_id");
 }
 const safePlacement = await waitForTerminalPlacement(safeIngestID);
-const verifierAfterSafe = await waitForVerifierIncrease(verifierAfterRejects, teamID);
+const verifierAfterSafe = await waitForExactlyOneVerifierRequest(verifierAfterRejects, teamID);
 
 const isolatedTeam = await createTeam(`Security Intake Isolated ${runID}`);
 const isolatedProfile = await createProfile(isolatedTeam.id, "Security Intake Isolated Profile");
@@ -201,15 +201,19 @@ async function waitForTerminalPlacement(ingestID) {
   throw new Error(`timed out waiting for safe placement (last status: ${lastStatus || "unknown"})`);
 }
 
-async function waitForVerifierIncrease(before, targetTeamID) {
+async function waitForExactlyOneVerifierRequest(before, targetTeamID) {
+  const expected = before + 1;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const value = await prometheusValue("densemem_verifier_requests_total", targetTeamID);
-    if (value > before) {
+    if (value === expected) {
       return value;
+    }
+    if (value > expected) {
+      throw new Error("safe remember caused more than one live verifier request");
     }
     await delay(5_000);
   }
-  throw new Error("safe remember did not produce a live verifier request");
+  throw new Error("safe remember did not produce exactly one live verifier request");
 }
 
 async function assertVerifierStable(expected, targetTeamID) {
