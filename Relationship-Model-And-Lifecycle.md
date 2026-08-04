@@ -64,7 +64,7 @@ are defined in
 | Evidence authority | Policy classification of the submitted source and actor; it is not an assessor confidence score. |
 | Evidence support | Immutable link recording that one exact fragment span and source group was accepted for a Relationship at a point in time. |
 | Support decision | Append-only `grant`, `revoke`, or `reinstate` event controlling whether policy currently counts an EvidenceSupport. |
-| Evidence security event | Append-only deterministic scan, model signal, quarantine, or authorized release decision for one fragment. |
+| Evidence security event | Append-only pass scan for an accepted fragment, worker/assessor signal, quarantine, or authorized release decision. A pre-stage rejection has no fragment and is recorded only as a safe audit event. |
 | Lifecycle transition | Append-only record of a status or validity-bound change. |
 | Hypothesis | Dream-generated possibility that cannot become knowledge without new evidence entering `remember`. |
 
@@ -689,15 +689,15 @@ different content is a conflict and changes no state.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  Input["Authenticated source revision<br/>plus scan assessment"] --> Owner{"Caller owns source?"}
+  Input["Authenticated source revision"] --> Scan{"Intake scan passes?"}
+  Scan -- No --> Audit["Safe rejection audit;<br/>change no source state"]
+  Scan -- Yes --> Owner{"Caller owns source?"}
   Owner -- No --> Reject["Reject; change no source state"]
   Owner -- Yes --> Previous{"Expected previous revision<br/>matches current?"}
   Previous -- No --> Reject
   Previous -- Yes --> Tx["One source-activation transaction"]
   Tx --> Effects["Atomically append and advance,<br/>revoke prior support, recompute,<br/>and stage new evidence"]
-  Effects --> Decision{"Scan decision"}
-  Decision -- quarantine --> Gap["New evidence remains quarantined;<br/>old revision stays ineffective"]
-  Decision -- pass or guarded --> Place["Continue asynchronous placement"]
+  Effects --> Place["Continue asynchronous placement"]
 ```
 
 Activation occurs at authenticated intake. A quarantined, later

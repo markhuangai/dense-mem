@@ -102,15 +102,18 @@ It rejects, at minimum:
 
 - Base64 and encoded payloads, including data URIs, PEM-like material, JWT-like
   tokens, and folded encoded blocks
-- hidden controls, bidirectional controls, and deceptive Unicode forms
+- hidden controls or bidirectional Unicode that form an evasive control flood
+  or normalize into another threat pattern
 - executable or active markup
 - role spoofing and instruction overrides
-- attempts to solicit credentials, environment variables, secrets, outbound
+- directives to solicit credentials, environment variables, secrets, outbound
   network calls, or data exfiltration
 
 The scan normalizes a bounded set of common encodings before checking. It is a
 deny gate, not proof that the evidence is benign. Rejections return a bounded
-safe error and create no submission or canonical memory.
+safe error and create no submission or canonical memory. Its tool/network rule
+requires directive wording, so descriptive prose and valid bidirectional
+formatting do not become intake rejections.
 
 The worker repeats the deterministic scan before it uses staged content. This
 catches staged data that could otherwise be processed after a scanner policy
@@ -168,6 +171,10 @@ clear a deterministic security signal, decide durable status, create support
 outside the evidence, create or activate a predicate, or override authenticated
 ownership.
 
+A `hidden_control_markup` signal is valid only when its exact cited span contains
+a covered hidden control or active markup. An ungrounded signal invalidates the
+complete assessor response; it cannot quarantine or commit a submission.
+
 A registration-required result follows the controlled, auditable predicate
 workflow. It does not make a raw client or assessor predicate durable, and
 clients do not receive a predicate-review task.
@@ -196,12 +203,16 @@ If assessment rejects the proposed semantic content without a security concern,
 the submission becomes rejected. The client can submit a new, complete
 submission, but cannot negotiate or append evidence to the rejected one.
 
-If either security layer finds a concern, the submission becomes quarantined.
-PostgreSQL sets quarantine_expires_at to exactly 24 hours after the quarantine
-completion timestamp. The staged evidence remains isolated only for that
-interval, then the cleanup job hard-deletes it. A replacement is a new complete
-remember call with replaces_quarantined_submission_id; it never releases or
-extends the quarantined data.
+An intake scan concern is not a submission: it returns a bounded error and
+records only safe audit metadata before any evidence or provider-bound proposal
+is staged. A repeated worker scan or an assessor security concern quarantines an
+already-staged submission. A deterministic worker hit records its matching
+placement fragment's security event, quarantine, and terminal placement result in one PostgreSQL
+transaction. PostgreSQL sets quarantine_expires_at to exactly 24 hours after the
+quarantine completion timestamp. The staged evidence remains isolated only for
+that interval, then the cleanup job hard-deletes it. A replacement is a new
+complete remember call with replaces_quarantined_submission_id; it never
+releases or extends the quarantined data.
 
 ## Public Status Contract
 

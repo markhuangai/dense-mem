@@ -231,7 +231,7 @@ and failed.
 | processing | A worker holds a current assessment lease. |
 | completed | Atomic canonical promotion completed. |
 | rejected | Server semantic/contract policy rejected it with no client review path. |
-| quarantined | A deterministic or assessor security concern isolated the staged data. |
+| quarantined | A worker-time deterministic or assessor security concern isolated already-staged data. |
 | failed | A required worker, provider, or persistence operation exhausted bounded retry policy. |
 
 search_state is not the processing state:
@@ -258,7 +258,10 @@ The retired get_memory_placement and resolve_memory_placement tools are absent.
 The write-time scanner rejects Base64/encoded material, hidden controls,
 instruction overrides, role spoofing, active markup, secret-extraction attempts,
 and exfiltration or tool-invocation instructions before any submission is
-stored. It normalizes bounded common encodings and is repeated by the worker.
+stored. A rejection returns a bounded error and records safe audit metadata
+only; it creates no fragment, provider request, search document, or embedding
+job. The worker repeats the scan for staged evidence, where a deterministic
+concern quarantines that staged submission.
 
 A passed submission receives one capability-free assessor request containing the
 full staged evidence, raw client relationships, bounded Entity candidates, and
@@ -276,8 +279,8 @@ closed response contains:
 The assessor cannot clear a deterministic signal, choose an unprovided stored
 ID, access tools or secrets, set durable state, create or activate a predicate,
 or commit a record. Predicate registration is a separate validated, auditable
-server workflow. A security concern quarantines the submission; an invalid
-assessor response cannot cause a partial semantic commit.
+server workflow. An assessor security concern quarantines a staged submission;
+an invalid assessor response cannot cause a partial semantic commit.
 
 ## Evidence Lifecycle and Corrections
 

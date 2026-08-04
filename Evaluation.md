@@ -264,7 +264,7 @@ erase a pre-existing runtime with a different identity.
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Unsafe corpus input | Historical data contains encoded or injected text. | Keep retained evidence unchanged, run the real scanner, then require a live assessor disposition during import. |
+| Unsafe corpus input | Historical data contains encoded or injected text. | Keep retained evidence unchanged and run the real scanner; a deterministic rejection fails import before any assessor call, while only passing rows require a live assessor disposition. |
 | Seed semantic drift | Proposal generation changes evidence or cohort while making V2 valid. | Source lock, explicit exclusions, and retained-evidence identity comparison before evaluation. |
 | False pass from mock | Import test checks a stub rather than server behavior. | Use public MCP calls against real Compose PostgreSQL/service. |
 | Search race | Retrieval starts before required derived documents are current. | Poll submission status and fail the import gate on pending/failed timeout. |

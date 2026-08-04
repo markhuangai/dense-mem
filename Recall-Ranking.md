@@ -5,6 +5,13 @@ Relationships are a separate correlation and discovery frontier. Communities
 and Hypotheses are separate derived frontiers and never replace evidence or
 Relationships.
 
+> **Implementation status:** the community assembly described below is the
+> approved target tracked by
+> [issue #158](https://github.com/markhuangai/dense-mem/issues/158). The current
+> runtime still exposes the transitional path-shaped community response and
+> underfill gate. Until #158 is complete,
+> [Technical Reference](Technical-Reference) remains the live public contract.
+
 This page owns recall eligibility, frontier flow, grouping, and degradation.
 Cosine distance and RRF are defined in
 [Vector Search And Ranking](Vector-Search-And-Ranking). Exact public fields and
@@ -47,20 +54,36 @@ flowchart LR
   RelationshipFuse --> RelationshipGate["Status, support, time,<br/>scope, and access gates"]
   RelationshipTextOnly --> RelationshipGate
   RelationshipGate --> Group["Collapse semantic_group_key"]
-  Group --> Relationships["related_relationships[]"]
+  Group --> Candidates["Query-ranked Relationship candidates"]
 
-  Query --> Community{"Community feature enabled?"}
-  Community -- Yes --> Communities["related_communities[]"]
-  Community -- No --> Empty["empty community frontier"]
+  Results --> Coverage["Resolve covered semantic groups"]
+  KnownEvidence["known_evidence_ids"] --> Coverage
+  KnownRelationships["known_relationship_ids"] --> Coverage
+  Coverage --> Novel["Exclude covered candidates"]
+  Candidates --> Novel
+
+  Results --> Community["Seed current communities"]
+  KnownEvidence --> Community
+  KnownRelationships --> Community
+  Novel --> Community
+  Community --> Communities["related_communities[]<br/>with novel Relationships"]
+  Communities --> Emitted["Nested emitted semantic groups"]
+  Novel --> Remaining["Subtract nested emitted groups"]
+  Emitted --> Remaining
+  Remaining --> Relationships["related_relationships[] fallback"]
 
   Results --> Response["Recall response"]
   Relationships --> Response
   Communities --> Response
-  Empty --> Response
+  Query --> Hypotheses["related_hypotheses[]"]
+  Hypotheses --> Response
 ```
 
-Evidence, Relationship, and Community limits are independent. An empty or
-disabled frontier never donates capacity to another frontier.
+Evidence keeps its independent result budget. `community_limit` and
+`community_relationship_limit` bound community output;
+`relationship_limit` bounds the remaining direct fallback. Unused slots do not
+change another field's configured maximum, but semantic-group coverage is
+shared so the fields never repeat the same meaning.
 
 ## PostgreSQL Read Sequence
 
@@ -83,12 +106,17 @@ sequenceDiagram
     R->>P: Evidence full-text and vector candidates
   and Relationship frontier
     R->>P: Relationship lexical candidates and generation state
-  and Optional derived frontiers
-    R->>P: Communities and Hypotheses when enabled
   end
   R->>R: Gate and rank evidence
   R->>R: Fuse or degrade Relationship search
-  R->>R: Hydrate, group, and apply independent limits
+  R->>P: Resolve semantic groups for current and known Evidence/Relationships
+  R->>R: Exclude covered Relationship groups
+  opt Current-state communities enabled and fresh
+    R->>P: Select seeded communities and uncovered member Relationships
+  end
+  R->>R: Remove nested groups and build direct fallback
+  R->>P: Retrieve Hypotheses independently
+  R->>R: Hydrate, authorize, and apply lane limits
   R-->>C: Results, related frontiers, states, and degradations
 ```
 
@@ -212,11 +240,18 @@ consume one response slot:
 4. sort remaining eligible IDs by UUID into
    `equivalent_relationship_ids`;
 5. union authorized supporting Evidence IDs;
-6. apply `relationship_limit` after grouping.
+6. retain a bounded internal candidate pool, then apply `relationship_limit`
+   only after Community-nested groups are removed.
 
 `known_relationship_ids` suppresses the complete semantic group when it
 contains the representative or any equivalent ID. Grouping never merges
 ownership, support, lifecycle, conflict history, or trace.
+
+For the approved community assembly, the service also resolves semantic groups
+supported by returned `results[]` and visible `known_evidence_ids`. Those groups
+are already covered even though the compact public Evidence result does not
+expose its internal Relationship IDs. Unknown or cross-team known IDs are
+ignored without revealing existence.
 
 ## Conflict Disposition
 
@@ -239,17 +274,39 @@ implies a preferred position. The exact resolution policy belongs in
 ## Community Frontier
 
 Communities are optional derived clusters of eligible Relationships. The
-feature remains disabled by default.
+feature remains disabled by default and returns only current snapshots. It does
+not support historical `valid_at` or `known_at` reconstruction.
 
-When enabled:
+Assembly uses this deterministic order:
 
-- community results use `community_limit`, independent from Evidence and
-  Relationship limits;
-- the frontier returns only current community snapshots built from active,
-  effectively supported Relationships;
-- communities do not replace direct results, add Relationship score, become
-  evidence, or enter the semantic graph;
-- `community_limit=0` disables the frontier for that request.
+1. build covered semantic groups from returned Evidence, visible
+   `known_evidence_ids`, and `known_relationship_ids`;
+2. retrieve and group query-ranked direct Relationship candidates;
+3. seed communities by returned Evidence, then known Evidence/Relationships,
+   then query-ranked candidates and `expand_from_entity_ids`;
+4. rank communities by seed lane, best seed rank, descending matching-seed
+   count, then logical community ID;
+5. order uncovered members by direct query match, stored source
+   rank/centrality, then semantic-group key;
+6. drop a community that contributes no uncovered Relationship;
+7. subtract actually nested semantic groups from the direct candidates and use
+   the remainder as `related_relationships[]` fallback.
+
+A Relationship omitted by `community_relationship_limit` can still enter the
+direct fallback if it is query-relevant. A singleton never persisted as a
+community can also enter fallback. The same semantic group cannot occur in
+Evidence coverage, a nested community result, and direct fallback.
+
+`community_limit` defaults to `3`, has maximum `10`, and accepts `0` to disable
+the lane. `community_relationship_limit` defaults to `5` and has range `1..20`.
+`relationship_limit` applies after nested groups are removed. Community summary
+text has no independent lexical/vector search and does not alter Evidence or
+Relationship candidate scores.
+
+A temporal request skips communities, preserves temporal Evidence and direct
+Relationships, and emits optional `community_temporal_not_supported`. A
+disabled lane is empty without degradation. An enabled missing, stale, failed,
+or oversized snapshot returns other lanes plus a bounded community degradation.
 
 The canonical record and detection contract belongs in
 [Community And Dreaming](Community-And-Dreaming).
@@ -266,27 +323,41 @@ The canonical record and detection contract belongs in
     }
   ],
   "conflicts": [],
-  "related_relationships": [
-    {
-      "relationship_id": "r1",
-      "equivalent_relationship_ids": ["r2"],
-      "subject": {"entity_id": "mark-1", "name": "Mark Huang"},
-      "predicate": "works_on",
-      "object": {"entity_id": "dense-mem", "name": "Dense-Mem"},
-      "polarity": "+",
-      "evidence_ids": ["e1"]
-    }
-  ],
   "related_communities": [
     {
       "community_id": "community-1",
+      "rank": 1,
       "summary": "Dense-Mem project work and storage choices.",
       "top_entities": [
-        {"entity_id": "dense-mem", "name": "Dense-Mem"}
+        {"entity_id": "dense-mem", "name": "Dense-Mem"},
+        {"entity_id": "mark-1", "name": "Mark Huang"}
       ],
       "top_predicates": ["works_on", "uses"],
-      "member_count": 4,
-      "source_count": 3
+      "entity_count": 4,
+      "relationship_count": 7,
+      "relationships": [
+        {
+          "relationship_id": "r3",
+          "equivalent_relationship_ids": [],
+          "subject": {"entity_id": "dense-mem", "name": "Dense-Mem"},
+          "predicate": "uses",
+          "object": {"entity_id": "postgresql", "name": "PostgreSQL"},
+          "polarity": "+",
+          "evidence_ids": ["e2"]
+        }
+      ],
+      "relationships_truncated": false
+    }
+  ],
+  "related_relationships": [
+    {
+      "relationship_id": "r6",
+      "equivalent_relationship_ids": [],
+      "subject": {"entity_id": "mark-1", "name": "Mark Huang"},
+      "predicate": "lives_in",
+      "object": {"entity_id": "toronto", "name": "Toronto"},
+      "polarity": "+",
+      "evidence_ids": ["e3"]
     }
   ],
   "related_hypotheses": [],
@@ -305,9 +376,13 @@ The canonical record and detection contract belongs in
 }
 ```
 
-`relationship_id` is the representative trace handle.
-`equivalent_relationship_ids` excludes the representative. Detailed evidence,
-verification, ownership, comparisons, and history require `trace_memory`.
+The Evidence result covers its supporting `works_on` semantic group, so that
+group does not repeat in either related array. The community contributes an
+uncovered project Relationship, while the unrelated singleton remains in the
+direct fallback. Nested and fallback `relationship_id` values are representative
+trace handles; `equivalent_relationship_ids` excludes the representative.
+Detailed evidence, verification, ownership, comparisons, and history require
+`trace_memory`.
 
 ## Trace Mode
 
@@ -343,7 +418,10 @@ Required failures fail the request. Optional-frontier failures are explicit:
 | Relationship generation `embedding` | lexical-only Relationship discovery; state `pending`; emit `relationship_vector_warming` |
 | Relationship generation `failed` | lexical-only Relationship discovery; state `failed`; emit `relationship_vector_failed` |
 | Relationship generation `current` | enable equal-weight lexical/vector RRF |
-| optional Community or Hypothesis lookup fails | return other frontiers and append a bounded degradation |
+| Community feature disabled or `community_limit=0` | return an empty Community lane without degradation |
+| `valid_at` or `known_at` supplied | skip Communities; preserve temporal Evidence/Relationships; emit `community_temporal_not_supported` |
+| enabled Community snapshot missing, stale, failed, or too large | return Evidence and disjoint direct fallback; append a bounded Community degradation |
+| optional Hypothesis lookup fails | return other frontiers and append a bounded degradation |
 | authoritative source hydration fails | fail; never reconstruct knowledge from search text |
 | trace read fails | fail trace; never synthesize history |
 
@@ -354,15 +432,18 @@ without reopening the release generation.
 
 ## Recall Feedback And Evaluation
 
-Feedback records query, result IDs, ranks, ranking version, judgment, and actor.
-It does not mutate weights or Relationship state directly. See
-[Recall Feedback](Recall-Feedback).
+Feedback records query, lane-local Evidence, Community, nested/fallback
+Relationship and Hypothesis references/ranks, ranking version, judgment, and
+actor. It does not mutate weights or Relationship state directly. See [Recall
+Feedback](Recall-Feedback).
 
 Ranking changes require matched baseline/candidate data, stable seeds and
 providers, Evidence Recall@K/MRR/nDCG, Relationship Recall@5 and grouping
-precision, separate Community exposure, cross-team leakage checks, temporal and
-exact-anchor slices, warm-up/failure cases, and latency percentiles. Release
-policy belongs in [Evaluation](Evaluation).
+precision, unique supported Relationship coverage, zero cross-lane
+semantic-group duplicates, Community/direct-fallback contribution rates,
+cross-team leakage checks, temporal and exact-anchor slices, warm-up/failure
+cases, latency percentiles, and summary token/cost reporting. Release policy
+belongs in [Evaluation](Evaluation).
 
 ## Risks And Mitigations
 
@@ -375,29 +456,37 @@ policy belongs in [Evaluation](Evaluation).
 | Known equivalent repeats | caller excludes one ID but another author copy reappears | suppress the complete semantic group |
 | Search seed leaks stale state | old search text returns after support is revoked | source hydration rechecks status, effective support, time, and conflict disposition |
 | Filtered ANN misses | vector search returns an incomplete authorized set | apply the exact/ANN oracle contract in [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
-| Community crowds direct discovery | a summary consumes Relationship capacity | independent fields and limits; no leftover-slot filling |
+| Community hides direct discovery | a singleton or truncated member disappears | keep `related_relationships[]` as a semantic-group-disjoint fallback |
+| Cross-lane duplicate | a returned Evidence fact repeats inside a Community or fallback | derive coverage from current/known Evidence and Relationships, then assert disjoint semantic groups |
+| Stale or failed Community | a retracted source remains summarized or no current snapshot publishes | source validation, explicit degradation, direct fallback, and next-night retry |
 | Unbounded traversal | a hub Entity expands millions of edges | direct one-edge expansion plus indexed fan-out and total bounds |
 | Vector failure hides valid knowledge | terminal embedding state removes a valid lexical document | keep valid format-2 text lexically eligible and emit an explicit degradation |
 
 ## Recall Acceptance Invariants
 
 1. `results[]` contains only eligible Evidence contexts.
-2. Relationship discovery cannot change Evidence rank or budget.
+2. Relationship discovery and Communities cannot change Evidence rank or budget.
 3. Related Relationships require active status and effective support.
 4. Relationship scoring uses equal-weight lexical/vector RRF and no lifecycle,
-   provenance, authority, or popularity boost.
+   provenance, authority, popularity, or Community-summary boost.
 5. Equivalent authored Relationships consume one slot and remain traceable.
-6. Known Relationship IDs suppress their complete semantic group.
-7. `expand_from_entity_ids` performs direct one-edge expansion only.
-8. Partial migration never enables partial vector fusion.
-9. Pending or failed Relationship vectors retain lexical discovery and expose
-   public state/degradation.
-10. Evidence documents and vectors are independent from Relationship projection
+6. Returned and known Evidence plus known Relationship IDs suppress their
+   complete semantic groups from later lanes.
+7. Nested Community and direct fallback Relationships are disjoint by semantic
+   group.
+8. A returned Community contributes at least one uncovered Relationship.
+9. Singletons and query-relevant members omitted by Community limits remain
+   eligible for direct fallback.
+10. `expand_from_entity_ids` performs direct one-edge candidate expansion only.
+11. Partial migration never enables partial vector fusion.
+12. Pending or failed Relationship vectors retain lexical discovery and expose
+    public state/degradation.
+13. Evidence documents and vectors are independent from Relationship projection
     generations.
-11. Communities and Hypotheses remain separate optional frontiers.
-12. Required branch failures and optional degradation are explicit.
-13. Search hits and graph context never become evidence.
-14. Historical `valid_at` and `known_at` reconstruct applicable lifecycle and
-    Conflict state.
-15. Every returned representative and equivalent ID remains authorized and
+14. Communities and Hypotheses remain separate optional frontiers.
+15. Temporal Evidence and Relationship recall reconstruct applicable lifecycle
+    and Conflict state; Communities are skipped with explicit degradation.
+16. Required branch failures and optional degradation are explicit.
+17. Search hits, Community summaries, and graph context never become evidence.
+18. Every returned representative and equivalent ID remains authorized and
     traceable.

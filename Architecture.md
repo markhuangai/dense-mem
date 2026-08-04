@@ -239,9 +239,19 @@ Canonical ownership:
 
 ## Write Boundary
 
-Remember first validates and deterministically scans the bounded request, then
-atomically commits exact evidence, the scan event, and queued, guarded, or
-quarantined processing intent. A worker handling queued evidence prefetches
+Remember first validates and deterministically scans every provider-bound user
+field: evidence and the structured proposal. An intake rejection appends only
+safe, team-scoped audit metadata and returns a bounded error; it creates no
+ingest, fragment, search document, embedding job, or provider request. A
+passing request atomically commits exact evidence, a pass scan event, and
+queued processing intent. The scan normalizes covered format controls before
+matching, rejects a hidden-control flood, and rejects a normalized threat
+pattern; its tool and network rule requires directive wording rather than a
+descriptive statement. The worker repeats the scan before it loads candidates
+or calls the assessor. A worker-time deterministic concern atomically appends
+the matching placement fragment's security event, quarantine, and terminal
+placement outcome; an assessor concern follows the same staged-data quarantine
+path. A clean worker prefetches
 exact-span current Entity candidates and a structured predicate catalog, starts
 one strict assessor conversation containing bounded `security_signals`,
 `entity_results`, and `relationship_results`, validates and persists the first
@@ -253,11 +263,12 @@ most five turns; provider failures use durable placement retry.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Request["Authenticated bounded request"] --> Scan{"Pass, guarded,<br/>or quarantine?"}
-  Scan -- quarantine --> StageQ["Commit quarantined intake"]
-  StageQ --> Quarantine["Restricted audit only"]
-  Scan -- pass or guarded --> Intake["Commit evidence and queue intent"]
-  Intake --> Context["Exact Entity candidates and<br/>structured predicate catalog"]
+  Request["Authenticated bounded request"] --> Scan{"Intake scan passes?"}
+  Scan -- no --> Audit["Safe rejection audit;<br/>nothing staged"]
+  Scan -- yes --> Intake["Commit evidence, pass event,<br/>and queue intent"]
+  Intake --> WorkerScan{"Worker scan passes?"}
+  WorkerScan -- no --> Quarantine["Atomically record security event,<br/>quarantine, and terminal state"]
+  WorkerScan -- yes --> Context["Exact Entity candidates and<br/>structured predicate catalog"]
   Context --> Assess["One bounded assessor conversation"]
   Assess --> Validate["Closed-schema, security-signal,<br/>and allowlist validation"]
   Validate --> Signal{"Model security signal?"}

@@ -386,8 +386,16 @@ Typed error schema is in
 Raw staged evidence, exact-span client proposals, bounded same-team Entity
 candidates, and the predicate catalog are untrusted prompt data. The write path
 first runs a deterministic Base64/encoding, hidden-control, instruction,
-role-spoofing, markup, secret-extraction, and exfiltration scan before it stages
-anything. The worker repeats that scan when it claims the submission.
+role-spoofing, markup, secret-extraction, and exfiltration scan over every
+provider-bound user field, including the structured proposal, before it stages
+anything. An intake hit returns a bounded error and appends only safe audit
+metadata; no submission, fragment, search document, embedding job, or assessor
+request exists. The worker repeats that scan over the staged evidence and
+provider-bound proposal before it claims candidate context or calls the assessor.
+The versioned policy normalizes covered format controls before matching,
+rejects a hidden-control flood or a normalized threat pattern, and treats an
+external tool or network request as unsafe only when it has directive wording.
+Valid bidirectional prose and descriptive statements remain eligible evidence.
 
 The assessor receives the full staged submission plus bounded candidate/predicate
 context in one capability-free structured request. It has no tools, credentials,
@@ -397,12 +405,18 @@ evidence item. Its output cannot clear a deterministic signal, select an
 unprovided stored ID, create support, release quarantine, set lifecycle status,
 or commit canonical state.
 
-A model security concern quarantines the submission. PostgreSQL retains isolated
-staging for exactly 24 hours, then hard-deletes it. A client can only submit a
-new complete replacement linked to the quarantined submission; it cannot
-negotiate, release, or append evidence to it. Complete closed-schema validation
-is required before one atomic canonical promotion; no partial semantic commit is
-allowed.
+A `hidden_control_markup` output must cite an exact span with a covered hidden
+control or active markup. Otherwise the closed assessor response is invalid and
+cannot create a quarantine.
+
+A worker-time deterministic or model security concern quarantines the staged
+submission. For a deterministic worker hit, PostgreSQL atomically records the
+matching placement fragment's security event, quarantine record, and terminal placement result.
+PostgreSQL retains isolated staging for exactly 24 hours, then hard-deletes it.
+A client can only submit a new complete replacement linked to the quarantined
+submission; it cannot negotiate, release, or append evidence to it. Complete
+closed-schema validation is required before one atomic canonical promotion; no
+partial semantic commit is allowed.
 
 ## Audit
 
@@ -412,7 +426,8 @@ Audit high-value events:
 - authority changes and submission terminal outcomes
 - source revision activation, direct evidence supersession/retraction, and resulting
   support/status transitions
-- deterministic/model quarantine, exact retention expiry, and replacement link
+- deterministic intake rejection audits plus worker/model quarantine, exact
+  retention expiry, and replacement link
 - Entity merge/split
 - Relationship retraction/supersession corrections
 - Conflict case open/reopen/resolve/overdue/dismiss decisions and policy version

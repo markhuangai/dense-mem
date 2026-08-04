@@ -290,10 +290,11 @@ instant before, exactly at, and one instant after `expires_at`.
 ### Injection boundary
 
 - the same scanner policy and bytes produce the same bounded signals/decision
-- scanner error or deterministic quarantine reaches no model
-- guarded evidence receives fixed untrusted-data guidance
-- assessor signals only escalate and retain exact original spans
-- manager plus `write` is required for release; release re-enters guarded
+- intake rejection appends safe audit metadata only and reaches no staging or
+  model
+- worker-time deterministic and assessor signals quarantine staged evidence and
+  retain exact original spans
+- quarantine release follows the separately authorized staged-data workflow
 - quoted security guidance and adversarial variants measure false positives and
   bypasses separately
 
@@ -445,7 +446,7 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 | V2.4 migration triggers unnecessary vectors | a broad version bump rewrites search documents and queues embeddings | populated #129 fixture, before/after search hashes/job counts, and a hard zero-provider-call assertion |
 | ANN benchmark is misleading | global unfiltered test passes while small tenants lose results | tenant-filtered exact baseline under representative skew/concurrency |
 | Cross-profile tests collapse to one actor | ownership bugs pass because every fixture uses one profile | mandatory A/B/C read, correct, split, adopt, and forget integration cases |
-| Scanner fixtures test keywords only | ordinary security documentation is quarantined while obfuscated control text passes | quoted/adversarial minimal pairs plus pass/guarded/quarantine confusion and bypass gates |
+| Scanner fixtures test keywords only | ordinary security documentation is rejected while obfuscated control text passes | quoted/adversarial minimal pairs plus intake reject/pass and worker-quarantine bypass gates |
 | Source revision test checks only the pointer | pointer advances while adopted Relationships and search state remain stale | real A/B/C dependency fixtures and transaction-state assertions for support, status, transitions, and search intent |
 | Projection migration test starts only from empty data | resumability, Evidence isolation, and partial-vector bias are never exercised | populated pre-upgrade fixture, forced batch/job failures, hash parity, and whole-team gate assertions |
 

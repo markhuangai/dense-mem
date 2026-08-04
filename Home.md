@@ -34,30 +34,35 @@ sequenceDiagram
   User->>Host: Share evidence
   Host->>DM: remember(evidence, exact-span proposal)
   DM->>DM: Deterministic write-time security scan
-  DM->>PG: Stage isolated submission
-  DM-->>Host: submission_id
-  DM->>PG: Load exact Entity candidates and structured predicates
-  DM->>DM: One capability-free assessor request
-  DM->>PG: Persist first valid assessment
-  alt Security concern
-    DM->>PG: Quarantine isolated submission for exactly 24 hours
-  else Clean validated assessment
-    DM->>PG: Atomically commit state, history, predicates, and search jobs
-  end
-  Host->>DM: get_submission_status(submission_id)
-  DM-->>Host: Safe owner-scoped processing/search outcomes
-  Host->>DM: recall_memory(query)
-  DM->>PG: Evidence and Relationship search with optional derived frontiers
-  DM-->>Host: Ranked Evidence plus separate related frontiers and degradations
-  opt Cross-profile Conflict needs more evidence
-    Host->>User: Present authored positions and exact question
-    User-->>Host: Provide new evidence
-    Host->>DM: remember(evidence, conflict context)
-  end
-  opt Support or correction detail needed
-    Host->>DM: trace_memory(relationship_id)
-    DM->>PG: Load normalized provenance/history
-    DM-->>Host: Evidence, verification, lifecycle, and Conflict history
+  alt Intake rejection
+    DM->>PG: Append safe rejection audit metadata
+    DM-->>Host: Bounded error; nothing staged
+  else Intake pass
+    DM->>PG: Stage isolated submission
+    DM-->>Host: submission_id
+    DM->>PG: Load exact Entity candidates and structured predicates
+    DM->>DM: One capability-free assessor request
+    DM->>PG: Persist first valid assessment
+    alt Worker or assessor security concern
+      DM->>PG: Quarantine isolated submission for exactly 24 hours
+    else Clean validated assessment
+      DM->>PG: Atomically commit state, history, predicates, and search jobs
+    end
+    Host->>DM: get_submission_status(submission_id)
+    DM-->>Host: Safe owner-scoped processing/search outcomes
+    Host->>DM: recall_memory(query)
+    DM->>PG: Evidence and Relationship search with optional derived frontiers
+    DM-->>Host: Ranked Evidence plus separate related frontiers and degradations
+    opt Cross-profile Conflict needs more evidence
+      Host->>User: Present authored positions and exact question
+      User-->>Host: Provide new evidence
+      Host->>DM: remember(evidence, conflict context)
+    end
+    opt Support or correction detail needed
+      Host->>DM: trace_memory(relationship_id)
+      DM->>PG: Load normalized provenance/history
+      DM-->>Host: Evidence, verification, lifecycle, and Conflict history
+    end
   end
 ```
 

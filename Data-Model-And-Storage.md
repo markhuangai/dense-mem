@@ -111,7 +111,7 @@ flowchart LR
 | `evidence_sources` | one stable team/source-owner-scoped source identity and its current revision pointer |
 | `evidence_source_revisions` | append-only immutable source snapshots linked by expected previous-revision tokens |
 | `evidence_fragments` | immutable verbatim evidence slices and their source envelope |
-| `evidence_security_events` | append-only deterministic scan, assessor signal, quarantine, and authorized release history |
+| `evidence_security_events` | append-only pass scans for accepted fragments plus worker-time deterministic/assessor signals, quarantine, and authorized release history; pre-stage rejections live only as safe audit events |
 | `entity_records` | canonical team-scoped identities and current identity state |
 | `entity_names` | canonical, alias, and former names attached to an Entity |
 | `value_records` | canonical typed scalar endpoints |
