@@ -2,6 +2,7 @@ package memoryservice
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -79,11 +80,7 @@ func TestSemanticPlacementReviewSourceForwardsFlatRelationshipHintsToProvider(t 
 		t.Fatalf("provider request = %#v", provider.req)
 	}
 	got := provider.req.RelationshipHints[0]
-	subject, subjectOK := reviewMap(got["subject"])
-	predicate, predicateOK := reviewMap(got["predicate"])
-	object, objectOK := reviewMap(got["object"])
-	entity, entityOK := reviewMap(object["entity"])
-	if !subjectOK || subject["name"] != "Dense-Mem" || !predicateOK || predicate["proposed_key"] != "uses" || !objectOK || !entityOK || entity["name"] != "PostgreSQL" {
-		t.Fatalf("flat relationship hint was not preserved: %#v", got)
+	if !reflect.DeepEqual(got, flatRelationship) {
+		t.Fatalf("flat relationship hint = %#v, want %#v", got, flatRelationship)
 	}
 }
