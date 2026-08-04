@@ -14,17 +14,23 @@ import (
 )
 
 type CompletePlacementReviewInput struct {
-	TeamID           string
-	OwnerProfileID   string
-	IngestID         string
-	PlacementRunID   string
-	PlacementItemID  string
-	WorkerID         string
-	ExpectedAttempts int
-	OutcomeKind      string
-	Status           string
-	Category         string
-	Payload          map[string]any
+	TeamID             string
+	OwnerProfileID     string
+	IngestID           string
+	PlacementRunID     string
+	PlacementItemID    string
+	WorkerID           string
+	ExpectedAttempts   int
+	OutcomeKind        string
+	Status             string
+	Category           string
+	Payload            map[string]any
+	SecurityQuarantine *PlacementSecurityQuarantineInput
+}
+
+type PlacementSecurityQuarantineInput struct {
+	FragmentID string
+	SecurityEventDraft
 }
 
 type CompletePlacementReviewResult struct {
@@ -88,6 +94,27 @@ func (r *LedgerRepositoryImpl) CompletePlacementReviewResult(
 				return nil
 			}
 			return err
+		}
+		if input.SecurityQuarantine != nil {
+			securityInput := SecurityEventInput{
+				TeamID:             input.TeamID,
+				OwnerProfileID:     input.OwnerProfileID,
+				IngestID:           input.IngestID,
+				FragmentID:         input.SecurityQuarantine.FragmentID,
+				SecurityEventDraft: input.SecurityQuarantine.SecurityEventDraft,
+			}
+			if err := ensureEvidenceEventOwnership(ctx, tx, securityInput); err != nil {
+				return err
+			}
+			if _, err := insertSecurityEvent(ctx, tx, securityInput); err != nil {
+				return err
+			}
+			if err := insertEvidenceQuarantine(ctx, tx, CreateIngestInput{
+				TeamID:         input.TeamID,
+				OwnerProfileID: input.OwnerProfileID,
+			}, input.IngestID, input.SecurityQuarantine.FragmentID, input.SecurityQuarantine.Reason); err != nil {
+				return err
+			}
 		}
 		itemStatus, category, runStatus := terminalPlacementStatuses(input.Status, input.Category)
 		payload := terminalPlacementPayload(input.Payload, input.Status)
@@ -233,6 +260,12 @@ func normalizeCompletePlacementReviewInput(input CompletePlacementReviewInput) C
 	input.OutcomeKind = strings.TrimSpace(input.OutcomeKind)
 	input.Status = strings.TrimSpace(input.Status)
 	input.Category = strings.TrimSpace(input.Category)
+	if input.SecurityQuarantine != nil {
+		quarantine := *input.SecurityQuarantine
+		quarantine.FragmentID = strings.TrimSpace(quarantine.FragmentID)
+		quarantine.SecurityEventDraft = normalizeSecurityEventDraft(quarantine.SecurityEventDraft)
+		input.SecurityQuarantine = &quarantine
+	}
 	if input.OutcomeKind == "" {
 		input.OutcomeKind = "semantic_review_terminal"
 	}
@@ -284,6 +317,24 @@ func validateCompletePlacementReviewInput(input CompletePlacementReviewInput) er
 		string(domain.SemanticReviewTerminalFailure):
 	default:
 		return fmt.Errorf("unsupported terminal review status %q", input.Status)
+	}
+	if input.SecurityQuarantine != nil {
+		if input.Status != string(domain.SemanticReviewQuarantined) {
+			return errors.New("security quarantine requires quarantined terminal status")
+		}
+		securityInput := SecurityEventInput{
+			TeamID:             input.TeamID,
+			OwnerProfileID:     input.OwnerProfileID,
+			IngestID:           input.IngestID,
+			FragmentID:         input.SecurityQuarantine.FragmentID,
+			SecurityEventDraft: input.SecurityQuarantine.SecurityEventDraft,
+		}
+		if err := validateSecurityEventInput(securityInput); err != nil {
+			return fmt.Errorf("security quarantine: %w", err)
+		}
+		if securityInput.Decision != "quarantine" {
+			return errors.New("security quarantine requires quarantine decision")
+		}
 	}
 	return nil
 }

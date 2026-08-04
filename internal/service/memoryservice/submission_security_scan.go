@@ -2,6 +2,8 @@ package memoryservice
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"html"
 	"math"
 	"regexp"
@@ -18,8 +20,8 @@ import (
 
 const (
 	securityScanPolicyVersion  = "dense-mem.remember-intake-security.v1"
-	securityScanPolicyManifest = "dense-mem.remember-intake-security.v1|base64,data_uri,pem,jwt,folded_base64,hidden_controls,markup,control_role,chat_role_marker,override,secret,password_secret,tool_exfiltration"
-	securityScanPolicyHash     = "sha256:010031c97cb51dca3190979e8f27781726122fbe035a11a9c6e787db9f428c80"
+	securityScanPolicyManifest = "dense-mem.remember-intake-security.v1|base64,data_uri,pem,jwt_json,folded_base64,hidden_controls,combining_marks,markup,control_role,chat_role_marker,override,secret,password_secret,tool_exfiltration,provider_bound_proposal"
+	securityScanPolicyHash     = "sha256:83fa4c3b9f8ac9587ee0ce2c5fbcb63cec54321c7b99927cefe60a02ca18e235"
 
 	SubmissionSecurityErrorEncodedEvidence = "encoded_evidence_not_allowed"
 	SubmissionSecurityErrorRejected        = "evidence_security_rejected"
@@ -43,7 +45,7 @@ var (
 	markupPattern      = regexp.MustCompile(`(?is)<!--|<\s*(?:script|iframe|object|embed|meta|svg)\b|\bon[a-z]{3,32}\s*=`)
 	controlRolePattern = regexp.MustCompile(`(?im)(?:^|[\r\n])[[:space:]]*(?:system|developer)[[:space:]]*:|<\|[[:space:]]*(?:system|developer)[[:space:]]*\|>|<<[[:space:]]*(?:sys|system|developer)[[:space:]]*>>`)
 
-	secretExtractionPattern = regexp.MustCompile(`(?is)\b(?:reveal|show|send|dump|print|exfiltrate|return|output)\b.{0,100}\b(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b`)
+	secretExtractionPattern = regexp.MustCompile(`(?is)\b(?:reveal|show|send|dump|print|exfiltrate|return)\b.{0,100}\b(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b|\b(?:please[[:space:]_-]+)?output\b[[:space:]_-]+(?:(?:all|the|your|any|raw|secret|hidden|system|environment|api|access|auth|session|credential|cookie|token)[[:space:]_-]+)*(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b`)
 	toolExfiltrationPattern = regexp.MustCompile(`(?is)\b(?:use[[:space:]_-]*(?:your[[:space:]_-]*)?tools?|curl|wget|fetch|post|send|upload|exfiltrate|transmit|make[[:space:]_-]*(?:an[[:space:]_-]*)?(?:http[[:space:]_-]*|network[[:space:]_-]*)?request|call[[:space:]_-]*(?:an[[:space:]_-]*)?api)\b.{0,180}(?:https?://|webhook|endpoint|external|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?)`)
 	identifierHexPattern    = regexp.MustCompile(`(?i)^(?:sha(?:1|224|256|384|512):)?(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{56}|[0-9a-f]{64}|[0-9a-f]{96}|[0-9a-f]{128})$`)
 	uuidPattern             = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -82,13 +84,15 @@ type SubmissionSecuritySignal struct {
 
 // SubmissionSecurityScan is the deterministic result for one evidence item.
 type SubmissionSecurityScan struct {
-	Signals []SubmissionSecuritySignal
+	Signals          []SubmissionSecuritySignal
+	SignalsTruncated bool
 }
 
-// SubmissionSecurityBatchSignal identifies the evidence item that produced a
-// bounded deterministic safety signal.
+// SubmissionSecurityBatchSignal identifies the bounded request input that
+// produced a deterministic safety signal.
 type SubmissionSecurityBatchSignal struct {
 	EvidenceIndex int
+	Source        string
 	SubmissionSecuritySignal
 }
 
@@ -97,8 +101,20 @@ type SubmissionSecurityBatchSignal struct {
 type SubmissionSecurityBatchScan struct {
 	Items            []SubmissionSecurityScan
 	Signals          []SubmissionSecurityBatchSignal
+	EvidenceCount    int
 	SignalsTruncated bool
 }
+
+type submissionSecurityInput struct {
+	content       string
+	source        string
+	evidenceIndex int
+}
+
+const (
+	submissionSecuritySourceEvidence = "evidence"
+	submissionSecuritySourceProposal = "proposal"
+)
 
 func buildOverridePattern() string {
 	word := func(value string) string {
@@ -129,8 +145,8 @@ func ScanSubmissionEvidence(content string) (SubmissionSecurityScan, error) {
 		signals = append(signals, dangerousSubmissionSignals(decoded, true)...)
 	}
 
-	signals = normalizeSubmissionSecuritySignals(signals)
-	scan := SubmissionSecurityScan{Signals: signals}
+	signals, truncated := normalizeSubmissionSecuritySignals(signals)
+	scan := SubmissionSecurityScan{Signals: signals, SignalsTruncated: truncated}
 	if scan.rejectsEncodedEvidence() {
 		return scan, ErrEncodedEvidenceNotAllowed
 	}
@@ -143,25 +159,68 @@ func ScanSubmissionEvidence(content string) (SubmissionSecurityScan, error) {
 // ScanSubmissionBatch evaluates all evidence to produce a bounded audit
 // record and then rejects the whole batch when any item is unsafe.
 func ScanSubmissionBatch(contents []string) (SubmissionSecurityBatchScan, error) {
-	result := SubmissionSecurityBatchScan{Items: make([]SubmissionSecurityScan, len(contents))}
-	var rejection error
+	inputs := make([]submissionSecurityInput, 0, len(contents))
 	for index, content := range contents {
-		scan, err := ScanSubmissionEvidence(content)
+		inputs = append(inputs, submissionSecurityInput{
+			content:       content,
+			source:        submissionSecuritySourceEvidence,
+			evidenceIndex: index,
+		})
+	}
+	return scanSubmissionInputs(inputs)
+}
+
+func scanSubmissionWithProviderProposal(contents []string, proposal map[string]any) (SubmissionSecurityBatchScan, error) {
+	inputs := make([]submissionSecurityInput, 0, len(contents)+1)
+	for index, content := range contents {
+		inputs = append(inputs, submissionSecurityInput{
+			content:       content,
+			source:        submissionSecuritySourceEvidence,
+			evidenceIndex: index,
+		})
+	}
+	if len(proposal) == 0 {
+		return scanSubmissionInputs(inputs)
+	}
+	encodedProposal, err := json.Marshal(proposal)
+	if err != nil {
+		return SubmissionSecurityBatchScan{Items: make([]SubmissionSecurityScan, len(inputs)), EvidenceCount: len(contents)}, ErrEvidenceSecurityRejected
+	}
+	inputs = append(inputs, submissionSecurityInput{
+		content:       string(encodedProposal),
+		source:        submissionSecuritySourceProposal,
+		evidenceIndex: -1,
+	})
+	return scanSubmissionInputs(inputs)
+}
+
+func scanSubmissionInputs(inputs []submissionSecurityInput) (SubmissionSecurityBatchScan, error) {
+	result := SubmissionSecurityBatchScan{Items: make([]SubmissionSecurityScan, len(inputs))}
+	var rejection error
+	for index, input := range inputs {
+		scan, err := ScanSubmissionEvidence(input.content)
 		result.Items[index] = scan
+		if input.source == submissionSecuritySourceEvidence {
+			result.EvidenceCount++
+		}
+		if scan.SignalsTruncated {
+			result.SignalsTruncated = true
+		}
 		for _, signal := range scan.Signals {
 			if len(result.Signals) >= submissionSecurityMaxBatchSignals {
 				result.SignalsTruncated = true
 				break
 			}
 			result.Signals = append(result.Signals, SubmissionSecurityBatchSignal{
-				EvidenceIndex:            index,
+				EvidenceIndex:            input.evidenceIndex,
+				Source:                   input.source,
 				SubmissionSecuritySignal: signal,
 			})
 		}
 		if err != nil && rejection == nil {
 			rejection = err
 		}
-		if err == ErrEncodedEvidenceNotAllowed {
+		if errors.Is(err, ErrEncodedEvidenceNotAllowed) {
 			rejection = ErrEncodedEvidenceNotAllowed
 		}
 	}
@@ -190,16 +249,36 @@ func submissionSecurityPassEvent() repository.SecurityEventDraft {
 }
 
 func submissionSecurityQuarantineEvent(scan SubmissionSecurityScan) repository.SecurityEventDraft {
-	signals := make([]repository.SecuritySignalInput, 0, len(scan.Signals))
+	return submissionSecurityQuarantineEventForSignals(scan.Signals, scan.SignalsTruncated, nil)
+}
+
+func submissionSecurityBatchQuarantineEvent(scan SubmissionSecurityBatchScan) repository.SecurityEventDraft {
+	signals := make([]SubmissionSecuritySignal, 0, len(scan.Signals))
+	sources := make([]string, 0, len(scan.Signals))
 	for _, signal := range scan.Signals {
+		signals = append(signals, signal.SubmissionSecuritySignal)
+		sources = append(sources, signal.Source)
+	}
+	return submissionSecurityQuarantineEventForSignals(signals, scan.SignalsTruncated, sources)
+}
+
+func submissionSecurityQuarantineEventForSignals(
+	scanSignals []SubmissionSecuritySignal,
+	signalsTruncated bool,
+	sources []string,
+) repository.SecurityEventDraft {
+	signals := make([]repository.SecuritySignalInput, 0, len(scanSignals))
+	for index, signal := range scanSignals {
+		metadata := map[string]any{"rule_id": signal.RuleID}
+		if index < len(sources) && sources[index] != "" {
+			metadata["source"] = sources[index]
+		}
 		signals = append(signals, repository.SecuritySignalInput{
 			Kind:      signal.Kind,
 			Severity:  signal.Severity,
 			SpanStart: signal.Start,
 			SpanEnd:   signal.End,
-			Metadata: map[string]any{
-				"rule_id": signal.RuleID,
-			},
+			Metadata:  metadata,
 		})
 	}
 	return repository.SecurityEventDraft{
@@ -209,7 +288,8 @@ func submissionSecurityQuarantineEvent(scan SubmissionSecurityScan) repository.S
 		Reason:         "deterministic intake scan rejected evidence",
 		Signals:        signals,
 		Metadata: map[string]any{
-			"policy_version": securityScanPolicyVersion,
+			"policy_version":    securityScanPolicyVersion,
+			"signals_truncated": signalsTruncated,
 		},
 	}
 }
@@ -242,6 +322,9 @@ func normalizedSecurityView(view securityView) securityView {
 	for index, value := range []rune(view.text) {
 		normalized := strings.ToLower(norm.NFKC.String(string(value)))
 		for _, normalizedRune := range normalized {
+			if unicode.Is(unicode.Mn, normalizedRune) {
+				continue
+			}
 			text.WriteRune(normalizedRune)
 			spans = append(spans, view.spans[index])
 		}
@@ -355,6 +438,9 @@ func encodedEvidenceSignals(view securityView) []SubmissionSecuritySignal {
 		if commonIdentifierCandidate(candidate) {
 			continue
 		}
+		if looksLikeNaturalEvidenceToken(candidate) {
+			continue
+		}
 		candidateCount++
 		if candidateCount > submissionSecurityMaxEncodedCandidates {
 			if signal, ok := signalForLocation(view, location, "obfuscated_instruction", "encoded_candidate_budget", "critical", true); ok {
@@ -366,9 +452,6 @@ func encodedEvidenceSignals(view securityView) []SubmissionSecuritySignal {
 			if signal, ok := signalForLocation(view, location, "obfuscated_instruction", "oversized_base64", "critical", true); ok {
 				signals = append(signals, signal)
 			}
-			continue
-		}
-		if looksLikeNaturalEvidenceToken(candidate) {
 			continue
 		}
 		if encodedCandidateRejected(candidate) {
@@ -392,14 +475,9 @@ func jwtSignal(view securityView) (SubmissionSecuritySignal, bool) {
 		if len(parts) != 3 {
 			continue
 		}
-		valid := true
-		for _, part := range parts {
-			if len(part) < 8 || !isBase64URLPart(part) {
-				valid = false
-				break
-			}
-		}
-		if !valid {
+		if len(parts[0]) < 8 || len(parts[1]) < 8 || len(parts[2]) < 8 ||
+			!isBase64URLPart(parts[0]) || !isBase64URLPart(parts[1]) || !isBase64URLPart(parts[2]) ||
+			!isJWTJSONObject(parts[0], true) || !isJWTJSONObject(parts[1], false) {
 			continue
 		}
 		if index := strings.Index(view.text, trimmed); index >= 0 {
@@ -407,6 +485,22 @@ func jwtSignal(view securityView) (SubmissionSecuritySignal, bool) {
 		}
 	}
 	return SubmissionSecuritySignal{}, false
+}
+
+func isJWTJSONObject(part string, requireAlgorithm bool) bool {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(part, "="))
+	if err != nil || len(decoded) == 0 || len(decoded) > submissionSecurityMaxDecodedBytes {
+		return false
+	}
+	var value map[string]any
+	if err := json.Unmarshal(decoded, &value); err != nil || len(value) == 0 {
+		return false
+	}
+	if !requireAlgorithm {
+		return true
+	}
+	algorithm, ok := value["alg"].(string)
+	return ok && strings.TrimSpace(algorithm) != ""
 }
 
 func isBase64URLPart(value string) bool {
@@ -742,9 +836,9 @@ func signalForSourceSpan(view securityView, span sourceSpan, kind, ruleID, sever
 	return SubmissionSecuritySignal{Kind: kind, RuleID: ruleID, Severity: severity, Start: span.start, End: span.end, Encoded: encoded}, true
 }
 
-func normalizeSubmissionSecuritySignals(signals []SubmissionSecuritySignal) []SubmissionSecuritySignal {
+func normalizeSubmissionSecuritySignals(signals []SubmissionSecuritySignal) ([]SubmissionSecuritySignal, bool) {
 	if len(signals) == 0 {
-		return []SubmissionSecuritySignal{}
+		return []SubmissionSecuritySignal{}, false
 	}
 	sort.Slice(signals, func(left, right int) bool {
 		if signals[left].Start != signals[right].Start {
@@ -760,6 +854,7 @@ func normalizeSubmissionSecuritySignals(signals []SubmissionSecuritySignal) []Su
 	})
 	out := make([]SubmissionSecuritySignal, 0, minInt(len(signals), submissionSecurityMaxSignals))
 	seen := make(map[string]struct{}, len(signals))
+	truncated := false
 	for _, signal := range signals {
 		if signal.End <= signal.Start || strings.TrimSpace(signal.Kind) == "" || strings.TrimSpace(signal.RuleID) == "" {
 			continue
@@ -769,12 +864,13 @@ func normalizeSubmissionSecuritySignals(signals []SubmissionSecuritySignal) []Su
 			continue
 		}
 		seen[key] = struct{}{}
-		out = append(out, signal)
-		if len(out) == submissionSecurityMaxSignals {
-			break
+		if len(out) >= submissionSecurityMaxSignals {
+			truncated = true
+			continue
 		}
+		out = append(out, signal)
 	}
-	return out
+	return out, truncated
 }
 
 func minInt(left, right int) int {

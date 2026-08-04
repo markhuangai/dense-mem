@@ -38,6 +38,7 @@ type SecurityRejectionAuditInput struct {
 
 type SecurityRejectionAuditSignal struct {
 	EvidenceIndex int
+	Source        string
 	Kind          string
 	RuleID        string
 	Severity      string
@@ -61,6 +62,7 @@ func recordSubmissionSecurityRejection(
 	for _, signal := range scan.Signals {
 		signals = append(signals, SecurityRejectionAuditSignal{
 			EvidenceIndex: signal.EvidenceIndex,
+			Source:        signal.Source,
 			Kind:          signal.Kind,
 			RuleID:        signal.RuleID,
 			Severity:      signal.Severity,
@@ -69,7 +71,8 @@ func recordSubmissionSecurityRejection(
 		})
 	}
 	reason := SubmissionSecurityErrorRejected
-	if typed, ok := rejection.(*SubmissionSecurityError); ok && strings.TrimSpace(typed.Code) != "" {
+	var typed *SubmissionSecurityError
+	if errors.As(rejection, &typed) && strings.TrimSpace(typed.Code) != "" {
 		reason = typed.Code
 	}
 	if err := auditor.RecordSecurityRejection(ctx, SecurityRejectionAuditInput{
@@ -80,7 +83,7 @@ func recordSubmissionSecurityRejection(
 		CorrelationID:    correlation.FromContext(ctx),
 		Surface:          strings.TrimSpace(surface),
 		ReasonCode:       reason,
-		EvidenceCount:    len(scan.Items),
+		EvidenceCount:    scan.EvidenceCount,
 		PolicyVersion:    securityScanPolicyVersion,
 		PolicyHash:       securityScanPolicyHash,
 		Signals:          signals,

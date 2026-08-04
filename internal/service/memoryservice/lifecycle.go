@@ -19,7 +19,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-var ErrLifecycleAuthContext = errors.New("memory lifecycle: authenticated actor context is required")
+var (
+	ErrLifecycleAuthContext = errors.New("memory lifecycle: authenticated actor context is required")
+	ErrLifecyclePersistence = errors.New("memory lifecycle: persistence failed")
+)
 
 type LifecycleService interface {
 	ResolveMemoryPlacement(ctx context.Context, req ResolveMemoryPlacementRequest) (*ResolveMemoryPlacementResult, error)
@@ -388,7 +391,7 @@ func (s *lifecycleService) rejectUnsafeLifecycleEvidence(
 		return nil
 	}
 	if auditErr := recordSubmissionSecurityRejection(ctx, s.auditor, actor, surface, scan, err); auditErr != nil {
-		return auditErr
+		return ErrLifecyclePersistence
 	}
 	return err
 }

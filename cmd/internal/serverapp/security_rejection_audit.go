@@ -31,6 +31,7 @@ func (a securityRejectionAuditAdapter) RecordSecurityRejection(
 	for _, signal := range input.Signals {
 		signals = append(signals, map[string]any{
 			"evidence_index": signal.EvidenceIndex,
+			"source":         signal.Source,
 			"kind":           signal.Kind,
 			"rule_id":        signal.RuleID,
 			"severity":       signal.Severity,

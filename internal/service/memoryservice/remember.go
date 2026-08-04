@@ -167,7 +167,11 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 	for _, evidence := range req.Evidence {
 		contents = append(contents, evidence.Content)
 	}
-	scan, scanErr := ScanSubmissionBatch(contents)
+	proposal := map[string]any{
+		"entity_hints":       req.EntityHints,
+		"relationship_hints": req.RelationshipHints,
+	}
+	scan, scanErr := scanSubmissionWithProviderProposal(contents, proposal)
 	if scanErr != nil {
 		if err := recordSubmissionSecurityRejection(ctx, s.auditor, actor, "remember", scan, scanErr); err != nil {
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
@@ -181,10 +185,6 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 	requestHash, err := canonicalRequestHash(req)
 	if err != nil {
 		return nil, err
-	}
-	proposal := map[string]any{
-		"entity_hints":       req.EntityHints,
-		"relationship_hints": req.RelationshipHints,
 	}
 	correlationID := correlation.FromContext(ctx)
 	actorMetadata := map[string]any{
