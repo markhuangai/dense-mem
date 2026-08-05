@@ -30,6 +30,7 @@ type SubmissionAssessmentPlacementWorkerService interface {
 type SubmissionAssessmentPlacementWorkerDependencies struct {
 	Ledger                    repository.LedgerRepository
 	Assessments               repository.SubmissionAssessmentRepository
+	ReviewExpiry              SemanticAssessmentReviewExpiry
 	Catalog                   SubmissionAssessmentCatalog
 	Provider                  SemanticAssessorProvider
 	Limits                    verifier.SemanticAssessmentLimits
@@ -44,6 +45,7 @@ type SubmissionAssessmentPlacementWorkerDependencies struct {
 type submissionAssessmentPlacementWorkerService struct {
 	ledger                    repository.LedgerRepository
 	assessments               repository.SubmissionAssessmentRepository
+	reviewExpiry              SemanticAssessmentReviewExpiry
 	catalog                   SubmissionAssessmentCatalog
 	provider                  SemanticAssessorProvider
 	limits                    verifier.SemanticAssessmentLimits
@@ -66,6 +68,12 @@ func NewSubmissionAssessmentPlacementWorkerService(
 	if now == nil {
 		now = time.Now
 	}
+	reviewExpiry := deps.ReviewExpiry
+	if reviewExpiry == nil {
+		if configured, ok := deps.Assessments.(SemanticAssessmentReviewExpiry); ok {
+			reviewExpiry = configured
+		}
+	}
 	metrics := deps.Metrics
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
@@ -73,6 +81,7 @@ func NewSubmissionAssessmentPlacementWorkerService(
 	return &submissionAssessmentPlacementWorkerService{
 		ledger:                    deps.Ledger,
 		assessments:               deps.Assessments,
+		reviewExpiry:              reviewExpiry,
 		catalog:                   deps.Catalog,
 		provider:                  deps.Provider,
 		limits:                    deps.Limits,
@@ -88,6 +97,16 @@ func NewSubmissionAssessmentPlacementWorkerService(
 func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssessmentPlacement(ctx context.Context) (bool, error) {
 	if err := s.validateDependencies(); err != nil {
 		return false, err
+	}
+	if s.reviewExpiry != nil {
+		expired, err := s.reviewExpiry.ExpirePlacementAssessmentReviews(ctx, repository.ExpirePlacementAssessmentReviewsInput{
+			TeamID: s.teamID,
+			Now:    s.now().UTC(),
+		})
+		if err != nil {
+			return false, fmt.Errorf("submission assessment worker: expire reviews: %w", err)
+		}
+		observability.RecordAssessorReviewExpiry(s.metrics, expired)
 	}
 	run, err := s.ledger.ClaimNextPlacementRun(ctx, s.teamID, s.workerID, s.lease)
 	if err != nil {
@@ -169,7 +188,7 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		return true, errors.Join(err, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_scope"))
 	}
 	if errors.Is(err, repository.ErrPlacementStaleSource) {
-		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "stale_source")
+		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewSuperseded), "failed", "stale_source")
 	}
 	if err != nil {
 		return true, errors.Join(err, s.retryOrFail(ctx, *run, scope, "semantic_commit", false, false))
@@ -525,17 +544,35 @@ func submissionAssessmentDeterministicQuarantines(
 		signals []SubmissionSecurityBatchSignal
 	}
 	byFragmentID := map[string]*group{}
+	proposalSignals := make([]SubmissionSecurityBatchSignal, 0)
 	for _, signal := range scan.Signals {
-		item := plan.Items[0]
-		if signal.Source == submissionSecuritySourceEvidence && signal.EvidenceIndex >= 0 && signal.EvidenceIndex < len(plan.Items) {
-			item = plan.Items[signal.EvidenceIndex]
+		switch signal.Source {
+		case submissionSecuritySourceEvidence:
+			item, ok := plan.itemsByEvidenceID[submissionAssessmentEvidenceID(signal.EvidenceIndex)]
+			if !ok {
+				return nil, errors.New("submission assessment security signal references unknown evidence")
+			}
+			entry := byFragmentID[item.Fragment.FragmentID]
+			if entry == nil {
+				entry = &group{}
+				byFragmentID[item.Fragment.FragmentID] = entry
+			}
+			entry.signals = append(entry.signals, signal)
+		case submissionSecuritySourceProposal:
+			proposalSignals = append(proposalSignals, signal)
+		default:
+			return nil, errors.New("submission assessment security signal source is unsupported")
 		}
-		entry := byFragmentID[item.Fragment.FragmentID]
-		if entry == nil {
-			entry = &group{}
-			byFragmentID[item.Fragment.FragmentID] = entry
+	}
+	if len(proposalSignals) > 0 {
+		for _, item := range plan.Items {
+			entry := byFragmentID[item.Fragment.FragmentID]
+			if entry == nil {
+				entry = &group{}
+				byFragmentID[item.Fragment.FragmentID] = entry
+			}
+			entry.signals = append(entry.signals, proposalSignals...)
 		}
-		entry.signals = append(entry.signals, signal)
 	}
 	if len(byFragmentID) == 0 {
 		byFragmentID[plan.Items[0].Fragment.FragmentID] = &group{}
@@ -554,7 +591,14 @@ func submissionAssessmentDeterministicQuarantines(
 		}
 		draft := submissionSecurityQuarantineEventForSignals(signals, scan.SignalsTruncated, sources)
 		for index, signal := range entry.signals {
-			if signal.Source != submissionSecuritySourceEvidence || index >= len(draft.Signals) {
+			if index >= len(draft.Signals) {
+				continue
+			}
+			if signal.Source == submissionSecuritySourceProposal {
+				draft.Signals[index].Metadata["scope"] = "submission"
+				continue
+			}
+			if signal.Source != submissionSecuritySourceEvidence {
 				continue
 			}
 			quote, err := verifier.SemanticEvidenceSpan(item.Fragment.Content, signal.Start, signal.End)

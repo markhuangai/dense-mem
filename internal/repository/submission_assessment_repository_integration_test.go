@@ -27,6 +27,10 @@ func TestSubmissionAssessmentPersistsOneRunAndAtomicallyCommitsEveryItem(t *test
 	require.NotNil(t, claimed)
 
 	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+	reused, existing, err := repo.PersistSubmissionAssessment(ctx, submissionAssessmentPersistInput(*claimed))
+	require.NoError(t, err)
+	assert.True(t, existing)
+	assert.Equal(t, assessment.AssessmentID, reused.AssessmentID)
 	input := submissionAssessmentCommitFixture(*claimed, ingest, assessment.AssessmentID, false)
 	committed, err := repo.CommitSubmissionAssessment(ctx, input)
 	require.NoError(t, err)
@@ -192,6 +196,116 @@ func TestSubmissionAssessmentCommitRequiresAssessmentForTheSameRun(t *testing.T)
 	assert.Equal(t, before, after)
 }
 
+func TestSubmissionAssessmentCommitRejectsDifferentProfileAndTeam(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-assessment-isolation-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-owner")
+	otherOwnerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-other-owner")
+	otherTeamID := createLedgerTeam(t, adminDB, rls, "submission-assessment-other-team")
+	otherTeamOwnerID := createLedgerProfile(t, adminDB, rls, otherTeamID, "submission-assessment-other-team-owner")
+	insertSearchTestContract(t, adminDB, rls, "submission-assessment-isolation-search", 3, "exact", "")
+	repo := NewLedgerRepository(appDB, rls)
+	ingest := createSubmissionAssessmentIngest(t, ctx, repo, teamID, ownerID, "submission-assessment-isolation")
+	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+	input := submissionAssessmentCommitFixture(*claimed, ingest, assessment.AssessmentID, false)
+	before := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerID, ingest.PlacementRunID)
+
+	differentProfile := input
+	differentProfile.OwnerProfileID = otherOwnerID
+	_, err = repo.CommitSubmissionAssessment(ctx, differentProfile)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlacementLeaseLost)
+	afterDifferentProfile := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerID, ingest.PlacementRunID)
+	assert.Equal(t, before, afterDifferentProfile)
+
+	differentTeam := input
+	differentTeam.TeamID = otherTeamID
+	differentTeam.OwnerProfileID = otherTeamOwnerID
+	_, err = repo.CommitSubmissionAssessment(ctx, differentTeam)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPlacementLeaseLost)
+	afterDifferentTeam := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerID, ingest.PlacementRunID)
+	assert.Equal(t, before, afterDifferentTeam)
+}
+
+func TestSubmissionAssessmentCommitReusesCompatiblePredicateAlias(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-assessment-alias-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-alias-owner")
+	insertSearchTestContract(t, adminDB, rls, "submission-assessment-alias-search", 3, "exact", "")
+	semantic := NewSemanticRepository(appDB, rls)
+	createSemanticEntity(t, ctx, semantic, teamID, ownerID, "concept", "Alias seed")
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO team_predicate_definitions (
+			    team_id, predicate_key, version, aliases, allowed_subject_kinds,
+			    allowed_object_kinds, relationship_kind, current_cardinality,
+			    lifecycle_state, origin, metadata
+			) VALUES (
+			    ?::uuid, 'related_to', 1, ARRAY['links']::text[], ARRAY['concept']::text[],
+			    ARRAY['concept']::text[], 'state', 'many', 'active', 'built_in', '{}'::jsonb
+			)
+		`, teamID).Error
+	}))
+	repo := NewLedgerRepository(appDB, rls)
+	ingest := createSubmissionAssessmentIngest(t, ctx, repo, teamID, ownerID, "submission-assessment-alias")
+	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+	input := submissionAssessmentCommitFixture(*claimed, ingest, assessment.AssessmentID, false)
+
+	_, err = repo.CommitSubmissionAssessment(ctx, input)
+	require.NoError(t, err)
+
+	var actions, predicateKeys []string
+	var registeredKeyCount int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		rows, err := tx.Raw(`
+			SELECT registration_action, predicate_key
+			FROM predicate_registration_events
+			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+			ORDER BY relationship_ref ASC
+		`, teamID, ingest.PlacementRunID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var action, predicateKey string
+			if err := rows.Scan(&action, &predicateKey); err != nil {
+				return err
+			}
+			actions = append(actions, action)
+			predicateKeys = append(predicateKeys, predicateKey)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT COUNT(*) FROM team_predicate_definitions
+			WHERE team_id = ?::uuid AND predicate_key = 'links'
+		`, teamID).Scan(&registeredKeyCount).Error
+	}))
+	assert.Equal(t, []string{"reused", "reused"}, actions)
+	assert.Equal(t, []string{"related_to", "related_to"}, predicateKeys)
+	assert.Zero(t, registeredKeyCount)
+}
+
+func TestSubmissionTerminalStatusesTreatSupersededAsFailed(t *testing.T) {
+	itemStatus, itemCategory, runStatus := submissionTerminalStatuses(string(domain.SemanticReviewSuperseded), "")
+	assert.Equal(t, string(domain.PlacementRunFailed), itemStatus)
+	assert.Equal(t, "failed", itemCategory)
+	assert.Equal(t, string(domain.PlacementRunFailed), runStatus)
+}
+
 type submissionAssessmentSemanticCount struct {
 	Entities        int64
 	Predicates      int64
@@ -256,8 +370,15 @@ func createSubmissionAssessmentIngest(t *testing.T, ctx context.Context, repo *L
 
 func persistSubmissionAssessment(t *testing.T, ctx context.Context, repo *LedgerRepositoryImpl, run PlacementRun) *SubmissionAssessment {
 	t.Helper()
+	assessment, existing, err := repo.PersistSubmissionAssessment(ctx, submissionAssessmentPersistInput(run))
+	require.NoError(t, err)
+	assert.False(t, existing)
+	return assessment
+}
+
+func submissionAssessmentPersistInput(run PlacementRun) PersistSubmissionAssessmentInput {
 	response := json.RawMessage(`{"request_id":"submission-assessment","security_signals":[],"entity_results":[],"relationship_results":[]}`)
-	assessment, existing, err := repo.PersistSubmissionAssessment(ctx, PersistSubmissionAssessmentInput{
+	return PersistSubmissionAssessmentInput{
 		TeamID:                  run.TeamID,
 		OwnerProfileID:          run.OwnerProfileID,
 		IngestID:                run.IngestID,
@@ -272,10 +393,7 @@ func persistSubmissionAssessment(t *testing.T, ctx context.Context, repo *Ledger
 		NormalizedResponse:      response,
 		ResponseHash:            "sha256:submission-assessment-test",
 		ValidatedAt:             time.Now().UTC(),
-	})
-	require.NoError(t, err)
-	assert.False(t, existing)
-	return assessment
+	}
 }
 
 func submissionAssessmentCommitFixture(run PlacementRun, ingest *CreateIngestResult, assessmentID string, invalidSecondRelationship bool) CommitSubmissionAssessmentInput {

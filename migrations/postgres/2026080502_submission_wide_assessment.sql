@@ -3,8 +3,8 @@
 
 -- Lock/rewrite analysis:
 -- - The active-run preflight intentionally blocks deployment while an older
---   per-item worker could still create partial semantic state. Drain or
---   terminalize those runs before this migration.
+--   per-item worker or review run could still create partial semantic state.
+--   Drain or terminalize those runs before this migration.
 -- - ALTER COLUMN DROP NOT NULL and additive columns do not rewrite retained
 --   assessment payloads; new constraints and foreign keys validate existing
 --   rows while this transactional migration holds their required locks.
@@ -23,7 +23,7 @@ BEGIN
     SELECT count(*)
     INTO unfinished_count
     FROM placement_runs
-    WHERE status IN ('queued', 'guarded', 'processing');
+    WHERE status IN ('queued', 'guarded', 'processing', 'awaiting_review');
 
     IF unfinished_count > 0 THEN
         RAISE EXCEPTION

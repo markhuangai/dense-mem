@@ -908,6 +908,7 @@ func startActiveWorkers(
 			worker := memoryservice.NewSubmissionAssessmentPlacementWorkerService(memoryservice.SubmissionAssessmentPlacementWorkerDependencies{
 				Ledger:                    ledger,
 				Assessments:               ledger,
+				ReviewExpiry:              ledger,
 				Catalog:                   semantic,
 				Provider:                  assessor,
 				Limits:                    assessmentLimits,

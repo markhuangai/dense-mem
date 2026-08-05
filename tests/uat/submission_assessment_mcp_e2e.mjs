@@ -171,7 +171,27 @@ function submissionSummary(ingestID) {
       (SELECT count(*) FROM predicate_registration_events WHERE team_id = ${sqlLiteral(teamID)}::uuid AND placement_run_id = (SELECT placement_run_id FROM run)) AS registration_events,
       (SELECT count(*) FROM predicate_registration_events WHERE team_id = ${sqlLiteral(teamID)}::uuid AND placement_run_id = (SELECT placement_run_id FROM run) AND predicate_key = 'enables') AS enables_registrations,
       (SELECT count(*) FROM predicate_registration_events WHERE team_id = ${sqlLiteral(teamID)}::uuid AND placement_run_id = (SELECT placement_run_id FROM run) AND registration_action = 'created') AS created_registrations,
-      (SELECT count(*) FROM search_documents WHERE team_id = ${sqlLiteral(teamID)}::uuid) AS search_documents;
+      (SELECT count(*)
+       FROM search_documents AS document
+       WHERE document.team_id = ${sqlLiteral(teamID)}::uuid
+         AND (
+           (document.source_kind = 'evidence' AND document.source_id IN (
+             SELECT item.fragment_id
+             FROM placement_items AS item
+             WHERE item.team_id = ${sqlLiteral(teamID)}::uuid
+               AND item.placement_run_id = (SELECT placement_run_id FROM run)
+           ))
+           OR
+           (document.source_kind = 'relationship' AND document.source_id IN (
+             SELECT observation.relationship_id
+             FROM relationship_observations AS observation
+             JOIN verification_events AS verification
+               ON verification.team_id = observation.team_id
+              AND verification.observation_id = observation.observation_id
+             WHERE observation.team_id = ${sqlLiteral(teamID)}::uuid
+               AND verification.assessment_id = (SELECT assessment_id FROM assessment)
+           ))
+         )) AS search_documents;
   `);
   return {
     assessments: positiveCount(row[0]),

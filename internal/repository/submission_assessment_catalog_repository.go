@@ -42,7 +42,7 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 			           COALESCE(canonical.display_name, name.display_name, '') AS canonical_name,
 				           rec.identity_context, rec.status,
 				           CASE WHEN rec.entity_id = NULLIF(?, '')::uuid THEN 0 ELSE 1 END AS known_rank,
-				           CASE WHEN lower(COALESCE(name.display_name, '')) = lower(?) THEN 0 ELSE 1 END AS name_rank
+			           CASE WHEN name.normalized_name = ? THEN 0 ELSE 1 END AS name_rank
 				    FROM entity_records AS rec
 				    LEFT JOIN entity_names AS name
 				      ON name.team_id = rec.team_id
@@ -59,7 +59,7 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 				      AND rec.entity_kind = ?
 				      AND (
 				          rec.entity_id = NULLIF(?, '')::uuid
-				          OR lower(COALESCE(name.display_name, '')) = lower(?)
+			          OR name.normalized_name = ?
 				      )
 				    ORDER BY rec.entity_id, known_rank, name_rank, name.created_at DESC
 				)
@@ -67,8 +67,8 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 				FROM candidates
 				ORDER BY known_rank, name_rank, entity_id
 				LIMIT ?
-			`, target.KnownEntityID, target.Surface, input.TeamID, target.EntityKind,
-				target.KnownEntityID, target.Surface, input.CandidateLimit+1).Rows()
+		`, target.KnownEntityID, normalizeName(target.Surface), input.TeamID, target.EntityKind,
+				target.KnownEntityID, normalizeName(target.Surface), input.CandidateLimit+1).Rows()
 			if err != nil {
 				return err
 			}

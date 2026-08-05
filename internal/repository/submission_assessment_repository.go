@@ -262,7 +262,7 @@ func (r *LedgerRepositoryImpl) PersistSubmissionAssessment(
 	existing := false
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		inserted, err := insertSubmissionAssessment(ctx, tx, input)
-		if err != nil {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if inserted != nil {
@@ -399,7 +399,7 @@ func insertSubmissionAssessment(
 		    ?::uuid, 'submission', ?::uuid, ?::uuid, ?::uuid,
 		    ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?
 		)
-		ON CONFLICT DO NOTHING
+		ON CONFLICT (team_id, placement_run_id) WHERE assessment_scope = 'submission' DO NOTHING
 		RETURNING team_id::text, assessment_id::text, owner_profile_id::text,
 		          ingest_id::text, placement_run_id::text, request_id,
 		          assessor_contract_version, model, tokenizer,
@@ -416,7 +416,10 @@ func insertSubmissionAssessment(
 	}
 	defer rows.Close()
 	if !rows.Next() {
-		return nil, rows.Err()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, sql.ErrNoRows
 	}
 	assessment, err := scanSubmissionAssessment(rows)
 	if err != nil {
@@ -681,7 +684,7 @@ func validateCompleteSubmissionAssessmentInput(input CompleteSubmissionAssessmen
 		return err
 	}
 	switch input.Status {
-	case string(domain.SemanticReviewReviewRequired), string(domain.SemanticReviewTerminalFailure), string(domain.SemanticReviewQuarantined), string(domain.SemanticReviewRejected):
+	case string(domain.SemanticReviewReviewRequired), string(domain.SemanticReviewTerminalFailure), string(domain.SemanticReviewQuarantined), string(domain.SemanticReviewRejected), string(domain.SemanticReviewSuperseded):
 	default:
 		return fmt.Errorf("unsupported submission terminal status %q", input.Status)
 	}
@@ -733,6 +736,8 @@ func submissionTerminalStatuses(status, category string) (string, string, string
 	case string(domain.SemanticReviewQuarantined):
 		return "quarantined", "quarantined", string(domain.PlacementRunQuarantined)
 	case string(domain.SemanticReviewTerminalFailure):
+		return "failed", "failed", string(domain.PlacementRunFailed)
+	case string(domain.SemanticReviewSuperseded):
 		return "failed", "failed", string(domain.PlacementRunFailed)
 	case string(domain.SemanticReviewReviewRequired):
 		return string(domain.PlacementRunAwaitingReview), "candidate", string(domain.PlacementRunAwaitingReview)

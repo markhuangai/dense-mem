@@ -15,6 +15,30 @@ type assessorConfigProviderStub struct {
 	confidenceThreshold    float64
 }
 
+type legacyAssessorConfigProviderStub struct {
+	ConfigProvider
+	inputTokens            int
+	outputTokens           int
+	candidateContextTokens int
+	tokenizer              string
+}
+
+func (s legacyAssessorConfigProviderStub) GetAIVerifierMaxInputTokens() int {
+	return s.inputTokens
+}
+
+func (s legacyAssessorConfigProviderStub) GetAIVerifierMaxOutputTokens() int {
+	return s.outputTokens
+}
+
+func (s legacyAssessorConfigProviderStub) GetAIVerifierMaxCandidateContextTokens() int {
+	return s.candidateContextTokens
+}
+
+func (s legacyAssessorConfigProviderStub) GetAIVerifierTokenizer() string {
+	return s.tokenizer
+}
+
 func (s assessorConfigProviderStub) GetAIVerifierMaxInputTokens() int {
 	return s.inputTokens
 }
@@ -149,5 +173,24 @@ func TestAssessorConfigFallbacksAndConfidenceValidation(t *testing.T) {
 	}
 	if got := (&Config{MemoryAutoWriteConfidenceThreshold: 0, memoryAutoWriteConfidenceThresholdSet: true}).GetMemoryAutoWriteConfidenceThreshold(); got != 0 {
 		t.Fatalf("explicit Config zero threshold = %v, want 0", got)
+	}
+}
+
+func TestAssessorBudgetPreservesLegacyOptionalConfig(t *testing.T) {
+	budget := AIVerifierAssessmentBudgetFor(legacyAssessorConfigProviderStub{
+		inputTokens:            10,
+		outputTokens:           20,
+		candidateContextTokens: 30,
+		tokenizer:              "legacy-tokenizer",
+	})
+
+	if budget != (AIVerifierAssessmentBudget{
+		MaxInputTokens:            10,
+		MaxOutputTokens:           20,
+		MaxCandidateContextTokens: 30,
+		MaxPredicateOptions:       DefaultAIVerifierMaxPredicateOptions,
+		Tokenizer:                 "legacy-tokenizer",
+	}) {
+		t.Fatalf("legacy assessor budget = %#v", budget)
 	}
 }

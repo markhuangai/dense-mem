@@ -151,10 +151,22 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 			}
 		}
 
+		evidenceSearchContract, err := loadActiveSearchContractInTx(ctx, tx)
+		if err != nil {
+			return err
+		}
 		for _, item := range items {
 			commit := common
 			commit.PlacementItemID = item.PlacementItemID
-			document, err := upsertPlacementItemEvidenceSearchDocument(ctx, tx, commit, item.FragmentID, r.embeddingJobMaxAttempts)
+			document, err := upsertPlacementEvidenceSearchDocumentWithContract(
+				ctx,
+				tx,
+				commit,
+				item.FragmentID,
+				map[string]any{"placement_item_id": commit.PlacementItemID},
+				evidenceSearchContract,
+				r.embeddingJobMaxAttempts,
+			)
 			if err != nil {
 				return err
 			}
@@ -455,7 +467,7 @@ func loadLockedSubmissionAssessmentItems(
 		item.Fragment.FragmentID = item.FragmentID
 		item.Fragment.EvidenceIndex = item.EvidenceIndex
 		item.SourceStale = retired || (item.Fragment.SourceRevisionID != "" && currentRevisionID != "" && item.Fragment.SourceRevisionID != currentRevisionID)
-		if item.Status != string(domain.PlacementRunQueued) && item.Status != "processing" {
+		if item.Status != string(domain.PlacementRunQueued) && item.Status != string(domain.PlacementRunProcessing) {
 			return nil, ErrPlacementLeaseLost
 		}
 		items = append(items, item)
@@ -588,7 +600,10 @@ func resolveSubmissionPredicateRegistration(
 	}
 	defer rows.Close()
 	if !rows.Next() {
-		return SemanticReviewPredicateCandidate{}, "", rows.Err()
+		if err := rows.Err(); err != nil {
+			return SemanticReviewPredicateCandidate{}, "", err
+		}
+		return SemanticReviewPredicateCandidate{}, "", sql.ErrNoRows
 	}
 	created, err := scanSubmissionPredicateCandidate(rows)
 	if err != nil {
@@ -606,12 +621,23 @@ func loadLatestSubmissionPredicate(
 		SELECT predicate_key, version, aliases, allowed_subject_kinds,
 		       allowed_object_kinds, relationship_kind, current_cardinality,
 		       lifecycle_state
-		FROM team_predicate_definitions
-		WHERE team_id = ?::uuid
-		  AND predicate_key = ?
-		ORDER BY version DESC
-		LIMIT 1
-	`, teamID, predicateKey).Rows()
+		FROM (
+			SELECT predicate_key, version, aliases, allowed_subject_kinds,
+			       allowed_object_kinds, relationship_kind, current_cardinality,
+			       lifecycle_state,
+			       row_number() OVER (
+			           PARTITION BY predicate_key
+			           ORDER BY version DESC
+			       ) AS version_rank
+			FROM team_predicate_definitions
+			WHERE team_id = ?::uuid
+		) AS latest
+		WHERE version_rank = 1
+		  AND (predicate_key = ? OR ? = ANY(aliases))
+		ORDER BY CASE WHEN predicate_key = ? THEN 0 ELSE 1 END,
+		         predicate_key ASC
+		LIMIT 2
+	`, teamID, predicateKey, predicateKey, predicateKey).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -624,6 +650,15 @@ func loadLatestSubmissionPredicate(
 	}
 	candidate, err := scanSubmissionPredicateCandidate(rows)
 	if err != nil {
+		return nil, err
+	}
+	if candidate.PredicateKey == predicateKey {
+		return &candidate, rows.Err()
+	}
+	if rows.Next() {
+		return nil, ErrSubmissionPredicateRegistrationHeld
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return &candidate, rows.Err()

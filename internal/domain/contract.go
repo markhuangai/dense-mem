@@ -257,6 +257,7 @@ const (
 	SemanticReviewRejected        SemanticReviewStatus = "rejected"
 	SemanticReviewRetryable       SemanticReviewStatus = "retryable"
 	SemanticReviewTerminalFailure SemanticReviewStatus = "terminal_failure"
+	SemanticReviewSuperseded      SemanticReviewStatus = "superseded"
 )
 
 type ResolveAction string
@@ -411,6 +412,7 @@ func SemanticReviewStatuses() []string {
 		string(SemanticReviewRejected),
 		string(SemanticReviewRetryable),
 		string(SemanticReviewTerminalFailure),
+		string(SemanticReviewSuperseded),
 	}
 }
 

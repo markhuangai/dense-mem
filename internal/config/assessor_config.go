@@ -9,8 +9,11 @@ type aiVerifierAssessmentConfig interface {
 	GetAIVerifierMaxInputTokens() int
 	GetAIVerifierMaxOutputTokens() int
 	GetAIVerifierMaxCandidateContextTokens() int
-	GetAIVerifierMaxPredicateOptions() int
 	GetAIVerifierTokenizer() string
+}
+
+type aiVerifierPredicateOptionsConfig interface {
+	GetAIVerifierMaxPredicateOptions() int
 }
 
 type memoryAutoWriteConfidenceConfig interface {
@@ -51,11 +54,13 @@ func AIVerifierAssessmentBudgetFor(cfg ConfigProvider) AIVerifierAssessmentBudge
 	if value := assessmentConfig.GetAIVerifierMaxCandidateContextTokens(); value > 0 {
 		budget.MaxCandidateContextTokens = value
 	}
-	if value := assessmentConfig.GetAIVerifierMaxPredicateOptions(); value > 0 {
-		budget.MaxPredicateOptions = value
-	}
 	if value := strings.TrimSpace(assessmentConfig.GetAIVerifierTokenizer()); value != "" {
 		budget.Tokenizer = value
+	}
+	if predicateOptionsConfig, ok := cfg.(aiVerifierPredicateOptionsConfig); ok && predicateOptionsConfig != nil {
+		if value := predicateOptionsConfig.GetAIVerifierMaxPredicateOptions(); value > 0 {
+			budget.MaxPredicateOptions = value
+		}
 	}
 	return budget
 }

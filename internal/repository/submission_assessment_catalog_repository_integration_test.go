@@ -19,8 +19,8 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndReportsOverflow(t *testing.T)
 	teamC := createLedgerTeam(t, adminDB, rls, "submission-catalog-team-c")
 	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "submission-catalog-owner-c")
 	repo := NewSemanticRepository(appDB, rls)
-	teamAEntity := createSemanticEntity(t, ctx, repo, teamA, ownerA, "project", "Dense-Mem")
-	teamCEntity := createSemanticEntity(t, ctx, repo, teamC, ownerC, "project", "Dense-Mem")
+	teamAEntity := createSemanticEntity(t, ctx, repo, teamA, ownerA, "project", "Dense Mem")
+	teamCEntity := createSemanticEntity(t, ctx, repo, teamC, ownerC, "project", "Dense Mem")
 
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamA, ownerA, func(tx *gorm.DB) error {
 		return tx.Exec(`
@@ -39,7 +39,7 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndReportsOverflow(t *testing.T)
 		TeamID:         teamA,
 		OwnerProfileID: ownerB,
 		Entities: []SubmissionAssessmentEntityCatalogTarget{{
-			Ref: "dense-mem", Surface: "Dense-Mem", EntityKind: "project", KnownEntityID: teamCEntity.EntityID,
+			Ref: "dense-mem", Surface: "  DENSE   MEM  ", EntityKind: "project", KnownEntityID: teamCEntity.EntityID,
 		}},
 		CandidateLimit: 20,
 	})

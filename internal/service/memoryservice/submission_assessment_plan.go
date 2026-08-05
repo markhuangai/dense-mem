@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
@@ -327,6 +329,11 @@ func submissionAssessmentEntityTargetFromProposal(
 		return submissionAssessmentEntityTarget{}, errors.New("submission assessment entity kind is unsupported")
 	}
 	knownEntityID := strings.TrimSpace(submissionAssessmentRawString(raw, "known_entity_id"))
+	if knownEntityID != "" {
+		if _, err := uuid.Parse(knownEntityID); err != nil {
+			return submissionAssessmentEntityTarget{}, errors.New("submission assessment known entity id is invalid")
+		}
+	}
 	ref := fmt.Sprintf("entity:%s:%d:%d:%s", evidenceID, start, end, kind)
 	item := itemsByEvidenceID[evidenceID]
 	return submissionAssessmentEntityTarget{

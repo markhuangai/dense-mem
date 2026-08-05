@@ -66,7 +66,7 @@ func TestContractEnums(t *testing.T) {
 			t.Fatalf("RelationshipOutcomeCategories missing %s", category)
 		}
 	}
-	for _, status := range []string{"accepted", "review_required", "quarantined", "rejected", "retryable", "terminal_failure"} {
+	for _, status := range []string{"accepted", "review_required", "quarantined", "rejected", "retryable", "terminal_failure", "superseded"} {
 		if !slices.Contains(SemanticReviewStatuses(), status) {
 			t.Fatalf("SemanticReviewStatuses missing %s", status)
 		}
