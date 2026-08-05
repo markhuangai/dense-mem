@@ -9,6 +9,7 @@ type aiVerifierAssessmentConfig interface {
 	GetAIVerifierMaxInputTokens() int
 	GetAIVerifierMaxOutputTokens() int
 	GetAIVerifierMaxCandidateContextTokens() int
+	GetAIVerifierMaxPredicateOptions() int
 	GetAIVerifierTokenizer() string
 }
 
@@ -23,6 +24,7 @@ type AIVerifierAssessmentBudget struct {
 	MaxInputTokens            int
 	MaxOutputTokens           int
 	MaxCandidateContextTokens int
+	MaxPredicateOptions       int
 	Tokenizer                 string
 }
 
@@ -33,6 +35,7 @@ func AIVerifierAssessmentBudgetFor(cfg ConfigProvider) AIVerifierAssessmentBudge
 		MaxInputTokens:            DefaultAIVerifierMaxInputTokens,
 		MaxOutputTokens:           DefaultAIVerifierMaxOutputTokens,
 		MaxCandidateContextTokens: DefaultAIVerifierMaxCandidateContextTokens,
+		MaxPredicateOptions:       DefaultAIVerifierMaxPredicateOptions,
 		Tokenizer:                 DefaultAIVerifierTokenizer,
 	}
 	assessmentConfig, ok := cfg.(aiVerifierAssessmentConfig)
@@ -47,6 +50,9 @@ func AIVerifierAssessmentBudgetFor(cfg ConfigProvider) AIVerifierAssessmentBudge
 	}
 	if value := assessmentConfig.GetAIVerifierMaxCandidateContextTokens(); value > 0 {
 		budget.MaxCandidateContextTokens = value
+	}
+	if value := assessmentConfig.GetAIVerifierMaxPredicateOptions(); value > 0 {
+		budget.MaxPredicateOptions = value
 	}
 	if value := strings.TrimSpace(assessmentConfig.GetAIVerifierTokenizer()); value != "" {
 		budget.Tokenizer = value
@@ -90,6 +96,13 @@ func (c *Config) GetAIVerifierMaxCandidateContextTokens() int {
 		return DefaultAIVerifierMaxCandidateContextTokens
 	}
 	return c.AIVerifierMaxCandidateContextTokens
+}
+
+func (c *Config) GetAIVerifierMaxPredicateOptions() int {
+	if c.AIVerifierMaxPredicateOptions <= 0 {
+		return DefaultAIVerifierMaxPredicateOptions
+	}
+	return c.AIVerifierMaxPredicateOptions
 }
 
 func (c *Config) GetAIVerifierTokenizer() string {

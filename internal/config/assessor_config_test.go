@@ -10,6 +10,7 @@ type assessorConfigProviderStub struct {
 	inputTokens            int
 	outputTokens           int
 	candidateContextTokens int
+	predicateOptions       int
 	tokenizer              string
 	confidenceThreshold    float64
 }
@@ -24,6 +25,10 @@ func (s assessorConfigProviderStub) GetAIVerifierMaxOutputTokens() int {
 
 func (s assessorConfigProviderStub) GetAIVerifierMaxCandidateContextTokens() int {
 	return s.candidateContextTokens
+}
+
+func (s assessorConfigProviderStub) GetAIVerifierMaxPredicateOptions() int {
+	return s.predicateOptions
 }
 
 func (s assessorConfigProviderStub) GetAIVerifierTokenizer() string {
@@ -61,6 +66,7 @@ func TestLoadAssessorTokenBudgetAndRejectsObsoleteVariables(t *testing.T) {
 		t.Setenv("AI_VERIFIER_MAX_INPUT_TOKENS", "1234")
 		t.Setenv("AI_VERIFIER_MAX_OUTPUT_TOKENS", "567")
 		t.Setenv("AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", "789")
+		t.Setenv("AI_VERIFIER_MAX_PREDICATE_OPTIONS", "456")
 		t.Setenv("AI_VERIFIER_TOKENIZER", "cl100k_base")
 
 		cfg, err := Load()
@@ -68,7 +74,7 @@ func TestLoadAssessorTokenBudgetAndRejectsObsoleteVariables(t *testing.T) {
 			t.Fatalf("Load() returned unexpected error: %v", err)
 		}
 		budget := AIVerifierAssessmentBudgetFor(&cfg)
-		if budget.MaxInputTokens != 1234 || budget.MaxOutputTokens != 567 || budget.MaxCandidateContextTokens != 789 || budget.Tokenizer != "cl100k_base" {
+		if budget.MaxInputTokens != 1234 || budget.MaxOutputTokens != 567 || budget.MaxCandidateContextTokens != 789 || budget.MaxPredicateOptions != 456 || budget.Tokenizer != "cl100k_base" {
 			t.Fatalf("assessor budget = %#v", budget)
 		}
 	})
@@ -110,6 +116,7 @@ func TestAssessorConfigFallbacksAndConfidenceValidation(t *testing.T) {
 		MaxInputTokens:            DefaultAIVerifierMaxInputTokens,
 		MaxOutputTokens:           DefaultAIVerifierMaxOutputTokens,
 		MaxCandidateContextTokens: DefaultAIVerifierMaxCandidateContextTokens,
+		MaxPredicateOptions:       DefaultAIVerifierMaxPredicateOptions,
 		Tokenizer:                 DefaultAIVerifierTokenizer,
 	}) {
 		t.Fatalf("fallback budget = %#v", budget)
@@ -119,9 +126,10 @@ func TestAssessorConfigFallbacksAndConfidenceValidation(t *testing.T) {
 		inputTokens:            10,
 		outputTokens:           20,
 		candidateContextTokens: 30,
+		predicateOptions:       40,
 		tokenizer:              " custom ",
 	})
-	if budget != (AIVerifierAssessmentBudget{MaxInputTokens: 10, MaxOutputTokens: 20, MaxCandidateContextTokens: 30, Tokenizer: "custom"}) {
+	if budget != (AIVerifierAssessmentBudget{MaxInputTokens: 10, MaxOutputTokens: 20, MaxCandidateContextTokens: 30, MaxPredicateOptions: 40, Tokenizer: "custom"}) {
 		t.Fatalf("configured budget = %#v", budget)
 	}
 

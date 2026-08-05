@@ -896,7 +896,6 @@ func startActiveWorkers(
 ) {
 	hostname, _ := os.Hostname()
 	baseWorkerID := fmt.Sprintf("active-%s-%d", hostname, os.Getpid())
-	reviewExpiry := memoryservice.NewSemanticAssessmentReviewExpiryThrottle(ledger, time.Minute)
 	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
 		name:         "placement",
 		baseWorkerID: baseWorkerID,
@@ -906,11 +905,9 @@ func startActiveWorkers(
 		logger:       logger,
 		workerError:  errSemanticPlacementWorkerFailed,
 		work: func(ctx context.Context, teamID string, workerID string) (bool, error) {
-			worker := memoryservice.NewSemanticAssessmentPlacementWorkerService(memoryservice.SemanticAssessmentPlacementWorkerDependencies{
+			worker := memoryservice.NewSubmissionAssessmentPlacementWorkerService(memoryservice.SubmissionAssessmentPlacementWorkerDependencies{
 				Ledger:                    ledger,
 				Assessments:               ledger,
-				ReviewExpiry:              reviewExpiry,
-				Commit:                    ledger,
 				Catalog:                   semantic,
 				Provider:                  assessor,
 				Limits:                    assessmentLimits,
@@ -920,7 +917,7 @@ func startActiveWorkers(
 				WorkerID:                  workerID,
 				Lease:                     placementLease,
 			})
-			return worker.ProcessNextSemanticAssessmentPlacement(ctx)
+			return worker.ProcessNextSubmissionAssessmentPlacement(ctx)
 		},
 	})
 	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{

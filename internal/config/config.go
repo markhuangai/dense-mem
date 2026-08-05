@@ -27,6 +27,8 @@ const (
 	DefaultAIVerifierMaxInputTokens            = 200000
 	DefaultAIVerifierMaxOutputTokens           = 65536
 	DefaultAIVerifierMaxCandidateContextTokens = 50000
+	DefaultAIVerifierMaxPredicateOptions       = 100
+	MaxAIVerifierMaxPredicateOptions           = 2000
 	DefaultAIVerifierTokenizer                 = "o200k_base"
 	DefaultMemoryAutoWriteConfidenceThreshold  = 0.7
 	DefaultMemoryPlacementWorkerCount          = 1
@@ -156,6 +158,7 @@ type Config struct {
 	AIVerifierMaxInputTokens              int
 	AIVerifierMaxOutputTokens             int
 	AIVerifierMaxCandidateContextTokens   int
+	AIVerifierMaxPredicateOptions         int
 	AIVerifierTokenizer                   string
 	MemoryAutoWriteConfidenceThreshold    float64
 	memoryAutoWriteConfidenceThresholdSet bool
@@ -554,6 +557,7 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"AI_VERIFIER_MAX_INPUT_TOKENS", DefaultAIVerifierMaxInputTokens, func(c *Config, value int) { c.AIVerifierMaxInputTokens = value }},
 		{"AI_VERIFIER_MAX_OUTPUT_TOKENS", DefaultAIVerifierMaxOutputTokens, func(c *Config, value int) { c.AIVerifierMaxOutputTokens = value }},
 		{"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", DefaultAIVerifierMaxCandidateContextTokens, func(c *Config, value int) { c.AIVerifierMaxCandidateContextTokens = value }},
+		{"AI_VERIFIER_MAX_PREDICATE_OPTIONS", DefaultAIVerifierMaxPredicateOptions, func(c *Config, value int) { c.AIVerifierMaxPredicateOptions = value }},
 		{"MEMORY_PLACEMENT_WORKER_COUNT", DefaultMemoryPlacementWorkerCount, func(c *Config, value int) { c.MemoryPlacementWorkerCount = value }},
 		{"MEMORY_PLACEMENT_POLL_SECONDS", DefaultMemoryPlacementPollSeconds, func(c *Config, value int) { c.MemoryPlacementPollSeconds = value }},
 	}); err != nil {
@@ -652,6 +656,7 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"AI_VERIFIER_MAX_INPUT_TOKENS", cfg.AIVerifierMaxInputTokens},
 		{"AI_VERIFIER_MAX_OUTPUT_TOKENS", cfg.AIVerifierMaxOutputTokens},
 		{"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", cfg.AIVerifierMaxCandidateContextTokens},
+		{"AI_VERIFIER_MAX_PREDICATE_OPTIONS", cfg.AIVerifierMaxPredicateOptions},
 		{"MEMORY_PLACEMENT_WORKER_COUNT", cfg.MemoryPlacementWorkerCount},
 		{"MEMORY_PLACEMENT_POLL_SECONDS", cfg.MemoryPlacementPollSeconds},
 		{"PROMOTE_TX_TIMEOUT_SECONDS", cfg.PromoteTxTimeoutSeconds},
@@ -700,6 +705,12 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS",
 			Message: fmt.Sprintf("must be less than or equal to AI_VERIFIER_MAX_INPUT_TOKENS, got %d > %d", cfg.AIVerifierMaxCandidateContextTokens, cfg.AIVerifierMaxInputTokens),
+		}
+	}
+	if cfg.AIVerifierMaxPredicateOptions > MaxAIVerifierMaxPredicateOptions {
+		return cfg, &ValidationError{
+			Field:   "AI_VERIFIER_MAX_PREDICATE_OPTIONS",
+			Message: fmt.Sprintf("must be less than or equal to %d, got %d", MaxAIVerifierMaxPredicateOptions, cfg.AIVerifierMaxPredicateOptions),
 		}
 	}
 	if math.IsNaN(cfg.MemoryAutoWriteConfidenceThreshold) ||

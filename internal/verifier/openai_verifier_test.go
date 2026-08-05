@@ -46,6 +46,7 @@ func TestOpenAIVerifierUsesSharedSemanticAssessmentLimits(t *testing.T) {
 	cfg.AIVerifierMaxInputTokens = 1234
 	cfg.AIVerifierMaxOutputTokens = 567
 	cfg.AIVerifierMaxCandidateContextTokens = 789
+	cfg.AIVerifierMaxPredicateOptions = 456
 	cfg.AIVerifierTokenizer = "cl100k_base"
 	limits := SemanticAssessmentLimitsForConfig(cfg)
 

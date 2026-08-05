@@ -136,6 +136,7 @@ func truncateLedgerFixtures(tx *gorm.DB) error {
 	return tx.Exec(`
 		TRUNCATE
 			telemetry_first_disposition_backfill_state,
+			predicate_registration_events,
 			v2_compatibility_markers,
 			v2_migration_operator_actions,
 			v2_migration_gate_results,
