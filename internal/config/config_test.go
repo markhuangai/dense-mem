@@ -172,6 +172,7 @@ func TestLoadDefaults(t *testing.T) {
 	if budget.MaxInputTokens != DefaultAIVerifierMaxInputTokens ||
 		budget.MaxOutputTokens != DefaultAIVerifierMaxOutputTokens ||
 		budget.MaxCandidateContextTokens != DefaultAIVerifierMaxCandidateContextTokens ||
+		budget.MaxPredicateOptions != DefaultAIVerifierMaxPredicateOptions ||
 		budget.Tokenizer != DefaultAIVerifierTokenizer {
 		t.Fatalf("default assessor budget = %#v", budget)
 	}

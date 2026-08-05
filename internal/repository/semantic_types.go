@@ -149,6 +149,49 @@ type SemanticAssessmentPredicateOptionsInput struct {
 	Limit          int
 }
 
+// SubmissionAssessmentEntityCatalogInput loads the complete exact-name and
+// known-id candidate set for every server-derived submission entity target.
+// A result is marked incomplete rather than silently trimming a target's
+// candidates.
+type SubmissionAssessmentEntityCatalogInput struct {
+	TeamID         string
+	OwnerProfileID string
+	Entities       []SubmissionAssessmentEntityCatalogTarget
+	CandidateLimit int
+}
+
+type SubmissionAssessmentEntityCatalogTarget struct {
+	Ref           string
+	Surface       string
+	EntityKind    string
+	KnownEntityID string
+}
+
+type SubmissionAssessmentEntityCatalogGroup struct {
+	Ref        string
+	Candidates []SemanticReviewEntityCandidate
+	Complete   bool
+}
+
+type SubmissionAssessmentEntityCatalogResult struct {
+	Groups   []SubmissionAssessmentEntityCatalogGroup
+	Complete bool
+}
+
+// SubmissionAssessmentPredicateCatalogInput lists every active current team
+// predicate definition up to the configured hard bound. It intentionally has
+// no relevance trim because a partial catalog is unsafe for registration.
+type SubmissionAssessmentPredicateCatalogInput struct {
+	TeamID         string
+	OwnerProfileID string
+	Limit          int
+}
+
+type SubmissionAssessmentPredicateCatalogResult struct {
+	Options  []SemanticReviewPredicateCandidate
+	Complete bool
+}
+
 type UpsertValueInput struct {
 	TeamID               string
 	OwnerProfileID       string

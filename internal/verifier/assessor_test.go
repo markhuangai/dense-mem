@@ -33,6 +33,231 @@ func TestSemanticAssessmentPrepareAndValidateCompleteResponse(t *testing.T) {
 	}
 }
 
+func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
+	display := " 42 ms "
+	unit := " ms "
+	predicate := "has_latency"
+	version := 1
+	req := SemanticAssessmentRequest{
+		RequestID:      "submission-value-1",
+		TeamID:         "team-1",
+		OwnerProfileID: "owner-1",
+		Evidence: []SemanticReviewEvidence{{
+			EvidenceID: "ev-1", FragmentID: "fragment-1", Content: "Latency is 42.",
+		}},
+		EntityCandidateGroups: []SemanticAssessmentEntityCandidateGroup{{
+			Surface: "Latency", EvidenceID: "ev-1", Start: 0, End: 7, Candidates: []SemanticAssessmentEntityCandidate{},
+		}},
+		PredicateOptions: []SemanticAssessmentPredicateOption{{
+			PredicateKey:        predicate,
+			Version:             version,
+			Aliases:             []string{},
+			AllowedSubjectKinds: []string{"concept"},
+			AllowedObjectKinds:  []string{"number"},
+			RelationshipKind:    "state",
+			CurrentCardinality:  "many",
+		}},
+		SubmissionContract: &SemanticAssessmentSubmissionContract{
+			Entities: []SemanticAssessmentRequiredEntityRef{{
+				Ref: "entity:latency", Surface: "Latency", Kind: "concept", EvidenceID: "ev-1", Start: 0, End: 7,
+			}},
+			Relationships: []SemanticAssessmentRequiredRelationshipRef{{
+				ProposalID:        "relationship:latency",
+				SubjectRef:        "entity:latency",
+				OriginalPredicate: "is",
+				ObjectValue: &SemanticAssessmentValue{
+					ValueType: " number ", CanonicalValue: " 42 ", Display: &display, Unit: &unit,
+				},
+				Polarity: "+",
+				Modality: "statement",
+				Evidence: []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 0, End: 13}},
+			}},
+		},
+	}
+	limits := DefaultSemanticAssessmentLimits()
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+	requireValue := prepared.SubmittedRelationships[0].ObjectValue
+	if requireValue == nil || requireValue.ValueType != "number" || requireValue.CanonicalValue != "42" || *requireValue.Display != "42 ms" || *requireValue.Unit != "ms" {
+		t.Fatalf("submitted typed value = %#v", requireValue)
+	}
+	*requireValue.Display = "changed"
+	if *prepared.SubmissionContract.Relationships[0].ObjectValue.Display != "42 ms" {
+		t.Fatal("submitted typed value aliases the trusted contract")
+	}
+	*requireValue.Display = "42 ms"
+
+	responseDisplay := "42 ms"
+	responseUnit := "ms"
+	response := SemanticAssessmentResponse{
+		RequestID:       prepared.RequestID,
+		SecuritySignals: []SemanticSecuritySignal{},
+		EntityResults: []SemanticAssessmentEntityResult{{
+			Ref: "entity:latency", Surface: "Latency", Kind: "concept", EvidenceID: "ev-1", Start: 0, End: 7,
+			Action: "create", Confidence: 0.99, Rationale: "No candidate exists in the complete catalog.",
+		}},
+		RelationshipResults: []SemanticAssessmentRelationshipResult{{
+			Ref:               "relationship:latency",
+			SubjectRef:        "entity:latency",
+			OriginalPredicate: "is",
+			PredicateStatus:   "resolved",
+			PredicateKey:      &predicate,
+			PredicateVersion:  &version,
+			ObjectValue: &SemanticAssessmentValue{
+				ValueType: "number", CanonicalValue: "42", Display: &responseDisplay, Unit: &responseUnit,
+			},
+			Polarity: "+", Modality: "statement",
+			Evidence:        []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 0, End: 13}},
+			ScopeStatus:     "absent",
+			EvidenceVerdict: "entailed",
+			TemporalVerdict: "absent",
+			Confidence:      0.99,
+			Rationale:       "The evidence explicitly states the typed value.",
+		}},
+	}
+	if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v", errs)
+	}
+
+	response.RelationshipResults[0].ObjectValue.CanonicalValue = "43"
+	if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "does not preserve its submitted object") {
+		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want typed value preservation error", errs)
+	}
+}
+
+func TestSemanticAssessmentSubmissionContractRejectsUntrustedTargets(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*SemanticAssessmentRequest)
+		want   string
+	}{
+		{
+			name: "submitted fields without contract",
+			mutate: func(request *SemanticAssessmentRequest) {
+				request.SubmissionContract = nil
+				request.SubmittedEntities = []SemanticAssessmentSubmittedEntity{{Ref: "untrusted"}}
+			},
+			want: "submission_contract",
+		},
+		{
+			name: "empty contract",
+			mutate: func(request *SemanticAssessmentRequest) {
+				request.SubmissionContract = &SemanticAssessmentSubmissionContract{}
+			},
+			want: "must contain between 1",
+		},
+		{
+			name: "duplicate entity ref",
+			mutate: func(request *SemanticAssessmentRequest) {
+				request.SubmissionContract.Entities = append(request.SubmissionContract.Entities, request.SubmissionContract.Entities[0])
+			},
+			want: "is duplicated",
+		},
+		{
+			name: "entity evidence outside request",
+			mutate: func(request *SemanticAssessmentRequest) {
+				request.SubmissionContract.Entities[0].EvidenceID = "unknown"
+			},
+			want: "is unknown",
+		},
+		{
+			name: "relationship subject outside entities",
+			mutate: func(request *SemanticAssessmentRequest) {
+				request.SubmissionContract.Relationships[0].SubjectRef = "entity:unknown"
+			},
+			want: "must reference a submitted entity",
+		},
+		{
+			name: "relationship object has both endpoint forms",
+			mutate: func(request *SemanticAssessmentRequest) {
+				request.SubmissionContract.Relationships[0].ObjectValue = &SemanticAssessmentValue{ValueType: "string", CanonicalValue: "Dense-Mem"}
+			},
+			want: "requires exactly one object_ref or object_value",
+		},
+		{
+			name: "relationship typed value is invalid",
+			mutate: func(request *SemanticAssessmentRequest) {
+				request.SubmissionContract.Relationships[0].ObjectRef = nil
+				request.SubmissionContract.Relationships[0].ObjectValue = &SemanticAssessmentValue{ValueType: "unsupported", CanonicalValue: "value"}
+			},
+			want: "object_value",
+		},
+		{
+			name: "relationship support is duplicated",
+			mutate: func(request *SemanticAssessmentRequest) {
+				evidence := request.SubmissionContract.Relationships[0].Evidence[0]
+				request.SubmissionContract.Relationships[0].Evidence = append(request.SubmissionContract.Relationships[0].Evidence, evidence)
+			},
+			want: "is duplicated",
+		},
+		{
+			name: "relationship modality is unsupported",
+			mutate: func(request *SemanticAssessmentRequest) {
+				request.SubmissionContract.Relationships[0].Modality = "unsupported"
+			},
+			want: "modality",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request, limits := semanticAssessmentSubmissionContractTestRequest(t)
+			test.mutate(&request)
+
+			_, errs := PrepareSemanticAssessmentRequest(request, limits)
+
+			if len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), test.want) {
+				t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v, want %q", errs, test.want)
+			}
+		})
+	}
+}
+
+func TestSemanticAssessmentSubmissionContractRejectsResponseTargetDrift(t *testing.T) {
+	request, limits := semanticAssessmentSubmissionContractTestRequest(t)
+	prepared, errs := PrepareSemanticAssessmentRequest(request, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*SemanticAssessmentResponse)
+		want   string
+	}{
+		{
+			name:   "entity target drift",
+			mutate: func(response *SemanticAssessmentResponse) { response.EntityResults[0].Surface = "Other" },
+			want:   "does not preserve its submitted entity target",
+		},
+		{
+			name: "relationship target drift",
+			mutate: func(response *SemanticAssessmentResponse) {
+				response.RelationshipResults[0].OriginalPredicate = "changed"
+			},
+			want: "does not preserve its submitted relationship target",
+		},
+		{
+			name:   "relationship evidence outside contract",
+			mutate: func(response *SemanticAssessmentResponse) { response.RelationshipResults[0].Evidence[0].End = 4 },
+			want:   "contains a span outside the submitted relationship target",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := semanticAssessmentTestResponse()
+			test.mutate(&response)
+
+			_, errs := PrepareSemanticAssessmentResponse(prepared, response, limits)
+
+			if len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), test.want) {
+				t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want %q", errs, test.want)
+			}
+		})
+	}
+}
+
 func TestSemanticAssessmentCandidateGroupsAreOptionalReuseAllowlists(t *testing.T) {
 	req, limits := semanticAssessmentTestRequest(t)
 	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
@@ -340,6 +565,28 @@ func semanticAssessmentTestRequest(t *testing.T) (SemanticAssessmentRequest, Sem
 			CurrentCardinality:  "many",
 		}},
 	}, DefaultSemanticAssessmentLimits()
+}
+
+func semanticAssessmentSubmissionContractTestRequest(t *testing.T) (SemanticAssessmentRequest, SemanticAssessmentLimits) {
+	t.Helper()
+	request, limits := semanticAssessmentTestRequest(t)
+	productRef := "product-1"
+	request.SubmissionContract = &SemanticAssessmentSubmissionContract{
+		Entities: []SemanticAssessmentRequiredEntityRef{
+			{Ref: "person-1", Surface: "Mark", Kind: "person", EvidenceID: "ev-1", Start: 0, End: 4},
+			{Ref: "product-1", Surface: "Dense-Mem", Kind: "product", EvidenceID: "ev-1", Start: 14, End: 23},
+		},
+		Relationships: []SemanticAssessmentRequiredRelationshipRef{{
+			ProposalID:        "relationship-1",
+			SubjectRef:        "person-1",
+			OriginalPredicate: "works on",
+			ObjectRef:         &productRef,
+			Polarity:          "+",
+			Modality:          "statement",
+			Evidence:          []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 0, End: 24}},
+		}},
+	}
+	return request, limits
 }
 
 func semanticAssessmentTestResponse() SemanticAssessmentResponse {

@@ -51,7 +51,7 @@ func semanticAssessmentRelationshipResultSchema() map[string]any {
 				"ref":                stringSchema(1, 128),
 				"subject_ref":        stringSchema(1, 128),
 				"original_predicate": stringSchema(1, 256),
-				"predicate_status":   enumSchema([]string{"resolved", "needs_review"}),
+				"predicate_status":   enumSchema([]string{"resolved", "registration_required", "needs_review"}),
 				"predicate_key":      nullableStringSchema(128),
 				"predicate_version":  nullableIntegerSchema(1),
 				"object_ref":         nullableStringSchema(128),

@@ -25,17 +25,17 @@ const (
 
 	SemanticAssessmentMaxEntityCandidatesPerSurface = 20
 	SemanticAssessmentMaxPredicateOptions           = 100
-	SemanticAssessmentMaxEntityResults              = 100
+	SemanticAssessmentMaxEntityResults              = 400
 	SemanticAssessmentMaxRelationshipResults        = 200
 	SemanticAssessmentMaxEvidenceSpans              = 20
 )
 
 const (
-	semanticAssessmentSystemPrompt = `You are Dense-Mem's integrated structure and support assessor. Use only submitted evidence, optional client proposal hints, exact-span Entity candidate groups, and structured predicate options. Return one complete JSON object matching the required schema.
+	semanticAssessmentSystemPrompt = `You are Dense-Mem's integrated structure and support assessor. Use only submitted evidence, optional client proposal hints, exact-span Entity candidate groups, structured predicate options, and any submitted_entities and submitted_relationships contract. Return one complete JSON object matching the required schema.
 
 Extract evidence-grounded Entity mentions and atomic Relationship observations. Treat every start and end as zero-based Unicode rune offsets into the selected evidence.content; start is inclusive and end is exclusive. Copy the submitted evidence_id and set each Entity surface to the exact content[start:end] text. Return at most one entity_result for each (evidence_id, start, end) span, and give every Entity and Relationship result a unique ref. A Relationship subject_ref and object_ref must reference Entity refs in the same response. Set exactly one of object_ref and object_value, and include at least one unique exact evidence span for every Relationship.
 
-For a Relationship that corresponds to a client proposal hint, use that hint's supplied ref as the result ref and retain one of its exact support spans. The client predicate.proposed_key is a non-authoritative normalization hint: select an existing supplied predicate option when it fits; otherwise predicate_status "needs_review" requires predicate_key and predicate_version both null. Never create or activate a predicate. Choose action "reuse" only for the one supplied exact compatible Entity candidate; choose "create" when no compatible candidate exists; choose "ambiguous" for multiple, conflicting, or truncated candidate context.
+When submitted_entities and submitted_relationships are present, they are a closed submission contract: return exactly one Entity result for each submitted_entity and exactly one Relationship result for each submitted_relationship. Preserve their refs, entity spans, surfaces, kinds, endpoints, original_predicate, polarity, modality, and use only their listed support spans. Do not discover, extract, omit, or add any Entity or Relationship outside that contract. The client predicate.proposed_key is a non-authoritative normalization hint: select an existing supplied predicate option when it fits; otherwise use predicate_status "registration_required" with predicate_key and predicate_version both null. Use "needs_review" only when the relationship cannot be assessed safely; predicate_status "needs_review" requires predicate_key and predicate_version both null. Never create or activate a predicate. Choose action "reuse" only for the one supplied exact compatible Entity candidate; choose "create" when no compatible candidate exists; choose "ambiguous" for multiple, conflicting, or truncated candidate context.
 
 For every Relationship without an explicit time in its evidence, set temporal_verdict "absent" and set valid_from and valid_to both to null. Set temporal_verdict "entailed" only when the evidence explicitly supports a time, and then provide at least one supported RFC3339 valid_from or valid_to value. For temporal_verdict "ambiguous" or "contradicted", set valid_from and valid_to both to null.
 
@@ -47,7 +47,7 @@ When entity_selection_hints are present for entity_results[i], keep that Entity'
 
 When span_hints are present for entity_results[i], obey the hint for that exact index. If remove_result is true, remove the invalid Entity result and update or remove dependent Relationship refs; do not relocate it to another mention. Empty valid_spans means the submitted surface does not occur in the evidence and the result must be removed. Otherwise keep the Entity result at index i, copy that hint's surface into the Entity surface exactly, and copy recommended_span when present. If recommended_span is absent, choose only a valid_spans entry matching the intended mention and evidence_id whose occupied_by_other_result is false. Copy the selected entry's start, end, action, and candidate_entity_id together; keep the Entity's ref, kind, confidence, and rationale unchanged. Never select an entry whose occupied_by_other_result is true. The action and candidate_entity_id are derived for the Entity's returned kind at that exact span. If validation_errors also requires changing kind, apply the Entity action rules below for the corrected kind instead. The numbers are zero-based Unicode rune offsets; start is inclusive and end is exclusive. For other span errors, recalculate the offsets from evidence.content and copy the exact Entity surface. Do not invent a replacement mention or repeat any Entity span or result ref.
 
-For Entity action errors, use reuse only when exactly one supplied exact candidate of the returned kind is compatible, use create only when candidate context is not truncated and no compatible candidate exists, and otherwise use ambiguous; candidate_entity_id is required only for reuse and must be null otherwise. For temporal errors, use temporal_verdict "absent" with both bounds null when no explicit time is supported; use temporal_verdict "entailed" only with at least one supported RFC3339 bound. For predicate endpoint-kind errors, select a different supplied option whose allowed_subject_kinds and allowed_object_kinds accept the returned endpoint kinds, or use needs_review with predicate_key and predicate_version both null. For predicate_status needs_review, predicate_key and predicate_version must both be null; use resolved only when selecting a supplied predicate key and version. Do not return a patch or explanation.`
+For Entity action errors, use reuse only when exactly one supplied exact candidate of the returned kind is compatible, use create only when candidate context is not truncated and no compatible candidate exists, and otherwise use ambiguous; candidate_entity_id is required only for reuse and must be null otherwise. For temporal errors, use temporal_verdict "absent" with both bounds null when no explicit time is supported; use temporal_verdict "entailed" only with at least one supported RFC3339 bound. For predicate endpoint-kind errors, select a different supplied option whose allowed_subject_kinds and allowed_object_kinds accept the returned endpoint kinds, or use registration_required with predicate_key and predicate_version both null. For predicate_status registration_required or needs_review, predicate_key and predicate_version must both be null; use resolved only when selecting a supplied predicate key and version. Do not return a patch or explanation.`
 )
 
 // SemanticAssessmentLimits bounds one immutable assessor request and its
@@ -134,6 +134,9 @@ type SemanticAssessmentRequest struct {
 	EntityCandidateGroups     []SemanticAssessmentEntityCandidateGroup    `json:"entity_candidate_groups"`
 	PredicateOptions          []SemanticAssessmentPredicateOption         `json:"predicate_options"`
 	RequiredRelationshipRefs  []SemanticAssessmentRequiredRelationshipRef `json:"-"`
+	SubmittedEntities         []SemanticAssessmentSubmittedEntity         `json:"submitted_entities,omitempty"`
+	SubmittedRelationships    []SemanticAssessmentSubmittedRelationship   `json:"submitted_relationships,omitempty"`
+	SubmissionContract        *SemanticAssessmentSubmissionContract       `json:"-"`
 	CandidateContextTokens    int                                         `json:"candidate_context_tokens"`
 	CandidateContextTruncated bool                                        `json:"candidate_context_truncated"`
 	InputTokens               int                                         `json:"-"`
@@ -194,14 +197,6 @@ type SemanticAssessmentEvidenceSpan struct {
 	End        int    `json:"end"`
 }
 
-// SemanticAssessmentRequiredRelationshipRef binds trusted server-side
-// correction/conflict context to a client proposal without forwarding that
-// context to the assessor provider.
-type SemanticAssessmentRequiredRelationshipRef struct {
-	ProposalID string                           `json:"proposal_id"`
-	Evidence   []SemanticAssessmentEvidenceSpan `json:"evidence"`
-}
-
 type SemanticAssessmentValue struct {
 	ValueType      string  `json:"value_type"`
 	CanonicalValue string  `json:"canonical_value"`
@@ -256,6 +251,7 @@ func PrepareSemanticAssessmentRequest(
 	errs := validateSemanticAssessmentRequestBasics(&req)
 	evidenceByID := semanticEvidenceByID(req.Evidence)
 	errs = append(errs, normalizeAssessmentRequiredRelationshipRefs(&req, evidenceByID)...)
+	errs = append(errs, normalizeSemanticAssessmentSubmissionContract(&req, evidenceByID)...)
 	errs = append(errs, normalizeAssessmentCandidateGroups(&req, evidenceByID, limits)...)
 	errs = append(errs, normalizeAssessmentPredicateOptions(&req, limits)...)
 	if len(errs) > 0 {
@@ -363,6 +359,7 @@ func PrepareSemanticAssessmentResponse(
 	errs = append(errs, validateSemanticAssessmentEntityResults(req, response.EntityResults, evidenceByID)...)
 	errs = append(errs, validateSemanticAssessmentRelationshipResults(req, response.EntityResults, response.RelationshipResults, evidenceByID)...)
 	errs = append(errs, ValidateSemanticAssessmentRequiredRelationshipRefs(req.RequiredRelationshipRefs, response.RelationshipResults)...)
+	errs = append(errs, validateSemanticAssessmentSubmissionResponse(req.SubmissionContract, response)...)
 	if len(errs) > 0 {
 		return response, errs
 	}
@@ -877,9 +874,9 @@ func validateSemanticAssessmentPredicateResult(
 			errs = append(errs, semanticErr(field+".predicate_key", "does not accept the object kind"))
 		}
 		return errs
-	case "needs_review":
+	case "registration_required", "needs_review":
 		if result.PredicateKey != nil || result.PredicateVersion != nil {
-			return []SemanticValidationError{semanticErr(field+".predicate_key", "predicate_key and predicate_version must be null for needs_review")}
+			return []SemanticValidationError{semanticErr(field+".predicate_key", "predicate_key and predicate_version must be null for "+result.PredicateStatus)}
 		}
 		return nil
 	default:

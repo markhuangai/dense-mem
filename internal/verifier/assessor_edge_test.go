@@ -131,6 +131,75 @@ func TestSemanticAssessmentRequestRejectsMalformedTrustedRelationshipRefs(t *tes
 	}
 }
 
+func TestSemanticAssessmentSubmissionContractRequiresExactCompleteResponse(t *testing.T) {
+	req, limits := semanticAssessmentTestRequest(t)
+	req.SubmissionContract = &SemanticAssessmentSubmissionContract{
+		Entities: []SemanticAssessmentRequiredEntityRef{
+			{Ref: "person-1", Surface: "Mark", Kind: "person", EvidenceID: "ev-1", Start: 0, End: 4},
+			{Ref: "product-1", Surface: "Dense-Mem", Kind: "product", EvidenceID: "ev-1", Start: 14, End: 23},
+		},
+		Relationships: []SemanticAssessmentRequiredRelationshipRef{{
+			ProposalID: "relationship-1", SubjectRef: "person-1", OriginalPredicate: "works on",
+			ObjectRef: stringPointer("product-1"), Polarity: "+", Modality: "statement",
+			Evidence: []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 0, End: 24}},
+		}},
+	}
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+	if len(prepared.SubmittedEntities) != 2 || len(prepared.SubmittedRelationships) != 1 {
+		t.Fatalf("prepared submission contract = %#v / %#v", prepared.SubmittedEntities, prepared.SubmittedRelationships)
+	}
+
+	t.Run("accepts exact response and registration request", func(t *testing.T) {
+		response := semanticAssessmentTestResponse()
+		response.RelationshipResults[0].PredicateStatus = "registration_required"
+		response.RelationshipResults[0].PredicateKey = nil
+		response.RelationshipResults[0].PredicateVersion = nil
+		if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) != 0 {
+			t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v", errs)
+		}
+	})
+
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*SemanticAssessmentResponse)
+		want   string
+	}{
+		{
+			name:   "missing entity target",
+			mutate: func(response *SemanticAssessmentResponse) { response.EntityResults = response.EntityResults[:1] },
+			want:   "is missing a submitted entity target",
+		},
+		{
+			name:   "extra relationship target",
+			mutate: func(response *SemanticAssessmentResponse) { response.RelationshipResults[0].Ref = "invented" },
+			want:   "is outside the submitted relationship contract",
+		},
+		{
+			name:   "changes preserved relationship polarity",
+			mutate: func(response *SemanticAssessmentResponse) { response.RelationshipResults[0].Polarity = "-" },
+			want:   "does not preserve its submitted relationship target",
+		},
+		{
+			name: "adds unsupported support span",
+			mutate: func(response *SemanticAssessmentResponse) {
+				response.RelationshipResults[0].Evidence = []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 5, End: 13}}
+			},
+			want: "contains a span outside the submitted relationship target",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := semanticAssessmentTestResponse()
+			testCase.mutate(&response)
+			if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), testCase.want) {
+				t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want %q", errs, testCase.want)
+			}
+		})
+	}
+}
+
 func TestSemanticAssessmentResponseNormalizesSecurityTimeScopeAndValue(t *testing.T) {
 	req, limits := semanticAssessmentTestRequest(t)
 	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)

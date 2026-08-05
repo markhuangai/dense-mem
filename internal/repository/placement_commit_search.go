@@ -468,6 +468,29 @@ func upsertPlacementEvidenceSearchDocument(
 	if err != nil {
 		return nil, err
 	}
+	return upsertPlacementEvidenceSearchDocumentWithContract(
+		ctx,
+		tx,
+		commit,
+		fragmentID,
+		metadata,
+		contract,
+		embeddingJobMaxAttempts,
+	)
+}
+
+func upsertPlacementEvidenceSearchDocumentWithContract(
+	ctx context.Context,
+	tx *gorm.DB,
+	commit CommitPlacementSemanticInput,
+	fragmentID string,
+	metadata map[string]any,
+	contract *ActiveSearchContract,
+	embeddingJobMaxAttempts int,
+) (*SearchDocumentResult, error) {
+	if contract == nil {
+		return nil, errors.New("active search contract is required")
+	}
 	var content string
 	if err := tx.WithContext(ctx).Raw(`
 		SELECT content
