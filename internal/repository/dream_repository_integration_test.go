@@ -335,6 +335,100 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	require.Equal(t, []DreamPathEvaluationInput{path}, unassessed, "a source version change permits reassessment")
 }
 
+func TestDreamRepositoryPersistsTeamScopedPredicateHypothesis(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "dream-team-predicate-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "dream-team-predicate-owner")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
+	middle := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "Runtime")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
+	first := createActiveDreamRelationship(t, ctx, ledgerRepo, semanticRepo, teamID, ownerID,
+		"dream-team-predicate-first", "Dense-Mem uses Runtime.", subject.EntityID, middle.EntityID, "dream:team-predicate-first")
+	second := createActiveDreamRelationship(t, ctx, ledgerRepo, semanticRepo, teamID, ownerID,
+		"dream-team-predicate-second", "Runtime uses PostgreSQL.", middle.EntityID, object.EntityID, "dream:team-predicate-second")
+
+	predicate, err := semanticRepo.EnsureSemanticReviewPredicateCandidate(ctx, EnsureSemanticPredicateCandidateInput{
+		TeamID:           teamID,
+		OwnerProfileID:   ownerID,
+		Predicate:        "depends transitively on",
+		RelationshipKind: "state",
+		SubjectKind:      "project",
+		ObjectKind:       "product",
+		Origin:           "provider_generated",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "depends_transitively_on", predicate.PredicateKey)
+
+	var globalPredicateCount int
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)::int
+			FROM predicate_definitions
+			WHERE predicate_key = ?
+			  AND version = ?
+		`, predicate.PredicateKey, predicate.Version).Scan(&globalPredicateCount).Error
+	}))
+	require.Zero(t, globalPredicateCount, "the regression requires a team-only predicate")
+
+	run, err := semanticRepo.ClaimDreamCycle(ctx, DreamCycleClaimInput{
+		TeamID:               teamID,
+		InitiatedByProfileID: ownerID,
+		RunDate:              "2026-08-05",
+		WindowKey:            "manual:team-predicate",
+		LeaseToken:           uuid.NewString(),
+		LeaseUntil:           time.Now().UTC().Add(time.Minute),
+	})
+	require.NoError(t, err)
+
+	inputs, err := semanticRepo.ListDreamInputs(ctx, DreamInputListInput{TeamID: teamID, Limit: 10})
+	require.NoError(t, err)
+	firstInput := requireDreamInput(t, inputs, first.Relationship.RelationshipID)
+	secondInput := requireDreamInput(t, inputs, second.Relationship.RelationshipID)
+	proposal := evidenceGroundedDreamProposal(
+		teamID,
+		ownerID,
+		run.RunID,
+		firstInput,
+		secondInput,
+		subject.EntityID,
+		object.EntityID,
+		predicate.PredicateKey,
+		"Dense-Mem may depend transitively on PostgreSQL.",
+	)
+	proposal.PredicateVersion = predicate.Version
+
+	persisted, err := semanticRepo.PersistDreamGeneration(ctx, DreamGenerationPersistInput{
+		TeamID:             teamID,
+		CreatedByProfileID: ownerID,
+		RunID:              run.RunID,
+		LeaseToken:         run.LeaseToken,
+		ProviderModel:      "test-provider",
+		Proposals:          []UpsertHypothesisInput{proposal},
+		EvaluatedPaths: []DreamPathEvaluationInput{{
+			FirstRelationshipID:         firstInput.RelationshipID,
+			FirstRelationshipVersion:    firstInput.Version,
+			SecondRelationshipID:        secondInput.RelationshipID,
+			SecondRelationshipVersion:   secondInput.Version,
+			AllowedPredicateFingerprint: testDreamPathPredicateFingerprint,
+		}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, persisted.Created)
+	require.Zero(t, persisted.Rejected)
+
+	records, _, err := semanticRepo.ListHypotheses(ctx, ListHypothesesInput{TeamID: teamID, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, predicate.PredicateKey, records[0].PredicateKey)
+	assert.Equal(t, predicate.Version, records[0].PredicateVersion)
+}
+
 func TestScheduledDreamRecoveryFencesExpiredLease(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
