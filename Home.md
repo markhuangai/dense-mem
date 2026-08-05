@@ -36,7 +36,7 @@ sequenceDiagram
   DM->>DM: Deterministic write-time security scan
   alt Intake rejection
     DM->>PG: Append safe rejection audit metadata
-    DM-->>Host: Bounded error; nothing staged
+    DM-->>Host: Bounded error, nothing staged
   else Intake pass
     DM->>PG: Stage isolated submission
     DM-->>Host: submission_id

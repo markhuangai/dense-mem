@@ -612,7 +612,7 @@ sequenceDiagram
   else unchanged overdue case
     N->>P: Commit local-date assessment reservation and bounded dossier
     N->>N: Call configured verifier outside the transaction
-    N->>P: Complete assessment by case-version CAS; resolve, requeue, or LWW fallback
+    N->>P: Complete assessment by case-version CAS, then resolve, requeue, or use LWW fallback
   end
 ```
 
