@@ -226,7 +226,12 @@ func RunActiveServer(
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
 
-	rememberSvc := memoryservice.NewRememberService(memoryservice.RememberDependencies{Ledger: ledgerRepo, Metrics: discoverabilityMetrics})
+	securityRejectionAuditor := newSecurityRejectionAuditAdapter(auditService)
+	rememberSvc := memoryservice.NewRememberService(memoryservice.RememberDependencies{
+		Ledger:  ledgerRepo,
+		Auditor: securityRejectionAuditor,
+		Metrics: discoverabilityMetrics,
+	})
 	recallSvc := memoryservice.NewRecallService(memoryservice.RecallDependencies{
 		Search:          searchRepo,
 		Provider:        retryEmbedder,
@@ -239,6 +244,7 @@ func RunActiveServer(
 		Semantic:  semanticRepo,
 		Placement: ledgerRepo,
 		Evidence:  ledgerRepo,
+		Auditor:   securityRejectionAuditor,
 		Metrics:   discoverabilityMetrics,
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)

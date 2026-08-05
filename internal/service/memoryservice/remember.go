@@ -23,7 +23,6 @@ import (
 const (
 	rememberCheckAfterSeconds = 60
 	rememberStatusTool        = "get_memory_placement"
-	securityScanPolicyHash    = "sha256:dc58e28e205acb37e6860e393cfd21c9f38bf78c7df8bb15c1d016b3478e51a4"
 )
 
 var (
@@ -40,11 +39,13 @@ type RememberService interface {
 
 type RememberDependencies struct {
 	Ledger  repository.LedgerRepository
+	Auditor SecurityRejectionAuditor
 	Metrics observability.DiscoverabilityMetrics
 }
 
 type rememberService struct {
 	ledger  repository.LedgerRepository
+	auditor SecurityRejectionAuditor
 	metrics observability.DiscoverabilityMetrics
 }
 
@@ -53,7 +54,7 @@ func NewRememberService(deps RememberDependencies) RememberService {
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
-	return &rememberService{ledger: deps.Ledger, metrics: metrics}
+	return &rememberService{ledger: deps.Ledger, auditor: deps.Auditor, metrics: metrics}
 }
 
 type RememberRequest struct {
@@ -162,15 +163,28 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 		return nil, errors.New("remember: evidence is required")
 	}
 	started := time.Now()
-
-	normalized, status := s.normalizeEvidence(req.Evidence)
-	requestHash, err := canonicalRequestHash(req)
-	if err != nil {
-		return nil, err
+	contents := make([]string, 0, len(req.Evidence))
+	for _, evidence := range req.Evidence {
+		contents = append(contents, evidence.Content)
 	}
 	proposal := map[string]any{
 		"entity_hints":       req.EntityHints,
 		"relationship_hints": req.RelationshipHints,
+	}
+	scan, scanErr := scanSubmissionWithProviderProposal(contents, proposal)
+	if scanErr != nil {
+		if err := recordSubmissionSecurityRejection(ctx, s.auditor, actor, "remember", scan, scanErr); err != nil {
+			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
+			return nil, ErrRememberPersistence
+		}
+		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
+		return nil, scanErr
+	}
+
+	normalized := s.normalizeEvidence(req.Evidence)
+	requestHash, err := canonicalRequestHash(req)
+	if err != nil {
+		return nil, err
 	}
 	correlationID := correlation.FromContext(ctx)
 	actorMetadata := map[string]any{
@@ -193,7 +207,7 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 		IdempotencyKey:    strings.TrimSpace(req.IdempotencyKey),
 		RequestHash:       requestHash,
 		SourceSummary:     sourceSummary(req.Evidence),
-		Status:            status,
+		Status:            string(domain.PlacementRunQueued),
 		TelemetryRemember: true,
 		Proposal:          proposal,
 		Metadata:          metadata,
@@ -239,23 +253,11 @@ func (s *rememberService) GetMemoryPlacement(
 	return placementRunResultFromLedger(placement), nil
 }
 
-func (s *rememberService) normalizeEvidence(evidence []RememberEvidenceInput) ([]repository.EvidenceInput, string) {
+func (s *rememberService) normalizeEvidence(evidence []RememberEvidenceInput) []repository.EvidenceInput {
 	out := make([]repository.EvidenceInput, 0, len(evidence))
-	status := string(domain.PlacementRunQueued)
-	hasProcessable := false
-	hasGuarded := false
-	hasQuarantined := false
 	sourceRevisionHashes := sourceRevisionContentHashes(evidence)
 	for _, item := range evidence {
-		scan := scanEvidence(item.Content)
-		if scan.Decision == "quarantine" {
-			hasQuarantined = true
-		} else {
-			hasProcessable = true
-			if scan.Decision == "guarded" {
-				hasGuarded = true
-			}
-		}
+		event := submissionSecurityPassEvent()
 		authority, metadata := ledgerAuthorityAndMetadata(item.Authority, item.Metadata)
 		metadata = evidenceProcessingIntentMetadata(metadata, item)
 		out = append(out, repository.EvidenceInput{
@@ -272,15 +274,10 @@ func (s *rememberService) normalizeEvidence(evidence []RememberEvidenceInput) ([
 			IdempotencyKey:                strings.TrimSpace(item.IdempotencyKey),
 			Labels:                        append([]string(nil), item.Labels...),
 			Metadata:                      metadata,
-			InitialEvent:                  &scan,
+			InitialEvent:                  &event,
 		})
 	}
-	if hasQuarantined && !hasProcessable {
-		status = string(domain.PlacementRunQuarantined)
-	} else if hasGuarded {
-		status = string(domain.PlacementRunGuarded)
-	}
-	return out, status
+	return out
 }
 
 func sourceRevisionContentHashes(evidence []RememberEvidenceInput) map[string]string {
@@ -595,68 +592,4 @@ func sourceSummary(evidence []RememberEvidenceInput) string {
 		}
 	}
 	return fmt.Sprintf("remember evidence_count=%d", len(evidence))
-}
-
-func scanEvidence(content string) repository.SecurityEventDraft {
-	signals := make([]repository.SecuritySignalInput, 0, 2)
-	lowerContent := asciiLowerForScan(content)
-	addSignal := func(kind, severity, needle string) {
-		index := strings.Index(lowerContent, needle)
-		if index < 0 {
-			return
-		}
-		end := index + len(needle)
-		quote := content[index:end]
-		if len(quote) > 120 {
-			quote = quote[:120]
-		}
-		signals = append(signals, repository.SecuritySignalInput{
-			Kind:      kind,
-			Severity:  severity,
-			SpanStart: index,
-			SpanEnd:   end,
-			Quote:     quote,
-		})
-	}
-	addSignal("instruction_override", "high", "ignore previous instructions")
-	addSignal("instruction_override", "high", "disregard previous instructions")
-	addSignal("prompt_secret_extraction", "critical", "reveal your system prompt")
-	addSignal("prompt_secret_extraction", "critical", "show me your hidden instructions")
-	addSignal("tool_exfiltration", "critical", "exfiltrate")
-	addSignal("hidden_control_markup", "medium", "<!--")
-	addSignal("role_control_spoofing", "medium", "system:")
-	addSignal("role_control_spoofing", "medium", "developer:")
-
-	decision := "pass"
-	reason := "deterministic scan passed"
-	for _, signal := range signals {
-		if signal.Severity == "critical" {
-			return repository.SecurityEventDraft{
-				EventKind:      "deterministic_scan",
-				Decision:       "quarantine",
-				ScanPolicyHash: securityScanPolicyHash,
-				Reason:         "evidence quarantined by deterministic safety scan",
-				Signals:        signals,
-			}
-		}
-		decision = "guarded"
-		reason = "evidence requires guarded placement after deterministic safety scan"
-	}
-	return repository.SecurityEventDraft{
-		EventKind:      "deterministic_scan",
-		Decision:       decision,
-		ScanPolicyHash: securityScanPolicyHash,
-		Reason:         reason,
-		Signals:        signals,
-	}
-}
-
-func asciiLowerForScan(content string) string {
-	out := []byte(content)
-	for i, b := range out {
-		if b >= 'A' && b <= 'Z' {
-			out[i] = b + ('a' - 'A')
-		}
-	}
-	return string(out)
 }

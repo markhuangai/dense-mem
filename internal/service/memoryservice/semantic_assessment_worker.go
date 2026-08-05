@@ -175,6 +175,17 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 	if !ok {
 		return true, errors.Join(errors.New("semantic assessment worker: no claimable placement item"), s.retryOrFail(ctx, *run, repository.PlacementItem{}, "placement_item", false, false))
 	}
+	clientProposal := assessmentClientProposalWithoutTrustedContext(placement.Proposal)
+	if scan, err := scanSubmissionWithProviderProposal([]string{fragment.Content}, clientProposal); err != nil {
+		return true, s.completeTerminalWithSecurityQuarantine(
+			ctx,
+			*run,
+			item,
+			fragment.FragmentID,
+			scan,
+			"deterministic_security_scan",
+		)
+	}
 
 	request, err := s.buildRequest(ctx, *run, item, fragment, placement.Proposal)
 	if err != nil {
@@ -568,25 +579,7 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminal(
 	item repository.PlacementItem,
 	status, category, stage string,
 ) error {
-	completed, err := s.commit.CompletePlacementReviewResult(ctx, repository.CompletePlacementReviewInput{
-		TeamID:           run.TeamID,
-		OwnerProfileID:   run.OwnerProfileID,
-		IngestID:         run.IngestID,
-		PlacementRunID:   run.PlacementRunID,
-		PlacementItemID:  item.PlacementItemID,
-		WorkerID:         s.workerID,
-		ExpectedAttempts: run.Attempts,
-		Status:           status,
-		Category:         category,
-		Payload: map[string]any{
-			"assessor_contract": domain.ContractVersion,
-			"failure_stage":     strings.TrimSpace(stage),
-		},
-	})
-	if err == nil && completed != nil {
-		s.recordFirstDisposition(ctx, run, completed.FirstDisposition)
-	}
-	return err
+	return s.completeTerminalWithSecurityEvent(ctx, run, item, status, category, stage, nil)
 }
 
 func (s *semanticAssessmentPlacementWorkerService) recordSecuritySignals(

@@ -367,6 +367,13 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 			want: "security_signals[1].kind: is unsupported",
 		},
 		{
+			name: "hidden control markup signal requires a matching span",
+			mutate: func(response *SemanticAssessmentResponse) {
+				response.SecuritySignals = []SemanticSecuritySignal{{EvidenceID: "ev-1", Kind: "hidden_control_markup", Start: 0, End: 4}}
+			},
+			want: "hidden_control_markup requires a hidden control or active markup",
+		},
+		{
 			name: "entity result fields and evidence spans",
 			mutate: func(response *SemanticAssessmentResponse) {
 				result := &response.EntityResults[0]

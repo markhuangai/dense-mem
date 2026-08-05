@@ -381,6 +381,11 @@ func TestValidateSemanticReviewResponseRejectsInvalidSecuritySignal(t *testing.T
 			Kind:       "bad_kind",
 			Start:      10,
 			End:        4,
+		}, {
+			EvidenceID: "ev_1",
+			Kind:       "hidden_control_markup",
+			Start:      0,
+			End:        4,
 		}},
 		EntityResults: []SemanticEntityResult{
 			{Ref: "person_1", Action: "reuse", CandidateEntityID: &entMark, Confidence: 0.9, Rationale: "allowed candidate"},
@@ -391,8 +396,28 @@ func TestValidateSemanticReviewResponseRejectsInvalidSecuritySignal(t *testing.T
 		},
 	}
 	joined := semanticJoinedErrors(ValidateSemanticReviewResponse(req, resp))
-	if !strings.Contains(joined, "unknown evidence_id") || !strings.Contains(joined, "unsupported security signal kind") {
+	if !strings.Contains(joined, "unknown evidence_id") || !strings.Contains(joined, "unsupported security signal kind") || !strings.Contains(joined, "hidden_control_markup requires a hidden control or active markup") {
 		t.Fatalf("security signal errors = %s", joined)
+	}
+}
+
+func TestSemanticHiddenControlMarkupSignalRequiresMatchingSpan(t *testing.T) {
+	testCases := []struct {
+		name  string
+		quote string
+		want  bool
+	}{
+		{name: "visible text", quote: "ordinary evidence", want: false},
+		{name: "active markup", quote: "<script", want: true},
+		{name: "hidden control", quote: "safe\u200btext", want: true},
+		{name: "line break", quote: "line\nbreak", want: false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := semanticSecuritySignalSpanMatchesKind("hidden_control_markup", testCase.quote); got != testCase.want {
+				t.Fatalf("semanticSecuritySignalSpanMatchesKind() = %t, want %t", got, testCase.want)
+			}
+		})
 	}
 }
 

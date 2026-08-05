@@ -247,6 +247,9 @@ func TestSemanticReviewQuarantinesSecuritySignalsWithoutSemanticDecisions(t *tes
 	if got := ledger.securityEvents[0].Signals[0].Quote; got != "Renée" {
 		t.Fatalf("security quote = %q", got)
 	}
+	if got := ledger.securityEvents[0].ScanPolicyHash; got != semanticReviewSecurityPolicyHash {
+		t.Fatalf("security policy hash = %q", got)
+	}
 	last := ledger.outcomes[len(ledger.outcomes)-1]
 	if last.UpdateItemStatus != "" || last.UpdateItemCategory != "" {
 		t.Fatalf("final review outcome mutated placement item before commit: %#v", last)

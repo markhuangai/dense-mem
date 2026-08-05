@@ -596,6 +596,7 @@ func TestSemanticAssessmentInstructionsExposeRequestDependentRules(t *testing.T)
 		`temporal_verdict "absent"`,
 		`temporal_verdict "entailed"`,
 		"RFC3339",
+		"hidden control rune or active markup",
 	} {
 		assert.Contains(t, semanticAssessmentSystemPrompt, expected)
 	}
