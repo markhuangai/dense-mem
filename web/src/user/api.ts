@@ -29,7 +29,7 @@ export type UserSession = {
   team: UserTeam;
   key: UserKey;
   teams?: UserTeamOption[];
-  auth_method?: "api_key" | "sso";
+  auth_method?: "api_key" | "api_key_session" | "sso";
   can_rotate: boolean;
   can_manage_team: boolean;
   personal_key: UserKey | null;
@@ -294,15 +294,19 @@ type RequestOptions = {
   body?: unknown;
 };
 
+export type UserAuthMode = "anonymous" | "api_key" | "api_key_session" | "sso";
+
 type Envelope<T> = {
   data: T;
 };
 
 export class UserApi {
   private readonly token: string;
+  private readonly authMode: UserAuthMode;
 
-  constructor(token: string) {
+  constructor(token: string, authMode: UserAuthMode = token ? "api_key" : "anonymous") {
     this.token = token;
+    this.authMode = authMode;
   }
 
   async session(): Promise<UserSession> {
@@ -326,6 +330,19 @@ export class UserApi {
 
   async logoutSSO(): Promise<{ status: string }> {
     const payload = await this.request<Envelope<{ status: string }>>("/ui/api/sso/logout", { method: "POST" });
+    return payload.data;
+  }
+
+  async createPortalSession(remember: boolean): Promise<{ status: string }> {
+    const payload = await this.request<Envelope<{ status: string }>>("/ui/api/session", {
+      method: "POST",
+      body: { remember },
+    });
+    return payload.data;
+  }
+
+  async logoutPortalSession(): Promise<{ status: string }> {
+    const payload = await this.request<Envelope<{ status: string }>>("/ui/api/session/logout", { method: "POST" });
     return payload.data;
   }
 
@@ -482,7 +499,7 @@ export class UserApi {
       credentials: this.token ? "same-origin" : "include",
       body: options.body,
       csrf: this.token ? undefined : {
-        cookieName: "dense_mem_sso_csrf",
+        cookieName: this.authMode === "api_key_session" ? "dense_mem_ui_csrf" : "dense_mem_sso_csrf",
         headerName: "X-Dense-Mem-CSRF",
       },
     });

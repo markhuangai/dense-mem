@@ -15,7 +15,7 @@ const CONFIG_LABELS: Record<string, string> = {
   SSO_SESSION_TTL_SECONDS: "Session TTL",
   SSO_STATE_TTL_SECONDS: "OAuth state TTL",
   SSO_HTTP_TIMEOUT_SECONDS: "OIDC HTTP timeout",
-  SSO_COOKIE_SECURE: "Secure cookies",
+  SSO_COOKIE_SECURE: "Secure browser cookies",
   DREAMING_ENABLED: "Enable scheduled cycle",
   DREAMING_FORCE_ENABLED: "Force all teams",
   DREAMING_START_TIME_LOCAL: "Cycle start time",
@@ -394,7 +394,7 @@ function ConfigField({
       <>
         <label htmlFor={item.key}>{label}</label>
         <select id={item.key} value={value} onChange={(event) => onChange(event.target.value)}>
-          <option value="">Auto from public URL</option>
+          <option value="">Auto from SSO public URL</option>
           <option value="true">Enabled</option>
           <option value="false">Disabled</option>
         </select>

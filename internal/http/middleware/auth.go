@@ -106,10 +106,15 @@ type SSOSessionAuthenticator interface {
 	AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error)
 }
 
+type UserPortalSessionAuthenticator interface {
+	AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error)
+}
+
 type AuthOptions struct {
-	SSOEntitlementValidator SSOEntitlementValidator
-	SSOSessionAuthenticator SSOSessionAuthenticator
-	AllowMissingCredentials bool
+	SSOEntitlementValidator        SSOEntitlementValidator
+	SSOSessionAuthenticator        SSOSessionAuthenticator
+	UserPortalSessionAuthenticator UserPortalSessionAuthenticator
+	AllowMissingCredentials        bool
 }
 
 func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc service.AuditService, securitySvc SecurityBanService, opts AuthOptions) echo.MiddlewareFunc {
@@ -120,6 +125,16 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 
 			// Missing header
 			if authHeader == "" {
+				if opts.UserPortalSessionAuthenticator != nil {
+					if err := authenticateUserPortalSession(c, opts.UserPortalSessionAuthenticator, opts.SSOEntitlementValidator); err != nil {
+						if err != errNoUserPortalSession {
+							logAuthFailure(c, auditSvc, securitySvc, nil, "UI_SESSION_AUTH_INVALID", "user portal session authentication failed")
+							return err
+						}
+					} else {
+						return next(c)
+					}
+				}
 				if opts.SSOSessionAuthenticator != nil {
 					if err := authenticateSSOSession(c, opts.SSOSessionAuthenticator); err != nil {
 						if err == errNoSSOSession {
@@ -275,6 +290,7 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 }
 
 var errNoSSOSession = errors.New("no sso session")
+var errNoUserPortalSession = errors.New("no user portal session")
 
 func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticator) error {
 	cookie, err := c.Request().Cookie(service.SSOSessionCookieName)
@@ -292,9 +308,43 @@ func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticato
 	if err != nil {
 		return ssoAuthError(err)
 	}
+	return setSessionPrincipal(c, key, "sso_session")
+}
+
+func authenticateUserPortalSession(c echo.Context, authenticator UserPortalSessionAuthenticator, entitlementValidator SSOEntitlementValidator) error {
+	cookie, err := c.Request().Cookie(service.UserPortalSessionCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return errNoUserPortalSession
+	}
+	requireCSRF := requestRequiresCSRF(c.Request().Method)
+	csrfToken := c.Request().Header.Get(service.SSOCSRFHeaderName)
+	key, err := authenticator.AuthenticateSession(c.Request().Context(), cookie.Value, csrfToken, requireCSRF)
+	if err != nil {
+		return userPortalSessionAuthError(err)
+	}
+	if key == nil {
+		return httperr.New(httperr.AUTH_INVALID, "invalid user portal session")
+	}
+	if entitlementValidator != nil {
+		validated, err := entitlementValidator.ValidateAPIKeyPrincipal(c.Request().Context(), key)
+		if err != nil {
+			return ssoAuthError(err)
+		}
+		if validated == nil {
+			return httperr.New(httperr.FORBIDDEN, "sso access denied")
+		}
+		key = validated
+	}
+	return setSessionPrincipal(c, key, "api_key_session")
+}
+
+func setSessionPrincipal(c echo.Context, key *domain.APIKey, authMethod string) error {
+	if key == nil {
+		return httperr.New(httperr.AUTH_INVALID, "invalid session")
+	}
 	teamID := key.GetTeamID()
 	if teamID == uuid.Nil {
-		return httperr.New(httperr.AUTH_INVALID, "invalid sso session")
+		return httperr.New(httperr.AUTH_INVALID, "invalid session")
 	}
 	profileID := key.ID
 	principal := &Principal{
@@ -305,7 +355,7 @@ func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticato
 		Role:          key.GetRole(),
 		Scopes:        key.Scopes,
 		RateLimit:     key.RateLimit,
-		AuthMethod:    "sso_session",
+		AuthMethod:    authMethod,
 		SSOIdentityID: key.SSOIdentityID,
 		SSOProviderID: key.SSOProviderID,
 		SSOSubject:    key.SSOSubject,
@@ -349,6 +399,17 @@ func ssoAuthError(err error) error {
 	}
 }
 
+func userPortalSessionAuthError(err error) error {
+	switch {
+	case errors.Is(err, service.ErrUserPortalSessionInvalid):
+		return httperr.New(httperr.AUTH_INVALID, "invalid user portal session")
+	case errors.Is(err, service.ErrUserPortalCSRFInvalid):
+		return httperr.New(httperr.FORBIDDEN, "invalid user portal csrf token")
+	default:
+		return httperr.New(httperr.INTERNAL_ERROR, "user portal session authentication failed")
+	}
+}
+
 // LastUsedMiddleware updates API key last_used_at after earlier middleware has
 // admitted the request. Place it after rate limiting to avoid DB writes for
 // over-quota valid keys.
@@ -356,7 +417,7 @@ func LastUsedMiddleware(repo repository.APIKeyRepository) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			principal := GetPrincipal(c.Request().Context())
-			if principal != nil && principal.AuthMethod != "sso_session" && principal.KeyID != uuid.Nil {
+			if principal != nil && principal.AuthMethod != "sso_session" && principal.AuthMethod != "api_key_session" && principal.KeyID != uuid.Nil {
 				go func(keyID uuid.UUID) {
 					touchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()

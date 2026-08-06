@@ -753,6 +753,7 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
   let recallCallCount = 0;
   let graphCallCount = 0;
   let graphNodeDetailCallCount = 0;
+  let portalSessionCreated = false;
   const rotatedSession = {
     ...session,
     key: { ...session.key, key_suffix: "new123", last_used_at: null },
@@ -767,10 +768,16 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
     if (url === "/ui/api/session" && method === "GET") {
       const auth = authorizationHeader(init);
       if (!auth) {
-        return jsonResponse({ code: "AUTH_MISSING", message: "missing authorization header", details: null }, 401);
+        return portalSessionCreated
+          ? jsonResponse({ data: { ...session, auth_method: "api_key_session", team: currentTeam } })
+          : jsonResponse({ code: "AUTH_MISSING", message: "missing authorization header", details: null }, 401);
       }
       const selectedSession = auth.includes("dm_new_plaintext") ? rotatedSession : session;
       return jsonResponse({ data: { ...selectedSession, team: currentTeam } });
+    }
+    if (url === "/ui/api/session" && method === "POST") {
+      portalSessionCreated = true;
+      return jsonResponse({ data: { status: "signed_in" } });
     }
     if (url === "/ui/api/key/rotate" && method === "POST") {
       return jsonResponse({

@@ -3,6 +3,7 @@ package compose_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -55,6 +56,15 @@ func TestDockerComposeExpertExample_HasOptionalProfiles(t *testing.T) {
 	assert.NotContains(t, server.Environment, "AI_REVIEWER_MODEL")
 	assert.Contains(t, server.Environment["AI_VERIFIER_MODEL"], "AI_VERIFIER_MODEL must be set")
 	assert.NotContains(t, server.DependsOn, "redis")
+}
+
+func TestDockerComposeExpertExample_PreservesUiPathForCustomDomain(t *testing.T) {
+	text := strings.ToLower(readExample(t, "docker-compose.expert.yml"))
+
+	assert.Contains(t, text, "traefik.http.routers.densemem.rule=host(`${dense_mem_domain:-localhost}`)")
+	assert.Contains(t, text, "traefik.http.services.densemem.loadbalancer.server.port=8080")
+	assert.NotContains(t, text, "stripprefix")
+	assert.NotContains(t, text, "replacepath")
 }
 
 func removedGraphServiceName() string {

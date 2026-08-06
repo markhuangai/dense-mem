@@ -143,7 +143,7 @@ func isAnonymousUserSessionProbe(c echo.Context, v middleware.RequestLoggerValue
 		return false
 	}
 	for _, cookie := range c.Request().Cookies() {
-		if cookie.Name == service.SSOSessionCookieName && strings.TrimSpace(cookie.Value) != "" {
+		if (cookie.Name == service.SSOSessionCookieName || cookie.Name == service.UserPortalSessionCookieName) && strings.TrimSpace(cookie.Value) != "" {
 			return false
 		}
 	}

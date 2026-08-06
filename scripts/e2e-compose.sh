@@ -449,6 +449,14 @@ remove_e2e_playwright_container() {
 
 run_compose_playwright_tests() {
   local image
+  local test_args=()
+  if [[ "${1:-}" == "portal" ]]; then
+    test_args=(
+      "tests-compose/compose-portal.spec.ts"
+      -g
+      "remembered API-key login uses a seven-day server session"
+    )
+  fi
   image="${DENSE_MEM_E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.61.0-noble}"
   E2E_PLAYWRIGHT_CONTAINER="densemem-e2e-${E2E_FILE_ID}-playwright"
   if docker container inspect "$E2E_PLAYWRIGHT_CONTAINER" >/dev/null 2>&1; then
@@ -477,7 +485,8 @@ run_compose_playwright_tests() {
     -e "DENSE_MEM_E2E_DREAM_STATEMENT=$dream_statement" \
     -e "DENSE_MEM_PROMETHEUS_URL=$PROMETHEUS_URL" \
     "$E2E_PLAYWRIGHT_CONTAINER" \
-    sh -ec 'cd /tmp/web && npm ci && ./node_modules/.bin/playwright test --config playwright.compose.config.ts'
+    sh -ec 'cd /tmp/web && npm ci && ./node_modules/.bin/playwright test --config playwright.compose.config.ts "$@"' \
+    sh "${test_args[@]}"
   remove_e2e_playwright_container
 }
 
@@ -524,8 +533,8 @@ if [[ "$E2E_MODE" != "standard" && "$E2E_MODE" != "entra_scim" ]]; then
   exit 1
 fi
 
-if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" ]]; then
-  echo "DENSE_MEM_E2E_SCENARIO must be full, security_intake, submission_assessment, or semantic_holds." >&2
+if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" ]]; then
+  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, security_intake, submission_assessment, or semantic_holds." >&2
   exit 1
 fi
 
@@ -617,6 +626,8 @@ export COMPOSE_DOCKER_CLI_BUILD=1
 
 if [[ "$E2E_MODE" == "entra_scim" ]]; then
   echo "Skipping unrelated compose prechecks for the Entra SCIM scenario."
+elif [[ "$E2E_SCENARIO" == "portal" ]]; then
+  echo "Skipping unrelated disposable PostgreSQL prechecks for the portal scenario."
 elif [[ "${DENSE_MEM_E2E_SKIP_PRECHECKS:-0}" == "1" ]]; then
   echo "Skipping disposable PostgreSQL prechecks by DENSE_MEM_E2E_SKIP_PRECHECKS."
 else
@@ -675,6 +686,21 @@ create_control_team "E2E Team" "compose e2e seed"
 team_id="$CREATED_TEAM_ID"
 create_control_profile "$team_id" "E2E Profile"
 api_key="$CREATED_API_KEY"
+
+if [[ "$E2E_SCENARIO" == "portal" ]]; then
+  echo "Running compose-backed API-key portal cookie-auth e2e."
+  dream_statement="portal cookie-auth e2e"
+  DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
+  DENSE_MEM_USER_URL="$USER_URL" \
+  DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
+  DENSE_MEM_E2E_TEAM_ID="$team_id" \
+  DENSE_MEM_E2E_API_KEY="$api_key" \
+  DENSE_MEM_E2E_TEAM_NAME="E2E Team" \
+  DENSE_MEM_E2E_DREAM_STATEMENT="$dream_statement" \
+  DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" \
+  run_compose_playwright_tests portal
+  exit 0
+fi
 
 if [[ "$E2E_SCENARIO" == "security_intake" ]]; then
   echo "Running compose-backed security intake e2e with the configured live verifier."
