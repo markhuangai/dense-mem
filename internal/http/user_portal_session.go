@@ -3,23 +3,21 @@ package http
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
-	"io"
 	nethttp "net/http"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/markhuangai/dense-mem/internal/http/dto"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
-type userPortalCreateSessionRequest struct {
-	Remember *bool `json:"remember"`
-}
+const userPortalCreateSessionBodyKey = "user_portal_create_session"
 
 func (h *userPortalHandler) createPortalSession(c echo.Context) error {
 	principal := httpmw.GetPrincipal(c.Request().Context())
@@ -30,16 +28,7 @@ func (h *userPortalHandler) createPortalSession(c echo.Context) error {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "user portal session service unavailable")
 	}
 
-	var body userPortalCreateSessionRequest
-	decoder := json.NewDecoder(c.Request().Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil || body.Remember == nil {
-		return httperr.New(httperr.VALIDATION_ERROR, "session request must contain remember")
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return httperr.New(httperr.VALIDATION_ERROR, "session request must contain one JSON object")
-	}
+	body := httpmw.MustGetValidatedBody[dto.CreateUserPortalSessionRequest](c.Request().Context(), userPortalCreateSessionBodyKey)
 
 	result, err := h.portal.CreateSession(c.Request().Context(), principal.KeyID)
 	if err != nil {
@@ -50,7 +39,7 @@ func (h *userPortalHandler) createPortalSession(c echo.Context) error {
 	setUserPortalCookie(c, service.UserPortalCSRFCookieName, result.CSRFToken, false, *body.Remember, result.ExpiresAt, secure)
 	clearSSOCookie(c, service.SSOSessionCookieName)
 	clearSSOCookie(c, service.SSOCSRFCookieName)
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "signed_in"}})
+	return response.SuccessOK(c, map[string]string{"status": "signed_in"})
 }
 
 func (h *userPortalHandler) logoutPortalSession(c echo.Context) error {
@@ -67,7 +56,7 @@ func (h *userPortalHandler) logoutPortalSession(c echo.Context) error {
 	secure := h.portalCookieSecure(c.Request().Context())
 	clearUserPortalCookie(c, service.UserPortalSessionCookieName, true, secure)
 	clearUserPortalCookie(c, service.UserPortalCSRFCookieName, false, secure)
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "signed_out"}})
+	return response.SuccessOK(c, map[string]string{"status": "signed_out"})
 }
 
 func validateUserPortalLogoutCSRF(c echo.Context) error {

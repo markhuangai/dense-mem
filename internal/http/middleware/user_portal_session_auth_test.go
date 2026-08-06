@@ -17,11 +17,17 @@ import (
 )
 
 type userPortalSessionAuthStub struct {
-	key *domain.APIKey
-	err error
+	key             *domain.APIKey
+	err             error
+	gotSessionToken string
+	gotCSRFToken    string
+	gotRequireCSRF  bool
 }
 
-func (s userPortalSessionAuthStub) AuthenticateSession(context.Context, string, string, bool) (*domain.APIKey, error) {
+func (s *userPortalSessionAuthStub) AuthenticateSession(_ context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error) {
+	s.gotSessionToken = sessionToken
+	s.gotCSRFToken = csrfToken
+	s.gotRequireCSRF = requireCSRF
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -31,17 +37,18 @@ func (s userPortalSessionAuthStub) AuthenticateSession(context.Context, string, 
 func TestAuthMiddlewareAuthenticatesPortalSessionAndSetsAuthMethod(t *testing.T) {
 	teamID := uuid.New()
 	keyID := uuid.New()
+	stub := &userPortalSessionAuthStub{key: &domain.APIKey{
+		ID:        keyID,
+		TeamID:    teamID,
+		Name:      "portal",
+		Role:      service.APIKeyRoleMember,
+		Scopes:    []string{"read"},
+		RateLimit: 120,
+	}}
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(AuthMiddlewareWithOptions(&mockAPIKeyRepository{}, nil, nil, AuthOptions{
-		UserPortalSessionAuthenticator: userPortalSessionAuthStub{key: &domain.APIKey{
-			ID:        keyID,
-			TeamID:    teamID,
-			Name:      "portal",
-			Role:      service.APIKeyRoleMember,
-			Scopes:    []string{"read"},
-			RateLimit: 120,
-		}},
+		UserPortalSessionAuthenticator: stub,
 	}))
 	e.GET("/ui/api/session", func(c echo.Context) error {
 		principal := GetPrincipal(c.Request().Context())
@@ -58,13 +65,17 @@ func TestAuthMiddlewareAuthenticatesPortalSessionAndSetsAuthMethod(t *testing.T)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"auth_method":"api_key_session"`)
+	require.Equal(t, "opaque-session", stub.gotSessionToken)
+	require.Empty(t, stub.gotCSRFToken)
+	require.False(t, stub.gotRequireCSRF)
 }
 
 func TestAuthMiddlewareFailsClosedForInvalidPortalSession(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
+	stub := &userPortalSessionAuthStub{err: service.ErrUserPortalSessionInvalid}
 	e.Use(AuthMiddlewareWithOptions(&mockAPIKeyRepository{}, nil, nil, AuthOptions{
-		UserPortalSessionAuthenticator: userPortalSessionAuthStub{err: service.ErrUserPortalSessionInvalid},
+		UserPortalSessionAuthenticator: stub,
 		AllowMissingCredentials:        true,
 	}))
 	e.GET("/ui/api/session", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
@@ -81,8 +92,9 @@ func TestAuthMiddlewareFailsClosedForInvalidPortalSession(t *testing.T) {
 func TestAuthMiddlewareRequiresPortalCSRFForUnsafeRequests(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
+	stub := &userPortalSessionAuthStub{err: service.ErrUserPortalCSRFInvalid}
 	e.Use(AuthMiddlewareWithOptions(&mockAPIKeyRepository{}, nil, nil, AuthOptions{
-		UserPortalSessionAuthenticator: userPortalSessionAuthStub{err: service.ErrUserPortalCSRFInvalid},
+		UserPortalSessionAuthenticator: stub,
 	}))
 	e.POST("/ui/api/key/rotate", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
 
@@ -93,6 +105,9 @@ func TestAuthMiddlewareRequiresPortalCSRFForUnsafeRequests(t *testing.T) {
 
 	require.Equal(t, http.StatusForbidden, rec.Code)
 	require.Contains(t, rec.Body.String(), `"code":"FORBIDDEN"`)
+	require.Equal(t, "opaque-session", stub.gotSessionToken)
+	require.Empty(t, stub.gotCSRFToken)
+	require.True(t, stub.gotRequireCSRF)
 }
 
 var _ repository.APIKeyRepository = (*mockAPIKeyRepository)(nil)

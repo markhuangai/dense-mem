@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/http/dto"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service"
@@ -22,6 +24,11 @@ type portalSessionManagerStub struct {
 	createdKeyID uuid.UUID
 	logoutToken  string
 	result       *service.UserPortalSessionResult
+}
+
+func invokeCreatePortalSession(t *testing.T, h *userPortalHandler, c echo.Context) error {
+	t.Helper()
+	return httpmw.BindAndValidateStrict[dto.CreateUserPortalSessionRequest](userPortalCreateSessionBodyKey)(h.createPortalSession)(c)
 }
 
 func (s *portalSessionManagerStub) CreateSession(_ context.Context, keyID uuid.UUID) (*service.UserPortalSessionResult, error) {
@@ -53,7 +60,7 @@ func TestCreatePortalSessionSetsHostOnlyUiCookies(t *testing.T) {
 		AuthMethod: "api_key",
 	})
 
-	err := h.createPortalSession(c)
+	err := invokeCreatePortalSession(t, h, c)
 	require.NoError(t, err)
 	require.Equal(t, keyID, manager.createdKeyID)
 
@@ -94,7 +101,7 @@ func TestCreatePortalSessionUsesBrowserSessionCookiesWhenRememberDisabled(t *tes
 		AuthMethod: "api_key",
 	})
 
-	require.NoError(t, h.createPortalSession(c))
+	require.NoError(t, invokeCreatePortalSession(t, h, c))
 	recorder, ok := c.Response().Writer.(*httptest.ResponseRecorder)
 	require.True(t, ok)
 	found := 0
@@ -117,7 +124,7 @@ func TestCreatePortalSessionRejectsUnknownOrMissingFields(t *testing.T) {
 
 	for _, body := range []string{`{}`, `{"remember":true,"unexpected":true}`, `{"remember":true} {}`} {
 		c := userPortalEchoContext(t, http.MethodPost, "/ui/api/session", body, principal)
-		err := h.createPortalSession(c)
+		err := invokeCreatePortalSession(t, h, c)
 		var apiErr *httperr.APIError
 		require.ErrorAs(t, err, &apiErr)
 		require.Equal(t, httperr.VALIDATION_ERROR, apiErr.Code)
@@ -131,14 +138,14 @@ func TestCreatePortalSessionRequiresDirectAPIKeyAndService(t *testing.T) {
 		{KeyID: uuid.New(), TeamID: uuid.New(), AuthMethod: "api_key_session"},
 	} {
 		h := &userPortalHandler{portal: manager}
-		err := h.createPortalSession(userPortalEchoContext(t, http.MethodPost, "/ui/api/session", `{"remember":true}`, principal))
+		err := invokeCreatePortalSession(t, h, userPortalEchoContext(t, http.MethodPost, "/ui/api/session", `{"remember":true}`, principal))
 		var apiErr *httperr.APIError
 		require.ErrorAs(t, err, &apiErr)
 		require.Equal(t, httperr.FORBIDDEN, apiErr.Code)
 	}
 
 	h := &userPortalHandler{}
-	err := h.createPortalSession(userPortalEchoContext(t, http.MethodPost, "/ui/api/session", `{"remember":true}`, &httpmw.Principal{
+	err := invokeCreatePortalSession(t, h, userPortalEchoContext(t, http.MethodPost, "/ui/api/session", `{"remember":true}`, &httpmw.Principal{
 		KeyID:      uuid.New(),
 		TeamID:     uuid.New(),
 		AuthMethod: "api_key",

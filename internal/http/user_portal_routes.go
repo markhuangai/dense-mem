@@ -56,7 +56,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 
 	api := e.Group("/ui/api")
 	useUserPortalMiddleware(api, deps, authOpts)
-	api.POST("/session", portal.createPortalSession)
+	api.POST("/session", portal.createPortalSession, httpmw.BindAndValidateStrict[dto.CreateUserPortalSessionRequest](userPortalCreateSessionBodyKey))
 
 	profileHandler := handler.NewProfileHandler(deps.ProfileSvc)
 	apiKeyHandler := handler.NewAPIKeyHandler(deps.APIKeySvc)

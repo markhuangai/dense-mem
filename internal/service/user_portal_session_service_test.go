@@ -130,6 +130,12 @@ func TestUserPortalSessionServiceRejectsMissingOrExpiredCredentials(t *testing.T
 			CSRFHash:    HashSSOToken("csrf"),
 			ExpiresAt:   now.Add(-time.Second),
 		},
+		HashSSOToken("active"): {
+			SessionHash: HashSSOToken("active"),
+			KeyID:       keyID,
+			CSRFHash:    HashSSOToken("csrf"),
+			ExpiresAt:   now.Add(time.Hour),
+		},
 	}}
 	keys := &activePortalKeyRepositoryStub{keys: map[uuid.UUID]*domain.APIKey{
 		keyID: {ID: keyID, TeamID: uuid.New(), AuthSource: "api_key"},
@@ -142,7 +148,7 @@ func TestUserPortalSessionServiceRejectsMissingOrExpiredCredentials(t *testing.T
 	require.ErrorIs(t, err, ErrUserPortalSessionInvalid)
 
 	keys.keys[keyID] = nil
-	_, err = service.AuthenticateSession(context.Background(), "expired", "csrf", false)
+	_, err = service.AuthenticateSession(context.Background(), "active", "csrf", false)
 	require.ErrorIs(t, err, ErrUserPortalSessionInvalid)
 
 	repo.deleteErr = errors.New("delete failed")
