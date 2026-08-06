@@ -524,8 +524,8 @@ if [[ "$E2E_MODE" != "standard" && "$E2E_MODE" != "entra_scim" ]]; then
   exit 1
 fi
 
-if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" ]]; then
-  echo "DENSE_MEM_E2E_SCENARIO must be full, security_intake, or submission_assessment." >&2
+if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" ]]; then
+  echo "DENSE_MEM_E2E_SCENARIO must be full, security_intake, submission_assessment, or semantic_holds." >&2
   exit 1
 fi
 
@@ -586,7 +586,7 @@ require_env_value AI_API_URL >/dev/null
 require_env_value AI_API_KEY >/dev/null
 require_env_value AI_API_EMBEDDING_MODEL >/dev/null
 require_env_value AI_API_EMBEDDING_DIMENSIONS >/dev/null
-if [[ "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
+if [[ "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "semantic_holds" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
   require_env_value AI_VERIFIER_API_URL >/dev/null
   require_env_value AI_VERIFIER_API_KEY >/dev/null
   require_env_value AI_VERIFIER_MODEL >/dev/null
@@ -700,6 +700,20 @@ if [[ "$E2E_SCENARIO" == "submission_assessment" ]]; then
   DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
   DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
   node "$ROOT_DIR/tests/uat/submission_assessment_mcp_e2e.mjs"
+  exit 0
+fi
+
+if [[ "$E2E_SCENARIO" == "semantic_holds" ]]; then
+  echo "Running compose-backed semantic-hold and replacement e2e with the configured live verifier."
+  DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
+  DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
+  DENSE_MEM_USER_URL="$USER_URL" \
+  DENSE_MEM_E2E_TEAM_ID="$team_id" \
+  DENSE_MEM_E2E_API_KEY="$api_key" \
+  DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" \
+  DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
+  DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
+  node "$ROOT_DIR/tests/uat/semantic_holds_mcp_e2e.mjs"
   exit 0
 fi
 

@@ -58,11 +58,12 @@ func NewRememberService(deps RememberDependencies) RememberService {
 }
 
 type RememberRequest struct {
-	ContractVersion   string                  `json:"contract_version"`
-	Evidence          []RememberEvidenceInput `json:"evidence"`
-	EntityHints       []map[string]any        `json:"entity_hints,omitempty"`
-	RelationshipHints []map[string]any        `json:"relationship_hints,omitempty"`
-	IdempotencyKey    string                  `json:"idempotency_key,omitempty"`
+	ContractVersion      string                  `json:"contract_version"`
+	Evidence             []RememberEvidenceInput `json:"evidence"`
+	EntityHints          []map[string]any        `json:"entity_hints,omitempty"`
+	RelationshipHints    []map[string]any        `json:"relationship_hints,omitempty"`
+	IdempotencyKey       string                  `json:"idempotency_key,omitempty"`
+	ReplacesSubmissionID string                  `json:"replaces_submission_id,omitempty"`
 }
 
 type GetMemoryPlacementRequest struct {
@@ -202,16 +203,17 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 		"actor":            actorMetadata,
 	}
 	created, err := s.ledger.CreateIngest(ctx, repository.CreateIngestInput{
-		TeamID:            actor.TeamID.String(),
-		OwnerProfileID:    actor.ProfileID.String(),
-		IdempotencyKey:    strings.TrimSpace(req.IdempotencyKey),
-		RequestHash:       requestHash,
-		SourceSummary:     sourceSummary(req.Evidence),
-		Status:            string(domain.PlacementRunQueued),
-		TelemetryRemember: true,
-		Proposal:          proposal,
-		Metadata:          metadata,
-		Evidence:          normalized,
+		TeamID:               actor.TeamID.String(),
+		OwnerProfileID:       actor.ProfileID.String(),
+		IdempotencyKey:       strings.TrimSpace(req.IdempotencyKey),
+		RequestHash:          requestHash,
+		SourceSummary:        sourceSummary(req.Evidence),
+		Status:               string(domain.PlacementRunQueued),
+		TelemetryRemember:    true,
+		Proposal:             proposal,
+		Metadata:             metadata,
+		Evidence:             normalized,
+		ReplacesSubmissionID: strings.TrimSpace(req.ReplacesSubmissionID),
 	})
 	if err != nil {
 		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
@@ -317,11 +319,12 @@ func sourceRevisionBatchHash(contents []string) string {
 
 func canonicalRequestHash(req RememberRequest) (string, error) {
 	payload := map[string]any{
-		"contract_version":   req.ContractVersion,
-		"evidence":           req.Evidence,
-		"entity_hints":       req.EntityHints,
-		"relationship_hints": req.RelationshipHints,
-		"idempotency_key":    strings.TrimSpace(req.IdempotencyKey),
+		"contract_version":       req.ContractVersion,
+		"evidence":               req.Evidence,
+		"entity_hints":           req.EntityHints,
+		"relationship_hints":     req.RelationshipHints,
+		"idempotency_key":        strings.TrimSpace(req.IdempotencyKey),
+		"replaces_submission_id": strings.TrimSpace(req.ReplacesSubmissionID),
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -525,8 +528,12 @@ func resultString(fields map[string]any, key string) string {
 
 func translateRememberLedgerError(err error) error {
 	switch {
+	case errors.Is(err, repository.ErrSubmissionReplacementConflict):
+		return httperr.New(httperr.CONFLICT, "submission replacement conflict")
 	case errors.Is(err, repository.ErrIdempotencyConflict), errors.Is(err, repository.ErrSourceRevisionConflict):
 		return fmt.Errorf("%w: duplicate or stale intake request", ErrRememberConflict)
+	case errors.Is(err, repository.ErrSubmissionReplacementNotFound):
+		return httperr.New(httperr.NOT_FOUND, "submission not found")
 	case errors.Is(err, repository.ErrTeamInactive):
 		return httperr.New(httperr.NOT_FOUND, "team not found")
 	default:

@@ -202,6 +202,9 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 			}
 			result.OutcomeIDs = append(result.OutcomeIDs, outcomeID)
 		}
+		if err := promoteSubmissionReplacement(ctx, tx, input.SubmissionAssessmentRunScope); err != nil {
+			return err
+		}
 		firstDisposition, err := completeSubmissionPlacementRun(ctx, tx, input.SubmissionAssessmentRunScope, string(domain.PlacementRunCompleted), "")
 		if err != nil {
 			return err
