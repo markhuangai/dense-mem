@@ -35,8 +35,7 @@ func NewUserPortalSessionRepository(db *gorm.DB, rls postgres.RLSHelper) *UserPo
 func (r *UserPortalSessionRepositoryImpl) CreateSession(ctx context.Context, session *domain.UserPortalSession) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`
-			INSERT INTO user_portal_sessions (session_hash, key_id, csrf_hash, expires_at, created_at)
-			VALUES ($1, $2, $3, $4, $5)
+			SELECT public.dense_mem_portal_session_create($1, $2, $3, $4, $5)
 		`, session.SessionHash, session.KeyID, session.CSRFHash, session.ExpiresAt, session.CreatedAt).Error
 	})
 	if err != nil {
@@ -50,8 +49,7 @@ func (r *UserPortalSessionRepositoryImpl) GetSession(ctx context.Context, sessio
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
 			SELECT session_hash, key_id, csrf_hash, expires_at, created_at
-			FROM user_portal_sessions
-			WHERE session_hash = $1 AND expires_at > NOW()
+			FROM public.dense_mem_portal_session_get($1)
 		`, sessionHash).Rows()
 		if err != nil {
 			return err
@@ -76,7 +74,7 @@ func (r *UserPortalSessionRepositoryImpl) GetSession(ctx context.Context, sessio
 
 func (r *UserPortalSessionRepositoryImpl) DeleteSession(ctx context.Context, sessionHash string) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		return tx.Exec(`DELETE FROM user_portal_sessions WHERE session_hash = $1`, sessionHash).Error
+		return tx.Exec(`SELECT public.dense_mem_portal_session_delete($1)`, sessionHash).Error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete user portal session: %w", err)
@@ -86,7 +84,7 @@ func (r *UserPortalSessionRepositoryImpl) DeleteSession(ctx context.Context, ses
 
 func (r *UserPortalSessionRepositoryImpl) DeleteExpiredSessions(ctx context.Context, now time.Time) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		return tx.Exec(`DELETE FROM user_portal_sessions WHERE expires_at <= $1`, now).Error
+		return tx.Exec(`SELECT public.dense_mem_portal_session_delete_expired($1)`, now).Error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete expired user portal sessions: %w", err)

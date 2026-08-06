@@ -17,6 +17,14 @@ func TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			GRANT EXECUTE ON FUNCTION public.dense_mem_portal_session_create(TEXT, UUID, TEXT, TIMESTAMPTZ, TIMESTAMPTZ) TO densemem_rls_test;
+			GRANT EXECUTE ON FUNCTION public.dense_mem_portal_session_get(TEXT) TO densemem_rls_test;
+			GRANT EXECUTE ON FUNCTION public.dense_mem_portal_session_delete(TEXT) TO densemem_rls_test;
+			GRANT EXECUTE ON FUNCTION public.dense_mem_portal_session_delete_expired(TIMESTAMPTZ) TO densemem_rls_test;
+		`).Error
+	}))
 	teamA := createLedgerTeam(t, adminDB, rls, "portal-session-rls-team-a")
 	profileA := createLedgerProfile(t, adminDB, rls, teamA, "portal-session-rls-profile-a")
 	teamB := createLedgerTeam(t, adminDB, rls, "portal-session-rls-team-b")
@@ -86,6 +94,16 @@ func TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle(t *testing.T) {
 			return nil
 		}))
 	}
+
+	var systemContextVisible int64
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM user_portal_sessions
+			WHERE session_hash IN (?, ?)
+		`, sessionA.SessionHash, sessionB.SessionHash).Scan(&systemContextVisible).Error
+	}))
+	require.Zero(t, systemContextVisible, "the application role must not bypass the dedicated portal-session role")
 
 	require.NoError(t, repo.DeleteSession(ctx, sessionA.SessionHash))
 	deletedA, err := repo.GetSession(ctx, sessionA.SessionHash)

@@ -106,7 +106,7 @@ func (s *UserPortalSessionService) AuthenticateSession(ctx context.Context, sess
 	if err != nil {
 		return nil, err
 	}
-	if session == nil || session.ExpiresAt.Before(s.now().UTC()) {
+	if session == nil || !session.ExpiresAt.After(s.now().UTC()) {
 		return nil, ErrUserPortalSessionInvalid
 	}
 	if requireCSRF && !hashMatches(csrfToken, session.CSRFHash) {
