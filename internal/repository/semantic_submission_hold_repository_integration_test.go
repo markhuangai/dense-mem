@@ -22,7 +22,7 @@ func TestSubmissionHoldExpiryIsInclusiveStateOnlyAndIdempotent(t *testing.T) {
 	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-worker", time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+	persistSubmissionAssessment(t, ctx, repo, *claimed)
 
 	_, err = repo.CompleteSubmissionAssessment(ctx, CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: SubmissionAssessmentRunScope{
@@ -65,7 +65,7 @@ func TestSubmissionHoldExpiryIsInclusiveStateOnlyAndIdempotent(t *testing.T) {
 	assert.Equal(t, "active", holdState)
 	assert.Zero(t, semanticCount)
 
-	before, err := repo.ExpireSubmissionHolds(ctx, ExpireSubmissionHoldsInput{TeamID: teamID, Now: expiresAt.Add(-time.Nanosecond)})
+	before, err := repo.ExpireSubmissionHolds(ctx, ExpireSubmissionHoldsInput{TeamID: teamID, Now: expiresAt.Add(-time.Microsecond)})
 	require.NoError(t, err)
 	assert.Zero(t, before.Expired)
 
@@ -126,7 +126,17 @@ func TestSubmissionHoldExpiryIsInclusiveStateOnlyAndIdempotent(t *testing.T) {
 	assert.Equal(t, int64(2), evidenceCount)
 	assert.Zero(t, relationshipCount)
 	assert.Zero(t, searchCount)
-	_ = assessment
+
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return createSubmissionHoldProjection(ctx, tx, SubmissionAssessmentRunScope{
+			TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+			PlacementRunID: ingest.PlacementRunID,
+		}, "policy_review")
+	}))
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT semantic_hold_state FROM placement_runs WHERE team_id = ?::uuid AND placement_run_id = ?::uuid`, teamID, ingest.PlacementRunID).Row().Scan(&finalState)
+	}))
+	assert.Equal(t, "expired", finalState)
 }
 
 func TestSubmissionReplacementIsolationReleaseAndPromotion(t *testing.T) {
@@ -182,7 +192,7 @@ func TestSubmissionReplacementIsolationReleaseAndPromotion(t *testing.T) {
 	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-worker", time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+	persistSubmissionAssessment(t, ctx, repo, *claimed)
 	_, err = repo.CompleteSubmissionAssessment(ctx, CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: SubmissionAssessmentRunScope{
 			TeamID: teamID, OwnerProfileID: ownerID, IngestID: replacement.IngestID,
@@ -207,8 +217,6 @@ func TestSubmissionReplacementIsolationReleaseAndPromotion(t *testing.T) {
 	assert.Equal(t, "active", targetState)
 	assert.Equal(t, "failed", successorStatus)
 	assert.Equal(t, int64(1), releaseEvents)
-	_ = assessment
-
 	promotableTarget := createHeldSubmissionForTest(t, ctx, repo, teamID, ownerID, "submission-replacement-promotable-target")
 	promotableInput := replacementInput
 	promotableInput.IdempotencyKey = "submission-replacement-promotable-successor"
@@ -242,6 +250,87 @@ func TestSubmissionReplacementIsolationReleaseAndPromotion(t *testing.T) {
 	assert.Equal(t, "superseded", targetHoldState)
 	assert.Equal(t, promotable.PlacementRunID, supersededBy)
 	assert.Equal(t, "completed", targetSuccessor)
+	assert.Equal(t, int64(1), promotionEvents)
+	assert.Equal(t, int64(1), supersededEvents)
+}
+
+func TestSubmissionReplacementSerializesWithHoldExpiry(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-replacement-expiry-race-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-replacement-expiry-race-owner")
+	insertSearchTestContract(t, adminDB, rls, "submission-replacement-expiry-race-search", 3, "exact", "")
+	repo := NewLedgerRepository(appDB, rls)
+	target := createHeldSubmissionForTest(t, ctx, repo, teamID, ownerID, "submission-replacement-expiry-race-target")
+
+	var expiresAt time.Time
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT expires_at FROM submission_holds WHERE team_id = ?::uuid AND placement_run_id = (SELECT placement_run_id FROM placement_runs WHERE team_id = ?::uuid AND ingest_id = ?::uuid)`, teamID, teamID, target.IngestID).Row().Scan(&expiresAt)
+	}))
+
+	replacementInput := CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "submission-replacement-expiry-race-successor",
+		RequestHash: sha256Hex("submission-replacement-expiry-race-successor"), ReplacesSubmissionID: target.IngestID,
+		Evidence: []EvidenceInput{{Content: "Orion links Vega."}, {Content: "Vega links Lyra."}},
+	}
+	start := make(chan struct{})
+	type replacementResult struct {
+		ingest *CreateIngestResult
+		err    error
+	}
+	type expiryResult struct {
+		result ExpireSubmissionHoldsResult
+		err    error
+	}
+	replacementDone := make(chan replacementResult, 1)
+	expiryDone := make(chan expiryResult, 1)
+	go func() {
+		<-start
+		ingest, err := repo.CreateIngest(ctx, replacementInput)
+		replacementDone <- replacementResult{ingest: ingest, err: err}
+	}()
+	go func() {
+		<-start
+		result, err := repo.ExpireSubmissionHolds(ctx, ExpireSubmissionHoldsInput{TeamID: teamID, Now: expiresAt})
+		expiryDone <- expiryResult{result: result, err: err}
+	}()
+	close(start)
+	replacement := <-replacementDone
+	require.NoError(t, replacement.err)
+	require.NotNil(t, replacement.ingest)
+	expiry := <-expiryDone
+	require.NoError(t, expiry.err)
+	assert.Equal(t, int64(1), expiry.result.Expired)
+
+	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+	committed, err := repo.CommitSubmissionAssessment(ctx, submissionAssessmentCommitFixture(*claimed, replacement.ingest, assessment.AssessmentID, false))
+	require.NoError(t, err)
+	assert.Equal(t, "accepted", committed.Status)
+
+	var targetState, successorStatus string
+	var expiryEvents, promotionEvents, supersededEvents int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT semantic_hold_state FROM placement_runs WHERE team_id = ?::uuid AND placement_run_id = ?::uuid`, teamID, target.PlacementRunID).Row().Scan(&targetState); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT status FROM placement_runs WHERE team_id = ?::uuid AND placement_run_id = ?::uuid`, teamID, replacement.ingest.PlacementRunID).Row().Scan(&successorStatus); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT count(*) FROM placement_outcomes WHERE team_id = ?::uuid AND placement_run_id = ?::uuid AND outcome_kind = 'submission_hold_expired'`, teamID, target.PlacementRunID).Row().Scan(&expiryEvents); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT count(*) FROM placement_outcomes WHERE team_id = ?::uuid AND placement_run_id = ?::uuid AND outcome_kind = 'submission_replacement_promoted'`, teamID, replacement.ingest.PlacementRunID).Row().Scan(&promotionEvents); err != nil {
+			return err
+		}
+		return tx.Raw(`SELECT count(*) FROM placement_outcomes WHERE team_id = ?::uuid AND placement_run_id = ?::uuid AND outcome_kind = 'submission_hold_superseded'`, teamID, target.PlacementRunID).Row().Scan(&supersededEvents)
+	}))
+	assert.Equal(t, "superseded", targetState)
+	assert.Equal(t, "completed", successorStatus)
+	assert.Equal(t, int64(1), expiryEvents)
 	assert.Equal(t, int64(1), promotionEvents)
 	assert.Equal(t, int64(1), supersededEvents)
 }

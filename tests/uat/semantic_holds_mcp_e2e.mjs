@@ -27,7 +27,7 @@ const target = await mcpSuccess(apiKey, "remember", rememberInput(
 const targetID = requiredString(target.ingest_id, "target ingest_id");
 await waitForState(apiKey, targetID, "awaiting_review");
 const targetBeforeReplacement = holdSummary(targetID);
-if (targetBeforeReplacement.holdState !== "active" && targetBeforeReplacement.holdState !== "expired") {
+if (targetBeforeReplacement.holdState !== "active") {
   throw new Error("target did not become an active semantic hold");
 }
 if (targetBeforeReplacement.holdCount !== 1 || targetBeforeReplacement.semanticWrites !== 0) {
@@ -205,7 +205,7 @@ function holdSummary(targetID, heldSuccessorID = "", successfulSuccessorID = "")
       COALESCE((SELECT placement_run_id::text FROM successful_successor), ''),
       (SELECT count(*) FROM placement_outcomes WHERE team_id = ${sqlLiteral(teamID)}::uuid AND placement_run_id = (SELECT placement_run_id FROM successful_successor) AND outcome_kind = 'submission_replacement_promoted'),
       (SELECT count(*) FROM placement_outcomes WHERE team_id = ${sqlLiteral(teamID)}::uuid AND placement_run_id = (SELECT placement_run_id FROM target) AND outcome_kind = 'submission_hold_superseded');
-  `);
+  `, 11);
   return {
     holdState: stringValue(row[0]),
     supersededBy: stringValue(row[1]),
@@ -226,7 +226,7 @@ function postgresCountByCorrelation(correlationID) {
     SELECT count(*) FROM knowledge_ingests
     WHERE team_id = ${sqlLiteral(teamID)}::uuid
       AND metadata #>> '{actor,correlation_id}' = ${sqlLiteral(correlationID)};
-  `)[0]);
+  `, 1)[0]);
 }
 
 async function mcpSuccess(key, name, args, correlationID = "") {
@@ -314,7 +314,7 @@ async function prometheusValue(metric, targetTeamID) {
   return parsed;
 }
 
-function postgresRow(sql) {
+function postgresRow(sql, expectedFields = 0) {
   const result = spawnSync("docker", [
     "compose", "-p", composeProject, "-f", composeFile,
     "exec", "-T", "postgres", "sh", "-ec",
@@ -327,7 +327,15 @@ function postgresRow(sql) {
   if (result.status !== 0) {
     throw new Error("postgres semantic-hold query failed");
   }
-  return result.stdout.trim().split("|");
+  const output = result.stdout.trim();
+  if (!output) {
+    throw new Error("postgres semantic-hold query returned no rows");
+  }
+  const fields = output.split("|");
+  if (expectedFields > 0 && fields.length !== expectedFields) {
+    throw new Error("postgres semantic-hold query returned an unexpected column count");
+  }
+  return fields;
 }
 
 function sqlLiteral(value) {

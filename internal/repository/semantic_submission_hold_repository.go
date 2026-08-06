@@ -47,8 +47,11 @@ func lockSubmissionReplacementTarget(
 		FROM placement_runs AS run
 		WHERE run.team_id = ?::uuid
 		  AND run.ingest_id = ?::uuid
+		  AND run.owner_profile_id = ?::uuid
+		ORDER BY run.created_at ASC, run.placement_run_id ASC
+		LIMIT 1
 		FOR UPDATE
-	`, teamID, ingestID).Rows()
+	`, teamID, ingestID, ownerProfileID).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -248,8 +251,23 @@ func createSubmissionHoldProjection(
 		    updated_at = ?
 		WHERE team_id = ?::uuid
 		  AND placement_run_id = ?::uuid
+		  AND semantic_hold_state IS NULL
 	`, heldAt, heldAt, scope.TeamID, scope.PlacementRunID).Error; err != nil {
 		return err
+	}
+	var outcomeExists bool
+	if err := tx.WithContext(ctx).Raw(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM placement_outcomes
+			WHERE team_id = ?::uuid
+			  AND idempotency_key = ?
+		)
+	`, scope.TeamID, "submission-hold:"+scope.PlacementRunID+":created").Row().Scan(&outcomeExists); err != nil {
+		return err
+	}
+	if outcomeExists {
+		return nil
 	}
 	_, err = insertPlacementOutcome(ctx, tx, PlacementOutcomeInput{
 		TeamID:         scope.TeamID,

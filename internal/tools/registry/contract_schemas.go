@@ -23,7 +23,7 @@ func rememberInputSchema() map[string]any {
 		"evidence":               evidenceArraySchema(),
 		"relationships":          relationshipSubmissionArraySchema(),
 		"idempotency_key":        schemaString("Ingest retry key scoped to team and profile.", 128),
-		"replaces_submission_id": schemaString("Same-owner held submission to replace.", 128),
+		"replaces_submission_id": uuidStringSchema("Same-owner held submission to replace."),
 	})
 }
 

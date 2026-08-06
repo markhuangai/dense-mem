@@ -8,6 +8,8 @@ import (
 	"sort"
 	"time"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
 )
 
 func ValidateInput(tool Tool, args map[string]any) error {
@@ -132,9 +134,16 @@ func validateSchemaValue(name string, value any, schema map[string]any) error {
 			return fmt.Errorf("%s", message)
 		}
 		enforceFormat, _ := schema["x-enforce-format"].(bool)
-		if format, _ := schema["format"].(string); enforceFormat && format == "date-time" {
-			if _, err := time.Parse(time.RFC3339, s); err != nil {
-				return fmt.Errorf("%s must be a valid RFC 3339 date-time", name)
+		if format, _ := schema["format"].(string); enforceFormat {
+			switch format {
+			case "date-time":
+				if _, err := time.Parse(time.RFC3339, s); err != nil {
+					return fmt.Errorf("%s must be a valid RFC 3339 date-time", name)
+				}
+			case "uuid":
+				if _, err := uuid.Parse(s); err != nil {
+					return fmt.Errorf("%s must be a valid UUID", name)
+				}
 			}
 		}
 	case "integer":

@@ -163,6 +163,12 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("remember: evidence is required")
 	}
+	replacementID := strings.TrimSpace(req.ReplacesSubmissionID)
+	if replacementID != "" {
+		if _, err := uuid.Parse(replacementID); err != nil {
+			return nil, translateRememberLedgerError(fmt.Errorf("%w: invalid submission id: %v", repository.ErrSubmissionReplacementNotFound, err))
+		}
+	}
 	started := time.Now()
 	contents := make([]string, 0, len(req.Evidence))
 	for _, evidence := range req.Evidence {
@@ -213,7 +219,7 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 		Proposal:             proposal,
 		Metadata:             metadata,
 		Evidence:             normalized,
-		ReplacesSubmissionID: strings.TrimSpace(req.ReplacesSubmissionID),
+		ReplacesSubmissionID: replacementID,
 	})
 	if err != nil {
 		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")

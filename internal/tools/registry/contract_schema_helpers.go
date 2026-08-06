@@ -26,6 +26,13 @@ func nonEmptyStringSchema(description string, maxLength int) map[string]any {
 	return schema
 }
 
+func uuidStringSchema(description string) map[string]any {
+	schema := schemaString(description, 128)
+	schema["format"] = "uuid"
+	schema["x-enforce-format"] = true
+	return schema
+}
+
 func requireNonEmptyStrings(required []string, properties map[string]any) {
 	for _, field := range required {
 		property, ok := properties[field].(map[string]any)

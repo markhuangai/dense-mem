@@ -144,6 +144,8 @@ BEGIN
             AND existing_hold.placement_run_id = run.placement_run_id
       )
       AND (
+          run.completed_at IS NULL
+          OR
           NOT EXISTS (
               SELECT 1
               FROM placement_items AS item
