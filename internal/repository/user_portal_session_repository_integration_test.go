@@ -105,6 +105,45 @@ func TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle(t *testing.T) {
 	}))
 	require.Zero(t, systemContextVisible, "the application role must not bypass the dedicated portal-session role")
 
+	var functionVisible int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamA, profileA, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM public.dense_mem_portal_session_get(?)
+		`, sessionA.SessionHash).Scan(&functionVisible).Error
+	}))
+	require.Zero(t, functionVisible, "non-system contexts must not read through portal-session functions")
+
+	deniedSession := &domain.UserPortalSession{
+		SessionHash: "portal-session-hash-denied-" + uuid.NewString(),
+		KeyID:       uuid.MustParse(profileA),
+		CSRFHash:    "portal-csrf-hash-denied",
+		ExpiresAt:   createdAt.Add(2 * time.Hour),
+		CreatedAt:   createdAt,
+	}
+	createErr := rls.WithTeamProfileTx(ctx, appDB, teamA, profileA, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			SELECT public.dense_mem_portal_session_create(?, ?, ?, ?, ?)
+		`, deniedSession.SessionHash, deniedSession.KeyID, deniedSession.CSRFHash, deniedSession.ExpiresAt, deniedSession.CreatedAt).Error
+	})
+	require.Error(t, createErr, "non-system contexts must not create through portal-session functions")
+	deniedLoaded, err := repo.GetSession(ctx, deniedSession.SessionHash)
+	require.NoError(t, err)
+	require.Nil(t, deniedLoaded)
+
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamA, profileA, func(tx *gorm.DB) error {
+		return tx.Exec(`SELECT public.dense_mem_portal_session_delete(?)`, sessionA.SessionHash).Error
+	}))
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamA, profileA, func(tx *gorm.DB) error {
+		return tx.Exec(`SELECT public.dense_mem_portal_session_delete_expired(?)`, time.Now().UTC().Add(time.Hour)).Error
+	}))
+	unchangedA, err := repo.GetSession(ctx, sessionA.SessionHash)
+	require.NoError(t, err)
+	require.NotNil(t, unchangedA, "non-system function calls must not delete portal sessions")
+	unchangedB, err := repo.GetSession(ctx, sessionB.SessionHash)
+	require.NoError(t, err)
+	require.NotNil(t, unchangedB, "non-system cleanup must not delete portal sessions")
+
 	require.NoError(t, repo.DeleteSession(ctx, sessionA.SessionHash))
 	deletedA, err := repo.GetSession(ctx, sessionA.SessionHash)
 	require.NoError(t, err)
