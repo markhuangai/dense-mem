@@ -41,6 +41,38 @@ describe("UserApi", () => {
     }));
   });
 
+  it("exchanges a bearer key for a remembered portal session", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: { status: "signed_in" },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new UserApi("dm_key").createPortalSession(true);
+
+    expect(fetchMock).toHaveBeenCalledWith("/ui/api/session", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ remember: true }),
+      credentials: "same-origin",
+      headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
+    }));
+  });
+
+  it("uses the portal CSRF cookie for cookie-authenticated writes", async () => {
+    document.cookie = "dense_mem_ui_csrf=portal-csrf";
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: { status: "signed_out" },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new UserApi("", "api_key_session").logoutPortalSession();
+
+    expect(fetchMock).toHaveBeenCalledWith("/ui/api/session/logout", expect.objectContaining({
+      method: "POST",
+      credentials: "include",
+      headers: expect.objectContaining({ "X-Dense-Mem-CSRF": "portal-csrf" }),
+    }));
+  });
+
   it("requests role-derived telemetry", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: {

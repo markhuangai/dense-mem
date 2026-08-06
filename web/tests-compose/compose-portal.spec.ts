@@ -49,6 +49,7 @@ type TelemetryResponse = {
 
 type UserSessionResponse = {
   data?: {
+    auth_method?: string;
     can_manage_team?: boolean;
     key?: {
       id?: string;
@@ -410,13 +411,82 @@ test("write user key regenerates itself and invalidates the old key", async ({ p
   expect(newApiKey).not.toBe(writable.api_key);
   await expect
     .poll(() => page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey")))
-    .toBe(newApiKey);
+    .toBeNull();
 
   const oldSession = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(writable.api_key) });
   expect(oldSession.status()).toBe(401);
 
   const newSession = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(newApiKey) });
   expect(newSession.status()).toBe(200);
+});
+
+test("remembered API-key login uses a seven-day server session", async ({ page, request, browser }, testInfo) => {
+  await setSSOCookieSecure(request, false);
+  const writable = await createTeamProfile(request, uniqueName("Cookie session", testInfo), ["read", "write"]);
+
+  await page.goto(`${userUrl}/ui/`);
+  await page.getByLabel("API key").fill(writable.api_key);
+  await page.getByRole("checkbox", { name: /7 days/i }).check();
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Knowledge", exact: true })).toBeVisible();
+
+  const cookies = await page.context().cookies(`${userUrl}/ui/`);
+  const sessionCookie = cookies.find((cookie) => cookie.name === "dense_mem_ui_session");
+  const csrfCookie = cookies.find((cookie) => cookie.name === "dense_mem_ui_csrf");
+  expect(sessionCookie).toBeDefined();
+  expect(sessionCookie?.path).toBe("/ui");
+  expect(sessionCookie?.httpOnly).toBe(true);
+  expect(sessionCookie?.secure).toBe(false);
+  expect(sessionCookie?.sameSite).toBe("Lax");
+  expect((sessionCookie?.expires ?? 0) - Date.now() / 1000).toBeGreaterThan(6 * 24 * 60 * 60);
+  expect(csrfCookie?.path).toBe("/ui");
+  expect(csrfCookie?.httpOnly).toBe(false);
+  expect(await page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBeNull();
+
+  const storageState = await page.context().storageState();
+  const freshContext = await browser.newContext({ storageState });
+  const freshPage = await freshContext.newPage();
+  try {
+    await freshPage.goto(`${userUrl}/ui/`);
+    await expect(freshPage.getByRole("heading", { name: "Knowledge", exact: true })).toBeVisible();
+    expect(await freshPage.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBeNull();
+  } finally {
+    await freshContext.close();
+  }
+
+  const missingCsrfStatus = await page.evaluate(async () => {
+    const response = await fetch("/ui/api/key/rotate", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    return response.status;
+  });
+  expect(missingCsrfStatus).toBe(403);
+
+  await page.getByRole("button", { name: /My key/i }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: /Regenerate key/i }).click();
+  const rotatedKey = page.getByLabel("Generated API key");
+  const newApiKey = await rotatedKey.inputValue();
+  expect(newApiKey).not.toBe(writable.api_key);
+  expect(await page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBeNull();
+
+  const oldBearerSession = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(writable.api_key) });
+  expect(oldBearerSession.status()).toBe(401);
+  const cookieSession = await page.evaluate(async () => {
+    const response = await fetch("/ui/api/session", { credentials: "include" });
+    return { status: response.status, body: await response.json() as UserSessionResponse };
+  });
+  expect(cookieSession.status).toBe(200);
+  expect(cookieSession.body.data?.auth_method).toBe("api_key_session");
+
+  await page.getByRole("button", { name: /sign out/i }).click();
+  await expect(page.getByLabel("API key", { exact: true })).toBeVisible();
+  const remainingCookies = await page.context().cookies(`${userUrl}/ui/`);
+  expect(remainingCookies.some((cookie) => cookie.name === "dense_mem_ui_session")).toBe(false);
+  expect(remainingCookies.some((cookie) => cookie.name === "dense_mem_ui_csrf")).toBe(false);
 });
 
 test("user self-rotate endpoint rejects profile edits", async ({ request }, testInfo) => {
@@ -468,6 +538,14 @@ async function createTeamProfile(request: APIRequestContext, name: string, scope
   }
   const payload = await response.json() as { data: CreatedProfile };
   return payload.data;
+}
+
+async function setSSOCookieSecure(request: APIRequestContext, enabled: boolean) {
+  const response = await request.patch(`${controlUrl}/control/api/config/sso`, {
+    headers: bearer(controlToken),
+    data: { items: [{ key: "SSO_COOKIE_SECURE", value: String(enabled) }] },
+  });
+  expect(response.status()).toBe(200);
 }
 
 async function recallFeedbackEnabled(request: APIRequestContext) {

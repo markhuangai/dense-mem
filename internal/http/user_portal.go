@@ -42,6 +42,7 @@ type UserPortalDeps struct {
 	AuditSvc        service.AuditService
 	SecuritySvc     httpmw.SecurityBanService
 	SSOService      *service.SSOService
+	PortalSession   service.UserPortalSessionManager
 	AppConfig       service.AppConfigService
 	Config          config.ConfigProvider
 	UserStaticDir   string
@@ -57,6 +58,7 @@ type userPortalHandler struct {
 	dreams    *handler.DreamHandler
 	audit     *handler.AuditHandler
 	sso       *service.SSOService
+	portal    service.UserPortalSessionManager
 	appConfig service.AppConfigService
 }
 
@@ -351,10 +353,14 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 	if err != nil {
 		return userPortalSessionResponse{}, err
 	}
+	authMethod := principal.AuthMethod
+	if authMethod == "" {
+		authMethod = "api_key"
+	}
 	return userPortalSessionResponse{
 		Team:          teamResponse,
 		Key:           toUserPortalKey(key),
-		AuthMethod:    "api_key",
+		AuthMethod:    authMethod,
 		CanRotate:     userPortalHasScope(principal.Scopes, service.APIKeyScopeWrite),
 		CanManageTeam: principal.Role == service.APIKeyRoleManager,
 	}, nil
@@ -466,6 +472,8 @@ func (h *userPortalHandler) completeSSO(c echo.Context) error {
 	cookieSecure := h.sso.CookieSecure(c.Request().Context())
 	setSSOCookie(c, service.SSOSessionCookieName, result.SessionToken, true, result.Session.ExpiresAt, cookieSecure)
 	setSSOCookie(c, service.SSOCSRFCookieName, result.CSRFToken, false, result.Session.ExpiresAt, cookieSecure)
+	clearUserPortalCookie(c, service.UserPortalSessionCookieName, true, cookieSecure)
+	clearUserPortalCookie(c, service.UserPortalCSRFCookieName, false, cookieSecure)
 	return c.Redirect(nethttp.StatusFound, result.RedirectPath)
 }
 

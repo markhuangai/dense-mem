@@ -98,6 +98,7 @@ func RunActiveServer(
 	profileRepo := repository.NewProfileRepository(pgDB.GetDB(), rlsHelper)
 	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)
 	ssoRepo := repository.NewSSORepository(pgDB.GetDB(), rlsHelper)
+	portalSessionRepo := repository.NewUserPortalSessionRepository(pgDB.GetDB(), rlsHelper)
 	directoryIdentityRepo := repository.NewDirectoryIdentityRepository(pgDB.GetDB(), rlsHelper)
 	controlIdentityRepo := repository.NewControlIdentityRepository(pgDB.GetDB(), rlsHelper)
 	appConfigRepo := repository.NewAppConfigRepository(pgDB.GetDB(), rlsHelper)
@@ -161,6 +162,7 @@ func RunActiveServer(
 		RuntimeConfig: appConfigService,
 		Logger:        logger,
 	})
+	portalSessionService := service.NewUserPortalSessionService(portalSessionRepo, apiKeyRepo, nil)
 	directoryIdentityService := service.NewDirectoryIdentityService(directoryIdentityRepo, service.DirectoryIdentityConfig{})
 	controlIdentityService := service.NewControlIdentityService(controlIdentityRepo, ssoRepo, service.ControlIdentityConfig{RuntimeConfig: appConfigService})
 	rateLimitService := backend.rateLimitService
@@ -374,20 +376,21 @@ func RunActiveServer(
 		MCPGet:  mcpHandler.HandleGet,
 	})
 	userPortalDeps := http.UserPortalDeps{
-		APIKeyRepo:   apiKeyRepo,
-		ProfileSvc:   profileService,
-		APIKeySvc:    apiKeyService,
-		RateLimitSvc: rateLimitService,
-		UsageMetrics: usageMetricsService,
-		Telemetry:    telemetryReader,
-		GraphView:    graphViewSvc,
-		RecallSvc:    recallSvc,
-		DreamSvc:     dreamSvc,
-		AuditSvc:     auditService,
-		SecuritySvc:  securityService,
-		SSOService:   ssoService,
-		AppConfig:    appConfigService,
-		Config:       &cfg,
+		APIKeyRepo:    apiKeyRepo,
+		ProfileSvc:    profileService,
+		APIKeySvc:     apiKeyService,
+		RateLimitSvc:  rateLimitService,
+		UsageMetrics:  usageMetricsService,
+		Telemetry:     telemetryReader,
+		GraphView:     graphViewSvc,
+		RecallSvc:     recallSvc,
+		DreamSvc:      dreamSvc,
+		AuditSvc:      auditService,
+		SecuritySvc:   securityService,
+		SSOService:    ssoService,
+		PortalSession: portalSessionService,
+		AppConfig:     appConfigService,
+		Config:        &cfg,
 	}
 	userPortalDeps.ExtraMiddleware = append(userPortalDeps.ExtraMiddleware, options.UserPortalMiddleware...)
 	if telemetryHTTPMetrics != nil {

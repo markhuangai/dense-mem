@@ -31,12 +31,15 @@ const TOKEN_STORAGE_KEY = "denseMem.userApiKey";
 const THEME_STORAGE_KEY = "denseMem.userTheme";
 
 type Theme = "light" | "dark";
-type AuthMode = "none" | "api_key" | "sso";
+type AuthMode = "none" | "api_key" | "api_key_session" | "sso";
 type UserTab = "search" | "graph" | "dreams" | "usage" | "team" | "key";
 type ProfilePermission = "read" | "read_write";
 
 function sessionAuthMode(session: UserSession): AuthMode {
-  return session.auth_method === "sso" ? "sso" : "api_key";
+  if (session.auth_method === "sso") {
+    return "sso";
+  }
+  return session.auth_method === "api_key_session" ? "api_key_session" : "api_key";
 }
 
 function canShowMyKey(session: UserSession | null): boolean {
@@ -66,6 +69,7 @@ export function UserPortalApp() {
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "");
   const [draftToken, setDraftToken] = useState(token);
   const [authMode, setAuthMode] = useState<AuthMode>(() => token ? "api_key" : "none");
+  const [rememberSession, setRememberSession] = useState(false);
   const [ssoProviders, setSSOProviders] = useState<SSOProvider[]>([]);
   const [authError, setAuthError] = useState("");
   const [theme, setTheme] = useState<Theme>(() => readTheme());
@@ -75,6 +79,23 @@ export function UserPortalApp() {
       return;
     }
     let active = true;
+    if (authMode === "api_key_session") {
+      new UserApi("", "api_key_session").session()
+        .then((session) => {
+          if (active) {
+            setAuthMode(sessionAuthMode(session));
+            setAuthError("");
+          }
+        })
+        .catch(() => {
+          if (active) {
+            setAuthMode("none");
+          }
+        });
+      return () => {
+        active = false;
+      };
+    }
     const api = new UserApi("");
     api.ssoProviders()
       .then((providers) => {
@@ -98,7 +119,7 @@ export function UserPortalApp() {
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [authMode, token]);
 
   function toggleTheme() {
     setTheme((current) => {
@@ -116,10 +137,19 @@ export function UserPortalApp() {
       return;
     }
     try {
-      const session = await new UserApi(nextToken).session();
-      sessionStorage.setItem(TOKEN_STORAGE_KEY, nextToken);
-      setToken(nextToken);
-      setAuthMode(sessionAuthMode(session));
+      await new UserApi(nextToken).session();
+      await new UserApi(nextToken).createPortalSession(rememberSession);
+      let cookieSession: UserSession;
+      try {
+        cookieSession = await new UserApi("", "api_key_session").session();
+      } catch (error) {
+        await new UserApi("", "api_key_session").logoutPortalSession().catch(() => undefined);
+        throw error;
+      }
+      sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+      setToken("");
+      setDraftToken("");
+      setAuthMode(sessionAuthMode(cookieSession));
       setAuthError("");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Authentication failed.");
@@ -130,6 +160,8 @@ export function UserPortalApp() {
     try {
       if (authMode === "sso") {
         await new UserApi("").logoutSSO();
+      } else if (authMode === "api_key_session") {
+        await new UserApi("", "api_key_session").logoutPortalSession();
       }
     } catch (error) {
       setAuthError(readError(error));
@@ -138,11 +170,12 @@ export function UserPortalApp() {
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     setToken("");
     setDraftToken("");
+    setRememberSession(false);
     setAuthMode("none");
     setAuthError("");
   }
 
-  if (!token && authMode !== "sso") {
+  if (!token && authMode !== "sso" && authMode !== "api_key_session") {
     return (
       <AuthShell
         theme={theme}
@@ -168,6 +201,15 @@ export function UserPortalApp() {
           onChange={(event) => setDraftToken(event.target.value)}
           autoComplete="current-password"
         />
+        <label className="checkbox-row" htmlFor="remember-user-session">
+          <input
+            id="remember-user-session"
+            type="checkbox"
+            checked={rememberSession}
+            onChange={(event) => setRememberSession(event.target.checked)}
+          />
+          Keep me signed in for 7 days
+        </label>
         {authError && <p className="field-error" role="alert">{authError}</p>}
         <button className="primary-button" type="submit">
           <KeyRound size={17} aria-hidden="true" />
@@ -227,7 +269,7 @@ function UserPortal({
   onToggleTheme: () => void;
   onSignOut: () => Promise<void>;
 }) {
-  const api = useMemo(() => new UserApi(token), [token, authMode]);
+  const api = useMemo(() => new UserApi(token, authMode === "none" ? "anonymous" : authMode), [token, authMode]);
   const [session, setSession] = useState<UserSession | null>(null);
   const [activeTab, setActiveTab] = useState<UserTab>("search");
   const [error, setError] = useState("");

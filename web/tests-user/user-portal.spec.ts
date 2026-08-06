@@ -301,7 +301,7 @@ test("write key regenerates only through the self-rotate endpoint", async ({ pag
   const details = page.getByLabel("Knowledge details");
   await expect(details.getByLabel("Generated API key")).toHaveValue("dm_new_plaintext");
   await expect(details.getByText("******new123")).toBeVisible();
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBe("dm_new_plaintext");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBeNull();
   expect(calls.rotateBodies).toEqual(["{}"]);
   expect(calls.disallowedProfileCalls).toEqual([]);
 });
@@ -484,6 +484,7 @@ async function mockUserApi(
   let currentKey = { ...state.key };
   let currentCanRotate = state.canRotate;
   let currentProfiles = (state.profiles ?? []).map((profile) => ({ ...profile }));
+  let portalSessionCreated = false;
 
   await page.route("**/ui/api/sso/providers", async (route) => {
     await route.fulfill({
@@ -537,8 +538,33 @@ async function mockUserApi(
   });
 
   await page.route("**/ui/api/session", async (route) => {
+    if (route.request().method() === "POST") {
+      portalSessionCreated = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ data: { status: "signed_in" } }),
+      });
+      return;
+    }
     const authorization = route.request().headers().authorization ?? "";
     if (!authorization.startsWith("Bearer ")) {
+      if (portalSessionCreated) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            data: {
+              team: currentTeam,
+              key: currentKey,
+              auth_method: "api_key_session",
+              can_rotate: currentCanRotate,
+              can_manage_team: state.canManageTeam ?? false,
+            },
+          }),
+        });
+        return;
+      }
       await route.fulfill({
         status: 401,
         contentType: "application/json",

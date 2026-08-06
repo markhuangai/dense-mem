@@ -304,6 +304,101 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 	return &key, nil
 }
 
+// GetActiveByID retrieves the current authorization metadata for a standard
+// API key profile without loading key material. The stable profile ID remains
+// valid across in-place key rotation, while revocation and team state are
+// checked on every portal-cookie request.
+func (r *APIKeyRepositoryImpl) GetActiveByID(ctx context.Context, id uuid.UUID) (*domain.APIKey, error) {
+	var key domain.APIKey
+	var teamID *uuid.UUID
+	var ssoIdentityID, ssoProviderID, ssoOwnerIdentityID string
+	found := false
+
+	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		rows, rerr := tx.Raw(`
+			SELECT
+				k.id,
+				k.team_id,
+				COALESCE(t.name, ''),
+				COALESCE(k.key_suffix, ''),
+				k.name,
+				k.scopes,
+				k.role,
+				k.rate_limit,
+				k.last_used_at,
+				k.expires_at,
+				k.created_at,
+				k.revoked_at,
+				COALESCE(k.auth_source, ''),
+				COALESCE(k.sso_identity_id::text, ''),
+				COALESCE(k.sso_provider_id::text, ''),
+				COALESCE(k.sso_owner_identity_id::text, ''),
+				COALESCE(k.sso_subject, ''),
+				COALESCE(k.sso_email, ''),
+				COALESCE(k.sso_group_id, ''),
+				COALESCE(k.sso_entitlement_status, ''),
+				k.sso_last_entitlement_checked_at,
+				k.sso_last_login_at
+			FROM team_profiles k
+			JOIN teams t ON t.id = k.team_id
+			WHERE k.id = $1
+				AND k.auth_source = 'api_key'
+				AND k.key_hash IS NOT NULL
+				AND k.revoked_at IS NULL
+				AND (k.expires_at IS NULL OR k.expires_at > NOW())
+				AND t.status = 'active'
+				AND t.deleted_at IS NULL
+		`, id).Rows()
+		if rerr != nil {
+			return rerr
+		}
+		defer rows.Close()
+		if !rows.Next() {
+			return rows.Err()
+		}
+		found = true
+		return rows.Scan(
+			&key.ID,
+			&teamID,
+			&key.TeamName,
+			&key.KeySuffix,
+			&key.Label,
+			pq.Array(&key.Scopes),
+			&key.Role,
+			&key.RateLimit,
+			&key.LastUsedAt,
+			&key.ExpiresAt,
+			&key.CreatedAt,
+			&key.RevokedAt,
+			&key.AuthSource,
+			&ssoIdentityID,
+			&ssoProviderID,
+			&ssoOwnerIdentityID,
+			&key.SSOSubject,
+			&key.SSOEmail,
+			&key.SSOGroupID,
+			&key.SSOEntitlementStatus,
+			&key.SSOLastEntitlementCheckedAt,
+			&key.SSOLastLoginAt,
+		)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active api key by id: %w", err)
+	}
+	if !found {
+		return nil, nil
+	}
+	if teamID != nil {
+		key.ProfileID = *teamID
+		key.TeamID = *teamID
+	}
+	key.Name = key.Label
+	key.SSOIdentityID = parseOptionalUUID(ssoIdentityID)
+	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
+	key.SSOOwnerIdentityID = parseOptionalUUID(ssoOwnerIdentityID)
+	return &key, nil
+}
+
 // RevokeForProfile marks an API key as revoked only when it belongs to profileID.
 // Returns the number of rows affected (0 means the id/profile combination did not match).
 func (r *APIKeyRepositoryImpl) RevokeForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error) {

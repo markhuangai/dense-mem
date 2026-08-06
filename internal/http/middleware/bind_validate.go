@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 
 	"github.com/labstack/echo/v4"
 
@@ -37,6 +39,32 @@ func BindAndValidate[T any](ctxKey string) echo.MiddlewareFunc {
 			ctx := context.WithValue(c.Request().Context(), contextKey(ctxKey), &body)
 			c.SetRequest(c.Request().WithContext(ctx))
 
+			return next(c)
+		}
+	}
+}
+
+// BindAndValidateStrict is the closed-schema variant for JSON bodies that must
+// reject unknown fields and any second JSON value.
+func BindAndValidateStrict[T any](ctxKey string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			var body T
+			decoder := json.NewDecoder(c.Request().Body)
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&body); err != nil {
+				return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
+			}
+			var trailing any
+			if err := decoder.Decode(&trailing); err != io.EOF {
+				return httperr.New(httperr.VALIDATION_ERROR, "request body must contain one JSON object")
+			}
+
+			if err := validation.ValidateStruct(&body); err != nil {
+				return httperr.NewWithDetails(httperr.VALIDATION_ERROR, "validation failed", extractValidationErrors(err))
+			}
+			ctx := context.WithValue(c.Request().Context(), contextKey(ctxKey), &body)
+			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
 	}

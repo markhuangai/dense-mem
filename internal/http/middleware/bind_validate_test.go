@@ -76,6 +76,26 @@ func TestBindAndValidateRejectsMalformedAndInvalidBodies(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "validation failed")
 }
 
+func TestBindAndValidateStrictRejectsUnknownAndTrailingBodies(t *testing.T) {
+	e := echo.New()
+	e.HTTPErrorHandler = httperr.ErrorHandler
+	e.POST("/body", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	}, BindAndValidateStrict[bindValidateBody]("body"))
+
+	for _, body := range []string{
+		`{"name":"Ada","unexpected":true}`,
+		`{"name":"Ada","email":"ada@example.com"} {}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/body", strings.NewReader(body))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		require.Contains(t, rec.Body.String(), `"code":"VALIDATION_ERROR"`)
+	}
+}
+
 func TestValidatedBodyHelpersAndValidationFormatting(t *testing.T) {
 	ctx := context.Background()
 	_, ok := GetValidatedBody[bindValidateBody](ctx, "missing")

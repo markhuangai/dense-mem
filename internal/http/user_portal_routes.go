@@ -23,6 +23,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		dreams:    handler.NewDreamHandler(deps.DreamSvc),
 		audit:     handler.NewAuditHandler(deps.AuditSvc),
 		sso:       deps.SSOService,
+		portal:    deps.PortalSession,
 		appConfig: deps.AppConfig,
 	}
 
@@ -34,11 +35,17 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		ssoAPI.GET("/callback", portal.completeSSO)
 		ssoAPI.POST("/logout", portal.logoutSSO)
 	}
+	portalSessionAPI := e.Group("/ui/api/session")
+	portalSessionAPI.Use(publicIPRateLimitMiddleware("public-user-session", deps.RateLimitSvc, deps.Config))
+	portalSessionAPI.POST("/logout", portal.logoutPortalSession)
 
 	authOpts := httpmw.AuthOptions{}
 	if deps.SSOService != nil {
 		authOpts.SSOEntitlementValidator = deps.SSOService
 		authOpts.SSOSessionAuthenticator = deps.SSOService
+	}
+	if deps.PortalSession != nil {
+		authOpts.UserPortalSessionAuthenticator = deps.PortalSession
 	}
 
 	sessionAPI := e.Group("/ui/api")
@@ -49,6 +56,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 
 	api := e.Group("/ui/api")
 	useUserPortalMiddleware(api, deps, authOpts)
+	api.POST("/session", portal.createPortalSession, httpmw.BindAndValidateStrict[dto.CreateUserPortalSessionRequest](userPortalCreateSessionBodyKey))
 
 	profileHandler := handler.NewProfileHandler(deps.ProfileSvc)
 	apiKeyHandler := handler.NewAPIKeyHandler(deps.APIKeySvc)
