@@ -17,13 +17,15 @@ import (
 )
 
 var (
-	ErrIdempotencyConflict       = errors.New("idempotency conflict")
-	ErrPlacementLeaseConflict    = errors.New("placement lease conflict")
-	ErrPlacementNotFound         = errors.New("placement not found")
-	ErrSourceRevisionConflict    = errors.New("source revision conflict")
-	ErrEvidenceLifecycleNotFound = errors.New("evidence lifecycle target not found")
-	ErrEvidenceLifecycleConflict = errors.New("evidence lifecycle conflict")
-	ErrTeamInactive              = errors.New("team is not active")
+	ErrIdempotencyConflict           = errors.New("idempotency conflict")
+	ErrPlacementLeaseConflict        = errors.New("placement lease conflict")
+	ErrPlacementNotFound             = errors.New("placement not found")
+	ErrSourceRevisionConflict        = errors.New("source revision conflict")
+	ErrEvidenceLifecycleNotFound     = errors.New("evidence lifecycle target not found")
+	ErrEvidenceLifecycleConflict     = errors.New("evidence lifecycle conflict")
+	ErrTeamInactive                  = errors.New("team is not active")
+	ErrSubmissionReplacementNotFound = errors.New("submission replacement target not found")
+	ErrSubmissionReplacementConflict = errors.New("submission replacement target conflict")
 )
 
 type LedgerRepository interface {
@@ -37,16 +39,17 @@ type LedgerRepository interface {
 }
 
 type CreateIngestInput struct {
-	TeamID            string
-	OwnerProfileID    string
-	IdempotencyKey    string
-	RequestHash       string
-	SourceSummary     string
-	Status            string
-	TelemetryRemember bool
-	Proposal          map[string]any
-	Metadata          map[string]any
-	Evidence          []EvidenceInput
+	TeamID               string
+	OwnerProfileID       string
+	IdempotencyKey       string
+	RequestHash          string
+	ReplacesSubmissionID string
+	SourceSummary        string
+	Status               string
+	TelemetryRemember    bool
+	Proposal             map[string]any
+	Metadata             map[string]any
+	Evidence             []EvidenceInput
 }
 
 type GetPlacementRunInput struct {
@@ -124,14 +127,17 @@ type EvidenceFragment struct {
 }
 
 type PlacementRun struct {
-	TeamID         string
-	PlacementRunID string
-	IngestID       string
-	OwnerProfileID string
-	Status         string
-	Attempts       int
-	MaxAttempts    int
-	LeaseUntil     *time.Time
+	TeamID                     string
+	PlacementRunID             string
+	IngestID                   string
+	OwnerProfileID             string
+	Status                     string
+	Attempts                   int
+	MaxAttempts                int
+	LeaseUntil                 *time.Time
+	SemanticHoldState          string
+	ReplacesPlacementRunID     string
+	SupersededByPlacementRunID string
 }
 
 type PlacementItem struct {
@@ -230,7 +236,15 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 			result = loaded
 			return nil
 		}
-		placementRunID, createdAt, completedAt, err := insertPlacementRun(ctx, tx, input, ingestID)
+		replacementTargetID := ""
+		if input.ReplacesSubmissionID != "" {
+			target, err := lockSubmissionReplacementTarget(ctx, tx, input.TeamID, input.OwnerProfileID, input.ReplacesSubmissionID)
+			if err != nil {
+				return err
+			}
+			replacementTargetID = target.PlacementRunID
+		}
+		placementRunID, createdAt, completedAt, err := insertPlacementRun(ctx, tx, input, ingestID, replacementTargetID)
 		if err != nil {
 			return err
 		}
@@ -733,19 +747,20 @@ func selectKnowledgeIngestByIdempotency(ctx context.Context, tx *gorm.DB, input 
 	return ingestID, requestHash, nil
 }
 
-func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string) (string, time.Time, *time.Time, error) {
+func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string, replacementTargetID string) (string, time.Time, *time.Time, error) {
 	completedExpr := "NULL"
 	if input.Status == string(domain.PlacementRunQuarantined) {
 		completedExpr = "now()"
 	}
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
 		INSERT INTO placement_runs (
-		    team_id, ingest_id, owner_profile_id, status, completed_at
+		    team_id, ingest_id, owner_profile_id, status, completed_at,
+		    replaces_placement_run_id
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, %s
+		    ?::uuid, ?::uuid, ?::uuid, ?, %s, NULLIF(?, '')::uuid
 		)
 		RETURNING placement_run_id::text, created_at, completed_at
-	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.Status).Rows()
+	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.Status, replacementTargetID).Rows()
 	if err != nil {
 		return "", time.Time{}, nil, err
 	}

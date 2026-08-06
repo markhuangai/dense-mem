@@ -20,9 +20,10 @@ func contractInput(required []string, properties map[string]any) map[string]any 
 
 func rememberInputSchema() map[string]any {
 	return contractInput([]string{"evidence", "relationships"}, map[string]any{
-		"evidence":        evidenceArraySchema(),
-		"relationships":   relationshipSubmissionArraySchema(),
-		"idempotency_key": schemaString("Ingest retry key scoped to team and profile.", 128),
+		"evidence":               evidenceArraySchema(),
+		"relationships":          relationshipSubmissionArraySchema(),
+		"idempotency_key":        schemaString("Ingest retry key scoped to team and profile.", 128),
+		"replaces_submission_id": uuidStringSchema("Same-owner held submission to replace."),
 	})
 }
 

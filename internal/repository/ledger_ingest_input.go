@@ -17,6 +17,7 @@ func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.RequestHash = strings.TrimSpace(input.RequestHash)
+	input.ReplacesSubmissionID = strings.TrimSpace(input.ReplacesSubmissionID)
 	input.SourceSummary = strings.TrimSpace(input.SourceSummary)
 	input.Status = strings.TrimSpace(input.Status)
 	if input.Status == "" {
@@ -63,6 +64,11 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 	}
 	if input.IdempotencyKey != "" && input.RequestHash == "" {
 		return errors.New("request_hash is required when idempotency_key is set")
+	}
+	if input.ReplacesSubmissionID != "" {
+		if _, err := uuid.Parse(input.ReplacesSubmissionID); err != nil {
+			return fmt.Errorf("%w: invalid submission id: %v", ErrSubmissionReplacementNotFound, err)
+		}
 	}
 	if len(input.Evidence) == 0 {
 		return errors.New("evidence is required")

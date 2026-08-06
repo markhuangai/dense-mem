@@ -137,6 +137,20 @@ func TestValidateInputDateTimeEnforcementIsOptIn(t *testing.T) {
 	}
 }
 
+func TestValidateInputUUIDEnforcement(t *testing.T) {
+	uuidSchema := map[string]any{"type": "string", "format": "uuid", "x-enforce-format": true}
+	tool := Tool{InputSchema: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"id": uuidSchema},
+	}}
+	if err := ValidateInput(tool, map[string]any{"id": "00000000-0000-0000-0000-000000000001"}); err != nil {
+		t.Fatalf("valid UUID rejected: %v", err)
+	}
+	if err := ValidateInput(tool, map[string]any{"id": "not-a-uuid"}); err == nil || !strings.Contains(err.Error(), "valid UUID") {
+		t.Fatalf("invalid UUID error = %v, want valid UUID error", err)
+	}
+}
+
 func TestValidationHelperBranches(t *testing.T) {
 	if err := ValidateInput(Tool{}, map[string]any{"anything": true}); err != nil {
 		t.Fatalf("ValidateInput empty schema = %v, want nil", err)

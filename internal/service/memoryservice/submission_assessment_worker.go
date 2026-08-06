@@ -31,6 +31,7 @@ type SubmissionAssessmentPlacementWorkerDependencies struct {
 	Ledger                    repository.LedgerRepository
 	Assessments               repository.SubmissionAssessmentRepository
 	ReviewExpiry              SemanticAssessmentReviewExpiry
+	HoldExpiry                repository.SemanticSubmissionHoldExpiry
 	Catalog                   SubmissionAssessmentCatalog
 	Provider                  SemanticAssessorProvider
 	Limits                    verifier.SemanticAssessmentLimits
@@ -46,6 +47,7 @@ type submissionAssessmentPlacementWorkerService struct {
 	ledger                    repository.LedgerRepository
 	assessments               repository.SubmissionAssessmentRepository
 	reviewExpiry              SemanticAssessmentReviewExpiry
+	holdExpiry                repository.SemanticSubmissionHoldExpiry
 	catalog                   SubmissionAssessmentCatalog
 	provider                  SemanticAssessorProvider
 	limits                    verifier.SemanticAssessmentLimits
@@ -74,6 +76,12 @@ func NewSubmissionAssessmentPlacementWorkerService(
 			reviewExpiry = configured
 		}
 	}
+	holdExpiry := deps.HoldExpiry
+	if holdExpiry == nil {
+		if configured, ok := deps.Assessments.(repository.SemanticSubmissionHoldExpiry); ok {
+			holdExpiry = configured
+		}
+	}
 	metrics := deps.Metrics
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
@@ -82,6 +90,7 @@ func NewSubmissionAssessmentPlacementWorkerService(
 		ledger:                    deps.Ledger,
 		assessments:               deps.Assessments,
 		reviewExpiry:              reviewExpiry,
+		holdExpiry:                holdExpiry,
 		catalog:                   deps.Catalog,
 		provider:                  deps.Provider,
 		limits:                    deps.Limits,
@@ -107,6 +116,14 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 			return false, fmt.Errorf("submission assessment worker: expire reviews: %w", err)
 		}
 		observability.RecordAssessorReviewExpiry(s.metrics, expired)
+	}
+	if s.holdExpiry != nil {
+		if _, err := s.holdExpiry.ExpireSubmissionHolds(ctx, repository.ExpireSubmissionHoldsInput{
+			TeamID: s.teamID,
+			Now:    s.now().UTC(),
+		}); err != nil {
+			return false, fmt.Errorf("submission assessment worker: expire semantic holds: %w", err)
+		}
 	}
 	run, err := s.ledger.ClaimNextPlacementRun(ctx, s.teamID, s.workerID, s.lease)
 	if err != nil {
@@ -183,6 +200,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	committed, err := s.assessments.CommitSubmissionAssessment(ctx, commitInput)
 	if errors.Is(err, repository.ErrSubmissionAssessmentNonPromotable) || errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld) {
 		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewReviewRequired), "candidate", "commit_review")
+	}
+	if errors.Is(err, repository.ErrSubmissionReplacementConflict) {
+		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "replacement_conflict")
 	}
 	if errors.Is(err, repository.ErrSubmissionAssessmentScopeMismatch) {
 		return true, errors.Join(err, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_scope"))
