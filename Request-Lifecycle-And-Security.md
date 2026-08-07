@@ -101,20 +101,30 @@ outcomes.
 
 ## Browser Session And CSRF
 
-The user portal preserves two authentication paths: a Dense-Mem API key or,
-when configured, an SSO browser session. API-key requests authenticate with the
-bearer credential. SSO routes may authenticate a secure, HttpOnly, SameSite
-session cookie; state-changing requests using that cookie require a CSRF token
-bound to the session.
+The user portal preserves direct Dense-Mem API-key authentication and browser
+sessions. A user may explicitly exchange an API-key bearer login for an opaque
+server-side portal session. When configured, SSO has its own browser session.
+Portal and SSO sessions use secure, HttpOnly, SameSite cookies plus a readable
+double-submit CSRF cookie; state-changing requests using either cookie require
+the `X-Dense-Mem-CSRF` header. The portal session is fixed at seven days and
+reloads current API-key authorization on every request.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
   Browser["Browser request"] --> Bearer{"Bearer header present?"}
   Bearer -- Yes --> Key["API-key principal"]
-  Bearer -- No --> Cookie{"Valid SSO session?"}
-  Cookie -- No --> Deny["401"]
-  Cookie -- Yes --> Mutate{"State-changing method?"}
+  Bearer -- No --> PortalCookie{"API-key portal cookie present?"}
+  PortalCookie -- No --> SSOCookie{"Valid SSO session?"}
+  PortalCookie -- Yes --> PortalValid{"Valid portal session?"}
+  PortalValid -- No --> Deny
+  PortalValid -- Yes --> PortalMutate{"State-changing method?"}
+  PortalMutate -- No --> PortalSession["API-key session principal"]
+  PortalMutate -- Yes --> PortalCSRF{"Valid CSRF token?"}
+  PortalCSRF -- No --> Deny
+  PortalCSRF -- Yes --> PortalSession
+  SSOCookie -- No --> Deny["401"]
+  SSOCookie -- Yes --> Mutate{"State-changing method?"}
   Mutate -- No --> Session["SSO principal"]
   Mutate -- Yes --> CSRF{"Valid CSRF token?"}
   CSRF -- No --> Deny
@@ -321,9 +331,10 @@ same application services and PostgreSQL authority as MCP where their use cases
 overlap, but their browser endpoints are not a supported client SDK or memory
 automation interface.
 
-This boundary does not convert API-key portal login into an HttpOnly session.
-HttpOnly/SameSite cookie and CSRF requirements apply to the SSO-session path;
-API-key authentication remains the bearer-key path.
+The browser only takes the portal-cookie path after an explicit user opt-in;
+the direct bearer path remains available for API clients and users who do not
+opt in. If a portal or SSO cookie is presented but invalid, authentication
+fails closed instead of falling through to another cookie path.
 
 ## Idempotency
 
@@ -412,8 +423,10 @@ cannot create a quarantine.
 A worker-time deterministic or model security concern quarantines the staged
 submission. For a deterministic worker hit, PostgreSQL atomically records the
 matching placement fragment's security event, quarantine record, and terminal placement result.
-PostgreSQL retains isolated staging for exactly 24 hours, then hard-deletes it.
-A client can only submit a new complete replacement linked to the quarantined
+PostgreSQL retains an isolated raw payload copy for exactly 24 hours, then
+hard-deletes that copy. Append-only evidence, identifiers, hashes, security
+events, and lineage remain restricted audit history and are never recallable or
+provider input. A client can only submit a new complete replacement linked to the quarantined
 submission; it cannot negotiate, release, or append evidence to it. Complete
 closed-schema validation is required before one atomic canonical promotion; no
 partial semantic commit is allowed.
@@ -431,7 +444,7 @@ Audit high-value events:
 - Entity merge/split
 - Relationship retraction/supersession corrections
 - Conflict case open/reopen/resolve/overdue/dismiss decisions and policy version
-- memory-pack import/rollback
+- memory-pack export authorization and omission reporting
 - runtime configuration changes
 - repeated authentication/rate/security failures
 - control-plane access
@@ -475,8 +488,8 @@ audit ledger.
 11. user/control portal handlers remain first-party views and do not become a
     public memory automation contract
 12. user-portal API-key login remains supported alongside configured SSO;
-    HttpOnly session and CSRF semantics apply only to cookie-authenticated SSO
-    requests
+    explicit API-key portal sessions and SSO sessions use HttpOnly/SameSite
+    cookies, CSRF protection, and current-authorization revalidation
 13. no client can release a quarantine or append evidence to an existing
     submission; a replacement is a fresh complete submission
 14. a source revision can be advanced only by its immutable source owner and an
@@ -485,5 +498,7 @@ audit ledger.
     HTTP discovery and execution routes cannot expose them
 16. deterministic security rejection happens before staging, and every assessor
     response contains one security verdict for every staged evidence item
-17. quarantined staging is isolated for exactly 24 hours and then hard-deleted;
+17. the quarantined raw payload copy is isolated for exactly 24 hours and then
+    hard-deleted; immutable source evidence and lineage remain restricted audit
+    history;
     recalled evidence remains untrusted data after any successful write

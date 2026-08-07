@@ -12,6 +12,17 @@ in this architecture page.
 - checks: `scripts/ci-check.sh` runs line lint, Go tests, and a 90% unit coverage
   gate for selected internal packages
 
+## API-Key Portal Cookie E2E
+
+Run `scripts/e2e-compose.sh` with `DENSE_MEM_E2E_SCENARIO=portal` against the
+local Compose file and environment used for the instance. This mode boots the
+real PostgreSQL/Redis/server stack, seeds a real API key, sets
+`SSO_COOKIE_SECURE=false` through the private control API for its HTTP browser
+test, and runs the remembered API-key portal session scenario in desktop and
+mobile Playwright projects. It does not edit the boot environment; HTTPS
+deployments must keep the runtime setting `true` and preserve the original
+`/ui` path through the ingress.
+
 ## Architecture Boundaries
 
 | Retired pattern | Current requirement |
@@ -217,9 +228,11 @@ real PostgreSQL/`pgvector` instance and actual service logic.
   semantic state
 - a quarantined or later failed replacement never reactivates the prior revision
 - existing predicate aliases resolve to one canonical team definition
-- unmatched predicate wording, catalog truncation without a valid exact match,
-  alias/key ambiguity, endpoint-kind mismatch, and Relationship-kind collision
-  create review and no Relationship
+- an incomplete Entity or predicate catalog fails before a provider call and
+  creates no semantic state
+- unmatched predicate wording uses server-controlled registration; alias/key
+  ambiguity, endpoint-kind mismatch, and Relationship-kind collision hold the
+  complete submission with no semantic subset
 - assessor output never creates or edits a predicate definition
 - forget retracts the edge while preserving nodes/history
 
@@ -259,14 +272,46 @@ provider envelope, missing choice, or empty assistant message makes no
 same-history correction. It must release the reservation transactionally,
 persist only bounded failure class/status, and requeue through placement
 `max_attempts`; 429 honors bounded `Retry-After`. A valid non-empty
-security-signal array quarantines the complete item and creates no
+security-signal array quarantines the complete submission and creates no
 `VerificationEvent` or other semantic subset.
 
 Persist a valid response, then force process exit, lease loss, pause/resume, and
 semantic transaction failure before commit. Each resumed path must load the
-same assessment row, create the same material decisions, and make zero further
-assessor calls. A unique stable claim key must prevent two workers from
-persisting different valid responses.
+same run-scoped assessment row, create the same material decisions, and make
+zero further assessor calls. A unique stable run identity must prevent two
+workers from persisting different valid responses.
+
+### Submission-wide assessment
+
+- two or more evidence items and every distinct relationship ref are sent in
+  one logical assessor conversation, including two relationships that cite the
+  same evidence index
+- one invalid, low-confidence, unresolved, or incompatible result leaves every
+  sibling without semantic state; #151 records the existing `awaiting_review`
+  compatibility hold without a review task
+- complete entity/predicate catalogs are preflighted with a limit-plus-one
+  query; overflow and token-budget failures make zero provider call
+- controlled predicate registration takes a team/key transaction lock, rechecks
+  the latest definition, and records created/reused append-only provenance
+- real PostgreSQL A/B/C tests cover catalog isolation, run binding, all-or-zero
+  commit, rollback after a later sibling failure, and registration races
+- real PostgreSQL tests cover the semantic-hold expiry boundary, immutable hold
+  facts, concurrent expiry idempotency, cross-profile/team replacement denial,
+  failed-successor release, and successful atomic supersession
+- a live Compose MCP E2E uses an actual credential and proves one request over
+  multiple evidence/relationships promotes atomically
+
+### Semantic holds and replacement submissions
+
+- a policy-held submission has one append-only hold fact, no review task, no
+  semantic/search writes, and an exact 24-hour expiry
+- expiry immediately before, at, and after the boundary is state-only and one
+  of two concurrent workers records the transition
+- an optional `replaces_submission_id` accepts only an owned active/expired hold;
+  absent, cross-profile, cross-team, and superseded targets are bounded
+- a staged/processing/held/rejected/quarantined/failed successor leaves the
+  target unchanged, while the first successful successor atomically supersedes
+  it and records both audit outcomes
 
 ### Semantic review expiry
 

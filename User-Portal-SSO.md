@@ -11,9 +11,10 @@ This page defines the target browser SSO contract. Provider-specific setup is
 version-sensitive; verify it against the deployed Dense-Mem release and the
 provider's current documentation.
 
-This cookie-session contract applies to SSO login only. The user portal also
-continues to support Dense-Mem API-key authentication; an API-key portal login
-is not implicitly converted into an HttpOnly SSO session.
+This page defines the SSO cookie-session contract. The user portal also
+supports direct API-key authentication and an explicit, separate API-key portal
+session described below; an API-key login is never converted into an SSO
+session.
 
 When SSO is configured, the user portal adds public SSO endpoints under the main
 Dense-Mem public base URL.
@@ -47,6 +48,40 @@ Dense-Mem exposes these user-portal SSO endpoints:
 | `POST` | `/ui/api/sso/key` | Creates the current SSO member's owned API key for the selected team. |
 | `POST` | `/ui/api/sso/key/rotate` | Rotates the current SSO member's owned API key for the selected team. |
 | `POST` | `/ui/api/sso/logout` | Clears the local Dense-Mem SSO session cookies. |
+
+## API-Key Portal Session
+
+The API-key login screen has an opt-in “Keep me signed in for 7 days” checkbox.
+After the direct bearer key is validated, the UI calls:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/ui/api/session` | Exchanges the current direct API-key bearer for an opaque portal session. Body is exactly `{"remember":true}` or `{"remember":false}`. |
+| `GET` | `/ui/api/session` | Reads the current portal session, direct bearer session, or SSO session. |
+| `POST` | `/ui/api/session/logout` | Deletes the presented portal session and clears its cookies. |
+
+The server stores only SHA-256 fingerprints of the session and CSRF tokens.
+The browser receives a host-only `dense_mem_ui_session` cookie (`HttpOnly`,
+`SameSite=Lax`, `Path=/ui`) and a readable `dense_mem_ui_csrf` cookie on the
+same path. State-changing requests send the CSRF value in
+`X-Dense-Mem-CSRF`. The server-side session always expires seven days after
+creation; the checkbox controls only whether the browser cookies persist past
+the current browser session. Expiry is absolute, not sliding.
+
+The session points to the stable API-key profile ID. Rotation replaces key
+material in place, so an active portal session survives rotation. Revocation,
+expiration, inactive/deleted teams, role/scopes, and SSO-owned-key entitlement
+are checked again on each request. The API-key exchange clears SSO browser
+cookies, and an SSO callback clears portal cookies.
+
+Portal sessions are stored in PostgreSQL under a dedicated `NOLOGIN`
+`dense_mem_portal_session_system` role. The application login receives only
+`EXECUTE` on the four bounded session functions; setting the transaction-local
+`app.tx_mode` marker alone does not grant direct access to the session table.
+The bundled Compose deployment runs migrations with the same database login as
+the server. Deployments that separate migration and runtime logins must grant
+the runtime login those function privileges without granting it direct table
+access.
 
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%

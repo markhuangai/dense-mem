@@ -55,7 +55,7 @@ For dense-mem.v2.4, verify:
 - remember requires evidence and a proposal with exact Unicode code-point spans;
 - get_submission_status accepts a submission_id and exposes only safe,
   owner-scoped state;
-- get_memory_placement and resolve_memory_placement are absent;
+- legacy placement and review tools are absent;
 - retract_evidence preserves append-only provenance;
 - recall_memory returns evidence contexts plus separate related frontiers,
   search states, and degradations;
@@ -120,4 +120,3 @@ Use [Quick Start](Quick-Start) and
 
 Authentication and transport security are in
 [Request Lifecycle And Security](Request-Lifecycle-And-Security).
-

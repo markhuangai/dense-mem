@@ -83,7 +83,7 @@ database version, and feature flags before deciding what shipped.
 | durable team Conflict cases, recall disposition, and evidence-backed correction | [Conflicts And Corrections](Conflicts-And-Corrections) |
 | community derivation and analytical summaries | [Community And Dreaming](Community-And-Dreaming) |
 | Hypothesis generation, isolation, review, and staleness | [Dreaming](Dreaming) |
-| portable knowledge artifact and import/rollback workflow | [Memory Packs](Memory-Packs) |
+| portable knowledge artifact and export workflow | [Memory Packs](Memory-Packs) |
 | observational recall feedback | [Recall Feedback](Recall-Feedback) |
 | evaluation manifests, quality metrics, and release gates | [Evaluation](Evaluation) |
 | browser SSO and entitlement mapping | [User Portal SSO](User-Portal-SSO) |

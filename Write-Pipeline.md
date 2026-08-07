@@ -49,6 +49,12 @@ zero-based Unicode code-point positions, with an inclusive start and exclusive
 end. Every component span must be covered by a support span in the same evidence
 item.
 
+`relationship.ref` is request-local and unique. Several distinct relationships
+may cite the same `evidence_index`; one long evidence item is not limited to one
+proposition. `predicate.proposed_key` is at most 128 Unicode code points and
+the exact predicate `surface` is at most 256. The server rejects an oversized
+value; it never truncates a key or surface before assessment.
+
 ~~~json
 {
   "evidence": [{
@@ -129,7 +135,7 @@ submission_runs
   ├── client relationships
   ├── attempts, lease, and bounded error code
   ├── assessor response and per-item outcomes
-  └── optional replacement link
+  └── optional same-owner replacement link
 
 canonical knowledge (separate until promotion)
   ├── evidence and observations
@@ -142,26 +148,62 @@ The raw staging boundary is not searchable, recallable, or canonical memory.
 Every row is team- and owner-scoped using the authenticated request context and
 PostgreSQL RLS.
 
+### Semantic hold lifecycle
+
+When the complete assessor response is valid but server policy cannot promote
+it, the run and every item become `awaiting_review`/`candidate` with zero
+semantic writes and no review task. #152 records an immutable
+`submission_holds` fact with the assessment, bounded reason, owner, terminal
+timestamp, and exact 24-hour expiry. The run projection is `active` until the
+server expiry job changes it to `expired`; neither state is recallable or an
+approval.
+
+`replaces_submission_id` is optional public intake input. It names only an
+owned active or expired hold and creates a complete successor through the
+normal scanner, assessor, catalog, and atomic-commit path. A queued, guarded, or
+processing successor occupies the one replacement slot. A held, rejected,
+quarantined, failed, or expired successor emits a release outcome and leaves the
+target unchanged. On the first successful successor promotion, PostgreSQL
+locks the target and marks it `superseded` in the same transaction as the new
+semantic/search writes. Replays are idempotent; cross-profile, cross-team,
+absent, and already-superseded targets return the same bounded error classes.
+
 ## Server-Owned Assessment
 
-The worker loads the complete staged submission, a bounded list of same-team
-Entity candidates, and the active team predicate catalog. It sends them to one
-capability-free assessor request.
+The worker assesses the complete staged submission as one run-scoped unit. It
+loads the complete same-team candidate set for each submitted Entity surface and
+the complete active team predicate catalog, then sends that context in one
+capability-free assessor conversation. It never assesses or commits an evidence
+item independently.
 
 The assessor receives:
 
 - the full exact staged evidence and the raw client relationship proposals,
   including every client `predicate.proposed_key`
-- bounded Entity candidates and active predicate options for normalization
+- complete Entity candidate sets for submitted surfaces and the complete active
+  predicate catalog, only when each set fits its configured hard bound
 - no tools, credentials, environment variables, network capability, or request
   headers
 - no prior raw evidence history, cross-team data, or authority to select stored
   IDs outside its supplied options
 
-The predicate catalog is selected deterministically: exact key or alias matches
-first, then structured relevance/rank. The request records whether that catalog
-is complete for the decision; truncation must not turn an existing predicate
-into a false new one.
+Catalog preflight is not relevance selection. The worker asks PostgreSQL for one
+more row than each hard bound and requires a complete result: at most 20
+same-name Entity candidates for each submitted surface and every active team
+predicate within `AI_VERIFIER_MAX_PREDICATE_OPTIONS` (default 100; maximum
+2,000). An incomplete catalog or candidate-context token overflow ends the run
+as `catalog_context_overflow` before any provider call. If the exact evidence
+and contract themselves cannot fit the input budget, it ends as
+`assessment_input_overflow`, also with no provider call. An omitted existing
+predicate must never become a false registration decision.
+
+One placement-run attempt has one logical assessor conversation whose initial
+request contains every evidence item and relationship ref. A malformed complete
+response can receive at most four same-history complete-regeneration turns. A
+timeout, transport, protocol, or HTTP failure ends that conversation and
+requeues a fresh history through the durable placement-attempt budget. Once a
+valid run-scoped assessment is persisted, restart, lease reclaim, and commit
+retry reuse it and make no further provider call.
 
 The response is a closed schema. It must contain one security verdict, signals,
 and bounded justification for every evidence item plus normalized Entity and
@@ -175,14 +217,19 @@ A `hidden_control_markup` signal is valid only when its exact cited span contain
 a covered hidden control or active markup. An ungrounded signal invalidates the
 complete assessor response; it cannot quarantine or commit a submission.
 
-A registration-required result follows the controlled, auditable predicate
-workflow. It does not make a raw client or assessor predicate durable, and
-clients do not receive a predicate-review task.
+A registration-required result follows a controlled, auditable predicate
+workflow. In the same semantic transaction, the server takes a team/key advisory
+lock, rechecks the latest definition, reuses a compatible active definition, or
+creates a restricted definition with append-only registration provenance. It
+does not make a raw client or assessor predicate durable by itself. If server
+policy cannot promote a valid complete result, every item enters the existing
+`awaiting_review` compatibility hold with zero semantic commit and no new review
+task. #152 owns that hold's formal expiry and replacement lifecycle.
 
 Malformed, incomplete, duplicate, out-of-allowlist, or otherwise invalid
-responses do not produce a partial semantic commit. The worker uses bounded
-durable retries; required failures remain visible as a terminal failed
-submission.
+responses do not produce a partial semantic commit. Malformed content uses the
+same-history complete-regeneration budget; provider failures use durable fresh
+attempts. Required exhaustion remains visible as a terminal failed submission.
 
 ## Promotion, Rejection, and Quarantine
 
@@ -190,14 +237,15 @@ On a clean valid assessment, one PostgreSQL transaction:
 
 1. creates canonical evidence and observations;
 2. applies Entity/Value/Relationship and lifecycle decisions;
-3. consumes only a predicate decision already validated by the controlled
-   registration workflow;
+3. resolves, reuses, or registers predicates only through controlled server
+   policy;
 4. records assessment outcomes and audit history;
 5. creates derived full-text/vector search work; and
 6. marks the submission completed.
 
-No canonical evidence or semantic subset commits before that transaction.
-Embeddings are asynchronous derived state and cannot overwrite a newer source.
+No canonical evidence or semantic subset commits before that transaction: all
+items in the run promote together or none do. Embeddings are asynchronous
+derived state and cannot overwrite a newer source.
 
 If assessment rejects the proposed semantic content without a security concern,
 the submission becomes rejected. The client can submit a new, complete
@@ -209,9 +257,11 @@ is staged. A repeated worker scan or an assessor security concern quarantines an
 already-staged submission. A deterministic worker hit records its matching
 placement fragment's security event, quarantine, and terminal placement result in one PostgreSQL
 transaction. PostgreSQL sets quarantine_expires_at to exactly 24 hours after the
-quarantine completion timestamp. The staged evidence remains isolated only for
-that interval, then the cleanup job hard-deletes it. A replacement is a new
-complete remember call with replaces_quarantined_submission_id; it never
+quarantine completion timestamp. The isolated raw payload copy remains only for
+that interval, then the cleanup job hard-deletes it. Append-only evidence,
+identifiers, hashes, security events, and lineage remain restricted audit
+history and are never recallable or provider input. A replacement is a new
+complete remember call through the quarantine-specific workflow; it never
 releases or extends the quarantined data.
 
 ## Public Status Contract
@@ -225,18 +275,22 @@ The status is owner-scoped and contains safe, bounded state only:
 | processing | A worker owns a live assessment lease. | Poll later. |
 | completed | Canonical promotion succeeded. | Recall or trace normally. |
 | rejected | The server rejected the submission. | Submit a new complete request if appropriate. |
-| quarantined | Security concern; isolated staged data expires after 24 hours. | Do not use it; optionally submit a replacement. |
+| quarantined | Security concern; the isolated raw payload copy expires after 24 hours while immutable source history remains restricted and non-recallable. | Do not use it; optionally submit a replacement. |
 | failed | Required worker/provider/persistence work exhausted its bounded retry policy. | Diagnose using safe error/correlation context, then submit anew if appropriate. |
 
-Status also reports per-evidence outcomes and per-relationship outcomes,
-bounded error codes, quarantine_expires_at when applicable, and search state.
+Status reports per-evidence search readiness, bounded error codes,
+quarantine_expires_at when applicable, and search state.
 search_state=pending means canonical promotion may be complete while a derived
 embedding is still being built. current and not_required are ready for the
 evaluation/recall freshness gate; failed is a visible degradation.
 
-There is deliberately no get_memory_placement, resolve_memory_placement,
-review task, client confidence value, or follow-up-evidence action in this
-contract.
+There is deliberately no client-facing placement/review tool, review task,
+client confidence value, or follow-up-evidence action in this contract.
+
+The `awaiting_review` compatibility hold used by the #151 worker is not a
+client review action and is not a partial promotion. #152 defines its immutable
+expiry/replacement lifecycle before the final public status contract removes
+placement-era compatibility states.
 
 ## Recall Safety Boundary
 
@@ -278,8 +332,16 @@ do not run legacy placement workers or expose legacy placement tools.
 5. model concern quarantines rather than partially commits;
 6. a clean valid submission promotes canonical state and derived search work
    atomically;
-7. status never exposes a review task or raw assessor/prompt content;
-8. quarantined staging is removed only after its exact 24-hour retention;
-9. a predicate is added or activated only through the controlled validated
+7. two relationships may cite one evidence item, while the assessor still
+   receives every distinct relationship ref in one run-scoped request;
+8. catalog or input overflow makes zero provider call and zero semantic write;
+9. a valid but non-promotable run becomes an `awaiting_review` compatibility
+   hold with no review task or semantic subset, and expiry changes only its
+   projection;
+10. status never exposes a review task or raw assessor/prompt content;
+11. a same-owner complete replacement leaves its target unchanged until a
+   successful atomic promotion, while a successful successor supersedes it;
+12. quarantined staging is removed only after its exact 24-hour retention;
+13. a predicate is added or activated only through the controlled validated
    registration workflow; and
-10. recall remains evidence-first and treats returned content as untrusted.
+14. recall remains evidence-first and treats returned content as untrusted.

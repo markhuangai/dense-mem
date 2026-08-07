@@ -35,8 +35,8 @@ sequenceDiagram
   DM-->>Host: Trace and explicit decision choices
   Host->>User: Ask the exact conflict question
   User-->>Host: Decision plus evidence
-  Host->>DM: resolve_memory_placement(...)
-  DM->>PG: Append decision and recompute affected current state
+  Host->>DM: get_submission_status(submission_id)
+  DM-->>Host: Bounded terminal/search state; no client review decision
 ```
 
 An unresolved same-owner conflicting observation is not an active edge. The
@@ -371,127 +371,46 @@ The client presents:
 
 An opaque “accept or reject?” prompt is insufficient.
 
-## Identity Review
+## Server-side ambiguity handling
 
-The client may select only a server-supplied same-team candidate:
+Entity, predicate, scope, and temporal ambiguity remain isolated in the
+assessment ledger. The client receives only the bounded submission state from
+`get_submission_status`; it cannot select a candidate, release a quarantine,
+acknowledge a review task, or append a decision to an existing submission.
 
-```json
-{
-  "ingest_id": "ing_01J...",
-  "placement_item_id": "item_identity_1",
-  "placement_item_version": 3,
-  "action": "select_entity",
-  "entity_ref": "mark",
-  "candidate_entity_id": "ent_mark_huang",
-  "idempotency_key": "identity-resolution-1"
-}
-```
+When new source material resolves the ambiguity, submit one complete,
+authenticated `remember` request with exact evidence and proposal spans. The
+server re-runs the integrated assessor and applies owner, team, conflict, and
+support policy atomically. Historical assessment and conflict records remain
+append-only and are available through authorized trace/audit paths.
 
-Selecting a supplied candidate reapplies the persisted assessment
-deterministically and makes zero assessor calls. If exact current-session
-context cannot select one supplied option, the client asks the user.
-`confirm_new_entity` requires evidence that distinguishes a new identity. The
-client never allocates the new ID; the new evidence becomes one new placement
-item with one bounded assessor conversation.
-
-A late same-name conflict may require a split. Dense-Mem first shows only the
-caller's observations and Relationships that may move. After confirmation, it
-creates the new Entity and reassigns only selected caller-owned immutable
-observation IDs. It never moves another profile's rows or every row based on
-display text.
-
-## Predicate Review
-
-An unknown phrase remains on the observation with no `predicate_key`. Review
-may:
-
-- select an existing server-supplied registered predicate when meaning matches
-- reject the observation mapping
-- route a proposed registry change through a separately authorized,
-  versioned vocabulary workflow
-
-The assessor and ordinary review endpoint cannot add a predicate definition.
-A Hypothesis is not an unknown predicate; it is an isolated dream output using
-an already registered predicate. See [Dreaming](Dreaming).
-
-## Relationship Review Actions
-
-| Action | Meaning |
-| --- | --- |
-| `accept` | append exact authoritative client evidence as one new placement item and run one assessment |
-| `reject` | append the rejection and preserve observation/history |
-| `correct` | append exact replacement evidence as one new placement item and run one assessment |
-| `forget` | retract the caller-owned selected Relationship from active reads while retaining its ledger |
-| `acknowledge` | mark review consumption; change no semantic state |
-
-`accept` does not bypass assessment or directly assign active status. New
-evidence enters the integrated assessor; deterministic support policy decides
-whether the Relationship becomes active. See
-[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#source-independence-and-support-policy).
-
-These client actions mutate only a Relationship owned by the authenticated
-profile. To address another profile's Relationship, the caller submits new
-evidence through `remember`; deterministic post-assessment identity and
-conflict policy derive the appropriate cross-reference and case update. The
-system Conflict reviewer is the only non-owner lifecycle writer for a
-cross-profile stale-state case. There is no cross-profile client `accept`,
-`forget`, `supersede`, merge, or split shortcut.
+The server never allocates a destination ID from client text, moves another
+profile's rows, or treats a same-team candidate as canonical without its own
+assessment. A Hypothesis is not an unknown predicate; it remains an isolated
+dream output using an already registered predicate. See [Dreaming](Dreaming).
 
 ## Correct With New Evidence
 
-A correction appends evidence; it is not an in-place text edit.
+A correction appends evidence; it is not an in-place text edit. Submit a fresh
+complete request and poll its returned `submission_id`:
 
 ```json
 {
-  "ingest_id": "ing_01J...",
-  "placement_item_id": "item_relationship_1",
-  "placement_item_version": 4,
-  "action": "correct",
-  "evidence": [
-    {
-      "content": "The user confirmed that production now deploys from release.",
-      "source_type": "manual",
-      "authority": "authoritative",
-      "source_group": "user-resolution:ing_01J..."
-    }
-  ],
-  "proposal": {
-    "entities": [
-      {
-        "ref": "production",
-        "name": "production",
-        "entity_kind": "environment",
-        "identity_context": {
-          "system": "Dense-Mem"
-        }
-      },
-      {
-        "ref": "release",
-        "name": "release",
-        "entity_kind": "git_branch",
-        "identity_context": {
-          "repository": "Dense-Mem"
-        }
-      }
-    ],
-    "relationships": [
-      {
-        "proposal_id": "production_deploys_from_release",
-        "subject_ref": "production",
-        "predicate": "deploys_from",
-        "object_ref": "release",
-        "polarity": "+",
-        "modality": "statement",
-        "evidence": [
-          {
-            "evidence_index": 0,
-            "start": 0,
-            "end": 60
-          }
-        ]
-      }
-    ]
-  },
+  "evidence": [{
+    "content": "The user confirmed that production now deploys from release.",
+    "source_type": "manual",
+    "authority": "authoritative",
+    "source_group": "user-resolution:deployment"
+  }],
+  "relationships": [{
+    "ref": "production_deploys_from_release",
+    "subject": {"name": "production", "entity_kind": "environment", "span": {"evidence_index": 0, "start": 0, "end": 10}},
+    "predicate": {"proposed_key": "deploys_from", "surface": "deploys from", "span": {"evidence_index": 0, "start": 11, "end": 22}},
+    "object": {"entity": {"name": "release", "entity_kind": "git_branch", "span": {"evidence_index": 0, "start": 23, "end": 30}}},
+    "polarity": "+",
+    "modality": "statement",
+    "supports": [{"evidence_index": 0, "start": 0, "end": 30}]
+  }],
   "idempotency_key": "deployment-correction-1"
 }
 ```
@@ -500,8 +419,8 @@ The replacement enters the same integrated assessor, deterministic
 lifecycle, and PostgreSQL transaction as every `remember`. Prior evidence and
 transitions remain traceable.
 
-This action corrects the caller's Relationship; it does not declare a shared
-source globally obsolete. A source owner that can prove stable lineage instead
+This submission corrects the caller's Relationship; it does not declare a
+shared source globally obsolete. A source owner that can prove stable lineage instead
 uses `source_key`, `source_revision`, and `previous_source_revision`. Source
 activation occurs at intake, makes the prior revision ineffective for every
 profile that adopted it, and recomputes affected statuses from remaining

@@ -146,7 +146,7 @@ The following logical families carry non-null `team_id` from creation:
 - Hypotheses and their review/run rows
 - search documents and embedding jobs
 - recall events/feedback and tenant-scoped evaluation run records
-- memory-pack import runs/change ledgers
+- memory-pack export provenance and omission metadata
 - team community/dream schedules and results
 - team audit and operation events
 

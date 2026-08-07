@@ -155,7 +155,7 @@ the server and calls `tools/list`; verify:
 - contract `dense-mem.v2.4`
 - `remember` requires evidence plus exact span-grounded proposals
 - `get_submission_status` returns owner-scoped processing and search state
-- `get_memory_placement` and `resolve_memory_placement` are absent
+- legacy placement and review tools are absent
 - `retract_evidence` is visible to a write-scoped key
 - `recall_memory` returns ranked Evidence contexts plus
   `related_relationships[]`, `related_communities[]`, `conflicts[]`,

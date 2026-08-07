@@ -42,9 +42,21 @@ operational probes, not memory APIs. Retired generic REST paths, including
 `/api/v1`, must not be exposed.
 
 User-portal authentication remains either a Dense-Mem API key or configured
-SSO. API-key login continues to use the key-based authentication path; SSO uses
-its separate browser-session and CSRF contract. The portal does not imply that
-every API-key login is exchanged for an HttpOnly session.
+SSO. API-key login uses the bearer path by default. When the user explicitly
+checks “Keep me signed in for 7 days,” the portal exchanges that direct bearer
+login for an opaque server-side browser session; the raw API key is never put
+in a cookie. SSO continues to use its separate browser-session and CSRF
+contract.
+
+The API-key portal session is fixed at seven days on the server. The checked
+browser cookies are persistent for seven days; an unchecked exchange creates
+browser-session cookies while retaining the same seven-day server expiry. The
+session stores the stable API-key profile ID, so in-place key rotation does not
+sign the user out, while revocation, expiration, team deletion, role, scopes,
+and SSO-owned-key entitlement are revalidated on every request. The session
+cookie is HttpOnly, host-only, SameSite=Lax, and scoped to `/ui`; the separate
+CSRF cookie is readable by the first-party UI and is sent as
+`X-Dense-Mem-CSRF` for state-changing requests.
 
 ## User Portal
 
@@ -133,7 +145,7 @@ The control portal manages:
 - operation/audit/security views
 - telemetry and feedback summaries
 - dream/community scheduler state
-- memory-pack import/rollback operations
+- memory-pack export and bounded omission reporting
 
 It is not a general memory editor. Semantic changes use versioned review,
 correction, merge/split, retraction, or import workflows with audit.

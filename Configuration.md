@@ -83,6 +83,11 @@ PostgreSQL is authoritative for knowledge, workflow, search, and control state.
 
 Production should separate migration and runtime roles. The runtime role needs
 only application DML, approved functions, and tenant-scoped/RLS access.
+The portal-session migration creates a `NOLOGIN`
+`dense_mem_portal_session_system` role for its security-definer functions; the
+runtime login needs only `EXECUTE` on those functions, never direct portal
+session-table access. The bundled Compose deployment uses one database login,
+so the migration grants that login the function privileges automatically.
 The `vector` extension is installed by the global PostgreSQL migration and is
 not optional after the pgvector image cutover.
 
@@ -189,15 +194,19 @@ flowchart TD
 | `AI_VERIFIER_MAX_INPUT_TOKENS` | `200000` | complete message-history budget, including the server prompt and any correction history |
 | `AI_VERIFIER_MAX_OUTPUT_TOKENS` | `65536` | complete-response acceptance budget; it is not sent as a provider `max_tokens` parameter |
 | `AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS` | `50000` | Entity/predicate context budget inside the complete request budget |
+| `AI_VERIFIER_MAX_PREDICATE_OPTIONS` | `100` | complete active team-predicate catalog capacity; 1 through 2,000, and overflow is a preflight failure rather than truncation |
 | `AI_VERIFIER_TOKENIZER` | `o200k_base` | tokenizer for all assessor budget checks; supported overrides are validated at startup |
 | `MEMORY_AUTO_WRITE_CONFIDENCE_THRESHOLD` | `0.7` | global bootstrap gate for positive Relationship support |
 | `RELATIONSHIP_MATCH_MAX_CANDIDATES` | `100` | post-assessment server-side identity/conflict comparison cap |
 
-Entity candidates remain capped at 20 per exact evidence surface, structured
-predicate options at 100, extracted Entity results at 100, and Relationship
-results at 200. Those are closed-contract limits, not environment knobs. The
-adapter also has a fixed 16 MiB response transport cap as a safety boundary;
-it does not replace token accounting.
+Entity candidates remain capped at 20 per exact evidence surface. The complete
+active predicate catalog uses `AI_VERIFIER_MAX_PREDICATE_OPTIONS` (100 by
+default and at most 2,000); it is never relevance-truncated. Extracted Entity
+results are capped at 400 and Relationship results at 200. An incomplete
+catalog or candidate-context token overflow fails before the provider is called.
+Those response limits are closed-contract limits, not environment knobs. The
+adapter also has a fixed 16 MiB response transport cap as a safety boundary; it
+does not replace token accounting.
 
 `AI_ASSESSOR_*` and the obsolete `AI_VERIFIER_MAX_*_BYTES` variables are
 rejected at startup. `AI_REVIEWER_MODEL` is tolerated only as an ignored legacy
@@ -373,13 +382,21 @@ Entities, Relationships, reviews, queues, API keys, or audit.
 | `SSO_SESSION_TTL_SECONDS` | `28800` | browser session lifetime |
 | `SSO_STATE_TTL_SECONDS` | `600` | OAuth state/PKCE lifetime |
 | `SSO_HTTP_TIMEOUT_SECONDS` | `10` | provider timeout |
-| `SSO_COOKIE_SECURE` | derived | true for HTTPS by default |
+| `SSO_COOKIE_SECURE` | derived | Secure flag for SSO and API-key portal cookies; true for HTTPS by default |
 
 `SCIM_PUBLIC_BASE_URL` and `CONTROL_PUBLIC_BASE_URL` must be absolute HTTPS URLs
 without a query or fragment. They are control-plane settings, not request
 fields. A SCIM base is expanded to `/scim/v2/<connector-id>`; the control base
 expands its OIDC callback to `/control/auth/callback` and restricts browser
 origins to that administrative ingress.
+
+`SSO_COOKIE_SECURE` is a PostgreSQL-backed runtime setting, not a server
+environment-variable source. Leave it derived for a deployment whose
+`SSO_PUBLIC_BASE_URL` is HTTPS, set it explicitly to `true` when an HTTPS
+custom-domain ingress fronts the portal, and set it explicitly to `false` only
+for a local HTTP test instance. The same setting controls the SSO and
+API-key portal cookies; the private control API is the authoritative update
+path.
 
 Detailed public-edge policy is in [Public HTTPS And Redis](Public-HTTPS-And-Redis);
 SSO and Entra directory mapping are in [User Portal SSO](User-Portal-SSO).

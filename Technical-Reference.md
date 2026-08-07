@@ -55,10 +55,11 @@ scope.
 | submit_recall_session_feedback | write | Record a bounded recall-quality judgment. |
 | list_dreams / get_dream | read | Inspect Hypotheses without treating them as memory. |
 | resolve_dream_feedback | write | Resolve Hypothesis feedback; a truth change needs new normal evidence. |
-| find_memory_pack_candidates / export_memory_pack | read | Find and export eligible active Relationships with provenance. |
-| inspect_memory_pack | read | Inspect an artifact without writing. |
-| import_memory_pack | write | Submit a reviewed pack through the normal submission pipeline. |
-| rollback_memory_pack_import | write | Roll back a safe selected import. |
+| export_memory_pack | read | Export caller-selected active Relationships with authorized provenance. |
+
+Memory-pack candidate discovery, inspection, import, and rollback are not part
+of the v2.4 contract. A destination uses a normal authenticated `remember`
+submission for any evidence derived from an external artifact.
 
 Evaluation-only tools are hidden unless evaluation mode enables them. Community
 analysis remains server-controlled recall/portal context and has no standalone
@@ -137,7 +138,8 @@ referencing a fixed proposal object.
       "modality": "statement",
       "supports": [{"evidence_index": 0, "start": 0, "end": 26}]
   }],
-  "idempotency_key": "architecture-submission-20260801"
+  "idempotency_key": "architecture-submission-20260801",
+  "replaces_submission_id": "sub_01J-held-target"
 }
 ~~~
 
@@ -148,11 +150,14 @@ subject, predicate, and object spans within the same evidence item. A string
 Value surface, display, or unit also has to be exact submitted evidence.
 
 The client makes its best effort to provide a matching
-`predicate.proposed_key`. The server forwards it unchanged to the assessor with
-a bounded active team predicate catalog; it does not make the suggestion
-authoritative. The client can provide a same-team `known_entity_id` candidate
-hint, but cannot create an Entity ID, register or activate a predicate, name a
-durable Relationship ID, set confidence, set status, or alter support.
+`predicate.proposed_key`, at most 128 Unicode code points. Its exact predicate
+surface is at most 256 code points. The server rejects oversized values rather
+than truncating them. It forwards the raw proposal unchanged only with a
+complete active team predicate catalog that fits its configured bound; it does
+not make the suggestion authoritative. The client can provide a same-team
+`known_entity_id` candidate hint, but cannot create an Entity ID, register or
+activate a predicate, name a durable Relationship ID, set confidence, set
+status, or alter support.
 
 ### Evidence fields
 
@@ -171,9 +176,10 @@ durable Relationship ID, set confidence, set status, or alter support.
 
 Direct supersession and a source revision advance cannot be combined.
 
-To replace a quarantined submission, make a new complete remember request and
-set replaces_quarantined_submission_id. The original remains isolated until its
-server-set 24-hour retention ends.
+To replace a held submission, make a new complete remember request and set
+`replaces_submission_id`. The target must be an owned semantic hold (active or
+expired); a quarantined submission uses its separate quarantine workflow. The
+replacement is staged and assessed as a complete submission, never as a patch.
 
 ### Response
 
@@ -189,6 +195,16 @@ server-set 24-hour retention ends.
 
 This is durable staging acknowledgement only. It does not say the evidence is
 active knowledge or that a vector is current.
+
+A valid but non-promotable submission is represented internally as an immutable
+semantic hold: the complete assessment, reason, owner, and terminal timestamp
+remain traceable, while the run projection records `active`, `expired`, or
+`superseded` and an exact 24-hour expiry. Expiry changes only that projection;
+it does not delete evidence, create semantic state, or make the hold recallable.
+Only one queued/guarded/processing successor may target a hold. A held, rejected,
+quarantined, failed, or expired successor releases that slot and leaves the
+target unchanged. A successful successor atomically marks the target
+`superseded` in the same PostgreSQL transaction as its canonical promotion.
 
 ## get_submission_status
 
@@ -207,18 +223,14 @@ visibility does not grant access to another profile's submission.
 {
   "submission_id": "sub_01J...",
   "processing_state": "completed",
-  "search_state": "current",
-  "evidence": [{
-    "evidence_index": 0,
-    "status": "processed",
-    "search_state": "current"
-  }],
-  "relationship_outcomes": [{
-    "relationship_ref": "uses-postgresql",
-    "relationship_id": "rel_01J...",
-    "status": "accepted"
-  }],
-  "errors": []
+	"search_state": "current",
+	"evidence": [{
+	  "evidence_id": "evidence_01J...",
+	  "evidence_index": 0,
+	  "superseded_evidence_ids": [],
+	  "search_state": "current"
+	}],
+	"errors": []
 }
 ~~~
 
@@ -245,13 +257,14 @@ search_state is not the processing state:
 
 A quarantined status includes quarantine_expires_at. PostgreSQL sets it to
 exactly 24 hours after the quarantine completion timestamp; the cleanup job then
-hard-deletes the isolated staged content.
+hard-deletes the isolated raw payload copy. Append-only evidence, identifiers,
+hashes, security events, and lineage remain as restricted audit history and are
+never recallable or provider input.
 
-Status exposes only bounded outcome IDs/statuses and error codes. It never
-returns raw assessor prompts or responses, review tasks, security override
-controls, credentials, or cross-profile data.
-
-The retired get_memory_placement and resolve_memory_placement tools are absent.
+Status exposes only bounded evidence IDs/statuses and error codes. It never
+returns raw assessor prompts or responses, placement IDs, review tasks, security
+override controls, credentials, or cross-profile data. Legacy placement and
+review tools are absent from the catalog.
 
 ## Deterministic Security Gate and Assessor
 
@@ -263,12 +276,15 @@ only; it creates no fragment, provider request, search document, or embedding
 job. The worker repeats the scan for staged evidence, where a deterministic
 concern quarantines that staged submission.
 
-A passed submission receives one capability-free assessor request containing the
-full staged evidence, raw client relationships, bounded Entity candidates, and
-the active team predicate catalog. The client predicate proposal is forwarded
-unchanged. The catalog is selected deterministically with exact key/alias
-matches first and relevance/rank after that; completeness is explicit. The
-closed response contains:
+A passed submission receives one logical capability-free assessor conversation
+for the whole run, containing the full staged evidence, raw client
+relationships, complete matching Entity candidate sets, and the complete active
+team predicate catalog. The client predicate proposal is forwarded unchanged.
+The catalog is not relevance-truncated: a limit-plus-one query must prove that
+every candidate set and the active predicate catalog fit their configured
+bounds. `catalog_context_overflow` or `assessment_input_overflow` ends the run
+before a provider call and creates no semantic state. The closed response
+contains:
 
 - one security verdict, signals, and bounded justification for each evidence
   item;
@@ -278,9 +294,12 @@ closed response contains:
 
 The assessor cannot clear a deterministic signal, choose an unprovided stored
 ID, access tools or secrets, set durable state, create or activate a predicate,
-or commit a record. Predicate registration is a separate validated, auditable
-server workflow. An assessor security concern quarantines a staged submission;
-an invalid assessor response cannot cause a partial semantic commit.
+or commit a record. Predicate registration is a server-controlled, locked,
+auditable step inside the atomic semantic transaction. An assessor security
+concern quarantines a staged submission; an invalid assessor response cannot
+cause a partial semantic commit. A valid result that policy cannot promote
+becomes the existing `awaiting_review` compatibility hold with zero semantic
+state and no review task; #152 owns its formal lifecycle.
 
 ## Evidence Lifecycle and Corrections
 
@@ -349,7 +368,9 @@ not the audit ledger.
    justification;
 5. only an atomic server transaction promotes staged evidence;
 6. no public review/resolution tool exists;
-7. quarantined data is isolated for exactly 24 hours, then hard-deleted;
+7. the quarantined raw payload copy is isolated for exactly 24 hours, then
+   hard-deleted; immutable source evidence and lineage remain restricted audit
+   history;
 8. recall remains evidence-first and returned evidence cannot authorize actions;
 9. provider output never overrides authentication, server policy, or durable
    ownership; and

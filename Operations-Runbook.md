@@ -202,7 +202,7 @@ flowchart TD
   Lease -- Yes --> Stage{"Dominant stage?"}
   Stage -- assessor --> Provider["Inspect provider limits,<br/>schema failures and cooldown"]
   Stage -- commit --> DB["Inspect lock waits, constraints,<br/>deadlocks and pool saturation"]
-  Stage -- review --> Review["Expected awaiting_review;<br/>notify client/work queue"]
+  Stage -- review --> Review["Compatibility hold;<br/>verify zero semantic commit"]
 ```
 
 Required checks:
@@ -215,7 +215,7 @@ Required checks:
 - provider 429/cooldown/concurrency
 - database deadlocks, lock timeouts, serialization failures, and constraint
   errors
-- awaiting-review age separately from worker backlog
+- compatibility-hold age separately from worker backlog
 
 Retryable provider failures use deterministic exponential backoff with bounded
 jitter. The first four retry releases wait about 15s, 30s, 60s, and 120s. A
@@ -240,11 +240,22 @@ after the evidence is durably staged. Zero owners, multiple owners, invalid
 team/profile membership, other cutover exclusions, and deterministic terminal
 failures remain hard blockers that need operator investigation.
 
-`needs_review` is terminal for handoff progress only when the placement item is
-`awaiting_review` and has an open or acknowledged review task. Those items do
-not block cutover; they remain review backlog after PostgreSQL authority is
-active.
-Missing review tasks are repairable orchestration state, not valid held review.
+For the submission-wide worker, a valid but non-promotable result is terminal
+for worker progress when every item and its run are `awaiting_review` with the
+same `candidate` category. It has zero semantic commit and deliberately creates
+no review task or client action. Treat it as a compatibility hold, not a missing
+review-task incident. #152 owns its formal immutable expiry and replacement
+lifecycle. Legacy item-scoped review rows remain a separate compatibility path:
+those rows still require their historical task invariants.
+
+For semantic holds, inspect `submission_holds` and the run projection together.
+The immutable fact must retain its assessment, reason, owner, `held_at`, and
+`expires_at = held_at + 24 hours`; expiry may change only
+`placement_runs.semantic_hold_state` and append an outcome. A successor is
+allowed only from the same owner and may be queued/guarded/processing once per
+target. Never manually mark a target superseded: only the successor's successful
+semantic transaction may do so. Failed, held, rejected, quarantined, or expired
+successors must release the slot without changing the target.
 
 Do not mark jobs complete, delete queue rows, reset attempts, or extend leases
 with direct SQL. Repair the root cause, use the supported pause/resume repair

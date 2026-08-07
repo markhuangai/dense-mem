@@ -141,11 +141,11 @@ in `remember`.
 | `reinforced` | still useful after explicit same-team feedback; automatic generation never reinforces a duplicate |
 | `stale` | a same-team reviewer marked the idea no longer current |
 | `rejected` | explicitly rejected |
-| `submitted` | new evidence was sent to `remember`; placement outcome remains separate |
+| `submitted` | new evidence was sent to `remember`; submission status remains separate |
 
-`submitted` does not mean accepted or factual. The linked `ingest_id` and any
-later `relationship_outcomes[]` relationship ID expose the actual placement
-outcome.
+`submitted` does not mean accepted or factual. The linked `submission_id` can be
+polled with `get_submission_status`; status remains bounded and does not expose
+placement questions or provider output.
 
 ## Generation Flow
 

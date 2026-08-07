@@ -129,14 +129,16 @@ processing state:
 | quarantined | Security concern; data is isolated. | Do not use it. Submit a separate replacement only if appropriate. |
 | failed | Required work exhausted bounded retry policy. | Use safe error/correlation context, then submit anew if appropriate. |
 
-The status response includes per-evidence and per-Relationship outcomes plus
-safe reason codes. It does not include an assessor prompt, raw response, review
-task, or control that overrides server policy.
+The status response includes per-evidence search readiness and bounded reason
+codes. It does not include placement IDs, assessor prompts, raw responses,
+review tasks, or a control that overrides server policy.
 
-quarantined submissions retain isolated staged data for exactly 24 hours, then
-are hard-deleted. To correct one, submit a fresh complete request with
-replaces_quarantined_submission_id. That link does not release, reuse, or
-extend the quarantined content.
+quarantined submissions retain an isolated raw payload copy for exactly 24
+hours, then that copy is hard-deleted. The append-only evidence, identifiers,
+hashes, security events, and lineage remain as restricted audit history; they
+are never recallable or provider input. To correct one, submit a fresh complete request with the
+authenticated replacement field when the server policy permits it. A
+replacement never releases, reuses, or extends quarantined content.
 
 ## Replace or Retract Evidence
 
@@ -260,4 +262,3 @@ access. Use a read-only key for automation that must never write memory.
 | Client tries to resolve ambiguity | Submit a complete new evidence/proposal package; the server owns assessment. |
 | Client retries a malicious payload | Reject it at write time and do not use a quarantine-release action. |
 | Client needs proof | Trace the Relationship’s evidence and decision history. |
-

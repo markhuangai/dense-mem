@@ -220,8 +220,9 @@ ephemeral credential to prove the public integration path:
 5. another profile cannot fetch the first profile’s submission status;
 6. recall/trace preserve evidence-first output and flag returned evidence as
    untrusted data; and
-7. the migration and repository integration tests prove exact 24-hour
-   quarantine retention and hard-delete cleanup.
+7. the migration and repository integration tests prove exact 24-hour raw
+   quarantine-payload retention and hard-delete cleanup; immutable source
+   evidence and lineage remain restricted audit history.
 
 This is a real PostgreSQL/service test, not a mocked method-call test.
 

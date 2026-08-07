@@ -470,12 +470,14 @@ For each observation, the assessor returns bounded semantic judgments:
 | Temporal verdict | `entailed`, `absent`, `ambiguous`, `contradicted` | Whether submitted evidence supports the assessor-extracted validity bounds. |
 
 The assessor also returns a separate bounded `security_signals` control array.
-A non-empty valid array quarantines the evidence and creates no
+A non-empty valid array quarantines the complete submission and creates no
 `VerificationEvent` or semantic subset.
 
 Stored Relationships are not assessor inputs. The request contains only the
-submitted evidence, exact-span current Entity candidates, and a bounded
-structured predicate catalog. The assessor cannot invent a predicate or select
+complete staged submission, complete same-team candidate sets for its exact
+Entity surfaces, and the complete active predicate catalog when each fits its
+hard configured bound. Catalog overflow is terminal before a provider call; it
+is never relevance-truncated. The assessor cannot invent a predicate or select
 a stored Relationship. After the first schema-valid response is persisted, the
 server recomputes canonical identity and loads bounded current state for
 deduplication, conflict, update, and cross-reference policy. A same-owner match
@@ -510,10 +512,10 @@ operational telemetry and consume durable placement attempts. A malformed HTTP
 200 response triggers a same-history correction turn but creates no material
 event. Five malformed turns exhaust that conversation with zero partial commit.
 
-One placement claim appends at most one material `VerificationEvent` per
-observation, derived from the first valid persisted assessment. Worker restart,
-lease reclaim, and commit retry reuse that assessment. V2.4 migration preserves
-legacy events as written and does not rescore them.
+One submission placement run appends at most one material `VerificationEvent`
+per observation, derived from its first valid persisted assessment. Worker
+restart, lease reclaim, and commit retry reuse that assessment. V2.4 migration
+preserves legacy events as written and does not rescore them.
 
 ## Status And Effective Support
 
@@ -922,9 +924,10 @@ The refactor is incomplete until tests prove:
 7. stored knowledge alone cannot create support
 8. normal recall does not load complete evidence or transition history
 9. trace reconstructs evidence, verification, and lifecycle lineage
-10. exact existing keys or aliases reuse canonical definitions, while
-    unmatched, ambiguous, colliding, or kind-incompatible predicate wording
-    creates review and never lets the assessor register vocabulary
+10. exact existing keys or aliases reuse canonical definitions; a missing key
+    can enter only through server-controlled locked registration with append-only
+    provenance, while ambiguous, colliding, or kind-incompatible wording holds
+    the complete submission with no semantic subset
 11. a Hypothesis cannot create a node or edge
 12. forget removes the active SemanticEdge while preserving nodes and history
 13. one profile-owned Relationship has at most one graph-shaped SemanticEdge
@@ -961,7 +964,8 @@ The refactor is incomplete until tests prove:
     current interval
 29. every suppressed current position remains reconstructable through trace and
     historical `valid_at`/`known_at` recall
-30. one placement attempt opens one assessor conversation with at most five
+30. one submission placement-run attempt opens one assessor conversation over
+    every staged evidence item and relationship ref, with at most five
     same-history malformed-response turns; provider failures use durable
     attempts, while restart, lease reclaim, or commit retry reuses the first
     valid persisted assessment

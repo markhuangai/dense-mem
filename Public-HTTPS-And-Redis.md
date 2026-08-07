@@ -31,8 +31,16 @@ Use a pinned release's expert Compose example. Configure the domain/contact
 values required by its ingress implementation, then enable its TLS profile.
 
 Protected requests may carry an MCP or user-portal API-key bearer credential,
-or a user-portal SSO session cookie. Do not expose plain HTTP outside
-loopback/private networks.
+an opaque user-portal API-key session cookie, or a user-portal SSO session
+cookie. Do not expose plain HTTP outside loopback/private networks.
+
+The expert Traefik route matches the configured host and forwards the original
+request path to the Dense-Mem listener on port `8080`; it must not strip or
+rewrite `/ui` or `/ui/api`. The portal cookies are host-only and scoped to
+`/ui`, so a custom domain works without a cookie `Domain` override. Set the
+runtime `SSO_COOKIE_SECURE` setting to `true` for the HTTPS custom-domain
+deployment. The setting is PostgreSQL-backed and changed through the private
+control portal; it is not an authoritative Compose environment variable.
 
 Public edge controls include:
 

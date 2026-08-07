@@ -112,13 +112,16 @@ flowchart LR
 | `evidence_source_revisions` | append-only immutable source snapshots linked by expected previous-revision tokens |
 | `evidence_fragments` | immutable verbatim evidence slices and their source envelope |
 | `evidence_security_events` | append-only pass scans for accepted fragments plus worker-time deterministic/assessor signals, quarantine, and authorized release history; pre-stage rejections live only as safe audit events |
+| `submission_quarantine_payloads` | system-only retention of exact quarantined proposal/evidence/assessor payloads for the fixed 24-hour security-retention window |
+| `submission_quarantine_tombstones` | append-only hashes and fragment references proving quarantined payload deletion without retaining the raw payload |
 | `entity_records` | canonical team-scoped identities and current identity state |
 | `entity_names` | canonical, alias, and former names attached to an Entity |
 | `value_records` | canonical typed scalar endpoints |
 | `entity_resolution_events` | append-only assessor and server decisions for evidence-local mentions |
 | `entity_correction_events` | append-only merge, split, and reassignment decisions |
 | `relationship_observations` | immutable extracted statements tied to exact evidence spans |
-| `placement_assessments` | first schema-valid normalized assessor response for one placement claim; unique claim identity makes restart and commit retry reuse it |
+| `placement_assessments` | append-once normalized assessor response for one legacy item claim or one submission-wide run; scope-bound uniqueness makes restart and commit retry reuse it |
+| `predicate_registration_events` | append-only provenance for server-controlled predicate creation or reuse during a submission-wide semantic transaction |
 | `verification_events` | append-only Relationship judgments derived from persisted schema-valid assessor results |
 | `relationship_records` | one authored Relationship episode's current status, effective support, validity, author, and version |
 | `relationship_evidence_supports` | accepted, deduplicated evidence-span and source-group links |
@@ -140,7 +143,15 @@ flowchart LR
 | `embedding_contracts` | versioned provider/model/dimension/normalization/query meaning shared by compatible query and document vectors |
 | `search_projection_generations` | per-team, per-source-kind text projection convergence and vector activation state |
 | `search_index_generations` | versioned pgvector physical index compatibility, build state, and active pointer |
-| `placement_runs` / `placement_items` | observable processing workflow, stable claim identity, retry, and failure state |
+| `placement_runs` / `placement_items` | observable processing workflow, stable claim identity, retry, failure state, semantic-hold projection, and successor links |
+| `submission_holds` | append-only immutable hold facts: assessment, reason, owner, terminal timestamp, and exact 24-hour expiry |
+
+Quarantined payloads are isolated from normal profile reads. Only system or
+migration transactions may purge the raw JSON after its database-enforced
+expiry; the purge appends a bounded `submission_quarantine_purged` outcome and
+retains tombstone hashes for audit. This retention path is separate from the
+semantic `submission_holds` lifecycle: a semantic hold is not security
+quarantine and is never exposed as raw provider or evidence payload.
 
 ### Persisted assessment and semantic review shape
 
@@ -150,8 +161,9 @@ authoritative commit:
 ```text
 assessment_id
 team_id
-placement_item_id
-claim_key
+assessment_scope: item | submission
+placement_item_id / claim_key        (required only for legacy item scope)
+placement_run_id / ingest_id         (required only for submission scope)
 request_id
 assessor_contract_version
 model
@@ -161,18 +173,28 @@ response_hash
 validated_at
 created_at
 
-UNIQUE (team_id, placement_item_id)
-UNIQUE (team_id, claim_key)
+UNIQUE (team_id, placement_item_id)  for the non-null item scope
+UNIQUE (team_id, claim_key)          for the non-null item scope
+UNIQUE (team_id, placement_run_id)   WHERE assessment_scope = submission
 ```
 
 `normalized_response` contains only fields accepted by the closed assessor
 schema. It does not repeat request evidence, provider transport metadata, or
-secrets. `claim_key` is allocated with the immutable placement item and is not a
-worker, lease, or attempt ID; every reclaim uses the same value. The worker
-inserts the first valid result. A conflict on either unique key reloads that row;
-it never calls the model to produce a replacement. `VerificationEvent` and
-Entity-resolution rows reference the persisted assessment so a restart, lease
-reclaim, or semantic transaction retry applies the same decision.
+secrets. Legacy `claim_key` is allocated with the immutable placement item. A
+submission assessment instead binds to the immutable team, owner, ingest, and
+placement run. The worker inserts the first valid result. A conflict on the
+scope's unique key reloads that row; it never calls the model to produce a
+replacement. `VerificationEvent` and Entity-resolution rows reference the
+persisted assessment so a restart, lease reclaim, or semantic transaction retry
+applies the same decision.
+
+#151 writes `assessment_scope = submission`: one persisted response covers every
+evidence item and relationship ref in that run, including multiple
+relationships that cite the same evidence index. Commit verifies that the
+assessment belongs to the exact team/owner/ingest/run before it writes any
+semantic row. The cutover migration refuses to run while older queued, guarded,
+processing, or awaiting-review runs remain, so item-scoped and submission-scoped
+workers cannot interleave.
 
 V2.4 adds nullable audit fields to `verification_events` for
 `assessment_id`, `assessment_policy_version`, `threshold_used`, and
@@ -189,6 +211,23 @@ meaning merely to rename it. An unresolved open/acknowledged semantic task
 closes at seven days.
 Security quarantine and durable cross-profile Conflict cases retain their own
 workflows and are not converted to expiring semantic review tasks.
+
+### Immutable semantic holds and replacements (#152)
+
+`submission_holds` is an append-only fact ledger. Its `held_at` and `expires_at`
+are immutable, with `expires_at = held_at + 24 hours`; it has no mutable approval
+state. `placement_runs.semantic_hold_state`, version, and timestamp are the
+mutable projection. Hold expiry updates only that projection and appends an
+outcome, preserving the staged evidence, assessment, and audit lineage.
+
+`placement_runs.replaces_placement_run_id` links a complete same-owner successor
+to the target hold, and `superseded_by_placement_run_id` records the successful
+promotion. A partial unique index permits one queued, guarded, or processing
+successor per target. Terminal non-success releases the slot without changing
+the target; successful semantic commit locks the target and atomically records
+target supersession plus successor promotion outcomes. RLS and explicit owner
+predicates make absent, cross-team, and cross-profile targets the same bounded
+not-found result.
 
 The exact Relationship identity, fields, and lifecycle belong only in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle). Entity
@@ -739,20 +778,22 @@ canonical keys, aliases, allowed endpoint kinds, `relationship_kind`,
 `current_cardinality`, lifecycle state, and version.
 
 Global built-ins seed per-team `team_predicate_definitions`. The assessor
-receives at most 100 structured active definitions, with exact evidence
-key/alias matches first. PostgreSQL normalization, RLS, append-only versioning,
-and the
+receives the complete active team catalog only when it fits the configured
+`AI_VERIFIER_MAX_PREDICATE_OPTIONS` capacity (100 by default, at most 2,000).
+PostgreSQL normalization, RLS, append-only versioning, and the
 [strict assessor contract](Write-Pipeline#strict-assessor-contract) decide
 whether a returned option can be referenced. Providers cannot create registry
 vocabulary or directly mutate Relationship lifecycle or active graph state.
 
-The registry may grow without a fixed vocabulary ceiling. Extraction receives
-only the bounded structured catalog. Commit resolution checks the complete team
-registry under a team/key transaction lock. A compatible existing definition
-is reused. Unmatched wording, catalog truncation without a valid exact match,
-alias/key ambiguity, or kind incompatibility produces task-backed review and no
-Relationship; the write path never expands an existing endpoint allowlist or
-registers a new definition.
+The registry may grow without a fixed vocabulary ceiling. If its complete active
+catalog cannot fit, assessment ends as `catalog_context_overflow` before a
+provider call; the request never substitutes relevance selection for a complete
+comparison set. Commit resolution checks the complete team registry under a
+team/key advisory transaction lock. A compatible existing definition is reused;
+an absent key may be created with only the submitted endpoint kinds and an
+append-only registration event. An inactive, ambiguous, colliding, or
+kind-incompatible key holds the whole run with zero semantic commit; #151 does
+not create a client review task for that hold.
 
 The registry does not contain `policy_family`. The
 canonical contract and unknown-predicate behavior are defined in
