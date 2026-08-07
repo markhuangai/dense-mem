@@ -15,6 +15,7 @@ E2E_FILES_PREPARED=0
 E2E_ENV_FILE=""
 E2E_COMPOSE_FILE=""
 E2E_COMPOSE_OVERLAY_FILE=""
+E2E_POSTGRES_COMPOSE_OVERLAY_FILE=""
 E2E_PROMETHEUS_DIR=""
 E2E_BIND_DIR=""
 E2E_ENTRA_DIR=""
@@ -203,11 +204,14 @@ wait_for_entra_mock() {
 }
 
 compose() {
-  if [[ -n "$E2E_COMPOSE_OVERLAY_FILE" ]]; then
-    docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" -f "$E2E_COMPOSE_OVERLAY_FILE" "$@"
-    return
+  local compose_args=(-p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE")
+  if [[ -n "$E2E_POSTGRES_COMPOSE_OVERLAY_FILE" ]]; then
+    compose_args+=(-f "$E2E_POSTGRES_COMPOSE_OVERLAY_FILE")
   fi
-  docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+  if [[ -n "$E2E_COMPOSE_OVERLAY_FILE" ]]; then
+    compose_args+=(-f "$E2E_COMPOSE_OVERLAY_FILE")
+  fi
+  docker compose "${compose_args[@]}" "$@"
 }
 
 is_generated_marker_file() {
@@ -339,6 +343,170 @@ NODE
     return 1
   fi
   COMPOSE_FILE="$E2E_COMPOSE_FILE"
+}
+
+prepare_postgres_e2e_overlay() {
+  E2E_POSTGRES_COMPOSE_OVERLAY_FILE="${ROOT_DIR}/docker-compose.postgres-e2e-${E2E_FILE_ID}.yml"
+  node - "$E2E_POSTGRES_COMPOSE_OVERLAY_FILE" "$E2E_MARKER" <<'NODE'
+const fs = require("node:fs");
+
+const [destination, marker] = process.argv.slice(2);
+const contents = [
+  marker,
+  "services:",
+  "  postgres:",
+  "    environment:",
+  "      POSTGRES_USER: densemem_e2e_bootstrap",
+  "      POSTGRES_PASSWORD: dense-mem-e2e-bootstrap-password",
+  "    healthcheck:",
+  '      test: ["CMD-SHELL", "pg_isready -U densemem_e2e_bootstrap -d \\"$${POSTGRES_DB}\\""]',
+  "",
+].join("\n");
+fs.writeFileSync(destination, contents);
+NODE
+}
+
+compose_server_environment_value() {
+  local field="$1"
+  compose config --format json | json_field "services.server.environment.${field}"
+}
+
+wait_for_postgres_service() {
+  for _ in $(seq 1 90); do
+    if compose exec -T postgres sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "Timed out waiting for the E2E PostgreSQL service." >&2
+  return 1
+}
+
+provision_postgres_runtime_role() {
+  local runtime_user
+  local runtime_password
+  local runtime_database
+  local role_state
+  runtime_user="$(compose_server_environment_value POSTGRES_USER)"
+  runtime_password="$(compose_server_environment_value POSTGRES_PASSWORD)"
+  runtime_database="$(compose_server_environment_value POSTGRES_DB)"
+
+  if [[ "$runtime_user" == "densemem_e2e_bootstrap" || "$runtime_user" == "densemem_e2e_database_owner" ]]; then
+    echo "POSTGRES_USER conflicts with an E2E provisioning role: ${runtime_user}" >&2
+    return 1
+  fi
+
+  compose exec -T \
+    -e "DENSE_MEM_RUNTIME_POSTGRES_USER=$runtime_user" \
+    -e "DENSE_MEM_RUNTIME_POSTGRES_PASSWORD=$runtime_password" \
+    -e "DENSE_MEM_RUNTIME_POSTGRES_DB=$runtime_database" \
+    postgres sh -ec \
+    'psql -v ON_ERROR_STOP=1 \
+      -U "$POSTGRES_USER" \
+      -d "$POSTGRES_DB" \
+      -v runtime_user="$DENSE_MEM_RUNTIME_POSTGRES_USER" \
+      -v runtime_password="$DENSE_MEM_RUNTIME_POSTGRES_PASSWORD" \
+      -v runtime_database="$DENSE_MEM_RUNTIME_POSTGRES_DB"' <<'SQL'
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE ROLE :"runtime_user"
+  LOGIN PASSWORD :'runtime_password'
+  NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE densemem_e2e_database_owner
+  NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+
+ALTER DATABASE :"runtime_database" OWNER TO densemem_e2e_database_owner;
+GRANT CONNECT, CREATE, TEMPORARY ON DATABASE :"runtime_database" TO :"runtime_user";
+GRANT USAGE, CREATE ON SCHEMA public TO :"runtime_user";
+SQL
+
+  role_state="$(
+    compose exec -T \
+      -e "PGPASSWORD=$runtime_password" \
+      postgres psql -X -v ON_ERROR_STOP=1 -At -F '|' \
+      -h 127.0.0.1 -U "$runtime_user" -d "$runtime_database" \
+      -c "
+        SELECT
+          role.rolsuper,
+          role.rolcreatedb,
+          role.rolcreaterole,
+          role.rolreplication,
+          role.rolbypassrls,
+          pg_get_userbyid(database.datdba) = CURRENT_USER,
+          has_database_privilege(CURRENT_USER, current_database(), 'CREATE'),
+          has_schema_privilege(CURRENT_USER, 'public', 'CREATE')
+        FROM pg_roles AS role
+        JOIN pg_database AS database ON database.datname = current_database()
+        WHERE role.rolname = CURRENT_USER
+      "
+  )"
+  if [[ "$role_state" != "f|f|f|f|f|f|t|t" ]]; then
+    echo "Unexpected E2E PostgreSQL runtime role state: ${role_state}" >&2
+    return 1
+  fi
+}
+
+verify_postgres_runtime_migration_state() {
+  local runtime_user
+  local runtime_password
+  local runtime_database
+  local migration_state
+  runtime_user="$(compose_server_environment_value POSTGRES_USER)"
+  runtime_password="$(compose_server_environment_value POSTGRES_PASSWORD)"
+  runtime_database="$(compose_server_environment_value POSTGRES_DB)"
+
+  migration_state="$(
+    compose exec -T \
+      -e "PGPASSWORD=$runtime_password" \
+      postgres psql -X -v ON_ERROR_STOP=1 -At -F '|' \
+      -h 127.0.0.1 -U "$runtime_user" -d "$runtime_database" \
+      -c "
+        SELECT
+          EXISTS (
+            SELECT 1 FROM goose_db_version
+            WHERE version_id = 2026080603 AND is_applied
+          ),
+          NOT EXISTS (
+            SELECT 1 FROM pg_roles
+            WHERE rolname = 'dense_mem_portal_session_system'
+          ),
+          NOT EXISTS (
+            SELECT 1
+            FROM pg_proc AS procedure
+            JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+            WHERE namespace.nspname = 'public'
+              AND procedure.proname LIKE 'dense_mem_portal_session_%'
+          ),
+          table_state.relrowsecurity,
+          table_state.relforcerowsecurity,
+          pg_get_userbyid(table_state.relowner) = CURRENT_USER,
+          policy.polcmd = '*',
+          policy.polroles = ARRAY[0::oid],
+          pg_get_expr(policy.polqual, policy.polrelid) LIKE '%current_setting%'
+            AND pg_get_expr(policy.polqual, policy.polrelid) LIKE '%app.tx_mode%'
+            AND pg_get_expr(policy.polqual, policy.polrelid) LIKE '%system%',
+          pg_get_expr(policy.polwithcheck, policy.polrelid) LIKE '%current_setting%'
+            AND pg_get_expr(policy.polwithcheck, policy.polrelid) LIKE '%app.tx_mode%'
+            AND pg_get_expr(policy.polwithcheck, policy.polrelid) LIKE '%system%',
+          NOT EXISTS (
+            SELECT 1
+            FROM pg_class AS relation
+            JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = 'public'
+              AND relation.relkind IN ('r', 'p', 'S', 'v', 'm')
+              AND pg_get_userbyid(relation.relowner) <> CURRENT_USER
+          )
+        FROM pg_class AS table_state
+        JOIN pg_policy AS policy ON policy.polrelid = table_state.oid
+        WHERE table_state.oid = to_regclass('public.user_portal_sessions')
+          AND policy.polname = 'user_portal_sessions_system_access'
+      "
+  )"
+  if [[ "$migration_state" != "t|t|t|t|t|t|t|t|t|t|t" ]]; then
+    echo "Unexpected E2E PostgreSQL migration state: ${migration_state}" >&2
+    return 1
+  fi
 }
 
 prepare_entra_mock_files() {
@@ -513,6 +681,9 @@ cleanup() {
   if [[ -n "$E2E_COMPOSE_OVERLAY_FILE" && -f "$E2E_COMPOSE_OVERLAY_FILE" ]] && is_generated_marker_file "$E2E_COMPOSE_OVERLAY_FILE"; then
     rm -- "$E2E_COMPOSE_OVERLAY_FILE"
   fi
+  if [[ -n "$E2E_POSTGRES_COMPOSE_OVERLAY_FILE" && -f "$E2E_POSTGRES_COMPOSE_OVERLAY_FILE" ]] && is_generated_marker_file "$E2E_POSTGRES_COMPOSE_OVERLAY_FILE"; then
+    rm -- "$E2E_POSTGRES_COMPOSE_OVERLAY_FILE"
+  fi
   if [[ -n "$E2E_ENTRA_DIR" && -f "${E2E_ENTRA_DIR}/.dense-mem-e2e-marker" ]] && is_generated_marker_file "${E2E_ENTRA_DIR}/.dense-mem-e2e-marker"; then
     rm -r "$E2E_ENTRA_DIR"
   fi
@@ -640,6 +811,7 @@ else
 fi
 
 prepare_e2e_compose_files
+prepare_postgres_e2e_overlay
 prepare_e2e_prometheus_files
 prepare_entra_mock_files
 
@@ -661,10 +833,14 @@ if docker ps -a --format '{{.Names}}' | grep -Fxq "$PROMETHEUS_CONTAINER_NAME"; 
 fi
 
 echo "Starting e2e compose stack on ${USER_URL}, ${CONTROL_URL}, and ${PROMETHEUS_URL}."
+compose up -d postgres
+wait_for_postgres_service
+provision_postgres_runtime_role
 compose up -d --build
 
 wait_for_url "main API readiness" "${USER_URL}/ready"
 wait_for_url "control portal API" "${CONTROL_URL}/control/api/session" "Authorization: Bearer ${CONTROL_TOKEN}"
+verify_postgres_runtime_migration_state
 if [[ "$E2E_MODE" != "entra_scim" ]]; then
   wait_for_url "Prometheus readiness" "${PROMETHEUS_URL}/-/ready"
 fi

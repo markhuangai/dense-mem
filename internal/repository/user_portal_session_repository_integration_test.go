@@ -17,14 +17,6 @@ func TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			GRANT EXECUTE ON FUNCTION public.dense_mem_portal_session_create(TEXT, UUID, TEXT, TIMESTAMPTZ, TIMESTAMPTZ) TO densemem_rls_test;
-			GRANT EXECUTE ON FUNCTION public.dense_mem_portal_session_get(TEXT) TO densemem_rls_test;
-			GRANT EXECUTE ON FUNCTION public.dense_mem_portal_session_delete(TEXT) TO densemem_rls_test;
-			GRANT EXECUTE ON FUNCTION public.dense_mem_portal_session_delete_expired(TIMESTAMPTZ) TO densemem_rls_test;
-		`).Error
-	}))
 	teamA := createLedgerTeam(t, adminDB, rls, "portal-session-rls-team-a")
 	profileA := createLedgerProfile(t, adminDB, rls, teamA, "portal-session-rls-profile-a")
 	teamB := createLedgerTeam(t, adminDB, rls, "portal-session-rls-team-b")
@@ -103,16 +95,7 @@ func TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle(t *testing.T) {
 			WHERE session_hash IN (?, ?)
 		`, sessionA.SessionHash, sessionB.SessionHash).Scan(&systemContextVisible).Error
 	}))
-	require.Zero(t, systemContextVisible, "the application role must not bypass the dedicated portal-session role")
-
-	var functionVisible int64
-	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamA, profileA, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			SELECT count(*)
-			FROM public.dense_mem_portal_session_get(?)
-		`, sessionA.SessionHash).Scan(&functionVisible).Error
-	}))
-	require.Zero(t, functionVisible, "non-system contexts must not read through portal-session functions")
+	require.Equal(t, int64(2), systemContextVisible, "system contexts must access portal sessions through RLS")
 
 	deniedSession := &domain.UserPortalSession{
 		SessionHash: "portal-session-hash-denied-" + uuid.NewString(),
@@ -123,26 +106,37 @@ func TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle(t *testing.T) {
 	}
 	createErr := rls.WithTeamProfileTx(ctx, appDB, teamA, profileA, func(tx *gorm.DB) error {
 		return tx.Exec(`
-			SELECT public.dense_mem_portal_session_create(?, ?, ?, ?, ?)
+			INSERT INTO user_portal_sessions (
+				session_hash, key_id, csrf_hash, expires_at, created_at
+			) VALUES (?, ?, ?, ?, ?)
 		`, deniedSession.SessionHash, deniedSession.KeyID, deniedSession.CSRFHash, deniedSession.ExpiresAt, deniedSession.CreatedAt).Error
 	})
-	require.Error(t, createErr, "non-system contexts must not create through portal-session functions")
+	require.Error(t, createErr, "non-system contexts must not create portal sessions")
 	deniedLoaded, err := repo.GetSession(ctx, deniedSession.SessionHash)
 	require.NoError(t, err)
 	require.Nil(t, deniedLoaded)
 
-	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamA, profileA, func(tx *gorm.DB) error {
-		return tx.Exec(`SELECT public.dense_mem_portal_session_delete(?)`, sessionA.SessionHash).Error
-	}))
-	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamA, profileA, func(tx *gorm.DB) error {
-		return tx.Exec(`SELECT public.dense_mem_portal_session_delete_expired(?)`, time.Now().UTC().Add(time.Hour)).Error
-	}))
-	unchangedA, err := repo.GetSession(ctx, sessionA.SessionHash)
+	expiredSession := &domain.UserPortalSession{
+		SessionHash: "portal-session-hash-expired-" + uuid.NewString(),
+		KeyID:       uuid.MustParse(profileA),
+		CSRFHash:    "portal-csrf-hash-expired",
+		ExpiresAt:   createdAt.Add(-time.Minute),
+		CreatedAt:   createdAt.Add(-time.Hour),
+	}
+	require.NoError(t, repo.CreateSession(ctx, expiredSession))
+	expiredLoaded, err := repo.GetSession(ctx, expiredSession.SessionHash)
 	require.NoError(t, err)
-	require.NotNil(t, unchangedA, "non-system function calls must not delete portal sessions")
-	unchangedB, err := repo.GetSession(ctx, sessionB.SessionHash)
-	require.NoError(t, err)
-	require.NotNil(t, unchangedB, "non-system cleanup must not delete portal sessions")
+	require.Nil(t, expiredLoaded)
+	require.NoError(t, repo.DeleteExpiredSessions(ctx, createdAt))
+	var expiredCount int64
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM user_portal_sessions
+			WHERE session_hash = ?
+		`, expiredSession.SessionHash).Scan(&expiredCount).Error
+	}))
+	require.Zero(t, expiredCount)
 
 	require.NoError(t, repo.DeleteSession(ctx, sessionA.SessionHash))
 	deletedA, err := repo.GetSession(ctx, sessionA.SessionHash)
