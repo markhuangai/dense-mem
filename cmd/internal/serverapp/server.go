@@ -456,7 +456,11 @@ func RunActiveServer(
 
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
-	ledgerRepo.StartSubmissionQuarantinePurger(workerCtx, time.Minute)
+	var quarantinePurgeMetrics repository.SubmissionQuarantinePurgeMetrics
+	if metrics, ok := discoverabilityMetrics.(repository.SubmissionQuarantinePurgeMetrics); ok {
+		quarantinePurgeMetrics = metrics
+	}
+	ledgerRepo.StartSubmissionQuarantinePurger(workerCtx, time.Minute, slog.Default(), quarantinePurgeMetrics)
 	startActiveWorkers(
 		workerCtx,
 		logger,

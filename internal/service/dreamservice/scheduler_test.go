@@ -77,6 +77,13 @@ func TestSchedulerStartReturnsWhenUnavailableOrCanceled(t *testing.T) {
 	NewScheduler(&schedulerDreamStub{cfg: dueSchedulerConfig()}, &schedulerProfileStub{}, discardSchedulerLogger()).Start(ctx)
 }
 
+func TestSchedulerNextMinuteDelayAlignsToUTCMinute(t *testing.T) {
+	now := time.Date(2026, 6, 11, 3, 0, 29, 500_000_000, time.FixedZone("offset", 2*60*60))
+
+	require.Equal(t, 30*time.Second+500*time.Millisecond, schedulerNextMinuteDelay(now))
+	require.Equal(t, time.Minute, schedulerNextMinuteDelay(now.Truncate(time.Minute)))
+}
+
 func TestSchedulerPagesThroughTeamsAndUsesScheduledPath(t *testing.T) {
 	teams := make([]*domain.Profile, 101)
 	for i := range teams {

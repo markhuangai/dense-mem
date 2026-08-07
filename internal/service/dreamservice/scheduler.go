@@ -70,6 +70,13 @@ func (s *Scheduler) Start(ctx context.Context) {
 		return
 	}
 	s.runDue(ctx)
+	minuteTimer := time.NewTimer(schedulerNextMinuteDelay(time.Now().UTC()))
+	defer minuteTimer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-minuteTimer.C:
+	}
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
@@ -80,6 +87,11 @@ func (s *Scheduler) Start(ctx context.Context) {
 			s.runDue(ctx)
 		}
 	}
+}
+
+func schedulerNextMinuteDelay(now time.Time) time.Duration {
+	next := now.UTC().Truncate(time.Minute).Add(time.Minute)
+	return next.Sub(now)
 }
 
 func (s *Scheduler) runDue(ctx context.Context) {

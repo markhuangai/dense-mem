@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"gorm.io/gorm"
@@ -10,7 +11,8 @@ import (
 
 // PurgeExpiredSubmissionQuarantinePayloads runs only in system mode. It
 // claims a bounded batch, appends a purge outcome, and then removes the raw
-// payload while retaining the append-only ledger identifiers and hashes.
+// payload while retaining the append-only ledger identifiers, hashes, security
+// events, and staged evidence required for audit and lineage.
 func (r *LedgerRepositoryImpl) PurgeExpiredSubmissionQuarantinePayloads(ctx context.Context, now time.Time, batchSize int) (int, error) {
 	if batchSize <= 0 || batchSize > 100 {
 		batchSize = 100
@@ -77,10 +79,50 @@ func (r *LedgerRepositoryImpl) PurgeExpiredSubmissionQuarantinePayloads(ctx cont
 	return purged, nil
 }
 
+// SubmissionQuarantinePurgeMetrics is the narrow metric surface needed by the
+// retention worker. It is intentionally separate from request metrics because
+// purge failures have no request identity.
+type SubmissionQuarantinePurgeMetrics interface {
+	IncSubmissionQuarantinePurgeFailure()
+}
+
+func drainExpiredSubmissionQuarantinePayloads(
+	ctx context.Context,
+	now time.Time,
+	batchSize int,
+	purge func(context.Context, time.Time, int) (int, error),
+) error {
+	for {
+		purged, err := purge(ctx, now, batchSize)
+		if err != nil {
+			return err
+		}
+		if purged < batchSize {
+			return nil
+		}
+	}
+}
+
+func observeSubmissionQuarantinePurgeFailure(ctx context.Context, logger *slog.Logger, metrics SubmissionQuarantinePurgeMetrics) {
+	if logger != nil {
+		logger.ErrorContext(ctx, "submission quarantine purge failed",
+			"error_class", "database_operation",
+		)
+	}
+	if metrics != nil {
+		metrics.IncSubmissionQuarantinePurgeFailure()
+	}
+}
+
 // StartSubmissionQuarantinePurger starts the global retention worker. It is
 // intentionally independent of active-team workers so expired payloads are
 // purged even when no team has a queued placement run.
-func (r *LedgerRepositoryImpl) StartSubmissionQuarantinePurger(ctx context.Context, interval time.Duration) {
+func (r *LedgerRepositoryImpl) StartSubmissionQuarantinePurger(
+	ctx context.Context,
+	interval time.Duration,
+	logger *slog.Logger,
+	metrics SubmissionQuarantinePurgeMetrics,
+) {
 	if interval <= 0 {
 		interval = time.Minute
 	}
@@ -92,7 +134,10 @@ func (r *LedgerRepositoryImpl) StartSubmissionQuarantinePurger(ctx context.Conte
 			case <-ctx.Done():
 				return
 			case now := <-ticker.C:
-				_, _ = r.PurgeExpiredSubmissionQuarantinePayloads(ctx, now.UTC(), 100)
+				err := drainExpiredSubmissionQuarantinePayloads(ctx, now.UTC(), 100, r.PurgeExpiredSubmissionQuarantinePayloads)
+				if err != nil && ctx.Err() == nil {
+					observeSubmissionQuarantinePurgeFailure(ctx, logger, metrics)
+				}
 			}
 		}
 	}()

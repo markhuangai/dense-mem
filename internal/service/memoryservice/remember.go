@@ -480,7 +480,7 @@ func rememberResultFromLedger(created *repository.CreateIngestResult, correlatio
 	return &RememberResult{
 		IngestID:          created.IngestID,
 		SubmissionID:      created.IngestID,
-		ProcessingState:   created.Status,
+		ProcessingState:   publicSubmissionProcessingState(created.Status, created.SemanticHoldState),
 		CheckAfterSeconds: rememberCheckAfterSeconds,
 		StatusTool:        rememberStatusTool,
 		CorrelationID:     correlationID,

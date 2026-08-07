@@ -5,9 +5,10 @@ SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 
--- Quarantine expiry is a fixed, bounded retention window. The normal ledger
--- keeps identifiers, hashes, and lifecycle events; submitted payloads move to
--- the system-only table below and are purged after the window.
+-- Quarantine expiry is a fixed, bounded retention window for the raw
+-- provider-facing payload copy. The append-only ledger keeps identifiers,
+-- hashes, security events, and staged evidence for audit and lineage; those
+-- immutable source rows are not part of the raw-payload retention boundary.
 ALTER TABLE placement_runs
     ADD COLUMN IF NOT EXISTS quarantine_expires_at TIMESTAMPTZ NULL;
 
@@ -101,7 +102,10 @@ CREATE POLICY submission_quarantine_payloads_system_delete ON submission_quarant
     FOR DELETE USING (current_setting('app.tx_mode', true) IN ('system', 'migration'));
 
 COMMENT ON TABLE submission_quarantine_payloads IS
-    'System/migration-only quarantined submission payloads. Purge after exactly 24 hours; public reads are forbidden.';
+    'System/migration-only raw quarantined submission payload copy. Purge after exactly 24 hours; immutable source ledger rows remain for audit and lineage; public reads are forbidden.';
+
+COMMENT ON TABLE submission_quarantine_tombstones IS
+    'System/migration-only hashes identifying raw quarantine fragments after payload purge; source evidence remains immutable audit history.';
 
 -- +goose StatementEnd
 

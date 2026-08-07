@@ -603,8 +603,9 @@ func (r *LedgerRepositoryImpl) CompleteSubmissionAssessment(
 }
 
 // storeSubmissionQuarantinePayload moves the exact provider-facing material
-// into the system-only retention table before normal evidence is tombstoned.
-// IDs and hashes remain in the append-only ledger for audit and lineage.
+// into the system-only raw-payload retention table before normal evidence is
+// tombstoned. The append-only source rows remain restricted audit history;
+// purge removes only this raw-payload copy while IDs and hashes preserve lineage.
 func storeSubmissionQuarantinePayload(ctx context.Context, tx *gorm.DB, scope SubmissionAssessmentRunScope) error {
 	var proposal, evidence, assessorResponse []byte
 	row := tx.WithContext(ctx).Raw(`

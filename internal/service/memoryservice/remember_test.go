@@ -123,6 +123,30 @@ func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T)
 	require.Equal(t, "corr-canonical", actor["correlation_id"])
 }
 
+func TestRememberReplayMapsInternalStatesToPublicProcessingStates(t *testing.T) {
+	teamID, profileID, keyID := uuid.New(), uuid.New(), uuid.New()
+	for status, want := range map[string]string{
+		string(domain.PlacementRunQueued):         "queued",
+		string(domain.PlacementRunGuarded):        "queued",
+		string(domain.PlacementRunProcessing):     "processing",
+		string(domain.PlacementRunCompleted):      "completed",
+		string(domain.PlacementRunAwaitingReview): "rejected",
+		string(domain.PlacementRunQuarantined):    "quarantined",
+		string(domain.PlacementRunFailed):         "failed",
+		"unexpected":                              "failed",
+	} {
+		ledger := &rememberLedgerStub{result: &repository.CreateIngestResult{
+			TeamID: teamID.String(), IngestID: uuid.NewString(), PlacementRunID: uuid.NewString(), Status: status,
+		}}
+		result, err := NewRememberService(RememberDependencies{Ledger: ledger}).Remember(
+			authenticatedRememberContext(teamID, profileID, keyID),
+			RememberRequest{ContractVersion: domain.ContractVersion, Evidence: []RememberEvidenceInput{{Content: "replay"}}},
+		)
+		require.NoError(t, err)
+		require.Equal(t, want, result.ProcessingState, "internal status %q", status)
+	}
+}
+
 func TestGetSubmissionStatusReturnsBoundedOwnerProjection(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()

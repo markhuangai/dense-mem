@@ -34,6 +34,7 @@ if (targetBeforeReplacement.holdCount !== 1 || targetBeforeReplacement.semanticW
   throw new Error("target hold did not preserve zero semantic writes and one hold fact");
 }
 
+await waitForVerifierRequest(teamID, verifierBeforeTarget);
 const verifierBeforeUnauthorized = await prometheusValue("densemem_verifier_requests_total", teamID);
 const sameTeamUnauthorized = await mcpRaw(
   sameTeamOtherProfile.apiKey,
@@ -312,6 +313,16 @@ async function prometheusValue(metric, targetTeamID) {
     throw new Error(`Prometheus returned a non-numeric ${metric}`);
   }
   return parsed;
+}
+
+async function waitForVerifierRequest(targetTeamID, previousValue) {
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    if (await prometheusValue("densemem_verifier_requests_total", targetTeamID) > previousValue) {
+      return;
+    }
+    await delay(2_000);
+  }
+  throw new Error("target verifier request was not reflected in Prometheus");
 }
 
 function postgresRow(sql, expectedFields = 0) {

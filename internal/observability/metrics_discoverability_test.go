@@ -15,6 +15,11 @@ func TestNoopDiscoverabilityMetricsNeverPanics(t *testing.T) {
 	m.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
 	m.ObserveConflictReviewDuration(1, "completed")
 	m.IncVerifyVerdict("verified")
+	metrics, ok := m.(SubmissionQuarantineMetrics)
+	if !ok {
+		t.Fatal("noop metrics does not implement SubmissionQuarantineMetrics")
+	}
+	metrics.IncSubmissionQuarantinePurgeFailure()
 }
 
 func TestInMemoryDiscoverabilityMetricsRecordsActiveSignals(t *testing.T) {
@@ -33,6 +38,7 @@ func TestInMemoryDiscoverabilityMetricsRecordsActiveSignals(t *testing.T) {
 	m.ObserveDreamFeedback(DreamFeedback{Decision: "invalid", Outcome: "invalid", FromStatus: "invalid"})
 	m.ObserveConflictReviewDuration(2.5, "completed")
 	m.IncVerifyVerdict("verified")
+	m.IncSubmissionQuarantinePurgeFailure()
 
 	if got := m.EmbeddingSamples(); len(got) != 1 || got[0].DurationMs != 123.4 || got[0].Outcome != "ok" {
 		t.Fatalf("embedding samples = %+v", got)
@@ -57,6 +63,9 @@ func TestInMemoryDiscoverabilityMetricsRecordsActiveSignals(t *testing.T) {
 	}
 	if got := m.VerifyVerdictCount("verified"); got != 1 {
 		t.Fatalf("verified verdict count = %d; want 1", got)
+	}
+	if got := m.SubmissionQuarantinePurgeFailureCount(); got != 1 {
+		t.Fatalf("quarantine purge failure count = %d; want 1", got)
 	}
 }
 
