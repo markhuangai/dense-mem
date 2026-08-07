@@ -114,8 +114,7 @@ func TestTelemetryTerminalFailureSeriesIsOperatorSystemOnly(t *testing.T) {
 	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	team := TelemetryScope{Type: "team", TeamID: &teamID}
 	teamCard := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(team, nil, "1h", true), "assessor_terminal_failures")
-	require.NotNil(t, teamCard)
-	require.Contains(t, teamCard.Query, `team_id="11111111-1111-4111-8111-111111111111"`)
+	require.Nil(t, teamCard)
 }
 
 func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {

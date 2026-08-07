@@ -172,7 +172,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	assessment, response, reused, providerAttempted, releaseProviderAttempt, err := s.loadOrAssess(ctx, *run, scope, request)
 	if err != nil {
 		if errors.Is(err, repository.ErrSubmissionAssessorAttemptConsumed) {
-			return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_attempt_consumed")
+			return true, terminalizeAfterError(err, func() error {
+				return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_attempt_consumed")
+			})
 		}
 		if providerAttempted && errors.Is(err, verifier.ErrVerifierMalformedResponse) {
 			failureClass, providerTurns := semanticAssessmentMalformedFailure(err)
@@ -212,7 +214,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewReviewRequired), "candidate", "commit_review")
 	}
 	if errors.Is(err, repository.ErrSubmissionReplacementConflict) {
-		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "replacement_conflict")
+		return true, terminalizeAfterError(err, func() error {
+			return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "replacement_conflict")
+		})
 	}
 	if errors.Is(err, repository.ErrSubmissionAssessmentScopeMismatch) {
 		return true, terminalizeAfterError(err, func() error {

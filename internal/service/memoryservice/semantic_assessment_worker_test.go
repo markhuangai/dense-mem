@@ -136,6 +136,19 @@ func TestSemanticAssessmentWorkerRecordsFirstDispositionOnlyForRemember(t *testi
 	}
 }
 
+func TestSemanticAssessmentWorkerRecordsPlacementLoadFailureStage(t *testing.T) {
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	ledger, _, _, _, _, worker := semanticAssessmentWorkerFixtureWithMetrics(t, metrics)
+	ledger.getErr = errors.New("placement load failed")
+
+	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
+
+	require.True(t, processed)
+	require.ErrorContains(t, err, "placement load failed")
+	assert.Equal(t, 1, metrics.AssessorTerminalFailureCount("placement_load"))
+	assert.Zero(t, metrics.AssessorTerminalFailureCount("placement_item"))
+}
+
 func TestSemanticAssessmentWorkerReusesPersistedAssessmentAfterCommitFailure(t *testing.T) {
 	ledger, assessments, commit, _, provider, worker := semanticAssessmentWorkerFixture(t)
 	commit.commitErr = errors.New("semantic transaction failed")
@@ -771,6 +784,7 @@ func testIntPointer(value int) *int { return &value }
 type semanticAssessmentWorkerLedgerStub struct {
 	run               *repository.PlacementRun
 	placement         *repository.CreateIngestResult
+	getErr            error
 	appendSecurity    []repository.SecurityEventInput
 	appendSecurityErr error
 	finishCalls       int
@@ -782,6 +796,9 @@ func (s *semanticAssessmentWorkerLedgerStub) CreateIngest(context.Context, repos
 }
 
 func (s *semanticAssessmentWorkerLedgerStub) GetPlacementRun(context.Context, repository.GetPlacementRunInput) (*repository.CreateIngestResult, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
 	return s.placement, nil
 }
 

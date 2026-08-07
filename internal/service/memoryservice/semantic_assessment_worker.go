@@ -562,7 +562,7 @@ func (s *semanticAssessmentPlacementWorkerService) retryOrFail(
 		firstDisposition, err := s.ledger.FinishPlacementRun(ctx, run.TeamID, run.PlacementRunID, s.workerID, string(domain.PlacementRunFailed), "semantic assessment failed before item selection")
 		if err == nil {
 			s.recordFirstDisposition(ctx, run, firstDisposition)
-			observability.RecordAssessorTerminalFailure(s.metrics, "placement_item")
+			observability.RecordAssessorTerminalFailure(s.metrics, stage)
 		}
 		return err
 	}

@@ -644,7 +644,7 @@ func loadLatestSubmissionPredicate(
 		              ELSE 2 END,
 		         predicate_key ASC
 		LIMIT 2
-	`, teamID, requestedKey, canonicalKey, requestedKey, canonicalKey, canonicalKey, requestedKey).Rows()
+	`, teamID, requestedKey, canonicalKey, requestedKey, canonicalKey, requestedKey, canonicalKey).Rows()
 	if err != nil {
 		return nil, err
 	}

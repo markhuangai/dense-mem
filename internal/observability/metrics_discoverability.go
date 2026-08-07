@@ -411,7 +411,8 @@ func NormalizeAssessorTerminalFailureStage(value string) string {
 		"candidate_prefetch", "assessment_attempt_consumed", "assessment", "provider",
 		"review_override", "security_signal", "confidence_policy", "policy_review",
 		"deterministic_policy", "commit_review", "replacement_conflict", "assessment_scope",
-		"stale_source", "semantic_commit", "verification", "stored_response":
+		"stale_source", "semantic_commit", "verification", "stored_response",
+		"predicate_catalog", "extraction", "preflight":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return "unknown"

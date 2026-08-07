@@ -141,8 +141,9 @@ type RelationshipOutcomeRef struct {
 }
 
 type PlacementError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Retryable bool   `json:"retryable"`
 }
 
 func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*RememberResult, error) {
@@ -237,9 +238,6 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 }
 
 func validateRememberRelationshipCoverage(evidenceCount int, relationships []map[string]any) error {
-	if len(relationships) == 0 {
-		return nil
-	}
 	covered := make([]bool, evidenceCount)
 	for _, relationship := range relationships {
 		for _, rawSupport := range rememberArrayValues(relationship["supports"]) {
@@ -493,10 +491,20 @@ func placementItemErrors(item repository.PlacementItem) []PlacementError {
 	if item.Status != "failed" && item.Category != "failed" {
 		return []PlacementError{}
 	}
+	if strings.EqualFold(resultString(item.Result, "status"), "superseded") {
+		return []PlacementError{}
+	}
+	if _, ok := item.Result["failure_stage"]; !ok {
+		return []PlacementError{}
+	}
 	stage := observability.NormalizeAssessorTerminalFailureStage(resultString(item.Result, "failure_stage"))
+	if stage == "unknown" {
+		return []PlacementError{}
+	}
 	return []PlacementError{{
-		Code:    "semantic_assessment_terminal_failure",
-		Message: "semantic assessment failed at " + stage,
+		Code:      "semantic_assessment_terminal_failure",
+		Message:   "semantic assessment failed at " + stage,
+		Retryable: false,
 	}}
 }
 

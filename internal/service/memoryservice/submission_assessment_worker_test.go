@@ -866,6 +866,7 @@ type submissionAssessmentWorkerAssessmentStub struct {
 	completions       []repository.CompleteSubmissionAssessmentInput
 	requeues          []repository.RequeueSubmissionAssessmentInput
 	completeNil       bool
+	completeErr       error
 	requeueNil        bool
 	reviewExpiryCalls int
 	reviewExpiryErr   error
@@ -928,6 +929,9 @@ func (s *submissionAssessmentWorkerAssessmentStub) CommitSubmissionAssessment(_ 
 
 func (s *submissionAssessmentWorkerAssessmentStub) CompleteSubmissionAssessment(_ context.Context, input repository.CompleteSubmissionAssessmentInput) (*repository.CompleteSubmissionAssessmentResult, error) {
 	s.completions = append(s.completions, input)
+	if s.completeErr != nil {
+		return nil, s.completeErr
+	}
 	if s.completeNil {
 		return nil, nil
 	}

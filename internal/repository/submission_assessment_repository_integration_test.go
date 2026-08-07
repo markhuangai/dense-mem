@@ -299,6 +299,70 @@ func TestSubmissionAssessmentCommitReusesCompatiblePredicateAlias(t *testing.T) 
 	assert.Zero(t, registeredKeyCount)
 }
 
+func TestSubmissionAssessmentCommitPrefersExactPredicateKeyOverCanonical(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-assessment-exact-predicate-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-exact-predicate-owner")
+	insertSearchTestContract(t, adminDB, rls, "submission-assessment-exact-predicate-search", 3, "exact", "")
+	semantic := NewSemanticRepository(appDB, rls)
+	createSemanticEntity(t, ctx, semantic, teamID, ownerID, "concept", "Exact predicate seed")
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		for _, predicateKey := range []string{"Uses-DB", "uses_db"} {
+			if err := tx.Exec(`
+				INSERT INTO team_predicate_definitions (
+				    team_id, predicate_key, version, aliases, allowed_subject_kinds,
+				    allowed_object_kinds, relationship_kind, current_cardinality,
+				    lifecycle_state, origin, metadata
+				) VALUES (
+				    ?::uuid, ?, 1, ARRAY[]::text[], ARRAY['concept']::text[],
+				    ARRAY['concept']::text[], 'state', 'many', 'active', 'built_in', '{}'::jsonb
+				)
+			`, teamID, predicateKey).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	repo := NewLedgerRepository(appDB, rls)
+	ingest := createSubmissionAssessmentIngest(t, ctx, repo, teamID, ownerID, "submission-assessment-exact-predicate")
+	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+	input := submissionAssessmentCommitFixture(*claimed, ingest, assessment.AssessmentID, false)
+	for index := range input.PredicateRegistrations {
+		input.PredicateRegistrations[index].PredicateKey = "Uses-DB"
+	}
+
+	_, err = repo.CommitSubmissionAssessment(ctx, input)
+	require.NoError(t, err)
+
+	var predicateKeys []string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		rows, err := tx.Raw(`
+			SELECT predicate_key
+			FROM predicate_registration_events
+			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+			ORDER BY relationship_ref ASC
+		`, teamID, ingest.PlacementRunID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var predicateKey string
+			if err := rows.Scan(&predicateKey); err != nil {
+				return err
+			}
+			predicateKeys = append(predicateKeys, predicateKey)
+		}
+		return rows.Err()
+	}))
+	assert.Equal(t, []string{"Uses-DB", "Uses-DB"}, predicateKeys)
+}
+
 func TestSubmissionTerminalStatusesTreatSupersededAsFailed(t *testing.T) {
 	itemStatus, itemCategory, runStatus := submissionTerminalStatuses(string(domain.SemanticReviewSuperseded), "")
 	assert.Equal(t, string(domain.PlacementRunFailed), itemStatus)

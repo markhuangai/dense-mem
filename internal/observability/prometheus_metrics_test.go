@@ -380,6 +380,11 @@ func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
 	if got := NormalizeAssessorTerminalFailureStage("unexpected stage"); got != "unknown" {
 		t.Fatalf("NormalizeAssessorTerminalFailureStage() = %q, want unknown", got)
 	}
+	for _, stage := range []string{"predicate_catalog", "extraction", "preflight"} {
+		if got := NormalizeAssessorTerminalFailureStage(stage); got != stage {
+			t.Fatalf("NormalizeAssessorTerminalFailureStage(%q) = %q, want %q", stage, got, stage)
+		}
+	}
 
 	RecordAssessorCall(NoopDiscoverabilityMetrics(), 0, 0, 0, "")
 	RecordAssessorValidationFailure(NoopDiscoverabilityMetrics(), "")

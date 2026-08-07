@@ -369,25 +369,23 @@ func validateSubmittedEvidenceCoverage(raw any, evidence []any, path string) err
 	if !ok || len(relationships) == 0 {
 		return nil
 	}
-	if ok {
-		for _, item := range relationships {
-			relationship, ok := objectFields(item)
+	for _, item := range relationships {
+		relationship, ok := objectFields(item)
+		if !ok {
+			continue
+		}
+		supports, ok := relationship["supports"].([]any)
+		if !ok {
+			continue
+		}
+		for _, support := range supports {
+			fields, ok := objectFields(support)
 			if !ok {
 				continue
 			}
-			supports, ok := relationship["supports"].([]any)
-			if !ok {
-				continue
-			}
-			for _, support := range supports {
-				fields, ok := objectFields(support)
-				if !ok {
-					continue
-				}
-				index, ok := schemaNumber(fields["evidence_index"])
-				if ok && int(index) >= 0 && int(index) < len(covered) {
-					covered[int(index)] = true
-				}
+			index, ok := schemaNumber(fields["evidence_index"])
+			if ok && int(index) >= 0 && int(index) < len(covered) {
+				covered[int(index)] = true
 			}
 		}
 	}
