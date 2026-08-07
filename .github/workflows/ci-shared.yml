@@ -37,6 +37,9 @@ jobs:
       - name: Run repository lint
         run: npm run --prefix .lint lint:lines
 
+      - name: Run scheduled-dreaming timing test
+        run: node --test tests/uat/team_dreaming_schedule.test.mjs
+
       - name: Run evaluation monitor shell test
         run: bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
 
