@@ -10,8 +10,8 @@ SELECT set_config('app.current_profile_id', '', true);
 -- hashes, security events, and staged evidence for audit and lineage; those
 -- immutable source rows are not part of the raw-payload retention boundary.
 -- The placement_runs CHECK is installed NOT VALID to avoid an ACCESS EXCLUSIVE
--- full-table scan during installation; validation uses the lower-impact
--- SHARE UPDATE EXCLUSIVE lock before the backfill.
+-- full-table scan during installation. Validation and the existing-row backfill
+-- run in the following migration, after this transaction releases the add-constraint lock.
 ALTER TABLE placement_runs
     ADD COLUMN IF NOT EXISTS quarantine_expires_at TIMESTAMPTZ NULL;
 
@@ -22,14 +22,6 @@ ALTER TABLE placement_runs
         quarantine_expires_at IS NULL
         OR quarantine_expires_at >= created_at + interval '24 hours'
     ) NOT VALID;
-
-ALTER TABLE placement_runs
-    VALIDATE CONSTRAINT placement_runs_quarantine_expiry_check;
-
-UPDATE placement_runs
-SET quarantine_expires_at = COALESCE(completed_at, created_at) + interval '24 hours'
-WHERE status = 'quarantined'
-  AND quarantine_expires_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS submission_quarantine_payloads (
     team_id UUID NOT NULL,
