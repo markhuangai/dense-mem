@@ -686,10 +686,9 @@ func TestPlacementResolutionQuarantineRejectsTerminalRetryWithoutResettingExpiry
 		Evidence: []EvidenceInput{{
 			Content: "Manual review confirmed this evidence must remain quarantined.",
 			InitialEvent: &SecurityEventDraft{
-				EventKind:      "deterministic_scan",
-				Decision:       "quarantine",
-				ScanPolicyHash: "manual-review-policy",
-				Reason:         "manual review retained quarantine",
+				EventKind: "deterministic_scan",
+				Decision:  "quarantine",
+				Reason:    "manual review retained quarantine",
 			},
 		}},
 		IdempotencyKey: "quarantine-retry-1",
