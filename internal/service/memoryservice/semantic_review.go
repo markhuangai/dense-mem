@@ -19,7 +19,6 @@ const (
 	SemanticPlacementDefaultVerifierCallBudget = semanticProposalDefaultMaxAttempts + semanticReviewDefaultMaxAttempts
 	semanticReviewOutcomeKind                  = "semantic_review"
 	semanticReviewAttemptOutcomeKind           = "semantic_review_provider_attempt"
-	semanticReviewSecurityPolicyHash           = "sha256:dc58e28e205acb37e6860e393cfd21c9f38bf78c7df8bb15c1d016b3478e51a4"
 
 	semanticFailureStagePredicateCatalog = "predicate_catalog"
 	semanticFailureStageExtraction       = "extraction"
@@ -296,10 +295,9 @@ func (s *semanticReviewService) appendSecurityEvents(ctx context.Context, job Se
 			IngestID:       job.IngestID,
 			FragmentID:     evidence.FragmentID,
 			SecurityEventDraft: repository.SecurityEventDraft{
-				EventKind:      "verifier_signal",
-				Decision:       "quarantine",
-				ScanPolicyHash: semanticReviewSecurityPolicyHash,
-				Reason:         "semantic verifier reported security signal",
+				EventKind: "verifier_signal",
+				Decision:  "quarantine",
+				Reason:    "semantic verifier reported security signal",
 				Signals: []repository.SecuritySignalInput{{
 					Kind:      signal.Kind,
 					Severity:  semanticSignalSeverity(signal.Kind),

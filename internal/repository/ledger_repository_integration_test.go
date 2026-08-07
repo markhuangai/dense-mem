@@ -569,10 +569,9 @@ func TestLedgerCreateIngestLinksSourceRevisionQuarantineAndRollsBackOnSourceConf
 			SourceKey:           "doc://write-pipeline",
 			SourceRevisionToken: "rev-1",
 			InitialEvent: &SecurityEventDraft{
-				EventKind:      "deterministic_scan",
-				Decision:       "quarantine",
-				ScanPolicyHash: "scan-v1",
-				Reason:         "bounded public reason",
+				EventKind: "deterministic_scan",
+				Decision:  "quarantine",
+				Reason:    "bounded public reason",
 				Signals: []SecuritySignalInput{{
 					Kind:      "prompt_secret_extraction",
 					Severity:  "critical",

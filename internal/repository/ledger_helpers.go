@@ -186,7 +186,6 @@ func normalizeSecurityEventInput(input SecurityEventInput) SecurityEventInput {
 func normalizeSecurityEventDraft(input SecurityEventDraft) SecurityEventDraft {
 	input.EventKind = strings.TrimSpace(input.EventKind)
 	input.Decision = strings.TrimSpace(input.Decision)
-	input.ScanPolicyHash = strings.TrimSpace(input.ScanPolicyHash)
 	input.Reason = strings.TrimSpace(input.Reason)
 	for i := range input.Signals {
 		input.Signals[i].Kind = strings.TrimSpace(input.Signals[i].Kind)
@@ -249,13 +248,13 @@ func insertSecurityEvent(ctx context.Context, tx *gorm.DB, input SecurityEventIn
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_security_events (
 		    team_id, fragment_id, ingest_id, owner_profile_id, event_kind, decision,
-		    scan_policy_hash, reason, metadata
+		    reason, metadata
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb
 		)
 		RETURNING security_event_id::text
 	`, input.TeamID, input.FragmentID, input.IngestID, input.OwnerProfileID,
-		input.EventKind, input.Decision, input.ScanPolicyHash, input.Reason, string(metadata)).Rows()
+		input.EventKind, input.Decision, input.Reason, string(metadata)).Rows()
 	if err != nil {
 		return "", err
 	}

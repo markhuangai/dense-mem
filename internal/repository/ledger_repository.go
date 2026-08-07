@@ -77,12 +77,11 @@ type EvidenceInput struct {
 }
 
 type SecurityEventDraft struct {
-	EventKind      string
-	Decision       string
-	ScanPolicyHash string
-	Reason         string
-	Signals        []SecuritySignalInput
-	Metadata       map[string]any
+	EventKind string
+	Decision  string
+	Reason    string
+	Signals   []SecuritySignalInput
+	Metadata  map[string]any
 }
 
 type SecurityEventInput struct {

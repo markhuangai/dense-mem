@@ -697,11 +697,10 @@ func (s *submissionAssessmentPlacementWorkerService) completeProviderSecurityQua
 		quarantines = append(quarantines, repository.SubmissionAssessmentSecurityQuarantineInput{
 			FragmentID: item.Fragment.FragmentID,
 			SecurityEventDraft: repository.SecurityEventDraft{
-				EventKind:      "verifier_signal",
-				Decision:       "quarantine",
-				ScanPolicyHash: "dense-mem.v2.4",
-				Reason:         "semantic assessor reported security signal",
-				Signals:        entry.signals,
+				EventKind: "verifier_signal",
+				Decision:  "quarantine",
+				Reason:    "semantic assessor reported security signal",
+				Signals:   entry.signals,
 			},
 		})
 	}

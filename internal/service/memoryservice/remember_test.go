@@ -95,6 +95,7 @@ func TestPlacementRelationshipOutcomeProjection(t *testing.T) {
 }
 
 func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T) {
+	const exactContent = `  C:\notes\[draft]\report.txt includes "\u0041", '\x42', [%20], and {&amp;}.  `
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
@@ -119,7 +120,7 @@ func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T)
 		ContractVersion: domain.ContractVersion,
 		IdempotencyKey:  "remember-idem",
 		Evidence: []RememberEvidenceInput{{
-			Content:        "  exact evidence bytes stay intact  ",
+			Content:        exactContent,
 			SourceType:     "document",
 			Source:         "wiki",
 			SourceGroup:    "wiki:target-architecture",
@@ -145,9 +146,13 @@ func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T)
 		t.Fatalf("idempotency/hash not set: %#v", input)
 	}
 	require.True(t, input.TelemetryRemember)
-	if got := input.Evidence[0].Content; got != "  exact evidence bytes stay intact  " {
+	if got := input.Evidence[0].Content; got != exactContent {
 		t.Fatalf("content = %q", got)
 	}
+	require.NotNil(t, input.Evidence[0].InitialEvent)
+	require.Equal(t, "deterministic_scan", input.Evidence[0].InitialEvent.EventKind)
+	require.Equal(t, "pass", input.Evidence[0].InitialEvent.Decision)
+	require.Empty(t, input.Evidence[0].InitialEvent.Metadata)
 	if input.Evidence[0].Authority != "authoritative" {
 		t.Fatalf("authority = %q", input.Evidence[0].Authority)
 	}

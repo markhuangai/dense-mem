@@ -27,8 +27,6 @@ func TestSecurityRejectionAuditAdapterWritesBoundedAuditEntry(t *testing.T) {
 		Surface:        "remember",
 		ReasonCode:     memoryservice.SubmissionSecurityErrorRejected,
 		EvidenceCount:  1,
-		PolicyVersion:  "dense-mem.remember-intake-security.v1",
-		PolicyHash:     "sha256:test",
 		Signals: []memoryservice.SecurityRejectionAuditSignal{{
 			EvidenceIndex: 0,
 			Source:        "evidence",
@@ -51,6 +49,8 @@ func TestSecurityRejectionAuditAdapterWritesBoundedAuditEntry(t *testing.T) {
 	require.Nil(t, appender.entry.AfterPayload)
 	require.Equal(t, "remember", appender.entry.Metadata["surface"])
 	require.Equal(t, memoryservice.SubmissionSecurityErrorRejected, appender.entry.Metadata["reason_code"])
+	require.NotContains(t, appender.entry.Metadata, "policy_version")
+	require.NotContains(t, appender.entry.Metadata, "policy_hash")
 	signals, ok := appender.entry.Metadata["signals"].([]any)
 	require.True(t, ok)
 	require.Len(t, signals, 1)

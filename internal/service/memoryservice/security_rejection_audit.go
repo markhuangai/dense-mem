@@ -30,8 +30,6 @@ type SecurityRejectionAuditInput struct {
 	Surface          string
 	ReasonCode       string
 	EvidenceCount    int
-	PolicyVersion    string
-	PolicyHash       string
 	Signals          []SecurityRejectionAuditSignal
 	SignalsTruncated bool
 }
@@ -84,8 +82,6 @@ func recordSubmissionSecurityRejection(
 		Surface:          strings.TrimSpace(surface),
 		ReasonCode:       reason,
 		EvidenceCount:    scan.EvidenceCount,
-		PolicyVersion:    securityScanPolicyVersion,
-		PolicyHash:       securityScanPolicyHash,
 		Signals:          signals,
 		SignalsTruncated: scan.SignalsTruncated,
 	}); err != nil {

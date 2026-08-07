@@ -656,10 +656,9 @@ func releasePlacementQuarantine(
 		IngestID:       input.IngestID,
 		FragmentID:     scope.FragmentID,
 		SecurityEventDraft: SecurityEventDraft{
-			EventKind:      "quarantine_release",
-			Decision:       "released",
-			ScanPolicyHash: "manual-review",
-			Reason:         input.Message,
+			EventKind: "quarantine_release",
+			Decision:  "released",
+			Reason:    input.Message,
 			Metadata: map[string]any{
 				"actor_role": input.ActorRole,
 			},

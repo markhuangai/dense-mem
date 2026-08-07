@@ -51,8 +51,6 @@ func (a securityRejectionAuditAdapter) RecordSecurityRejection(
 		ActorRole:     input.ActorRole,
 		CorrelationID: input.CorrelationID,
 		Metadata: map[string]any{
-			"policy_version":    input.PolicyVersion,
-			"policy_hash":       input.PolicyHash,
 			"surface":           input.Surface,
 			"reason_code":       input.ReasonCode,
 			"evidence_count":    input.EvidenceCount,

@@ -622,11 +622,10 @@ func (s *semanticAssessmentPlacementWorkerService) recordSecuritySignals(
 		IngestID:       run.IngestID,
 		FragmentID:     fragment.FragmentID,
 		SecurityEventDraft: repository.SecurityEventDraft{
-			EventKind:      "verifier_signal",
-			Decision:       "quarantine",
-			ScanPolicyHash: "dense-mem.v2.4",
-			Reason:         "semantic assessor reported security signal",
-			Signals:        signals,
+			EventKind: "verifier_signal",
+			Decision:  "quarantine",
+			Reason:    "semantic assessor reported security signal",
+			Signals:   signals,
 		},
 	})
 	return err
