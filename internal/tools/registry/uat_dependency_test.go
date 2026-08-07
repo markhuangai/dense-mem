@@ -31,13 +31,9 @@ func TestBuildActiveExecutableToolsRequireDependencies(t *testing.T) {
 			},
 		},
 		{
-			name: ToolResolveMemoryPlacement,
+			name: ToolGetSubmissionStatus,
 			args: map[string]any{
-				"action":          string(domain.ResolveForget),
-				"relationship_id": "relationship-canonical",
-				"message":         "forget this relationship",
-				"idempotency_key": "forget-1",
-				"evidence":        []any{map[string]any{"content": "forget"}},
+				"submission_id": "submission-canonical",
 			},
 		},
 		{
@@ -77,37 +73,10 @@ func TestBuildActiveExecutableToolsRequireDependencies(t *testing.T) {
 			},
 		},
 		{
-			name: ToolFindMemoryPackCandidates,
-			args: map[string]any{
-				"query": "PostgreSQL",
-			},
-		},
-		{
 			name: ToolExportMemoryPack,
 			args: map[string]any{
 				"name":             "PostgreSQL pack",
 				"relationship_ids": []any{"relationship-canonical"},
-			},
-		},
-		{
-			name: ToolInspectMemoryPack,
-			args: map[string]any{
-				"artifact_json": "{}",
-				"mode":          "review",
-			},
-		},
-		{
-			name: ToolImportMemoryPack,
-			args: map[string]any{
-				"artifact_json": "{}",
-				"mode":          "review",
-			},
-		},
-		{
-			name: ToolRollbackMemoryPackImport,
-			args: map[string]any{
-				"import_id": "import-canonical",
-				"dry_run":   true,
 			},
 		},
 	}

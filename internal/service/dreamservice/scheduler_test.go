@@ -77,6 +77,32 @@ func TestSchedulerStartReturnsWhenUnavailableOrCanceled(t *testing.T) {
 	NewScheduler(&schedulerDreamStub{cfg: dueSchedulerConfig()}, &schedulerProfileStub{}, discardSchedulerLogger()).Start(ctx)
 }
 
+func TestSchedulerNextMinuteDelayAlignsToUTCMinute(t *testing.T) {
+	now := time.Date(2026, 6, 11, 3, 0, 29, 500_000_000, time.FixedZone("offset", 2*60*60))
+
+	require.Equal(t, 30*time.Second+500*time.Millisecond, schedulerNextMinuteDelay(now))
+	require.Equal(t, time.Minute, schedulerNextMinuteDelay(now.Truncate(time.Minute)))
+}
+
+func TestSchedulerRunsDueAtFirstMinuteBoundary(t *testing.T) {
+	teamID := uuid.New()
+	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
+	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig()}
+	scheduler := NewScheduler(dreams, profiles, discardSchedulerLogger())
+	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC) }
+	boundary := make(chan time.Time, 1)
+	boundary <- time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
+
+	require.True(t, scheduler.waitForMinuteBoundary(context.Background(), boundary))
+	require.Equal(t, []string{teamID.String()}, dreams.scheduledTeams)
+}
+
+func TestSchedulerBoundaryWaitHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.False(t, NewScheduler(&schedulerDreamStub{cfg: dueSchedulerConfig()}, &schedulerProfileStub{}, discardSchedulerLogger()).waitForMinuteBoundary(ctx, make(chan time.Time)))
+}
+
 func TestSchedulerPagesThroughTeamsAndUsesScheduledPath(t *testing.T) {
 	teams := make([]*domain.Profile, 101)
 	for i := range teams {

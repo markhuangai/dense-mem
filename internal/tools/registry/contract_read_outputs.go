@@ -221,11 +221,11 @@ func traceRelationshipSchema() map[string]any {
 
 func traceObservationSchema() map[string]any {
 	return closedObject(
-		[]string{"observation_id", "ingest_id", "placement_item_id"},
+		[]string{"observation_id", "submission_id", "placement_item_id"},
 		map[string]any{
 			"observation_id":     schemaString("Observation ID.", 128),
 			"relationship_id":    nullableString("Relationship ID when resolved.", 128),
-			"ingest_id":          schemaString("Placement run ID.", 128),
+			"submission_id":      schemaString("Submission ID.", 128),
 			"placement_item_id":  schemaString("Placement item ID.", 128),
 			"subject_ref":        schemaString("Submitted subject ref.", 128),
 			"original_predicate": schemaString("Original predicate wording.", 128),
@@ -272,10 +272,10 @@ func traceSupportDecisionSchema() map[string]any {
 
 func traceEvidenceSchema() map[string]any {
 	return closedObject(
-		[]string{"evidence_id", "ingest_id", "evidence_index", "content_hash", "content_truncated"},
+		[]string{"evidence_id", "submission_id", "evidence_index", "content_hash", "content_truncated"},
 		map[string]any{
 			"evidence_id":       schemaString("Evidence ID.", 128),
-			"ingest_id":         schemaString("Placement run ID.", 128),
+			"submission_id":     schemaString("Submission ID.", 128),
 			"evidence_index":    map[string]any{"type": "integer", "minimum": 0, "maximum": 19},
 			"content":           schemaString("Optional bounded evidence content.", 999),
 			"content_hash":      schemaString("Evidence content hash.", 128),

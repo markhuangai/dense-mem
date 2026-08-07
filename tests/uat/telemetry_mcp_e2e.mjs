@@ -72,12 +72,12 @@ const remember = await mcpTool("remember", {
     supports: [{ evidence_index: 0, start: 0, end: Array.from(telemetryContent).length }],
   }],
 });
-const ingestID = String(remember.ingest_id ?? "");
-if (!ingestID) {
-  throw new Error("remember did not return an ingest_id");
+const submissionID = String(remember.submission_id ?? "");
+if (!submissionID) {
+  throw new Error("remember did not return a submission_id");
 }
 
-const placementStatus = await waitForFirstDisposition(ingestID);
+const placementStatus = await waitForFirstDisposition(submissionID);
 await mcpTool("recall_memory", {
   query: `Telemetry E2E ${runID} exact evidence`,
   limit: 5,
@@ -129,12 +129,12 @@ async function mcpTool(name, args) {
   return JSON.parse(text);
 }
 
-async function waitForFirstDisposition(ingestID) {
+async function waitForFirstDisposition(submissionID) {
   let lastStatus = "";
   for (let attempt = 0; attempt < 150; attempt += 1) {
-    const placement = await mcpTool("get_memory_placement", { ingest_id: ingestID });
+    const placement = await mcpTool("get_submission_status", { submission_id: submissionID });
     lastStatus = String(placement.processing_state ?? "");
-    if (["completed", "awaiting_review", "failed", "quarantined"].includes(lastStatus)) {
+    if (["completed", "rejected", "failed", "quarantined"].includes(lastStatus)) {
       return lastStatus;
     }
     await delay(2_000);

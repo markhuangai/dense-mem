@@ -79,12 +79,14 @@ type PrometheusMetrics struct {
 	assessorConfidenceGate       *prometheus.CounterVec
 	assessorReviewExpiry         prometheus.Counter
 	assessorTerminalFailures     *prometheus.CounterVec
+	quarantinePurgeFailures      prometheus.Counter
 }
 
 var _ DiscoverabilityMetrics = (*PrometheusMetrics)(nil)
 var _ ScopedDiscoverabilityMetrics = (*PrometheusMetrics)(nil)
 var _ HTTPMetrics = (*PrometheusMetrics)(nil)
 var _ AssessorMetrics = (*PrometheusMetrics)(nil)
+var _ SubmissionQuarantineMetrics = (*PrometheusMetrics)(nil)
 var _ AIOperationMetrics = (*PrometheusMetrics)(nil)
 
 // NewPrometheusMetrics creates a Prometheus recorder with a private registry so
@@ -251,6 +253,10 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 			Name: "densemem_assessor_terminal_failures_total",
 			Help: "Integrated assessor terminal failures by bounded stage.",
 		}, []string{"stage"}),
+		quarantinePurgeFailures: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "densemem_submission_quarantine_purge_failures_total",
+			Help: "Submission quarantine purge failures requiring operational attention.",
+		}),
 	}
 	m.registry.MustRegister(
 		m.httpRequests, m.httpDuration,
@@ -265,6 +271,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		m.assessorCandidateTruncations, m.assessorPersistence, m.assessorDuplicatePrevention,
 		m.assessorConfidenceGate, m.assessorReviewExpiry,
 		m.assessorTerminalFailures,
+		m.quarantinePurgeFailures,
 	)
 	return m
 }
@@ -539,6 +546,10 @@ func (m *PrometheusMetrics) AddAssessorReviewExpiry(count int64) {
 
 func (m *PrometheusMetrics) IncAssessorTerminalFailure(stage string) {
 	m.assessorTerminalFailures.WithLabelValues(NormalizeAssessorTerminalFailureStage(stage)).Inc()
+}
+
+func (m *PrometheusMetrics) IncSubmissionQuarantinePurgeFailure() {
+	m.quarantinePurgeFailures.Inc()
 }
 
 func (m *PrometheusMetrics) addTokens(counter *prometheus.CounterVec, ctx context.Context, model string, promptTokens, completionTokens, totalTokens int64) {

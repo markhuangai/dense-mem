@@ -59,7 +59,6 @@ func clearEnv() {
 		"MEMORY_PLACEMENT_WORKER_COUNT",
 		"MEMORY_PLACEMENT_POLL_SECONDS",
 		"PROMOTE_TX_TIMEOUT_SECONDS",
-		"MEMORY_PACK_IMPORT_HISTORY_DAYS",
 		"CONTROL_HTTP_ADDR",
 		"CONTROL_PORTAL_TOKEN",
 		"TELEMETRY_ENABLED",
@@ -492,7 +491,6 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.GetAIVerifierTimeoutSeconds()
 	_ = provider.GetAIVerifierMaxConcurrency()
 	_ = provider.GetPromoteTxTimeoutSeconds()
-	_ = provider.GetMemoryPackImportHistoryDays()
 	_ = provider.GetControlHTTPAddr()
 	_ = provider.GetControlPortalToken()
 }
@@ -814,25 +812,6 @@ func TestLoadKnowledgeConfigDefaults(t *testing.T) {
 	if got := cfg.GetPromoteTxTimeoutSeconds(); got != 10 {
 		t.Errorf("GetPromoteTxTimeoutSeconds() = %d, want %d", got, 10)
 	}
-	if got := cfg.GetMemoryPackImportHistoryDays(); got != 30 {
-		t.Errorf("GetMemoryPackImportHistoryDays() = %d, want %d", got, 30)
-	}
-}
-
-func TestLoadMemoryPackImportHistoryEnv(t *testing.T) {
-	t.Run("canonical env", func(t *testing.T) {
-		clearEnv()
-		setRequiredEnv()
-		os.Setenv("MEMORY_PACK_IMPORT_HISTORY_DAYS", "14")
-
-		cfg, err := Load()
-		if err != nil {
-			t.Fatalf("Load() returned unexpected error: %v", err)
-		}
-		if got := cfg.GetMemoryPackImportHistoryDays(); got != 14 {
-			t.Fatalf("GetMemoryPackImportHistoryDays() = %d, want 14", got)
-		}
-	})
 }
 
 func TestLoadControlPortalValidation(t *testing.T) {

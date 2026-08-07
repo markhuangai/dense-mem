@@ -123,14 +123,12 @@ func publicErrorCodes() []string {
 	}
 }
 
-func placementErrorArraySchema() map[string]any {
+func submissionStatusErrorArraySchema() map[string]any {
 	return array(closedObject(
-		[]string{"code", "message", "retryable"},
+		[]string{"code", "message"},
 		map[string]any{
-			"code":        schemaString("Typed placement error code.", 128),
-			"message":     schemaString("Bounded safe placement error.", 512),
-			"retryable":   map[string]any{"type": "boolean"},
-			"review_task": nullableString("Review task handle when client action is possible.", 128),
+			"code":    schemaString("Typed submission error code.", 128),
+			"message": schemaString("Bounded safe submission error.", 512),
 		},
 	), 0, 50)
 }

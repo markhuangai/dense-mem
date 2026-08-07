@@ -10,66 +10,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-func TestBuildActiveWiresExecutableResolveMemoryPlacementForget(t *testing.T) {
-	stub := &stubLifecycleService{}
-	reg, err := BuildActive(Dependencies{Lifecycle: stub})
-	if err != nil {
-		t.Fatalf("BuildActive: %v", err)
-	}
-	resolve, ok := reg.Get(ToolResolveMemoryPlacement)
-	if !ok {
-		t.Fatal("BuildActive did not register resolve_memory_placement")
-	}
-	if resolve.Invoke == nil {
-		t.Fatal("BuildActive resolve_memory_placement invoker is nil")
-	}
-	out, err := resolve.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
-		"action":          string(domain.ResolveForget),
-		"relationship_id": "relationship-canonical",
-		"message":         "forget this relationship",
-		"idempotency_key": "forget-1",
-		"evidence": []any{
-			map[string]any{"content": "The user asked to forget it."},
-		},
-	})
-	if err != nil {
-		t.Fatalf("resolve_memory_placement.Invoke: %v", err)
-	}
-	if err := ValidateInput(Tool{InputSchema: resolve.OutputSchema}, out); err != nil {
-		t.Fatalf("validate output: %v", err)
-	}
-	if out["decision_id"] != "decision-canonical" || out["processing_state"] != string(domain.PlacementRunCompleted) {
-		t.Fatalf("resolve output = %#v", out)
-	}
-	if stub.req.Action != domain.ResolveForget || stub.req.RelationshipID != "relationship-canonical" {
-		t.Fatalf("stub request not populated: %#v", stub.req)
-	}
-}
-
-func TestBuildActiveResolveMemoryPlacementRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildActive(Dependencies{Lifecycle: &stubLifecycleService{}})
-	if err != nil {
-		t.Fatalf("BuildActive: %v", err)
-	}
-	resolve, ok := reg.Get(ToolResolveMemoryPlacement)
-	if !ok {
-		t.Fatal("BuildActive did not register resolve_memory_placement")
-	}
-	_, err = resolve.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
-		"team_id":         "attacker-team",
-		"action":          string(domain.ResolveForget),
-		"relationship_id": "relationship-canonical",
-		"message":         "forget this relationship",
-		"idempotency_key": "forget-1",
-		"evidence": []any{
-			map[string]any{"content": "The user asked to forget it."},
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "team_id") {
-		t.Fatalf("resolve_memory_placement.Invoke err = %v, want tenant override rejection", err)
-	}
-}
-
 func TestBuildActiveWiresExecutableRetractEvidence(t *testing.T) {
 	stub := &stubLifecycleService{}
 	reg, err := BuildActive(Dependencies{Lifecycle: stub})

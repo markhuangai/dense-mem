@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -540,6 +542,11 @@ func (r *LedgerRepositoryImpl) CompleteSubmissionAssessment(
 				return err
 			}
 		}
+		if len(input.SecurityQuarantines) > 0 {
+			if err := storeSubmissionQuarantinePayload(ctx, tx, input.SubmissionAssessmentRunScope); err != nil {
+				return err
+			}
+		}
 		itemStatus, itemCategory, runStatus := submissionTerminalStatuses(input.Status, input.Category)
 		payload := terminalPlacementPayload(input.Payload, input.Status)
 		payload["submission_atomic"] = true
@@ -593,6 +600,101 @@ func (r *LedgerRepositoryImpl) CompleteSubmissionAssessment(
 		return nil, fmt.Errorf("submission assessment completion: %w", err)
 	}
 	return result, nil
+}
+
+// storeSubmissionQuarantinePayload moves the exact provider-facing material
+// into the system-only raw-payload retention table before normal evidence is
+// tombstoned. The append-only source rows remain restricted audit history;
+// purge removes only this raw-payload copy while IDs and hashes preserve lineage.
+func storeSubmissionQuarantinePayload(ctx context.Context, tx *gorm.DB, scope SubmissionAssessmentRunScope) error {
+	var proposal, evidence, assessorResponse []byte
+	row := tx.WithContext(ctx).Raw(`
+		SELECT COALESCE(ingest.proposal, '{}'::jsonb),
+		       COALESCE((
+		           SELECT assessment.normalized_response
+		           FROM placement_assessments AS assessment
+		           WHERE assessment.team_id = run.team_id
+		             AND assessment.placement_run_id = run.placement_run_id
+		             AND assessment.ingest_id = run.ingest_id
+		             AND assessment.owner_profile_id = run.owner_profile_id
+		             AND assessment.assessment_scope = 'submission'
+		           ORDER BY assessment.created_at DESC, assessment.assessment_id DESC
+		           LIMIT 1
+		       ), '{}'::jsonb),
+		       COALESCE((
+		           SELECT jsonb_agg(jsonb_build_object(
+		               'evidence_id', fragment.fragment_id::text,
+		               'evidence_index', fragment.evidence_index,
+		               'content', fragment.content,
+		               'content_hash', fragment.content_hash,
+		               'source_type', fragment.source_type,
+		               'source_ref', fragment.source_ref,
+		               'metadata', fragment.metadata
+		           ) ORDER BY fragment.evidence_index)
+		           FROM evidence_fragments AS fragment
+		           WHERE fragment.team_id = run.team_id
+		             AND fragment.ingest_id = run.ingest_id
+		             AND fragment.owner_profile_id = run.owner_profile_id
+		       ), '[]'::jsonb)
+		FROM placement_runs AS run
+		JOIN knowledge_ingests AS ingest
+		  ON ingest.team_id = run.team_id AND ingest.ingest_id = run.ingest_id
+		WHERE run.team_id = ?::uuid
+		  AND run.placement_run_id = ?::uuid
+		  AND run.ingest_id = ?::uuid
+		  AND run.owner_profile_id = ?::uuid
+	`, scope.TeamID, scope.PlacementRunID, scope.IngestID, scope.OwnerProfileID).Row()
+	if err := row.Scan(&proposal, &assessorResponse, &evidence); err != nil {
+		return err
+	}
+	payload := map[string]json.RawMessage{
+		"proposal":          append(json.RawMessage(nil), proposal...),
+		"evidence":          append(json.RawMessage(nil), evidence...),
+		"assessor_response": append(json.RawMessage(nil), assessorResponse...),
+	}
+	canonical, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(canonical)
+	// The profile policy permits writes but not raw-payload reads, so ON CONFLICT
+	// cannot be used here: PostgreSQL's arbiter would require a SELECT policy.
+	// Completion holds the run lock and commits atomically, making this plain
+	// insert idempotent at the terminal transition boundary.
+	if err := tx.WithContext(ctx).Exec(`
+		INSERT INTO submission_quarantine_payloads (
+		    team_id, placement_run_id, ingest_id, owner_profile_id,
+		    proposal, evidence, assessor_response, payload_sha256,
+		    quarantined_at, expires_at
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+		    ?::jsonb, ?::jsonb, ?::jsonb, ?, now(), now() + interval '24 hours'
+		)
+	`, scope.TeamID, scope.PlacementRunID, scope.IngestID, scope.OwnerProfileID,
+		string(proposal), string(evidence), string(assessorResponse), hex.EncodeToString(sum[:])).Error; err != nil {
+		return err
+	}
+	if err := tx.WithContext(ctx).Exec(`
+		INSERT INTO submission_quarantine_tombstones (
+		    team_id, fragment_id, ingest_id, owner_profile_id, content_hash
+		)
+		SELECT fragment.team_id, fragment.fragment_id, fragment.ingest_id,
+		       fragment.owner_profile_id, fragment.content_hash
+		FROM evidence_fragments AS fragment
+		WHERE fragment.team_id = ?::uuid
+		  AND fragment.ingest_id = ?::uuid
+		  AND fragment.owner_profile_id = ?::uuid
+	`, scope.TeamID, scope.IngestID, scope.OwnerProfileID).Error; err != nil {
+		return err
+	}
+	return tx.WithContext(ctx).Exec(`
+		UPDATE placement_runs
+		SET quarantine_expires_at = COALESCE(quarantine_expires_at, now() + interval '24 hours'),
+		    updated_at = now()
+		WHERE team_id = ?::uuid
+		  AND placement_run_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+	`, scope.TeamID, scope.PlacementRunID, scope.OwnerProfileID).Error
 }
 
 func (r *LedgerRepositoryImpl) RequeueSubmissionAssessment(
@@ -775,6 +877,10 @@ func completeSubmissionPlacementRun(
 		    error = ?,
 		    lease_until = NULL,
 		    completed_at = now(),
+		    quarantine_expires_at = CASE
+		        WHEN ? = 'quarantined' THEN now() + interval '24 hours'
+		        ELSE quarantine_expires_at
+		    END,
 		    updated_at = now()
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
@@ -785,7 +891,7 @@ func completeSubmissionPlacementRun(
 		  AND attempts = ?
 		  AND lease_until > clock_timestamp()
 		RETURNING created_at, completed_at
-	`, status, strings.TrimSpace(message), scope.TeamID, scope.OwnerProfileID, scope.IngestID,
+	`, status, strings.TrimSpace(message), status, scope.TeamID, scope.OwnerProfileID, scope.IngestID,
 		scope.PlacementRunID, scope.WorkerID, scope.ExpectedAttempts).Rows()
 	if err != nil {
 		return nil, err

@@ -14,9 +14,8 @@ import (
 
 const (
 	ToolRemember                    = "remember"
-	ToolGetMemoryPlacement          = "get_memory_placement"
+	ToolGetSubmissionStatus         = "get_submission_status"
 	ToolRetractEvidence             = "retract_evidence"
-	ToolResolveMemoryPlacement      = "resolve_memory_placement"
 	ToolCorrectEntityResolution     = "correct_entity_resolution"
 	ToolRecallMemory                = "recall_memory"
 	ToolTraceMemory                 = "trace_memory"
@@ -24,20 +23,15 @@ const (
 	ToolListDreams                  = "list_dreams"
 	ToolGetDream                    = "get_dream"
 	ToolResolveDreamFeedback        = "resolve_dream_feedback"
-	ToolFindMemoryPackCandidates    = "find_memory_pack_candidates"
 	ToolExportMemoryPack            = "export_memory_pack"
-	ToolInspectMemoryPack           = "inspect_memory_pack"
-	ToolImportMemoryPack            = "import_memory_pack"
-	ToolRollbackMemoryPackImport    = "rollback_memory_pack_import"
 )
 
 // Community analysis stays server-controlled recall context and first-party
 // portal data; it is intentionally absent from the public MCP catalog.
 var contractToolNames = []string{
 	ToolRemember,
-	ToolGetMemoryPlacement,
+	ToolGetSubmissionStatus,
 	ToolRetractEvidence,
-	ToolResolveMemoryPlacement,
 	ToolCorrectEntityResolution,
 	ToolRecallMemory,
 	ToolTraceMemory,
@@ -45,11 +39,7 @@ var contractToolNames = []string{
 	ToolListDreams,
 	ToolGetDream,
 	ToolResolveDreamFeedback,
-	ToolFindMemoryPackCandidates,
 	ToolExportMemoryPack,
-	ToolInspectMemoryPack,
-	ToolImportMemoryPack,
-	ToolRollbackMemoryPackImport,
 }
 
 // ContractTools returns the frozen contract tool contract catalog. The returned
@@ -64,11 +54,11 @@ func ContractTools() []Tool {
 			rememberOutputSchema(),
 		),
 		contractTool(
-			ToolGetMemoryPlacement,
-			"Poll a memory placement run.",
+			ToolGetSubmissionStatus,
+			"Poll the bounded status of a submitted evidence batch.",
 			[]string{"read"},
-			getMemoryPlacementInputSchema(),
-			placementRunOutputSchema(),
+			getSubmissionStatusInputSchema(),
+			submissionStatusOutputSchema(),
 		),
 		contractTool(
 			ToolRetractEvidence,
@@ -76,13 +66,6 @@ func ContractTools() []Tool {
 			[]string{"write"},
 			retractEvidenceInputSchema(),
 			retractEvidenceOutputSchema(),
-		),
-		contractTool(
-			ToolResolveMemoryPlacement,
-			"Resolve placement review items through append-only evidence decisions.",
-			[]string{"write"},
-			resolveMemoryPlacementInputSchema(),
-			resolveMemoryPlacementOutputSchema(),
 		),
 		contractTool(
 			ToolCorrectEntityResolution,
@@ -134,39 +117,11 @@ func ContractTools() []Tool {
 			resolveDreamFeedbackOutputSchema(),
 		),
 		contractTool(
-			ToolFindMemoryPackCandidates,
-			"Find active Relationships that may be exported into a memory pack.",
-			[]string{"read"},
-			findMemoryPackCandidatesInputSchema(),
-			findMemoryPackCandidatesOutputSchema(),
-		),
-		contractTool(
 			ToolExportMemoryPack,
 			"Export selected active Relationships with support provenance.",
 			[]string{"read"},
 			exportMemoryPackInputSchema(),
 			exportMemoryPackOutputSchema(),
-		),
-		contractTool(
-			ToolInspectMemoryPack,
-			"Inspect a memory-pack artifact without writing durable state.",
-			[]string{"read"},
-			inspectMemoryPackInputSchema(),
-			inspectMemoryPackOutputSchema(),
-		),
-		contractTool(
-			ToolImportMemoryPack,
-			"Import a reviewed memory pack through normal evidence placement.",
-			[]string{"write"},
-			importMemoryPackInputSchema(),
-			importMemoryPackOutputSchema(),
-		),
-		contractTool(
-			ToolRollbackMemoryPackImport,
-			"Rollback a memory-pack import when no selected state changed.",
-			[]string{"write"},
-			rollbackMemoryPackImportInputSchema(),
-			rollbackMemoryPackImportOutputSchema(),
 		),
 	}
 }
@@ -196,21 +151,27 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				return structToMap(res)
 			}
-		case ToolGetMemoryPlacement:
+		case ToolGetSubmissionStatus:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.Remember == nil {
+				statusService := deps.SubmissionStatus
+				if statusService == nil {
+					if candidate, ok := deps.Remember.(memoryservice.SubmissionStatusService); ok {
+						statusService = candidate
+					}
+				}
+				if statusService == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
-					return nil, fmt.Errorf("get_memory_placement: invalid input: %w", err)
+					return nil, fmt.Errorf("get_submission_status: invalid input: %w", err)
 				}
-				var req memoryservice.GetMemoryPlacementRequest
+				var req memoryservice.GetSubmissionStatusRequest
 				if err := remapInput(input, &req); err != nil {
-					return nil, fmt.Errorf("get_memory_placement: invalid input: %w", err)
+					return nil, fmt.Errorf("get_submission_status: invalid input: %w", err)
 				}
 				req.ContractVersion = domain.ContractVersion
-				res, err := deps.Remember.GetMemoryPlacement(ctx, req)
+				res, err := statusService.GetSubmissionStatus(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -231,26 +192,6 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				req.ContractVersion = domain.ContractVersion
 				res, err := deps.Lifecycle.RetractEvidence(ctx, req)
-				if err != nil {
-					return nil, err
-				}
-				return structToMap(res)
-			}
-		case ToolResolveMemoryPlacement:
-			tool := tools[i]
-			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.Lifecycle == nil {
-					return nil, ErrToolUnavailable
-				}
-				if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
-					return nil, fmt.Errorf("resolve_memory_placement: invalid input: %w", err)
-				}
-				var req memoryservice.ResolveMemoryPlacementRequest
-				if err := remapInput(input, &req); err != nil {
-					return nil, fmt.Errorf("resolve_memory_placement: invalid input: %w", err)
-				}
-				req.ContractVersion = domain.ContractVersion
-				res, err := deps.Lifecycle.ResolveMemoryPlacement(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -386,25 +327,6 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				return resolveDreamFeedbackContractOutput(res), nil
 			}
-		case ToolFindMemoryPackCandidates:
-			tool := tools[i]
-			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.MemoryPack == nil {
-					return nil, ErrToolUnavailable
-				}
-				if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
-					return nil, fmt.Errorf("find_memory_pack_candidates: invalid input: %w", err)
-				}
-				var req skillpackservice.FindCandidatesRequest
-				if err := remapInput(input, &req); err != nil {
-					return nil, fmt.Errorf("find_memory_pack_candidates: invalid input: %w", err)
-				}
-				res, err := deps.MemoryPack.FindCandidates(ctx, req)
-				if err != nil {
-					return nil, err
-				}
-				return findMemoryPackCandidatesContractOutput(res), nil
-			}
 		case ToolExportMemoryPack:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
@@ -423,66 +345,6 @@ func contractTools(deps Dependencies) []Tool {
 					return nil, err
 				}
 				return exportMemoryPackContractOutput(res), nil
-			}
-		case ToolInspectMemoryPack:
-			tool := tools[i]
-			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.MemoryPack == nil {
-					return nil, ErrToolUnavailable
-				}
-				if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
-					return nil, fmt.Errorf("inspect_memory_pack: invalid input: %w", err)
-				}
-				var req skillpackservice.InspectRequest
-				if err := remapInput(input, &req); err != nil {
-					return nil, fmt.Errorf("inspect_memory_pack: invalid input: %w", err)
-				}
-				res, err := deps.MemoryPack.Inspect(ctx, req)
-				if err != nil {
-					return nil, err
-				}
-				return inspectMemoryPackContractOutput(res, req.Mode), nil
-			}
-		case ToolImportMemoryPack:
-			tool := tools[i]
-			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.MemoryPack == nil {
-					return nil, ErrToolUnavailable
-				}
-				if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
-					return nil, fmt.Errorf("import_memory_pack: invalid input: %w", err)
-				}
-				var req skillpackservice.ImportRequest
-				if err := remapInput(input, &req); err != nil {
-					return nil, fmt.Errorf("import_memory_pack: invalid input: %w", err)
-				}
-				res, err := deps.MemoryPack.Import(ctx, req)
-				if err != nil {
-					return nil, err
-				}
-				return importMemoryPackContractOutput(res), nil
-			}
-		case ToolRollbackMemoryPackImport:
-			tool := tools[i]
-			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				if deps.MemoryPack == nil {
-					return nil, ErrToolUnavailable
-				}
-				if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
-					return nil, fmt.Errorf("rollback_memory_pack_import: invalid input: %w", err)
-				}
-				var req skillpackservice.RollbackRequest
-				if err := remapInput(input, &req); err != nil {
-					return nil, fmt.Errorf("rollback_memory_pack_import: invalid input: %w", err)
-				}
-				if !req.DryRun {
-					req.Confirm = true
-				}
-				res, err := deps.MemoryPack.Rollback(ctx, req)
-				if err != nil {
-					return nil, err
-				}
-				return rollbackMemoryPackContractOutput(res), nil
 			}
 		}
 	}
@@ -566,22 +428,14 @@ func ValidateContractInput(tool Tool, args map[string]any, scopes []string) erro
 		return validateUniqueStringArray(args, "evidence_ids")
 	case ToolTraceMemory:
 		return validateUniqueStringArray(args, "predicate_keys")
-	case ToolResolveMemoryPlacement:
-		return validateResolveMemoryPlacement(args)
 	case ToolCorrectEntityResolution:
 		return validateCorrectEntityResolution(args)
 	case ToolSubmitRecallSessionFeedback:
 		return validateRecallFeedback(args)
 	case ToolResolveDreamFeedback:
 		return validateDreamFeedback(args)
-	case ToolFindMemoryPackCandidates:
-		return validateUniqueStringArray(args, "predicate_keys")
 	case ToolExportMemoryPack:
 		return validateUniqueStringArray(args, "relationship_ids")
-	case ToolInspectMemoryPack, ToolImportMemoryPack:
-		return validateMemoryPackSource(args)
-	case ToolRollbackMemoryPackImport:
-		return validateRollbackMemoryPackImport(args)
 	default:
 		return nil
 	}
@@ -638,52 +492,6 @@ func validateRecall(args map[string]any) error {
 		}
 	}
 	return nil
-}
-
-func validateResolveMemoryPlacement(args map[string]any) error {
-	action, _ := args["action"].(string)
-	// Item-targeted decisions require the inspected version so stale reviews fail closed.
-	switch domain.ResolveAction(action) {
-	case domain.ResolveAcknowledge:
-		return validateRequiredFields(args, "ingest_id")
-	case domain.ResolveSelectEntity:
-		return validateRequiredFields(args,
-			"ingest_id",
-			"placement_item_id",
-			"placement_item_version",
-			"entity_ref",
-			"candidate_entity_id",
-		)
-	case domain.ResolveConfirmNewEntity:
-		return validateRequiredFields(args,
-			"ingest_id",
-			"placement_item_id",
-			"placement_item_version",
-			"entity_ref",
-			"evidence",
-		)
-	case domain.ResolveSelectPredicate:
-		return validateRequiredFields(args,
-			"ingest_id",
-			"placement_item_id",
-			"placement_item_version",
-			"observation_id",
-			"predicate_key",
-			"predicate_version",
-		)
-	case domain.ResolveAccept:
-		return validateRequiredFields(args, "ingest_id", "placement_item_id", "placement_item_version", "evidence")
-	case domain.ResolveReject:
-		return validateRequiredFields(args, "ingest_id", "placement_item_id", "placement_item_version", "message")
-	case domain.ResolveCorrect:
-		return validateRequiredFields(args, "ingest_id", "placement_item_id", "placement_item_version", "evidence")
-	case domain.ResolveReleaseQuarantine:
-		return validateRequiredFields(args, "ingest_id", "placement_item_id", "placement_item_version", "message")
-	case domain.ResolveForget:
-		return validateRequiredFields(args, "relationship_id", "message", "evidence")
-	default:
-		return nil
-	}
 }
 
 func validateSourceRevisionFields(index int, fields map[string]any) error {

@@ -17,11 +17,13 @@ func quarantinePlacementRunForUserResolution(ctx context.Context, tx *gorm.DB, s
 		    lease_until = NULL,
 		    worker_id = '',
 		    completed_at = now(),
+		    quarantine_expires_at = now() + interval '24 hours',
 		    updated_at = now()
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
 		  AND placement_run_id = ?::uuid
 		  AND status <> 'processing'
+		  AND status <> 'quarantined'
 		RETURNING created_at, completed_at
 	`, scope.TeamID, scope.OwnerProfileID, scope.PlacementRunID).Rows()
 	if err != nil {

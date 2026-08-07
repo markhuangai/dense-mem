@@ -198,9 +198,9 @@ func relationshipConflictContextSchema() map[string]any {
 	}
 }
 
-func getMemoryPlacementInputSchema() map[string]any {
-	return contractInput([]string{"ingest_id"}, map[string]any{
-		"ingest_id": schemaString("Placement run ID returned by remember.", 128),
+func getSubmissionStatusInputSchema() map[string]any {
+	return contractInput([]string{"submission_id"}, map[string]any{
+		"submission_id": schemaString("Submission ID returned by remember.", 128),
 	})
 }
 
@@ -211,35 +211,6 @@ func retractEvidenceInputSchema() map[string]any {
 		"evidence_ids":    evidenceIDs,
 		"reason":          nonEmptyStringSchema("Required bounded retraction reason.", 1000),
 		"idempotency_key": nonEmptyStringSchema("Retraction retry key scoped to team and profile.", 128),
-	})
-}
-
-func resolveMemoryPlacementInputSchema() map[string]any {
-	return contractInput([]string{"action", "idempotency_key"}, map[string]any{
-		"action":            schemaEnum(domain.ResolveActions()),
-		"ingest_id":         schemaString("Placement run ID.", 128),
-		"placement_item_id": schemaString("Review item ID.", 128),
-		"placement_item_version": map[string]any{
-			"type":        "integer",
-			"minimum":     1,
-			"description": "Observed placement item version from inspection; stale values are rejected.",
-		},
-		"observation_id":  schemaString("Unresolved observation ID.", 128),
-		"relationship_id": schemaString("Caller-owned Relationship ID.", 128),
-		"entity_ref":      schemaString("Client-local Entity proposal ref.", 128),
-		"candidate_entity_id": schemaString(
-			"Server-supplied candidate Entity ID selected for this profile.",
-			128,
-		),
-		"predicate_key": schemaString("Server-supplied registered predicate key.", 128),
-		"predicate_version": map[string]any{
-			"type":        "integer",
-			"minimum":     1,
-			"description": "Server-supplied predicate version selected for this observation.",
-		},
-		"message":         schemaString("Bounded reason or reviewer explanation.", 1000),
-		"evidence":        evidenceArraySchema(),
-		"idempotency_key": schemaString("Resolution retry key scoped to team and profile.", 128),
 	})
 }
 
@@ -361,16 +332,8 @@ func resolveDreamFeedbackInputSchema() map[string]any {
 	})
 }
 
-func findMemoryPackCandidatesInputSchema() map[string]any {
-	return contractInput([]string{"query"}, map[string]any{
-		"query":          schemaString("Topic search query.", 512),
-		"limit":          map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
-		"predicate_keys": stringArraySchema("Registered predicate key filter.", 100, 128),
-	})
-}
-
 func exportMemoryPackInputSchema() map[string]any {
-	return contractInput([]string{"name"}, map[string]any{
+	return contractInput([]string{"name", "relationship_ids"}, map[string]any{
 		"name":                 schemaString("Memory pack name.", 256),
 		"description":          schemaString("Memory pack description.", 1024),
 		"relationship_ids":     stringArraySchema("Relationship ID to export.", 500, 128),
@@ -379,64 +342,39 @@ func exportMemoryPackInputSchema() map[string]any {
 	})
 }
 
-func inspectMemoryPackInputSchema() map[string]any {
-	return contractInput([]string{"mode"}, map[string]any{
-		"artifact_json":   schemaString("Memory-pack JSON artifact.", memoryPackArtifactMaxLength),
-		"url":             schemaString("HTTPS URL.", 2048),
-		"expected_sha256": schemaString("Expected canonical SHA-256.", 64),
-		"mode":            schemaEnum([]string{"review", "trusted"}),
-	})
-}
-
-func importMemoryPackInputSchema() map[string]any {
-	return contractInput([]string{"mode"}, map[string]any{
-		"artifact_json":   schemaString("Memory-pack JSON artifact.", memoryPackArtifactMaxLength),
-		"url":             schemaString("HTTPS URL.", 2048),
-		"expected_sha256": schemaString("Expected canonical SHA-256.", 64),
-		"mode":            schemaEnum([]string{"review", "trusted"}),
-		"conflict_decisions": array(closedObject(
-			[]string{"item_id", "decision"},
-			map[string]any{
-				"item_id":          schemaString("Artifact-local item ID.", 128),
-				"decision":         schemaEnum([]string{"skip", "import_for_review", "map_entity", "confirm_new_entity", "accept_source_authority"}),
-				"target_entity_id": schemaString("Server-supplied same-team Entity candidate.", 128),
-				"evidence":         evidenceArraySchema(),
-			},
-		), 0, 500),
-		"idempotency_key": schemaString("Import retry key scoped to team and profile.", 128),
-	})
-}
-
-func rollbackMemoryPackImportInputSchema() map[string]any {
-	return contractInput([]string{"import_id", "dry_run"}, map[string]any{
-		"import_id":    schemaString("Memory-pack import ID.", 128),
-		"dry_run":      map[string]any{"type": "boolean"},
-		"impact_token": schemaString("Version-bound rollback dry-run token required for apply.", 256),
-	})
-}
-
 func rememberOutputSchema() map[string]any {
 	return closedObject(
-		[]string{"ingest_id", "processing_state", "check_after_seconds", "status_tool", "correlation_id"},
+		[]string{"submission_id", "processing_state", "check_after_seconds", "status_tool", "correlation_id"},
 		map[string]any{
-			"ingest_id":           schemaString("Placement run ID.", 128),
-			"processing_state":    schemaEnum(domain.PlacementRunStatuses()),
+			"submission_id":       schemaString("Submission ID.", 128),
+			"processing_state":    schemaEnum([]string{"queued", "processing", "completed", "rejected", "quarantined", "failed"}),
 			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
-			"status_tool":         schemaEnum([]string{ToolGetMemoryPlacement}),
+			"status_tool":         schemaEnum([]string{ToolGetSubmissionStatus}),
 			"correlation_id":      schemaString("Request correlation ID.", 128),
 		},
 	)
 }
 
-func placementRunOutputSchema() map[string]any {
+func submissionStatusOutputSchema() map[string]any {
 	return closedObject(
-		[]string{"ingest_id", "processing_state", "search_state", "items", "errors"},
+		[]string{"submission_id", "processing_state", "search_state", "check_after_seconds", "evidence", "errors"},
 		map[string]any{
-			"ingest_id":        schemaString("Placement run ID.", 128),
-			"processing_state": schemaEnum(domain.PlacementRunStatuses()),
-			"search_state":     schemaEnum(domain.SearchProjectionStates()),
-			"items":            array(placementItemSchema(), 0, 20),
-			"errors":           placementErrorArraySchema(),
+			"submission_id":       schemaString("Submission ID.", 128),
+			"processing_state":    schemaEnum([]string{"queued", "processing", "completed", "rejected", "quarantined", "failed"}),
+			"search_state":        schemaEnum(domain.SearchProjectionStates()),
+			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
+			"evidence": array(closedObject(
+				[]string{"evidence_id", "evidence_index", "superseded_evidence_ids", "search_state"},
+				map[string]any{
+					"evidence_id":             schemaString("Durable evidence ID.", 128),
+					"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
+					"superseded_evidence_ids": stringArraySchema("Evidence ID superseded by this evidence.", 50, 128),
+					"search_state":            schemaEnum(domain.SearchProjectionStates()),
+				},
+			), 0, 100),
+			"errors":                        submissionStatusErrorArraySchema(),
+			"quarantine_expires_at":         nullableString("Fixed quarantine expiry.", 64),
+			"replacement_window_expires_at": nullableString("Replacement window expiry.", 64),
 		},
 	)
 }
@@ -458,108 +396,6 @@ func retractEvidenceOutputSchema() map[string]any {
 			"affected_relationship_count":        map[string]any{"type": "integer", "minimum": 0},
 			"pending_relationship_count":         map[string]any{"type": "integer", "minimum": 0},
 			"retained_active_relationship_count": map[string]any{"type": "integer", "minimum": 0},
-		},
-	)
-}
-
-func placementItemSchema() map[string]any {
-	return closedObject(
-		[]string{"item_id", "evidence_id", "superseded_evidence_ids", "version", "evidence_index", "category", "search_state", "relationship_outcomes", "review_tasks", "errors"},
-		map[string]any{
-			"item_id":                 schemaString("Stable placement item ID.", 128),
-			"evidence_id":             schemaString("Durable evidence ID.", 128),
-			"superseded_evidence_ids": stringArraySchema("Evidence ID superseded by this replacement.", 50, 128),
-			"version":                 map[string]any{"type": "integer", "minimum": 1},
-			"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
-			"category":                schemaEnum(domain.EvidenceItemCategories()),
-			"relationship_outcomes":   relationshipOutcomeArraySchema(),
-			"review_tasks":            placementReviewTaskArraySchema(),
-			"search_state":            schemaEnum(domain.SearchProjectionStates()),
-			"errors":                  placementErrorArraySchema(),
-		},
-	)
-}
-
-func relationshipOutcomeArraySchema() map[string]any {
-	return map[string]any{
-		"type": "array", "maxItems": 200,
-		"items": closedObject(
-			[]string{"proposal_id", "observation_id", "owner_profile_id", "category", "reason"},
-			map[string]any{
-				"proposal_id":         nullableString("Client proposal ID when supplied.", 128),
-				"observation_id":      nullableString("Durable observation ID when one exists.", 128),
-				"relationship_id":     nullableString("Relationship ID when one exists.", 128),
-				"owner_profile_id":    schemaString("Relationship owner profile ID.", 128),
-				"relationship_status": schemaEnum(domain.RelationshipStatuses()),
-				"category":            schemaEnum(domain.RelationshipOutcomeCategories()),
-				"reason":              schemaString("Bounded placement explanation.", 1000),
-				"review_task":         nullableString("Review task handle.", 128),
-				"predicate_options":   array(predicateDefinitionSchema(), 0, 100),
-				"confidence_gate":     schemaEnum([]string{"meets_write_threshold", "below_write_threshold", "not_applicable"}),
-				"policy_version":      nullableString("Bounded assessment policy version.", 256),
-			},
-		),
-	}
-}
-
-func placementReviewTaskArraySchema() map[string]any {
-	return map[string]any{
-		"type": "array", "maxItems": 300,
-		"items": closedObject(
-			[]string{"review_task_id", "version", "kind", "status", "question", "options", "guidance", "expires_at"},
-			map[string]any{
-				"review_task_id": schemaString("Stable semantic review task ID.", 128),
-				"version":        map[string]any{"type": "integer", "minimum": 1},
-				"kind":           schemaEnum([]string{"support_confidence", "identity", "predicate", "scope", "time"}),
-				"status":         schemaEnum([]string{"open", "acknowledged", "resolved", "canceled", "expired"}),
-				"question":       schemaString("Exact bounded semantic review question.", 1000),
-				"options":        array(placementReviewOptionSchema(), 0, 100),
-				"guidance":       schemaString("Bounded semantic review guidance.", 2000),
-				"expires_at":     map[string]any{"type": []any{"string", "null"}, "format": "date-time"},
-			},
-		),
-	}
-}
-
-func placementReviewOptionSchema() map[string]any {
-	return map[string]any{
-		"x-enforce-one-of": true,
-		"oneOf": []any{
-			closedObject(
-				[]string{"entity_id", "canonical_name", "kind"},
-				map[string]any{
-					"entity_id":      schemaString("Server-supplied Entity ID.", 128),
-					"canonical_name": schemaString("Server-supplied Entity canonical name.", 256),
-					"kind":           schemaEnum(domain.EntityKinds()),
-				},
-			),
-			closedObject(
-				[]string{"predicate_key", "version", "aliases"},
-				map[string]any{
-					"predicate_key": schemaString("Server-supplied predicate key.", 128),
-					"version":       map[string]any{"type": "integer", "minimum": 1},
-					"aliases":       stringArraySchema("Server-supplied predicate alias.", 20, 256),
-				},
-			),
-			closedObject(
-				[]string{"action"},
-				map[string]any{
-					"action": schemaEnum([]string{"submit_new_evidence"}),
-				},
-			),
-		},
-	}
-}
-
-func resolveMemoryPlacementOutputSchema() map[string]any {
-	return closedObject(
-		[]string{"decision_id", "processing_state"},
-		map[string]any{
-			"decision_id":         schemaString("Append-only decision ID.", 128),
-			"ingest_id":           schemaString("Follow-up placement run ID.", 128),
-			"processing_state":    schemaEnum(domain.PlacementRunStatuses()),
-			"impact_summary":      schemaString("Bounded before/after summary.", 1000),
-			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
 		},
 	)
 }
@@ -679,34 +515,6 @@ func traceMemoryOutputSchema() map[string]any {
 		"visited_entity_ids":               stringArraySchema("Visited Entity ID.", 500, 128),
 		"stopped_reason":                   nullableString("Trace budget stop reason.", 128),
 	})
-}
-
-func predicateDefinitionSchema() map[string]any {
-	return map[string]any{
-		"type":                 "object",
-		"additionalProperties": false,
-		"required": []string{
-			"predicate_key",
-			"version",
-			"relationship_kind",
-			"current_cardinality",
-			"lifecycle_state",
-		},
-		"properties": map[string]any{
-			"predicate_key":         schemaString("Immutable predicate key.", 128),
-			"aliases":               stringArraySchema("Predicate alias.", 50, 128),
-			"allowed_subject_kinds": stringArraySchema("Allowed subject Entity kind.", 20, 64),
-			"allowed_object_kinds": stringArraySchema(
-				"Allowed object Entity kind or Value type.",
-				20,
-				64,
-			),
-			"relationship_kind":   schemaEnum(domain.RelationshipKinds()),
-			"current_cardinality": schemaEnum(domain.CurrentCardinalities()),
-			"lifecycle_state":     schemaEnum(domain.PredicateLifecycleStates()),
-			"version":             map[string]any{"type": "integer", "minimum": 1},
-		},
-	}
 }
 
 func stringArraySchema(description string, maxItems int, maxLen int) map[string]any {

@@ -23,7 +23,7 @@ import (
 
 const (
 	rememberCheckAfterSeconds = 60
-	rememberStatusTool        = "get_memory_placement"
+	rememberStatusTool        = "get_submission_status"
 )
 
 var (
@@ -35,7 +35,12 @@ var (
 
 type RememberService interface {
 	Remember(ctx context.Context, req RememberRequest) (*RememberResult, error)
-	GetMemoryPlacement(ctx context.Context, req GetMemoryPlacementRequest) (*PlacementRunResult, error)
+}
+
+// SubmissionStatusService exposes the bounded, owner-scoped status projection
+// used by the public contract. Placement records remain internal worker state.
+type SubmissionStatusService interface {
+	GetSubmissionStatus(ctx context.Context, req GetSubmissionStatusRequest) (*SubmissionStatusResult, error)
 }
 
 type RememberDependencies struct {
@@ -50,7 +55,7 @@ type rememberService struct {
 	metrics observability.DiscoverabilityMetrics
 }
 
-func NewRememberService(deps RememberDependencies) RememberService {
+func NewRememberService(deps RememberDependencies) *rememberService {
 	metrics := deps.Metrics
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
@@ -67,9 +72,9 @@ type RememberRequest struct {
 	ReplacesSubmissionID string                  `json:"replaces_submission_id,omitempty"`
 }
 
-type GetMemoryPlacementRequest struct {
+type GetSubmissionStatusRequest struct {
 	ContractVersion string `json:"contract_version"`
-	IngestID        string `json:"ingest_id"`
+	SubmissionID    string `json:"submission_id"`
 }
 
 type RememberEvidenceInput struct {
@@ -88,62 +93,36 @@ type RememberEvidenceInput struct {
 }
 
 type RememberResult struct {
-	IngestID          string `json:"ingest_id"`
+	// IngestID is retained for internal compatibility and is never serialized.
+	IngestID          string `json:"-"`
+	SubmissionID      string `json:"submission_id"`
 	ProcessingState   string `json:"processing_state"`
 	CheckAfterSeconds int    `json:"check_after_seconds"`
 	StatusTool        string `json:"status_tool"`
 	CorrelationID     string `json:"correlation_id"`
 }
 
-type PlacementRunResult struct {
-	IngestID        string                `json:"ingest_id"`
-	ProcessingState string                `json:"processing_state"`
-	SearchState     string                `json:"search_state"`
-	Items           []PlacementItemResult `json:"items"`
-	Errors          []PlacementError      `json:"errors"`
+type SubmissionStatusResult struct {
+	SubmissionID               string                     `json:"submission_id"`
+	ProcessingState            string                     `json:"processing_state"`
+	SearchState                string                     `json:"search_state"`
+	CheckAfterSeconds          int                        `json:"check_after_seconds"`
+	Evidence                   []SubmissionEvidenceStatus `json:"evidence"`
+	Errors                     []SubmissionStatusError    `json:"errors"`
+	QuarantineExpiresAt        *time.Time                 `json:"quarantine_expires_at,omitempty"`
+	ReplacementWindowExpiresAt *time.Time                 `json:"replacement_window_expires_at,omitempty"`
 }
 
-type PlacementItemResult struct {
-	ItemID                string                   `json:"item_id"`
-	EvidenceID            string                   `json:"evidence_id"`
-	SupersededEvidenceIDs []string                 `json:"superseded_evidence_ids"`
-	Version               int                      `json:"version"`
-	EvidenceIndex         int                      `json:"evidence_index"`
-	Category              string                   `json:"category"`
-	SearchState           string                   `json:"search_state"`
-	RelationshipOutcomes  []RelationshipOutcomeRef `json:"relationship_outcomes"`
-	ReviewTasks           []PlacementReviewTaskRef `json:"review_tasks"`
-	Errors                []PlacementError         `json:"errors"`
+type SubmissionEvidenceStatus struct {
+	EvidenceID            string   `json:"evidence_id"`
+	EvidenceIndex         int      `json:"evidence_index"`
+	SupersededEvidenceIDs []string `json:"superseded_evidence_ids"`
+	SearchState           string   `json:"search_state"`
 }
 
-type PlacementReviewTaskRef struct {
-	ReviewTaskID string           `json:"review_task_id"`
-	Version      int              `json:"version"`
-	Kind         string           `json:"kind"`
-	Status       string           `json:"status"`
-	Question     string           `json:"question"`
-	Options      []map[string]any `json:"options"`
-	Guidance     string           `json:"guidance"`
-	ExpiresAt    *time.Time       `json:"expires_at"`
-}
-
-type RelationshipOutcomeRef struct {
-	ProposalID         string `json:"proposal_id"`
-	ObservationID      string `json:"observation_id"`
-	RelationshipID     string `json:"relationship_id,omitempty"`
-	OwnerProfileID     string `json:"owner_profile_id"`
-	RelationshipStatus string `json:"relationship_status,omitempty"`
-	Category           string `json:"category"`
-	Reason             string `json:"reason"`
-	ReviewTask         string `json:"review_task,omitempty"`
-	ConfidenceGate     string `json:"confidence_gate,omitempty"`
-	PolicyVersion      string `json:"policy_version,omitempty"`
-}
-
-type PlacementError struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable"`
+type SubmissionStatusError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*RememberResult, error) {
@@ -318,33 +297,104 @@ func rememberEvidenceIndex(raw any) (int, bool) {
 	return 0, false
 }
 
-func (s *rememberService) GetMemoryPlacement(
+// GetSubmissionStatus is the public status projection. It deliberately
+// omits placement IDs, review tasks, provider output, and database details.
+func (s *rememberService) GetSubmissionStatus(
 	ctx context.Context,
-	req GetMemoryPlacementRequest,
-) (*PlacementRunResult, error) {
+	req GetSubmissionStatusRequest,
+) (*SubmissionStatusResult, error) {
 	if s.ledger == nil {
-		return nil, errors.New("memory placement: ledger repository is required")
+		return nil, errors.New("submission status: ledger repository is required")
 	}
 	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
-		return nil, fmt.Errorf("memory placement: invalid contract_version %q", req.ContractVersion)
+		return nil, fmt.Errorf("submission status: invalid contract_version %q", req.ContractVersion)
 	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
 		return nil, ErrRememberAuthContext
 	}
-	ingestID := strings.TrimSpace(req.IngestID)
-	if ingestID == "" {
-		return nil, errors.New("memory placement: ingest_id is required")
+	submissionID := strings.TrimSpace(req.SubmissionID)
+	if submissionID == "" {
+		return nil, errors.New("submission status: submission_id is required")
+	}
+	if _, err := uuid.Parse(submissionID); err != nil {
+		return nil, httperr.New(httperr.NOT_FOUND, "submission not found")
 	}
 	placement, err := s.ledger.GetPlacementRun(ctx, repository.GetPlacementRunInput{
 		TeamID:         actor.TeamID.String(),
 		OwnerProfileID: actor.ProfileID.String(),
-		IngestID:       ingestID,
+		IngestID:       submissionID,
 	})
 	if err != nil {
-		return nil, err
+		if errors.Is(err, repository.ErrPlacementNotFound) {
+			return nil, httperr.New(httperr.NOT_FOUND, "submission not found")
+		}
+		return nil, ErrRememberPersistence
 	}
-	return placementRunResultFromLedger(placement), nil
+	return submissionStatusResultFromLedger(placement), nil
+}
+
+func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) *SubmissionStatusResult {
+	if placement == nil {
+		return &SubmissionStatusResult{Evidence: []SubmissionEvidenceStatus{}, Errors: []SubmissionStatusError{}}
+	}
+	items := make([]SubmissionEvidenceStatus, 0, len(placement.Items))
+	lineage := make(map[string][]string, len(placement.Evidence))
+	for _, evidence := range placement.Evidence {
+		lineage[evidence.FragmentID] = append([]string(nil), evidence.SupersededEvidenceIDs...)
+	}
+	searchState := string(domain.SearchProjectionNotRequired)
+	for _, item := range placement.Items {
+		itemSearchState := placementItemSearchState(item)
+		searchState = placementCombinedSearchState(searchState, itemSearchState)
+		superseded := lineage[item.FragmentID]
+		if superseded == nil {
+			superseded = []string{}
+		}
+		items = append(items, SubmissionEvidenceStatus{
+			EvidenceID:            item.FragmentID,
+			EvidenceIndex:         item.EvidenceIndex,
+			SupersededEvidenceIDs: superseded,
+			SearchState:           itemSearchState,
+		})
+	}
+	processing := publicSubmissionProcessingState(placement.Status, placement.SemanticHoldState)
+	statusErrors := []SubmissionStatusError{}
+	if processing == "failed" {
+		statusErrors = append(statusErrors, SubmissionStatusError{Code: "submission_processing_failed", Message: "submission processing failed"})
+	}
+	return &SubmissionStatusResult{
+		SubmissionID:               placement.IngestID,
+		ProcessingState:            processing,
+		SearchState:                searchState,
+		CheckAfterSeconds:          rememberCheckAfterSeconds,
+		Evidence:                   items,
+		Errors:                     statusErrors,
+		QuarantineExpiresAt:        placement.QuarantineExpiresAt,
+		ReplacementWindowExpiresAt: placement.ReplacementWindowExpiresAt,
+	}
+}
+
+func publicSubmissionProcessingState(status, holdState string) string {
+	if strings.TrimSpace(holdState) != "" {
+		return "rejected"
+	}
+	switch strings.TrimSpace(status) {
+	case string(domain.PlacementRunQueued), string(domain.PlacementRunGuarded):
+		return "queued"
+	case string(domain.PlacementRunProcessing):
+		return "processing"
+	case string(domain.PlacementRunCompleted):
+		return "completed"
+	case string(domain.PlacementRunAwaitingReview):
+		return "rejected"
+	case string(domain.PlacementRunQuarantined):
+		return "quarantined"
+	case string(domain.PlacementRunFailed):
+		return "failed"
+	default:
+		return "failed"
+	}
 }
 
 func (s *rememberService) normalizeEvidence(evidence []RememberEvidenceInput) []repository.EvidenceInput {
@@ -429,93 +479,12 @@ func canonicalRequestHash(req RememberRequest) (string, error) {
 func rememberResultFromLedger(created *repository.CreateIngestResult, correlationID string) *RememberResult {
 	return &RememberResult{
 		IngestID:          created.IngestID,
-		ProcessingState:   created.Status,
+		SubmissionID:      created.IngestID,
+		ProcessingState:   publicSubmissionProcessingState(created.Status, created.SemanticHoldState),
 		CheckAfterSeconds: rememberCheckAfterSeconds,
 		StatusTool:        rememberStatusTool,
 		CorrelationID:     correlationID,
 	}
-}
-
-func placementRunResultFromLedger(created *repository.CreateIngestResult) *PlacementRunResult {
-	items := make([]PlacementItemResult, 0, len(created.Items))
-	topLevelErrors := make([]PlacementError, 0)
-	seenErrors := make(map[string]struct{})
-	lineage := make(map[string][]string, len(created.Evidence))
-	for _, evidence := range created.Evidence {
-		lineage[evidence.FragmentID] = append([]string(nil), evidence.SupersededEvidenceIDs...)
-	}
-	searchState := string(domain.SearchProjectionNotRequired)
-	for _, item := range created.Items {
-		version := item.Version
-		if version == 0 {
-			version = 1
-		}
-		itemSearchState := placementItemSearchState(item)
-		searchState = placementCombinedSearchState(searchState, itemSearchState)
-		supersededEvidenceIDs := lineage[item.FragmentID]
-		if supersededEvidenceIDs == nil {
-			supersededEvidenceIDs = []string{}
-		}
-		itemErrors := placementItemErrors(item)
-		for _, placementError := range itemErrors {
-			errorKey := placementError.Code + ":" + placementError.Message
-			if _, exists := seenErrors[errorKey]; exists {
-				continue
-			}
-			seenErrors[errorKey] = struct{}{}
-			topLevelErrors = append(topLevelErrors, placementError)
-		}
-		items = append(items, PlacementItemResult{
-			ItemID:                item.PlacementItemID,
-			EvidenceID:            item.FragmentID,
-			SupersededEvidenceIDs: supersededEvidenceIDs,
-			Version:               version,
-			EvidenceIndex:         item.EvidenceIndex,
-			Category:              publicPlacementItemCategory(item),
-			SearchState:           itemSearchState,
-			RelationshipOutcomes:  placementRelationshipOutcomes(item.Result),
-			ReviewTasks:           placementReviewTasks(item.ReviewTasks),
-			Errors:                itemErrors,
-		})
-	}
-	return &PlacementRunResult{
-		IngestID:        created.IngestID,
-		ProcessingState: created.Status,
-		SearchState:     searchState,
-		Items:           items,
-		Errors:          topLevelErrors,
-	}
-}
-
-func placementItemErrors(item repository.PlacementItem) []PlacementError {
-	if item.Status != "failed" && item.Category != "failed" {
-		return []PlacementError{}
-	}
-	if strings.EqualFold(resultString(item.Result, "status"), "superseded") {
-		return []PlacementError{}
-	}
-	if _, ok := item.Result["failure_stage"]; !ok {
-		return []PlacementError{}
-	}
-	stage := observability.NormalizeAssessorTerminalFailureStage(resultString(item.Result, "failure_stage"))
-	if stage == "unknown" {
-		return []PlacementError{}
-	}
-	return []PlacementError{{
-		Code:      "semantic_assessment_terminal_failure",
-		Message:   "semantic assessment failed at " + stage,
-		Retryable: false,
-	}}
-}
-
-func publicPlacementItemCategory(item repository.PlacementItem) string {
-	if item.Category == "quarantined" || item.Status == "quarantined" {
-		return string(domain.EvidenceQuarantined)
-	}
-	if item.Status == "failed" || item.Category == "failed" {
-		return string(domain.EvidenceProcessingFailed)
-	}
-	return string(domain.EvidenceProcessed)
 }
 
 func placementCombinedSearchState(left, right string) string {
@@ -566,55 +535,6 @@ func placementSearchStateFromStates(values []any) string {
 	return ""
 }
 
-func placementRelationshipOutcomes(result map[string]any) []RelationshipOutcomeRef {
-	values := resultArray(result, "relationship_outcomes")
-	out := make([]RelationshipOutcomeRef, 0, len(values))
-	for _, value := range values {
-		fields, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-		out = append(out, RelationshipOutcomeRef{
-			ProposalID:         resultString(fields, "proposal_id"),
-			ObservationID:      resultString(fields, "observation_id"),
-			RelationshipID:     resultString(fields, "relationship_id"),
-			OwnerProfileID:     resultString(fields, "owner_profile_id"),
-			RelationshipStatus: resultString(fields, "relationship_status"),
-			Category:           resultString(fields, "category"),
-			Reason:             resultString(fields, "reason"),
-			ReviewTask:         resultString(fields, "review_task"),
-			ConfidenceGate:     resultString(fields, "confidence_gate"),
-			PolicyVersion:      resultString(fields, "policy_version"),
-		})
-	}
-	return out
-}
-
-func placementReviewTasks(tasks []repository.PlacementReviewTask) []PlacementReviewTaskRef {
-	result := make([]PlacementReviewTaskRef, 0, len(tasks))
-	for _, task := range tasks {
-		options := make([]map[string]any, 0, len(task.Options))
-		for _, option := range task.Options {
-			cloned := make(map[string]any, len(option))
-			for key, value := range option {
-				cloned[key] = value
-			}
-			options = append(options, cloned)
-		}
-		result = append(result, PlacementReviewTaskRef{
-			ReviewTaskID: task.ReviewTaskID,
-			Version:      task.Version,
-			Kind:         task.Kind,
-			Status:       task.Status,
-			Question:     task.Question,
-			Options:      options,
-			Guidance:     task.Guidance,
-			ExpiresAt:    task.ExpiresAt,
-		})
-	}
-	return result
-}
-
 func resultArray(result map[string]any, key string) []any {
 	if len(result) == 0 {
 		return nil
@@ -637,17 +557,6 @@ func resultArray(result map[string]any, key string) []any {
 	default:
 		return nil
 	}
-}
-
-func resultString(fields map[string]any, key string) string {
-	value, ok := fields[key]
-	if !ok || value == nil {
-		return ""
-	}
-	if str, ok := value.(string); ok {
-		return strings.TrimSpace(str)
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func translateRememberLedgerError(err error) error {

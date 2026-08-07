@@ -78,18 +78,24 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 			evidence := input["evidence"].([]any)
 			firstEvidence := evidence[0].(map[string]any)
 			idempotencyKey := firstEvidence["idempotency_key"].(string)
-			id, ok := rememberIDs[idempotencyKey]
-			if !ok {
+			if _, ok := rememberIDs[idempotencyKey]; !ok {
 				t.Fatalf("remember input = %#v", input)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ingest_id": strings.TrimPrefix(idempotencyKey, "eval:"),
-				"status":    "queued",
-				"evidence":  []map[string]any{{"id": id}},
+				"submission_id":    strings.TrimPrefix(idempotencyKey, "eval:"),
+				"processing_state": "queued",
 			})
-		case "tool:get_memory_placement":
+		case "tool:get_submission_status":
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode status body: %v", err)
+			}
+			submissionID := input["submission_id"].(string)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"placement": map[string]any{"status": "completed"},
+				"submission_id":    submissionID,
+				"processing_state": "completed",
+				"search_state":     "current",
+				"evidence":         []map[string]any{{"evidence_id": rememberIDs["eval:"+submissionID]}},
 			})
 		case "tool:eval_run_dream_cycle":
 			var input map[string]any

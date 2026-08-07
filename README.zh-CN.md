@@ -150,12 +150,13 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 
 - `AI_VERIFIER_MODEL` 要设为 chat endpoint 上真实存在的模型。启动校验会在开始
   写入 memory 前发现缺失或错误配置。7B-8B 级别模型适合本地 smoke test；更大的
-  模型在加载期间可能超过默认 60 秒超时，placement 会保持可重试直到模型可响应。
+模型在加载期间可能超过默认 60 秒超时，处理会保持可重试直到模型可响应。
 
 ## 证据生命周期
 
-`remember` 会先持久化精确证据并返回 `ingest_id`；provider 调用和 placement 在
-确认后继续执行。使用 `get_memory_placement` 查询权威处理状态。
+`remember` 会先持久化精确证据并返回 `submission_id`；provider 调用和处理在确认
+后继续执行。使用 `get_submission_status` 查询按所有者隔离的处理与搜索状态。
+该状态投影不会暴露 placement 问题、provider 输出或内部 run ID。
 
 若要替换自己拥有的一条当前证据，把其 UUID 放入新证据的
 `supersedes_evidence_ids`。直接指定目标与通过 `previous_source_revision` 推进
@@ -218,9 +219,8 @@ remember 证据（可选 Entity/Relationship 提议）
 | 工具 | 用途 |
 |------|------|
 | `remember` | 提交精确证据及可选 Entity/Relationship 提议，由服务端完成 placement。 |
-| `get_memory_placement` | 查询 placement run。 |
+| `get_submission_status` | 查询按所有者隔离的处理与搜索就绪状态。 |
 | `retract_evidence` | 退役调用者拥有的证据，同时保留只追加的来源记录。 |
-| `resolve_memory_placement` | 通过只追加的证据决策处理 placement 审查项。 |
 | `correct_entity_resolution` | 演练或应用调用者拥有的 Entity 合并和拆分更正。 |
 | `recall_memory` | 检索活跃证据上下文和 Relationship 句柄。 |
 | `trace_memory` | 沿证据、决策和生命周期追踪一条同团队 Relationship。 |
@@ -228,14 +228,10 @@ remember 证据（可选 Entity/Relationship 提议）
 | `list_dreams` | 列出可审查的 Hypothesis，不把它们当作记忆。 |
 | `get_dream` | 获取一个已授权 Hypothesis 及其来源引用。 |
 | `resolve_dream_feedback` | 处理 Hypothesis 反馈，不把 Hypothesis 当成证据。 |
-| `find_memory_pack_candidates` | 查找可以导出的活跃 Relationships。 |
 | `export_memory_pack` | 导出选定活跃 Relationships 及其支持来源。 |
-| `inspect_memory_pack` | 不写入持久状态地检查 memory-pack artifact。 |
-| `import_memory_pack` | 通过普通证据 placement 导入已审阅的 memory pack。 |
-| `rollback_memory_pack_import` | 在选定状态尚未变化时回滚一次导入。 |
 
-memory-pack writer 输出 `dense-mem.memory-pack.v2.4`；严格 reader 会先验证原始
-hash，再兼容读取旧的 v2.3 和 v1 artifact。
+memory-pack 仅导出当前的 `dense-mem.memory-pack.v2.4` artifact。导入和候选发现
+流程不属于公共契约。
 
 ## 支持的 HTTP 表面
 

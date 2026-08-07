@@ -37,6 +37,7 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 	metrics.ObserveRecallFeedbackFor(ctx, RecallFeedback{Used: true, AnswerSupported: true, Quality: "high"})
 	metrics.ObserveDreamFeedbackFor(ctx, DreamFeedback{Decision: "confirm_true", Outcome: "ok", FromStatus: "proposed"})
 	metrics.ObserveConflictReviewDurationFor(ctx, 2.5, "completed")
+	metrics.IncSubmissionQuarantinePurgeFailure()
 
 	body := scrapePrometheusMetrics(t, metrics)
 	for _, want := range []string{
@@ -63,6 +64,7 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 		`decision="confirm_true"`,
 		`densemem_conflict_review_duration_seconds_bucket{`,
 		`outcome="completed"`,
+		`densemem_submission_quarantine_purge_failures_total 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scraped metrics missing %q\n%s", want, body)

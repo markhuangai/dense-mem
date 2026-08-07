@@ -112,6 +112,11 @@ type CreateIngestResult struct {
 	Evidence         []EvidenceFragment
 	Items            []PlacementItem
 	FirstDisposition *PlacementFirstDisposition
+	// Status projection metadata is loaded for the owner-scoped public status
+	// endpoint; it is not placement data and is never exposed directly.
+	QuarantineExpiresAt        *time.Time
+	ReplacementWindowExpiresAt *time.Time
+	SemanticHoldState          string
 }
 
 type EvidenceFragment struct {
@@ -483,6 +488,10 @@ func (r *LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID st
 			    error = ?,
 			    lease_until = NULL,
 			    completed_at = now(),
+			    quarantine_expires_at = CASE
+			        WHEN ? = 'quarantined' THEN now() + interval '24 hours'
+			        ELSE quarantine_expires_at
+			    END,
 			    updated_at = now()
 			WHERE team_id = ?::uuid
 			  AND placement_run_id = ?::uuid
@@ -491,7 +500,7 @@ func (r *LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID st
 			  AND lease_until IS NOT NULL
 			  AND lease_until > now()
 			RETURNING owner_profile_id::text, created_at, completed_at
-		`, status, strings.TrimSpace(message), teamID, placementRunID, workerID).Rows()
+		`, status, strings.TrimSpace(message), status, teamID, placementRunID, workerID).Rows()
 		if err != nil {
 			return err
 		}
@@ -753,13 +762,15 @@ func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInpu
 	}
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
 		INSERT INTO placement_runs (
-		    team_id, ingest_id, owner_profile_id, status, completed_at,
+		    team_id, ingest_id, owner_profile_id, status, completed_at, quarantine_expires_at,
 		    replaces_placement_run_id
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, %s, NULLIF(?, '')::uuid
+		    ?::uuid, ?::uuid, ?::uuid, ?, %s,
+		    CASE WHEN ? = 'quarantined' THEN now() + interval '24 hours' ELSE NULL END,
+		    NULLIF(?, '')::uuid
 		)
 		RETURNING placement_run_id::text, created_at, completed_at
-	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.Status, replacementTargetID).Rows()
+	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.Status, input.Status, replacementTargetID).Rows()
 	if err != nil {
 		return "", time.Time{}, nil, err
 	}

@@ -414,29 +414,19 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 	if err := c.callToolWithRetry(ctx, "remember", input, &out); err != nil {
 		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
 	}
-	fragmentID := fragmentIDFromRemember(out)
-	evidenceID := evidenceIDFromRemember(out)
-	if fragmentID == "" && evidenceID != "" && !isRememberOutput(out) {
-		fragmentID = evidenceID
+	submissionID := stringValue(out["submission_id"])
+	if submissionID == "" {
+		return mapping, fmt.Errorf("import %s: remember response missing submission_id", item.SourceDocID)
 	}
-	if ingestID := stringValue(out["ingest_id"]); ingestID != "" {
-		placement, err := c.WaitForMemoryPlacementResult(ctx, ingestID, c.placementTimeout())
-		if err != nil {
-			return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
-		}
-		if evidenceID == "" {
-			evidenceID = evidenceIDFromPlacement(placement)
-		}
+	status, err := c.WaitForSubmissionStatusResult(ctx, submissionID, c.placementTimeout())
+	if err != nil {
+		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
 	}
-	if fragmentID == "" && evidenceID == "" {
-		return mapping, fmt.Errorf("import %s: remember response missing fragment or evidence id", item.SourceDocID)
+	fragmentID := evidenceIDFromSubmission(status)
+	if fragmentID == "" {
+		return mapping, fmt.Errorf("import %s: submission status missing evidence id", item.SourceDocID)
 	}
-	if fragmentID != "" {
-		addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
-	}
-	if evidenceID != "" {
-		addSourceMapping(&mapping, Ref{Type: "evidence", ID: evidenceID, SourceDocID: item.SourceDocID}, fragmentID == "")
-	}
+	addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
 	return mapping, nil
 }
 
@@ -469,13 +459,13 @@ func corpusImportGroupKey(item CorpusItem) string {
 	return "item:" + sourceDocID
 }
 
-func (c *HTTPClient) WaitForMemoryPlacement(ctx context.Context, ingestID string, timeout time.Duration) error {
-	_, err := c.WaitForMemoryPlacementResult(ctx, ingestID, timeout)
+func (c *HTTPClient) WaitForSubmissionStatus(ctx context.Context, submissionID string, timeout time.Duration) error {
+	_, err := c.WaitForSubmissionStatusResult(ctx, submissionID, timeout)
 	return err
 }
 
-func (c *HTTPClient) WaitForMemoryPlacementResult(ctx context.Context, ingestID string, timeout time.Duration) (map[string]any, error) {
-	if strings.TrimSpace(ingestID) == "" {
+func (c *HTTPClient) WaitForSubmissionStatusResult(ctx context.Context, submissionID string, timeout time.Duration) (map[string]any, error) {
+	if strings.TrimSpace(submissionID) == "" {
 		return nil, nil
 	}
 	if timeout <= 0 {
@@ -485,38 +475,41 @@ func (c *HTTPClient) WaitForMemoryPlacementResult(ctx context.Context, ingestID 
 	defer cancel()
 	for {
 		var out map[string]any
-		if err := c.callToolWithRetry(waitCtx, "get_memory_placement", map[string]any{"ingest_id": ingestID}, &out); err != nil {
+		if err := c.callToolWithRetry(waitCtx, "get_submission_status", map[string]any{"submission_id": submissionID}, &out); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				return nil, fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
+				return nil, fmt.Errorf("submission %s did not complete within %s", submissionID, timeout)
 			}
 			return nil, err
 		}
-		status := placementProcessingState(out)
+		status := submissionProcessingState(out)
 		switch status {
-		case "completed", "awaiting_review":
-			searchState := placementSearchState(out)
+		case "completed":
+			searchState := submissionSearchState(out)
 			switch searchState {
 			case "", "current", "not_required":
 				return out, nil
 			case "pending":
 			case "failed":
-				if cause := placementErrorMessage(out); cause != "" {
-					return nil, fmt.Errorf("memory placement %s search_state failed: %s", ingestID, cause)
+				if cause := submissionErrorMessage(out); cause != "" {
+					return nil, fmt.Errorf("submission %s search_state failed: %s", submissionID, cause)
 				}
-				return nil, fmt.Errorf("memory placement %s search_state failed", ingestID)
+				return nil, fmt.Errorf("submission %s search_state failed", submissionID)
 			default:
-				return nil, fmt.Errorf("memory placement %s returned unknown search_state %q", ingestID, searchState)
+				return nil, fmt.Errorf("submission %s returned unknown search_state %q", submissionID, searchState)
 			}
-		case "failed", "guarded", "quarantined":
-			if cause := placementErrorMessage(out); cause != "" {
-				return nil, fmt.Errorf("memory placement %s %s: %s", ingestID, status, cause)
+		case "queued", "processing":
+		case "failed", "rejected", "quarantined":
+			if cause := submissionErrorMessage(out); cause != "" {
+				return nil, fmt.Errorf("submission %s %s: %s", submissionID, status, cause)
 			}
-			return nil, fmt.Errorf("memory placement %s %s", ingestID, status)
+			return nil, fmt.Errorf("submission %s %s", submissionID, status)
+		default:
+			return nil, fmt.Errorf("submission %s returned unknown processing_state %q", submissionID, status)
 		}
 		select {
 		case <-waitCtx.Done():
 			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-				return nil, fmt.Errorf("memory placement %s did not complete within %s", ingestID, timeout)
+				return nil, fmt.Errorf("submission %s did not complete within %s", submissionID, timeout)
 			}
 			return nil, waitCtx.Err()
 		case <-time.After(time.Second):
@@ -808,38 +801,15 @@ func knowledgeItemID(kind string, item map[string]any) string {
 	}
 }
 
-func fragmentIDFromRemember(out map[string]any) string {
-	fragment, _ := out["fragment"].(map[string]any)
-	return firstNonEmpty(stringValue(fragment["id"]), stringValue(fragment["fragment_id"]))
-}
-
-func evidenceIDFromRemember(out map[string]any) string {
-	if id := stringValue(out["evidence_id"]); id != "" {
-		return id
-	}
+func evidenceIDFromSubmission(out map[string]any) string {
 	evidence, _ := out["evidence"].([]any)
-	if len(evidence) == 0 {
-		return ""
-	}
-	first, _ := evidence[0].(map[string]any)
-	return firstNonEmpty(stringValue(first["evidence_id"]), stringValue(first["id"]), stringValue(first["fragment_id"]))
-}
-
-func isRememberOutput(out map[string]any) bool {
-	return stringValue(out["processing_state"]) != "" ||
-		stringValue(out["status_tool"]) != "" ||
-		stringValue(out["correlation_id"]) != ""
-}
-
-func evidenceIDFromPlacement(out map[string]any) string {
-	items, _ := out["items"].([]any)
-	for _, raw := range items {
+	for _, raw := range evidence {
 		item, _ := raw.(map[string]any)
 		if id := firstNonEmpty(stringValue(item["evidence_id"]), stringValue(item["id"]), stringValue(item["fragment_id"])); id != "" {
 			return id
 		}
 	}
-	return evidenceIDFromRemember(out)
+	return ""
 }
 
 func traceFromToolOutput(tc Case, out map[string]any) RecallTrace {

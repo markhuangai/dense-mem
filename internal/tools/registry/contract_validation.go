@@ -1,12 +1,9 @@
 package registry
 
 import (
-	"encoding/hex"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 type contractSourceRevision struct {
@@ -179,155 +176,6 @@ func validateDreamFeedback(args map[string]any) error {
 	default:
 		return validateRequiredFields(args, "reason")
 	}
-}
-
-func validateMemoryPackSource(args map[string]any) error {
-	artifact, hasArtifact := nonEmptyString(args["artifact_json"])
-	rawURL, hasURL := nonEmptyString(args["url"])
-	if hasArtifact == hasURL {
-		return fmt.Errorf("exactly one of artifact_json or url is required")
-	}
-	if hasArtifact && utf8.RuneCountInString(artifact) > memoryPackArtifactMaxLength {
-		return fmt.Errorf("artifact_json exceeds maximum length of %d", memoryPackArtifactMaxLength)
-	}
-	if hasURL {
-		parsed, err := url.Parse(rawURL)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-			return fmt.Errorf("url must be an absolute HTTPS URL")
-		}
-		if _, ok := args["expected_sha256"]; !ok {
-			return fmt.Errorf("expected_sha256 is required for url")
-		}
-	}
-	if digest, ok := args["expected_sha256"].(string); ok {
-		decoded, err := hex.DecodeString(digest)
-		if err != nil || len(decoded) != 32 {
-			return fmt.Errorf("expected_sha256 must be a 64-character hexadecimal SHA-256")
-		}
-	}
-	return nil
-}
-
-func nonEmptyString(value any) (string, bool) {
-	text, ok := value.(string)
-	if !ok {
-		return "", false
-	}
-	text = strings.TrimSpace(text)
-	return text, text != ""
-}
-
-func validateRollbackMemoryPackImport(args map[string]any) error {
-	dryRun, _ := args["dry_run"].(bool)
-	if dryRun {
-		return nil
-	}
-	if contractValueEmpty(args["impact_token"]) {
-		return fmt.Errorf("impact_token is required for rollback apply")
-	}
-	return nil
-}
-
-func validateUniqueObjectRefsIn(raw any, path string, refField string) error {
-	items, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	for i, item := range items {
-		fields, ok := objectFields(item)
-		if !ok {
-			continue
-		}
-		value, _ := fields[refField].(string)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			return fmt.Errorf("%s[%d].%s: duplicate ref %q", path, i, refField, value)
-		}
-		seen[value] = struct{}{}
-	}
-	return nil
-}
-
-func validateRelationshipObjectChoiceIn(raw any, path string) error {
-	items, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
-	for i, item := range items {
-		fields, ok := objectFields(item)
-		if !ok {
-			continue
-		}
-		objectRef, hasObjectRef := fields["object_ref"].(string)
-		hasObjectRef = hasObjectRef && strings.TrimSpace(objectRef) != ""
-		_, hasObjectValue := fields["object_value"]
-		if hasObjectRef == hasObjectValue {
-			return fmt.Errorf("%s[%d]: exactly one of object_ref or object_value is required", path, i)
-		}
-	}
-	return nil
-}
-
-func validateProposalReferencesAndSpans(proposal map[string]any, evidence []any) error {
-	entityRefs := map[string]struct{}{}
-	entities, _ := proposal["entities"].([]any)
-	for _, raw := range entities {
-		entity, _ := objectFields(raw)
-		ref, _ := entity["ref"].(string)
-		entityRefs[ref] = struct{}{}
-	}
-	relationships, _ := proposal["relationships"].([]any)
-	for i, raw := range relationships {
-		relationship, _ := objectFields(raw)
-		for _, field := range []string{"subject_ref", "object_ref"} {
-			ref, ok := relationship[field].(string)
-			if !ok || ref == "" {
-				continue
-			}
-			if _, exists := entityRefs[ref]; !exists {
-				return fmt.Errorf("proposal.relationships[%d].%s references unknown Entity ref %q", i, field, ref)
-			}
-		}
-		spans, _ := relationship["evidence"].([]any)
-		for j, rawSpan := range spans {
-			span, _ := objectFields(rawSpan)
-			indexNumber, _ := schemaNumber(span["evidence_index"])
-			index := int(indexNumber)
-			if index < 0 || index >= len(evidence) {
-				return fmt.Errorf("proposal.relationships[%d].evidence[%d].evidence_index is outside submitted evidence", i, j)
-			}
-			startNumber, _ := schemaNumber(span["start"])
-			endNumber, _ := schemaNumber(span["end"])
-			start, end := int(startNumber), int(endNumber)
-			evidenceItem, _ := objectFields(evidence[index])
-			content, _ := evidenceItem["content"].(string)
-			if start < 0 || end <= start || end > utf8.RuneCountInString(content) {
-				return fmt.Errorf("proposal.relationships[%d].evidence[%d] has invalid code-point span", i, j)
-			}
-		}
-		if objectValue, ok := objectFields(relationship["object_value"]); ok {
-			if err := validateTypedValue(objectValue, fmt.Sprintf("proposal.relationships[%d].object_value", i)); err != nil {
-				return err
-			}
-		}
-		if target, ok := objectFields(relationship["correction_target"]); ok {
-			if err := validateCorrectionTarget(target, fmt.Sprintf("proposal.relationships[%d].correction_target", i)); err != nil {
-				return err
-			}
-		}
-		if context, ok := objectFields(relationship["conflict_context"]); ok {
-			if err := validateConflictContext(context, fmt.Sprintf("proposal.relationships[%d].conflict_context", i)); err != nil {
-				return err
-			}
-		}
-		if err := validateRelationshipValidityWindow(relationship, fmt.Sprintf("proposal.relationships[%d]", i)); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 type submittedRelationshipSpan struct {

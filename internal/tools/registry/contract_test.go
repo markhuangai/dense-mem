@@ -150,11 +150,11 @@ func TestContractCatalogMetadata(t *testing.T) {
 	}
 	for _, name := range []string{
 		ToolRemember,
-		ToolResolveMemoryPlacement,
+		ToolGetSubmissionStatus,
 		ToolCorrectEntityResolution,
 		ToolRecallMemory,
 		ToolTraceMemory,
-		ToolImportMemoryPack,
+		ToolExportMemoryPack,
 	} {
 		if _, ok := seen[name]; !ok {
 			t.Fatalf("contract missing tool %s", name)
@@ -376,187 +376,6 @@ func TestFlatRelationshipValidityFieldsBelongToRelationship(t *testing.T) {
 	}
 }
 
-func TestResolveMemoryPlacementActionRequiredFields(t *testing.T) {
-	resolve, err := requireTool(toolMap(t), ToolResolveMemoryPlacement)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := map[string]any{"idempotency_key": "resolution-1"}
-	evidence := []any{map[string]any{"content": "The user supplied authoritative resolution evidence."}}
-	cases := []struct {
-		name    string
-		action  string
-		valid   map[string]any
-		missing string
-	}{
-		{
-			name:    "acknowledge requires ingest",
-			action:  string(domain.ResolveAcknowledge),
-			valid:   map[string]any{"ingest_id": "ing-1"},
-			missing: "ingest_id",
-		},
-		{
-			name:   "select entity requires mention and candidate",
-			action: string(domain.ResolveSelectEntity),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"entity_ref":             "person-1",
-				"candidate_entity_id":    "ent-1",
-			},
-			missing: "candidate_entity_id",
-		},
-		{
-			name:   "confirm new entity requires evidence",
-			action: string(domain.ResolveConfirmNewEntity),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"entity_ref":             "person-1",
-				"evidence":               evidence,
-			},
-			missing: "evidence",
-		},
-		{
-			name:   "select predicate requires predicate version",
-			action: string(domain.ResolveSelectPredicate),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"observation_id":         "obs-1",
-				"predicate_key":          "works_on",
-				"predicate_version":      float64(1),
-			},
-			missing: "predicate_version",
-		},
-		{
-			name:   "accept requires evidence",
-			action: string(domain.ResolveAccept),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"evidence":               evidence,
-			},
-			missing: "evidence",
-		},
-		{
-			name:   "reject requires reason",
-			action: string(domain.ResolveReject),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"message":                "not supported by the source",
-			},
-			missing: "message",
-		},
-		{
-			name:   "correct requires evidence",
-			action: string(domain.ResolveCorrect),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"evidence":               evidence,
-			},
-			missing: "evidence",
-		},
-		{
-			name:   "release quarantine requires reason",
-			action: string(domain.ResolveReleaseQuarantine),
-			valid: map[string]any{
-				"ingest_id":              "ing-1",
-				"placement_item_id":      "item-1",
-				"placement_item_version": float64(1),
-				"message":                "manager reviewed quarantine signal",
-			},
-			missing: "message",
-		},
-		{
-			name:   "forget requires relationship target",
-			action: string(domain.ResolveForget),
-			valid: map[string]any{
-				"relationship_id": "rel-1",
-				"message":         "user requested retraction",
-				"evidence":        evidence,
-			},
-			missing: "relationship_id",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			valid := mergeMap(base, tc.valid)
-			valid["action"] = tc.action
-			if err := ValidateContractInput(resolve, valid, []string{"write"}); err != nil {
-				t.Fatalf("valid action rejected: %v", err)
-			}
-
-			invalid := cloneMap(valid)
-			missing := tc.missing
-			delete(invalid, tc.missing)
-			err := ValidateContractInput(resolve, invalid, []string{"write"})
-			if err == nil || !strings.Contains(err.Error(), missing+" is required") {
-				t.Fatalf("missing %s err = %v", missing, err)
-			}
-		})
-	}
-}
-
-func TestResolveMemoryPlacementRejectsLegacyNestedDecision(t *testing.T) {
-	resolve, err := requireTool(toolMap(t), ToolResolveMemoryPlacement)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := map[string]any{
-		"action":                 string(domain.ResolveSelectEntity),
-		"idempotency_key":        "resolution-1",
-		"ingest_id":              "ing-1",
-		"placement_item_id":      "item-1",
-		"placement_item_version": float64(1),
-		"entity_ref":             "person-1",
-		"candidate_entity_id":    "ent-1",
-		"decision": map[string]any{
-			"mention_ref": "person-1",
-			"entity_id":   "ent-1",
-		},
-	}
-	err = ValidateContractInput(resolve, input, []string{"write"})
-	if err == nil || !strings.Contains(err.Error(), "decision") {
-		t.Fatalf("legacy nested decision err = %v", err)
-	}
-}
-
-func TestResolveMemoryPlacementReviewActionsRequireItemVersion(t *testing.T) {
-	resolve, err := requireTool(toolMap(t), ToolResolveMemoryPlacement)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, action := range []domain.ResolveAction{
-		domain.ResolveSelectEntity,
-		domain.ResolveConfirmNewEntity,
-		domain.ResolveSelectPredicate,
-		domain.ResolveAccept,
-		domain.ResolveReject,
-		domain.ResolveCorrect,
-		domain.ResolveReleaseQuarantine,
-	} {
-		input := map[string]any{
-			"action":            string(action),
-			"idempotency_key":   "resolution-1",
-			"ingest_id":         "ing-1",
-			"placement_item_id": "item-1",
-		}
-		err := ValidateContractInput(resolve, input, []string{"write"})
-		if err == nil || !strings.Contains(err.Error(), "placement_item_version is required") {
-			t.Fatalf("%s missing placement_item_version err = %v", action, err)
-		}
-	}
-}
-
 func TestDefaultRecallDoesNotPermitCandidatesOrHypotheses(t *testing.T) {
 	tools := toolMap(t)
 	recall, err := requireTool(tools, ToolRecallMemory)
@@ -600,29 +419,33 @@ func TestDefaultRecallDoesNotPermitCandidatesOrHypotheses(t *testing.T) {
 func TestCanonicalInputFieldNames(t *testing.T) {
 	tools := toolMap(t)
 	cases := []struct {
-		tool      string
-		required  []string
-		forbidden []string
+		tool           string
+		canonical      []string
+		schemaRequired []string
+		forbidden      []string
 	}{
-		{ToolRemember, []string{"evidence", "relationships"}, []string{"contract_version", "entity_hints", "relationship_hints", "proposal"}},
-		{ToolResolveMemoryPlacement, []string{"placement_item_version", "entity_ref", "candidate_entity_id", "message"}, []string{"contract_version", "decision", "reason"}},
-		{ToolCorrectEntityResolution, []string{"operation", "owned_observation_ids", "impact_token"}, []string{"action", "selected_observation_ids", "plan_token"}},
-		{ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, []string{"include_evidence", "use_communities"}},
-		{ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, []string{"max_chars"}},
-		{ToolSubmitRecallSessionFeedback, []string{"recalls"}, nil},
-		{ToolGetDream, []string{"hypothesis_id"}, []string{"dream_id"}},
-		{ToolResolveDreamFeedback, []string{"hypothesis_id", "decision", "reason", "evidence", "relationships"}, []string{"dream_id", "feedback", "proposal"}},
-		{ToolFindMemoryPackCandidates, []string{"query", "limit", "predicate_keys"}, nil},
-		{ToolExportMemoryPack, []string{"include_evidence", "include_entity_names"}, []string{"include_support"}},
-		{ToolInspectMemoryPack, []string{"artifact_json", "url", "expected_sha256", "mode"}, []string{"recommend_decisions"}},
-		{ToolRollbackMemoryPackImport, []string{"import_id", "dry_run"}, nil},
+		{ToolRemember, []string{"evidence", "relationships"}, nil, []string{"contract_version", "entity_hints", "relationship_hints", "proposal"}},
+		{ToolGetSubmissionStatus, []string{"submission_id"}, []string{"submission_id"}, []string{"ingest_id", "placement_item_id", "items", "review_tasks"}},
+		{ToolCorrectEntityResolution, []string{"operation", "owned_observation_ids", "impact_token"}, nil, []string{"action", "selected_observation_ids", "plan_token"}},
+		{ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, nil, []string{"include_evidence", "use_communities"}},
+		{ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, nil, []string{"max_chars"}},
+		{ToolSubmitRecallSessionFeedback, []string{"recalls"}, nil, nil},
+		{ToolGetDream, []string{"hypothesis_id"}, nil, []string{"dream_id"}},
+		{ToolResolveDreamFeedback, []string{"hypothesis_id", "decision", "reason", "evidence", "relationships"}, nil, []string{"dream_id", "feedback", "proposal"}},
+		{ToolExportMemoryPack, []string{"relationship_ids"}, []string{"name", "relationship_ids"}, []string{"include_support"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tool, func(t *testing.T) {
 			props := schemaProperties(tools[tc.tool].InputSchema)
-			for _, field := range tc.required {
+			required := schemaRequiredFields(tools[tc.tool].InputSchema)
+			for _, field := range tc.canonical {
 				if _, ok := props[field]; !ok {
 					t.Errorf("missing canonical field %s", field)
+				}
+			}
+			for _, field := range tc.schemaRequired {
+				if !slices.Contains(required, field) {
+					t.Errorf("canonical field %s is not required by the schema", field)
 				}
 			}
 			for _, field := range tc.forbidden {
@@ -832,60 +655,4 @@ func mergeMap(left map[string]any, right map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
-}
-
-func TestPredicateOptionsContract(t *testing.T) {
-	schema := predicateDefinitionSchema()
-	props := schemaProperties(schema)
-	for _, field := range []string{
-		"predicate_key",
-		"version",
-		"relationship_kind",
-		"current_cardinality",
-		"lifecycle_state",
-	} {
-		if _, ok := props[field]; !ok {
-			t.Fatalf("predicate definition schema missing %s", field)
-		}
-	}
-	relationshipKind := props["relationship_kind"]
-	if err := validateSchemaValue("relationship_kind", "state", relationshipKind); err != nil {
-		t.Fatalf("relationship_kind state rejected: %v", err)
-	}
-	if err := validateSchemaValue("relationship_kind", "versioned", relationshipKind); err == nil {
-		t.Fatal("relationship_kind accepted removed policy_family value")
-	}
-	cardinality := props["current_cardinality"]
-	if err := validateSchemaValue("current_cardinality", "one", cardinality); err != nil {
-		t.Fatalf("current_cardinality one rejected: %v", err)
-	}
-	if err := validateSchemaValue("current_cardinality", "latest", cardinality); err == nil {
-		t.Fatal("current_cardinality accepted non-wiki value")
-	}
-}
-
-func TestPlacementReviewOptionSchemaRequiresOneCompleteOptionShape(t *testing.T) {
-	schema := placementReviewOptionSchema()
-	valid := []map[string]any{
-		{"entity_id": "entity-1", "canonical_name": "Dense-Mem", "kind": "product"},
-		{"predicate_key": "works_on", "version": 1, "aliases": []string{"works on"}},
-		{"action": "submit_new_evidence"},
-	}
-	for _, option := range valid {
-		if err := validateSchemaValue("option", option, schema); err != nil {
-			t.Fatalf("validateSchemaValue(%#v) error = %v", option, err)
-		}
-	}
-	for _, option := range []map[string]any{
-		{},
-		{"entity_id": "entity-1"},
-		{"entity_id": "entity-1", "canonical_name": "Dense-Mem", "kind": "product", "action": "submit_new_evidence"},
-	} {
-		if err := validateSchemaValue("option", option, schema); err == nil {
-			t.Fatalf("validateSchemaValue(%#v) accepted incomplete or mixed option", option)
-		}
-	}
-	if got := placementReviewTaskArraySchema()["maxItems"]; got != 300 {
-		t.Fatalf("review task maxItems = %#v, want 300", got)
-	}
 }

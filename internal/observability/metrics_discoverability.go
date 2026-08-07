@@ -33,6 +33,11 @@ type AssessorMetrics interface {
 	IncAssessorTerminalFailure(stage string)
 }
 
+// SubmissionQuarantineMetrics records required retention-worker failures.
+type SubmissionQuarantineMetrics interface {
+	IncSubmissionQuarantinePurgeFailure()
+}
+
 // NoopDiscoverabilityMetrics returns a recorder that discards all metrics.
 func NoopDiscoverabilityMetrics() DiscoverabilityMetrics { return noopMetrics{} }
 
@@ -59,6 +64,7 @@ func (noopMetrics) IncAssessorDuplicateRequestPrevention(string) {}
 func (noopMetrics) IncAssessorConfidenceGate(string)             {}
 func (noopMetrics) AddAssessorReviewExpiry(int64)                {}
 func (noopMetrics) IncAssessorTerminalFailure(string)            {}
+func (noopMetrics) IncSubmissionQuarantinePurgeFailure()         {}
 
 // InMemoryDiscoverabilityMetrics is a test-friendly recorder.
 type InMemoryDiscoverabilityMetrics struct {
@@ -80,6 +86,7 @@ type InMemoryDiscoverabilityMetrics struct {
 	assessorGateBands           map[string]int
 	assessorReviewExpiry        int64
 	assessorTerminalFailures    map[string]int
+	quarantinePurgeFailures     int
 }
 
 // AssessorCallSample records one bounded assessor conversation.
@@ -149,6 +156,7 @@ type ConflictReviewSample struct {
 
 var _ DiscoverabilityMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
 var _ AssessorMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
+var _ SubmissionQuarantineMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
 
 // NewInMemoryDiscoverabilityMetrics constructs a fresh recorder.
 func NewInMemoryDiscoverabilityMetrics() *InMemoryDiscoverabilityMetrics {
@@ -344,6 +352,12 @@ func (m *InMemoryDiscoverabilityMetrics) IncAssessorTerminalFailure(stage string
 	m.assessorTerminalFailures[NormalizeAssessorTerminalFailureStage(stage)]++
 }
 
+func (m *InMemoryDiscoverabilityMetrics) IncSubmissionQuarantinePurgeFailure() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.quarantinePurgeFailures++
+}
+
 func (m *InMemoryDiscoverabilityMetrics) AssessorCalls() []AssessorCallSample {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -417,4 +431,10 @@ func NormalizeAssessorTerminalFailureStage(value string) string {
 	default:
 		return "unknown"
 	}
+}
+
+func (m *InMemoryDiscoverabilityMetrics) SubmissionQuarantinePurgeFailureCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.quarantinePurgeFailures
 }

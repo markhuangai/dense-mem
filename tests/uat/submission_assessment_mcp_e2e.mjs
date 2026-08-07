@@ -54,14 +54,14 @@ const remember = await mcpTool("remember", {
     relationship("r:enables-relay", 1, "Atlas", "enables", "Relay", "enables", "product", "product", evidence[1]),
   ],
 });
-const ingestID = stringValue(remember.ingest_id);
-if (!ingestID) {
-  throw new Error("remember did not return an ingest_id");
+const submissionID = stringValue(remember.submission_id);
+if (!submissionID) {
+  throw new Error("remember did not return a submission_id");
 }
 
-await waitForCompletedPlacement(ingestID);
+await waitForCompletedPlacement(submissionID);
 const verifierAfter = await waitForVerifierRequest(verifierBefore + 1);
-const summary = submissionSummary(ingestID);
+const summary = submissionSummary(submissionID);
 
 if (summary.assessments !== 1 || summary.completedItems !== 2 || summary.commitOutcomes !== 2) {
   throw new Error("submission did not complete as one atomic placement run");
@@ -105,7 +105,7 @@ if (terminalFailures < 1) {
 console.log(JSON.stringify({
   status: "ok",
   run_id: runID,
-  ingest_id: ingestID,
+  submission_id: submissionID,
   verifier_requests_before: verifierBefore,
   verifier_requests_after: verifierAfter,
   verifier_requests_after_overflow: overflowAfter,
@@ -240,15 +240,15 @@ function span(content, text, from = 0) {
   };
 }
 
-async function waitForCompletedPlacement(ingestID) {
+async function waitForCompletedPlacement(submissionID) {
   const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2_000);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const placement = await mcpTool("get_memory_placement", { ingest_id: ingestID });
+    const placement = await mcpTool("get_submission_status", { submission_id: submissionID });
     const state = stringValue(placement.processing_state);
     if (state === "completed") {
       return;
     }
-    if (["awaiting_review", "failed", "quarantined"].includes(state)) {
+    if (["rejected", "failed", "quarantined"].includes(state)) {
       throw new Error(`submission reached unexpected terminal state ${state}`);
     }
     await delay(2_000);
@@ -286,8 +286,8 @@ async function waitForVerifierRequest(expected) {
   throw new Error("submission did not record one assessor conversation");
 }
 
-function submissionSummary(ingestID) {
-  const runIDLiteral = sqlLiteral(ingestID);
+function submissionSummary(submissionID) {
+  const runIDLiteral = sqlLiteral(submissionID);
   const row = postgresRow(`
     WITH run AS (
       SELECT placement_run_id
