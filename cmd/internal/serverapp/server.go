@@ -106,7 +106,6 @@ func RunActiveServer(
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
 	operationLogRepo := repository.NewOperationLogRepository(pgDB.GetDB(), rlsHelper)
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
-	skillPackImportRepo := repository.NewSkillPackImportRepository(pgDB.GetDB(), rlsHelper)
 	semanticRepo := repository.NewSemanticRepository(pgDB.GetDB(), rlsHelper)
 	ledgerRepo := repository.NewLedgerRepositoryWithRuntimeConfig(
 		pgDB.GetDB(),
@@ -270,10 +269,7 @@ func RunActiveServer(
 	})
 	graphViewSvc := graphview.NewSemantic(semanticRepo)
 	memoryPackSvc := skillpackservice.NewMemoryPackService(skillpackservice.MemoryPackDependencies{
-		Semantic:    semanticRepo,
-		Remember:    rememberSvc,
-		Ledger:      skillPackImportRepo,
-		HistoryDays: cfg.GetMemoryPackImportHistoryDays(),
+		Semantic: semanticRepo,
 	})
 	recallFeedbackEventService := service.NewRecallFeedbackEventService(recallFeedbackEventRepo, appConfigService, nil)
 	recallFeedbackEventService.Start(context.Background())
@@ -286,6 +282,7 @@ func RunActiveServer(
 		EvaluationAudit:      auditService,
 		Context:              contextSvc,
 		Remember:             rememberSvc,
+		SubmissionStatus:     rememberSvc,
 		Recall:               recallSvc,
 		Lifecycle:            lifecycleSvc,
 		Evaluation:           semanticRepo,
@@ -459,6 +456,7 @@ func RunActiveServer(
 
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
+	ledgerRepo.StartSubmissionQuarantinePurger(workerCtx, time.Minute)
 	startActiveWorkers(
 		workerCtx,
 		logger,

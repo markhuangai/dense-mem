@@ -39,8 +39,8 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	if err := ValidateInput(Tool{InputSchema: remember.OutputSchema}, out); err != nil {
 		t.Fatalf("validate output: %v", err)
 	}
-	if out["ingest_id"] != "ingest-canonical" {
-		t.Fatalf("ingest_id = %#v, want ingest-canonical", out["ingest_id"])
+	if out["submission_id"] != "ingest-canonical" {
+		t.Fatalf("submission_id = %#v, want ingest-canonical", out["submission_id"])
 	}
 	if out["processing_state"] != string(domain.PlacementRunQueued) || out["correlation_id"] != "corr-canonical" {
 		t.Fatalf("output = %#v", out)

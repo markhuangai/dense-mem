@@ -27,6 +27,7 @@ type Dependencies struct {
 
 	Context           contextservice.Service
 	Remember          memoryservice.RememberService
+	SubmissionStatus  memoryservice.SubmissionStatusService
 	Recall            memoryservice.RecallService
 	Lifecycle         memoryservice.LifecycleService
 	Evaluation        repository.EvaluationRepository

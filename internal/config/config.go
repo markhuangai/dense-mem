@@ -75,7 +75,6 @@ type ConfigProvider interface {
 	GetAIVerifierTimeoutSeconds() int
 	GetAIVerifierMaxConcurrency() int
 	GetPromoteTxTimeoutSeconds() int
-	GetMemoryPackImportHistoryDays() int
 	GetControlHTTPAddr() string
 	GetControlPortalToken() string
 }
@@ -165,7 +164,6 @@ type Config struct {
 	MemoryPlacementWorkerCount            int
 	MemoryPlacementPollSeconds            int
 	PromoteTxTimeoutSeconds               int
-	MemoryPackImportHistoryDays           int
 	ControlHTTPAddr                       string
 	ControlPortalToken                    string `json:"-"`
 	TelemetryEnabled                      bool
@@ -276,13 +274,12 @@ func (c *Config) GetMemoryPlacementPollSeconds() int {
 	}
 	return c.MemoryPlacementPollSeconds
 }
-func (c *Config) GetPromoteTxTimeoutSeconds() int     { return c.PromoteTxTimeoutSeconds }
-func (c *Config) GetMemoryPackImportHistoryDays() int { return c.MemoryPackImportHistoryDays }
-func (c *Config) GetControlHTTPAddr() string          { return c.ControlHTTPAddr }
-func (c *Config) GetControlPortalToken() string       { return c.ControlPortalToken }
-func (c *Config) GetTelemetryEnabled() bool           { return c.TelemetryEnabled }
-func (c *Config) GetTelemetryPrometheusURL() string   { return c.TelemetryPrometheusURL }
-func (c *Config) GetTelemetryPrometheusJob() string   { return c.TelemetryPrometheusJob }
+func (c *Config) GetPromoteTxTimeoutSeconds() int   { return c.PromoteTxTimeoutSeconds }
+func (c *Config) GetControlHTTPAddr() string        { return c.ControlHTTPAddr }
+func (c *Config) GetControlPortalToken() string     { return c.ControlPortalToken }
+func (c *Config) GetTelemetryEnabled() bool         { return c.TelemetryEnabled }
+func (c *Config) GetTelemetryPrometheusURL() string { return c.TelemetryPrometheusURL }
+func (c *Config) GetTelemetryPrometheusJob() string { return c.TelemetryPrometheusJob }
 func (c *Config) GetTelemetryQueryTimeoutSeconds() int {
 	if c.TelemetryQueryTimeoutSeconds > 0 {
 		return c.TelemetryQueryTimeoutSeconds
@@ -587,12 +584,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	}); err != nil {
 		return cfg, err
 	}
-	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
-		{"MEMORY_PACK_IMPORT_HISTORY_DAYS", 30, func(c *Config, value int) { c.MemoryPackImportHistoryDays = value }},
-	}); err != nil {
-		return cfg, err
-	}
-
 	cfg.ControlHTTPAddr = getEnvOrDefault("CONTROL_HTTP_ADDR", ":8090")
 	cfg.ControlPortalToken = os.Getenv("CONTROL_PORTAL_TOKEN")
 	cfg.TelemetryEnabled, err = parseBoolOrDefault("TELEMETRY_ENABLED", false)
@@ -665,7 +656,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"CONFLICT_REVIEW_BATCH_SIZE", cfg.ConflictReviewBatchSize},
 		{"CONFLICT_REVIEW_LEASE_SECONDS", cfg.ConflictReviewLeaseSeconds},
 		{"CONFLICT_REVIEW_MAX_ATTEMPTS", cfg.ConflictReviewMaxAttempts},
-		{"MEMORY_PACK_IMPORT_HISTORY_DAYS", cfg.MemoryPackImportHistoryDays},
 		{"TELEMETRY_QUERY_TIMEOUT_SECONDS", cfg.TelemetryQueryTimeoutSeconds},
 	}
 

@@ -50,43 +50,39 @@ func contractInvokeContext(scopes ...string) context.Context {
 }
 
 type stubRememberService struct {
-	req          memoryservice.RememberRequest
-	placementReq memoryservice.GetMemoryPlacementRequest
+	req       memoryservice.RememberRequest
+	statusReq memoryservice.GetSubmissionStatusRequest
 }
 
 func (s *stubRememberService) Remember(_ context.Context, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
 	s.req = req
 	return &memoryservice.RememberResult{
 		IngestID:          "ingest-canonical",
+		SubmissionID:      "ingest-canonical",
 		ProcessingState:   string(domain.PlacementRunQueued),
 		CheckAfterSeconds: 60,
-		StatusTool:        ToolGetMemoryPlacement,
+		StatusTool:        ToolGetSubmissionStatus,
 		CorrelationID:     "corr-canonical",
 	}, nil
 }
 
-func (s *stubRememberService) GetMemoryPlacement(
+func (s *stubRememberService) GetSubmissionStatus(
 	_ context.Context,
-	req memoryservice.GetMemoryPlacementRequest,
-) (*memoryservice.PlacementRunResult, error) {
-	s.placementReq = req
-	return &memoryservice.PlacementRunResult{
-		IngestID:        req.IngestID,
-		ProcessingState: string(domain.PlacementRunCompleted),
-		SearchState:     string(domain.SearchProjectionNotRequired),
-		Items: []memoryservice.PlacementItemResult{{
-			ItemID:                "item-canonical",
+	req memoryservice.GetSubmissionStatusRequest,
+) (*memoryservice.SubmissionStatusResult, error) {
+	s.statusReq = req
+	return &memoryservice.SubmissionStatusResult{
+		SubmissionID:      req.SubmissionID,
+		ProcessingState:   string(domain.PlacementRunCompleted),
+		SearchState:       string(domain.SearchProjectionCurrent),
+		CheckAfterSeconds: 60,
+		Evidence: []memoryservice.SubmissionEvidenceStatus{{
 			EvidenceID:            "evidence-canonical",
-			SupersededEvidenceIDs: []string{},
-			Version:               3,
 			EvidenceIndex:         0,
-			Category:              string(domain.EvidenceProcessed),
-			SearchState:           string(domain.SearchProjectionNotRequired),
-			RelationshipOutcomes:  []memoryservice.RelationshipOutcomeRef{},
-			ReviewTasks:           []memoryservice.PlacementReviewTaskRef{},
-			Errors:                []memoryservice.PlacementError{},
+			SupersededEvidenceIDs: []string{},
+			SearchState:           string(domain.SearchProjectionCurrent),
 		}},
-		Errors: []memoryservice.PlacementError{},
+		Errors: []memoryservice.SubmissionStatusError{},
 	}, nil
 }
 

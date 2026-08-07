@@ -48,71 +48,34 @@
       ]
     },
     "output": {
-      "ingest_id": "ing-1",
+      "submission_id": "ing-1",
       "processing_state": "queued",
       "check_after_seconds": 3,
-      "status_tool": "get_memory_placement",
+      "status_tool": "get_submission_status",
       "correlation_id": "req-1"
     }
   },
   {
-    "name": "valid placement poll",
-    "tool": "get_memory_placement",
+    "name": "valid submission status",
+    "tool": "get_submission_status",
     "contract_version": "dense-mem.v2.4",
     "scopes": ["read"],
     "valid": true,
-    "input": {"ingest_id": "ing-1"},
+    "input": {"submission_id": "ing-1"},
     "output": {
-      "ingest_id": "ing-1",
+      "submission_id": "ing-1",
       "processing_state": "completed",
       "search_state": "current",
-      "items": [
+      "check_after_seconds": 60,
+      "evidence": [
         {
-          "item_id": "item-1",
           "evidence_id": "ev-1",
-	      "superseded_evidence_ids": [],
-          "version": 1,
           "evidence_index": 0,
-          "category": "evidence_processed",
-          "search_state": "current",
-          "relationship_outcomes": [
-            {
-              "proposal_id": "rel:authority",
-              "observation_id": "obs-1",
-              "relationship_id": "rel-1",
-              "owner_profile_id": "profile-a",
-              "relationship_status": "active",
-              "category": "relationship_accepted",
-              "reason": "Entailed authoritative evidence."
-            }
-          ],
-          "review_tasks": [],
-          "errors": []
+          "superseded_evidence_ids": [],
+          "search_state": "current"
         }
       ],
       "errors": []
-    }
-  },
-  {
-    "name": "valid placement entity resolution",
-    "tool": "resolve_memory_placement",
-    "contract_version": "dense-mem.v2.4",
-    "scopes": ["write"],
-    "valid": true,
-    "input": {
-      "ingest_id": "ing-1",
-      "placement_item_id": "item-1",
-      "placement_item_version": 1,
-      "action": "select_entity",
-      "entity_ref": "person-1",
-      "candidate_entity_id": "ent-1",
-      "idempotency_key": "resolve-1"
-    },
-    "output": {
-      "decision_id": "decision-1",
-      "ingest_id": "ing-1",
-      "processing_state": "queued",
-      "check_after_seconds": 3
     }
   },
   {
@@ -291,15 +254,6 @@
     "output": {"hypothesis_id": "hyp-1", "status": "rejected"}
   },
   {
-    "name": "valid memory pack candidate search",
-    "tool": "find_memory_pack_candidates",
-    "contract_version": "dense-mem.v2.4",
-    "scopes": ["read"],
-    "valid": true,
-    "input": {"query": "release workflow", "limit": 20, "predicate_keys": ["requires"]},
-    "output": {"candidates": []}
-  },
-  {
     "name": "valid memory pack export",
     "tool": "export_memory_pack",
     "contract_version": "dense-mem.v2.4",
@@ -318,58 +272,6 @@
       "filename": "release-workflow.json",
       "counts": {"relationships": 1, "evidence": 1},
       "omissions": []
-    }
-  },
-  {
-    "name": "valid memory pack inspection",
-    "tool": "inspect_memory_pack",
-    "contract_version": "dense-mem.v2.4",
-    "scopes": ["read"],
-    "valid": true,
-    "input": {
-      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2.4\"}",
-      "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "mode": "review"
-    },
-    "output": {
-      "valid": true,
-      "format": "dense-mem.memory-pack.v2.4",
-      "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "mode": "review",
-      "counts": {"relationships": 0},
-      "conflicts": [],
-      "expected_outcomes": {"create": 0, "review": 0, "skip": 0}
-    }
-  },
-  {
-    "name": "valid reviewed memory pack import",
-    "tool": "import_memory_pack",
-    "contract_version": "dense-mem.v2.4",
-    "scopes": ["write"],
-    "valid": true,
-    "input": {
-      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2.4\"}",
-      "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "mode": "review",
-      "conflict_decisions": [{"item_id": "rel-1", "decision": "import_for_review"}],
-      "idempotency_key": "import-1"
-    },
-    "output": {"import_id": "import-1", "processing_state": "queued", "ingest_ids": ["ing-1"], "omissions": []}
-  },
-  {
-    "name": "valid memory pack rollback dry run",
-    "tool": "rollback_memory_pack_import",
-    "contract_version": "dense-mem.v2.4",
-    "scopes": ["write"],
-    "valid": true,
-    "input": {"import_id": "import-1", "dry_run": true},
-    "output": {
-      "import_id": "import-1",
-      "dry_run": true,
-      "safe": true,
-      "blockers": [],
-      "affected_relationship_ids": ["rel-1"],
-      "impact_token": "rollback-impact-1"
     }
   },
   {
@@ -445,15 +347,6 @@
         }
       ]
     }
-  },
-  {
-    "name": "out of allowlist resolution action",
-    "tool": "resolve_memory_placement",
-    "contract_version": "dense-mem.v2.4",
-    "scopes": ["write"],
-    "valid": false,
-    "want_error": "action must be one of",
-    "input": {"action": "supersede_other_profile", "idempotency_key": "resolve-1"}
   },
   {
     "name": "wrong contract version",

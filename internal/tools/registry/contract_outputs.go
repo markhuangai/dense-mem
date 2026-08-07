@@ -193,7 +193,7 @@ func traceObservationOutputs(records []repository.RelationshipObservationRecord)
 	for _, record := range records {
 		item := map[string]any{
 			"observation_id":    record.ObservationID,
-			"ingest_id":         record.IngestID,
+			"submission_id":     record.IngestID,
 			"placement_item_id": record.PlacementItemID,
 		}
 		putNullableString(item, "relationship_id", record.RelationshipID)
@@ -250,7 +250,7 @@ func traceEvidenceOutputs(records []repository.TraceEvidenceFragment) []map[stri
 	for _, record := range records {
 		item := map[string]any{
 			"evidence_id":       record.FragmentID,
-			"ingest_id":         record.IngestID,
+			"submission_id":     record.IngestID,
 			"evidence_index":    record.EvidenceIndex,
 			"content_hash":      record.ContentHash,
 			"content_truncated": record.ContentTruncated,
@@ -497,45 +497,13 @@ func resolveDreamFeedbackContractOutput(res *dreamservice.ResolveFeedbackResult)
 	}
 	out["hypothesis_id"] = res.Dream.DreamID
 	out["status"] = string(res.Dream.Status)
-	if res.Memory != nil && strings.TrimSpace(res.Memory.IngestID) != "" {
-		out["ingest_id"] = res.Memory.IngestID
-	}
-	return out
-}
-
-func findMemoryPackCandidatesContractOutput(res *skillpackservice.FindCandidatesResult) map[string]any {
-	if res == nil {
-		return map[string]any{"candidates": []any{}}
-	}
-	candidates := make([]map[string]any, 0, len(res.Candidates))
-	for i, candidate := range res.Candidates {
-		candidates = append(candidates, map[string]any{
-			"relationship_id": candidate.RelationshipID,
-			"subject": map[string]any{
-				"entity_id": candidate.SubjectEntityID,
-				"name":      candidate.Subject,
-			},
-			"predicate": candidate.PredicateKey,
-			"object":    memoryPackObjectContractOutput(candidate),
-			"polarity":  firstNonEmpty(candidate.Polarity, "+"),
-			"rank":      i + 1,
-		})
-	}
-	return map[string]any{"candidates": candidates}
-}
-
-func memoryPackObjectContractOutput(candidate skillpackservice.MemoryPackCandidate) map[string]any {
-	if strings.TrimSpace(candidate.ObjectValueID) != "" {
-		return map[string]any{
-			"value_id": candidate.ObjectValueID,
-			"type":     firstNonEmpty(candidate.ObjectValueType, string(domain.ValueTypeString)),
-			"value":    candidate.Object,
+	if res.Memory != nil {
+		submissionID := firstNonEmpty(res.Memory.SubmissionID, res.Memory.IngestID)
+		if submissionID != "" {
+			out["submission_id"] = submissionID
 		}
 	}
-	return map[string]any{
-		"entity_id": candidate.ObjectEntityID,
-		"name":      candidate.Object,
-	}
+	return out
 }
 
 func exportMemoryPackContractOutput(res *skillpackservice.ExportResult) map[string]any {
@@ -561,94 +529,6 @@ func exportMemoryPackContractOutput(res *skillpackservice.ExportResult) map[stri
 	}
 }
 
-func inspectMemoryPackContractOutput(res *skillpackservice.InspectResult, mode string) map[string]any {
-	if res == nil {
-		return map[string]any{
-			"valid":             false,
-			"format":            skillpackservice.MemoryPackFormat,
-			"content_sha256":    strings.Repeat("0", 64),
-			"mode":              firstNonEmpty(mode, "review"),
-			"counts":            map[string]any{},
-			"conflicts":         []any{},
-			"expected_outcomes": map[string]any{},
-		}
-	}
-	ready := 0
-	review := 0
-	for _, item := range res.Items {
-		if item.Status == "ready" {
-			ready++
-			continue
-		}
-		review++
-	}
-	return map[string]any{
-		"valid":          true,
-		"format":         res.Format,
-		"content_sha256": res.ArtifactHash,
-		"mode":           firstNonEmpty(mode, "review"),
-		"counts": map[string]any{
-			"relationships":     res.ItemCount,
-			"selected":          res.SelectedCount,
-			"evidence":          res.SupportSummary.EvidenceCount,
-			"evidence_supports": res.SupportSummary.SupportCount,
-		},
-		"conflicts": memoryPackConflictsContractOutput(res.DecisionsRequired),
-		"expected_outcomes": map[string]any{
-			"create": ready,
-			"review": review,
-			"skip":   0,
-		},
-	}
-}
-
-func importMemoryPackContractOutput(res *skillpackservice.ImportResult) map[string]any {
-	if res == nil {
-		return map[string]any{
-			"import_id":        "",
-			"processing_state": "failed",
-			"ingest_ids":       []any{},
-			"omissions":        []any{},
-		}
-	}
-	ingestIDs := []string{}
-	if strings.TrimSpace(res.IngestID) != "" {
-		ingestIDs = append(ingestIDs, res.IngestID)
-	}
-	return map[string]any{
-		"import_id":        res.ImportID,
-		"processing_state": memoryPackProcessingState(res),
-		"ingest_ids":       ingestIDs,
-		"omissions":        importMemoryPackOmissionsContractOutput(res.Items),
-	}
-}
-
-func rollbackMemoryPackContractOutput(res *skillpackservice.RollbackResult) map[string]any {
-	if res == nil {
-		return map[string]any{
-			"import_id":                 "",
-			"dry_run":                   true,
-			"safe":                      false,
-			"blockers":                  []any{},
-			"affected_relationship_ids": []any{},
-		}
-	}
-	out := map[string]any{
-		"import_id":                 res.ImportID,
-		"dry_run":                   res.DryRun,
-		"safe":                      len(res.Conflicts) == 0,
-		"blockers":                  rollbackBlockersContractOutput(res.Conflicts),
-		"affected_relationship_ids": res.AffectedRelationshipIDs,
-	}
-	if strings.TrimSpace(res.ImpactToken) != "" {
-		out["impact_token"] = res.ImpactToken
-	}
-	if res.Status == domain.SkillPackImportStatusRolledBack {
-		out["applied"] = true
-	}
-	return out
-}
-
 func memoryPackOmissionsContractOutput(omissions []string) []map[string]any {
 	out := make([]map[string]any, 0, len(omissions))
 	for _, omission := range omissions {
@@ -656,58 +536,6 @@ func memoryPackOmissionsContractOutput(omissions []string) []map[string]any {
 			continue
 		}
 		out = append(out, map[string]any{"item_id": "artifact", "reason": omission})
-	}
-	return out
-}
-
-func memoryPackConflictsContractOutput(prompts []skillpackservice.ConflictPrompt) []map[string]any {
-	out := make([]map[string]any, 0, len(prompts))
-	for _, prompt := range prompts {
-		out = append(out, map[string]any{
-			"item_id":           prompt.ItemID,
-			"kind":              firstNonEmpty(prompt.Reason, "review_required"),
-			"allowed_decisions": prompt.AllowedActions,
-		})
-	}
-	return out
-}
-
-func importMemoryPackOmissionsContractOutput(items []skillpackservice.ImportItemResult) []map[string]any {
-	out := []map[string]any{}
-	for _, item := range items {
-		switch item.Status {
-		case "skipped":
-			out = append(out, map[string]any{"item_id": item.ItemID, "reason": firstNonEmpty(item.Decision, "skipped")})
-		case "failed":
-			out = append(out, map[string]any{"item_id": item.ItemID, "reason": firstNonEmpty(item.Error, "failed")})
-		}
-	}
-	return out
-}
-
-func memoryPackProcessingState(res *skillpackservice.ImportResult) string {
-	switch res.Status {
-	case domain.SkillPackImportStatusFailed, "status_update_failed", "change_ledger_failed":
-		return "failed"
-	case domain.SkillPackImportStatusInspecting:
-		return "processing"
-	case domain.SkillPackImportStatusApplied:
-		if strings.TrimSpace(res.IngestID) != "" {
-			return "queued"
-		}
-		return "completed"
-	default:
-		return "completed"
-	}
-}
-
-func rollbackBlockersContractOutput(conflicts []string) []map[string]any {
-	out := make([]map[string]any, 0, len(conflicts))
-	for _, conflict := range conflicts {
-		out = append(out, map[string]any{
-			"code":    "rollback_blocked",
-			"message": conflict,
-		})
 	}
 	return out
 }

@@ -140,11 +140,11 @@ async function rememberAndWait(apiKey, input) {
     }],
     relationships: [relationshipHint(input, evidence)],
   });
-  const ingestID = String(result.ingest_id ?? "");
-  if (!ingestID) {
-    throw new Error(`remember did not return ingest_id: ${JSON.stringify(result)}`);
+  const submissionID = String(result.submission_id ?? "");
+  if (!submissionID) {
+    throw new Error(`remember did not return submission_id: ${JSON.stringify(result)}`);
   }
-  return await waitForPlacement(apiKey, ingestID, input.relationshipID);
+  return await waitForPlacement(apiKey, submissionID, input.relationshipID);
 }
 
 function relationshipHint(input, evidence) {
@@ -188,45 +188,34 @@ function relationshipHint(input, evidence) {
   };
 }
 
-async function waitForPlacement(apiKey, ingestID, proposalID) {
+async function waitForPlacement(apiKey, submissionID, proposalID) {
   let lastSummary = {};
   const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2_000);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const placement = await mcpTool(apiKey, "get_memory_placement", { ingest_id: ingestID });
+    const placement = await mcpTool(apiKey, "get_submission_status", { submission_id: submissionID });
     if (placement.processing_state === "failed" || placement.processing_state === "quarantined") {
       throw new Error(`placement failed: ${JSON.stringify(placement)}`);
     }
-    const outcomes = [];
-    for (const item of placement.items ?? []) {
-      for (const outcome of item.relationship_outcomes ?? []) {
-        outcomes.push(outcome);
-      }
-    }
-    lastSummary = {
-      processing_state: placement.processing_state,
-      item_count: Array.isArray(placement.items) ? placement.items.length : 0,
-      outcomes: outcomes.map((item) => ({
-        proposal_id: item.proposal_id,
-        relationship_id: item.relationship_id,
-        category: item.category,
-        reason: item.reason,
-      })),
-    };
-    let outcome = outcomes.find((item) => item.proposal_id === proposalID && item.relationship_id);
-    const acceptedOutcomes = outcomes.filter((item) => item.relationship_id);
-    if (!outcome && acceptedOutcomes.length === 1 && outcomes.length === 1) {
-      outcome = acceptedOutcomes[0];
-    }
-    if (placement.processing_state === "completed" && outcome) {
+    const row = postgresQuery(`
+      SELECT COALESCE(observation.relationship_id::text, ''), observation.owner_profile_id::text
+      FROM relationship_observations AS observation
+      WHERE observation.team_id = ${sqlLiteral(teamID)}::uuid
+        AND observation.ingest_id = ${sqlLiteral(submissionID)}::uuid
+        AND observation.relationship_id IS NOT NULL
+      ORDER BY observation.created_at ASC, observation.observation_id ASC
+      LIMIT 1
+    `).split("|");
+    lastSummary = { processing_state: placement.processing_state, relationship_id: row[0] || "" };
+    if (placement.processing_state === "completed" && row[0]) {
       return {
-        ingestID,
-        relationshipID: String(outcome.relationship_id),
-        ownerProfileID: String(outcome.owner_profile_id),
+        ingestID: submissionID,
+        relationshipID: String(row[0]),
+        ownerProfileID: String(row[1]),
       };
     }
     await delay(2_000);
   }
-  throw new Error(`timed out waiting for placement ${ingestID} after ${placementTimeoutSeconds}s: ${JSON.stringify(lastSummary)}`);
+  throw new Error(`timed out waiting for placement ${submissionID} after ${placementTimeoutSeconds}s: ${JSON.stringify(lastSummary)}`);
 }
 
 async function waitForRelationshipConflict(apiKey, relationshipID, status) {
@@ -423,7 +412,7 @@ function requeueCompletedConflictReviewRun(conflictID) {
         completed_at = NULL,
         last_error = 'compose e2e automatic review requeue',
         updated_at = now()
-    WHERE review_run.team_id = ${sqlLiteral(teamID)}::uuid
+      WHERE review_run.team_id = ${sqlLiteral(teamID)}::uuid
       AND review_run.status = 'completed'
       AND review_run.local_run_date = CURRENT_DATE
       AND EXISTS (

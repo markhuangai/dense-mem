@@ -192,10 +192,10 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 		"eval:doc-beta":  "frag-beta",
 	}
 	var rememberCalls int
-	var placementPolls int
+	var statusPolls int
 	var recallCalls int
 	var controlPatched bool
-	placementIngests := map[string]bool{}
+	statusSubmissions := map[string]bool{}
 
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -220,29 +220,30 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			evidence := input["evidence"].([]any)
 			firstEvidence := evidence[0].(map[string]any)
 			idempotencyKey := firstEvidence["idempotency_key"].(string)
-			id, ok := rememberIDs[idempotencyKey]
-			if !ok {
+			if _, ok := rememberIDs[idempotencyKey]; !ok {
 				t.Fatalf("remember input = %#v", input)
 			}
 			rememberCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ingest_id": strings.TrimPrefix(idempotencyKey, "eval:"),
-				"status":    "queued",
-				"evidence":  []map[string]any{{"id": id}},
+				"submission_id":    strings.TrimPrefix(idempotencyKey, "eval:"),
+				"processing_state": "queued",
 			})
-		case "tool:get_memory_placement":
+		case "tool:get_submission_status":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode placement body: %v", err)
 			}
-			ingestID, _ := input["ingest_id"].(string)
-			if ingestID != "doc-alpha" && ingestID != "doc-beta" {
-				t.Fatalf("placement input = %#v", input)
+			submissionID, _ := input["submission_id"].(string)
+			if submissionID != "doc-alpha" && submissionID != "doc-beta" {
+				t.Fatalf("status input = %#v", input)
 			}
-			placementIngests[ingestID] = true
-			placementPolls++
+			statusSubmissions[submissionID] = true
+			statusPolls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"placement": map[string]any{"status": "completed"},
+				"submission_id":    submissionID,
+				"processing_state": "completed",
+				"search_state":     "current",
+				"evidence":         []map[string]any{{"evidence_id": rememberIDs["eval:"+submissionID], "search_state": "current"}},
 			})
 		case "tool:eval_list_knowledge_refs":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -297,11 +298,11 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 	if summary.ScoredCaseCount != 2 || summary.AverageRecallAtK != 1 || summary.AverageMRR != 1 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	if !controlPatched || rememberCalls != 2 || placementPolls != 2 || recallCalls != 2 {
-		t.Fatalf("control/remember/placement/recall calls = %v/%d/%d/%d", controlPatched, rememberCalls, placementPolls, recallCalls)
+	if !controlPatched || rememberCalls != 2 || statusPolls != 2 || recallCalls != 2 {
+		t.Fatalf("control/remember/status/recall calls = %v/%d/%d/%d", controlPatched, rememberCalls, statusPolls, recallCalls)
 	}
-	if !placementIngests["doc-alpha"] || !placementIngests["doc-beta"] {
-		t.Fatalf("placement ingests = %#v; want doc-alpha and doc-beta", placementIngests)
+	if !statusSubmissions["doc-alpha"] || !statusSubmissions["doc-beta"] {
+		t.Fatalf("status submissions = %#v; want doc-alpha and doc-beta", statusSubmissions)
 	}
 }
 

@@ -24,8 +24,8 @@ const target = await mcpSuccess(apiKey, "remember", rememberInput(
   `${runID}:target`,
   "Project Nova uses Store.",
 ));
-const targetID = requiredString(target.ingest_id, "target ingest_id");
-await waitForState(apiKey, targetID, "awaiting_review");
+const targetID = requiredString(target.submission_id, "target submission_id");
+await waitForState(apiKey, targetID, "rejected");
 const targetBeforeReplacement = holdSummary(targetID);
 if (targetBeforeReplacement.holdState !== "active") {
   throw new Error("target did not become an active semantic hold");
@@ -62,8 +62,8 @@ const heldSuccessor = await mcpSuccess(apiKey, "remember", rememberInput(
   "Project Nova uses Store.",
   targetID,
 ));
-const heldSuccessorID = requiredString(heldSuccessor.ingest_id, "held successor ingest_id");
-await waitForState(apiKey, heldSuccessorID, "awaiting_review");
+const heldSuccessorID = requiredString(heldSuccessor.submission_id, "held successor submission_id");
+await waitForState(apiKey, heldSuccessorID, "rejected");
 const afterHeldSuccessor = holdSummary(targetID, heldSuccessorID);
 if (afterHeldSuccessor.holdState !== targetBeforeReplacement.holdState || afterHeldSuccessor.supersededBy) {
   throw new Error("held successor changed the target hold");
@@ -81,7 +81,7 @@ const successfulSuccessor = await mcpSuccess(apiKey, "remember", rememberInput(
   "Project Nova uses Store.",
   targetID,
 ));
-const successfulSuccessorID = requiredString(successfulSuccessor.ingest_id, "successful successor ingest_id");
+const successfulSuccessorID = requiredString(successfulSuccessor.submission_id, "successful successor submission_id");
 await waitForState(apiKey, successfulSuccessorID, "completed");
 const afterPromotion = holdSummary(targetID, heldSuccessorID, successfulSuccessorID);
 if (afterPromotion.holdState !== "superseded" || afterPromotion.supersededBy !== afterPromotion.successorRunID) {
@@ -163,19 +163,19 @@ function rememberInput(modality, idempotencyKey, content, replacementID = "") {
   return input;
 }
 
-async function waitForState(key, ingestID, expected) {
+async function waitForState(key, submissionID, expected) {
   for (let attempt = 0; attempt < 240; attempt += 1) {
-    const status = await mcpSuccess(key, "get_memory_placement", { ingest_id: ingestID });
+    const status = await mcpSuccess(key, "get_submission_status", { submission_id: submissionID });
     const state = stringValue(status.processing_state);
     if (state === expected) {
       return status;
     }
     if (["failed", "quarantined"].includes(state)) {
-      throw new Error(`submission ${ingestID} reached ${state} while waiting for ${expected}`);
+      throw new Error(`submission ${submissionID} reached ${state} while waiting for ${expected}`);
     }
     await delay(2_000);
   }
-  throw new Error(`timed out waiting for ${ingestID} to reach ${expected}`);
+  throw new Error(`timed out waiting for ${submissionID} to reach ${expected}`);
 }
 
 function holdSummary(targetID, heldSuccessorID = "", successfulSuccessorID = "") {

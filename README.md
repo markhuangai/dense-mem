@@ -165,14 +165,15 @@ startup validation requires a complete provider configuration.
 - Set `AI_VERIFIER_MODEL` to a model that exists on the selected chat endpoint.
   Startup validates the model configuration before the service accepts memory
   writes. A 7B-8B class model works for local smoke tests; larger models can
-  exceed the default 60-second timeout while they load, leaving placement
+  exceed the default 60-second timeout while they load, leaving processing
   attempts retryable until the model responds.
 
 ## Evidence Lifecycle
 
-`remember` durably stages exact evidence and returns an `ingest_id`; provider
-calls and placement happen after acknowledgement. Poll `get_memory_placement`
-for the authoritative processing state.
+`remember` durably stages exact evidence and returns a `submission_id`; provider
+calls and processing happen after acknowledgement. Poll `get_submission_status`
+with that ID for the owner-scoped processing and search state. The status
+projection omits placement questions, provider output, and internal run IDs.
 
 To replace a specific current evidence item you own, put its UUID in the new
 item's `supersedes_evidence_ids`. Direct targeting is separate from advancing a
@@ -240,9 +241,8 @@ checks to `tools/call`.
 | Tool | Purpose |
 |------|---------|
 | `remember` | Submit exact evidence and optional Entity/Relationship proposal hints for server-owned placement. |
-| `get_memory_placement` | Poll a placement run. |
+| `get_submission_status` | Poll owner-scoped processing and search readiness. |
 | `retract_evidence` | Retract caller-owned evidence while preserving append-only provenance. |
-| `resolve_memory_placement` | Resolve placement review items through append-only evidence decisions. |
 | `correct_entity_resolution` | Dry-run or apply caller-owned Entity merge and split corrections. |
 | `recall_memory` | Recall active evidence contexts and Relationship handles. |
 | `trace_memory` | Trace one same-team Relationship through evidence, decisions, and lineage. |
@@ -250,14 +250,10 @@ checks to `tools/call`.
 | `list_dreams` | List reviewable Hypotheses without treating them as memory. |
 | `get_dream` | Fetch one authorized Hypothesis and its source references. |
 | `resolve_dream_feedback` | Resolve Hypothesis feedback without using the Hypothesis as evidence. |
-| `find_memory_pack_candidates` | Find active Relationships that may be exported. |
 | `export_memory_pack` | Export selected active Relationships with support provenance. |
-| `inspect_memory_pack` | Inspect a memory-pack artifact without writing durable state. |
-| `import_memory_pack` | Import a reviewed memory pack through normal evidence placement. |
-| `rollback_memory_pack_import` | Roll back an import when no selected state changed. |
 
-Memory-pack writers emit `dense-mem.memory-pack.v2.4`; strict readers preserve
-support for prior v2.3 and v1 artifacts after validating their original hashes.
+Memory-pack export emits the current `dense-mem.memory-pack.v2.4` artifact. Import
+and candidate-discovery workflows are not part of the public contract.
 
 ## Supported HTTP Surfaces
 

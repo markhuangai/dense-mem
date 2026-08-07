@@ -17,7 +17,7 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 		"eval:doc-beta":  "evidence-beta",
 	}
 	var rememberCalls int
-	var placementPolls int
+	var statusPolls int
 	var recallCalls int
 	var controlPatched bool
 	exportCalls := map[string]int{}
@@ -35,8 +35,7 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 			evidence := input["evidence"].([]any)
 			firstEvidence := evidence[0].(map[string]any)
 			idempotencyKey := firstEvidence["idempotency_key"].(string)
-			id, ok := rememberIDs[idempotencyKey]
-			if !ok {
+			if _, ok := rememberIDs[idempotencyKey]; !ok {
 				t.Fatalf("remember input = %#v", input)
 			}
 			relationships, ok := input["relationships"].([]any)
@@ -45,14 +44,21 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 			}
 			rememberCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ingest_id": strings.TrimPrefix(idempotencyKey, "eval:"),
-				"status":    "queued",
-				"evidence":  []map[string]any{{"id": id}},
+				"submission_id":    strings.TrimPrefix(idempotencyKey, "eval:"),
+				"processing_state": "queued",
 			})
-		case "tool:get_memory_placement":
-			placementPolls++
+		case "tool:get_submission_status":
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode status body: %v", err)
+			}
+			submissionID := input["submission_id"].(string)
+			statusPolls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"placement": map[string]any{"status": "completed"},
+				"submission_id":    submissionID,
+				"processing_state": "completed",
+				"search_state":     "current",
+				"evidence":         []map[string]any{{"evidence_id": rememberIDs["eval:"+submissionID]}},
 			})
 		case "tool:eval_list_knowledge_refs":
 			var input map[string]any
@@ -102,8 +108,8 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 	if summary.Mode != "import" || summary.CaseCount != 2 || summary.ScoredCaseCount != 0 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	if !controlPatched || rememberCalls != 2 || placementPolls != 2 || recallCalls != 0 {
-		t.Fatalf("control/remember/placement/recall calls = %v/%d/%d/%d", controlPatched, rememberCalls, placementPolls, recallCalls)
+	if !controlPatched || rememberCalls != 2 || statusPolls != 2 || recallCalls != 0 {
+		t.Fatalf("control/remember/status/recall calls = %v/%d/%d/%d", controlPatched, rememberCalls, statusPolls, recallCalls)
 	}
 	for _, kind := range []string{"evidence", "entity", "value", "relationship", "hypothesis"} {
 		if exportCalls[kind] != 1 {
@@ -155,13 +161,18 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T
 			evidence := input["evidence"].([]any)[0].(map[string]any)
 			sourceDocID := strings.TrimPrefix(evidence["idempotency_key"].(string), "eval:")
 			remembered = append(remembered, sourceDocID)
+			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-" + sourceDocID})
+		case "tool:get_submission_status":
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Fatalf("decode status body: %v", err)
+			}
+			submissionID := input["submission_id"].(string)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ingest_id": "ingest-" + sourceDocID,
-				"evidence":  []map[string]any{{"id": "evidence-" + strings.TrimPrefix(sourceDocID, "doc-")}},
-			})
-		case "tool:get_memory_placement":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"placement": map[string]any{"status": "completed"},
+				"submission_id":    submissionID,
+				"processing_state": "completed",
+				"search_state":     "current",
+				"evidence":         []map[string]any{{"evidence_id": "evidence-" + strings.TrimPrefix(strings.TrimPrefix(submissionID, "submission-"), "doc-")}},
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)

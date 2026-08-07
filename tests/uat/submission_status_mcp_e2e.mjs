@@ -1,0 +1,317 @@
+#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
+const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
+const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
+const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
+const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
+const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
+const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
+const timeoutSeconds = positiveIntEnv("DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS", 720, 60, 1800);
+
+let rpcID = 0;
+const runID = `submission-status-e2e-${Date.now()}`;
+
+const listed = await toolsList();
+const listedNames = new Set((listed.tools ?? []).map((tool) => tool.name));
+for (const required of ["remember", "get_submission_status", "trace_memory", "export_memory_pack"]) {
+  if (!listedNames.has(required)) {
+    throw new Error(`tools/list is missing ${required}`);
+  }
+}
+for (const removed of ["get_memory_placement", "resolve_memory_placement", "find_memory_pack_candidates", "inspect_memory_pack", "import_memory_pack", "rollback_memory_pack_import"]) {
+  if (listedNames.has(removed)) {
+    throw new Error(`tools/list still exposes removed ${removed}`);
+  }
+}
+
+const remember = await mcpSuccess("remember", rememberInput());
+const submissionID = stringValue(remember.submission_id);
+if (!submissionID || Object.hasOwn(remember, "ingest_id") || Object.hasOwn(remember, "placement")) {
+  throw new Error(`remember returned a removed or missing identifier: ${JSON.stringify(remember)}`);
+}
+assertKeys(remember, ["submission_id", "processing_state", "check_after_seconds", "status_tool", "correlation_id"]);
+if (remember.status_tool !== "get_submission_status") {
+  throw new Error("remember did not advertise get_submission_status");
+}
+
+const initial = await mcpSuccess("get_submission_status", { submission_id: submissionID });
+assertStatusShape(initial, submissionID);
+const terminal = await waitForTerminal(submissionID);
+const repeated = await mcpSuccess("get_submission_status", { submission_id: submissionID });
+assertStatusShape(repeated, submissionID);
+if (stableJSON(terminal) !== stableJSON(repeated)) {
+  throw new Error("repeated submission status changed unexpectedly");
+}
+
+const missing = await mcpRaw(apiKey, "get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
+if (!missing.error || missing.result !== undefined || typeof missing.error.message !== "string") {
+  throw new Error("missing submission status did not fail with a bounded MCP error");
+}
+
+const otherProfile = await createProfile(teamID, `${runID}-other-profile`);
+const crossProfile = await mcpRaw(otherProfile.apiKey, "get_submission_status", { submission_id: submissionID });
+if (!crossProfile.error || crossProfile.result !== undefined || crossProfile.error.message.includes(submissionID)) {
+  throw new Error("submission status leaked across profile ownership boundary");
+}
+
+const relationshipID = postgresQuery(`
+  SELECT relationship_id::text
+  FROM relationship_observations
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND ingest_id = ${sqlLiteral(submissionID)}::uuid
+    AND relationship_id IS NOT NULL
+  ORDER BY created_at ASC
+  LIMIT 1;
+`);
+if (!relationshipID) {
+  throw new Error("completed submission did not produce a relationship observation");
+}
+
+const trace = await mcpSuccess("trace_memory", { relationship_id: relationshipID, include_evidence_content: true });
+assertNoLegacySubmissionFields(trace);
+for (const observation of trace.observations ?? []) {
+  if (!observation.submission_id || Object.hasOwn(observation, "ingest_id")) {
+    throw new Error("trace observation did not use submission_id exclusively");
+  }
+}
+for (const evidence of trace.evidence ?? []) {
+  if (!evidence.submission_id || Object.hasOwn(evidence, "ingest_id")) {
+    throw new Error("trace evidence did not use submission_id exclusively");
+  }
+}
+
+const exported = await mcpSuccess("export_memory_pack", {
+  name: `${runID} export`,
+  relationship_ids: [relationshipID],
+  include_evidence: false,
+});
+assertKeys(exported, ["artifact_json", "content_sha256", "filename", "counts", "omissions"]);
+if (typeof exported.artifact_json !== "string" || !exported.artifact_json.includes("dense-mem.memory-pack.v2.4")) {
+  throw new Error("export did not return the current memory-pack format");
+}
+
+const ledgerTables = postgresQuery(`
+  SELECT concat(
+    COALESCE(to_regclass('public.skill_pack_imports')::text, ''), '|',
+    COALESCE(to_regclass('public.skill_pack_import_changes')::text, ''), '|',
+    COALESCE(to_regclass('public.submission_quarantine_payloads')::text, ''), '|',
+    COALESCE(to_regclass('public.submission_quarantine_tombstones')::text, '')
+  );
+`);
+const [imports, changes, quarantinePayloads, quarantineTombstones] = ledgerTables.split("|");
+if (imports || changes || !quarantinePayloads || !quarantineTombstones) {
+  throw new Error(`database removal/retention boundary is wrong: ${ledgerTables}`);
+}
+
+console.log(JSON.stringify({
+  status: "ok",
+  run_id: runID,
+  submission_id: submissionID,
+  processing_state: terminal.processing_state,
+  search_state: terminal.search_state,
+  relationship_id: relationshipID,
+  listed_tool_count: listedNames.size,
+  removed_tools_absent: true,
+  profile_isolation: true,
+  memory_pack_export: true,
+  import_ledger_tables_absent: true,
+}, null, 2));
+
+async function toolsList() {
+  const response = await httpJSON(`${userURL}/mcp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/list", params: {} }),
+  });
+  if (response.error || !response.result) {
+    throw new Error("tools/list returned a bounded error");
+  }
+  return response.result;
+}
+
+function rememberInput() {
+  const content = "Project Aurora uses LedgerDB.";
+  const subject = "Project Aurora";
+  const predicate = "uses";
+  const object = "LedgerDB";
+  const subjectStart = 0;
+  const predicateStart = subject.length + 1;
+  const objectStart = predicateStart + predicate.length + 1;
+  return {
+    evidence: [{
+      content,
+      source_type: "document",
+      source: `${runID}:source`,
+      source_group: runID,
+      idempotency_key: `${runID}:evidence`,
+    }],
+    relationships: [{
+      ref: `${runID}:relationship`,
+      subject: {
+        name: subject,
+        entity_kind: "project",
+        span: { evidence_index: 0, start: subjectStart, end: subjectStart + subject.length },
+      },
+      predicate: {
+        proposed_key: predicate,
+        surface: predicate,
+        span: { evidence_index: 0, start: predicateStart, end: predicateStart + predicate.length },
+      },
+      object: {
+        entity: {
+          name: object,
+          entity_kind: "product",
+          span: { evidence_index: 0, start: objectStart, end: objectStart + object.length },
+        },
+      },
+      polarity: "+",
+      modality: "statement",
+      supports: [{ evidence_index: 0, start: 0, end: Array.from(content).length }],
+    }],
+  };
+}
+
+async function waitForTerminal(id) {
+  const attempts = Math.ceil((timeoutSeconds * 1000) / 2000);
+  let last = "";
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const status = await mcpSuccess("get_submission_status", { submission_id: id });
+    assertStatusShape(status, id);
+    last = stringValue(status.processing_state);
+    const searchTerminal = ["current", "not_required", "failed"].includes(status.search_state);
+    if (["completed", "rejected", "failed", "quarantined"].includes(last) && searchTerminal) {
+      if (last !== "completed") {
+        throw new Error(`status scenario submission reached ${last}`);
+      }
+      if (status.search_state === "failed") {
+        throw new Error("status scenario search projection failed");
+      }
+      return status;
+    }
+    await delay(2000);
+  }
+  throw new Error(`timed out waiting for terminal submission status (last ${last || "unknown"})`);
+}
+
+function assertStatusShape(status, id) {
+  assertKeys(status, ["submission_id", "processing_state", "search_state", "check_after_seconds", "evidence", "errors"]);
+  if (status.submission_id !== id || Object.hasOwn(status, "ingest_id") || Object.hasOwn(status, "placement_run_id") || Object.hasOwn(status, "items") || Object.hasOwn(status, "review_tasks")) {
+    throw new Error("submission status exposed a removed internal field");
+  }
+  if (!Array.isArray(status.evidence) || !Array.isArray(status.errors)) {
+    throw new Error("submission status did not return bounded evidence/errors arrays");
+  }
+  for (const item of status.evidence) {
+    assertKeys(item, ["evidence_id", "evidence_index", "superseded_evidence_ids", "search_state"]);
+    if (Object.hasOwn(item, "content") || Object.hasOwn(item, "placement_item_id") || Object.hasOwn(item, "provider_response")) {
+      throw new Error("submission status exposed raw or placement evidence details");
+    }
+  }
+}
+
+function assertNoLegacySubmissionFields(value) {
+  const serialized = JSON.stringify(value);
+  if (serialized.includes('"ingest_id"') || serialized.includes('"placement_run_id"')) {
+    throw new Error("public trace output exposed a removed submission field");
+  }
+}
+
+async function mcpSuccess(name, args) {
+  const response = await mcpRaw(apiKey, name, args);
+  if (response.error || response.result === undefined) {
+    throw new Error(`MCP ${name} returned a bounded error`);
+  }
+  const text = response.result?.content?.[0]?.text;
+  if (typeof text !== "string") {
+    throw new Error(`MCP ${name} did not return JSON content`);
+  }
+  return JSON.parse(text);
+}
+
+async function mcpRaw(key, name, args) {
+  return httpJSON(`${userURL}/mcp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/call", params: { name, arguments: args } }),
+  });
+}
+
+async function createProfile(targetTeamID, name) {
+  const response = await httpJSON(`${controlURL}/control/api/teams/${targetTeamID}/profiles`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${controlToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }),
+  });
+  const key = stringValue(response.data?.api_key);
+  if (!key) {
+    throw new Error("control API did not return a second profile key");
+  }
+  return { apiKey: key };
+}
+
+function postgresQuery(sql) {
+  const result = spawnSync("docker", [
+    "compose", "-p", composeProject, "-f", composeFile,
+    "exec", "-T", "postgres", "sh", "-ec",
+    'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
+    "submission-status-e2e", sql,
+  ], { cwd: fileURLToPath(new URL("../..", import.meta.url)), encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`postgres query failed (${result.status})`);
+  }
+  return result.stdout.trim();
+}
+
+function assertKeys(value, required) {
+  for (const key of required) {
+    if (!Object.hasOwn(value, key)) {
+      throw new Error(`response is missing ${key}`);
+    }
+  }
+}
+
+function stableJSON(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJSON).sort().join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJSON(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
+function sqlLiteral(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+async function httpJSON(url, options) {
+  const response = await fetch(url, options);
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} ${url}: response body redacted`);
+  }
+  return text ? JSON.parse(text) : {};
+}
+
+function stringValue(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function requiredEnv(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function positiveIntEnv(name, fallback, minimum, maximum) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return parsed;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

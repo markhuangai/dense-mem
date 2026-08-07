@@ -53,6 +53,7 @@ type UserSessionResponse = {
     can_manage_team?: boolean;
     key?: {
       id?: string;
+      name?: string;
       scopes?: string[];
       role?: string;
     };
@@ -216,8 +217,8 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
     },
   }));
   expect(original.processing_state).toBe("queued");
-  const originalIngestID = requiredString(original, "ingest_id");
-  const originalItem = await waitForPlacementItem(request, originalIngestID);
+  const originalSubmissionID = requiredString(original, "submission_id");
+  const originalItem = await waitForSubmissionEvidence(request, originalSubmissionID);
   const originalEvidenceID = requiredString(originalItem, "evidence_id");
 
   const replacement = mcpToolPayload(await mcpCall(request, "tools/call", {
@@ -233,7 +234,7 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
     },
   }));
   expect(replacement.processing_state).toBe("queued");
-  const replacementItem = await waitForPlacementItem(request, requiredString(replacement, "ingest_id"));
+  const replacementItem = await waitForSubmissionEvidence(request, requiredString(replacement, "submission_id"));
   const replacementEvidenceID = requiredString(replacementItem, "evidence_id");
   expect(replacementItem.superseded_evidence_ids).toEqual([originalEvidenceID]);
 
@@ -366,13 +367,20 @@ test("MCP recall feedback is submitted and surfaced through compose telemetry", 
 
 test("user portal logs in with a real API key and shows only that profile", async ({ page, request }, testInfo) => {
   const otherProfile = await createTeamProfile(request, uniqueName("Other profile", testInfo), ["read"]);
+  const sessionResponse = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(seedApiKey) });
+  expect(sessionResponse.status()).toBe(200);
+  const sessionBody = await sessionResponse.json() as UserSessionResponse;
+  const seedProfileName = sessionBody.data?.key?.name;
+  if (!seedProfileName) {
+    throw new Error("seed API key session did not return a profile name");
+  }
 
   await openUserPortal(page, seedApiKey);
 
   await expect(page.getByText(seedTeamName)).toBeVisible();
-  await expect(page.getByLabel("Current workspace")).not.toContainText("E2E Profile");
+  await expect(page.getByLabel("Current workspace")).not.toContainText(seedProfileName);
   await page.getByRole("button", { name: /My key/i }).click();
-  await expect(page.getByText("E2E Profile")).toBeVisible();
+  await expect(page.getByText(seedProfileName, { exact: true })).toBeVisible();
   await expect(page.getByText(otherProfile.key.name)).toBeHidden();
 
   await page.getByRole("button", { name: "Recall" }).click();
@@ -644,19 +652,19 @@ function mcpToolPayload(response: Record<string, unknown>) {
   return JSON.parse(first.text) as Record<string, unknown>;
 }
 
-async function waitForPlacementItem(request: APIRequestContext, ingestID: string): Promise<Record<string, unknown>> {
+async function waitForSubmissionEvidence(request: APIRequestContext, submissionID: string): Promise<Record<string, unknown>> {
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    const placement = mcpToolPayload(await mcpCall(request, "tools/call", {
-      name: "get_memory_placement",
-      arguments: { ingest_id: ingestID },
+    const status = mcpToolPayload(await mcpCall(request, "tools/call", {
+      name: "get_submission_status",
+      arguments: { submission_id: submissionID },
     }));
-    const first = Array.isArray(placement.items) ? placement.items[0] : undefined;
+    const first = Array.isArray(status.evidence) ? status.evidence[0] : undefined;
     if (isRecord(first) && typeof first.evidence_id === "string" && first.evidence_id !== "") {
       return first;
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error(`placement did not return an evidence item for ${ingestID}`);
+  throw new Error(`submission status did not return evidence for ${submissionID}`);
 }
 
 function requiredString(value: Record<string, unknown>, field: string) {

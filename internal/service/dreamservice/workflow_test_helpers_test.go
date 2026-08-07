@@ -333,10 +333,3 @@ func (s *rememberServiceStub) Remember(_ context.Context, req memoryservice.Reme
 		ProcessingState: string(domain.PlacementRunQueued),
 	}, nil
 }
-
-func (s *rememberServiceStub) GetMemoryPlacement(context.Context, memoryservice.GetMemoryPlacementRequest) (*memoryservice.PlacementRunResult, error) {
-	if s.err != nil {
-		return nil, s.err
-	}
-	return nil, errors.New("not implemented")
-}

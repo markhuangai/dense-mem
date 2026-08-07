@@ -112,6 +112,11 @@ type CreateIngestResult struct {
 	Evidence         []EvidenceFragment
 	Items            []PlacementItem
 	FirstDisposition *PlacementFirstDisposition
+	// Status projection metadata is loaded for the owner-scoped public status
+	// endpoint; it is not placement data and is never exposed directly.
+	QuarantineExpiresAt        *time.Time
+	ReplacementWindowExpiresAt *time.Time
+	SemanticHoldState          string
 }
 
 type EvidenceFragment struct {
@@ -753,13 +758,15 @@ func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInpu
 	}
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
 		INSERT INTO placement_runs (
-		    team_id, ingest_id, owner_profile_id, status, completed_at,
+		    team_id, ingest_id, owner_profile_id, status, completed_at, quarantine_expires_at,
 		    replaces_placement_run_id
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, %s, NULLIF(?, '')::uuid
+		    ?::uuid, ?::uuid, ?::uuid, ?, %s,
+		    CASE WHEN ? = 'quarantined' THEN now() + interval '24 hours' ELSE NULL END,
+		    NULLIF(?, '')::uuid
 		)
 		RETURNING placement_run_id::text, created_at, completed_at
-	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.Status, replacementTargetID).Rows()
+	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.Status, input.Status, replacementTargetID).Rows()
 	if err != nil {
 		return "", time.Time{}, nil, err
 	}

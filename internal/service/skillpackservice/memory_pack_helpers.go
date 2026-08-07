@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -19,55 +18,6 @@ func memoryPackActor(ctx context.Context) (requestctx.ActorProfile, error) {
 		return requestctx.ActorProfile{}, ErrMemoryPackAuthContext
 	}
 	return actor, nil
-}
-
-func MemoryPackEndpointText(endpoint MemoryPackEndpoint) string {
-	if endpoint.Kind == "value" {
-		return endpoint.Value
-	}
-	return endpoint.DisplayName
-}
-
-func MemoryPackSupportedPredicate(predicate string) bool {
-	switch strings.TrimSpace(predicate) {
-	case "works_on", "uses", "primary_database", "released":
-		return true
-	default:
-		return false
-	}
-}
-
-func memoryPackGraphNodes(nodes []repository.SemanticGraphNode) map[string]repository.SemanticGraphNode {
-	out := map[string]repository.SemanticGraphNode{}
-	for _, node := range nodes {
-		out[node.Key] = node
-	}
-	return out
-}
-
-func memoryPackCandidateFromEdge(
-	edge repository.SemanticGraphEdge,
-	nodes map[string]repository.SemanticGraphNode,
-) MemoryPackCandidate {
-	subject := nodes[edge.Source]
-	object := nodes[edge.Target]
-	candidate := MemoryPackCandidate{
-		RelationshipID:   edge.RelationshipID,
-		PredicateKey:     edge.Relationship,
-		SubjectEntityID:  subject.ID,
-		Subject:          subject.Title,
-		Object:           object.Title,
-		Polarity:         "+",
-		SupportCount:     edge.SupportCount,
-		SourceGroupCount: edge.SourceGroupCount,
-	}
-	if object.Type == "value" {
-		candidate.ObjectValueID = object.ID
-		candidate.ObjectValueType = object.Body
-	} else {
-		candidate.ObjectEntityID = object.ID
-	}
-	return candidate
 }
 
 func MemoryPackSortedEvidenceIDs(values map[string]MemoryPackEvidence) []string {
@@ -124,16 +74,6 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
-func clampLimit(value, fallback, maxValue int) int {
-	if value <= 0 {
-		return fallback
-	}
-	if value > maxValue {
-		return maxValue
-	}
-	return value
-}
-
 func MemoryPackCopyMap(value map[string]any) map[string]any {
 	if len(value) == 0 {
 		return nil
@@ -146,10 +86,7 @@ func MemoryPackCopyMap(value map[string]any) map[string]any {
 }
 
 func MemoryPackSupportOmissions(includeSupport bool, canonical []byte) []string {
-	if includeSupport {
-		return nil
-	}
-	if len(canonical) == 0 {
+	if includeSupport || len(canonical) == 0 {
 		return nil
 	}
 	return []string{"support evidence omitted by request"}

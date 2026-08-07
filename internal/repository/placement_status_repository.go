@@ -62,12 +62,18 @@ func loadPlacementRunStatus(
 ) (*CreateIngestResult, error) {
 	result := &CreateIngestResult{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID}
 	var proposalRaw []byte
+	var semanticHoldState sql.NullString
+	var quarantineExpiresAt, replacementWindowExpiresAt sql.NullTime
 	err := tx.WithContext(ctx).Raw(`
-		SELECT run.placement_run_id::text, run.status, COALESCE(ingest.proposal, '{}'::jsonb)
+		SELECT run.placement_run_id::text, run.status, COALESCE(ingest.proposal, '{}'::jsonb),
+		       run.semantic_hold_state, run.quarantine_expires_at, hold.expires_at
 		FROM placement_runs AS run
 		JOIN knowledge_ingests AS ingest
 		  ON ingest.team_id = run.team_id
 		 AND ingest.ingest_id = run.ingest_id
+		LEFT JOIN submission_holds AS hold
+		  ON hold.team_id = run.team_id
+		 AND hold.placement_run_id = run.placement_run_id
 		WHERE run.team_id = ?::uuid
 		  AND run.owner_profile_id = ?::uuid
 		  AND run.ingest_id = ?::uuid
@@ -75,6 +81,9 @@ func loadPlacementRunStatus(
 		&result.PlacementRunID,
 		&result.Status,
 		&proposalRaw,
+		&semanticHoldState,
+		&quarantineExpiresAt,
+		&replacementWindowExpiresAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -84,6 +93,17 @@ func loadPlacementRunStatus(
 	}
 	if err := json.Unmarshal(proposalRaw, &result.Proposal); err != nil {
 		return nil, err
+	}
+	if semanticHoldState.Valid {
+		result.SemanticHoldState = strings.TrimSpace(semanticHoldState.String)
+	}
+	if quarantineExpiresAt.Valid {
+		value := quarantineExpiresAt.Time.UTC()
+		result.QuarantineExpiresAt = &value
+	}
+	if replacementWindowExpiresAt.Valid {
+		value := replacementWindowExpiresAt.Time.UTC()
+		result.ReplacementWindowExpiresAt = &value
 	}
 	evidenceRows, err := tx.WithContext(ctx).Raw(`
 		SELECT fragment_id::text, evidence_index, content, content_hash, authority,

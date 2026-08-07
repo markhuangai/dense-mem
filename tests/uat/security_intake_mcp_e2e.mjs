@@ -100,16 +100,16 @@ for (const testCase of acceptedCases) {
     testCase.clientComment,
   );
   const accepted = await mcpSuccess(apiKey, "remember", input, `${runID}:${testCase.name}`);
-  const ingestID = stringValue(accepted.ingest_id);
-  if (!ingestID) {
-    throw new Error(`${testCase.name} remember did not return an ingest_id`);
+  const submissionID = stringValue(accepted.submission_id);
+  if (!submissionID) {
+    throw new Error(`${testCase.name} remember did not return a submission_id`);
   }
-  assertAcceptedIngest(ingestID, input.evidence[0].content);
+  assertAcceptedIngest(submissionID, input.evidence[0].content);
   verifierAfterAccepted = await waitForExactlyOneVerifierRequest(verifierAfterAccepted, teamID);
-  const placement = await waitForTerminalPlacement(ingestID, testCase.allowProviderQuarantine);
+  const placement = await waitForTerminalPlacement(submissionID, testCase.allowProviderQuarantine);
   acceptedResults.push({
     name: testCase.name,
-    ingest_id: ingestID,
+    submission_id: submissionID,
     processing_state: placement.processing_state,
   });
 }
@@ -229,12 +229,12 @@ function relationshipRememberInput(payload, idempotencyKey, source, clientCommen
   };
 }
 
-async function waitForTerminalPlacement(ingestID, allowProviderQuarantine) {
+async function waitForTerminalPlacement(submissionID, allowProviderQuarantine = false) {
   let lastStatus = "";
   for (let attempt = 0; attempt < 180; attempt += 1) {
-    const placement = await mcpSuccess(apiKey, "get_memory_placement", { ingest_id: ingestID });
+    const placement = await mcpSuccess(apiKey, "get_submission_status", { submission_id: submissionID });
     lastStatus = stringValue(placement.processing_state);
-    if (["completed", "awaiting_review", "failed", "quarantined"].includes(lastStatus)) {
+    if (["completed", "rejected", "failed", "quarantined"].includes(lastStatus)) {
       if (lastStatus === "failed" || (lastStatus === "quarantined" && !allowProviderQuarantine)) {
         throw new Error(`accepted remember reached unexpected ${lastStatus}`);
       }

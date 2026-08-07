@@ -7,15 +7,15 @@ dedicated local Dense-Mem stack. Corpus ingestion uses the same public
 ```text
 corpus row
   -> POST /mcp, JSON-RPC tools/call remember
-  -> asynchronous AI placement
-  -> POST /mcp, JSON-RPC tools/call get_memory_placement
+  -> asynchronous processing
+  -> POST /mcp, JSON-RPC tools/call get_submission_status
   -> recall suite
   -> qrel-based retrieval metrics
 ```
 
-The evaluation harness does not use `import_memories` or an answer-judge model.
-It measures retrieval against deterministic qrels and reports placement outcomes
-separately.
+The evaluation harness does not use legacy memory-pack import tools or an
+answer-judge model. It measures retrieval against deterministic qrels and waits
+for the bounded submission status projection before scoring.
 
 The approved seed, generated diagnostic datasets, persistent databases,
 credentials, and run artifacts are local-only and ignored by git. The full
