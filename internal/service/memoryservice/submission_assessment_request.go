@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
@@ -48,32 +49,9 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 	if err != nil {
 		return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("catalog_context_validation", "submission entity catalog is invalid")
 	}
-	predicateLimit := s.limits.MaxPredicateOptions
-	if predicateLimit <= 0 {
-		predicateLimit = verifier.DefaultSemanticAssessmentLimits().MaxPredicateOptions
-	}
-	predicateCatalog, err := s.catalog.ListSubmissionAssessmentPredicateCatalog(ctx, repository.SubmissionAssessmentPredicateCatalogInput{
-		TeamID:         run.TeamID,
-		OwnerProfileID: run.OwnerProfileID,
-		Limit:          predicateLimit,
-	})
+	predicateOptions, err := s.submissionAssessmentPredicateOptions(ctx, run, plan)
 	if err != nil {
-		return verifier.SemanticAssessmentRequest{}, fmt.Errorf("load submission predicate catalog: %w", err)
-	}
-	if !predicateCatalog.Complete {
-		return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("catalog_context_overflow", "submission predicate catalog exceeds its configured complete bound")
-	}
-	predicateOptions := make([]verifier.SemanticAssessmentPredicateOption, 0, len(predicateCatalog.Options))
-	for _, predicate := range predicateCatalog.Options {
-		predicateOptions = append(predicateOptions, verifier.SemanticAssessmentPredicateOption{
-			PredicateKey:        predicate.PredicateKey,
-			Version:             predicate.Version,
-			Aliases:             append([]string(nil), predicate.Aliases...),
-			AllowedSubjectKinds: append([]string(nil), predicate.AllowedSubjectKinds...),
-			AllowedObjectKinds:  append([]string(nil), predicate.AllowedObjectKinds...),
-			RelationshipKind:    predicate.RelationshipKind,
-			CurrentCardinality:  predicate.CurrentCardinality,
-		})
+		return verifier.SemanticAssessmentRequest{}, err
 	}
 	evidence := make([]verifier.SemanticReviewEvidence, 0, len(plan.Items))
 	for _, item := range plan.Items {
@@ -103,6 +81,100 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 		}
 	}
 	return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("trusted_context_validation", "submission assessment contract is invalid")
+}
+
+func (s *submissionAssessmentPlacementWorkerService) submissionAssessmentPredicateOptions(
+	ctx context.Context,
+	run repository.PlacementRun,
+	plan submissionAssessmentPlan,
+) ([]verifier.SemanticAssessmentPredicateOption, error) {
+	limit := s.limits.MaxPredicateOptions
+	if limit <= 0 {
+		limit = verifier.DefaultSemanticAssessmentLimits().MaxPredicateOptions
+	}
+	if limit > verifier.SemanticAssessmentMaxPredicateOptions {
+		limit = verifier.SemanticAssessmentMaxPredicateOptions
+	}
+
+	proposedKeys := make([]string, 0, len(plan.RelationshipTargets))
+	seenKeys := make(map[string]struct{}, len(plan.RelationshipTargets))
+	queryParts := make([]string, 0, len(plan.Items)+len(plan.RelationshipTargets))
+	for _, item := range plan.Items {
+		queryParts = append(queryParts, item.Fragment.Content)
+	}
+	for _, relationship := range plan.RelationshipTargets {
+		key := strings.TrimSpace(relationship.ProposedPredicate)
+		if key == "" {
+			continue
+		}
+		queryParts = append(queryParts, key)
+		if _, exists := seenKeys[key]; exists {
+			continue
+		}
+		seenKeys[key] = struct{}{}
+		proposedKeys = append(proposedKeys, key)
+	}
+
+	resolved, err := s.catalog.ResolveSemanticReviewPredicateCandidates(ctx, repository.SemanticReviewPredicateResolutionInput{
+		TeamID:         run.TeamID,
+		OwnerProfileID: run.OwnerProfileID,
+		Predicates:     proposedKeys,
+		Limit:          limit + 1,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resolve submission predicate candidates: %w", err)
+	}
+
+	candidates := make([]repository.SemanticReviewPredicateCandidate, 0, limit)
+	seenCandidates := make(map[string]struct{}, len(resolved))
+	appendCandidate := func(candidate repository.SemanticReviewPredicateCandidate) {
+		if strings.TrimSpace(candidate.PredicateKey) == "" || candidate.Version < 1 || candidate.LifecycleState != "active" {
+			return
+		}
+		key := fmt.Sprintf("%s:%d", candidate.PredicateKey, candidate.Version)
+		if _, exists := seenCandidates[key]; exists {
+			return
+		}
+		seenCandidates[key] = struct{}{}
+		candidates = append(candidates, candidate)
+	}
+	for _, resolution := range resolved {
+		appendCandidate(resolution.Candidate)
+	}
+	if len(candidates) > limit {
+		return nil, deterministicSemanticAssessmentPreflightError("predicate_options_overflow", "submission predicate candidates exceed the configured request bound")
+	}
+
+	ranked, err := s.catalog.ListSemanticAssessmentPredicateOptions(ctx, repository.SemanticAssessmentPredicateOptionsInput{
+		TeamID:         run.TeamID,
+		OwnerProfileID: run.OwnerProfileID,
+		QueryText:      strings.Join(queryParts, "\n"),
+		ProposedKeys:   proposedKeys,
+		Limit:          limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load submission predicate options: %w", err)
+	}
+	for _, candidate := range ranked {
+		if len(candidates) == limit {
+			break
+		}
+		appendCandidate(candidate)
+	}
+
+	options := make([]verifier.SemanticAssessmentPredicateOption, 0, len(candidates))
+	for _, candidate := range candidates {
+		options = append(options, verifier.SemanticAssessmentPredicateOption{
+			PredicateKey:        candidate.PredicateKey,
+			Version:             candidate.Version,
+			Aliases:             append([]string(nil), candidate.Aliases...),
+			AllowedSubjectKinds: append([]string(nil), candidate.AllowedSubjectKinds...),
+			AllowedObjectKinds:  append([]string(nil), candidate.AllowedObjectKinds...),
+			RelationshipKind:    candidate.RelationshipKind,
+			CurrentCardinality:  candidate.CurrentCardinality,
+		})
+	}
+	return options, nil
 }
 
 func submissionAssessmentEntityCandidateGroups(

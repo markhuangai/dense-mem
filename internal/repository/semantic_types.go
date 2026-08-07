@@ -178,20 +178,6 @@ type SubmissionAssessmentEntityCatalogResult struct {
 	Complete bool
 }
 
-// SubmissionAssessmentPredicateCatalogInput lists every active current team
-// predicate definition up to the configured hard bound. It intentionally has
-// no relevance trim because a partial catalog is unsafe for registration.
-type SubmissionAssessmentPredicateCatalogInput struct {
-	TeamID         string
-	OwnerProfileID string
-	Limit          int
-}
-
-type SubmissionAssessmentPredicateCatalogResult struct {
-	Options  []SemanticReviewPredicateCandidate
-	Complete bool
-}
-
 type UpsertValueInput struct {
 	TeamID               string
 	OwnerProfileID       string

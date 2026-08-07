@@ -58,10 +58,11 @@ func evidenceArraySchema() map[string]any {
 
 func relationshipSubmissionArraySchema() map[string]any {
 	return map[string]any{
-		"type":     "array",
-		"minItems": 1,
-		"maxItems": 200,
-		"items":    relationshipSubmissionSchema(),
+		"type":        "array",
+		"minItems":    1,
+		"maxItems":    200,
+		"description": "Each relationship must include supports entries whose evidence_index values collectively cover every submitted evidence item. Spans use Unicode code-point offsets.",
+		"items":       relationshipSubmissionSchema(),
 	}
 }
 

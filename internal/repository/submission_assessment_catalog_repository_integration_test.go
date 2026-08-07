@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestSubmissionAssessmentCatalogIsTeamScopedAndReportsOverflow(t *testing.T) {
+func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolution(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -50,31 +50,23 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndReportsOverflow(t *testing.T)
 	assert.Equal(t, teamAEntity.EntityID, entityCatalog.Groups[0].Candidates[0].EntityID)
 	assert.NotEqual(t, teamCEntity.EntityID, entityCatalog.Groups[0].Candidates[0].EntityID)
 
-	teamAPredicates, err := repo.ListSubmissionAssessmentPredicateCatalog(ctx, SubmissionAssessmentPredicateCatalogInput{
-		TeamID: teamA, OwnerProfileID: ownerB, Limit: 2000,
+	teamAPredicates, err := repo.ResolveSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateResolutionInput{
+		TeamID: teamA, OwnerProfileID: ownerB, Predicates: []string{"team_a_only"}, Limit: 2,
 	})
 	require.NoError(t, err)
-	require.True(t, teamAPredicates.Complete)
-	assert.Contains(t, submissionAssessmentPredicateKeys(teamAPredicates.Options), "team_a_only")
+	require.Len(t, teamAPredicates, 1)
+	assert.Equal(t, "team_a_only", teamAPredicates[0].Candidate.PredicateKey)
 
-	teamCPredicates, err := repo.ListSubmissionAssessmentPredicateCatalog(ctx, SubmissionAssessmentPredicateCatalogInput{
-		TeamID: teamC, OwnerProfileID: ownerC, Limit: 2000,
+	teamCPredicates, err := repo.ResolveSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateResolutionInput{
+		TeamID: teamC, OwnerProfileID: ownerC, Predicates: []string{"team_a_only"}, Limit: 2,
 	})
 	require.NoError(t, err)
-	assert.NotContains(t, submissionAssessmentPredicateKeys(teamCPredicates.Options), "team_a_only")
+	assert.Empty(t, teamCPredicates)
 
-	overflow, err := repo.ListSubmissionAssessmentPredicateCatalog(ctx, SubmissionAssessmentPredicateCatalogInput{
-		TeamID: teamA, OwnerProfileID: ownerB, Limit: 1,
+	options, err := repo.ListSemanticAssessmentPredicateOptions(ctx, SemanticAssessmentPredicateOptionsInput{
+		TeamID: teamA, OwnerProfileID: ownerB, QueryText: "Alpha uses team_a_only", ProposedKeys: []string{"team_a_only"}, Limit: 100,
 	})
 	require.NoError(t, err)
-	assert.False(t, overflow.Complete)
-	assert.Len(t, overflow.Options, 1)
-}
-
-func submissionAssessmentPredicateKeys(options []SemanticReviewPredicateCandidate) []string {
-	keys := make([]string, 0, len(options))
-	for _, option := range options {
-		keys = append(keys, option.PredicateKey)
-	}
-	return keys
+	require.NotEmpty(t, options)
+	assert.Equal(t, "team_a_only", options[0].PredicateKey)
 }

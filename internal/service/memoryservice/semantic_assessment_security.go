@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
@@ -56,6 +57,9 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminalWithSecurityE
 	})
 	if err == nil && completed != nil {
 		s.recordFirstDisposition(ctx, run, completed.FirstDisposition)
+		if status == string(domain.SemanticReviewTerminalFailure) {
+			observability.RecordAssessorTerminalFailure(s.metrics, stage)
+		}
 	}
 	return err
 }

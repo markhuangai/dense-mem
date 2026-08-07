@@ -2,6 +2,7 @@ package memoryservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -399,6 +400,95 @@ func TestPlacementRunResultUsesEmptyLineageForCurrentEvidence(t *testing.T) {
 	require.Len(t, result.Items, 1)
 	require.NotNil(t, result.Items[0].SupersededEvidenceIDs)
 	require.Empty(t, result.Items[0].SupersededEvidenceIDs)
+}
+
+func TestPlacementRunResultProjectsBoundedFailureStages(t *testing.T) {
+	result := placementRunResultFromLedger(&repository.CreateIngestResult{
+		Status: string(domain.PlacementRunFailed),
+		Items: []repository.PlacementItem{
+			{PlacementItemID: "failed-known", Status: "failed", Result: map[string]any{"failure_stage": "predicate_options_overflow"}},
+			{PlacementItemID: "failed-unknown", Status: "failed", Result: map[string]any{"failure_stage": "database password leaked"}},
+			{PlacementItemID: "failed-duplicate", Category: "failed", Result: map[string]any{"failure_stage": "predicate_options_overflow"}},
+		},
+	})
+	require.Len(t, result.Items, 3)
+	require.Equal(t, []PlacementError{{Code: "semantic_assessment_terminal_failure", Message: "semantic assessment failed at predicate_options_overflow"}}, result.Items[0].Errors)
+	require.Equal(t, []PlacementError{{Code: "semantic_assessment_terminal_failure", Message: "semantic assessment failed at unknown"}}, result.Items[1].Errors)
+	require.Len(t, result.Errors, 2)
+}
+
+func TestRememberRelationshipCoverageReportsAllMissingEvidenceIndexes(t *testing.T) {
+	relationships := []map[string]any{{
+		"supports": []map[string]any{{"evidence_index": 0}},
+	}}
+	err := validateRememberRelationshipCoverage(3, relationships)
+	require.ErrorContains(t, err, "missing evidence indexes: [1 2]")
+}
+
+func TestRememberRelationshipCoverageAcceptsCompleteHints(t *testing.T) {
+	relationships := []map[string]any{
+		{"supports": []any{"not an object", map[string]any{"evidence_index": -1}, map[string]any{"evidence_index": "0"}}},
+		{"supports": []map[string]any{{"evidence_index": 1}}},
+	}
+	require.NoError(t, validateRememberRelationshipCoverage(2, relationships))
+}
+
+func TestRememberRejectsMissingRequiredInputsBeforeStaging(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	ctx := authenticatedRememberContext(teamID, profileID, keyID)
+	_, err := NewRememberService(RememberDependencies{}).Remember(ctx, RememberRequest{ContractVersion: domain.ContractVersion})
+	require.ErrorContains(t, err, "ledger repository is required")
+
+	ledger := &rememberLedgerStub{}
+	svc := NewRememberService(RememberDependencies{Ledger: ledger})
+	_, err = svc.Remember(ctx, RememberRequest{ContractVersion: "old", Evidence: []RememberEvidenceInput{{Content: "fact"}}})
+	require.ErrorContains(t, err, "invalid contract_version")
+	_, err = svc.Remember(ctx, RememberRequest{ContractVersion: domain.ContractVersion})
+	require.ErrorContains(t, err, "evidence is required")
+}
+
+func TestRememberEvidenceIndexAcceptsNumericRepresentations(t *testing.T) {
+	tests := []struct {
+		name  string
+		raw   any
+		want  int
+		valid bool
+	}{
+		{"int", int(1), 1, true},
+		{"int8", int8(2), 2, true},
+		{"int16", int16(3), 3, true},
+		{"int32", int32(4), 4, true},
+		{"int64", int64(5), 5, true},
+		{"uint", uint(6), 6, true},
+		{"uint8", uint8(7), 7, true},
+		{"uint16", uint16(8), 8, true},
+		{"uint32", uint32(9), 9, true},
+		{"uint64", uint64(10), 10, true},
+		{"float64", float64(11), 11, true},
+		{"float64_fraction", 11.5, 0, false},
+		{"float32", float32(12), 12, true},
+		{"float32_fraction", float32(12.5), 0, false},
+		{"json_number", json.Number("13"), 13, true},
+		{"json_number_invalid", json.Number("bad"), 0, false},
+		{"string", " 14 ", 14, true},
+		{"string_invalid", "bad", 0, false},
+		{"other", struct{}{}, 0, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, valid := rememberEvidenceIndex(test.raw)
+			require.Equal(t, test.valid, valid)
+			require.Equal(t, test.want, got)
+		})
+	}
+	if got := rememberArrayValues([]map[string]any{{"evidence_index": 0}}); len(got) != 1 {
+		t.Fatalf("map slice values = %#v", got)
+	}
+	if got := rememberArrayValues("not an array"); got != nil {
+		t.Fatalf("invalid array values = %#v", got)
+	}
 }
 
 func TestGetMemoryPlacementRequiresAuthContractAndLedger(t *testing.T) {

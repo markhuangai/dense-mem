@@ -58,7 +58,7 @@ func ContractTools() []Tool {
 	return []Tool{
 		contractTool(
 			ToolRemember,
-			"Submit exact evidence and optional proposal hints for server-owned placement.",
+			"Submit exact evidence and relationship proposals for server-owned placement; supports must cover every submitted evidence item by evidence_index.",
 			[]string{"write"},
 			rememberInputSchema(),
 			rememberOutputSchema(),
@@ -621,7 +621,10 @@ func validateRemember(args map[string]any) error {
 	if err := validateDirectEvidenceSupersessions(evidence); err != nil {
 		return err
 	}
-	return validateSubmittedRelationships(args["relationships"], evidence, "relationships")
+	if err := validateSubmittedRelationships(args["relationships"], evidence, "relationships"); err != nil {
+		return err
+	}
+	return validateSubmittedEvidenceCoverage(args["relationships"], evidence, "relationships")
 }
 
 func validateRecall(args map[string]any) error {

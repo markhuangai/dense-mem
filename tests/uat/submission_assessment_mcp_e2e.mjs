@@ -18,6 +18,28 @@ const evidence = [
 ];
 const verifierBefore = await prometheusValue("densemem_verifier_requests_total");
 
+const coverageRunID = `${runID}:coverage`;
+const coverageError = await mcpToolExpectError("remember", {
+  evidence: [
+    { content: "Covered uses evidence.", source_type: "document", source: coverageRunID, source_group: coverageRunID, idempotency_key: `${coverageRunID}:evidence:0` },
+    { content: "Uncovered evidence.", source_type: "document", source: coverageRunID, source_group: coverageRunID, idempotency_key: `${coverageRunID}:evidence:1` },
+  ],
+  relationships: [simpleRelationship("Covered uses evidence.", "coverage-rel", 0, "Covered", "uses", "evidence", "uses", "project", "product", "Covered uses evidence.")],
+});
+if (!coverageError.includes("missing evidence indexes: [1]")) {
+  throw new Error("remember coverage rejection did not identify the missing evidence index");
+}
+const coverageStaged = positiveCount(postgresRow(`
+  SELECT count(*) FROM knowledge_ingests
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND idempotency_key = ${sqlLiteral(`${coverageRunID}:evidence:0`)}
+`)[0]);
+if (coverageStaged !== 0) {
+  throw new Error("coverage-rejected remember unexpectedly staged an ingest");
+}
+
+seedPredicates("unrelated", 2500);
+
 const remember = await mcpTool("remember", {
   evidence: evidence.map((content, index) => ({
     content,
@@ -54,12 +76,39 @@ if (summary.searchDocuments !== 5) {
   throw new Error("atomic submission commit did not create evidence and relationship search documents");
 }
 
+const overflowBefore = await prometheusValue("densemem_verifier_requests_total");
+const overflowSubmission = overflowFixture();
+seedPredicates("overflow", overflowSubmission.relationships.length, "overflow");
+const overflowRemember = await mcpTool("remember", overflowSubmission);
+const overflowIngestID = stringValue(overflowRemember.ingest_id);
+if (!overflowIngestID) {
+  throw new Error("predicate overflow remember did not return an ingest_id");
+}
+const overflowStatus = await waitForFailedPlacement(overflowIngestID);
+const overflowErrors = Array.isArray(overflowStatus.errors) ? overflowStatus.errors : [];
+if (!overflowErrors.some((item) => stringValue(item.code) === "semantic_assessment_terminal_failure" && stringValue(item.message).includes("predicate_options_overflow"))) {
+  throw new Error("predicate overflow status did not expose its bounded terminal stage");
+}
+const overflowAfter = await prometheusValue("densemem_verifier_requests_total");
+if (overflowAfter !== overflowBefore) {
+  throw new Error("predicate overflow unexpectedly called the verifier");
+}
+const terminalFailures = await waitForPrometheusValueSelector(
+  "densemem_assessor_terminal_failures_total",
+  'stage="predicate_options_overflow"',
+  1,
+);
+if (terminalFailures < 1) {
+  throw new Error("predicate overflow did not record the bounded terminal metric");
+}
+
 console.log(JSON.stringify({
   status: "ok",
   run_id: runID,
   ingest_id: ingestID,
   verifier_requests_before: verifierBefore,
   verifier_requests_after: verifierAfter,
+  verifier_requests_after_overflow: overflowAfter,
   assessments: summary.assessments,
   completed_items: summary.completedItems,
   relationship_observations: summary.relationshipObservations,
@@ -67,7 +116,25 @@ console.log(JSON.stringify({
 }, null, 2));
 
 function relationship(ref, evidenceIndex, subject, predicateSurface, object, proposedKey, subjectKind, objectKind, supportText) {
-  const content = evidence[evidenceIndex];
+  return relationshipForContent(evidence[evidenceIndex], ref, evidenceIndex, subject, predicateSurface, object, proposedKey, subjectKind, objectKind, supportText);
+}
+
+function simpleRelationship(content, ref, evidenceIndex, subject, predicateSurface, object, proposedKey, subjectKind, objectKind, supportText) {
+  return relationshipForContent(
+    content,
+    ref,
+    evidenceIndex,
+    subject,
+    predicateSurface,
+    object,
+    proposedKey,
+    subjectKind,
+    objectKind,
+    supportText,
+  );
+}
+
+function relationshipForContent(content, ref, evidenceIndex, subject, predicateSurface, object, proposedKey, subjectKind, objectKind, supportText) {
   const subjectSpan = span(content, subject, supportText === content ? 0 : content.indexOf(supportText));
   const predicateSpan = span(content, predicateSurface, supportText === content ? 0 : content.indexOf(supportText));
   const objectSpan = span(content, object, supportText === content ? 0 : content.indexOf(supportText));
@@ -97,6 +164,71 @@ function relationship(ref, evidenceIndex, subject, predicateSurface, object, pro
   };
 }
 
+function seedPredicates(prefix, count, keyPrefix = `${runID}:${prefix}`) {
+  postgresRow(`
+    INSERT INTO semantic_team_refs (team_id)
+    VALUES (${sqlLiteral(teamID)}::uuid)
+    ON CONFLICT (team_id) DO NOTHING;
+
+    INSERT INTO team_predicate_definitions (
+      team_id, predicate_key, version, aliases, allowed_subject_kinds,
+      allowed_object_kinds, relationship_kind, current_cardinality,
+      lifecycle_state, origin, metadata
+    )
+    SELECT ${sqlLiteral(teamID)}::uuid,
+           ${sqlLiteral(`${keyPrefix}_`)} || series::text,
+           1,
+           ARRAY[]::text[],
+           ARRAY['project','product','organization','concept','other']::text[],
+           ARRAY['project','product','organization','concept','other']::text[],
+           'state', 'many', 'active', 'built_in', '{}'::jsonb
+    FROM generate_series(0, ${count - 1}) AS series;
+    SELECT count(*) FROM team_predicate_definitions
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND predicate_key LIKE ${sqlLiteral(`${keyPrefix}_%`)};
+  `);
+}
+
+function overflowFixture() {
+  const overflowEvidence = [];
+  const relationships = [];
+  for (let evidenceIndex = 0; evidenceIndex < Math.ceil(101 / 6); evidenceIndex += 1) {
+    const clauses = [];
+    const indexes = [];
+    for (let slot = 0; slot < 6; slot += 1) {
+      const index = evidenceIndex * 6 + slot;
+      if (index >= 101) {
+        break;
+      }
+      clauses.push(`A${index} x B${index}`);
+      indexes.push(index);
+    }
+    const content = `${clauses.join(". ")}.`;
+    overflowEvidence.push({
+      content,
+      source_type: "document",
+      source: `${runID}:overflow:evidence:${evidenceIndex}`,
+      source_group: `${runID}:overflow`,
+      idempotency_key: `${runID}:overflow:evidence:${evidenceIndex}`,
+    });
+    for (const index of indexes) {
+      relationships.push(relationshipForContent(
+        content,
+        `overflow-rel-${index}`,
+        evidenceIndex,
+        `A${index}`,
+        "x",
+        `B${index}`,
+        `overflow_${index}`,
+        "project",
+        "product",
+        `A${index} x B${index}`,
+      ));
+    }
+  }
+  return { evidence: overflowEvidence, relationships };
+}
+
 function span(content, text, from = 0) {
   const byteIndex = content.indexOf(text, from);
   if (byteIndex < 0) {
@@ -122,6 +254,22 @@ async function waitForCompletedPlacement(ingestID) {
     await delay(2_000);
   }
   throw new Error("timed out waiting for submission completion");
+}
+
+async function waitForFailedPlacement(ingestID) {
+  const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2_000);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const placement = await mcpTool("get_memory_placement", { ingest_id: ingestID });
+    const state = stringValue(placement.processing_state);
+    if (state === "failed") {
+      return placement;
+    }
+    if (["completed", "awaiting_review", "quarantined"].includes(state)) {
+      throw new Error(`predicate overflow reached unexpected terminal state ${state}`);
+    }
+    await delay(2_000);
+  }
+  throw new Error("timed out waiting for predicate overflow failure");
 }
 
 async function waitForVerifierRequest(expected) {
@@ -232,9 +380,37 @@ async function mcpTool(name, args) {
   return JSON.parse(text);
 }
 
+async function mcpToolExpectError(name, args) {
+  const response = await httpJSON(`${userURL}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: ++rpcID,
+      method: "tools/call",
+      params: { name, arguments: args },
+    }),
+  });
+  if (!response.error || response.result !== undefined) {
+    throw new Error(`MCP ${name} unexpectedly succeeded`);
+  }
+  const message = response.error?.message;
+  if (typeof message !== "string") {
+    throw new Error(`MCP ${name} returned an unrecognized bounded error`);
+  }
+  return message;
+}
+
 async function prometheusValue(metric) {
+  return prometheusValueSelector(metric, `team_id="${teamID}"`);
+}
+
+async function prometheusValueSelector(metric, selector) {
   const url = new URL("/api/v1/query", `${prometheusURL}/`);
-  url.searchParams.set("query", `sum(${metric}{team_id="${teamID}"})`);
+  url.searchParams.set("query", `sum(${metric}{${selector}})`);
   const response = await httpJSON(url.toString(), { method: "GET" });
   const value = response.data?.result?.[0]?.value?.[1];
   const parsed = Number(value ?? 0);
@@ -242,6 +418,17 @@ async function prometheusValue(metric) {
     throw new Error(`Prometheus returned a non-numeric ${metric}`);
   }
   return parsed;
+}
+
+async function waitForPrometheusValueSelector(metric, selector, minimum) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const value = await prometheusValueSelector(metric, selector);
+    if (value >= minimum) {
+      return value;
+    }
+    await delay(2_000);
+  }
+  return prometheusValueSelector(metric, selector);
 }
 
 function postgresRow(sql) {

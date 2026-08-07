@@ -78,6 +78,7 @@ type PrometheusMetrics struct {
 	assessorDuplicatePrevention  *prometheus.CounterVec
 	assessorConfidenceGate       *prometheus.CounterVec
 	assessorReviewExpiry         prometheus.Counter
+	assessorTerminalFailures     *prometheus.CounterVec
 }
 
 var _ DiscoverabilityMetrics = (*PrometheusMetrics)(nil)
@@ -246,6 +247,10 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 			Name: "densemem_assessor_review_expiry_total",
 			Help: "Integrated assessor semantic review tasks expired by the scheduler.",
 		}),
+		assessorTerminalFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_assessor_terminal_failures_total",
+			Help: "Integrated assessor terminal failures by bounded stage.",
+		}, []string{"stage"}),
 	}
 	m.registry.MustRegister(
 		m.httpRequests, m.httpDuration,
@@ -259,6 +264,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		m.assessorCalls, m.assessorDur, m.assessorTokens, m.assessorValidation, m.assessorValidationFields,
 		m.assessorCandidateTruncations, m.assessorPersistence, m.assessorDuplicatePrevention,
 		m.assessorConfidenceGate, m.assessorReviewExpiry,
+		m.assessorTerminalFailures,
 	)
 	return m
 }
@@ -529,6 +535,10 @@ func (m *PrometheusMetrics) AddAssessorReviewExpiry(count int64) {
 	if count > 0 {
 		m.assessorReviewExpiry.Add(float64(count))
 	}
+}
+
+func (m *PrometheusMetrics) IncAssessorTerminalFailure(stage string) {
+	m.assessorTerminalFailures.WithLabelValues(NormalizeAssessorTerminalFailureStage(stage)).Inc()
 }
 
 func (m *PrometheusMetrics) addTokens(counter *prometheus.CounterVec, ctx context.Context, model string, promptTokens, completionTokens, totalTokens int64) {
@@ -887,5 +897,11 @@ func RecordAssessorConfidenceGate(metrics DiscoverabilityMetrics, band string) {
 func RecordAssessorReviewExpiry(metrics DiscoverabilityMetrics, count int64) {
 	if recorder, ok := metrics.(AssessorMetrics); ok {
 		recorder.AddAssessorReviewExpiry(count)
+	}
+}
+
+func RecordAssessorTerminalFailure(metrics DiscoverabilityMetrics, stage string) {
+	if recorder, ok := metrics.(AssessorMetrics); ok {
+		recorder.IncAssessorTerminalFailure(stage)
 	}
 }

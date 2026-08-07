@@ -68,24 +68,39 @@ func TestContractRememberBoundaryContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := withRequiredFlatRelationship(map[string]any{
-		"evidence": []any{
-			map[string]any{
-				"content": strings.Repeat("a", memoryEntryMaxLength),
-			},
-		},
-	})
+	input := flatRelationshipForContent(strings.Repeat("a", memoryEntryMaxLength))
 	if err := ValidateContractInput(remember, input, []string{"write"}); err != nil {
 		t.Fatalf("boundary content rejected: %v", err)
 	}
-	oversized := withRequiredFlatRelationship(map[string]any{
-		"evidence": []any{map[string]any{
-			"content": strings.Repeat("a", memoryEntryMaxLength+1),
-		}},
-	})
+	oversized := flatRelationshipForContent(strings.Repeat("a", memoryEntryMaxLength+1))
 	err = ValidateContractInput(remember, oversized, []string{"write"})
 	if err == nil || !strings.Contains(err.Error(), "maximum length") {
 		t.Fatalf("oversized content err = %v, want maximum length", err)
+	}
+}
+
+func flatRelationshipForContent(content string) map[string]any {
+	return map[string]any{
+		"evidence": []any{
+			map[string]any{"content": content},
+		},
+		"relationships": []any{map[string]any{
+			"ref": "a-relationship",
+			"subject": map[string]any{
+				"name": "a", "entity_kind": "project",
+				"span": map[string]any{"evidence_index": 0, "start": 0, "end": 1},
+			},
+			"predicate": map[string]any{
+				"proposed_key": "uses", "surface": "a",
+				"span": map[string]any{"evidence_index": 0, "start": 1, "end": 2},
+			},
+			"object": map[string]any{"entity": map[string]any{
+				"name": "a", "entity_kind": "product",
+				"span": map[string]any{"evidence_index": 0, "start": 2, "end": 3},
+			}},
+			"polarity": "+", "modality": "statement",
+			"supports": []any{map[string]any{"evidence_index": 0, "start": 0, "end": len([]rune(content))}},
+		}},
 	}
 }
 

@@ -57,6 +57,13 @@ func semanticAssessmentPreflightFailure(err error) (string, bool) {
 	return "candidate_prefetch", false
 }
 
+func terminalizeAfterError(original error, complete func() error) error {
+	if completionErr := complete(); completionErr != nil {
+		return errors.Join(original, completionErr)
+	}
+	return nil
+}
+
 type SemanticAssessmentCatalog interface {
 	ListSemanticAssessmentEntityMatches(ctx context.Context, input repository.SemanticAssessmentEntityMatchInput) (repository.SemanticAssessmentEntityMatchResult, error)
 	ListSemanticAssessmentKnownEntities(ctx context.Context, input repository.SemanticAssessmentKnownEntityInput) ([]repository.SemanticReviewEntityCandidate, error)
@@ -191,7 +198,9 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 	if err != nil {
 		stage, terminal := semanticAssessmentPreflightFailure(err)
 		if terminal {
-			return true, errors.Join(err, s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewTerminalFailure), "failed", stage))
+			return true, terminalizeAfterError(err, func() error {
+				return s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewTerminalFailure), "failed", stage)
+			})
 		}
 		return true, errors.Join(err, s.retryOrFail(ctx, *run, item, stage, false, false))
 	}
@@ -203,15 +212,17 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 		}
 		if providerAttempted && errors.Is(err, verifier.ErrVerifierMalformedResponse) {
 			failureClass, providerTurns := semanticAssessmentMalformedFailure(err)
-			return true, errors.Join(err, s.completeTerminalWithFailure(
-				ctx,
-				*run,
-				item,
-				"assessment",
-				failureClass,
-				0,
-				providerTurns,
-			))
+			return true, terminalizeAfterError(err, func() error {
+				return s.completeTerminalWithFailure(
+					ctx,
+					*run,
+					item,
+					"assessment",
+					failureClass,
+					0,
+					providerTurns,
+				)
+			})
 		}
 		if providerAttempted {
 			return true, errors.Join(err, s.retryProviderFailure(
@@ -262,7 +273,9 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 		placement.Proposal,
 	)
 	if err != nil {
-		return true, errors.Join(err, s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewTerminalFailure), "failed", "deterministic_policy"))
+		return true, terminalizeAfterError(err, func() error {
+			return s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewTerminalFailure), "failed", "deterministic_policy")
+		})
 	}
 	commitInput.WorkerID = s.workerID
 	commitInput.Payload["assessment_reused"] = reused
@@ -549,6 +562,7 @@ func (s *semanticAssessmentPlacementWorkerService) retryOrFail(
 		firstDisposition, err := s.ledger.FinishPlacementRun(ctx, run.TeamID, run.PlacementRunID, s.workerID, string(domain.PlacementRunFailed), "semantic assessment failed before item selection")
 		if err == nil {
 			s.recordFirstDisposition(ctx, run, firstDisposition)
+			observability.RecordAssessorTerminalFailure(s.metrics, "placement_item")
 		}
 		return err
 	}

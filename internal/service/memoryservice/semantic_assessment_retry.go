@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -100,6 +101,7 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminalWithFailure(
 	})
 	if err == nil && completed != nil {
 		s.recordFirstDisposition(ctx, run, completed.FirstDisposition)
+		observability.RecordAssessorTerminalFailure(s.metrics, stage)
 	}
 	return err
 }

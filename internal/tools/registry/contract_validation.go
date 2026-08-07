@@ -363,6 +363,46 @@ func validateSubmittedRelationships(raw any, evidence []any, path string) error 
 	return nil
 }
 
+func validateSubmittedEvidenceCoverage(raw any, evidence []any, path string) error {
+	covered := make([]bool, len(evidence))
+	relationships, ok := raw.([]any)
+	if !ok || len(relationships) == 0 {
+		return nil
+	}
+	if ok {
+		for _, item := range relationships {
+			relationship, ok := objectFields(item)
+			if !ok {
+				continue
+			}
+			supports, ok := relationship["supports"].([]any)
+			if !ok {
+				continue
+			}
+			for _, support := range supports {
+				fields, ok := objectFields(support)
+				if !ok {
+					continue
+				}
+				index, ok := schemaNumber(fields["evidence_index"])
+				if ok && int(index) >= 0 && int(index) < len(covered) {
+					covered[int(index)] = true
+				}
+			}
+		}
+	}
+	missing := make([]int, 0)
+	for index, present := range covered {
+		if !present {
+			missing = append(missing, index)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%s must cover every evidence item; missing evidence indexes: %v", path, missing)
+	}
+	return nil
+}
+
 func validateSubmittedRelationship(relationship map[string]any, evidence []any, path string) error {
 	supports, err := submittedRelationshipSupports(relationship["supports"], evidence, path+".supports")
 	if err != nil {

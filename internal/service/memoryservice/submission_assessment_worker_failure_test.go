@@ -40,7 +40,6 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 			commitErr:  repository.ErrSubmissionAssessmentScopeMismatch,
 			wantStatus: string(domain.SemanticReviewTerminalFailure),
 			wantStage:  "assessment_scope",
-			wantError:  true,
 		},
 		{
 			name:        "transient commit failure requeues",

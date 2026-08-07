@@ -58,6 +58,8 @@ func TestTelemetryCostCardsAreOperatorOnly(t *testing.T) {
 	for _, id := range []string{"ai_cost_usd", "verifier_cost_usd", "embedding_cost_usd"} {
 		require.NotContains(t, userIDs, id)
 	}
+	require.Contains(t, operatorIDs, "assessor_terminal_failures")
+	require.NotContains(t, userIDs, "assessor_terminal_failures")
 	for _, id := range []string{"recall_embedding_cost_usd", "background_embedding_cost_usd", "ai_unpriced_operations"} {
 		require.NotContains(t, operatorIDs, id)
 		require.NotContains(t, userIDs, id)
@@ -95,6 +97,25 @@ func TestTelemetryCostCardsAreOperatorOnly(t *testing.T) {
 	require.Contains(t, profileEmbeddingCost.Query, `team_id="11111111-1111-4111-8111-111111111111"`)
 	require.Contains(t, profileEmbeddingCost.Query, `profile_id="22222222-2222-4222-8222-222222222222"`)
 	require.NotContains(t, profileEmbeddingCost.Query, `operation="background_embedding"`)
+}
+
+func TestTelemetryTerminalFailureSeriesIsOperatorSystemOnly(t *testing.T) {
+	system := TelemetryScope{Type: "system"}
+	operatorCard := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(system, nil, "1h", true), "assessor_terminal_failures")
+	require.NotNil(t, operatorCard)
+	require.Contains(t, operatorCard.Query, "densemem_assessor_terminal_failures_total")
+	require.NotContains(t, operatorCard.Query, "team_id=")
+
+	operatorSeries := telemetryQuerySpecByID(telemetryActivitySeriesSpecsForAudience(`{job="dense-mem"}`, "1m", true), "assessor_terminal_failures")
+	require.NotNil(t, operatorSeries)
+	require.Equal(t, "failures/s", operatorSeries.Unit)
+	require.Contains(t, operatorSeries.Query, `densemem_assessor_terminal_failures_total{job="dense-mem"}`)
+
+	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	team := TelemetryScope{Type: "team", TeamID: &teamID}
+	teamCard := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(team, nil, "1h", true), "assessor_terminal_failures")
+	require.NotNil(t, teamCard)
+	require.Contains(t, teamCard.Query, `team_id="11111111-1111-4111-8111-111111111111"`)
 }
 
 func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {

@@ -154,8 +154,7 @@ func TestSemanticAssessmentWorkerTerminalizesInvalidProviderResponse(t *testing.
 
 	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
 	require.True(t, processed)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid complete response")
+	require.NoError(t, err)
 	require.Equal(t, 1, provider.calls)
 	require.Equal(t, 0, assessments.persistCalls)
 	assert.Empty(t, commit.requeues)

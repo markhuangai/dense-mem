@@ -14,13 +14,12 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 	targetA := uuid.NewString()
 	targetB := uuid.NewString()
 	valid := map[string]any{
-		"evidence": []any{map[string]any{
-			"content":                 "Dense-Mem now uses the replacement evidence.",
-			"idempotency_key":         "replacement-a",
-			"supersedes_evidence_ids": []any{targetA},
-		}},
+		"evidence": validFlatRelationshipSubmission()["evidence"],
 	}
-	valid = withRequiredFlatRelationship(valid)
+	evidence := valid["evidence"].([]any)
+	evidence[0].(map[string]any)["idempotency_key"] = "replacement-a"
+	evidence[0].(map[string]any)["supersedes_evidence_ids"] = []any{targetA}
+	valid["relationships"] = validFlatRelationshipSubmission()["relationships"]
 	require.NoError(t, ValidateContractInput(remember, valid, []string{"write"}))
 
 	tests := []struct {
