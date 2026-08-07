@@ -190,6 +190,42 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 	`).Scan(&portalSessionFunctionCount))
 	require.Zero(t, portalSessionFunctionCount)
 
+	var rowSecurityEnabled, forcesRowSecurity, ownsPortalSessionTable bool
+	var appliesToAllCommands, appliesToPublic bool
+	var usingExpression, checkExpression string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT
+			class.relrowsecurity,
+			class.relforcerowsecurity,
+			pg_get_userbyid(class.relowner) = CURRENT_USER,
+			policy.polcmd = '*',
+			policy.polroles = ARRAY[0::oid],
+			pg_get_expr(policy.polqual, policy.polrelid),
+			pg_get_expr(policy.polwithcheck, policy.polrelid)
+		FROM pg_class AS class
+		JOIN pg_policy AS policy ON policy.polrelid = class.oid
+		WHERE class.oid = to_regclass('public.user_portal_sessions')
+		  AND policy.polname = 'user_portal_sessions_system_access'
+	`).Scan(
+		&rowSecurityEnabled,
+		&forcesRowSecurity,
+		&ownsPortalSessionTable,
+		&appliesToAllCommands,
+		&appliesToPublic,
+		&usingExpression,
+		&checkExpression,
+	))
+	require.True(t, rowSecurityEnabled)
+	require.True(t, forcesRowSecurity)
+	require.True(t, ownsPortalSessionTable)
+	require.True(t, appliesToAllCommands)
+	require.True(t, appliesToPublic)
+	for _, expression := range []string{usingExpression, checkExpression} {
+		require.Contains(t, expression, "current_setting")
+		require.Contains(t, expression, "app.tx_mode")
+		require.Contains(t, expression, "system")
+	}
+
 	var unownedApplicationRelations int
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
 		SELECT count(*)

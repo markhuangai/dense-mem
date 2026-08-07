@@ -66,7 +66,7 @@ jobs:
       - name: Run least-privileged migration test
         run: >-
           go test -tags=integration ./internal/storage/postgres
-          -run '^TestMigratorRunUpAsRuntimeRoleWithoutCreateRole$' -count=1
+          -run '^TestMigratorRunUpAsRuntimeRoleWithoutCreateRole$' -count=1 -v
 
       - name: Run unit coverage gate
         shell: bash
