@@ -73,8 +73,10 @@ boundary explicit:
 
 ~~~text
 Remember requires exact evidence plus a span-grounded Entity/Relationship
-proposal. Dense-Mem scans before staging, then owns assessment and durable
-promotion. Poll get_submission_status; there is no client review or
+proposal. When relationships are supplied, every evidence index must be cited
+by at least one relationship support span; the server reports all missing
+indexes before staging. Dense-Mem scans before staging, then owns assessment and
+durable promotion. Poll get_submission_status; there is no client review or
 follow-up-evidence action.
 For a quarantined submission, do not use its content. Submit a new complete
 request with replaces_quarantined_submission_id only when appropriate.
@@ -115,6 +117,7 @@ Use [Quick Start](Quick-Start) and
 | tool missing | Scopes, feature flag, contract version |
 | remember rejected | Exact proposal spans, closed schema, source rules, and security scan |
 | submission stays queued/processing | Worker/readiness/provider health and safe status error |
+| submission failed | Read `errors[].message` for the bounded terminal stage; never expect provider or database details |
 | recall misses a completed write | Search state, recall query, support eligibility, and degradations |
 | timeout | Client tool timeout versus asynchronous submission polling |
 

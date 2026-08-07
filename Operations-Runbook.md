@@ -136,6 +136,18 @@ migration concurrently. Keep migrations compatible with the previous binary for
 rolling deployments. Independent databases do not share that lock; each must be
 started and migrated separately.
 
+Migration `2026080701` is a coordinated-stop exception: it drops the unused
+`evidence_security_events.scan_policy_hash` column under an `ACCESS EXCLUSIVE`
+table lock, and an old binary cannot write security events after that drop. For
+the Docker Compose release, stop every API and worker container, confirm no old
+process retains a placement lease or database session, and take a PostgreSQL
+backup if the historical values must remain recoverable. Start only the new
+release; its startup migration must finish before listeners or workers become
+ready. Then verify the column is absent and run the `security_intake` Compose
+scenario. The down migration recreates a blank compatibility column but cannot
+restore discarded values, so a value-preserving rollback requires the backup
+and matching old application release.
+
 The image healthcheck uses a 30-minute startup grace matching the default
 migration timeout. Docker ignores failed probes during that grace and switches
 to normal failure counting after the first successful probe. If
@@ -210,6 +222,9 @@ Required checks:
 - queued count and oldest age
 - active lease owner, heartbeat, and attempt count
 - failures grouped by stage and safe code
+- `densemem_assessor_terminal_failures_total{stage=...}` and owner-scoped
+  submission status `errors`; use the stage to distinguish predicate option
+  overflow, input/catalog overflow, provider exhaustion, and commit failures
 - invalid-assessor count, JSON-pointer classes, provider turns per assessor
   conversation, and persisted-assessment reuse
 - provider 429/cooldown/concurrency
@@ -224,6 +239,12 @@ capped at 300s. Attempts are not reset by ordinary retries. A schema-invalid
 HTTP 200 response does not release the placement item: the assessor receives
 the bounded validation errors in the same message history and may return a
 complete replacement, for at most five provider turns in that conversation.
+
+The public placement status projects only an allowlisted terminal stage such as
+`predicate_options_overflow` or `assessment`. Never use provider/database error
+text from logs or SQL as a client diagnostic. If the stage is `unknown`, inspect
+the authenticated correlation window, worker lease/attempt row, and PostgreSQL
+transaction/constraint state without exporting raw payloads.
 
 When a legacy authority handoff reaches the end of its source cursor with all
 items terminal but some items failed or were excluded, the supervisor pauses the

@@ -163,7 +163,7 @@ status, or alter support.
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| content | yes | Verbatim source text. Base64 or encoded evidence is not accepted. |
+| content | yes | Verbatim source text. Base64 and other encoded payload bodies are not accepted; ordinary paths, backslashes, quotes, brackets, and harmless escape notation are allowed unless their decoded inspection view forms a threat. |
 | source_type | no | conversation, document, observation, or manual; it grants no authority. |
 | source | no | Bounded provenance label. |
 | authority | no | Proposed source authority, subject to server policy. |
@@ -274,7 +274,12 @@ and exfiltration or tool-invocation instructions before any submission is
 stored. A rejection returns a bounded error and records safe audit metadata
 only; it creates no fragment, provider request, search document, or embedding
 job. The worker repeats the scan for staged evidence, where a deterministic
-concern quarantines that staged submission.
+concern quarantines that staged submission. The scanner inspects one bounded
+decoded view of percent, hexadecimal, Unicode, and HTML-entity escapes while
+preserving exact source text. Punctuation has no security meaning by itself:
+direct quoted or bracketed directives still reject, while descriptive quoted
+tool/network examples remain eligible. Audit and security-event records retain
+bounded rules and spans without a scanner version or policy hash.
 
 A passed submission receives one logical capability-free assessor conversation
 for the whole run, containing the full staged evidence, raw client
@@ -352,7 +357,7 @@ not the audit ledger.
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Encoded prompt injection | A Base64 payload carries an instruction that survives textual inspection. | Reject Base64/encoded evidence before staging and rescan at worker claim. |
+| Encoded prompt injection | A Base64 payload or escaped instruction survives textual inspection. | Reject encoded payload bodies, inspect one bounded escape layer before staging, and rescan at worker claim without rejecting harmless escape notation alone. |
 | Assessor coercion | Evidence tells the model to leak secrets or call an API. | Treat evidence as data, provide no tools/secrets/environment, require closed schema, and quarantine a security concern. |
 | Client follows recalled text | Recalled evidence asks the host to exfiltrate a key. | Mark all returned evidence untrusted and require client-side action/tool policy. |
 | Partial canonical commit | One malformed assessor item leaves another Relationship promoted. | Validate complete coverage, then promote all accepted state in one PostgreSQL transaction. |

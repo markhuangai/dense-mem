@@ -334,14 +334,17 @@ instant before, exactly at, and one instant after `expires_at`.
 
 ### Injection boundary
 
-- the same scanner policy and bytes produce the same bounded signals/decision
+- the same scanner rules and bytes produce the same bounded signals/decision
 - intake rejection appends safe audit metadata only and reaches no staging or
   model
 - worker-time deterministic and assessor signals quarantine staged evidence and
   retain exact original spans
 - quarantine release follows the separately authorized staged-data workflow
-- quoted security guidance and adversarial variants measure false positives and
-  bypasses separately
+- Windows paths, harmless escape notation, quotes, and brackets pass unchanged
+- descriptive quoted attacks and direct quoted/bracketed directives measure
+  false positives and bypasses separately
+- new audit and security-event fixtures contain bounded rule metadata without a
+  scanner version or policy hash
 
 ### Recall/search
 

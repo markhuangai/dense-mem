@@ -403,10 +403,15 @@ anything. An intake hit returns a bounded error and appends only safe audit
 metadata; no submission, fragment, search document, embedding job, or assessor
 request exists. The worker repeats that scan over the staged evidence and
 provider-bound proposal before it claims candidate context or calls the assessor.
-The versioned policy normalizes covered format controls before matching,
-rejects a hidden-control flood or a normalized threat pattern, and treats an
-external tool or network request as unsafe only when it has directive wording.
-Valid bidirectional prose and descriptive statements remain eligible evidence.
+The scanner normalizes covered format controls and one bounded layer of percent,
+hexadecimal, Unicode, and HTML-entity escapes before matching. Escape notation,
+backslashes, quotes, and brackets are not threats by themselves. It rejects a
+hidden-control flood or normalized threat pattern and treats an external tool or
+network request as unsafe only when it has directive wording at a structural
+boundary or after an imperative cue. Direct quoted or bracketed directives still
+reject; valid bidirectional prose and descriptive quotations remain eligible.
+Safe audit metadata contains bounded decisions, rules, sources, and spans, not a
+scanner version or policy hash.
 
 The assessor receives the full staged submission plus bounded candidate/predicate
 context in one capability-free structured request. It has no tools, credentials,

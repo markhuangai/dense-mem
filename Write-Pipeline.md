@@ -43,6 +43,10 @@ and one item can support multiple distinct propositions, so there is no fixed
 single relationship object or separate cross-referenced `proposal.entities`
 object.
 
+When more than one evidence item is submitted, every evidence index must appear
+in at least one relationship `supports` span. The server reports all missing
+indexes together and stages nothing.
+
 Each relationship is self-contained. Its inline subject and object Entity (or
 typed Value), predicate, and supports have exact evidence spans. Offsets are
 zero-based Unicode code-point positions, with an inclusive start and exclusive
@@ -117,13 +121,19 @@ It rejects, at minimum:
 
 The scan normalizes a bounded set of common encodings before checking. It is a
 deny gate, not proof that the evidence is benign. Rejections return a bounded
-safe error and create no submission or canonical memory. Its tool/network rule
-requires directive wording, so descriptive prose and valid bidirectional
-formatting do not become intake rejections.
+safe error with bounded rule IDs and source spans, and create no submission or
+canonical memory. One inspection layer covers percent escapes, `\xNN`,
+`\uNNNN`, and HTML entities without changing the staged text. Those forms,
+backslashes, quotes, and brackets are not rejection reasons by themselves. A
+direct directive remains unsafe when wrapped in punctuation; descriptive prose
+that quotes a tool/network attack remains eligible. Structured proposal string
+values are scanned as values rather than inferred from serialized JSON quotes.
 
 The worker repeats the deterministic scan before it uses staged content. This
-catches staged data that could otherwise be processed after a scanner policy
-change or a compromised intake path.
+catches staged data that could otherwise be processed after a compromised or
+stale intake path. Scanner events and pre-stage rejection audits retain bounded
+decisions, reasons, rule IDs, sources, and spans without a scanner version or
+policy hash.
 
 ## Isolated Submission State
 
@@ -171,31 +181,33 @@ absent, and already-superseded targets return the same bounded error classes.
 ## Server-Owned Assessment
 
 The worker assesses the complete staged submission as one run-scoped unit. It
-loads the complete same-team candidate set for each submitted Entity surface and
-the complete active team predicate catalog, then sends that context in one
-capability-free assessor conversation. It never assesses or commits an evidence
-item independently.
+loads the complete same-team candidate set for each submitted Entity surface,
+resolves each proposed predicate key or alias exactly, and adds only bounded
+active predicate options ranked by the submitted keys and evidence wording.
+It sends that context in one capability-free assessor conversation. It never
+assesses or commits an evidence item independently.
 
 The assessor receives:
 
 - the full exact staged evidence and the raw client relationship proposals,
   including every client `predicate.proposed_key`
-- complete Entity candidate sets for submitted surfaces and the complete active
-  predicate catalog, only when each set fits its configured hard bound
+- complete Entity candidate sets for submitted surfaces
+- every exact active predicate key/alias match, plus relevant active options up
+  to the request bound; unrelated team predicates are not loaded into context
 - no tools, credentials, environment variables, network capability, or request
   headers
 - no prior raw evidence history, cross-team data, or authority to select stored
   IDs outside its supplied options
 
-Catalog preflight is not relevance selection. The worker asks PostgreSQL for one
-more row than each hard bound and requires a complete result: at most 20
-same-name Entity candidates for each submitted surface and every active team
-predicate within `AI_VERIFIER_MAX_PREDICATE_OPTIONS` (default 100; maximum
-2,000). An incomplete catalog or candidate-context token overflow ends the run
-as `catalog_context_overflow` before any provider call. If the exact evidence
-and contract themselves cannot fit the input budget, it ends as
-`assessment_input_overflow`, also with no provider call. An omitted existing
-predicate must never become a false registration decision.
+Entity preflight remains complete: at most 20 same-name candidates are loaded
+for each submitted surface. Predicate preflight is exact and bounded: exact
+key/alias matches are merged with evidence-relevant active options and the
+provider context is capped at `AI_VERIFIER_MAX_PREDICATE_OPTIONS` (default 100).
+If exact matches alone exceed that bound, the run ends as
+`predicate_options_overflow` before any provider call. Candidate-context token
+overflow remains `catalog_context_overflow`; if the exact evidence and contract
+cannot fit the input budget, it ends as `assessment_input_overflow`. An omitted
+exact predicate must never become a false registration decision.
 
 One placement-run attempt has one logical assessor conversation whose initial
 request contains every evidence item and relationship ref. A malformed complete
@@ -276,10 +288,13 @@ The status is owner-scoped and contains safe, bounded state only:
 | completed | Canonical promotion succeeded. | Recall or trace normally. |
 | rejected | The server rejected the submission. | Submit a new complete request if appropriate. |
 | quarantined | Security concern; the isolated raw payload copy expires after 24 hours while immutable source history remains restricted and non-recallable. | Do not use it; optionally submit a replacement. |
-| failed | Required worker/provider/persistence work exhausted its bounded retry policy. | Diagnose using safe error/correlation context, then submit anew if appropriate. |
+| failed | Required worker/provider/persistence work exhausted its bounded retry policy. | Diagnose using the safe terminal stage in `errors` and correlation context, then submit anew if appropriate. |
 
 Status reports per-evidence search readiness, bounded error codes,
 quarantine_expires_at when applicable, and search state.
+Terminal placement failures include `semantic_assessment_terminal_failure` with
+an allowlisted stage such as `predicate_options_overflow` or `assessment`; raw
+provider, database, prompt, and credential details never appear in status.
 search_state=pending means canonical promotion may be complete while a derived
 embedding is still being built. current and not_required are ready for the
 evaluation/recall freshness gate; failed is a visible degradation.
@@ -325,7 +340,8 @@ do not run legacy placement workers or expose legacy placement tools.
 
 ## Acceptance Checks
 
-1. a missing or span-mismatched relationship is rejected before staging;
+1. a missing or span-mismatched relationship is rejected before staging, and a
+   relationship-bearing request covers every submitted evidence index;
 2. Base64 and injection evidence are rejected before staging;
 3. staged content cannot enter recall or search before atomic promotion;
 4. every assessor response covers every evidence item with a security verdict;
@@ -334,7 +350,8 @@ do not run legacy placement workers or expose legacy placement tools.
    atomically;
 7. two relationships may cite one evidence item, while the assessor still
    receives every distinct relationship ref in one run-scoped request;
-8. catalog or input overflow makes zero provider call and zero semantic write;
+8. exact predicate, candidate-context, or input overflow makes zero provider
+   call and zero semantic write;
 9. a valid but non-promotable run becomes an `awaiting_review` compatibility
    hold with no review task or semantic subset, and expiry changes only its
    projection;

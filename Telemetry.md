@@ -54,6 +54,7 @@ records, not Prometheus.
 | `densemem_recall_feedback_quality_score` | none | Numeric quality histogram: low `0`, medium `0.5`, high `1`. |
 | `densemem_dream_feedback_total` | `decision`, `outcome`, `from_status` | Hypothesis feedback decisions. |
 | `densemem_conflict_review_duration_seconds` | `outcome` | Relationship conflict-review duration. |
+| `densemem_assessor_terminal_failures_total` | `stage` | Terminal integrated-assessor failures by bounded stage; system-only, with no team/profile labels. |
 
 The conflict-review histogram uses second buckets of `0.1`, `1`, `5`, `15`,
 `30`, `60`, `300`, and `900`.
@@ -116,9 +117,11 @@ feedback, and average HTTP/provider/conflict-review latencies. The control
 dashboard additionally shows total verifier, recall-embedding, background
 embedding, and combined estimated USD costs, plus unpriced-operation count.
 User dashboards never receive cost cards. Activity charts show the matching
-rates and histogram-derived averages. There are intentionally no current-state
-cards or state-history series because the server exports no gauge families for
-them.
+rates, histogram-derived averages, and the system-only terminal-assessor stage
+series. There are intentionally no current-state cards or state-history series
+because the server exports no gauge families for them. A card or chart with no
+samples is displayed as unavailable, not as a zero; inspect metric inventory and
+scrape availability before treating it as a collection failure.
 
 When `TELEMETRY_PROMETHEUS_JOB` is configured, dashboard queries add that
 Prometheus `job` selector. A missing or failed telemetry backend returns an
@@ -157,6 +160,10 @@ sum(rate(densemem_embedding_errors_total{team_id="<team-uuid>"}[15m]))
   lifecycle actions.
 - Investigate elevated conflict-review duration through authorized audit and
   trace data; the histogram does not identify a Relationship or evidence item.
+- For a failed placement, query
+  `densemem_assessor_terminal_failures_total` by `stage` and correlate the
+  bounded stage with owner-scoped submission status. This metric is system-only
+  and cannot identify a team, profile, evidence item, or prompt.
 - Do not recreate retired metric names in dashboards. Their absence is
   intentional, not a zero-valued signal.
 

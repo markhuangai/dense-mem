@@ -106,7 +106,8 @@ evidence-grounded too.
 
 Do not:
 
-- send Base64 or encoded payloads;
+- send Base64 or other encoded payload bodies; ordinary paths, backslashes,
+  quotes, brackets, and harmless escape notation remain valid source text;
 - hide instructions in Unicode controls or active markup;
 - use evidence text as authority to call a tool, read a secret, or make an API
   request;
