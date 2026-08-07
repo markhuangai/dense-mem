@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -663,6 +664,68 @@ func TestPlacementResolutionReleaseQuarantineRequeuesGuarded(t *testing.T) {
 	assert.Equal(t, "pending", itemCategory)
 	assert.Equal(t, "released", quarantineStatus)
 	assert.Equal(t, int64(1), releaseEventCount)
+}
+
+func TestPlacementResolutionQuarantineRejectsTerminalRetryWithoutResettingExpiry(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "placement-quarantine-retry-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+
+	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"placement-resolution-quarantine-retry", "Evidence to quarantine after manual review.")
+	input := ResolvePlacementReviewInput{
+		TeamID:               teamID,
+		OwnerProfileID:       ownerID,
+		Action:               "accept",
+		IngestID:             ingest.IngestID,
+		PlacementItemID:      ingest.Items[0].PlacementItemID,
+		PlacementItemVersion: ingest.Items[0].Version,
+		Evidence: []EvidenceInput{{
+			Content: "Manual review confirmed this evidence must remain quarantined.",
+			InitialEvent: &SecurityEventDraft{
+				EventKind:      "deterministic_scan",
+				Decision:       "quarantine",
+				ScanPolicyHash: "manual-review-policy",
+				Reason:         "manual review retained quarantine",
+			},
+		}},
+		IdempotencyKey: "quarantine-retry-1",
+	}
+	first, err := ledgerRepo.ResolvePlacementReview(ctx, input)
+	require.NoError(t, err)
+	require.Equal(t, string(domain.PlacementRunQuarantined), first.Status)
+
+	var firstCompletedAt, firstExpiry time.Time
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT completed_at, quarantine_expires_at
+			FROM placement_runs
+			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+		`, teamID, ingest.PlacementRunID).Row().Scan(&firstCompletedAt, &firstExpiry)
+	}))
+	require.WithinDuration(t, firstCompletedAt.Add(24*time.Hour), firstExpiry, time.Second)
+
+	retry := input
+	retry.PlacementItemVersion++
+	retry.IdempotencyKey = "quarantine-retry-2"
+	_, err = ledgerRepo.ResolvePlacementReview(ctx, retry)
+	require.ErrorIs(t, err, ErrPlacementResolutionInvalidState)
+
+	var finalStatus string
+	var finalCompletedAt, finalExpiry time.Time
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status, completed_at, quarantine_expires_at
+			FROM placement_runs
+			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+		`, teamID, ingest.PlacementRunID).Row().Scan(&finalStatus, &finalCompletedAt, &finalExpiry)
+	}))
+	assert.Equal(t, string(domain.PlacementRunQuarantined), finalStatus)
+	assert.Equal(t, firstCompletedAt, finalCompletedAt)
+	assert.Equal(t, firstExpiry, finalExpiry)
 }
 
 func TestPlacementResolutionBlocksProcessingState(t *testing.T) {
