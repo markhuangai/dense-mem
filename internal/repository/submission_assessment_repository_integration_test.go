@@ -267,6 +267,7 @@ func TestSubmissionAssessmentQuarantineRetainsRawCopyUntilSystemPurge(t *testing
 	var payloadSHA string
 	var rawEvidence, rawAssessment string
 	var retentionSeconds float64
+	var placementCompletedAt, placementExpiry time.Time
 	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT COUNT(*), COALESCE(MAX(payload_sha256), ''),
@@ -283,18 +284,39 @@ func TestSubmissionAssessmentQuarantineRetainsRawCopyUntilSystemPurge(t *testing
 		`, teamID, ingest.IngestID).Scan(&tombstoneCount).Error; err != nil {
 			return err
 		}
-		return tx.Raw(`
+		if err := tx.Raw(`
 			SELECT COUNT(*) FROM evidence_fragments
 			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
-		`, teamID, ingest.IngestID).Scan(&sourceCount).Error
+		`, teamID, ingest.IngestID).Scan(&sourceCount).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT completed_at, quarantine_expires_at
+			FROM placement_runs
+			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+		`, teamID, ingest.PlacementRunID).Row().Scan(&placementCompletedAt, &placementExpiry)
 	}))
 	assert.Equal(t, int64(1), payloadCount)
 	assert.NotEmpty(t, payloadSHA)
 	assert.Contains(t, rawEvidence, "Orion links Vega.")
 	assert.Contains(t, rawAssessment, "submission-assessment")
 	assert.InDelta(t, float64((24 * time.Hour).Seconds()), retentionSeconds, 1)
+	assert.WithinDuration(t, placementCompletedAt.Add(24*time.Hour), placementExpiry, time.Second)
 	assert.Equal(t, int64(2), tombstoneCount)
 	assert.Equal(t, int64(2), sourceCount)
+	for _, expiryExpression := range []string{
+		"completed_at + interval '25 hours'",
+		"NULL",
+	} {
+		err := rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+			return tx.Exec(`
+				UPDATE placement_runs
+				SET quarantine_expires_at = `+expiryExpression+`
+				WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+			`, teamID, ingest.PlacementRunID).Error
+		})
+		require.Error(t, err, "quarantined placement runs must reject expiry %s", expiryExpression)
+	}
 
 	for _, profileID := range []string{ownerID, foreignID} {
 		var visible int64

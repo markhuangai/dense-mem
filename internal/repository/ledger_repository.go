@@ -488,6 +488,10 @@ func (r *LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID st
 			    error = ?,
 			    lease_until = NULL,
 			    completed_at = now(),
+			    quarantine_expires_at = CASE
+			        WHEN ? = 'quarantined' THEN now() + interval '24 hours'
+			        ELSE quarantine_expires_at
+			    END,
 			    updated_at = now()
 			WHERE team_id = ?::uuid
 			  AND placement_run_id = ?::uuid
@@ -496,7 +500,7 @@ func (r *LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID st
 			  AND lease_until IS NOT NULL
 			  AND lease_until > now()
 			RETURNING owner_profile_id::text, created_at, completed_at
-		`, status, strings.TrimSpace(message), teamID, placementRunID, workerID).Rows()
+		`, status, strings.TrimSpace(message), status, teamID, placementRunID, workerID).Rows()
 		if err != nil {
 			return err
 		}

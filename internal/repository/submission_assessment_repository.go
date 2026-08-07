@@ -875,6 +875,10 @@ func completeSubmissionPlacementRun(
 		    error = ?,
 		    lease_until = NULL,
 		    completed_at = now(),
+		    quarantine_expires_at = CASE
+		        WHEN ? = 'quarantined' THEN now() + interval '24 hours'
+		        ELSE quarantine_expires_at
+		    END,
 		    updated_at = now()
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
@@ -885,7 +889,7 @@ func completeSubmissionPlacementRun(
 		  AND attempts = ?
 		  AND lease_until > clock_timestamp()
 		RETURNING created_at, completed_at
-	`, status, strings.TrimSpace(message), scope.TeamID, scope.OwnerProfileID, scope.IngestID,
+	`, status, strings.TrimSpace(message), status, scope.TeamID, scope.OwnerProfileID, scope.IngestID,
 		scope.PlacementRunID, scope.WorkerID, scope.ExpectedAttempts).Rows()
 	if err != nil {
 		return nil, err

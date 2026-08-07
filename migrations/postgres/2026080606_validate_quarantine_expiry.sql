@@ -9,9 +9,8 @@ SELECT set_config('app.current_profile_id', '', true);
 -- ACCESS EXCLUSIVE add-constraint lock is not held during this backfill or
 -- validation scan. The update is idempotent for interrupted deployments.
 UPDATE placement_runs
-SET quarantine_expires_at = COALESCE(completed_at, created_at) + interval '24 hours'
-WHERE status = 'quarantined'
-  AND quarantine_expires_at IS NULL;
+SET quarantine_expires_at = completed_at + interval '24 hours'
+WHERE status = 'quarantined';
 
 ALTER TABLE placement_runs
     VALIDATE CONSTRAINT placement_runs_quarantine_expiry_check;

@@ -19,8 +19,12 @@ ALTER TABLE placement_runs
     DROP CONSTRAINT IF EXISTS placement_runs_quarantine_expiry_check;
 ALTER TABLE placement_runs
     ADD CONSTRAINT placement_runs_quarantine_expiry_check CHECK (
-        quarantine_expires_at IS NULL
-        OR quarantine_expires_at >= created_at + interval '24 hours'
+        status <> 'quarantined'
+        OR (
+            completed_at IS NOT NULL
+            AND quarantine_expires_at IS NOT NULL
+            AND quarantine_expires_at = completed_at + interval '24 hours'
+        )
     ) NOT VALID;
 
 CREATE TABLE IF NOT EXISTS submission_quarantine_payloads (
