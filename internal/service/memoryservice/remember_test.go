@@ -140,7 +140,11 @@ func TestRememberReplayMapsInternalStatesToPublicProcessingStates(t *testing.T) 
 		}}
 		result, err := NewRememberService(RememberDependencies{Ledger: ledger}).Remember(
 			authenticatedRememberContext(teamID, profileID, keyID),
-			RememberRequest{ContractVersion: domain.ContractVersion, Evidence: []RememberEvidenceInput{{Content: "replay"}}},
+			RememberRequest{
+				ContractVersion:   domain.ContractVersion,
+				Evidence:          []RememberEvidenceInput{{Content: "replay"}},
+				RelationshipHints: completeRememberRelationshipHints(1),
+			},
 		)
 		require.NoError(t, err)
 		require.Equal(t, want, result.ProcessingState, "internal status %q", status)
