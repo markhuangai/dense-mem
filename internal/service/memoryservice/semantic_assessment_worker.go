@@ -208,7 +208,9 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 	assessment, response, reused, providerAttempted, releaseProviderAttempt, err := s.loadOrAssess(ctx, *run, item, request)
 	if err != nil {
 		if errors.Is(err, errSemanticAssessmentProviderAttemptConsumed) {
-			return true, s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_attempt_consumed")
+			return true, terminalizeAfterError(err, func() error {
+				return s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_attempt_consumed")
+			})
 		}
 		if providerAttempted && errors.Is(err, verifier.ErrVerifierMalformedResponse) {
 			failureClass, providerTurns := semanticAssessmentMalformedFailure(err)

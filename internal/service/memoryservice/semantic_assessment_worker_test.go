@@ -296,6 +296,21 @@ func TestSemanticAssessmentWorkerDoesNotCallProviderAfterDurableReservationWitho
 	assert.Equal(t, "assessment_attempt_consumed", commit.completions[0].Payload["failure_stage"])
 }
 
+func TestSemanticAssessmentWorkerPreservesAttemptConsumedErrorWhenTerminalCompletionFails(t *testing.T) {
+	_, assessments, commit, _, provider, worker := semanticAssessmentWorkerFixture(t)
+	assessments.reserved = true
+	completionErr := errors.New("semantic terminal completion unavailable")
+	commit.completeErr = completionErr
+
+	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
+
+	require.True(t, processed)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errSemanticAssessmentProviderAttemptConsumed)
+	assert.ErrorIs(t, err, completionErr)
+	assert.Zero(t, provider.calls)
+}
+
 func TestSemanticAssessmentWorkerRecordsBoundedAssessorMetrics(t *testing.T) {
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	_, assessments, _, catalog, provider, worker := semanticAssessmentWorkerFixtureWithMetrics(t, metrics)
@@ -880,6 +895,7 @@ type semanticAssessmentWorkerCommitStub struct {
 	requeues    []repository.RequeuePlacementReviewInput
 	completions []repository.CompletePlacementReviewInput
 	commitErr   error
+	completeErr error
 }
 
 func (s *semanticAssessmentWorkerCommitStub) CommitPlacementSemanticResult(_ context.Context, input repository.CommitPlacementSemanticInput) (*repository.CommitPlacementSemanticResult, error) {
@@ -892,6 +908,9 @@ func (s *semanticAssessmentWorkerCommitStub) CommitPlacementSemanticResult(_ con
 
 func (s *semanticAssessmentWorkerCommitStub) CompletePlacementReviewResult(_ context.Context, input repository.CompletePlacementReviewInput) (*repository.CompletePlacementReviewResult, error) {
 	s.completions = append(s.completions, input)
+	if s.completeErr != nil {
+		return nil, s.completeErr
+	}
 	return &repository.CompletePlacementReviewResult{Status: input.Status}, nil
 }
 
