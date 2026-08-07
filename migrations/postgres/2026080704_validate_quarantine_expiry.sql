@@ -5,7 +5,7 @@ SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 
--- Migration 0604 committed the NOT VALID constraint separately so its
+-- Migration 0702 committed the NOT VALID constraint separately so its
 -- ACCESS EXCLUSIVE add-constraint lock is not held during this backfill or
 -- validation scan. The update is idempotent for interrupted deployments.
 UPDATE placement_runs
