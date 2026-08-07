@@ -478,13 +478,32 @@ verify_postgres_runtime_migration_state() {
             WHERE namespace.nspname = 'public'
               AND procedure.proname LIKE 'dense_mem_portal_session_%'
           ),
+          table_state.relrowsecurity,
           table_state.relforcerowsecurity,
-          pg_get_userbyid(table_state.relowner) = CURRENT_USER
+          pg_get_userbyid(table_state.relowner) = CURRENT_USER,
+          policy.polcmd = '*',
+          policy.polroles = ARRAY[0::oid],
+          pg_get_expr(policy.polqual, policy.polrelid) LIKE '%current_setting%'
+            AND pg_get_expr(policy.polqual, policy.polrelid) LIKE '%app.tx_mode%'
+            AND pg_get_expr(policy.polqual, policy.polrelid) LIKE '%system%',
+          pg_get_expr(policy.polwithcheck, policy.polrelid) LIKE '%current_setting%'
+            AND pg_get_expr(policy.polwithcheck, policy.polrelid) LIKE '%app.tx_mode%'
+            AND pg_get_expr(policy.polwithcheck, policy.polrelid) LIKE '%system%',
+          NOT EXISTS (
+            SELECT 1
+            FROM pg_class AS relation
+            JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = 'public'
+              AND relation.relkind IN ('r', 'p', 'S', 'v', 'm')
+              AND pg_get_userbyid(relation.relowner) <> CURRENT_USER
+          )
         FROM pg_class AS table_state
+        JOIN pg_policy AS policy ON policy.polrelid = table_state.oid
         WHERE table_state.oid = to_regclass('public.user_portal_sessions')
+          AND policy.polname = 'user_portal_sessions_system_access'
       "
   )"
-  if [[ "$migration_state" != "t|t|t|t|t" ]]; then
+  if [[ "$migration_state" != "t|t|t|t|t|t|t|t|t|t|t" ]]; then
     echo "Unexpected E2E PostgreSQL migration state: ${migration_state}" >&2
     return 1
   fi
