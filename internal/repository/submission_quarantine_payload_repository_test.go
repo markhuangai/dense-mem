@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,11 +42,14 @@ func TestObserveSubmissionQuarantinePurgeFailureIsBoundedAndMetered(t *testing.T
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	metrics := &submissionQuarantinePurgeMetricsStub{}
-	observeSubmissionQuarantinePurgeFailure(context.Background(), logger, metrics)
+	observeSubmissionQuarantinePurgeFailure(context.Background(), logger, metrics, &pgconn.PgError{
+		Code:    "57014",
+		Message: "database password leaked",
+	})
 	require.Equal(t, 1, metrics.failures)
 	require.Contains(t, logs.String(), "submission quarantine purge failed")
-	require.Contains(t, logs.String(), "error_class=database_operation")
-	require.NotContains(t, logs.String(), "database password")
+	require.Contains(t, logs.String(), "error_class=sqlstate_57014")
+	require.NotContains(t, logs.String(), "database password leaked")
 }
 
 func TestDrainExpiredSubmissionQuarantinePayloadsReturnsFailure(t *testing.T) {

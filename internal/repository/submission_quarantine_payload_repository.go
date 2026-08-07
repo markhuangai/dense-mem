@@ -2,10 +2,12 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -103,15 +105,41 @@ func drainExpiredSubmissionQuarantinePayloads(
 	}
 }
 
-func observeSubmissionQuarantinePurgeFailure(ctx context.Context, logger *slog.Logger, metrics SubmissionQuarantinePurgeMetrics) {
+func observeSubmissionQuarantinePurgeFailure(ctx context.Context, logger *slog.Logger, metrics SubmissionQuarantinePurgeMetrics, err error) {
 	if logger != nil {
 		logger.ErrorContext(ctx, "submission quarantine purge failed",
-			"error_class", "database_operation",
+			"error_class", submissionQuarantinePurgeErrorClass(err),
 		)
 	}
 	if metrics != nil {
 		metrics.IncSubmissionQuarantinePurgeFailure()
 	}
+}
+
+func submissionQuarantinePurgeErrorClass(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	}
+	var postgresError *pgconn.PgError
+	if errors.As(err, &postgresError) && validSubmissionQuarantineSQLState(postgresError.Code) {
+		return "sqlstate_" + postgresError.Code
+	}
+	return "database_operation"
+}
+
+func validSubmissionQuarantineSQLState(code string) bool {
+	if len(code) != 5 {
+		return false
+	}
+	for _, character := range code {
+		if (character < '0' || character > '9') && (character < 'A' || character > 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 // StartSubmissionQuarantinePurger starts the global retention worker. It is
@@ -136,7 +164,7 @@ func (r *LedgerRepositoryImpl) StartSubmissionQuarantinePurger(
 			case now := <-ticker.C:
 				err := drainExpiredSubmissionQuarantinePayloads(ctx, now.UTC(), 100, r.PurgeExpiredSubmissionQuarantinePayloads)
 				if err != nil && ctx.Err() == nil {
-					observeSubmissionQuarantinePurgeFailure(ctx, logger, metrics)
+					observeSubmissionQuarantinePurgeFailure(ctx, logger, metrics, err)
 				}
 			}
 		}
