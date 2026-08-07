@@ -57,7 +57,7 @@ func (r *LedgerRepositoryImpl) PurgeExpiredSubmissionQuarantinePayloads(ctx cont
 				) VALUES (
 				    ?::uuid, ?::uuid, ?::uuid,
 				    'submission_quarantine_purged', 'purged',
-				    jsonb_build_object('quarantine_payload_id', ?, 'purged_at', ?), ?
+				    jsonb_build_object('quarantine_payload_id', ?::text, 'purged_at', ?::timestamptz), ?
 				)
 				ON CONFLICT DO NOTHING
 			`, item.teamID, item.runID, item.ownerID, item.payloadID, now, now).Error; err != nil {

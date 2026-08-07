@@ -91,6 +91,7 @@ ALTER TABLE submission_quarantine_payloads FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS submission_quarantine_payloads_system_only ON submission_quarantine_payloads;
 DROP POLICY IF EXISTS submission_quarantine_payloads_owner_insert ON submission_quarantine_payloads;
 DROP POLICY IF EXISTS submission_quarantine_payloads_system_delete ON submission_quarantine_payloads;
+DROP POLICY IF EXISTS submission_quarantine_payloads_system_update ON submission_quarantine_payloads;
 CREATE POLICY submission_quarantine_payloads_system_only ON submission_quarantine_payloads
     FOR SELECT USING (current_setting('app.tx_mode', true) IN ('system', 'migration'));
 CREATE POLICY submission_quarantine_payloads_owner_insert ON submission_quarantine_payloads
@@ -100,11 +101,14 @@ CREATE POLICY submission_quarantine_payloads_owner_insert ON submission_quaranti
             current_setting('app.tx_mode', true) = 'profile'
             AND team_id = nullif(current_setting('app.current_team_id', true), '')::uuid
             AND owner_profile_id = nullif(current_setting('app.current_profile_id', true), '')::uuid
-            AND expires_at = quarantined_at + interval '24 hours'
         )
     );
 CREATE POLICY submission_quarantine_payloads_system_delete ON submission_quarantine_payloads
     FOR DELETE USING (current_setting('app.tx_mode', true) IN ('system', 'migration'));
+CREATE POLICY submission_quarantine_payloads_system_update ON submission_quarantine_payloads
+    FOR UPDATE
+    USING (current_setting('app.tx_mode', true) IN ('system', 'migration'))
+    WITH CHECK (current_setting('app.tx_mode', true) IN ('system', 'migration'));
 
 COMMENT ON TABLE submission_quarantine_payloads IS
     'System/migration-only raw quarantined submission payload copy. Purge after exactly 24 hours; immutable source ledger rows remain for audit and lineage; public reads are forbidden.';

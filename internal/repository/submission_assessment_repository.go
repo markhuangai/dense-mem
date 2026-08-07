@@ -657,6 +657,10 @@ func storeSubmissionQuarantinePayload(ctx context.Context, tx *gorm.DB, scope Su
 		return err
 	}
 	sum := sha256.Sum256(canonical)
+	// The profile policy permits writes but not raw-payload reads, so ON CONFLICT
+	// cannot be used here: PostgreSQL's arbiter would require a SELECT policy.
+	// Completion holds the run lock and commits atomically, making this plain
+	// insert idempotent at the terminal transition boundary.
 	if err := tx.WithContext(ctx).Exec(`
 		INSERT INTO submission_quarantine_payloads (
 		    team_id, placement_run_id, ingest_id, owner_profile_id,
@@ -666,7 +670,6 @@ func storeSubmissionQuarantinePayload(ctx context.Context, tx *gorm.DB, scope Su
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
 		    ?::jsonb, ?::jsonb, ?::jsonb, ?, now(), now() + interval '24 hours'
 		)
-		ON CONFLICT (team_id, placement_run_id) DO NOTHING
 	`, scope.TeamID, scope.PlacementRunID, scope.IngestID, scope.OwnerProfileID,
 		string(proposal), string(evidence), string(assessorResponse), hex.EncodeToString(sum[:])).Error; err != nil {
 		return err
@@ -681,7 +684,6 @@ func storeSubmissionQuarantinePayload(ctx context.Context, tx *gorm.DB, scope Su
 		WHERE fragment.team_id = ?::uuid
 		  AND fragment.ingest_id = ?::uuid
 		  AND fragment.owner_profile_id = ?::uuid
-		ON CONFLICT (team_id, fragment_id) DO NOTHING
 	`, scope.TeamID, scope.IngestID, scope.OwnerProfileID).Error; err != nil {
 		return err
 	}
