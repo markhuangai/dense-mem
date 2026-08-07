@@ -19,10 +19,6 @@ import (
 )
 
 const (
-	securityScanPolicyVersion  = "dense-mem.remember-intake-security.v2"
-	securityScanPolicyManifest = "dense-mem.remember-intake-security.v2|base64,data_uri,pem,jwt_json,folded_base64,normalized_hidden_controls,hidden_control_flood,combining_marks,markup,control_role,chat_role_marker,override,secret,password_secret,directive_tool_exfiltration,provider_bound_proposal"
-	securityScanPolicyHash     = "sha256:4c1e282b6305d318e0ce46137ad24a2af1269a63a274326b2bdd9fe4ec2dffa1"
-
 	SubmissionSecurityErrorEncodedEvidence = "encoded_evidence_not_allowed"
 	SubmissionSecurityErrorRejected        = "evidence_security_rejected"
 
@@ -185,16 +181,54 @@ func scanSubmissionWithProviderProposal(contents []string, proposal map[string]a
 	if len(proposal) == 0 {
 		return scanSubmissionInputs(inputs)
 	}
-	encodedProposal, err := json.Marshal(proposal)
+	proposalInputs, err := submissionSecurityProposalInputs(proposal)
 	if err != nil {
 		return SubmissionSecurityBatchScan{Items: make([]SubmissionSecurityScan, len(inputs)), EvidenceCount: len(contents)}, ErrEvidenceSecurityRejected
 	}
-	inputs = append(inputs, submissionSecurityInput{
-		content:       string(encodedProposal),
-		source:        submissionSecuritySourceProposal,
-		evidenceIndex: -1,
-	})
+	inputs = append(inputs, proposalInputs...)
 	return scanSubmissionInputs(inputs)
+}
+
+func submissionSecurityProposalInputs(proposal map[string]any) ([]submissionSecurityInput, error) {
+	encoded, err := json.Marshal(proposal)
+	if err != nil {
+		return nil, err
+	}
+	var normalized any
+	if err := json.Unmarshal(encoded, &normalized); err != nil {
+		return nil, err
+	}
+	values := make([]string, 0)
+	appendSubmissionSecurityProposalValues(normalized, &values)
+	inputs := make([]submissionSecurityInput, 0, len(values))
+	for _, value := range values {
+		inputs = append(inputs, submissionSecurityInput{
+			content:       value,
+			source:        submissionSecuritySourceProposal,
+			evidenceIndex: -1,
+		})
+	}
+	return inputs, nil
+}
+
+func appendSubmissionSecurityProposalValues(value any, values *[]string) {
+	switch typed := value.(type) {
+	case string:
+		*values = append(*values, typed)
+	case []any:
+		for _, item := range typed {
+			appendSubmissionSecurityProposalValues(item, values)
+		}
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			appendSubmissionSecurityProposalValues(typed[key], values)
+		}
+	}
 }
 
 func scanSubmissionInputs(inputs []submissionSecurityInput) (SubmissionSecurityBatchScan, error) {
@@ -241,13 +275,9 @@ func (scan SubmissionSecurityScan) rejectsEncodedEvidence() bool {
 
 func submissionSecurityPassEvent() repository.SecurityEventDraft {
 	return repository.SecurityEventDraft{
-		EventKind:      "deterministic_scan",
-		Decision:       "pass",
-		ScanPolicyHash: securityScanPolicyHash,
-		Reason:         "deterministic intake scan passed",
-		Metadata: map[string]any{
-			"policy_version": securityScanPolicyVersion,
-		},
+		EventKind: "deterministic_scan",
+		Decision:  "pass",
+		Reason:    "deterministic intake scan passed",
 	}
 }
 
@@ -285,13 +315,11 @@ func submissionSecurityQuarantineEventForSignals(
 		})
 	}
 	return repository.SecurityEventDraft{
-		EventKind:      "deterministic_scan",
-		Decision:       "quarantine",
-		ScanPolicyHash: securityScanPolicyHash,
-		Reason:         "deterministic intake scan rejected evidence",
-		Signals:        signals,
+		EventKind: "deterministic_scan",
+		Decision:  "quarantine",
+		Reason:    "deterministic intake scan rejected evidence",
+		Signals:   signals,
 		Metadata: map[string]any{
-			"policy_version":    securityScanPolicyVersion,
 			"signals_truncated": signalsTruncated,
 		},
 	}
@@ -834,12 +862,13 @@ func toolExfiltrationIsDirective(text string, start int) bool {
 	if start < 0 || start > len(text) {
 		return false
 	}
-	prefix := text[:start]
+	prefix := strings.TrimRightFunc(text[:start], func(value rune) bool {
+		return unicode.IsSpace(value) || strings.ContainsRune("\\\"'`([{<", value)
+	})
 	if toolDirectiveStartPattern.MatchString(prefix) || toolDirectiveSuffixPattern.MatchString(prefix) {
 		return true
 	}
-	trimmed := strings.TrimRightFunc(prefix, unicode.IsSpace)
-	return strings.HasSuffix(trimmed, `"`) || strings.HasSuffix(trimmed, "'") || strings.HasSuffix(trimmed, "`")
+	return false
 }
 
 func hiddenControlRune(value rune) bool {

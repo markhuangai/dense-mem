@@ -16,11 +16,13 @@ import (
 
 var errSubmissionAssessmentRequiresReview = errors.New("submission assessment requires review")
 
-// SubmissionAssessmentCatalog provides the complete, bounded server-owned
-// catalog used by one closed submission assessment.
+// SubmissionAssessmentCatalog provides the server-owned entity candidates and
+// exact-plus-relevant predicate options used by one closed submission
+// assessment. Predicate lookup must not require a complete team-wide catalog.
 type SubmissionAssessmentCatalog interface {
 	ListSubmissionAssessmentEntityCatalog(ctx context.Context, input repository.SubmissionAssessmentEntityCatalogInput) (repository.SubmissionAssessmentEntityCatalogResult, error)
-	ListSubmissionAssessmentPredicateCatalog(ctx context.Context, input repository.SubmissionAssessmentPredicateCatalogInput) (repository.SubmissionAssessmentPredicateCatalogResult, error)
+	ResolveSemanticReviewPredicateCandidates(ctx context.Context, input repository.SemanticReviewPredicateResolutionInput) ([]repository.SemanticReviewPredicateResolution, error)
+	ListSemanticAssessmentPredicateOptions(ctx context.Context, input repository.SemanticAssessmentPredicateOptionsInput) ([]repository.SemanticReviewPredicateCandidate, error)
 }
 
 type SubmissionAssessmentPlacementWorkerService interface {
@@ -143,7 +145,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	}
 	plan, err := buildSubmissionAssessmentPlan(placement)
 	if err != nil {
-		return true, errors.Join(err, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "trusted_context_validation"))
+		return true, terminalizeAfterError(err, func() error {
+			return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "trusted_context_validation")
+		})
 	}
 	clientProposal := assessmentClientProposalWithoutTrustedContext(placement.Proposal)
 	contents := make([]string, 0, len(plan.Items))
@@ -158,7 +162,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	if err != nil {
 		stage, terminal := semanticAssessmentPreflightFailure(err)
 		if terminal {
-			return true, errors.Join(err, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage))
+			return true, terminalizeAfterError(err, func() error {
+				return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage)
+			})
 		}
 		return true, errors.Join(err, s.retryOrFail(ctx, *run, scope, stage, false, false))
 	}
@@ -166,11 +172,15 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	assessment, response, reused, providerAttempted, releaseProviderAttempt, err := s.loadOrAssess(ctx, *run, scope, request)
 	if err != nil {
 		if errors.Is(err, repository.ErrSubmissionAssessorAttemptConsumed) {
-			return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_attempt_consumed")
+			return true, terminalizeAfterError(err, func() error {
+				return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_attempt_consumed")
+			})
 		}
 		if providerAttempted && errors.Is(err, verifier.ErrVerifierMalformedResponse) {
 			failureClass, providerTurns := semanticAssessmentMalformedFailure(err)
-			return true, errors.Join(err, s.completeTerminalWithFailure(ctx, scope, "assessment", failureClass, 0, providerTurns))
+			return true, terminalizeAfterError(err, func() error {
+				return s.completeTerminalWithFailure(ctx, scope, "assessment", failureClass, 0, providerTurns)
+			})
 		}
 		if providerAttempted {
 			return true, errors.Join(err, s.retryProviderFailure(ctx, *run, scope, "assessment", releaseProviderAttempt, verifier.ProviderFailureDetails(err)))
@@ -194,7 +204,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewReviewRequired), "candidate", "policy_review")
 	}
 	if err != nil {
-		return true, errors.Join(err, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "deterministic_policy"))
+		return true, terminalizeAfterError(err, func() error {
+			return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "deterministic_policy")
+		})
 	}
 	recordSubmissionAssessmentGateBands(s.metrics, commitInput)
 	committed, err := s.assessments.CommitSubmissionAssessment(ctx, commitInput)
@@ -202,10 +214,14 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewReviewRequired), "candidate", "commit_review")
 	}
 	if errors.Is(err, repository.ErrSubmissionReplacementConflict) {
-		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "replacement_conflict")
+		return true, terminalizeAfterError(err, func() error {
+			return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "replacement_conflict")
+		})
 	}
 	if errors.Is(err, repository.ErrSubmissionAssessmentScopeMismatch) {
-		return true, errors.Join(err, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_scope"))
+		return true, terminalizeAfterError(err, func() error {
+			return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_scope")
+		})
 	}
 	if errors.Is(err, repository.ErrPlacementStaleSource) {
 		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewSuperseded), "failed", "stale_source")
@@ -488,6 +504,9 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithFailure
 	if err == nil && completed == nil {
 		return errors.New("submission assessment worker: nil terminal result")
 	}
+	if err == nil && completed != nil {
+		observability.RecordAssessorTerminalFailure(s.metrics, stage)
+	}
 	return err
 }
 
@@ -509,6 +528,9 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 	})
 	if err == nil && completed == nil {
 		return errors.New("submission assessment worker: nil terminal result")
+	}
+	if err == nil && completed != nil && status == string(domain.SemanticReviewTerminalFailure) {
+		observability.RecordAssessorTerminalFailure(s.metrics, stage)
 	}
 	return err
 }
@@ -679,11 +701,10 @@ func (s *submissionAssessmentPlacementWorkerService) completeProviderSecurityQua
 		quarantines = append(quarantines, repository.SubmissionAssessmentSecurityQuarantineInput{
 			FragmentID: item.Fragment.FragmentID,
 			SecurityEventDraft: repository.SecurityEventDraft{
-				EventKind:      "verifier_signal",
-				Decision:       "quarantine",
-				ScanPolicyHash: "dense-mem.v2.4",
-				Reason:         "semantic assessor reported security signal",
-				Signals:        entry.signals,
+				EventKind: "verifier_signal",
+				Decision:  "quarantine",
+				Reason:    "semantic assessor reported security signal",
+				Signals:   entry.signals,
 			},
 		})
 	}

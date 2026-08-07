@@ -87,6 +87,7 @@ func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.
 	assert.Equal(t, "is working on", resolutions[0].RequestedPredicate)
 	assert.Equal(t, "alias", resolutions[0].MatchKind)
 	assert.Equal(t, "works_on", resolutions[0].Candidate.PredicateKey)
+	assert.Contains(t, resolutions[0].Candidate.Aliases, "is_working_on")
 
 	options, err := repo.ListSemanticReviewPredicateOptions(ctx, SemanticReviewPredicateOptionsInput{
 		TeamID:         teamID,

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -140,8 +141,9 @@ type RelationshipOutcomeRef struct {
 }
 
 type PlacementError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Retryable bool   `json:"retryable"`
 }
 
 func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*RememberResult, error) {
@@ -162,6 +164,9 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 	}
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("remember: evidence is required")
+	}
+	if err := validateRememberRelationshipCoverage(len(req.Evidence), req.RelationshipHints); err != nil {
+		return nil, err
 	}
 	replacementID := strings.TrimSpace(req.ReplacesSubmissionID)
 	if replacementID != "" {
@@ -230,6 +235,87 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 		observability.RecordRememberFirstDisposition(ctx, s.metrics, disposition.CompletedAt.Sub(disposition.CreatedAt), disposition.Status)
 	}
 	return rememberResultFromLedger(created, correlationID), nil
+}
+
+func validateRememberRelationshipCoverage(evidenceCount int, relationships []map[string]any) error {
+	covered := make([]bool, evidenceCount)
+	for _, relationship := range relationships {
+		for _, rawSupport := range rememberArrayValues(relationship["supports"]) {
+			support, ok := rawSupport.(map[string]any)
+			if !ok {
+				continue
+			}
+			index, ok := rememberEvidenceIndex(support["evidence_index"])
+			if ok && index >= 0 && index < len(covered) {
+				covered[index] = true
+			}
+		}
+	}
+	missing := make([]int, 0)
+	for index, present := range covered {
+		if !present {
+			missing = append(missing, index)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("remember: relationship hints must cover every evidence item; missing evidence indexes: %v", missing)
+	}
+	return nil
+}
+
+func rememberArrayValues(raw any) []any {
+	switch values := raw.(type) {
+	case []any:
+		return values
+	case []map[string]any:
+		out := make([]any, 0, len(values))
+		for _, value := range values {
+			out = append(out, value)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func rememberEvidenceIndex(raw any) (int, bool) {
+	switch value := raw.(type) {
+	case int:
+		return value, true
+	case int8:
+		return int(value), true
+	case int16:
+		return int(value), true
+	case int32:
+		return int(value), true
+	case int64:
+		return int(value), true
+	case uint:
+		return int(value), true
+	case uint8:
+		return int(value), true
+	case uint16:
+		return int(value), true
+	case uint32:
+		return int(value), true
+	case uint64:
+		return int(value), true
+	case float64:
+		if value == float64(int(value)) {
+			return int(value), true
+		}
+	case float32:
+		if value == float32(int(value)) {
+			return int(value), true
+		}
+	case json.Number:
+		index, err := strconv.Atoi(string(value))
+		return index, err == nil
+	case string:
+		index, err := strconv.Atoi(strings.TrimSpace(value))
+		return index, err == nil
+	}
+	return 0, false
 }
 
 func (s *rememberService) GetMemoryPlacement(
@@ -352,6 +438,8 @@ func rememberResultFromLedger(created *repository.CreateIngestResult, correlatio
 
 func placementRunResultFromLedger(created *repository.CreateIngestResult) *PlacementRunResult {
 	items := make([]PlacementItemResult, 0, len(created.Items))
+	topLevelErrors := make([]PlacementError, 0)
+	seenErrors := make(map[string]struct{})
 	lineage := make(map[string][]string, len(created.Evidence))
 	for _, evidence := range created.Evidence {
 		lineage[evidence.FragmentID] = append([]string(nil), evidence.SupersededEvidenceIDs...)
@@ -368,6 +456,15 @@ func placementRunResultFromLedger(created *repository.CreateIngestResult) *Place
 		if supersededEvidenceIDs == nil {
 			supersededEvidenceIDs = []string{}
 		}
+		itemErrors := placementItemErrors(item)
+		for _, placementError := range itemErrors {
+			errorKey := placementError.Code + ":" + placementError.Message
+			if _, exists := seenErrors[errorKey]; exists {
+				continue
+			}
+			seenErrors[errorKey] = struct{}{}
+			topLevelErrors = append(topLevelErrors, placementError)
+		}
 		items = append(items, PlacementItemResult{
 			ItemID:                item.PlacementItemID,
 			EvidenceID:            item.FragmentID,
@@ -378,7 +475,7 @@ func placementRunResultFromLedger(created *repository.CreateIngestResult) *Place
 			SearchState:           itemSearchState,
 			RelationshipOutcomes:  placementRelationshipOutcomes(item.Result),
 			ReviewTasks:           placementReviewTasks(item.ReviewTasks),
-			Errors:                []PlacementError{},
+			Errors:                itemErrors,
 		})
 	}
 	return &PlacementRunResult{
@@ -386,8 +483,29 @@ func placementRunResultFromLedger(created *repository.CreateIngestResult) *Place
 		ProcessingState: created.Status,
 		SearchState:     searchState,
 		Items:           items,
-		Errors:          []PlacementError{},
+		Errors:          topLevelErrors,
 	}
+}
+
+func placementItemErrors(item repository.PlacementItem) []PlacementError {
+	if item.Status != "failed" && item.Category != "failed" {
+		return []PlacementError{}
+	}
+	if strings.EqualFold(resultString(item.Result, "status"), "superseded") {
+		return []PlacementError{}
+	}
+	if _, ok := item.Result["failure_stage"]; !ok {
+		return []PlacementError{}
+	}
+	stage := observability.NormalizeAssessorTerminalFailureStage(resultString(item.Result, "failure_stage"))
+	if stage == "unknown" {
+		return []PlacementError{}
+	}
+	return []PlacementError{{
+		Code:      "semantic_assessment_terminal_failure",
+		Message:   "semantic assessment failed at " + stage,
+		Retryable: false,
+	}}
 }
 
 func publicPlacementItemCategory(item repository.PlacementItem) string {

@@ -26,7 +26,7 @@ const profileC = await createProfile("Conflict E2E C");
 
 const first = await rememberAndWait(profileA.apiKey, {
   idempotencyKey: `${runID}:a`,
-  evidence: `ConflictE2E ${runID}: Effective ${newerEffectiveAt}, ${primaryProjectName} primary database is ${postgresName} according to profile A.`,
+  evidence: `ConflictE2E ${runID}: Effective ${newerEffectiveAt}, 🚀 ${primaryProjectName} primary database is ${postgresName} according to profile A.`,
   sourceGroup: `${runID}:source:a`,
   validFrom: newerEffectiveAt,
   subject: { ref: "project", name: primaryProjectName, kind: "project" },
@@ -138,25 +138,7 @@ async function rememberAndWait(apiKey, input) {
       idempotency_key: input.idempotencyKey,
       ...(input.authority ? { authority: input.authority } : {}),
     }],
-    proposal: {
-      entities: [
-        entityProposal(input.subject),
-        entityProposal(input.object),
-      ],
-      relationships: [{
-        proposal_id: input.relationshipID,
-        subject_ref: input.subject.ref,
-        predicate: "primary_database",
-        object_ref: input.object.ref,
-        evidence: [{
-          evidence_index: 0,
-          start: 0,
-          end: evidence.length,
-        }],
-        ...(input.validFrom ? { valid_from: input.validFrom } : {}),
-        ...(input.conflictContext ? { conflict_context: input.conflictContext } : {}),
-      }],
-    },
+    relationships: [relationshipHint(input, evidence)],
   });
   const ingestID = String(result.ingest_id ?? "");
   if (!ingestID) {
@@ -165,12 +147,44 @@ async function rememberAndWait(apiKey, input) {
   return await waitForPlacement(apiKey, ingestID, input.relationshipID);
 }
 
-function entityProposal(entity) {
+function relationshipHint(input, evidence) {
+  const predicateSurface = "primary database";
+  const subjectStart = evidence.indexOf(input.subject.name);
+  const predicateStart = evidence.indexOf(predicateSurface, subjectStart);
+  const objectStart = evidence.indexOf(input.object.name, predicateStart);
+  if (subjectStart < 0 || predicateStart < 0 || objectStart < 0) {
+    throw new Error(`could not derive relationship spans for ${input.relationshipID}`);
+  }
+  const codePointOffset = (utf16Offset) => Array.from(evidence.slice(0, utf16Offset)).length;
+  const subjectEnd = subjectStart + input.subject.name.length;
+  const predicateEnd = predicateStart + predicateSurface.length;
+  const objectEnd = objectStart + input.object.name.length;
   return {
-    ref: entity.ref,
-    name: entity.name,
-    entity_kind: entity.kind,
-    ...(entity.knownEntityID ? { known_entity_id: entity.knownEntityID } : {}),
+    ref: input.relationshipID,
+    subject: {
+      name: input.subject.name,
+      entity_kind: input.subject.kind,
+      ...(input.subject.knownEntityID ? { known_entity_id: input.subject.knownEntityID } : {}),
+      span: { evidence_index: 0, start: codePointOffset(subjectStart), end: codePointOffset(subjectEnd) },
+    },
+    predicate: {
+      proposed_key: "primary_database",
+      surface: predicateSurface,
+      span: { evidence_index: 0, start: codePointOffset(predicateStart), end: codePointOffset(predicateEnd) },
+    },
+    object: {
+      entity: {
+        name: input.object.name,
+        entity_kind: input.object.kind,
+        ...(input.object.knownEntityID ? { known_entity_id: input.object.knownEntityID } : {}),
+        span: { evidence_index: 0, start: codePointOffset(objectStart), end: codePointOffset(objectEnd) },
+      },
+    },
+    polarity: "+",
+    modality: "statement",
+    ...(input.validFrom ? { valid_from: input.validFrom } : {}),
+    ...(input.conflictContext ? { conflict_context: input.conflictContext } : {}),
+    supports: [{ evidence_index: 0, start: 0, end: Array.from(evidence).length }],
   };
 }
 
@@ -243,7 +257,7 @@ async function waitForConflictID(apiKey, query, conflictID, status) {
 }
 
 async function resolveOverdueConflictThroughVerifier() {
-  const marker = `OverdueConflictE2E ${runID}`;
+  const marker = `Overdue Conflict E2E ${runID}`;
   const overdueProjectName = `${marker} project`;
   const overduePostgresName = `${marker} PostgreSQL`;
   const overdueGraphDBName = `${marker} GraphDB`;
@@ -383,6 +397,26 @@ function markConflictReviewDue(conflictID) {
 
 function requeueCompletedConflictReviewRun(conflictID) {
   postgresQuery(`
+    WITH latest_run AS (
+      SELECT review_run_id
+      FROM relationship_conflict_review_runs
+      WHERE team_id = ${sqlLiteral(teamID)}::uuid
+        AND status = 'completed'
+        AND local_run_date = CURRENT_DATE
+      ORDER BY completed_at DESC NULLS LAST, review_run_id DESC
+      LIMIT 1
+    )
+    UPDATE relationship_conflict_cases AS conflict
+    SET last_review_run_id = latest_run.review_run_id,
+        updated_at = now()
+    FROM latest_run
+    WHERE conflict.team_id = ${sqlLiteral(teamID)}::uuid
+      AND conflict.conflict_id = ${sqlLiteral(conflictID)}::uuid
+      AND conflict.last_review_run_id IS NULL
+      AND conflict.status IN ('open', 'overdue')
+      AND conflict.next_review_at <= clock_timestamp();
+  `);
+  postgresQuery(`
     UPDATE relationship_conflict_review_runs AS review_run
     SET status = 'failed',
         lease_until = NULL,
@@ -391,12 +425,15 @@ function requeueCompletedConflictReviewRun(conflictID) {
         updated_at = now()
     WHERE review_run.team_id = ${sqlLiteral(teamID)}::uuid
       AND review_run.status = 'completed'
+      AND review_run.local_run_date = CURRENT_DATE
       AND EXISTS (
         SELECT 1
         FROM relationship_conflict_cases AS conflict
         WHERE conflict.team_id = review_run.team_id
           AND conflict.conflict_id = ${sqlLiteral(conflictID)}::uuid
           AND conflict.last_review_run_id = review_run.review_run_id
+          AND conflict.status IN ('open', 'overdue')
+          AND conflict.next_review_at <= clock_timestamp()
       );
   `);
 }

@@ -1,6 +1,9 @@
 package observability
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
 
 // DiscoverabilityMetrics is the concurrency-safe metrics contract used by
 // active memory services.
@@ -27,6 +30,7 @@ type AssessorMetrics interface {
 	IncAssessorDuplicateRequestPrevention(stage string)
 	IncAssessorConfidenceGate(band string)
 	AddAssessorReviewExpiry(count int64)
+	IncAssessorTerminalFailure(stage string)
 }
 
 // NoopDiscoverabilityMetrics returns a recorder that discards all metrics.
@@ -54,6 +58,7 @@ func (noopMetrics) IncAssessorAssessmentPersistence(string)      {}
 func (noopMetrics) IncAssessorDuplicateRequestPrevention(string) {}
 func (noopMetrics) IncAssessorConfidenceGate(string)             {}
 func (noopMetrics) AddAssessorReviewExpiry(int64)                {}
+func (noopMetrics) IncAssessorTerminalFailure(string)            {}
 
 // InMemoryDiscoverabilityMetrics is a test-friendly recorder.
 type InMemoryDiscoverabilityMetrics struct {
@@ -74,6 +79,7 @@ type InMemoryDiscoverabilityMetrics struct {
 	assessorDuplicatePrevention map[string]int
 	assessorGateBands           map[string]int
 	assessorReviewExpiry        int64
+	assessorTerminalFailures    map[string]int
 }
 
 // AssessorCallSample records one bounded assessor conversation.
@@ -154,6 +160,7 @@ func NewInMemoryDiscoverabilityMetrics() *InMemoryDiscoverabilityMetrics {
 		assessorPersistence:         make(map[string]int),
 		assessorDuplicatePrevention: make(map[string]int),
 		assessorGateBands:           make(map[string]int),
+		assessorTerminalFailures:    make(map[string]int),
 	}
 }
 
@@ -331,6 +338,12 @@ func (m *InMemoryDiscoverabilityMetrics) AddAssessorReviewExpiry(count int64) {
 	m.assessorReviewExpiry += count
 }
 
+func (m *InMemoryDiscoverabilityMetrics) IncAssessorTerminalFailure(stage string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assessorTerminalFailures[NormalizeAssessorTerminalFailureStage(stage)]++
+}
+
 func (m *InMemoryDiscoverabilityMetrics) AssessorCalls() []AssessorCallSample {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -379,4 +392,29 @@ func (m *InMemoryDiscoverabilityMetrics) AssessorReviewExpiryCount() int64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.assessorReviewExpiry
+}
+
+func (m *InMemoryDiscoverabilityMetrics) AssessorTerminalFailureCount(stage string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.assessorTerminalFailures[NormalizeAssessorTerminalFailureStage(stage)]
+}
+
+// NormalizeAssessorTerminalFailureStage keeps terminal failure telemetry and
+// status projections on a bounded, system-only vocabulary.
+func NormalizeAssessorTerminalFailureStage(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "placement_load", "placement_item", "trusted_context_validation",
+		"deterministic_security_scan", "catalog_context_overflow",
+		"catalog_context_validation", "predicate_options_overflow",
+		"assessment_input_overflow", "candidate_context_validation", "candidate_context_limit",
+		"candidate_prefetch", "assessment_attempt_consumed", "assessment", "provider",
+		"review_override", "security_signal", "confidence_policy", "policy_review",
+		"deterministic_policy", "commit_review", "replacement_conflict", "assessment_scope",
+		"stale_source", "semantic_commit", "verification", "stored_response",
+		"predicate_catalog", "extraction", "preflight":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "unknown"
+	}
 }

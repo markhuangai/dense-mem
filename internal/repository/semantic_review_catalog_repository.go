@@ -23,6 +23,7 @@ const (
 	semanticReviewMaxCandidateLimit     = 20
 	semanticReviewDefaultOptionLimit    = 100
 	semanticReviewMaxOptionLimit        = 100
+	semanticReviewMaxResolutionLimit    = semanticReviewMaxOptionLimit + 1
 	semanticReviewMaxResolutionInputs   = 200
 )
 
@@ -160,7 +161,7 @@ func (r *SemanticRepositoryImpl) ResolveSemanticReviewPredicateCandidates(
 			    SELECT requested.requested_predicate, requested.requested_order,
 			           CASE WHEN definition.predicate_key = requested.normalized_predicate
 			                THEN 'key' ELSE 'alias' END AS match_kind,
-			           definition.predicate_key, definition.version,
+			           definition.predicate_key, definition.version, definition.aliases,
 			           definition.allowed_subject_kinds, definition.allowed_object_kinds,
 			           definition.relationship_kind, definition.current_cardinality,
 			           definition.lifecycle_state
@@ -182,7 +183,7 @@ func (r *SemanticRepositoryImpl) ResolveSemanticReviewPredicateCandidates(
 			           ) AS match_rank
 			    FROM matched
 			)
-			SELECT requested_predicate, match_kind, predicate_key, version,
+			SELECT requested_predicate, match_kind, predicate_key, version, aliases,
 			       allowed_subject_kinds, allowed_object_kinds,
 			       relationship_kind, current_cardinality, lifecycle_state
 			FROM latest
@@ -195,6 +196,7 @@ func (r *SemanticRepositoryImpl) ResolveSemanticReviewPredicateCandidates(
 		defer rows.Close()
 		for rows.Next() {
 			var resolution SemanticReviewPredicateResolution
+			var aliases pq.StringArray
 			var subjectKinds pq.StringArray
 			var objectKinds pq.StringArray
 			if err := rows.Scan(
@@ -202,6 +204,7 @@ func (r *SemanticRepositoryImpl) ResolveSemanticReviewPredicateCandidates(
 				&resolution.MatchKind,
 				&resolution.Candidate.PredicateKey,
 				&resolution.Candidate.Version,
+				&aliases,
 				&subjectKinds,
 				&objectKinds,
 				&resolution.Candidate.RelationshipKind,
@@ -210,6 +213,7 @@ func (r *SemanticRepositoryImpl) ResolveSemanticReviewPredicateCandidates(
 			); err != nil {
 				return err
 			}
+			resolution.Candidate.Aliases = []string(aliases)
 			resolution.Candidate.AllowedSubjectKinds = []string(subjectKinds)
 			resolution.Candidate.AllowedObjectKinds = []string(objectKinds)
 			out = append(out, resolution)
@@ -405,7 +409,7 @@ func validateSemanticReviewPredicateCandidateInput(input SemanticReviewPredicate
 func normalizeSemanticReviewPredicateResolutionInput(input SemanticReviewPredicateResolutionInput) SemanticReviewPredicateResolutionInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
-	input.Limit = normalizeReviewCandidateLimit(input.Limit)
+	input.Limit = normalizeReviewResolutionLimit(input.Limit)
 	seen := map[string]struct{}{}
 	predicates := make([]string, 0, len(input.Predicates))
 	for _, predicate := range input.Predicates {
@@ -424,6 +428,16 @@ func normalizeSemanticReviewPredicateResolutionInput(input SemanticReviewPredica
 	}
 	input.Predicates = predicates
 	return input
+}
+
+func normalizeReviewResolutionLimit(limit int) int {
+	if limit <= 0 {
+		return semanticReviewDefaultCandidateLimit
+	}
+	if limit > semanticReviewMaxResolutionLimit {
+		return semanticReviewMaxResolutionLimit
+	}
+	return limit
 }
 
 func validateSemanticReviewPredicateResolutionInput(input SemanticReviewPredicateResolutionInput) error {

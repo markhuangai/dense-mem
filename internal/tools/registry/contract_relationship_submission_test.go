@@ -32,6 +32,19 @@ func TestRememberRequiresFlatSpanGroundedRelationships(t *testing.T) {
 	}
 }
 
+func TestRememberRequiresRelationshipCoverageForEverySubmittedEvidenceItem(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := validFlatRelationshipSubmission()
+	input["evidence"] = append(input["evidence"].([]any), map[string]any{"content": "A second source."})
+	err = ValidateContractInput(remember, input, []string{"write"})
+	if err == nil || !strings.Contains(err.Error(), "missing evidence indexes: [1]") {
+		t.Fatalf("coverage error = %v", err)
+	}
+}
+
 func TestRememberRejectsInexactOrUnsupportedFlatRelationshipFields(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	if err != nil {

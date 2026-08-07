@@ -161,10 +161,9 @@ func deterministicPlacementSecurityQuarantine(fragmentID string) *PlacementSecur
 	return &PlacementSecurityQuarantineInput{
 		FragmentID: fragmentID,
 		SecurityEventDraft: SecurityEventDraft{
-			EventKind:      "deterministic_scan",
-			Decision:       "quarantine",
-			ScanPolicyHash: "sha256:security-transaction-test",
-			Reason:         "deterministic intake scan rejected evidence",
+			EventKind: "deterministic_scan",
+			Decision:  "quarantine",
+			Reason:    "deterministic intake scan rejected evidence",
 			Signals: []SecuritySignalInput{{
 				Kind:      "instruction_override",
 				Severity:  "critical",

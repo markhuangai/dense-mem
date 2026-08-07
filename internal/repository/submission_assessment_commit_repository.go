@@ -554,13 +554,15 @@ func resolveSubmissionPredicateRegistration(
 	input *CommitSubmissionAssessmentInput,
 	registration SubmissionPredicateRegistrationInput,
 ) (SemanticReviewPredicateCandidate, string, error) {
+	requestedKey := strings.TrimSpace(registration.PredicateKey)
+	canonicalKey := canonicalGeneratedPredicateKey(requestedKey)
 	if err := tx.WithContext(ctx).Exec(
 		`SELECT pg_advisory_xact_lock(hashtext(?))`,
-		input.TeamID+":"+registration.PredicateKey,
+		input.TeamID+":"+canonicalKey,
 	).Error; err != nil {
 		return SemanticReviewPredicateCandidate{}, "", err
 	}
-	loaded, err := loadLatestSubmissionPredicate(ctx, tx, input.TeamID, registration.PredicateKey)
+	loaded, err := loadLatestSubmissionPredicate(ctx, tx, input.TeamID, requestedKey, canonicalKey)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return SemanticReviewPredicateCandidate{}, "", err
 	}
@@ -594,7 +596,7 @@ func resolveSubmissionPredicateRegistration(
 		RETURNING predicate_key, version, aliases, allowed_subject_kinds,
 		          allowed_object_kinds, relationship_kind, current_cardinality,
 		          lifecycle_state
-	`, input.TeamID, registration.PredicateKey,
+	`, input.TeamID, canonicalKey,
 		pq.Array([]string{registration.SubjectKind}),
 		pq.Array([]string{registration.ObjectKind}),
 		string(metadata)).Rows()
@@ -618,7 +620,7 @@ func resolveSubmissionPredicateRegistration(
 func loadLatestSubmissionPredicate(
 	ctx context.Context,
 	tx *gorm.DB,
-	teamID, predicateKey string,
+	teamID, requestedKey, canonicalKey string,
 ) (*SemanticReviewPredicateCandidate, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT predicate_key, version, aliases, allowed_subject_kinds,
@@ -636,11 +638,13 @@ func loadLatestSubmissionPredicate(
 			WHERE team_id = ?::uuid
 		) AS latest
 		WHERE version_rank = 1
-		  AND (predicate_key = ? OR ? = ANY(aliases))
-		ORDER BY CASE WHEN predicate_key = ? THEN 0 ELSE 1 END,
+		  AND (predicate_key = ? OR predicate_key = ? OR ? = ANY(aliases) OR ? = ANY(aliases))
+		ORDER BY CASE WHEN predicate_key = ? THEN 0
+		              WHEN predicate_key = ? THEN 1
+		              ELSE 2 END,
 		         predicate_key ASC
 		LIMIT 2
-	`, teamID, predicateKey, predicateKey, predicateKey).Rows()
+	`, teamID, requestedKey, canonicalKey, requestedKey, canonicalKey, requestedKey, canonicalKey).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -655,7 +659,7 @@ func loadLatestSubmissionPredicate(
 	if err != nil {
 		return nil, err
 	}
-	if candidate.PredicateKey == predicateKey {
+	if candidate.PredicateKey == canonicalKey || candidate.PredicateKey == requestedKey {
 		return &candidate, rows.Err()
 	}
 	if rows.Next() {

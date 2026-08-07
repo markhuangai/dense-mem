@@ -1,0 +1,142 @@
+//go:build integration
+
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/pressly/goose/v3"
+	"github.com/stretchr/testify/require"
+)
+
+func TestEvidenceSecurityScanPolicyMigrationPreservesEventHistory(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026080603)
+	require.True(t, columnExists(t, ctx, sqlDB, "evidence_security_events", "scan_policy_hash"))
+
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	ingestID := uuid.NewString()
+	fragmentID := uuid.NewString()
+	eventID := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_team_refs (team_id)
+			VALUES ($1::uuid)
+			ON CONFLICT (team_id) DO NOTHING
+		`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_profile_refs (team_id, profile_id)
+			VALUES ($1::uuid, $2::uuid)
+			ON CONFLICT (team_id, profile_id) DO NOTHING
+		`, teamID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (team_id, ingest_id, owner_profile_id, status)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, 'quarantined')
+		`, teamID, ingestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_fragments (
+				team_id, fragment_id, ingest_id, owner_profile_id, evidence_index,
+				content, content_hash, source_type, authority
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid, 0,
+				'legacy quarantined evidence', 'sha256:legacy', 'document', 'primary'
+			)
+		`, teamID, fragmentID, ingestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_security_events (
+				team_id, security_event_id, fragment_id, ingest_id, owner_profile_id,
+				event_kind, decision, scan_policy_hash, reason, metadata
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+				'deterministic_scan', 'quarantine', 'sha256:legacy-policy',
+				'legacy deterministic rejection', '{"signals_truncated":true}'::jsonb
+			)
+		`, teamID, eventID, fragmentID, ingestID, profileID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_security_signals (
+				team_id, security_event_id, signal_index, owner_profile_id,
+				kind, severity, span_start, span_end, metadata
+			) VALUES (
+				$1::uuid, $2::uuid, 0, $3::uuid,
+				'instruction_override', 'critical', 0, 6,
+				'{"rule_id":"instruction_override"}'::jsonb
+			)
+		`, teamID, eventID, profileID)
+		return err
+	}))
+
+	runGooseUpTo(t, ctx, sqlDB, 2026080701)
+	require.False(t, columnExists(t, ctx, sqlDB, "evidence_security_events", "scan_policy_hash"))
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		var eventKind, decision, reason, ruleID string
+		var signalsTruncated bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT event_kind, decision, reason,
+			       (metadata->>'signals_truncated')::boolean
+			FROM evidence_security_events
+			WHERE team_id = $1::uuid AND security_event_id = $2::uuid
+		`, teamID, eventID).Scan(&eventKind, &decision, &reason, &signalsTruncated); err != nil {
+			return err
+		}
+		require.Equal(t, "deterministic_scan", eventKind)
+		require.Equal(t, "quarantine", decision)
+		require.Equal(t, "legacy deterministic rejection", reason)
+		require.True(t, signalsTruncated)
+		if err := tx.QueryRowContext(ctx, `
+			SELECT metadata->>'rule_id'
+			FROM evidence_security_signals
+			WHERE team_id = $1::uuid AND security_event_id = $2::uuid AND signal_index = 0
+		`, teamID, eventID).Scan(&ruleID); err != nil {
+			return err
+		}
+		require.Equal(t, "instruction_override", ruleID)
+		return nil
+	}))
+
+	require.NoError(t, goose.SetDialect("postgres"))
+	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026080603))
+	require.True(t, columnExists(t, ctx, sqlDB, "evidence_security_events", "scan_policy_hash"))
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		var restoredHash string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT scan_policy_hash
+			FROM evidence_security_events
+			WHERE team_id = $1::uuid AND security_event_id = $2::uuid
+		`, teamID, eventID).Scan(&restoredHash); err != nil {
+			return err
+		}
+		require.Empty(t, restoredHash)
+
+		var defaultHash string
+		if err := tx.QueryRowContext(ctx, `
+			INSERT INTO evidence_security_events (
+				team_id, fragment_id, ingest_id, owner_profile_id,
+				event_kind, decision, reason
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				'quarantine_release', 'released', 'structural rollback write'
+			)
+			RETURNING scan_policy_hash
+		`, teamID, fragmentID, ingestID, profileID).Scan(&defaultHash); err != nil {
+			return err
+		}
+		require.Empty(t, defaultHash)
+		return nil
+	}))
+}

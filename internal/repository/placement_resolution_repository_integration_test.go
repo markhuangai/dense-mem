@@ -605,10 +605,9 @@ func TestPlacementResolutionReleaseQuarantineRequeuesGuarded(t *testing.T) {
 		Evidence: []EvidenceInput{{
 			Content: "Quarantined evidence pending manager review.",
 			InitialEvent: &SecurityEventDraft{
-				EventKind:      "deterministic_scan",
-				Decision:       "quarantine",
-				ScanPolicyHash: "policy",
-				Reason:         "deterministic quarantine",
+				EventKind: "deterministic_scan",
+				Decision:  "quarantine",
+				Reason:    "deterministic quarantine",
 			},
 		}},
 	})

@@ -143,6 +143,7 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		return nil, err
 	}
 	includeCost := strings.EqualFold(strings.TrimSpace(filter.Audience), TelemetryAudienceOperator)
+	includeTerminalFailures := includeCost && strings.EqualFold(scope.Type, "system")
 
 	nowFn := time.Now
 	if s != nil && s.now != nil {
@@ -165,8 +166,8 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		Cards:          appendTelemetryCards(initialWindowedCards, initialCurrentCards),
 		WindowedCards:  initialWindowedCards,
 		CurrentCards:   initialCurrentCards,
-		Series:         telemetryEmptySeries(),
-		ActivitySeries: telemetryEmptyActivitySeries(),
+		Series:         telemetryEmptySeriesForAudience(includeTerminalFailures),
+		ActivitySeries: telemetryEmptyActivitySeriesForAudience(includeTerminalFailures),
 		StateSeries:    telemetryEmptyStateSeries(),
 	}
 	if s == nil || s.baseURL == "" {
@@ -203,7 +204,7 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		currentCards = append(currentCards, TelemetryCard{ID: spec.ID, Label: spec.Label, Unit: spec.Unit, Value: scalar.Value, Available: scalar.Available})
 	}
 
-	activitySpecs := telemetryActivitySeriesSpecs(selector, windowDef.Rate)
+	activitySpecs := telemetryActivitySeriesSpecsForAudience(selector, windowDef.Rate, includeTerminalFailures)
 	activitySeries := make([]TelemetrySeries, 0, len(activitySpecs))
 	for _, spec := range activitySpecs {
 		points, queryErr := s.queryRange(queryCtx, spec.Query, from, to, windowDef.Step)
@@ -319,11 +320,17 @@ func telemetryWindowedCardSpecsForAudience(scope TelemetryScope, baseLabels map[
 	if !includeCost {
 		return specs
 	}
-	return append(specs,
-		telemetryQuerySpec{ID: "ai_cost_usd", Label: "AI cost", Unit: "USD", Query: telemetryAICost(scope, baseLabels, "", window)},
+	costSpecs := []telemetryQuerySpec{
+		{ID: "ai_cost_usd", Label: "AI cost", Unit: "USD", Query: telemetryAICost(scope, baseLabels, "", window)},
 		telemetryQuerySpec{ID: "verifier_cost_usd", Label: "Verifier cost", Unit: "USD", Query: telemetryAICost(scope, baseLabels, observability.AIComponentVerifier, window)},
 		telemetryQuerySpec{ID: "embedding_cost_usd", Label: "Embedding cost", Unit: "USD", Query: telemetryAICost(scope, baseLabels, observability.AIComponentEmbedding, window)},
-	)
+	}
+	if !strings.EqualFold(scope.Type, "system") {
+		return append(specs, costSpecs...)
+	}
+	return append(append(specs, telemetryQuerySpec{
+		ID: "assessor_terminal_failures", Label: "Assessor terminal failures", Unit: "failures", Query: telemetrySparseCounterIncrease("densemem_assessor_terminal_failures_total", scope, baseLabels, nil, window),
+	}), costSpecs...)
 }
 
 func telemetryCurrentCardSpecs(scope TelemetryScope, baseLabels map[string]string) []telemetryQuerySpec {
@@ -338,7 +345,11 @@ func telemetrySeriesSpecs(selector string, rateWindow string) []telemetryQuerySp
 }
 
 func telemetryActivitySeriesSpecs(selector string, rateWindow string) []telemetryQuerySpec {
-	return []telemetryQuerySpec{
+	return telemetryActivitySeriesSpecsForAudience(selector, rateWindow, false)
+}
+
+func telemetryActivitySeriesSpecsForAudience(selector string, rateWindow string, includeTerminalFailures bool) []telemetryQuerySpec {
+	specs := []telemetryQuerySpec{
 		{ID: "http_rps", Label: "HTTP requests", Unit: "rps", Query: fmt.Sprintf("sum(rate(densemem_http_requests_total%s[%s]))", selector, rateWindow)},
 		{ID: "http_errors_rps", Label: "HTTP errors", Unit: "rps", Query: fmt.Sprintf("sum(rate(densemem_http_requests_total%s[%s]))", telemetrySelectorWithRaw(selector, `status_class=~"4xx|5xx"`), rateWindow)},
 		{ID: "embedding_requests", Label: "Embedding requests", Unit: "requests/s", Query: fmt.Sprintf("sum(rate(densemem_embedding_requests_total%s[%s]))", selector, rateWindow)},
@@ -359,6 +370,15 @@ func telemetryActivitySeriesSpecs(selector string, rateWindow string) []telemetr
 		{ID: "dream_promote_candidates", Label: "Dream promote candidates", Unit: "events/s", Query: fmt.Sprintf("sum(rate(densemem_dream_feedback_total%s[%s]))", telemetrySelectorWithRaw(selector, `decision="promote_candidate",outcome="ok"`), rateWindow)},
 		{ID: "conflict_review_duration", Label: "Conflict review", Unit: "ms", Query: telemetryRangeHistogramAverage("densemem_conflict_review_duration_seconds", selector, "", rateWindow, 1000)},
 	}
+	if !includeTerminalFailures {
+		return specs
+	}
+	return append(specs, telemetryQuerySpec{
+		ID:    "assessor_terminal_failures",
+		Label: "Assessor terminal failures",
+		Unit:  "failures/s",
+		Query: fmt.Sprintf("sum(rate(densemem_assessor_terminal_failures_total%s[%s]))", selector, rateWindow),
+	})
 }
 
 func telemetryStateSeriesSpecs(selector string) []telemetryQuerySpec {
@@ -697,11 +717,15 @@ func telemetryEmptyCurrentCards() []TelemetryCard {
 }
 
 func telemetryEmptySeries() []TelemetrySeries {
-	return appendTelemetrySeries(telemetryEmptyActivitySeries(), telemetryEmptyStateSeries())
+	return telemetryEmptySeriesForAudience(false)
 }
 
-func telemetryEmptyActivitySeries() []TelemetrySeries {
-	return telemetryEmptySeriesFromSpecs(telemetryActivitySeriesSpecs("", "1m"))
+func telemetryEmptySeriesForAudience(includeTerminalFailures bool) []TelemetrySeries {
+	return appendTelemetrySeries(telemetryEmptyActivitySeriesForAudience(includeTerminalFailures), telemetryEmptyStateSeries())
+}
+
+func telemetryEmptyActivitySeriesForAudience(includeTerminalFailures bool) []TelemetrySeries {
+	return telemetryEmptySeriesFromSpecs(telemetryActivitySeriesSpecsForAudience("", "1m", includeTerminalFailures))
 }
 
 func telemetryEmptyStateSeries() []TelemetrySeries {

@@ -40,7 +40,6 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 			commitErr:  repository.ErrSubmissionAssessmentScopeMismatch,
 			wantStatus: string(domain.SemanticReviewTerminalFailure),
 			wantStage:  "assessment_scope",
-			wantError:  true,
 		},
 		{
 			name:        "transient commit failure requeues",
@@ -158,4 +157,34 @@ func TestSubmissionAssessmentWorkerRejectsNilCompletionAndRetryResults(t *testin
 	assessments.requeueNil = true
 	err = service.retryOrFail(context.Background(), *ledger.run, scope, "test", false, false)
 	require.ErrorContains(t, err, "nil retry result")
+}
+
+func TestSubmissionAssessmentWorkerPreservesOriginalErrorWhenTerminalCompletionFails(t *testing.T) {
+	t.Run("assessment attempt consumed", func(t *testing.T) {
+		_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+		assessments.reserved = true
+		completionErr := errors.New("terminal completion unavailable")
+		assessments.completeErr = completionErr
+
+		processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+		require.True(t, processed)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, repository.ErrSubmissionAssessorAttemptConsumed)
+		assert.ErrorIs(t, err, completionErr)
+	})
+
+	t.Run("replacement conflict", func(t *testing.T) {
+		_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+		assessments.commitErr = repository.ErrSubmissionReplacementConflict
+		completionErr := errors.New("replacement terminal completion unavailable")
+		assessments.completeErr = completionErr
+
+		processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+		require.True(t, processed)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, repository.ErrSubmissionReplacementConflict)
+		assert.ErrorIs(t, err, completionErr)
+	})
 }

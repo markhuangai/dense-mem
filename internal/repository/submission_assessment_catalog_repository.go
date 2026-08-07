@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -17,7 +16,6 @@ import (
 const (
 	submissionAssessmentMaxEntityTargets = 400
 	submissionAssessmentMaxCandidateSet  = 20
-	submissionAssessmentMaxPredicateSet  = 2000
 )
 
 func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
@@ -114,72 +112,6 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 	return result, nil
 }
 
-func (r *SemanticRepositoryImpl) ListSubmissionAssessmentPredicateCatalog(
-	ctx context.Context,
-	input SubmissionAssessmentPredicateCatalogInput,
-) (SubmissionAssessmentPredicateCatalogResult, error) {
-	input = normalizeSubmissionAssessmentPredicateCatalogInput(input)
-	if err := validateSubmissionAssessmentPredicateCatalogInput(input); err != nil {
-		return SubmissionAssessmentPredicateCatalogResult{}, err
-	}
-	result := SubmissionAssessmentPredicateCatalogResult{Options: []SemanticReviewPredicateCandidate{}, Complete: true}
-	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
-			WITH latest AS (
-			    SELECT DISTINCT ON (predicate_key)
-			           predicate_key, version, aliases, allowed_subject_kinds,
-			           allowed_object_kinds, relationship_kind, current_cardinality,
-			           lifecycle_state, origin, created_at
-			    FROM team_predicate_definitions
-			    WHERE team_id = ?::uuid
-			    ORDER BY predicate_key, version DESC
-			)
-			SELECT predicate_key, version, aliases, allowed_subject_kinds,
-			       allowed_object_kinds, relationship_kind, current_cardinality,
-			       lifecycle_state
-			FROM latest
-			WHERE lifecycle_state = 'active'
-			ORDER BY CASE WHEN origin = 'built_in' THEN 0 ELSE 1 END,
-			         created_at ASC,
-			         predicate_key ASC
-			LIMIT ?
-		`, input.TeamID, input.Limit+1).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			candidate := SemanticReviewPredicateCandidate{}
-			var aliases, subjectKinds, objectKinds pq.StringArray
-			if err := rows.Scan(
-				&candidate.PredicateKey,
-				&candidate.Version,
-				&aliases,
-				&subjectKinds,
-				&objectKinds,
-				&candidate.RelationshipKind,
-				&candidate.CurrentCardinality,
-				&candidate.LifecycleState,
-			); err != nil {
-				return err
-			}
-			if len(result.Options) == input.Limit {
-				result.Complete = false
-				continue
-			}
-			candidate.Aliases = []string(aliases)
-			candidate.AllowedSubjectKinds = []string(subjectKinds)
-			candidate.AllowedObjectKinds = []string(objectKinds)
-			result.Options = append(result.Options, candidate)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return SubmissionAssessmentPredicateCatalogResult{}, fmt.Errorf("semantic: list submission assessment predicate catalog: %w", err)
-	}
-	return result, nil
-}
-
 func normalizeSubmissionAssessmentEntityCatalogInput(input SubmissionAssessmentEntityCatalogInput) SubmissionAssessmentEntityCatalogInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
@@ -234,28 +166,6 @@ func validateSubmissionAssessmentEntityCatalogInput(input SubmissionAssessmentEn
 				return fmt.Errorf("known_entity_id is invalid: %w", err)
 			}
 		}
-	}
-	return nil
-}
-
-func normalizeSubmissionAssessmentPredicateCatalogInput(input SubmissionAssessmentPredicateCatalogInput) SubmissionAssessmentPredicateCatalogInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
-	if input.Limit <= 0 {
-		input.Limit = semanticReviewDefaultOptionLimit
-	}
-	return input
-}
-
-func validateSubmissionAssessmentPredicateCatalogInput(input SubmissionAssessmentPredicateCatalogInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
-		return fmt.Errorf("owner_profile_id is required: %w", err)
-	}
-	if input.Limit < 1 || input.Limit > submissionAssessmentMaxPredicateSet {
-		return fmt.Errorf("limit must be between 1 and %d", submissionAssessmentMaxPredicateSet)
 	}
 	return nil
 }

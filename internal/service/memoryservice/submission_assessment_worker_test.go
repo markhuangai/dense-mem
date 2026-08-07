@@ -48,21 +48,22 @@ func TestSubmissionAssessmentWorkerAssessesWholeRunAndCommitsAtomically(t *testi
 	assert.Equal(t, false, commit.Payload["assessment_reused"])
 	assert.Len(t, catalog.entityInputs, 1)
 	assert.Len(t, catalog.predicateInputs, 1)
+	assert.Len(t, catalog.predicateOptionInputs, 1)
 }
 
-func TestSubmissionAssessmentWorkerTerminalizesIncompleteCatalogBeforeProvider(t *testing.T) {
+func TestSubmissionAssessmentWorkerTerminalizesPredicateOptionOverflowBeforeProvider(t *testing.T) {
 	_, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
 	catalog.predicateComplete = false
 
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 	require.True(t, processed)
-	require.Error(t, err)
+	require.NoError(t, err)
 	assert.Zero(t, provider.calls)
 	assert.Zero(t, assessments.persistCalls)
 	assert.Empty(t, assessments.commits)
 	require.Len(t, assessments.completions, 1)
 	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), assessments.completions[0].Status)
-	assert.Equal(t, "catalog_context_overflow", assessments.completions[0].Payload["failure_stage"])
+	assert.Equal(t, "predicate_options_overflow", assessments.completions[0].Payload["failure_stage"])
 }
 
 func TestSubmissionAssessmentWorkerHoldsWholeRunWhenOneRelationshipIsNonPromotable(t *testing.T) {
@@ -119,7 +120,7 @@ func TestSubmissionAssessmentWorkerRejectsInvalidKnownEntityIDBeforeProvider(t *
 
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 
-	require.Error(t, err)
+	require.NoError(t, err)
 	assert.True(t, processed)
 	assert.Zero(t, provider.calls)
 	assert.Empty(t, catalog.entityInputs)
@@ -225,7 +226,7 @@ func TestSubmissionAssessmentWorkerTerminalizesMalformedProviderResponse(t *test
 
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 
-	require.Error(t, err)
+	require.NoError(t, err)
 	assert.True(t, processed)
 	assert.Equal(t, 1, provider.calls)
 	assert.Zero(t, assessments.persistCalls)
@@ -473,7 +474,7 @@ func TestSubmissionAssessmentBuildRequestClassifiesCompleteCatalogAndInputBudget
 	_, err = service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
 	stage, terminal = semanticAssessmentPreflightFailure(err)
 	assert.True(t, terminal)
-	assert.Equal(t, "catalog_context_overflow", stage)
+	assert.Equal(t, "predicate_options_overflow", stage)
 
 	catalog.predicateComplete = true
 	service.limits.MaxInputTokens = 1
@@ -865,6 +866,7 @@ type submissionAssessmentWorkerAssessmentStub struct {
 	completions       []repository.CompleteSubmissionAssessmentInput
 	requeues          []repository.RequeueSubmissionAssessmentInput
 	completeNil       bool
+	completeErr       error
 	requeueNil        bool
 	reviewExpiryCalls int
 	reviewExpiryErr   error
@@ -927,6 +929,9 @@ func (s *submissionAssessmentWorkerAssessmentStub) CommitSubmissionAssessment(_ 
 
 func (s *submissionAssessmentWorkerAssessmentStub) CompleteSubmissionAssessment(_ context.Context, input repository.CompleteSubmissionAssessmentInput) (*repository.CompleteSubmissionAssessmentResult, error) {
 	s.completions = append(s.completions, input)
+	if s.completeErr != nil {
+		return nil, s.completeErr
+	}
 	if s.completeNil {
 		return nil, nil
 	}
@@ -944,28 +949,6 @@ func (s *submissionAssessmentWorkerAssessmentStub) RequeueSubmissionAssessment(_
 func (s *submissionAssessmentWorkerAssessmentStub) ExpirePlacementAssessmentReviews(context.Context, repository.ExpirePlacementAssessmentReviewsInput) (int64, error) {
 	s.reviewExpiryCalls++
 	return 0, s.reviewExpiryErr
-}
-
-type submissionAssessmentWorkerCatalogStub struct {
-	entityInputs      []repository.SubmissionAssessmentEntityCatalogInput
-	predicateInputs   []repository.SubmissionAssessmentPredicateCatalogInput
-	predicateOptions  []repository.SemanticReviewPredicateCandidate
-	entityComplete    bool
-	predicateComplete bool
-}
-
-func (s *submissionAssessmentWorkerCatalogStub) ListSubmissionAssessmentEntityCatalog(_ context.Context, input repository.SubmissionAssessmentEntityCatalogInput) (repository.SubmissionAssessmentEntityCatalogResult, error) {
-	s.entityInputs = append(s.entityInputs, input)
-	groups := make([]repository.SubmissionAssessmentEntityCatalogGroup, 0, len(input.Entities))
-	for _, entity := range input.Entities {
-		groups = append(groups, repository.SubmissionAssessmentEntityCatalogGroup{Ref: entity.Ref, Candidates: []repository.SemanticReviewEntityCandidate{}, Complete: true})
-	}
-	return repository.SubmissionAssessmentEntityCatalogResult{Groups: groups, Complete: s.entityComplete}, nil
-}
-
-func (s *submissionAssessmentWorkerCatalogStub) ListSubmissionAssessmentPredicateCatalog(_ context.Context, input repository.SubmissionAssessmentPredicateCatalogInput) (repository.SubmissionAssessmentPredicateCatalogResult, error) {
-	s.predicateInputs = append(s.predicateInputs, input)
-	return repository.SubmissionAssessmentPredicateCatalogResult{Options: append([]repository.SemanticReviewPredicateCandidate(nil), s.predicateOptions...), Complete: s.predicateComplete}, nil
 }
 
 type submissionAssessmentWorkerProviderStub struct {

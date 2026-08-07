@@ -391,6 +391,7 @@ func TestLifecycleResolvePlacementMapsEvidenceForRepository(t *testing.T) {
 	require.Equal(t, []string{"evidence-old"}, first.Metadata["supersedes_evidence_ids"])
 	require.Equal(t, "pass", first.InitialEvent.Decision)
 	require.Equal(t, "deterministic_scan", first.InitialEvent.EventKind)
+	require.Empty(t, first.InitialEvent.Metadata)
 	require.NotEmpty(t, first.SourceRevisionContentHash)
 
 	require.Equal(t, "policy-note", second.Authority)

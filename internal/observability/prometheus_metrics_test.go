@@ -250,6 +250,7 @@ func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testin
 	metrics.IncAssessorDuplicateRequestPrevention("post_persist")
 	metrics.IncAssessorConfidenceGate("below_write_threshold")
 	metrics.AddAssessorReviewExpiry(3)
+	metrics.IncAssessorTerminalFailure("predicate_options_overflow")
 
 	body := scrapePrometheusMetrics(t, metrics)
 	for _, want := range []string{
@@ -266,6 +267,7 @@ func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testin
 		`densemem_assessor_duplicate_request_prevented_total{stage="post_persist"}`,
 		`densemem_assessor_confidence_gate_total{band="below_write_threshold"}`,
 		`densemem_assessor_review_expiry_total 3`,
+		`densemem_assessor_terminal_failures_total{stage="predicate_options_overflow"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scraped assessor metrics missing %q\n%s", want, body)
@@ -328,6 +330,7 @@ func TestNoopDiscoverabilityMetrics_ConsumesCalls(t *testing.T) {
 	assessor.IncAssessorDuplicateRequestPrevention("post_persist")
 	assessor.IncAssessorConfidenceGate("meets_write_threshold")
 	assessor.AddAssessorReviewExpiry(1)
+	assessor.IncAssessorTerminalFailure("assessment")
 }
 
 func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
@@ -341,6 +344,7 @@ func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
 	RecordAssessorConfidenceGate(metrics, "below_write_threshold")
 	RecordAssessorReviewExpiry(metrics, 2)
 	RecordAssessorReviewExpiry(metrics, 0)
+	RecordAssessorTerminalFailure(metrics, "assessment")
 
 	calls := metrics.AssessorCalls()
 	if len(calls) != 1 {
@@ -370,6 +374,17 @@ func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
 	if got := metrics.AssessorReviewExpiryCount(); got != 2 {
 		t.Fatalf("AssessorReviewExpiryCount() = %d, want 2", got)
 	}
+	if got := metrics.AssessorTerminalFailureCount("assessment"); got != 1 {
+		t.Fatalf("AssessorTerminalFailureCount() = %d, want 1", got)
+	}
+	if got := NormalizeAssessorTerminalFailureStage("unexpected stage"); got != "unknown" {
+		t.Fatalf("NormalizeAssessorTerminalFailureStage() = %q, want unknown", got)
+	}
+	for _, stage := range []string{"predicate_catalog", "extraction", "preflight"} {
+		if got := NormalizeAssessorTerminalFailureStage(stage); got != stage {
+			t.Fatalf("NormalizeAssessorTerminalFailureStage(%q) = %q, want %q", stage, got, stage)
+		}
+	}
 
 	RecordAssessorCall(NoopDiscoverabilityMetrics(), 0, 0, 0, "")
 	RecordAssessorValidationFailure(NoopDiscoverabilityMetrics(), "")
@@ -379,6 +394,7 @@ func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
 	RecordAssessorDuplicateRequestPrevention(NoopDiscoverabilityMetrics(), "")
 	RecordAssessorConfidenceGate(NoopDiscoverabilityMetrics(), "")
 	RecordAssessorReviewExpiry(NoopDiscoverabilityMetrics(), 0)
+	RecordAssessorTerminalFailure(NoopDiscoverabilityMetrics(), "")
 }
 func scrapePrometheusMetrics(t *testing.T, metrics *PrometheusMetrics) string {
 	t.Helper()
