@@ -19,9 +19,11 @@ type exportSemanticStub struct {
 	record *repository.RelationshipTraceRecord
 	result *repository.RelationshipTraceResult
 	err    error
+	input  repository.TraceRelationshipInput
 }
 
-func (s *exportSemanticStub) TraceRelationship(_ context.Context, _ repository.TraceRelationshipInput) (*repository.RelationshipTraceResult, error) {
+func (s *exportSemanticStub) TraceRelationship(_ context.Context, input repository.TraceRelationshipInput) (*repository.RelationshipTraceResult, error) {
+	s.input = input
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -66,6 +68,9 @@ func TestMemoryPackExportOnlyProducesCanonicalV24Artifact(t *testing.T) {
 	}
 	if len(result.Omissions) != 1 {
 		t.Fatalf("omissions = %#v, want support omission", result.Omissions)
+	}
+	if got := svc.(*memoryPackService).deps.Semantic.(*exportSemanticStub).input.TeamID; got != teamID.String() {
+		t.Fatalf("trace team_id = %q, want %q", got, teamID)
 	}
 }
 

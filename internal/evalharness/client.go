@@ -426,9 +426,7 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 	if fragmentID == "" {
 		return mapping, fmt.Errorf("import %s: submission status missing evidence id", item.SourceDocID)
 	}
-	if fragmentID != "" {
-		addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
-	}
+	addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
 	return mapping, nil
 }
 
@@ -499,11 +497,14 @@ func (c *HTTPClient) WaitForSubmissionStatusResult(ctx context.Context, submissi
 			default:
 				return nil, fmt.Errorf("submission %s returned unknown search_state %q", submissionID, searchState)
 			}
+		case "queued", "processing":
 		case "failed", "rejected", "quarantined":
 			if cause := submissionErrorMessage(out); cause != "" {
 				return nil, fmt.Errorf("submission %s %s: %s", submissionID, status, cause)
 			}
 			return nil, fmt.Errorf("submission %s %s", submissionID, status)
+		default:
+			return nil, fmt.Errorf("submission %s returned unknown processing_state %q", submissionID, status)
 		}
 		select {
 		case <-waitCtx.Done():

@@ -31,7 +31,7 @@ func TestTraceContractOutputPreservesPublicSubmissionAndLineageIDs(t *testing.T)
 			SupportDecisionID: "decision-1", SupportID: "support-1", RelationshipID: "relationship-1", Decision: "accepted", CreatedAt: now,
 		}},
 		Evidence: []repository.TraceEvidenceFragment{{
-			FragmentID: "evidence-1", Content: "Dense-Mem uses PostgreSQL", SourceType: "manual", Authority: "primary", CreatedAt: now,
+			FragmentID: "evidence-1", IngestID: "submission-1", Content: "Dense-Mem uses PostgreSQL", SourceType: "manual", Authority: "primary", CreatedAt: now,
 		}},
 		EvidenceLifecycleEvents: []repository.TraceEvidenceLifecycleEvent{{
 			LifecycleEventID: "lifecycle-1", TargetFragmentID: "evidence-1", Action: "accepted", CreatedAt: now,
@@ -63,5 +63,13 @@ func TestTraceContractOutputPreservesPublicSubmissionAndLineageIDs(t *testing.T)
 	}
 	if trace["stopped_reason"] != "bounded" {
 		t.Fatalf("stopped reason = %#v", trace["stopped_reason"])
+	}
+	evidence, ok := trace["evidence"].([]map[string]any)
+	if !ok || len(evidence) != 1 || evidence[0]["submission_id"] != "submission-1" {
+		t.Fatalf("evidence output = %#v", trace["evidence"])
+	}
+	lineage, ok := trace["supersession_lineage"].([]map[string]any)
+	if !ok || len(lineage) != 1 || lineage[0]["relationship_id"] != "relationship-0" {
+		t.Fatalf("supersession lineage = %#v", trace["supersession_lineage"])
 	}
 }

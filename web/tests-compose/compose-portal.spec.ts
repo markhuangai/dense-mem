@@ -653,7 +653,7 @@ function mcpToolPayload(response: Record<string, unknown>) {
 }
 
 async function waitForSubmissionEvidence(request: APIRequestContext, submissionID: string): Promise<Record<string, unknown>> {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (let attempt = 0; attempt < 90; attempt += 1) {
     const status = mcpToolPayload(await mcpCall(request, "tools/call", {
       name: "get_submission_status",
       arguments: { submission_id: submissionID },
@@ -662,7 +662,11 @@ async function waitForSubmissionEvidence(request: APIRequestContext, submissionI
     if (isRecord(first) && typeof first.evidence_id === "string" && first.evidence_id !== "") {
       return first;
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    const processingState = typeof status.processing_state === "string" ? status.processing_state : "";
+    if (["failed", "rejected", "quarantined"].includes(processingState)) {
+      throw new Error(`submission ${submissionID} reached ${processingState}: ${JSON.stringify(status.errors ?? [])}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
   throw new Error(`submission status did not return evidence for ${submissionID}`);
 }

@@ -165,13 +165,14 @@ function rememberInput(modality, idempotencyKey, content, replacementID = "") {
 }
 
 async function waitForState(key, submissionID, expected) {
+  const terminalStates = new Set(["completed", "rejected", "failed", "quarantined"]);
   for (let attempt = 0; attempt < 240; attempt += 1) {
     const status = await mcpSuccess(key, "get_submission_status", { submission_id: submissionID });
     const state = stringValue(status.processing_state);
     if (state === expected) {
       return status;
     }
-    if (["failed", "quarantined"].includes(state)) {
+    if (terminalStates.has(state)) {
       throw new Error(`submission ${submissionID} reached ${state} while waiting for ${expected}`);
     }
     await delay(2_000);

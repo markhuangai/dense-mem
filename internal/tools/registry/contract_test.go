@@ -419,26 +419,33 @@ func TestDefaultRecallDoesNotPermitCandidatesOrHypotheses(t *testing.T) {
 func TestCanonicalInputFieldNames(t *testing.T) {
 	tools := toolMap(t)
 	cases := []struct {
-		tool      string
-		required  []string
-		forbidden []string
+		tool           string
+		canonical      []string
+		schemaRequired []string
+		forbidden      []string
 	}{
-		{ToolRemember, []string{"evidence", "relationships"}, []string{"contract_version", "entity_hints", "relationship_hints", "proposal"}},
-		{ToolGetSubmissionStatus, []string{"submission_id"}, []string{"ingest_id", "placement_item_id", "items", "review_tasks"}},
-		{ToolCorrectEntityResolution, []string{"operation", "owned_observation_ids", "impact_token"}, []string{"action", "selected_observation_ids", "plan_token"}},
-		{ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, []string{"include_evidence", "use_communities"}},
-		{ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, []string{"max_chars"}},
-		{ToolSubmitRecallSessionFeedback, []string{"recalls"}, nil},
-		{ToolGetDream, []string{"hypothesis_id"}, []string{"dream_id"}},
-		{ToolResolveDreamFeedback, []string{"hypothesis_id", "decision", "reason", "evidence", "relationships"}, []string{"dream_id", "feedback", "proposal"}},
-		{ToolExportMemoryPack, []string{"relationship_ids"}, []string{"include_support"}},
+		{ToolRemember, []string{"evidence", "relationships"}, nil, []string{"contract_version", "entity_hints", "relationship_hints", "proposal"}},
+		{ToolGetSubmissionStatus, []string{"submission_id"}, []string{"submission_id"}, []string{"ingest_id", "placement_item_id", "items", "review_tasks"}},
+		{ToolCorrectEntityResolution, []string{"operation", "owned_observation_ids", "impact_token"}, nil, []string{"action", "selected_observation_ids", "plan_token"}},
+		{ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, nil, []string{"include_evidence", "use_communities"}},
+		{ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, nil, []string{"max_chars"}},
+		{ToolSubmitRecallSessionFeedback, []string{"recalls"}, nil, nil},
+		{ToolGetDream, []string{"hypothesis_id"}, nil, []string{"dream_id"}},
+		{ToolResolveDreamFeedback, []string{"hypothesis_id", "decision", "reason", "evidence", "relationships"}, nil, []string{"dream_id", "feedback", "proposal"}},
+		{ToolExportMemoryPack, []string{"relationship_ids"}, []string{"name", "relationship_ids"}, []string{"include_support"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tool, func(t *testing.T) {
 			props := schemaProperties(tools[tc.tool].InputSchema)
-			for _, field := range tc.required {
+			required := schemaRequiredFields(tools[tc.tool].InputSchema)
+			for _, field := range tc.canonical {
 				if _, ok := props[field]; !ok {
 					t.Errorf("missing canonical field %s", field)
+				}
+			}
+			for _, field := range tc.schemaRequired {
+				if !slices.Contains(required, field) {
+					t.Errorf("canonical field %s is not required by the schema", field)
 				}
 			}
 			for _, field := range tc.forbidden {

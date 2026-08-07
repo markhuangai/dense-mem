@@ -28,8 +28,8 @@ func (r *LedgerRepositoryImpl) PurgeExpiredSubmissionQuarantinePayloads(ctx cont
 			FROM submission_quarantine_payloads
 			WHERE expires_at <= ?
 			ORDER BY expires_at ASC, team_id, quarantine_payload_id
-			FOR UPDATE SKIP LOCKED
 			LIMIT ?
+			FOR UPDATE SKIP LOCKED
 		`, now, batchSize).Rows()
 		if err != nil {
 			return err

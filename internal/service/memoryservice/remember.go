@@ -329,7 +329,7 @@ func (s *rememberService) GetSubmissionStatus(
 		if errors.Is(err, repository.ErrPlacementNotFound) {
 			return nil, httperr.New(httperr.NOT_FOUND, "submission not found")
 		}
-		return nil, err
+		return nil, ErrRememberPersistence
 	}
 	return submissionStatusResultFromLedger(placement), nil
 }
@@ -359,9 +359,9 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 		})
 	}
 	processing := publicSubmissionProcessingState(placement.Status, placement.SemanticHoldState)
-	errors := []SubmissionStatusError{}
+	statusErrors := []SubmissionStatusError{}
 	if processing == "failed" {
-		errors = append(errors, SubmissionStatusError{Code: "submission_processing_failed", Message: "submission processing failed"})
+		statusErrors = append(statusErrors, SubmissionStatusError{Code: "submission_processing_failed", Message: "submission processing failed"})
 	}
 	return &SubmissionStatusResult{
 		SubmissionID:               placement.IngestID,
@@ -369,7 +369,7 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 		SearchState:                searchState,
 		CheckAfterSeconds:          rememberCheckAfterSeconds,
 		Evidence:                   items,
-		Errors:                     errors,
+		Errors:                     statusErrors,
 		QuarantineExpiresAt:        placement.QuarantineExpiresAt,
 		ReplacementWindowExpiresAt: placement.ReplacementWindowExpiresAt,
 	}

@@ -258,7 +258,8 @@ func TestGetSubmissionStatusRejectsInvalidRequestsAndBoundsErrors(t *testing.T) 
 	require.Equal(t, httperr.NOT_FOUND, apiErr.Code)
 	generic := NewRememberService(RememberDependencies{Ledger: &rememberLedgerStub{err: errors.New("database unavailable")}})
 	_, err = generic.GetSubmissionStatus(ctx, GetSubmissionStatusRequest{ContractVersion: domain.ContractVersion, SubmissionID: uuid.NewString()})
-	require.ErrorContains(t, err, "database unavailable")
+	require.ErrorIs(t, err, ErrRememberPersistence)
+	require.NotContains(t, err.Error(), "database unavailable")
 }
 
 func TestRememberRejectsUnsafeEvidenceBeforeStagingAndAuditsSafely(t *testing.T) {

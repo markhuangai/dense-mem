@@ -193,7 +193,7 @@ async function waitForPlacement(apiKey, submissionID, proposalID) {
   const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2_000);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const placement = await mcpTool(apiKey, "get_submission_status", { submission_id: submissionID });
-    if (placement.processing_state === "failed" || placement.processing_state === "quarantined") {
+    if (["rejected", "failed", "quarantined"].includes(placement.processing_state)) {
       throw new Error(`placement failed: ${JSON.stringify(placement)}`);
     }
     const row = postgresQuery(`

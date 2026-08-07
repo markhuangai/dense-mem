@@ -72,10 +72,8 @@ func (s *Scheduler) Start(ctx context.Context) {
 	s.runDue(ctx)
 	minuteTimer := time.NewTimer(schedulerNextMinuteDelay(time.Now().UTC()))
 	defer minuteTimer.Stop()
-	select {
-	case <-ctx.Done():
+	if !s.waitForMinuteBoundary(ctx, minuteTimer.C) {
 		return
-	case <-minuteTimer.C:
 	}
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
@@ -86,6 +84,16 @@ func (s *Scheduler) Start(ctx context.Context) {
 		case <-ticker.C:
 			s.runDue(ctx)
 		}
+	}
+}
+
+func (s *Scheduler) waitForMinuteBoundary(ctx context.Context, boundary <-chan time.Time) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-boundary:
+		s.runDue(ctx)
+		return true
 	}
 }
 

@@ -95,7 +95,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			statusPolls++
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				t.Fatalf("decode placement body: %v", err)
+				t.Fatalf("decode submission status body: %v", err)
 			}
 			if input["submission_id"] != "submission-alpha" {
 				t.Fatalf("status input = %#v", input)
@@ -657,7 +657,7 @@ func TestHTTPClientWaitForSubmissionStatusResultWaitsForSearchProjection(t *test
 	defer server.Close()
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
-	out, err := client.WaitForSubmissionStatusResult(context.Background(), "ingest-search", 2*time.Second)
+	out, err := client.WaitForSubmissionStatusResult(context.Background(), "submission-search", 2*time.Second)
 	if err != nil {
 		t.Fatalf("WaitForSubmissionStatusResult: %v", err)
 	}
@@ -686,6 +686,25 @@ func TestHTTPClientWaitForSubmissionStatusResultReportsSearchFailure(t *testing.
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	_, err := client.WaitForSubmissionStatusResult(context.Background(), "submission-search-failed", time.Second)
 	if err == nil || !strings.Contains(err.Error(), "submission submission-search-failed search_state failed: embedding failed") {
+		t.Fatalf("WaitForSubmissionStatusResult err = %v", err)
+	}
+}
+
+func TestHTTPClientWaitForSubmissionStatusResultRejectsUnknownProcessingState(t *testing.T) {
+	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "tool:get_submission_status" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"submission_id":    "submission-unknown-state",
+			"processing_state": "mystery",
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	_, err := client.WaitForSubmissionStatusResult(context.Background(), "submission-unknown-state", time.Second)
+	if err == nil || !strings.Contains(err.Error(), `unknown processing_state "mystery"`) {
 		t.Fatalf("WaitForSubmissionStatusResult err = %v", err)
 	}
 }

@@ -231,7 +231,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 		case "tool:get_submission_status":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				t.Fatalf("decode placement body: %v", err)
+				t.Fatalf("decode submission status body: %v", err)
 			}
 			submissionID, _ := input["submission_id"].(string)
 			if submissionID != "doc-alpha" && submissionID != "doc-beta" {

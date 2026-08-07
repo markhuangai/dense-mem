@@ -9,6 +9,9 @@ SELECT set_config('app.current_profile_id', '', true);
 -- provider-facing payload copy. The append-only ledger keeps identifiers,
 -- hashes, security events, and staged evidence for audit and lineage; those
 -- immutable source rows are not part of the raw-payload retention boundary.
+-- The placement_runs CHECK is installed NOT VALID to avoid an ACCESS EXCLUSIVE
+-- full-table scan during installation; validation uses the lower-impact
+-- SHARE UPDATE EXCLUSIVE lock before the backfill.
 ALTER TABLE placement_runs
     ADD COLUMN IF NOT EXISTS quarantine_expires_at TIMESTAMPTZ NULL;
 
@@ -18,7 +21,10 @@ ALTER TABLE placement_runs
     ADD CONSTRAINT placement_runs_quarantine_expiry_check CHECK (
         quarantine_expires_at IS NULL
         OR quarantine_expires_at >= created_at + interval '24 hours'
-    );
+    ) NOT VALID;
+
+ALTER TABLE placement_runs
+    VALIDATE CONSTRAINT placement_runs_quarantine_expiry_check;
 
 UPDATE placement_runs
 SET quarantine_expires_at = COALESCE(completed_at, created_at) + interval '24 hours'
@@ -70,6 +76,7 @@ CREATE TABLE IF NOT EXISTS submission_quarantine_tombstones (
 ALTER TABLE submission_quarantine_tombstones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE submission_quarantine_tombstones FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS submission_quarantine_tombstones_system_only ON submission_quarantine_tombstones;
+DROP POLICY IF EXISTS submission_quarantine_tombstones_owner_insert ON submission_quarantine_tombstones;
 CREATE POLICY submission_quarantine_tombstones_system_only ON submission_quarantine_tombstones
     FOR SELECT USING (current_setting('app.tx_mode', true) IN ('system', 'migration'));
 CREATE POLICY submission_quarantine_tombstones_owner_insert ON submission_quarantine_tombstones
@@ -86,6 +93,8 @@ ALTER TABLE submission_quarantine_payloads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE submission_quarantine_payloads FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS submission_quarantine_payloads_system_only ON submission_quarantine_payloads;
+DROP POLICY IF EXISTS submission_quarantine_payloads_owner_insert ON submission_quarantine_payloads;
+DROP POLICY IF EXISTS submission_quarantine_payloads_system_delete ON submission_quarantine_payloads;
 CREATE POLICY submission_quarantine_payloads_system_only ON submission_quarantine_payloads
     FOR SELECT USING (current_setting('app.tx_mode', true) IN ('system', 'migration'));
 CREATE POLICY submission_quarantine_payloads_owner_insert ON submission_quarantine_payloads
