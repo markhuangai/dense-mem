@@ -307,7 +307,19 @@ func TestSubmissionAssessmentQuarantineRetainsRawCopyUntilSystemPurge(t *testing
 		assert.Zero(t, visible, "raw quarantine payload must remain system-only")
 	}
 
-	purged, err := repo.PurgeExpiredSubmissionQuarantinePayloads(ctx, time.Now().UTC().Add(25*time.Hour), 100)
+	referenceTime := time.Now().UTC()
+	purged, err := repo.PurgeExpiredSubmissionQuarantinePayloads(ctx, referenceTime.Add(23*time.Hour), 100)
+	require.NoError(t, err)
+	assert.Zero(t, purged)
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT COUNT(*) FROM submission_quarantine_payloads
+			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+		`, teamID, ingest.PlacementRunID).Scan(&payloadCount).Error
+	}))
+	assert.Equal(t, int64(1), payloadCount)
+
+	purged, err = repo.PurgeExpiredSubmissionQuarantinePayloads(ctx, referenceTime.Add(25*time.Hour), 100)
 	require.NoError(t, err)
 	assert.Equal(t, 1, purged)
 	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
