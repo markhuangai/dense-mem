@@ -19,7 +19,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		keys:      deps.APIKeySvc,
 		telemetry: deps.Telemetry,
 		graph:     deps.GraphView,
-		recall:    handler.NewRecallHandler(deps.RecallSvc),
+		recall:    handler.NewRecallHandler(deps.RecallSvc, deps.DreamSvc),
 		dreams:    handler.NewDreamHandler(deps.DreamSvc),
 		audit:     handler.NewAuditHandler(deps.AuditSvc),
 		sso:       deps.SSOService,

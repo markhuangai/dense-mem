@@ -5,28 +5,19 @@ import (
 	"errors"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-)
-
-const (
-	SubmitRecallSessionFeedbackToolName  = "submit_recall_session_feedback"
-	EvalListRecallFeedbackEventsToolName = "eval_list_recall_feedback_events"
-	EvalGetRecallFeedbackEventToolName   = "eval_get_recall_feedback_event"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
 var evaluationToolNames = map[string]struct{}{
-	"eval_get_manifest":                  {},
-	"eval_list_knowledge_refs":           {},
-	"eval_get_knowledge_item":            {},
-	EvalListRecallFeedbackEventsToolName: {},
-	EvalGetRecallFeedbackEventToolName:   {},
-	"eval_run_dream_cycle":               {},
-	"eval_run_recall_case":               {},
-	"eval_score_retrieval_case":          {},
+	"eval_list_knowledge_refs": {},
+	"eval_run_dream_cycle":     {},
+	"eval_run_recall_case":     {},
 }
 
-var recallFeedbackEventToolNames = map[string]struct{}{
-	EvalListRecallFeedbackEventsToolName: {},
-	EvalGetRecallFeedbackEventToolName:   {},
+var dreamToolNames = map[string]struct{}{
+	ToolListDreams:           {},
+	ToolGetDream:             {},
+	ToolResolveDreamFeedback: {},
 }
 
 // IsEvaluationTool reports whether a tool belongs to the evaluation-only surface.
@@ -45,25 +36,82 @@ type RecallFeedbackConfigProvider interface {
 	RecallFeedbackRuntimeConfig(ctx context.Context) (domain.RecallFeedbackRuntimeConfig, error)
 }
 
-// EvaluationConfigProvider is the runtime config surface for evaluation tools.
-type EvaluationConfigProvider interface {
-	EvaluationRuntimeConfig(ctx context.Context) (domain.EvaluationRuntimeConfig, error)
+// DreamingConfigProvider resolves the authenticated team's effective Dreaming
+// policy. The argument is a fallback team ID for non-request callers;
+// authenticated request context takes precedence.
+type DreamingConfigProvider interface {
+	EffectiveConfig(ctx context.Context, fallbackTeamID string) (dreamservice.EffectiveConfig, error)
+}
+
+// RuntimeToolPolicy contains request-time feature dependencies shared by MCP
+// discovery and invocation.
+type RuntimeToolPolicy struct {
+	RecallFeedback RecallFeedbackConfigProvider
+	Dreams         DreamingConfigProvider
+	resolved       *runtimeToolFeatures
+}
+
+type runtimeToolFeatures struct {
+	recallFeedbackEnabled  bool
+	recallFeedbackResolved bool
+	dreamingEnabled        bool
+	dreamingResolved       bool
+}
+
+type runtimeToolFeaturesContextKey struct{}
+
+// ResolveRuntimeToolPolicy evaluates only the feature config needed by the
+// supplied tools and reuses any values already resolved in this request.
+func ResolveRuntimeToolPolicy(ctx context.Context, policy RuntimeToolPolicy, tools ...Tool) RuntimeToolPolicy {
+	features := runtimeToolFeatures{}
+	if policy.resolved != nil {
+		features = *policy.resolved
+	}
+	needsRecallFeedback := false
+	needsDreaming := false
+	for _, tool := range tools {
+		if tool.Name == ToolSubmitRecallSessionFeedback || tool.Name == ToolRecallMemory {
+			needsRecallFeedback = true
+		}
+		if tool.Name == ToolRecallMemory {
+			needsDreaming = true
+		}
+		if _, ok := dreamToolNames[tool.Name]; ok {
+			needsDreaming = true
+		}
+	}
+	if needsRecallFeedback && !features.recallFeedbackResolved {
+		features.recallFeedbackEnabled = recallFeedbackEnabledFromConfig(ctx, policy.RecallFeedback)
+		features.recallFeedbackResolved = true
+	}
+	if needsDreaming && !features.dreamingResolved {
+		features.dreamingEnabled = dreamingEnabledFromConfig(ctx, policy.Dreams)
+		features.dreamingResolved = true
+	}
+	policy.resolved = &features
+	return policy
+}
+
+// WithRuntimeToolPolicy makes a resolved feature snapshot available to tool
+// invokers in the same request.
+func WithRuntimeToolPolicy(ctx context.Context, policy RuntimeToolPolicy) context.Context {
+	if policy.resolved == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, runtimeToolFeaturesContextKey{}, *policy.resolved)
 }
 
 // ToolVisible reports whether a registered tool should be visible for a request.
-func ToolVisible(ctx context.Context, tool Tool, cfg RecallFeedbackConfigProvider) bool {
+func ToolVisible(ctx context.Context, tool Tool, policy RuntimeToolPolicy) bool {
+	policy = ResolveRuntimeToolPolicy(ctx, policy, tool)
 	if tool.FeatureGate == domain.FeatureGate && tool.Visibility == domain.ToolVisibility {
 		return false
 	}
-	if tool.Name == SubmitRecallSessionFeedbackToolName {
-		return RecallFeedbackEnabled(ctx, cfg)
+	if tool.Name == ToolSubmitRecallSessionFeedback {
+		return policy.resolved.recallFeedbackEnabled
 	}
-	if _, ok := recallFeedbackEventToolNames[tool.Name]; ok {
-		return RecallFeedbackEnabled(ctx, cfg)
-	}
-	if _, ok := evaluationToolNames[tool.Name]; ok {
-		evalCfg, ok := cfg.(EvaluationConfigProvider)
-		return ok && EvaluationEnabled(ctx, evalCfg)
+	if _, ok := dreamToolNames[tool.Name]; ok {
+		return policy.resolved.dreamingEnabled
 	}
 	return true
 }
@@ -71,6 +119,22 @@ func ToolVisible(ctx context.Context, tool Tool, cfg RecallFeedbackConfigProvide
 // RecallFeedbackEnabled fails closed because this feature controls optional
 // telemetry collection rather than core recall behavior.
 func RecallFeedbackEnabled(ctx context.Context, cfg RecallFeedbackConfigProvider) bool {
+	if resolved, ok := ctx.Value(runtimeToolFeaturesContextKey{}).(runtimeToolFeatures); ok && resolved.recallFeedbackResolved {
+		return resolved.recallFeedbackEnabled
+	}
+	return recallFeedbackEnabledFromConfig(ctx, cfg)
+}
+
+// DreamingEnabled fails closed so disabled or unreadable team configuration
+// cannot expose Hypothesis lifecycle tools.
+func DreamingEnabled(ctx context.Context, cfg DreamingConfigProvider) bool {
+	if resolved, ok := ctx.Value(runtimeToolFeaturesContextKey{}).(runtimeToolFeatures); ok && resolved.dreamingResolved {
+		return resolved.dreamingEnabled
+	}
+	return dreamingEnabledFromConfig(ctx, cfg)
+}
+
+func recallFeedbackEnabledFromConfig(ctx context.Context, cfg RecallFeedbackConfigProvider) bool {
 	if cfg == nil {
 		return false
 	}
@@ -78,12 +142,10 @@ func RecallFeedbackEnabled(ctx context.Context, cfg RecallFeedbackConfigProvider
 	return err == nil && runtime.Enabled
 }
 
-// EvaluationEnabled fails closed because evaluation mode exposes broad
-// team-scoped diagnostic data.
-func EvaluationEnabled(ctx context.Context, cfg EvaluationConfigProvider) bool {
+func dreamingEnabledFromConfig(ctx context.Context, cfg DreamingConfigProvider) bool {
 	if cfg == nil {
 		return false
 	}
-	runtime, err := cfg.EvaluationRuntimeConfig(ctx)
-	return err == nil && runtime.Enabled
+	effective, err := cfg.EffectiveConfig(ctx, "")
+	return err == nil && effective.Enabled
 }

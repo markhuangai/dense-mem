@@ -84,9 +84,8 @@ export PROMETHEUS_PORT="${PROMETHEUS_PORT:-19090}"
 export PROMETHEUS_CONTAINER_NAME="${PROMETHEUS_CONTAINER_NAME:-densemem-eval-v1-prometheus}"
 
 compose() {
-  docker compose -p densemem_eval_full -f docker-compose.yml -f tests/eval/docker-compose.eval.yml "$@"
+  docker compose -p "${DENSE_MEM_EVAL_COMPOSE_PROJECT:-densemem_eval_full}" -f examples/docker-compose.evaluation.yml "$@"
 }
-
 canonical_json_sha256() {
   local digest
   digest="$(jq -cS -j . "$1" | sha256sum | awk '{print $1}')"
@@ -119,21 +118,22 @@ load_env() {
   local eval_redis_port="${REDIS_PORT}"
   local eval_prometheus_port="${PROMETHEUS_PORT}"
   local eval_prometheus_container_name="${PROMETHEUS_CONTAINER_NAME}"
-  local eval_compose_data_dir="${V1_COMPOSE_DATA_DIR}"
+  local eval_compose_data_dir="${V1_COMPOSE_DATA_DIR}" eval_env_file="${DENSE_MEM_EVAL_ENV_FILE:-.env}"
   local requested_release_gate_policy="${RELEASE_GATE_POLICY}"
   local requested_allow_ungated_evaluation="${ALLOW_UNGATED_EVALUATION}"
   local requested_api_key="${DENSE_MEM_API_KEY:-}"
   local requested_control_token="${DENSE_MEM_CONTROL_TOKEN:-}"
   local requested_team_id="${EVAL_TEAM_ID:-}"
-  if [[ ! -f .env ]]; then
-    echo ".env is required for the eval stack" >&2
+  if [[ ! -f "${eval_env_file}" ]]; then
+    echo "eval env file not found: ${eval_env_file}" >&2
     return 1
   fi
+  eval_env_file="$(realpath -- "${eval_env_file}")"
   set -a
   # shellcheck disable=SC1091
-  . ./.env
+  . "${eval_env_file}"
   set +a
-
+  export DENSE_MEM_EVAL_ENV_FILE="${eval_env_file}"
   export DENSE_MEM_PORT="${eval_dense_mem_port}"
   export CONTROL_PORTAL_PORT="${eval_control_portal_port}"
   export POSTGRES_HOST_PORT="${eval_postgres_host_port}"
@@ -848,7 +848,11 @@ run_baseline() {
   if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
     baseline_args+=(--release-gate-policy "${RELEASE_GATE_POLICY}")
   fi
-
+  [[ -z "${MIN_RECALL_AT_K:-}" ]] || baseline_args+=(--min-recall-at-k "${MIN_RECALL_AT_K}")
+  [[ -z "${MIN_REQUIRED_RANK1_RATE:-}" ]] || baseline_args+=(--min-required-rank1-rate "${MIN_REQUIRED_RANK1_RATE}")
+  [[ -z "${MAX_AVERAGE_BAD_AT_K:-}" ]] || baseline_args+=(--max-average-bad-at-k "${MAX_AVERAGE_BAD_AT_K}")
+  [[ -z "${MAX_BAD_RANK1_RATE:-}" ]] || baseline_args+=(--max-bad-rank1-rate "${MAX_BAD_RANK1_RATE}")
+  [[ -z "${MAX_UNMAPPED_SOURCE_REFS:-}" ]] || baseline_args+=(--max-unmapped-source-refs "${MAX_UNMAPPED_SOURCE_REFS}")
   log "starting_baseline_eval"
   if ! "${baseline_args[@]}"; then
     log "baseline_eval_failed path=${BASELINE_DIR}/release_gate_result.json"
@@ -856,7 +860,6 @@ run_baseline() {
   fi
   log "baseline_eval_finished path=${BASELINE_DIR}/summary.json"
 }
-
 main() {
   exec 9> "${MONITOR_DIR}/monitor.lock"
   if ! flock -n 9; then
@@ -907,10 +910,8 @@ main() {
     terminal="$(terminal_placement_count "${completed}" "${awaiting_review}" "${quarantined}")"
     pending=$((queued + processing))
     count_failures=0
-
     write_resume_files
     write_placement_summary
-
     local rate_per_minute="" eta_seconds=""
     if [[ -n "${previous_terminal}" && -n "${previous_epoch}" && "${now_epoch}" -gt "${previous_epoch}" && "${terminal}" -ge "${previous_terminal}" ]]; then
       local delta_count=$((terminal - previous_terminal))
@@ -922,16 +923,20 @@ main() {
     fi
     previous_terminal="${terminal}"
     previous_epoch="${now_epoch}"
-
     if [[ "${latest}" -gt "${TARGET}" || "${fragments}" -gt "${TARGET}" ]]; then
       log "dataset_count_exceeds_target latest=${latest}/${TARGET} fragments=${fragments}/${TARGET}; refusing_eval"
       write_import_gate_result "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "dataset_count_exceeds_target"
       write_status "failed" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "$(live_import_pid || true)" "${rate_per_minute}" "${eta_seconds}"
       return 1
     fi
-
     local pid=""
     pid="$(live_import_pid || true)"
+    if [[ "${failed}" -gt 0 && -z "${pid}" && "${pending}" == "0" ]]; then
+      log "failed_placement_detected failed=${failed}; refusing_eval"
+      write_import_gate_result "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "failed_placement_detected"
+      write_status "failed" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
+      return 1
+    fi
     if [[ "${latest}" == "${TARGET}" && "${terminal}" == "${TARGET}" && "${failed}" == "0" && "${queued}" == "0" && "${processing}" == "0" && "${fragments}" == "${TARGET}" ]]; then
       if [[ -n "${pid}" ]]; then
         log "import_finalizing pid=${pid} terminal=${terminal}/${TARGET} completed=${completed} awaiting_review=${awaiting_review} quarantined=${quarantined}"
@@ -968,7 +973,6 @@ main() {
       log "done"
       return 0
     fi
-
     if [[ -n "${pid}" ]]; then
       log "import_running pid=${pid} terminal=${terminal}/${TARGET} completed=${completed} awaiting_review=${awaiting_review} quarantined=${quarantined} failed=${failed} pending=${pending} fragments=${fragments}"
       write_status "import_running" "${fragments}" "${latest}" "${completed}" "${awaiting_review}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "${pid}" "${rate_per_minute}" "${eta_seconds}"
@@ -990,7 +994,6 @@ main() {
     sleep "${SLEEP_SECONDS}"
   done
 }
-
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   main "$@"
 fi

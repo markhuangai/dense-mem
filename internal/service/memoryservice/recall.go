@@ -95,6 +95,7 @@ type RecallRequest struct {
 	KnownEvidenceIDs     []string   `json:"known_evidence_ids,omitempty"`
 	KnownRelationshipIDs []string   `json:"known_relationship_ids,omitempty"`
 	ExpandFromEntityIDs  []string   `json:"expand_from_entity_ids,omitempty"`
+	IncludeHypotheses    bool       `json:"-"`
 }
 
 type RecallResult struct {
@@ -106,11 +107,19 @@ type RecallResult struct {
 	RelatedHypotheses    []RelatedHypothesisSummary   `json:"related_hypotheses"`
 	SearchStates         RecallSearchStates           `json:"search_states"`
 	Degradations         []RecallDegradationResult    `json:"degradations"`
+	SuggestedActions     []RecallSuggestedAction      `json:"suggested_actions"`
 
 	DiscoveryPaths    []RecallDiscoveryPath    `json:"-"`
 	DiscoveryGuidance string                   `json:"-"`
 	Degradation       *RecallDegradationResult `json:"-"`
 	SearchState       string                   `json:"-"`
+}
+
+type RecallSuggestedAction struct {
+	Tool          string   `json:"tool"`
+	Guidance      string   `json:"guidance"`
+	RecallEventID string   `json:"recall_event_id,omitempty"`
+	HypothesisIDs []string `json:"hypothesis_ids,omitempty"`
 }
 
 type RecallResultItem struct {
@@ -283,10 +292,13 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 	if communityDegradation != nil {
 		result.Degradations = append(result.Degradations, *communityDegradation)
 	}
-	related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.ProfileID.String(), req.Query)
-	result.RelatedHypotheses = related
-	if relatedDegradation != nil {
-		result.Degradations = append(result.Degradations, *relatedDegradation)
+	result.RelatedHypotheses = []RelatedHypothesisSummary{}
+	if req.IncludeHypotheses {
+		related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.ProfileID.String(), req.Query)
+		result.RelatedHypotheses = related
+		if relatedDegradation != nil {
+			result.Degradations = append(result.Degradations, *relatedDegradation)
+		}
 	}
 	if len(result.Degradations) > 0 {
 		result.Degradation = &result.Degradations[0]

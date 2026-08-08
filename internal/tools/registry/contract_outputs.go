@@ -69,7 +69,8 @@ func recallContractOutput(res *memoryservice.RecallResult) map[string]any {
 				"evidence":      string(domain.SearchProjectionCurrent),
 				"relationships": string(domain.SearchProjectionCurrent),
 			},
-			"degradations": []any{},
+			"degradations":      []any{},
+			"suggested_actions": []any{},
 		}
 	}
 	results := make([]map[string]any, 0, len(res.Results))
@@ -99,6 +100,10 @@ func recallContractOutput(res *memoryservice.RecallResult) map[string]any {
 	if degradations == nil {
 		degradations = []memoryservice.RecallDegradationResult{}
 	}
+	suggestedActions := res.SuggestedActions
+	if suggestedActions == nil {
+		suggestedActions = []memoryservice.RecallSuggestedAction{}
+	}
 	searchStates := map[string]any{
 		"evidence":      res.SearchStates.Evidence,
 		"relationships": res.SearchStates.Relationships,
@@ -121,6 +126,7 @@ func recallContractOutput(res *memoryservice.RecallResult) map[string]any {
 		"related_hypotheses":    relatedHypotheses,
 		"search_states":         searchStates,
 		"degradations":          degradations,
+		"suggested_actions":     suggestedActions,
 	}
 }
 

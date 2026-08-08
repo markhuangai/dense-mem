@@ -3,7 +3,9 @@ package memoryservice
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -51,48 +53,108 @@ func TestLifecycleForgetUsesAuthenticatedOwner(t *testing.T) {
 	require.Equal(t, "forget-1", semantic.input.IdempotencyKey)
 }
 
-func TestLifecycleCorrectEntityResolutionUsesAuthenticatedOwner(t *testing.T) {
+func TestLifecycleCorrectRelationshipUsesAuthenticatedOwner(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
-	sourceEntityID := uuid.NewString()
-	observationID := uuid.NewString()
+	relationshipID := uuid.NewString()
+	evidenceID := uuid.NewString()
 	semantic := &lifecycleSemanticStub{
-		correctResult: &repository.CorrectEntityResolutionResult{
-			DryRun:                 true,
-			PlanToken:              "plan-canonical",
-			SelectedObservationIDs: []string{observationID},
-			BlockedObservationIDs:  []string{},
-			ImpactSummary:          "split planned",
+		correctResult: &repository.CorrectRelationshipResult{
+			SubmissionID:    uuid.NewString(),
+			ProcessingState: "completed",
 		},
 	}
 	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic})
 
-	result, err := svc.CorrectEntityResolution(authenticatedRememberContext(teamID, profileID, keyID), CorrectEntityResolutionRequest{
-		ContractVersion:     domain.ContractVersion,
-		Operation:           domain.EntityCorrectionSplit,
-		SourceEntityID:      sourceEntityID,
-		OwnedObservationIDs: []string{observationID},
-		DryRun:              true,
-		IdempotencyKey:      "split-1",
-		Evidence: []RememberEvidenceInput{{
-			Content:     "The selected Mark mention refers to a different person.",
-			SourceGroup: "conversation:identity-correction",
+	result, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, keyID), CorrectRelationshipRequest{
+		ContractVersion: domain.ContractVersion,
+		Action:          "submit",
+		RelationshipID:  relationshipID,
+		ExpectedVersion: 3,
+		Patch: repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{
+			Key: "works_with",
 		}},
+		Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: evidenceID, Start: 0, End: 8}},
+		Reason:   "predicate was resolved incorrectly", IdempotencyKey: "relationship-correction-1",
 	})
 	require.NoError(t, err)
-	require.True(t, result.DryRun)
-	require.Equal(t, "plan-canonical", result.ImpactToken)
-	require.Equal(t, []string{observationID}, result.SelectedObservationIDs)
+	require.Equal(t, semantic.correctResult.SubmissionID, result.SubmissionID)
+	require.Equal(t, "relationship_correction", result.SubmissionKind)
+	require.Equal(t, "completed", result.ProcessingState)
+	require.Equal(t, rememberStatusTool, result.StatusTool)
 
 	require.Equal(t, teamID.String(), semantic.correctInput.TeamID)
 	require.Equal(t, profileID.String(), semantic.correctInput.OwnerProfileID)
-	require.Equal(t, sourceEntityID, semantic.correctInput.SourceEntityID)
-	require.Equal(t, string(domain.EntityCorrectionSplit), semantic.correctInput.Action)
-	require.Equal(t, []string{observationID}, semantic.correctInput.SelectedObservationIDs)
-	require.Equal(t, "split-1", semantic.correctInput.IdempotencyKey)
-	require.Len(t, semantic.correctInput.Evidence, 1)
-	require.Equal(t, "conversation:identity-correction", semantic.correctInput.Evidence[0].SourceGroup)
+	require.Equal(t, relationshipID, semantic.correctInput.RelationshipID)
+	require.Equal(t, "submit", semantic.correctInput.Action)
+	require.Equal(t, 3, semantic.correctInput.ExpectedVersion)
+	require.Equal(t, "relationship-correction-1", semantic.correctInput.IdempotencyKey)
+}
+
+func TestLifecycleRelationshipCorrectionStatusUsesOwnerAndSearchState(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	submissionID := uuid.NewString()
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	semantic := &lifecycleSemanticStub{statusResult: &repository.RelationshipCorrectionStatus{
+		SubmissionID: submissionID, ProcessingState: "awaiting_confirmation", SearchState: string(domain.SearchProjectionPending),
+		Confirmation: &repository.RelationshipCorrectionConfirmation{Token: uuid.NewString(), ExpiresAt: expiresAt},
+	}}
+	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic})
+
+	result, err := svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    submissionID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, submissionID, result.SubmissionID)
+	require.Equal(t, "relationship_correction", result.SubmissionKind)
+	require.Equal(t, "awaiting_confirmation", result.ProcessingState)
+	require.Equal(t, string(domain.SearchProjectionPending), result.SearchState)
+	require.NotNil(t, result.AwaitingConfirmation)
+	require.Equal(t, teamID.String(), semantic.statusInput.TeamID)
+	require.Equal(t, profileID.String(), semantic.statusInput.OwnerProfileID)
+	semantic.statusResult = &repository.RelationshipCorrectionStatus{
+		SubmissionID: submissionID, ProcessingState: "completed", SearchState: string(domain.SearchProjectionFailed),
+		Correction: &repository.RelationshipCorrectionResult{SuccessorRelationshipID: uuid.NewString(), SuccessorVersion: 2},
+	}
+	result, err = svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    submissionID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.ProcessingState)
+	require.Equal(t, string(domain.SearchProjectionFailed), result.SearchState)
+	require.NotNil(t, result.CorrectionResult)
+
+	_, err = svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    "not-a-uuid",
+	})
+	var publicErr *httperr.APIError
+	require.ErrorAs(t, err, &publicErr)
+	require.Equal(t, httperr.NOT_FOUND, publicErr.Code)
+}
+
+func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
+	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
+	repositoryFailure := errors.New("database host and query details")
+	svc := NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{err: repositoryFailure}})
+	_, err := svc.CorrectRelationship(ctx, CorrectRelationshipRequest{
+		ContractVersion: domain.ContractVersion,
+		Action:          "submit",
+	})
+	require.ErrorIs(t, err, ErrLifecyclePersistence)
+	require.NotContains(t, err.Error(), repositoryFailure.Error())
+
+	unsafeAction := strings.Repeat("client-controlled-", 100)
+	_, err = svc.CorrectRelationship(ctx, CorrectRelationshipRequest{
+		ContractVersion: domain.ContractVersion,
+		Action:          unsafeAction,
+	})
+	require.ErrorContains(t, err, "action must be submit or confirm")
+	require.NotContains(t, err.Error(), unsafeAction)
 }
 
 func TestLifecycleRejectsUnsafeResolveEvidenceBeforeRepositoryWrite(t *testing.T) {
@@ -117,28 +179,6 @@ func TestLifecycleRejectsUnsafeResolveEvidenceBeforeRepositoryWrite(t *testing.T
 	require.Equal(t, "resolve_memory_placement", auditor.inputs[0].Surface)
 }
 
-func TestLifecycleRejectsUnsafeCorrectionEvidenceBeforeRepositoryWrite(t *testing.T) {
-	teamID := uuid.New()
-	profileID := uuid.New()
-	keyID := uuid.New()
-	semantic := &lifecycleSemanticStub{}
-	auditor := &securityRejectionAuditorStub{}
-	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, Auditor: auditor})
-
-	_, err := svc.CorrectEntityResolution(authenticatedRememberContext(teamID, profileID, keyID), CorrectEntityResolutionRequest{
-		ContractVersion: domain.ContractVersion,
-		Operation:       domain.EntityCorrectionSplit,
-		SourceEntityID:  uuid.NewString(),
-		DryRun:          true,
-		Evidence:        []RememberEvidenceInput{{Content: "data:text/plain;base64,SGVsbG8gd29ybGQ="}},
-		IdempotencyKey:  "unsafe-correction",
-	})
-	require.ErrorIs(t, err, ErrEncodedEvidenceNotAllowed)
-	require.Zero(t, semantic.correctCalls)
-	require.Len(t, auditor.inputs, 1)
-	require.Equal(t, "correct_entity_resolution", auditor.inputs[0].Surface)
-}
-
 func TestLifecycleFailsClosedWhenUnsafeEvidenceAuditFails(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
@@ -161,24 +201,6 @@ func TestLifecycleFailsClosedWhenUnsafeEvidenceAuditFails(t *testing.T) {
 	require.NotErrorIs(t, err, ErrSecurityAuditPersistence)
 	require.NotContains(t, err.Error(), "audit unavailable")
 	require.Zero(t, placement.calls)
-}
-
-func TestCorrectionEvidenceFromRequestUsesCanonicalSourceGroupFallbacks(t *testing.T) {
-	require.Nil(t, correctionEvidenceFromRequest(nil))
-
-	mapped := correctionEvidenceFromRequest([]RememberEvidenceInput{
-		{
-			Content:   "The source key identifies this correction.",
-			SourceKey: "wiki:identity-corrections",
-		},
-		{
-			Content: "The source reference identifies this correction.",
-			Source:  "conversation:identity-corrections",
-		},
-	})
-	require.Len(t, mapped, 2)
-	require.Equal(t, "wiki:identity-corrections", mapped[0].SourceGroup)
-	require.Equal(t, "conversation:identity-corrections", mapped[1].SourceGroup)
 }
 
 func TestLifecycleRetractEvidenceUsesAuthenticatedOwner(t *testing.T) {
@@ -497,32 +519,34 @@ func TestLifecycleRejectsInvalidContractAndPropagatesRepositoryError(t *testing.
 	require.ErrorIs(t, err, repoErr)
 }
 
-func TestLifecycleCorrectEntityResolutionRequiresAuthContractAndRepository(t *testing.T) {
+func TestLifecycleCorrectRelationshipRequiresAuthContractAndRepository(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
-	req := CorrectEntityResolutionRequest{
-		ContractVersion:     domain.ContractVersion,
-		Operation:           domain.EntityCorrectionSplit,
-		SourceEntityID:      uuid.NewString(),
-		OwnedObservationIDs: []string{uuid.NewString()},
-		DryRun:              true,
+	req := CorrectRelationshipRequest{
+		ContractVersion: domain.ContractVersion,
+		Action:          "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1,
+		Patch:    repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}},
+		Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}},
+		Reason:   "incorrect predicate", IdempotencyKey: "correction-1",
 	}
 
-	_, err := NewLifecycleService(LifecycleDependencies{}).CorrectEntityResolution(ctx, req)
+	_, err := NewLifecycleService(LifecycleDependencies{}).CorrectRelationship(ctx, req)
 	require.ErrorContains(t, err, "semantic repository is required")
 
-	_, err = NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{}}).CorrectEntityResolution(context.Background(), req)
+	_, err = NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{}}).CorrectRelationship(context.Background(), req)
 	require.ErrorIs(t, err, ErrLifecycleAuthContext)
 
 	req.ContractVersion = "v0"
-	_, err = NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{}}).CorrectEntityResolution(ctx, req)
+	_, err = NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{}}).CorrectRelationship(ctx, req)
 	require.ErrorContains(t, err, "invalid contract_version")
 }
 
 type lifecycleSemanticStub struct {
 	input         repository.RetractRelationshipInput
-	correctInput  repository.CorrectEntityResolutionInput
+	correctInput  repository.CorrectRelationshipInput
+	statusInput   repository.GetRelationshipCorrectionInput
 	result        *repository.RelationshipTransitionResult
-	correctResult *repository.CorrectEntityResolutionResult
+	correctResult *repository.CorrectRelationshipResult
+	statusResult  *repository.RelationshipCorrectionStatus
 	err           error
 	correctCalls  int
 }
@@ -541,10 +565,10 @@ func (s *lifecycleSemanticStub) RetractRelationship(
 	return s.result, nil
 }
 
-func (s *lifecycleSemanticStub) CorrectEntityResolution(
+func (s *lifecycleSemanticStub) CorrectRelationship(
 	_ context.Context,
-	input repository.CorrectEntityResolutionInput,
-) (*repository.CorrectEntityResolutionResult, error) {
+	input repository.CorrectRelationshipInput,
+) (*repository.CorrectRelationshipResult, error) {
 	s.correctCalls++
 	s.correctInput = input
 	if s.err != nil {
@@ -554,6 +578,20 @@ func (s *lifecycleSemanticStub) CorrectEntityResolution(
 		return nil, errors.New("missing correct result")
 	}
 	return s.correctResult, nil
+}
+
+func (s *lifecycleSemanticStub) GetRelationshipCorrection(
+	_ context.Context,
+	input repository.GetRelationshipCorrectionInput,
+) (*repository.RelationshipCorrectionStatus, error) {
+	s.statusInput = input
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.statusResult == nil {
+		return nil, repository.ErrRelationshipCorrectionNotFound
+	}
+	return s.statusResult, nil
 }
 
 type lifecyclePlacementStub struct {

@@ -15,6 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
@@ -34,6 +35,15 @@ func (s *stubRecallService) Recall(ctx context.Context, req memoryservice.Recall
 }
 
 var _ memoryservice.RecallService = (*stubRecallService)(nil)
+
+type recallDreamingConfigStub struct {
+	enabled bool
+	err     error
+}
+
+func (s recallDreamingConfigStub) EffectiveConfig(context.Context, string) (dreamservice.EffectiveConfig, error) {
+	return dreamservice.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: s.enabled}}, s.err
+}
 
 func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	e := echo.New()
@@ -77,7 +87,7 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 			}, nil
 		},
 	}
-	h := NewRecallHandler(svc)
+	h := NewRecallHandler(svc, nil)
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(injectProfileMiddleware(teamID))
 	e.Use(injectActorMiddleware(teamID, profileID))
@@ -137,9 +147,54 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	}
 }
 
+func TestRecallHandlerGatesHypothesesByEffectiveTeamDreaming(t *testing.T) {
+	for _, test := range []struct {
+		name                string
+		dreams              recallDreamingConfigStub
+		wantInclude         bool
+		wantHypothesisCount int
+	}{
+		{name: "enabled", dreams: recallDreamingConfigStub{enabled: true}, wantInclude: true, wantHypothesisCount: 1},
+		{name: "disabled", dreams: recallDreamingConfigStub{}, wantHypothesisCount: 0},
+		{name: "config failure", dreams: recallDreamingConfigStub{err: errors.New("config unavailable")}, wantHypothesisCount: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			e := echo.New()
+			teamID := uuid.New()
+			profileID := uuid.New()
+			var captured memoryservice.RecallRequest
+			svc := &stubRecallService{recallFunc: func(_ context.Context, req memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
+				captured = req
+				return &memoryservice.RecallResult{RelatedHypotheses: []memoryservice.RelatedHypothesisSummary{{HypothesisID: "hypothesis-1"}}}, nil
+			}}
+			h := NewRecallHandler(svc, test.dreams)
+			e.HTTPErrorHandler = httperr.ErrorHandler
+			e.Use(injectProfileMiddleware(teamID))
+			e.Use(injectActorMiddleware(teamID, profileID))
+			e.GET("/ui/api/recall", h.Handle)
+
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/api/recall?query=postgres", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+			}
+			if captured.IncludeHypotheses != test.wantInclude {
+				t.Fatalf("include_hypotheses = %v; want %v", captured.IncludeHypotheses, test.wantInclude)
+			}
+			var response recallDataEnvelope
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if len(response.Data.RelatedHypotheses) != test.wantHypothesisCount {
+				t.Fatalf("related_hypotheses = %#v", response.Data.RelatedHypotheses)
+			}
+		})
+	}
+}
+
 func TestRecallHandlerRequiresTeamContext(t *testing.T) {
 	e := echo.New()
-	h := NewRecallHandler(&stubRecallService{})
+	h := NewRecallHandler(&stubRecallService{}, nil)
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.GET("/ui/api/recall", h.Handle)
 
@@ -163,7 +218,7 @@ func TestRecallHandlerMapsAuthContextError(t *testing.T) {
 			return nil, memoryservice.ErrRecallAuthContext
 		},
 	}
-	h := NewRecallHandler(svc)
+	h := NewRecallHandler(svc, nil)
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(injectProfileMiddleware(teamID))
 	e.GET("/ui/api/recall", h.Handle)
@@ -191,7 +246,7 @@ func TestRecallHandlerMapsRequiredDegradation(t *testing.T) {
 			}, nil
 		},
 	}
-	h := NewRecallHandler(svc)
+	h := NewRecallHandler(svc, nil)
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(injectProfileMiddleware(teamID))
 	e.Use(injectActorMiddleware(teamID, profileID))
@@ -219,7 +274,7 @@ func TestRecallHandlerMapsEmptyRequiredDegradationMessage(t *testing.T) {
 			}, nil
 		},
 	}
-	h := NewRecallHandler(svc)
+	h := NewRecallHandler(svc, nil)
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(injectProfileMiddleware(teamID))
 	e.Use(injectActorMiddleware(teamID, profileID))
@@ -246,7 +301,7 @@ func TestRecallHandlerMapsGenericError(t *testing.T) {
 			return nil, errors.New("database details must not leak")
 		},
 	}
-	h := NewRecallHandler(svc)
+	h := NewRecallHandler(svc, nil)
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(injectProfileMiddleware(teamID))
 	e.Use(injectActorMiddleware(teamID, profileID))

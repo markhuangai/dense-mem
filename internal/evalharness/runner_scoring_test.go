@@ -98,11 +98,13 @@ func TestEvaluateGates(t *testing.T) {
 	minRank1 := 0.5
 	maxBad := 0.25
 	maxBadRank1 := 0.1
+	maxUnmapped := 0
 	gates := GateOptions{
-		MinRecallAtK:         &minRecall,
-		MinRequiredRank1Rate: &minRank1,
-		MaxAverageBadAtK:     &maxBad,
-		MaxBadRank1Rate:      &maxBadRank1,
+		MinRecallAtK:          &minRecall,
+		MinRequiredRank1Rate:  &minRank1,
+		MaxAverageBadAtK:      &maxBad,
+		MaxBadRank1Rate:       &maxBadRank1,
+		MaxUnmappedSourceRefs: &maxUnmapped,
 	}
 	passed := EvaluateGates(Summary{
 		AverageRecallAtK:  0.9,
@@ -114,13 +116,14 @@ func TestEvaluateGates(t *testing.T) {
 		t.Fatalf("passed gate = %+v", passed)
 	}
 	failed := EvaluateGates(Summary{
-		AverageRecallAtK:  0.7,
-		RequiredRank1Rate: 0.4,
-		AverageBadAtK:     0.3,
-		BadRank1Rate:      0.2,
+		AverageRecallAtK:   0.7,
+		RequiredRank1Rate:  0.4,
+		AverageBadAtK:      0.3,
+		BadRank1Rate:       0.2,
+		UnmappedSourceRefs: 1,
 	}, gates)
-	if failed.Passed || len(failed.Failures) != 4 {
-		t.Fatalf("failed gate = %+v; want four failures", failed)
+	if failed.Passed || len(failed.Failures) != 5 {
+		t.Fatalf("failed gate = %+v; want five failures", failed)
 	}
 }
 

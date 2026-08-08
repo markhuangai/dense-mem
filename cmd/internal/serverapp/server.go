@@ -278,7 +278,6 @@ func RunActiveServer(
 		Metrics:              discoverabilityMetrics,
 		RecallFeedbackConfig: appConfigService,
 		RecallFeedbackEvents: recallFeedbackEventService,
-		EvaluationConfig:     appConfigService,
 		EvaluationAudit:      auditService,
 		Context:              contextSvc,
 		Remember:             rememberSvc,
@@ -286,7 +285,6 @@ func RunActiveServer(
 		Recall:               recallSvc,
 		Lifecycle:            lifecycleSvc,
 		Evaluation:           semanticRepo,
-		EvaluationEnabled:    true,
 		Communities:          semanticRepo,
 		MemoryPack:           memoryPackSvc,
 		Dreams:               dreamSvc,
@@ -306,7 +304,7 @@ func RunActiveServer(
 		time.Duration(cfg.GetSSEMaxDurationSeconds())*time.Second,
 		backend.streamCleanupRepo,
 	)
-	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(toolRegistry, logger, streamLifecycle, appConfigService)
+	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(toolRegistry, logger, streamLifecycle, appConfigService, dreamSvc)
 
 	checks := []http.HealthCheck{
 		{Name: "postgres", Check: func(ctx context.Context) error {

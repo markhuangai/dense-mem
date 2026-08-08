@@ -41,13 +41,13 @@ const (
 
 // Server is an MCP server bound to a shared tool registry.
 type Server struct {
-	registry             registry.Registry
-	profileID            string
-	scopes               []string
-	team                 TeamContext
-	logger               observability.LogProvider
-	recallFeedbackConfig registry.RecallFeedbackConfigProvider
-	prompts              promptcatalog.Catalog
+	registry          registry.Registry
+	profileID         string
+	scopes            []string
+	team              TeamContext
+	logger            observability.LogProvider
+	runtimeToolPolicy registry.RuntimeToolPolicy
+	prompts           promptcatalog.Catalog
 }
 
 // TeamContext is non-secret team metadata made visible in MCP discovery so
@@ -75,15 +75,22 @@ func NewServerWithScopesAndTeamContext(reg registry.Registry, profileID string, 
 
 // NewServerWithScopesTeamContextAndRuntimeConfig constructs a Server with
 // request-scoped team metadata and runtime feature visibility.
-func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, profileID string, scopes []string, team TeamContext, logger observability.LogProvider, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *Server {
+func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, profileID string, scopes []string, team TeamContext, logger observability.LogProvider, recallFeedbackConfig registry.RecallFeedbackConfigProvider, dreams ...registry.DreamingConfigProvider) *Server {
+	var dreamConfig registry.DreamingConfigProvider
+	if len(dreams) > 0 {
+		dreamConfig = dreams[0]
+	}
 	return &Server{
-		registry:             reg,
-		profileID:            profileID,
-		scopes:               append([]string(nil), scopes...),
-		team:                 normalizeTeamContext(team),
-		logger:               logger,
-		recallFeedbackConfig: recallFeedbackConfig,
-		prompts:              defaultPromptCatalog(logger),
+		registry:  reg,
+		profileID: profileID,
+		scopes:    append([]string(nil), scopes...),
+		team:      normalizeTeamContext(team),
+		logger:    logger,
+		runtimeToolPolicy: registry.RuntimeToolPolicy{
+			RecallFeedback: recallFeedbackConfig,
+			Dreams:         dreamConfig,
+		},
+		prompts: defaultPromptCatalog(logger),
 	}
 }
 
@@ -275,9 +282,10 @@ func (s *Server) handlePromptsGet(raw json.RawMessage) (map[string]any, *rpcErro
 // The registry is already the source of truth so this is a pure transform.
 func (s *Server) handleToolsList(ctx context.Context) map[string]any {
 	listed := s.registry.List()
+	policy := registry.ResolveRuntimeToolPolicy(ctx, s.runtimeToolPolicy, listed...)
 	out := make([]map[string]any, 0, len(listed))
 	for _, t := range listed {
-		if !registry.ToolVisible(ctx, t, s.recallFeedbackConfig) {
+		if !registry.ToolVisible(ctx, t, policy) {
 			continue
 		}
 		if !s.canUseTool(t) {
@@ -320,7 +328,8 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	if !ok {
 		return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", params.Name)}
 	}
-	if !registry.ToolVisible(ctx, tool, s.recallFeedbackConfig) {
+	policy := registry.ResolveRuntimeToolPolicy(ctx, s.runtimeToolPolicy, tool)
+	if !registry.ToolVisible(ctx, tool, policy) {
 		return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", params.Name)}
 	}
 	if !s.canUseTool(tool) {
@@ -350,6 +359,7 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 			return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
 		}
 	}
+	ctx = registry.WithRuntimeToolPolicy(ctx, policy)
 	result, err := tool.Invoke(ctx, s.profileID, args)
 	if err != nil {
 		if errors.Is(err, registry.ErrToolDisabled) {

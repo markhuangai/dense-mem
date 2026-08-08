@@ -704,8 +704,8 @@ if [[ "$E2E_MODE" != "standard" && "$E2E_MODE" != "entra_scim" ]]; then
   exit 1
 fi
 
-if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "all" ]]; then
-  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, submission_status, security_intake, submission_assessment, semantic_holds, or all." >&2
+if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "all" ]]; then
+  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, submission_status, security_intake, submission_assessment, semantic_holds, or all." >&2
   exit 1
 fi
 
@@ -719,7 +719,7 @@ if [[ "$E2E_SCENARIO" == "all" ]]; then
     echo "DENSE_MEM_E2E_SCENARIO=all requires DENSE_MEM_E2E_MODE=standard." >&2
     exit 1
   fi
-  for scenario in submission_status security_intake submission_assessment semantic_holds full; do
+  for scenario in mcp_boundaries submission_status security_intake submission_assessment semantic_holds full; do
     echo "Running compose e2e scenario ${scenario} as part of all."
     DENSE_MEM_E2E_SCENARIO="$scenario" \
     DENSE_MEM_E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-all}-$(printf '%s' "$scenario" | tr '[:upper:]' '[:lower:]')" \
@@ -890,6 +890,17 @@ if [[ "$E2E_SCENARIO" == "portal" ]]; then
   DENSE_MEM_E2E_DREAM_STATEMENT="$dream_statement" \
   DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" \
   run_compose_playwright_tests portal
+  exit 0
+fi
+
+if [[ "$E2E_SCENARIO" == "mcp_boundaries" ]]; then
+  echo "Running compose-backed MCP production/evaluation and feature-gate boundary e2e."
+  DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
+  DENSE_MEM_USER_URL="$USER_URL" \
+  DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
+  DENSE_MEM_E2E_TEAM_ID="$team_id" \
+  DENSE_MEM_E2E_API_KEY="$api_key" \
+  node "$ROOT_DIR/tests/uat/mcp_boundaries_e2e.mjs"
   exit 0
 fi
 

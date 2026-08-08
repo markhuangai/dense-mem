@@ -17,8 +17,6 @@ type RunOptions struct {
 	OutDir                 string
 	BaseURL                string
 	APIKey                 string
-	ControlURL             string
-	ControlToken           string
 	ImportSeed             bool
 	ImportConcurrency      int
 	PlacementTimeout       time.Duration
@@ -135,7 +133,6 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		ReleaseGatePolicyPath:  opts.ReleaseGatePolicyPath,
 		ReleaseGatePolicyHash:  releaseGatePolicyHash,
 		BaseURL:                opts.BaseURL,
-		ControlURL:             opts.ControlURL,
 		ToolTransport:          "mcp",
 		ToolContract:           "mcp.tools/call.v1",
 		ImportSeed:             opts.ImportSeed,
@@ -187,12 +184,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		client := &HTTPClient{
 			BaseURL:          opts.BaseURL,
 			APIKey:           opts.APIKey,
-			ControlURL:       opts.ControlURL,
-			ControlToken:     opts.ControlToken,
 			PlacementTimeout: opts.PlacementTimeout,
-		}
-		if err := client.EnableEvaluationMode(ctx, opts.MaxPageSize); err != nil {
-			return Summary{}, err
 		}
 		mappingLoadedFromPath := false
 		if opts.MappingPath != "" {

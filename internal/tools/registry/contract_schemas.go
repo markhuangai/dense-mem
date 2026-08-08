@@ -200,7 +200,7 @@ func relationshipConflictContextSchema() map[string]any {
 
 func getSubmissionStatusInputSchema() map[string]any {
 	return contractInput([]string{"submission_id"}, map[string]any{
-		"submission_id": schemaString("Submission ID returned by remember.", 128),
+		"submission_id": schemaString("Submission ID returned by remember or correct_relationship.", 128),
 	})
 }
 
@@ -214,20 +214,63 @@ func retractEvidenceInputSchema() map[string]any {
 	})
 }
 
-func correctEntityResolutionInputSchema() map[string]any {
-	return contractInput(
-		[]string{"operation", "source_entity_id", "target_entity_id", "owned_observation_ids", "evidence", "dry_run", "idempotency_key"},
-		map[string]any{
-			"operation":             schemaEnum(domain.EntityCorrectionActions()),
-			"source_entity_id":      schemaString("Caller-visible source Entity ID.", 128),
-			"target_entity_id":      nullableString("Merge target Entity ID; null for split.", 128),
-			"owned_observation_ids": stringArraySchema("Caller-owned observation ID.", 200, 128),
-			"dry_run":               map[string]any{"type": "boolean"},
-			"impact_token":          schemaString("Version-bound dry-run token required for apply.", 256),
-			"evidence":              evidenceArraySchema(),
-			"idempotency_key":       schemaString("Correction retry key scoped to team and profile.", 128),
+func correctRelationshipInputSchema() map[string]any {
+	return contractInput([]string{"action", "idempotency_key"}, map[string]any{
+		"action":             schemaEnum([]string{"submit", "confirm"}),
+		"relationship_id":    schemaString("Caller-owned Relationship to replace.", 128),
+		"expected_version":   map[string]any{"type": "integer", "minimum": 1},
+		"patch":              relationshipCorrectionPatchSchema(),
+		"supports":           relationshipCorrectionSupportArraySchema(),
+		"reason":             nonEmptyStringSchema("Bounded correction reason.", 1000),
+		"submission_id":      schemaString("Correction submission awaiting confirmation.", 128),
+		"confirmation_token": schemaString("One-round confirmation token.", 256),
+		"selection":          relationshipCorrectionSelectionSchema(),
+		"idempotency_key":    nonEmptyStringSchema("Retry key scoped to team and profile.", 128),
+	})
+}
+
+func relationshipCorrectionPatchSchema() map[string]any {
+	return closedObject(nil, map[string]any{
+		"subject_entity": relationshipCorrectionEntitySchema(),
+		"predicate": closedObject([]string{"key"}, map[string]any{
+			"key": nonEmptyStringSchema("Registered team predicate key.", 128),
+		}),
+		"object_entity": relationshipCorrectionEntitySchema(),
+	})
+}
+
+func relationshipCorrectionEntitySchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"oneOf": []any{
+			map[string]any{"required": []string{"entity_id"}, "not": map[string]any{"required": []string{"name"}}},
+			map[string]any{"required": []string{"name", "entity_kind"}, "not": map[string]any{"required": []string{"entity_id"}}},
 		},
-	)
+		"properties": map[string]any{
+			"entity_id":   schemaString("Existing same-team Entity ID.", 128),
+			"name":        nonEmptyStringSchema("Canonical name for deterministic resolution or creation.", 256),
+			"entity_kind": schemaEnum(domain.EntityKinds()),
+		},
+		"additionalProperties": false,
+	}
+}
+
+func relationshipCorrectionSupportArraySchema() map[string]any {
+	return array(closedObject(
+		[]string{"evidence_id", "start", "end"},
+		map[string]any{
+			"evidence_id": schemaString("Existing supporting evidence fragment ID.", 128),
+			"start":       map[string]any{"type": "integer", "minimum": 0},
+			"end":         map[string]any{"type": "integer", "minimum": 1},
+		},
+	), 1, 200)
+}
+
+func relationshipCorrectionSelectionSchema() map[string]any {
+	return closedObject(nil, map[string]any{
+		"subject_entity_id": schemaString("Selected subject Entity candidate.", 128),
+		"object_entity_id":  schemaString("Selected object Entity candidate.", 128),
+	})
 }
 
 func recallMemoryInputSchema() map[string]any {
@@ -344,9 +387,10 @@ func exportMemoryPackInputSchema() map[string]any {
 
 func rememberOutputSchema() map[string]any {
 	return closedObject(
-		[]string{"submission_id", "processing_state", "check_after_seconds", "status_tool", "correlation_id"},
+		[]string{"submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"},
 		map[string]any{
 			"submission_id":       schemaString("Submission ID.", 128),
+			"submission_kind":     schemaEnum([]string{"remember"}),
 			"processing_state":    schemaEnum([]string{"queued", "processing", "completed", "rejected", "quarantined", "failed"}),
 			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
 			"status_tool":         schemaEnum([]string{ToolGetSubmissionStatus}),
@@ -357,10 +401,11 @@ func rememberOutputSchema() map[string]any {
 
 func submissionStatusOutputSchema() map[string]any {
 	return closedObject(
-		[]string{"submission_id", "processing_state", "search_state", "check_after_seconds", "evidence", "errors"},
+		[]string{"submission_id", "submission_kind", "processing_state", "search_state", "check_after_seconds", "evidence", "errors"},
 		map[string]any{
 			"submission_id":       schemaString("Submission ID.", 128),
-			"processing_state":    schemaEnum([]string{"queued", "processing", "completed", "rejected", "quarantined", "failed"}),
+			"submission_kind":     schemaEnum([]string{"remember", "relationship_correction"}),
+			"processing_state":    schemaEnum([]string{"queued", "processing", "awaiting_confirmation", "completed", "rejected", "quarantined", "failed"}),
 			"search_state":        schemaEnum(domain.SearchProjectionStates()),
 			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
 			"evidence": array(closedObject(
@@ -375,6 +420,40 @@ func submissionStatusOutputSchema() map[string]any {
 			"errors":                        submissionStatusErrorArraySchema(),
 			"quarantine_expires_at":         nullableString("Fixed quarantine expiry.", 64),
 			"replacement_window_expires_at": nullableString("Replacement window expiry.", 64),
+			"awaiting_confirmation":         relationshipCorrectionConfirmationSchema(),
+			"correction_result":             relationshipCorrectionResultSchema(),
+		},
+	)
+}
+
+func relationshipCorrectionConfirmationSchema() map[string]any {
+	return closedObject(
+		[]string{"confirmation_token", "expires_at", "candidates"},
+		map[string]any{
+			"confirmation_token": schemaString("One-round confirmation token.", 256),
+			"expires_at":         schemaString("Confirmation expiry in RFC3339 format.", 64),
+			"candidates": array(closedObject(
+				[]string{"endpoint", "entity_id", "entity_kind", "canonical_name"},
+				map[string]any{
+					"endpoint":       schemaEnum([]string{"subject_entity", "object_entity"}),
+					"entity_id":      schemaString("Same-team Entity candidate.", 128),
+					"entity_kind":    schemaEnum(domain.EntityKinds()),
+					"canonical_name": schemaString("Current canonical Entity name.", 256),
+				},
+			), 2, 40),
+		},
+	)
+}
+
+func relationshipCorrectionResultSchema() map[string]any {
+	return closedObject(
+		[]string{"original_relationship_id", "original_version", "successor_relationship_id", "successor_version", "reused_successor"},
+		map[string]any{
+			"original_relationship_id":  schemaString("Superseded Relationship ID.", 128),
+			"original_version":          map[string]any{"type": "integer", "minimum": 1},
+			"successor_relationship_id": schemaString("Created or reused successor Relationship ID.", 128),
+			"successor_version":         map[string]any{"type": "integer", "minimum": 1},
+			"reused_successor":          map[string]any{"type": "boolean"},
 		},
 	)
 }
@@ -400,24 +479,16 @@ func retractEvidenceOutputSchema() map[string]any {
 	)
 }
 
-func correctEntityResolutionOutputSchema() map[string]any {
+func correctRelationshipOutputSchema() map[string]any {
 	return closedObject(
-		[]string{
-			"dry_run",
-			"selected_observation_ids",
-			"blocked_observation_ids",
-			"relationship_changes",
-			"entity_candidates",
-			"unchanged_cross_profile_references",
-		},
+		[]string{"submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"},
 		map[string]any{
-			"dry_run":                            map[string]any{"type": "boolean"},
-			"impact_token":                       schemaString("Expiring version-bound apply token.", 256),
-			"selected_observation_ids":           stringArraySchema("Observation selected for change.", 200, 128),
-			"blocked_observation_ids":            stringArraySchema("Observation blocked from change.", 200, 128),
-			"relationship_changes":               array(correctionRelationshipChangeSchema(), 0, 500),
-			"entity_candidates":                  array(correctionEntityCandidateSchema(), 0, 100),
-			"unchanged_cross_profile_references": array(crossProfileReferenceSchema(), 0, 500),
+			"submission_id":       schemaString("Correction submission ID.", 128),
+			"submission_kind":     schemaEnum([]string{"relationship_correction"}),
+			"processing_state":    schemaEnum([]string{"awaiting_confirmation", "completed", "rejected", "failed"}),
+			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
+			"status_tool":         schemaEnum([]string{ToolGetSubmissionStatus}),
+			"correlation_id":      schemaString("Request correlation ID.", 128),
 		},
 	)
 }
@@ -426,7 +497,7 @@ func recallMemoryOutputSchema() map[string]any {
 	return closedObject(
 		[]string{
 			"recall_id", "results", "conflicts", "related_relationships",
-			"related_communities", "related_hypotheses", "search_states", "degradations",
+			"related_communities", "related_hypotheses", "search_states", "degradations", "suggested_actions",
 		},
 		map[string]any{
 			"recall_id":             schemaString("Recall event ID.", 128),
@@ -437,6 +508,19 @@ func recallMemoryOutputSchema() map[string]any {
 			"related_hypotheses":    array(hypothesisSummarySchema(), 0, 20),
 			"search_states":         recallSearchStatesSchema(),
 			"degradations":          array(recallDegradationSchema(), 0, 10),
+			"suggested_actions":     array(recallSuggestedActionSchema(), 0, 2),
+		},
+	)
+}
+
+func recallSuggestedActionSchema() map[string]any {
+	return closedObject(
+		[]string{"tool", "guidance"},
+		map[string]any{
+			"tool":            schemaEnum([]string{ToolSubmitRecallSessionFeedback, ToolResolveDreamFeedback}),
+			"guidance":        schemaString("Bounded next-step guidance.", 512),
+			"recall_event_id": schemaString("Recall event ID accepted by the feedback tool.", 128),
+			"hypothesis_ids":  stringArraySchema("Hypothesis IDs returned by this recall.", 20, 128),
 		},
 	)
 }
@@ -471,7 +555,7 @@ func recallDegradationSchema() map[string]any {
 	return closedObject(
 		[]string{"frontier", "code", "message"},
 		map[string]any{
-			"frontier":         schemaEnum([]string{"evidence", "relationships", "communities", "hypotheses"}),
+			"frontier":         schemaEnum([]string{"evidence", "relationships", "communities", "hypotheses", "feedback"}),
 			"required_failure": map[string]any{"type": "boolean"},
 			"optional":         map[string]any{"type": "boolean"},
 			"code":             schemaString("Stable bounded degradation code.", 128),

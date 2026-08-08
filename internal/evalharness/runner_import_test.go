@@ -19,14 +19,10 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 	var rememberCalls int
 	var statusPolls int
 	var recallCalls int
-	var controlPatched bool
 	exportCalls := map[string]int{}
 
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/control/api/config/evaluation":
-			controlPatched = true
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case "tool:remember":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -94,8 +90,6 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 		SuitePath:         filepath.Join(dir, "suite.jsonl"),
 		BaseURL:           server.URL,
 		APIKey:            "api-key",
-		ControlURL:        server.URL,
-		ControlToken:      "control-token",
 		ImportSeed:        true,
 		ImportConcurrency: 1,
 		MaxPageSize:       50,
@@ -108,8 +102,8 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 	if summary.Mode != "import" || summary.CaseCount != 2 || summary.ScoredCaseCount != 0 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	if !controlPatched || rememberCalls != 2 || statusPolls != 2 || recallCalls != 0 {
-		t.Fatalf("control/remember/status/recall calls = %v/%d/%d/%d", controlPatched, rememberCalls, statusPolls, recallCalls)
+	if rememberCalls != 2 || statusPolls != 2 || recallCalls != 0 {
+		t.Fatalf("remember/status/recall calls = %d/%d/%d", rememberCalls, statusPolls, recallCalls)
 	}
 	for _, kind := range []string{"evidence", "entity", "value", "relationship", "hypothesis"} {
 		if exportCalls[kind] != 1 {
@@ -144,8 +138,6 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T
 	var remembered []string
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/control/api/config/evaluation":
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case "tool:eval_list_knowledge_refs":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"items": []map[string]any{{
@@ -187,8 +179,6 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T
 		SuitePath:              filepath.Join(dir, "suite.jsonl"),
 		BaseURL:                server.URL,
 		APIKey:                 "api-key",
-		ControlURL:             server.URL,
-		ControlToken:           "control-token",
 		ImportSeed:             true,
 		ImportConcurrency:      1,
 		ResumeSourceDocIDsPath: resumePath,
@@ -231,7 +221,6 @@ func TestRunRejectsV1SeedImportBeforeExternalCalls(t *testing.T) {
 		SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
 		SuitePath:        filepath.Join(dir, "suite.jsonl"),
 		BaseURL:          server.URL,
-		ControlURL:       server.URL,
 		ImportSeed:       true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "cannot be imported through the required flat relationship contract") {

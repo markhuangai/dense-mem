@@ -115,6 +115,7 @@ func TestMCP_RoundTripsContractFixtures(t *testing.T) {
 				TeamContext{},
 				logger,
 				recallFeedbackConfigStub{enabled: true},
+				dreamingConfigStub{enabled: true},
 			)
 
 			params, err := json.Marshal(map[string]any{
@@ -207,7 +208,15 @@ func TestMCP_ToolListRequiredFieldsAreArraysOrOmitted(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	server := NewServerWithScopes(reg, "profile-a", []string{"read", "write"}, logger)
+	server := NewServerWithScopesTeamContextAndRuntimeConfig(
+		reg,
+		"profile-a",
+		[]string{"read", "write"},
+		TeamContext{},
+		logger,
+		recallFeedbackConfigStub{enabled: true},
+		dreamingConfigStub{enabled: true},
+	)
 	out := runRPC(t, server, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	var response rpcResp
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &response); err != nil {

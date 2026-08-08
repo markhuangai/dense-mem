@@ -2,10 +2,12 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -16,7 +18,7 @@ const (
 	ToolRemember                    = "remember"
 	ToolGetSubmissionStatus         = "get_submission_status"
 	ToolRetractEvidence             = "retract_evidence"
-	ToolCorrectEntityResolution     = "correct_entity_resolution"
+	ToolCorrectRelationship         = "correct_relationship"
 	ToolRecallMemory                = "recall_memory"
 	ToolTraceMemory                 = "trace_memory"
 	ToolSubmitRecallSessionFeedback = "submit_recall_session_feedback"
@@ -32,7 +34,7 @@ var contractToolNames = []string{
 	ToolRemember,
 	ToolGetSubmissionStatus,
 	ToolRetractEvidence,
-	ToolCorrectEntityResolution,
+	ToolCorrectRelationship,
 	ToolRecallMemory,
 	ToolTraceMemory,
 	ToolSubmitRecallSessionFeedback,
@@ -68,11 +70,11 @@ func ContractTools() []Tool {
 			retractEvidenceOutputSchema(),
 		),
 		contractTool(
-			ToolCorrectEntityResolution,
-			"Dry-run or apply caller-owned Entity merge and split corrections.",
+			ToolCorrectRelationship,
+			"Replace one caller-owned Relationship while preserving its existing evidence provenance and superseding the old Relationship atomically.",
 			[]string{"write"},
-			correctEntityResolutionInputSchema(),
-			correctEntityResolutionOutputSchema(),
+			correctRelationshipInputSchema(),
+			correctRelationshipOutputSchema(),
 		),
 		contractTool(
 			ToolRecallMemory,
@@ -160,7 +162,7 @@ func contractTools(deps Dependencies) []Tool {
 						statusService = candidate
 					}
 				}
-				if statusService == nil {
+				if statusService == nil && deps.Lifecycle == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
@@ -171,7 +173,16 @@ func contractTools(deps Dependencies) []Tool {
 					return nil, fmt.Errorf("get_submission_status: invalid input: %w", err)
 				}
 				req.ContractVersion = domain.ContractVersion
-				res, err := statusService.GetSubmissionStatus(ctx, req)
+				if statusService != nil {
+					res, err := statusService.GetSubmissionStatus(ctx, req)
+					if err == nil {
+						return structToMap(res)
+					}
+					if !isSubmissionNotFound(err) || deps.Lifecycle == nil {
+						return nil, err
+					}
+				}
+				res, err := deps.Lifecycle.GetRelationshipCorrectionStatus(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -197,21 +208,21 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				return structToMap(res)
 			}
-		case ToolCorrectEntityResolution:
+		case ToolCorrectRelationship:
 			tool := tools[i]
 			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
 				if deps.Lifecycle == nil {
 					return nil, ErrToolUnavailable
 				}
 				if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
-					return nil, fmt.Errorf("correct_entity_resolution: invalid input: %w", err)
+					return nil, fmt.Errorf("correct_relationship: invalid input: %w", err)
 				}
-				var req memoryservice.CorrectEntityResolutionRequest
+				var req memoryservice.CorrectRelationshipRequest
 				if err := remapInput(input, &req); err != nil {
-					return nil, fmt.Errorf("correct_entity_resolution: invalid input: %w", err)
+					return nil, fmt.Errorf("correct_relationship: invalid input: %w", err)
 				}
 				req.ContractVersion = domain.ContractVersion
-				res, err := deps.Lifecycle.CorrectEntityResolution(ctx, req)
+				res, err := deps.Lifecycle.CorrectRelationship(ctx, req)
 				if err != nil {
 					return nil, err
 				}
@@ -231,11 +242,17 @@ func contractTools(deps Dependencies) []Tool {
 					return nil, fmt.Errorf("recall_memory: invalid input: %w", err)
 				}
 				req.ContractVersion = domain.ContractVersion
+				dreamingEnabled := DreamingEnabled(ctx, deps.Dreams)
+				req.IncludeHypotheses = dreamingEnabled
 				res, err := deps.Recall.Recall(ctx, req)
 				if err != nil {
 					return nil, err
 				}
-				recordRecallFeedbackSnapshot(ctx, deps, input, req, res)
+				if res != nil && !dreamingEnabled {
+					res.RelatedHypotheses = []memoryservice.RelatedHypothesisSummary{}
+				}
+				feedbackSnapshotStored := recordRecallFeedbackSnapshot(ctx, deps, input, req, res)
+				setRecallSuggestedActions(res, feedbackSnapshotStored, dreamingEnabled)
 				return recallContractOutput(res), nil
 			}
 		case ToolTraceMemory:
@@ -351,6 +368,11 @@ func contractTools(deps Dependencies) []Tool {
 	return tools
 }
 
+func isSubmissionNotFound(err error) bool {
+	var apiErr *httperr.APIError
+	return errors.As(err, &apiErr) && apiErr.Code == httperr.NOT_FOUND
+}
+
 func objectArray(value any) []map[string]any {
 	items, ok := value.([]any)
 	if !ok {
@@ -428,8 +450,8 @@ func ValidateContractInput(tool Tool, args map[string]any, scopes []string) erro
 		return validateUniqueStringArray(args, "evidence_ids")
 	case ToolTraceMemory:
 		return validateUniqueStringArray(args, "predicate_keys")
-	case ToolCorrectEntityResolution:
-		return validateCorrectEntityResolution(args)
+	case ToolCorrectRelationship:
+		return validateCorrectRelationship(args)
 	case ToolSubmitRecallSessionFeedback:
 		return validateRecallFeedback(args)
 	case ToolResolveDreamFeedback:

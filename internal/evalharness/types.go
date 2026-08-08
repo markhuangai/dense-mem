@@ -315,7 +315,6 @@ type RunConfig struct {
 	ReleaseGatePolicyPath  string `json:"release_gate_policy_path,omitempty"`
 	ReleaseGatePolicyHash  string `json:"release_gate_policy_sha256,omitempty"`
 	BaseURL                string `json:"base_url,omitempty"`
-	ControlURL             string `json:"control_url,omitempty"`
 	ToolTransport          string `json:"tool_transport"`
 	ToolContract           string `json:"tool_contract"`
 	ImportSeed             bool   `json:"import_seed"`
@@ -379,6 +378,7 @@ type GateOptions struct {
 	MinRequiredRank1Rate         *float64 `json:"min_required_rank1_rate,omitempty"`
 	MaxAverageBadAtK             *float64 `json:"max_average_bad_at_k,omitempty"`
 	MaxBadRank1Rate              *float64 `json:"max_bad_rank1_rate,omitempty"`
+	MaxUnmappedSourceRefs        *int     `json:"max_unmapped_source_refs,omitempty"`
 	MinContextRecallAtK          *float64 `json:"min_context_recall_at_k,omitempty"`
 	MinContextRequiredRank1Rate  *float64 `json:"min_context_required_rank1_rate,omitempty"`
 	MaxAverageContextBadAtK      *float64 `json:"max_average_context_bad_at_k,omitempty"`

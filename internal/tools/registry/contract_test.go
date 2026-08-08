@@ -151,7 +151,7 @@ func TestContractCatalogMetadata(t *testing.T) {
 	for _, name := range []string{
 		ToolRemember,
 		ToolGetSubmissionStatus,
-		ToolCorrectEntityResolution,
+		ToolCorrectRelationship,
 		ToolRecallMemory,
 		ToolTraceMemory,
 		ToolExportMemoryPack,
@@ -171,18 +171,18 @@ func TestContractExcludesStandaloneCommunityTool(t *testing.T) {
 }
 
 func TestToolVisibleHidesDormantContractTools(t *testing.T) {
-	if !ToolVisible(context.Background(), Tool{Name: "recall_memory"}, nil) {
+	if !ToolVisible(context.Background(), Tool{Name: "recall_memory"}, RuntimeToolPolicy{}) {
 		t.Fatal("ordinary tools should remain visible")
 	}
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ToolVisible(context.Background(), remember, nil) {
+	if ToolVisible(context.Background(), remember, RuntimeToolPolicy{}) {
 		t.Fatal("dormant contract tool is visible before cutover")
 	}
 	remember.Visibility = "active"
-	if !ToolVisible(context.Background(), remember, nil) {
+	if !ToolVisible(context.Background(), remember, RuntimeToolPolicy{}) {
 		t.Fatal("non-dormant contract tool should be visible to cutover wiring")
 	}
 }
@@ -426,7 +426,7 @@ func TestCanonicalInputFieldNames(t *testing.T) {
 	}{
 		{ToolRemember, []string{"evidence", "relationships"}, nil, []string{"contract_version", "entity_hints", "relationship_hints", "proposal"}},
 		{ToolGetSubmissionStatus, []string{"submission_id"}, []string{"submission_id"}, []string{"ingest_id", "placement_item_id", "items", "review_tasks"}},
-		{ToolCorrectEntityResolution, []string{"operation", "owned_observation_ids", "impact_token"}, nil, []string{"action", "selected_observation_ids", "plan_token"}},
+		{ToolCorrectRelationship, []string{"action", "relationship_id", "expected_version", "patch", "supports", "reason", "submission_id", "confirmation_token", "selection"}, []string{"action", "idempotency_key"}, []string{"operation", "source_entity_id", "target_entity_id", "owned_observation_ids", "dry_run", "impact_token", "evidence"}},
 		{ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, nil, []string{"include_evidence", "use_communities"}},
 		{ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, nil, []string{"max_chars"}},
 		{ToolSubmitRecallSessionFeedback, []string{"recalls"}, nil, nil},
@@ -457,30 +457,82 @@ func TestCanonicalInputFieldNames(t *testing.T) {
 	}
 }
 
-func TestCorrectionRequiresCanonicalDryRunAndApplyFields(t *testing.T) {
-	tool, err := requireTool(toolMap(t), ToolCorrectEntityResolution)
+func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
+	tool, err := requireTool(toolMap(t), ToolCorrectRelationship)
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := map[string]any{
-		"operation":             "split",
-		"source_entity_id":      "ent-source",
-		"target_entity_id":      nil,
-		"owned_observation_ids": []any{"obs-1"},
-		"evidence":              []any{map[string]any{"content": "These observations refer to a different person."}},
-		"idempotency_key":       "split-1",
+	submit := map[string]any{
+		"action":           "submit",
+		"relationship_id":  "relationship-source",
+		"expected_version": 2,
+		"patch":            map[string]any{"predicate": map[string]any{"key": "works_with"}},
+		"supports":         []any{map[string]any{"evidence_id": "evidence-1", "start": 0, "end": 8}},
+		"reason":           "predicate resolved incorrectly",
+		"idempotency_key":  "correction-submit-1",
 	}
-	dryRun := mergeMap(base, map[string]any{"dry_run": true})
-	if err := ValidateContractInput(tool, dryRun, []string{"write"}); err != nil {
-		t.Fatalf("dry run rejected: %v", err)
+	if err := ValidateContractInput(tool, submit, []string{"write"}); err != nil {
+		t.Fatalf("submit rejected: %v", err)
 	}
-	apply := mergeMap(base, map[string]any{"dry_run": false, "impact_token": "impact-1"})
-	if err := ValidateContractInput(tool, apply, []string{"write"}); err != nil {
-		t.Fatalf("apply rejected: %v", err)
+	confirm := map[string]any{
+		"action":             "confirm",
+		"submission_id":      "correction-submission",
+		"confirmation_token": "confirmation-token",
+		"selection":          map[string]any{"subject_entity_id": "entity-selected"},
+		"idempotency_key":    "correction-confirm-1",
 	}
-	delete(apply, "impact_token")
-	if err := ValidateContractInput(tool, apply, []string{"write"}); err == nil || !strings.Contains(err.Error(), "impact_token is required") {
-		t.Fatalf("apply without impact token err = %v", err)
+	if err := ValidateContractInput(tool, confirm, []string{"write"}); err != nil {
+		t.Fatalf("confirm rejected: %v", err)
+	}
+
+	for _, test := range []struct {
+		name      string
+		input     map[string]any
+		wantError string
+	}{
+		{
+			name: "submit missing supports",
+			input: map[string]any{
+				"action": "submit", "relationship_id": "relationship-source", "expected_version": 2,
+				"patch":  map[string]any{"predicate": map[string]any{"key": "works_with"}},
+				"reason": "predicate resolved incorrectly", "idempotency_key": "correction-submit-missing",
+			},
+			wantError: "supports is required",
+		},
+		{
+			name: "submit with confirmation field",
+			input: map[string]any{
+				"action": "submit", "relationship_id": "relationship-source", "expected_version": 2,
+				"patch":    map[string]any{"predicate": map[string]any{"key": "works_with"}},
+				"supports": []any{map[string]any{"evidence_id": "evidence-1", "start": 0, "end": 8}},
+				"reason":   "predicate resolved incorrectly", "submission_id": "not-accepted",
+				"idempotency_key": "correction-submit-mixed",
+			},
+			wantError: "submission_id is not accepted for action submit",
+		},
+		{
+			name: "confirm with submit field",
+			input: map[string]any{
+				"action": "confirm", "submission_id": "correction-submission", "confirmation_token": "confirmation-token",
+				"selection": map[string]any{"subject_entity_id": "entity-selected"}, "relationship_id": "not-accepted",
+				"idempotency_key": "correction-confirm-mixed",
+			},
+			wantError: "relationship_id is not accepted for action confirm",
+		},
+		{
+			name: "confirm with empty selection",
+			input: map[string]any{
+				"action": "confirm", "submission_id": "correction-submission", "confirmation_token": "confirmation-token",
+				"selection": map[string]any{}, "idempotency_key": "correction-confirm-empty",
+			},
+			wantError: "selection must choose at least one Entity candidate",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ValidateContractInput(tool, test.input, []string{"write"}); err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("error = %v; want %q", err, test.wantError)
+			}
+		})
 	}
 }
 

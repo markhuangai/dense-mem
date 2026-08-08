@@ -40,8 +40,6 @@ func main() {
 	flag.StringVar(&cohortLockPath, "cohort-lock", "", "committed cohort lock for derive-v2, V2 cohort validation, or V2 cohort comparison")
 	flag.StringVar(&opts.BaseURL, "base-url", env("DENSE_MEM_BASE_URL", "http://127.0.0.1:8080"), "Dense-Mem HTTP base URL")
 	flag.StringVar(&opts.APIKey, "api-key", env("DENSE_MEM_API_KEY", ""), "read/write API key")
-	flag.StringVar(&opts.ControlURL, "control-url", env("DENSE_MEM_CONTROL_URL", "http://127.0.0.1:8090"), "control portal base URL")
-	flag.StringVar(&opts.ControlToken, "control-token", env("DENSE_MEM_CONTROL_TOKEN", ""), "control portal token")
 	flag.BoolVar(&opts.ImportSeed, "import-seed", false, "import corpus through remember before running cases")
 	flag.IntVar(&opts.ImportConcurrency, "import-concurrency", importConcurrencyDefault(), fmt.Sprintf("maximum concurrent seed import requests (1-%d)", evalharness.MaxImportConcurrency))
 	flag.DurationVar(&opts.PlacementTimeout, "placement-timeout", envDuration("DENSE_MEM_EVAL_PLACEMENT_TIMEOUT", 2*time.Minute), "maximum time to wait for each memory placement")
@@ -57,6 +55,7 @@ func main() {
 	registerFloatGate("min-required-rank1-rate", "minimum share of cases with a required ref ranked first", &opts.Gates.MinRequiredRank1Rate, validateRate)
 	registerFloatGate("max-average-bad-at-k", "maximum average bad refs@k allowed for scoring modes", &opts.Gates.MaxAverageBadAtK, validateNonNegative)
 	registerFloatGate("max-bad-rank1-rate", "maximum share of cases with a bad ref ranked first", &opts.Gates.MaxBadRank1Rate, validateRate)
+	registerIntGate("max-unmapped-source-refs", "maximum number of source qrel refs that may remain unmapped", &opts.Gates.MaxUnmappedSourceRefs)
 	registerFloatGate("min-context-recall-at-k", "minimum average context recall@k required when context refs are present", &opts.Gates.MinContextRecallAtK, validateRate)
 	registerFloatGate("min-context-required-rank1-rate", "minimum share of context-scored cases with a required ref first in context", &opts.Gates.MinContextRequiredRank1Rate, validateRate)
 	registerFloatGate("max-average-context-bad-at-k", "maximum average bad context refs@k allowed when context refs are present", &opts.Gates.MaxAverageContextBadAtK, validateNonNegative)
@@ -246,6 +245,20 @@ func registerFloatGate(name, usage string, target **float64, validate func(float
 		}
 		if err := validate(value); err != nil {
 			return err
+		}
+		*target = &value
+		return nil
+	})
+}
+
+func registerIntGate(name, usage string, target **int) {
+	flag.Func(name, usage, func(raw string) error {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			return err
+		}
+		if value < 0 {
+			return fmt.Errorf("value must be non-negative")
 		}
 		*target = &value
 		return nil

@@ -96,6 +96,7 @@ type RememberResult struct {
 	// IngestID is retained for internal compatibility and is never serialized.
 	IngestID          string `json:"-"`
 	SubmissionID      string `json:"submission_id"`
+	SubmissionKind    string `json:"submission_kind"`
 	ProcessingState   string `json:"processing_state"`
 	CheckAfterSeconds int    `json:"check_after_seconds"`
 	StatusTool        string `json:"status_tool"`
@@ -103,14 +104,23 @@ type RememberResult struct {
 }
 
 type SubmissionStatusResult struct {
-	SubmissionID               string                     `json:"submission_id"`
-	ProcessingState            string                     `json:"processing_state"`
-	SearchState                string                     `json:"search_state"`
-	CheckAfterSeconds          int                        `json:"check_after_seconds"`
-	Evidence                   []SubmissionEvidenceStatus `json:"evidence"`
-	Errors                     []SubmissionStatusError    `json:"errors"`
-	QuarantineExpiresAt        *time.Time                 `json:"quarantine_expires_at,omitempty"`
-	ReplacementWindowExpiresAt *time.Time                 `json:"replacement_window_expires_at,omitempty"`
+	SubmissionID               string                                   `json:"submission_id"`
+	SubmissionKind             string                                   `json:"submission_kind"`
+	ProcessingState            string                                   `json:"processing_state"`
+	SearchState                string                                   `json:"search_state"`
+	CheckAfterSeconds          int                                      `json:"check_after_seconds"`
+	Evidence                   []SubmissionEvidenceStatus               `json:"evidence"`
+	Errors                     []SubmissionStatusError                  `json:"errors"`
+	QuarantineExpiresAt        *time.Time                               `json:"quarantine_expires_at,omitempty"`
+	ReplacementWindowExpiresAt *time.Time                               `json:"replacement_window_expires_at,omitempty"`
+	AwaitingConfirmation       *SubmissionAwaitingConfirmation          `json:"awaiting_confirmation,omitempty"`
+	CorrectionResult           *repository.RelationshipCorrectionResult `json:"correction_result,omitempty"`
+}
+
+type SubmissionAwaitingConfirmation struct {
+	ConfirmationToken string                                       `json:"confirmation_token"`
+	ExpiresAt         time.Time                                    `json:"expires_at"`
+	Candidates        []repository.RelationshipCorrectionCandidate `json:"candidates"`
 }
 
 type SubmissionEvidenceStatus struct {
@@ -365,6 +375,7 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 	}
 	return &SubmissionStatusResult{
 		SubmissionID:               placement.IngestID,
+		SubmissionKind:             "remember",
 		ProcessingState:            processing,
 		SearchState:                searchState,
 		CheckAfterSeconds:          rememberCheckAfterSeconds,
@@ -480,6 +491,7 @@ func rememberResultFromLedger(created *repository.CreateIngestResult, correlatio
 	return &RememberResult{
 		IngestID:          created.IngestID,
 		SubmissionID:      created.IngestID,
+		SubmissionKind:    "remember",
 		ProcessingState:   publicSubmissionProcessingState(created.Status, created.SemanticHoldState),
 		CheckAfterSeconds: rememberCheckAfterSeconds,
 		StatusTool:        rememberStatusTool,

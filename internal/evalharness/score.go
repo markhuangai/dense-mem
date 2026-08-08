@@ -366,6 +366,7 @@ func EvaluateGates(summary Summary, gates GateOptions) GateResult {
 			"required_rank1_rate":          summary.RequiredRank1Rate,
 			"average_bad_at_k":             summary.AverageBadAtK,
 			"bad_rank1_rate":               summary.BadRank1Rate,
+			"unmapped_source_refs":         float64(summary.UnmappedSourceRefs),
 			"average_context_recall_at_k":  summary.AverageContextRecallAtK,
 			"context_required_rank1_rate":  summary.ContextRequiredRank1Rate,
 			"average_context_bad_at_k":     summary.AverageContextBadAtK,
@@ -404,6 +405,17 @@ func EvaluateGates(summary Summary, gates GateOptions) GateResult {
 	checkMin("required_rank1_rate", summary.RequiredRank1Rate, gates.MinRequiredRank1Rate)
 	checkMax("average_bad_at_k", summary.AverageBadAtK, gates.MaxAverageBadAtK)
 	checkMax("bad_rank1_rate", summary.BadRank1Rate, gates.MaxBadRank1Rate)
+	if gates.MaxUnmappedSourceRefs != nil {
+		result.Thresholds["unmapped_source_refs"] = float64(*gates.MaxUnmappedSourceRefs)
+		if summary.UnmappedSourceRefs > *gates.MaxUnmappedSourceRefs {
+			result.Passed = false
+			result.Failures = append(result.Failures, fmt.Sprintf(
+				"unmapped_source_refs %d above maximum %d",
+				summary.UnmappedSourceRefs,
+				*gates.MaxUnmappedSourceRefs,
+			))
+		}
+	}
 	if gates.ContextAny() {
 		if summary.ContextScoredCaseCount == 0 {
 			result.Passed = false
@@ -445,6 +457,7 @@ func (g GateOptions) Any() bool {
 		g.MinRequiredRank1Rate != nil ||
 		g.MaxAverageBadAtK != nil ||
 		g.MaxBadRank1Rate != nil ||
+		g.MaxUnmappedSourceRefs != nil ||
 		g.ContextAny() ||
 		g.EvidenceAny() ||
 		g.DreamAny()

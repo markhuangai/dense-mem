@@ -1,77 +1,34 @@
+//go:build evaluation
+
 package registry
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	appservice "github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/recallquality"
 )
 
 const (
-	defaultEvalK = 10
-	maxEvalK     = 50
+	defaultEvaluationPageSize = 100
+	maxEvaluationPageSize     = 500
 )
-
-func evalGetManifestTool(deps Dependencies) Tool {
-	return Tool{
-		Name:           "eval_get_manifest",
-		Description:    "Evaluation mode manifest for the authenticated team, including runtime limits and available evaluation capabilities.",
-		InputSchema:    map[string]any{"type": "object", "additionalProperties": false},
-		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read", "write"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			runtime := domain.EvaluationRuntimeConfig{Enabled: true, ExportMaxPageSize: appservice.DefaultEvaluationExportMaxPageSize}
-			if deps.EvaluationConfig != nil {
-				cfg, err := deps.EvaluationConfig.EvaluationRuntimeConfig(ctx)
-				if err != nil {
-					return nil, fmt.Errorf("eval_get_manifest: runtime config unavailable: %w", err)
-				}
-				runtime = cfg
-			}
-			if err := auditEvaluationTool(ctx, deps, "eval_get_manifest", 0, false, nil); err != nil {
-				return nil, err
-			}
-			actor, _ := requestctx.ActorProfileFromContext(ctx)
-			return map[string]any{
-				"evaluation_mode": runtime.Enabled,
-				"export_limits": map[string]any{
-					"max_page_size": runtime.ExportMaxPageSize,
-				},
-				"team": map[string]any{
-					"id":   firstNonEmpty(actor.TeamID.String(), profileID),
-					"name": actor.TeamName,
-				},
-				"capabilities": []string{
-					"knowledge_refs",
-					"knowledge_item",
-					"recall_feedback_events",
-					"dream_cycle",
-					"recall_case",
-					"retrieval_scoring",
-				},
-			}, nil
-		},
-	}
-}
 
 func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 	return Tool{
 		Name:        "eval_list_knowledge_refs",
-		Description: "Page through team-scoped knowledge references for evaluation. Content is included unless metadata_only=true.",
+		Description: "Page through authenticated-team knowledge references for evaluation. Content is included unless metadata_only=true.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"type"},
 			"properties": map[string]any{
 				"type":          schemaEnum(evalListKnowledgeRefTypes(deps)),
-				"limit":         map[string]any{"type": "integer", "minimum": 1, "maximum": 500},
+				"limit":         map[string]any{"type": "integer", "minimum": 1, "maximum": maxEvaluationPageSize},
 				"cursor":        schemaString("Opaque cursor from a previous response.", 512),
 				"status":        schemaString("Optional lifecycle status filter.", 64),
 				"metadata_only": map[string]any{"type": "boolean"},
@@ -82,7 +39,7 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 		RequiredScopes: []string{"read", "write"},
 		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
 			kind := strings.ToLower(stringInput(input["type"]))
-			limit := evalLimit(ctx, deps, input)
+			limit := evalLimit(input)
 			metadataOnly, _ := input["metadata_only"].(bool)
 			if err := auditEvaluationTool(ctx, deps, "eval_list_knowledge_refs", limit, !metadataOnly, map[string]any{"type": kind, "status": input["status"]}); err != nil {
 				return nil, err
@@ -91,247 +48,11 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 			case "dream":
 				return evalListDreams(ctx, deps, profileID, input, limit, metadataOnly)
 			case "evidence", "relationship", "entity", "value", "hypothesis":
-				if err := requireEvaluationKnowledgeTypesVisible(deps); err != nil {
-					return nil, err
-				}
 				return evalListKnowledgeRefs(ctx, deps, profileID, input, limit, metadataOnly)
 			default:
 				return nil, fmt.Errorf("eval_list_knowledge_refs: unsupported type %q", kind)
 			}
 		},
-	}
-}
-
-func evalGetKnowledgeItemTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        "eval_get_knowledge_item",
-		Description: "Fetch one team-scoped knowledge item with its evaluation metadata.",
-		InputSchema: map[string]any{
-			"type":     "object",
-			"required": []string{"type", "id"},
-			"properties": map[string]any{
-				"type":          schemaEnum(evalGetKnowledgeItemTypes(deps)),
-				"id":            schemaString("Knowledge item ID.", 256),
-				"metadata_only": map[string]any{"type": "boolean"},
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read", "write"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			kind := strings.ToLower(stringInput(input["type"]))
-			id, _ := input["id"].(string)
-			metadataOnly, _ := input["metadata_only"].(bool)
-			if err := auditEvaluationTool(ctx, deps, "eval_get_knowledge_item", 1, !metadataOnly, map[string]any{"type": kind}); err != nil {
-				return nil, err
-			}
-			item, err := evalGetKnowledgeItem(ctx, deps, profileID, kind, id)
-			if err != nil {
-				return nil, err
-			}
-			if metadataOnly {
-				stripEvalContent(kind, item)
-			}
-			return map[string]any{"item": item}, nil
-		},
-	}
-}
-
-func evalListRecallFeedbackEventsTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        EvalListRecallFeedbackEventsToolName,
-		Description: "Export team-scoped recall feedback events for diagnostics and hard-case mining.",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"limit":           map[string]any{"type": "integer", "minimum": 1, "maximum": 500},
-				"offset":          map[string]any{"type": "integer", "minimum": 0},
-				"quality":         schemaEnum([]string{"high", "medium", "low"}),
-				"include_pending": map[string]any{"type": "boolean"},
-				"missing_context": map[string]any{"type": "boolean"},
-				"irrelevant":      map[string]any{"type": "boolean"},
-				"from":            map[string]any{"type": "string", "format": "date-time"},
-				"to":              map[string]any{"type": "string", "format": "date-time"},
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{appservice.APIKeyScopeRead, appservice.APIKeyScopeFeedbackRead},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			if deps.RecallFeedbackEvents == nil {
-				return nil, ErrToolUnavailable
-			}
-			reader, ok := deps.RecallFeedbackEvents.(interface {
-				ListRecallFeedbackEvents(context.Context, domain.RecallFeedbackEventFilter) (*domain.RecallFeedbackEventPage, error)
-			})
-			if !ok {
-				return nil, ErrToolUnavailable
-			}
-			limit := evalLimit(ctx, deps, input)
-			if err := auditEvaluationTool(ctx, deps, EvalListRecallFeedbackEventsToolName, limit, false, nil); err != nil {
-				return nil, err
-			}
-			filter, err := evalRecallFeedbackFilter(ctx, profileID, input, limit)
-			if err != nil {
-				return nil, err
-			}
-			page, err := reader.ListRecallFeedbackEvents(ctx, filter)
-			if err != nil {
-				return nil, err
-			}
-			out, err := structToMap(page)
-			if err != nil {
-				return nil, err
-			}
-			return out, nil
-		},
-	}
-}
-
-func evalGetRecallFeedbackEventTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        EvalGetRecallFeedbackEventToolName,
-		Description: "Fetch one team-scoped recall feedback event with resolved current graph state.",
-		InputSchema: map[string]any{
-			"type":     "object",
-			"required": []string{"recall_id"},
-			"properties": map[string]any{
-				"recall_id": schemaString("Recall feedback event ID.", 256),
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{appservice.APIKeyScopeRead, appservice.APIKeyScopeFeedbackRead},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			if deps.RecallFeedbackEvents == nil {
-				return nil, ErrToolUnavailable
-			}
-			reader, ok := deps.RecallFeedbackEvents.(interface {
-				GetRecallFeedbackEvent(context.Context, string) (*domain.RecallFeedbackEvent, error)
-			})
-			if !ok {
-				return nil, ErrToolUnavailable
-			}
-			if err := auditEvaluationTool(ctx, deps, EvalGetRecallFeedbackEventToolName, 1, false, nil); err != nil {
-				return nil, err
-			}
-			recallID, _ := input["recall_id"].(string)
-			event, err := reader.GetRecallFeedbackEvent(ctx, recallID)
-			if err != nil {
-				return nil, err
-			}
-			if !evalEventInScope(ctx, profileID, event) {
-				return nil, errors.New("recall feedback event not found")
-			}
-			out, err := structToMap(event)
-			if err != nil {
-				return nil, err
-			}
-			return map[string]any{"event": out}, nil
-		},
-	}
-}
-
-func evalScoreRetrievalCaseTool(deps Dependencies) Tool {
-	return Tool{
-		Name:        "eval_score_retrieval_case",
-		Description: "Score one ranked retrieval case and optional context refs against required and bad refs using deterministic recallquality metrics.",
-		InputSchema: map[string]any{
-			"type":     "object",
-			"required": []string{"ranked_refs", "required_refs"},
-			"properties": map[string]any{
-				"k":                      map[string]any{"type": "integer", "minimum": 1, "maximum": maxEvalK},
-				"ranked_refs":            evalRefArraySchema(false),
-				"context_refs":           evalRefArraySchema(false),
-				"evidence_refs":          evalRefArraySchema(false),
-				"dream_refs":             evalRefArraySchema(false),
-				"required_refs":          evalRefArraySchema(true),
-				"bad_refs":               evalRefArraySchema(false),
-				"required_evidence_refs": evalRefArraySchema(true),
-				"bad_evidence_refs":      evalRefArraySchema(false),
-				"required_dream_refs":    evalRefArraySchema(true),
-				"bad_dream_refs":         evalRefArraySchema(false),
-			},
-			"additionalProperties": false,
-		},
-		OutputSchema:   map[string]any{"type": "object"},
-		RequiredScopes: []string{"read", "write"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-			k := intInputOrDefault(input["k"], defaultEvalK)
-			if err := auditEvaluationTool(ctx, deps, "eval_score_retrieval_case", k, false, nil); err != nil {
-				return nil, err
-			}
-			ranked := evalResultRefs(input["ranked_refs"])
-			required := evalJudgments(input["required_refs"])
-			bad := evalResultRefs(input["bad_refs"])
-			metrics := recallquality.ScoreAtK(ranked, required, bad, k)
-			out, err := structToMap(metrics)
-			if err != nil {
-				return nil, err
-			}
-			if _, ok := input["context_refs"]; ok {
-				contextMetrics := recallquality.ScoreAtK(evalResultRefs(input["context_refs"]), required, bad, k)
-				out["context_scored"] = true
-				out["context_relevant_at_k"] = contextMetrics.RelevantAtK
-				out["context_relevant_total"] = contextMetrics.RelevantTotal
-				out["context_bad_at_k"] = contextMetrics.BadAtK
-				out["context_recall_at_k"] = contextMetrics.RecallAtK
-				out["context_mrr"] = contextMetrics.MRR
-				out["context_ndcg_at_k"] = contextMetrics.NDCGAtK
-			}
-			if _, ok := input["evidence_refs"]; ok {
-				evidenceMetrics := recallquality.ScoreAtK(
-					evalResultRefs(input["evidence_refs"]),
-					evalJudgments(input["required_evidence_refs"]),
-					evalResultRefs(input["bad_evidence_refs"]),
-					k,
-				)
-				out["evidence_scored"] = true
-				out["evidence_relevant_at_k"] = evidenceMetrics.RelevantAtK
-				out["evidence_relevant_total"] = evidenceMetrics.RelevantTotal
-				out["evidence_bad_at_k"] = evidenceMetrics.BadAtK
-				out["evidence_recall_at_k"] = evidenceMetrics.RecallAtK
-				out["evidence_mrr"] = evidenceMetrics.MRR
-				out["evidence_ndcg_at_k"] = evidenceMetrics.NDCGAtK
-			}
-			if _, ok := input["dream_refs"]; ok {
-				dreamMetrics := recallquality.ScoreAtK(
-					evalResultRefs(input["dream_refs"]),
-					evalJudgments(input["required_dream_refs"]),
-					evalResultRefs(input["bad_dream_refs"]),
-					k,
-				)
-				out["dream_scored"] = true
-				out["dream_relevant_at_k"] = dreamMetrics.RelevantAtK
-				out["dream_relevant_total"] = dreamMetrics.RelevantTotal
-				out["dream_bad_at_k"] = dreamMetrics.BadAtK
-				out["dream_recall_at_k"] = dreamMetrics.RecallAtK
-				out["dream_mrr"] = dreamMetrics.MRR
-				out["dream_ndcg_at_k"] = dreamMetrics.NDCGAtK
-			}
-			return out, nil
-		},
-	}
-}
-
-func evalGetKnowledgeItem(ctx context.Context, deps Dependencies, profileID, kind, id string) (map[string]any, error) {
-	switch kind {
-	case "dream":
-		if deps.Dreams == nil {
-			return nil, ErrToolUnavailable
-		}
-		dream, err := deps.Dreams.Get(ctx, profileID, id)
-		if err != nil {
-			return nil, err
-		}
-		return structToMap(dream)
-	case "evidence", "relationship", "entity", "value", "hypothesis":
-		if err := requireEvaluationKnowledgeTypesVisible(deps); err != nil {
-			return nil, err
-		}
-		return evalGetCanonicalKnowledgeItem(ctx, deps, profileID, kind, id)
-	default:
-		return nil, fmt.Errorf("eval_get_knowledge_item: unsupported type %q", kind)
 	}
 }
 
@@ -371,75 +92,15 @@ func auditEvaluationTool(ctx context.Context, deps Dependencies, tool string, pa
 	})
 }
 
-func evalLimit(ctx context.Context, deps Dependencies, input map[string]any) int {
-	limit := appservice.DefaultEvaluationExportMaxPageSize
-	if deps.EvaluationConfig != nil {
-		if cfg, err := deps.EvaluationConfig.EvaluationRuntimeConfig(ctx); err == nil && cfg.ExportMaxPageSize > 0 {
-			limit = cfg.ExportMaxPageSize
-		}
-	}
-	if requested, ok := intInput(input["limit"]); ok && requested > 0 && requested < limit {
+func evalLimit(input map[string]any) int {
+	limit := defaultEvaluationPageSize
+	if requested, ok := intInput(input["limit"]); ok && requested > 0 {
 		limit = requested
 	}
-	if limit > 500 {
-		return 500
+	if limit > maxEvaluationPageSize {
+		return maxEvaluationPageSize
 	}
 	return limit
-}
-
-func evalRecallFeedbackFilter(ctx context.Context, profileID string, input map[string]any, limit int) (domain.RecallFeedbackEventFilter, error) {
-	filter := domain.RecallFeedbackEventFilter{Limit: limit}
-	if offset, ok := intInput(input["offset"]); ok {
-		filter.Offset = offset
-	}
-	if quality, ok := input["quality"].(string); ok {
-		filter.Quality = quality
-	}
-	if includePending, ok := input["include_pending"].(bool); ok {
-		filter.IncludePending = includePending
-	}
-	if missing, ok := input["missing_context"].(bool); ok {
-		filter.MissingContext = &missing
-	}
-	if irrelevant, ok := input["irrelevant"].(bool); ok {
-		filter.Irrelevant = &irrelevant
-	}
-	if from, ok := input["from"].(string); ok && strings.TrimSpace(from) != "" {
-		parsed, err := time.Parse(time.RFC3339, from)
-		if err != nil {
-			return filter, fmt.Errorf("from must be RFC3339")
-		}
-		filter.From = &parsed
-	}
-	if to, ok := input["to"].(string); ok && strings.TrimSpace(to) != "" {
-		parsed, err := time.Parse(time.RFC3339, to)
-		if err != nil {
-			return filter, fmt.Errorf("to must be RFC3339")
-		}
-		filter.To = &parsed
-	}
-	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok && actor.TeamID != uuid.Nil {
-		filter.TeamID = &actor.TeamID
-		return filter, nil
-	}
-	if parsed, err := uuid.Parse(profileID); err == nil {
-		filter.TeamID = &parsed
-	}
-	return filter, nil
-}
-
-func evalEventInScope(ctx context.Context, profileID string, event *domain.RecallFeedbackEvent) bool {
-	if event == nil {
-		return false
-	}
-	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok && actor.TeamID != uuid.Nil {
-		return event.TeamID != nil && *event.TeamID == actor.TeamID
-	}
-	parsed, err := uuid.Parse(profileID)
-	if err != nil {
-		return false
-	}
-	return event.TeamID != nil && *event.TeamID == parsed
 }
 
 func evalPage(items []map[string]any, nextCursor string) map[string]any {
@@ -452,12 +113,6 @@ func evalPage(items []map[string]any, nextCursor string) map[string]any {
 
 func stripEvalContent(kind string, item map[string]any) {
 	switch kind {
-	case "fragment":
-		delete(item, "content")
-	case "claim", "fact":
-		delete(item, "object")
-	case "community":
-		delete(item, "summary")
 	case "dream":
 		delete(item, "hypothesis")
 		delete(item, "what_if")
@@ -476,81 +131,8 @@ func stripEvalContent(kind string, item map[string]any) {
 	}
 }
 
-func evalRefArraySchema(withGrade bool) map[string]any {
-	properties := map[string]any{
-		"type": schemaEnum(evalScoredKnowledgeRefTypes()),
-		"id":   schemaString("Reference ID.", 256),
-	}
-	required := []string{"type", "id"}
-	if withGrade {
-		properties["grade"] = map[string]any{"type": "number", "minimum": 0}
-	}
-	return map[string]any{
-		"type":     "array",
-		"maxItems": 500,
-		"items": map[string]any{
-			"type":                 "object",
-			"required":             required,
-			"properties":           properties,
-			"additionalProperties": true,
-		},
-	}
-}
-
-func evalResultRefs(value any) []recallquality.ResultRef {
-	maps := evalRefMaps(value)
-	if maps == nil {
-		return nil
-	}
-	refs := make([]recallquality.ResultRef, 0, len(maps))
-	for _, m := range maps {
-		refs = append(refs, recallquality.ResultRef{
-			Type: stringInput(m["type"]),
-			ID:   stringInput(m["id"]),
-		})
-	}
-	return refs
-}
-
-func evalJudgments(value any) []recallquality.Judgment {
-	maps := evalRefMaps(value)
-	if maps == nil {
-		return nil
-	}
-	refs := make([]recallquality.Judgment, 0, len(maps))
-	for _, m := range maps {
-		grade := 1.0
-		if parsed, ok := schemaNumber(m["grade"]); ok {
-			grade = parsed
-		}
-		refs = append(refs, recallquality.Judgment{
-			Type:  stringInput(m["type"]),
-			ID:    stringInput(m["id"]),
-			Grade: grade,
-		})
-	}
-	return refs
-}
-
-func evalRefMaps(value any) []map[string]any {
-	switch raw := value.(type) {
-	case []any:
-		maps := make([]map[string]any, 0, len(raw))
-		for _, item := range raw {
-			if m, ok := item.(map[string]any); ok {
-				maps = append(maps, m)
-			}
-		}
-		return maps
-	case []map[string]any:
-		return raw
-	default:
-		return nil
-	}
-}
-
 func optionalTime(value any) (*time.Time, error) {
-	raw := strings.TrimSpace(stringInput(value))
+	raw := stringInput(value)
 	if raw == "" {
 		return nil, nil
 	}
@@ -568,29 +150,10 @@ func intInputOrDefault(value any, fallback int) int {
 	return fallback
 }
 
-func boolInput(value any) bool {
-	parsed, _ := value.(bool)
-	return parsed
-}
-
 func boolInputOrDefault(value any, fallback bool) bool {
 	parsed, ok := value.(bool)
 	if !ok {
 		return fallback
 	}
 	return parsed
-}
-
-func stringInput(value any) string {
-	parsed, _ := value.(string)
-	return strings.TrimSpace(parsed)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" && value != uuid.Nil.String() {
-			return value
-		}
-	}
-	return ""
 }

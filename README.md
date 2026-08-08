@@ -211,6 +211,36 @@ Both operations append lifecycle events. They never physically delete evidence
 or trace lineage. Current recall excludes retired evidence, while a historical
 `known_at` view before the event can still show what the system knew then.
 
+`correct_relationship` replaces a specific active Relationship owned by the
+calling profile. It does not rewrite or delete the original record. The caller
+supplies the current Relationship version, its exact effective evidence spans,
+a bounded reason, and only the endpoints or predicate that need correction:
+
+```json
+{
+  "action": "submit",
+  "relationship_id": "<owned-active-relationship-uuid>",
+  "expected_version": 1,
+  "patch": {
+    "object_entity": {
+      "entity_id": "<correct-same-team-entity-uuid>"
+    }
+  },
+  "supports": [
+    { "evidence_id": "<supporting-evidence-uuid>", "start": 0, "end": 38 }
+  ],
+  "reason": "The object was resolved to the wrong Entity.",
+  "idempotency_key": "relationship-correction-20260808"
+}
+```
+
+On acceptance, Dense-Mem atomically supersedes the original Relationship,
+creates or reuses the active successor, copies the effective support lineage,
+and appends the correction event and `corrects` cross-reference. A different
+profile in the same team may read team-visible memory but cannot correct the
+author's Relationship. Ambiguous Entity names require one owner confirmation;
+the original remains active until that confirmation succeeds.
+
 ## Recall and Graph State
 
 `recall_memory` is evidence-first but support-path gated. Its `results[]`
@@ -238,19 +268,56 @@ The active contract is `dense-mem.v2.4`. Discover the authorized catalog with
 MCP `tools/list`; the server applies the same scope, feature, and visibility
 checks to `tools/call`.
 
-| Tool | Purpose |
-|------|---------|
-| `remember` | Submit exact evidence and optional Entity/Relationship proposal hints for server-owned placement. |
-| `get_submission_status` | Poll owner-scoped processing and search readiness. |
-| `retract_evidence` | Retract caller-owned evidence while preserving append-only provenance. |
-| `correct_entity_resolution` | Dry-run or apply caller-owned Entity merge and split corrections. |
-| `recall_memory` | Recall active evidence contexts and Relationship handles. |
-| `trace_memory` | Trace one same-team Relationship through evidence, decisions, and lineage. |
-| `submit_recall_session_feedback` | Record bounded session-level recall quality feedback. |
-| `list_dreams` | List reviewable Hypotheses without treating them as memory. |
-| `get_dream` | Fetch one authorized Hypothesis and its source references. |
-| `resolve_dream_feedback` | Resolve Hypothesis feedback without using the Hypothesis as evidence. |
-| `export_memory_pack` | Export selected active Relationships with support provenance. |
+| Tool | Used by | Registration | Use case and capability |
+|------|---------|--------------|-------------------------|
+| `remember` | Both | Production and evaluation images | Production evidence intake; the harness also imports corpus rows through this real intake path. |
+| `get_submission_status` | Both | Production and evaluation images | Poll owner-scoped `remember` and `correct_relationship` processing; the harness waits for imported corpus placement. |
+| `retract_evidence` | Production | Production and evaluation images | Retire caller-owned evidence while preserving append-only provenance. |
+| `correct_relationship` | Production | Production and evaluation images | Owner-only replacement of an active supported Relationship; supersedes the original and preserves support lineage. |
+| `recall_memory` | Production | Production and evaluation images | Recall active evidence contexts and Relationship handles. When enabled features produce an actionable follow-up, the result includes `suggested_actions`. |
+| `trace_memory` | Production | Production and evaluation images | Trace one same-team Relationship through evidence, decisions, and lineage. |
+| `submit_recall_session_feedback` | Production | Conditional in both images | Record bounded session-level recall quality feedback. Registered only while recall feedback is enabled. |
+| `list_dreams` | Production | Conditional in both images | List reviewable Hypotheses without treating them as memory. Registered only when Dreaming is effective for the authenticated team. |
+| `get_dream` | Production | Conditional in both images | Fetch one authorized Hypothesis and its source references under the same team Dreaming gate. |
+| `resolve_dream_feedback` | Production | Conditional in both images | Confirm independently supported or refuted Hypotheses; uncertain items remain unresolved. Uses the same team Dreaming gate. |
+| `export_memory_pack` | Production | Production and evaluation images | Export selected active Relationships with support provenance. |
+| `eval_list_knowledge_refs` | Evaluation harness | Evaluation image only | Page stable team-scoped knowledge references used to map seed documents to stored records. |
+| `eval_run_dream_cycle` | Evaluation harness | Evaluation image only | Run an isolated, bounded manual Dream cycle, optionally with seed Hypotheses, for evaluation. |
+| `eval_run_recall_case` | Evaluation harness | Evaluation image only | Execute current recall logic and return ranked/context references for deterministic scoring. |
+
+The production release binary is compiled without the `evaluation` build tag,
+so no environment variable or control-panel setting can register evaluation
+tools in a live release. The evaluation target adds only the three harness tools
+above. `eval_get_manifest`, `eval_get_knowledge_item`,
+`eval_list_recall_feedback_events`, `eval_get_recall_feedback_event`, and
+`eval_score_retrieval_case` are removed because the current harness does not use
+them.
+
+When recall feedback is enabled and the feedback snapshot is stored,
+`recall_memory.suggested_actions` points to
+`submit_recall_session_feedback` with the matching recall ID. When effective
+team Dreaming is enabled and recall returns Hypotheses, it also points to
+`resolve_dream_feedback`: confirm true or false only with independent evidence,
+and leave uncertain Hypotheses unresolved.
+
+For local evaluation, the committed compose example builds the evaluation
+target and loads the ignored repository-root `.env` by default:
+
+```bash
+docker compose -p densemem_eval \
+  -f examples/docker-compose.evaluation.yml up -d --build
+
+go run ./cmd/eval-seedgen \
+  --preset local_eval_100 \
+  --out tests/eval/seeds/local_eval_100 \
+  --suite tests/eval/suites/local_eval_100.jsonl
+```
+
+The `local_eval_100` CLI preset emits the versioned `local_eval_100_v2` seed
+identity with 100 corpus rows and 25 scored cases. It is a smoke check for the
+evaluation image and harness plumbing, not a replacement for the approved
+deterministic 1k release gate. Use `IMPORT_CONCURRENCY=5` for this smoke; the
+full evaluation remains configurable up to the harness limit of 10.
 
 Memory-pack export emits the current `dense-mem.memory-pack.v2.4` artifact. Import
 and candidate-discovery workflows are not part of the public contract.

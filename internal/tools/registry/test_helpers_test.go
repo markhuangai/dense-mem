@@ -38,23 +38,6 @@ func (s stubRecallFeedbackConfig) RecallFeedbackRuntimeConfig(context.Context) (
 	return domain.RecallFeedbackRuntimeConfig{Enabled: s.enabled}, s.err
 }
 
-func (s stubRecallFeedbackConfig) EvaluationRuntimeConfig(context.Context) (domain.EvaluationRuntimeConfig, error) {
-	return domain.EvaluationRuntimeConfig{Enabled: s.enabled}, s.err
-}
-
-type stubEvaluationConfig struct {
-	enabled bool
-	err     error
-}
-
-func (s stubEvaluationConfig) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
-	return domain.RecallFeedbackRuntimeConfig{}, nil
-}
-
-func (s stubEvaluationConfig) EvaluationRuntimeConfig(context.Context) (domain.EvaluationRuntimeConfig, error) {
-	return domain.EvaluationRuntimeConfig{Enabled: s.enabled}, s.err
-}
-
 type stubRecallFeedbackRecorder struct {
 	snapshots []domain.RecallFeedbackEvent
 	feedback  []domain.RecallFeedbackSubmission

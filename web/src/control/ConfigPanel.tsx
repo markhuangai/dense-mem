@@ -1,10 +1,10 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useState } from "react";
 import { Check, Clock, ListFilter, MessageSquare, Moon, Network, RefreshCw, Settings, X } from "lucide-react";
-import { CommunityDetectionConfig, CommunityDetectionConfigItem, ControlApi, DreamingConfig, DreamingConfigItem, EvaluationConfig, EvaluationConfigItem, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem, TelemetryPricingConfig, TelemetryPricingConfigItem } from "../api";
+import { CommunityDetectionConfig, CommunityDetectionConfigItem, ControlApi, DreamingConfig, DreamingConfigItem, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem, TelemetryPricingConfig, TelemetryPricingConfigItem } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
-type ConfigTab = "general" | "sso" | "dreaming" | "community" | "operation-logs" | "recall-feedback" | "evaluation" | "telemetry-pricing";
+type ConfigTab = "general" | "sso" | "dreaming" | "community" | "operation-logs" | "recall-feedback" | "telemetry-pricing";
 
 const CONFIG_LABELS: Record<string, string> = {
   APP_TIMEZONE: "Timezone",
@@ -27,8 +27,6 @@ const CONFIG_LABELS: Record<string, string> = {
   OPERATION_LOG_RETENTION_DAYS: "Retention days",
   RECALL_FEEDBACK_ENABLED: "Enable recall feedback",
   RECALL_FEEDBACK_RETENTION_DAYS: "Investigation retention days",
-  EVALUATION_MODE_ENABLED: "Evaluation mode",
-  EVALUATION_EXPORT_MAX_PAGE_SIZE: "Max export page size",
   TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS: "Verifier input USD / million tokens",
   TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS: "Verifier output USD / million tokens",
   TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS: "Embedding input USD / million tokens",
@@ -49,7 +47,6 @@ const CONFIG_PLACEHOLDERS: Record<string, string> = {
   COMMUNITY_DETECTION_JITTER_SECONDS: "600",
   OPERATION_LOG_RETENTION_DAYS: "30",
   RECALL_FEEDBACK_RETENTION_DAYS: "30",
-  EVALUATION_EXPORT_MAX_PAGE_SIZE: "100",
   TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS: "Leave blank to mark as unpriced",
   TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS: "Leave blank to mark as unpriced",
   TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS: "Leave blank to mark as unpriced",
@@ -134,16 +131,6 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
           <span>Recall</span>
         </button>
         <button
-          className={activeTab === "evaluation" ? "tab-button active" : "tab-button"}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === "evaluation"}
-          onClick={() => setActiveTab("evaluation")}
-        >
-          <Settings size={16} aria-hidden="true" />
-          <span>Evaluation</span>
-        </button>
-        <button
           className={activeTab === "telemetry-pricing" ? "tab-button active" : "tab-button"}
           type="button"
           role="tab"
@@ -169,14 +156,13 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
       {activeTab === "dreaming" && <DreamingConfigPanel api={api} />}
       {activeTab === "community" && <CommunityDetectionConfigPanel api={api} />}
       {activeTab === "recall-feedback" && <RecallFeedbackConfigPanel api={api} />}
-      {activeTab === "evaluation" && <EvaluationConfigPanel api={api} />}
       {activeTab === "telemetry-pricing" && <TelemetryPricingConfigPanel api={api} />}
       {activeTab === "operation-logs" && <OperationLogConfigPanel api={api} />}
     </>
   );
 }
 
-type ConfigItem = GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem | EvaluationConfigItem | TelemetryPricingConfigItem;
+type ConfigItem = GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem | TelemetryPricingConfigItem;
 type RuntimeConfig = {
   update_time: string;
   items: ConfigItem[];
@@ -250,17 +236,6 @@ function RecallFeedbackConfigPanel({ api }: { api: ControlApi }) {
       refreshLabel="Refresh recall feedback config"
       load={() => api.getRecallFeedbackConfig()}
       save={(input) => api.updateRecallFeedbackConfig(input)}
-    />
-  );
-}
-
-function EvaluationConfigPanel({ api }: { api: ControlApi }) {
-  return (
-    <RuntimeConfigPanel
-      title="Evaluation"
-      refreshLabel="Refresh evaluation config"
-      load={() => api.getEvaluationConfig()}
-      save={(input) => api.updateEvaluationConfig(input)}
     />
   );
 }
@@ -383,7 +358,7 @@ function ConfigField({
   value,
   onChange,
 }: {
-  item: GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem | EvaluationConfigItem | TelemetryPricingConfigItem;
+  item: GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem | TelemetryPricingConfigItem;
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -444,7 +419,7 @@ function ConfigField({
   }
 
   const pricing = item.key.startsWith("TELEMETRY_COST_");
-  const numeric = pricing || item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" || item.key === "EVALUATION_EXPORT_MAX_PAGE_SIZE";
+  const numeric = pricing || item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
   const time = item.key === "DREAMING_START_TIME_LOCAL" || item.key === "COMMUNITY_DETECTION_START_TIME_LOCAL";
   const min = item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric && !pricing ? 1 : undefined;
   return (
@@ -455,7 +430,7 @@ function ConfigField({
         type={time ? "time" : pricing ? "text" : numeric ? "number" : "text"}
         inputMode={pricing ? "decimal" : undefined}
         min={min}
-        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : item.key === "EVALUATION_EXPORT_MAX_PAGE_SIZE" ? 500 : undefined}
+        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : undefined}
         placeholder={CONFIG_PLACEHOLDERS[item.key] ?? ""}
         value={value}
         onChange={(event) => onChange(event.target.value)}
