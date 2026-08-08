@@ -16,7 +16,7 @@ RUN npm run build
 # ============================================================================
 # Build stage
 # ============================================================================
-FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine AS builder-base
+FROM --platform=$BUILDPLATFORM golang:1.26.5-alpine AS builder-base
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -51,7 +51,7 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
 # ============================================================================
 # Shared runtime stage
 # ============================================================================
-FROM alpine:3.20 AS runtime-base
+FROM alpine:3.24 AS runtime-base
 
 ARG IMAGE_VERSION=dev
 ARG IMAGE_REVISION=unknown
