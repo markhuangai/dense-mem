@@ -116,6 +116,15 @@ const [currentCount, logicalCount, algorithmKind, algorithmVersion] = currentRec
 if (Number(currentCount) < 1 || Number(logicalCount) < 1 || algorithmKind !== "louvain" || algorithmVersion !== "v2") {
   throw new Error(`persisted community snapshot is incomplete: ${currentRecord}`);
 }
+const communityIndexes = postgresQuery(`
+  SELECT string_agg(indexname, ',' ORDER BY indexname)
+  FROM pg_indexes
+  WHERE schemaname = 'public'
+    AND indexname IN ('community_records_current_logical_unique', 'community_sources_group_idx', 'community_sources_community_idx')
+`);
+for (const indexName of ['community_records_current_logical_unique', 'community_sources_group_idx', 'community_sources_community_idx']) {
+  if (!communityIndexes.split(',').includes(indexName)) throw new Error(`community migration index is missing: ${indexName}`);
+}
 
 console.log(JSON.stringify({
   status: "ok",

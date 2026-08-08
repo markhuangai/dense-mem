@@ -139,12 +139,16 @@ func TestMigratorRunUp(t *testing.T) {
 
 	m := NewMigratorWithDB(sqlDB)
 
-	// Run up migrations
 	err := m.RunUp(ctx)
-	// Should succeed since we have a valid migrations directory
 	assert.NoError(t, err, "RunUp should succeed")
 	err = m.RunUp(ctx)
 	assert.NoError(t, err, "repeat RunUp should be idempotent")
+	for _, indexName := range []string{"community_records_current_logical_unique", "community_sources_group_idx", "community_sources_community_idx"} {
+		assert.True(t, indexExists(t, ctx, sqlDB, indexName), "community migration index %s should exist", indexName)
+	}
+	var logicalCommunityIDNotNull int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'community_records' AND column_name = 'logical_community_id' AND is_nullable = 'NO'`).Scan(&logicalCommunityIDNotNull))
+	assert.Equal(t, 1, logicalCommunityIDNotNull, "logical community IDs should be enforced after the committed backfill")
 }
 
 func TestMigratorRunUpAppliesPostCutoverCleanupAfterEmbeddingRetry(t *testing.T) {
@@ -172,8 +176,8 @@ func TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrgan
 	defer cleanup()
 
 	m := NewMigratorWithDB(sqlDB)
-
-	require.NoError(t, m.RunUp(ctx), "RunUp should succeed")
+	require.NoError(t, goose.SetDialect("postgres"))
+	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026073106), "telemetry migration setup should succeed")
 
 	var pricingCount int
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
@@ -187,7 +191,10 @@ func TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrgan
 	`).Scan(&pricingCount))
 	assert.Equal(t, 3, pricingCount)
 
-	require.NoError(t, m.RunDown(ctx), "telemetry marker index migration should be reversible")
+	// Rewind post-telemetry migrations first; the test's assertions start at
+	// the known reversible telemetry boundary rather than the repository head.
+	require.NoError(t, goose.SetDialect("postgres"))
+	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026073105), "telemetry marker index migration should be reversible")
 	assert.False(t, indexExists(t, ctx, sqlDB, "placement_outcomes_telemetry_first_disposition_unique"))
 	assert.False(t, indexExists(t, ctx, sqlDB, "knowledge_ingests_telemetry_remember_backfill_idx"))
 	assert.False(t, tableExists(t, ctx, sqlDB, "telemetry_first_disposition_backfill_state"))
@@ -281,6 +288,12 @@ func TestSemanticLedgerMigrationUpgradesPopulated1703(t *testing.T) {
 	runGooseUpTo(t, ctx, sqlDB, 2026071703)
 	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
 	insertMigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "primary")
+	// Main's post-cutover guard requires a compatible marker for populated databases.
+	runGooseUpTo(t, ctx, sqlDB, 2026071909)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO v2_compatibility_markers (marker_kind, version, status, corpus_hash, gate_report_hash, metadata) VALUES ('v2_cutover', 'dense-mem.v2.1.cutover.v1', 'compatible', 'sha256:corpus', 'sha256:gates', '{}'::jsonb)`)
+		return err
+	}))
 
 	m := NewMigratorWithDB(sqlDB)
 	require.NoError(t, m.RunUp(ctx))
@@ -482,8 +495,6 @@ func TestSemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority(t *test
 	}))
 
 	m := NewMigratorWithDB(sqlDB)
-	require.NoError(t, m.RunDown(ctx))
-
 	err := m.RunDown(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot roll back 2026071704")
