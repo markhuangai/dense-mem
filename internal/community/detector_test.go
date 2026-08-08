@@ -35,7 +35,11 @@ func TestDetectRejectsBoundExceededGraphWithoutPartialClusters(t *testing.T) {
 }
 
 func TestDetectStopsBeforeMaterializingAnOversizedEdgeSet(t *testing.T) {
-	inputs := make([]Input, 201)
+	inputCount := 2
+	for inputCount*(inputCount-1)/2 <= MaxEdges {
+		inputCount++
+	}
+	inputs := make([]Input, inputCount)
 	for i := range inputs {
 		inputs[i] = Input{
 			RelationshipID:   fmt.Sprintf("r-%d", i),

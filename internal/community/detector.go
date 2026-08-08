@@ -113,10 +113,6 @@ func Detect(inputs []Input, seed uint64) Result {
 		return result
 	}
 
-	groupIndex := make(map[string]int, len(groups))
-	for i, group := range groups {
-		groupIndex[group] = i
-	}
 	weights := make(map[[2]int]float64)
 	tooLarge := false
 	addSharedWeights := func(values func(Node) []string, amount float64) {

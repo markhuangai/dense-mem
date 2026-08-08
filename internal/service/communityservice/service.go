@@ -440,6 +440,9 @@ func summaryMinInt(left, right int) int {
 }
 
 func validateCommunitySummaryResponse(response domain.CommunitySummary, inputHash string, relationships []domain.CommunitySummaryRelationship) string {
+	allowedRelationshipIDs := relationshipIDs(relationships)
+	allowedEvidenceIDs := evidenceIDs(relationships)
+	allowedSupportQuotes := supportQuotes(relationships)
 	switch {
 	case strings.TrimSpace(response.Summary) == "":
 		return "summary_empty"
@@ -447,15 +450,21 @@ func validateCommunitySummaryResponse(response domain.CommunitySummary, inputHas
 		return "summary_too_long"
 	case response.InputHash != "" && response.InputHash != inputHash:
 		return "input_hash_mismatch"
-	case !subsetStrings(response.AdmittedRelationshipIDs, relationshipIDs(relationships)):
+	case len(allowedRelationshipIDs) > 0 && len(response.AdmittedRelationshipIDs) == 0:
+		return "admitted_relationship_ids_required"
+	case len(allowedEvidenceIDs) > 0 && len(response.AdmittedEvidenceIDs) == 0:
+		return "admitted_evidence_ids_required"
+	case len(allowedSupportQuotes) > 0 && len(response.AdmittedSupportQuotes) == 0:
+		return "admitted_support_quotes_required"
+	case !subsetStrings(response.AdmittedRelationshipIDs, allowedRelationshipIDs):
 		return "admitted_relationship_ids_not_allowlisted"
-	case !subsetStrings(response.AdmittedEvidenceIDs, evidenceIDs(relationships)):
+	case !subsetStrings(response.AdmittedEvidenceIDs, allowedEvidenceIDs):
 		return "admitted_evidence_ids_not_allowlisted"
 	case !uniqueStrings(response.AdmittedRelationshipIDs):
 		return "admitted_relationship_ids_not_unique"
 	case !uniqueStrings(response.AdmittedEvidenceIDs):
 		return "admitted_evidence_ids_not_unique"
-	case !validSupportQuotes(response.AdmittedSupportQuotes, supportQuotes(relationships)):
+	case !validSupportQuotes(response.AdmittedSupportQuotes, allowedSupportQuotes):
 		return "admitted_support_quotes_not_exact"
 	case !validTopEntities(response.TopEntities, relationships):
 		return "top_entities_not_allowlisted"

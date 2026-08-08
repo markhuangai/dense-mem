@@ -256,6 +256,8 @@ describe("UserApi", () => {
 
     const result = await new UserApi("dm_key").recall("target", 1);
 
+    const communityHit = result.find((hit) => hit.community);
+    expect(communityHit?.community?.relationships?.[0].relationship_id).toBe("relationship-no-evidence");
     expect(result.find((hit) => hit.evidence)?.relationships).toEqual([]);
   });
 

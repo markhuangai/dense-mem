@@ -166,7 +166,13 @@ func TestValidateCommunitySummaryResponseRejectsIncompleteResponses(t *testing.T
 		SupportQuotes: []domain.CommunitySummarySupportQuote{{EvidenceID: "evidence-1", Quote: "exact quote"}},
 		Subject:       "Dense-Mem", Predicate: "uses", Object: "PostgreSQL",
 	}}
-	base := domain.CommunitySummary{Summary: "A grounded summary.", InputHash: "input-hash"}
+	base := domain.CommunitySummary{
+		Summary:                 "A grounded summary.",
+		InputHash:               "input-hash",
+		AdmittedRelationshipIDs: []string{"relationship-1"},
+		AdmittedEvidenceIDs:     []string{"evidence-1"},
+		AdmittedSupportQuotes:   append([]domain.CommunitySummarySupportQuote(nil), relationships[0].SupportQuotes...),
+	}
 	cases := []struct {
 		name   string
 		mutate func(*domain.CommunitySummary)
@@ -175,6 +181,9 @@ func TestValidateCommunitySummaryResponseRejectsIncompleteResponses(t *testing.T
 		{name: "empty summary", mutate: func(response *domain.CommunitySummary) { response.Summary = " " }, want: "summary_empty"},
 		{name: "summary too long", mutate: func(response *domain.CommunitySummary) { response.Summary = strings.Repeat("x", 4001) }, want: "summary_too_long"},
 		{name: "input hash mismatch", mutate: func(response *domain.CommunitySummary) { response.InputHash = "other" }, want: "input_hash_mismatch"},
+		{name: "missing relationship admissions", mutate: func(response *domain.CommunitySummary) { response.AdmittedRelationshipIDs = nil }, want: "admitted_relationship_ids_required"},
+		{name: "missing evidence admissions", mutate: func(response *domain.CommunitySummary) { response.AdmittedEvidenceIDs = nil }, want: "admitted_evidence_ids_required"},
+		{name: "missing support quote admissions", mutate: func(response *domain.CommunitySummary) { response.AdmittedSupportQuotes = nil }, want: "admitted_support_quotes_required"},
 		{name: "relationship not allowlisted", mutate: func(response *domain.CommunitySummary) { response.AdmittedRelationshipIDs = []string{"other"} }, want: "admitted_relationship_ids_not_allowlisted"},
 		{name: "evidence not allowlisted", mutate: func(response *domain.CommunitySummary) { response.AdmittedEvidenceIDs = []string{"other"} }, want: "admitted_evidence_ids_not_allowlisted"},
 		{name: "duplicate relationship", mutate: func(response *domain.CommunitySummary) {
@@ -198,9 +207,6 @@ func TestValidateCommunitySummaryResponseRejectsIncompleteResponses(t *testing.T
 	}
 
 	valid := base
-	valid.AdmittedRelationshipIDs = []string{"relationship-1"}
-	valid.AdmittedEvidenceIDs = []string{"evidence-1"}
-	valid.AdmittedSupportQuotes = append([]domain.CommunitySummarySupportQuote(nil), relationships[0].SupportQuotes...)
 	valid.TopEntities = []string{"Dense-Mem", "PostgreSQL"}
 	valid.TopPredicates = []string{"uses"}
 	require.Empty(t, validateCommunitySummaryResponse(valid, "input-hash", relationships))
@@ -430,6 +436,7 @@ func (s *communitySummaryProviderStub) SummarizeCommunity(_ context.Context, inp
 	for _, relationship := range input.Relationships {
 		response.AdmittedRelationshipIDs = append(response.AdmittedRelationshipIDs, relationship.RelationshipID)
 		response.AdmittedEvidenceIDs = append(response.AdmittedEvidenceIDs, relationship.EvidenceIDs...)
+		response.AdmittedSupportQuotes = append(response.AdmittedSupportQuotes, relationship.SupportQuotes...)
 	}
 	if s.invalid {
 		response.InputHash = "sha256:invalid"
