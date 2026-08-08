@@ -1,9 +1,10 @@
 # Telemetry
 
 Dense-Mem exports a small, active Prometheus inventory for authenticated HTTP,
-provider work, recall, feedback, and conflict-review timing. It does not export
-placement-stage, retired evidence/Relationship state, promotion, advisory-lock,
-community, or generic graph metric families.
+provider work, recall, feedback, conflict-review timing, and the bounded
+community snapshot/summary/recall outcomes. It does not export placement-stage,
+retired evidence/Relationship state, promotion, advisory-lock, or generic graph
+metric families.
 
 The scrape endpoint is private. Browser telemetry is first-party only through
 `/ui/api/telemetry` and `/control/api/telemetry`; it is not a public memory
@@ -55,6 +56,9 @@ records, not Prometheus.
 | `densemem_dream_feedback_total` | `decision`, `outcome`, `from_status` | Hypothesis feedback decisions. |
 | `densemem_conflict_review_duration_seconds` | `outcome` | Relationship conflict-review duration. |
 | `densemem_assessor_terminal_failures_total` | `stage` | Terminal integrated-assessor failures by bounded stage; system-only, with no team/profile labels. |
+| `densemem_community_runs_total` | `status` | Team/profile-scoped community snapshot outcomes such as `completed`, `skipped`, `too_large`, or `failed`. |
+| `densemem_community_summaries_total` | `outcome` | Team/profile-scoped summary-provider outcomes. |
+| `densemem_community_recall_total` | `outcome` | Team/profile-scoped community recall outcomes. |
 
 The conflict-review histogram uses second buckets of `0.1`, `1`, `5`, `15`,
 `30`, `60`, `300`, and `900`.

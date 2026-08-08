@@ -138,6 +138,14 @@ the deterministic 1k evaluation/comparison and put the result in the PR. Reuse
 a prior successful import only when import logic, schema, seed identity,
 placement terminality, and search/vector freshness are unchanged.
 
+For build/catalog/lifecycle changes that do not alter retrieval logic, run the
+`local_eval_100_v2` smoke through
+`examples/docker-compose.evaluation.yml`. This proves the build-tagged eval
+surface and live harness path but is not release-quality evidence. The compose
+E2E scenarios `mcp_boundaries` and `submission_status` cover production catalog
+exclusion, conditional feedback/Dreaming discovery, recall hints, and
+owner-only Relationship correction.
+
 Example focused commands, verified against the current Go/npm layout:
 
 ```bash

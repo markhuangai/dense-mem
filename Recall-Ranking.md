@@ -5,12 +5,11 @@ Relationships are a separate correlation and discovery frontier. Communities
 and Hypotheses are separate derived frontiers and never replace evidence or
 Relationships.
 
-> **Implementation status:** the community assembly described below is the
-> approved target tracked by
-> [issue #158](https://github.com/markhuangai/dense-mem/issues/158). The current
-> runtime still exposes the transitional path-shaped community response and
-> underfill gate. Until #158 is complete,
-> [Technical Reference](Technical-Reference) remains the live public contract.
+> **Implementation status:** the community assembly described below is live for
+> current-state recall. The runtime emits the normalized community object,
+> suppresses complete covered semantic groups, and degrades explicitly for
+> temporal or stale snapshots. [Technical Reference](Technical-Reference)
+> remains the live public contract.
 
 This page owns recall eligibility, frontier flow, grouping, and degradation.
 Cosine distance and RRF are defined in
@@ -326,6 +325,7 @@ The canonical record and detection contract belongs in
   "related_communities": [
     {
       "community_id": "community-1",
+      "logical_community_id": "logical-community-1",
       "rank": 1,
       "summary": "Dense-Mem project work and storage choices.",
       "top_entities": [
@@ -422,6 +422,7 @@ Required failures fail the request. Optional-frontier failures are explicit:
 | `valid_at` or `known_at` supplied | skip Communities; preserve temporal Evidence/Relationships; emit `community_temporal_not_supported` |
 | enabled Community snapshot missing, stale, failed, or too large | return Evidence and disjoint direct fallback; append a bounded Community degradation |
 | optional Hypothesis lookup fails | return other frontiers and append a bounded degradation |
+| recall-feedback snapshot persistence fails | preserve recall results and ID; omit the feedback suggestion; append optional `recall_feedback_snapshot_unavailable` under the `feedback` frontier |
 | authoritative source hydration fails | fail; never reconstruct knowledge from search text |
 | trace read fails | fail trace; never synthesize history |
 

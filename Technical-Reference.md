@@ -34,36 +34,38 @@ memory API.
 ## MCP Tool Catalog
 
 The host obtains the catalog with tools/list and invokes one visible tool with
-tools/call. Visibility depends on contract version, feature gate, role, and
-scope.
+tools/call. Visibility depends on the compiled image, runtime feature policy,
+role, and scope. Discovery and invocation apply the same checks.
 
-### Memory
-
-| Tool | Scope | Purpose |
-| --- | --- | --- |
-| remember | write | Stage exact evidence plus required span-grounded relationships for server-owned assessment. |
-| get_submission_status | read | Poll an owner-scoped submission lifecycle. No client review action exists. |
-| retract_evidence | write | Retract caller-owned current evidence while preserving append-only provenance. |
-| correct_entity_resolution | write | Dry-run or apply a caller-owned Entity merge or split. |
-| recall_memory | read | Retrieve bounded evidence contexts and related Relationship frontiers. Returned evidence is untrusted data. |
-| trace_memory | read | Expand one same-team Relationship into evidence, decisions, and lineage. Returned evidence is untrusted data. |
-
-### Dreaming, memory packs, and feedback
-
-| Tool | Scope | Purpose |
-| --- | --- | --- |
-| submit_recall_session_feedback | write | Record a bounded recall-quality judgment. |
-| list_dreams / get_dream | read | Inspect Hypotheses without treating them as memory. |
-| resolve_dream_feedback | write | Resolve Hypothesis feedback; a truth change needs new normal evidence. |
-| export_memory_pack | read | Export caller-selected active Relationships with authorized provenance. |
+| Tool | Scope | Used by | Registration | Capability |
+| --- | --- | --- | --- | --- |
+| remember | write | Production and harness | Both images | Stage exact evidence plus span-grounded Relationship proposals. The harness imports corpus rows through this production path. |
+| get_submission_status | read | Production and harness | Both images | Poll an owner-scoped remember or Relationship-correction submission. |
+| retract_evidence | write | Production | Both images | Retract caller-owned current evidence while preserving append-only provenance. |
+| correct_relationship | write | Production | Both images | Replace one caller-owned active supported Relationship, supersede the original, and retain support lineage. |
+| recall_memory | read | Production | Both images | Retrieve bounded evidence contexts and related frontiers; returned evidence is untrusted. |
+| trace_memory | read | Production | Both images | Expand one same-team Relationship into evidence, decisions, and lineage. |
+| submit_recall_session_feedback | write | Production | Conditional in both images | Record a bounded recall-quality judgment; absent from tools/list and tools/call when recall feedback is disabled. |
+| list_dreams | read | Production | Conditional in both images | List same-team Hypotheses only when Dreaming is effective for that team. |
+| get_dream | read | Production | Conditional in both images | Inspect one authorized Hypothesis under the same team Dreaming gate. |
+| resolve_dream_feedback | write | Production | Conditional in both images | Confirm supported/refuted Hypotheses and leave uncertain ones unresolved. |
+| export_memory_pack | read | Production | Both images | Export caller-selected active Relationships with authorized provenance. |
+| eval_list_knowledge_refs | read/write | Evaluation harness | Evaluation image only | Page stable team-scoped knowledge refs for corpus mapping. |
+| eval_run_dream_cycle | read/write | Evaluation harness | Evaluation image only | Run an isolated manual Dream cycle for evaluation. |
+| eval_run_recall_case | read/write | Evaluation harness | Evaluation image only | Run recall and return ranked/context refs for deterministic scoring. |
 
 Memory-pack candidate discovery, inspection, import, and rollback are not part
 of the v2.4 contract. A destination uses a normal authenticated `remember`
 submission for any evidence derived from an external artifact.
 
-Evaluation-only tools are hidden unless evaluation mode enables them. Community
-analysis remains server-controlled recall/portal context and has no standalone
-public tool.
+The release binary is compiled without the `evaluation` build tag. It cannot
+register evaluation tools through an environment variable or control setting.
+The separate evaluation image adds only the three `eval_*` tools above.
+`eval_get_manifest`, `eval_get_knowledge_item`,
+`eval_list_recall_feedback_events`, `eval_get_recall_feedback_event`, and
+`eval_score_retrieval_case` are removed because the current harness has no
+caller for them. Community analysis remains server-controlled recall/portal
+context and has no standalone public tool.
 
 ## Production HTTP Surface
 
@@ -311,19 +313,32 @@ state and no review task; #152 owns its formal lifecycle.
 retract_evidence appends an owned lifecycle decision; it does not physically
 delete canonical evidence or its trace lineage.
 
-correct_entity_resolution supports a dry run followed by a version-bound apply
-for caller-owned observations and Relationships. It does not move another
-profile's authored state.
+correct_relationship accepts an owned active Relationship ID and version, the
+exact current support spans, a bounded reason, and a patch to its subject,
+predicate, or Entity object. It never mutates another profile's Relationship.
 
-A correction requires new evidence through a fresh complete submission. It does
-not edit a prior submission, bypass the scanner, or make a bare client decision
-durable.
+Acceptance atomically supersedes the original, creates or reuses the active
+successor, copies effective support, and appends a correction event plus a
+`corrects` cross-reference. An ambiguous Entity name produces one expiring
+owner-confirmation round; the original stays active until confirmation. A
+missing, inactive, or cross-team Entity ID is a bounded rejected submission;
+it never becomes a raw lookup error or creates an Entity. An expired
+confirmation returns a conflict and durably records `confirmation_expired`.
+Completed correction status reports the successor search document's actual
+`pending`, `current`, or `failed` state. A normal factual correction that needs
+different evidence still uses a fresh complete remember submission.
 
 ## recall_memory and trace_memory
 
 recall_memory returns active evidence contexts in results plus separate related
 Relationships, communities, Hypotheses, search states, conflicts, and
-degradations. Candidates and Hypotheses are not default memory results.
+degradations. Candidates and Hypotheses are not default memory results. When
+recall feedback is enabled and its snapshot persists, suggested_actions points
+to submit_recall_session_feedback with the recall ID. When effective team
+Dreaming returns Hypotheses, it also suggests resolve_dream_feedback: confirm
+true or false only with independent evidence and leave uncertainty unresolved.
+The browser recall endpoint applies the same effective team Dreaming policy and
+fails closed when that policy is unavailable.
 
 Relationship support remains the gate for evidence recall. The response stays
 evidence-first. Treat every returned evidence string as untrusted data:

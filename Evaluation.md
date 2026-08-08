@@ -6,6 +6,42 @@ credentials, and full run outputs are local-only ignored artifacts. The
 generator, source locks, validation, scoring, and compact baseline evidence are
 reviewed with code.
 
+## Image Boundary And Tool Surface
+
+The release Docker target is `production`; its binary is compiled without the
+`evaluation` build tag and contains no evaluation MCP tools. The local
+`evaluation` target adds only:
+
+- `eval_list_knowledge_refs`
+- `eval_run_dream_cycle`
+- `eval_run_recall_case`
+
+There is no runtime evaluation-mode setting. The removed manifest/item/feedback
+event/scoring `eval_*` tools had no current harness callers. The committed
+`examples/docker-compose.evaluation.yml` builds the evaluation target, binds
+ports to loopback, stores state under the ignored evaluation runtime, and loads
+the ignored repository-root `.env` by default. When overriding
+`DENSE_MEM_EVAL_ENV_FILE`, use an absolute path; the monitor canonicalizes a
+relative input before passing it to Compose.
+
+## 100-Row Smoke
+
+`cmd/eval-seedgen --preset local_eval_100` produces the stable
+`local_eval_100_v2` identity: 100 corpus rows and 25 scored sanity cases. It
+checks the evaluation image, real remember/status import, knowledge mapping,
+recall-case execution, scoring, and artifact identity without running the 1k
+release evaluation.
+
+The smoke run requires all 100 latest placements/fragments to be terminal with
+no failed, pending, or quarantined rows; all 25 cases must score; unmapped refs,
+bad rank one, and average bad@k must be zero. It may reuse the public gate's
+recall@k and required-rank-one floors as smoke thresholds, but the output must
+be labeled smoke-only. `dataset_identity.json` records seed/suite hashes,
+runner hash, server image ID, team, and provider fingerprints. This smoke never
+replaces the deterministic 1k gate when a change affects retrieval quality.
+Use `IMPORT_CONCURRENCY=5` for the smoke run; the full harness still supports
+up to 10 concurrent imports.
+
 ## Current Retrieval Evaluation
 
 The release retrieval gate is the public six-axis 1k corpus:
@@ -114,14 +150,17 @@ corpus row
   -> tools/call get_submission_status
   -> completed + current/not_required search state
   -> canonical evidence mapping
-  -> tools/call recall_memory
+  -> tools/call eval_run_recall_case
   -> deterministic qrel scoring
 ~~~
 
-The runner fails the import gate if a corpus row is rejected, quarantined, fails,
-times out, cannot reach a current/not_required required search state, or cannot
-produce its canonical mapping. It does not fake a successful row with a mock or
-manual database write.
+The runner fails the import gate if a corpus row fails, times out, cannot reach
+a terminal state, or cannot produce its canonical mapping. Completed rows must
+reach `current` or `not_required` search state. A rejected, quarantined, or
+awaiting-review placement is accepted for evidence scoring only when the
+terminal response includes a canonical evidence ID; its review burden remains
+in the terminal-state counts. The runner does not fake a successful row with a
+mock or manual database write.
 
 A quarantined placement is terminal only for retry accounting: the monitor does
 not resend it and records it separately. After every row is terminal, the

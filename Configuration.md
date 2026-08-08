@@ -422,16 +422,16 @@ Metric definitions belong in [Telemetry](Telemetry).
 
 These keys are PostgreSQL-backed unless identified as hard environment caps.
 
-### Recall feedback and evaluation
+### Recall feedback
 
 | Key | Target default | Meaning |
 | --- | --- | --- |
 | `RECALL_FEEDBACK_ENABLED` | `false` | expose feedback collection |
 | `RECALL_FEEDBACK_RETENTION_DAYS` | `30` | detail retention, 1–365 |
-| `EVALUATION_MODE_ENABLED` | `false` | expose evaluation-only APIs |
-| `EVALUATION_EXPORT_MAX_PAGE_SIZE` | `100` | export maximum, 1–500 |
 
-Never enable evaluation mode for production teams.
+Evaluation is not a runtime configuration mode. The production binary omits
+evaluation tools; the separate evaluation Docker target compiles them in with
+the `evaluation` build tag.
 
 ### Dreaming
 
@@ -457,14 +457,12 @@ Eligibility and no-new-node behavior belong in [Dreaming](Dreaming).
 | `COMMUNITY_DETECTION_START_TIME_LOCAL` | `03:30` | local schedule |
 | `COMMUNITY_DETECTION_MAX_CONCURRENCY` | `1` | concurrent team runs |
 | `COMMUNITY_DETECTION_JITTER_SECONDS` | `600` | stable jitter |
-| `COMMUNITY_DETECTION_MIN_CHANGED_RELATIONSHIPS` | `100` | recompute threshold |
-| `COMMUNITY_DETECTION_MAX_AGE_HOURS` | `24` | staleness boundary |
-| `COMMUNITY_DETECTION_MAX_NODES` | `500000` | hard input cap |
-| `COMMUNITY_DETECTION_MAX_EDGES` | `2000000` | hard input cap |
-| `COMMUNITY_DETECTION_TIMEOUT_SECONDS` | `600` | run timeout |
 
-The service reads eligible IDs from PostgreSQL into a bounded analytical job;
-no external graph-analysis dependency is implied. See
+These are the only editable community settings. The detector always enforces
+hard limits of 5,000 semantic-group nodes and 20,000 weighted edges, and its
+run/provider time bounds are fixed in the service. The service reads eligible
+state from PostgreSQL into a bounded analytical job; no external graph-analysis
+dependency is implied. See
 [Community And Dreaming](Community-And-Dreaming).
 
 ### Conflict review

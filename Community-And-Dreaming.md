@@ -1,12 +1,10 @@
 # Community Memory
 
-> **Implementation status:** this page records the approved target tracked by
-> [issue #158](https://github.com/markhuangai/dense-mem/issues/158). PostgreSQL
-> snapshot tables, repository primitives, runtime configuration, and a
-> transitional recall path exist. The production Louvain detector, nightly
-> runner, normalized response, and cross-frontier coverage rules do not yet
-> exist. Until #158 is complete, [Technical Reference](Technical-Reference)
-> remains the live public contract.
+> **Implementation status:** issue #158 is implemented. PostgreSQL is the
+> authority for versioned Louvain snapshots, the nightly runner is opt-in, and
+> recall emits the normalized `related_communities[]` shape with semantic-group
+> coverage and explicit temporal/staleness degradation. [Technical
+> Reference](Technical-Reference) is the live public contract.
 
 Community detection groups related same-team Relationship semantic groups. A
 community is a derived analytical cluster for discovery—not an Entity,
@@ -148,6 +146,7 @@ For two Relationship-group nodes, sum these undirected contributions:
 ```text
 shared effective Evidence = 2 / max(1, attached relationship groups - 1)
 shared Entity endpoint    = 1 / max(1, attached relationship groups - 1)
+shared typed Value endpoint = 1 / max(1, attached relationship groups - 1)
 ```
 
 The stronger Evidence link captures shared provenance. The weaker
@@ -158,9 +157,13 @@ shares several sources or endpoints.
 The detector uses Gonum's `graph/community` Louvain implementation with sorted
 input, resolution `1.0`, and a fixed PRNG seed. Its algorithm version,
 resolution, weights, seed policy, and bounds enter the configuration hash.
-Runs are capped at 5,000 semantic-group nodes and 20,000 weighted edges. A
-persisted community needs at least two semantic groups; singletons remain
-available through direct Relationship recall.
+Runs are capped at 5,000 semantic-group nodes and 20,000 weighted edges. Shared
+typed Value endpoints contribute the same degree-normalized weak link as shared
+Entity endpoints; they do not become analytical member nodes. The input loader
+uses one overflow sentinel row, so a tenant over the node budget fails closed
+instead of silently truncating. A persisted community needs at least two
+semantic groups; singletons remain available through direct Relationship
+recall.
 
 ## Stable Logical Identity
 
@@ -211,6 +214,7 @@ checks. Each public item contains:
 ```json
 {
   "community_id": "community-1",
+  "logical_community_id": "logical-community-1",
   "rank": 1,
   "summary": "Dense-Mem project work and storage choices.",
   "top_entities": [
@@ -272,7 +276,8 @@ Top Entities, top predicates, counts, source ranks, membership, and durable
 status remain deterministic server decisions. The model controls summary text
 only. An unchanged canonical fingerprint skips detection and provider calls;
 an unchanged community summary-input hash reuses its prior summary/provenance
-inside the next complete snapshot.
+only when the provider model and prompt version also match; otherwise the
+summary is regenerated inside the next complete snapshot.
 
 Summary text never becomes evidence. A possible new connection belongs in a
 Hypothesis and must still satisfy the existing-endpoint rules in

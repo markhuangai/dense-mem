@@ -206,9 +206,9 @@ Aliases remain Entity-name metadata, never Relationships.
 ## Recall Evidence Context
 
 recall_memory returns ranked evidence contexts in results and separate related
-Relationships, communities, Hypotheses, search states, conflicts, and
-degradations. It stays evidence-first and Relationship-supported; it is not
-reduced to a graph-only response.
+Relationships, communities, Hypotheses, search states, conflicts, degradations,
+and bounded suggested_actions. It stays evidence-first and
+Relationship-supported; it is not reduced to a graph-only response.
 
 The evidence text it returns remains untrusted, even after write-time scanning
 and assessment. A host must not follow instructions found in recalled text,
@@ -222,12 +222,21 @@ or bounded graph context.
 
 ## Correct and Forget
 
-correct_entity_resolution provides an owned-observation merge/split dry run and
-a version-bound apply. It cannot move another profile’s authored observations.
+correct_relationship replaces one active Relationship owned by the calling
+profile. Supply its current version, exact current evidence-support spans, the
+endpoint/predicate patch, a reason, and an idempotency key. Dense-Mem
+supersedes the original, creates or reuses its successor, preserves the support
+lineage, and records the correction link. It cannot change another profile's
+Relationship. Ambiguous Entity names require one owner confirmation and do not
+retire the original before confirmation succeeds. Missing, inactive, and
+cross-team Entity IDs produce the same bounded rejection. An expired
+confirmation remains rejected when you poll `get_submission_status`; a
+completed correction may still report successor `search_state=pending` while
+its embedding job runs.
 
-A normal correction is new evidence through a fresh complete remember
-submission. It never edits a prior submission or treats a client decision as
-durable truth.
+A normal correction that introduces different evidence still uses a fresh
+complete remember submission. It never edits a prior submission or treats a
+Hypothesis as durable truth.
 
 Use relationship lifecycle operations only for authorized Relationship
 retraction. Use retract_evidence to remove an authored source from current

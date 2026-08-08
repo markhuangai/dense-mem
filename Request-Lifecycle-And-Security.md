@@ -211,7 +211,7 @@ flowchart TD
 | replace quarantined submission | `write` | submit a fresh complete evidence/proposal package; no release action exists |
 | recall-feedback submission | `write` | feature enabled |
 | stored feedback inspection | `read + feedback:read` | feature enabled; same-team/control restrictions |
-| evaluation tools | `read + write` | evaluation mode; disposable teams only |
+| evaluation tools | `read + write` | compiled into the evaluation image only; disposable teams only |
 | team/profile/key administration | route-specific | manager for same-team operations |
 | cross-team administration | control-plane auth | never a normal user-key capability |
 

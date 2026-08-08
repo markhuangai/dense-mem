@@ -22,7 +22,7 @@ sequenceDiagram
   participant Metrics as Bounded metrics
 
   Host->>Recall: Query memory
-  Recall-->>Host: Results and recall_event_id
+  Recall-->>Host: Results, recall_event_id, and suggested action
   Host->>Host: Answer user
   Host->>Feedback: Bounded session judgment
   Feedback->>PG: Persist refs, ranking version, and judgment
@@ -31,6 +31,15 @@ sequenceDiagram
 
 Feedback is submitted after the host has enough context to judge whether recall
 helped the answer.
+
+When recall feedback is enabled and the server successfully stores the recall
+snapshot, recall_memory includes a suggested_actions entry naming
+submit_recall_session_feedback and the matching recall ID. If feedback is
+disabled, the tool is not registered in tools/list, direct tools/call returns
+not found, and recall does not suggest it. If snapshot persistence fails, recall
+still returns its recall ID and results, omits the unavailable suggestion, and
+adds the optional `feedback` degradation
+`recall_feedback_snapshot_unavailable`.
 
 ## Record-Only Boundary
 
@@ -157,9 +166,10 @@ queries, stale source data, host misuse, and privacy before adding a case.
 
 ## Feature Gate And Access
 
-The tool is visible only when database-backed configuration enables recall
-feedback. Submission needs `write` scope. Detailed event inspection needs
-`read` plus `feedback:read` and the appropriate same-team/control role.
+The tool is visible and callable only when database-backed configuration
+enables recall feedback. Submission needs `write` scope. Detailed event
+inspection is a control/first-party surface; the retired evaluation feedback
+event tools are not part of either image's MCP catalog.
 
 Disabling collection stops new events; it does not silently delete retained
 events.

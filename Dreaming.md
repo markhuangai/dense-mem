@@ -309,11 +309,20 @@ The feature uses:
 - `get_dream`
 - `resolve_dream_feedback`
 
+All three tools are registered only while Dreaming is effective for the
+authenticated team. A global disable hides them for every team; global force
+enable exposes them for every team; otherwise the team's `dreaming.enabled`
+override decides. tools/list and tools/call enforce the same result.
+
 Exact public schemas belong in [Technical Reference](Technical-Reference).
 `list_dreams` is a compact summary; `get_dream` returns the exact cited
 derivations for review. Both portal lists show the cited-excerpt count and its
 quotes to authorized same-team users.
 Feedback such as reject or stale changes only Hypothesis lifecycle.
+
+When recall returns Hypotheses under this gate, its suggested_actions entry
+points to resolve_dream_feedback. Confirm true or false only with evidence
+independent of the generated Hypothesis; leave uncertain items unresolved.
 
 ### Submit new evidence
 
