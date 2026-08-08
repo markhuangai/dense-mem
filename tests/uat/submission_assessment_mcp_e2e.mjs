@@ -264,7 +264,7 @@ async function waitForFailedSubmission(submissionID) {
     if (state === "failed") {
       return placement;
     }
-    if (["completed", "awaiting_review", "quarantined"].includes(state)) {
+    if (["completed", "awaiting_review", "rejected", "quarantined"].includes(state)) {
       throw new Error(`predicate overflow reached unexpected terminal state ${state}`);
     }
     await delay(2_000);

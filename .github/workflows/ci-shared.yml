@@ -33,7 +33,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26.4"
+          go-version: "1.26.5"
           cache: false
 
       - name: Set up Node.js
@@ -45,6 +45,14 @@ jobs:
 
       - name: Install lint dependencies
         run: npm ci --prefix .lint
+
+      - name: Run npm vulnerability audits
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm audit --prefix .lint --audit-level=high
+          npm audit --prefix web --audit-level=high
+          npm audit --prefix packages/mcp-proxy --audit-level=high
 
       - name: Run repository lint
         run: npm run --prefix .lint lint:lines
@@ -80,6 +88,9 @@ jobs:
 
           printf '%s\n' "${packages}"
           go test ${packages}
+
+      - name: Run Go vulnerability scan
+        run: go tool govulncheck ./...
 
       - name: Run unit coverage gate
         shell: bash

@@ -28,7 +28,7 @@
     "start": "node bin/dense-mem-mcp-proxy.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "publishConfig": {
     "access": "public"
@@ -37,6 +37,6 @@
     "supergateway": "3.4.3"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0"
+    "@modelcontextprotocol/sdk": "1.30.0"
   }
 }

@@ -3,6 +3,8 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
+    ignore_usernames:
+      - "dependabot[bot]"
     base_branches:
       - "^main$"
       - "^dev$"
