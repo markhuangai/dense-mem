@@ -27,7 +27,8 @@ PostgreSQL container for full dump/restore proof.
 - `relations/public.<relation>.sql` documents relation-owned DDL, including
   constraints, indexes, triggers, row-security state, and policies.
 - `manifest.tsv` records the configured image, resolved digest, Goose version,
-  latest migration, and SHA-256 checksum for every generated SQL file.
+  latest migration, a digest of every migration filename and content hash, and
+  a SHA-256 checksum for every generated SQL file.
 
 The split files are inspection aids, not an ordered restore set. Production
 must never apply this catalog or use it for desired-state reconciliation. Add a

@@ -127,6 +127,16 @@ latest_migration() {
 	printf '%s\n' "${latest}"
 }
 
+migration_tree_sha256() {
+	(
+		cd "${MIGRATION_DIR}"
+		while IFS= read -r -d '' filename; do
+			printf '%s\0' "${filename}"
+			sha256sum -- "${filename}" | awk '{ print $1 }'
+		done < <(find . -maxdepth 1 -type f -name '*.sql' -printf '%P\0' | LC_ALL=C sort -z)
+	) | sha256sum | awk '{ print $1 }'
+}
+
 tcp_ready() {
 	local host="$1"
 	local port="$2"
@@ -209,6 +219,7 @@ write_manifest() {
 	local resolved="$3"
 	local goose_version="$4"
 	local latest="$5"
+	local migration_tree="$6"
 	local relative_path checksum
 
 	{
@@ -216,6 +227,7 @@ write_manifest() {
 		printf 'meta\tresolved_image\t%s\n' "${resolved}"
 		printf 'meta\tgoose_version\t%s\n' "${goose_version}"
 		printf 'meta\tlatest_migration\t%s\n' "${latest}"
+		printf 'meta\tmigration_tree_sha256\t%s\n' "${migration_tree}"
 		while IFS= read -r relative_path; do
 			checksum="$(sha256sum "${output_dir}/${relative_path}" | awk '{ print $1 }')"
 			printf 'sha256\t%s\t%s\n' "${relative_path}" "${checksum}"
@@ -231,6 +243,7 @@ generate_catalog() {
 	local resolved="$2"
 	local goose_version="$3"
 	local latest="$4"
+	local migration_tree="$5"
 	local password port database_host dsn_host source_dsn
 	local raw_dump parity_dump relation relation_file
 	local -a relations=()
@@ -307,7 +320,8 @@ generate_catalog() {
 	done
 	dump_database "${candidate_dir}/global.sql" dense_mem_canonical "${exclude_relations[@]}"
 
-	write_manifest "${candidate_dir}" "${configured}" "${resolved}" "${goose_version}" "${latest}"
+	write_manifest "${candidate_dir}" "${configured}" "${resolved}" "${goose_version}" \
+		"${latest}" "${migration_tree}"
 }
 
 if [[ "$#" -ne 1 || ( "$1" != 'write' && "$1" != 'check' ) ]]; then
@@ -333,6 +347,7 @@ configured="$(configured_image)"
 [[ -n "${configured}" ]] || fail 'cannot read the PostgreSQL image from examples/docker-compose.base.yml'
 goose_version="$(resolve_goose_version)"
 latest="$(latest_migration)"
+migration_tree="$(migration_tree_sha256)"
 
 if [[ "${mode}" == 'write' ]]; then
 	docker pull "${configured}" >/dev/null
@@ -350,7 +365,7 @@ else
 	docker pull "${resolved}" >/dev/null
 fi
 
-generate_catalog "${configured}" "${resolved}" "${goose_version}" "${latest}"
+generate_catalog "${configured}" "${resolved}" "${goose_version}" "${latest}" "${migration_tree}"
 
 if [[ "${mode}" == 'check' ]]; then
 	if ! diff -ruN "${CATALOG_DIR}" "${candidate_dir}"; then

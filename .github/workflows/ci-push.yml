@@ -14,3 +14,4 @@ jobs:
     uses: ./.github/workflows/ci-shared.yml
     with:
       migration-base-sha: ${{ github.event.before }}
+      migration-base-mode: exact

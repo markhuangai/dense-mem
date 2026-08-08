@@ -161,6 +161,20 @@ write_migration "${HISTORY_REPO}/migrations/postgres/20990101000003_valid.sql"
 		./scripts/check-postgres-migrations.sh
 )
 
+reset_history_fixture
+write_migration "${HISTORY_REPO}/migrations/postgres/20260808040000_old_tip.sql"
+git -C "${HISTORY_REPO}" add migrations/postgres/20260808040000_old_tip.sql
+git -C "${HISTORY_REPO}" commit --quiet -m 'fixture old main tip'
+HISTORY_OLD_TIP="$(git -C "${HISTORY_REPO}" rev-parse HEAD)"
+git -C "${HISTORY_REPO}" switch --quiet --detach "${HISTORY_BASE}"
+(
+	cd "${HISTORY_REPO}"
+	PATH="${FAKE_BIN}:${PATH}" ./scripts/check-postgres-migrations.sh "${HISTORY_OLD_TIP}"
+)
+expect_failure 'exact prior tip deletion' env PATH="${FAKE_BIN}:${PATH}" \
+	DENSE_MEM_MIGRATION_BASE_MODE=exact \
+	"${HISTORY_REPO}/scripts/check-postgres-migrations.sh" "${HISTORY_OLD_TIP}"
+
 SCAFFOLD_REPO="${TEMP_DIR}/scaffold"
 mkdir -p "${SCAFFOLD_REPO}/migrations/postgres" "${SCAFFOLD_REPO}/scripts"
 cp "${ROOT_DIR}/scripts/new-postgres-migration.sh" "${SCAFFOLD_REPO}/scripts/"
@@ -201,6 +215,17 @@ catalog_meta() {
 	printf '%s\n' "${values[0]}"
 }
 
+migration_tree_sha256() {
+	local directory="$1"
+	(
+		cd "${directory}"
+		while IFS= read -r -d '' filename; do
+			printf '%s\0' "${filename}"
+			sha256sum -- "${filename}" | awk '{ print $1 }'
+		done < <(find . -maxdepth 1 -type f -name '*.sql' -printf '%P\0' | LC_ALL=C sort -z)
+	) | sha256sum | awk '{ print $1 }'
+}
+
 expected_image="$(
 	awk '
 		$1 == "postgres:" { in_postgres = 1; next }
@@ -227,6 +252,9 @@ fi
 [[ "$(catalog_meta goose_version)" == "${expected_goose}" ]] || fail 'catalog Goose metadata is stale'
 [[ "$(catalog_meta latest_migration)" == "${expected_latest}" ]] || \
 	fail 'catalog latest-migration metadata is stale'
+expected_migration_tree="$(migration_tree_sha256 "${ROOT_DIR}/migrations/postgres")"
+[[ "$(catalog_meta migration_tree_sha256)" == "${expected_migration_tree}" ]] || \
+	fail 'catalog migration-tree metadata is stale'
 
 checksum_rows=0
 declare -A checksum_paths=()
@@ -235,7 +263,7 @@ while IFS=$'\t' read -r record key value; do
 		meta)
 			[[ -n "${key}" && -n "${value}" ]] || fail 'catalog metadata row is incomplete'
 			case "${key}" in
-				configured_image | resolved_image | goose_version | latest_migration) ;;
+				configured_image | resolved_image | goose_version | latest_migration | migration_tree_sha256) ;;
 				*) fail "unknown manifest metadata: ${key}" ;;
 			esac
 			;;

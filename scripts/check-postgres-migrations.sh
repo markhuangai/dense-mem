@@ -24,9 +24,22 @@ base_ref="${1:-${DENSE_MEM_MIGRATION_BASE_REF:-origin/main}}"
 if [[ "${base_ref}" =~ ^0+$ ]]; then
 	fail "base ref is an all-zero sentinel: ${base_ref}"
 fi
-git rev-parse --verify --quiet "${base_ref}^{commit}" >/dev/null || fail "base ref is not a commit: ${base_ref}"
-merge_base="$(git merge-base HEAD "${base_ref}")" || fail "cannot compute merge base with ${base_ref}"
-[[ -n "${merge_base}" ]] || fail "merge base with ${base_ref} is empty"
+base_commit="$(git rev-parse --verify --quiet "${base_ref}^{commit}")" || \
+	fail "base ref is not a commit: ${base_ref}"
+base_mode="${DENSE_MEM_MIGRATION_BASE_MODE:-merge-base}"
+case "${base_mode}" in
+	merge-base)
+		comparison_base="$(git merge-base HEAD "${base_commit}")" || \
+			fail "cannot compute merge base with ${base_ref}"
+		[[ -n "${comparison_base}" ]] || fail "merge base with ${base_ref} is empty"
+		;;
+	exact)
+		comparison_base="${base_commit}"
+		;;
+	*)
+		fail "unsupported base mode: ${base_mode}"
+		;;
+esac
 
 declare -A base_paths=()
 base_max=0
@@ -56,7 +69,7 @@ while IFS= read -r -d '' entry; do
 	if ((10#${version} > 10#${base_max})); then
 		base_max="${version}"
 	fi
-done < <(git ls-tree -rz "${merge_base}" -- "${MIGRATION_DIR_REL}")
+done < <(git ls-tree -rz "${comparison_base}" -- "${MIGRATION_DIR_REL}")
 
 mapfile -d '' migration_paths < <(
 	find "${MIGRATION_DIR}" -maxdepth 1 -type f -name '*.sql' -print0 | LC_ALL=C sort -z
@@ -105,4 +118,4 @@ go run "github.com/pressly/goose/v3/cmd/goose@${goose_version}" \
 	-dir "${MIGRATION_DIR}" validate || fail 'Goose validation failed'
 
 printf 'PostgreSQL migration history is valid at %s (%d new migration(s)).\n' \
-	"${merge_base}" "${new_count}"
+	"${comparison_base}" "${new_count}"

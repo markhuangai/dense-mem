@@ -7,6 +7,11 @@ on:
         description: Commit used to derive the PostgreSQL migration merge base
         required: true
         type: string
+      migration-base-mode:
+        description: Whether migration history is compared with the merge base or exact commit
+        required: false
+        default: merge-base
+        type: string
 
 permissions:
   contents: read
@@ -54,6 +59,8 @@ jobs:
         run: bash tests/scripts/postgres_migration_tools_test.sh
 
       - name: Check immutable PostgreSQL migration history
+        env:
+          DENSE_MEM_MIGRATION_BASE_MODE: ${{ inputs.migration-base-mode }}
         run: ./scripts/check-postgres-migrations.sh "${{ inputs.migration-base-sha }}"
 
       - name: Run Go tests
