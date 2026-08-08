@@ -34,6 +34,23 @@ func TestDetectRejectsBoundExceededGraphWithoutPartialClusters(t *testing.T) {
 	require.Empty(t, result.Clusters)
 }
 
+func TestDetectStopsBeforeMaterializingAnOversizedEdgeSet(t *testing.T) {
+	inputs := make([]Input, 201)
+	for i := range inputs {
+		inputs[i] = Input{
+			RelationshipID:   fmt.Sprintf("r-%d", i),
+			SemanticGroupKey: fmt.Sprintf("g-%d", i),
+			SubjectEntityID:  "shared-entity",
+		}
+	}
+
+	result := Detect(inputs, 1)
+
+	require.True(t, result.TooLarge)
+	require.Empty(t, result.Edges)
+	require.Empty(t, result.Clusters)
+}
+
 func TestConfigurationHashAndGroupIndex(t *testing.T) {
 	result := Detect([]Input{
 		{RelationshipID: "r-2", SemanticGroupKey: "g-2", SubjectEntityID: "e-2", ObjectEntityID: "e-1", EvidenceIDs: []string{"ev-2"}},
@@ -53,6 +70,7 @@ func TestDetectNormalizesAndDeduplicatesInputs(t *testing.T) {
 	require.Len(t, result.Nodes, 1)
 	require.Equal(t, []string{"r"}, result.Nodes[0].RelationshipIDs)
 	require.Equal(t, []string{"e", "e2"}, result.Nodes[0].EntityIDs)
+	require.Equal(t, []string{"value"}, result.Nodes[0].ValueIDs)
 	require.Equal(t, []string{"ev"}, result.Nodes[0].EvidenceIDs)
 	require.Empty(t, result.Edges)
 }

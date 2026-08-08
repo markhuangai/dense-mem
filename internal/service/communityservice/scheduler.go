@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,10 +34,8 @@ func (s *Scheduler) Start(ctx context.Context) {
 	}
 	timer := time.NewTimer(nextMinuteDelay(s.now()))
 	defer timer.Stop()
-	select {
-	case <-ctx.Done():
+	if !s.waitForMinuteBoundary(ctx, timer.C) {
 		return
-	case <-timer.C:
 	}
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
@@ -47,6 +46,16 @@ func (s *Scheduler) Start(ctx context.Context) {
 		case <-ticker.C:
 			s.runDue(ctx)
 		}
+	}
+}
+
+func (s *Scheduler) waitForMinuteBoundary(ctx context.Context, boundary <-chan time.Time) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-boundary:
+		s.runDue(ctx)
+		return true
 	}
 }
 
@@ -135,7 +144,11 @@ func deterministicJitter(teamID string, window time.Time, maxSeconds int) time.D
 	if maxSeconds <= 0 {
 		return 0
 	}
+	maxDurationSeconds := int(math.MaxInt64 / int64(time.Second))
+	if maxSeconds > maxDurationSeconds {
+		maxSeconds = maxDurationSeconds
+	}
 	digest := sha256.Sum256([]byte(teamID + "\x00" + window.UTC().Format("2006-01-02")))
-	value := binary.BigEndian.Uint32(digest[:4]) % uint32(maxSeconds+1)
+	value := uint64(binary.BigEndian.Uint32(digest[:4])) % uint64(maxSeconds+1)
 	return time.Duration(value) * time.Second
 }

@@ -671,9 +671,9 @@ func hydrateRecallRelationships(
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
 		eventAt,
+		pq.Array(input.ExcludedGroupKeys), pq.Array(input.ExcludedGroupKeys),
 		input.ValidAt, input.ValidAt, input.ValidAt,
-		input.KnownAt, input.KnownAt, input.KnownAt,
-		pq.Array(input.ExcludedGroupKeys), pq.Array(input.ExcludedGroupKeys)).Rows()
+		input.KnownAt, input.KnownAt, input.KnownAt).Rows()
 	if err != nil {
 		return nil, err
 	}

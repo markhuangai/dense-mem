@@ -61,7 +61,7 @@ func (v *OpenAIVerifier) SummarizeCommunity(ctx context.Context, input domain.Co
 		return domain.CommunitySummary{}, &MalformedResponseError{Provider: openAIVerifierProvider, Message: "community summary is empty", RawJSON: content}
 	}
 	return domain.CommunitySummary{
-		Summary: strings.TrimSpace(response.Summary), TopEntities: boundedStrings(response.TopEntities, 5), TopPredicates: boundedStrings(response.TopPredicates, 5),
+		Summary: strings.TrimSpace(response.Summary), TopEntities: append([]string(nil), response.TopEntities...), TopPredicates: append([]string(nil), response.TopPredicates...),
 		AdmittedRelationshipIDs: append([]string(nil), response.AdmittedRelationshipIDs...), AdmittedEvidenceIDs: append([]string(nil), response.AdmittedEvidenceIDs...),
 		AdmittedSupportQuotes: append([]domain.CommunitySummarySupportQuote(nil), response.AdmittedSupportQuotes...),
 		InputHash:             input.SummaryInputHash, ProviderModel: v.model,
@@ -69,36 +69,9 @@ func (v *OpenAIVerifier) SummarizeCommunity(ctx context.Context, input domain.Co
 	}, nil
 }
 
-func boundedStrings(values []string, limit int) []string {
-	out := make([]string, 0, minInt(len(values), limit))
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-		if len(out) == limit {
-			break
-		}
-	}
-	return out
-}
-
 func hashCommunityResponse(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 var _ interface {

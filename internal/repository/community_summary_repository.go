@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func (r *SemanticRepositoryImpl) RecordCommunitySummaryAttempt(ctx context.Context, input CommunitySummaryAttemptInput) error {
@@ -28,6 +30,9 @@ func (r *SemanticRepositoryImpl) RecordCommunitySummaryAttempt(ctx context.Conte
 	}
 	if input.Attempt < 1 || input.Attempt > 3 {
 		return fmt.Errorf("attempt must be between one and three")
+	}
+	if input.AdmittedSupportQuotes == nil {
+		input.AdmittedSupportQuotes = []domain.CommunitySummarySupportQuote{}
 	}
 	quotes, err := json.Marshal(input.AdmittedSupportQuotes)
 	if err != nil {

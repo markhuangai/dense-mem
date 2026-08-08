@@ -187,6 +187,7 @@ describe("UserApi", () => {
         related_communities: [
           {
             community_id: "community-1",
+            logical_community_id: "logical-community-1",
             rank: 1,
             summary: "Dense-Mem community",
             top_entities: [{ entity_id: "33333333-3333-4333-8333-333333333333", name: "Dense-Mem" }],
@@ -217,6 +218,7 @@ describe("UserApi", () => {
 
     expect(result).toHaveLength(2);
     expect(result[0].community?.community_id).toBe("community-1");
+    expect(result[0].community?.logical_community_id).toBe("logical-community-1");
     const evidenceHit = result.find((hit) => hit.evidence);
     expect(evidenceHit?.evidence?.evidence_id).toBe("11111111-1111-4111-8111-111111111111");
     expect(evidenceHit?.evidence?.context).toContain("PostgreSQL");
@@ -229,6 +231,32 @@ describe("UserApi", () => {
         headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
       }),
     );
+  });
+
+  it("does not associate community relationships without evidence IDs to every evidence hit", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        results: [{ evidence_id: "evidence-target", rank: 1, context: "target" }],
+        related_relationships: [],
+        related_communities: [{
+          community_id: "community-no-evidence",
+          logical_community_id: "logical-community-no-evidence",
+          rank: 1,
+          summary: "community",
+          top_entities: [],
+          top_predicates: [],
+          entity_count: 0,
+          relationship_count: 1,
+          relationships: [{ relationship_id: "relationship-no-evidence" }],
+          relationships_truncated: false,
+        }],
+      },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new UserApi("dm_key").recall("target", 1);
+
+    expect(result.find((hit) => hit.evidence)?.relationships).toEqual([]);
   });
 
   it("maps canonical related relationship recall hits", async () => {

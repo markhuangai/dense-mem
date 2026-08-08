@@ -108,7 +108,7 @@ func (h *controlPortalHandler) getTeamCommunityStatus(c echo.Context) error {
 	}
 	status, err := h.communities.Status(c.Request().Context(), teamID.String())
 	if err != nil {
-		return err
+		return httperr.New(httperr.INTERNAL_ERROR, "community status unavailable")
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": status})
 }

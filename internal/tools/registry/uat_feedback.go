@@ -238,10 +238,10 @@ func recallFeedbackResultRefs(res *memoryservice.RecallResult) []domain.RecallFe
 		seen[key] = len(refs)
 		refs = append(refs, ref)
 	}
-	for _, item := range res.Results {
+	for resultIndex, item := range res.Results {
 		rank := item.Rank
 		if rank <= 0 {
-			rank = len(refs) + 1
+			rank = resultIndex + 1
 		}
 		if item.EvidenceID != "" {
 			appendRef(domain.RecallFeedbackResultRef{
@@ -266,9 +266,9 @@ func recallFeedbackResultRefs(res *memoryservice.RecallResult) []domain.RecallFe
 		}
 	}
 	for _, community := range res.RelatedCommunities {
-		appendRef(domain.RecallFeedbackResultRef{Type: domain.RecallFeedbackResultTypeCommunity, ID: community.CommunityID, Rank: community.Rank})
+		appendRef(domain.RecallFeedbackResultRef{Type: domain.RecallFeedbackResultTypeCommunity, ID: community.CommunityID, Rank: community.Rank, StatusAtRecall: res.SearchState})
 		for _, relationship := range community.CommunityRelationships {
-			appendRef(domain.RecallFeedbackResultRef{Type: domain.RecallFeedbackResultTypeRelationship, ID: relationship.RelationshipID, Rank: community.Rank})
+			appendRef(domain.RecallFeedbackResultRef{Type: domain.RecallFeedbackResultTypeRelationship, ID: relationship.RelationshipID, Rank: community.Rank, StatusAtRecall: firstNonEmpty(relationship.SearchState, res.SearchState)})
 		}
 	}
 	for rank, relationship := range res.RelatedRelationships {

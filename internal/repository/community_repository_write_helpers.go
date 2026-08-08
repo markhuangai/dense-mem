@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/lib/pq"
 	"gorm.io/gorm"
@@ -21,6 +22,10 @@ func ensureCommunitySourcesCurrent(ctx context.Context, tx *gorm.DB, teamID stri
 		WITH expected AS (
 			SELECT *
 			FROM unnest(?::uuid[], ?::int[]) AS e(relationship_id, relationship_version)
+		), latest_support AS (
+			SELECT DISTINCT ON (team_id, support_id) team_id, support_id, decision
+			FROM relationship_support_decision_events
+			ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
 		)
 		SELECT expected.relationship_id::text
 		FROM expected
@@ -31,19 +36,13 @@ func ensureCommunitySourcesCurrent(ctx context.Context, tx *gorm.DB, teamID stri
 		   OR relationship.version <> expected.relationship_version
 		   OR relationship.status <> 'active'
 		   OR (relationship.object_entity_id IS NULL AND relationship.object_value_id IS NULL)
-		   OR NOT EXISTS (
+			OR NOT EXISTS (
 				SELECT 1
 				FROM relationship_evidence_supports AS support
-				JOIN relationship_support_decision_events AS decision
+				JOIN latest_support AS decision
 				  ON decision.team_id = support.team_id
 				 AND decision.support_id = support.support_id
 				 AND decision.decision IN ('grant', 'reinstate')
-				 AND decision.created_at = (
-					SELECT max(latest.created_at)
-					FROM relationship_support_decision_events AS latest
-					WHERE latest.team_id = decision.team_id
-					  AND latest.support_id = decision.support_id
-				 )
 				LEFT JOIN evidence_quarantines AS quarantine
 				  ON quarantine.team_id = support.team_id
 				 AND quarantine.fragment_id = support.fragment_id
@@ -80,10 +79,11 @@ func flattenCommunitySources(communities []CommunityPublishRecord) []CommunitySo
 	out := make([]CommunitySourceInput, 0)
 	for _, community := range communities {
 		for _, source := range community.Sources {
-			if _, ok := seen[source.RelationshipID]; ok {
+			key := source.RelationshipID + "\x00" + strconv.Itoa(source.RelationshipVersion)
+			if _, ok := seen[key]; ok {
 				continue
 			}
-			seen[source.RelationshipID] = struct{}{}
+			seen[key] = struct{}{}
 			out = append(out, source)
 		}
 	}

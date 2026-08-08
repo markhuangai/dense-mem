@@ -29,6 +29,7 @@ test("user recall renders a community result and the exact nested contract", asy
   const community = communities?.[0] as Record<string, unknown>;
   expect(Object.keys(community).sort()).toEqual([
     "community_id",
+    "logical_community_id",
     "entity_count",
     "rank",
     "relationship_count",

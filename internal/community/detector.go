@@ -44,6 +44,7 @@ type Node struct {
 	SemanticGroupKey string
 	RelationshipIDs  []string
 	EntityIDs        []string
+	ValueIDs         []string
 	EvidenceIDs      []string
 }
 
@@ -86,11 +87,12 @@ func Detect(inputs []Input, seed uint64) Result {
 		}
 		node.RelationshipIDs = appendUnique(node.RelationshipIDs, strings.TrimSpace(input.RelationshipID))
 		node.EvidenceIDs = appendAllUnique(node.EvidenceIDs, input.EvidenceIDs)
-		for _, entityID := range []string{input.SubjectEntityID, input.ObjectEntityID} {
+		for _, entityID := range []string{strings.TrimSpace(input.SubjectEntityID), strings.TrimSpace(input.ObjectEntityID)} {
 			if entityID != "" {
 				node.EntityIDs = appendUnique(node.EntityIDs, entityID)
 			}
 		}
+		node.ValueIDs = appendUnique(node.ValueIDs, strings.TrimSpace(input.ObjectValueID))
 	}
 	groups := make([]string, 0, len(byGroup))
 	for group := range byGroup {
@@ -102,6 +104,7 @@ func Detect(inputs []Input, seed uint64) Result {
 		node := *byGroup[group]
 		sort.Strings(node.RelationshipIDs)
 		sort.Strings(node.EntityIDs)
+		sort.Strings(node.ValueIDs)
 		sort.Strings(node.EvidenceIDs)
 		result.Nodes = append(result.Nodes, node)
 	}
@@ -115,7 +118,11 @@ func Detect(inputs []Input, seed uint64) Result {
 		groupIndex[group] = i
 	}
 	weights := make(map[[2]int]float64)
+	tooLarge := false
 	addSharedWeights := func(values func(Node) []string, amount float64) {
+		if tooLarge {
+			return
+		}
 		owners := make(map[string][]int)
 		for i, node := range result.Nodes {
 			for _, value := range values(node) {
@@ -139,7 +146,12 @@ func Detect(inputs []Input, seed uint64) Result {
 					if left > right {
 						left, right = right, left
 					}
-					weights[[2]int{left, right}] += contribution
+					pair := [2]int{left, right}
+					if _, exists := weights[pair]; !exists && len(weights) >= MaxEdges {
+						tooLarge = true
+						return
+					}
+					weights[pair] += contribution
 				}
 			}
 		}
@@ -149,7 +161,8 @@ func Detect(inputs []Input, seed uint64) Result {
 	// dominating the graph.
 	addSharedWeights(func(node Node) []string { return node.EvidenceIDs }, 2)
 	addSharedWeights(func(node Node) []string { return node.EntityIDs }, 1)
-	if len(weights) > MaxEdges {
+	addSharedWeights(func(node Node) []string { return node.ValueIDs }, 1)
+	if tooLarge || len(weights) > MaxEdges {
 		result.TooLarge = true
 		return result
 	}

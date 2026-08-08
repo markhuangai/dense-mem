@@ -125,6 +125,8 @@ export function TeamOverviewPanel({
 
   const metricsReady = metrics !== null && !metricsUnavailable;
   const metricsFailed = metricsUnavailable && !loading;
+  const communityUnavailable = communityStatus === null && !loading;
+  const communityEnabled = communityStatus?.effective_config.enabled === true;
   const teamMetrics = metricsReady ? metrics.teams.find((item) => item.team_id === team.id) : undefined;
   const requests = metricsReady ? teamMetrics?.requests ?? metrics.system.requests : 0;
   const errors = metricsReady ? teamMetrics?.errors ?? metrics.system.errors : 0;
@@ -145,7 +147,7 @@ export function TeamOverviewPanel({
     <div className="team-overview" aria-label="Team overview">
       <div className="summary-strip" aria-label="Summary">
         <SummaryCard label="Profiles" value={profiles.length} detail={`${managerCount} managers`} />
-        <SummaryCard label="Communities" value={communityStatus?.current_community_count ?? "n/a"} detail={communityStatus?.effective_config.enabled ? "Nightly enabled" : "Nightly disabled"} tone={communityStatus?.effective_config.enabled ? "neutral" : "warning"} />
+        <SummaryCard label="Communities" value={communityStatus?.current_community_count ?? "n/a"} detail={loading ? "Loading" : communityUnavailable ? "Status unavailable" : communityEnabled ? "Nightly enabled" : "Nightly disabled"} tone={communityUnavailable || !communityEnabled ? "warning" : "neutral"} />
         <SummaryCard label="Requests" value={requestValue} detail="Last hour" tone={metricsFailed ? "warning" : "neutral"} />
         <SummaryCard label="Recall health" value={healthValue} detail={healthDetail} tone={metricsFailed ? "warning" : "neutral"} />
         <div className="health-stack" aria-label="Health summary">

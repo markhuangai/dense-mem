@@ -136,6 +136,7 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 		if err != nil {
 			return err
 		}
+		defer rows.Close()
 		matched := make([]CommunityRecallRecord, 0, input.Limit)
 		for rows.Next() {
 			record := CommunityRecallRecord{}
@@ -147,9 +148,6 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 			matched = append(matched, record)
 		}
 		if err := rows.Err(); err != nil {
-			return err
-		}
-		if err := rows.Close(); err != nil {
 			return err
 		}
 		for index := range matched {

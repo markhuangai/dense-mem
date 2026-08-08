@@ -164,8 +164,8 @@ func normalizeCommunityInputListInput(input CommunityInputListInput) CommunityIn
 	if input.Limit <= 0 {
 		input.Limit = 500
 	}
-	if input.Limit > 5000 {
-		input.Limit = 5000
+	if input.Limit > 5001 {
+		input.Limit = 5001
 	}
 	return input
 }

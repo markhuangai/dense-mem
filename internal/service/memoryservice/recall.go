@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/markhuangai/dense-mem/internal/community"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -151,6 +152,7 @@ type RecallDiscoveryPath struct {
 	Relationships          []RecallRelationshipHandle   `json:"relationships"`
 	EvidenceIDs            []string                     `json:"evidence_ids"`
 	CommunityID            string                       `json:"community_id,omitempty"`
+	LogicalCommunityID     string                       `json:"logical_community_id,omitempty"`
 	Rank                   int                          `json:"rank,omitempty"`
 	Summary                string                       `json:"summary,omitempty"`
 	TopEntities            []EntityHandle               `json:"top_entities,omitempty"`
@@ -167,6 +169,7 @@ func (p RecallDiscoveryPath) MarshalJSON() ([]byte, error) {
 	if p.CommunityID != "" {
 		return json.Marshal(struct {
 			CommunityID            string                       `json:"community_id"`
+			LogicalCommunityID     string                       `json:"logical_community_id"`
 			Rank                   int                          `json:"rank"`
 			Summary                string                       `json:"summary"`
 			TopEntities            []EntityHandle               `json:"top_entities"`
@@ -175,7 +178,7 @@ func (p RecallDiscoveryPath) MarshalJSON() ([]byte, error) {
 			RelationshipCount      int                          `json:"relationship_count"`
 			Relationships          []RelatedRelationshipSummary `json:"relationships"`
 			RelationshipsTruncated bool                         `json:"relationships_truncated"`
-		}{p.CommunityID, p.Rank, p.Summary, p.TopEntities, p.TopPredicates, p.EntityCount, p.RelationshipCount, p.CommunityRelationships, p.RelationshipsTruncated})
+		}{p.CommunityID, p.LogicalCommunityID, p.Rank, p.Summary, p.TopEntities, p.TopPredicates, p.EntityCount, p.RelationshipCount, p.CommunityRelationships, p.RelationshipsTruncated})
 	}
 	return json.Marshal(struct {
 		Relationships []RecallRelationshipHandle `json:"relationships"`
@@ -185,6 +188,7 @@ func (p RecallDiscoveryPath) MarshalJSON() ([]byte, error) {
 
 type RecallCommunity struct {
 	CommunityID            string                       `json:"community_id"`
+	LogicalCommunityID     string                       `json:"logical_community_id"`
 	Rank                   int                          `json:"rank"`
 	Summary                string                       `json:"summary"`
 	TopEntities            []EntityHandle               `json:"top_entities"`
@@ -512,6 +516,9 @@ func (s *recallService) recallCommunities(
 			case "running":
 				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot generation is in progress; direct relationship fallback was used")
 			}
+			if latest.Status != "completed" || !communitySnapshotRunCompatible(latest) {
+				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot metadata was incompatible; direct relationship fallback was used")
+			}
 		}
 	}
 	if staler, ok := s.communities.(interface {
@@ -547,6 +554,16 @@ func (s *recallService) recallCommunities(
 	// old path reader; production wiring uses RecallCommunities above.
 	paths, degradation := s.recallCommunityDiscovery(ctx, teamID, req)
 	return []RecallDiscoveryPath{}, paths, degradation
+}
+
+func communitySnapshotRunCompatible(run *repository.CommunityRun) bool {
+	if run == nil {
+		return false
+	}
+	return run.AlgorithmKind == community.AlgorithmKind &&
+		run.AlgorithmVersion == community.AlgorithmVersion &&
+		run.ProfileVersion == repository.CommunityProfileVersion &&
+		run.ConfigurationHash == community.ConfigurationHash(community.DefaultSeed)
 }
 
 func communitySnapshotDegradation(code, message string) *RecallDegradationResult {
@@ -688,7 +705,7 @@ func recallCommunitiesFromRepository(records []repository.CommunityRecallRecord)
 			continue
 		}
 		community := RecallDiscoveryPath{
-			CommunityID: record.CommunityID, Rank: record.Rank, Summary: record.Summary,
+			CommunityID: record.CommunityID, LogicalCommunityID: record.LogicalCommunityID, Rank: record.Rank, Summary: record.Summary,
 			TopPredicates: append([]string(nil), record.TopPredicates...), EntityCount: record.EntityCount,
 			RelationshipCount: record.RelationshipCount, RelationshipsTruncated: record.RelationshipsTruncated,
 			TopEntities:            make([]EntityHandle, 0, len(record.TopEntities)),

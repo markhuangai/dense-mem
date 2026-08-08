@@ -18,7 +18,7 @@ import (
 const (
 	CommunityAlgorithmKind    = "louvain"
 	CommunityAlgorithmVersion = "v2"
-	CommunityProfileVersion   = "postgres"
+	CommunityProfileVersion   = "postgres-v2"
 )
 
 var (
@@ -35,6 +35,7 @@ type CommunityRepository interface {
 	PublishCommunitySnapshot(ctx context.Context, input CommunitySnapshotPublishInput) error
 	RefreshCommunityStaleness(ctx context.Context, input CommunityStalenessInput) (int, error)
 	ListCommunities(ctx context.Context, input CommunityListInput) ([]CommunityRecord, error)
+	CountCurrentCommunities(ctx context.Context, teamID string) (int, error)
 	GetCommunity(ctx context.Context, input CommunityGetInput) (*CommunityRecord, error)
 	RecallCommunityDiscovery(ctx context.Context, input CommunityDiscoveryInput) ([]CommunityDiscoveryPath, error)
 	LatestCommunityRun(ctx context.Context, teamID string) (*CommunityRun, error)
@@ -319,8 +320,7 @@ func (r *SemanticRepositoryImpl) ClaimCommunityRun(ctx context.Context, input Co
 					?::uuid, ?::uuid, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?::timestamptz
 				)
 				ON CONFLICT ON CONSTRAINT community_snapshot_runs_window_unique DO UPDATE
-				SET run_id = EXCLUDED.run_id,
-				    status = 'running',
+				SET status = 'running',
 				    algorithm_kind = EXCLUDED.algorithm_kind,
 				    algorithm_version = EXCLUDED.algorithm_version,
 				    profile_version = EXCLUDED.profile_version,
@@ -551,6 +551,7 @@ func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input 
 			WHERE relationship.team_id = ?::uuid
 			  AND relationship.identity_alias_of_relationship_id IS NULL
 			  AND relationship.status = 'active'
+			  AND (relationship.object_entity_id IS NULL OR object.entity_id IS NOT NULL)
 			  AND (relationship.object_entity_id IS NOT NULL OR relationship.object_value_id IS NOT NULL)
 			ORDER BY relationship.updated_at ASC, relationship.relationship_id ASC
 			LIMIT ?
@@ -777,6 +778,26 @@ func (r *SemanticRepositoryImpl) ListCommunities(ctx context.Context, input Comm
 		return nil, fmt.Errorf("community: list communities: %w", err)
 	}
 	return records, nil
+}
+
+func (r *SemanticRepositoryImpl) CountCurrentCommunities(ctx context.Context, teamID string) (int, error) {
+	teamID = strings.TrimSpace(teamID)
+	if _, err := uuid.Parse(teamID); err != nil {
+		return 0, fmt.Errorf("team_id is required: %w", err)
+	}
+	var count int
+	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
+		return tx.WithContext(ctx).Raw(`
+			SELECT count(*)::int
+			FROM community_records
+			WHERE team_id = ?::uuid
+			  AND status = 'current'
+		`, teamID).Scan(&count).Error
+	})
+	if err != nil {
+		return 0, fmt.Errorf("community: count current communities: %w", err)
+	}
+	return count, nil
 }
 
 func (r *SemanticRepositoryImpl) GetCommunity(ctx context.Context, input CommunityGetInput) (*CommunityRecord, error) {

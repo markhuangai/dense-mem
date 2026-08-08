@@ -13,6 +13,7 @@ const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 const prometheusURL = requiredEnv("DENSE_MEM_PROMETHEUS_URL").replace(/\/$/, "");
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
+const communityRunWaitAttempts = 140;
 
 let rpcID = 0;
 const runID = `community-recall-e2e-${Date.now()}`;
@@ -46,10 +47,9 @@ const recalled = await mcpSuccess("recall_memory", {
 });
 assertCommunityContract(recalled);
 const coveredEvidenceIDs = [...new Set(recalled.related_communities.flatMap((community) => community.relationships.flatMap((relationship) => relationship.evidence_ids ?? [])))];
-if (coveredEvidenceIDs.length > 0) {
-  const covered = await mcpSuccess("recall_memory", { query: "Dense-Mem Runtime PostgreSQL", limit: 5, community_limit: 3, known_evidence_ids: coveredEvidenceIDs });
-  assertKnownEvidenceSuppressed(covered, coveredEvidenceIDs);
-}
+if (coveredEvidenceIDs.length === 0) throw new Error("community recall returned no nested evidence IDs for suppression coverage");
+const covered = await mcpSuccess("recall_memory", { query: "Dense-Mem Runtime PostgreSQL", limit: 5, community_limit: 3, known_evidence_ids: coveredEvidenceIDs });
+assertKnownEvidenceSuppressed(covered, coveredEvidenceIDs);
 const fullyCovered = await mcpSuccess("recall_memory", {
   query: "Dense-Mem Runtime PostgreSQL",
   limit: 5,
@@ -132,7 +132,7 @@ console.log(JSON.stringify({
 
 async function waitForCommunityRun() {
   let latest = null;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < communityRunWaitAttempts; attempt += 1) {
     const response = await controlJSON(`/teams/${teamID}/community/status`);
     latest = response.data?.latest_run ?? null;
     if (latest?.window_key === runDate && latest.status === "completed" && Number(response.data?.current_community_count ?? 0) > 0) {
@@ -246,7 +246,7 @@ async function createIsolatedTeam() {
 function assertCommunityContract(payload) {
   const communities = payload.related_communities;
   if (!Array.isArray(communities) || communities.length < 1) throw new Error(`recall did not return a community: ${JSON.stringify(payload)}`);
-  const required = ["community_id", "rank", "summary", "top_entities", "top_predicates", "entity_count", "relationship_count", "relationships", "relationships_truncated"];
+  const required = ["community_id", "logical_community_id", "rank", "summary", "top_entities", "top_predicates", "entity_count", "relationship_count", "relationships", "relationships_truncated"];
   for (const community of communities) {
     for (const key of required) if (!Object.hasOwn(community, key)) throw new Error(`community omitted ${key}`);
     if (!Array.isArray(community.top_entities) || community.top_entities.length > 5 || !Array.isArray(community.top_predicates) || community.top_predicates.length > 5) throw new Error("community top fields exceeded bounds");

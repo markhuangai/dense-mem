@@ -49,13 +49,14 @@ func TestRecallUsesCurrentCommunitySnapshotAndCoverage(t *testing.T) {
 	communities := &recallCommunitySnapshotStub{
 		covered: []string{"covered-group"},
 		records: []repository.CommunityRecallRecord{{
-			CommunityID:       communityID,
-			Rank:              1,
-			Summary:           "Durable memory uses PostgreSQL.",
-			TopEntities:       []repository.CommunityRecallTopEntity{{EntityID: uuid.NewString(), Name: "Dense-Mem"}},
-			TopPredicates:     []string{"uses"},
-			EntityCount:       2,
-			RelationshipCount: 1,
+			CommunityID:        communityID,
+			LogicalCommunityID: uuid.NewString(),
+			Rank:               1,
+			Summary:            "Durable memory uses PostgreSQL.",
+			TopEntities:        []repository.CommunityRecallTopEntity{{EntityID: uuid.NewString(), Name: "Dense-Mem"}},
+			TopPredicates:      []string{"uses"},
+			EntityCount:        2,
+			RelationshipCount:  1,
 			Relationships: []repository.RecallRelationshipHit{{
 				RelationshipID:   relationshipID,
 				SemanticGroupKey: "community-group",
@@ -136,6 +137,29 @@ func TestRecallCommunitiesReportsTerminalRunStatuses(t *testing.T) {
 	}
 }
 
+func TestRecallCommunitiesRejectsIncompatibleCompletedSnapshot(t *testing.T) {
+	limit := 1
+	communities := &recallCommunityRunStub{
+		status:            "completed",
+		algorithmKind:     "connected_components",
+		algorithmVersion:  "v1",
+		profileVersion:    repository.CommunityProfileVersion,
+		configurationHash: "sha256:legacy",
+	}
+	svc := &recallService{
+		communities:     communities,
+		communityConfig: recallCommunityConfigStub{enabled: true},
+	}
+
+	records, paths, degradation := svc.recallCommunities(context.Background(), uuid.NewString(), RecallRequest{
+		CommunityLimit: &limit,
+	}, map[string]struct{}{}, nil, nil, true)
+
+	require.Empty(t, records)
+	require.Empty(t, paths)
+	require.Equal(t, "community_snapshot_unavailable", degradation.Code)
+}
+
 func TestRecallDiscoveryPathMarshalLegacyShape(t *testing.T) {
 	encoded, err := json.Marshal(RecallDiscoveryPath{
 		Relationships: []RecallRelationshipHandle{{RelationshipID: "relationship-1"}},
@@ -160,11 +184,18 @@ type recallCommunitySnapshotStub struct {
 
 type recallCommunityRunStub struct {
 	recallCommunitySnapshotStub
-	status string
+	status            string
+	algorithmKind     string
+	algorithmVersion  string
+	profileVersion    string
+	configurationHash string
 }
 
 func (s *recallCommunityRunStub) LatestCommunityRun(_ context.Context, _ string) (*repository.CommunityRun, error) {
-	return &repository.CommunityRun{Status: s.status}, nil
+	return &repository.CommunityRun{
+		Status: s.status, AlgorithmKind: s.algorithmKind, AlgorithmVersion: s.algorithmVersion,
+		ProfileVersion: s.profileVersion, ConfigurationHash: s.configurationHash,
+	}, nil
 }
 
 func (s *recallCommunitySnapshotStub) ListCommunitySemanticGroups(_ context.Context, _ repository.CommunityCoverageInput) ([]string, error) {

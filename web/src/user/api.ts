@@ -171,6 +171,7 @@ export type DreamStatus = {
 
 export type RecallCommunity = {
   community_id: string;
+  logical_community_id: string;
   rank: number;
   summary: string;
   top_entities: RecallEntity[];
@@ -537,6 +538,9 @@ function relationshipsForEvidence(paths: RecallDiscoveryPath[], evidenceID: stri
   const out: RecallRelationship[] = [];
   for (const path of paths) {
     for (const relationship of path.relationships) {
+      if (path.community_id && !relationship.evidence_ids?.length) {
+        continue;
+      }
       if (relationship.evidence_ids?.length && !relationship.evidence_ids.includes(evidenceID)) {
         continue;
       }

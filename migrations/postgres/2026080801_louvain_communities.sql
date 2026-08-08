@@ -12,9 +12,28 @@ ALTER TABLE community_snapshot_runs
 ALTER TABLE community_records
     ADD COLUMN IF NOT EXISTS logical_community_id UUID;
 
-UPDATE community_records
-SET logical_community_id = community_id
-WHERE logical_community_id IS NULL;
+-- Backfill in bounded batches so a large deployed snapshot does not hold one
+-- unbounded update transaction. UUID logical IDs preserve the legacy version ID
+-- until a subsequent Louvain run establishes stable lineage.
+DO $$
+DECLARE
+    updated_rows INTEGER;
+BEGIN
+    LOOP
+        WITH batch AS (
+            SELECT ctid
+            FROM community_records
+            WHERE logical_community_id IS NULL
+            LIMIT 1000
+        )
+        UPDATE community_records AS record
+        SET logical_community_id = record.community_id
+        FROM batch
+        WHERE record.ctid = batch.ctid;
+        GET DIAGNOSTICS updated_rows = ROW_COUNT;
+        EXIT WHEN updated_rows = 0;
+    END LOOP;
+END $$;
 
 ALTER TABLE community_records
     ALTER COLUMN logical_community_id SET NOT NULL;
@@ -27,21 +46,42 @@ ALTER TABLE community_sources
     ADD COLUMN IF NOT EXISTS semantic_group_key TEXT NOT NULL DEFAULT '',
     ADD COLUMN IF NOT EXISTS source_state_hash TEXT NOT NULL DEFAULT '';
 
-UPDATE community_sources AS source
-SET semantic_group_key = relationship.semantic_group_key,
-    source_state_hash = encode(
-        digest(
-            concat_ws(':', relationship.relationship_id::text, relationship.version::text,
-                      relationship.status, relationship.support_count::text,
-                      relationship.updated_at::text),
-            'sha256'
-        ),
-        'hex'
-    )
-FROM relationship_records AS relationship
-WHERE source.team_id = relationship.team_id
-  AND source.relationship_id = relationship.relationship_id
-  AND (source.semantic_group_key = '' OR source.source_state_hash = '');
+-- digest() is supplied by pgcrypto in the core schema migration; this migration
+-- intentionally does not create or remove extensions.
+DO $$
+DECLARE
+    updated_rows INTEGER;
+BEGIN
+    LOOP
+        WITH batch AS (
+            SELECT source.ctid,
+                   relationship.semantic_group_key,
+                   encode(
+                       digest(
+                           concat_ws(':', relationship.relationship_id::text, relationship.version::text,
+                                     relationship.status, relationship.support_count::text,
+                                     relationship.updated_at::text),
+                           'sha256'
+                       ),
+                       'hex'
+                   ) AS source_state_hash
+            FROM community_sources AS source
+            JOIN relationship_records AS relationship
+              ON relationship.team_id = source.team_id
+             AND relationship.relationship_id = source.relationship_id
+            WHERE (source.semantic_group_key = '' AND relationship.semantic_group_key <> '')
+               OR source.source_state_hash = ''
+            LIMIT 1000
+        )
+        UPDATE community_sources AS source
+        SET semantic_group_key = batch.semantic_group_key,
+            source_state_hash = batch.source_state_hash
+        FROM batch
+        WHERE source.ctid = batch.ctid;
+        GET DIAGNOSTICS updated_rows = ROW_COUNT;
+        EXIT WHEN updated_rows = 0;
+    END LOOP;
+END $$;
 
 CREATE INDEX IF NOT EXISTS community_sources_group_idx
     ON community_sources(team_id, semantic_group_key, community_id);
@@ -105,6 +145,10 @@ CREATE POLICY community_summary_attempts_insert ON community_summary_attempts FO
 SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
+
+ALTER TABLE community_snapshot_runs
+    ALTER COLUMN algorithm_kind SET DEFAULT 'connected_components',
+    ALTER COLUMN algorithm_version SET DEFAULT 'v1';
 
 DROP TABLE IF EXISTS community_summary_attempts;
 DROP INDEX IF EXISTS community_sources_group_idx;

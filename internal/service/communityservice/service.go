@@ -22,13 +22,14 @@ import (
 
 const (
 	runLease                        = 15 * time.Minute
-	inputLimit                      = community.MaxNodes
+	inputLimit                      = community.MaxNodes + 1
 	maxSummaryRunAttempts           = 3
 	maxSummaryRelationships         = 100
 	maxSummaryEvidenceIDs           = 200
 	maxSummaryQuotes                = 200
 	maxSummaryQuotesPerRelationship = 3
 	maxSummaryQuoteRunes            = 1000
+	communitySummaryPromptVersion   = "community-summary-v1"
 )
 
 type service struct {
@@ -86,7 +87,7 @@ func (s *service) RunScheduled(ctx context.Context, teamID string, windowAt time
 		LeaseUntil:        s.now().Add(runLease),
 		AlgorithmKind:     community.AlgorithmKind,
 		AlgorithmVersion:  community.AlgorithmVersion,
-		ProfileVersion:    "postgres-v2",
+		ProfileVersion:    repository.CommunityProfileVersion,
 		ConfigurationHash: configurationHash,
 		SourceFingerprint: sourceFingerprint,
 		MaxNodes:          community.MaxNodes,
@@ -171,14 +172,14 @@ func (s *service) RunScheduled(ctx context.Context, teamID string, windowAt time
 	result.ProviderAttempts = attempts
 	result.CommunityCount = len(communities)
 	if buildErr != nil {
-		return finish("failed", buildErr.Error())
+		return finish("failed", "community summary generation failed")
 	}
 	if renewErr := leaseFailure(); renewErr != nil {
 		return finish("failed", "community run lease renewal failed")
 	}
 	latestInputs, latestErr := s.store.ListCommunityInputs(ctx, repository.CommunityInputListInput{TeamID: teamID, Limit: inputLimit})
 	if latestErr != nil {
-		return finish("failed", latestErr.Error())
+		return finish("failed", "community source refresh failed")
 	}
 	latestFingerprint, fingerprintErr := fingerprintInputs(latestInputs, configurationHash, providerModel)
 	if fingerprintErr != nil || latestFingerprint != sourceFingerprint {
@@ -190,11 +191,11 @@ func (s *service) RunScheduled(ctx context.Context, teamID string, windowAt time
 	if err := s.store.PublishCommunitySnapshot(ctx, repository.CommunitySnapshotPublishInput{
 		TeamID: teamID, RunID: run.RunID,
 		AlgorithmKind: community.AlgorithmKind, AlgorithmVersion: community.AlgorithmVersion,
-		ProfileVersion: "postgres-v2", ConfigurationHash: configurationHash,
+		ProfileVersion: repository.CommunityProfileVersion, ConfigurationHash: configurationHash,
 		SourceFingerprint: sourceFingerprint, SourceSnapshot: sourceSnapshot(inputs),
 		NodeCount: result.NodeCount, EdgeCount: result.EdgeCount, Communities: communities,
 	}); err != nil {
-		return finish("failed", err.Error())
+		return finish("failed", "community snapshot publication failed")
 	}
 	result.Status = "completed"
 	result.CompletedAt = s.now()
@@ -221,10 +222,10 @@ func (s *service) Status(ctx context.Context, teamID string) (*StatusResult, err
 	} else if run != nil {
 		status.LatestRun = runResultFromRecord(run, run.Status)
 	}
-	if records, err := s.store.ListCommunities(ctx, repository.CommunityListInput{TeamID: teamID, Status: "current", Limit: 100}); err != nil {
+	if count, err := s.store.CountCurrentCommunities(ctx, teamID); err != nil {
 		return nil, err
 	} else {
-		status.CurrentCommunityCount = len(records)
+		status.CurrentCommunityCount = count
 	}
 	return status, nil
 }
@@ -267,7 +268,11 @@ func (s *service) buildPublishRecords(ctx context.Context, teamID, runID string,
 		}
 		summaryRelationships := boundedSummaryRelationships(clusterInputs)
 		record.SummaryInputHash = hashJSON(summaryRelationships)
-		if previous, ok := previousByLogicalID[record.LogicalCommunityID]; ok && previous.SummaryInputHash == record.SummaryInputHash && strings.TrimSpace(previous.Summary) != "" {
+		if previous, ok := previousByLogicalID[record.LogicalCommunityID]; ok &&
+			previous.SummaryInputHash == record.SummaryInputHash &&
+			strings.TrimSpace(previous.SummaryProviderModel) == strings.TrimSpace(configuredProviderModel) &&
+			previous.SummaryPromptHash == summaryPromptHash(record.SummaryInputHash) &&
+			strings.TrimSpace(previous.Summary) != "" {
 			record.Summary = previous.Summary
 			record.SummaryVersion = firstNonEmpty(previous.SummaryVersion, record.SummaryVersion)
 			record.SummaryProviderModel = previous.SummaryProviderModel
@@ -294,7 +299,7 @@ func (s *service) buildPublishRecords(ctx context.Context, teamID, runID string,
 			observability.RecordCommunitySummary(ctx, metrics, "ok", usedAttempts)
 		}
 		record.SummaryProviderModel = provider
-		record.SummaryPromptHash = hashString(record.SummaryInputHash + ":prompt")
+		record.SummaryPromptHash = summaryPromptHash(record.SummaryInputHash)
 		record.SummaryResponseHash = firstNonEmpty(summaryResponse.ResponseHash, hashString(record.Summary))
 		record.SummaryVersion = firstNonEmpty(record.SummaryVersion, "community-louvain-v2")
 		record.SourceFingerprint = sourceFingerprint
@@ -310,7 +315,7 @@ func (s *service) summarize(ctx context.Context, teamID, runID, versionCommunity
 		return domain.CommunitySummary{}, "", 0, errors.New("community summary provider is unavailable")
 	}
 	providerModel := s.summary.ModelName()
-	promptHash := hashString(inputHash + ":prompt")
+	promptHash := summaryPromptHash(inputHash)
 	for attempt := 1; attempt <= maxSummaryRunAttempts; attempt++ {
 		response, err := s.summary.SummarizeCommunity(ctx, domain.CommunitySummaryInput{CommunityID: logicalCommunityID, SummaryInputHash: inputHash, Relationships: relationships})
 		if err != nil {
@@ -504,6 +509,11 @@ func hashString(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
+
+func summaryPromptHash(inputHash string) string {
+	return hashString(inputHash + ":prompt:" + communitySummaryPromptVersion)
+}
+
 func hashJSON(value any) string {
 	encoded, _ := json.Marshal(value)
 	return hashString(string(encoded))
@@ -513,8 +523,22 @@ func runResultFromRecord(record *repository.CommunityRun, status string) *RunRes
 	if record == nil {
 		return nil
 	}
-	return &RunResult{RunID: record.RunID, TeamID: record.TeamID, WindowKey: record.WindowKey, Status: status, NodeCount: record.NodeCount, EdgeCount: record.EdgeCount, CommunityCount: record.CommunityCount, SourceFingerprint: record.SourceFingerprint, Error: record.Error, StartedAt: record.StartedAt, CompletedAt: derefTime(record.CompletedAt)}
+	return &RunResult{RunID: record.RunID, TeamID: record.TeamID, WindowKey: record.WindowKey, Status: status, NodeCount: record.NodeCount, EdgeCount: record.EdgeCount, CommunityCount: record.CommunityCount, SourceFingerprint: record.SourceFingerprint, Error: publicCommunityRunError(status), StartedAt: record.StartedAt, CompletedAt: derefTime(record.CompletedAt)}
 }
+
+func publicCommunityRunError(status string) string {
+	switch status {
+	case "failed":
+		return "community run failed"
+	case "too_large":
+		return "community graph exceeded the configured bound"
+	case "cancelled":
+		return "community run was cancelled"
+	default:
+		return ""
+	}
+}
+
 func derefTime(value *time.Time) time.Time {
 	if value == nil {
 		return time.Time{}
