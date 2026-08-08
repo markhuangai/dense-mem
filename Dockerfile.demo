@@ -3,7 +3,7 @@
 # ============================================================================
 # Web portal build stage
 # ============================================================================
-FROM --platform=$BUILDPLATFORM node:22-alpine AS web-builder
+FROM --platform=$BUILDPLATFORM node:25-alpine AS web-builder
 
 WORKDIR /web
 
