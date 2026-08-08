@@ -390,14 +390,14 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 		communityRelationships += len(community.CommunityRelationships)
 	}
 	observability.RecordCommunityRecall(ctx, s.metrics, communityOutcome, len(result.RelatedCommunities), communityRelationships)
-		result.RelatedHypotheses = []RelatedHypothesisSummary{}
-		if req.IncludeHypotheses {
-			related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.ProfileID.String(), req.Query)
-			result.RelatedHypotheses = related
-			if relatedDegradation != nil {
-				result.Degradations = append(result.Degradations, *relatedDegradation)
-			}
+	result.RelatedHypotheses = []RelatedHypothesisSummary{}
+	if req.IncludeHypotheses {
+		related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.ProfileID.String(), req.Query)
+		result.RelatedHypotheses = related
+		if relatedDegradation != nil {
+			result.Degradations = append(result.Degradations, *relatedDegradation)
 		}
+	}
 	if len(result.Degradations) > 0 {
 		result.Degradation = &result.Degradations[0]
 	}
