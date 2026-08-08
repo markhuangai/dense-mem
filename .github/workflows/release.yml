@@ -31,12 +31,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Ensure release is not already published
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         with:
@@ -146,7 +146,7 @@ jobs:
 
     steps:
       - name: Checkout RC source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-release.outputs.source_commit }}
           fetch-depth: 0
@@ -256,7 +256,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -328,7 +328,7 @@ jobs:
           } > release-notes.md
 
       - name: Create GitHub Release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         with:
