@@ -567,4 +567,21 @@
     padding-inline: 5px;
     font-size: 12px;
   }
+
+  .summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .summary-strip .summary-item {
+    min-height: 84px;
+    padding: 12px;
+  }
+
+  .health-stack {
+    grid-column: 1 / -1;
+  }
+
+  .overview-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

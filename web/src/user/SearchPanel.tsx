@@ -4,20 +4,21 @@ import {
   ExternalLink,
   FileText,
   GitBranch,
+  Network,
   Search,
   X,
 } from "lucide-react";
 import { LoadingState, SectionHeading } from "../ui/components";
-import { GraphNodeType, RecallEvidenceContext, RecallHit, RecallRelationship, UserApi } from "./api";
+import { GraphNodeType, RecallCommunity, RecallEvidenceContext, RecallHit, RecallRelationship, UserApi } from "./api";
 
 const ResultGraphPreview = lazy(() => import("./GraphPanel").then((module) => ({ default: module.ResultGraphPreview })));
 
-type RecallResultKind = "evidence" | "relationship";
+type RecallResultKind = "evidence" | "relationship" | "community";
 type RecallResultStatus = "verified" | "provisional" | "disputed" | "deprecated";
 type RecallSortMode = "relevance" | "date";
 type ResultDensity = "comfortable" | "compact";
 type InspectorTab = "evidence" | "lineage" | "recall" | "graph";
-type RecallDisplayItem = RecallEvidenceContext | RecallRelationship | undefined;
+type RecallDisplayItem = RecallEvidenceContext | RecallRelationship | RecallCommunity | undefined;
 
 type IndexedRecallResult = {
   hit: RecallHit;
@@ -32,6 +33,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
   const [enabledTypes, setEnabledTypes] = useState<Record<RecallResultKind, boolean>>({
     evidence: true,
     relationship: true,
+    community: true,
   });
   const [enabledStatuses, setEnabledStatuses] = useState<Record<RecallResultStatus, boolean>>({
     verified: true,
@@ -96,7 +98,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
   const typeCounts = useMemo(() => indexedHits.reduce<Record<RecallResultKind, number>>((counts, item) => ({
     ...counts,
     [item.kind]: counts[item.kind] + 1,
-  }), { evidence: 0, relationship: 0 }), [indexedHits]);
+  }), { evidence: 0, relationship: 0, community: 0 }), [indexedHits]);
   const statusCounts = useMemo(() => indexedHits.reduce<Record<RecallResultStatus, number>>((counts, indexed) => {
     const status = recallResultStatus(resultItem(indexed.hit));
     if (status === null) {
@@ -130,7 +132,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
   }
 
   function clearFilters() {
-    setEnabledTypes({ evidence: true, relationship: true });
+    setEnabledTypes({ evidence: true, relationship: true, community: true });
     setEnabledStatuses({ verified: true, provisional: true, disputed: false, deprecated: false });
     setDateMode("all");
     setStartDate("");
@@ -155,7 +157,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
         />
         <fieldset className="filter-stack">
           <legend>Type</legend>
-          {(["evidence", "relationship"] as RecallResultKind[]).map((kind) => (
+          {(["evidence", "relationship", "community"] as RecallResultKind[]).map((kind) => (
             <label className="filter-row" key={kind}>
               <input
                 type="checkbox"
@@ -481,7 +483,7 @@ function KnowledgeInspector({
 }
 
 function recallGraphAnchor(result: IndexedRecallResult): { type: GraphNodeType; id: string } | null {
-  const relationship = result.hit.relationship ?? result.hit.relationships?.[0];
+  const relationship = result.hit.relationship ?? result.hit.relationships?.[0] ?? result.hit.community?.relationships?.[0];
   if (relationship?.subject?.entity_id) {
     return { type: "entity", id: relationship.subject.entity_id };
   }
@@ -497,6 +499,9 @@ function recallGraphAnchor(result: IndexedRecallResult): { type: GraphNodeType; 
 function deriveEntities(hits: RecallHit[]): string[] {
   const values = new Set<string>();
   for (const hit of hits) {
+    for (const entity of hit.community?.top_entities ?? []) {
+      addEntity(values, entity.name);
+    }
     for (const relationship of [hit.relationship, ...(hit.relationships ?? [])]) {
       if (relationship) {
         addEntity(values, relationship.subject?.name);
@@ -525,6 +530,9 @@ function itemTitle(item: RecallDisplayItem): string {
   if (isRelationship(item)) {
     return item.subject?.name || shortId(item.relationship_id);
   }
+  if (isCommunity(item)) {
+    return item.summary || `Community ${shortId(item.community_id ?? "")}`;
+  }
   return "Result";
 }
 
@@ -539,7 +547,10 @@ function itemBody(item: RecallDisplayItem): string {
     const object = item.object?.name || item.object?.value || "";
     return [item.predicate, object].filter(Boolean).join(": ");
   }
-	return "";
+  if (isCommunity(item)) {
+    return `${item.entity_count} entities · ${item.relationship_count} relationships${item.relationships_truncated ? " · truncated" : ""}`;
+  }
+  return "";
 }
 
 function tierLabel(hit: RecallHit): string {
@@ -554,6 +565,9 @@ function tierLabel(hit: RecallHit): string {
 }
 
 function recallResultKind(hit: RecallHit): RecallResultKind {
+  if (hit.community) {
+    return "community";
+  }
   if (hit.evidence) {
     return "evidence";
   }
@@ -564,11 +578,14 @@ function recallResultKindLabel(kind: RecallResultKind): string {
   if (kind === "evidence") {
     return "Evidence";
   }
+  if (kind === "community") {
+    return "Community";
+  }
   return "Relationship";
 }
 
 function resultItem(hit: RecallHit): RecallDisplayItem {
-  return hit.evidence ?? hit.relationship;
+  return hit.community ?? hit.evidence ?? hit.relationship;
 }
 
 function recallResultStatus(item: RecallDisplayItem): RecallResultStatus | null {
@@ -588,6 +605,9 @@ function recallResultStatus(item: RecallDisplayItem): RecallResultStatus | null 
       return "provisional";
     }
     return "verified";
+  }
+  if (item && isCommunity(item)) {
+    return null;
   }
   return null;
 }
@@ -682,11 +702,14 @@ function resultIcon(kind: RecallResultKind) {
   if (kind === "evidence") {
     return <FileText size={15} aria-hidden="true" />;
   }
+  if (kind === "community") {
+    return <Network size={15} aria-hidden="true" />;
+  }
   return <GitBranch size={15} aria-hidden="true" />;
 }
 
 function recallKey(hit: RecallHit, index: number): string {
-  return hit.evidence?.evidence_id ?? hit.relationship?.relationship_id ?? String(index);
+  return hit.community?.community_id ?? hit.evidence?.evidence_id ?? hit.relationship?.relationship_id ?? String(index);
 }
 
 function sourceLabel(item: RecallDisplayItem): string {
@@ -695,6 +718,9 @@ function sourceLabel(item: RecallDisplayItem): string {
   }
   if (isEvidence(item)) {
     return item.source || item.source_type || "evidence";
+  }
+  if (isCommunity(item)) {
+    return "semantic community";
   }
   return "relationship graph";
 }
@@ -732,6 +758,10 @@ function isRelationship(item: RecallDisplayItem): item is RecallRelationship {
 
 function isEvidence(item: RecallDisplayItem): item is RecallEvidenceContext {
   return Boolean(item && "evidence_id" in item && "context" in item);
+}
+
+function isCommunity(item: RecallDisplayItem): item is RecallCommunity {
+  return Boolean(item && "community_id" in item && "summary" in item && "relationships" in item);
 }
 
 function firstEvidenceLine(value: string): string {

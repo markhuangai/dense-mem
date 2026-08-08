@@ -2,14 +2,17 @@ package memoryservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/markhuangai/dense-mem/internal/community"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -56,6 +59,18 @@ type RecallCommunityRepository interface {
 	RefreshCommunityStaleness(ctx context.Context, input repository.CommunityStalenessInput) (int, error)
 }
 
+type RecallCommunitySnapshotRepository interface {
+	RecallCommunities(ctx context.Context, input repository.CommunityRecallInput) ([]repository.CommunityRecallRecord, error)
+}
+
+type RecallCommunityCoverageRepository interface {
+	ListCommunitySemanticGroups(ctx context.Context, input repository.CommunityCoverageInput) ([]string, error)
+}
+
+type RecallCommunityRunRepository interface {
+	LatestCommunityRun(ctx context.Context, teamID string) (*repository.CommunityRun, error)
+}
+
 type RecallCommunityConfigProvider interface {
 	CommunityDetectionRuntimeConfig(ctx context.Context) (domain.CommunityDetectionRuntimeConfig, error)
 }
@@ -85,17 +100,18 @@ func NewRecallService(deps RecallDependencies) RecallService {
 }
 
 type RecallRequest struct {
-	ContractVersion      string     `json:"contract_version"`
-	Query                string     `json:"query"`
-	Limit                int        `json:"limit,omitempty"`
-	RelationshipLimit    *int       `json:"relationship_limit,omitempty"`
-	CommunityLimit       *int       `json:"community_limit,omitempty"`
-	ValidAt              *time.Time `json:"valid_at,omitempty"`
-	KnownAt              *time.Time `json:"known_at,omitempty"`
-	KnownEvidenceIDs     []string   `json:"known_evidence_ids,omitempty"`
-	KnownRelationshipIDs []string   `json:"known_relationship_ids,omitempty"`
-	ExpandFromEntityIDs  []string   `json:"expand_from_entity_ids,omitempty"`
-	IncludeHypotheses    bool       `json:"-"`
+	ContractVersion            string     `json:"contract_version"`
+	Query                      string     `json:"query"`
+	Limit                      int        `json:"limit,omitempty"`
+	IncludeHypotheses          bool       `json:"-"`
+	RelationshipLimit          *int       `json:"relationship_limit,omitempty"`
+	CommunityLimit             *int       `json:"community_limit,omitempty"`
+	CommunityRelationshipLimit *int       `json:"community_relationship_limit,omitempty"`
+	ValidAt                    *time.Time `json:"valid_at,omitempty"`
+	KnownAt                    *time.Time `json:"known_at,omitempty"`
+	KnownEvidenceIDs           []string   `json:"known_evidence_ids,omitempty"`
+	KnownRelationshipIDs       []string   `json:"known_relationship_ids,omitempty"`
+	ExpandFromEntityIDs        []string   `json:"expand_from_entity_ids,omitempty"`
 }
 
 type RecallResult struct {
@@ -133,8 +149,54 @@ type RecallResultItem struct {
 }
 
 type RecallDiscoveryPath struct {
-	Relationships []RecallRelationshipHandle `json:"relationships"`
-	EvidenceIDs   []string                   `json:"evidence_ids"`
+	Relationships          []RecallRelationshipHandle   `json:"relationships"`
+	EvidenceIDs            []string                     `json:"evidence_ids"`
+	CommunityID            string                       `json:"community_id,omitempty"`
+	LogicalCommunityID     string                       `json:"logical_community_id,omitempty"`
+	Rank                   int                          `json:"rank,omitempty"`
+	Summary                string                       `json:"summary,omitempty"`
+	TopEntities            []EntityHandle               `json:"top_entities,omitempty"`
+	TopPredicates          []string                     `json:"top_predicates,omitempty"`
+	EntityCount            int                          `json:"entity_count,omitempty"`
+	RelationshipCount      int                          `json:"relationship_count,omitempty"`
+	CommunityRelationships []RelatedRelationshipSummary `json:"-"`
+	RelationshipsTruncated bool                         `json:"relationships_truncated,omitempty"`
+}
+
+// MarshalJSON keeps the transitional in-process path adapter private while
+// emitting the exact first-class community contract for snapshot records.
+func (p RecallDiscoveryPath) MarshalJSON() ([]byte, error) {
+	if p.CommunityID != "" {
+		return json.Marshal(struct {
+			CommunityID            string                       `json:"community_id"`
+			LogicalCommunityID     string                       `json:"logical_community_id"`
+			Rank                   int                          `json:"rank"`
+			Summary                string                       `json:"summary"`
+			TopEntities            []EntityHandle               `json:"top_entities"`
+			TopPredicates          []string                     `json:"top_predicates"`
+			EntityCount            int                          `json:"entity_count"`
+			RelationshipCount      int                          `json:"relationship_count"`
+			Relationships          []RelatedRelationshipSummary `json:"relationships"`
+			RelationshipsTruncated bool                         `json:"relationships_truncated"`
+		}{p.CommunityID, p.LogicalCommunityID, p.Rank, p.Summary, p.TopEntities, p.TopPredicates, p.EntityCount, p.RelationshipCount, p.CommunityRelationships, p.RelationshipsTruncated})
+	}
+	return json.Marshal(struct {
+		Relationships []RecallRelationshipHandle `json:"relationships"`
+		EvidenceIDs   []string                   `json:"evidence_ids"`
+	}{p.Relationships, p.EvidenceIDs})
+}
+
+type RecallCommunity struct {
+	CommunityID            string                       `json:"community_id"`
+	LogicalCommunityID     string                       `json:"logical_community_id"`
+	Rank                   int                          `json:"rank"`
+	Summary                string                       `json:"summary"`
+	TopEntities            []EntityHandle               `json:"top_entities"`
+	TopPredicates          []string                     `json:"top_predicates"`
+	EntityCount            int                          `json:"entity_count"`
+	RelationshipCount      int                          `json:"relationship_count"`
+	Relationships          []RelatedRelationshipSummary `json:"relationships"`
+	RelationshipsTruncated bool                         `json:"relationships_truncated"`
 }
 
 type RecallConflictSummary struct {
@@ -170,6 +232,7 @@ type RecallRelationshipHandle struct {
 type RelatedRelationshipSummary struct {
 	RelationshipID            string         `json:"relationship_id"`
 	EquivalentRelationshipIDs []string       `json:"equivalent_relationship_ids"`
+	SemanticGroupKey          string         `json:"-"`
 	Subject                   EntityHandle   `json:"subject"`
 	Predicate                 string         `json:"predicate"`
 	Object                    SemanticObject `json:"object"`
@@ -273,25 +336,60 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 		return nil, err
 	}
 	result = recallResultFromRepository(recalled, degradations)
-	relationships, relationshipState, relationshipDegradation := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req, queryEmbedding)
+	returnedEvidenceIDs := recallResultEvidenceIDs(result.Results)
+	coveredGroups, coverageAvailable, coverageDegradation := s.resolveCommunityCoverage(ctx, actor.TeamID.String(), req.KnownEvidenceIDs, returnedEvidenceIDs, req.KnownRelationshipIDs)
+	if coverageDegradation != nil {
+		result.Degradations = append(result.Degradations, *coverageDegradation)
+	}
+	relationships, relationshipState, relationshipDegradation, directGroups := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req, queryEmbedding, coveredGroups)
 	result.RelatedRelationships = relationships
 	result.SearchStates.Relationships = relationshipState
 	if relationshipDegradation != nil {
 		result.Degradations = append(result.Degradations, *relationshipDegradation)
 	}
-	paths, communityDegradation := []RecallDiscoveryPath{}, (*RecallDegradationResult)(nil)
-	if len(result.Results) < req.Limit {
-		paths, communityDegradation = s.recallCommunityDiscovery(ctx, actor.TeamID.String(), req)
+	communities, paths, communityDegradation := []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, (*RecallDegradationResult)(nil)
+	if _, snapshotRepo := s.communities.(RecallCommunitySnapshotRepository); snapshotRepo || len(result.Results) < req.Limit {
+		evidenceIDs := make([]string, 0, len(result.Results))
+		evidenceIDs = append(evidenceIDs, returnedEvidenceIDs...)
+		communityGroups := cloneGroupSet(coveredGroups)
+		for group := range directGroups {
+			communityGroups[group] = struct{}{}
+		}
+		seedRelationshipIDs := relationshipSummaryIDs(relationships)
+		communities, paths, communityDegradation = s.recallCommunities(ctx, actor.TeamID.String(), req, communityGroups, evidenceIDs, seedRelationshipIDs, coverageAvailable)
 	}
-	result.RelatedCommunities = paths
+	result.RelatedCommunities = communities
 	result.DiscoveryPaths = paths
 	result.DiscoveryGuidance = "No additional discovery guidance."
-	if len(paths) > 0 {
+	if len(communities) > 0 || len(paths) > 0 {
 		result.DiscoveryGuidance = "Community discovery found derived relationship paths; verify details with trace_memory before using them as support."
 	}
 	if communityDegradation != nil {
 		result.Degradations = append(result.Degradations, *communityDegradation)
 	}
+	if len(communities) > 0 {
+		communityGroups := cloneGroupSet(coveredGroups)
+		for group := range directGroups {
+			communityGroups[group] = struct{}{}
+		}
+		for _, community := range communities {
+			for _, relationship := range community.CommunityRelationships {
+				if relationship.SemanticGroupKey != "" {
+					communityGroups[relationship.SemanticGroupKey] = struct{}{}
+				}
+			}
+		}
+		result.RelatedRelationships = filterRelatedRelationshipsByGroups(result.RelatedRelationships, communityGroups)
+	}
+	communityOutcome := "ok"
+	if communityDegradation != nil {
+		communityOutcome = "degraded"
+	}
+	communityRelationships := 0
+	for _, community := range result.RelatedCommunities {
+		communityRelationships += len(community.CommunityRelationships)
+	}
+	observability.RecordCommunityRecall(ctx, s.metrics, communityOutcome, len(result.RelatedCommunities), communityRelationships)
 	result.RelatedHypotheses = []RelatedHypothesisSummary{}
 	if req.IncludeHypotheses {
 		related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.ProfileID.String(), req.Query)
@@ -304,6 +402,33 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 		result.Degradation = &result.Degradations[0]
 	}
 	return result, nil
+}
+
+func (s *recallService) resolveCommunityCoverage(
+	ctx context.Context,
+	teamID string,
+	knownEvidenceIDs []string,
+	returnedEvidenceIDs []string,
+	knownRelationshipIDs []string,
+) (map[string]struct{}, bool, *RecallDegradationResult) {
+	groups := map[string]struct{}{}
+	coverageRepo, ok := s.communities.(RecallCommunityCoverageRepository)
+	if !ok {
+		return groups, true, nil
+	}
+	evidenceIDs := append(append([]string(nil), knownEvidenceIDs...), returnedEvidenceIDs...)
+	covered, err := coverageRepo.ListCommunitySemanticGroups(ctx, repository.CommunityCoverageInput{
+		TeamID: teamID, EvidenceIDs: evidenceIDs, RelationshipIDs: knownRelationshipIDs,
+	})
+	if err != nil {
+		return groups, false, communitySnapshotDegradation("community_snapshot_unavailable", "community coverage was unavailable; direct relationship fallback was used")
+	}
+	for _, group := range covered {
+		if strings.TrimSpace(group) != "" {
+			groups[group] = struct{}{}
+		}
+	}
+	return groups, true, nil
 }
 
 func (s *recallService) recallCommunityDiscovery(
@@ -322,12 +447,6 @@ func (s *recallService) recallCommunityDiscovery(
 	if !cfg.Enabled {
 		return []RecallDiscoveryPath{}, nil
 	}
-	if _, err := s.communities.RefreshCommunityStaleness(ctx, repository.CommunityStalenessInput{
-		TeamID: teamID,
-		Limit:  200,
-	}); err != nil {
-		return []RecallDiscoveryPath{}, communityDiscoveryDegradation()
-	}
 	records, err := s.communities.RecallCommunityDiscovery(ctx, repository.CommunityDiscoveryInput{
 		TeamID:               teamID,
 		Query:                req.Query,
@@ -341,6 +460,103 @@ func (s *recallService) recallCommunityDiscovery(
 		return []RecallDiscoveryPath{}, communityDiscoveryDegradation()
 	}
 	return communityDiscoveryPaths(records), nil
+}
+
+func (s *recallService) recallCommunities(
+	ctx context.Context,
+	teamID string,
+	req RecallRequest,
+	excludedGroups map[string]struct{},
+	returnedEvidenceIDs []string,
+	seedRelationshipIDs []string,
+	coverageAvailable bool,
+) ([]RecallDiscoveryPath, []RecallDiscoveryPath, *RecallDegradationResult) {
+	communityLimit := recallOptionalLimitValue(req.CommunityLimit)
+	if communityLimit <= 0 || s.communities == nil || s.communityConfig == nil {
+		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, nil
+	}
+	cfg, err := s.communityConfig.CommunityDetectionRuntimeConfig(ctx)
+	if err != nil {
+		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communityDiscoveryDegradation()
+	}
+	if !cfg.Enabled {
+		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, nil
+	}
+	if req.ValidAt != nil || req.KnownAt != nil {
+		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation(
+			"community_temporal_not_supported",
+			"community snapshots are current-only; temporal recall used direct relationship fallback",
+		)
+	}
+	if !coverageAvailable {
+		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community coverage was unavailable; direct relationship fallback was used")
+	}
+	if runRepo, ok := s.communities.(RecallCommunityRunRepository); ok {
+		latest, runErr := runRepo.LatestCommunityRun(ctx, teamID)
+		if runErr != nil {
+			return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community run status was unavailable; direct relationship fallback was used")
+		}
+		if latest != nil {
+			switch latest.Status {
+			case "failed", "cancelled":
+				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_detection_failed", "community detection failed; direct relationship fallback was used")
+			case "too_large":
+				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_graph_too_large", "community graph exceeded the configured bound; direct relationship fallback was used")
+			case "running":
+				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot generation is in progress; direct relationship fallback was used")
+			}
+			if latest.Status != "completed" || !communitySnapshotRunCompatible(latest) {
+				return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot metadata was incompatible; direct relationship fallback was used")
+			}
+		}
+	}
+	if staler, ok := s.communities.(interface {
+		RefreshCommunityStaleness(context.Context, repository.CommunityStalenessInput) (int, error)
+	}); ok {
+		if staleCount, staleErr := staler.RefreshCommunityStaleness(ctx, repository.CommunityStalenessInput{TeamID: teamID, Limit: 200}); staleErr != nil || staleCount > 0 {
+			return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation(
+				"community_snapshot_stale",
+				"community snapshot sources changed; direct relationship fallback was used",
+			)
+		}
+	}
+	if snapshotRepo, ok := s.communities.(RecallCommunitySnapshotRepository); ok {
+		groups := make([]string, 0, len(excludedGroups))
+		for group := range excludedGroups {
+			groups = append(groups, group)
+		}
+		sort.Strings(groups)
+		records, recallErr := snapshotRepo.RecallCommunities(ctx, repository.CommunityRecallInput{
+			TeamID: teamID, Query: req.Query, ValidAt: req.ValidAt, KnownAt: req.KnownAt,
+			ReturnedEvidenceIDs: returnedEvidenceIDs, SeedRelationshipIDs: seedRelationshipIDs,
+			KnownEvidenceIDs: req.KnownEvidenceIDs, KnownRelationshipIDs: req.KnownRelationshipIDs,
+			ExpandFromEntityIDs: req.ExpandFromEntityIDs, ExcludedGroupKeys: groups,
+			Limit: communityLimit, RelationshipLimit: recallOptionalLimitValue(req.CommunityRelationshipLimit),
+			CoveredGroupKeys: groups,
+		})
+		if recallErr != nil {
+			return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot was unavailable; direct relationship fallback was used")
+		}
+		return recallCommunitiesFromRepository(records), []RecallDiscoveryPath{}, nil
+	}
+	// Transitional adapters remain usable for callers that only implement the
+	// old path reader; production wiring uses RecallCommunities above.
+	paths, degradation := s.recallCommunityDiscovery(ctx, teamID, req)
+	return []RecallDiscoveryPath{}, paths, degradation
+}
+
+func communitySnapshotRunCompatible(run *repository.CommunityRun) bool {
+	if run == nil {
+		return false
+	}
+	return run.AlgorithmKind == community.AlgorithmKind &&
+		run.AlgorithmVersion == community.AlgorithmVersion &&
+		run.ProfileVersion == repository.CommunityProfileVersion &&
+		run.ConfigurationHash == community.ConfigurationHash(community.DefaultSeed)
+}
+
+func communitySnapshotDegradation(code, message string) *RecallDegradationResult {
+	return &RecallDegradationResult{Frontier: "communities", Optional: true, Code: code, Message: message}
 }
 
 func communityDiscoveryDegradation() *RecallDegradationResult {
@@ -357,10 +573,11 @@ func (s *recallService) recallRelatedRelationships(
 	teamID string,
 	req RecallRequest,
 	queryEmbedding []float32,
-) ([]RelatedRelationshipSummary, string, *RecallDegradationResult) {
+	excludedGroups map[string]struct{},
+) ([]RelatedRelationshipSummary, string, *RecallDegradationResult, map[string]struct{}) {
 	relationshipLimit := recallOptionalLimitValue(req.RelationshipLimit)
 	if relationshipLimit <= 0 {
-		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionNotRequired), nil
+		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionNotRequired), nil, map[string]struct{}{}
 	}
 	recalled, err := s.search.RecallRelationships(ctx, repository.RecallRelationshipsInput{
 		TeamID:               teamID,
@@ -369,8 +586,10 @@ func (s *recallService) recallRelatedRelationships(
 		Limit:                relationshipLimit,
 		ValidAt:              req.ValidAt,
 		KnownAt:              req.KnownAt,
+		KnownEvidenceIDs:     req.KnownEvidenceIDs,
 		KnownRelationshipIDs: req.KnownRelationshipIDs,
 		ExpandFromEntityIDs:  req.ExpandFromEntityIDs,
+		ExcludedGroupKeys:    sortedGroupKeys(excludedGroups),
 	})
 	if err != nil {
 		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionFailed), &RecallDegradationResult{
@@ -378,7 +597,7 @@ func (s *recallService) recallRelatedRelationships(
 			Optional: true,
 			Code:     "relationship_discovery_unavailable",
 			Message:  "relationship discovery was unavailable; primary evidence recall was used",
-		}
+		}, map[string]struct{}{}
 	}
 	state := string(domain.SearchProjectionCurrent)
 	if recalled != nil && recalled.SearchState != "" {
@@ -390,7 +609,15 @@ func (s *recallService) recallRelatedRelationships(
 	} else if recalled != nil && recalled.VectorOmitted {
 		degradation = relationshipVectorDegradation(state)
 	}
-	return relatedRelationshipSummaries(recalled), state, degradation
+	groups := map[string]struct{}{}
+	if recalled != nil {
+		for _, hit := range recalled.Results {
+			if hit.SemanticGroupKey != "" {
+				groups[hit.SemanticGroupKey] = struct{}{}
+			}
+		}
+	}
+	return relatedRelationshipSummaries(recalled), state, degradation, groups
 }
 
 func relationshipVectorDegradation(state string) *RecallDegradationResult {
@@ -460,6 +687,38 @@ func communityDiscoveryPaths(records []repository.CommunityDiscoveryPath) []Reca
 	return out
 }
 
+func recallCommunitiesFromRepository(records []repository.CommunityRecallRecord) []RecallDiscoveryPath {
+	out := make([]RecallDiscoveryPath, 0, len(records))
+	for _, record := range records {
+		if len(record.Relationships) == 0 {
+			continue
+		}
+		community := RecallDiscoveryPath{
+			CommunityID: record.CommunityID, LogicalCommunityID: record.LogicalCommunityID, Rank: record.Rank, Summary: record.Summary,
+			TopPredicates: append([]string(nil), record.TopPredicates...), EntityCount: record.EntityCount,
+			RelationshipCount: record.RelationshipCount, RelationshipsTruncated: record.RelationshipsTruncated,
+			TopEntities:            make([]EntityHandle, 0, len(record.TopEntities)),
+			CommunityRelationships: make([]RelatedRelationshipSummary, 0, len(record.Relationships)),
+		}
+		for _, entity := range record.TopEntities {
+			community.TopEntities = append(community.TopEntities, EntityHandle{EntityID: entity.EntityID, Name: entity.Name})
+		}
+		for _, relationship := range record.Relationships {
+			community.CommunityRelationships = append(community.CommunityRelationships, RelatedRelationshipSummary{
+				RelationshipID:            relationship.RelationshipID,
+				EquivalentRelationshipIDs: append([]string(nil), relationship.EquivalentRelationshipIDs...),
+				SemanticGroupKey:          relationship.SemanticGroupKey,
+				Subject:                   EntityHandle{EntityID: relationship.SubjectEntityID, Name: relationship.SubjectName},
+				Predicate:                 relationship.PredicateKey, Object: recallRelationshipObject(relationship),
+				Polarity: relationship.Polarity, EvidenceIDs: append([]string(nil), relationship.EvidenceIDs...),
+				SearchState: relationship.SearchState,
+			})
+		}
+		out = append(out, community)
+	}
+	return out
+}
+
 func relatedRelationshipSummaries(recalled *repository.RecallRelationshipsResult) []RelatedRelationshipSummary {
 	if recalled == nil {
 		return []RelatedRelationshipSummary{}
@@ -469,6 +728,7 @@ func relatedRelationshipSummaries(recalled *repository.RecallRelationshipsResult
 		out = append(out, RelatedRelationshipSummary{
 			RelationshipID:            record.RelationshipID,
 			EquivalentRelationshipIDs: append([]string(nil), record.EquivalentRelationshipIDs...),
+			SemanticGroupKey:          record.SemanticGroupKey,
 			Subject: EntityHandle{
 				EntityID: record.SubjectEntityID,
 				Name:     record.SubjectName,
@@ -481,6 +741,57 @@ func relatedRelationshipSummaries(recalled *repository.RecallRelationshipsResult
 		})
 	}
 	return out
+}
+
+func sortedGroupKeys(groups map[string]struct{}) []string {
+	keys := make([]string, 0, len(groups))
+	for group := range groups {
+		if strings.TrimSpace(group) != "" {
+			keys = append(keys, group)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func cloneGroupSet(groups map[string]struct{}) map[string]struct{} {
+	cloned := make(map[string]struct{}, len(groups))
+	for group := range groups {
+		cloned[group] = struct{}{}
+	}
+	return cloned
+}
+
+func recallResultEvidenceIDs(results []RecallResultItem) []string {
+	ids := make([]string, 0, len(results))
+	seen := map[string]struct{}{}
+	for _, result := range results {
+		if result.EvidenceID == "" {
+			continue
+		}
+		if _, ok := seen[result.EvidenceID]; ok {
+			continue
+		}
+		seen[result.EvidenceID] = struct{}{}
+		ids = append(ids, result.EvidenceID)
+	}
+	return ids
+}
+
+func relationshipSummaryIDs(values []RelatedRelationshipSummary) []string {
+	ids := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		if value.RelationshipID == "" {
+			continue
+		}
+		if _, ok := seen[value.RelationshipID]; ok {
+			continue
+		}
+		seen[value.RelationshipID] = struct{}{}
+		ids = append(ids, value.RelationshipID)
+	}
+	return ids
 }
 
 func recallRelationshipObject(record repository.RecallRelationshipHit) SemanticObject {
@@ -566,6 +877,7 @@ func normalizeRecallRequest(req RecallRequest) RecallRequest {
 	}
 	req.RelationshipLimit = normalizeRecallOptionalLimit(req.RelationshipLimit, defaultRelatedRelationshipLimit, maxRelatedRelationshipLimit)
 	req.CommunityLimit = normalizeRecallOptionalLimit(req.CommunityLimit, defaultCommunityPathLimit, maxCommunityPathLimit)
+	req.CommunityRelationshipLimit = normalizeRecallPositiveLimit(req.CommunityRelationshipLimit, defaultRelatedRelationshipLimit, maxRelatedRelationshipLimit)
 	req.KnownEvidenceIDs = normalizeRecallRequestIDs(req.KnownEvidenceIDs)
 	req.KnownRelationshipIDs = normalizeRecallRequestIDs(req.KnownRelationshipIDs)
 	req.ExpandFromEntityIDs = normalizeRecallRequestIDs(req.ExpandFromEntityIDs)
@@ -585,6 +897,14 @@ func normalizeRecallOptionalLimit(value *int, defaultValue int, maxValue int) *i
 		normalized = maxValue
 	}
 	return &normalized
+}
+
+func normalizeRecallPositiveLimit(value *int, defaultValue int, maxValue int) *int {
+	normalized := normalizeRecallOptionalLimit(value, defaultValue, maxValue)
+	if *normalized < 1 {
+		*normalized = 1
+	}
+	return normalized
 }
 
 func recallOptionalLimitValue(value *int) int {
@@ -675,99 +995,4 @@ func recallCreatedAt(value time.Time) *time.Time {
 	}
 	createdAt := value.UTC()
 	return &createdAt
-}
-
-func recallConflictSummaries(records []repository.RelationshipConflictCaseRecord) []RecallConflictSummary {
-	out := make([]RecallConflictSummary, 0, len(records))
-	for _, record := range records {
-		reviewDueAt := record.ReviewDueAt
-		positions := recallConflictPositions(record.Positions)
-		summary := RecallConflictSummary{
-			ConflictID:          record.ConflictID,
-			Version:             record.Version,
-			Kind:                record.Kind,
-			Status:              record.Status,
-			Question:            record.Question,
-			ReviewDueAt:         &reviewDueAt,
-			EffectiveAt:         record.EffectiveAt,
-			EffectiveTimeBasis:  record.EffectiveTimeBasis,
-			PreferredPositionID: record.PreferredPositionID,
-			Positions:           positions,
-			PositionsTruncated:  len(record.Positions) > recallConflictPositionLimit,
-		}
-		out = append(out, summary)
-	}
-	return out
-}
-
-const (
-	recallConflictPositionLimit         = 10
-	recallConflictRelationshipIDLimit   = 20
-	recallConflictOwnerProfileIDLimit   = 20
-	recallConflictResultEvidenceIDLimit = 50
-)
-
-func recallConflictPositions(records []repository.RelationshipConflictPositionRecord) []RecallConflictPosition {
-	if len(records) > recallConflictPositionLimit {
-		records = records[:recallConflictPositionLimit]
-	}
-	out := make([]RecallConflictPosition, 0, len(records))
-	for _, record := range records {
-		out = append(out, RecallConflictPosition{
-			PositionID:        record.PositionID,
-			Disposition:       record.Disposition,
-			RelationshipIDs:   limitStrings(record.RelationshipIDs, recallConflictRelationshipIDLimit),
-			OwnerProfileIDs:   limitStrings(record.OwnerProfileIDs, recallConflictOwnerProfileIDLimit),
-			ResultEvidenceIDs: limitStrings(record.EvidenceIDs, recallConflictResultEvidenceIDLimit),
-		})
-	}
-	return out
-}
-
-func limitStrings(values []string, limit int) []string {
-	if limit >= 0 && len(values) > limit {
-		values = values[:limit]
-	}
-	return append([]string(nil), values...)
-}
-
-func relatedHypothesisSummaries(records []repository.HypothesisRecord) []RelatedHypothesisSummary {
-	out := make([]RelatedHypothesisSummary, 0, len(records))
-	for _, record := range records {
-		out = append(out, RelatedHypothesisSummary{
-			HypothesisID:          record.HypothesisID,
-			SubjectEntityID:       record.SubjectEntityID,
-			PredicateKey:          record.PredicateKey,
-			ObjectEntityID:        record.ObjectEntityID,
-			ObjectValueID:         record.ObjectValueID,
-			Statement:             record.Statement,
-			Status:                record.Status,
-			SourceRelationshipIDs: relatedHypothesisSourceIDs(record.SourceRefs),
-			GeneratorKind:         publicHypothesisGeneratorKind(record.GeneratorKind),
-			GeneratorVersion:      record.GeneratorVersion,
-			CreatedAt:             record.CreatedAt,
-		})
-	}
-	return out
-}
-
-func relatedHypothesisSourceIDs(refs []map[string]any) []string {
-	out := []string{}
-	for _, ref := range refs {
-		id, _ := ref["id"].(string)
-		id = strings.TrimSpace(id)
-		if id != "" {
-			out = append(out, id)
-		}
-	}
-	return out
-}
-
-func publicHypothesisGeneratorKind(kind string) string {
-	switch strings.TrimSpace(kind) {
-	case "provider":
-		return "provider"
-	default:
-		return "deterministic"
-	}
 }

@@ -109,6 +109,17 @@ func TestRecallInputNormalizationAndValidation(t *testing.T) {
 	}
 }
 
+func TestRecallRelationshipEvidenceOverlapFiltersKnownSupport(t *testing.T) {
+	evidenceID := uuid.NewString()
+	otherEvidenceID := uuid.NewString()
+	if !recallEvidenceOverlaps([]string{otherEvidenceID, evidenceID}, []string{evidenceID}) {
+		t.Fatal("expected known evidence overlap")
+	}
+	if recallEvidenceOverlaps([]string{otherEvidenceID}, []string{evidenceID}) {
+		t.Fatal("unexpected evidence overlap")
+	}
+}
+
 func TestRecallBoundsAndContextHelpers(t *testing.T) {
 	if got := recallOverfetchLimit(1); got != recallOverfetchFloor {
 		t.Fatalf("overfetch floor = %d, want %d", got, recallOverfetchFloor)

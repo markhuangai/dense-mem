@@ -12,10 +12,25 @@ export function recallPayloadForHits(hits: RecallHit[]): RecallPayload {
       };
     }),
     conflicts: [],
-    related_communities: hits.map((hit) => ({
-      evidence_ids: [evidenceForHit(hit).evidence_id],
-      relationships: relationshipsForHit(hit),
-    })),
+    related_communities: [],
+    discovery_paths: hits.map((hit) => {
+      const evidenceID = evidenceForHit(hit).evidence_id;
+      return {
+        community_id: `community-${evidenceID}`,
+        logical_community_id: `logical-community-${evidenceID}`,
+        rank: 1,
+        summary: "test community",
+        top_entities: [],
+        top_predicates: [],
+        entity_count: 0,
+        relationship_count: relationshipsForHit(hit).length,
+        relationships: relationshipsForHit(hit).map((relationship) => ({
+          ...relationship,
+          evidence_ids: relationship.evidence_ids?.length ? relationship.evidence_ids : [evidenceID],
+        })),
+        relationships_truncated: false,
+      };
+    }),
     related_relationships: [],
     related_hypotheses: [],
     search_states: { evidence: "current", relationships: "current" },

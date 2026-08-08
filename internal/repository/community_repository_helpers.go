@@ -36,7 +36,8 @@ func scanCommunityRecords(rows *sql.Rows) ([]CommunityRecord, error) {
 		record := CommunityRecord{}
 		var topEntities, topPredicates pq.StringArray
 		var supersededAt sql.NullTime
-		if err := rows.Scan(&record.TeamID, &record.CommunityID, &record.RunID,
+		if err := rows.Scan(&record.TeamID, &record.CommunityID, &record.LogicalCommunityID,
+			&record.RunID,
 			&record.Ordinal, &record.Status, &record.Summary,
 			&record.SummaryVersion, &record.MemberCount, &record.SourceCount,
 			&topEntities, &topPredicates, &record.SourceFingerprint,
@@ -65,6 +66,14 @@ func marshalCommunitySnapshot(value []map[string]any) ([]byte, error) {
 	return encoded, nil
 }
 
+func normalizeCommunityLogicalID(record CommunityPublishRecord) string {
+	logicalID := strings.TrimSpace(record.LogicalCommunityID)
+	if logicalID == "" {
+		logicalID = strings.TrimSpace(record.CommunityID)
+	}
+	return logicalID
+}
+
 func (record CommunityRecord) DomainCommunity() *domain.Community {
 	return &domain.Community{
 		CommunityID:      record.CommunityID,
@@ -86,6 +95,7 @@ func normalizeCommunityRunClaimInput(input CommunityRunClaimInput) CommunityRunC
 	input.AlgorithmVersion = strings.TrimSpace(input.AlgorithmVersion)
 	input.ProfileVersion = strings.TrimSpace(input.ProfileVersion)
 	input.ConfigurationHash = strings.TrimSpace(input.ConfigurationHash)
+	input.SourceFingerprint = strings.TrimSpace(input.SourceFingerprint)
 	if input.WindowKey == "" {
 		input.WindowKey = time.Now().UTC().Format("2006-01-02")
 	}
@@ -154,8 +164,8 @@ func normalizeCommunityInputListInput(input CommunityInputListInput) CommunityIn
 	if input.Limit <= 0 {
 		input.Limit = 500
 	}
-	if input.Limit > 5000 {
-		input.Limit = 5000
+	if input.Limit > 5001 {
+		input.Limit = 5001
 	}
 	return input
 }
@@ -186,6 +196,10 @@ func normalizeCommunitySnapshotPublishInput(input CommunitySnapshotPublishInput)
 	}
 	for i := range input.Communities {
 		input.Communities[i].CommunityID = strings.TrimSpace(input.Communities[i].CommunityID)
+		input.Communities[i].LogicalCommunityID = strings.TrimSpace(input.Communities[i].LogicalCommunityID)
+		if input.Communities[i].LogicalCommunityID == "" {
+			input.Communities[i].LogicalCommunityID = input.Communities[i].CommunityID
+		}
 		input.Communities[i].Summary = strings.TrimSpace(input.Communities[i].Summary)
 		input.Communities[i].SummaryVersion = strings.TrimSpace(input.Communities[i].SummaryVersion)
 		input.Communities[i].SourceFingerprint = strings.TrimSpace(input.Communities[i].SourceFingerprint)
@@ -195,6 +209,8 @@ func normalizeCommunitySnapshotPublishInput(input CommunitySnapshotPublishInput)
 		for j := range input.Communities[i].Sources {
 			input.Communities[i].Sources[j].RelationshipID = strings.TrimSpace(input.Communities[i].Sources[j].RelationshipID)
 			input.Communities[i].Sources[j].OwnerProfileID = strings.TrimSpace(input.Communities[i].Sources[j].OwnerProfileID)
+			input.Communities[i].Sources[j].SemanticGroupKey = strings.TrimSpace(input.Communities[i].Sources[j].SemanticGroupKey)
+			input.Communities[i].Sources[j].SourceStateHash = strings.TrimSpace(input.Communities[i].Sources[j].SourceStateHash)
 		}
 	}
 	return input
@@ -214,11 +230,14 @@ func validateCommunitySnapshotPublishInput(input CommunitySnapshotPublishInput) 
 		return errors.New("node and edge counts must be non-negative")
 	}
 	if len(input.Communities) == 0 {
-		return errors.New("communities are required")
+		return nil
 	}
 	for _, community := range input.Communities {
 		if _, err := uuid.Parse(community.CommunityID); err != nil {
 			return fmt.Errorf("community_id is required: %w", err)
+		}
+		if _, err := uuid.Parse(community.LogicalCommunityID); err != nil {
+			return fmt.Errorf("logical_community_id is required: %w", err)
 		}
 		if community.Summary == "" {
 			return errors.New("community summary is required")

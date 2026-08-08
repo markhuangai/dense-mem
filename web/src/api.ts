@@ -1,7 +1,7 @@
 import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types";
+import type { CommunityStatus } from "./community-api-types";
 import { requestJson } from "./http";
 export { ApiError } from "./http";
-
 export type Team = {
   id: string;
   name: string;
@@ -12,7 +12,6 @@ export type Team = {
   created_at: string;
   updated_at: string;
 };
-
 export type TeamProfile = {
   id: string;
   team_id: string;
@@ -919,6 +918,10 @@ export class ControlApi {
 
   getTeamDreamingStatus(teamId: string): Promise<DreamStatus> {
     return this.requestEnvelope<DreamStatus>(`/teams/${teamId}/dreaming/status`);
+  }
+
+  getTeamCommunityStatus(teamId: string): Promise<CommunityStatus> {
+    return this.requestEnvelope<CommunityStatus>(`/teams/${teamId}/community/status`);
   }
 
   listTeamDreamingRuns(teamId: string, limit = 20): Promise<DreamRun[]> {

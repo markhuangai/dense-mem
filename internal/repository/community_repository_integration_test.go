@@ -23,6 +23,7 @@ func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	semanticRepo := NewSemanticRepository(appDB, rls)
 	searchRepo := NewSearchRepository(appDB, rls)
+	insertSearchTestContract(t, adminDB, rls, "community-search", 3, "exact", "")
 
 	mark := createSemanticEntity(t, ctx, semanticRepo, teamA, ownerA, "person", "Mark Huang")
 	denseMem := createSemanticEntity(t, ctx, semanticRepo, teamA, ownerA, "project", "Dense-Mem")
@@ -196,6 +197,19 @@ func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, otherTeamList)
 
+	recalledCommunities, err := semanticRepo.RecallCommunities(ctx, CommunityRecallInput{
+		TeamID:            teamA,
+		Query:             "PostgreSQL",
+		Limit:             10,
+		RelationshipLimit: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, recalledCommunities, 1)
+	assert.NotEmpty(t, recalledCommunities[0].TopEntities)
+	require.Len(t, recalledCommunities[0].Relationships, 1)
+	assert.Equal(t, teamA, recalledCommunities[0].Relationships[0].TeamID)
+	assert.Contains(t, []string{work.Relationship.RelationshipID, uses.Relationship.RelationshipID}, recalledCommunities[0].Relationships[0].RelationshipID)
+
 	discovery, err := semanticRepo.RecallCommunityDiscovery(ctx, CommunityDiscoveryInput{
 		TeamID: teamA,
 		Query:  "PostgreSQL",
@@ -203,8 +217,8 @@ func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, discovery, 1)
-	assert.Equal(t, uses.Relationship.RelationshipID, discovery[0].Relationship.RelationshipID)
-	assert.Contains(t, discovery[0].EvidenceIDs, usesIngest.Evidence[0].FragmentID)
+	assert.Contains(t, []string{work.Relationship.RelationshipID, uses.Relationship.RelationshipID}, discovery[0].Relationship.RelationshipID)
+	assert.NotEmpty(t, discovery[0].EvidenceIDs)
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`

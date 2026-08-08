@@ -481,8 +481,21 @@ func (c *HTTPClient) WaitForSubmissionStatusResult(ctx context.Context, submissi
 			default:
 				return nil, fmt.Errorf("submission %s returned unknown search_state %q", submissionID, searchState)
 			}
-		case "queued", "processing":
-		case "failed", "rejected", "quarantined":
+		case "queued", "processing", "awaiting_review":
+		case "rejected":
+			if evidenceIDFromSubmission(out) != "" {
+				return out, nil
+			}
+			if cause := submissionErrorMessage(out); cause != "" {
+				return nil, fmt.Errorf("submission %s %s: %s", submissionID, status, cause)
+			}
+			return nil, fmt.Errorf("submission %s %s", submissionID, status)
+		case "quarantined":
+			if cause := submissionErrorMessage(out); cause != "" {
+				return nil, fmt.Errorf("submission %s quarantined: %s", submissionID, cause)
+			}
+			return nil, fmt.Errorf("submission %s quarantined", submissionID)
+		case "failed":
 			if cause := submissionErrorMessage(out); cause != "" {
 				return nil, fmt.Errorf("submission %s %s: %s", submissionID, status, cause)
 			}

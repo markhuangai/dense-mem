@@ -277,15 +277,16 @@ func recallMemoryInputSchema() map[string]any {
 	query := schemaString("Natural-language recall query.", 512)
 	query["minLength"] = 1
 	return contractInput([]string{"query"}, map[string]any{
-		"query":                  query,
-		"limit":                  map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
-		"relationship_limit":     map[string]any{"type": "integer", "minimum": 0, "maximum": 20},
-		"community_limit":        map[string]any{"type": "integer", "minimum": 0, "maximum": 10},
-		"valid_at":               nullableDateTime("Real-world recall time."),
-		"known_at":               nullableDateTime("System-knowledge recall time."),
-		"known_evidence_ids":     stringArraySchema("Evidence UUID already seen.", 200, 128),
-		"known_relationship_ids": stringArraySchema("Relationship UUID already seen.", 200, 128),
-		"expand_from_entity_ids": stringArraySchema("Entity UUID for focused expansion.", 50, 128),
+		"query":                        query,
+		"limit":                        map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
+		"relationship_limit":           map[string]any{"type": "integer", "minimum": 0, "maximum": 20},
+		"community_limit":              map[string]any{"type": "integer", "minimum": 0, "maximum": 10},
+		"community_relationship_limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
+		"valid_at":                     nullableDateTime("Real-world recall time."),
+		"known_at":                     nullableDateTime("System-knowledge recall time."),
+		"known_evidence_ids":           stringArraySchema("Evidence UUID already seen.", 200, 128),
+		"known_relationship_ids":       stringArraySchema("Relationship UUID already seen.", 200, 128),
+		"expand_from_entity_ids":       stringArraySchema("Entity UUID for focused expansion.", 50, 128),
 	})
 }
 

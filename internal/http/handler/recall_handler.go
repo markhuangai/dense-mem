@@ -59,14 +59,15 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 
 	dreamingEnabled := recallDreamingEnabled(ctx, h.dreams)
 	result, err := h.svc.Recall(ctx, memoryservice.RecallRequest{
-		ContractVersion:   domain.ContractVersion,
-		Query:             req.Query,
-		Limit:             req.Limit,
-		IncludeHypotheses: dreamingEnabled,
-		RelationshipLimit: req.RelationshipLimit,
-		CommunityLimit:    req.CommunityLimit,
-		ValidAt:           req.ValidAt,
-		KnownAt:           req.KnownAt,
+		ContractVersion:            domain.ContractVersion,
+		Query:                      req.Query,
+		Limit:                      req.Limit,
+		IncludeHypotheses:          dreamingEnabled,
+		RelationshipLimit:          req.RelationshipLimit,
+		CommunityLimit:             req.CommunityLimit,
+		CommunityRelationshipLimit: req.CommunityRelationshipLimit,
+		ValidAt:                    req.ValidAt,
+		KnownAt:                    req.KnownAt,
 		KnownEvidenceIDs: append(
 			[]string(nil),
 			req.KnownEvidenceIDs...,

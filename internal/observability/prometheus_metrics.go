@@ -80,6 +80,9 @@ type PrometheusMetrics struct {
 	assessorReviewExpiry         prometheus.Counter
 	assessorTerminalFailures     *prometheus.CounterVec
 	quarantinePurgeFailures      prometheus.Counter
+	communityRuns                *prometheus.CounterVec
+	communitySummaries           *prometheus.CounterVec
+	communityRecalls             *prometheus.CounterVec
 }
 
 var _ DiscoverabilityMetrics = (*PrometheusMetrics)(nil)
@@ -257,6 +260,18 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 			Name: "densemem_submission_quarantine_purge_failures_total",
 			Help: "Submission quarantine purge failures requiring operational attention.",
 		}),
+		communityRuns: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_community_runs_total",
+			Help: "Community snapshot runs by bounded terminal status.",
+		}, append(identityLabels(), "status")),
+		communitySummaries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_community_summaries_total",
+			Help: "Community summary provider outcomes.",
+		}, append(identityLabels(), "outcome")),
+		communityRecalls: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_community_recall_total",
+			Help: "Community recall outcomes.",
+		}, append(identityLabels(), "outcome")),
 	}
 	m.registry.MustRegister(
 		m.httpRequests, m.httpDuration,
@@ -271,9 +286,21 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		m.assessorCandidateTruncations, m.assessorPersistence, m.assessorDuplicatePrevention,
 		m.assessorConfidenceGate, m.assessorReviewExpiry,
 		m.assessorTerminalFailures,
-		m.quarantinePurgeFailures,
+		m.quarantinePurgeFailures, m.communityRuns, m.communitySummaries, m.communityRecalls,
 	)
 	return m
+}
+
+func (m *PrometheusMetrics) ObserveCommunityRun(ctx context.Context, status string, _, _, _ int) {
+	m.communityRuns.WithLabelValues(append(identityValues(ctx), normalizeLabel(status))...).Inc()
+}
+
+func (m *PrometheusMetrics) ObserveCommunitySummary(ctx context.Context, outcome string, _ int) {
+	m.communitySummaries.WithLabelValues(append(identityValues(ctx), normalizeLabel(outcome))...).Inc()
+}
+
+func (m *PrometheusMetrics) ObserveCommunityRecall(ctx context.Context, outcome string, _, _ int) {
+	m.communityRecalls.WithLabelValues(append(identityValues(ctx), normalizeLabel(outcome))...).Inc()
 }
 
 func (m *PrometheusMetrics) Handler() http.Handler {

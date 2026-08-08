@@ -33,10 +33,21 @@ func semanticObjectSchema() map[string]any {
 
 func recallDiscoveryPathSchema() map[string]any {
 	return closedObject(
-		[]string{"relationships", "evidence_ids"},
+		[]string{
+			"community_id", "logical_community_id", "rank", "summary", "top_entities", "top_predicates",
+			"entity_count", "relationship_count", "relationships", "relationships_truncated",
+		},
 		map[string]any{
-			"relationships": array(recallRelationshipSchema(), 1, 20),
-			"evidence_ids":  stringArraySchema("Evidence ID supporting this discovery path.", 50, 128),
+			"community_id":            schemaString("Stable community version ID.", 128),
+			"logical_community_id":    schemaString("Stable logical community identity across snapshots.", 128),
+			"rank":                    map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
+			"summary":                 schemaString("Bounded derived community summary.", 4000),
+			"top_entities":            array(entityHandleSchema(), 0, 5),
+			"top_predicates":          stringArraySchema("Registered predicate key.", 5, 128),
+			"entity_count":            map[string]any{"type": "integer", "minimum": 0},
+			"relationship_count":      map[string]any{"type": "integer", "minimum": 0},
+			"relationships":           array(relatedRelationshipSchema(), 0, 20),
+			"relationships_truncated": map[string]any{"type": "boolean"},
 		},
 	)
 }

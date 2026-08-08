@@ -123,6 +123,10 @@ func TestRecallConflictSummariesEnforcePositionBounds(t *testing.T) {
 	require.Len(t, summaries[0].Positions[0].ResultEvidenceIDs, 50)
 }
 
+func TestPublicHypothesisGeneratorKindPreservesProvider(t *testing.T) {
+	require.Equal(t, "provider", publicHypothesisGeneratorKind("provider"))
+}
+
 func TestRecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
@@ -670,6 +674,7 @@ type recallSearchStub struct {
 	result             *repository.RecallEvidenceResult
 	relationshipResult *repository.RecallRelationshipsResult
 	relationshipCalled bool
+	relationshipCalls  int
 	err                error
 	relationshipErr    error
 }
@@ -691,6 +696,7 @@ func (s *recallSearchStub) RecallEvidence(_ context.Context, input repository.Re
 
 func (s *recallSearchStub) RecallRelationships(_ context.Context, input repository.RecallRelationshipsInput) (*repository.RecallRelationshipsResult, error) {
 	s.relationshipCalled = true
+	s.relationshipCalls++
 	s.relationshipInput = input
 	if s.relationshipErr != nil {
 		return nil, s.relationshipErr
