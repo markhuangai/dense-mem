@@ -638,7 +638,8 @@ func hydrateRecallRelationships(
 		          )
 		      )
 		      AND (?::timestamptz IS NOT NULL OR relationship.support_count > 0)
-		      AND known_groups.semantic_group_key IS NULL
+				AND known_groups.semantic_group_key IS NULL
+				AND (cardinality(?::text[]) = 0 OR relationship.semantic_group_key <> ALL(?::text[]))
 		      AND (
 		          ?::timestamptz IS NULL
 		          OR ((relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
@@ -671,7 +672,8 @@ func hydrateRecallRelationships(
 		input.KnownAt, input.KnownAt, input.KnownAt,
 		eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
-		input.KnownAt, input.KnownAt, input.KnownAt).Rows()
+		input.KnownAt, input.KnownAt, input.KnownAt,
+		pq.Array(input.ExcludedGroupKeys), pq.Array(input.ExcludedGroupKeys)).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -710,7 +712,7 @@ func hydrateRecallRelationships(
 		return nil, err
 	}
 	for relationshipID, hit := range out {
-		if len(hit.EvidenceIDs) == 0 {
+		if len(hit.EvidenceIDs) == 0 || recallEvidenceOverlaps(hit.EvidenceIDs, input.KnownEvidenceIDs) {
 			delete(out, relationshipID)
 		}
 	}
@@ -718,6 +720,22 @@ func hydrateRecallRelationships(
 		return nil, err
 	}
 	return out, nil
+}
+
+func recallEvidenceOverlaps(evidenceIDs, knownEvidenceIDs []string) bool {
+	if len(evidenceIDs) == 0 || len(knownEvidenceIDs) == 0 {
+		return false
+	}
+	known := make(map[string]struct{}, len(knownEvidenceIDs))
+	for _, evidenceID := range knownEvidenceIDs {
+		known[evidenceID] = struct{}{}
+	}
+	for _, evidenceID := range evidenceIDs {
+		if _, ok := known[evidenceID]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func hydrateRecallRelationshipEvidenceIDs(ctx context.Context, tx *gorm.DB, input RecallRelationshipsInput, hits map[string]RecallRelationshipHit) error {

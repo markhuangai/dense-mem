@@ -1,5 +1,5 @@
 import { CSSProperties, ReactNode, useEffect, useState } from "react";
-import { Activity, CheckCircle2, Moon, Users } from "lucide-react";
+import { Activity, CheckCircle2, Moon, Network, Users } from "lucide-react";
 import { ControlApi, Team, TeamProfile } from "../api";
 import { SectionHeading, SummaryCard } from "../ui/components";
 import { formatDate, profilePermissionLabel, profileRoleLabel, shortId } from "./utils";
@@ -87,6 +87,7 @@ export function TeamOverviewPanel({
   const [profiles, setProfiles] = useState<TeamProfile[]>([]);
   const [metrics, setMetrics] = useState<Awaited<ReturnType<ControlApi["getMetrics"]>> | null>(null);
   const [metricsUnavailable, setMetricsUnavailable] = useState(false);
+  const [communityStatus, setCommunityStatus] = useState<Awaited<ReturnType<ControlApi["getTeamCommunityStatus"]>> | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -101,13 +102,15 @@ export function TeamOverviewPanel({
         }
         return null;
       }),
+      api.getTeamCommunityStatus(team.id).catch(() => null),
     ])
-      .then(([nextProfiles, nextMetrics]) => {
+      .then(([nextProfiles, nextMetrics, nextCommunityStatus]) => {
         if (!active) {
           return;
         }
         setProfiles(nextProfiles);
         setMetrics(nextMetrics);
+        setCommunityStatus(nextCommunityStatus);
         setMetricsUnavailable(nextMetrics === null);
       })
       .finally(() => {
@@ -142,6 +145,7 @@ export function TeamOverviewPanel({
     <div className="team-overview" aria-label="Team overview">
       <div className="summary-strip" aria-label="Summary">
         <SummaryCard label="Profiles" value={profiles.length} detail={`${managerCount} managers`} />
+        <SummaryCard label="Communities" value={communityStatus?.current_community_count ?? "n/a"} detail={communityStatus?.effective_config.enabled ? "Nightly enabled" : "Nightly disabled"} tone={communityStatus?.effective_config.enabled ? "neutral" : "warning"} />
         <SummaryCard label="Requests" value={requestValue} detail="Last hour" tone={metricsFailed ? "warning" : "neutral"} />
         <SummaryCard label="Recall health" value={healthValue} detail={healthDetail} tone={metricsFailed ? "warning" : "neutral"} />
         <div className="health-stack" aria-label="Health summary">
@@ -158,6 +162,7 @@ export function TeamOverviewPanel({
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="Errors" value={errorValue} trend={metricsReady ? errors > 0 ? "review" : "clear" : "unavailable"} tone={errors > 0 ? "danger" : metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Users size={15} aria-hidden="true" />} label="Writable profiles" value={readWriteCount} trend={`${profiles.length} total`} />
           <MetricRow icon={<Moon size={15} aria-hidden="true" />} label="Dreaming" value={team.dreaming_effective?.enabled ? "Enabled" : "Inherited"} trend={team.dreaming_effective?.source ?? "global"} />
+          <MetricRow icon={<Network size={15} aria-hidden="true" />} label="Community snapshot" value={communityStatus?.current_community_count ?? "n/a"} trend={communityStatus?.latest_run?.status ?? "not run"} tone={communityStatus?.latest_run?.status === "failed" ? "warning" : "neutral"} />
         </section>
 
         <section className="overview-panel" aria-label="Top signals">

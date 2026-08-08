@@ -186,7 +186,13 @@ describe("UserApi", () => {
         related_relationships: [],
         related_communities: [
           {
-            evidence_ids: ["11111111-1111-4111-8111-111111111111"],
+            community_id: "community-1",
+            rank: 1,
+            summary: "Dense-Mem community",
+            top_entities: [{ entity_id: "33333333-3333-4333-8333-333333333333", name: "Dense-Mem" }],
+            top_predicates: ["uses"],
+            entity_count: 2,
+            relationship_count: 1,
             relationships: [
               {
                 relationship_id: "22222222-2222-4222-8222-222222222222",
@@ -194,8 +200,10 @@ describe("UserApi", () => {
                 predicate: "uses",
                 object: { name: "PostgreSQL" },
                 polarity: "positive",
+                evidence_ids: ["11111111-1111-4111-8111-111111111111"],
               },
             ],
+            relationships_truncated: false,
           },
         ],
         related_hypotheses: [],
@@ -207,12 +215,14 @@ describe("UserApi", () => {
 
     const result = await new UserApi("dm_key").recall("postgres", 3);
 
-    expect(result).toHaveLength(1);
-    expect(result[0].evidence?.evidence_id).toBe("11111111-1111-4111-8111-111111111111");
-    expect(result[0].evidence?.context).toContain("PostgreSQL");
-    expect(result[0].relationships?.[0].relationship_id).toBe("22222222-2222-4222-8222-222222222222");
-    expect(result[0].semantic_rank).toBe(2);
-    expect(result[0].final_score).toBe(0.5);
+    expect(result).toHaveLength(2);
+    expect(result[0].community?.community_id).toBe("community-1");
+    const evidenceHit = result.find((hit) => hit.evidence);
+    expect(evidenceHit?.evidence?.evidence_id).toBe("11111111-1111-4111-8111-111111111111");
+    expect(evidenceHit?.evidence?.context).toContain("PostgreSQL");
+    expect(evidenceHit?.relationships?.[0].relationship_id).toBe("22222222-2222-4222-8222-222222222222");
+    expect(evidenceHit?.semantic_rank).toBe(2);
+    expect(evidenceHit?.final_score).toBe(0.5);
     expect(fetchMock).toHaveBeenCalledWith(
       "/ui/api/recall?query=postgres&limit=3",
       expect.objectContaining({

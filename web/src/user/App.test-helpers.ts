@@ -12,9 +12,17 @@ export function recallPayloadForHits(hits: RecallHit[]): RecallPayload {
       };
     }),
     conflicts: [],
-    related_communities: hits.map((hit) => ({
-      evidence_ids: [evidenceForHit(hit).evidence_id],
+    related_communities: [],
+    discovery_paths: hits.map((hit) => ({
+      community_id: `community-${evidenceForHit(hit).evidence_id}`,
+      rank: 1,
+      summary: "test community",
+      top_entities: [],
+      top_predicates: [],
+      entity_count: 0,
+      relationship_count: relationshipsForHit(hit).length,
       relationships: relationshipsForHit(hit),
+      relationships_truncated: false,
     })),
     related_relationships: [],
     related_hypotheses: [],

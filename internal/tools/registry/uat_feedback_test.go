@@ -40,7 +40,7 @@ func TestBuildActiveRecallRecordsFeedbackSnapshot(t *testing.T) {
 	if snapshot.ContractVersion != domain.ContractVersion || snapshot.SearchState != string(domain.SearchProjectionCurrent) {
 		t.Fatalf("snapshot metadata = %+v", snapshot)
 	}
-	if got := snapshot.SnapshotMetadata["result_schema"]; got != "v2.evidence_relationship_refs.v1" {
+	if got := snapshot.SnapshotMetadata["result_schema"]; got != "v2.evidence_community_relationship_refs.v1" {
 		t.Fatalf("snapshot result schema = %#v", got)
 	}
 	if len(snapshot.ResultRefs) != 2 {

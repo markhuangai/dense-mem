@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,11 +11,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 const (
-	CommunityAlgorithmKind    = "connected_components"
-	CommunityAlgorithmVersion = "v1"
+	CommunityAlgorithmKind    = "louvain"
+	CommunityAlgorithmVersion = "v2"
 	CommunityProfileVersion   = "postgres"
 )
 
@@ -26,6 +29,7 @@ var (
 
 type CommunityRepository interface {
 	ClaimCommunityRun(ctx context.Context, input CommunityRunClaimInput) (*CommunityRun, error)
+	RenewCommunityRunLease(ctx context.Context, input CommunityRunLeaseInput) error
 	CompleteCommunityRun(ctx context.Context, input CommunityRunCompleteInput) error
 	ListCommunityInputs(ctx context.Context, input CommunityInputListInput) ([]CommunityInput, error)
 	PublishCommunitySnapshot(ctx context.Context, input CommunitySnapshotPublishInput) error
@@ -34,6 +38,10 @@ type CommunityRepository interface {
 	GetCommunity(ctx context.Context, input CommunityGetInput) (*CommunityRecord, error)
 	RecallCommunityDiscovery(ctx context.Context, input CommunityDiscoveryInput) ([]CommunityDiscoveryPath, error)
 	LatestCommunityRun(ctx context.Context, teamID string) (*CommunityRun, error)
+	ListCurrentCommunityLineage(ctx context.Context, teamID string) ([]CommunityLineageRecord, error)
+	ListCommunitySemanticGroups(ctx context.Context, input CommunityCoverageInput) ([]string, error)
+	RecallCommunities(ctx context.Context, input CommunityRecallInput) ([]CommunityRecallRecord, error)
+	RecordCommunitySummaryAttempt(ctx context.Context, input CommunitySummaryAttemptInput) error
 }
 
 type CommunityRunClaimInput struct {
@@ -44,8 +52,15 @@ type CommunityRunClaimInput struct {
 	AlgorithmVersion  string
 	ProfileVersion    string
 	ConfigurationHash string
+	SourceFingerprint string
 	MaxNodes          int
 	MaxEdges          int
+}
+
+type CommunityRunLeaseInput struct {
+	TeamID     string
+	RunID      string
+	LeaseUntil time.Time
 }
 
 type CommunityRunCompleteInput struct {
@@ -94,6 +109,12 @@ type CommunityInput struct {
 	PredicateVersion int
 	ObjectEntityID   string
 	ObjectName       string
+	ObjectValueID    string
+	ObjectValueType  string
+	ObjectValue      string
+	SemanticGroupKey string
+	EvidenceIDs      []string
+	EvidenceQuotes   []domain.CommunitySummarySupportQuote
 }
 
 type CommunitySnapshotPublishInput struct {
@@ -111,17 +132,22 @@ type CommunitySnapshotPublishInput struct {
 }
 
 type CommunityPublishRecord struct {
-	CommunityID       string
-	Ordinal           int
-	Summary           string
-	SummaryVersion    string
-	MemberCount       int
-	SourceCount       int
-	TopEntities       []string
-	TopPredicates     []string
-	SourceFingerprint string
-	Memberships       []CommunityMembershipInput
-	Sources           []CommunitySourceInput
+	CommunityID          string
+	LogicalCommunityID   string
+	Ordinal              int
+	Summary              string
+	SummaryVersion       string
+	MemberCount          int
+	SourceCount          int
+	TopEntities          []string
+	TopPredicates        []string
+	SourceFingerprint    string
+	SummaryInputHash     string
+	SummaryProviderModel string
+	SummaryPromptHash    string
+	SummaryResponseHash  string
+	Memberships          []CommunityMembershipInput
+	Sources              []CommunitySourceInput
 }
 
 type CommunityMembershipInput struct {
@@ -136,6 +162,77 @@ type CommunitySourceInput struct {
 	OwnerProfileID      string
 	RelationshipVersion int
 	SourceRank          int
+	SemanticGroupKey    string
+	SourceStateHash     string
+}
+
+type CommunityLineageRecord struct {
+	CommunityID          string
+	LogicalCommunityID   string
+	GroupKeys            []string
+	SummaryInputHash     string
+	Summary              string
+	SummaryVersion       string
+	SummaryProviderModel string
+	SummaryPromptHash    string
+	SummaryResponseHash  string
+}
+
+type CommunityRecallInput struct {
+	TeamID               string
+	Query                string
+	ValidAt              *time.Time
+	KnownAt              *time.Time
+	ReturnedEvidenceIDs  []string
+	KnownEvidenceIDs     []string
+	KnownRelationshipIDs []string
+	SeedRelationshipIDs  []string
+	ExpandFromEntityIDs  []string
+	ExcludedGroupKeys    []string
+	CoveredGroupKeys     []string
+	Limit                int
+	RelationshipLimit    int
+}
+
+type CommunityCoverageInput struct {
+	TeamID          string
+	EvidenceIDs     []string
+	RelationshipIDs []string
+}
+
+type CommunityRecallTopEntity struct {
+	EntityID string
+	Name     string
+}
+
+type CommunityRecallRecord struct {
+	CommunityID            string
+	LogicalCommunityID     string
+	Rank                   int
+	Summary                string
+	TopEntities            []CommunityRecallTopEntity
+	TopPredicates          []string
+	EntityCount            int
+	RelationshipCount      int
+	Relationships          []RecallRelationshipHit
+	RelationshipsTruncated bool
+}
+
+type CommunitySummaryAttemptInput struct {
+	TeamID                  string
+	RunID                   string
+	CommunityID             string
+	Attempt                 int
+	ProviderModel           string
+	PromptHash              string
+	ResponseHash            string
+	InputHash               string
+	AdmittedRelationshipIDs []string
+	AdmittedEvidenceIDs     []string
+	AdmittedSupportQuotes   []domain.CommunitySummarySupportQuote
+	ResponseSummary         string
+	Valid                   bool
+	ErrorCode               string
 }
 
 type CommunityStalenessInput struct {
@@ -183,22 +280,24 @@ type CommunityDiscoveryRelationship struct {
 }
 
 type CommunityRecord struct {
-	TeamID            string
-	CommunityID       string
-	RunID             string
-	Ordinal           int
-	Status            string
-	Summary           string
-	SummaryVersion    string
-	MemberCount       int
-	SourceCount       int
-	TopEntities       []string
-	TopPredicates     []string
-	SourceFingerprint string
-	StaleReason       string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	SupersededAt      *time.Time
+	TeamID             string
+	CommunityID        string
+	LogicalCommunityID string
+	RunID              string
+	Ordinal            int
+	Status             string
+	Summary            string
+	SummaryVersion     string
+	MemberCount        int
+	SourceCount        int
+	TopEntities        []string
+	TopPredicates      []string
+	SourceFingerprint  string
+	StaleReason        string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	SupersededAt       *time.Time
+	GroupKeys          []string
 }
 
 var _ CommunityRepository = (*SemanticRepositoryImpl)(nil)
@@ -215,9 +314,9 @@ func (r *SemanticRepositoryImpl) ClaimCommunityRun(ctx context.Context, input Co
 			WITH attempted AS (
 				INSERT INTO community_snapshot_runs (
 					team_id, run_id, window_key, status, algorithm_kind, algorithm_version,
-					profile_version, configuration_hash, max_nodes, max_edges, lease_until
+					profile_version, configuration_hash, source_fingerprint, max_nodes, max_edges, lease_until
 				) VALUES (
-					?::uuid, ?::uuid, ?, 'running', ?, ?, ?, ?, ?, ?, ?::timestamptz
+					?::uuid, ?::uuid, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?::timestamptz
 				)
 				ON CONFLICT ON CONSTRAINT community_snapshot_runs_window_unique DO UPDATE
 				SET run_id = EXCLUDED.run_id,
@@ -226,10 +325,10 @@ func (r *SemanticRepositoryImpl) ClaimCommunityRun(ctx context.Context, input Co
 				    algorithm_version = EXCLUDED.algorithm_version,
 				    profile_version = EXCLUDED.profile_version,
 				    configuration_hash = EXCLUDED.configuration_hash,
+				    source_fingerprint = EXCLUDED.source_fingerprint,
 				    max_nodes = EXCLUDED.max_nodes,
 				    max_edges = EXCLUDED.max_edges,
 				    lease_until = EXCLUDED.lease_until,
-				    source_fingerprint = '',
 				    source_snapshot = '[]'::jsonb,
 				    node_count = 0,
 				    edge_count = 0,
@@ -238,7 +337,9 @@ func (r *SemanticRepositoryImpl) ClaimCommunityRun(ctx context.Context, input Co
 				    started_at = now(),
 				    completed_at = NULL,
 				    updated_at = now()
-				WHERE community_snapshot_runs.status IN ('failed', 'skipped', 'too_large', 'cancelled')
+				WHERE (community_snapshot_runs.status = 'completed'
+				       AND community_snapshot_runs.source_fingerprint <> EXCLUDED.source_fingerprint)
+				   OR community_snapshot_runs.status IN ('failed', 'skipped', 'too_large', 'cancelled')
 				   OR community_snapshot_runs.lease_until IS NULL
 				   OR community_snapshot_runs.lease_until <= now()
 				RETURNING team_id::text, run_id::text, window_key, status, algorithm_kind,
@@ -260,7 +361,7 @@ func (r *SemanticRepositoryImpl) ClaimCommunityRun(ctx context.Context, input Co
 			  AND NOT EXISTS (SELECT 1 FROM attempted)
 		`, input.TeamID, runID, input.WindowKey, input.AlgorithmKind,
 			input.AlgorithmVersion, input.ProfileVersion, input.ConfigurationHash,
-			input.MaxNodes, input.MaxEdges, input.LeaseUntil, input.TeamID, input.WindowKey).Rows()
+			input.SourceFingerprint, input.MaxNodes, input.MaxEdges, input.LeaseUntil, input.TeamID, input.WindowKey).Rows()
 		if err != nil {
 			return err
 		}
@@ -273,6 +374,20 @@ func (r *SemanticRepositoryImpl) ClaimCommunityRun(ctx context.Context, input Co
 			return err
 		}
 		run = scanned
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if run.Claimed && input.SourceFingerprint != "" {
+			if err := tx.WithContext(ctx).Exec(`
+				UPDATE community_records
+				SET status = 'stale', stale_reason = 'source_changed', updated_at = now()
+				WHERE team_id = ?::uuid
+				  AND status = 'current'
+				  AND source_fingerprint <> ?
+			`, input.TeamID, input.SourceFingerprint).Error; err != nil {
+				return err
+			}
+		}
 		return rows.Err()
 	})
 	if err != nil {
@@ -315,6 +430,40 @@ func (r *SemanticRepositoryImpl) CompleteCommunityRun(ctx context.Context, input
 	return nil
 }
 
+func (r *SemanticRepositoryImpl) RenewCommunityRunLease(ctx context.Context, input CommunityRunLeaseInput) error {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.RunID = strings.TrimSpace(input.RunID)
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.RunID); err != nil {
+		return fmt.Errorf("run_id is required: %w", err)
+	}
+	if input.LeaseUntil.IsZero() {
+		return errors.New("lease_until is required")
+	}
+	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		result := tx.WithContext(ctx).Exec(`
+			UPDATE community_snapshot_runs
+			SET lease_until = ?, updated_at = now()
+			WHERE team_id = ?::uuid
+			  AND run_id = ?::uuid
+			  AND status = 'running'
+		`, input.LeaseUntil, input.TeamID, input.RunID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrCommunityRunAlreadyClaimed
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("community: renew run lease: %w", err)
+	}
+	return nil
+}
+
 func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input CommunityInputListInput) ([]CommunityInput, error) {
 	input = normalizeCommunityInputListInput(input)
 	if err := validateCommunityInputListInput(input); err != nil {
@@ -331,49 +480,101 @@ func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input 
 				  AND name_kind = 'canonical'
 				  AND valid_to IS NULL
 				ORDER BY team_id, entity_id, created_at DESC, entity_name_id DESC
+			), latest_support AS (
+				SELECT DISTINCT ON (team_id, support_id)
+				       team_id, support_id, decision
+				FROM relationship_support_decision_events
+				WHERE team_id = ?::uuid
+				ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
+			), effective_support AS (
+				SELECT support.team_id, support.relationship_id,
+				       array_agg(DISTINCT support.fragment_id::text ORDER BY support.fragment_id::text) AS evidence_ids,
+				       jsonb_agg(jsonb_build_object('evidence_id', support.fragment_id::text, 'quote', support.quote)
+				                 ORDER BY support.fragment_id::text) AS evidence_quotes
+				FROM relationship_evidence_supports AS support
+				JOIN latest_support AS latest
+				  ON latest.team_id = support.team_id
+				 AND latest.support_id = support.support_id
+				 AND latest.decision IN ('grant', 'reinstate')
+				LEFT JOIN evidence_quarantines AS quarantine
+				  ON quarantine.team_id = support.team_id
+				 AND quarantine.fragment_id = support.fragment_id
+				 AND quarantine.status = 'active'
+				LEFT JOIN evidence_sources AS source
+				  ON source.team_id = support.team_id
+				 AND source.source_id = support.source_id
+				LEFT JOIN evidence_lifecycle_events AS lifecycle
+				  ON lifecycle.team_id = support.team_id
+				 AND lifecycle.target_fragment_id = support.fragment_id
+				WHERE support.team_id = ?::uuid
+				  AND quarantine.quarantine_id IS NULL
+				  AND lifecycle.lifecycle_event_id IS NULL
+				  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
+				GROUP BY support.team_id, support.relationship_id
 			)
-				SELECT relationship.relationship_id::text,
-				       relationship.owner_profile_id::text,
-				       relationship.version,
-				       relationship.subject_entity_id::text,
+			SELECT relationship.relationship_id::text,
+			       relationship.owner_profile_id::text,
+			       relationship.version,
+			       relationship.subject_entity_id::text,
 			       COALESCE(subject_name.display_name, relationship.subject_entity_id::text) AS subject_name,
 			       relationship.predicate_key,
 			       relationship.predicate_version,
-			       relationship.object_entity_id::text,
-			       COALESCE(object_name.display_name, relationship.object_entity_id::text) AS object_name
+			       COALESCE(relationship.object_entity_id::text, ''),
+			       COALESCE(object_name.display_name, value_record.display, value_record.canonical_value, relationship.object_value_id::text, '') AS object_name,
+			       COALESCE(relationship.object_value_id::text, ''),
+			       COALESCE(value_record.value_type, ''),
+			       COALESCE(value_record.canonical_value, ''),
+			       relationship.semantic_group_key,
+			       effective_support.evidence_ids,
+			       effective_support.evidence_quotes
 			FROM relationship_records AS relationship
 			JOIN entity_records AS subject
 			  ON subject.team_id = relationship.team_id
 			 AND subject.entity_id = relationship.subject_entity_id
 			 AND subject.status = 'active'
-			JOIN entity_records AS object
-				  ON object.team_id = relationship.team_id
-				 AND object.entity_id = relationship.object_entity_id
-				 AND object.status = 'active'
+			LEFT JOIN entity_records AS object
+			  ON object.team_id = relationship.team_id
+			 AND object.entity_id = relationship.object_entity_id
+			 AND object.status = 'active'
+			LEFT JOIN value_records AS value_record
+			  ON value_record.team_id = relationship.team_id
+			 AND value_record.value_id = relationship.object_value_id
 			LEFT JOIN canonical_names AS subject_name
 			  ON subject_name.team_id = relationship.team_id
 			 AND subject_name.entity_id = relationship.subject_entity_id
 			LEFT JOIN canonical_names AS object_name
 				  ON object_name.team_id = relationship.team_id
 				 AND object_name.entity_id = relationship.object_entity_id
-				WHERE relationship.team_id = ?::uuid
-				  AND relationship.status = 'active'
-				  AND relationship.support_count > 0
-				  AND relationship.object_entity_id IS NOT NULL
+			JOIN effective_support
+			  ON effective_support.team_id = relationship.team_id
+			 AND effective_support.relationship_id = relationship.relationship_id
+			WHERE relationship.team_id = ?::uuid
+			  AND relationship.identity_alias_of_relationship_id IS NULL
+			  AND relationship.status = 'active'
+			  AND (relationship.object_entity_id IS NOT NULL OR relationship.object_value_id IS NOT NULL)
 			ORDER BY relationship.updated_at ASC, relationship.relationship_id ASC
 			LIMIT ?
-		`, input.TeamID, input.TeamID, input.Limit).Rows()
+		`, input.TeamID, input.TeamID, input.TeamID, input.TeamID, input.Limit).Rows()
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
-			for rows.Next() {
-				item := CommunityInput{}
-				if err := rows.Scan(&item.RelationshipID, &item.OwnerProfileID, &item.Version,
-					&item.SubjectEntityID, &item.SubjectName, &item.PredicateKey,
-					&item.PredicateVersion, &item.ObjectEntityID,
-					&item.ObjectName); err != nil {
+		for rows.Next() {
+			item := CommunityInput{}
+			var evidenceIDs pq.StringArray
+			var evidenceQuotesJSON []byte
+			if err := rows.Scan(&item.RelationshipID, &item.OwnerProfileID, &item.Version,
+				&item.SubjectEntityID, &item.SubjectName, &item.PredicateKey,
+				&item.PredicateVersion, &item.ObjectEntityID,
+				&item.ObjectName, &item.ObjectValueID, &item.ObjectValueType,
+				&item.ObjectValue, &item.SemanticGroupKey, &evidenceIDs, &evidenceQuotesJSON); err != nil {
 				return err
+			}
+			item.EvidenceIDs = []string(evidenceIDs)
+			if len(evidenceQuotesJSON) > 0 {
+				if err := json.Unmarshal(evidenceQuotesJSON, &item.EvidenceQuotes); err != nil {
+					return err
+				}
 			}
 			out = append(out, item)
 		}
@@ -478,10 +679,39 @@ func (r *SemanticRepositoryImpl) RefreshCommunityStaleness(ctx context.Context, 
 				            AND source.community_id = record.community_id
 				            AND (
 					                relationship.relationship_id IS NULL
-					                OR relationship.version <> source.relationship_version
-					                OR relationship.status <> 'active'
-					                OR relationship.support_count = 0
-					                OR relationship.object_entity_id IS NULL
+														OR relationship.version <> source.relationship_version
+														OR relationship.status <> 'active'
+														OR relationship.support_count = 0
+								OR (relationship.object_entity_id IS NULL AND relationship.object_value_id IS NULL)
+								OR NOT EXISTS (
+									SELECT 1
+									FROM relationship_evidence_supports AS support
+									JOIN relationship_support_decision_events AS decision
+									  ON decision.team_id = support.team_id
+									 AND decision.support_id = support.support_id
+									 AND decision.decision IN ('grant', 'reinstate')
+									 AND decision.created_at = (
+										SELECT max(latest.created_at)
+										FROM relationship_support_decision_events AS latest
+										WHERE latest.team_id = decision.team_id
+										  AND latest.support_id = decision.support_id
+									 )
+									LEFT JOIN evidence_quarantines AS quarantine
+									  ON quarantine.team_id = support.team_id
+									 AND quarantine.fragment_id = support.fragment_id
+									 AND quarantine.status = 'active'
+															LEFT JOIN evidence_sources AS source
+															  ON source.team_id = support.team_id
+															 AND source.source_id = support.source_id
+															LEFT JOIN evidence_lifecycle_events AS lifecycle
+															  ON lifecycle.team_id = support.team_id
+															 AND lifecycle.target_fragment_id = support.fragment_id
+															WHERE support.team_id = relationship.team_id
+															  AND support.relationship_id = relationship.relationship_id
+															  AND quarantine.quarantine_id IS NULL
+															  AND lifecycle.lifecycle_event_id IS NULL
+									  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
+								)
 				            )
 				      )
 				  )
@@ -525,7 +755,7 @@ func (r *SemanticRepositoryImpl) ListCommunities(ctx context.Context, input Comm
 	var records []CommunityRecord
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT team_id::text, community_id::text, run_id::text, ordinal, status,
+			SELECT team_id::text, community_id::text, COALESCE(logical_community_id, community_id)::text, run_id::text, ordinal, status,
 			       summary, summary_version, member_count, source_count,
 			       top_entities, top_predicates, source_fingerprint, stale_reason,
 			       created_at, updated_at, superseded_at
@@ -557,7 +787,7 @@ func (r *SemanticRepositoryImpl) GetCommunity(ctx context.Context, input Communi
 	var record *CommunityRecord
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT team_id::text, community_id::text, run_id::text, ordinal, status,
+			SELECT team_id::text, community_id::text, COALESCE(logical_community_id, community_id)::text, run_id::text, ordinal, status,
 			       summary, summary_version, member_count, source_count,
 			       top_entities, top_predicates, source_fingerprint, stale_reason,
 			       created_at, updated_at, superseded_at
@@ -583,170 +813,6 @@ func (r *SemanticRepositoryImpl) GetCommunity(ctx context.Context, input Communi
 		return nil, fmt.Errorf("community: get community: %w", err)
 	}
 	return record, nil
-}
-
-func (r *SemanticRepositoryImpl) RecallCommunityDiscovery(ctx context.Context, input CommunityDiscoveryInput) ([]CommunityDiscoveryPath, error) {
-	input = normalizeCommunityDiscoveryInput(input)
-	if err := validateCommunityDiscoveryInput(input); err != nil {
-		return nil, err
-	}
-	if input.Query == "" && len(input.ExpandFromEntityIDs) == 0 {
-		return []CommunityDiscoveryPath{}, nil
-	}
-	paths := []CommunityDiscoveryPath{}
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
-			WITH matched_communities AS (
-				SELECT record.team_id, record.community_id,
-				       row_number() OVER (ORDER BY record.member_count DESC, record.community_id ASC)::int AS community_rank
-				FROM community_records AS record
-				WHERE record.team_id = ?::uuid
-				  AND record.status = 'current'
-				  AND (
-				      (
-				          ? <> ''
-				          AND to_tsvector(
-				              'simple',
-				              concat_ws(' ', record.summary, array_to_string(record.top_entities, ' '), array_to_string(record.top_predicates, ' '))
-				          ) @@ plainto_tsquery('simple', ?)
-				      )
-				      OR (
-				          cardinality(?::uuid[]) > 0
-				          AND EXISTS (
-				              SELECT 1
-				              FROM community_memberships AS membership
-				              WHERE membership.team_id = record.team_id
-				                AND membership.community_id = record.community_id
-				                AND membership.entity_id = ANY(?::uuid[])
-				          )
-				      )
-				  )
-				ORDER BY record.member_count DESC, record.community_id ASC
-				LIMIT ?
-			),
-			latest_support_decision AS (
-				SELECT DISTINCT ON (team_id, support_id)
-				       team_id, support_id, decision
-				FROM relationship_support_decision_events
-				WHERE team_id = ?::uuid
-				ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
-			),
-			canonical_names AS (
-				SELECT DISTINCT ON (team_id, entity_id)
-				       team_id, entity_id, display_name
-				FROM entity_names
-				WHERE team_id = ?::uuid
-				  AND name_kind = 'canonical'
-				  AND valid_to IS NULL
-				ORDER BY team_id, entity_id, created_at DESC, entity_name_id DESC
-			)
-			SELECT community.community_id::text,
-			       community.community_rank,
-			       community_source.source_rank,
-			       relationship.relationship_id::text,
-			       relationship.subject_entity_id::text,
-			       COALESCE(subject_name.display_name, relationship.subject_entity_id::text) AS subject_name,
-			       relationship.predicate_key,
-			       relationship.object_entity_id::text,
-			       COALESCE(object_name.display_name, relationship.object_entity_id::text) AS object_name,
-			       relationship.polarity,
-			       array_agg(DISTINCT support.fragment_id::text ORDER BY support.fragment_id::text) AS evidence_ids
-			FROM matched_communities AS community
-			JOIN community_sources AS community_source
-			  ON community_source.team_id = community.team_id
-			 AND community_source.community_id = community.community_id
-			JOIN relationship_records AS relationship
-			  ON relationship.team_id = community_source.team_id
-				 AND relationship.relationship_id = community_source.relationship_id
-				 AND relationship.version = community_source.relationship_version
-				 AND relationship.status = 'active'
-				 AND relationship.support_count > 0
-				 AND relationship.object_entity_id IS NOT NULL
-			LEFT JOIN canonical_names AS subject_name
-			  ON subject_name.team_id = relationship.team_id
-			 AND subject_name.entity_id = relationship.subject_entity_id
-			LEFT JOIN canonical_names AS object_name
-			  ON object_name.team_id = relationship.team_id
-			 AND object_name.entity_id = relationship.object_entity_id
-			JOIN relationship_evidence_supports AS support
-			  ON support.team_id = relationship.team_id
-			 AND support.relationship_id = relationship.relationship_id
-			JOIN latest_support_decision AS latest
-			  ON latest.team_id = support.team_id
-			 AND latest.support_id = support.support_id
-			 AND latest.decision IN ('grant', 'reinstate')
-			LEFT JOIN evidence_quarantines AS quarantine
-			  ON quarantine.team_id = support.team_id
-			 AND quarantine.fragment_id = support.fragment_id
-			 AND quarantine.status = 'active'
-			LEFT JOIN evidence_sources AS source
-			  ON source.team_id = support.team_id
-			 AND source.source_id = support.source_id
-			WHERE community.team_id = ?::uuid
-			  AND quarantine.quarantine_id IS NULL
-			  AND (
-			      support.source_id IS NULL
-			      OR source.current_revision_id = support.source_revision_id
-			  )
-			  AND (
-			      ?::timestamptz IS NULL
-			      OR ((relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
-			          AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
-			  )
-			  AND (
-			      ?::timestamptz IS NULL
-			      OR (relationship.created_at <= ?::timestamptz
-			          AND support.created_at <= ?::timestamptz
-			          AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
-			  )
-			  AND (
-			      cardinality(?::uuid[]) = 0
-			      OR relationship.relationship_id <> ALL(?::uuid[])
-			  )
-			GROUP BY community.community_id, community.community_rank, community_source.source_rank,
-			         relationship.relationship_id, relationship.subject_entity_id, subject_name.display_name,
-			         relationship.predicate_key, relationship.object_entity_id, object_name.display_name,
-			         relationship.polarity
-			ORDER BY community.community_rank ASC, community_source.source_rank ASC, relationship.relationship_id ASC
-			LIMIT ?
-		`, input.TeamID, input.Query, input.Query,
-			pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
-			input.Limit, input.TeamID, input.TeamID, input.TeamID,
-			input.ValidAt, input.ValidAt, input.ValidAt,
-			input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
-			pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
-			input.Limit).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			path := CommunityDiscoveryPath{}
-			var evidenceIDs pq.StringArray
-			if err := rows.Scan(
-				&path.CommunityID,
-				&path.CommunityRank,
-				&path.SourceRank,
-				&path.Relationship.RelationshipID,
-				&path.Relationship.SubjectEntityID,
-				&path.Relationship.SubjectName,
-				&path.Relationship.PredicateKey,
-				&path.Relationship.ObjectEntityID,
-				&path.Relationship.ObjectName,
-				&path.Relationship.Polarity,
-				&evidenceIDs,
-			); err != nil {
-				return err
-			}
-			path.EvidenceIDs = []string(evidenceIDs)
-			paths = append(paths, path)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, fmt.Errorf("community: recall discovery: %w", err)
-	}
-	return paths, nil
 }
 
 func (r *SemanticRepositoryImpl) LatestCommunityRun(ctx context.Context, teamID string) (*CommunityRun, error) {
@@ -787,18 +853,68 @@ func (r *SemanticRepositoryImpl) LatestCommunityRun(ctx context.Context, teamID 
 	return run, nil
 }
 
+func (r *SemanticRepositoryImpl) ListCurrentCommunityLineage(ctx context.Context, teamID string) ([]CommunityLineageRecord, error) {
+	teamID = strings.TrimSpace(teamID)
+	if _, err := uuid.Parse(teamID); err != nil {
+		return nil, fmt.Errorf("team_id is required: %w", err)
+	}
+	lineage := []CommunityLineageRecord{}
+	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
+		rows, err := tx.WithContext(ctx).Raw(`
+			SELECT record.community_id::text,
+			       COALESCE(record.logical_community_id, record.community_id)::text,
+			       COALESCE(array_agg(DISTINCT source.semantic_group_key ORDER BY source.semantic_group_key)
+			                FILTER (WHERE source.semantic_group_key <> ''), ARRAY[]::text[]),
+			       record.summary_input_hash, record.summary, record.summary_version,
+			       record.summary_provider_model, record.summary_prompt_hash, record.summary_response_hash
+			FROM community_records AS record
+			LEFT JOIN community_sources AS source
+			  ON source.team_id = record.team_id
+			 AND source.community_id = record.community_id
+			WHERE record.team_id = ?::uuid
+			  AND record.status = 'current'
+			GROUP BY record.community_id, record.logical_community_id, record.updated_at,
+			         record.summary_input_hash, record.summary, record.summary_version,
+			         record.summary_provider_model, record.summary_prompt_hash, record.summary_response_hash
+			ORDER BY record.updated_at DESC, record.community_id ASC
+		`, teamID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var record CommunityLineageRecord
+			var groups pq.StringArray
+			if err := rows.Scan(&record.CommunityID, &record.LogicalCommunityID, &groups,
+				&record.SummaryInputHash, &record.Summary, &record.SummaryVersion,
+				&record.SummaryProviderModel, &record.SummaryPromptHash, &record.SummaryResponseHash); err != nil {
+				return err
+			}
+			record.GroupKeys = []string(groups)
+			lineage = append(lineage, record)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("community: list lineage: %w", err)
+	}
+	return lineage, nil
+}
+
 func insertCommunityRecord(ctx context.Context, tx *gorm.DB, input CommunitySnapshotPublishInput, community CommunityPublishRecord) error {
 	if err := tx.WithContext(ctx).Exec(`
 		INSERT INTO community_records (
 			team_id, community_id, run_id, ordinal, status, summary, summary_version,
-			member_count, source_count, top_entities, top_predicates, source_fingerprint
+			logical_community_id, member_count, source_count, top_entities, top_predicates, source_fingerprint,
+			summary_input_hash, summary_provider_model, summary_prompt_hash, summary_response_hash, summary_generated_at
 		) VALUES (
-			?::uuid, ?::uuid, ?::uuid, ?, 'current', ?, ?, ?, ?, ?::text[], ?::text[], ?
+			?::uuid, ?::uuid, ?::uuid, ?, 'current', ?, ?, ?::uuid, ?, ?, ?::text[], ?::text[], ?, ?, ?, ?, ?, now()
 		)
 	`, input.TeamID, community.CommunityID, input.RunID, community.Ordinal,
-		community.Summary, community.SummaryVersion, community.MemberCount,
+		community.Summary, community.SummaryVersion, normalizeCommunityLogicalID(community), community.MemberCount,
 		community.SourceCount, pq.Array(community.TopEntities),
-		pq.Array(community.TopPredicates), community.SourceFingerprint).Error; err != nil {
+		pq.Array(community.TopPredicates), community.SourceFingerprint, community.SummaryInputHash,
+		community.SummaryProviderModel, community.SummaryPromptHash, community.SummaryResponseHash).Error; err != nil {
 		return err
 	}
 	for _, membership := range community.Memberships {
@@ -817,69 +933,15 @@ func insertCommunityRecord(ctx context.Context, tx *gorm.DB, input CommunitySnap
 		if err := tx.WithContext(ctx).Exec(`
 			INSERT INTO community_sources (
 				team_id, community_id, relationship_id, owner_profile_id,
-				relationship_version, source_rank
+				relationship_version, source_rank, semantic_group_key, source_state_hash
 			) VALUES (
-				?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?
+				?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?
 			)
 		`, input.TeamID, community.CommunityID, source.RelationshipID,
-			source.OwnerProfileID, source.RelationshipVersion, source.SourceRank).Error; err != nil {
+			source.OwnerProfileID, source.RelationshipVersion, source.SourceRank,
+			source.SemanticGroupKey, source.SourceStateHash).Error; err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func ensureCommunitySourcesCurrent(ctx context.Context, tx *gorm.DB, teamID string, sources []CommunitySourceInput) error {
-	if len(sources) == 0 {
-		return ErrCommunitySourceStale
-	}
-	relationshipIDs := make([]string, 0, len(sources))
-	versions := make([]int, 0, len(sources))
-	for _, source := range sources {
-		relationshipIDs = append(relationshipIDs, source.RelationshipID)
-		versions = append(versions, source.RelationshipVersion)
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		WITH expected AS (
-			SELECT *
-			FROM unnest(?::uuid[], ?::int[]) AS e(relationship_id, relationship_version)
-		)
-		SELECT expected.relationship_id::text
-		FROM expected
-		LEFT JOIN relationship_records AS relationship
-		  ON relationship.team_id = ?::uuid
-		 AND relationship.relationship_id = expected.relationship_id
-		WHERE relationship.relationship_id IS NULL
-		   OR relationship.version <> expected.relationship_version
-		   OR relationship.status <> 'active'
-		   OR relationship.support_count = 0
-		   OR relationship.object_entity_id IS NULL
-		LIMIT 1
-	`, pq.Array(relationshipIDs), pq.Array(versions), teamID).Rows()
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	if rows.Next() {
-		return ErrCommunitySourceStale
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func flattenCommunitySources(communities []CommunityPublishRecord) []CommunitySourceInput {
-	seen := map[string]struct{}{}
-	out := make([]CommunitySourceInput, 0)
-	for _, community := range communities {
-		for _, source := range community.Sources {
-			if _, ok := seen[source.RelationshipID]; ok {
-				continue
-			}
-			seen[source.RelationshipID] = struct{}{}
-			out = append(out, source)
-		}
-	}
-	return out
 }

@@ -169,6 +169,18 @@ export type DreamStatus = {
   pending_count: number;
 };
 
+export type RecallCommunity = {
+  community_id: string;
+  rank: number;
+  summary: string;
+  top_entities: RecallEntity[];
+  top_predicates: string[];
+  entity_count: number;
+  relationship_count: number;
+  relationships: RecallRelationship[];
+  relationships_truncated: boolean;
+};
+
 export type RecallHit = {
   tier?: string;
   score?: number;
@@ -181,6 +193,7 @@ export type RecallHit = {
   final_score?: number;
   discovery_paths?: RecallDiscoveryPath[];
   related_hypotheses?: unknown[];
+  community?: RecallCommunity;
 };
 
 export type RecallEntity = {
@@ -224,17 +237,14 @@ export type RecallEvidenceContext = {
   created_at?: string;
 };
 
-export type RecallDiscoveryPath = {
-  relationships: RecallRelationship[];
-  evidence_ids: string[];
-};
+export type RecallDiscoveryPath = RecallCommunity;
 
 export type RecallPayload = {
   recall_id?: string;
   results: RecallEvidenceContext[];
   conflicts?: unknown[];
   related_relationships?: RecallRelationship[];
-  related_communities?: RecallDiscoveryPath[];
+  related_communities?: RecallCommunity[];
   discovery_paths?: RecallDiscoveryPath[];
   discovery_guidance?: string;
   related_hypotheses?: unknown[];
@@ -405,7 +415,15 @@ export class UserApi {
     const payload = await this.request<Envelope<unknown>>(`/ui/api/recall?${params.toString()}`);
     const data = payload.data;
     if (isRecallPayload(data)) {
-      const communityPaths = data.related_communities ?? data.discovery_paths ?? [];
+      const communityPaths = data.related_communities?.length ? data.related_communities : data.discovery_paths ?? [];
+      const communityHits = (data.related_communities ?? []).filter((community): community is RecallCommunity => Boolean(community.community_id)).map((community, index) => ({
+        community,
+        relationships: community.relationships ?? [],
+        discovery_paths: communityPaths,
+        related_hypotheses: data.related_hypotheses ?? [],
+        semantic_rank: community.rank || index + 1,
+        final_score: community.rank ? 1 / community.rank : undefined,
+      }));
       const relationshipHits = (data.related_relationships ?? []).map((relationship, index) => ({
         relationship,
         relationships: [relationship],
@@ -424,7 +442,7 @@ export class UserApi {
         final_score: evidence.rank ? 1 / evidence.rank : undefined,
         semantic_rank: evidence.rank,
       }));
-      return [...evidenceHits, ...relationshipHits];
+      return [...communityHits, ...evidenceHits, ...relationshipHits];
     }
     throw new ApiError(500, "Unexpected recall response format");
   }
@@ -518,10 +536,10 @@ function relationshipsForEvidence(paths: RecallDiscoveryPath[], evidenceID: stri
   const seen = new Set<string>();
   const out: RecallRelationship[] = [];
   for (const path of paths) {
-    if (!path.evidence_ids.includes(evidenceID)) {
-      continue;
-    }
     for (const relationship of path.relationships) {
+      if (relationship.evidence_ids?.length && !relationship.evidence_ids.includes(evidenceID)) {
+        continue;
+      }
       if (!relationship.relationship_id || seen.has(relationship.relationship_id)) {
         continue;
       }

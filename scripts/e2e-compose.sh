@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_SOURCE_FILE="${DENSE_MEM_E2E_COMPOSE_SOURCE:-${ROOT_DIR}/docker-compose.yml}"
 ROOT_ENV_SOURCE_FILE="${DENSE_MEM_E2E_ENV_SOURCE:-${ROOT_DIR}/.env}"
@@ -624,6 +623,8 @@ run_compose_playwright_tests() {
       -g
       "remembered API-key login uses a seven-day server session"
     )
+  elif [[ "${1:-}" == "community" ]]; then
+    test_args=("tests-compose/community-recall.spec.ts")
   fi
   image="${DENSE_MEM_E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.61.0-noble}"
   E2E_PLAYWRIGHT_CONTAINER="densemem-e2e-${E2E_FILE_ID}-playwright"
@@ -650,7 +651,7 @@ run_compose_playwright_tests() {
     -e "DENSE_MEM_E2E_TEAM_ID=$team_id" \
     -e "DENSE_MEM_E2E_TEAM_NAME=E2E Team" \
     -e "DENSE_MEM_E2E_API_KEY=$api_key" \
-    -e "DENSE_MEM_E2E_DREAM_STATEMENT=$dream_statement" \
+    -e "DENSE_MEM_E2E_DREAM_STATEMENT=${dream_statement:-}" \
     -e "DENSE_MEM_PROMETHEUS_URL=$PROMETHEUS_URL" \
     "$E2E_PLAYWRIGHT_CONTAINER" \
     sh -ec 'cd /tmp/web && npm ci && ./node_modules/.bin/playwright test --config playwright.compose.config.ts "$@"' \
@@ -704,8 +705,8 @@ if [[ "$E2E_MODE" != "standard" && "$E2E_MODE" != "entra_scim" ]]; then
   exit 1
 fi
 
-if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "all" ]]; then
-  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, submission_status, security_intake, submission_assessment, semantic_holds, or all." >&2
+if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "all" ]]; then
+  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, submission_status, security_intake, submission_assessment, semantic_holds, community, or all." >&2
   exit 1
 fi
 
@@ -719,7 +720,7 @@ if [[ "$E2E_SCENARIO" == "all" ]]; then
     echo "DENSE_MEM_E2E_SCENARIO=all requires DENSE_MEM_E2E_MODE=standard." >&2
     exit 1
   fi
-  for scenario in mcp_boundaries submission_status security_intake submission_assessment semantic_holds full; do
+  for scenario in mcp_boundaries submission_status security_intake submission_assessment semantic_holds community full; do
     echo "Running compose e2e scenario ${scenario} as part of all."
     DENSE_MEM_E2E_SCENARIO="$scenario" \
     DENSE_MEM_E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-all}-$(printf '%s' "$scenario" | tr '[:upper:]' '[:lower:]')" \
@@ -781,7 +782,7 @@ require_env_value AI_API_URL >/dev/null
 require_env_value AI_API_KEY >/dev/null
 require_env_value AI_API_EMBEDDING_MODEL >/dev/null
 require_env_value AI_API_EMBEDDING_DIMENSIONS >/dev/null
-if [[ "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "semantic_holds" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
+if [[ "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "semantic_holds" || "$E2E_SCENARIO" == "community" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
   require_env_value AI_VERIFIER_API_URL >/dev/null
   require_env_value AI_VERIFIER_API_KEY >/dev/null
   require_env_value AI_VERIFIER_MODEL >/dev/null
@@ -943,7 +944,6 @@ if [[ "$E2E_SCENARIO" == "submission_assessment" ]]; then
   node "$ROOT_DIR/tests/uat/submission_assessment_mcp_e2e.mjs"
   exit 0
 fi
-
 if [[ "$E2E_SCENARIO" == "semantic_holds" ]]; then
   echo "Running compose-backed semantic-hold and replacement e2e with the configured live verifier."
   DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
@@ -957,7 +957,19 @@ if [[ "$E2E_SCENARIO" == "semantic_holds" ]]; then
   node "$ROOT_DIR/tests/uat/semantic_holds_mcp_e2e.mjs"
   exit 0
 fi
-
+if [[ "$E2E_SCENARIO" == "community" ]]; then
+  echo "Running compose-backed community recall e2e with the configured live verifier."
+  export DENSE_MEM_CONTROL_URL="$CONTROL_URL" DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_API_KEY="$api_key" DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE"
+  node "$ROOT_DIR/tests/uat/community_recall_mcp_e2e.mjs"
+  if [[ "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" == "1" ]]; then
+    echo "Skipping compose-backed community Playwright tests by DENSE_MEM_E2E_SKIP_PLAYWRIGHT."
+  else
+    echo "Running compose-backed community Playwright tests."
+    export DENSE_MEM_E2E_TEAM_NAME="E2E Team"
+    run_compose_playwright_tests community
+  fi
+  exit 0
+fi
 echo "Running compose-backed scheduled team dreaming e2e."
 dream_json="$(DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
 DENSE_MEM_USER_URL="$USER_URL" \
@@ -969,7 +981,6 @@ DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
 node "$ROOT_DIR/tests/uat/team_dreaming_e2e.mjs")"
 printf '%s\n' "$dream_json"
 dream_statement="$(printf '%s' "$dream_json" | json_field statement)"
-
 echo "Running compose-backed telemetry MCP e2e."
 DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
 DENSE_MEM_USER_URL="$USER_URL" \

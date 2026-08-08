@@ -225,8 +225,10 @@ type RecallRelationshipsInput struct {
 	Limit                int
 	ValidAt              *time.Time
 	KnownAt              *time.Time
+	KnownEvidenceIDs     []string
 	KnownRelationshipIDs []string
 	ExpandFromEntityIDs  []string
+	ExcludedGroupKeys    []string
 }
 
 type RecallEvidenceResult struct {

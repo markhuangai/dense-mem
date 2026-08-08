@@ -3,6 +3,7 @@ package repository
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -11,8 +12,10 @@ import (
 func normalizeRecallRelationshipsInput(input RecallRelationshipsInput) RecallRelationshipsInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.Query = strings.TrimSpace(input.Query)
+	input.KnownEvidenceIDs = normalizeRecallUUIDList(input.KnownEvidenceIDs)
 	input.KnownRelationshipIDs = normalizeRecallUUIDList(input.KnownRelationshipIDs)
 	input.ExpandFromEntityIDs = normalizeRecallUUIDList(input.ExpandFromEntityIDs)
+	input.ExcludedGroupKeys = normalizeRecallStringList(input.ExcludedGroupKeys)
 	if input.Limit <= 0 {
 		input.Limit = defaultRelationshipRecallLimit
 	}
@@ -30,6 +33,7 @@ func validateRecallRelationshipsInput(input RecallRelationshipsInput) error {
 		return errors.New("query or expand_from_entity_ids is required")
 	}
 	for label, values := range map[string][]string{
+		"known_evidence_ids":     input.KnownEvidenceIDs,
 		"known_relationship_ids": input.KnownRelationshipIDs,
 		"expand_from_entity_ids": input.ExpandFromEntityIDs,
 	} {
@@ -40,4 +44,22 @@ func validateRecallRelationshipsInput(input RecallRelationshipsInput) error {
 		}
 	}
 	return nil
+}
+
+func normalizeRecallStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
+	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
@@ -241,6 +242,13 @@ func RunActiveServer(
 		CommunityConfig: appConfigService,
 		Metrics:         discoverabilityMetrics,
 	})
+	communitySvc := communityservice.New(communityservice.Dependencies{
+		Store:     semanticRepo,
+		AppConfig: appConfigService,
+		Profiles:  profileService,
+		Summary:   verifierProvider,
+		Metrics:   discoverabilityMetrics,
+	})
 	lifecycleSvc := memoryservice.NewLifecycleService(memoryservice.LifecycleDependencies{
 		Semantic:  semanticRepo,
 		Placement: ledgerRepo,
@@ -413,6 +421,7 @@ func RunActiveServer(
 				Logs:            operationLogService,
 				RecallFeedback:  recallFeedbackEventService,
 				Dreams:          controlDreamSvc,
+				Communities:     communitySvc,
 			},
 			healthConfig,
 			logger,
@@ -482,6 +491,9 @@ func RunActiveServer(
 	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
 	defer dreamSchedulerCancel()
 	go dreamservice.NewScheduler(dreamSvc, profileService, slog.Default()).Start(dreamSchedulerCtx)
+	communitySchedulerCtx, communitySchedulerCancel := context.WithCancel(context.Background())
+	defer communitySchedulerCancel()
+	go communityservice.NewScheduler(communitySvc, profileService, appConfigService, slog.Default()).Start(communitySchedulerCtx)
 	conflictReviewCtx, conflictReviewCancel := context.WithCancel(context.Background())
 	defer conflictReviewCancel()
 	startConflictReviewWorkers(conflictReviewCtx, logger, profileService, conflictReviewRunner, &cfg, discoverabilityMetrics)
@@ -504,6 +516,7 @@ func RunActiveServer(
 	logger.Info("shutting down server")
 	workerCancel()
 	dreamSchedulerCancel()
+	communitySchedulerCancel()
 	conflictReviewCancel()
 	if pricingRefreshCancel != nil {
 		pricingRefreshCancel()

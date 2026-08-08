@@ -98,6 +98,21 @@ func (h *controlPortalHandler) getTeamDreamingStatus(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": status})
 }
 
+func (h *controlPortalHandler) getTeamCommunityStatus(c echo.Context) error {
+	if h.communities == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "community service unavailable")
+	}
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+	if err != nil {
+		return err
+	}
+	status, err := h.communities.Status(c.Request().Context(), teamID.String())
+	if err != nil {
+		return err
+	}
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": status})
+}
+
 func (h *controlPortalHandler) listTeamDreamingRuns(c echo.Context) error {
 	if h.dreams == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "dream service unavailable")

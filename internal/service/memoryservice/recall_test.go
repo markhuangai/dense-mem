@@ -123,6 +123,10 @@ func TestRecallConflictSummariesEnforcePositionBounds(t *testing.T) {
 	require.Len(t, summaries[0].Positions[0].ResultEvidenceIDs, 50)
 }
 
+func TestPublicHypothesisGeneratorKindPreservesProvider(t *testing.T) {
+	require.Equal(t, "provider", publicHypothesisGeneratorKind("provider"))
+}
+
 func TestRecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
