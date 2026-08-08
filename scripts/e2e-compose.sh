@@ -623,8 +623,7 @@ run_compose_playwright_tests() {
       -g
       "remembered API-key login uses a seven-day server session"
     )
-  elif [[ "${1:-}" == "community" ]]; then
-    test_args=("tests-compose/community-recall.spec.ts")
+  elif [[ "${1:-}" == "community" ]]; then test_args=("tests-compose/community-recall.spec.ts");
   fi
   image="${DENSE_MEM_E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.61.0-noble}"
   E2E_PLAYWRIGHT_CONTAINER="densemem-e2e-${E2E_FILE_ID}-playwright"
@@ -931,7 +930,6 @@ if [[ "$E2E_SCENARIO" == "submission_status" ]]; then
   node "$ROOT_DIR/tests/uat/submission_status_mcp_e2e.mjs"
   exit 0
 fi
-
 if [[ "$E2E_SCENARIO" == "submission_assessment" ]]; then
   echo "Running compose-backed submission-wide assessor e2e with the configured live verifier."
   DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
@@ -958,17 +956,8 @@ if [[ "$E2E_SCENARIO" == "semantic_holds" ]]; then
   exit 0
 fi
 if [[ "$E2E_SCENARIO" == "community" ]]; then
-  echo "Running compose-backed community recall e2e with the configured live verifier."
-  export DENSE_MEM_CONTROL_URL="$CONTROL_URL" DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_API_KEY="$api_key" DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE"
-  node "$ROOT_DIR/tests/uat/community_recall_mcp_e2e.mjs"
-  if [[ "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" == "1" ]]; then
-    echo "Skipping compose-backed community Playwright tests by DENSE_MEM_E2E_SKIP_PLAYWRIGHT."
-  else
-    echo "Running compose-backed community Playwright tests."
-    export DENSE_MEM_E2E_TEAM_NAME="E2E Team"
-    run_compose_playwright_tests community
-  fi
-  exit 0
+  echo "Running compose-backed community recall e2e with the configured live verifier."; export DENSE_MEM_CONTROL_URL="$CONTROL_URL" DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_API_KEY="$api_key" DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE"; node "$ROOT_DIR/tests/uat/community_recall_mcp_e2e.mjs"
+  if [[ "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" == "1" ]]; then echo "Skipping compose-backed community Playwright tests by DENSE_MEM_E2E_SKIP_PLAYWRIGHT."; else echo "Running compose-backed community Playwright tests."; export DENSE_MEM_E2E_TEAM_NAME="E2E Team"; run_compose_playwright_tests community; fi; exit 0
 fi
 echo "Running compose-backed scheduled team dreaming e2e."
 dream_json="$(DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
