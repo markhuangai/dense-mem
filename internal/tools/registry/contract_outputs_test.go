@@ -4,8 +4,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
+
+func TestFirstNonEmptyReturnsTrimmedNonNilValue(t *testing.T) {
+	if got := firstNonEmpty("  ", " "+uuid.Nil.String()+" ", " canonical "); got != "canonical" {
+		t.Fatalf("firstNonEmpty = %q; want canonical", got)
+	}
+}
 
 func TestTraceConflictOutputsIncludePositionsAndResolution(t *testing.T) {
 	dueAt := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)

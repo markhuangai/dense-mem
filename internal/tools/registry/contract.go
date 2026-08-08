@@ -230,7 +230,7 @@ func contractTools(deps Dependencies) []Tool {
 			}
 		case ToolRecallMemory:
 			tool := tools[i]
-			tools[i].Invoke = func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
 				if deps.Recall == nil {
 					return nil, ErrToolUnavailable
 				}
@@ -242,7 +242,7 @@ func contractTools(deps Dependencies) []Tool {
 					return nil, fmt.Errorf("recall_memory: invalid input: %w", err)
 				}
 				req.ContractVersion = domain.ContractVersion
-				dreamingEnabled := DreamingEnabled(ctx, deps.Dreams, profileID)
+				dreamingEnabled := DreamingEnabled(ctx, deps.Dreams)
 				req.IncludeHypotheses = dreamingEnabled
 				res, err := deps.Recall.Recall(ctx, req)
 				if err != nil {

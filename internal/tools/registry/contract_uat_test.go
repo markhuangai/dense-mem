@@ -179,6 +179,9 @@ func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {
 	if stub.req.ContractVersion != domain.ContractVersion {
 		t.Fatalf("contract version = %q", stub.req.ContractVersion)
 	}
+	if stub.req.IncludeHypotheses {
+		t.Fatal("recall enabled hypotheses without effective team Dreaming")
+	}
 }
 
 func TestRecallSuggestedActionsMatchEnabledFeatures(t *testing.T) {

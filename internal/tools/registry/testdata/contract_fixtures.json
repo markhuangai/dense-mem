@@ -105,6 +105,28 @@
     }
   },
   {
+    "name": "valid relationship correction confirm",
+    "tool": "correct_relationship",
+    "contract_version": "dense-mem.v2.4",
+    "scopes": ["write"],
+    "valid": true,
+    "input": {
+      "action": "confirm",
+      "submission_id": "correction-1",
+      "confirmation_token": "confirmation-1",
+      "selection": {"object_entity_id": "entity-atlas"},
+      "idempotency_key": "relationship-correction-confirm-1"
+    },
+    "output": {
+      "submission_id": "correction-1",
+      "submission_kind": "relationship_correction",
+      "processing_state": "completed",
+      "check_after_seconds": 0,
+      "status_tool": "get_submission_status",
+      "correlation_id": "req-correction-confirm-1"
+    }
+  },
+  {
     "name": "valid recall boundary limit",
     "tool": "recall_memory",
     "contract_version": "dense-mem.v2.4",
@@ -393,6 +415,22 @@
       "supports": [{"evidence_id": "evidence-1", "start": 0, "end": 8}],
       "reason": "The predicate was resolved incorrectly.",
       "idempotency_key": "relationship-correction-override-1"
+    }
+  },
+  {
+    "name": "mixed relationship correction confirm rejected",
+    "tool": "correct_relationship",
+    "contract_version": "dense-mem.v2.4",
+    "scopes": ["write"],
+    "valid": false,
+    "want_error": "relationship_id is not accepted for action confirm",
+    "input": {
+      "action": "confirm",
+      "submission_id": "correction-1",
+      "confirmation_token": "confirmation-1",
+      "selection": {"object_entity_id": "entity-atlas"},
+      "relationship_id": "relationship-source",
+      "idempotency_key": "relationship-correction-confirm-mixed-1"
     }
   },
   {

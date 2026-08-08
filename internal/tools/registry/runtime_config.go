@@ -8,8 +8,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
-const SubmitRecallSessionFeedbackToolName = "submit_recall_session_feedback"
-
 var evaluationToolNames = map[string]struct{}{
 	"eval_list_knowledge_refs": {},
 	"eval_run_dream_cycle":     {},
@@ -39,9 +37,10 @@ type RecallFeedbackConfigProvider interface {
 }
 
 // DreamingConfigProvider resolves the authenticated team's effective Dreaming
-// policy. Implementations must derive team identity from the request context.
+// policy. The argument is a fallback team ID for non-request callers;
+// authenticated request context takes precedence.
 type DreamingConfigProvider interface {
-	EffectiveConfig(ctx context.Context, profileID string) (dreamservice.EffectiveConfig, error)
+	EffectiveConfig(ctx context.Context, fallbackTeamID string) (dreamservice.EffectiveConfig, error)
 }
 
 // RuntimeToolPolicy contains request-time feature dependencies shared by MCP
@@ -49,19 +48,70 @@ type DreamingConfigProvider interface {
 type RuntimeToolPolicy struct {
 	RecallFeedback RecallFeedbackConfigProvider
 	Dreams         DreamingConfigProvider
-	ProfileID      string
+	resolved       *runtimeToolFeatures
+}
+
+type runtimeToolFeatures struct {
+	recallFeedbackEnabled  bool
+	recallFeedbackResolved bool
+	dreamingEnabled        bool
+	dreamingResolved       bool
+}
+
+type runtimeToolFeaturesContextKey struct{}
+
+// ResolveRuntimeToolPolicy evaluates only the feature config needed by the
+// supplied tools and reuses any values already resolved in this request.
+func ResolveRuntimeToolPolicy(ctx context.Context, policy RuntimeToolPolicy, tools ...Tool) RuntimeToolPolicy {
+	features := runtimeToolFeatures{}
+	if policy.resolved != nil {
+		features = *policy.resolved
+	}
+	needsRecallFeedback := false
+	needsDreaming := false
+	for _, tool := range tools {
+		if tool.Name == ToolSubmitRecallSessionFeedback || tool.Name == ToolRecallMemory {
+			needsRecallFeedback = true
+		}
+		if tool.Name == ToolRecallMemory {
+			needsDreaming = true
+		}
+		if _, ok := dreamToolNames[tool.Name]; ok {
+			needsDreaming = true
+		}
+	}
+	if needsRecallFeedback && !features.recallFeedbackResolved {
+		features.recallFeedbackEnabled = recallFeedbackEnabledFromConfig(ctx, policy.RecallFeedback)
+		features.recallFeedbackResolved = true
+	}
+	if needsDreaming && !features.dreamingResolved {
+		features.dreamingEnabled = dreamingEnabledFromConfig(ctx, policy.Dreams)
+		features.dreamingResolved = true
+	}
+	policy.resolved = &features
+	return policy
+}
+
+// WithRuntimeToolPolicy makes a resolved feature snapshot available to tool
+// invokers in the same request.
+func WithRuntimeToolPolicy(ctx context.Context, policy RuntimeToolPolicy) context.Context {
+	if policy.resolved == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, runtimeToolFeaturesContextKey{}, *policy.resolved)
 }
 
 // ToolVisible reports whether a registered tool should be visible for a request.
 func ToolVisible(ctx context.Context, tool Tool, policy RuntimeToolPolicy) bool {
+	policy = ResolveRuntimeToolPolicy(ctx, policy, tool)
 	if tool.FeatureGate == domain.FeatureGate && tool.Visibility == domain.ToolVisibility {
 		return false
 	}
-	if tool.Name == SubmitRecallSessionFeedbackToolName {
-		return RecallFeedbackEnabled(ctx, policy.RecallFeedback)
+	if tool.Name == ToolSubmitRecallSessionFeedback {
+		return policy.resolved.recallFeedbackEnabled
 	}
 	if _, ok := dreamToolNames[tool.Name]; ok {
-		return DreamingEnabled(ctx, policy.Dreams, policy.ProfileID)
+		return policy.resolved.dreamingEnabled
 	}
 	return true
 }
@@ -69,6 +119,22 @@ func ToolVisible(ctx context.Context, tool Tool, policy RuntimeToolPolicy) bool 
 // RecallFeedbackEnabled fails closed because this feature controls optional
 // telemetry collection rather than core recall behavior.
 func RecallFeedbackEnabled(ctx context.Context, cfg RecallFeedbackConfigProvider) bool {
+	if resolved, ok := ctx.Value(runtimeToolFeaturesContextKey{}).(runtimeToolFeatures); ok && resolved.recallFeedbackResolved {
+		return resolved.recallFeedbackEnabled
+	}
+	return recallFeedbackEnabledFromConfig(ctx, cfg)
+}
+
+// DreamingEnabled fails closed so disabled or unreadable team configuration
+// cannot expose Hypothesis lifecycle tools.
+func DreamingEnabled(ctx context.Context, cfg DreamingConfigProvider) bool {
+	if resolved, ok := ctx.Value(runtimeToolFeaturesContextKey{}).(runtimeToolFeatures); ok && resolved.dreamingResolved {
+		return resolved.dreamingEnabled
+	}
+	return dreamingEnabledFromConfig(ctx, cfg)
+}
+
+func recallFeedbackEnabledFromConfig(ctx context.Context, cfg RecallFeedbackConfigProvider) bool {
 	if cfg == nil {
 		return false
 	}
@@ -76,12 +142,10 @@ func RecallFeedbackEnabled(ctx context.Context, cfg RecallFeedbackConfigProvider
 	return err == nil && runtime.Enabled
 }
 
-// DreamingEnabled fails closed so disabled or unreadable team configuration
-// cannot expose Hypothesis lifecycle tools.
-func DreamingEnabled(ctx context.Context, cfg DreamingConfigProvider, profileID string) bool {
+func dreamingEnabledFromConfig(ctx context.Context, cfg DreamingConfigProvider) bool {
 	if cfg == nil {
 		return false
 	}
-	effective, err := cfg.EffectiveConfig(ctx, profileID)
+	effective, err := cfg.EffectiveConfig(ctx, "")
 	return err == nil && effective.Enabled
 }

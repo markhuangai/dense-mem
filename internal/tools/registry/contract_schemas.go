@@ -555,7 +555,7 @@ func recallDegradationSchema() map[string]any {
 	return closedObject(
 		[]string{"frontier", "code", "message"},
 		map[string]any{
-			"frontier":         schemaEnum([]string{"evidence", "relationships", "communities", "hypotheses"}),
+			"frontier":         schemaEnum([]string{"evidence", "relationships", "communities", "hypotheses", "feedback"}),
 			"required_failure": map[string]any{"type": "boolean"},
 			"optional":         map[string]any{"type": "boolean"},
 			"code":             schemaString("Stable bounded degradation code.", 128),

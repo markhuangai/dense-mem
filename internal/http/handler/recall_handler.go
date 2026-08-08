@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
@@ -23,13 +25,18 @@ type RecallHandlerInterface interface {
 
 // RecallHandler serves GET /ui/api/recall from the active recall pipeline.
 type RecallHandler struct {
-	svc memoryservice.RecallService
+	svc    memoryservice.RecallService
+	dreams recallDreamingConfigProvider
+}
+
+type recallDreamingConfigProvider interface {
+	EffectiveConfig(ctx context.Context, fallbackTeamID string) (dreamservice.EffectiveConfig, error)
 }
 
 var _ RecallHandlerInterface = (*RecallHandler)(nil)
 
-func NewRecallHandler(svc memoryservice.RecallService) *RecallHandler {
-	return &RecallHandler{svc: svc}
+func NewRecallHandler(svc memoryservice.RecallService, dreams recallDreamingConfigProvider) *RecallHandler {
+	return &RecallHandler{svc: svc, dreams: dreams}
 }
 
 func (h *RecallHandler) Handle(c echo.Context) error {
@@ -50,10 +57,12 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
+	dreamingEnabled := recallDreamingEnabled(ctx, h.dreams)
 	result, err := h.svc.Recall(ctx, memoryservice.RecallRequest{
 		ContractVersion:   domain.ContractVersion,
 		Query:             req.Query,
 		Limit:             req.Limit,
+		IncludeHypotheses: dreamingEnabled,
 		RelationshipLimit: req.RelationshipLimit,
 		CommunityLimit:    req.CommunityLimit,
 		ValidAt:           req.ValidAt,
@@ -77,6 +86,9 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 		}
 		return httperr.New(httperr.INTERNAL_ERROR, "recall failed")
 	}
+	if result != nil && !dreamingEnabled {
+		result.RelatedHypotheses = []memoryservice.RelatedHypothesisSummary{}
+	}
 	if degradation := requiredRecallDegradation(result); degradation != nil {
 		message := strings.TrimSpace(degradation.Message)
 		if message == "" {
@@ -86,6 +98,14 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 	}
 
 	return response.SuccessOK(c, recallHTTPResult(result))
+}
+
+func recallDreamingEnabled(ctx context.Context, cfg recallDreamingConfigProvider) bool {
+	if cfg == nil {
+		return false
+	}
+	effective, err := cfg.EffectiveConfig(ctx, "")
+	return err == nil && effective.Enabled
 }
 
 func recallHTTPResult(result *memoryservice.RecallResult) memoryservice.RecallResult {

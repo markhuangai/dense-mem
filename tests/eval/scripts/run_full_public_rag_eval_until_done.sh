@@ -86,7 +86,6 @@ export PROMETHEUS_CONTAINER_NAME="${PROMETHEUS_CONTAINER_NAME:-densemem-eval-v1-
 compose() {
   docker compose -p "${DENSE_MEM_EVAL_COMPOSE_PROJECT:-densemem_eval_full}" -f examples/docker-compose.evaluation.yml "$@"
 }
-
 canonical_json_sha256() {
   local digest
   digest="$(jq -cS -j . "$1" | sha256sum | awk '{print $1}')"
@@ -129,6 +128,7 @@ load_env() {
     echo "eval env file not found: ${eval_env_file}" >&2
     return 1
   fi
+  eval_env_file="$(realpath -- "${eval_env_file}")"
   set -a
   # shellcheck disable=SC1091
   . "${eval_env_file}"

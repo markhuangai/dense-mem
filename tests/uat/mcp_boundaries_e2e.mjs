@@ -30,8 +30,9 @@ for (const required of ["remember", "get_submission_status", "retract_evidence",
 for (const absent of [feedbackTool, ...dreamTools, ...activeEvalTools, ...removedTools]) {
   assertMissing(names, absent, "disabled or non-production tool");
 }
-await assertToolNotFound(feedbackTool, {});
-await assertToolNotFound("list_dreams", {});
+for (const hidden of [feedbackTool, ...dreamTools, ...activeEvalTools, ...removedTools]) {
+  await assertToolNotFound(hidden, {});
+}
 
 await updateRecallFeedback(true);
 names = await listedToolNames();

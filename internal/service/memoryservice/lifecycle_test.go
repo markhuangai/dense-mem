@@ -3,7 +3,9 @@ package memoryservice
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -88,6 +90,71 @@ func TestLifecycleCorrectRelationshipUsesAuthenticatedOwner(t *testing.T) {
 	require.Equal(t, "submit", semantic.correctInput.Action)
 	require.Equal(t, 3, semantic.correctInput.ExpectedVersion)
 	require.Equal(t, "relationship-correction-1", semantic.correctInput.IdempotencyKey)
+}
+
+func TestLifecycleRelationshipCorrectionStatusUsesOwnerAndSearchState(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	submissionID := uuid.NewString()
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	semantic := &lifecycleSemanticStub{statusResult: &repository.RelationshipCorrectionStatus{
+		SubmissionID: submissionID, ProcessingState: "awaiting_confirmation", SearchState: string(domain.SearchProjectionPending),
+		Confirmation: &repository.RelationshipCorrectionConfirmation{Token: uuid.NewString(), ExpiresAt: expiresAt},
+	}}
+	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic})
+
+	result, err := svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    submissionID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, submissionID, result.SubmissionID)
+	require.Equal(t, "relationship_correction", result.SubmissionKind)
+	require.Equal(t, "awaiting_confirmation", result.ProcessingState)
+	require.Equal(t, string(domain.SearchProjectionPending), result.SearchState)
+	require.NotNil(t, result.AwaitingConfirmation)
+	require.Equal(t, teamID.String(), semantic.statusInput.TeamID)
+	require.Equal(t, profileID.String(), semantic.statusInput.OwnerProfileID)
+	semantic.statusResult = &repository.RelationshipCorrectionStatus{
+		SubmissionID: submissionID, ProcessingState: "completed", SearchState: string(domain.SearchProjectionFailed),
+		Correction: &repository.RelationshipCorrectionResult{SuccessorRelationshipID: uuid.NewString(), SuccessorVersion: 2},
+	}
+	result, err = svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    submissionID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.ProcessingState)
+	require.Equal(t, string(domain.SearchProjectionFailed), result.SearchState)
+	require.NotNil(t, result.CorrectionResult)
+
+	_, err = svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    "not-a-uuid",
+	})
+	var publicErr *httperr.APIError
+	require.ErrorAs(t, err, &publicErr)
+	require.Equal(t, httperr.NOT_FOUND, publicErr.Code)
+}
+
+func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
+	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
+	repositoryFailure := errors.New("database host and query details")
+	svc := NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{err: repositoryFailure}})
+	_, err := svc.CorrectRelationship(ctx, CorrectRelationshipRequest{
+		ContractVersion: domain.ContractVersion,
+		Action:          "submit",
+	})
+	require.ErrorIs(t, err, ErrLifecyclePersistence)
+	require.NotContains(t, err.Error(), repositoryFailure.Error())
+
+	unsafeAction := strings.Repeat("client-controlled-", 100)
+	_, err = svc.CorrectRelationship(ctx, CorrectRelationshipRequest{
+		ContractVersion: domain.ContractVersion,
+		Action:          unsafeAction,
+	})
+	require.ErrorContains(t, err, "action must be submit or confirm")
+	require.NotContains(t, err.Error(), unsafeAction)
 }
 
 func TestLifecycleRejectsUnsafeResolveEvidenceBeforeRepositoryWrite(t *testing.T) {
@@ -476,6 +543,7 @@ func TestLifecycleCorrectRelationshipRequiresAuthContractAndRepository(t *testin
 type lifecycleSemanticStub struct {
 	input         repository.RetractRelationshipInput
 	correctInput  repository.CorrectRelationshipInput
+	statusInput   repository.GetRelationshipCorrectionInput
 	result        *repository.RelationshipTransitionResult
 	correctResult *repository.CorrectRelationshipResult
 	statusResult  *repository.RelationshipCorrectionStatus
@@ -514,8 +582,9 @@ func (s *lifecycleSemanticStub) CorrectRelationship(
 
 func (s *lifecycleSemanticStub) GetRelationshipCorrection(
 	_ context.Context,
-	_ repository.GetRelationshipCorrectionInput,
+	input repository.GetRelationshipCorrectionInput,
 ) (*repository.RelationshipCorrectionStatus, error) {
+	s.statusInput = input
 	if s.err != nil {
 		return nil, s.err
 	}

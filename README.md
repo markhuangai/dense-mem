@@ -313,10 +313,11 @@ go run ./cmd/eval-seedgen \
   --suite tests/eval/suites/local_eval_100.jsonl
 ```
 
-`local_eval_100_v2` contains 100 corpus rows and 25 scored cases. It is a smoke
-check for the evaluation image and harness plumbing, not a replacement for the
-approved deterministic 1k release gate. Use `IMPORT_CONCURRENCY=5` for this
-smoke; the full evaluation remains configurable up to the harness limit of 10.
+The `local_eval_100` CLI preset emits the versioned `local_eval_100_v2` seed
+identity with 100 corpus rows and 25 scored cases. It is a smoke check for the
+evaluation image and harness plumbing, not a replacement for the approved
+deterministic 1k release gate. Use `IMPORT_CONCURRENCY=5` for this smoke; the
+full evaluation remains configurable up to the harness limit of 10.
 
 Memory-pack export emits the current `dense-mem.memory-pack.v2.4` artifact. Import
 and candidate-discovery workflows are not part of the public contract.

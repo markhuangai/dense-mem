@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -27,6 +29,8 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	subject := createSemanticEntity(t, ctx, semantic, teamA, ownerA, "person", "Mark Huang")
 	wrongObject := createSemanticEntity(t, ctx, semantic, teamA, ownerA, "project", "Wrong Project")
 	correctObject := createSemanticEntity(t, ctx, semantic, teamA, ownerA, "project", "Dense-Mem")
+	retiredObject := createSemanticEntity(t, ctx, semantic, teamA, ownerA, "project", "Retired Project")
+	crossTeamObject := createSemanticEntity(t, ctx, semantic, teamC, ownerC, "project", "Cross-Team Project")
 	ingest := createSemanticIngest(t, ctx, ledger, teamA, ownerA, "relationship-correction-source", "Mark Huang works on Dense-Mem.")
 	fragmentID := ingest.Evidence[0].FragmentID
 	spanEnd := len("Mark Huang works on Dense-Mem.")
@@ -43,6 +47,23 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 		Patch:    RelationshipCorrectionPatch{ObjectEntity: &RelationshipCorrectionEntityPatch{EntityID: correctObject.EntityID}},
 		Supports: []RelationshipCorrectionSupport{{EvidenceID: fragmentID, Start: 0, End: spanEnd}},
 		Reason:   "the object Entity was resolved incorrectly", IdempotencyKey: "replace-owned-relationship",
+	}
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamA, func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			UPDATE entity_records SET status = 'retired', updated_at = now()
+			WHERE team_id = ?::uuid AND entity_id = ?::uuid
+		`, teamA, retiredObject.EntityID)
+		require.Equal(t, int64(1), result.RowsAffected)
+		return result.Error
+	}))
+	for index, targetID := range []string{uuid.NewString(), retiredObject.EntityID, crossTeamObject.EntityID} {
+		unavailable := request
+		unavailable.Patch.ObjectEntity = &RelationshipCorrectionEntityPatch{EntityID: targetID}
+		unavailable.IdempotencyKey = "reject-unavailable-entity-" + string(rune('a'+index))
+		rejected, err := semantic.CorrectRelationship(ctx, unavailable)
+		require.NoError(t, err)
+		require.Equal(t, "rejected", rejected.ProcessingState, "target index %d id %s", index, targetID)
+		require.Equal(t, "entity_not_found", rejected.ErrorCode, "target index %d id %s", index, targetID)
 	}
 
 	nonOwner := request
@@ -61,6 +82,7 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	result, err := semantic.CorrectRelationship(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.ProcessingState)
+	require.Equal(t, "pending", result.SearchState)
 	require.NotNil(t, result.Correction)
 	require.False(t, result.Correction.ReusedSuccessor)
 	require.NotEqual(t, original.RelationshipID, result.Correction.SuccessorRelationshipID)
@@ -75,6 +97,7 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	})
 	require.NoError(t, err)
 	require.Equal(t, "completed", status.ProcessingState)
+	require.Equal(t, "pending", status.SearchState)
 
 	err = rls.WithTeamProfileTx(ctx, appDB, teamA, ownerA, func(tx *gorm.DB) error {
 		var originalStatus, successorStatus string
@@ -95,6 +118,15 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 		assert.Equal(t, 1, originalSupportCount)
 		assert.Equal(t, "active", successorStatus)
 		assert.Equal(t, 1, successorSupportCount)
+		var searchState string
+		if err := tx.Raw(`
+			SELECT search_state FROM search_documents
+			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ?::uuid
+			ORDER BY updated_at DESC LIMIT 1
+		`, teamA, result.Correction.SuccessorRelationshipID).Row().Scan(&searchState); err != nil {
+			return err
+		}
+		assert.Equal(t, searchState, status.SearchState)
 
 		var crossReferences, correctionEvents int64
 		if err := tx.Raw(`
@@ -135,7 +167,7 @@ func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.
 	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Mark Huang")
 	wrongObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Wrong Project")
 	firstAtlas := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Atlas")
-	_ = createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Atlas")
+	secondAtlas := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Atlas")
 	ingest := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "relationship-correction-ambiguous-source", "Mark Huang works on Atlas.")
 	fragmentID := ingest.Evidence[0].FragmentID
 	spanEnd := len("Mark Huang works on Atlas.")
@@ -156,6 +188,14 @@ func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.
 	require.Equal(t, "awaiting_confirmation", submitted.ProcessingState)
 	require.NotNil(t, submitted.Confirmation)
 	require.Len(t, submitted.Confirmation.Candidates, 2)
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		canceledCtx, cancel := context.WithCancel(ctx)
+		cancel()
+		validationErr := validateSelectedCorrectionEntities(canceledCtx, tx, teamID, submitted.Confirmation.Candidates, RelationshipCorrectionSelection{ObjectEntityID: firstAtlas.EntityID})
+		require.Error(t, validationErr)
+		require.NotErrorIs(t, validationErr, errRelationshipCorrectionSelectionUnavailable)
+		return nil
+	}))
 
 	var originalStatus string
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
@@ -166,7 +206,7 @@ func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.
 	confirmed, err := semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
 		TeamID: teamID, OwnerProfileID: ownerID, Action: "confirm",
 		SubmissionID: submitted.SubmissionID, ConfirmationToken: submitted.Confirmation.Token,
-		Selection:      RelationshipCorrectionSelection{ObjectEntityID: firstAtlas.EntityID},
+		Selection:      RelationshipCorrectionSelection{ObjectEntityID: strings.ToUpper(firstAtlas.EntityID)},
 		IdempotencyKey: "ambiguous-confirm",
 	})
 	require.NoError(t, err)
@@ -180,6 +220,85 @@ func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.
 		IdempotencyKey: "second-confirmation-round",
 	})
 	require.True(t, errors.Is(err, ErrRelationshipCorrectionConfirmation), "err=%v", err)
+
+	expiredSubject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Expired Confirmation Owner")
+	expiredWrongObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Expired Wrong Project")
+	expiredIngest := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "relationship-correction-expired-source", "Expired Confirmation Owner works on Atlas.")
+	expiredSpan := len("Expired Confirmation Owner works on Atlas.")
+	expiredOriginal := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: expiredIngest.IngestID,
+		SubjectEntityID: expiredSubject.EntityID, PredicateKey: "works_on", ObjectEntityID: expiredWrongObject.EntityID,
+		Support: &EvidenceSupportInput{FragmentID: expiredIngest.Evidence[0].FragmentID, SourceGroupKey: "conversation:expired", SpanStart: 0, SpanEnd: expiredSpan, Authority: "primary"},
+	}).Relationship
+	expired, err := semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "submit",
+		RelationshipID: expiredOriginal.RelationshipID, ExpectedVersion: expiredOriginal.Version,
+		Patch:    RelationshipCorrectionPatch{ObjectEntity: &RelationshipCorrectionEntityPatch{Name: "Atlas", EntityKind: "project"}},
+		Supports: []RelationshipCorrectionSupport{{EvidenceID: expiredIngest.Evidence[0].FragmentID, Start: 0, End: expiredSpan}},
+		Reason:   "the object Entity was resolved incorrectly", IdempotencyKey: "expired-submit",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "awaiting_confirmation", expired.ProcessingState)
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_correction_submissions
+			SET confirmation_expires_at = ?
+			WHERE team_id = ?::uuid AND submission_id = ?::uuid
+		`, time.Now().UTC().Add(-time.Minute), teamID, expired.SubmissionID).Error
+	}))
+	_, err = semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "confirm",
+		SubmissionID: expired.SubmissionID, ConfirmationToken: expired.Confirmation.Token,
+		Selection: RelationshipCorrectionSelection{ObjectEntityID: firstAtlas.EntityID}, IdempotencyKey: "expired-confirm",
+	})
+	require.ErrorIs(t, err, ErrRelationshipCorrectionConfirmationExpired)
+	expiredStatus, err := semantic.GetRelationshipCorrection(ctx, GetRelationshipCorrectionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SubmissionID: expired.SubmissionID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "rejected", expiredStatus.ProcessingState)
+	require.Equal(t, "confirmation_expired", expiredStatus.ErrorCode)
+	_, err = semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "confirm",
+		SubmissionID: expired.SubmissionID, ConfirmationToken: expired.Confirmation.Token,
+		Selection: RelationshipCorrectionSelection{ObjectEntityID: firstAtlas.EntityID}, IdempotencyKey: "expired-confirm",
+	})
+	require.ErrorIs(t, err, ErrRelationshipCorrectionConfirmationExpired)
+
+	unavailableSubject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Unavailable Selection Owner")
+	unavailableWrongObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Unavailable Wrong Project")
+	unavailableIngest := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "relationship-correction-unavailable-source", "Unavailable Selection Owner works on Atlas.")
+	unavailableSpan := len("Unavailable Selection Owner works on Atlas.")
+	unavailableOriginal := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: unavailableIngest.IngestID,
+		SubjectEntityID: unavailableSubject.EntityID, PredicateKey: "works_on", ObjectEntityID: unavailableWrongObject.EntityID,
+		Support: &EvidenceSupportInput{FragmentID: unavailableIngest.Evidence[0].FragmentID, SourceGroupKey: "conversation:unavailable", SpanStart: 0, SpanEnd: unavailableSpan, Authority: "primary"},
+	}).Relationship
+	unavailable, err := semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "submit",
+		RelationshipID: unavailableOriginal.RelationshipID, ExpectedVersion: unavailableOriginal.Version,
+		Patch:    RelationshipCorrectionPatch{ObjectEntity: &RelationshipCorrectionEntityPatch{Name: "Atlas", EntityKind: "project"}},
+		Supports: []RelationshipCorrectionSupport{{EvidenceID: unavailableIngest.Evidence[0].FragmentID, Start: 0, End: unavailableSpan}},
+		Reason:   "the object Entity was resolved incorrectly", IdempotencyKey: "unavailable-submit",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "awaiting_confirmation", unavailable.ProcessingState)
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			UPDATE entity_records SET status = 'retired', updated_at = now()
+			WHERE team_id = ?::uuid AND entity_id = ?::uuid
+		`, teamID, secondAtlas.EntityID)
+		require.Equal(t, int64(1), result.RowsAffected)
+		return result.Error
+	}))
+	unavailableResult, err := semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "confirm",
+		SubmissionID: unavailable.SubmissionID, ConfirmationToken: unavailable.Confirmation.Token,
+		Selection: RelationshipCorrectionSelection{ObjectEntityID: secondAtlas.EntityID}, IdempotencyKey: "unavailable-confirm",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "rejected", unavailableResult.ProcessingState)
+	require.Equal(t, "persistent_ambiguity", unavailableResult.ErrorCode)
 }
 
 func TestRelationshipCorrectionReusesActiveCollisionAndRejectsNoOp(t *testing.T) {
@@ -305,4 +424,33 @@ func TestCorrectRelationshipValidationRejectsInvalidConfirmation(t *testing.T) {
 	})
 	err := validateCorrectRelationshipInput(input)
 	require.ErrorContains(t, err, "selection")
+}
+
+func TestNormalizeCorrectRelationshipInputCanonicalizesWithoutMutatingCaller(t *testing.T) {
+	teamID := uuid.NewString()
+	profileID := uuid.NewString()
+	relationshipID := uuid.NewString()
+	entityID := uuid.NewString()
+	firstEvidenceID := uuid.NewString()
+	secondEvidenceID := uuid.NewString()
+	callerSupports := []RelationshipCorrectionSupport{
+		{EvidenceID: strings.ToUpper(secondEvidenceID), Start: 2, End: 3},
+		{EvidenceID: strings.ToUpper(firstEvidenceID), Start: 0, End: 1},
+	}
+	callerPatch := &RelationshipCorrectionEntityPatch{EntityID: " " + strings.ToUpper(entityID) + " "}
+	input := CorrectRelationshipInput{
+		TeamID: strings.ToUpper(teamID), OwnerProfileID: strings.ToUpper(profileID), Action: " submit ",
+		RelationshipID: strings.ToUpper(relationshipID), Patch: RelationshipCorrectionPatch{ObjectEntity: callerPatch},
+		Supports: callerSupports,
+	}
+
+	normalized := normalizeCorrectRelationshipInput(input)
+
+	require.Equal(t, teamID, normalized.TeamID)
+	require.Equal(t, profileID, normalized.OwnerProfileID)
+	require.Equal(t, relationshipID, normalized.RelationshipID)
+	require.Equal(t, entityID, normalized.Patch.ObjectEntity.EntityID)
+	require.ElementsMatch(t, []string{firstEvidenceID, secondEvidenceID}, []string{normalized.Supports[0].EvidenceID, normalized.Supports[1].EvidenceID})
+	require.Equal(t, strings.ToUpper(secondEvidenceID), callerSupports[0].EvidenceID)
+	require.Equal(t, " "+strings.ToUpper(entityID)+" ", callerPatch.EntityID)
 }

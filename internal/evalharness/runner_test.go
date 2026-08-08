@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -195,6 +196,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 	var statusPolls int
 	var recallCalls int
 	statusSubmissions := map[string]bool{}
+	var callsMu sync.Mutex
 
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -209,7 +211,9 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			if _, ok := rememberIDs[idempotencyKey]; !ok {
 				t.Fatalf("remember input = %#v", input)
 			}
+			callsMu.Lock()
 			rememberCalls++
+			callsMu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"submission_id":    strings.TrimPrefix(idempotencyKey, "eval:"),
 				"processing_state": "queued",
@@ -223,8 +227,10 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			if submissionID != "doc-alpha" && submissionID != "doc-beta" {
 				t.Fatalf("status input = %#v", input)
 			}
+			callsMu.Lock()
 			statusSubmissions[submissionID] = true
 			statusPolls++
+			callsMu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"submission_id":    submissionID,
 				"processing_state": "completed",
@@ -245,7 +251,9 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode recall body: %v", err)
 			}
+			callsMu.Lock()
 			recallCalls++
+			callsMu.Unlock()
 			caseID, _ := input["case_id"].(string)
 			refID := "frag-alpha"
 			if caseID == "case-2" {
@@ -282,11 +290,16 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 	if summary.ScoredCaseCount != 2 || summary.AverageRecallAtK != 1 || summary.AverageMRR != 1 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	if rememberCalls != 2 || statusPolls != 2 || recallCalls != 2 {
-		t.Fatalf("remember/status/recall calls = %d/%d/%d", rememberCalls, statusPolls, recallCalls)
+	callsMu.Lock()
+	gotRememberCalls, gotStatusPolls, gotRecallCalls := rememberCalls, statusPolls, recallCalls
+	gotAlpha, gotBeta := statusSubmissions["doc-alpha"], statusSubmissions["doc-beta"]
+	gotStatusSubmissions := map[string]bool{"doc-alpha": gotAlpha, "doc-beta": gotBeta}
+	callsMu.Unlock()
+	if gotRememberCalls != 2 || gotStatusPolls != 2 || gotRecallCalls != 2 {
+		t.Fatalf("remember/status/recall calls = %d/%d/%d", gotRememberCalls, gotStatusPolls, gotRecallCalls)
 	}
-	if !statusSubmissions["doc-alpha"] || !statusSubmissions["doc-beta"] {
-		t.Fatalf("status submissions = %#v; want doc-alpha and doc-beta", statusSubmissions)
+	if !gotAlpha || !gotBeta {
+		t.Fatalf("status submissions = %#v; want doc-alpha and doc-beta", gotStatusSubmissions)
 	}
 }
 

@@ -375,6 +375,7 @@ type RelationshipCorrectionResult struct {
 type CorrectRelationshipResult struct {
 	SubmissionID    string
 	ProcessingState string
+	SearchState     string
 	Confirmation    *RelationshipCorrectionConfirmation
 	Correction      *RelationshipCorrectionResult
 	ErrorCode       string

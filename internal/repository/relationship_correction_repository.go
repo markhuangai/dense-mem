@@ -20,15 +20,52 @@ import (
 )
 
 var (
-	ErrRelationshipCorrectionNotFound            = errors.New("relationship correction not found")
-	ErrRelationshipCorrectionConfirmation        = errors.New("relationship correction confirmation is invalid")
-	ErrRelationshipCorrectionConfirmationExpired = errors.New("relationship correction confirmation expired")
+	ErrRelationshipCorrectionNotFound             = errors.New("relationship correction not found")
+	ErrRelationshipCorrectionConfirmation         = errors.New("relationship correction confirmation is invalid")
+	ErrRelationshipCorrectionConfirmationExpired  = errors.New("relationship correction confirmation expired")
+	ErrRelationshipCorrectionStateConflict        = errors.New("relationship correction state conflict")
+	errRelationshipCorrectionSelectionUnavailable = errors.New("relationship correction selected entity is unavailable")
 )
 
 const (
 	relationshipCorrectionConfirmationTTL = 2 * time.Hour
 	relationshipCorrectionCandidateLimit  = 20
 )
+
+const relationshipCorrectionSubmissionSelectSQL = `
+	SELECT submission.team_id::text, submission.submission_id::text,
+	       submission.owner_profile_id::text, submission.relationship_id::text,
+	       submission.expected_version, submission.request_hash,
+	       submission.patch, submission.supports, submission.reason,
+	       submission.idempotency_key, submission.confirmation_idempotency_key,
+	       submission.confirmation_request_hash, submission.processing_state,
+	       submission.confirmation_round, submission.confirmation_token,
+	       submission.confirmation_expires_at, submission.candidates,
+	       submission.selection, COALESCE(submission.successor_relationship_id::text, ''),
+	       submission.reused_successor, submission.error_code, submission.error_message,
+	       COALESCE(successor.version, 0), COALESCE(successor_search.search_state, 'not_required')
+	FROM relationship_correction_submissions AS submission
+	LEFT JOIN relationship_records AS successor
+	  ON successor.team_id = submission.team_id
+	 AND successor.relationship_id = submission.successor_relationship_id
+	LEFT JOIN LATERAL (
+	    SELECT document.search_state
+	    FROM search_documents AS document
+	    JOIN search_index_generations AS generation
+	      ON generation.embedding_contract_id = document.embedding_contract_id
+	     AND generation.embedding_dimensions = document.embedding_dimensions
+	     AND generation.activation_state = 'active'
+	    JOIN embedding_contracts AS contract
+	      ON contract.embedding_contract_id = document.embedding_contract_id
+	     AND contract.lifecycle_state = 'active'
+	     AND contract.distance_metric = 'cosine'
+	    WHERE document.team_id = submission.team_id
+	      AND document.source_kind = 'relationship'
+	      AND document.source_id = submission.successor_relationship_id
+	    ORDER BY contract.version DESC, generation.generation DESC, document.updated_at DESC
+	    LIMIT 1
+	) AS successor_search ON true
+`
 
 type relationshipCorrectionSubmissionRow struct {
 	TeamID                  string
@@ -54,6 +91,7 @@ type relationshipCorrectionSubmissionRow struct {
 	ErrorCode               string
 	ErrorMessage            string
 	SuccessorVersion        int
+	SearchState             string
 }
 
 func (r *SemanticRepositoryImpl) CorrectRelationship(
@@ -65,6 +103,7 @@ func (r *SemanticRepositoryImpl) CorrectRelationship(
 		return nil, err
 	}
 	var result *CorrectRelationshipResult
+	var committedErr error
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
 			return err
@@ -72,6 +111,10 @@ func (r *SemanticRepositoryImpl) CorrectRelationship(
 		var err error
 		if input.Action == "confirm" {
 			result, err = r.confirmRelationshipCorrection(ctx, tx, input)
+			if errors.Is(err, ErrRelationshipCorrectionConfirmationExpired) {
+				committedErr = err
+				return nil
+			}
 		} else {
 			result, err = r.submitRelationshipCorrection(ctx, tx, input)
 		}
@@ -79,6 +122,9 @@ func (r *SemanticRepositoryImpl) CorrectRelationship(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("semantic: correct relationship: %w", err)
+	}
+	if committedErr != nil {
+		return nil, fmt.Errorf("semantic: correct relationship: %w", committedErr)
 	}
 	return result, nil
 }
@@ -233,6 +279,9 @@ func (r *SemanticRepositoryImpl) confirmRelationshipCorrection(
 	}
 	if row.ConfirmationIdempotency != "" {
 		if row.ConfirmationIdempotency == input.IdempotencyKey && row.ConfirmationRequestHash == confirmationHash {
+			if row.ErrorCode == "confirmation_expired" {
+				return relationshipCorrectionResultFromRow(row), ErrRelationshipCorrectionConfirmationExpired
+			}
 			return relationshipCorrectionResultFromRow(row), nil
 		}
 		if row.ConfirmationIdempotency == input.IdempotencyKey {
@@ -246,7 +295,11 @@ func (r *SemanticRepositoryImpl) confirmRelationshipCorrection(
 		if err := rejectRelationshipCorrectionSubmission(ctx, tx, row, "confirmation_expired", "relationship correction confirmation expired", input.IdempotencyKey, confirmationHash); err != nil {
 			return nil, err
 		}
-		return nil, ErrRelationshipCorrectionConfirmationExpired
+		updated, err := loadRelationshipCorrectionSubmission(ctx, tx, row.TeamID, row.OwnerProfileID, row.SubmissionID, false)
+		if err != nil {
+			return nil, err
+		}
+		return relationshipCorrectionResultFromRow(updated), ErrRelationshipCorrectionConfirmationExpired
 	}
 	if subtle.ConstantTimeCompare([]byte(row.ConfirmationToken), []byte(input.ConfirmationToken)) != 1 {
 		return nil, ErrRelationshipCorrectionConfirmation
@@ -302,9 +355,22 @@ func (r *SemanticRepositoryImpl) confirmRelationshipCorrection(
 	if err != nil {
 		return nil, err
 	}
+	if resolution.RejectionCode != "" {
+		if err := rejectRelationshipCorrectionSubmission(ctx, tx, row, resolution.RejectionCode, resolution.RejectionMessage, input.IdempotencyKey, confirmationHash); err != nil {
+			return nil, err
+		}
+		updated, err := loadRelationshipCorrectionSubmission(ctx, tx, row.TeamID, row.OwnerProfileID, row.SubmissionID, false)
+		if err != nil {
+			return nil, err
+		}
+		return relationshipCorrectionResultFromRow(updated), nil
+	}
 	resolution.Selection = mergeRelationshipCorrectionSelection(resolution.Selection, selection)
 	resolution.Candidates = nil
 	if err := validateSelectedCorrectionEntities(ctx, tx, row.TeamID, row.Candidates, resolution.Selection); err != nil {
+		if !errors.Is(err, errRelationshipCorrectionSelectionUnavailable) {
+			return nil, err
+		}
 		if rejectErr := rejectRelationshipCorrectionSubmission(ctx, tx, row, "persistent_ambiguity", "selected Entity candidate is no longer available", input.IdempotencyKey, confirmationHash); rejectErr != nil {
 			return nil, rejectErr
 		}
@@ -326,23 +392,36 @@ func (r *SemanticRepositoryImpl) confirmRelationshipCorrection(
 }
 
 func normalizeCorrectRelationshipInput(input CorrectRelationshipInput) CorrectRelationshipInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.TeamID = canonicalCorrectionUUID(input.TeamID)
+	input.OwnerProfileID = canonicalCorrectionUUID(input.OwnerProfileID)
 	input.Action = strings.TrimSpace(input.Action)
-	input.RelationshipID = strings.TrimSpace(input.RelationshipID)
+	input.RelationshipID = canonicalCorrectionUUID(input.RelationshipID)
 	input.Reason = strings.TrimSpace(input.Reason)
-	input.SubmissionID = strings.TrimSpace(input.SubmissionID)
-	input.ConfirmationToken = strings.TrimSpace(input.ConfirmationToken)
+	input.SubmissionID = canonicalCorrectionUUID(input.SubmissionID)
+	input.ConfirmationToken = canonicalCorrectionUUID(input.ConfirmationToken)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	if input.Patch.SubjectEntity != nil {
+		copy := *input.Patch.SubjectEntity
+		input.Patch.SubjectEntity = &copy
+	}
+	if input.Patch.ObjectEntity != nil {
+		copy := *input.Patch.ObjectEntity
+		input.Patch.ObjectEntity = &copy
+	}
+	if input.Patch.Predicate != nil {
+		copy := *input.Patch.Predicate
+		input.Patch.Predicate = &copy
+	}
 	normalizeCorrectionEntityPatch(input.Patch.SubjectEntity)
 	normalizeCorrectionEntityPatch(input.Patch.ObjectEntity)
 	if input.Patch.Predicate != nil {
 		input.Patch.Predicate.Key = strings.TrimSpace(input.Patch.Predicate.Key)
 	}
-	input.Selection.SubjectEntityID = strings.TrimSpace(input.Selection.SubjectEntityID)
-	input.Selection.ObjectEntityID = strings.TrimSpace(input.Selection.ObjectEntityID)
+	input.Selection.SubjectEntityID = canonicalCorrectionUUID(input.Selection.SubjectEntityID)
+	input.Selection.ObjectEntityID = canonicalCorrectionUUID(input.Selection.ObjectEntityID)
+	input.Supports = append([]RelationshipCorrectionSupport(nil), input.Supports...)
 	for index := range input.Supports {
-		input.Supports[index].EvidenceID = strings.TrimSpace(input.Supports[index].EvidenceID)
+		input.Supports[index].EvidenceID = canonicalCorrectionUUID(input.Supports[index].EvidenceID)
 	}
 	sort.Slice(input.Supports, func(i, j int) bool {
 		return relationshipCorrectionSupportKey(input.Supports[i]) < relationshipCorrectionSupportKey(input.Supports[j])
@@ -354,9 +433,18 @@ func normalizeCorrectionEntityPatch(patch *RelationshipCorrectionEntityPatch) {
 	if patch == nil {
 		return
 	}
-	patch.EntityID = strings.TrimSpace(patch.EntityID)
+	patch.EntityID = canonicalCorrectionUUID(patch.EntityID)
 	patch.Name = strings.TrimSpace(patch.Name)
 	patch.EntityKind = strings.TrimSpace(patch.EntityKind)
+}
+
+func canonicalCorrectionUUID(value string) string {
+	trimmed := strings.TrimSpace(value)
+	parsed, err := uuid.Parse(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	return parsed.String()
 }
 
 func validateCorrectRelationshipInput(input CorrectRelationshipInput) error {
@@ -429,7 +517,7 @@ func validateCorrectRelationshipInput(input CorrectRelationshipInput) error {
 			}
 		}
 	default:
-		return fmt.Errorf("unsupported action %q", input.Action)
+		return errors.New("action must be submit or confirm")
 	}
 	return nil
 }
@@ -520,6 +608,7 @@ func relationshipCorrectionResultFromRow(row *relationshipCorrectionSubmissionRo
 		ProcessingState: row.ProcessingState,
 		ErrorCode:       row.ErrorCode,
 		ErrorMessage:    row.ErrorMessage,
+		SearchState:     row.SearchState,
 	}
 	if row.ProcessingState == "awaiting_confirmation" && row.ConfirmationExpiresAt != nil {
 		result.Confirmation = &RelationshipCorrectionConfirmation{
@@ -549,22 +638,7 @@ func loadRelationshipCorrectionSubmission(
 	if lock {
 		lockClause = "FOR UPDATE OF submission"
 	}
-	return scanRelationshipCorrectionSubmission(tx.WithContext(ctx).Raw(`
-		SELECT submission.team_id::text, submission.submission_id::text,
-		       submission.owner_profile_id::text, submission.relationship_id::text,
-		       submission.expected_version, submission.request_hash,
-		       submission.patch, submission.supports, submission.reason,
-		       submission.idempotency_key, submission.confirmation_idempotency_key,
-		       submission.confirmation_request_hash, submission.processing_state,
-		       submission.confirmation_round, submission.confirmation_token,
-		       submission.confirmation_expires_at, submission.candidates,
-		       submission.selection, COALESCE(submission.successor_relationship_id::text, ''),
-		       submission.reused_successor, submission.error_code, submission.error_message,
-		       COALESCE(successor.version, 0)
-		FROM relationship_correction_submissions AS submission
-		LEFT JOIN relationship_records AS successor
-		  ON successor.team_id = submission.team_id
-		 AND successor.relationship_id = submission.successor_relationship_id
+	return scanRelationshipCorrectionSubmission(tx.WithContext(ctx).Raw(relationshipCorrectionSubmissionSelectSQL+`
 		WHERE submission.team_id = ?::uuid
 		  AND submission.owner_profile_id = ?::uuid
 		  AND submission.submission_id = ?::uuid
@@ -577,22 +651,7 @@ func loadRelationshipCorrectionByIdempotency(
 	tx *gorm.DB,
 	teamID, ownerProfileID, idempotencyKey string,
 ) (*relationshipCorrectionSubmissionRow, error) {
-	return scanRelationshipCorrectionSubmission(tx.WithContext(ctx).Raw(`
-		SELECT submission.team_id::text, submission.submission_id::text,
-		       submission.owner_profile_id::text, submission.relationship_id::text,
-		       submission.expected_version, submission.request_hash,
-		       submission.patch, submission.supports, submission.reason,
-		       submission.idempotency_key, submission.confirmation_idempotency_key,
-		       submission.confirmation_request_hash, submission.processing_state,
-		       submission.confirmation_round, submission.confirmation_token,
-		       submission.confirmation_expires_at, submission.candidates,
-		       submission.selection, COALESCE(submission.successor_relationship_id::text, ''),
-		       submission.reused_successor, submission.error_code, submission.error_message,
-		       COALESCE(successor.version, 0)
-		FROM relationship_correction_submissions AS submission
-		LEFT JOIN relationship_records AS successor
-		  ON successor.team_id = submission.team_id
-		 AND successor.relationship_id = submission.successor_relationship_id
+	return scanRelationshipCorrectionSubmission(tx.WithContext(ctx).Raw(relationshipCorrectionSubmissionSelectSQL+`
 		WHERE submission.team_id = ?::uuid
 		  AND submission.owner_profile_id = ?::uuid
 		  AND submission.idempotency_key = ?
@@ -610,7 +669,7 @@ func scanRelationshipCorrectionSubmission(row *sql.Row) (*relationshipCorrection
 		&loaded.IdempotencyKey, &loaded.ConfirmationIdempotency, &loaded.ConfirmationRequestHash,
 		&loaded.ProcessingState, &loaded.ConfirmationRound, &loaded.ConfirmationToken, &expiresAt,
 		&candidatesJSON, &selectionJSON, &loaded.SuccessorRelationshipID, &loaded.ReusedSuccessor,
-		&loaded.ErrorCode, &loaded.ErrorMessage, &loaded.SuccessorVersion,
+		&loaded.ErrorCode, &loaded.ErrorMessage, &loaded.SuccessorVersion, &loaded.SearchState,
 	); errors.Is(err, sql.ErrNoRows) {
 		return nil, gorm.ErrRecordNotFound
 	} else if err != nil {

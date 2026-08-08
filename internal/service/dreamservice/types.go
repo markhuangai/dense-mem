@@ -72,7 +72,7 @@ type Service interface {
 	Recall(ctx context.Context, profileID, query string, limit int) ([]*domain.Dream, error)
 	ResolveFeedback(ctx context.Context, profileID string, req ResolveFeedbackRequest) (*ResolveFeedbackResult, error)
 	Status(ctx context.Context, profileID string) (*StatusResult, error)
-	EffectiveConfig(ctx context.Context, profileID string) (EffectiveConfig, error)
+	EffectiveConfig(ctx context.Context, fallbackTeamID string) (EffectiveConfig, error)
 }
 
 type RunCycleRequest struct {

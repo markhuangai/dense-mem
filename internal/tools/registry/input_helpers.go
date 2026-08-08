@@ -18,8 +18,9 @@ func stringInput(value any) string {
 
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
-		if strings.TrimSpace(value) != "" && value != uuid.Nil.String() {
-			return value
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" && trimmed != uuid.Nil.String() {
+			return trimmed
 		}
 	}
 	return ""

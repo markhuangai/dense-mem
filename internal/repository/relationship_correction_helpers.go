@@ -206,6 +206,11 @@ func resolveRelationshipCorrectionPatch(
 	var err error
 	if input.Patch.SubjectEntity != nil {
 		resolved, err := resolveCorrectionEntity(ctx, tx, input.TeamID, "subject_entity", input.Patch.SubjectEntity)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			resolution.RejectionCode = "entity_not_found"
+			resolution.RejectionMessage = "subject Entity is not active and available to the team"
+			return resolution, nil
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -230,6 +235,11 @@ func resolveRelationshipCorrectionPatch(
 
 	if input.Patch.ObjectEntity != nil {
 		resolved, err := resolveCorrectionEntity(ctx, tx, input.TeamID, "object_entity", input.Patch.ObjectEntity)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			resolution.RejectionCode = "entity_not_found"
+			resolution.RejectionMessage = "object Entity is not active and available to the team"
+			return resolution, nil
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -458,11 +468,14 @@ func validateSelectedCorrectionEntities(
 	selected := map[string]string{"subject_entity": selection.SubjectEntityID, "object_entity": selection.ObjectEntityID}
 	for endpoint := range groupCorrectionCandidates(candidates) {
 		candidate, err := loadActiveCorrectionEntity(ctx, tx, teamID, selected[endpoint])
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errRelationshipCorrectionSelectionUnavailable
+		}
 		if err != nil {
 			return err
 		}
 		if candidate.EntityID != selected[endpoint] {
-			return ErrRelationshipCorrectionConfirmation
+			return errRelationshipCorrectionSelectionUnavailable
 		}
 	}
 	return nil
@@ -532,7 +545,7 @@ func rejectRelationshipCorrectionSubmission(
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		return ErrRelationshipCorrectionConfirmation
+		return ErrRelationshipCorrectionStateConflict
 	}
 	return nil
 }

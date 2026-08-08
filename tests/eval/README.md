@@ -186,9 +186,10 @@ smoke check.
 
 ## Run the 100-row smoke check
 
-The `local_eval_100_v2` seed contains 100 corpus rows: 25 scored sanity cases,
-each with one required document and three hard negatives. Generated seed,
-suite, database, and run files remain ignored.
+The `local_eval_100` CLI preset emits the versioned `local_eval_100_v2` seed
+identity. It contains 100 corpus rows: 25 scored sanity cases, each with one
+required document and three hard negatives. Generated seed, suite, database,
+and run files remain ignored.
 
 ```bash
 go run ./cmd/eval-seedgen \
@@ -226,6 +227,7 @@ eval commands to use another local runtime root or env file.
 
 ```bash
 export V1_COMPOSE_DATA_DIR="$(realpath -m tests/eval/runtime/v1)"
+export DENSE_MEM_EVAL_ENV_FILE="$(realpath .env)"
 export DENSE_MEM_EVAL_COMPOSE_PROJECT=densemem_eval_full
 
 docker compose -p "${DENSE_MEM_EVAL_COMPOSE_PROJECT}" \

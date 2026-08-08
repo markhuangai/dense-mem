@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -50,6 +51,44 @@ func TestBuildActiveRecallRecordsFeedbackSnapshot(t *testing.T) {
 	}
 	if snapshot.ResultRefs[1].Type != domain.RecallFeedbackResultTypeRelationship || snapshot.ResultRefs[1].ID != "relationship-canonical" {
 		t.Fatalf("relationship ref = %+v", snapshot.ResultRefs[1])
+	}
+}
+
+func TestBuildActiveRecallReportsFeedbackSnapshotFailure(t *testing.T) {
+	reg, err := BuildActive(Dependencies{
+		Recall:               &stubRecallService{},
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: &stubRecallFeedbackRecorder{err: errors.New("snapshot unavailable")},
+		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+	})
+	if err != nil {
+		t.Fatalf("BuildActive: %v", err)
+	}
+	recall, _ := reg.Get(ToolRecallMemory)
+	out, err := recall.Invoke(contractInvokeContext("read"), "ignored-profile", map[string]any{"query": "PostgreSQL memory"})
+	if err != nil {
+		t.Fatalf("recall_memory.Invoke: %v", err)
+	}
+	if out["recall_id"] != "rec-canonical" {
+		t.Fatalf("recall_id = %#v; want preserved", out["recall_id"])
+	}
+	degradations, ok := out["degradations"].([]memoryservice.RecallDegradationResult)
+	if !ok || len(degradations) != 1 || degradations[0].Frontier != "feedback" || degradations[0].Code != "recall_feedback_snapshot_unavailable" {
+		t.Fatalf("degradations = %#v", out["degradations"])
+	}
+	if actions := out["suggested_actions"].([]memoryservice.RecallSuggestedAction); len(actions) != 0 {
+		t.Fatalf("suggested_actions = %#v; unavailable feedback must not be suggested", actions)
+	}
+	serialized, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal output: %v", err)
+	}
+	var wireOutput map[string]any
+	if err := json.Unmarshal(serialized, &wireOutput); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	if err := ValidateInput(Tool{InputSchema: recall.OutputSchema}, wireOutput); err != nil {
+		t.Fatalf("validate output: %v", err)
 	}
 }
 
@@ -214,8 +253,12 @@ func TestRecallFeedbackSnapshotHelpersCoverOptionalBranches(t *testing.T) {
 		RecallFeedbackEvents: recorder,
 		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
 	}, map[string]any{"query": "PostgreSQL memory"}, memoryservice.RecallRequest{Query: "PostgreSQL memory"}, res)
-	if res.RecallID != "" {
-		t.Fatalf("recall id = %q; want cleared after snapshot failure", res.RecallID)
+	if res.RecallID != "rec-canonical" {
+		t.Fatalf("recall id = %q; want preserved after snapshot failure", res.RecallID)
+	}
+	if len(res.Degradations) != 1 || res.Degradations[0].Frontier != "feedback" ||
+		res.Degradations[0].Code != "recall_feedback_snapshot_unavailable" || !res.Degradations[0].Optional {
+		t.Fatalf("snapshot failure degradation = %+v", res.Degradations)
 	}
 }
 

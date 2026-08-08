@@ -262,6 +262,9 @@ func (s *lifecycleService) CorrectRelationship(
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
 		return nil, ErrLifecycleAuthContext
 	}
+	if req.Action != "submit" && req.Action != "confirm" {
+		return nil, errors.New("memory lifecycle: action must be submit or confirm")
+	}
 	result, err := s.semantic.CorrectRelationship(ctx, repository.CorrectRelationshipInput{
 		TeamID:            actor.TeamID.String(),
 		OwnerProfileID:    actor.ProfileID.String(),
@@ -322,10 +325,11 @@ func translateRelationshipCorrectionError(err error) error {
 	}
 	if errors.Is(err, repository.ErrSemanticIdempotencyConflict) ||
 		errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) ||
-		errors.Is(err, repository.ErrRelationshipCorrectionConfirmationExpired) {
+		errors.Is(err, repository.ErrRelationshipCorrectionConfirmationExpired) ||
+		errors.Is(err, repository.ErrRelationshipCorrectionStateConflict) {
 		return httperr.New(httperr.CONFLICT, "relationship correction conflict")
 	}
-	return err
+	return ErrLifecyclePersistence
 }
 
 func relationshipCorrectionSubmissionStatus(result *repository.RelationshipCorrectionStatus) *SubmissionStatusResult {
@@ -338,6 +342,9 @@ func relationshipCorrectionSubmissionStatus(result *repository.RelationshipCorre
 	}
 	status.SubmissionID = result.SubmissionID
 	status.ProcessingState = result.ProcessingState
+	if result.SearchState != "" {
+		status.SearchState = result.SearchState
+	}
 	if result.Confirmation != nil {
 		status.AwaitingConfirmation = &SubmissionAwaitingConfirmation{
 			ConfirmationToken: result.Confirmation.Token,

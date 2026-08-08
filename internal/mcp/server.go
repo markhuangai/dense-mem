@@ -89,7 +89,6 @@ func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, profi
 		runtimeToolPolicy: registry.RuntimeToolPolicy{
 			RecallFeedback: recallFeedbackConfig,
 			Dreams:         dreamConfig,
-			ProfileID:      profileID,
 		},
 		prompts: defaultPromptCatalog(logger),
 	}
@@ -283,9 +282,10 @@ func (s *Server) handlePromptsGet(raw json.RawMessage) (map[string]any, *rpcErro
 // The registry is already the source of truth so this is a pure transform.
 func (s *Server) handleToolsList(ctx context.Context) map[string]any {
 	listed := s.registry.List()
+	policy := registry.ResolveRuntimeToolPolicy(ctx, s.runtimeToolPolicy, listed...)
 	out := make([]map[string]any, 0, len(listed))
 	for _, t := range listed {
-		if !registry.ToolVisible(ctx, t, s.runtimeToolPolicy) {
+		if !registry.ToolVisible(ctx, t, policy) {
 			continue
 		}
 		if !s.canUseTool(t) {
@@ -328,7 +328,8 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	if !ok {
 		return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", params.Name)}
 	}
-	if !registry.ToolVisible(ctx, tool, s.runtimeToolPolicy) {
+	policy := registry.ResolveRuntimeToolPolicy(ctx, s.runtimeToolPolicy, tool)
+	if !registry.ToolVisible(ctx, tool, policy) {
 		return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", params.Name)}
 	}
 	if !s.canUseTool(tool) {
@@ -358,6 +359,7 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 			return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
 		}
 	}
+	ctx = registry.WithRuntimeToolPolicy(ctx, policy)
 	result, err := tool.Invoke(ctx, s.profileID, args)
 	if err != nil {
 		if errors.Is(err, registry.ErrToolDisabled) {

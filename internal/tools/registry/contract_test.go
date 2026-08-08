@@ -484,9 +484,55 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 	if err := ValidateContractInput(tool, confirm, []string{"write"}); err != nil {
 		t.Fatalf("confirm rejected: %v", err)
 	}
-	delete(submit, "supports")
-	if err := ValidateContractInput(tool, submit, []string{"write"}); err == nil || !strings.Contains(err.Error(), "supports is required") {
-		t.Fatalf("submit without supports err = %v", err)
+
+	for _, test := range []struct {
+		name      string
+		input     map[string]any
+		wantError string
+	}{
+		{
+			name: "submit missing supports",
+			input: map[string]any{
+				"action": "submit", "relationship_id": "relationship-source", "expected_version": 2,
+				"patch":  map[string]any{"predicate": map[string]any{"key": "works_with"}},
+				"reason": "predicate resolved incorrectly", "idempotency_key": "correction-submit-missing",
+			},
+			wantError: "supports is required",
+		},
+		{
+			name: "submit with confirmation field",
+			input: map[string]any{
+				"action": "submit", "relationship_id": "relationship-source", "expected_version": 2,
+				"patch":    map[string]any{"predicate": map[string]any{"key": "works_with"}},
+				"supports": []any{map[string]any{"evidence_id": "evidence-1", "start": 0, "end": 8}},
+				"reason":   "predicate resolved incorrectly", "submission_id": "not-accepted",
+				"idempotency_key": "correction-submit-mixed",
+			},
+			wantError: "submission_id is not accepted for action submit",
+		},
+		{
+			name: "confirm with submit field",
+			input: map[string]any{
+				"action": "confirm", "submission_id": "correction-submission", "confirmation_token": "confirmation-token",
+				"selection": map[string]any{"subject_entity_id": "entity-selected"}, "relationship_id": "not-accepted",
+				"idempotency_key": "correction-confirm-mixed",
+			},
+			wantError: "relationship_id is not accepted for action confirm",
+		},
+		{
+			name: "confirm with empty selection",
+			input: map[string]any{
+				"action": "confirm", "submission_id": "correction-submission", "confirmation_token": "confirmation-token",
+				"selection": map[string]any{}, "idempotency_key": "correction-confirm-empty",
+			},
+			wantError: "selection must choose at least one Entity candidate",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ValidateContractInput(tool, test.input, []string{"write"}); err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("error = %v; want %q", err, test.wantError)
+			}
+		})
 	}
 }
 

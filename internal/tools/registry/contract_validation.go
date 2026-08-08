@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -129,7 +130,7 @@ func validateCorrectRelationship(args map[string]any) error {
 			return fmt.Errorf("selection must choose at least one Entity candidate")
 		}
 	default:
-		return fmt.Errorf("unsupported action %q", action)
+		return errors.New("action must be submit or confirm")
 	}
 	return nil
 }
