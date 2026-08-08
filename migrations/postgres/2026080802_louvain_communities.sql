@@ -166,8 +166,7 @@ BEGIN
             LEFT JOIN effective_support
               ON effective_support.team_id = relationship.team_id
              AND effective_support.relationship_id = relationship.relationship_id
-            WHERE source.semantic_group_key = ''
-               OR source.source_state_hash = ''
+            WHERE source.source_state_hash = ''
             LIMIT 1000
         )
         UPDATE community_sources AS source

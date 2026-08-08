@@ -31,10 +31,46 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS community_records_current_fts_idx
     )
     WHERE status = 'current';
 
--- Lock/rewrite: this validates the committed 0802 backfill before enforcing
--- the invariant; it does not rewrite the community_records heap.
+-- Lock/rewrite: adding NOT VALID records the invariant without scanning the
+-- table; validation uses SHARE UPDATE EXCLUSIVE and permits normal reads and
+-- writes. The validated check lets SET NOT NULL skip a second heap scan.
+ALTER TABLE community_records
+    DROP CONSTRAINT IF EXISTS community_records_logical_community_id_not_null;
+ALTER TABLE community_records
+    ADD CONSTRAINT community_records_logical_community_id_not_null
+    CHECK (logical_community_id IS NOT NULL) NOT VALID;
+ALTER TABLE community_records
+    VALIDATE CONSTRAINT community_records_logical_community_id_not_null;
 ALTER TABLE community_records
     ALTER COLUMN logical_community_id SET NOT NULL;
+ALTER TABLE community_records
+    DROP CONSTRAINT community_records_logical_community_id_not_null;
+
+-- Recovery: a failed concurrent unique build leaves an invalid index behind;
+-- this branch-only migration drops it before retrying the duplicate check.
+DROP INDEX CONCURRENTLY IF EXISTS community_records_current_logical_unique;
+
+-- +goose StatementBegin
+DO $$
+DECLARE
+    duplicate_count BIGINT;
+BEGIN
+    SELECT count(*)
+    INTO duplicate_count
+    FROM (
+        SELECT team_id, logical_community_id
+        FROM community_records
+        WHERE status = 'current'
+        GROUP BY team_id, logical_community_id
+        HAVING count(*) > 1
+    ) AS duplicates;
+    IF duplicate_count > 0 THEN
+        RAISE EXCEPTION
+            'cannot create community_records_current_logical_unique: % duplicate current team/logical community groups',
+            duplicate_count;
+    END IF;
+END $$;
+-- +goose StatementEnd
 
 -- Lock/rewrite: concurrent index construction permits normal community reads
 -- and writes while indexing the derived community tables.
@@ -59,3 +95,5 @@ DROP INDEX CONCURRENTLY IF EXISTS community_records_current_fts_idx;
 DROP FUNCTION IF EXISTS community_record_search_vector(TEXT, TEXT[], TEXT[]);
 ALTER TABLE community_records
     ALTER COLUMN logical_community_id DROP NOT NULL;
+ALTER TABLE community_records
+    DROP CONSTRAINT IF EXISTS community_records_logical_community_id_not_null;
