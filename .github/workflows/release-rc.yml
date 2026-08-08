@@ -128,7 +128,7 @@ jobs:
 
       - name: Ensure GitHub prerelease
         if: steps.version.outputs.is_prerelease == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           TAG: ${{ steps.version.outputs.tag }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
