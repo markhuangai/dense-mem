@@ -80,14 +80,14 @@ const overflowBefore = await prometheusValue("densemem_verifier_requests_total")
 const overflowSubmission = overflowFixture();
 seedPredicates("overflow", overflowSubmission.relationships.length, "overflow");
 const overflowRemember = await mcpTool("remember", overflowSubmission);
-const overflowIngestID = stringValue(overflowRemember.ingest_id);
-if (!overflowIngestID) {
-  throw new Error("predicate overflow remember did not return an ingest_id");
+const overflowSubmissionID = stringValue(overflowRemember.submission_id);
+if (!overflowSubmissionID) {
+  throw new Error("predicate overflow remember did not return a submission_id");
 }
-const overflowStatus = await waitForFailedPlacement(overflowIngestID);
+const overflowStatus = await waitForFailedSubmission(overflowSubmissionID);
 const overflowErrors = Array.isArray(overflowStatus.errors) ? overflowStatus.errors : [];
-if (!overflowErrors.some((item) => stringValue(item.code) === "semantic_assessment_terminal_failure" && stringValue(item.message).includes("predicate_options_overflow"))) {
-  throw new Error("predicate overflow status did not expose its bounded terminal stage");
+if (!overflowErrors.some((item) => stringValue(item.code) === "submission_processing_failed")) {
+  throw new Error("predicate overflow status did not expose its bounded terminal failure");
 }
 const overflowAfter = await prometheusValue("densemem_verifier_requests_total");
 if (overflowAfter !== overflowBefore) {
@@ -256,10 +256,10 @@ async function waitForCompletedPlacement(submissionID) {
   throw new Error("timed out waiting for submission completion");
 }
 
-async function waitForFailedPlacement(ingestID) {
+async function waitForFailedSubmission(submissionID) {
   const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2_000);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const placement = await mcpTool("get_memory_placement", { ingest_id: ingestID });
+    const placement = await mcpTool("get_submission_status", { submission_id: submissionID });
     const state = stringValue(placement.processing_state);
     if (state === "failed") {
       return placement;

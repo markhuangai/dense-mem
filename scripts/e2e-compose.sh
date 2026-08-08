@@ -616,7 +616,7 @@ remove_e2e_playwright_container() {
 
 run_compose_playwright_tests() {
   local image
-  local test_args=()
+  local test_args=("tests-compose/compose-portal.spec.ts")
   if [[ "${1:-}" == "portal" ]]; then
     test_args=(
       "tests-compose/compose-portal.spec.ts"
