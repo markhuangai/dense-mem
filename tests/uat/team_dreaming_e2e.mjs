@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
+import { nextScheduledUTCMinute } from "./team_dreaming_schedule.mjs";
+
 const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
@@ -68,12 +70,6 @@ console.log(JSON.stringify({
   statement,
   scheduled_at: scheduledAt.toISOString(),
 }, null, 2));
-
-function nextScheduledUTCMinute() {
-  const target = new Date(Date.now() + 4 * 60_000);
-  target.setUTCSeconds(0, 0);
-  return target;
-}
 
 function formatDate(value) {
   return value.toISOString().slice(0, 10);
