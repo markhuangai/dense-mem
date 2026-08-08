@@ -625,7 +625,7 @@ run_compose_playwright_tests() {
     )
   elif [[ "${1:-}" == "community" ]]; then test_args=("tests-compose/community-recall.spec.ts");
   fi
-  image="${DENSE_MEM_E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.61.0-noble}"
+  image="${DENSE_MEM_E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.62.1-noble}"
   E2E_PLAYWRIGHT_CONTAINER="densemem-e2e-${E2E_FILE_ID}-playwright"
   if docker container inspect "$E2E_PLAYWRIGHT_CONTAINER" >/dev/null 2>&1; then
     echo "Container ${E2E_PLAYWRIGHT_CONTAINER} already exists; choose another DENSE_MEM_E2E_RUN_ID." >&2
