@@ -88,7 +88,7 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 				  AND record.status = 'current'
 				  AND (
 					  params.query = ''
-					  OR to_tsvector('simple', concat_ws(' ', record.summary, array_to_string(record.top_entities, ' '), array_to_string(record.top_predicates, ' '))) @@ plainto_tsquery('simple', params.query)
+					  OR community_record_search_vector(record.summary, record.top_entities, record.top_predicates) @@ plainto_tsquery('simple', params.query)
 					  OR EXISTS (
 						  SELECT 1 FROM community_memberships membership
 						  WHERE membership.team_id = record.team_id
@@ -150,11 +150,11 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		for index := range matched {
-			if err := loadCommunityTopEntities(ctx, tx, input.TeamID, matched[index].CommunityID, &matched[index]); err != nil {
+		if len(matched) > 0 {
+			if err := loadCommunityTopEntitiesBatch(ctx, tx, input.TeamID, matched); err != nil {
 				return err
 			}
-			if err := loadCommunityRecallRelationships(ctx, tx, input, &matched[index]); err != nil {
+			if err := loadCommunityRecallRelationshipsBatch(ctx, tx, input, matched); err != nil {
 				return err
 			}
 		}
@@ -171,36 +171,60 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 	return communities, nil
 }
 
-func loadCommunityTopEntities(ctx context.Context, tx *gorm.DB, teamID, communityID string, record *CommunityRecallRecord) error {
+func loadCommunityTopEntitiesBatch(ctx context.Context, tx *gorm.DB, teamID string, records []CommunityRecallRecord) error {
+	communityIDs := make([]string, 0, len(records))
+	byCommunityID := make(map[string]*CommunityRecallRecord, len(records))
+	for index := range records {
+		communityIDs = append(communityIDs, records[index].CommunityID)
+		byCommunityID[records[index].CommunityID] = &records[index]
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT membership.entity_id::text,
-		       COALESCE(name.display_name, membership.entity_id::text)
-		FROM community_memberships membership
-		LEFT JOIN entity_names name
-		  ON name.team_id = membership.team_id
-		 AND name.entity_id = membership.entity_id
-		 AND name.name_kind = 'canonical'
-		 AND name.valid_to IS NULL
-		WHERE membership.team_id = ?::uuid
-		  AND membership.community_id = ?::uuid
-		ORDER BY membership.rank ASC, membership.entity_id ASC
-		LIMIT 5
-	`, teamID, communityID).Rows()
+		WITH ranked_memberships AS (
+			SELECT membership.community_id::text AS community_id,
+			       membership.entity_id::text AS entity_id,
+			       COALESCE(name.display_name, membership.entity_id::text) AS entity_name,
+			       row_number() OVER (
+				       PARTITION BY membership.community_id
+				       ORDER BY membership.rank ASC, membership.entity_id ASC
+			       ) AS membership_rank
+			FROM community_memberships membership
+			LEFT JOIN entity_names name
+			  ON name.team_id = membership.team_id
+			 AND name.entity_id = membership.entity_id
+			 AND name.name_kind = 'canonical'
+			 AND name.valid_to IS NULL
+			WHERE membership.team_id = ?::uuid
+			  AND membership.community_id = ANY(?::uuid[])
+		)
+		SELECT community_id, entity_id, entity_name
+		FROM ranked_memberships
+		WHERE membership_rank <= 5
+		ORDER BY community_id, membership_rank, entity_id
+	`, teamID, pq.Array(communityIDs)).Rows()
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
+		var communityID string
 		var entity CommunityRecallTopEntity
-		if err := rows.Scan(&entity.EntityID, &entity.Name); err != nil {
+		if err := rows.Scan(&communityID, &entity.EntityID, &entity.Name); err != nil {
 			return err
 		}
-		record.TopEntities = append(record.TopEntities, entity)
+		if record := byCommunityID[communityID]; record != nil {
+			record.TopEntities = append(record.TopEntities, entity)
+		}
 	}
 	return rows.Err()
 }
 
-func loadCommunityRecallRelationships(ctx context.Context, tx *gorm.DB, input CommunityRecallInput, record *CommunityRecallRecord) error {
+func loadCommunityRecallRelationshipsBatch(ctx context.Context, tx *gorm.DB, input CommunityRecallInput, records []CommunityRecallRecord) error {
+	communityIDs := make([]string, 0, len(records))
+	byCommunityID := make(map[string]*CommunityRecallRecord, len(records))
+	for index := range records {
+		communityIDs = append(communityIDs, records[index].CommunityID)
+		byCommunityID[records[index].CommunityID] = &records[index]
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH latest_support AS (
 			SELECT DISTINCT ON (team_id, support_id) team_id, support_id, decision
@@ -221,18 +245,26 @@ func loadCommunityRecallRelationships(ctx context.Context, tx *gorm.DB, input Co
 			  AND lifecycle.lifecycle_event_id IS NULL
 			  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
 			GROUP BY support.relationship_id
-		)
-		SELECT relationship.relationship_id::text,
-		       relationship.semantic_group_key,
-		       relationship.subject_entity_id::text,
-		       COALESCE(subject_name.display_name, relationship.subject_entity_id::text),
-		       relationship.predicate_key,
-		       COALESCE(relationship.object_entity_id::text, ''),
-		       COALESCE(relationship.object_value_id::text, ''),
-		       COALESCE(object_name.display_name, value_record.display, value_record.canonical_value, ''),
-		       COALESCE(value_record.value_type, ''), COALESCE(value_record.canonical_value, ''),
-		       relationship.polarity, effective_support.evidence_ids,
-		       community_source.source_rank, relationship.created_at
+		), ranked_relationships AS (
+		SELECT community_source.community_id::text AS community_id,
+		       relationship.relationship_id::text AS relationship_id,
+		       relationship.semantic_group_key AS semantic_group_key,
+		       relationship.subject_entity_id::text AS subject_entity_id,
+		       COALESCE(subject_name.display_name, relationship.subject_entity_id::text) AS subject_name,
+		       relationship.predicate_key AS predicate_key,
+		       COALESCE(relationship.object_entity_id::text, '') AS object_entity_id,
+		       COALESCE(relationship.object_value_id::text, '') AS object_value_id,
+		       COALESCE(object_name.display_name, value_record.display, value_record.canonical_value, '') AS object_name,
+		       COALESCE(value_record.value_type, '') AS object_value_type,
+		       COALESCE(value_record.canonical_value, '') AS object_value,
+		       relationship.polarity AS polarity,
+		       effective_support.evidence_ids AS evidence_ids,
+		       community_source.source_rank AS source_rank,
+		       relationship.created_at AS created_at,
+		       row_number() OVER (
+			       PARTITION BY community_source.community_id
+			       ORDER BY community_source.source_rank ASC, relationship.relationship_id ASC
+		       ) AS community_rank
 		FROM community_sources community_source
 		JOIN relationship_records relationship
 		  ON relationship.team_id = community_source.team_id
@@ -246,17 +278,22 @@ func loadCommunityRecallRelationships(ctx context.Context, tx *gorm.DB, input Co
 		LEFT JOIN value_records value_record
 		  ON value_record.team_id = relationship.team_id AND value_record.value_id = relationship.object_value_id
 		WHERE community_source.team_id = ?::uuid
-		  AND community_source.community_id = ?::uuid
+		  AND community_source.community_id = ANY(?::uuid[])
 		  AND relationship.identity_alias_of_relationship_id IS NULL
 		  AND relationship.status = 'active'
 		  AND (?::timestamptz IS NULL OR ((relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz) AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz)))
 		  AND (?::timestamptz IS NULL OR (relationship.created_at <= ?::timestamptz AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz)))
 		  AND (cardinality(?::uuid[]) = 0 OR relationship.relationship_id <> ALL(?::uuid[]))
 		  AND (cardinality(?::text[]) = 0 OR relationship.semantic_group_key <> ALL(?::text[]))
-		ORDER BY community_source.source_rank ASC, relationship.relationship_id ASC
-		LIMIT ?
+		)
+		SELECT community_id, relationship_id, semantic_group_key, subject_entity_id, subject_name,
+		       predicate_key, object_entity_id, object_value_id, object_name, object_value_type,
+		       object_value, polarity, evidence_ids, source_rank, created_at
+		FROM ranked_relationships
+		WHERE community_rank <= ?
+		ORDER BY community_id, community_rank, relationship_id
 	`, input.TeamID, input.KnownAt, input.KnownAt, input.TeamID,
-		input.TeamID, record.CommunityID, input.ValidAt, input.ValidAt, input.ValidAt,
+		input.TeamID, pq.Array(communityIDs), input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
 		pq.Array(input.CoveredGroupKeys), pq.Array(input.CoveredGroupKeys), input.RelationshipLimit+1).Rows()
@@ -265,10 +302,11 @@ func loadCommunityRecallRelationships(ctx context.Context, tx *gorm.DB, input Co
 	}
 	defer rows.Close()
 	for rows.Next() {
+		var communityID string
 		var hit RecallRelationshipHit
 		var evidenceIDs pq.StringArray
 		var sourceRank int
-		if err := rows.Scan(&hit.RelationshipID, &hit.SemanticGroupKey, &hit.SubjectEntityID, &hit.SubjectName, &hit.PredicateKey,
+		if err := rows.Scan(&communityID, &hit.RelationshipID, &hit.SemanticGroupKey, &hit.SubjectEntityID, &hit.SubjectName, &hit.PredicateKey,
 			&hit.ObjectEntityID, &hit.ObjectValueID, &hit.ObjectName, &hit.ObjectValueType, &hit.ObjectValue,
 			&hit.Polarity, &evidenceIDs, &sourceRank, &hit.CreatedAt); err != nil {
 			return err
@@ -276,14 +314,18 @@ func loadCommunityRecallRelationships(ctx context.Context, tx *gorm.DB, input Co
 		hit.TeamID = input.TeamID
 		hit.EvidenceIDs = []string(evidenceIDs)
 		hit.SearchState = "current"
-		record.Relationships = append(record.Relationships, hit)
+		if record := byCommunityID[communityID]; record != nil {
+			record.Relationships = append(record.Relationships, hit)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if len(record.Relationships) > input.RelationshipLimit {
-		record.Relationships = record.Relationships[:input.RelationshipLimit]
-		record.RelationshipsTruncated = true
+	for index := range records {
+		if len(records[index].Relationships) > input.RelationshipLimit {
+			records[index].Relationships = records[index].Relationships[:input.RelationshipLimit]
+			records[index].RelationshipsTruncated = true
+		}
 	}
 	return nil
 }

@@ -674,6 +674,7 @@ type recallSearchStub struct {
 	result             *repository.RecallEvidenceResult
 	relationshipResult *repository.RecallRelationshipsResult
 	relationshipCalled bool
+	relationshipCalls  int
 	err                error
 	relationshipErr    error
 }
@@ -695,6 +696,7 @@ func (s *recallSearchStub) RecallEvidence(_ context.Context, input repository.Re
 
 func (s *recallSearchStub) RecallRelationships(_ context.Context, input repository.RecallRelationshipsInput) (*repository.RecallRelationshipsResult, error) {
 	s.relationshipCalled = true
+	s.relationshipCalls++
 	s.relationshipInput = input
 	if s.relationshipErr != nil {
 		return nil, s.relationshipErr

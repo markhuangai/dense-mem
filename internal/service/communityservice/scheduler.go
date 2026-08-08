@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"log/slog"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +20,7 @@ type Scheduler struct {
 	config   AppConfig
 	logger   *slog.Logger
 	now      func() time.Time
+	runMu    sync.Mutex
 }
 
 func NewScheduler(service Service, profiles ProfileService, config AppConfig, logger *slog.Logger) *Scheduler {
@@ -60,6 +62,11 @@ func (s *Scheduler) waitForMinuteBoundary(ctx context.Context, boundary <-chan t
 }
 
 func (s *Scheduler) runDue(ctx context.Context) {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	var runs sync.WaitGroup
+	defer runs.Wait()
+
 	now := s.now().UTC()
 	if s.config == nil {
 		return
@@ -87,7 +94,9 @@ func (s *Scheduler) runDue(ctx context.Context) {
 				continue
 			}
 			teamID := profile.ID.String()
+			runs.Add(1)
 			go func(teamID string) {
+				defer runs.Done()
 				delay := deterministicJitter(teamID, now, cfg.JitterSeconds)
 				timer := time.NewTimer(delay)
 				defer timer.Stop()

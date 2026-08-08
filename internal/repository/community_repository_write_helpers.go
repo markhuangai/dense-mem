@@ -25,6 +25,7 @@ func ensureCommunitySourcesCurrent(ctx context.Context, tx *gorm.DB, teamID stri
 		), latest_support AS (
 			SELECT DISTINCT ON (team_id, support_id) team_id, support_id, decision
 			FROM relationship_support_decision_events
+			WHERE team_id = ?::uuid
 			ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
 		)
 		SELECT expected.relationship_id::text
@@ -60,7 +61,7 @@ func ensureCommunitySourcesCurrent(ctx context.Context, tx *gorm.DB, teamID stri
 				  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
 			)
 		LIMIT 1
-	`, pq.Array(relationshipIDs), pq.Array(versions), teamID, teamID).Rows()
+	`, pq.Array(relationshipIDs), pq.Array(versions), teamID, teamID, teamID).Rows()
 	if err != nil {
 		return err
 	}

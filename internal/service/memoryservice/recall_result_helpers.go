@@ -100,3 +100,17 @@ func publicHypothesisGeneratorKind(kind string) string {
 		return "deterministic"
 	}
 }
+
+func filterRelatedRelationshipsByGroups(values []RelatedRelationshipSummary, excludedGroups map[string]struct{}) []RelatedRelationshipSummary {
+	if len(values) == 0 || len(excludedGroups) == 0 {
+		return values
+	}
+	filtered := make([]RelatedRelationshipSummary, 0, len(values))
+	for _, value := range values {
+		if _, excluded := excludedGroups[value.SemanticGroupKey]; excluded {
+			continue
+		}
+		filtered = append(filtered, value)
+	}
+	return filtered
+}

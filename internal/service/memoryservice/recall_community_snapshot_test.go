@@ -90,7 +90,9 @@ func TestRecallUsesCurrentCommunitySnapshotAndCoverage(t *testing.T) {
 	require.Equal(t, []string{"covered-group", "direct-group"}, communities.snapshotInput.ExcludedGroupKeys)
 	require.Equal(t, communities.snapshotInput.ExcludedGroupKeys, communities.snapshotInput.CoveredGroupKeys)
 	require.Equal(t, 1, communities.snapshotInput.RelationshipLimit)
-	require.Equal(t, []string{"community-group", "covered-group", "direct-group"}, search.relationshipInput.ExcludedGroupKeys)
+	require.Equal(t, 1, search.relationshipCalls)
+	require.Equal(t, []string{"covered-group"}, search.relationshipInput.ExcludedGroupKeys)
+	require.Empty(t, result.RelatedRelationships)
 
 	encoded, err := json.Marshal(result)
 	require.NoError(t, err)

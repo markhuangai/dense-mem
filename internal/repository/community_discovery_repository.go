@@ -28,10 +28,7 @@ func (r *SemanticRepositoryImpl) RecallCommunityDiscovery(ctx context.Context, i
 				  AND (
 				      (
 				          ? <> ''
-				          AND to_tsvector(
-				              'simple',
-				              concat_ws(' ', record.summary, array_to_string(record.top_entities, ' '), array_to_string(record.top_predicates, ' '))
-				          ) @@ plainto_tsquery('simple', ?)
+				          AND community_record_search_vector(record.summary, record.top_entities, record.top_predicates) @@ plainto_tsquery('simple', ?)
 				      )
 				      OR (
 				          cardinality(?::uuid[]) > 0

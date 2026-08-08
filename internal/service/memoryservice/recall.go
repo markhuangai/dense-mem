@@ -379,12 +379,7 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 				}
 			}
 		}
-		fallback, fallbackState, fallbackDegradation, _ := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req, queryEmbedding, communityGroups)
-		result.RelatedRelationships = fallback
-		result.SearchStates.Relationships = fallbackState
-		if fallbackDegradation != nil {
-			result.Degradations = append(result.Degradations, *fallbackDegradation)
-		}
+		result.RelatedRelationships = filterRelatedRelationshipsByGroups(result.RelatedRelationships, communityGroups)
 	}
 	communityOutcome := "ok"
 	if communityDegradation != nil {
@@ -451,12 +446,6 @@ func (s *recallService) recallCommunityDiscovery(
 	}
 	if !cfg.Enabled {
 		return []RecallDiscoveryPath{}, nil
-	}
-	if staleCount, err := s.communities.RefreshCommunityStaleness(ctx, repository.CommunityStalenessInput{
-		TeamID: teamID,
-		Limit:  200,
-	}); err != nil || staleCount > 0 {
-		return []RecallDiscoveryPath{}, communityDiscoveryDegradation()
 	}
 	records, err := s.communities.RecallCommunityDiscovery(ctx, repository.CommunityDiscoveryInput{
 		TeamID:               teamID,
