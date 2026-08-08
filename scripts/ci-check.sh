@@ -8,6 +8,8 @@ npm ci --prefix .lint
 npm run --prefix .lint lint:lines
 node --test tests/uat/team_dreaming_schedule.test.mjs
 bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
+bash tests/scripts/postgres_migration_tools_test.sh
+./scripts/check-postgres-migrations.sh
 packages="$(
 	git ls-files '*.go' |
 		grep -Ev '^(tests/uat|tests/eval/runtime)/' |

@@ -623,8 +623,7 @@ run_compose_playwright_tests() {
       -g
       "remembered API-key login uses a seven-day server session"
     )
-  elif [[ "${1:-}" == "community" ]]; then test_args=("tests-compose/community-recall.spec.ts");
-  fi
+  elif [[ "${1:-}" == "community" ]]; then test_args=("tests-compose/community-recall.spec.ts"); else test_args=("tests-compose/compose-portal.spec.ts"); fi
   image="${DENSE_MEM_E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.61.0-noble}"
   E2E_PLAYWRIGHT_CONTAINER="densemem-e2e-${E2E_FILE_ID}-playwright"
   if docker container inspect "$E2E_PLAYWRIGHT_CONTAINER" >/dev/null 2>&1; then

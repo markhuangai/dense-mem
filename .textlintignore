@@ -11,3 +11,5 @@ tests/eval/seeds/**
 tests/eval/suites/**
 tests/eval/seeds/local_train_100k_v1/**
 tests/eval/snapshots/**
+schema/postgres/*.sql
+schema/postgres/**/*.sql

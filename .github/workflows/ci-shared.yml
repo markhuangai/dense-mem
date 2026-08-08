@@ -2,6 +2,11 @@ name: CI Shared
 
 on:
   workflow_call:
+    inputs:
+      migration-base-sha:
+        description: Commit used to derive the PostgreSQL migration merge base
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -17,6 +22,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -43,6 +50,12 @@ jobs:
       - name: Run evaluation monitor shell test
         run: bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
 
+      - name: Run PostgreSQL migration static tooling tests
+        run: bash tests/scripts/postgres_migration_tools_test.sh
+
+      - name: Check immutable PostgreSQL migration history
+        run: ./scripts/check-postgres-migrations.sh "${{ inputs.migration-base-sha }}"
+
       - name: Run Go tests
         shell: bash
         run: |
@@ -60,11 +73,6 @@ jobs:
 
           printf '%s\n' "${packages}"
           go test ${packages}
-
-      - name: Run concurrent startup migration test
-        run: >-
-          go test -tags=integration ./internal/storage/postgres
-          -run '^TestMigratorRunUpSerializesConcurrentStartup$' -count=1
 
       - name: Run unit coverage gate
         shell: bash
