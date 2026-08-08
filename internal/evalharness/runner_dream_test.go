@@ -68,8 +68,6 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 	var dreamCycleCalled bool
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/control/api/config/evaluation":
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case "tool:remember":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -179,8 +177,6 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 		SuitePath:        filepath.Join(dir, "suite.jsonl"),
 		BaseURL:          server.URL,
 		APIKey:           "api-key",
-		ControlURL:       server.URL,
-		ControlToken:     "control-token",
 		ImportSeed:       true,
 		MaxPageSize:      50,
 		RunID:            "live-dream-baseline-test",

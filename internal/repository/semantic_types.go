@@ -12,7 +12,8 @@ type SemanticRepository interface {
 	ApplyRelationshipDecision(ctx context.Context, input ApplyRelationshipDecisionInput) (*RelationshipDecisionResult, error)
 	RetractRelationship(ctx context.Context, input RetractRelationshipInput) (*RelationshipTransitionResult, error)
 	ApplyRelationshipSupportDecision(ctx context.Context, input ApplyRelationshipSupportDecisionInput) (*RelationshipSupportDecisionResult, error)
-	CorrectEntityResolution(ctx context.Context, input CorrectEntityResolutionInput) (*CorrectEntityResolutionResult, error)
+	CorrectRelationship(ctx context.Context, input CorrectRelationshipInput) (*CorrectRelationshipResult, error)
+	GetRelationshipCorrection(ctx context.Context, input GetRelationshipCorrectionInput) (*RelationshipCorrectionStatus, error)
 	AppendCrossReference(ctx context.Context, input AppendCrossReferenceInput) (string, error)
 	CreateHypothesis(ctx context.Context, input CreateHypothesisInput) (string, error)
 	ListSemanticEdges(ctx context.Context, teamID string, limit int) ([]SemanticEdge, error)
@@ -308,36 +309,85 @@ type RelationshipTransitionResult struct {
 	IdempotencyKey string
 }
 
-type CorrectionEvidenceInput struct {
-	Content     string
-	SourceType  string
-	Authority   string
-	SourceGroup string
-	Metadata    map[string]any
+type RelationshipCorrectionEntityPatch struct {
+	EntityID   string `json:"entity_id,omitempty"`
+	Name       string `json:"name,omitempty"`
+	EntityKind string `json:"entity_kind,omitempty"`
 }
 
-type CorrectEntityResolutionInput struct {
-	TeamID                 string
-	OwnerProfileID         string
-	Action                 string
-	SourceEntityID         string
-	TargetEntityID         string
-	SelectedObservationIDs []string
-	DryRun                 bool
-	PlanToken              string
-	Evidence               []CorrectionEvidenceInput
-	IdempotencyKey         string
+type RelationshipCorrectionPredicatePatch struct {
+	Key string `json:"key"`
 }
 
-type CorrectEntityResolutionResult struct {
-	DryRun                 bool     `json:"dry_run"`
-	PlanToken              string   `json:"plan_token,omitempty"`
-	SelectedObservationIDs []string `json:"selected_ids"`
-	BlockedObservationIDs  []string `json:"blocked_ids"`
-	ImpactSummary          string   `json:"impact_summary"`
-	CorrectionEventID      string   `json:"correction_event_id,omitempty"`
-	NewEntityID            string   `json:"new_entity_id,omitempty"`
+type RelationshipCorrectionPatch struct {
+	SubjectEntity *RelationshipCorrectionEntityPatch    `json:"subject_entity,omitempty"`
+	Predicate     *RelationshipCorrectionPredicatePatch `json:"predicate,omitempty"`
+	ObjectEntity  *RelationshipCorrectionEntityPatch    `json:"object_entity,omitempty"`
 }
+
+type RelationshipCorrectionSupport struct {
+	EvidenceID string `json:"evidence_id"`
+	Start      int    `json:"start"`
+	End        int    `json:"end"`
+}
+
+type RelationshipCorrectionSelection struct {
+	SubjectEntityID string `json:"subject_entity_id,omitempty"`
+	ObjectEntityID  string `json:"object_entity_id,omitempty"`
+}
+
+type CorrectRelationshipInput struct {
+	TeamID            string
+	OwnerProfileID    string
+	Action            string
+	RelationshipID    string
+	ExpectedVersion   int
+	Patch             RelationshipCorrectionPatch
+	Supports          []RelationshipCorrectionSupport
+	Reason            string
+	SubmissionID      string
+	ConfirmationToken string
+	Selection         RelationshipCorrectionSelection
+	IdempotencyKey    string
+}
+
+type RelationshipCorrectionCandidate struct {
+	Endpoint      string `json:"endpoint"`
+	EntityID      string `json:"entity_id"`
+	EntityKind    string `json:"entity_kind"`
+	CanonicalName string `json:"canonical_name"`
+}
+
+type RelationshipCorrectionConfirmation struct {
+	Token      string                            `json:"token"`
+	ExpiresAt  time.Time                         `json:"expires_at"`
+	Candidates []RelationshipCorrectionCandidate `json:"candidates"`
+}
+
+type RelationshipCorrectionResult struct {
+	OriginalRelationshipID  string `json:"original_relationship_id"`
+	OriginalVersion         int    `json:"original_version"`
+	SuccessorRelationshipID string `json:"successor_relationship_id"`
+	SuccessorVersion        int    `json:"successor_version"`
+	ReusedSuccessor         bool   `json:"reused_successor"`
+}
+
+type CorrectRelationshipResult struct {
+	SubmissionID    string
+	ProcessingState string
+	Confirmation    *RelationshipCorrectionConfirmation
+	Correction      *RelationshipCorrectionResult
+	ErrorCode       string
+	ErrorMessage    string
+}
+
+type GetRelationshipCorrectionInput struct {
+	TeamID         string
+	OwnerProfileID string
+	SubmissionID   string
+}
+
+type RelationshipCorrectionStatus = CorrectRelationshipResult
 
 type AppendCrossReferenceInput struct {
 	TeamID                    string

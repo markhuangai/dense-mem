@@ -1,3 +1,5 @@
+//go:build evaluation
+
 package registry
 
 import (
@@ -45,21 +47,6 @@ func evalListKnowledgeRefs(ctx context.Context, deps Dependencies, profileID str
 	}, nil
 }
 
-func evalGetCanonicalKnowledgeItem(ctx context.Context, deps Dependencies, profileID, kind, id string) (map[string]any, error) {
-	if err := requireEvaluationKnowledgeTypesVisible(deps); err != nil {
-		return nil, err
-	}
-	teamID, err := evalActorTeamID(ctx, profileID)
-	if err != nil {
-		return nil, err
-	}
-	return deps.Evaluation.GetEvaluationItem(ctx, repository.EvaluationGetInput{
-		TeamID: teamID,
-		Type:   kind,
-		ID:     id,
-	})
-}
-
 func evalActorTeamID(ctx context.Context, profileID string) (string, error) {
 	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok && actor.TeamID != uuid.Nil {
 		return actor.TeamID.String(), nil
@@ -72,21 +59,10 @@ func evalActorTeamID(ctx context.Context, profileID string) (string, error) {
 }
 
 func evalListKnowledgeRefTypes(deps Dependencies) []string {
-	types := []string{"dream"}
-	if evaluationKnowledgeTypesVisible(deps) {
-		types = append(types,
-			"evidence",
-			"relationship",
-			"entity",
-			"value",
-			"hypothesis",
-		)
+	types := make([]string, 0, 6)
+	if deps.Dreams != nil {
+		types = append(types, "dream")
 	}
-	return types
-}
-
-func evalGetKnowledgeItemTypes(deps Dependencies) []string {
-	types := []string{"dream"}
 	if evaluationKnowledgeTypesVisible(deps) {
 		types = append(types,
 			"evidence",
@@ -100,28 +76,14 @@ func evalGetKnowledgeItemTypes(deps Dependencies) []string {
 }
 
 func evaluationKnowledgeTypesVisible(deps Dependencies) bool {
-	return deps.Evaluation != nil && deps.EvaluationEnabled
+	return deps.Evaluation != nil
 }
 
 func requireEvaluationKnowledgeTypesVisible(deps Dependencies) error {
 	if deps.Evaluation == nil {
 		return ErrToolUnavailable
 	}
-	if !deps.EvaluationEnabled {
-		return ErrToolDisabled
-	}
 	return nil
-}
-
-func evalScoredKnowledgeRefTypes() []string {
-	return []string{
-		"dream",
-		"evidence",
-		"relationship",
-		"entity",
-		"value",
-		"hypothesis",
-	}
 }
 
 func copyEvalItem(item map[string]any) map[string]any {

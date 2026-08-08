@@ -22,6 +22,7 @@ MIN_RECALL_AT_K=""
 MIN_REQUIRED_RANK1_RATE=""
 MAX_AVERAGE_BAD_AT_K=""
 MAX_BAD_RANK1_RATE=""
+MAX_UNMAPPED_SOURCE_REFS=""
 MIN_DREAM_RECALL_AT_K=""
 MIN_DREAM_REQUIRED_RANK1_RATE=""
 MAX_AVERAGE_DREAM_BAD_AT_K=""
@@ -101,6 +102,10 @@ while [[ $# -gt 0 ]]; do
       MAX_BAD_RANK1_RATE="$2"
       shift 2
       ;;
+    --max-unmapped-source-refs)
+      MAX_UNMAPPED_SOURCE_REFS="$2"
+      shift 2
+      ;;
     --min-dream-recall-at-k)
       MIN_DREAM_RECALL_AT_K="$2"
       shift 2
@@ -130,7 +135,7 @@ if [[ "${MODE}" != "compare" && ( -z "${SEED}" || -z "${SUITE}" ) ]]; then
 fi
 
 if [[ "${COMPOSE_UP}" == "1" ]]; then
-  docker compose -p "${DENSE_MEM_EVAL_COMPOSE_PROJECT:-densemem_eval}" -f docker-compose.yml up -d --build
+  docker compose -p "${DENSE_MEM_EVAL_COMPOSE_PROJECT:-densemem_eval}" -f examples/docker-compose.evaluation.yml up -d --build
 fi
 
 args=(go run ./cmd/eval-runner --mode "${MODE}")
@@ -178,6 +183,9 @@ if [[ -n "${MAX_AVERAGE_BAD_AT_K}" ]]; then
 fi
 if [[ -n "${MAX_BAD_RANK1_RATE}" ]]; then
   args+=(--max-bad-rank1-rate "${MAX_BAD_RANK1_RATE}")
+fi
+if [[ -n "${MAX_UNMAPPED_SOURCE_REFS}" ]]; then
+  args+=(--max-unmapped-source-refs "${MAX_UNMAPPED_SOURCE_REFS}")
 fi
 if [[ -n "${MIN_DREAM_RECALL_AT_K}" ]]; then
   args+=(--min-dream-recall-at-k "${MIN_DREAM_RECALL_AT_K}")

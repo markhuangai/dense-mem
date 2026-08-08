@@ -192,6 +192,33 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 这两种操作都会追加生命周期事件，绝不会物理删除证据或追踪链路。当前检索会排除
 已退役证据；事件发生前的历史 `known_at` 视图仍可以显示当时系统知道的内容。
 
+`correct_relationship` 用于替换调用 profile 自己拥有的一条活跃 Relationship，
+不会重写或删除原记录。调用者必须提供当前版本、精确的有效证据 span、有界原因，
+以及需要更正的端点或 predicate：
+
+```json
+{
+  "action": "submit",
+  "relationship_id": "<自己拥有的活跃-relationship-uuid>",
+  "expected_version": 1,
+  "patch": {
+    "object_entity": {
+      "entity_id": "<正确的同团队-entity-uuid>"
+    }
+  },
+  "supports": [
+    { "evidence_id": "<支持证据-uuid>", "start": 0, "end": 38 }
+  ],
+  "reason": "对象被解析成了错误的 Entity。",
+  "idempotency_key": "relationship-correction-20260808"
+}
+```
+
+接受后，Dense-Mem 会原子地 supersede 原 Relationship、创建或复用活跃后继、复制
+有效支持链路，并追加 correction event 与 `corrects` cross-reference。同团队的其他
+profile 可以读取团队可见记忆，但不能更正作者的 Relationship。若 Entity 名称存在
+歧义，只允许作者确认一次；确认成功前原 Relationship 保持活跃。
+
 ## 检索与图状态
 
 `recall_memory` 是证据优先但受支持路径约束的接口。只有最终 hydration 证明存在
@@ -216,19 +243,51 @@ remember 证据（可选 Entity/Relationship 提议）
 当前契约版本为 `dense-mem.v2.4`。用 MCP `tools/list` 发现已授权目录；服务端对
 `tools/call` 施加相同的 scope、功能和可见性检查。
 
-| 工具 | 用途 |
-|------|------|
-| `remember` | 提交精确证据及可选 Entity/Relationship 提议，由服务端完成 placement。 |
-| `get_submission_status` | 查询按所有者隔离的处理与搜索就绪状态。 |
-| `retract_evidence` | 退役调用者拥有的证据，同时保留只追加的来源记录。 |
-| `correct_entity_resolution` | 演练或应用调用者拥有的 Entity 合并和拆分更正。 |
-| `recall_memory` | 检索活跃证据上下文和 Relationship 句柄。 |
-| `trace_memory` | 沿证据、决策和生命周期追踪一条同团队 Relationship。 |
-| `submit_recall_session_feedback` | 记录有界的 session 级检索质量反馈。 |
-| `list_dreams` | 列出可审查的 Hypothesis，不把它们当作记忆。 |
-| `get_dream` | 获取一个已授权 Hypothesis 及其来源引用。 |
-| `resolve_dream_feedback` | 处理 Hypothesis 反馈，不把 Hypothesis 当成证据。 |
-| `export_memory_pack` | 导出选定活跃 Relationships 及其支持来源。 |
+| 工具 | 使用方 | 注册方式 | 用途与能力 |
+|------|--------|----------|------------|
+| `remember` | 两者 | 正式与评估镜像 | 正式证据写入；评估 harness 也通过真实 intake 导入 corpus。 |
+| `get_submission_status` | 两者 | 正式与评估镜像 | 查询 `remember` 与 `correct_relationship` 的所有者隔离状态；harness 用它等待导入 placement。 |
+| `retract_evidence` | 正式 | 正式与评估镜像 | 退役调用者拥有的证据，同时保留只追加来源。 |
+| `correct_relationship` | 正式 | 正式与评估镜像 | 仅作者可替换活跃且有支持的 Relationship；supersede 原记录并保留支持链路。 |
+| `recall_memory` | 正式 | 正式与评估镜像 | 检索活跃证据上下文和 Relationship；有可执行后续动作时返回 `suggested_actions`。 |
+| `trace_memory` | 正式 | 正式与评估镜像 | 沿证据、决策和生命周期追踪一条同团队 Relationship。 |
+| `submit_recall_session_feedback` | 正式 | 两种镜像中均为条件注册 | 记录有界的 session 级检索质量反馈；只有 recall feedback 启用时才注册。 |
+| `list_dreams` | 正式 | 两种镜像中均为条件注册 | 列出可审查 Hypothesis；仅在 authenticated team 的 Dreaming 生效时注册。 |
+| `get_dream` | 正式 | 两种镜像中均为条件注册 | 在同一团队 Dreaming gate 下获取 Hypothesis 与来源引用。 |
+| `resolve_dream_feedback` | 正式 | 两种镜像中均为条件注册 | 用独立证据确认或否定 Hypothesis；不确定项保持 unresolved。使用同一团队 Dreaming gate。 |
+| `export_memory_pack` | 正式 | 正式与评估镜像 | 导出选定活跃 Relationships 及其支持来源。 |
+| `eval_list_knowledge_refs` | 评估 harness | 仅评估镜像 | 分页列出稳定、团队隔离的知识引用，用于 seed 文档映射。 |
+| `eval_run_dream_cycle` | 评估 harness | 仅评估镜像 | 为评估运行隔离、有界的手动 Dream cycle，并可传入 seed Hypothesis。 |
+| `eval_run_recall_case` | 评估 harness | 仅评估镜像 | 执行当前 recall 逻辑并返回用于确定性评分的 ranked/context refs。 |
+
+正式发布 binary 不带 `evaluation` build tag，因此任何环境变量或控制面设置都无法在
+线上注册评估工具。评估 target 只增加上表三个 harness 工具。
+`eval_get_manifest`、`eval_get_knowledge_item`、
+`eval_list_recall_feedback_events`、`eval_get_recall_feedback_event` 和
+`eval_score_retrieval_case` 已删除，因为当前 harness 不使用它们。
+
+启用 recall feedback 且 feedback snapshot 保存成功后，
+`recall_memory.suggested_actions` 会携带对应 recall ID，提示调用
+`submit_recall_session_feedback`。团队有效 Dreaming 启用且 recall 返回 Hypothesis 时，
+还会提示调用 `resolve_dream_feedback`：只有独立证据充分时才确认 true 或 false；
+不确定项保持 unresolved。
+
+本地评估使用已提交的 compose 示例。它会构建评估 target，并默认读取仓库根目录中
+未提交的 `.env`：
+
+```bash
+docker compose -p densemem_eval \
+  -f examples/docker-compose.evaluation.yml up -d --build
+
+go run ./cmd/eval-seedgen \
+  --preset local_eval_100 \
+  --out tests/eval/seeds/local_eval_100 \
+  --suite tests/eval/suites/local_eval_100.jsonl
+```
+
+`local_eval_100_v2` 包含 100 条 corpus 与 25 个评分 case。它只用于检查评估镜像和
+harness plumbing，不能替代已批准的确定性 1k release gate。此 smoke 建议使用
+`IMPORT_CONCURRENCY=5`；完整评估仍可在 harness 的上限 10 内配置。
 
 memory-pack 仅导出当前的 `dense-mem.memory-pack.v2.4` artifact。导入和候选发现
 流程不属于公共契约。

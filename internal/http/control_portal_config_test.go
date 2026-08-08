@@ -25,7 +25,6 @@ type controlAppConfigSvc struct {
 	communitySettings    *domain.CommunityDetectionConfigSettings
 	operationLogSettings *domain.OperationLogConfigSettings
 	recallSettings       *domain.RecallFeedbackConfigSettings
-	evaluationSettings   *domain.EvaluationConfigSettings
 	telemetrySettings    *domain.TelemetryPricingConfigSettings
 	generalValues        map[string]string
 	values               map[string]string
@@ -33,7 +32,6 @@ type controlAppConfigSvc struct {
 	communityValues      map[string]string
 	operationLogValues   map[string]string
 	recallValues         map[string]string
-	evaluationValues     map[string]string
 	telemetryValues      map[string]string
 	getErr               error
 	updateErr            error
@@ -41,8 +39,6 @@ type controlAppConfigSvc struct {
 	dreamingRuntimeErr   error
 	recallRuntime        domain.RecallFeedbackRuntimeConfig
 	recallRuntimeErr     error
-	evaluationRuntime    domain.EvaluationRuntimeConfig
-	evaluationRuntimeErr error
 	telemetryRuntime     domain.TelemetryPricingRuntimeConfig
 	telemetryRuntimeErr  error
 }
@@ -221,62 +217,6 @@ func (s *controlAppConfigSvc) UpdateRecallFeedbackSettings(_ context.Context, va
 
 func (s *controlAppConfigSvc) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
 	return s.recallRuntime, s.recallRuntimeErr
-}
-
-func (s *controlAppConfigSvc) GetEvaluationSettings(context.Context) (*domain.EvaluationConfigSettings, error) {
-	if s.getErr != nil {
-		return nil, s.getErr
-	}
-	return s.evaluationSettings, nil
-}
-
-func (s *controlAppConfigSvc) UpdateEvaluationSettings(_ context.Context, values map[string]string, _, _, _ string) (*domain.EvaluationConfigSettings, error) {
-	if s.updateErr != nil {
-		return nil, s.updateErr
-	}
-	if s.evaluationValues == nil {
-		s.evaluationValues = make(map[string]string)
-	}
-	for key, value := range values {
-		s.evaluationValues[key] = value
-	}
-	if raw, ok := values[domain.AppConfigEvaluationModeEnabled]; ok {
-		enabled, err := strconv.ParseBool(raw)
-		if err != nil {
-			return nil, service.ErrInvalidAppConfig
-		}
-		s.evaluationRuntime.Enabled = enabled
-		if s.evaluationSettings != nil {
-			s.evaluationSettings.Effective.Enabled = enabled
-			for i := range s.evaluationSettings.Items {
-				if s.evaluationSettings.Items[i].Key == domain.AppConfigEvaluationModeEnabled {
-					s.evaluationSettings.Items[i].Value = raw
-					s.evaluationSettings.Items[i].EffectiveValue = strconv.FormatBool(enabled)
-				}
-			}
-		}
-	}
-	if raw, ok := values[domain.AppConfigEvaluationExportMaxPage]; ok {
-		maxPageSize, err := strconv.Atoi(raw)
-		if err != nil || maxPageSize < 1 || maxPageSize > 500 {
-			return nil, service.ErrInvalidAppConfig
-		}
-		s.evaluationRuntime.ExportMaxPageSize = maxPageSize
-		if s.evaluationSettings != nil {
-			s.evaluationSettings.Effective.ExportMaxPageSize = maxPageSize
-			for i := range s.evaluationSettings.Items {
-				if s.evaluationSettings.Items[i].Key == domain.AppConfigEvaluationExportMaxPage {
-					s.evaluationSettings.Items[i].Value = raw
-					s.evaluationSettings.Items[i].EffectiveValue = strconv.Itoa(maxPageSize)
-				}
-			}
-		}
-	}
-	return s.evaluationSettings, nil
-}
-
-func (s *controlAppConfigSvc) EvaluationRuntimeConfig(context.Context) (domain.EvaluationRuntimeConfig, error) {
-	return s.evaluationRuntime, s.evaluationRuntimeErr
 }
 
 func (s *controlAppConfigSvc) GetTelemetryPricingSettings(context.Context) (*domain.TelemetryPricingConfigSettings, error) {
@@ -626,63 +566,6 @@ func TestControlPortalRecallFeedbackConfigFlows(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-func TestControlPortalEvaluationConfigFlows(t *testing.T) {
-	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
-	appConfig := &controlAppConfigSvc{
-		evaluationSettings: &domain.EvaluationConfigSettings{
-			UpdateTime: now.Format(time.RFC3339Nano),
-			Items: []domain.EvaluationConfigItem{{
-				Key:            domain.AppConfigEvaluationModeEnabled,
-				Value:          "false",
-				EffectiveValue: "false",
-				UpdatedAt:      now,
-			}, {
-				Key:            domain.AppConfigEvaluationExportMaxPage,
-				Value:          "100",
-				EffectiveValue: "100",
-				UpdatedAt:      now,
-			}},
-			Effective: domain.EvaluationRuntimeConfig{Enabled: false, ExportMaxPageSize: 100},
-		},
-		evaluationRuntime: domain.EvaluationRuntimeConfig{Enabled: false, ExportMaxPageSize: 100},
-	}
-	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
-		ControlHTTPAddr:    "127.0.0.1:8090",
-		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
-		Config: appConfig,
-	}, HealthConfig{}, nil)
-	require.NoError(t, err)
-
-	do := func(method, path, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer secret")
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, req)
-		return rec
-	}
-
-	rec := do(http.MethodGet, "/control/api/config/evaluation", "")
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"enabled":false`)
-	require.Contains(t, rec.Body.String(), `"export_max_page_size":100`)
-
-	rec = do(http.MethodPatch, "/control/api/config/evaluation", `{"items":[{"key":"EVALUATION_MODE_ENABLED","value":"true"},{"key":"EVALUATION_EXPORT_MAX_PAGE_SIZE","value":"250"}]}`)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "true", appConfig.evaluationValues[domain.AppConfigEvaluationModeEnabled])
-	require.Equal(t, "250", appConfig.evaluationValues[domain.AppConfigEvaluationExportMaxPage])
-	require.Contains(t, rec.Body.String(), `"enabled":true`)
-	require.Contains(t, rec.Body.String(), `"export_max_page_size":250`)
-
-	rec = do(http.MethodPatch, "/control/api/config/evaluation", "{")
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-
-	appConfig.updateErr = service.ErrInvalidAppConfig
-	rec = do(http.MethodPatch, "/control/api/config/evaluation", `{"items":[{"key":"EVALUATION_MODE_ENABLED","value":"maybe"}]}`)
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-}
-
 func TestControlPortalTelemetryPricingConfigFlows(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	verifierInput, verifierOutput, embeddingInput := 1.25, 2.5, 0.1
@@ -771,7 +654,6 @@ func TestControlConfigNilResponses(t *testing.T) {
 	require.Empty(t, toControlCommunityDetectionConfig(nil).Items)
 	require.Empty(t, toControlOperationLogConfig(nil).Items)
 	require.Empty(t, toControlRecallFeedbackConfig(nil).Items)
-	require.Empty(t, toControlEvaluationConfig(nil).Items)
 	require.Empty(t, toControlTelemetryPricingConfig(nil, "", "").Items)
 }
 
@@ -792,8 +674,6 @@ func TestControlPortalConfigUnavailableHandlers(t *testing.T) {
 		{name: "update operation logs", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateOperationLogConfig(c) }},
 		{name: "get recall feedback", call: func(h *controlPortalHandler, c echo.Context) error { return h.getRecallFeedbackConfig(c) }},
 		{name: "update recall feedback", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateRecallFeedbackConfig(c) }},
-		{name: "get evaluation", call: func(h *controlPortalHandler, c echo.Context) error { return h.getEvaluationConfig(c) }},
-		{name: "update evaluation", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateEvaluationConfig(c) }},
 		{name: "get telemetry pricing", call: func(h *controlPortalHandler, c echo.Context) error { return h.getTelemetryPricingConfig(c) }},
 		{name: "update telemetry pricing", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateTelemetryPricingConfig(c) }},
 	}
@@ -817,7 +697,6 @@ func TestControlPortalConfigGetErrors(t *testing.T) {
 		{name: "community detection", call: h.getCommunityDetectionConfig},
 		{name: "operation logs", call: h.getOperationLogConfig},
 		{name: "recall feedback", call: h.getRecallFeedbackConfig},
-		{name: "evaluation", call: h.getEvaluationConfig},
 		{name: "telemetry pricing", call: h.getTelemetryPricingConfig},
 	}
 
@@ -859,11 +738,6 @@ func TestControlPortalConfigUpdateBackendErrors(t *testing.T) {
 			name: "recall feedback",
 			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateRecallFeedbackConfig(c) },
 			body: `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"true"}]}`,
-		},
-		{
-			name: "evaluation",
-			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateEvaluationConfig(c) },
-			body: `{"items":[{"key":"EVALUATION_MODE_ENABLED","value":"true"}]}`,
 		},
 		{
 			name: "telemetry pricing",

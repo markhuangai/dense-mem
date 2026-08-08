@@ -17,6 +17,13 @@ The evaluation harness does not use legacy memory-pack import tools or an
 answer-judge model. It measures retrieval against deterministic qrels and waits
 for the bounded submission status projection before scoring.
 
+The normal release image contains no evaluation MCP tools. The committed
+`examples/docker-compose.evaluation.yml` builds the separate `evaluation`
+Docker target, whose binary is compiled with the `evaluation` build tag. That
+target adds only `eval_list_knowledge_refs`, `eval_run_dream_cycle`, and
+`eval_run_recall_case`; there is no runtime switch that can expose them in the
+production binary.
+
 The approved seed, generated diagnostic datasets, persistent databases,
 credentials, and run artifacts are local-only and ignored by git. The full
 release evaluation never runs in remote CI.
@@ -26,7 +33,6 @@ release evaluation never runs in remote CI.
 ```text
 tests/eval/
   README.md
-  docker-compose.eval.yml
   scripts/
     prepare_public_6axis_eval.py
     prepare_public_semantic_eval.py
@@ -175,20 +181,55 @@ silently evaluating the wrong corpus.
 
 The old relational seed presets depended on typed claims and preloaded facts,
 so they are retired. `cmd/eval-seedgen` retains the content-only
-`local_eval_1k` preset.
+`local_eval_1k` preset and provides `local_eval_100` for a fast image/harness
+smoke check.
+
+## Run the 100-row smoke check
+
+The `local_eval_100_v2` seed contains 100 corpus rows: 25 scored sanity cases,
+each with one required document and three hard negatives. Generated seed,
+suite, database, and run files remain ignored.
+
+```bash
+go run ./cmd/eval-seedgen \
+  --preset local_eval_100 \
+  --out tests/eval/seeds/local_eval_100 \
+  --suite tests/eval/suites/local_eval_100.jsonl
+
+export SEED=tests/eval/seeds/local_eval_100/seed_manifest.json
+export SUITE=tests/eval/suites/local_eval_100.jsonl
+export ALLOW_UNGATED_EVALUATION=1
+export IMPORT_CONCURRENCY=5
+export MIN_RECALL_AT_K=0.8429611650485437
+export MIN_REQUIRED_RANK1_RATE=0.7621359223300971
+export MAX_AVERAGE_BAD_AT_K=0
+export MAX_BAD_RANK1_RATE=0
+export MAX_UNMAPPED_SOURCE_REFS=0
+
+tests/eval/scripts/run_full_public_rag_eval_until_done.sh
+```
+
+These retrieval floors mirror the existing public gate only to catch smoke
+regressions. This run is not release evidence and does not replace the approved
+1k comparison. The monitor requires all 100 latest placements and fragments to
+be terminal with no failed/pending/quarantined rows before passing. Its ignored
+`dataset_identity.json` binds the seed/suite hashes, runner hash, server image
+ID, team, and model configuration; `gate_result.json` records the smoke
+thresholds and metrics.
 
 ## Start the persistent V1 stack
 
-The override stores all database state under `tests/eval/runtime/v1` by
-default. Set `V1_COMPOSE_DATA_DIR` before both `up` and later eval commands to
-use another V1 root.
+The evaluation compose stores database state under `tests/eval/runtime/v1` by
+default and reads the ignored repository-root `.env`. Set
+`V1_COMPOSE_DATA_DIR` or `DENSE_MEM_EVAL_ENV_FILE` before both `up` and later
+eval commands to use another local runtime root or env file.
 
 ```bash
 export V1_COMPOSE_DATA_DIR="$(realpath -m tests/eval/runtime/v1)"
+export DENSE_MEM_EVAL_COMPOSE_PROJECT=densemem_eval_full
 
-docker compose -p densemem_eval_full \
-  -f docker-compose.yml \
-  -f tests/eval/docker-compose.eval.yml \
+docker compose -p "${DENSE_MEM_EVAL_COMPOSE_PROJECT}" \
+  -f examples/docker-compose.evaluation.yml \
   up -d --build
 ```
 
@@ -276,14 +317,15 @@ Resume behavior is based on the latest placement attempt for each
 | --- | --- |
 | `completed` and live fragment exists | Skip the corpus row. |
 | `awaiting_review` and live fragment exists | Skip the corpus row and report review burden separately. |
-| `failed` | Retry the corpus row. |
+| `failed` | Stop the monitor; investigate the failed placement before using a fresh isolated team/runtime. |
 | No attempt | Import the corpus row. |
 | `queued` or `processing` | Wait for the placement worker; do not duplicate it. |
 | Completed checkpoint but fragment is missing | Retry the corpus row. |
 
 One failed concurrent request stops scheduling new rows but allows already
-active requests to finish. A later monitor pass continues from the latest
-terminal placements instead of restarting the corpus.
+active requests to finish. The monitor then fails instead of retrying the
+stable idempotency key. After correcting the cause, use a fresh isolated
+team/runtime; non-failed interruptions still resume from the latest placements.
 
 The runtime identity contains the seed and suite hashes, release-policy hash,
 MCP contract, runner binary hash, local server image ID, reviewer/verifier and

@@ -194,24 +194,10 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 	var rememberCalls int
 	var statusPolls int
 	var recallCalls int
-	var controlPatched bool
 	statusSubmissions := map[string]bool{}
 
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/control/api/config/evaluation":
-			if r.Method != http.MethodPatch || r.Header.Get("Authorization") != "Bearer control-token" {
-				t.Fatalf("control request = %s auth %q", r.Method, r.Header.Get("Authorization"))
-			}
-			var body map[string][]map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode control body: %v", err)
-			}
-			if body["items"][1]["value"] != "50" {
-				t.Fatalf("control body = %#v", body)
-			}
-			controlPatched = true
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case "tool:remember":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -286,8 +272,6 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 		SuitePath:        filepath.Join(dir, "suite.jsonl"),
 		BaseURL:          server.URL,
 		APIKey:           "api-key",
-		ControlURL:       server.URL,
-		ControlToken:     "control-token",
 		ImportSeed:       true,
 		MaxPageSize:      50,
 		RunID:            "live-baseline-test",
@@ -298,8 +282,8 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 	if summary.ScoredCaseCount != 2 || summary.AverageRecallAtK != 1 || summary.AverageMRR != 1 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	if !controlPatched || rememberCalls != 2 || statusPolls != 2 || recallCalls != 2 {
-		t.Fatalf("control/remember/status/recall calls = %v/%d/%d/%d", controlPatched, rememberCalls, statusPolls, recallCalls)
+	if rememberCalls != 2 || statusPolls != 2 || recallCalls != 2 {
+		t.Fatalf("remember/status/recall calls = %d/%d/%d", rememberCalls, statusPolls, recallCalls)
 	}
 	if !statusSubmissions["doc-alpha"] || !statusSubmissions["doc-beta"] {
 		t.Fatalf("status submissions = %#v; want doc-alpha and doc-beta", statusSubmissions)

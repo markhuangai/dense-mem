@@ -18,13 +18,9 @@ func TestRunCandidateWithKnowledgeMappingScoresEvidenceRefs(t *testing.T) {
 		t.Fatalf("write source-doc qrels: %v", err)
 	}
 
-	var controlPatched bool
 	var requestedTypes []string
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/control/api/config/evaluation":
-			controlPatched = true
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case "tool:eval_list_knowledge_refs":
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -74,16 +70,11 @@ func TestRunCandidateWithKnowledgeMappingScoresEvidenceRefs(t *testing.T) {
 		SuitePath:        filepath.Join(dir, "suite.jsonl"),
 		BaseURL:          server.URL,
 		APIKey:           "api-key",
-		ControlURL:       server.URL,
-		ControlToken:     "control-token",
 		OutDir:           out,
 		RunID:            "candidate-test",
 	})
 	if err != nil {
 		t.Fatalf("Run candidate with mapping: %v", err)
-	}
-	if !controlPatched {
-		t.Fatal("control config was not patched")
 	}
 	if strings.Join(requestedTypes, ",") != "evidence,entity,value,relationship,hypothesis" {
 		t.Fatalf("requested types = %v", requestedTypes)

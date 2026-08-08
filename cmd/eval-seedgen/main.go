@@ -12,6 +12,8 @@ import (
 )
 
 const (
+	presetLocalEval100    = "local_eval_100"
+	seedIdentityLocal100  = "local_eval_100_v2"
 	presetLocalEval1K     = "local_eval_1k"
 	seedIdentityLocalEval = "local_eval_1k_v2"
 )
@@ -90,6 +92,11 @@ func main() {
 
 func generatePreset(preset, outDir, suitePath string) error {
 	switch preset {
+	case presetLocalEval100, seedIdentityLocal100:
+		if err := generateLocalEval100(outDir, suitePath); err != nil {
+			return fmt.Errorf("generate seed: %w", err)
+		}
+		return nil
 	case presetLocalEval1K, seedIdentityLocalEval:
 		if err := generateLocalEval1K(outDir, suitePath); err != nil {
 			return fmt.Errorf("generate seed: %w", err)
@@ -100,12 +107,45 @@ func generatePreset(preset, outDir, suitePath string) error {
 	}
 }
 
+func generateLocalEval100(outDir, suitePath string) error {
+	return generateLocalEval(
+		outDir,
+		suitePath,
+		seedIdentityLocal100,
+		"Deterministic 100-row local smoke seed for evaluation-image and recall plumbing checks.",
+		buildLocalEval100(),
+		25,
+		0,
+		true,
+	)
+}
+
 func generateLocalEval1K(outDir, suitePath string) error {
-	generated := buildLocalEval1K()
+	return generateLocalEval(
+		outDir,
+		suitePath,
+		seedIdentityLocalEval,
+		"Deterministic 1k local eval seed for recall ranking and misleading-memory regressions.",
+		buildLocalEval1K(),
+		100,
+		900,
+		false,
+	)
+}
+
+func generateLocalEval(outDir, suitePath, seedID, description string, generated []generatedCase, sanityCases, adversarialCases int, withRelationships bool) error {
+	corpusCount := len(generated) * 4
+	hardNegativeCount := len(generated) * 3
+	schemaVersion := evalharness.SeedSchemaVersion
+	relationshipCount := 0
+	if withRelationships {
+		schemaVersion = evalharness.SeedSchemaVersionV2
+		relationshipCount = corpusCount
+	}
 	manifest := evalharness.SeedManifest{
-		SchemaVersion:     evalharness.SeedSchemaVersion,
-		SeedID:            seedIdentityLocalEval,
-		Description:       "Deterministic 1k local eval seed for recall ranking and misleading-memory regressions.",
+		SchemaVersion:     schemaVersion,
+		SeedID:            seedID,
+		Description:       description,
 		GeneratedAt:       "2026-06-28T00:00:00Z",
 		CorpusFile:        "corpus.jsonl",
 		CasesFile:         "cases.jsonl",
@@ -114,16 +154,17 @@ func generateLocalEval1K(outDir, suitePath string) error {
 		HardNegativesFile: "hard_negatives.jsonl",
 		TransformsFile:    "transforms.jsonl",
 		LicensesFile:      "licenses.md",
+		RelationshipCount: relationshipCount,
 		Counts: map[string]int{
-			"cases":             1000,
-			"corpus":            4000,
+			"cases":             len(generated),
+			"corpus":            corpusCount,
 			"docs_per_case":     4,
-			"qrels":             1000,
-			"answers":           1000,
-			"transforms":        1000,
-			"hard_negatives":    3000,
-			"sanity_cases":      100,
-			"adversarial_cases": 900,
+			"qrels":             len(generated),
+			"answers":           len(generated),
+			"transforms":        len(generated),
+			"hard_negatives":    hardNegativeCount,
+			"sanity_cases":      sanityCases,
+			"adversarial_cases": adversarialCases,
 		},
 		Sources: []evalharness.SeedSource{
 			{
@@ -134,14 +175,23 @@ func generateLocalEval1K(outDir, suitePath string) error {
 		},
 	}
 
-	corpus := make([]evalharness.CorpusItem, 0, 4000)
-	cases := make([]evalharness.Case, 0, 1000)
-	qrels := make([]evalharness.QRel, 0, 1000)
-	answers := make([]evalharness.AnswerLabel, 0, 1000)
-	hardNegatives := make([]hardNegativeRow, 0, 3000)
-	transforms := make([]transformRow, 0, 1000)
-	suite := make([]evalharness.SuiteCase, 0, 1000)
+	corpus := make([]evalharness.CorpusItem, 0, corpusCount)
+	cases := make([]evalharness.Case, 0, len(generated))
+	qrels := make([]evalharness.QRel, 0, len(generated))
+	answers := make([]evalharness.AnswerLabel, 0, len(generated))
+	hardNegatives := make([]hardNegativeRow, 0, hardNegativeCount)
+	transforms := make([]transformRow, 0, len(generated))
+	suite := make([]evalharness.SuiteCase, 0, len(generated))
 	for _, item := range generated {
+		if withRelationships {
+			for index := range item.Corpus {
+				relationship, err := localEval100Relationship(item.Corpus[index].Content)
+				if err != nil {
+					return fmt.Errorf("build relationship for %s: %w", item.Corpus[index].SourceDocID, err)
+				}
+				item.Corpus[index].Relationships = []any{relationship}
+			}
+		}
 		corpus = append(corpus, item.Corpus...)
 		cases = append(cases, item.Case)
 		qrels = append(qrels, item.QRel)
@@ -171,29 +221,116 @@ func generateLocalEval1K(outDir, suitePath string) error {
 	if err := writeJSONL(filepath.Join(outDir, "transforms.jsonl"), transforms); err != nil {
 		return err
 	}
-	if err := writeText(filepath.Join(outDir, "licenses.md"), localEvalLicense()); err != nil {
+	if err := writeText(filepath.Join(outDir, "licenses.md"), localEvalLicense(seedID)); err != nil {
 		return err
 	}
 	return writeJSONL(suitePath, suite)
 }
 
+func localEval100Relationship(content string) (map[string]any, error) {
+	subject, err := localEvalToken(content, "account L")
+	if err != nil {
+		return nil, err
+	}
+	object, err := localEvalToken(content, "team-")
+	if err != nil {
+		return nil, err
+	}
+	predicateSurface := ""
+	predicateKey := ""
+	modality := "statement"
+	switch {
+	case strings.HasPrefix(content, "Canonical owner registry"):
+		predicateSurface, predicateKey = "current primary owner for", "has_current_primary_owner"
+	case strings.HasPrefix(content, "Legacy note"):
+		predicateSurface, predicateKey = "previously used", "previously_used"
+	case strings.HasPrefix(content, "Unapproved draft"):
+		predicateSurface, predicateKey, modality = "proposed owner for", "has_proposed_owner", "proposal"
+	case strings.HasPrefix(content, "Neighbor account"):
+		predicateSurface, predicateKey = "currently uses", "currently_uses"
+	default:
+		return nil, fmt.Errorf("unsupported smoke content shape")
+	}
+	span := func(surface string) (map[string]any, error) {
+		byteStart := strings.Index(content, surface)
+		if byteStart < 0 {
+			return nil, fmt.Errorf("surface %q is not present", surface)
+		}
+		start := len([]rune(content[:byteStart]))
+		return map[string]any{"evidence_index": 0, "start": start, "end": start + len([]rune(surface))}, nil
+	}
+	subjectSpan, err := span(subject)
+	if err != nil {
+		return nil, err
+	}
+	predicateSpan, err := span(predicateSurface)
+	if err != nil {
+		return nil, err
+	}
+	objectSpan, err := span(object)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"ref": "relationship_1",
+		"subject": map[string]any{
+			"name": subject, "entity_kind": "other", "span": subjectSpan,
+		},
+		"predicate": map[string]any{
+			"proposed_key": predicateKey, "surface": predicateSurface, "span": predicateSpan,
+		},
+		"object": map[string]any{"entity": map[string]any{
+			"name": object, "entity_kind": "other", "span": objectSpan,
+		}},
+		"polarity": "+",
+		"modality": modality,
+		"supports": []any{map[string]any{"evidence_index": 0, "start": 0, "end": len([]rune(content))}},
+	}, nil
+}
+
+func localEvalToken(content, prefix string) (string, error) {
+	start := strings.Index(content, prefix)
+	if start < 0 {
+		return "", fmt.Errorf("token prefix %q is not present", prefix)
+	}
+	end := start + len(prefix)
+	for end < len(content) {
+		value := content[end]
+		if (value < 'a' || value > 'z') && (value < 'A' || value > 'Z') && (value < '0' || value > '9') && value != '-' {
+			break
+		}
+		end++
+	}
+	return content[start:end], nil
+}
+
+func buildLocalEval100() []generatedCase {
+	out := make([]generatedCase, 0, 25)
+	for i := 1; i <= 25; i++ {
+		item := buildCase(seedIdentityLocal100, sanityScenario(i), i, false, "sanity", "sanity_case")
+		item.Case.KnownAt = ""
+		out = append(out, item)
+	}
+	return out
+}
+
 func buildLocalEval1K() []generatedCase {
 	out := make([]generatedCase, 0, 1000)
 	for i := 1; i <= 100; i++ {
-		out = append(out, buildCase(sanityScenario(i), i, false, "sanity", "sanity_case"))
+		out = append(out, buildCase(seedIdentityLocalEval, sanityScenario(i), i, false, "sanity", "sanity_case"))
 	}
 	globalIndex := 101
 	for _, category := range adversarialCategories() {
 		for i := 1; i <= 90; i++ {
-			out = append(out, buildCase(adversarialScenario(category, i), globalIndex, true, category.Name, category.Transform))
+			out = append(out, buildCase(seedIdentityLocalEval, adversarialScenario(category, i), globalIndex, true, category.Name, category.Transform))
 			globalIndex++
 		}
 	}
 	return out
 }
 
-func buildCase(s scenario, globalIndex int, adversarial bool, category, transform string) generatedCase {
-	caseID := fmt.Sprintf("%s_%04d", seedIdentityLocalEval, globalIndex)
+func buildCase(seedID string, s scenario, globalIndex int, adversarial bool, category, transform string) generatedCase {
+	caseID := fmt.Sprintf("%s_%04d", seedID, globalIndex)
 	requiredDocID := caseID + "_required"
 	badDocIDs := []string{caseID + "_negative_01", caseID + "_negative_02", caseID + "_negative_03"}
 	slices := []string{"sanity"}
@@ -203,10 +340,10 @@ func buildCase(s scenario, globalIndex int, adversarial bool, category, transfor
 		difficulty = "hard"
 	}
 	corpus := []evalharness.CorpusItem{
-		corpusItem(requiredDocID, s.RequiredTitle, s.RequiredContent, category, "required", 1.0, caseID),
+		corpusItem(seedID, requiredDocID, s.RequiredTitle, s.RequiredContent, category, "required", 1.0, caseID),
 	}
 	for i := range badDocIDs {
-		corpus = append(corpus, corpusItem(badDocIDs[i], s.BadTitles[i], s.BadContents[i], category, "hard_negative", 0.2, caseID))
+		corpus = append(corpus, corpusItem(seedID, badDocIDs[i], s.BadTitles[i], s.BadContents[i], category, "hard_negative", 0.2, caseID))
 	}
 	badRefs := make([]evalharness.Ref, 0, len(badDocIDs))
 	hardNegatives := make([]hardNegativeRow, 0, len(badDocIDs))
@@ -258,12 +395,12 @@ func buildCase(s scenario, globalIndex int, adversarial bool, category, transfor
 	}
 }
 
-func corpusItem(sourceDocID, title, content, category, role string, quality float64, caseID string) evalharness.CorpusItem {
+func corpusItem(seedID, sourceDocID, title, content, category, role string, quality float64, caseID string) evalharness.CorpusItem {
 	return evalharness.CorpusItem{
 		SourceDocID:   sourceDocID,
 		Title:         title,
 		Content:       content,
-		SourceDataset: seedIdentityLocalEval,
+		SourceDataset: seedID,
 		SourceType:    "synthetic",
 		Authority:     role,
 		SourceQuality: quality,
@@ -617,14 +754,14 @@ func writeText(path, value string) error {
 	return os.WriteFile(path, []byte(value), 0o644)
 }
 
-func localEvalLicense() string {
-	return strings.TrimSpace(`# local_eval_1k_v2 Licenses
+func localEvalLicense(seedID string) string {
+	return strings.TrimSpace(fmt.Sprintf(`# %s Licenses
 
 This seed is synthetic project-local evaluation data generated by cmd/eval-seedgen.
 
 It contains no third-party source text. Use it for local Dense-Mem recall quality
 tests and regression gates within this repository.
-`) + "\n"
+`, seedID)) + "\n"
 }
 
 func exitf(format string, args ...any) {

@@ -90,69 +90,69 @@ func TestBuildActiveRetractEvidenceReportsDependencyValidationAndServiceErrors(t
 	}
 }
 
-func TestBuildActiveWiresExecutableCorrectEntityResolution(t *testing.T) {
+func TestBuildActiveWiresExecutableCorrectRelationship(t *testing.T) {
 	stub := &stubLifecycleService{}
 	reg, err := BuildActive(Dependencies{Lifecycle: stub})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
-	correct, ok := reg.Get(ToolCorrectEntityResolution)
+	correct, ok := reg.Get(ToolCorrectRelationship)
 	if !ok {
-		t.Fatal("BuildActive did not register correct_entity_resolution")
+		t.Fatal("BuildActive did not register correct_relationship")
 	}
 	if correct.Invoke == nil {
-		t.Fatal("BuildActive correct_entity_resolution invoker is nil")
+		t.Fatal("BuildActive correct_relationship invoker is nil")
 	}
 	out, err := correct.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
-		"operation":             string(domain.EntityCorrectionSplit),
-		"source_entity_id":      "entity-source",
-		"target_entity_id":      nil,
-		"owned_observation_ids": []any{"obs-1"},
-		"dry_run":               true,
-		"idempotency_key":       "split-1",
-		"evidence": []any{
-			map[string]any{"content": "The selected Mark mention is a different person."},
-		},
+		"action":           "submit",
+		"relationship_id":  "relationship-source",
+		"expected_version": 2,
+		"patch":            map[string]any{"predicate": map[string]any{"key": "works_with"}},
+		"supports":         []any{map[string]any{"evidence_id": "evidence-1", "start": 0, "end": 8}},
+		"reason":           "predicate resolved incorrectly",
+		"idempotency_key":  "relationship-correction-1",
 	})
 	if err != nil {
-		t.Fatalf("correct_entity_resolution.Invoke: %v", err)
+		t.Fatalf("correct_relationship.Invoke: %v", err)
 	}
 	if err := ValidateInput(Tool{InputSchema: correct.OutputSchema}, out); err != nil {
 		t.Fatalf("validate output: %v", err)
 	}
-	if out["impact_token"] != "plan-canonical" {
+	if out["submission_kind"] != "relationship_correction" || out["processing_state"] != "completed" {
 		t.Fatalf("correct output = %#v", out)
 	}
-	if stub.correctReq.Operation != domain.EntityCorrectionSplit || stub.correctReq.SourceEntityID != "entity-source" {
+	if stub.correctReq.Action != "submit" || stub.correctReq.RelationshipID != "relationship-source" {
 		t.Fatalf("stub correct request not populated: %#v", stub.correctReq)
 	}
 }
 
-func TestBuildActiveCorrectEntityResolutionRejectsTenantOverride(t *testing.T) {
+func TestBuildActiveCorrectRelationshipRejectsTenantOverride(t *testing.T) {
 	reg, err := BuildActive(Dependencies{Lifecycle: &stubLifecycleService{}})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
-	correct, ok := reg.Get(ToolCorrectEntityResolution)
+	correct, ok := reg.Get(ToolCorrectRelationship)
 	if !ok {
-		t.Fatal("BuildActive did not register correct_entity_resolution")
+		t.Fatal("BuildActive did not register correct_relationship")
 	}
 	_, err = correct.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
-		"team_id":               "attacker-team",
-		"operation":             string(domain.EntityCorrectionSplit),
-		"source_entity_id":      "entity-source",
-		"target_entity_id":      nil,
-		"owned_observation_ids": []any{"obs-1"},
-		"dry_run":               true,
+		"team_id":          "attacker-team",
+		"action":           "submit",
+		"relationship_id":  "relationship-source",
+		"expected_version": 2,
+		"patch":            map[string]any{"predicate": map[string]any{"key": "works_with"}},
+		"supports":         []any{map[string]any{"evidence_id": "evidence-1", "start": 0, "end": 8}},
+		"reason":           "predicate resolved incorrectly",
+		"idempotency_key":  "relationship-correction-1",
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
-		t.Fatalf("correct_entity_resolution.Invoke err = %v, want tenant override rejection", err)
+		t.Fatalf("correct_relationship.Invoke err = %v, want tenant override rejection", err)
 	}
 }
 
 type stubLifecycleService struct {
 	req        memoryservice.ResolveMemoryPlacementRequest
-	correctReq memoryservice.CorrectEntityResolutionRequest
+	correctReq memoryservice.CorrectRelationshipRequest
 	retractReq memoryservice.RetractEvidenceRequest
 	retractErr error
 }
@@ -169,19 +169,24 @@ func (s *stubLifecycleService) ResolveMemoryPlacement(
 	}, nil
 }
 
-func (s *stubLifecycleService) CorrectEntityResolution(
+func (s *stubLifecycleService) CorrectRelationship(
 	_ context.Context,
-	req memoryservice.CorrectEntityResolutionRequest,
-) (*memoryservice.CorrectEntityResolutionResult, error) {
+	req memoryservice.CorrectRelationshipRequest,
+) (*memoryservice.CorrectRelationshipReceipt, error) {
 	s.correctReq = req
-	return &memoryservice.CorrectEntityResolutionResult{
-		DryRun:                          req.DryRun,
-		ImpactToken:                     "plan-canonical",
-		SelectedObservationIDs:          req.OwnedObservationIDs,
-		BlockedObservationIDs:           []string{},
-		RelationshipChanges:             []map[string]any{},
-		EntityCandidates:                []map[string]any{},
-		UnchangedCrossProfileReferences: []map[string]any{},
+	return &memoryservice.CorrectRelationshipReceipt{
+		SubmissionID: "correction-canonical", SubmissionKind: "relationship_correction",
+		ProcessingState: "completed", StatusTool: ToolGetSubmissionStatus, CorrelationID: "correlation-canonical",
+	}, nil
+}
+
+func (s *stubLifecycleService) GetRelationshipCorrectionStatus(
+	_ context.Context,
+	req memoryservice.GetSubmissionStatusRequest,
+) (*memoryservice.SubmissionStatusResult, error) {
+	return &memoryservice.SubmissionStatusResult{
+		SubmissionID: req.SubmissionID, SubmissionKind: "relationship_correction",
+		ProcessingState: "completed", SearchState: "not_required", Evidence: []memoryservice.SubmissionEvidenceStatus{}, Errors: []memoryservice.SubmissionStatusError{},
 	}, nil
 }
 

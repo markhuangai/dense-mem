@@ -85,31 +85,51 @@ func validateDecisionFields(args map[string]any, fields ...string) error {
 	return nil
 }
 
-func validateCorrectEntityResolution(args map[string]any) error {
-	if err := validateUniqueStringArray(args, "owned_observation_ids"); err != nil {
-		return err
-	}
-	owned, _ := args["owned_observation_ids"].([]any)
-	if len(owned) == 0 {
-		return fmt.Errorf("owned_observation_ids is required")
-	}
-	operation, _ := args["operation"].(string)
-	target, hasTarget := args["target_entity_id"]
-	switch operation {
-	case "merge":
-		if !hasTarget || contractValueEmpty(target) {
-			return fmt.Errorf("target_entity_id is required for operation merge")
+func validateCorrectRelationship(args map[string]any) error {
+	action, _ := args["action"].(string)
+	switch action {
+	case "submit":
+		for _, field := range []string{"relationship_id", "expected_version", "patch", "supports", "reason"} {
+			if contractValueEmpty(args[field]) {
+				return fmt.Errorf("%s is required for action submit", field)
+			}
 		}
-	case "split":
-		if !hasTarget || target != nil {
-			return fmt.Errorf("target_entity_id must be null for operation split")
+		for _, field := range []string{"submission_id", "confirmation_token", "selection"} {
+			if !contractValueEmpty(args[field]) {
+				return fmt.Errorf("%s is not accepted for action submit", field)
+			}
 		}
-	}
-	dryRun, _ := args["dry_run"].(bool)
-	if !dryRun {
-		if contractValueEmpty(args["impact_token"]) {
-			return fmt.Errorf("impact_token is required for correction apply")
+		patch, _ := objectFields(args["patch"])
+		if len(patch) == 0 {
+			return fmt.Errorf("patch must change at least one relationship field")
 		}
+		supports, _ := args["supports"].([]any)
+		seen := make(map[string]struct{}, len(supports))
+		for index, raw := range supports {
+			support, _ := objectFields(raw)
+			key := fmt.Sprintf("%s\x00%v\x00%v", stringField(support, "evidence_id"), support["start"], support["end"])
+			if _, exists := seen[key]; exists {
+				return fmt.Errorf("supports[%d] duplicates an evidence span", index)
+			}
+			seen[key] = struct{}{}
+		}
+	case "confirm":
+		for _, field := range []string{"submission_id", "confirmation_token", "selection"} {
+			if contractValueEmpty(args[field]) {
+				return fmt.Errorf("%s is required for action confirm", field)
+			}
+		}
+		for _, field := range []string{"relationship_id", "expected_version", "patch", "supports", "reason"} {
+			if !contractValueEmpty(args[field]) {
+				return fmt.Errorf("%s is not accepted for action confirm", field)
+			}
+		}
+		selection, _ := objectFields(args["selection"])
+		if contractValueEmpty(selection["subject_entity_id"]) && contractValueEmpty(selection["object_entity_id"]) {
+			return fmt.Errorf("selection must choose at least one Entity candidate")
+		}
+	default:
+		return fmt.Errorf("unsupported action %q", action)
 	}
 	return nil
 }

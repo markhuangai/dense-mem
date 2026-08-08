@@ -1,0 +1,87 @@
+# Dense-Mem evaluation compose example.
+#
+# Run from the repository root:
+#   docker compose -p densemem_eval \
+#     -f examples/docker-compose.evaluation.yml up -d --build
+#
+# The ignored repository-root .env is loaded into the containers by default.
+# Override DENSE_MEM_EVAL_ENV_FILE with another uncommitted env file if needed.
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.2-pg18-trixie
+    env_file:
+      - ${DENSE_MEM_EVAL_ENV_FILE:-../.env}
+    volumes:
+      - ${V1_COMPOSE_DATA_DIR:-../tests/eval/runtime/v1}/postgres:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-15432}:5432"
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"${POSTGRES_USER:-densemem}\" -d \"${POSTGRES_DB:-densemem}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --appendonly yes
+      ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
+    env_file:
+      - ${DENSE_MEM_EVAL_ENV_FILE:-../.env}
+    volumes:
+      - ${V1_COMPOSE_DATA_DIR:-../tests/eval/runtime/v1}/redis:/data
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-16380}:6379"
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ${REDIS_PASSWORD:+-a $$REDIS_PASSWORD} ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  server:
+    image: ${DENSE_MEM_EVAL_IMAGE:-dense-mem:evaluation-local}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: evaluation
+    env_file:
+      - ${DENSE_MEM_EVAL_ENV_FILE:-../.env}
+    environment:
+      HTTP_ADDR: :8080
+      CONTROL_HTTP_ADDR: :8090
+      POSTGRES_DSN: ""
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_SSLMODE: disable
+      REDIS_ADDR: redis:6379
+      DISTRIBUTED_COORDINATION_REQUIRED: "true"
+      RATE_LIMIT_PER_MINUTE: "200000"
+      AI_API_EMBEDDING_TIMEOUT_SECONDS: ${DENSE_MEM_EVAL_EMBEDDING_TIMEOUT_SECONDS:-600}
+      AI_API_EMBEDDING_MAX_CONCURRENCY: ${DENSE_MEM_EVAL_EMBEDDING_MAX_CONCURRENCY:-10}
+      EMBEDDING_WORKER_COUNT: ${DENSE_MEM_EVAL_EMBEDDING_WORKER_COUNT:-10}
+    ports:
+      - "127.0.0.1:${DENSE_MEM_PORT:-18080}:8080"
+      - "127.0.0.1:${CONTROL_PORTAL_PORT:-18090}:8090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - private
+    restart: unless-stopped
+
+networks:
+  private:

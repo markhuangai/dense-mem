@@ -164,8 +164,9 @@ func TestRecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion: domain.ContractVersion,
-		Query:           "PostgreSQL memory",
+		ContractVersion:   domain.ContractVersion,
+		Query:             "PostgreSQL memory",
+		IncludeHypotheses: true,
 	})
 	require.NoError(t, err)
 	require.Len(t, result.Results, 1)
@@ -612,8 +613,9 @@ func TestRecallAddsOptionalFrontierDegradations(t *testing.T) {
 	})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion: domain.ContractVersion,
-		Query:           "PostgreSQL",
+		ContractVersion:   domain.ContractVersion,
+		Query:             "PostgreSQL",
+		IncludeHypotheses: true,
 	})
 	require.NoError(t, err)
 	require.Len(t, result.Degradations, 3)

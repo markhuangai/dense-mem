@@ -18,7 +18,6 @@ const DefaultAppConfigCacheCheckInterval = 5 * time.Second
 const DefaultAppTimezone = "Local"
 const DefaultOperationLogRetentionDays = 30
 const DefaultRecallFeedbackRetentionDays = 30
-const DefaultEvaluationExportMaxPageSize = 100
 const DefaultCommunityDetectionStartTimeLocal = "03:30"
 const DefaultCommunityDetectionMaxConcurrency = 1
 const DefaultCommunityDetectionJitterSeconds = 600
@@ -44,9 +43,6 @@ type AppConfigService interface {
 	GetRecallFeedbackSettings(ctx context.Context) (*domain.RecallFeedbackConfigSettings, error)
 	UpdateRecallFeedbackSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.RecallFeedbackConfigSettings, error)
 	RecallFeedbackRuntimeConfig(ctx context.Context) (domain.RecallFeedbackRuntimeConfig, error)
-	GetEvaluationSettings(ctx context.Context) (*domain.EvaluationConfigSettings, error)
-	UpdateEvaluationSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.EvaluationConfigSettings, error)
-	EvaluationRuntimeConfig(ctx context.Context) (domain.EvaluationRuntimeConfig, error)
 	GetTelemetryPricingSettings(ctx context.Context) (*domain.TelemetryPricingConfigSettings, error)
 	UpdateTelemetryPricingSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.TelemetryPricingConfigSettings, error)
 	TelemetryPricingRuntimeConfig(ctx context.Context) (domain.TelemetryPricingRuntimeConfig, error)
@@ -72,7 +68,6 @@ type appConfigCache struct {
 	community  domain.CommunityDetectionConfigSettings
 	opLogs     domain.OperationLogConfigSettings
 	recall     domain.RecallFeedbackConfigSettings
-	evaluation domain.EvaluationConfigSettings
 	telemetry  domain.TelemetryPricingConfigSettings
 	checkedAt  time.Time
 }
@@ -382,10 +377,6 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 	if err != nil {
 		return nil, err
 	}
-	evaluation, err := evaluationRuntimeConfigFromEntries(entries)
-	if err != nil {
-		return nil, err
-	}
 	telemetry, err := telemetryPricingRuntimeConfigFromEntries(entries)
 	if err != nil {
 		return nil, err
@@ -400,7 +391,6 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 		community:  community,
 		opLogs:     opLogs,
 		recall:     recall,
-		evaluation: evaluation,
 		telemetry:  telemetry,
 		checkedAt:  checkedAt,
 	}, nil
@@ -939,7 +929,6 @@ func cloneAppConfigCache(cache *appConfigCache) *appConfigCache {
 	copy.community.Items = append([]domain.CommunityDetectionConfigItem(nil), cache.community.Items...)
 	copy.opLogs.Items = append([]domain.OperationLogConfigItem(nil), cache.opLogs.Items...)
 	copy.recall.Items = append([]domain.RecallFeedbackConfigItem(nil), cache.recall.Items...)
-	copy.evaluation.Items = append([]domain.EvaluationConfigItem(nil), cache.evaluation.Items...)
 	copy.telemetry.Items = append([]domain.TelemetryPricingConfigItem(nil), cache.telemetry.Items...)
 	copy.telemetry.Effective = cloneTelemetryPricingRuntimeConfig(cache.telemetry.Effective)
 	return &copy

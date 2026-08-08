@@ -5,28 +5,21 @@ import (
 	"errors"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
-const (
-	SubmitRecallSessionFeedbackToolName  = "submit_recall_session_feedback"
-	EvalListRecallFeedbackEventsToolName = "eval_list_recall_feedback_events"
-	EvalGetRecallFeedbackEventToolName   = "eval_get_recall_feedback_event"
-)
+const SubmitRecallSessionFeedbackToolName = "submit_recall_session_feedback"
 
 var evaluationToolNames = map[string]struct{}{
-	"eval_get_manifest":                  {},
-	"eval_list_knowledge_refs":           {},
-	"eval_get_knowledge_item":            {},
-	EvalListRecallFeedbackEventsToolName: {},
-	EvalGetRecallFeedbackEventToolName:   {},
-	"eval_run_dream_cycle":               {},
-	"eval_run_recall_case":               {},
-	"eval_score_retrieval_case":          {},
+	"eval_list_knowledge_refs": {},
+	"eval_run_dream_cycle":     {},
+	"eval_run_recall_case":     {},
 }
 
-var recallFeedbackEventToolNames = map[string]struct{}{
-	EvalListRecallFeedbackEventsToolName: {},
-	EvalGetRecallFeedbackEventToolName:   {},
+var dreamToolNames = map[string]struct{}{
+	ToolListDreams:           {},
+	ToolGetDream:             {},
+	ToolResolveDreamFeedback: {},
 }
 
 // IsEvaluationTool reports whether a tool belongs to the evaluation-only surface.
@@ -45,25 +38,30 @@ type RecallFeedbackConfigProvider interface {
 	RecallFeedbackRuntimeConfig(ctx context.Context) (domain.RecallFeedbackRuntimeConfig, error)
 }
 
-// EvaluationConfigProvider is the runtime config surface for evaluation tools.
-type EvaluationConfigProvider interface {
-	EvaluationRuntimeConfig(ctx context.Context) (domain.EvaluationRuntimeConfig, error)
+// DreamingConfigProvider resolves the authenticated team's effective Dreaming
+// policy. Implementations must derive team identity from the request context.
+type DreamingConfigProvider interface {
+	EffectiveConfig(ctx context.Context, profileID string) (dreamservice.EffectiveConfig, error)
+}
+
+// RuntimeToolPolicy contains request-time feature dependencies shared by MCP
+// discovery and invocation.
+type RuntimeToolPolicy struct {
+	RecallFeedback RecallFeedbackConfigProvider
+	Dreams         DreamingConfigProvider
+	ProfileID      string
 }
 
 // ToolVisible reports whether a registered tool should be visible for a request.
-func ToolVisible(ctx context.Context, tool Tool, cfg RecallFeedbackConfigProvider) bool {
+func ToolVisible(ctx context.Context, tool Tool, policy RuntimeToolPolicy) bool {
 	if tool.FeatureGate == domain.FeatureGate && tool.Visibility == domain.ToolVisibility {
 		return false
 	}
 	if tool.Name == SubmitRecallSessionFeedbackToolName {
-		return RecallFeedbackEnabled(ctx, cfg)
+		return RecallFeedbackEnabled(ctx, policy.RecallFeedback)
 	}
-	if _, ok := recallFeedbackEventToolNames[tool.Name]; ok {
-		return RecallFeedbackEnabled(ctx, cfg)
-	}
-	if _, ok := evaluationToolNames[tool.Name]; ok {
-		evalCfg, ok := cfg.(EvaluationConfigProvider)
-		return ok && EvaluationEnabled(ctx, evalCfg)
+	if _, ok := dreamToolNames[tool.Name]; ok {
+		return DreamingEnabled(ctx, policy.Dreams, policy.ProfileID)
 	}
 	return true
 }
@@ -78,12 +76,12 @@ func RecallFeedbackEnabled(ctx context.Context, cfg RecallFeedbackConfigProvider
 	return err == nil && runtime.Enabled
 }
 
-// EvaluationEnabled fails closed because evaluation mode exposes broad
-// team-scoped diagnostic data.
-func EvaluationEnabled(ctx context.Context, cfg EvaluationConfigProvider) bool {
+// DreamingEnabled fails closed so disabled or unreadable team configuration
+// cannot expose Hypothesis lifecycle tools.
+func DreamingEnabled(ctx context.Context, cfg DreamingConfigProvider, profileID string) bool {
 	if cfg == nil {
 		return false
 	}
-	runtime, err := cfg.EvaluationRuntimeConfig(ctx)
-	return err == nil && runtime.Enabled
+	effective, err := cfg.EffectiveConfig(ctx, profileID)
+	return err == nil && effective.Enabled
 }

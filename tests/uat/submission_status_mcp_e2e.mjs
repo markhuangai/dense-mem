@@ -16,12 +16,12 @@ const runID = `submission-status-e2e-${Date.now()}`;
 
 const listed = await toolsList();
 const listedNames = new Set((listed.tools ?? []).map((tool) => tool.name));
-for (const required of ["remember", "get_submission_status", "trace_memory", "export_memory_pack"]) {
+for (const required of ["remember", "get_submission_status", "correct_relationship", "trace_memory", "export_memory_pack"]) {
   if (!listedNames.has(required)) {
     throw new Error(`tools/list is missing ${required}`);
   }
 }
-for (const removed of ["get_memory_placement", "resolve_memory_placement", "find_memory_pack_candidates", "inspect_memory_pack", "import_memory_pack", "rollback_memory_pack_import"]) {
+for (const removed of ["correct_entity_resolution", "get_memory_placement", "resolve_memory_placement", "find_memory_pack_candidates", "inspect_memory_pack", "import_memory_pack", "rollback_memory_pack_import"]) {
   if (listedNames.has(removed)) {
     throw new Error(`tools/list still exposes removed ${removed}`);
   }
@@ -32,7 +32,10 @@ const submissionID = stringValue(remember.submission_id);
 if (!submissionID || Object.hasOwn(remember, "ingest_id") || Object.hasOwn(remember, "placement")) {
   throw new Error(`remember returned a removed or missing identifier: ${JSON.stringify(remember)}`);
 }
-assertKeys(remember, ["submission_id", "processing_state", "check_after_seconds", "status_tool", "correlation_id"]);
+assertKeys(remember, ["submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"]);
+if (remember.submission_kind !== "remember") {
+  throw new Error(`remember submission_kind = ${remember.submission_kind}`);
+}
 if (remember.status_tool !== "get_submission_status") {
   throw new Error("remember did not advertise get_submission_status");
 }
@@ -93,6 +96,85 @@ if (typeof exported.artifact_json !== "string" || !exported.artifact_json.includ
   throw new Error("export did not return the current memory-pack format");
 }
 
+const correctionSupport = postgresQuery(`
+  SELECT concat(record.version, '|', record.owner_profile_id::text, '|', support.fragment_id::text, '|', support.span_start, '|', support.span_end)
+  FROM relationship_records AS record
+  JOIN relationship_evidence_supports AS support
+    ON support.team_id = record.team_id
+   AND support.relationship_id = record.relationship_id
+  WHERE record.team_id = ${sqlLiteral(teamID)}::uuid
+    AND record.relationship_id = ${sqlLiteral(relationshipID)}::uuid
+  ORDER BY support.created_at ASC, support.support_id ASC
+  LIMIT 1;
+`);
+const [relationshipVersion, relationshipOwnerID, supportEvidenceID, supportStart, supportEnd] = correctionSupport.split("|");
+if (!relationshipVersion || !relationshipOwnerID || !supportEvidenceID || supportStart === undefined || !supportEnd) {
+  throw new Error(`could not resolve correction support: ${correctionSupport}`);
+}
+const correctionInput = {
+  action: "submit",
+  relationship_id: relationshipID,
+  expected_version: Number(relationshipVersion),
+  patch: {
+    object_entity: {
+      name: `${runID} corrected project`,
+      entity_kind: "project",
+    },
+  },
+  supports: [{ evidence_id: supportEvidenceID, start: Number(supportStart), end: Number(supportEnd) }],
+  reason: "The relationship object was resolved to the wrong project.",
+  idempotency_key: `${runID}:correct-relationship`,
+};
+
+const nonOwnerCorrection = await mcpRaw(otherProfile.apiKey, "correct_relationship", {
+  ...correctionInput,
+  idempotency_key: `${runID}:non-owner-correction`,
+});
+if (!nonOwnerCorrection.error || nonOwnerCorrection.result !== undefined || JSON.stringify(nonOwnerCorrection).includes(relationshipID)) {
+  throw new Error("non-owner relationship correction was allowed or leaked the target ID");
+}
+
+const correction = await mcpSuccess("correct_relationship", correctionInput);
+assertKeys(correction, ["submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"]);
+if (correction.submission_kind !== "relationship_correction" || correction.status_tool !== "get_submission_status") {
+  throw new Error(`correction receipt is invalid: ${JSON.stringify(correction)}`);
+}
+const correctionStatus = await mcpSuccess("get_submission_status", { submission_id: correction.submission_id });
+assertStatusShape(correctionStatus, correction.submission_id);
+if (correctionStatus.submission_kind !== "relationship_correction" || correctionStatus.processing_state !== "completed") {
+  throw new Error(`correction status is not completed: ${JSON.stringify(correctionStatus)}`);
+}
+const successorID = stringValue(correctionStatus.correction_result?.successor_relationship_id);
+if (!successorID || successorID === relationshipID) {
+  throw new Error(`correction did not create a successor: ${JSON.stringify(correctionStatus.correction_result)}`);
+}
+const crossProfileCorrectionStatus = await mcpRaw(otherProfile.apiKey, "get_submission_status", { submission_id: correction.submission_id });
+if (!crossProfileCorrectionStatus.error || crossProfileCorrectionStatus.result !== undefined || JSON.stringify(crossProfileCorrectionStatus).includes(correction.submission_id)) {
+  throw new Error("correction status leaked across profile ownership boundary");
+}
+const correctionState = postgresQuery(`
+  SELECT concat(
+    original.status, '|', successor.status, '|', successor.owner_profile_id::text, '|',
+    successor.support_count, '|', count(reference.cross_reference_id)
+  )
+  FROM relationship_records AS original
+  JOIN relationship_records AS successor
+    ON successor.team_id = original.team_id
+   AND successor.relationship_id = ${sqlLiteral(successorID)}::uuid
+  LEFT JOIN relationship_cross_references AS reference
+    ON reference.team_id = original.team_id
+   AND reference.source_relationship_id = successor.relationship_id
+   AND reference.target_relationship_id = original.relationship_id
+   AND reference.kind = 'corrects'
+  WHERE original.team_id = ${sqlLiteral(teamID)}::uuid
+    AND original.relationship_id = ${sqlLiteral(relationshipID)}::uuid
+  GROUP BY original.status, successor.status, successor.owner_profile_id, successor.support_count;
+`);
+const [originalState, successorState, successorOwner, successorSupportCount, correctionRefs] = correctionState.split("|");
+if (originalState !== "superseded" || successorState !== "active" || successorOwner !== relationshipOwnerID || Number(successorSupportCount) < 1 || correctionRefs !== "1") {
+  throw new Error(`relationship correction state is invalid: ${correctionState}`);
+}
+
 const ledgerTables = postgresQuery(`
   SELECT concat(
     COALESCE(to_regclass('public.skill_pack_imports')::text, ''), '|',
@@ -113,10 +195,14 @@ console.log(JSON.stringify({
   processing_state: terminal.processing_state,
   search_state: terminal.search_state,
   relationship_id: relationshipID,
+  correction_submission_id: correction.submission_id,
+  successor_relationship_id: successorID,
   listed_tool_count: listedNames.size,
   removed_tools_absent: true,
   profile_isolation: true,
   memory_pack_export: true,
+  relationship_correction_owner_only: true,
+  relationship_correction_successor: true,
   import_ledger_tables_absent: true,
 }, null, 2));
 
@@ -197,7 +283,7 @@ async function waitForTerminal(id) {
 }
 
 function assertStatusShape(status, id) {
-  assertKeys(status, ["submission_id", "processing_state", "search_state", "check_after_seconds", "evidence", "errors"]);
+  assertKeys(status, ["submission_id", "submission_kind", "processing_state", "search_state", "check_after_seconds", "evidence", "errors"]);
   if (status.submission_id !== id || Object.hasOwn(status, "ingest_id") || Object.hasOwn(status, "placement_run_id") || Object.hasOwn(status, "items") || Object.hasOwn(status, "review_tasks")) {
     throw new Error("submission status exposed a removed internal field");
   }

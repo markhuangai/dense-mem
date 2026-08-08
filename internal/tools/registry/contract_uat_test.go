@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
@@ -177,6 +178,75 @@ func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {
 	}
 	if stub.req.ContractVersion != domain.ContractVersion {
 		t.Fatalf("contract version = %q", stub.req.ContractVersion)
+	}
+}
+
+func TestRecallSuggestedActionsMatchEnabledFeatures(t *testing.T) {
+	recall := &stubRecallService{result: &memoryservice.RecallResult{
+		RecallID: "rec-canonical",
+		RelatedHypotheses: []memoryservice.RelatedHypothesisSummary{{
+			HypothesisID: "hypothesis-canonical",
+		}},
+	}}
+	recorder := &stubRecallFeedbackRecorder{}
+	reg, err := BuildActive(Dependencies{
+		Recall:               recall,
+		Dreams:               &stubDreamService{},
+		RecallFeedbackConfig: stubRecallFeedbackConfig{enabled: true},
+		RecallFeedbackEvents: recorder,
+		Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+	})
+	if err != nil {
+		t.Fatalf("BuildActive: %v", err)
+	}
+	tool, _ := reg.Get(ToolRecallMemory)
+	out, err := tool.Invoke(contractInvokeContext("read"), "profile-canonical", map[string]any{"query": "PostgreSQL"})
+	if err != nil {
+		t.Fatalf("recall_memory.Invoke: %v", err)
+	}
+	if !recall.req.IncludeHypotheses {
+		t.Fatal("enabled Dreaming did not authorize hypothesis recall")
+	}
+	actions, ok := out["suggested_actions"].([]memoryservice.RecallSuggestedAction)
+	if !ok || len(actions) != 2 {
+		t.Fatalf("suggested_actions = %#v; want feedback and Dream actions", out["suggested_actions"])
+	}
+	if actions[0].Tool != ToolSubmitRecallSessionFeedback || actions[0].RecallEventID != "rec-canonical" {
+		t.Fatalf("feedback action = %#v", actions[0])
+	}
+	if actions[1].Tool != ToolResolveDreamFeedback || len(actions[1].HypothesisIDs) != 1 || actions[1].HypothesisIDs[0] != "hypothesis-canonical" {
+		t.Fatalf("Dream action = %#v", actions[1])
+	}
+	if !strings.Contains(actions[1].Guidance, "leave uncertain hypotheses unresolved") {
+		t.Fatalf("Dream guidance = %q", actions[1].Guidance)
+	}
+	if len(recorder.snapshots) != 1 {
+		t.Fatalf("snapshots = %d; want 1", len(recorder.snapshots))
+	}
+
+	disabledRecall := &stubRecallService{result: &memoryservice.RecallResult{
+		RecallID: "rec-disabled",
+		RelatedHypotheses: []memoryservice.RelatedHypothesisSummary{{
+			HypothesisID: "must-not-leak",
+		}},
+	}}
+	disabledReg, err := BuildActive(Dependencies{Recall: disabledRecall})
+	if err != nil {
+		t.Fatalf("BuildActive disabled: %v", err)
+	}
+	disabledTool, _ := disabledReg.Get(ToolRecallMemory)
+	disabledOut, err := disabledTool.Invoke(contractInvokeContext("read"), "profile-canonical", map[string]any{"query": "PostgreSQL"})
+	if err != nil {
+		t.Fatalf("disabled recall_memory.Invoke: %v", err)
+	}
+	if disabledRecall.req.IncludeHypotheses {
+		t.Fatal("disabled Dreaming authorized hypothesis recall")
+	}
+	if hypotheses := disabledOut["related_hypotheses"].([]memoryservice.RelatedHypothesisSummary); len(hypotheses) != 0 {
+		t.Fatalf("disabled recall leaked hypotheses: %#v", hypotheses)
+	}
+	if actions := disabledOut["suggested_actions"].([]memoryservice.RecallSuggestedAction); len(actions) != 0 {
+		t.Fatalf("disabled recall suggested unavailable tools: %#v", actions)
 	}
 }
 

@@ -1,3 +1,5 @@
+//go:build evaluation
+
 package registry
 
 import (
@@ -25,17 +27,10 @@ func TestEvalKnowledgeToolsUseTeamScopeAndStripPayloads(t *testing.T) {
 			NextCursor: "next-page",
 			HasMore:    true,
 		},
-		item: map[string]any{
-			"type":          "relationship",
-			"id":            "00000000-0000-0000-0000-00000000e002",
-			"status":        "active",
-			"predicate_key": "works_at",
-		},
 	}
 	reg, err := BuildActive(Dependencies{
-		EvaluationAudit:   audit,
-		Evaluation:        evaluation,
-		EvaluationEnabled: true,
+		EvaluationAudit: audit,
+		Evaluation:      evaluation,
 	})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
@@ -73,54 +68,25 @@ func TestEvalKnowledgeToolsUseTeamScopeAndStripPayloads(t *testing.T) {
 		t.Fatalf("list input = %+v", evaluation.lastList)
 	}
 
-	getTool, _ := reg.Get("eval_get_knowledge_item")
-	itemOut, err := getTool.Invoke(ctx, "profile-eval", map[string]any{
-		"type": "relationship",
-		"id":   "00000000-0000-0000-0000-00000000e002",
-	})
-	if err != nil {
-		t.Fatalf("eval_get_knowledge_item relationship Invoke: %v", err)
-	}
-	relationship := itemOut["item"].(map[string]any)
-	if relationship["predicate_key"] != "works_at" || evaluation.lastGet.TeamID != "00000000-0000-0000-0000-000000000101" {
-		t.Fatalf("relationship item/input = %v/%+v", relationship, evaluation.lastGet)
-	}
-	evaluation.item = map[string]any{
-		"type":    "hypothesis",
-		"id":      "00000000-0000-0000-0000-00000000e003",
-		"status":  "candidate",
-		"payload": map[string]any{"hypothesis": "must be stripped"},
-	}
-	itemOut, err = getTool.Invoke(ctx, "profile-eval", map[string]any{
-		"type":          "hypothesis",
-		"id":            "00000000-0000-0000-0000-00000000e003",
-		"metadata_only": true,
-	})
-	if err != nil {
-		t.Fatalf("eval_get_knowledge_item hypothesis Invoke: %v", err)
-	}
-	hypothesis := itemOut["item"].(map[string]any)
-	if _, ok := hypothesis["payload"]; ok {
-		t.Fatalf("metadata-only hypothesis returned payload: %v", hypothesis)
-	}
-	if len(audit.entries) != 3 {
-		t.Fatalf("audit entries = %d; want 3", len(audit.entries))
+	if len(audit.entries) != 1 {
+		t.Fatalf("audit entries = %d; want 1", len(audit.entries))
 	}
 }
 
-func TestEvalKnowledgeToolsRequireExplicitGate(t *testing.T) {
-	evaluation := &evalEvaluationStore{}
+func TestEvalKnowledgeToolRequiresRepository(t *testing.T) {
 	reg, err := BuildActive(Dependencies{
 		EvaluationAudit: &evaluationAuditStub{},
-		Evaluation:      evaluation,
 	})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
-	for _, name := range []string{"eval_list_knowledge_refs", "eval_get_knowledge_item"} {
-		if _, ok := reg.Get(name); ok {
-			t.Fatalf("%s registered without explicit evaluation gate", name)
-		}
+	tool, ok := reg.Get("eval_list_knowledge_refs")
+	if !ok {
+		t.Fatal("evaluation build omitted eval_list_knowledge_refs")
+	}
+	_, err = tool.Invoke(context.Background(), "00000000-0000-0000-0000-000000000101", map[string]any{"type": "evidence"})
+	if !errors.Is(err, ErrToolUnavailable) {
+		t.Fatalf("Invoke error = %v; want ErrToolUnavailable", err)
 	}
 }
 

@@ -22,19 +22,17 @@ type Dependencies struct {
 
 	RecallFeedbackConfig RecallFeedbackConfigProvider
 	RecallFeedbackEvents RecallFeedbackEventRecorder
-	EvaluationConfig     EvaluationConfigProvider
 	EvaluationAudit      EvaluationAuditAppender
 
-	Context           contextservice.Service
-	Remember          memoryservice.RememberService
-	SubmissionStatus  memoryservice.SubmissionStatusService
-	Recall            memoryservice.RecallService
-	Lifecycle         memoryservice.LifecycleService
-	Evaluation        repository.EvaluationRepository
-	EvaluationEnabled bool
-	Communities       repository.CommunityRepository
-	MemoryPack        skillpackservice.MemoryPackService
-	Dreams            dreamservice.Service
+	Context          contextservice.Service
+	Remember         memoryservice.RememberService
+	SubmissionStatus memoryservice.SubmissionStatusService
+	Recall           memoryservice.RecallService
+	Lifecycle        memoryservice.LifecycleService
+	Evaluation       repository.EvaluationRepository
+	Communities      repository.CommunityRepository
+	MemoryPack       skillpackservice.MemoryPackService
+	Dreams           dreamservice.Service
 }
 
 type RecallFeedbackEventRecorder interface {
@@ -54,29 +52,13 @@ var ErrToolUnavailable = errors.New("tool not available (dependency missing or n
 // BuildActive wires the PostgreSQL-authoritative production registry.
 func BuildActive(deps Dependencies) (Registry, error) {
 	r := New()
-	tools := contractTools(deps)
-	if deps.EvaluationEnabled || deps.Recall != nil {
-		tools = append(tools, evaluationTools(deps)...)
-	}
+	tools := append(contractTools(deps), evaluationTools(deps)...)
 	for _, t := range tools {
 		if err := r.Register(t); err != nil {
 			return nil, fmt.Errorf("registry: BuildActive: %w", err)
 		}
 	}
 	return r, nil
-}
-
-func evaluationTools(deps Dependencies) []Tool {
-	return []Tool{
-		evalGetManifestTool(deps),
-		evalListKnowledgeRefsTool(deps),
-		evalGetKnowledgeItemTool(deps),
-		evalListRecallFeedbackEventsTool(deps),
-		evalGetRecallFeedbackEventTool(deps),
-		evalRunDreamCycleTool(deps),
-		evalRunRecallCaseTool(deps),
-		evalScoreRetrievalCaseTool(deps),
-	}
 }
 
 // --- schema + marshaling helpers ------------------------------------------

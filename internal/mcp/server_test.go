@@ -12,6 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -23,8 +24,13 @@ func (s recallFeedbackConfigStub) RecallFeedbackRuntimeConfig(context.Context) (
 	return domain.RecallFeedbackRuntimeConfig{Enabled: s.enabled}, nil
 }
 
-func (s recallFeedbackConfigStub) EvaluationRuntimeConfig(context.Context) (domain.EvaluationRuntimeConfig, error) {
-	return domain.EvaluationRuntimeConfig{Enabled: s.enabled}, nil
+type dreamingConfigStub struct {
+	enabled bool
+	err     error
+}
+
+func (s dreamingConfigStub) EffectiveConfig(context.Context, string) (dreamservice.EffectiveConfig, error) {
+	return dreamservice.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: s.enabled}}, s.err
 }
 
 // TestServerIgnoresProfileOverride verifies that a caller cannot override the
@@ -76,7 +82,7 @@ func TestServerRejectsProfileOverrideForEvaluationTools(t *testing.T) {
 	reg := registry.New()
 	called := false
 	_ = reg.Register(registry.Tool{
-		Name:           "eval_get_manifest",
+		Name:           "eval_run_recall_case",
 		Description:    "evaluation probe",
 		InputSchema:    map[string]any{"type": "object"},
 		RequiredScopes: []string{"read", "write"},
@@ -87,7 +93,7 @@ func TestServerRejectsProfileOverrideForEvaluationTools(t *testing.T) {
 	})
 	s := NewServerWithScopesTeamContextAndRuntimeConfig(reg, "pA", []string{"read", "write"}, TeamContext{}, logger, recallFeedbackConfigStub{enabled: true})
 
-	out := runRPC(t, s, `{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"eval_get_manifest","arguments":{"profile_id":"pB"}}}`)
+	out := runRPC(t, s, `{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"eval_run_recall_case","arguments":{"profile_id":"pB"}}}`)
 	var resp rpcResp
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
 		t.Fatalf("unmarshal: %v — out=%q", err, out)

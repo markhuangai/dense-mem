@@ -16,12 +16,12 @@ func recordRecallFeedbackSnapshot(
 	input map[string]any,
 	req memoryservice.RecallRequest,
 	res *memoryservice.RecallResult,
-) {
+) bool {
 	if res == nil || res.RecallID == "" || deps.RecallFeedbackEvents == nil {
-		return
+		return false
 	}
 	if !RecallFeedbackEnabled(ctx, deps.RecallFeedbackConfig) || deps.Metrics == nil {
-		return
+		return false
 	}
 	degradation := map[string]any{}
 	if res.Degradation != nil {
@@ -44,7 +44,39 @@ func recordRecallFeedbackSnapshot(
 	})
 	if err != nil {
 		res.RecallID = ""
+		return false
 	}
+	return true
+}
+
+func setRecallSuggestedActions(res *memoryservice.RecallResult, feedbackSnapshotStored, dreamingEnabled bool) {
+	if res == nil {
+		return
+	}
+	actions := make([]memoryservice.RecallSuggestedAction, 0, 2)
+	if feedbackSnapshotStored && res.RecallID != "" {
+		actions = append(actions, memoryservice.RecallSuggestedAction{
+			Tool:          ToolSubmitRecallSessionFeedback,
+			RecallEventID: res.RecallID,
+			Guidance:      "After using this recall, report the session outcome with this recall_event_id.",
+		})
+	}
+	if dreamingEnabled && len(res.RelatedHypotheses) > 0 {
+		hypothesisIDs := make([]string, 0, len(res.RelatedHypotheses))
+		for _, hypothesis := range res.RelatedHypotheses {
+			if hypothesis.HypothesisID != "" {
+				hypothesisIDs = append(hypothesisIDs, hypothesis.HypothesisID)
+			}
+		}
+		if len(hypothesisIDs) > 0 {
+			actions = append(actions, memoryservice.RecallSuggestedAction{
+				Tool:          ToolResolveDreamFeedback,
+				HypothesisIDs: hypothesisIDs,
+				Guidance:      "Confirm true or false only with independent evidence; leave uncertain hypotheses unresolved.",
+			})
+		}
+	}
+	res.SuggestedActions = actions
 }
 
 func submitRecallFeedback(ctx context.Context, deps Dependencies, input map[string]any) (map[string]any, error) {

@@ -16,7 +16,7 @@ RUN npm run build
 # ============================================================================
 # Build stage
 # ============================================================================
-FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine AS builder-base
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -31,6 +31,8 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked go mod download
 
 COPY . .
 
+FROM builder-base AS production-builder
+
 # CGO=0 produces a static binary that runs on alpine without libc shims.
 # -trimpath strips build-host paths; -ldflags="-s -w" drops symbol + DWARF
 # tables (smaller image, no debugger support in prod).
@@ -39,10 +41,17 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
+FROM builder-base AS evaluation-builder
+
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -tags=evaluation -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
+
 # ============================================================================
-# Runtime stage
+# Shared runtime stage
 # ============================================================================
-FROM alpine:3.20
+FROM alpine:3.20 AS runtime-base
 
 ARG IMAGE_VERSION=dev
 ARG IMAGE_REVISION=unknown
@@ -65,8 +74,6 @@ RUN apk add --no-cache ca-certificates tzdata wget && \
     adduser -S -G densemem -H -s /sbin/nologin densemem
 
 WORKDIR /app
-
-COPY --from=builder /out/server  /app/server
 
 # migrator.go discovers migrations via cwd-relative walk; WORKDIR=/app plus
 # this copy satisfies Strategy 1 in getMigrationsDir().
@@ -92,3 +99,16 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30m --retries=3 \
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["/app/server"]
+
+# The evaluation image is built explicitly with --target evaluation. Its
+# additional MCP tools are absent from the production binary, not runtime-gated.
+FROM runtime-base AS evaluation
+
+LABEL org.opencontainers.image.variant="evaluation"
+COPY --from=evaluation-builder --chown=densemem:densemem /out/server /app/server
+
+# Keep production last so an unqualified docker build remains production-only.
+FROM runtime-base AS production
+
+LABEL org.opencontainers.image.variant="production"
+COPY --from=production-builder --chown=densemem:densemem /out/server /app/server

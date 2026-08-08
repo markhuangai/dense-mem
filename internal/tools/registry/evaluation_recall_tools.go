@@ -1,3 +1,5 @@
+//go:build evaluation
+
 package registry
 
 import (

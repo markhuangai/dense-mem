@@ -14,7 +14,6 @@ import (
 )
 
 func TestHTTPClientEvaluationFlow(t *testing.T) {
-	var controlPatched bool
 	var rememberCalls int
 	var statusPolls int
 	var exportCursors []string
@@ -41,19 +40,6 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			t.Fatalf("content-type = %q; want application/json", r.Header.Get("Content-Type"))
 		}
 		switch r.URL.Path {
-		case "/control/api/config/evaluation":
-			if r.Method != http.MethodPatch || r.Header.Get("Authorization") != "Bearer control-token" {
-				t.Fatalf("control request = %s %s auth %q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
-			}
-			var body map[string][]map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode control body: %v", err)
-			}
-			if len(body["items"]) != 2 || body["items"][1]["value"] != "100" {
-				t.Fatalf("control body = %#v", body)
-			}
-			controlPatched = true
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		case "tool:remember":
 			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer api-key" {
 				t.Fatalf("remember request = %s auth %q", r.Method, r.Header.Get("Authorization"))
@@ -167,16 +153,11 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	defer server.Close()
 
 	client := &HTTPClient{
-		BaseURL:      server.URL + "/",
-		APIKey:       "api-key",
-		ControlURL:   server.URL + "/",
-		ControlToken: "control-token",
-		Client:       server.Client(),
+		BaseURL: server.URL + "/",
+		APIKey:  "api-key",
+		Client:  server.Client(),
 	}
 
-	if err := client.EnableEvaluationMode(context.Background(), 0); err != nil {
-		t.Fatalf("EnableEvaluationMode: %v", err)
-	}
 	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{
 		SourceDocID:   "doc-alpha",
 		Title:         "Alpha",
@@ -215,9 +196,6 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	}
 	if len(trace.RankedRefs) != 1 || trace.RankedRefs[0].ID != "fragment-alpha" || len(trace.ContextRefs) != 1 || len(trace.ContextEvidenceRefs) != 1 {
 		t.Fatalf("trace refs = %+v/%+v/%+v", trace.RankedRefs, trace.ContextRefs, trace.ContextEvidenceRefs)
-	}
-	if !controlPatched {
-		t.Fatal("control config was not patched")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -26,7 +27,8 @@ var (
 
 type LifecycleService interface {
 	ResolveMemoryPlacement(ctx context.Context, req ResolveMemoryPlacementRequest) (*ResolveMemoryPlacementResult, error)
-	CorrectEntityResolution(ctx context.Context, req CorrectEntityResolutionRequest) (*CorrectEntityResolutionResult, error)
+	CorrectRelationship(ctx context.Context, req CorrectRelationshipRequest) (*CorrectRelationshipReceipt, error)
+	GetRelationshipCorrectionStatus(ctx context.Context, req GetSubmissionStatusRequest) (*SubmissionStatusResult, error)
 	RetractEvidence(ctx context.Context, req RetractEvidenceRequest) (*RetractEvidenceResult, error)
 }
 
@@ -40,7 +42,8 @@ type LifecycleDependencies struct {
 
 type LifecycleSemanticRepository interface {
 	RetractRelationship(ctx context.Context, input repository.RetractRelationshipInput) (*repository.RelationshipTransitionResult, error)
-	CorrectEntityResolution(ctx context.Context, input repository.CorrectEntityResolutionInput) (*repository.CorrectEntityResolutionResult, error)
+	CorrectRelationship(ctx context.Context, input repository.CorrectRelationshipInput) (*repository.CorrectRelationshipResult, error)
+	GetRelationshipCorrection(ctx context.Context, input repository.GetRelationshipCorrectionInput) (*repository.RelationshipCorrectionStatus, error)
 }
 
 type LifecyclePlacementRepository interface {
@@ -92,26 +95,27 @@ type ResolveMemoryPlacementResult struct {
 	CheckAfterSeconds int    `json:"check_after_seconds,omitempty"`
 }
 
-type CorrectEntityResolutionRequest struct {
-	ContractVersion     string                        `json:"contract_version"`
-	Operation           domain.EntityCorrectionAction `json:"operation"`
-	SourceEntityID      string                        `json:"source_entity_id"`
-	TargetEntityID      string                        `json:"target_entity_id,omitempty"`
-	OwnedObservationIDs []string                      `json:"owned_observation_ids,omitempty"`
-	DryRun              bool                          `json:"dry_run"`
-	ImpactToken         string                        `json:"impact_token,omitempty"`
-	Evidence            []RememberEvidenceInput       `json:"evidence,omitempty"`
-	IdempotencyKey      string                        `json:"idempotency_key,omitempty"`
+type CorrectRelationshipRequest struct {
+	ContractVersion   string                                     `json:"contract_version"`
+	Action            string                                     `json:"action"`
+	RelationshipID    string                                     `json:"relationship_id,omitempty"`
+	ExpectedVersion   int                                        `json:"expected_version,omitempty"`
+	Patch             repository.RelationshipCorrectionPatch     `json:"patch,omitempty"`
+	Supports          []repository.RelationshipCorrectionSupport `json:"supports,omitempty"`
+	Reason            string                                     `json:"reason,omitempty"`
+	SubmissionID      string                                     `json:"submission_id,omitempty"`
+	ConfirmationToken string                                     `json:"confirmation_token,omitempty"`
+	Selection         repository.RelationshipCorrectionSelection `json:"selection,omitempty"`
+	IdempotencyKey    string                                     `json:"idempotency_key"`
 }
 
-type CorrectEntityResolutionResult struct {
-	DryRun                          bool             `json:"dry_run"`
-	ImpactToken                     string           `json:"impact_token,omitempty"`
-	SelectedObservationIDs          []string         `json:"selected_observation_ids"`
-	BlockedObservationIDs           []string         `json:"blocked_observation_ids"`
-	RelationshipChanges             []map[string]any `json:"relationship_changes"`
-	EntityCandidates                []map[string]any `json:"entity_candidates"`
-	UnchangedCrossProfileReferences []map[string]any `json:"unchanged_cross_profile_references"`
+type CorrectRelationshipReceipt struct {
+	SubmissionID      string `json:"submission_id"`
+	SubmissionKind    string `json:"submission_kind"`
+	ProcessingState   string `json:"processing_state"`
+	CheckAfterSeconds int    `json:"check_after_seconds"`
+	StatusTool        string `json:"status_tool"`
+	CorrelationID     string `json:"correlation_id"`
 }
 
 type RetractEvidenceRequest struct {
@@ -244,10 +248,10 @@ func (s *lifecycleService) forgetRelationship(
 	}, nil
 }
 
-func (s *lifecycleService) CorrectEntityResolution(
+func (s *lifecycleService) CorrectRelationship(
 	ctx context.Context,
-	req CorrectEntityResolutionRequest,
-) (*CorrectEntityResolutionResult, error) {
+	req CorrectRelationshipRequest,
+) (*CorrectRelationshipReceipt, error) {
 	if s.semantic == nil {
 		return nil, errors.New("memory lifecycle: semantic repository is required")
 	}
@@ -258,33 +262,94 @@ func (s *lifecycleService) CorrectEntityResolution(
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
 		return nil, ErrLifecycleAuthContext
 	}
-	if err := s.rejectUnsafeLifecycleEvidence(ctx, actor, "correct_entity_resolution", req.Evidence); err != nil {
-		return nil, err
-	}
-	result, err := s.semantic.CorrectEntityResolution(ctx, repository.CorrectEntityResolutionInput{
-		TeamID:                 actor.TeamID.String(),
-		OwnerProfileID:         actor.ProfileID.String(),
-		Action:                 string(req.Operation),
-		SourceEntityID:         req.SourceEntityID,
-		TargetEntityID:         req.TargetEntityID,
-		SelectedObservationIDs: req.OwnedObservationIDs,
-		DryRun:                 req.DryRun,
-		PlanToken:              req.ImpactToken,
-		Evidence:               correctionEvidenceFromRequest(req.Evidence),
-		IdempotencyKey:         req.IdempotencyKey,
+	result, err := s.semantic.CorrectRelationship(ctx, repository.CorrectRelationshipInput{
+		TeamID:            actor.TeamID.String(),
+		OwnerProfileID:    actor.ProfileID.String(),
+		Action:            req.Action,
+		RelationshipID:    req.RelationshipID,
+		ExpectedVersion:   req.ExpectedVersion,
+		Patch:             req.Patch,
+		Supports:          req.Supports,
+		Reason:            req.Reason,
+		SubmissionID:      req.SubmissionID,
+		ConfirmationToken: req.ConfirmationToken,
+		Selection:         req.Selection,
+		IdempotencyKey:    req.IdempotencyKey,
 	})
 	if err != nil {
-		return nil, err
+		return nil, translateRelationshipCorrectionError(err)
 	}
-	return &CorrectEntityResolutionResult{
-		DryRun:                          result.DryRun,
-		ImpactToken:                     result.PlanToken,
-		SelectedObservationIDs:          result.SelectedObservationIDs,
-		BlockedObservationIDs:           result.BlockedObservationIDs,
-		RelationshipChanges:             []map[string]any{},
-		EntityCandidates:                []map[string]any{},
-		UnchangedCrossProfileReferences: []map[string]any{},
+	return &CorrectRelationshipReceipt{
+		SubmissionID:      result.SubmissionID,
+		SubmissionKind:    "relationship_correction",
+		ProcessingState:   result.ProcessingState,
+		CheckAfterSeconds: 0,
+		StatusTool:        rememberStatusTool,
+		CorrelationID:     correlation.FromContext(ctx),
 	}, nil
+}
+
+func (s *lifecycleService) GetRelationshipCorrectionStatus(
+	ctx context.Context,
+	req GetSubmissionStatusRequest,
+) (*SubmissionStatusResult, error) {
+	if s.semantic == nil {
+		return nil, errors.New("submission status: semantic repository is required")
+	}
+	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
+		return nil, fmt.Errorf("submission status: invalid contract_version %q", req.ContractVersion)
+	}
+	actor, ok := requestctx.ActorProfileFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+		return nil, ErrLifecycleAuthContext
+	}
+	submissionID := strings.TrimSpace(req.SubmissionID)
+	if _, err := uuid.Parse(submissionID); err != nil {
+		return nil, httperr.New(httperr.NOT_FOUND, "submission not found")
+	}
+	result, err := s.semantic.GetRelationshipCorrection(ctx, repository.GetRelationshipCorrectionInput{
+		TeamID: actor.TeamID.String(), OwnerProfileID: actor.ProfileID.String(), SubmissionID: submissionID,
+	})
+	if err != nil {
+		return nil, translateRelationshipCorrectionError(err)
+	}
+	return relationshipCorrectionSubmissionStatus(result), nil
+}
+
+func translateRelationshipCorrectionError(err error) error {
+	if errors.Is(err, repository.ErrSemanticOwnerMismatch) || errors.Is(err, repository.ErrRelationshipCorrectionNotFound) {
+		return httperr.New(httperr.NOT_FOUND, "submission not found")
+	}
+	if errors.Is(err, repository.ErrSemanticIdempotencyConflict) ||
+		errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) ||
+		errors.Is(err, repository.ErrRelationshipCorrectionConfirmationExpired) {
+		return httperr.New(httperr.CONFLICT, "relationship correction conflict")
+	}
+	return err
+}
+
+func relationshipCorrectionSubmissionStatus(result *repository.RelationshipCorrectionStatus) *SubmissionStatusResult {
+	status := &SubmissionStatusResult{
+		SubmissionKind: "relationship_correction", SearchState: string(domain.SearchProjectionNotRequired),
+		CheckAfterSeconds: 0, Evidence: []SubmissionEvidenceStatus{}, Errors: []SubmissionStatusError{},
+	}
+	if result == nil {
+		return status
+	}
+	status.SubmissionID = result.SubmissionID
+	status.ProcessingState = result.ProcessingState
+	if result.Confirmation != nil {
+		status.AwaitingConfirmation = &SubmissionAwaitingConfirmation{
+			ConfirmationToken: result.Confirmation.Token,
+			ExpiresAt:         result.Confirmation.ExpiresAt,
+			Candidates:        append([]repository.RelationshipCorrectionCandidate(nil), result.Confirmation.Candidates...),
+		}
+	}
+	status.CorrectionResult = result.Correction
+	if result.ErrorCode != "" {
+		status.Errors = append(status.Errors, SubmissionStatusError{Code: result.ErrorCode, Message: result.ErrorMessage})
+	}
+	return status
 }
 
 func (s *lifecycleService) RetractEvidence(
@@ -356,23 +421,6 @@ func translateEvidenceLifecycleError(err error) error {
 	}
 }
 
-func correctionEvidenceFromRequest(evidence []RememberEvidenceInput) []repository.CorrectionEvidenceInput {
-	if len(evidence) == 0 {
-		return nil
-	}
-	out := make([]repository.CorrectionEvidenceInput, 0, len(evidence))
-	for _, item := range evidence {
-		out = append(out, repository.CorrectionEvidenceInput{
-			Content:     item.Content,
-			SourceType:  item.SourceType,
-			Authority:   item.Authority,
-			SourceGroup: correctionEvidenceSourceGroup(item),
-			Metadata:    item.Metadata,
-		})
-	}
-	return out
-}
-
 func (s *lifecycleService) rejectUnsafeLifecycleEvidence(
 	ctx context.Context,
 	actor requestctx.ActorProfile,
@@ -394,16 +442,6 @@ func (s *lifecycleService) rejectUnsafeLifecycleEvidence(
 		return ErrLifecyclePersistence
 	}
 	return err
-}
-
-func correctionEvidenceSourceGroup(item RememberEvidenceInput) string {
-	if value := strings.TrimSpace(item.SourceGroup); value != "" {
-		return value
-	}
-	if value := strings.TrimSpace(item.SourceKey); value != "" {
-		return value
-	}
-	return strings.TrimSpace(item.Source)
 }
 
 func lifecycleEvidenceFromRequest(evidence []RememberEvidenceInput) []repository.EvidenceInput {

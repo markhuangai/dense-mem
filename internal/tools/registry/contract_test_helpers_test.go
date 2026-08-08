@@ -59,6 +59,7 @@ func (s *stubRememberService) Remember(_ context.Context, req memoryservice.Reme
 	return &memoryservice.RememberResult{
 		IngestID:          "ingest-canonical",
 		SubmissionID:      "ingest-canonical",
+		SubmissionKind:    "remember",
 		ProcessingState:   string(domain.PlacementRunQueued),
 		CheckAfterSeconds: 60,
 		StatusTool:        ToolGetSubmissionStatus,
@@ -73,6 +74,7 @@ func (s *stubRememberService) GetSubmissionStatus(
 	s.statusReq = req
 	return &memoryservice.SubmissionStatusResult{
 		SubmissionID:      req.SubmissionID,
+		SubmissionKind:    "remember",
 		ProcessingState:   string(domain.PlacementRunCompleted),
 		SearchState:       string(domain.SearchProjectionCurrent),
 		CheckAfterSeconds: 60,
@@ -87,11 +89,15 @@ func (s *stubRememberService) GetSubmissionStatus(
 }
 
 type stubRecallService struct {
-	req memoryservice.RecallRequest
+	req    memoryservice.RecallRequest
+	result *memoryservice.RecallResult
 }
 
 func (s *stubRecallService) Recall(_ context.Context, req memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
 	s.req = req
+	if s.result != nil {
+		return s.result, nil
+	}
 	return &memoryservice.RecallResult{
 		RecallID: "rec-canonical",
 		Results: []memoryservice.RecallResultItem{{

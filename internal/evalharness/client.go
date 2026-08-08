@@ -18,8 +18,6 @@ import (
 type HTTPClient struct {
 	BaseURL          string
 	APIKey           string
-	ControlURL       string
-	ControlToken     string
 	PlacementTimeout time.Duration
 	Client           *http.Client
 }
@@ -38,20 +36,6 @@ type DreamCycleSeed struct {
 
 func (e *HTTPStatusError) Error() string {
 	return fmt.Sprintf("%s %s returned %d: %s", e.Method, e.URL, e.StatusCode, e.Body)
-}
-
-func (c *HTTPClient) EnableEvaluationMode(ctx context.Context, maxPageSize int) error {
-	if strings.TrimSpace(c.ControlURL) == "" || strings.TrimSpace(c.ControlToken) == "" {
-		return nil
-	}
-	if maxPageSize <= 0 {
-		maxPageSize = 100
-	}
-	body := map[string]any{"items": []map[string]string{
-		{"key": "EVALUATION_MODE_ENABLED", "value": "true"},
-		{"key": "EVALUATION_EXPORT_MAX_PAGE_SIZE", "value": fmt.Sprintf("%d", maxPageSize)},
-	}}
-	return c.doJSON(ctx, http.MethodPatch, endpoint(c.ControlURL, "/control/api/config/evaluation"), c.ControlToken, body, nil)
 }
 
 func (c *HTTPClient) CallTool(ctx context.Context, name string, input any, out any) error {
