@@ -70,7 +70,11 @@ type RelationshipConflictEvaluation struct {
 func EvaluateRelationshipConflict(input RelationshipConflictEvaluationInput) RelationshipConflictEvaluation {
 	positions := normalizedConflictPolicyPositions(input.Positions)
 	if len(positions) < 2 {
-		return RelationshipConflictEvaluation{Outcome: ConflictReviewOutcomeNoop, Reason: ConflictReviewReasonFewerThanTwoPositions}
+		return RelationshipConflictEvaluation{
+			Outcome: ConflictReviewOutcomeNoop,
+			Stage:   ConflictReviewStageWaitingForReviewDue,
+			Reason:  ConflictReviewReasonFewerThanTwoPositions,
+		}
 	}
 	totalSupporters := 0
 	for _, position := range positions {
@@ -100,8 +104,7 @@ func EvaluateRelationshipConflict(input RelationshipConflictEvaluationInput) Rel
 	})
 	top := positions[0]
 	if !input.Now.Before(input.ReviewDueAt) {
-		topShare := float64(top.SupporterCount) / float64(totalSupporters)
-		if topShare > 0.5 {
+		if top.SupporterCount > totalSupporters-top.SupporterCount {
 			return RelationshipConflictEvaluation{
 				Outcome:             ConflictReviewOutcomeResolve,
 				Stage:               ConflictReviewStageDueMajority,

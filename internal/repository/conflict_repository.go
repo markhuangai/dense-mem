@@ -295,7 +295,9 @@ func loadRelationshipConflictPlacement(
 			       support.support_id,
 			       support.verification_event_id,
 			       support.fragment_id,
-			       support.accepted_at,
+			       MAX(support.accepted_at) OVER (
+			           PARTITION BY support.relationship_id, support.source_group_key
+			       ) AS accepted_at,
 			       support.source_group_key,
 			       support.authority
 			FROM effective_supports AS support

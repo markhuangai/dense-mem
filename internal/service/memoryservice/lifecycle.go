@@ -390,9 +390,10 @@ func retractEvidenceRequestHash(req RetractEvidenceRequest) (string, error) {
 	}
 	sort.Strings(evidenceIDs)
 	payload, err := json.Marshal(map[string]any{
-		"evidence_ids":    evidenceIDs,
-		"reason":          strings.TrimSpace(req.Reason),
-		"idempotency_key": strings.TrimSpace(req.IdempotencyKey),
+		"contract_version": legacyRequestHashContractVersion,
+		"evidence_ids":     evidenceIDs,
+		"reason":           strings.TrimSpace(req.Reason),
+		"idempotency_key":  strings.TrimSpace(req.IdempotencyKey),
 	})
 	if err != nil {
 		return "", fmt.Errorf("memory lifecycle: canonical retract request hash: %w", err)

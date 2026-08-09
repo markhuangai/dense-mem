@@ -29,7 +29,6 @@ const relationshipConflictSupporterRowsSQL = `
 		 AND position.position_id = member.position_id
 		WHERE member.team_id = ?::uuid
 		  AND member.conflict_id = ANY(?::uuid[])
-		  AND (cardinality(?::uuid[]) = 0 OR member.position_id = ANY(?::uuid[]))
 		  AND (
 		      (?::timestamptz IS NULL AND member.active)
 		      OR (
@@ -148,7 +147,8 @@ const relationshipConflictSupporterRowsSQL = `
 	       fragment_id::text,
 	       accepted_at
 	FROM ranked_supporters
-	WHERE supporter_rank <= ?
+	WHERE (cardinality(?::uuid[]) = 0 OR position_id = ANY(?::uuid[]))
+	  AND supporter_rank <= ?
 	ORDER BY conflict_id, position_id, supporter_rank`
 
 func loadRelationshipConflictSupporters(
@@ -224,11 +224,11 @@ func relationshipConflictSupporterRowsArgsWithLimit(teamID string, conflictIDs, 
 	return []any{
 		teamID,
 		pq.Array(conflictIDs),
-		pq.Array(positionIDs),
-		pq.Array(positionIDs),
 		knownAt, knownAt, knownAt, knownAt,
 		knownAt, knownAt, knownAt, knownAt,
 		teamID,
+		pq.Array(positionIDs),
+		pq.Array(positionIDs),
 		supporterLimit,
 	}
 }

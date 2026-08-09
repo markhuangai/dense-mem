@@ -103,6 +103,17 @@ func TestPrepareConflictAssessmentRequestRejectsInvalidPositionAndEvidenceFields
 	assert.Contains(t, summary, "evidence[1].content")
 }
 
+func TestPrepareConflictAssessmentRequestRejectsMissingSupporterRef(t *testing.T) {
+	request := conflictAssessmentTestRequest(t)
+	request.Evidence[0].SupporterRef = "  "
+
+	_, errs := PrepareConflictAssessmentRequest(request, DefaultSemanticAssessmentLimits())
+	require.NotEmpty(t, errs)
+	summary := openAIValidationSummary(errs)
+	assert.Contains(t, summary, "evidence[0]")
+	assert.Contains(t, summary, "supporter_ref")
+}
+
 func TestConflictAssessmentResponseValidationRejectsInvalidDecisionShapes(t *testing.T) {
 	request := conflictAssessmentTestRequest(t)
 	position := "position-a"

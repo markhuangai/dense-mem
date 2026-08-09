@@ -56,6 +56,25 @@ func TestEvaluateRelationshipConflictDoesNotResolveTieAfterTTL(t *testing.T) {
 	}
 }
 
+func TestEvaluateRelationshipConflictPluralityWithoutMajorityStaysOverdue(t *testing.T) {
+	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
+	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
+		Now:         now,
+		ReviewDueAt: now,
+		Positions: []RelationshipConflictPositionRecord{
+			{PositionID: "pos-a", SupporterCount: 3},
+			{PositionID: "pos-b", SupporterCount: 2},
+			{PositionID: "pos-c", SupporterCount: 2},
+		},
+	})
+
+	if evaluation.Outcome != ConflictReviewOutcomeOverdue ||
+		evaluation.Stage != ConflictReviewStageDueNoWinner ||
+		evaluation.PreferredPositionID != "" {
+		t.Fatalf("evaluation = %+v, want overdue without winner", evaluation)
+	}
+}
+
 func TestEvaluateRelationshipConflictAuthorityDoesNotVetoSupporterMajority(t *testing.T) {
 	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
 	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
@@ -103,7 +122,9 @@ func TestEvaluateRelationshipConflictIgnoresInvalidPositions(t *testing.T) {
 		},
 	})
 
-	if evaluation.Outcome != ConflictReviewOutcomeNoop || evaluation.Reason != ConflictReviewReasonFewerThanTwoPositions {
+	if evaluation.Outcome != ConflictReviewOutcomeNoop ||
+		evaluation.Stage != ConflictReviewStageWaitingForReviewDue ||
+		evaluation.Reason != ConflictReviewReasonFewerThanTwoPositions {
 		t.Fatalf("evaluation = %+v", evaluation)
 	}
 }

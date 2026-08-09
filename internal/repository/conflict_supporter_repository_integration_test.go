@@ -192,6 +192,18 @@ func TestRelationshipConflictSupporterProjectionUsesOneLatestPositionPerProfile(
 	assert.NotContains(t, supporterIDs(positionA.Supporters), ownerC)
 	assert.Contains(t, supporterIDs(positionB.Supporters), ownerC)
 
+	// A bounded caller may request only position A. Hidden positions must still
+	// participate in the per-profile latest-position vote calculation.
+	requested := []RelationshipConflictPositionRecord{{
+		ConflictID: conflictID,
+		PositionID: positionA.PositionID,
+	}}
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return loadRelationshipConflictSupporters(ctx, tx, teamID, []string{conflictID}, nil, requested, relationshipConflictSupporterLimit)
+	}))
+	assert.Equal(t, 1, requested[0].SupporterCount)
+	assert.NotContains(t, supporterIDs(requested[0].Supporters), ownerC)
+
 	// Equal newest timestamps across positions abstain the profile instead of
 	// selecting a position by UUID or source-group identity.
 	tieAt := time.Date(2026, 8, 9, 0, 0, 2, 0, time.UTC)
@@ -212,6 +224,77 @@ func TestRelationshipConflictSupporterProjectionUsesOneLatestPositionPerProfile(
 	assert.Equal(t, 1, positionB.SupporterCount)
 	assert.NotContains(t, supporterIDs(positionA.Supporters), ownerC)
 	assert.NotContains(t, supporterIDs(positionB.Supporters), ownerC)
+
+	requested = []RelationshipConflictPositionRecord{{
+		ConflictID: conflictID,
+		PositionID: positionA.PositionID,
+	}}
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return loadRelationshipConflictSupporters(ctx, tx, teamID, []string{conflictID}, nil, requested, relationshipConflictSupporterLimit)
+	}))
+	assert.Equal(t, 1, requested[0].SupporterCount)
+	assert.NotContains(t, supporterIDs(requested[0].Supporters), ownerC)
+}
+
+func TestRelationshipConflictPlacementPreservesNewestSupportTimestampForGroupRepresentative(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "conflict-supporter-timestamp", 3, "exact", "")
+
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-supporter-timestamp-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "Timestamp A")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "Timestamp B")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Timestamp project")
+	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "Timestamp PostgreSQL")
+	graphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "Timestamp GraphDB")
+
+	content := "Dense-Mem uses PostgreSQL. Dense-Mem uses PostgreSQL."
+	quote := "Dense-Mem uses PostgreSQL."
+	secondStart := strings.LastIndex(content, quote)
+	preferred := commitPlacementRelationshipForConflictTestWithOptions(
+		t, ctx, ledgerRepo, teamID, ownerA, "worker-supporter-timestamp-a",
+		"supporter-timestamp-a", content, subject.EntityID, postgres.EntityID, "same-source",
+		conflictTestRelationshipOptions{
+			authority: "secondary",
+			additionalSupports: []conflictTestAdditionalSupport{{
+				sourceGroupKey: "same-source",
+				spanStart:      secondStart,
+				spanEnd:        secondStart + len(quote),
+				quote:          quote,
+				authority:      "inferred",
+			}},
+		},
+	)
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerB, "worker-supporter-timestamp-b",
+		"supporter-timestamp-b", "Dense-Mem uses GraphDB.", subject.EntityID, graphdb.EntityID, "other-source",
+	)
+	conflictID, _ := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+
+	var representativeAcceptedAt, newestSupportCreatedAt time.Time
+	var representativeAuthority string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT member.accepted_at,
+			       member.authority,
+			       max(support.created_at)
+			FROM relationship_conflict_position_members AS member
+			JOIN relationship_evidence_supports AS support
+			  ON support.team_id = member.team_id
+			 AND support.support_id = member.support_id
+			WHERE member.team_id = ?::uuid
+			  AND member.conflict_id = ?::uuid
+			  AND member.relationship_id = ?::uuid
+			  AND member.source_group_key = 'same-source'
+			GROUP BY member.accepted_at, member.authority
+		`, teamID, conflictID, preferred.RelationshipResults[0].Relationship.RelationshipID).
+			Row().Scan(&representativeAcceptedAt, &representativeAuthority, &newestSupportCreatedAt)
+	}))
+	assert.Equal(t, "secondary", representativeAuthority)
+	assert.WithinDuration(t, newestSupportCreatedAt, representativeAcceptedAt, time.Microsecond)
 }
 
 func supporterIDs(supporters []RelationshipConflictSupporterRecord) []string {

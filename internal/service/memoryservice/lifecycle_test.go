@@ -248,6 +248,16 @@ func TestRetractEvidenceRequestHashCanonicalizesEvidenceIDs(t *testing.T) {
 	require.Equal(t, first, second)
 }
 
+func TestRetractEvidenceRequestHashRetainsLegacyContractMarker(t *testing.T) {
+	hash, err := retractEvidenceRequestHash(RetractEvidenceRequest{
+		EvidenceIDs:    []string{"b", "a"},
+		Reason:         "entered in error",
+		IdempotencyKey: "retract-compat",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "sha256:72fbf75d4468d6232c78c592ea5331bd639dbe29aefb2926cf4f8776ce098ceb", hash)
+}
+
 func TestLifecycleRetractEvidenceValidatesDependenciesAndMapsRepositoryErrors(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
 	req := RetractEvidenceRequest{

@@ -122,6 +122,15 @@ func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T)
 	require.Equal(t, "corr-canonical", actor["correlation_id"])
 }
 
+func TestCanonicalRequestHashRetainsLegacyContractMarker(t *testing.T) {
+	hash, err := canonicalRequestHash(RememberRequest{
+		Evidence:       []RememberEvidenceInput{{Content: "compat"}},
+		IdempotencyKey: "compat-key",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "sha256:b4829467152fc5627c23b1236ff33cd558ba66a1d02ad315adb77f440a633ce0", hash)
+}
+
 func TestRememberReplayMapsInternalStatesToPublicProcessingStates(t *testing.T) {
 	teamID, profileID, keyID := uuid.New(), uuid.New(), uuid.New()
 	for status, want := range map[string]string{

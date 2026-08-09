@@ -276,13 +276,15 @@ func loadConflictQueuePageRecords(ctx context.Context, tx *gorm.DB, query domain
 		       version, attempts, created_at, updated_at,
 		       lease_until,
 		       COALESCE((
-			   SELECT attempt.failure_class
+			   SELECT CASE
+			              WHEN attempt.status = 'failed' THEN NULLIF(btrim(attempt.failure_class), '')
+			              ELSE ''
+			          END
 			   FROM relationship_conflict_ai_assessment_attempts AS attempt
 			   WHERE attempt.team_id = relationship_conflict_cases.team_id
 			     AND attempt.conflict_id = relationship_conflict_cases.conflict_id
 			     AND attempt.case_version = relationship_conflict_cases.version
-			     AND attempt.status = 'failed'
-			     AND NULLIF(btrim(attempt.failure_class), '') IS NOT NULL
+			     AND attempt.status IN ('selected', 'abstained', 'failed', 'superseded')
 			   ORDER BY COALESCE(attempt.completed_at, attempt.created_at) DESC, attempt.assessment_attempt_id DESC
 			   LIMIT 1
 		       ), '')

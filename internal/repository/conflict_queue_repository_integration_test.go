@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -53,6 +54,49 @@ func TestConflictQueueRepositoryIsTeamScopedAndKeysetOrdered(t *testing.T) {
 			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
 		`, now.Add(time.Hour), now.Add(time.Hour), now.Add(-time.Minute), teamA, conflictA2).Error
 	}))
+	var conflictVersion int
+	var conflictPositionID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT version
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, teamA, conflictA).Row().Scan(&conflictVersion); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT position_id::text
+			FROM relationship_conflict_positions
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+			ORDER BY position_id
+		LIMIT 1
+		`, teamA, conflictA).Row().Scan(&conflictPositionID)
+	}))
+	olderAttemptID := uuid.NewString()
+	newerAttemptID := uuid.NewString()
+	olderCompletedAt := now.Add(-2 * time.Minute)
+	newerCompletedAt := now.Add(-time.Minute)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO relationship_conflict_ai_assessment_attempts (
+				team_id, assessment_attempt_id, conflict_id, case_version,
+				local_assessment_date, model, policy_version, status,
+				failure_class, created_at, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, CURRENT_DATE - 1,
+			          'queue-model-old', 'queue-policy', 'failed', 'provider_unavailable', $5, $5)
+		`, teamA, olderAttemptID, conflictA, conflictVersion, olderCompletedAt).Error; err != nil {
+			return err
+		}
+		err := tx.Exec(`
+			INSERT INTO relationship_conflict_ai_assessment_attempts (
+				team_id, assessment_attempt_id, conflict_id, case_version,
+				local_assessment_date, model, policy_version, status,
+				selected_position_id, confidence, created_at, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, CURRENT_DATE,
+			          'queue-model-new', 'queue-policy', 'selected', $5::uuid, 0.9, $6, $6)
+		`, teamA, newerAttemptID, conflictA, conflictVersion, conflictPositionID, newerCompletedAt).Error
+		return err
+	}))
 
 	page, err := ledger.ListConflictQueue(ctx, domainConflictQueueQuery(teamA, "", 1))
 	require.NoError(t, err)
@@ -62,6 +106,7 @@ func TestConflictQueueRepositoryIsTeamScopedAndKeysetOrdered(t *testing.T) {
 	require.Equal(t, 1, page.Summary.ExpiredLeaseCount)
 	require.Len(t, page.Items, 1)
 	require.Equal(t, conflictA, page.Items[0].ConflictID)
+	require.Equal(t, "none", page.Items[0].LastFailureClass)
 	require.Equal(t, "active", page.Items[0].LeaseState)
 	require.NotEmpty(t, page.Items[0].Positions)
 	require.LessOrEqual(t, len(page.Items[0].Positions), domain.ConflictQueueMaxPositions)

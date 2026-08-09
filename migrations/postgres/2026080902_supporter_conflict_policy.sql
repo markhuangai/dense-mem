@@ -17,7 +17,7 @@ ALTER TABLE relationship_conflict_events
         'resolved', 'relationship_updated', 'dismissed', 'ai_assessment_reserved',
         'ai_assessed', 'resolution_pending', 'evidence_retracted',
         'derived_replacement_staged', 'derived_replacement_failed', 'policy_migrated'
-    ));
+    )) NOT VALID;
 
 CREATE TEMP TABLE conflict_policy_migration_cases ON COMMIT DROP AS
 SELECT team_id,
@@ -77,8 +77,8 @@ SET status = 'failed',
     lease_until = NULL,
     completed_at = COALESCE(completed_at, clock_timestamp()),
     updated_at = clock_timestamp()
-WHERE policy_version = 'cross_profile_conflict_v1'
-  AND status IN ('reserved', 'running');
+WHERE status IN ('reserved', 'running')
+  AND policy_version <> 'cross_profile_supporter_majority_after_ttl';
 
 UPDATE relationship_conflict_cases AS conflict
 SET policy_version = 'cross_profile_supporter_majority_after_ttl',
@@ -134,11 +134,9 @@ SELECT migration.team_id,
 FROM conflict_policy_migration_attempts AS migration
 ON CONFLICT (team_id, idempotency_key) WHERE idempotency_key <> '' DO NOTHING;
 
--- These columns only represented the old conflict resolver's derived group
--- counters. Source-group keys remain on members for lineage and identity.
-ALTER TABLE relationship_conflict_positions
-    DROP COLUMN IF EXISTS support_group_count,
-    DROP COLUMN IF EXISTS authoritative_group_count;
+-- The legacy counters remain during this expand/contract release so older
+-- replicas can continue selecting and writing the compatibility columns.
+-- Source-group keys remain on members for lineage and identity.
 
 -- +goose StatementEnd
 

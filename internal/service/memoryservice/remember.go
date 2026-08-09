@@ -75,6 +75,9 @@ type GetSubmissionStatusRequest struct {
 	SubmissionID string `json:"submission_id"`
 }
 
+// Keep the marker used by persisted pre-v2.4 idempotency hashes during replay.
+const legacyRequestHashContractVersion = "dense-mem.v2.4"
+
 type RememberEvidenceInput struct {
 	Content                string         `json:"content"`
 	SourceType             string         `json:"source_type,omitempty"`
@@ -464,6 +467,7 @@ func sourceRevisionBatchHash(contents []string) string {
 
 func canonicalRequestHash(req RememberRequest) (string, error) {
 	payload := map[string]any{
+		"contract_version":       legacyRequestHashContractVersion,
 		"evidence":               req.Evidence,
 		"entity_hints":           req.EntityHints,
 		"relationship_hints":     req.RelationshipHints,

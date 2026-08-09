@@ -627,8 +627,12 @@ func loadOverdueConflictAssessmentDossier(
 	if err := loadRelationshipConflictSupporters(ctx, tx, teamID, []string{conflictID}, nil, projection, relationshipConflictSupporterLimit); err != nil {
 		return nil, err
 	}
+	supporterCounts := make(map[string]int, len(projection))
+	for _, position := range projection {
+		supporterCounts[position.PositionID] = position.SupporterCount
+	}
 	for index := range dossier.Positions {
-		dossier.Positions[index].SupporterCount = projection[index].SupporterCount
+		dossier.Positions[index].SupporterCount = supporterCounts[dossier.Positions[index].PositionID]
 	}
 
 	evidenceRows, err := tx.WithContext(ctx).Raw(`
