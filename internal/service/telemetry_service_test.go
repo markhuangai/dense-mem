@@ -324,6 +324,11 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 		require.NotContains(t, activityIDs, retiredID)
 	}
 	require.Empty(t, telemetryCurrentCardSpecs(TelemetryScope{}, nil))
+	operatorCards := telemetryCurrentCardSpecsForAudience(TelemetryScope{Type: "system"}, nil, true)
+	require.Len(t, operatorCards, 1)
+	require.Equal(t, "conflict_queue_collection_success", operatorCards[0].ID)
+	require.Contains(t, operatorCards[0].Query, "min(densemem_conflict_queue_collection_success")
+	require.Empty(t, telemetryCurrentCardSpecsForAudience(TelemetryScope{Type: "system"}, nil, false))
 	require.Empty(t, telemetryStateSeriesSpecs(""))
 
 	scope, err = normalizeTelemetryScope(TelemetryFilter{Scope: "self", TeamID: &teamID, ProfileID: &profileID})

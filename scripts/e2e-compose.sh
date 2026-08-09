@@ -627,6 +627,7 @@ run_compose_playwright_tests() {
       "remembered API-key login uses a seven-day server session"
     )
   elif [[ "${1:-}" == "community" ]]; then test_args=("tests-compose/community-recall.spec.ts");
+  elif [[ "${1:-}" == "conflict_queue" ]]; then test_args=("tests-compose/compose-conflict-queue.spec.ts");
   fi
   image="${DENSE_MEM_E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.62.1-noble}"
   E2E_PLAYWRIGHT_CONTAINER="densemem-e2e-${E2E_FILE_ID}-playwright"
@@ -701,14 +702,12 @@ if [[ ! -f "$COMPOSE_SOURCE_FILE" ]]; then
   exit 1
 fi
 COMPOSE_SOURCE_DIR="$(cd "$(dirname "$COMPOSE_SOURCE_FILE")" && pwd)"
-
 if [[ "$E2E_MODE" != "standard" && "$E2E_MODE" != "entra_scim" ]]; then
   echo "DENSE_MEM_E2E_MODE must be standard or entra_scim." >&2
   exit 1
 fi
-
-if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "all" ]]; then
-  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, submission_status, security_intake, submission_assessment, semantic_holds, community, conflict, or all." >&2
+if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && "$E2E_SCENARIO" != "all" ]]; then
+  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, submission_status, security_intake, submission_assessment, semantic_holds, community, conflict, conflict_queue, or all." >&2
   exit 1
 fi
 
@@ -722,7 +721,7 @@ if [[ "$E2E_SCENARIO" == "all" ]]; then
     echo "DENSE_MEM_E2E_SCENARIO=all requires DENSE_MEM_E2E_MODE=standard." >&2
     exit 1
   fi
-  for scenario in mcp_boundaries submission_status security_intake submission_assessment semantic_holds community conflict full; do
+  for scenario in mcp_boundaries submission_status security_intake submission_assessment semantic_holds community conflict conflict_queue full; do
     echo "Running compose e2e scenario ${scenario} as part of all."
     DENSE_MEM_E2E_SCENARIO="$scenario" \
     DENSE_MEM_E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-all}-$(printf '%s' "$scenario" | tr '[:upper:]' '[:lower:]')" \
@@ -778,7 +777,6 @@ export POSTGRES_HOST_PORT NEO4J_HTTP_HOST_PORT NEO4J_BOLT_HOST_PORT REDIS_PORT
 TEMP_DIR="$(mktemp -d)"
 cd "$ROOT_DIR"
 trap cleanup EXIT
-
 prepare_e2e_environment
 chmod 600 "$E2E_ENV_FILE"
 require_env_true TELEMETRY_ENABLED
@@ -786,7 +784,7 @@ require_env_value AI_API_URL >/dev/null
 require_env_value AI_API_KEY >/dev/null
 require_env_value AI_API_EMBEDDING_MODEL >/dev/null
 require_env_value AI_API_EMBEDDING_DIMENSIONS >/dev/null
-if [[ "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "semantic_holds" || "$E2E_SCENARIO" == "community" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
+if [[ "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "semantic_holds" || "$E2E_SCENARIO" == "community" || "$E2E_SCENARIO" == "conflict_queue" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
   require_env_value AI_VERIFIER_API_URL >/dev/null
   require_env_value AI_VERIFIER_API_KEY >/dev/null
   require_env_value AI_VERIFIER_MODEL >/dev/null
@@ -971,6 +969,7 @@ if [[ "$E2E_SCENARIO" == "conflict" ]]; then
   run_conflict_e2e "$team_id"
   exit 0
 fi
+if [[ "$E2E_SCENARIO" == "conflict_queue" ]]; then run_conflict_queue_e2e "$team_id"; exit 0; fi
 echo "Running compose-backed scheduled team dreaming e2e."
 dream_json="$(DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
 DENSE_MEM_USER_URL="$USER_URL" \

@@ -1,5 +1,6 @@
 import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Ban,
   BarChart3,
   KeyRound,
@@ -37,6 +38,7 @@ const ConfigPanel = lazy(() => import("./control/ConfigPanel").then((module) => 
 const ControlDreamsPanel = lazy(() => import("./control/DreamsPanel").then((module) => ({ default: module.ControlDreamsPanel })));
 const LogsPanel = lazy(() => import("./control/LogsPanel").then((module) => ({ default: module.LogsPanel })));
 const RecallFeedbackPanel = lazy(() => import("./control/RecallFeedbackPanel").then((module) => ({ default: module.RecallFeedbackPanel })));
+const ConflictQueuePanel = lazy(() => import("./control/ConflictQueuePanel").then((module) => ({ default: module.ConflictQueuePanel })));
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
 const THEME_STORAGE_KEY = "denseMem.controlTheme";
@@ -294,6 +296,14 @@ function Portal({
           onClick: () => openTeamWorkspace("dreams"),
         },
         {
+          id: "conflicts",
+          label: "Conflicts",
+          icon: <AlertTriangle size={17} aria-hidden="true" />,
+          active: activeTab === "teams" && teamWorkspaceTab === "conflicts",
+          disabled: !selectedTeam,
+          onClick: () => openTeamWorkspace("conflicts"),
+        },
+        {
           id: "logs",
           label: "Logs",
           icon: <ListFilter size={17} aria-hidden="true" />,
@@ -547,6 +557,11 @@ function TeamWorkspace({
     <TeamWorkspaceShell team={team} activeTab={activeTab} onSelectTab={onSelectTab}>
       {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} onOpenSettings={() => onSelectTab("settings")} />}
       {activeTab === "profiles" && <TeamProfilesPanel api={api} team={team} embedded />}
+      {activeTab === "conflicts" && (
+        <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading conflict queue" /></div>}>
+          <ConflictQueuePanel api={api} team={team} />
+        </Suspense>
+      )}
         {activeTab === "dreams" && (
         <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading dreams" /></div>}>
           <ControlDreamsPanel api={api} team={team} embedded />

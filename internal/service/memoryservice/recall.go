@@ -100,7 +100,6 @@ func NewRecallService(deps RecallDependencies) RecallService {
 }
 
 type RecallRequest struct {
-	ContractVersion            string     `json:"contract_version"`
 	Query                      string     `json:"query"`
 	Limit                      int        `json:"limit,omitempty"`
 	IncludeHypotheses          bool       `json:"-"`
@@ -278,9 +277,6 @@ type RecallSearchStates struct {
 func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *RecallResult, err error) {
 	if s.search == nil {
 		return nil, errors.New("recall: search repository is required")
-	}
-	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
-		return nil, fmt.Errorf("recall: invalid contract_version %q", req.ContractVersion)
 	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
@@ -862,7 +858,6 @@ func (s *recallService) queryEmbedding(
 }
 
 func normalizeRecallRequest(req RecallRequest) RecallRequest {
-	req.ContractVersion = strings.TrimSpace(req.ContractVersion)
 	req.Query = strings.TrimSpace(req.Query)
 	if req.Limit <= 0 {
 		req.Limit = defaultRecallResultLimit

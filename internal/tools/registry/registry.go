@@ -24,15 +24,14 @@ type ToolInvoker func(ctx context.Context, profileID string, input map[string]an
 
 // Tool is the metadata + executor bundle for a single registered tool.
 type Tool struct {
-	Name            string
-	Description     string
-	InputSchema     map[string]any
-	OutputSchema    map[string]any
-	RequiredScopes  []string
-	ContractVersion string
-	FeatureGate     string
-	Visibility      string
-	Invoke          ToolInvoker
+	Name           string
+	Description    string
+	InputSchema    map[string]any
+	OutputSchema   map[string]any
+	RequiredScopes []string
+	FeatureGate    string
+	Visibility     string
+	Invoke         ToolInvoker
 }
 
 // Registry holds a set of Tools and answers register/list/get queries.

@@ -48,23 +48,19 @@ func upsertRelationshipConflictPosition(
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH inserted AS (
 			INSERT INTO relationship_conflict_positions (
-			    team_id, conflict_id, position_key, object_entity_id, object_value_id,
-			    support_group_count, authoritative_group_count
+			    team_id, conflict_id, position_key, object_entity_id, object_value_id
 			) VALUES (
-			    ?::uuid, ?::uuid, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?
+			    ?::uuid, ?::uuid, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid
 			)
 			ON CONFLICT (team_id, conflict_id, position_key)
-				DO UPDATE SET support_group_count = EXCLUDED.support_group_count,
-				              authoritative_group_count = EXCLUDED.authoritative_group_count,
-				              active = true,
+				DO UPDATE SET active = true,
 				              retired_at = NULL,
 				              last_seen_at = now(),
 				              updated_at = now()
 			RETURNING position_id::text, (xmax = 0) AS created
 		)
 		SELECT position_id, created FROM inserted
-	`, teamID, conflictID, first.PositionKey, first.ObjectEntityID, first.ObjectValueID,
-		first.SupportGroupCount, first.AuthoritativeGroupCount).Rows()
+	`, teamID, conflictID, first.PositionKey, first.ObjectEntityID, first.ObjectValueID).Rows()
 	if err != nil {
 		return false, err
 	}
@@ -188,20 +184,16 @@ func relationshipConflictPositionWouldChange(
 	row conflictPlacementRow,
 ) (bool, error) {
 	var positionID string
-	var supportGroupCount int
-	var authoritativeGroupCount int
 	var active bool
 	var retiredAt sql.NullTime
 	scan := tx.WithContext(ctx).Raw(`
-		SELECT position_id::text, support_group_count, authoritative_group_count, active, retired_at
+		SELECT position_id::text, active, retired_at
 		FROM relationship_conflict_positions
 		WHERE team_id = ?::uuid
 		  AND conflict_id = ?::uuid
 		  AND position_key = ?
 	`, teamID, conflictID, row.PositionKey).Row().Scan(
 		&positionID,
-		&supportGroupCount,
-		&authoritativeGroupCount,
 		&active,
 		&retiredAt,
 	)
@@ -211,9 +203,7 @@ func relationshipConflictPositionWouldChange(
 	if scan != nil {
 		return false, scan
 	}
-	return supportGroupCount != row.SupportGroupCount ||
-		authoritativeGroupCount != row.AuthoritativeGroupCount ||
-		!active ||
+	return !active ||
 		retiredAt.Valid, nil
 }
 

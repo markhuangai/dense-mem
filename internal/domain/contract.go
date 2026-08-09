@@ -3,8 +3,8 @@ package domain
 const (
 	ContractVersion              = "dense-mem.v2.4"
 	PredicatePolicyVersion       = "open_vocabulary_v1"
-	ConflictPolicyVersion        = "cross_profile_conflict_v1"
-	ConflictOverduePolicyVersion = "overdue_conflict_ai_v1"
+	ConflictPolicyVersion        = "cross_profile_supporter_majority_after_ttl"
+	ConflictOverduePolicyVersion = "overdue_conflict_ai_supporter_voting"
 	FeatureGate                  = "memory"
 	ToolVisibility               = "dormant"
 )
@@ -284,14 +284,13 @@ const (
 type PublicErrorCode string
 
 const (
-	ErrorInvalidContractVersion PublicErrorCode = "invalid_contract_version"
-	ErrorInvalidInput           PublicErrorCode = "invalid_input"
-	ErrorUnauthorizedScope      PublicErrorCode = "unauthorized_scope"
-	ErrorWrongOwner             PublicErrorCode = "wrong_owner"
-	ErrorConflict               PublicErrorCode = "conflict"
-	ErrorProviderUnavailable    PublicErrorCode = "provider_unavailable"
-	ErrorProviderMalformed      PublicErrorCode = "provider_malformed"
-	ErrorDegraded               PublicErrorCode = "degraded"
+	ErrorInvalidInput        PublicErrorCode = "invalid_input"
+	ErrorUnauthorizedScope   PublicErrorCode = "unauthorized_scope"
+	ErrorWrongOwner          PublicErrorCode = "wrong_owner"
+	ErrorConflict            PublicErrorCode = "conflict"
+	ErrorProviderUnavailable PublicErrorCode = "provider_unavailable"
+	ErrorProviderMalformed   PublicErrorCode = "provider_malformed"
+	ErrorDegraded            PublicErrorCode = "degraded"
 )
 
 func ResolveActions() []string {

@@ -88,14 +88,11 @@ func TestRelationshipConflictSupporterProjectionIsBoundedCurrentAndTeamScoped(t 
 	require.Len(t, current, 1)
 	preferredPosition := conflictSupporterTestPosition(t, current[0].Positions, postgres.EntityID)
 	assert.Equal(t, 21, preferredPosition.SupporterCount)
-	assert.Equal(t, 21, preferredPosition.SupportGroupCount)
-	assert.Equal(t, 1, preferredPosition.AuthoritativeGroupCount)
 	assert.True(t, preferredPosition.SupportersTruncated)
 	require.Len(t, preferredPosition.Supporters, relationshipConflictSupporterLimit)
 	assert.Equal(t, ownerA, preferredPosition.Supporters[0].ProfileID)
 	assert.Equal(t, "Profile A Renamed", preferredPosition.Supporters[0].ProfileName)
 	assert.Equal(t, "authoritative", preferredPosition.Supporters[0].StrongestAuthority)
-	assert.Equal(t, 2, preferredPosition.Supporters[0].SourceGroupCount)
 	assert.NotEmpty(t, preferredPosition.Supporters[0].EvidenceID)
 	assert.False(t, preferredPosition.Supporters[0].AcceptedAt.IsZero())
 
@@ -107,8 +104,6 @@ func TestRelationshipConflictSupporterProjectionIsBoundedCurrentAndTeamScoped(t 
 	require.Len(t, historical, 1)
 	historicalPosition := conflictSupporterTestPosition(t, historical[0].Positions, postgres.EntityID)
 	assert.Equal(t, 1, historicalPosition.SupporterCount)
-	assert.Equal(t, 2, historicalPosition.SupportGroupCount)
-	assert.Equal(t, 1, historicalPosition.AuthoritativeGroupCount)
 	assert.False(t, historicalPosition.SupportersTruncated)
 	require.Len(t, historicalPosition.Supporters, 1)
 	assert.Equal(t, "Profile A Renamed", historicalPosition.Supporters[0].ProfileName)
@@ -140,6 +135,209 @@ func TestRelationshipConflictSupporterProjectionIsBoundedCurrentAndTeamScoped(t 
 			strings.Contains(plan, "relationship_conflict_position_members_pkey"),
 		"supporter projection plan did not use a conflict-member index: %s", plan,
 	)
+}
+
+func TestRelationshipConflictSupporterProjectionUsesOneLatestPositionPerProfile(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "conflict-supporter-latest", 3, "exact", "")
+
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-supporter-latest-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "Latest A")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "Latest B")
+	ownerC := createLedgerProfile(t, adminDB, rls, teamID, "Latest C")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Latest project")
+	valueA := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "Latest A value")
+	valueB := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "Latest B value")
+	commitPlacementRelationshipForConflictTest(t, ctx, ledgerRepo, teamID, ownerA, "latest-a", "latest-a", "A", subject.EntityID, valueA.EntityID, "copied-source")
+	commitPlacementRelationshipForConflictTest(t, ctx, ledgerRepo, teamID, ownerB, "latest-b", "latest-b", "B", subject.EntityID, valueB.EntityID, "copied-source")
+	latestCA := commitPlacementRelationshipForConflictTest(t, ctx, ledgerRepo, teamID, ownerC, "latest-c-a", "latest-c-a", "C supports A", subject.EntityID, valueA.EntityID, "copied-source")
+
+	conflictID, _ := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+	knownAt := databaseNowForTest(t, adminDB, rls)
+	latestCB := commitPlacementRelationshipForConflictTest(t, ctx, ledgerRepo, teamID, ownerC, "latest-c-b", "latest-c-b", "C supports B", subject.EntityID, valueB.EntityID, "copied-source")
+	latestAt := knownAt.Add(2 * time.Minute)
+	var quarantinedFragmentID, quarantinedIngestID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT member.fragment_id::text, fragment.ingest_id::text
+			FROM relationship_conflict_position_members AS member
+			JOIN evidence_fragments AS fragment
+			  ON fragment.team_id = member.team_id
+			 AND fragment.fragment_id = member.fragment_id
+			WHERE member.team_id = ?::uuid
+			  AND member.conflict_id = ?::uuid
+			  AND member.relationship_id = ?::uuid
+			  AND member.owner_profile_id = ?::uuid
+			  AND member.fragment_id IS NOT NULL
+		`, teamID, conflictID, latestCA.RelationshipResults[0].Relationship.RelationshipID, ownerC).
+			Row().Scan(&quarantinedFragmentID, &quarantinedIngestID)
+	}))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO evidence_quarantines (
+				team_id, fragment_id, ingest_id, owner_profile_id, status, reason, created_at
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, 'active', 'future historical regression', ?)
+		`, teamID, quarantinedFragmentID, quarantinedIngestID, ownerC, latestAt).Error
+	}))
+	// Reactivate the superseded snapshot member so the projection test can exercise two effective positions for one profile.
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			UPDATE relationship_conflict_position_members
+			SET accepted_at = CASE relationship_id
+				WHEN ?::uuid THEN ?
+				WHEN ?::uuid THEN ?
+				ELSE accepted_at
+			END,
+			    active = true,
+			    retired_at = NULL
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+			  AND owner_profile_id = ?::uuid
+			  AND relationship_id IN (?::uuid, ?::uuid)
+		`, latestCA.RelationshipResults[0].Relationship.RelationshipID, latestAt.Add(-time.Minute),
+			latestCB.RelationshipResults[0].Relationship.RelationshipID, latestAt,
+			teamID, conflictID, ownerC,
+			latestCA.RelationshipResults[0].Relationship.RelationshipID,
+			latestCB.RelationshipResults[0].Relationship.RelationshipID)
+		require.Equal(t, int64(2), result.RowsAffected)
+		return result.Error
+	}))
+	current := loadConflictSupporterTestRecords(t, ctx, appDB, rls, teamID, ownerA, conflictID, nil, nil)
+	require.Len(t, current, 1)
+	positionA := conflictSupporterTestPosition(t, current[0].Positions, valueA.EntityID)
+	positionB := conflictSupporterTestPosition(t, current[0].Positions, valueB.EntityID)
+	assert.Equal(t, 1, positionA.SupporterCount)
+	assert.Equal(t, 2, positionB.SupporterCount)
+	assert.NotContains(t, supporterIDs(positionA.Supporters), ownerC)
+	assert.Contains(t, supporterIDs(positionB.Supporters), ownerC)
+
+	historical := loadConflictSupporterTestRecords(t, ctx, appDB, rls, teamID, ownerA, conflictID, nil, &knownAt)
+	require.Len(t, historical, 1)
+	historicalPositionA := conflictSupporterTestPosition(t, historical[0].Positions, valueA.EntityID)
+	historicalPositionB := conflictSupporterTestPosition(t, historical[0].Positions, valueB.EntityID)
+	assert.Equal(t, 2, historicalPositionA.SupporterCount)
+	assert.Equal(t, 1, historicalPositionB.SupporterCount)
+	assert.Contains(t, supporterIDs(historicalPositionA.Supporters), ownerC)
+	assert.NotContains(t, supporterIDs(historicalPositionB.Supporters), ownerC)
+
+	// A bounded caller may request only position A. Hidden positions must still
+	// participate in the per-profile latest-position vote calculation.
+	requested := []RelationshipConflictPositionRecord{{
+		ConflictID: conflictID,
+		PositionID: positionA.PositionID,
+	}}
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return loadRelationshipConflictSupporters(ctx, tx, teamID, []string{conflictID}, nil, requested, relationshipConflictSupporterLimit)
+	}))
+	assert.Equal(t, 1, requested[0].SupporterCount)
+	assert.NotContains(t, supporterIDs(requested[0].Supporters), ownerC)
+
+	// Equal newest timestamps across positions abstain the profile instead of
+	// selecting a position by UUID or source-group identity.
+	tieAt := latestAt.Add(time.Second)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_conflict_position_members
+			SET accepted_at = ?
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+			  AND owner_profile_id = ?::uuid
+		`, tieAt, teamID, conflictID, ownerC).Error
+	}))
+	tied := loadConflictSupporterTestRecords(t, ctx, appDB, rls, teamID, ownerA, conflictID, nil, nil)
+	require.Len(t, tied, 1)
+	positionA = conflictSupporterTestPosition(t, tied[0].Positions, valueA.EntityID)
+	positionB = conflictSupporterTestPosition(t, tied[0].Positions, valueB.EntityID)
+	assert.Equal(t, 1, positionA.SupporterCount)
+	assert.Equal(t, 1, positionB.SupporterCount)
+	assert.NotContains(t, supporterIDs(positionA.Supporters), ownerC)
+	assert.NotContains(t, supporterIDs(positionB.Supporters), ownerC)
+
+	requested = []RelationshipConflictPositionRecord{{
+		ConflictID: conflictID,
+		PositionID: positionA.PositionID,
+	}}
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return loadRelationshipConflictSupporters(ctx, tx, teamID, []string{conflictID}, nil, requested, relationshipConflictSupporterLimit)
+	}))
+	assert.Equal(t, 1, requested[0].SupporterCount)
+	assert.NotContains(t, supporterIDs(requested[0].Supporters), ownerC)
+}
+
+func TestRelationshipConflictPlacementPreservesNewestSupportTimestampForGroupRepresentative(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "conflict-supporter-timestamp", 3, "exact", "")
+
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-supporter-timestamp-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "Timestamp A")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "Timestamp B")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Timestamp project")
+	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "Timestamp PostgreSQL")
+	graphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "Timestamp GraphDB")
+
+	content := "Dense-Mem uses PostgreSQL. Dense-Mem uses PostgreSQL."
+	quote := "Dense-Mem uses PostgreSQL."
+	secondStart := strings.LastIndex(content, quote)
+	preferred := commitPlacementRelationshipForConflictTestWithOptions(
+		t, ctx, ledgerRepo, teamID, ownerA, "worker-supporter-timestamp-a",
+		"supporter-timestamp-a", content, subject.EntityID, postgres.EntityID, "same-source",
+		conflictTestRelationshipOptions{
+			authority: "secondary",
+			additionalSupports: []conflictTestAdditionalSupport{{
+				sourceGroupKey: "same-source",
+				spanStart:      secondStart,
+				spanEnd:        secondStart + len(quote),
+				quote:          quote,
+				authority:      "inferred",
+			}},
+		},
+	)
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerB, "worker-supporter-timestamp-b",
+		"supporter-timestamp-b", "Dense-Mem uses GraphDB.", subject.EntityID, graphdb.EntityID, "other-source",
+	)
+	conflictID, _ := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+
+	var representativeAcceptedAt, newestSupportCreatedAt time.Time
+	var representativeAuthority string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT member.accepted_at,
+			       member.authority,
+			       max(support.created_at)
+			FROM relationship_conflict_position_members AS member
+			JOIN relationship_evidence_supports AS support
+			  ON support.team_id = member.team_id
+			 AND support.relationship_id = member.relationship_id
+			 AND support.owner_profile_id = member.owner_profile_id
+			 AND support.source_group_key = member.source_group_key
+			WHERE member.team_id = ?::uuid
+			  AND member.conflict_id = ?::uuid
+			  AND member.relationship_id = ?::uuid
+			  AND member.source_group_key = 'same-source'
+			GROUP BY member.accepted_at, member.authority
+		`, teamID, conflictID, preferred.RelationshipResults[0].Relationship.RelationshipID).
+			Row().Scan(&representativeAcceptedAt, &representativeAuthority, &newestSupportCreatedAt)
+	}))
+	assert.Equal(t, "secondary", representativeAuthority)
+	assert.WithinDuration(t, newestSupportCreatedAt, representativeAcceptedAt, time.Microsecond)
+}
+
+func supporterIDs(supporters []RelationshipConflictSupporterRecord) []string {
+	ids := make([]string, 0, len(supporters))
+	for _, supporter := range supporters {
+		ids = append(ids, supporter.ProfileID)
+	}
+	return ids
 }
 
 func loadConflictSupporterTestRecords(

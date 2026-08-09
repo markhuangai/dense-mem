@@ -100,9 +100,6 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want 200. body=%s", rec.Code, rec.Body.String())
 	}
-	if captured.ContractVersion != domain.ContractVersion {
-		t.Fatalf("contract_version = %q; want %q", captured.ContractVersion, domain.ContractVersion)
-	}
 	if captured.Query != "postgres" || captured.Limit != 3 {
 		t.Fatalf("captured request = %#v", captured)
 	}

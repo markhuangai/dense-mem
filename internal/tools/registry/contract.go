@@ -146,7 +146,6 @@ func contractTools(deps Dependencies) []Tool {
 				if err != nil {
 					return nil, fmt.Errorf("remember: invalid input: %w", err)
 				}
-				req.ContractVersion = domain.ContractVersion
 				res, err := deps.Remember.Remember(ctx, req)
 				if err != nil {
 					return nil, err
@@ -172,7 +171,6 @@ func contractTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("get_submission_status: invalid input: %w", err)
 				}
-				req.ContractVersion = domain.ContractVersion
 				if statusService != nil {
 					res, err := statusService.GetSubmissionStatus(ctx, req)
 					if err == nil {
@@ -201,7 +199,6 @@ func contractTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("retract_evidence: invalid input: %w", err)
 				}
-				req.ContractVersion = domain.ContractVersion
 				res, err := deps.Lifecycle.RetractEvidence(ctx, req)
 				if err != nil {
 					return nil, err
@@ -221,7 +218,6 @@ func contractTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("correct_relationship: invalid input: %w", err)
 				}
-				req.ContractVersion = domain.ContractVersion
 				res, err := deps.Lifecycle.CorrectRelationship(ctx, req)
 				if err != nil {
 					return nil, err
@@ -241,7 +237,6 @@ func contractTools(deps Dependencies) []Tool {
 				if err := remapInput(input, &req); err != nil {
 					return nil, fmt.Errorf("recall_memory: invalid input: %w", err)
 				}
-				req.ContractVersion = domain.ContractVersion
 				dreamingEnabled := DreamingEnabled(ctx, deps.Dreams)
 				req.IncludeHypotheses = dreamingEnabled
 				res, err := deps.Recall.Recall(ctx, req)
@@ -396,14 +391,13 @@ func contractTool(
 	output map[string]any,
 ) Tool {
 	return Tool{
-		Name:            name,
-		Description:     description,
-		InputSchema:     input,
-		OutputSchema:    output,
-		RequiredScopes:  scopes,
-		ContractVersion: domain.ContractVersion,
-		FeatureGate:     domain.FeatureGate,
-		Visibility:      domain.ToolVisibility,
+		Name:           name,
+		Description:    description,
+		InputSchema:    input,
+		OutputSchema:   output,
+		RequiredScopes: scopes,
+		FeatureGate:    domain.FeatureGate,
+		Visibility:     domain.ToolVisibility,
 	}
 }
 
@@ -424,14 +418,6 @@ func IsContractTool(tool Tool) bool {
 }
 
 func ValidateContractInput(tool Tool, args map[string]any, scopes []string) error {
-	if tool.ContractVersion != domain.ContractVersion {
-		return fmt.Errorf(
-			"%s: tool contract version %q is not %q",
-			tool.Name,
-			tool.ContractVersion,
-			domain.ContractVersion,
-		)
-	}
 	if !ToolScopesSatisfied(tool, scopes) {
 		return fmt.Errorf("%s: missing required scope", tool.Name)
 	}
@@ -579,9 +565,6 @@ func requireTool(tools map[string]Tool, name string) (Tool, error) {
 	tool, ok := tools[name]
 	if !ok {
 		return Tool{}, fmt.Errorf("missing contract tool %s", name)
-	}
-	if tool.ContractVersion != domain.ContractVersion {
-		return Tool{}, fmt.Errorf("tool %s has wrong contract version", name)
 	}
 	if tool.FeatureGate != domain.FeatureGate || tool.Visibility != domain.ToolVisibility {
 		return Tool{}, fmt.Errorf("tool %s has wrong gate metadata", name)

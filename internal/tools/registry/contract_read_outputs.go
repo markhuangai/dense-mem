@@ -87,35 +87,31 @@ func recallConflictSchema() map[string]any {
 func recallConflictPositionSchema() map[string]any {
 	return closedObject(
 		[]string{
-			"position_id", "disposition", "supporter_count", "support_group_count",
-			"authoritative_group_count", "supporters_truncated", "supporters",
+			"position_id", "disposition", "supporter_count", "supporters_truncated", "supporters",
 			"relationship_ids", "owner_profile_ids", "result_evidence_ids",
 		},
 		map[string]any{
-			"position_id":               schemaString("Conflict position ID.", 128),
-			"disposition":               schemaEnum([]string{"candidate", "preferred", "suppressed_current"}),
-			"supporter_count":           map[string]any{"type": "integer", "minimum": 0},
-			"support_group_count":       map[string]any{"type": "integer", "minimum": 0},
-			"authoritative_group_count": map[string]any{"type": "integer", "minimum": 0},
-			"supporters_truncated":      map[string]any{"type": "boolean"},
-			"supporters":                array(recallConflictSupporterSchema(), 0, 20),
-			"relationship_ids":          stringArraySchema("Relationship ID in this position.", 20, 128),
-			"owner_profile_ids":         stringArraySchema("Owner profile ID in this position.", 20, 128),
-			"result_evidence_ids":       stringArraySchema("Returned evidence ID for this position.", 50, 128),
+			"position_id":          schemaString("Conflict position ID.", 128),
+			"disposition":          schemaEnum([]string{"candidate", "preferred", "suppressed_current"}),
+			"supporter_count":      map[string]any{"type": "integer", "minimum": 0},
+			"supporters_truncated": map[string]any{"type": "boolean"},
+			"supporters":           array(recallConflictSupporterSchema(), 0, 20),
+			"relationship_ids":     stringArraySchema("Relationship ID in this position.", 20, 128),
+			"owner_profile_ids":    stringArraySchema("Owner profile ID in this position.", 20, 128),
+			"result_evidence_ids":  stringArraySchema("Returned evidence ID for this position.", 50, 128),
 		},
 	)
 }
 
 func recallConflictSupporterSchema() map[string]any {
 	return closedObject(
-		[]string{"profile_id", "profile_name", "strongest_authority", "evidence_id", "accepted_at", "source_group_count"},
+		[]string{"profile_id", "profile_name", "strongest_authority", "evidence_id", "accepted_at"},
 		map[string]any{
 			"profile_id":          schemaString("Immutable supporter profile ID.", 128),
 			"profile_name":        schemaString("Current supporter profile display name.", 256),
 			"strongest_authority": schemaEnum([]string{"authoritative", "primary", "secondary", "inferred", "unknown"}),
 			"evidence_id":         schemaString("Representative supporting evidence ID.", 128),
 			"accepted_at":         map[string]any{"type": "string", "format": "date-time"},
-			"source_group_count":  map[string]any{"type": "integer", "minimum": 1},
 		},
 	)
 }

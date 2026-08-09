@@ -491,6 +491,15 @@ button:disabled {
   border: 1px solid var(--border);
 }
 
+.banner.warning {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--border));
+}
+
 .table-wrap {
   width: 100%;
   max-width: 100%;

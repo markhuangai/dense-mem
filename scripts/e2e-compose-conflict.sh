@@ -50,7 +50,7 @@ NODE
 }
 
 prepare_conflict_review_driver() {
-  if [[ "$E2E_SCENARIO" != "conflict" ]]; then
+  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" ]]; then
     return
   fi
   E2E_CONFLICT_REVIEW_DRIVER="${TEMP_DIR}/conflict-review-driver"
@@ -81,4 +81,40 @@ run_conflict_e2e() {
   DENSE_MEM_E2E_POSTGRES_PASSWORD="$runtime_postgres_password" \
   DENSE_MEM_E2E_POSTGRES_DB="$runtime_postgres_database" \
   node "$ROOT_DIR/tests/uat/conflict_mcp_e2e.mjs"
+}
+
+run_conflict_queue_e2e() {
+  local team_id="$1"
+  local runtime_postgres_user
+  local runtime_postgres_password
+  local runtime_postgres_database
+
+  echo "Running live-credential compose-backed MCP conflict queue e2e."
+  runtime_postgres_user="$(compose_server_environment_value POSTGRES_USER)"
+  runtime_postgres_password="$(compose_server_environment_value POSTGRES_PASSWORD)"
+  runtime_postgres_database="$(compose_server_environment_value POSTGRES_DB)"
+  DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
+  DENSE_MEM_USER_URL="$USER_URL" \
+  DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
+  DENSE_MEM_E2E_TEAM_ID="$team_id" \
+  DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
+  DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
+  DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER="$E2E_CONFLICT_REVIEW_DRIVER" \
+  DENSE_MEM_E2E_PROMETHEUS_URL="$PROMETHEUS_URL" \
+  DENSE_MEM_E2E_POSTGRES_HOST="127.0.0.1" \
+  DENSE_MEM_E2E_POSTGRES_PORT="$POSTGRES_HOST_PORT" \
+  DENSE_MEM_E2E_POSTGRES_USER="$runtime_postgres_user" \
+  DENSE_MEM_E2E_POSTGRES_PASSWORD="$runtime_postgres_password" \
+  DENSE_MEM_E2E_POSTGRES_DB="$runtime_postgres_database" \
+  DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE=1 \
+  AI_VERIFIER_API_URL="$(env_file_value AI_VERIFIER_API_URL)" \
+  AI_VERIFIER_API_KEY="$(env_file_value AI_VERIFIER_API_KEY)" \
+  AI_VERIFIER_MODEL="$(env_file_value AI_VERIFIER_MODEL)" \
+  node "$ROOT_DIR/tests/uat/conflict_queue_e2e.mjs"
+  if [[ "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" == "1" ]]; then
+    echo "Skipping compose-backed conflict queue Playwright tests by DENSE_MEM_E2E_SKIP_PLAYWRIGHT."
+  else
+    echo "Running compose-backed conflict queue Playwright tests."
+    run_compose_playwright_tests conflict_queue
+  fi
 }

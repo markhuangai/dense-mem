@@ -312,7 +312,7 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ConflictReviewOutcomeResolve, result.Outcome)
-	assert.Equal(t, "due_majority", result.Stage)
+	assert.Equal(t, "due_supporter_majority", result.Stage)
 	assert.ElementsMatch(t, []string{loser.RelationshipResults[0].Relationship.RelationshipID}, result.UpdatedRelationships)
 	require.NoError(t, ledgerRepo.CompleteRelationshipConflictReviewRun(ctx, ConflictReviewRunCompleteInput{
 		TeamID:        teamID,
@@ -471,6 +471,7 @@ func TestRelationshipConflictReviewerClampsLoserValidToToItsValidFrom(t *testing
 	teamID := createLedgerTeam(t, adminDB, rls, "conflict-review-valid-window-team")
 	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-valid-window-owner-a")
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-valid-window-owner-b")
+	ownerC := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-valid-window-owner-c")
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	semanticRepo := NewSemanticRepository(appDB, rls)
 
@@ -491,6 +492,12 @@ func TestRelationshipConflictReviewerClampsLoserValidToToItsValidFrom(t *testing
 		"valid-window-conflict-b", "Dense-Mem uses GraphDB according to a later primary source.",
 		subject.EntityID, graphdb.EntityID, "source-group-valid-window-b",
 		conflictTestRelationshipOptions{validFrom: &loserValidFrom, authority: "primary"},
+	)
+	_ = commitPlacementRelationshipForConflictTestWithOptions(
+		t, ctx, ledgerRepo, teamID, ownerC, "worker-valid-window-c",
+		"valid-window-conflict-c", "Dense-Mem uses PostgreSQL according to another supporting source.",
+		subject.EntityID, postgres.EntityID, "source-group-valid-window-c",
+		conflictTestRelationshipOptions{validFrom: &winnerValidFrom, authority: "secondary"},
 	)
 
 	var conflictID string
@@ -533,7 +540,7 @@ func TestRelationshipConflictReviewerClampsLoserValidToToItsValidFrom(t *testing
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ConflictReviewOutcomeResolve, result.Outcome)
-	assert.Equal(t, "due_unique_authoritative", result.Stage)
+	assert.Equal(t, "due_supporter_majority", result.Stage)
 	assert.ElementsMatch(t, []string{loser.RelationshipResults[0].Relationship.RelationshipID}, result.UpdatedRelationships)
 
 	var winnerStatus, loserStatus string
@@ -558,7 +565,7 @@ func TestRelationshipConflictReviewerClampsLoserValidToToItsValidFrom(t *testing
 	assert.True(t, loserValidTo.Equal(loserValidFrom), "loser valid_to = %s, want %s", loserValidTo, loserValidFrom)
 }
 
-func TestRelationshipConflictReviewerDeduplicatesCopiedSourceGroups(t *testing.T) {
+func TestRelationshipConflictReviewerCountsSupportersAcrossCopiedSourceGroups(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -628,8 +635,8 @@ func TestRelationshipConflictReviewerDeduplicatesCopiedSourceGroups(t *testing.T
 		Now:         reviewNow,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, ConflictReviewOutcomeOverdue, result.Outcome)
-	assert.Equal(t, "due_no_winner", result.Stage)
+	assert.Equal(t, ConflictReviewOutcomeResolve, result.Outcome)
+	assert.Equal(t, "due_supporter_majority", result.Stage)
 
 	var conflictStatus, preferredAStatus, loserStatus, preferredCStatus string
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
@@ -654,9 +661,9 @@ func TestRelationshipConflictReviewerDeduplicatesCopiedSourceGroups(t *testing.T
 		return nil
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "overdue", conflictStatus)
+	assert.Equal(t, "resolved", conflictStatus)
 	assert.Equal(t, "active", preferredAStatus)
-	assert.Equal(t, "active", loserStatus)
+	assert.Equal(t, "superseded", loserStatus)
 	assert.Equal(t, "active", preferredCStatus)
 }
 

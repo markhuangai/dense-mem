@@ -64,7 +64,6 @@ func NewRememberService(deps RememberDependencies) *rememberService {
 }
 
 type RememberRequest struct {
-	ContractVersion      string                  `json:"contract_version"`
 	Evidence             []RememberEvidenceInput `json:"evidence"`
 	EntityHints          []map[string]any        `json:"entity_hints,omitempty"`
 	RelationshipHints    []map[string]any        `json:"relationship_hints,omitempty"`
@@ -73,9 +72,11 @@ type RememberRequest struct {
 }
 
 type GetSubmissionStatusRequest struct {
-	ContractVersion string `json:"contract_version"`
-	SubmissionID    string `json:"submission_id"`
+	SubmissionID string `json:"submission_id"`
 }
+
+// Keep the marker used by persisted pre-v2.4 idempotency hashes during replay.
+const legacyRequestHashContractVersion = "dense-mem.v2.4"
 
 type RememberEvidenceInput struct {
 	Content                string         `json:"content"`
@@ -138,9 +139,6 @@ type SubmissionStatusError struct {
 func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*RememberResult, error) {
 	if s.ledger == nil {
 		return nil, errors.New("remember: ledger repository is required")
-	}
-	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
-		return nil, fmt.Errorf("remember: invalid contract_version %q", req.ContractVersion)
 	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
@@ -316,9 +314,6 @@ func (s *rememberService) GetSubmissionStatus(
 	if s.ledger == nil {
 		return nil, errors.New("submission status: ledger repository is required")
 	}
-	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
-		return nil, fmt.Errorf("submission status: invalid contract_version %q", req.ContractVersion)
-	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
 		return nil, ErrRememberAuthContext
@@ -472,7 +467,7 @@ func sourceRevisionBatchHash(contents []string) string {
 
 func canonicalRequestHash(req RememberRequest) (string, error) {
 	payload := map[string]any{
-		"contract_version":       req.ContractVersion,
+		"contract_version":       legacyRequestHashContractVersion,
 		"evidence":               req.Evidence,
 		"entity_hints":           req.EntityHints,
 		"relationship_hints":     req.RelationshipHints,

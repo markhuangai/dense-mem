@@ -122,7 +122,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), telemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
+	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
 	if telemetry.ControlIdentity != nil {
 		registerControlIdentityRoutes(e, control)
 	}
@@ -151,6 +151,9 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	}
 	if telemetry.Communities != nil {
 		api.GET("/teams/:teamId/community/status", control.getTeamCommunityStatus)
+	}
+	if telemetry.ConflictQueue != nil {
+		api.GET("/teams/:teamId/conflicts/queue", control.listConflictQueue)
 	}
 	api.GET("/teams/:teamId/profiles", control.listAPIKeys)
 	api.POST("/teams/:teamId/profiles", control.createAPIKey)

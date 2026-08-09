@@ -264,9 +264,9 @@ durable staging -> validated placement -> active eligible Relationships
 
 ## MCP Tool Catalog
 
-The active contract is `dense-mem.v2.4`. Discover the authorized catalog with
-MCP `tools/list`; the server applies the same scope, feature, and visibility
-checks to `tools/call`.
+Discover the current closed-schema catalog with MCP `tools/list`; callers do
+not select a contract version. The server applies the same scope, feature, and
+visibility checks to `tools/call`.
 
 | Tool | Used by | Registration | Use case and capability |
 |------|---------|--------------|-------------------------|
@@ -353,6 +353,9 @@ docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
 The overlay starts Prometheus on `127.0.0.1:9090` and scopes dashboard queries
 to `TELEMETRY_PROMETHEUS_JOB=dense-mem`. Free-text recall-feedback comments stay
 in bounded investigation records; Prometheus receives only bounded labels.
+Conflict queue state gauges are emitted by each instance, so multi-instance
+dashboards should use `max by (team_id, status)` (or the equivalent label set),
+while event counters retain normal `sum` and `rate` semantics.
 
 ## Responsibility Boundary
 

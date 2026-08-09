@@ -25,29 +25,27 @@ const (
 	ConflictAssessmentMaxRationale = 1000
 )
 
-const conflictAssessmentSystemPrompt = `You are Dense-Mem's overdue conflict assessor. Assess only the supplied, already accepted evidence and server-owned support metadata. Select one supplied position only when the dossier gives a clear, well-supported answer. Authority, independent source groups, distinct owner counts, accepted time, and explicit effective time can matter. Do not treat counts, deadline expiry, recency alone, or copied evidence as decisive. Do not invent evidence, IDs, sources, lifecycle actions, relationship updates, owners, or durable state.
+const conflictAssessmentSystemPrompt = `You are Dense-Mem's overdue conflict assessor. Assess only the supplied, already accepted evidence and server-owned support metadata. Select one supplied position only when the dossier gives a clear, well-supported answer. Distinct supporter counts, supporter identity references, authority, accepted time, and explicit effective time can matter. A supporter reference identifies one profile across evidence items; evidence volume is not an additional vote. Do not treat counts, deadline expiry, recency alone, or copied evidence as decisive. Do not invent evidence, IDs, sources, lifecycle actions, relationship updates, owners, or durable state.
 
 If the dossier does not support a clear position, abstain. Return one complete JSON object matching the schema and no other text.`
 
 const conflictAssessmentCorrectionInstruction = `Return one complete replacement JSON object matching the schema. Use decision "select" only with one supplied position_id and a confidence in [0,1]. Use decision "abstain" with position_id null and confidence 0. Do not return an explanation outside the JSON object.`
 
 type ConflictAssessmentEvidence struct {
-	EvidenceID     string     `json:"evidence_id"`
-	PositionID     string     `json:"position_id"`
-	SupportID      string     `json:"support_id"`
-	SourceGroupKey string     `json:"source_group_key"`
-	Authority      string     `json:"authority"`
-	AcceptedAt     time.Time  `json:"accepted_at"`
-	EffectiveAt    *time.Time `json:"effective_at,omitempty"`
-	Content        string     `json:"content"`
+	EvidenceID   string     `json:"evidence_id"`
+	PositionID   string     `json:"position_id"`
+	SupportID    string     `json:"support_id"`
+	SupporterRef string     `json:"supporter_ref"`
+	Authority    string     `json:"authority"`
+	AcceptedAt   time.Time  `json:"accepted_at"`
+	EffectiveAt  *time.Time `json:"effective_at,omitempty"`
+	Content      string     `json:"content"`
 }
 
 type ConflictAssessmentPosition struct {
-	PositionID              string `json:"position_id"`
-	PositionKey             string `json:"position_key"`
-	SupportGroupCount       int    `json:"support_group_count"`
-	AuthoritativeGroupCount int    `json:"authoritative_group_count"`
-	OwnerProfileCount       int    `json:"owner_profile_count"`
+	PositionID     string `json:"position_id"`
+	PositionKey    string `json:"position_key"`
+	SupporterCount int    `json:"supporter_count"`
 }
 
 // ConflictAssessmentRequest is a bounded, immutable case dossier. Team and
@@ -131,8 +129,8 @@ func PrepareConflictAssessmentRequest(req ConflictAssessmentRequest, limits Sema
 		if position.PositionKey == "" {
 			errs = append(errs, SemanticValidationError{Field: fmt.Sprintf("positions[%d].position_key", index), Message: "is required"})
 		}
-		if position.SupportGroupCount < 0 || position.AuthoritativeGroupCount < 0 || position.OwnerProfileCount < 0 {
-			errs = append(errs, SemanticValidationError{Field: fmt.Sprintf("positions[%d]", index), Message: "support counts must not be negative"})
+		if position.SupporterCount < 0 {
+			errs = append(errs, SemanticValidationError{Field: fmt.Sprintf("positions[%d]", index), Message: "supporter_count must not be negative"})
 		}
 	}
 	for index := range req.Evidence {
@@ -140,11 +138,11 @@ func PrepareConflictAssessmentRequest(req ConflictAssessmentRequest, limits Sema
 		evidence.EvidenceID = strings.TrimSpace(evidence.EvidenceID)
 		evidence.PositionID = strings.TrimSpace(evidence.PositionID)
 		evidence.SupportID = strings.TrimSpace(evidence.SupportID)
-		evidence.SourceGroupKey = strings.TrimSpace(evidence.SourceGroupKey)
+		evidence.SupporterRef = strings.TrimSpace(evidence.SupporterRef)
 		evidence.Authority = strings.TrimSpace(evidence.Authority)
 		evidence.Content = strings.TrimSpace(evidence.Content)
-		if evidence.EvidenceID == "" || evidence.PositionID == "" || evidence.SupportID == "" || evidence.SourceGroupKey == "" || evidence.Content == "" {
-			errs = append(errs, SemanticValidationError{Field: fmt.Sprintf("evidence[%d]", index), Message: "evidence_id, position_id, support_id, source_group_key, and content are required"})
+		if evidence.EvidenceID == "" || evidence.PositionID == "" || evidence.SupportID == "" || evidence.SupporterRef == "" || evidence.Content == "" {
+			errs = append(errs, SemanticValidationError{Field: fmt.Sprintf("evidence[%d]", index), Message: "evidence_id, position_id, support_id, supporter_ref, and content are required"})
 		}
 		if _, exists := positions[evidence.PositionID]; !exists {
 			errs = append(errs, SemanticValidationError{Field: fmt.Sprintf("evidence[%d].position_id", index), Message: "must reference a supplied position"})

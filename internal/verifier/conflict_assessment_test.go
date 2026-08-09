@@ -46,12 +46,12 @@ func TestPrepareConflictAssessmentRequestNormalizesAndBoundsDossier(t *testing.T
 		Version:   1,
 		Question:  " Which system is current? ",
 		Positions: []ConflictAssessmentPosition{
-			{PositionID: " position-b ", PositionKey: " entity:b ", SupportGroupCount: 1},
-			{PositionID: " position-a ", PositionKey: " entity:a ", SupportGroupCount: 1},
+			{PositionID: " position-b ", PositionKey: " entity:b ", SupporterCount: 1},
+			{PositionID: " position-a ", PositionKey: " entity:a ", SupporterCount: 1},
 		},
 		Evidence: []ConflictAssessmentEvidence{
-			{EvidenceID: " evidence-b ", PositionID: " position-b ", SupportID: " support-b ", SourceGroupKey: " source-b ", Authority: " primary ", AcceptedAt: localTime, EffectiveAt: &localTime, Content: " B is current. "},
-			{EvidenceID: " evidence-a ", PositionID: " position-a ", SupportID: " support-a ", SourceGroupKey: " source-a ", Authority: " authoritative ", AcceptedAt: localTime.Add(-time.Hour), Content: " A is current. "},
+			{EvidenceID: " evidence-b ", PositionID: " position-b ", SupportID: " support-b ", SupporterRef: " supporter-b ", Authority: " primary ", AcceptedAt: localTime, EffectiveAt: &localTime, Content: " B is current. "},
+			{EvidenceID: " evidence-a ", PositionID: " position-a ", SupportID: " support-a ", SupporterRef: " supporter-a ", Authority: " authoritative ", AcceptedAt: localTime.Add(-time.Hour), Content: " A is current. "},
 		},
 	}, DefaultSemanticAssessmentLimits())
 	require.Empty(t, errs)
@@ -77,17 +77,17 @@ func TestPrepareConflictAssessmentRequestRejectsInvalidPositionAndEvidenceFields
 	request.Positions = []ConflictAssessmentPosition{
 		{},
 		{PositionID: "duplicate", PositionKey: ""},
-		{PositionID: " duplicate ", PositionKey: "same", SupportGroupCount: -1},
+		{PositionID: " duplicate ", PositionKey: "same", SupporterCount: -1},
 	}
 	request.Evidence = []ConflictAssessmentEvidence{
 		{},
 		{
-			EvidenceID:     "evidence-unknown",
-			PositionID:     "unknown",
-			SupportID:      "support-unknown",
-			SourceGroupKey: "source-unknown",
-			AcceptedAt:     time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC),
-			Content:        strings.Repeat("x", ConflictAssessmentMaxContent+1),
+			EvidenceID:   "evidence-unknown",
+			PositionID:   "unknown",
+			SupportID:    "support-unknown",
+			SupporterRef: "supporter-unknown",
+			AcceptedAt:   time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC),
+			Content:      strings.Repeat("x", ConflictAssessmentMaxContent+1),
 		},
 	}
 
@@ -96,11 +96,22 @@ func TestPrepareConflictAssessmentRequestRejectsInvalidPositionAndEvidenceFields
 	assert.Contains(t, summary, "positions[0].position_id")
 	assert.Contains(t, summary, "positions[1].position_key")
 	assert.Contains(t, summary, "positions[2].position_id")
-	assert.Contains(t, summary, "support counts must not be negative")
+	assert.Contains(t, summary, "supporter_count must not be negative")
 	assert.Contains(t, summary, "evidence[0]")
 	assert.Contains(t, summary, "evidence[0].accepted_at")
 	assert.Contains(t, summary, "evidence[1].position_id")
 	assert.Contains(t, summary, "evidence[1].content")
+}
+
+func TestPrepareConflictAssessmentRequestRejectsMissingSupporterRef(t *testing.T) {
+	request := conflictAssessmentTestRequest(t)
+	request.Evidence[0].SupporterRef = "  "
+
+	_, errs := PrepareConflictAssessmentRequest(request, DefaultSemanticAssessmentLimits())
+	require.NotEmpty(t, errs)
+	summary := openAIValidationSummary(errs)
+	assert.Contains(t, summary, "evidence[0]")
+	assert.Contains(t, summary, "supporter_ref")
 }
 
 func TestConflictAssessmentResponseValidationRejectsInvalidDecisionShapes(t *testing.T) {
@@ -316,12 +327,12 @@ func conflictAssessmentTestRequest(t *testing.T) ConflictAssessmentRequest {
 		Version:   1,
 		Question:  "Which system is current?",
 		Positions: []ConflictAssessmentPosition{
-			{PositionID: "position-a", PositionKey: "entity:a", SupportGroupCount: 1},
-			{PositionID: "position-b", PositionKey: "entity:b", SupportGroupCount: 1},
+			{PositionID: "position-a", PositionKey: "entity:a", SupporterCount: 1},
+			{PositionID: "position-b", PositionKey: "entity:b", SupporterCount: 1},
 		},
 		Evidence: []ConflictAssessmentEvidence{
-			{EvidenceID: "evidence-a", PositionID: "position-a", SupportID: "support-a", SourceGroupKey: "source-a", Authority: "primary", AcceptedAt: now, Content: "The current system is A."},
-			{EvidenceID: "evidence-b", PositionID: "position-b", SupportID: "support-b", SourceGroupKey: "source-b", Authority: "primary", AcceptedAt: now, Content: "The current system is B."},
+			{EvidenceID: "evidence-a", PositionID: "position-a", SupportID: "support-a", SupporterRef: "supporter-a", Authority: "primary", AcceptedAt: now, Content: "The current system is A."},
+			{EvidenceID: "evidence-b", PositionID: "position-b", SupportID: "support-b", SupporterRef: "supporter-b", Authority: "primary", AcceptedAt: now, Content: "The current system is B."},
 		},
 	}, DefaultSemanticAssessmentLimits())
 	require.Empty(t, errs)

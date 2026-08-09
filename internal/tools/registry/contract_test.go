@@ -16,14 +16,13 @@ import (
 )
 
 type contractFixture struct {
-	Name            string         `json:"name"`
-	Tool            string         `json:"tool"`
-	ContractVersion string         `json:"contract_version"`
-	Scopes          []string       `json:"scopes"`
-	Valid           bool           `json:"valid"`
-	WantError       string         `json:"want_error"`
-	Input           map[string]any `json:"input"`
-	Output          map[string]any `json:"output"`
+	Name      string         `json:"name"`
+	Tool      string         `json:"tool"`
+	Scopes    []string       `json:"scopes"`
+	Valid     bool           `json:"valid"`
+	WantError string         `json:"want_error"`
+	Input     map[string]any `json:"input"`
+	Output    map[string]any `json:"output"`
 }
 
 func TestContractFixtures(t *testing.T) {
@@ -35,9 +34,6 @@ func TestContractFixtures(t *testing.T) {
 			tool, err := requireTool(tools, fixture.Tool)
 			if err != nil {
 				t.Fatal(err)
-			}
-			if fixture.ContractVersion != "" {
-				tool.ContractVersion = fixture.ContractVersion
 			}
 			err = ValidateContractInput(tool, fixture.Input, fixture.Scopes)
 			if fixture.Valid {
@@ -104,23 +100,15 @@ func flatRelationshipForContent(content string) map[string]any {
 	}
 }
 
-func TestContractVersionIsMetadataNotPayload(t *testing.T) {
+func TestContractSchemaHasNoPublicVersionMarker(t *testing.T) {
 	for _, tool := range ContractTools() {
 		props := schemaProperties(tool.InputSchema)
 		if _, ok := props["contract_version"]; ok {
 			t.Fatalf("%s exposes contract_version as a payload field", tool.Name)
 		}
-		if got := tool.InputSchema["x-contract-version"]; got != domain.ContractVersion {
-			t.Fatalf("%s x-contract-version = %v", tool.Name, got)
+		if _, ok := tool.InputSchema["x-contract-version"]; ok {
+			t.Fatalf("%s exposes x-contract-version metadata", tool.Name)
 		}
-	}
-}
-
-func TestIsContractToolDoesNotTrustVersionBeforeValidation(t *testing.T) {
-	tool := ContractTools()[0]
-	tool.ContractVersion = "dense-mem.v2.0"
-	if !IsContractTool(tool) {
-		t.Fatal("wrong-version descriptor bypasses transport validation")
 	}
 }
 
@@ -135,9 +123,6 @@ func TestContractCatalogMetadata(t *testing.T) {
 			t.Fatalf("duplicate contract tool name %s", tool.Name)
 		}
 		seen[tool.Name] = struct{}{}
-		if tool.ContractVersion != domain.ContractVersion {
-			t.Fatalf("%s contract version = %q", tool.Name, tool.ContractVersion)
-		}
 		if tool.FeatureGate != domain.FeatureGate || tool.Visibility != domain.ToolVisibility {
 			t.Fatalf("%s gate metadata = %q/%q", tool.Name, tool.FeatureGate, tool.Visibility)
 		}
@@ -581,7 +566,6 @@ func TestPublicErrorSchemaContract(t *testing.T) {
 		t.Fatalf("code enum = %#v", codeSchema["enum"])
 	}
 	for _, code := range []domain.PublicErrorCode{
-		domain.ErrorInvalidContractVersion,
 		domain.ErrorInvalidInput,
 		domain.ErrorUnauthorizedScope,
 		domain.ErrorWrongOwner,

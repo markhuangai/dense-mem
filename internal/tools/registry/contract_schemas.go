@@ -1,8 +1,6 @@
 package registry
 
-import (
-	"github.com/markhuangai/dense-mem/internal/domain"
-)
+import "github.com/markhuangai/dense-mem/internal/domain"
 
 func contractInput(required []string, properties map[string]any) map[string]any {
 	requireNonEmptyStrings(required, properties)
@@ -10,7 +8,6 @@ func contractInput(required []string, properties map[string]any) map[string]any 
 		"type":                 "object",
 		"properties":           properties,
 		"additionalProperties": false,
-		"x-contract-version":   domain.ContractVersion,
 	}
 	if len(required) > 0 {
 		schema["required"] = required

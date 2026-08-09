@@ -7,6 +7,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
+	"github.com/markhuangai/dense-mem/internal/service/conflictqueue"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
@@ -23,6 +24,7 @@ type ControlPortalTelemetry struct {
 	RecallFeedback  service.RecallFeedbackEventReader
 	Dreams          dreamservice.ControlService
 	Communities     communityservice.Service
+	ConflictQueue   conflictqueue.Reader
 }
 
 type controlPortalHandler struct {
@@ -35,6 +37,7 @@ type controlPortalHandler struct {
 	recallFeedback  service.RecallFeedbackEventReader
 	dreams          dreamservice.ControlService
 	communities     communityservice.Service
+	conflictQueue   conflictqueue.Reader
 	health          HealthConfig
 	sso             *service.SSOService
 	directory       *service.DirectoryIdentityService

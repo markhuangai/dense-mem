@@ -5,8 +5,6 @@ package registry
 import (
 	"reflect"
 	"testing"
-
-	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestEvaluationCatalogAddsOnlyHarnessTools(t *testing.T) {
@@ -37,12 +35,12 @@ func TestEvaluationCatalogAddsOnlyHarnessTools(t *testing.T) {
 	}
 }
 
-func TestEvaluationRecallRequestInjectsServiceContract(t *testing.T) {
+func TestEvaluationRecallRequestMapsQuery(t *testing.T) {
 	req, err := evalRecallRequest(map[string]any{"query": "contract boundary"})
 	if err != nil {
 		t.Fatalf("evalRecallRequest: %v", err)
 	}
-	if req.ContractVersion != domain.ContractVersion {
-		t.Fatalf("contract version = %q; want %q", req.ContractVersion, domain.ContractVersion)
+	if req.Query != "contract boundary" {
+		t.Fatalf("query = %q", req.Query)
 	}
 }

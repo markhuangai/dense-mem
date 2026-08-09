@@ -90,7 +90,6 @@ func evalRecallRequest(input map[string]any) (memoryservice.RecallRequest, error
 	if err := remapInput(input, &req); err != nil {
 		return req, err
 	}
-	req.ContractVersion = domain.ContractVersion
 	req.Query = stringInput(input["query"])
 	req.Limit = intInputOrDefault(input["limit"], defaultRecallCaseLimit)
 	if validAt, err := optionalTime(input["valid_at"]); err != nil {

@@ -45,16 +45,14 @@ func recallConflictPositions(records []repository.RelationshipConflictPositionRe
 	for _, record := range records {
 		supportersTruncated := record.SupportersTruncated || len(record.Supporters) > recallConflictSupporterLimit
 		out = append(out, RecallConflictPosition{
-			PositionID:              record.PositionID,
-			Disposition:             record.Disposition,
-			SupporterCount:          record.SupporterCount,
-			SupportGroupCount:       record.SupportGroupCount,
-			AuthoritativeGroupCount: record.AuthoritativeGroupCount,
-			SupportersTruncated:     supportersTruncated,
-			Supporters:              recallConflictSupporters(record.Supporters),
-			RelationshipIDs:         limitStrings(record.RelationshipIDs, recallConflictRelationshipIDLimit),
-			OwnerProfileIDs:         limitStrings(record.OwnerProfileIDs, recallConflictOwnerProfileIDLimit),
-			ResultEvidenceIDs:       limitStrings(record.EvidenceIDs, recallConflictResultEvidenceIDLimit),
+			PositionID:          record.PositionID,
+			Disposition:         record.Disposition,
+			SupporterCount:      record.SupporterCount,
+			SupportersTruncated: supportersTruncated,
+			Supporters:          recallConflictSupporters(record.Supporters),
+			RelationshipIDs:     limitStrings(record.RelationshipIDs, recallConflictRelationshipIDLimit),
+			OwnerProfileIDs:     limitStrings(record.OwnerProfileIDs, recallConflictOwnerProfileIDLimit),
+			ResultEvidenceIDs:   limitStrings(record.EvidenceIDs, recallConflictResultEvidenceIDLimit),
 		})
 	}
 	return out
@@ -72,7 +70,6 @@ func recallConflictSupporters(records []repository.RelationshipConflictSupporter
 			StrongestAuthority: record.StrongestAuthority,
 			EvidenceID:         record.EvidenceID,
 			AcceptedAt:         record.AcceptedAt,
-			SourceGroupCount:   record.SourceGroupCount,
 		})
 	}
 	return out

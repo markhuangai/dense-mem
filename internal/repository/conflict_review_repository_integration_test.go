@@ -102,7 +102,6 @@ func TestRelationshipConflictReviewerDismissesStaleCaseAfterRetraction(t *testin
 	require.NotEmpty(t, historicalConflicts[0].Positions)
 	for _, position := range historicalConflicts[0].Positions {
 		assert.Equal(t, "candidate", position.Disposition)
-		assert.Equal(t, 1, position.SupportGroupCount)
 	}
 }
 

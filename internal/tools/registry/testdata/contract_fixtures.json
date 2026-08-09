@@ -2,7 +2,6 @@
   {
     "name": "valid remember with source revision and relationships",
     "tool": "remember",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": true,
     "input": {
@@ -59,7 +58,6 @@
   {
     "name": "valid submission status",
     "tool": "get_submission_status",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["read"],
     "valid": true,
     "input": {"submission_id": "ing-1"},
@@ -83,7 +81,6 @@
   {
     "name": "valid relationship correction submit",
     "tool": "correct_relationship",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": true,
     "input": {
@@ -107,7 +104,6 @@
   {
     "name": "valid relationship correction confirm",
     "tool": "correct_relationship",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": true,
     "input": {
@@ -129,7 +125,6 @@
   {
     "name": "valid recall boundary limit",
     "tool": "recall_memory",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["read"],
     "valid": true,
     "input": {
@@ -167,7 +162,6 @@
   {
     "name": "valid relationship trace",
     "tool": "trace_memory",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["read"],
     "valid": true,
     "input": {
@@ -203,7 +197,6 @@
   {
     "name": "valid recall session feedback",
     "tool": "submit_recall_session_feedback",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": true,
     "input": {
@@ -234,7 +227,6 @@
   {
     "name": "valid dream list",
     "tool": "list_dreams",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["read"],
     "valid": true,
     "input": {"status": "proposed", "limit": 20},
@@ -243,7 +235,6 @@
   {
     "name": "valid dream read",
     "tool": "get_dream",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["read"],
     "valid": true,
     "input": {"hypothesis_id": "hyp-1"},
@@ -271,7 +262,6 @@
   {
     "name": "valid dream rejection",
     "tool": "resolve_dream_feedback",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": true,
     "input": {"hypothesis_id": "hyp-1", "decision": "reject", "reason": "No longer applicable."},
@@ -280,7 +270,6 @@
   {
     "name": "valid memory pack export",
     "tool": "export_memory_pack",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["read"],
     "valid": true,
     "input": {
@@ -301,7 +290,6 @@
   {
     "name": "unknown lifecycle field",
     "tool": "remember",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": false,
     "want_error": "unknown field: tier",
@@ -320,7 +308,6 @@
   {
     "name": "legacy remember hint fields rejected",
     "tool": "remember",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": false,
     "want_error": "unknown field: entity_hints",
@@ -339,7 +326,6 @@
   {
     "name": "missing required evidence",
     "tool": "remember",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": false,
     "want_error": "evidence is required",
@@ -348,7 +334,6 @@
   {
     "name": "duplicate relationship ref",
     "tool": "remember",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": false,
     "want_error": "duplicate ref",
@@ -373,18 +358,8 @@
     }
   },
   {
-    "name": "wrong contract version",
-    "tool": "recall_memory",
-    "contract_version": "dense-mem.v2.0",
-    "scopes": ["read"],
-    "valid": false,
-    "want_error": "tool contract version",
-    "input": {"query": "postgres"}
-  },
-  {
     "name": "wrong scope",
     "tool": "remember",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["read"],
     "valid": false,
     "want_error": "missing required scope",
@@ -393,7 +368,6 @@
   {
     "name": "duplicate recall evidence id",
     "tool": "recall_memory",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["read"],
     "valid": false,
     "want_error": "duplicate value",
@@ -402,7 +376,6 @@
   {
     "name": "cross profile override rejected",
     "tool": "correct_relationship",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": false,
     "want_error": "team_id and profile_id are not accepted",
@@ -420,7 +393,6 @@
   {
     "name": "mixed relationship correction confirm rejected",
     "tool": "correct_relationship",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": false,
     "want_error": "relationship_id is not accepted for action confirm",
@@ -436,7 +408,6 @@
   {
     "name": "unpaired source revision rejected",
     "tool": "remember",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": false,
     "want_error": "source_key and source_revision must appear together",
@@ -457,7 +428,6 @@
   {
     "name": "feedback judgment requires comment",
     "tool": "submit_recall_session_feedback",
-    "contract_version": "dense-mem.v2.4",
     "scopes": ["write"],
     "valid": false,
     "want_error": "feedback_comment is required",

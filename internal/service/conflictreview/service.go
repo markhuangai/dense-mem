@@ -49,6 +49,7 @@ type Dependencies struct {
 type Service struct {
 	repository Repository
 	provider   Provider
+	metrics    observability.DiscoverabilityMetrics
 	location   *time.Location
 	limits     verifier.SemanticAssessmentLimits
 	now        func() time.Time
@@ -86,6 +87,7 @@ func New(deps Dependencies) (*Service, error) {
 	return &Service{
 		repository: deps.Repository,
 		provider:   deps.Provider,
+		metrics:    metrics,
 		location:   location,
 		limits:     deps.Limits,
 		now:        now,
@@ -112,6 +114,9 @@ func (s *Service) ReviewRelationshipConflictCase(
 		return nil, errors.New("conflict review service: deterministic review returned no result")
 	}
 	if result.Outcome != repository.ConflictReviewOutcomeOverdue {
+		if result.Outcome == repository.ConflictReviewOutcomeResolve {
+			s.observeConflictResolution(input.TeamID, "deterministic", "resolved")
+		}
 		return result, nil
 	}
 
@@ -222,6 +227,7 @@ func (s *Service) applyAssessmentResponse(
 		}); err != nil {
 			return s.handleAssessmentCompletionError(result, err)
 		}
+		s.observeConflictAssessment(input.TeamID, "selected", "none")
 		applied, err := s.repository.ApplyOverdueConflictResolution(ctx, repository.ApplyOverdueConflictResolutionInput{
 			TeamID:              input.TeamID,
 			ConflictID:          input.ConflictID,
@@ -248,6 +254,7 @@ func (s *Service) applyAssessmentResponse(
 		}); err != nil {
 			return s.handleAssessmentCompletionError(result, err)
 		}
+		s.observeConflictAssessment(input.TeamID, "abstained", "none")
 		return s.applyLastWriteWins(ctx, result, input, reservation, dossier)
 	}
 	return s.recordAssessmentFailure(ctx, result, input, reservation, dossier, "invalid_response")
@@ -268,6 +275,7 @@ func (s *Service) recordAssessmentFailure(
 	if err != nil {
 		return s.handleAssessmentCompletionError(result, err)
 	}
+	s.observeConflictAssessment(input.TeamID, "failed", failureClass)
 	if completed == nil || completed.FailureCount < repository.ConflictAssessmentMaxFailedDays {
 		result.Stage = "overdue_assessment_failed"
 		return result, nil
@@ -350,6 +358,9 @@ func (s *Service) applyResolutionResult(
 		result.PreferredPositionID = applied.PreferredPositionID
 	}
 	if applied.Pending {
+		if applied.PendingTransitioned {
+			s.observeConflictResolution(input.TeamID, result.ResolutionMethod, "pending")
+		}
 		result.Stage = "resolution_pending"
 		result.ResolutionPending = true
 		return result, nil
@@ -362,10 +373,29 @@ func (s *Service) applyResolutionResult(
 	result.Stage = "overdue_" + result.ResolutionMethod
 	result.UpdatedRelationships = append([]string(nil), applied.UpdatedRelationships...)
 	result.RetractedEvidenceIDs = append([]string(nil), applied.RetractedEvidenceIDs...)
+	s.observeConflictResolution(input.TeamID, result.ResolutionMethod, "resolved")
 	if _, err := s.stageConflictDerivedEvidence(ctx, applied.DerivedEvidence); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *Service) observeConflictAssessment(teamID, decision, failureClass string) {
+	if s == nil {
+		return
+	}
+	if metrics, ok := s.metrics.(observability.ConflictQueueMetrics); ok {
+		metrics.ObserveConflictAssessment(teamID, decision, failureClass)
+	}
+}
+
+func (s *Service) observeConflictResolution(teamID, method, outcome string) {
+	if s == nil {
+		return
+	}
+	if metrics, ok := s.metrics.(observability.ConflictQueueMetrics); ok {
+		metrics.ObserveConflictResolution(teamID, method, outcome)
+	}
 }
 
 func (s *Service) stageConflictDerivedEvidence(ctx context.Context, targets []repository.ConflictDerivedEvidenceTarget) (int, error) {
@@ -408,23 +438,21 @@ func conflictAssessmentRequest(
 	}
 	for _, position := range dossier.Positions {
 		request.Positions = append(request.Positions, verifier.ConflictAssessmentPosition{
-			PositionID:              position.PositionID,
-			PositionKey:             position.PositionKey,
-			SupportGroupCount:       position.SupportGroupCount,
-			AuthoritativeGroupCount: position.AuthoritativeGroupCount,
-			OwnerProfileCount:       position.OwnerProfileCount,
+			PositionID:     position.PositionID,
+			PositionKey:    position.PositionKey,
+			SupporterCount: position.SupporterCount,
 		})
 	}
 	for _, evidence := range dossier.Evidence {
 		request.Evidence = append(request.Evidence, verifier.ConflictAssessmentEvidence{
-			EvidenceID:     evidence.FragmentID,
-			PositionID:     evidence.PositionID,
-			SupportID:      evidence.SupportID,
-			SourceGroupKey: evidence.SourceGroupKey,
-			Authority:      evidence.Authority,
-			AcceptedAt:     evidence.AcceptedAt,
-			EffectiveAt:    evidence.EffectiveAt,
-			Content:        evidence.Content,
+			EvidenceID:   evidence.FragmentID,
+			PositionID:   evidence.PositionID,
+			SupportID:    evidence.SupportID,
+			SupporterRef: evidence.SupporterRef,
+			Authority:    evidence.Authority,
+			AcceptedAt:   evidence.AcceptedAt,
+			EffectiveAt:  evidence.EffectiveAt,
+			Content:      evidence.Content,
 		})
 	}
 	return request, nil

@@ -152,7 +152,7 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 	to := nowFn().UTC()
 	from := to.Add(-windowDef.Duration)
 	initialWindowedCards := telemetryEmptyCardsFromSpecs(telemetryWindowedCardSpecsForAudience(scope, nil, windowKey, includeCost))
-	initialCurrentCards := telemetryEmptyCardsFromSpecs(telemetryCurrentCardSpecs(scope, nil))
+	initialCurrentCards := telemetryEmptyCardsFromSpecs(telemetryCurrentCardSpecsForAudience(scope, nil, includeCost))
 	snapshot := &TelemetrySnapshot{
 		Available: false,
 		Window: TelemetryWindow{
@@ -192,7 +192,7 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		windowedCards = append(windowedCards, TelemetryCard{ID: spec.ID, Label: spec.Label, Unit: spec.Unit, Value: scalar.Value, Available: scalar.Available})
 	}
 
-	currentCardSpecs := telemetryCurrentCardSpecs(scope, baseLabels)
+	currentCardSpecs := telemetryCurrentCardSpecsForAudience(scope, baseLabels, includeCost)
 	currentCards := make([]TelemetryCard, 0, len(currentCardSpecs))
 	for _, spec := range currentCardSpecs {
 		scalar, queryErr := s.queryInstant(queryCtx, spec.Query)
@@ -334,7 +334,17 @@ func telemetryWindowedCardSpecsForAudience(scope TelemetryScope, baseLabels map[
 }
 
 func telemetryCurrentCardSpecs(scope TelemetryScope, baseLabels map[string]string) []telemetryQuerySpec {
-	return nil
+	return telemetryCurrentCardSpecsForAudience(scope, baseLabels, false)
+}
+
+func telemetryCurrentCardSpecsForAudience(scope TelemetryScope, baseLabels map[string]string, operator bool) []telemetryQuerySpec {
+	if !operator || !strings.EqualFold(scope.Type, "system") {
+		return nil
+	}
+	return []telemetryQuerySpec{{
+		ID: "conflict_queue_collection_success", Label: "Conflict queue collection", Unit: "state",
+		Query: fmt.Sprintf("min(densemem_conflict_queue_collection_success%s)", telemetrySelector(scope, baseLabels)),
+	}}
 }
 
 func telemetrySeriesSpecs(selector string, rateWindow string) []telemetryQuerySpec {

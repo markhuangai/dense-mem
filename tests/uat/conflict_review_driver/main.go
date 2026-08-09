@@ -207,6 +207,23 @@ func completeFailedRun(
 }
 
 func driverConfig() config.Config {
+	if strings.TrimSpace(os.Getenv("DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE")) == "1" {
+		limits := verifier.DefaultSemanticAssessmentLimits()
+		return config.Config{
+			PostgresDSN:                         postgresDSN(),
+			AIVerifierAPIURL:                    requiredEnv("AI_VERIFIER_API_URL"),
+			AIVerifierAPIKey:                    requiredEnv("AI_VERIFIER_API_KEY"),
+			AIVerifierModel:                     requiredEnv("AI_VERIFIER_MODEL"),
+			AIVerifierDisableTemperature:        true,
+			AIVerifierTimeoutSeconds:            10,
+			AIVerifierMaxConcurrency:            1,
+			AIVerifierMaxInputTokens:            limits.MaxInputTokens,
+			AIVerifierMaxOutputTokens:           limits.MaxOutputTokens,
+			AIVerifierMaxCandidateContextTokens: limits.MaxCandidateContextTokens,
+			AIVerifierMaxPredicateOptions:       limits.MaxPredicateOptions,
+			AIVerifierTokenizer:                 limits.Tokenizer,
+		}
+	}
 	return config.Config{
 		PostgresDSN:                         postgresDSN(),
 		AIVerifierAPIURL:                    requiredEnv("DENSE_MEM_E2E_CONFLICT_PROVIDER_URL"),

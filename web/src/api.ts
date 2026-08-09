@@ -2,6 +2,17 @@ import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types
 import type { CommunityStatus } from "./community-api-types";
 import { requestJson } from "./http";
 export { ApiError } from "./http";
+export type {
+  ConflictQueueItem,
+  ConflictQueueLeaseState,
+  ConflictQueuePage,
+  ConflictQueuePosition,
+  ConflictQueueQuery,
+  ConflictQueueStatus,
+  ConflictQueueSummary,
+  ConflictQueueSupporter,
+} from "./conflict-queue-api-types";
+import type { ConflictQueuePage, ConflictQueueQuery } from "./conflict-queue-api-types";
 export type Team = {
   id: string;
   name: string;
@@ -12,6 +23,7 @@ export type Team = {
   created_at: string;
   updated_at: string;
 };
+
 export type TeamProfile = {
   id: string;
   team_id: string;
@@ -695,6 +707,21 @@ export class ControlApi {
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
     return this.requestEnvelope<ControlMetrics>(`/metrics${suffix}`);
+  }
+
+  getConflictQueue(teamId: string, query: ConflictQueueQuery = {}): Promise<ConflictQueuePage> {
+    const params = new URLSearchParams();
+    if (query.status) {
+      params.set("status", query.status);
+    }
+    if (query.limit !== undefined) {
+      params.set("limit", String(query.limit));
+    }
+    if (query.cursor) {
+      params.set("cursor", query.cursor);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return this.requestEnvelope<ConflictQueuePage>(`/teams/${encodeURIComponent(teamId)}/conflicts/queue${suffix}`);
   }
 
   getTelemetry(query: ControlTelemetryQuery = {}): Promise<TelemetrySnapshot> {
