@@ -11,6 +11,11 @@ in this architecture page.
 - browser apps: React/Vite with Vitest and Playwright
 - checks: `scripts/ci-check.sh` runs line lint, Go tests, and a 90% unit coverage
   gate for selected internal packages
+- CI supply-chain gates: the module-pinned `govulncheck` tool scans all Go
+  packages, and npm audit fails on high or critical findings in the repository
+  lint, browser, and MCP proxy dependency trees
+- Dependabot checks Go modules, npm lockfiles, container bases, and GitHub
+  Actions weekly; security fixes are grouped by ecosystem
 
 ## API-Key Portal Cookie E2E
 
@@ -152,6 +157,10 @@ Example focused commands, verified against the current Go/npm layout:
 go test ./internal/service/... -count=1
 go test ./internal/storage/postgres/... -count=1
 go test ./tests/integration/... -count=1
+go tool govulncheck ./...
+npm audit --prefix .lint --audit-level=high
+npm audit --prefix packages/mcp-proxy --audit-level=high
+npm audit --prefix web --audit-level=high
 npm test --prefix web
 ./scripts/ci-check.sh
 ```
@@ -169,6 +178,45 @@ Every PostgreSQL migration includes:
 - index/query-plan evidence for hot paths
 - backfill that is resumable/idempotent where large
 - backup/restore and rollback checkpoint
+
+### Migration history and schema catalog
+
+Goose migrations are the only executable schema authority. Treat every
+migration already present on the merge base as immutable and add one forward
+migration for each logical change. Create migrations through the repository
+helper so the version is a 14-digit UTC value greater than the current maximum:
+
+```bash
+./scripts/new-postgres-migration.sh <snake_case_name>
+./scripts/check-postgres-migrations.sh [base-ref]
+```
+
+The checker derives the current merge base rather than using a stored cutoff
+for pull requests. Main-push CI compares the new tree directly with the prior
+tip so rewritten history cannot discard a deployed migration unnoticed. It
+rejects edits, mode changes, renames, or deletions of existing migrations;
+duplicate, malformed, or out-of-order additions; unresolved review markers;
+and Goose validation failures. A branch with a lower version must rebase and
+create a correctly ordered migration. Do not enable out-of-order execution.
+
+Regenerate the read-only schema catalog after any migration change:
+
+```bash
+./scripts/postgres-schema-catalog.sh write
+./scripts/postgres-schema-catalog.sh check
+```
+
+The generator uses the repository's PostgreSQL/pgvector image, records its
+immutable digest, migrates a disposable database, and proves `current.sql`
+through a restore and second dump. `global.sql` and the relation files are
+inspection views, not another migration source or an ordered restore set.
+Production never applies the catalog.
+
+CI does not provision PostgreSQL. It verifies migration history and Goose
+syntax plus catalog image/version/latest-migration metadata, a digest of the
+migration filenames and contents, and generated-file checksums. Before
+committing a migration or catalog change, run catalog generation and the full
+migration integration suites against disposable PostgreSQL locally.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -380,6 +428,22 @@ C's follow-up through the public MCP `remember` contract. Assert the durable
 case/event rows and recall/trace behavior, not that a mocked resolver method was
 called.
 
+Run the deterministic Compose-backed matrix with:
+
+```bash
+DENSE_MEM_E2E_SCENARIO=conflict \
+DENSE_MEM_E2E_RUN_ID=conflict-local-1 \
+./scripts/e2e-compose.sh
+```
+
+The scenario uses the real MCP transport, application services, PostgreSQL/RLS,
+submission-wide assessor, conflict repository, recall, and trace. It stubs only
+the outbound OpenAI-compatible assessment and embedding transports. Explicit
+review times exercise five eligible failed assessment days without wall-clock
+waits. `DENSE_MEM_E2E_SCENARIO=all` includes this matrix; `full` does not run it
+implicitly. Repeat the scenario with a fresh run ID when changing conflict
+policy or projections.
+
 - B's placement creates B-owned knowledge, a cross-reference, and an open case;
   A's Relationship row/version/status/support/validity remains unchanged
   until nightly review
@@ -408,6 +472,16 @@ called.
   events, marks the case resolved, and queues search refresh
 - repeated nightly runs, duplicate source-group evidence, and stale claimed
   versions are idempotent and do not extend the original deadline
+- exact early quorum, due unique-authoritative, due majority, AI selection, AI
+  abstention fallback, and fifth-failed-day fallback each assert one terminal
+  stage and preferred position
+- recall and trace return identical supporter counts and summaries; 21 effective
+  profiles return 20 summaries with `supporters_truncated=true`, current renamed
+  profile names, and copied versus independent source-group behavior
+- a fresh `conflict_context` advances support, while a stale version reaches a
+  bounded rejected submission state without changing semantic counts
+- same-team A/B/C reads, owner-only mutation, separate-team non-disclosure, and
+  the absence of the retired placement tools are asserted through MCP
 - two replicas claim team-local batches without duplicate events; expired leases
   recover after restart and no cross-team row is read or written
 - semantic memory tools appear in MCP `tools/list`/`tools/call` only and no

@@ -136,6 +136,32 @@ migration concurrently. Keep migrations compatible with the previous binary for
 rolling deployments. Independent databases do not share that lock; each must be
 started and migrated separately.
 
+#### Migration rollout and recovery
+
+Use expand/backfill/cutover/contract for changes that cross application
+releases:
+
+1. add schema that remains compatible with the previous binary
+2. run a bounded, resumable backfill and cut application reads/writes over
+3. remove compatibility schema only after the rollback window closes and a
+   backup/PITR checkpoint has been restored successfully
+
+A failed transactional migration must leave the prior schema intact and block
+server readiness. Diagnose the migration and database state before retrying.
+A `NO TRANSACTION` migration can leave partial DDL, so it must be idempotent,
+retry-safe, and covered by a disposable real-PostgreSQL test that reproduces
+its interrupted state.
+
+Production does not invoke Goose Down automatically. After a committed
+migration, prefer a new roll-forward migration. Use PITR with the matching old
+application only when forward repair cannot preserve the required data or
+contract. Down migrations remain for local tests and controlled recovery
+analysis, including their documented irreversible boundaries.
+
+The generated schema catalog documents the result of the complete Goose
+history. It is never applied to production, used as a live desired-state diff,
+or treated as a substitute for migration and backup evidence.
+
 Migration `2026080701` is a coordinated-stop exception: it drops the unused
 `evidence_security_events.scan_policy_hash` column under an `ACCESS EXCLUSIVE`
 table lock, and an old binary cannot write security events after that drop. For

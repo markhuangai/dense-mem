@@ -188,6 +188,8 @@ ConflictPosition
   member Relationship IDs and versions
   owner profile IDs
   accepted evidence and source-group handles
+  distinct supporter, source-group, and authoritative-group counts
+  at most 20 deterministic supporter summaries
 
 ConflictEvent
   event_id
@@ -210,6 +212,33 @@ lifecycle change; it is not a truth decision.
 | neither author receives the other's evidence as support | equivalent evidence retains its original source-group identity |
 | ordinary profiles cannot rewrite cross-profile validity | `effective_at` is the cutoff used for current-read disposition and losing-episode closure |
 | trace returns every authorized position and event | primary current recall omits resolved non-preferred support paths |
+
+### Bounded supporter provenance
+
+Same-team `recall_memory` and `trace_memory` project the same supporter
+provenance for each effective position at the requested `known_at`. The
+position keeps its existing Relationship, profile, and Evidence ID arrays and
+adds:
+
+- `supporter_count`: distinct effective owner profiles
+- `support_group_count`: distinct effective server-derived source groups
+- `authoritative_group_count`: effective source groups with authoritative
+  support
+- `supporters_truncated`: whether the total exceeds the returned summaries
+- `supporters`: at most 20 current same-team profile summaries
+
+Each profile appears once. Its summary reports the strongest effective
+authority, the most recently accepted Evidence at that authority, its accepted
+time, and the profile's distinct effective source-group count. Summaries order
+by authority rank descending, accepted time descending, then immutable profile
+ID. The profile name is hydrated from the current same-team directory at read
+time; the immutable profile and Evidence IDs remain the audit identity.
+
+Copied support can therefore display several profiles while contributing only
+one independent group. Multiple independent groups from one profile increase
+group weight but do not duplicate that profile in `supporters`. Raw source-group
+keys, Evidence content, provider output, and cross-team identities are never
+included.
 
 A conflict case is created or changed only from committed, schema-valid state.
 Vector similarity alone cannot open one. The initial durable-case scope is a
