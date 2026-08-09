@@ -554,7 +554,6 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	require.NotNil(t, res.Dream)
 	assert.Equal(t, domain.DreamStatusSubmitted, res.Dream.Status)
 	require.Len(t, remember.requests, 1)
-	assert.Equal(t, domain.ContractVersion, remember.requests[0].ContractVersion)
 	assert.Equal(t, "dream-submit-1", remember.requests[0].IdempotencyKey)
 	assert.Equal(t, evidenceContent, remember.requests[0].Evidence[0].Content)
 	assert.Equal(t, []map[string]any{relationshipHint}, remember.requests[0].RelationshipHints)

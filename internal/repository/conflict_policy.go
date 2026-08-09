@@ -7,17 +7,12 @@ const (
 	ConflictReviewOutcomeOverdue = domain.ConflictReviewOutcomeOverdue
 	ConflictReviewOutcomeNoop    = domain.ConflictReviewOutcomeNoop
 
-	ConflictReviewStageEarlyQuorum            = domain.ConflictReviewStageEarlyQuorum
-	ConflictReviewStageDueUniqueAuthoritative = domain.ConflictReviewStageDueUniqueAuthoritative
-	ConflictReviewStageDueMajority            = domain.ConflictReviewStageDueMajority
-	ConflictReviewStageDueNoWinner            = domain.ConflictReviewStageDueNoWinner
-	ConflictReviewStageWaitingForReviewDue    = domain.ConflictReviewStageWaitingForReviewDue
-	ConflictReviewStageDismissedNoConflict    = domain.ConflictReviewStageDismissedNoConflict
+	ConflictReviewStageDueMajority         = domain.ConflictReviewStageDueMajority
+	ConflictReviewStageDueNoWinner         = domain.ConflictReviewStageDueNoWinner
+	ConflictReviewStageWaitingForReviewDue = domain.ConflictReviewStageWaitingForReviewDue
+	ConflictReviewStageDismissedNoConflict = domain.ConflictReviewStageDismissedNoConflict
 
 	ConflictReviewReasonFewerThanTwoPositions            = domain.ConflictReviewReasonFewerThanTwoPositions
-	ConflictReviewReasonNoSupportGroups                  = domain.ConflictReviewReasonNoSupportGroups
-	ConflictReviewReasonEarlyQuorumSupport               = domain.ConflictReviewReasonEarlyQuorumSupport
-	ConflictReviewReasonUniqueAuthoritativeSource        = domain.ConflictReviewReasonUniqueAuthoritativeSource
 	ConflictReviewReasonDueMajoritySupport               = domain.ConflictReviewReasonDueMajoritySupport
 	ConflictReviewReasonReviewDueWithoutDeterministicWin = domain.ConflictReviewReasonReviewDueWithoutDeterministicWin
 	ConflictReviewReasonReviewDueNotReached              = domain.ConflictReviewReasonReviewDueNotReached

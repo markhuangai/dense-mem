@@ -71,7 +71,6 @@ func NewLifecycleService(deps LifecycleDependencies) LifecycleService {
 }
 
 type ResolveMemoryPlacementRequest struct {
-	ContractVersion      string                  `json:"contract_version"`
 	Action               domain.ResolveAction    `json:"action"`
 	IngestID             string                  `json:"ingest_id,omitempty"`
 	PlacementItemID      string                  `json:"placement_item_id,omitempty"`
@@ -96,7 +95,6 @@ type ResolveMemoryPlacementResult struct {
 }
 
 type CorrectRelationshipRequest struct {
-	ContractVersion   string                                     `json:"contract_version"`
 	Action            string                                     `json:"action"`
 	RelationshipID    string                                     `json:"relationship_id,omitempty"`
 	ExpectedVersion   int                                        `json:"expected_version,omitempty"`
@@ -119,10 +117,9 @@ type CorrectRelationshipReceipt struct {
 }
 
 type RetractEvidenceRequest struct {
-	ContractVersion string   `json:"contract_version"`
-	EvidenceIDs     []string `json:"evidence_ids"`
-	Reason          string   `json:"reason"`
-	IdempotencyKey  string   `json:"idempotency_key"`
+	EvidenceIDs    []string `json:"evidence_ids"`
+	Reason         string   `json:"reason"`
+	IdempotencyKey string   `json:"idempotency_key"`
 }
 
 type RetractEvidenceResult struct {
@@ -138,9 +135,6 @@ func (s *lifecycleService) ResolveMemoryPlacement(
 	ctx context.Context,
 	req ResolveMemoryPlacementRequest,
 ) (*ResolveMemoryPlacementResult, error) {
-	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
-		return nil, fmt.Errorf("memory lifecycle: invalid contract_version %q", req.ContractVersion)
-	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
 		return nil, ErrLifecycleAuthContext
@@ -255,9 +249,6 @@ func (s *lifecycleService) CorrectRelationship(
 	if s.semantic == nil {
 		return nil, errors.New("memory lifecycle: semantic repository is required")
 	}
-	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
-		return nil, fmt.Errorf("memory lifecycle: invalid contract_version %q", req.ContractVersion)
-	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
 		return nil, ErrLifecycleAuthContext
@@ -298,9 +289,6 @@ func (s *lifecycleService) GetRelationshipCorrectionStatus(
 ) (*SubmissionStatusResult, error) {
 	if s.semantic == nil {
 		return nil, errors.New("submission status: semantic repository is required")
-	}
-	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
-		return nil, fmt.Errorf("submission status: invalid contract_version %q", req.ContractVersion)
 	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
@@ -366,9 +354,6 @@ func (s *lifecycleService) RetractEvidence(
 	if s.evidence == nil {
 		return nil, errors.New("memory lifecycle: evidence repository is required")
 	}
-	if strings.TrimSpace(req.ContractVersion) != domain.ContractVersion {
-		return nil, fmt.Errorf("memory lifecycle: invalid contract_version %q", req.ContractVersion)
-	}
 	actor, ok := requestctx.ActorProfileFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
 		return nil, ErrLifecycleAuthContext
@@ -405,10 +390,9 @@ func retractEvidenceRequestHash(req RetractEvidenceRequest) (string, error) {
 	}
 	sort.Strings(evidenceIDs)
 	payload, err := json.Marshal(map[string]any{
-		"contract_version": req.ContractVersion,
-		"evidence_ids":     evidenceIDs,
-		"reason":           strings.TrimSpace(req.Reason),
-		"idempotency_key":  strings.TrimSpace(req.IdempotencyKey),
+		"evidence_ids":    evidenceIDs,
+		"reason":          strings.TrimSpace(req.Reason),
+		"idempotency_key": strings.TrimSpace(req.IdempotencyKey),
 	})
 	if err != nil {
 		return "", fmt.Errorf("memory lifecycle: canonical retract request hash: %w", err)

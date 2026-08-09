@@ -130,29 +130,27 @@ type conflictPlacement struct {
 }
 
 type conflictPlacementRow struct {
-	RelationshipID          string
-	OwnerProfileID          string
-	SubjectEntityID         string
-	PredicateKey            string
-	PredicateVersion        int
-	RelationshipKind        string
-	CurrentCardinality      string
-	Polarity                string
-	ScopeKey                string
-	ObjectEntityID          string
-	ObjectValueID           string
-	PositionKey             string
-	SupportID               string
-	VerificationEventID     string
-	FragmentID              string
-	SourceGroupKey          string
-	Authority               string
-	AcceptedAt              time.Time
-	EffectiveAt             *time.Time
-	EffectiveTimeBasis      string
-	RecordedFallback        bool
-	SupportGroupCount       int
-	AuthoritativeGroupCount int
+	RelationshipID      string
+	OwnerProfileID      string
+	SubjectEntityID     string
+	PredicateKey        string
+	PredicateVersion    int
+	RelationshipKind    string
+	CurrentCardinality  string
+	Polarity            string
+	ScopeKey            string
+	ObjectEntityID      string
+	ObjectValueID       string
+	PositionKey         string
+	SupportID           string
+	VerificationEventID string
+	FragmentID          string
+	SourceGroupKey      string
+	Authority           string
+	AcceptedAt          time.Time
+	EffectiveAt         *time.Time
+	EffectiveTimeBasis  string
+	RecordedFallback    bool
 }
 
 func normalizeConflictRuntimeConfig(input ConflictRuntimeConfig) ConflictRuntimeConfig {
@@ -312,16 +310,6 @@ func loadRelationshipConflictPlacement(
 			         END,
 			         support.accepted_at DESC,
 				         support.support_id
-		),
-		position_counts AS (
-			SELECT active.object_entity_id,
-			       active.object_value_id,
-			       COUNT(DISTINCT support.source_group_key)::int AS support_group_count,
-			       COUNT(DISTINCT support.source_group_key) FILTER (WHERE support.authority = 'authoritative')::int AS authoritative_group_count
-			FROM active_relationships AS active
-			JOIN support_groups AS support
-			  ON support.relationship_id = active.relationship_id
-			GROUP BY active.object_entity_id, active.object_value_id
 		)
 		SELECT active.relationship_id::text,
 		       active.owner_profile_id::text,
@@ -346,15 +334,10 @@ func loadRelationshipConflictPlacement(
 		       support.authority,
 		       active.valid_from,
 		       CASE WHEN active.valid_from IS NULL THEN 'recorded_at' ELSE 'valid_from' END,
-		       active.valid_from IS NULL,
-		       counts.support_group_count,
-		       counts.authoritative_group_count
+		       active.valid_from IS NULL
 		FROM active_relationships AS active
 		JOIN support_groups AS support
 		  ON support.relationship_id = active.relationship_id
-		JOIN position_counts AS counts
-		  ON counts.object_entity_id IS NOT DISTINCT FROM active.object_entity_id
-		 AND counts.object_value_id IS NOT DISTINCT FROM active.object_value_id
 		ORDER BY position_key, active.owner_profile_id, active.relationship_id
 	`, teamID, source.SubjectEntityID, source.PredicateKey, source.RelationshipKind,
 		source.CurrentCardinality, source.Polarity, source.ScopeKey,
@@ -395,8 +378,6 @@ func loadRelationshipConflictPlacement(
 			&row.EffectiveAt,
 			&row.EffectiveTimeBasis,
 			&row.RecordedFallback,
-			&row.SupportGroupCount,
-			&row.AuthoritativeGroupCount,
 		); err != nil {
 			return nil, err
 		}
@@ -812,8 +793,6 @@ func loadRelationshipConflictPositionRowsWithLimit(
 			       COALESCE(position.object_entity_id::text, '') AS object_entity_id,
 			       COALESCE(position.object_value_id::text, '') AS object_value_id,
 			       %s AS disposition,
-			       COUNT(DISTINCT member.source_group_key)::int AS support_group_count,
-			       (COUNT(DISTINCT member.source_group_key) FILTER (WHERE member.authority = 'authoritative'))::int AS authoritative_group_count,
 			       COALESCE(array_remove(array_agg(DISTINCT member.relationship_id::text ORDER BY member.relationship_id::text), NULL), ARRAY[]::text[]) AS relationship_ids,
 			       COALESCE(array_remove(array_agg(DISTINCT member.owner_profile_id::text ORDER BY member.owner_profile_id::text), NULL), ARRAY[]::text[]) AS owner_profile_ids,
 			       COALESCE(array_remove(array_agg(DISTINCT member.fragment_id::text ORDER BY member.fragment_id::text), NULL), ARRAY[]::text[]) AS evidence_ids,
@@ -851,7 +830,7 @@ func loadRelationshipConflictPositionRowsWithLimit(
 			FROM grouped
 		)
 		SELECT conflict_id, position_id, position_key, object_entity_id, object_value_id,
-		       disposition, support_group_count, authoritative_group_count,
+		       disposition,
 		       relationship_ids, owner_profile_ids, evidence_ids, effective_at,
 		       effective_time_basis, recorded_fallback, position_count
 		FROM ranked
@@ -877,8 +856,6 @@ func loadRelationshipConflictPositionRowsWithLimit(
 			&record.ObjectEntityID,
 			&record.ObjectValueID,
 			&record.Disposition,
-			&record.SupportGroupCount,
-			&record.AuthoritativeGroupCount,
 			&relationshipIDs,
 			&ownerProfileIDs,
 			&evidenceIDs,

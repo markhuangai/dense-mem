@@ -32,11 +32,10 @@ func TestLifecycleForgetUsesAuthenticatedOwner(t *testing.T) {
 	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic})
 
 	result, err := svc.ResolveMemoryPlacement(authenticatedRememberContext(teamID, profileID, keyID), ResolveMemoryPlacementRequest{
-		ContractVersion: domain.ContractVersion,
-		Action:          domain.ResolveForget,
-		RelationshipID:  relationshipID,
-		Message:         "user asked to forget this relationship",
-		IdempotencyKey:  "forget-1",
+		Action:         domain.ResolveForget,
+		RelationshipID: relationshipID,
+		Message:        "user asked to forget this relationship",
+		IdempotencyKey: "forget-1",
 		Evidence: []RememberEvidenceInput{{
 			Content: "The user requested this relationship be forgotten.",
 		}},
@@ -68,7 +67,6 @@ func TestLifecycleCorrectRelationshipUsesAuthenticatedOwner(t *testing.T) {
 	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic})
 
 	result, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, keyID), CorrectRelationshipRequest{
-		ContractVersion: domain.ContractVersion,
 		Action:          "submit",
 		RelationshipID:  relationshipID,
 		ExpectedVersion: 3,
@@ -104,8 +102,7 @@ func TestLifecycleRelationshipCorrectionStatusUsesOwnerAndSearchState(t *testing
 	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic})
 
 	result, err := svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{
-		ContractVersion: domain.ContractVersion,
-		SubmissionID:    submissionID,
+		SubmissionID: submissionID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, submissionID, result.SubmissionID)
@@ -120,8 +117,7 @@ func TestLifecycleRelationshipCorrectionStatusUsesOwnerAndSearchState(t *testing
 		Correction: &repository.RelationshipCorrectionResult{SuccessorRelationshipID: uuid.NewString(), SuccessorVersion: 2},
 	}
 	result, err = svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{
-		ContractVersion: domain.ContractVersion,
-		SubmissionID:    submissionID,
+		SubmissionID: submissionID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.ProcessingState)
@@ -129,8 +125,7 @@ func TestLifecycleRelationshipCorrectionStatusUsesOwnerAndSearchState(t *testing
 	require.NotNil(t, result.CorrectionResult)
 
 	_, err = svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{
-		ContractVersion: domain.ContractVersion,
-		SubmissionID:    "not-a-uuid",
+		SubmissionID: "not-a-uuid",
 	})
 	var publicErr *httperr.APIError
 	require.ErrorAs(t, err, &publicErr)
@@ -142,16 +137,14 @@ func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
 	repositoryFailure := errors.New("database host and query details")
 	svc := NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{err: repositoryFailure}})
 	_, err := svc.CorrectRelationship(ctx, CorrectRelationshipRequest{
-		ContractVersion: domain.ContractVersion,
-		Action:          "submit",
+		Action: "submit",
 	})
 	require.ErrorIs(t, err, ErrLifecyclePersistence)
 	require.NotContains(t, err.Error(), repositoryFailure.Error())
 
 	unsafeAction := strings.Repeat("client-controlled-", 100)
 	_, err = svc.CorrectRelationship(ctx, CorrectRelationshipRequest{
-		ContractVersion: domain.ContractVersion,
-		Action:          unsafeAction,
+		Action: unsafeAction,
 	})
 	require.ErrorContains(t, err, "action must be submit or confirm")
 	require.NotContains(t, err.Error(), unsafeAction)
@@ -166,7 +159,6 @@ func TestLifecycleRejectsUnsafeResolveEvidenceBeforeRepositoryWrite(t *testing.T
 	svc := NewLifecycleService(LifecycleDependencies{Placement: placement, Auditor: auditor})
 
 	_, err := svc.ResolveMemoryPlacement(authenticatedRememberContext(teamID, profileID, keyID), ResolveMemoryPlacementRequest{
-		ContractVersion: domain.ContractVersion,
 		Action:          domain.ResolveAccept,
 		IngestID:        uuid.NewString(),
 		PlacementItemID: uuid.NewString(),
@@ -190,7 +182,6 @@ func TestLifecycleFailsClosedWhenUnsafeEvidenceAuditFails(t *testing.T) {
 	})
 
 	_, err := svc.ResolveMemoryPlacement(authenticatedRememberContext(teamID, profileID, keyID), ResolveMemoryPlacementRequest{
-		ContractVersion: domain.ContractVersion,
 		Action:          domain.ResolveReject,
 		IngestID:        uuid.NewString(),
 		PlacementItemID: uuid.NewString(),
@@ -219,10 +210,9 @@ func TestLifecycleRetractEvidenceUsesAuthenticatedOwner(t *testing.T) {
 	svc := NewLifecycleService(LifecycleDependencies{Evidence: evidence})
 
 	result, err := svc.RetractEvidence(authenticatedRememberContext(teamID, profileID, keyID), RetractEvidenceRequest{
-		ContractVersion: domain.ContractVersion,
-		EvidenceIDs:     []string{evidenceID},
-		Reason:          "entered in error",
-		IdempotencyKey:  "retract-1",
+		EvidenceIDs:    []string{evidenceID},
+		Reason:         "entered in error",
+		IdempotencyKey: "retract-1",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "decision-canonical", result.DecisionID)
@@ -233,10 +223,9 @@ func TestLifecycleRetractEvidenceUsesAuthenticatedOwner(t *testing.T) {
 	require.NotEmpty(t, evidence.input.RequestHash)
 
 	_, err = svc.RetractEvidence(context.Background(), RetractEvidenceRequest{
-		ContractVersion: domain.ContractVersion,
-		EvidenceIDs:     []string{evidenceID},
-		Reason:          "entered in error",
-		IdempotencyKey:  "retract-1",
+		EvidenceIDs:    []string{evidenceID},
+		Reason:         "entered in error",
+		IdempotencyKey: "retract-1",
 	})
 	require.ErrorIs(t, err, ErrLifecycleAuthContext)
 }
@@ -245,17 +234,15 @@ func TestRetractEvidenceRequestHashCanonicalizesEvidenceIDs(t *testing.T) {
 	firstEvidenceID := uuid.NewString()
 	secondEvidenceID := uuid.NewString()
 	first, err := retractEvidenceRequestHash(RetractEvidenceRequest{
-		ContractVersion: domain.ContractVersion,
-		EvidenceIDs:     []string{" " + firstEvidenceID + " ", secondEvidenceID},
-		Reason:          "entered in error",
-		IdempotencyKey:  "retract-canonical-hash",
+		EvidenceIDs:    []string{" " + firstEvidenceID + " ", secondEvidenceID},
+		Reason:         "entered in error",
+		IdempotencyKey: "retract-canonical-hash",
 	})
 	require.NoError(t, err)
 	second, err := retractEvidenceRequestHash(RetractEvidenceRequest{
-		ContractVersion: domain.ContractVersion,
-		EvidenceIDs:     []string{secondEvidenceID, firstEvidenceID},
-		Reason:          "entered in error",
-		IdempotencyKey:  "retract-canonical-hash",
+		EvidenceIDs:    []string{secondEvidenceID, firstEvidenceID},
+		Reason:         "entered in error",
+		IdempotencyKey: "retract-canonical-hash",
 	})
 	require.NoError(t, err)
 	require.Equal(t, first, second)
@@ -264,19 +251,13 @@ func TestRetractEvidenceRequestHashCanonicalizesEvidenceIDs(t *testing.T) {
 func TestLifecycleRetractEvidenceValidatesDependenciesAndMapsRepositoryErrors(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
 	req := RetractEvidenceRequest{
-		ContractVersion: domain.ContractVersion,
-		EvidenceIDs:     []string{uuid.NewString()},
-		Reason:          "entered in error",
-		IdempotencyKey:  "retract-errors-1",
+		EvidenceIDs:    []string{uuid.NewString()},
+		Reason:         "entered in error",
+		IdempotencyKey: "retract-errors-1",
 	}
 
 	_, err := NewLifecycleService(LifecycleDependencies{}).RetractEvidence(ctx, req)
 	require.ErrorContains(t, err, "evidence repository is required")
-
-	req.ContractVersion = "wrong"
-	_, err = NewLifecycleService(LifecycleDependencies{Evidence: &lifecycleEvidenceStub{}}).RetractEvidence(ctx, req)
-	require.ErrorContains(t, err, "invalid contract_version")
-	req.ContractVersion = domain.ContractVersion
 
 	for _, tc := range []struct {
 		name     string
@@ -326,7 +307,6 @@ func TestLifecycleResolvePlacementUsesAuthenticatedOwner(t *testing.T) {
 	svc := NewLifecycleService(LifecycleDependencies{Placement: placement})
 
 	result, err := svc.ResolveMemoryPlacement(authenticatedRememberContext(teamID, profileID, keyID), ResolveMemoryPlacementRequest{
-		ContractVersion:      domain.ContractVersion,
 		Action:               domain.ResolveSelectPredicate,
 		IngestID:             ingestID,
 		PlacementItemID:      itemID,
@@ -360,7 +340,6 @@ func TestLifecycleResolvePlacementMapsEvidenceForRepository(t *testing.T) {
 	svc := NewLifecycleService(LifecycleDependencies{Placement: placement})
 
 	_, err := svc.ResolveMemoryPlacement(authenticatedRememberContext(teamID, profileID, keyID), ResolveMemoryPlacementRequest{
-		ContractVersion:      domain.ContractVersion,
 		Action:               domain.ResolveSelectPredicate,
 		IngestID:             uuid.NewString(),
 		PlacementItemID:      uuid.NewString(),
@@ -424,7 +403,6 @@ func TestLifecycleResolvePlacementMapsEvidenceForRepository(t *testing.T) {
 func TestLifecycleReleaseQuarantineRequiresManagerRole(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
 	req := ResolveMemoryPlacementRequest{
-		ContractVersion:      domain.ContractVersion,
 		Action:               domain.ResolveReleaseQuarantine,
 		IngestID:             uuid.NewString(),
 		PlacementItemID:      uuid.NewString(),
@@ -445,12 +423,11 @@ func TestLifecycleReleaseQuarantineRequiresManagerRole(t *testing.T) {
 func TestLifecycleRejectsMissingAuthAndUnknownAction(t *testing.T) {
 	svc := NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{}})
 	req := ResolveMemoryPlacementRequest{
-		ContractVersion: domain.ContractVersion,
-		Action:          domain.ResolveForget,
-		RelationshipID:  uuid.NewString(),
-		Message:         "forget",
-		IdempotencyKey:  "forget-1",
-		Evidence:        []RememberEvidenceInput{{Content: "forget evidence"}},
+		Action:         domain.ResolveForget,
+		RelationshipID: uuid.NewString(),
+		Message:        "forget",
+		IdempotencyKey: "forget-1",
+		Evidence:       []RememberEvidenceInput{{Content: "forget evidence"}},
 	}
 
 	_, err := svc.ResolveMemoryPlacement(context.Background(), req)
@@ -464,12 +441,11 @@ func TestLifecycleRejectsMissingAuthAndUnknownAction(t *testing.T) {
 func TestLifecycleForgetRequiresRepositoryAndContractFields(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
 	req := ResolveMemoryPlacementRequest{
-		ContractVersion: domain.ContractVersion,
-		Action:          domain.ResolveForget,
-		RelationshipID:  uuid.NewString(),
-		Message:         "forget",
-		IdempotencyKey:  "forget-1",
-		Evidence:        []RememberEvidenceInput{{Content: "forget evidence"}},
+		Action:         domain.ResolveForget,
+		RelationshipID: uuid.NewString(),
+		Message:        "forget",
+		IdempotencyKey: "forget-1",
+		Evidence:       []RememberEvidenceInput{{Content: "forget evidence"}},
 	}
 
 	_, err := NewLifecycleService(LifecycleDependencies{}).ResolveMemoryPlacement(ctx, req)
@@ -488,7 +464,6 @@ func TestLifecycleForgetRequiresRepositoryAndContractFields(t *testing.T) {
 func TestLifecycleResolvePlacementRequiresRepository(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
 	_, err := NewLifecycleService(LifecycleDependencies{}).ResolveMemoryPlacement(ctx, ResolveMemoryPlacementRequest{
-		ContractVersion: domain.ContractVersion,
 		Action:          domain.ResolveReject,
 		IngestID:        uuid.NewString(),
 		PlacementItemID: uuid.NewString(),
@@ -498,32 +473,26 @@ func TestLifecycleResolvePlacementRequiresRepository(t *testing.T) {
 	require.ErrorContains(t, err, "placement repository is required")
 }
 
-func TestLifecycleRejectsInvalidContractAndPropagatesRepositoryError(t *testing.T) {
+func TestLifecyclePropagatesRepositoryError(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
 	req := ResolveMemoryPlacementRequest{
-		ContractVersion: "v0",
-		Action:          domain.ResolveForget,
-		RelationshipID:  uuid.NewString(),
-		Message:         "forget",
-		IdempotencyKey:  "forget-1",
-		Evidence:        []RememberEvidenceInput{{Content: "forget evidence"}},
+		Action:         domain.ResolveForget,
+		RelationshipID: uuid.NewString(),
+		Message:        "forget",
+		IdempotencyKey: "forget-1",
+		Evidence:       []RememberEvidenceInput{{Content: "forget evidence"}},
 	}
-	_, err := NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{}}).ResolveMemoryPlacement(ctx, req)
-	require.ErrorContains(t, err, "invalid contract_version")
-
 	repoErr := errors.New("repository failed")
-	req.ContractVersion = domain.ContractVersion
-	_, err = NewLifecycleService(LifecycleDependencies{
+	_, err := NewLifecycleService(LifecycleDependencies{
 		Semantic: &lifecycleSemanticStub{err: repoErr},
 	}).ResolveMemoryPlacement(ctx, req)
 	require.ErrorIs(t, err, repoErr)
 }
 
-func TestLifecycleCorrectRelationshipRequiresAuthContractAndRepository(t *testing.T) {
+func TestLifecycleCorrectRelationshipRequiresAuthAndRepository(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
 	req := CorrectRelationshipRequest{
-		ContractVersion: domain.ContractVersion,
-		Action:          "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1,
+		Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1,
 		Patch:    repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}},
 		Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}},
 		Reason:   "incorrect predicate", IdempotencyKey: "correction-1",
@@ -535,9 +504,6 @@ func TestLifecycleCorrectRelationshipRequiresAuthContractAndRepository(t *testin
 	_, err = NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{}}).CorrectRelationship(context.Background(), req)
 	require.ErrorIs(t, err, ErrLifecycleAuthContext)
 
-	req.ContractVersion = "v0"
-	_, err = NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{}}).CorrectRelationship(ctx, req)
-	require.ErrorContains(t, err, "invalid contract_version")
 }
 
 type lifecycleSemanticStub struct {

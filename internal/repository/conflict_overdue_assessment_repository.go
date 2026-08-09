@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,20 +54,18 @@ type OverdueConflictAssessmentDossier struct {
 }
 
 type OverdueConflictAssessmentPosition struct {
-	PositionID              string
-	PositionKey             string
-	SupportGroupCount       int
-	AuthoritativeGroupCount int
-	OwnerProfileCount       int
-	Supports                []domain.ConflictResolutionSupport
+	PositionID     string
+	PositionKey    string
+	SupporterCount int
+	Supports       []domain.ConflictResolutionSupport
 }
 
 type OverdueConflictAssessmentEvidence struct {
 	FragmentID     string
 	OwnerProfileID string
+	SupporterRef   string
 	PositionID     string
 	SupportID      string
-	SourceGroupKey string
 	Authority      string
 	AcceptedAt     time.Time
 	EffectiveAt    *time.Time
@@ -593,16 +592,7 @@ func loadOverdueConflictAssessmentDossier(
 	positionIndexByID := make(map[string]int)
 	positionRows, err := tx.WithContext(ctx).Raw(`
 		SELECT position.position_id::text,
-		       position.position_key,
-		       position.support_group_count,
-		       position.authoritative_group_count,
-		       (
-		           SELECT count(DISTINCT member.owner_profile_id)::int
-		           FROM relationship_conflict_position_members AS member
-		           WHERE member.team_id = position.team_id
-		             AND member.position_id = position.position_id
-		             AND member.active
-		       ) AS owner_profile_count
+		       position.position_key
 		FROM relationship_conflict_positions AS position
 		WHERE position.team_id = ?::uuid
 		  AND position.conflict_id = ?::uuid
@@ -615,7 +605,7 @@ func loadOverdueConflictAssessmentDossier(
 	defer positionRows.Close()
 	for positionRows.Next() {
 		position := OverdueConflictAssessmentPosition{}
-		if err := positionRows.Scan(&position.PositionID, &position.PositionKey, &position.SupportGroupCount, &position.AuthoritativeGroupCount, &position.OwnerProfileCount); err != nil {
+		if err := positionRows.Scan(&position.PositionID, &position.PositionKey); err != nil {
 			return nil, err
 		}
 		dossier.Positions = append(dossier.Positions, position)
@@ -626,6 +616,19 @@ func loadOverdueConflictAssessmentDossier(
 	}
 	if len(dossier.Positions) < 2 {
 		return nil, ErrConflictAssessmentUnavailable
+	}
+	projection := make([]RelationshipConflictPositionRecord, 0, len(dossier.Positions))
+	for _, position := range dossier.Positions {
+		projection = append(projection, RelationshipConflictPositionRecord{
+			ConflictID: conflictID,
+			PositionID: position.PositionID,
+		})
+	}
+	if err := loadRelationshipConflictSupporters(ctx, tx, teamID, []string{conflictID}, nil, projection, relationshipConflictSupporterLimit); err != nil {
+		return nil, err
+	}
+	for index := range dossier.Positions {
+		dossier.Positions[index].SupporterCount = projection[index].SupporterCount
 	}
 
 	evidenceRows, err := tx.WithContext(ctx).Raw(`
@@ -658,13 +661,6 @@ func loadOverdueConflictAssessmentDossier(
 		       fragment.fragment_id::text,
 		       fragment.owner_profile_id::text,
 		       support.support_id::text,
-		       COALESCE(
-		           NULLIF(source.source_key, ''),
-		           NULLIF(fragment.metadata->>'contract_source_group', ''),
-		           NULLIF(fragment.metadata->>'v2_contract_source_group', ''),
-		           NULLIF(support.source_group_key, ''),
-		           support.support_id::text
-		       ) AS source_group_key,
 		       support.authority,
 		       support.created_at,
 		       relationship.valid_from,
@@ -712,7 +708,6 @@ func loadOverdueConflictAssessmentDossier(
 			&item.FragmentID,
 			&item.OwnerProfileID,
 			&item.SupportID,
-			&item.SourceGroupKey,
 			&item.Authority,
 			&item.AcceptedAt,
 			&item.EffectiveAt,
@@ -738,6 +733,23 @@ func loadOverdueConflictAssessmentDossier(
 	}
 	if len(dossier.Evidence) == 0 {
 		return nil, ErrConflictAssessmentUnavailable
+	}
+	profileIDs := make([]string, 0, len(dossier.Evidence))
+	seenProfiles := make(map[string]struct{}, len(dossier.Evidence))
+	for _, item := range dossier.Evidence {
+		if _, seen := seenProfiles[item.OwnerProfileID]; seen {
+			continue
+		}
+		seenProfiles[item.OwnerProfileID] = struct{}{}
+		profileIDs = append(profileIDs, item.OwnerProfileID)
+	}
+	sort.Strings(profileIDs)
+	profileRefs := make(map[string]string, len(profileIDs))
+	for index, profileID := range profileIDs {
+		profileRefs[profileID] = fmt.Sprintf("supporter_%d", index+1)
+	}
+	for index := range dossier.Evidence {
+		dossier.Evidence[index].SupporterRef = profileRefs[dossier.Evidence[index].OwnerProfileID]
 	}
 	return dossier, nil
 }

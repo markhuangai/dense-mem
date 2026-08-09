@@ -112,7 +112,6 @@ func PublicErrorSchema() map[string]any {
 
 func publicErrorCodes() []string {
 	return []string{
-		string(domain.ErrorInvalidContractVersion),
 		string(domain.ErrorInvalidInput),
 		string(domain.ErrorUnauthorizedScope),
 		string(domain.ErrorWrongOwner),

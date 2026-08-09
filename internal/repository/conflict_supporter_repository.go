@@ -11,12 +11,15 @@ import (
 
 const relationshipConflictSupporterLimit = 20
 
+// The vote projection deliberately works across every position in a conflict.
+// A profile votes only when its newest effective accepted support identifies one
+// position. Equal newest timestamps are an abstention, not a position tie-break.
 const relationshipConflictSupporterRowsSQL = `
 	WITH effective_members AS (
 		SELECT member.conflict_id,
 		       member.position_id,
 		       member.owner_profile_id,
-		       member.source_group_key,
+		       member.support_id,
 		       member.authority,
 		       member.fragment_id,
 		       member.accepted_at
@@ -44,35 +47,69 @@ const relationshipConflictSupporterRowsSQL = `
 		      )
 		  )
 	),
-	profile_group_counts AS (
+	profile_position_latest AS (
 		SELECT conflict_id,
-		       position_id,
 		       owner_profile_id,
-		       COUNT(DISTINCT source_group_key)::int AS source_group_count
+		       position_id,
+		       MAX(accepted_at) AS latest_accepted_at
 		FROM effective_members
-		GROUP BY conflict_id, position_id, owner_profile_id
+		GROUP BY conflict_id, owner_profile_id, position_id
+	),
+	profile_latest AS (
+		SELECT conflict_id,
+		       owner_profile_id,
+		       MAX(latest_accepted_at) AS latest_accepted_at
+		FROM profile_position_latest
+		GROUP BY conflict_id, owner_profile_id
+	),
+	profile_latest_positions AS (
+		SELECT candidate.conflict_id,
+		       candidate.owner_profile_id,
+		       candidate.position_id,
+		       candidate.latest_accepted_at,
+		       COUNT(*) OVER (
+		           PARTITION BY candidate.conflict_id, candidate.owner_profile_id
+		       ) AS latest_position_count
+		FROM profile_position_latest AS candidate
+		JOIN profile_latest AS latest
+		  ON latest.conflict_id = candidate.conflict_id
+		 AND latest.owner_profile_id = candidate.owner_profile_id
+		 AND latest.latest_accepted_at = candidate.latest_accepted_at
+	),
+	voter_positions AS (
+		SELECT conflict_id,
+		       owner_profile_id,
+		       position_id
+		FROM profile_latest_positions
+		WHERE latest_position_count = 1
 	),
 	profile_representatives AS (
-		SELECT DISTINCT ON (conflict_id, position_id, owner_profile_id)
-		       conflict_id,
-		       position_id,
-		       owner_profile_id,
-		       authority,
-		       fragment_id,
-		       accepted_at
-		FROM effective_members
-		ORDER BY conflict_id,
-		         position_id,
-		         owner_profile_id,
-		         CASE authority
+		SELECT DISTINCT ON (member.conflict_id, member.position_id, member.owner_profile_id)
+		       member.conflict_id,
+		       member.position_id,
+		       member.owner_profile_id,
+		       member.authority,
+		       member.fragment_id,
+		       member.accepted_at,
+		       member.support_id
+		FROM effective_members AS member
+		JOIN voter_positions AS voter
+		  ON voter.conflict_id = member.conflict_id
+		 AND voter.position_id = member.position_id
+		 AND voter.owner_profile_id = member.owner_profile_id
+		ORDER BY member.conflict_id,
+		         member.position_id,
+		         member.owner_profile_id,
+		         CASE member.authority
 		             WHEN 'authoritative' THEN 0
 		             WHEN 'primary' THEN 1
 		             WHEN 'secondary' THEN 2
 		             WHEN 'inferred' THEN 3
 		             ELSE 4
 		         END,
-		         accepted_at DESC,
-		         fragment_id
+		         member.accepted_at DESC,
+		         member.support_id,
+		         member.fragment_id
 	),
 	ranked_supporters AS (
 		SELECT representative.conflict_id,
@@ -82,7 +119,6 @@ const relationshipConflictSupporterRowsSQL = `
 		       representative.authority,
 		       representative.fragment_id,
 		       representative.accepted_at,
-		       counts.source_group_count,
 		       COUNT(*) OVER (
 		           PARTITION BY representative.conflict_id, representative.position_id
 		       )::int AS supporter_count,
@@ -99,10 +135,6 @@ const relationshipConflictSupporterRowsSQL = `
 		                    representative.owner_profile_id
 		       ) AS supporter_rank
 		FROM profile_representatives AS representative
-		JOIN profile_group_counts AS counts
-		  ON counts.conflict_id = representative.conflict_id
-		 AND counts.position_id = representative.position_id
-		 AND counts.owner_profile_id = representative.owner_profile_id
 		JOIN team_profiles AS profile
 		  ON profile.team_id = ?::uuid
 		 AND profile.id = representative.owner_profile_id
@@ -114,8 +146,7 @@ const relationshipConflictSupporterRowsSQL = `
 	       name,
 	       authority,
 	       fragment_id::text,
-	       accepted_at,
-	       source_group_count
+	       accepted_at
 	FROM ranked_supporters
 	WHERE supporter_rank <= ?
 	ORDER BY conflict_id, position_id, supporter_rank`
@@ -144,6 +175,7 @@ func loadRelationshipConflictSupporters(
 	positionsByID := make(map[string]*RelationshipConflictPositionRecord, len(positions))
 	for i := range positions {
 		positions[i].Supporters = []RelationshipConflictSupporterRecord{}
+		positions[i].SupporterCount = 0
 		positionsByID[positions[i].PositionID] = &positions[i]
 	}
 	for rows.Next() {
@@ -159,7 +191,6 @@ func loadRelationshipConflictSupporters(
 			&supporter.StrongestAuthority,
 			&supporter.EvidenceID,
 			&supporter.AcceptedAt,
-			&supporter.SourceGroupCount,
 		); err != nil {
 			return err
 		}

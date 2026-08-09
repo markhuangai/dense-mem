@@ -438,23 +438,21 @@ func conflictAssessmentRequest(
 	}
 	for _, position := range dossier.Positions {
 		request.Positions = append(request.Positions, verifier.ConflictAssessmentPosition{
-			PositionID:              position.PositionID,
-			PositionKey:             position.PositionKey,
-			SupportGroupCount:       position.SupportGroupCount,
-			AuthoritativeGroupCount: position.AuthoritativeGroupCount,
-			OwnerProfileCount:       position.OwnerProfileCount,
+			PositionID:     position.PositionID,
+			PositionKey:    position.PositionKey,
+			SupporterCount: position.SupporterCount,
 		})
 	}
 	for _, evidence := range dossier.Evidence {
 		request.Evidence = append(request.Evidence, verifier.ConflictAssessmentEvidence{
-			EvidenceID:     evidence.FragmentID,
-			PositionID:     evidence.PositionID,
-			SupportID:      evidence.SupportID,
-			SourceGroupKey: evidence.SourceGroupKey,
-			Authority:      evidence.Authority,
-			AcceptedAt:     evidence.AcceptedAt,
-			EffectiveAt:    evidence.EffectiveAt,
-			Content:        evidence.Content,
+			EvidenceID:   evidence.FragmentID,
+			PositionID:   evidence.PositionID,
+			SupportID:    evidence.SupportID,
+			SupporterRef: evidence.SupporterRef,
+			Authority:    evidence.Authority,
+			AcceptedAt:   evidence.AcceptedAt,
+			EffectiveAt:  evidence.EffectiveAt,
+			Content:      evidence.Content,
 		})
 	}
 	return request, nil

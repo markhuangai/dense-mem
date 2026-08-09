@@ -577,7 +577,6 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 			return nil, err
 		}
 		remember, err := s.deps.Remember.Remember(ctx, memoryservice.RememberRequest{
-			ContractVersion:   domain.ContractVersion,
 			Evidence:          evidence,
 			EntityHints:       req.EntityHints,
 			RelationshipHints: req.RelationshipHints,

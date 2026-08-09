@@ -46,7 +46,7 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	if out["processing_state"] != string(domain.PlacementRunQueued) || out["correlation_id"] != "corr-canonical" {
 		t.Fatalf("output = %#v", out)
 	}
-	if stub.req.ContractVersion != domain.ContractVersion || len(stub.req.Evidence) != 1 {
+	if len(stub.req.Evidence) != 1 {
 		t.Fatalf("stub request not populated: %#v", stub.req)
 	}
 	if stub.req.IdempotencyKey != "eval:doc-alpha" {
@@ -175,9 +175,6 @@ func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {
 	}
 	if stub.req.Query != "PostgreSQL memory" {
 		t.Fatalf("stub request not populated: %#v", stub.req)
-	}
-	if stub.req.ContractVersion != domain.ContractVersion {
-		t.Fatalf("contract version = %q", stub.req.ContractVersion)
 	}
 	if stub.req.IncludeHypotheses {
 		t.Fatal("recall enabled hypotheses without effective team Dreaming")

@@ -37,7 +37,6 @@ func TestLifecycleRecordsFirstDispositionFromResolution(t *testing.T) {
 	svc := NewLifecycleService(LifecycleDependencies{Placement: placement, Metrics: metrics})
 
 	_, err := svc.ResolveMemoryPlacement(authenticatedRememberContext(teamID, profileID, keyID), ResolveMemoryPlacementRequest{
-		ContractVersion:      domain.ContractVersion,
 		Action:               domain.ResolveReject,
 		IngestID:             placement.result.IngestID,
 		PlacementItemID:      uuid.NewString(),
@@ -81,7 +80,6 @@ func TestLifecycleDoesNotRecordInternalFirstDisposition(t *testing.T) {
 	svc := NewLifecycleService(LifecycleDependencies{Placement: placement, Metrics: metrics})
 
 	_, err := svc.ResolveMemoryPlacement(authenticatedRememberContext(teamID, profileID, keyID), ResolveMemoryPlacementRequest{
-		ContractVersion:      domain.ContractVersion,
 		Action:               domain.ResolveReject,
 		IngestID:             placement.result.IngestID,
 		PlacementItemID:      uuid.NewString(),

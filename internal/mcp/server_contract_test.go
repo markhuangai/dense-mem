@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -92,9 +91,6 @@ func TestMCP_RoundTripsContractFixtures(t *testing.T) {
 			if !ok {
 				t.Fatalf("fixture tool %s does not exist", fixture.Tool)
 			}
-			if fixture.ContractVersion != "" {
-				tool.ContractVersion = fixture.ContractVersion
-			}
 			tool.Visibility = "active"
 			called := false
 			var invoked map[string]any
@@ -172,7 +168,7 @@ func TestMCP_RoundTripsContractFixtures(t *testing.T) {
 	}
 }
 
-func TestMCP_ToolListCarriesContractVersionMetadata(t *testing.T) {
+func TestMCP_ToolListHasNoPublicContractVersionMetadata(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
 	tool := registry.ContractTools()[0]
@@ -194,8 +190,11 @@ func TestMCP_ToolListCarriesContractVersionMetadata(t *testing.T) {
 	if err := json.Unmarshal(response.Result, &result); err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Tools) != 1 || result.Tools[0].InputSchema["x-contract-version"] != domain.ContractVersion {
-		t.Fatalf("tools/list contract metadata = %#v", result.Tools)
+	if len(result.Tools) != 1 {
+		t.Fatalf("tools/list tools = %#v", result.Tools)
+	}
+	if _, exists := result.Tools[0].InputSchema["x-contract-version"]; exists {
+		t.Fatalf("tools/list exposes x-contract-version: %#v", result.Tools[0].InputSchema)
 	}
 }
 
@@ -255,13 +254,12 @@ func TestMCP_ToolListRequiredFieldsAreArraysOrOmitted(t *testing.T) {
 }
 
 type mcpContractFixture struct {
-	Name            string         `json:"name"`
-	Tool            string         `json:"tool"`
-	ContractVersion string         `json:"contract_version"`
-	Scopes          []string       `json:"scopes"`
-	Valid           bool           `json:"valid"`
-	Input           map[string]any `json:"input"`
-	Output          map[string]any `json:"output"`
+	Name   string         `json:"name"`
+	Tool   string         `json:"tool"`
+	Scopes []string       `json:"scopes"`
+	Valid  bool           `json:"valid"`
+	Input  map[string]any `json:"input"`
+	Output map[string]any `json:"output"`
 }
 
 func readMCPContractFixtures(t *testing.T) []mcpContractFixture {

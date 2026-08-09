@@ -20,7 +20,6 @@ export type ConflictQueueSupporter = {
   profile_name: string;
   strongest_authority: string;
   accepted_at: string;
-  source_group_count: number;
 };
 
 export type ConflictQueuePosition = {
@@ -28,8 +27,6 @@ export type ConflictQueuePosition = {
   position_key: string;
   disposition: string;
   supporter_count: number;
-  support_group_count: number;
-  authoritative_group_count: number;
   supporters_truncated: boolean;
   supporters: ConflictQueueSupporter[];
 };

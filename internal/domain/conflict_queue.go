@@ -184,14 +184,12 @@ type ConflictQueueItem struct {
 }
 
 type ConflictQueuePosition struct {
-	PositionID              string                   `json:"position_id"`
-	PositionKey             string                   `json:"position_key"`
-	Disposition             string                   `json:"disposition"`
-	SupporterCount          int                      `json:"supporter_count"`
-	SupportGroupCount       int                      `json:"support_group_count"`
-	AuthoritativeGroupCount int                      `json:"authoritative_group_count"`
-	SupportersTruncated     bool                     `json:"supporters_truncated"`
-	Supporters              []ConflictQueueSupporter `json:"supporters"`
+	PositionID          string                   `json:"position_id"`
+	PositionKey         string                   `json:"position_key"`
+	Disposition         string                   `json:"disposition"`
+	SupporterCount      int                      `json:"supporter_count"`
+	SupportersTruncated bool                     `json:"supporters_truncated"`
+	Supporters          []ConflictQueueSupporter `json:"supporters"`
 }
 
 type ConflictQueueSupporter struct {
@@ -199,7 +197,6 @@ type ConflictQueueSupporter struct {
 	ProfileName        string    `json:"profile_name"`
 	StrongestAuthority string    `json:"strongest_authority"`
 	AcceptedAt         time.Time `json:"accepted_at"`
-	SourceGroupCount   int       `json:"source_group_count"`
 }
 
 type ConflictQueueMetricsSnapshot struct {

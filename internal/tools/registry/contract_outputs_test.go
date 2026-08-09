@@ -29,18 +29,15 @@ func TestTraceConflictOutputsIncludePositionsAndResolution(t *testing.T) {
 		EffectiveTimeBasis:  "valid_from",
 		PreferredPositionID: "00000000-0000-0000-0000-000000000201",
 		Positions: []repository.RelationshipConflictPositionRecord{{
-			PositionID:              "00000000-0000-0000-0000-000000000201",
-			Disposition:             "preferred",
-			SupporterCount:          1,
-			SupportGroupCount:       2,
-			AuthoritativeGroupCount: 1,
+			PositionID:     "00000000-0000-0000-0000-000000000201",
+			Disposition:    "preferred",
+			SupporterCount: 1,
 			Supporters: []repository.RelationshipConflictSupporterRecord{{
 				ProfileID:          "00000000-0000-0000-0000-000000000401",
 				ProfileName:        "Profile A",
 				StrongestAuthority: "authoritative",
 				EvidenceID:         "00000000-0000-0000-0000-000000000501",
 				AcceptedAt:         acceptedAt,
-				SourceGroupCount:   2,
 			}},
 			RelationshipIDs: []string{"00000000-0000-0000-0000-000000000301"},
 			OwnerProfileIDs: []string{"00000000-0000-0000-0000-000000000401"},
@@ -67,8 +64,7 @@ func TestTraceConflictOutputsIncludePositionsAndResolution(t *testing.T) {
 		position["disposition"] != "preferred" {
 		t.Fatalf("position output = %#v", position)
 	}
-	if position["supporter_count"] != 1 || position["support_group_count"] != 2 ||
-		position["authoritative_group_count"] != 1 || position["supporters_truncated"] != false {
+	if position["supporter_count"] != 1 || position["supporters_truncated"] != false {
 		t.Fatalf("position provenance output = %#v", position)
 	}
 	supporters, ok := position["supporters"].([]map[string]any)
@@ -77,8 +73,7 @@ func TestTraceConflictOutputsIncludePositionsAndResolution(t *testing.T) {
 	}
 	if supporters[0]["profile_name"] != "Profile A" ||
 		supporters[0]["strongest_authority"] != "authoritative" ||
-		supporters[0]["accepted_at"] != acceptedAt.Format(time.RFC3339Nano) ||
-		supporters[0]["source_group_count"] != 2 {
+		supporters[0]["accepted_at"] != acceptedAt.Format(time.RFC3339Nano) {
 		t.Fatalf("supporter output = %#v", supporters[0])
 	}
 	if got := position["relationship_ids"].([]string); len(got) != 1 || got[0] != "00000000-0000-0000-0000-000000000301" {
@@ -134,19 +129,16 @@ func TestTraceConflictOutputsEnforcePositionBounds(t *testing.T) {
 func TestRecallConflictPositionSchemaValidatesSupporterProvenance(t *testing.T) {
 	acceptedAt := time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC)
 	output := map[string]any{
-		"position_id":               "00000000-0000-0000-0000-000000000201",
-		"disposition":               "candidate",
-		"supporter_count":           1,
-		"support_group_count":       2,
-		"authoritative_group_count": 1,
-		"supporters_truncated":      false,
+		"position_id":          "00000000-0000-0000-0000-000000000201",
+		"disposition":          "candidate",
+		"supporter_count":      1,
+		"supporters_truncated": false,
 		"supporters": []any{map[string]any{
 			"profile_id":          "00000000-0000-0000-0000-000000000401",
 			"profile_name":        "Profile A",
 			"strongest_authority": "authoritative",
 			"evidence_id":         "00000000-0000-0000-0000-000000000501",
 			"accepted_at":         acceptedAt.Format(time.RFC3339),
-			"source_group_count":  2,
 		}},
 		"relationship_ids":    []any{"00000000-0000-0000-0000-000000000301"},
 		"owner_profile_ids":   []any{"00000000-0000-0000-0000-000000000401"},
@@ -155,6 +147,11 @@ func TestRecallConflictPositionSchemaValidatesSupporterProvenance(t *testing.T) 
 	if err := ValidateInput(Tool{InputSchema: recallConflictPositionSchema()}, output); err != nil {
 		t.Fatalf("validate conflict supporter output: %v", err)
 	}
+	output["support_group_count"] = 2
+	if err := ValidateInput(Tool{InputSchema: recallConflictPositionSchema()}, output); err == nil {
+		t.Fatal("source-group field unexpectedly passed closed output validation")
+	}
+	delete(output, "support_group_count")
 	delete(output, "supporters")
 	if err := ValidateInput(Tool{InputSchema: recallConflictPositionSchema()}, output); err == nil {
 		t.Fatal("missing supporters unexpectedly passed closed output validation")

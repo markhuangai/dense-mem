@@ -54,18 +54,15 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 				PolicyVersion:       domain.ConflictPolicyVersion,
 				PreferredPositionID: "",
 				Positions: []repository.RelationshipConflictPositionRecord{{
-					PositionID:              positionID,
-					Disposition:             "candidate",
-					SupporterCount:          1,
-					SupportGroupCount:       1,
-					AuthoritativeGroupCount: 1,
+					PositionID:     positionID,
+					Disposition:    "candidate",
+					SupporterCount: 1,
 					Supporters: []repository.RelationshipConflictSupporterRecord{{
 						ProfileID:          profileID.String(),
 						ProfileName:        "Profile A",
 						StrongestAuthority: "authoritative",
 						EvidenceID:         evidenceID,
 						AcceptedAt:         supportAcceptedAt,
-						SourceGroupCount:   1,
 					}},
 					RelationshipIDs: []string{relationshipID},
 					OwnerProfileIDs: []string{profileID.String()},
@@ -83,9 +80,8 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	svc := NewRecallService(RecallDependencies{Search: search, Provider: provider})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion: domain.ContractVersion,
-		Query:           "PostgreSQL memory",
-		Limit:           2,
+		Query: "PostgreSQL memory",
+		Limit: 2,
 	})
 	require.NoError(t, err)
 	require.Len(t, result.Results, 1)
@@ -99,8 +95,6 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	require.Equal(t, &reviewDueAt, result.Conflicts[0].ReviewDueAt)
 	require.Equal(t, []string{relationshipID}, result.Conflicts[0].Positions[0].RelationshipIDs)
 	require.Equal(t, 1, result.Conflicts[0].Positions[0].SupporterCount)
-	require.Equal(t, 1, result.Conflicts[0].Positions[0].SupportGroupCount)
-	require.Equal(t, 1, result.Conflicts[0].Positions[0].AuthoritativeGroupCount)
 	require.False(t, result.Conflicts[0].Positions[0].SupportersTruncated)
 	require.Equal(t, []RecallConflictSupporter{{
 		ProfileID:          profileID.String(),
@@ -108,7 +102,6 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 		StrongestAuthority: "authoritative",
 		EvidenceID:         evidenceID,
 		AcceptedAt:         supportAcceptedAt,
-		SourceGroupCount:   1,
 	}}, result.Conflicts[0].Positions[0].Supporters)
 	require.NotEmpty(t, result.DiscoveryGuidance)
 	require.Empty(t, result.DiscoveryPaths)
@@ -132,9 +125,7 @@ func TestRecallRejectsMismatchedConflictTeam(t *testing.T) {
 	}
 	svc := NewRecallService(RecallDependencies{Search: search})
 
-	_, err := svc.Recall(authenticatedRememberContext(teamID, uuid.New(), uuid.New()), RecallRequest{
-		ContractVersion: domain.ContractVersion,
-	})
+	_, err := svc.Recall(authenticatedRememberContext(teamID, uuid.New(), uuid.New()), RecallRequest{})
 	require.ErrorIs(t, err, ErrRecallRepositoryTeamMismatch)
 }
 
@@ -216,7 +207,6 @@ func TestRecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 	svc := NewRecallService(RecallDependencies{Search: search, Hypotheses: hypotheses})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion:   domain.ContractVersion,
 		Query:             "PostgreSQL memory",
 		IncludeHypotheses: true,
 	})
@@ -250,8 +240,7 @@ func TestRecallProviderFailureIsOptionalDegradation(t *testing.T) {
 	svc := NewRecallService(RecallDependencies{Search: search, Provider: provider})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion: domain.ContractVersion,
-		Query:           "PostgreSQL memory",
+		Query: "PostgreSQL memory",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result.Degradation)
@@ -287,8 +276,7 @@ func TestRecallProviderFailureReportsFailedRelationshipProjection(t *testing.T) 
 	})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion: domain.ContractVersion,
-		Query:           "PostgreSQL memory",
+		Query: "PostgreSQL memory",
 	})
 	require.NoError(t, err)
 	require.Equal(t, string(domain.SearchProjectionFailed), result.SearchStates.Relationships)
@@ -357,8 +345,7 @@ func TestRecallProviderMalformedBranchesAreOptionalDegradation(t *testing.T) {
 			svc := NewRecallService(RecallDependencies{Search: search, Provider: tt.provider})
 
 			result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-				ContractVersion: domain.ContractVersion,
-				Query:           "PostgreSQL memory",
+				Query: "PostgreSQL memory",
 			})
 			require.NoError(t, err)
 			require.NotNil(t, result.Degradation)
@@ -390,7 +377,6 @@ func TestRecallNormalizesIDs(t *testing.T) {
 	svc := NewRecallService(RecallDependencies{Search: search})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion:      domain.ContractVersion,
 		Query:                " ",
 		KnownEvidenceIDs:     []string{" " + evidenceID + " ", evidenceID},
 		KnownRelationshipIDs: []string{relationshipID, relationshipID},
@@ -446,9 +432,8 @@ func TestRecallAddsCommunityDiscoveryWhenEnabledAndPrimaryHasRoom(t *testing.T) 
 	})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion: domain.ContractVersion,
-		Query:           "PostgreSQL",
-		Limit:           3,
+		Query: "PostgreSQL",
+		Limit: 3,
 	})
 	require.NoError(t, err)
 	require.Nil(t, result.Degradation)
@@ -494,9 +479,8 @@ func TestRecallSkipsCommunityDiscoveryWhenPrimaryResultsFillLimit(t *testing.T) 
 	})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion: domain.ContractVersion,
-		Query:           "PostgreSQL",
-		Limit:           1,
+		Query: "PostgreSQL",
+		Limit: 1,
 	})
 
 	require.NoError(t, err)
@@ -561,7 +545,6 @@ func TestRecallReturnsRelatedRelationshipsAndVectorDegradation(t *testing.T) {
 	svc := NewRecallService(RecallDependencies{Search: search, Provider: provider})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion:   domain.ContractVersion,
 		Query:             "Dense-Mem PostgreSQL",
 		RelationshipLimit: &relationshipLimit,
 	})
@@ -602,7 +585,6 @@ func TestRecallSkipsRelatedRelationshipsWhenLimitIsZero(t *testing.T) {
 	svc := NewRecallService(RecallDependencies{Search: search})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion:   domain.ContractVersion,
 		Query:             "PostgreSQL",
 		RelationshipLimit: &relationshipLimit,
 	})
@@ -630,9 +612,8 @@ func TestRecallRestoresDefaultResultLimit(t *testing.T) {
 	svc := NewRecallService(RecallDependencies{Search: search})
 
 	_, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion: domain.ContractVersion,
-		Query:           "limits",
-		Limit:           0,
+		Query: "limits",
+		Limit: 0,
 	})
 	require.NoError(t, err)
 	require.Equal(t, defaultRecallResultLimit, search.input.Limit)
@@ -665,7 +646,6 @@ func TestRecallAddsOptionalFrontierDegradations(t *testing.T) {
 	})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion:   domain.ContractVersion,
 		Query:             "PostgreSQL",
 		IncludeHypotheses: true,
 	})
@@ -684,29 +664,19 @@ func TestRecallAddsOptionalFrontierDegradations(t *testing.T) {
 func TestRecallRequiresAuthenticatedActor(t *testing.T) {
 	svc := NewRecallService(RecallDependencies{Search: &recallSearchStub{}})
 	_, err := svc.Recall(context.Background(), RecallRequest{
-		ContractVersion: domain.ContractVersion,
-		Query:           "PostgreSQL memory",
+		Query: "PostgreSQL memory",
 	})
 	require.ErrorIs(t, err, ErrRecallAuthContext)
 }
 
-func TestRecallRejectsInvalidContractAndMissingSearch(t *testing.T) {
+func TestRecallRequiresSearch(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
 	ctx := authenticatedRememberContext(teamID, profileID, keyID)
 
-	_, err := NewRecallService(RecallDependencies{}).Recall(ctx, RecallRequest{
-		ContractVersion: domain.ContractVersion,
-		Query:           "PostgreSQL memory",
-	})
+	_, err := NewRecallService(RecallDependencies{}).Recall(ctx, RecallRequest{Query: "PostgreSQL memory"})
 	require.ErrorContains(t, err, "search repository is required")
-
-	_, err = NewRecallService(RecallDependencies{Search: &recallSearchStub{}}).Recall(ctx, RecallRequest{
-		ContractVersion: "wrong",
-		Query:           "PostgreSQL memory",
-	})
-	require.ErrorContains(t, err, "invalid contract_version")
 }
 
 func TestValidateRecallEmbeddingRejectsInvalidVectors(t *testing.T) {

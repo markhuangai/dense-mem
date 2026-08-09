@@ -30,9 +30,8 @@ const provenance = await provenanceAndIsolationScenario();
 console.log(JSON.stringify({
   status: "ok",
   run_id: runID,
-  contract_version: "dense-mem.v2.4",
-  early_quorum: early.summary,
-  due_unique_authoritative: authoritative,
+  supporter_majority_after_ttl: early.summary,
+  authority_does_not_veto_majority: authoritative,
   due_majority: majority,
   ai_selection: selected,
   ai_abstention_last_write_wins: abstained,
@@ -47,20 +46,24 @@ async function earlyQuorumScenario(teamID) {
     authorityA: "primary",
     authorityB: "secondary",
   });
-  for (let index = 2; index <= 4; index += 1) {
-    await submitPositionSupport(fixture, fixture.profileA, {
+  for (let index = 2; index <= 5; index += 1) {
+    const profile = await createProfile(fixture.teamID, `${runID} early-quorum supporter ${index}`);
+    await submitPositionSupport(fixture, profile, {
       label: `early-quorum-a-${index}`,
-      sourceGroup: `${runID}:early-quorum:independent:${index}`,
+      sourceGroup: fixture.sourceGroupA,
       authority: "primary",
     });
   }
   const open = await currentConflict(fixture.profileA.apiKey, fixture.relationshipA, "open");
   const winner = positionForRelationship(open, fixture.relationshipA);
-  assert(winner.support_group_count === 4, `early quorum winner group count = ${winner.support_group_count}`);
-  const result = runReview(fixture, offsetTime(open.review_due_at, -60_000));
-  assertReview(result, "resolve", "early_quorum", fixture.positionAID, "");
+  assert(winner.supporter_count === 5, `supporter majority count = ${winner.supporter_count}`);
+  // Review runs are one-per-local-day; use the prior day for the pre-TTL probe.
+  const beforeTTL = runReview(fixture, offsetTime(open.review_due_at, -86_460_000));
+  assertReview(beforeTTL, "no_op", "waiting_for_review_due", "", "");
+  const result = runReview(fixture, offsetTime(open.review_due_at, 1_000));
+  assertReview(result, "resolve", "due_supporter_majority", fixture.positionAID, "");
   const state = conflictState(fixture.teamID, fixture.conflictID);
-  assert(state.status === "resolved" && state.resolution_reason === "early_quorum_support", `early quorum lineage is invalid: ${JSON.stringify(state)}`);
+  assert(state.status === "resolved" && state.resolution_reason === "due_supporter_majority", `supporter majority lineage is invalid: ${JSON.stringify(state)}`);
   return {
     profileA: fixture.profileA,
     summary: { conflict_id: fixture.conflictID, preferred_position_id: fixture.positionAID, stage: result.stage },
@@ -74,11 +77,20 @@ async function dueUniqueAuthoritativeScenario() {
     validFromA: "2026-08-01T00:00:00Z",
     validFromB: "2026-08-01T00:00:00Z",
   });
+  for (let index = 2; index <= 3; index += 1) {
+    const profile = await createProfile(fixture.teamID, `${runID} majority supporter ${index}`);
+    await submitPositionSupport(fixture, profile, {
+      label: `due-authoritative-b-${index}`,
+      sourceGroup: fixture.sourceGroupB,
+      authority: "primary",
+      position: "b",
+    });
+  }
   const result = runReview(fixture, offsetTime(fixture.reviewDueAt, 1_000));
-  assertReview(result, "resolve", "due_unique_authoritative", fixture.positionAID, "");
+  assertReview(result, "resolve", "due_supporter_majority", fixture.positionBID, "");
   const state = conflictState(fixture.teamID, fixture.conflictID);
-  assert(state.status === "resolved" && state.resolution_reason === "unique_authoritative_source", `authoritative lineage is invalid: ${JSON.stringify(state)}`);
-  return { conflict_id: fixture.conflictID, preferred_position_id: fixture.positionAID, stage: result.stage };
+  assert(state.status === "resolved" && state.resolution_reason === "due_supporter_majority", `authority vetoed supporter majority: ${JSON.stringify(state)}`);
+  return { conflict_id: fixture.conflictID, preferred_position_id: fixture.positionBID, stage: result.stage };
 }
 
 async function dueMajorityScenario() {
@@ -86,18 +98,19 @@ async function dueMajorityScenario() {
     authorityA: "primary",
     authorityB: "secondary",
   });
-  await submitPositionSupport(fixture, fixture.profileA, {
+  const secondSupporter = await createProfile(fixture.teamID, `${runID} due-majority supporter`);
+  await submitPositionSupport(fixture, secondSupporter, {
     label: "due-majority-a-2",
-    sourceGroup: `${runID}:due-majority:independent:2`,
+    sourceGroup: fixture.sourceGroupA,
     authority: "primary",
   });
   const open = await currentConflict(fixture.profileA.apiKey, fixture.relationshipA, "open");
   const winner = positionForRelationship(open, fixture.relationshipA);
-  assert(winner.support_group_count === 2, `due majority winner group count = ${winner.support_group_count}`);
+  assert(winner.supporter_count === 2, `due majority supporter count = ${winner.supporter_count}`);
   const result = runReview(fixture, offsetTime(open.review_due_at, 1_000));
-  assertReview(result, "resolve", "due_majority", fixture.positionAID, "");
+  assertReview(result, "resolve", "due_supporter_majority", fixture.positionAID, "");
   const state = conflictState(fixture.teamID, fixture.conflictID);
-  assert(state.status === "resolved" && state.resolution_reason === "due_majority_support", `majority lineage is invalid: ${JSON.stringify(state)}`);
+  assert(state.status === "resolved" && state.resolution_reason === "due_supporter_majority", `majority lineage is invalid: ${JSON.stringify(state)}`);
   return { conflict_id: fixture.conflictID, preferred_position_id: fixture.positionAID, stage: result.stage };
 }
 
@@ -181,7 +194,6 @@ async function provenanceAndIsolationScenario() {
   const beforeIndependent = await currentConflict(profileC.apiKey, fixture.relationshipA, "open");
   const copiedPosition = positionForRelationship(beforeIndependent, fixture.relationshipA);
   assert(copiedPosition.supporter_count === 21, `copied supporter count = ${copiedPosition.supporter_count}`);
-  assert(copiedPosition.support_group_count === 1, `copied source group increased independent weight: ${copiedPosition.support_group_count}`);
   const observedVersion = Number(beforeIndependent.version);
   // Reusing this observed version must succeed once and be rejected after that commit advances the case.
   await submitPositionSupport(fixture, profileC, {
@@ -193,7 +205,7 @@ async function provenanceAndIsolationScenario() {
 
   const afterIndependent = await currentConflict(profileC.apiKey, fixture.relationshipA, "open");
   const independentPosition = positionForRelationship(afterIndependent, fixture.relationshipA);
-  assert(independentPosition.supporter_count === 21 && independentPosition.support_group_count === 2, `independent support counts are invalid: ${JSON.stringify(independentPosition)}`);
+  assert(independentPosition.supporter_count === 21, `same profile gained an extra vote: ${JSON.stringify(independentPosition)}`);
   assert(Number(afterIndependent.version) > observedVersion, "fresh conflict_context support did not advance the conflict version");
 
   const semanticBeforeStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
@@ -227,7 +239,7 @@ async function provenanceAndIsolationScenario() {
   const supporterA = tracePosition.supporters.find((supporter) => supporter.profile_id === fixture.profileA.profileID);
   const supporterC = tracePosition.supporters.find((supporter) => supporter.profile_id === profileC.profileID);
   assert(supporterA?.profile_name === renamedA && supporterA.strongest_authority === "authoritative", `current profile rename was not hydrated: ${JSON.stringify(supporterA)}`);
-  assert(supporterC?.source_group_count === 2, `one profile's independent source groups were not projected: ${JSON.stringify(supporterC)}`);
+  assert(supporterC?.profile_id === profileC.profileID, `supporter identity was not projected: ${JSON.stringify(supporterC)}`);
 
   const nonOwnerRetraction = await mcpRaw(profileC.apiKey, "retract_evidence", {
     evidence_ids: [fixture.evidenceA],
@@ -255,7 +267,6 @@ async function provenanceAndIsolationScenario() {
     supporter_count: tracePosition.supporter_count,
     returned_supporters: tracePosition.supporters.length,
     supporters_truncated: tracePosition.supporters_truncated,
-    support_group_count: tracePosition.support_group_count,
     recall_trace_parity: true,
     current_profile_name_hydrated: true,
     fresh_conflict_context_applied: true,
@@ -274,6 +285,7 @@ async function createConflictFixture(label, options = {}) {
   const objectAName = `${runID} ${label} PostgreSQL`;
   const objectBName = `${runID} ${label} GraphDB`;
   const sourceGroupA = `${runID}:${label}:source:a`;
+  const sourceGroupB = `${runID}:${label}:source:b`;
   const first = await submitRelationship(profileA.apiKey, {
     label: `${label}-a`,
     subjectName,
@@ -296,11 +308,16 @@ async function createConflictFixture(label, options = {}) {
     subjectName,
     objectName: objectBName,
     subjectEntityID,
-    sourceGroup: `${runID}:${label}:source:b`,
+    sourceGroup: sourceGroupB,
     authority: options.authorityB ?? "primary",
     validFrom: options.validFromB,
     marker: options.markerB,
   });
+  const secondTrace = await mcpSuccess(profileB.apiKey, "trace_memory", {
+    relationship_id: second.relationshipID,
+  });
+  const objectBEntityID = stringAt(secondTrace, ["relationship", "object_entity_id"]);
+  assert(objectBEntityID, `second ${label} trace did not return the canonical object entity ID`);
   const conflict = await currentConflict(profileB.apiKey, second.relationshipID, "open");
   const positionA = positionForRelationship(conflict, first.relationshipID);
   const positionB = positionForRelationship(conflict, second.relationshipID);
@@ -314,11 +331,13 @@ async function createConflictFixture(label, options = {}) {
     objectBName,
     subjectEntityID,
     objectAEntityID,
+    objectBEntityID,
     sourceGroupA,
     relationshipA: first.relationshipID,
     relationshipB: second.relationshipID,
     evidenceA: first.evidenceID,
     evidenceB: second.evidenceID,
+    sourceGroupB,
     conflictID: String(conflict.conflict_id),
     positionAID: String(positionA.position_id),
     positionBID: String(positionB.position_id),
@@ -327,12 +346,13 @@ async function createConflictFixture(label, options = {}) {
 }
 
 async function submitPositionSupport(fixture, profile, options) {
+  const positionB = options.position === "b";
   return submitRelationship(profile.apiKey, {
     label: options.label,
     subjectName: fixture.subjectName,
-    objectName: fixture.objectAName,
+    objectName: positionB ? fixture.objectBName : fixture.objectAName,
     subjectEntityID: fixture.subjectEntityID,
-    objectEntityID: fixture.objectAEntityID,
+    objectEntityID: positionB ? fixture.objectBEntityID : fixture.objectAEntityID,
     sourceGroup: options.sourceGroup,
     authority: options.authority,
     conflictContext: options.conflictContext,
@@ -690,8 +710,6 @@ function conflictByID(conflicts, conflictID) {
 function provenanceFields(position) {
   return {
     supporter_count: position.supporter_count,
-    support_group_count: position.support_group_count,
-    authoritative_group_count: position.authoritative_group_count,
     supporters_truncated: position.supporters_truncated,
     supporters: position.supporters,
   };

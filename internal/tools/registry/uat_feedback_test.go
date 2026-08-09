@@ -201,7 +201,6 @@ func TestRecallFeedbackSnapshotHelpersCoverOptionalBranches(t *testing.T) {
 		"use_communities":        true,
 		"ignored":                "not persisted",
 	}, memoryservice.RecallRequest{
-		ContractVersion:      domain.ContractVersion,
 		Query:                "PostgreSQL memory",
 		Limit:                7,
 		ValidAt:              &validAt,
@@ -265,8 +264,7 @@ func TestRecallFeedbackSnapshotHelpersCoverOptionalBranches(t *testing.T) {
 func TestRecordRecallFeedbackSnapshotPrerequisitesAndDegradation(t *testing.T) {
 	input := map[string]any{"query": "PostgreSQL memory"}
 	req := memoryservice.RecallRequest{
-		ContractVersion: domain.ContractVersion,
-		Query:           "PostgreSQL memory",
+		Query: "PostgreSQL memory",
 	}
 	recorder := &stubRecallFeedbackRecorder{}
 	enabledDeps := Dependencies{

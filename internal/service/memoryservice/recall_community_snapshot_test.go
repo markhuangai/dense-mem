@@ -76,7 +76,6 @@ func TestRecallUsesCurrentCommunitySnapshotAndCoverage(t *testing.T) {
 	})
 
 	result, err := svc.Recall(authenticatedRememberContext(teamID, profileID, keyID), RecallRequest{
-		ContractVersion:            domain.ContractVersion,
 		Limit:                      3,
 		RelationshipLimit:          intPointer(1),
 		CommunityLimit:             &communityLimit,

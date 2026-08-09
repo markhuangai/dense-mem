@@ -63,7 +63,7 @@ func TestServiceResolvesSelectedAssessment(t *testing.T) {
 	require.Len(t, provider.requests, 1)
 	assert.Equal(t, conflictReviewTestConflictID, provider.requests[0].CaseID)
 	assert.Len(t, provider.requests[0].Evidence, 2)
-	assert.Equal(t, 2, provider.requests[0].Positions[0].OwnerProfileCount)
+	assert.Equal(t, 2, provider.requests[0].Positions[0].SupporterCount)
 }
 
 func TestServiceUsesLastWriteWinsAfterExplicitAbstention(t *testing.T) {
@@ -573,10 +573,10 @@ func newConflictReviewRepositoryStub(t *testing.T) *conflictReviewRepositoryStub
 		Question:    "Which state is current?",
 		Positions: []repository.OverdueConflictAssessmentPosition{
 			{
-				PositionID:        conflictReviewTestPositionAID,
-				PositionKey:       "value:a",
-				OwnerProfileCount: 2,
-				Supports:          []domain.ConflictResolutionSupport{{Authority: "primary", AcceptedAt: older}},
+				PositionID:     conflictReviewTestPositionAID,
+				PositionKey:    "value:a",
+				SupporterCount: 2,
+				Supports:       []domain.ConflictResolutionSupport{{Authority: "primary", AcceptedAt: older}},
 			},
 			{
 				PositionID:  conflictReviewTestPositionBID,
@@ -590,7 +590,7 @@ func newConflictReviewRepositoryStub(t *testing.T) *conflictReviewRepositoryStub
 				OwnerProfileID: conflictReviewTestTeamID,
 				PositionID:     conflictReviewTestPositionAID,
 				SupportID:      conflictReviewTestSupportAID,
-				SourceGroupKey: "source-a",
+				SupporterRef:   "supporter_1",
 				Authority:      "primary",
 				AcceptedAt:     older,
 				Content:        "Evidence for position A.",
@@ -600,7 +600,7 @@ func newConflictReviewRepositoryStub(t *testing.T) *conflictReviewRepositoryStub
 				OwnerProfileID: conflictReviewTestTeamID,
 				PositionID:     conflictReviewTestPositionBID,
 				SupportID:      conflictReviewTestSupportBID,
-				SourceGroupKey: "source-b",
+				SupporterRef:   "supporter_1",
 				Authority:      "secondary",
 				AcceptedAt:     newer,
 				Content:        "Evidence for position B.",

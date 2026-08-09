@@ -264,9 +264,9 @@ durable staging -> validated placement -> active eligible Relationships
 
 ## MCP Tool Catalog
 
-The active contract is `dense-mem.v2.4`. Discover the authorized catalog with
-MCP `tools/list`; the server applies the same scope, feature, and visibility
-checks to `tools/call`.
+Discover the current closed-schema catalog with MCP `tools/list`; callers do
+not select a contract version. The server applies the same scope, feature, and
+visibility checks to `tools/call`.
 
 | Tool | Used by | Registration | Use case and capability |
 |------|---------|--------------|-------------------------|

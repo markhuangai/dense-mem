@@ -373,14 +373,12 @@ func conflictQueueItemFromRecord(row conflictQueueCaseRow, collectedAt time.Time
 	for _, position := range row.Record.Positions {
 		positionKey, _ := truncateConflictQueueText(position.PositionKey, 256)
 		queuePosition := domain.ConflictQueuePosition{
-			PositionID:              position.PositionID,
-			PositionKey:             positionKey,
-			Disposition:             position.Disposition,
-			SupporterCount:          position.SupporterCount,
-			SupportGroupCount:       position.SupportGroupCount,
-			AuthoritativeGroupCount: position.AuthoritativeGroupCount,
-			SupportersTruncated:     position.SupportersTruncated,
-			Supporters:              make([]domain.ConflictQueueSupporter, 0, len(position.Supporters)),
+			PositionID:          position.PositionID,
+			PositionKey:         positionKey,
+			Disposition:         position.Disposition,
+			SupporterCount:      position.SupporterCount,
+			SupportersTruncated: position.SupportersTruncated,
+			Supporters:          make([]domain.ConflictQueueSupporter, 0, len(position.Supporters)),
 		}
 		item.PositionsTruncated = item.PositionsTruncated || position.PositionsTruncated
 		for _, supporter := range position.Supporters {
@@ -388,7 +386,6 @@ func conflictQueueItemFromRecord(row conflictQueueCaseRow, collectedAt time.Time
 			queuePosition.Supporters = append(queuePosition.Supporters, domain.ConflictQueueSupporter{
 				ProfileID: supporter.ProfileID, ProfileName: profileName,
 				StrongestAuthority: supporter.StrongestAuthority, AcceptedAt: supporter.AcceptedAt,
-				SourceGroupCount: supporter.SourceGroupCount,
 			})
 		}
 		item.Positions = append(item.Positions, queuePosition)

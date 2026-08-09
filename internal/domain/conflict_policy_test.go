@@ -5,159 +5,90 @@ import (
 	"time"
 )
 
-func TestEvaluateRelationshipConflictResolvesEarlyQuorum(t *testing.T) {
+func TestEvaluateRelationshipConflictWaitsForTTLDespiteSupporterMajority(t *testing.T) {
 	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
 	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
 		Now:         now,
 		ReviewDueAt: now.Add(24 * time.Hour),
 		Positions: []RelationshipConflictPositionRecord{
-			{PositionID: "pos-a", SupportGroupCount: 4},
-			{PositionID: "pos-b", SupportGroupCount: 1},
+			{PositionID: "pos-a", SupporterCount: 5},
+			{PositionID: "pos-b", SupporterCount: 1},
 		},
 	})
 
-	if evaluation.Outcome != ConflictReviewOutcomeResolve {
-		t.Fatalf("Outcome = %q, want resolve", evaluation.Outcome)
+	if evaluation.Outcome != ConflictReviewOutcomeNoop || evaluation.Stage != ConflictReviewStageWaitingForReviewDue {
+		t.Fatalf("evaluation = %+v, want pre-TTL no-op", evaluation)
 	}
-	if evaluation.Stage != ConflictReviewStageEarlyQuorum || evaluation.PreferredPositionID != "pos-a" {
+}
+
+func TestEvaluateRelationshipConflictResolvesStrictSupporterMajorityAfterTTL(t *testing.T) {
+	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
+	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
+		Now:         now,
+		ReviewDueAt: now,
+		Positions: []RelationshipConflictPositionRecord{
+			{PositionID: "pos-a", SupporterCount: 5},
+			{PositionID: "pos-b", SupporterCount: 1},
+		},
+	})
+
+	if evaluation.Outcome != ConflictReviewOutcomeResolve || evaluation.Stage != ConflictReviewStageDueMajority || evaluation.PreferredPositionID != "pos-a" {
+		t.Fatalf("evaluation = %+v", evaluation)
+	}
+	if evaluation.TotalSupporterCount != 6 {
+		t.Fatalf("TotalSupporterCount = %d, want 6", evaluation.TotalSupporterCount)
+	}
+}
+
+func TestEvaluateRelationshipConflictDoesNotResolveTieAfterTTL(t *testing.T) {
+	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
+	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
+		Now:         now,
+		ReviewDueAt: now,
+		Positions: []RelationshipConflictPositionRecord{
+			{PositionID: "pos-a", SupporterCount: 1},
+			{PositionID: "pos-b", SupporterCount: 1},
+		},
+	})
+
+	if evaluation.Outcome != ConflictReviewOutcomeOverdue || evaluation.PreferredPositionID != "" {
+		t.Fatalf("evaluation = %+v, want overdue without winner", evaluation)
+	}
+}
+
+func TestEvaluateRelationshipConflictAuthorityDoesNotVetoSupporterMajority(t *testing.T) {
+	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
+	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
+		Now:         now,
+		ReviewDueAt: now,
+		Positions: []RelationshipConflictPositionRecord{
+			{PositionID: "pos-a", SupporterCount: 3, RecordedFallback: true},
+			{PositionID: "pos-b", SupporterCount: 1},
+		},
+	})
+
+	if evaluation.Outcome != ConflictReviewOutcomeResolve || evaluation.PreferredPositionID != "pos-a" {
 		t.Fatalf("evaluation = %+v", evaluation)
 	}
 }
 
-func TestEvaluateRelationshipConflictDueMajority(t *testing.T) {
+func TestEvaluateRelationshipConflictZeroSupportersWaitsThenOverdues(t *testing.T) {
 	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
-	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
+	before := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
 		Now:         now,
+		ReviewDueAt: now.Add(time.Hour),
+		Positions:   []RelationshipConflictPositionRecord{{PositionID: "pos-a"}, {PositionID: "pos-b"}},
+	})
+	if before.Outcome != ConflictReviewOutcomeNoop {
+		t.Fatalf("before TTL evaluation = %+v", before)
+	}
+	after := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
+		Now:         now.Add(time.Hour),
 		ReviewDueAt: now,
-		Positions: []RelationshipConflictPositionRecord{
-			{PositionID: "pos-a", SupportGroupCount: 2},
-			{PositionID: "pos-b", SupportGroupCount: 1},
-		},
+		Positions:   []RelationshipConflictPositionRecord{{PositionID: "pos-a"}, {PositionID: "pos-b"}},
 	})
-
-	if evaluation.Outcome != ConflictReviewOutcomeResolve {
-		t.Fatalf("Outcome = %q, want resolve", evaluation.Outcome)
-	}
-	if evaluation.Stage != ConflictReviewStageDueMajority || evaluation.PreferredPositionID != "pos-a" {
-		t.Fatalf("evaluation = %+v", evaluation)
-	}
-}
-
-func TestEvaluateRelationshipConflictDoesNotUseTTLLoneAsWinner(t *testing.T) {
-	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
-	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
-		Now:         now,
-		ReviewDueAt: now.Add(-time.Minute),
-		Positions: []RelationshipConflictPositionRecord{
-			{PositionID: "pos-a", SupportGroupCount: 1},
-			{PositionID: "pos-b", SupportGroupCount: 1},
-		},
-	})
-
-	if evaluation.Outcome != ConflictReviewOutcomeOverdue {
-		t.Fatalf("Outcome = %q, want overdue", evaluation.Outcome)
-	}
-	if evaluation.PreferredPositionID != "" {
-		t.Fatalf("PreferredPositionID = %q, want empty", evaluation.PreferredPositionID)
-	}
-}
-
-func TestEvaluateRelationshipConflictResolvesDueUniqueAuthoritative(t *testing.T) {
-	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
-	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
-		Now:         now,
-		ReviewDueAt: now,
-		Positions: []RelationshipConflictPositionRecord{
-			{PositionID: "pos-a", SupportGroupCount: 1, AuthoritativeGroupCount: 1},
-			{PositionID: "pos-b", SupportGroupCount: 3},
-		},
-	})
-
-	if evaluation.Outcome != ConflictReviewOutcomeResolve {
-		t.Fatalf("Outcome = %q, want resolve", evaluation.Outcome)
-	}
-	if evaluation.Stage != ConflictReviewStageDueUniqueAuthoritative || evaluation.PreferredPositionID != "pos-a" {
-		t.Fatalf("evaluation = %+v", evaluation)
-	}
-}
-
-func TestEvaluateRelationshipConflictRecordedFallbackDoesNotOverrideAuthority(t *testing.T) {
-	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
-	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
-		Now:         now,
-		ReviewDueAt: now,
-		Positions: []RelationshipConflictPositionRecord{
-			{PositionID: "pos-a", SupportGroupCount: 3, AuthoritativeGroupCount: 1, RecordedFallback: true},
-			{PositionID: "pos-b", SupportGroupCount: 1, AuthoritativeGroupCount: 1},
-		},
-	})
-
-	if evaluation.Outcome != ConflictReviewOutcomeResolve {
-		t.Fatalf("Outcome = %q, want resolve", evaluation.Outcome)
-	}
-	if evaluation.PreferredPositionID != "pos-b" {
-		t.Fatalf("PreferredPositionID = %q, want pos-b", evaluation.PreferredPositionID)
-	}
-}
-
-func TestEvaluateRelationshipConflictAuthoritativeOppositionBlocksMajority(t *testing.T) {
-	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
-	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
-		Now:         now,
-		ReviewDueAt: now,
-		Positions: []RelationshipConflictPositionRecord{
-			{PositionID: "pos-a", SupportGroupCount: 3, AuthoritativeGroupCount: 1},
-			{PositionID: "pos-b", SupportGroupCount: 1, AuthoritativeGroupCount: 1},
-		},
-	})
-
-	if evaluation.Outcome != ConflictReviewOutcomeOverdue {
-		t.Fatalf("Outcome = %q, want overdue", evaluation.Outcome)
-	}
-}
-
-func TestEvaluateRelationshipConflictLaterEffectiveTimeCanOverrideDueMajorityOpposition(t *testing.T) {
-	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
-	oldEffective := now.Add(-48 * time.Hour)
-	newEffective := now.Add(-24 * time.Hour)
-	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
-		Now:         now,
-		ReviewDueAt: now,
-		Positions: []RelationshipConflictPositionRecord{
-			{PositionID: "pos-a", SupportGroupCount: 2, AuthoritativeGroupCount: 1, EffectiveAt: &newEffective, EffectiveTimeBasis: "valid_from"},
-			{PositionID: "pos-b", SupportGroupCount: 1, AuthoritativeGroupCount: 1, EffectiveAt: &oldEffective},
-		},
-	})
-
-	if evaluation.Outcome != ConflictReviewOutcomeResolve {
-		t.Fatalf("Outcome = %q, want resolve", evaluation.Outcome)
-	}
-	if evaluation.Stage != ConflictReviewStageDueMajority || evaluation.PreferredPositionID != "pos-a" {
-		t.Fatalf("evaluation = %+v", evaluation)
-	}
-	if evaluation.EffectiveAt == nil || !evaluation.EffectiveAt.Equal(newEffective) {
-		t.Fatalf("EffectiveAt = %v, want %v", evaluation.EffectiveAt, newEffective)
-	}
-}
-
-func TestEvaluateRelationshipConflictLaterEffectiveTimeCanOverrideAuthoritativeOpposition(t *testing.T) {
-	now := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
-	oldEffective := now.Add(-48 * time.Hour)
-	newEffective := now.Add(-24 * time.Hour)
-	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
-		Now:         now,
-		ReviewDueAt: now.Add(24 * time.Hour),
-		Positions: []RelationshipConflictPositionRecord{
-			{PositionID: "pos-a", SupportGroupCount: 4, EffectiveAt: &newEffective, EffectiveTimeBasis: "valid_from"},
-			{PositionID: "pos-b", SupportGroupCount: 1, AuthoritativeGroupCount: 1, EffectiveAt: &oldEffective},
-		},
-	})
-
-	if evaluation.Outcome != ConflictReviewOutcomeResolve {
-		t.Fatalf("Outcome = %q, want resolve", evaluation.Outcome)
-	}
-	if evaluation.EffectiveAt == nil || !evaluation.EffectiveAt.Equal(newEffective) {
-		t.Fatalf("EffectiveAt = %v, want %v", evaluation.EffectiveAt, newEffective)
+	if after.Outcome != ConflictReviewOutcomeOverdue {
+		t.Fatalf("after TTL evaluation = %+v", after)
 	}
 }
 
@@ -167,16 +98,12 @@ func TestEvaluateRelationshipConflictIgnoresInvalidPositions(t *testing.T) {
 		Now:         now,
 		ReviewDueAt: now,
 		Positions: []RelationshipConflictPositionRecord{
-			{PositionID: " ", SupportGroupCount: 3},
-			{PositionID: "pos-a", SupportGroupCount: 0},
-			{PositionID: "pos-b", SupportGroupCount: 1},
+			{PositionID: " "},
+			{PositionID: "pos-a", SupporterCount: 1},
 		},
 	})
 
-	if evaluation.Outcome != ConflictReviewOutcomeNoop {
-		t.Fatalf("Outcome = %q, want no_op", evaluation.Outcome)
-	}
-	if evaluation.Reason != ConflictReviewReasonFewerThanTwoPositions {
-		t.Fatalf("Reason = %q, want %q", evaluation.Reason, ConflictReviewReasonFewerThanTwoPositions)
+	if evaluation.Outcome != ConflictReviewOutcomeNoop || evaluation.Reason != ConflictReviewReasonFewerThanTwoPositions {
+		t.Fatalf("evaluation = %+v", evaluation)
 	}
 }

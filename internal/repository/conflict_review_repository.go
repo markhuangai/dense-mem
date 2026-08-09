@@ -200,9 +200,9 @@ func (r *LedgerRepositoryImpl) ReviewRelationshipConflictCase(
 		result.Stage = evaluation.Stage
 		result.PreferredPositionID = evaluation.PreferredPositionID
 		if err := appendRelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, evaluation.PreferredPositionID, "", "", string(domain.RelationshipConflictEventEvaluated), evaluation.Outcome, "case:"+input.ConflictID+":run:"+input.ReviewRunID+":evaluated", map[string]any{
-			"stage":                     evaluation.Stage,
-			"reason":                    evaluation.Reason,
-			"total_support_group_count": evaluation.TotalSupportGroupCount,
+			"stage":                 evaluation.Stage,
+			"reason":                evaluation.Reason,
+			"total_supporter_count": evaluation.TotalSupporterCount,
 		}); err != nil {
 			return err
 		}

@@ -240,7 +240,7 @@ remember 证据（可选 Entity/Relationship 提议）
 
 ## MCP 工具目录
 
-当前契约版本为 `dense-mem.v2.4`。用 MCP `tools/list` 发现已授权目录；服务端对
+用 MCP `tools/list` 发现当前闭合 Schema 目录；调用方不能选择契约版本。服务端对
 `tools/call` 施加相同的 scope、功能和可见性检查。
 
 | 工具 | 使用方 | 注册方式 | 用途与能力 |

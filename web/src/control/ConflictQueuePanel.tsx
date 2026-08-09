@@ -199,7 +199,7 @@ function ConflictQueueRow({ item }: { item: ConflictQueueItem }) {
             <div className="conflict-position" key={position.position_id}>
               <div className="conflict-position-heading">
                 <strong>{position.position_key}</strong>
-                <span>{position.support_group_count} groups · {position.authoritative_group_count} authoritative</span>
+                <span>{position.supporter_count} supporters</span>
               </div>
               <div className="conflict-supporter-list">
                 {position.supporters.map((supporter) => (
