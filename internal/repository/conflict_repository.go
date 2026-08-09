@@ -846,13 +846,14 @@ func loadRelationshipConflictPositionRowsWithLimit(
 			         position.object_entity_id, position.object_value_id%s
 		), ranked AS (
 			SELECT grouped.*,
+			       COUNT(*) OVER (PARTITION BY conflict_id)::int AS position_count,
 			       row_number() OVER (PARTITION BY conflict_id ORDER BY position_key, position_id) AS position_rank
 			FROM grouped
 		)
 		SELECT conflict_id, position_id, position_key, object_entity_id, object_value_id,
 		       disposition, support_group_count, authoritative_group_count,
 		       relationship_ids, owner_profile_ids, evidence_ids, effective_at,
-		       effective_time_basis, recorded_fallback
+		       effective_time_basis, recorded_fallback, position_count
 		FROM ranked
 		WHERE ?::int <= 0 OR position_rank <= ?::int
 		ORDER BY conflict_id, position_key, position_id
@@ -884,12 +885,14 @@ func loadRelationshipConflictPositionRowsWithLimit(
 			&record.EffectiveAt,
 			&record.EffectiveTimeBasis,
 			&record.RecordedFallback,
+			&record.PositionCount,
 		); err != nil {
 			return nil, err
 		}
 		record.RelationshipIDs = []string(relationshipIDs)
 		record.OwnerProfileIDs = []string(ownerProfileIDs)
 		record.EvidenceIDs = []string(evidenceIDs)
+		record.PositionsTruncated = positionLimit > 0 && record.PositionCount > positionLimit
 		out = append(out, record)
 	}
 	return out, rows.Err()

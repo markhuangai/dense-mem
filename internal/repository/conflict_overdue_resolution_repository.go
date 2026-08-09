@@ -100,11 +100,25 @@ func (r *LedgerRepositoryImpl) ApplyOverdueConflictResolution(
 			return err
 		}
 		if len(targets) > conflictResolutionMaxFragments {
-			if err := appendRelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, input.PreferredPositionID, "", "", string(domain.RelationshipConflictEventResolutionPending), "fanout_bound", "case:"+input.ConflictID+":plan:"+planID+":pending", map[string]any{
-				"resolution_plan_id":    planID,
-				"target_fragment_count": len(targets),
-			}); err != nil {
+			pendingKey := "case:" + input.ConflictID + ":plan:" + planID + ":pending"
+			var pendingEventExists bool
+			if err := tx.WithContext(ctx).Raw(`
+				SELECT EXISTS (
+					SELECT 1
+					FROM relationship_conflict_events
+					WHERE team_id = ?::uuid AND idempotency_key = ?
+				)
+			`, input.TeamID, pendingKey).Row().Scan(&pendingEventExists); err != nil {
 				return err
+			}
+			if !pendingEventExists {
+				if err := appendRelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, input.PreferredPositionID, "", "", string(domain.RelationshipConflictEventResolutionPending), "fanout_bound", pendingKey, map[string]any{
+					"resolution_plan_id":    planID,
+					"target_fragment_count": len(targets),
+				}); err != nil {
+					return err
+				}
+				result.PendingTransitioned = true
 			}
 			result.Pending = true
 			return nil

@@ -212,6 +212,36 @@ func TestServiceResumesPendingResolutionWithoutProviderCall(t *testing.T) {
 	assert.Empty(t, repo.reserveInputs)
 }
 
+func TestServiceObservesPendingResolutionOnlyOnTransition(t *testing.T) {
+	repo := newConflictReviewRepositoryStub(t)
+	repo.pendingFound = true
+	repo.pendingResult = &repository.ApplyOverdueConflictResolutionResult{
+		ConflictID:          conflictReviewTestConflictID,
+		PreferredPositionID: conflictReviewTestPositionAID,
+		Method:              "ai",
+		Pending:             true,
+	}
+	metrics := observability.NewPrometheusMetrics()
+	service, err := New(Dependencies{
+		Repository: repo,
+		Provider:   &conflictReviewProviderStub{err: errors.New("provider must not be called")},
+		Metrics:    metrics,
+		Timezone:   "UTC",
+		Limits:     verifier.DefaultSemanticAssessmentLimits(),
+	})
+	require.NoError(t, err)
+
+	_, err = service.ReviewRelationshipConflictCase(context.Background(), conflictReviewInput())
+	require.NoError(t, err)
+	repo.pendingResult.PendingTransitioned = true
+	_, err = service.ReviewRelationshipConflictCase(context.Background(), conflictReviewInput())
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Contains(t, recorder.Body.String(), `densemem_conflict_resolutions_total{method="ai",outcome="pending",team_id="`+conflictReviewTestTeamID+`"} 1`)
+}
+
 func TestServiceRecordsLowConfidenceSelectionAsFailedAssessment(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	provider := &conflictReviewProviderStub{

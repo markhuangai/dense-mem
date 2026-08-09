@@ -32,6 +32,7 @@ type RelationshipConflictPositionRecord struct {
 	ConflictID              string
 	PositionID              string
 	PositionKey             string
+	PositionCount           int
 	Disposition             string
 	ObjectEntityID          string
 	ObjectValueID           string
@@ -39,6 +40,7 @@ type RelationshipConflictPositionRecord struct {
 	SupportGroupCount       int
 	AuthoritativeGroupCount int
 	SupportersTruncated     bool
+	PositionsTruncated      bool
 	Supporters              []RelationshipConflictSupporterRecord
 	RelationshipIDs         []string
 	OwnerProfileIDs         []string

@@ -39,7 +39,10 @@ export type ConflictQueueItem = {
   version: number;
   status: ConflictQueueStatus;
   question: string;
+  question_truncated: boolean;
   predicate_key: string;
+  predicate_key_truncated: boolean;
+  positions_truncated: boolean;
   review_due_at: string;
   next_review_at: string;
   created_at: string;

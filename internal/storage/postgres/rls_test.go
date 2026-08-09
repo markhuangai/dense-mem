@@ -223,6 +223,35 @@ func TestWithSystemTx(t *testing.T) {
 	}
 }
 
+func TestReadOnlyRepeatableReadTransactionOptions(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := setupRLSTestDB(t)
+	defer cleanup()
+
+	rls := NewRLS()
+	teamID := createTestTeam(t, db, "Read-only team")
+	var isolation, readOnly string
+	err := rls.WithTeamReadOnlyRepeatableTx(ctx, db, teamID.String(), func(tx *gorm.DB) error {
+		if err := tx.Raw("SHOW transaction_isolation").Scan(&isolation).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw("SHOW transaction_read_only").Scan(&readOnly).Error; err != nil {
+			return err
+		}
+		return tx.Exec("UPDATE teams SET updated_at = updated_at WHERE id = ?", teamID).Error
+	})
+
+	if err == nil {
+		t.Fatal("read-only repeatable-read transaction should reject writes")
+	}
+	if isolation != "repeatable read" {
+		t.Fatalf("expected repeatable read isolation, got %q", isolation)
+	}
+	if readOnly != "on" {
+		t.Fatalf("expected read-only transaction, got %q", readOnly)
+	}
+}
+
 func setupRLSTestDB(t *testing.T) (*gorm.DB, func()) {
 	t.Helper()
 

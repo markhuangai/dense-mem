@@ -187,6 +187,9 @@ func relationshipConflictSupporterRowsArgsWithLimit(teamID string, conflictIDs, 
 	if supporterLimit <= 0 {
 		supporterLimit = relationshipConflictSupporterLimit
 	}
+	if positionIDs == nil {
+		positionIDs = []string{}
+	}
 	return []any{
 		teamID,
 		pq.Array(conflictIDs),

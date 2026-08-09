@@ -2,12 +2,12 @@ package http
 
 import (
 	"errors"
-	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service/conflictqueue"
 )
@@ -35,7 +35,7 @@ func (h *controlPortalHandler) listConflictQueue(c echo.Context) error {
 	if err != nil {
 		return conflictQueueHTTPError(err)
 	}
-	return c.JSON(http.StatusOK, map[string]any{"data": page})
+	return response.SuccessOK(c, page)
 }
 
 func conflictQueueHTTPError(err error) error {

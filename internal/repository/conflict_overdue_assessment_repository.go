@@ -110,6 +110,7 @@ type ApplyOverdueConflictResolutionResult struct {
 	Method               string
 	Resolved             bool
 	Pending              bool
+	PendingTransitioned  bool
 	Stale                bool
 	UpdatedRelationships []string
 	RetractedEvidenceIDs []string

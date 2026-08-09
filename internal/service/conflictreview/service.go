@@ -358,7 +358,9 @@ func (s *Service) applyResolutionResult(
 		result.PreferredPositionID = applied.PreferredPositionID
 	}
 	if applied.Pending {
-		s.observeConflictResolution(input.TeamID, result.ResolutionMethod, "pending")
+		if applied.PendingTransitioned {
+			s.observeConflictResolution(input.TeamID, result.ResolutionMethod, "pending")
+		}
 		result.Stage = "resolution_pending"
 		result.ResolutionPending = true
 		return result, nil

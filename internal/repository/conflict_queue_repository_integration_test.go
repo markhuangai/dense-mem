@@ -64,9 +64,11 @@ func TestConflictQueueRepositoryIsTeamScopedAndKeysetOrdered(t *testing.T) {
 	require.Equal(t, conflictA, page.Items[0].ConflictID)
 	require.Equal(t, "active", page.Items[0].LeaseState)
 	require.NotEmpty(t, page.Items[0].Positions)
-	require.LessOrEqual(t, len(page.Items[0].Positions), 10)
+	require.LessOrEqual(t, len(page.Items[0].Positions), domain.ConflictQueueMaxPositions)
 	for _, position := range page.Items[0].Positions {
-		require.LessOrEqual(t, len(position.Supporters), 5)
+		require.NotEmpty(t, position.Supporters)
+		require.Positive(t, position.SupporterCount)
+		require.LessOrEqual(t, len(position.Supporters), domain.ConflictQueueMaxSupporters)
 	}
 	require.NotNil(t, page.NextCursor)
 	cursor, err := domain.DecodeConflictQueueCursor(*page.NextCursor)
@@ -79,6 +81,13 @@ func TestConflictQueueRepositoryIsTeamScopedAndKeysetOrdered(t *testing.T) {
 			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
 		`, now.Add(-30*time.Minute), now.Add(-time.Hour), teamA, conflictA3).Error
 	}))
+	overduePage, err := ledger.ListConflictQueue(ctx, domain.ConflictQueueQuery{TeamID: teamA, Status: "overdue", Limit: 25})
+	require.NoError(t, err)
+	require.Len(t, overduePage.Items, 2)
+	require.ElementsMatch(t, []string{conflictA, conflictA3}, []string{overduePage.Items[0].ConflictID, overduePage.Items[1].ConflictID})
+	for _, item := range overduePage.Items {
+		require.Equal(t, "overdue", item.Status)
+	}
 	secondPage, err := ledger.ListConflictQueue(ctx, domain.ConflictQueueQuery{
 		TeamID: teamA,
 		Limit:  1,
@@ -95,16 +104,40 @@ func TestConflictQueueRepositoryIsTeamScopedAndKeysetOrdered(t *testing.T) {
 	require.Len(t, thirdPage.Items, 1)
 	require.Equal(t, conflictA2, thirdPage.Items[0].ConflictID)
 	require.Nil(t, thirdPage.NextCursor)
+	_, err = ledger.ListConflictQueue(ctx, domain.ConflictQueueQuery{TeamID: teamB, Limit: 1, Cursor: cursor})
+	require.ErrorIs(t, err, domain.ErrConflictQueueCursorScope)
 
 	var queueIndexExists bool
+	var summaryIndexes []string
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Raw(`
+		if err := tx.Raw(`
 			SELECT EXISTS (
-				SELECT 1 FROM pg_indexes WHERE indexname = 'relationship_conflict_queue_active_idx'
+				SELECT 1
+				FROM pg_index AS state
+				JOIN pg_class AS index_class ON index_class.oid = state.indexrelid
+				WHERE index_class.relname = 'relationship_conflict_queue_active_idx'
+				  AND state.indisvalid
 			)
-		`).Scan(&queueIndexExists).Error
+		`).Scan(&queueIndexExists).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT index_class.relname
+			FROM pg_index AS state
+			JOIN pg_class AS index_class ON index_class.oid = state.indexrelid
+			WHERE state.indisvalid
+			  AND index_class.relname IN (
+				'relationship_conflict_ai_assessment_events_failed_idx',
+				'relationship_conflict_resolution_plans_applied_idx'
+			)
+			ORDER BY indexname
+		`).Scan(&summaryIndexes).Error
 	}))
 	require.True(t, queueIndexExists)
+	require.ElementsMatch(t, []string{
+		"relationship_conflict_ai_assessment_events_failed_idx",
+		"relationship_conflict_resolution_plans_applied_idx",
+	}, summaryIndexes)
 
 	snapshot, err := ledger.CollectConflictQueueMetrics(ctx)
 	require.NoError(t, err)

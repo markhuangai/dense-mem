@@ -3,6 +3,7 @@ package conflictqueue
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -49,5 +50,12 @@ func TestListRejectsInvalidQueueOptionsAndCursorScope(t *testing.T) {
 	_, err = service.List(context.Background(), teamID, ListOptions{Limit: 101})
 	require.ErrorIs(t, err, ErrInvalidLimit)
 	_, err = service.List(context.Background(), teamID, ListOptions{Cursor: "not-a-cursor"})
+	require.ErrorIs(t, err, ErrInvalidCursor)
+	foreignCursor, err := domain.EncodeConflictQueueCursor(domain.ConflictQueueCursor{
+		Version: 1, TeamID: "8b8f5d6d-6f23-4e48-9f5b-7a3ec4c39b90", Status: "open",
+		NextReviewAt: time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC), ConflictID: "d97d3e7a-4c4e-4f31-bd39-f0c7ac6b8f8a",
+	})
+	require.NoError(t, err)
+	_, err = service.List(context.Background(), teamID, ListOptions{Cursor: foreignCursor})
 	require.ErrorIs(t, err, ErrInvalidCursor)
 }

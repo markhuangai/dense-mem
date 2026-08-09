@@ -343,7 +343,7 @@ func telemetryCurrentCardSpecsForAudience(scope TelemetryScope, baseLabels map[s
 	}
 	return []telemetryQuerySpec{{
 		ID: "conflict_queue_collection_success", Label: "Conflict queue collection", Unit: "state",
-		Query: fmt.Sprintf("max(densemem_conflict_queue_collection_success%s)", telemetrySelector(scope, baseLabels)),
+		Query: fmt.Sprintf("min(densemem_conflict_queue_collection_success%s)", telemetrySelector(scope, baseLabels)),
 	}}
 }
 

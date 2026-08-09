@@ -1,6 +1,9 @@
 package domain
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +24,39 @@ func TestConflictQueueCursorRoundTripAndScope(t *testing.T) {
 	require.Equal(t, cursor, *decoded)
 	require.ErrorIs(t, decoded.ValidateScope(uuid.NewString(), "overdue"), ErrConflictQueueCursorScope)
 	require.ErrorIs(t, decoded.ValidateScope(teamID, "open"), ErrConflictQueueCursorScope)
+}
+
+func TestDecodeConflictQueueCursorRejectsMalformedPayloads(t *testing.T) {
+	valid := ConflictQueueCursor{
+		Version: 1, TeamID: uuid.NewString(), Status: "open", ConflictID: uuid.NewString(),
+		NextReviewAt: time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC),
+	}
+	encode := func(value any) string {
+		payload, err := json.Marshal(value)
+		require.NoError(t, err)
+		return base64.RawURLEncoding.EncodeToString(payload)
+	}
+
+	unsupportedVersion := valid
+	unsupportedVersion.Version = 2
+	zeroReview := valid
+	zeroReview.NextReviewAt = time.Time{}
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "empty", raw: ""},
+		{name: "oversized", raw: strings.Repeat("a", 1025)},
+		{name: "invalid base64", raw: "not valid base64"},
+		{name: "unsupported version", raw: encode(unsupportedVersion)},
+		{name: "zero review time", raw: encode(zeroReview)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := DecodeConflictQueueCursor(test.raw)
+			require.ErrorIs(t, err, ErrInvalidConflictQueueCursor)
+		})
+	}
 }
 
 func TestConflictQueueAllowListsBoundLabels(t *testing.T) {

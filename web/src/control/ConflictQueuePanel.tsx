@@ -15,12 +15,18 @@ export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team 
   const [queueError, setQueueError] = useState<unknown>(null);
   const [telemetryError, setTelemetryError] = useState<unknown>(null);
   const [telemetryDegraded, setTelemetryDegraded] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const requestSequence = useRef(0);
+  const lastTeamID = useRef(team.id);
   const currentCursor = cursorHistory[cursorHistory.length - 1] ?? "";
 
   useEffect(() => {
+    if (lastTeamID.current !== team.id) {
+      lastTeamID.current = team.id;
+      setCursorHistory([]);
+      return;
+    }
     const requestId = ++requestSequence.current;
     let active = true;
     setLoading(true);
@@ -28,33 +34,36 @@ export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team 
     setTelemetryError(null);
     setTelemetryDegraded(false);
 
-    Promise.allSettled([
-      api.getConflictQueue(team.id, { status: filter, limit: pageSize, cursor: currentCursor }),
-      api.getTelemetry({ window: "1h", scope: "system" }),
-    ]).then(([queueResult, telemetryResult]) => {
+    api.getConflictQueue(team.id, { status: filter, limit: pageSize, cursor: currentCursor }).then((value) => {
       if (!active || requestId !== requestSequence.current) {
         return;
       }
-      if (queueResult.status === "fulfilled") {
-        setPage(queueResult.value);
-      } else {
-        setQueueError(queueResult.reason);
-        setPage(null);
+      setPage(value);
+    }).catch((reason) => {
+      if (!active || requestId !== requestSequence.current) {
+        return;
       }
-      if (telemetryResult.status === "fulfilled") {
-        const snapshot = telemetryResult.value;
-        const card = snapshot.current_cards?.find((item) => item.id === "conflict_queue_collection_success");
-        if (!snapshot.available || !card || !card.available) {
-          setTelemetryError(new Error("Conflict queue collection telemetry is unavailable."));
-        } else {
-          setTelemetryDegraded(card.value < 1);
-        }
-      } else {
-        setTelemetryError(telemetryResult.reason);
-      }
+      setQueueError(reason);
+      setPage(null);
     }).finally(() => {
       if (active && requestId === requestSequence.current) {
         setLoading(false);
+      }
+    });
+
+    api.getTelemetry({ window: "1h", scope: "system" }).then((snapshot) => {
+      if (!active || requestId !== requestSequence.current) {
+        return;
+      }
+      const card = snapshot.current_cards?.find((item) => item.id === "conflict_queue_collection_success");
+      if (!snapshot.available || !card || !card.available) {
+        setTelemetryError(new Error("Conflict queue collection telemetry is unavailable."));
+      } else {
+        setTelemetryDegraded(card.value < 1);
+      }
+    }).catch((reason) => {
+      if (active && requestId === requestSequence.current) {
+        setTelemetryError(reason);
       }
     });
 
@@ -177,8 +186,8 @@ function ConflictQueueRow({ item }: { item: ConflictQueueItem }) {
         </div>
       </td>
       <td data-label="Question / predicate">
-        <div className="conflict-question">{item.question || "Unspecified conflict question"}</div>
-        <code>{item.predicate_key}</code>
+        <div className="conflict-question">{item.question || "Unspecified conflict question"}{item.question_truncated && <small className="conflict-truncation">Question truncated.</small>}</div>
+        <code>{item.predicate_key}</code>{item.predicate_key_truncated && <small className="conflict-truncation">Predicate truncated.</small>}
       </td>
       <td data-label="Positions and supporters">
         <div className="conflict-position-list">
@@ -191,13 +200,14 @@ function ConflictQueueRow({ item }: { item: ConflictQueueItem }) {
               <div className="conflict-supporter-list">
                 {position.supporters.map((supporter) => (
                   <span className="conflict-supporter" key={`${position.position_id}-${supporter.profile_id}`}>
-                    {supporter.profile_name || "Unnamed profile"} <small>{supporter.profile_id}</small>
+                    {supporter.profile_name || "Unnamed profile"} <small>{shortId(supporter.profile_id)}</small>
                   </span>
                 ))}
               </div>
               {position.supporters_truncated && <small className="conflict-truncation">Showing {position.supporters.length} of {position.supporter_count} supporters.</small>}
             </div>
           ))}
+          {item.positions_truncated && <small className="conflict-truncation">Some positions are not shown.</small>}
         </div>
       </td>
       <td data-label="Attempts"><strong>{item.attempt_count}</strong></td>

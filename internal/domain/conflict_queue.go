@@ -143,13 +143,6 @@ func (c ConflictQueueCursor) ValidateScope(teamID, statusFilter string) error {
 	return nil
 }
 
-func (c ConflictQueueCursor) StatusRank() int {
-	if c.Status == "overdue" {
-		return 0
-	}
-	return 1
-}
-
 type ConflictQueuePage struct {
 	Summary    ConflictQueueSummary `json:"summary"`
 	Items      []ConflictQueueItem  `json:"items"`
@@ -171,20 +164,23 @@ type ConflictQueueSummary struct {
 }
 
 type ConflictQueueItem struct {
-	ConflictID       string                  `json:"conflict_id"`
-	Version          int                     `json:"version"`
-	Status           string                  `json:"status"`
-	Question         string                  `json:"question"`
-	PredicateKey     string                  `json:"predicate_key"`
-	ReviewDueAt      time.Time               `json:"review_due_at"`
-	NextReviewAt     time.Time               `json:"next_review_at"`
-	CreatedAt        time.Time               `json:"created_at"`
-	UpdatedAt        time.Time               `json:"updated_at"`
-	AttemptCount     int                     `json:"attempt_count"`
-	LeaseState       string                  `json:"lease_state"`
-	LeaseUntil       *time.Time              `json:"lease_until,omitempty"`
-	LastFailureClass string                  `json:"last_failure_class"`
-	Positions        []ConflictQueuePosition `json:"positions"`
+	ConflictID            string                  `json:"conflict_id"`
+	Version               int                     `json:"version"`
+	Status                string                  `json:"status"`
+	Question              string                  `json:"question"`
+	QuestionTruncated     bool                    `json:"question_truncated"`
+	PredicateKey          string                  `json:"predicate_key"`
+	PredicateKeyTruncated bool                    `json:"predicate_key_truncated"`
+	PositionsTruncated    bool                    `json:"positions_truncated"`
+	ReviewDueAt           time.Time               `json:"review_due_at"`
+	NextReviewAt          time.Time               `json:"next_review_at"`
+	CreatedAt             time.Time               `json:"created_at"`
+	UpdatedAt             time.Time               `json:"updated_at"`
+	AttemptCount          int                     `json:"attempt_count"`
+	LeaseState            string                  `json:"lease_state"`
+	LeaseUntil            *time.Time              `json:"lease_until,omitempty"`
+	LastFailureClass      string                  `json:"last_failure_class"`
+	Positions             []ConflictQueuePosition `json:"positions"`
 }
 
 type ConflictQueuePosition struct {

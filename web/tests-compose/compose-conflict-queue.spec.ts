@@ -40,9 +40,15 @@ async function expectNoShellOverlap(page: Page) {
       return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
     })
   ));
-  for (const box of boxes) {
-    expect(box.width).toBeGreaterThan(0);
-    expect(box.height).toBeGreaterThan(0);
+  expect(boxes.length).toBeGreaterThan(0);
+  for (let i = 0; i < boxes.length; i += 1) {
+    expect(boxes[i].width).toBeGreaterThan(0);
+    expect(boxes[i].height).toBeGreaterThan(0);
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const horizontalOverlap = Math.min(boxes[i].right, boxes[j].right) - Math.max(boxes[i].left, boxes[j].left);
+      const verticalOverlap = Math.min(boxes[i].bottom, boxes[j].bottom) - Math.max(boxes[i].top, boxes[j].top);
+      expect(horizontalOverlap > 0 && verticalOverlap > 0, `${i} and ${j} shell boxes overlap`).toBe(false);
+    }
   }
 }
 

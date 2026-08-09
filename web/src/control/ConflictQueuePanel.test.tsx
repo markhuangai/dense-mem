@@ -36,6 +36,35 @@ describe("ConflictQueuePanel", () => {
     await waitFor(() => expect(getConflictQueue).toHaveBeenLastCalledWith("team-1", { status: "overdue", limit: 25, cursor: "" }));
   });
 
+  it("resets cursor pagination when the selected team changes", async () => {
+    const getConflictQueue = vi.fn().mockResolvedValue(queuePage({ next_cursor: "cursor-2" }));
+    const api = fakeApi(getConflictQueue);
+    const { rerender } = render(<ConflictQueuePanel api={api} team={team()} />);
+
+    await screen.findByText("Conflict question");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(getConflictQueue).toHaveBeenLastCalledWith("team-1", { status: "", limit: 25, cursor: "cursor-2" }));
+
+    rerender(<ConflictQueuePanel api={api} team={team({ id: "team-2" })} />);
+    await waitFor(() => expect(getConflictQueue).toHaveBeenLastCalledWith("team-2", { status: "", limit: 25, cursor: "" }));
+  });
+
+  it("renders queue data before optional telemetry settles", async () => {
+    let resolveTelemetry: ((value: unknown) => void) | undefined;
+    const getTelemetry = vi.fn(() => new Promise((resolve) => {
+      resolveTelemetry = resolve;
+    }));
+    const api = {
+      getConflictQueue: vi.fn().mockResolvedValue(queuePage()),
+      getTelemetry,
+    } as unknown as ControlApi;
+
+    render(<ConflictQueuePanel api={api} team={team()} />);
+    expect(await screen.findByText("Conflict question")).toBeInTheDocument();
+    expect(screen.queryByText("Loading conflict queue")).not.toBeInTheDocument();
+    resolveTelemetry?.({ available: false, current_cards: [] });
+  });
+
   it("distinguishes authorization failure from collector degradation", async () => {
     const api = fakeApi(vi.fn().mockRejectedValue(new ApiError(403, "forbidden")), {
       available: true,
@@ -46,6 +75,20 @@ describe("ConflictQueuePanel", () => {
 
     expect(await screen.findByText("Conflict queue access is not authorized.")).toBeInTheDocument();
     expect(screen.getByText(/Queue collector is degraded/)).toBeInTheDocument();
+  });
+
+  it("labels bounded question, predicate, and position projections", async () => {
+    const bounded = queuePage();
+    bounded.items[0].question_truncated = true;
+    bounded.items[0].predicate_key_truncated = true;
+    bounded.items[0].positions_truncated = true;
+    const api = fakeApi(vi.fn().mockResolvedValue(bounded));
+
+    render(<ConflictQueuePanel api={api} team={team()} />);
+
+    expect(await screen.findByText("Question truncated.")).toBeInTheDocument();
+    expect(screen.getByText("Predicate truncated.")).toBeInTheDocument();
+    expect(screen.getByText("Some positions are not shown.")).toBeInTheDocument();
   });
 });
 
@@ -60,7 +103,7 @@ function fakeApi(getConflictQueue: ReturnType<typeof vi.fn>, telemetryOverrides:
   } as unknown as ControlApi;
 }
 
-function team(): Team {
+function team(overrides: Partial<Team> = {}): Team {
   return {
     id: "team-1",
     name: "Research",
@@ -69,6 +112,7 @@ function team(): Team {
     config: null,
     created_at: "2026-08-01T00:00:00Z",
     updated_at: "2026-08-01T00:00:00Z",
+    ...overrides,
   };
 }
 
@@ -92,7 +136,10 @@ function queuePage(overrides: Partial<ConflictQueuePage> = {}): ConflictQueuePag
       version: 2,
       status: "overdue",
       question: "Conflict question",
+      question_truncated: false,
       predicate_key: "owns",
+      predicate_key_truncated: false,
+      positions_truncated: false,
       review_due_at: "2026-08-08T00:00:00Z",
       next_review_at: "2026-08-08T00:00:00Z",
       created_at: "2026-08-01T00:00:00Z",

@@ -178,10 +178,10 @@ func loadConflictQueueSummary(ctx context.Context, tx *gorm.DB, teamID string, c
 		return domain.ConflictQueueSummary{}, err
 	}
 	if oldestOpen.Valid {
-		summary.OldestOpenAgeSeconds = maxInt64(oldestOpen.Int64, 0)
+		summary.OldestOpenAgeSeconds = max(oldestOpen.Int64, int64(0))
 	}
 	if oldestOverdue.Valid {
-		summary.OldestOverdueAgeSeconds = maxInt64(oldestOverdue.Int64, 0)
+		summary.OldestOverdueAgeSeconds = max(oldestOverdue.Int64, int64(0))
 	}
 	summary.FailedAssessmentCount24h, err = countFailedConflictAssessments24h(ctx, tx, teamID, collectedAt)
 	if err != nil {
@@ -288,7 +288,9 @@ func loadConflictQueuePageRecords(ctx context.Context, tx *gorm.DB, query domain
 		       ), '')
 		FROM relationship_conflict_cases
 	`+where+`
-		ORDER BY status DESC, next_review_at, conflict_id
+		ORDER BY relationship_conflict_cases.status DESC,
+		         relationship_conflict_cases.next_review_at,
+		         relationship_conflict_cases.conflict_id
 		LIMIT ?
 	`, args...).Rows()
 	if err != nil {
@@ -341,20 +343,24 @@ func loadConflictQueuePageRecords(ctx context.Context, tx *gorm.DB, query domain
 }
 
 func conflictQueueItemFromRecord(row conflictQueueCaseRow, collectedAt time.Time) domain.ConflictQueueItem {
+	question, questionTruncated := truncateConflictQueueText(row.Record.Question, 512)
+	predicateKey, predicateKeyTruncated := truncateConflictQueueText(row.Record.PredicateKey, 256)
 	item := domain.ConflictQueueItem{
-		ConflictID:       row.Record.ConflictID,
-		Version:          row.Record.Version,
-		Status:           row.Record.Status,
-		Question:         truncateConflictQueueText(row.Record.Question, 512),
-		PredicateKey:     truncateConflictQueueText(row.Record.PredicateKey, 256),
-		ReviewDueAt:      row.Record.ReviewDueAt,
-		NextReviewAt:     row.Record.NextReviewAt,
-		CreatedAt:        row.Record.CreatedAt,
-		UpdatedAt:        row.Record.UpdatedAt,
-		AttemptCount:     row.Record.Attempts,
-		LeaseUntil:       row.LeaseUntil,
-		LastFailureClass: domain.NormalizeConflictQueueFailureClass(row.FailureClass),
-		Positions:        make([]domain.ConflictQueuePosition, 0, len(row.Record.Positions)),
+		ConflictID:            row.Record.ConflictID,
+		Version:               row.Record.Version,
+		Status:                row.Record.Status,
+		Question:              question,
+		QuestionTruncated:     questionTruncated,
+		PredicateKey:          predicateKey,
+		PredicateKeyTruncated: predicateKeyTruncated,
+		ReviewDueAt:           row.Record.ReviewDueAt,
+		NextReviewAt:          row.Record.NextReviewAt,
+		CreatedAt:             row.Record.CreatedAt,
+		UpdatedAt:             row.Record.UpdatedAt,
+		AttemptCount:          row.Record.Attempts,
+		LeaseUntil:            row.LeaseUntil,
+		LastFailureClass:      domain.NormalizeConflictQueueFailureClass(row.FailureClass),
+		Positions:             make([]domain.ConflictQueuePosition, 0, len(row.Record.Positions)),
 	}
 	switch {
 	case row.LeaseUntil == nil:
@@ -365,9 +371,10 @@ func conflictQueueItemFromRecord(row conflictQueueCaseRow, collectedAt time.Time
 		item.LeaseState = "expired"
 	}
 	for _, position := range row.Record.Positions {
+		positionKey, _ := truncateConflictQueueText(position.PositionKey, 256)
 		queuePosition := domain.ConflictQueuePosition{
 			PositionID:              position.PositionID,
-			PositionKey:             truncateConflictQueueText(position.PositionKey, 256),
+			PositionKey:             positionKey,
 			Disposition:             position.Disposition,
 			SupporterCount:          position.SupporterCount,
 			SupportGroupCount:       position.SupportGroupCount,
@@ -375,9 +382,11 @@ func conflictQueueItemFromRecord(row conflictQueueCaseRow, collectedAt time.Time
 			SupportersTruncated:     position.SupportersTruncated,
 			Supporters:              make([]domain.ConflictQueueSupporter, 0, len(position.Supporters)),
 		}
+		item.PositionsTruncated = item.PositionsTruncated || position.PositionsTruncated
 		for _, supporter := range position.Supporters {
+			profileName, _ := truncateConflictQueueText(supporter.ProfileName, 256)
 			queuePosition.Supporters = append(queuePosition.Supporters, domain.ConflictQueueSupporter{
-				ProfileID: supporter.ProfileID, ProfileName: truncateConflictQueueText(supporter.ProfileName, 256),
+				ProfileID: supporter.ProfileID, ProfileName: profileName,
 				StrongestAuthority: supporter.StrongestAuthority, AcceptedAt: supporter.AcceptedAt,
 				SourceGroupCount: supporter.SourceGroupCount,
 			})
@@ -387,20 +396,31 @@ func conflictQueueItemFromRecord(row conflictQueueCaseRow, collectedAt time.Time
 	return item
 }
 
-func truncateConflictQueueText(value string, maxRunes int) string {
+func truncateConflictQueueText(value string, maxRunes int) (string, bool) {
 	if utf8.RuneCountInString(value) <= maxRunes {
-		return value
+		return value, false
 	}
 	runes := []rune(value)
-	return string(runes[:maxRunes])
+	return string(runes[:maxRunes]), true
 }
 
 func activeConflictQueueTeams(ctx context.Context, tx *gorm.DB) ([]string, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT id::text
-		FROM teams
-		WHERE status = 'active' AND deleted_at IS NULL
-		ORDER BY id
+		WITH relevant_teams AS (
+			SELECT team_id
+			FROM relationship_conflict_cases
+			WHERE status IN ('open', 'overdue')
+			UNION
+			SELECT team_id
+			FROM relationship_conflict_derived_evidence_tasks
+			WHERE status <> 'completed'
+		)
+		SELECT relevant.team_id::text
+		FROM relevant_teams AS relevant
+		JOIN teams AS team ON team.id = relevant.team_id
+		WHERE team.status = 'active'
+		  AND team.deleted_at IS NULL
+		ORDER BY relevant.team_id
 	`).Rows()
 	if err != nil {
 		return nil, err
@@ -474,7 +494,7 @@ func loadConflictQueueOldestMetrics(ctx context.Context, tx *gorm.DB, teamIDs []
 		if values[teamID] == nil {
 			values[teamID] = map[string]float64{}
 		}
-		values[teamID][status] = maxFloat64(age, 0)
+		values[teamID][status] = max(age, float64(0))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -564,18 +584,4 @@ func loadConflictQueueDerivedTaskMetrics(ctx context.Context, tx *gorm.DB, teamI
 		}
 	}
 	return out, nil
-}
-
-func maxInt64(value, minimum int64) int64 {
-	if value < minimum {
-		return minimum
-	}
-	return value
-}
-
-func maxFloat64(value, minimum float64) float64 {
-	if value < minimum {
-		return minimum
-	}
-	return value
 }
