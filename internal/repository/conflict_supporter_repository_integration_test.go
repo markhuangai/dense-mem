@@ -161,6 +161,29 @@ func TestRelationshipConflictSupporterProjectionUsesOneLatestPositionPerProfile(
 	knownAt := databaseNowForTest(t, adminDB, rls)
 	latestCB := commitPlacementRelationshipForConflictTest(t, ctx, ledgerRepo, teamID, ownerC, "latest-c-b", "latest-c-b", "C supports B", subject.EntityID, valueB.EntityID, "copied-source")
 	latestAt := knownAt.Add(2 * time.Minute)
+	var quarantinedFragmentID, quarantinedIngestID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT member.fragment_id::text, fragment.ingest_id::text
+			FROM relationship_conflict_position_members AS member
+			JOIN evidence_fragments AS fragment
+			  ON fragment.team_id = member.team_id
+			 AND fragment.fragment_id = member.fragment_id
+			WHERE member.team_id = ?::uuid
+			  AND member.conflict_id = ?::uuid
+			  AND member.relationship_id = ?::uuid
+			  AND member.owner_profile_id = ?::uuid
+			  AND member.fragment_id IS NOT NULL
+		`, teamID, conflictID, latestCA.RelationshipResults[0].Relationship.RelationshipID, ownerC).
+			Row().Scan(&quarantinedFragmentID, &quarantinedIngestID)
+	}))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO evidence_quarantines (
+				team_id, fragment_id, ingest_id, owner_profile_id, status, reason, created_at
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, 'active', 'future historical regression', ?)
+		`, teamID, quarantinedFragmentID, quarantinedIngestID, ownerC, latestAt).Error
+	}))
 	// Reactivate the superseded snapshot member so the projection test can exercise two effective positions for one profile.
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		result := tx.Exec(`

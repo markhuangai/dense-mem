@@ -46,8 +46,8 @@ const relationshipConflictSupporterRowsSQL = `
 		          ?::timestamptz IS NOT NULL
 		          AND position.first_seen_at <= ?::timestamptz
 		          AND (position.retired_at IS NULL OR position.retired_at > ?::timestamptz)
-			  )
-		)
+		      )
+		  )
 	),
 	latest_support_decision AS (
 		SELECT DISTINCT ON (support.team_id, support.support_id)
@@ -112,16 +112,9 @@ const relationshipConflictSupporterRowsSQL = `
 		JOIN evidence_fragments AS fragment
 		  ON fragment.team_id = support.team_id
 		 AND fragment.fragment_id = support.fragment_id
-		LEFT JOIN evidence_quarantines AS quarantine
-		  ON quarantine.team_id = support.team_id
-		 AND quarantine.fragment_id = support.fragment_id
-		 AND quarantine.status = 'active'
 		LEFT JOIN evidence_sources AS source
 		  ON source.team_id = support.team_id
 		 AND source.source_id = support.source_id
-		LEFT JOIN evidence_lifecycle_events AS lifecycle
-		  ON lifecycle.team_id = support.team_id
-		 AND lifecycle.target_fragment_id = support.fragment_id
 		WHERE support.created_at <= ?::timestamptz
 		  AND COALESCE(
 		          NULLIF(source.source_key, ''),
@@ -130,10 +123,43 @@ const relationshipConflictSupporterRowsSQL = `
 		          NULLIF(support.source_group_key, ''),
 		          support.support_id::text
 		      ) = member.source_group_key
-		  AND quarantine.quarantine_id IS NULL
-		  AND lifecycle.lifecycle_event_id IS NULL
 		  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
-		  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM evidence_quarantines AS quarantine
+		      WHERE quarantine.team_id = support.team_id
+		        AND quarantine.fragment_id = support.fragment_id
+		        AND quarantine.created_at <= ?::timestamptz
+		        AND (quarantine.released_at IS NULL OR quarantine.released_at > ?::timestamptz)
+		  )
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM evidence_lifecycle_events AS lifecycle
+		      WHERE lifecycle.team_id = support.team_id
+		        AND lifecycle.target_fragment_id = support.fragment_id
+		        AND lifecycle.created_at <= ?::timestamptz
+		  )
+		  AND (
+		      support.source_id IS NULL
+		      OR (
+		          EXISTS (
+		              SELECT 1
+		              FROM evidence_source_revisions AS revision
+		              WHERE revision.team_id = support.team_id
+		                AND revision.source_id = support.source_id
+		                AND revision.source_revision_id = support.source_revision_id
+		                AND revision.created_at <= ?::timestamptz
+		          )
+		          AND NOT EXISTS (
+		              SELECT 1
+		              FROM evidence_source_revisions AS newer_revision
+		              WHERE newer_revision.team_id = support.team_id
+		                AND newer_revision.source_id = support.source_id
+		                AND newer_revision.supersedes_revision_id = support.source_revision_id
+		                AND newer_revision.created_at <= ?::timestamptz
+		          )
+		      )
+		  )
 	),
 	effective_members AS (
 		SELECT member.conflict_id,
@@ -339,6 +365,9 @@ func relationshipConflictSupporterRowsArgsWithLimit(teamID string, conflictIDs, 
 		teamID,
 		knownAt, knownAt,
 		knownAt,
+		knownAt, knownAt,
+		knownAt,
+		knownAt, knownAt,
 		knownAt,
 		teamID,
 		pq.Array(positionIDs),
