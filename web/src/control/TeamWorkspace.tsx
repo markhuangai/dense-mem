@@ -4,7 +4,7 @@ import { ControlApi, Team, TeamProfile } from "../api";
 import { SectionHeading, SummaryCard } from "../ui/components";
 import { formatDate, profilePermissionLabel, profileRoleLabel, shortId } from "./utils";
 
-export type TeamWorkspaceTab = "overview" | "profiles" | "dreams" | "settings";
+export type TeamWorkspaceTab = "overview" | "profiles" | "dreams" | "conflicts" | "settings";
 
 export function TeamWorkspaceShell({
   team,
@@ -40,6 +40,7 @@ function TeamWorkspaceHeader({
     { id: "overview", label: "Overview" },
     { id: "profiles", label: "Profiles" },
     { id: "dreams", label: "Dreams" },
+    { id: "conflicts", label: "Conflicts" },
     { id: "settings", label: "Settings" },
   ];
 

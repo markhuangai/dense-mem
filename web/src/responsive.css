@@ -110,7 +110,8 @@
   .metrics-summary,
   .dreaming-effective-grid,
   .dependency-grid,
-  .telemetry-card-grid {
+  .telemetry-card-grid,
+  .conflict-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -156,7 +157,8 @@
   .dreaming-effective-grid,
   .dependency-grid,
   .metrics-toolbar,
-  .telemetry-card-grid {
+  .telemetry-card-grid,
+  .conflict-summary {
     grid-template-columns: 1fr;
   }
 
