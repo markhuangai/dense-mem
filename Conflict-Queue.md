@@ -10,9 +10,9 @@ it does not create, resolve, retract, or otherwise mutate Relationships.
 GET /control/api/teams/{teamId}/conflicts/queue
 ```
 
-The route uses the control-plane authentication boundary and the requested team
-is taken from the authenticated control context. A successful response uses the
-standard `{ "data": ... }` envelope:
+The route uses the control-plane authentication boundary and applies the
+requested `teamId` as the team-scoped read boundary. A successful response uses
+the standard `{ "data": ... }` envelope:
 
 ```json
 {
