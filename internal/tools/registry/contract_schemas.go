@@ -413,6 +413,7 @@ func submissionStatusOutputSchema() map[string]any {
 					"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
 					"superseded_evidence_ids": stringArraySchema("Evidence ID superseded by this evidence.", 50, 128),
 					"search_state":            schemaEnum(domain.SearchProjectionStates()),
+					"error":                   map[string]any{"oneOf": []any{map[string]any{"type": "null"}, closedObject([]string{"code", "message"}, map[string]any{"code": schemaString("Typed submission error code.", 128), "message": schemaString("Bounded safe submission error.", 512)})}},
 				},
 			), 0, 100),
 			"errors":                        submissionStatusErrorArraySchema(),

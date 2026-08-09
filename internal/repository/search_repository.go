@@ -200,34 +200,6 @@ func (r *SearchRepositoryImpl) CheckSearchReadiness(ctx context.Context) (*Searc
 			})
 		}
 	}
-	stats, err := r.GetEmbeddingQueueStats(ctx, EmbeddingQueueStatsInput{
-		EmbeddingContractID: contract.EmbeddingContractID,
-		EmbeddingDimensions: contract.EmbeddingDimensions,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if stats.CutoverBlocking {
-		readiness.Ready = false
-		if stats.Queued+stats.Processing > 0 {
-			readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
-				Code:    "embedding_backlog_pending",
-				Message: fmt.Sprintf("%d embedding jobs are queued or processing for active search contract", stats.Queued+stats.Processing),
-			})
-		}
-		if stats.ExpiredLeases > 0 {
-			readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
-				Code:    "expired_embedding_leases",
-				Message: fmt.Sprintf("%d embedding jobs have expired leases for active search contract", stats.ExpiredLeases),
-			})
-		}
-		if stats.TerminalFailures > 0 {
-			readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
-				Code:    "terminal_embedding_failures",
-				Message: fmt.Sprintf("%d terminal embedding jobs exist for active search contract", stats.TerminalFailures),
-			})
-		}
-	}
 	incompleteRelationships, err := r.relationshipProjectionTextIncomplete(ctx, contract)
 	if err != nil {
 		return nil, err
@@ -288,7 +260,7 @@ func (r *SearchRepositoryImpl) relationshipProjectionTextIncomplete(ctx context.
 			            AND document.embedding_contract_id = ?::uuid
 			            AND document.embedding_dimensions = ?
 			            AND document.projection_format_version = 2
-			            AND document.search_state IN ('pending', 'current')
+			            AND document.search_state IN ('pending', 'current', 'failed')
 			            AND (
 			                document.projection_generation_id = generation.projection_generation_id
 			                OR (
@@ -469,7 +441,7 @@ func (r *SearchRepositoryImpl) SearchFullText(ctx context.Context, input FullTex
 			FROM recall_relationship_generation AS generation
 			JOIN search_documents AS document
 			  ON document.team_id = ?::uuid
-			WHERE document.search_state IN ('pending', 'current')
+			WHERE document.search_state IN ('pending', 'current', 'failed')
 			  AND document.search_tsv @@ plainto_tsquery('simple', ?)
 			  AND (
 			      document.source_kind <> 'relationship'

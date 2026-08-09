@@ -39,6 +39,11 @@ func TestInMemoryDiscoverabilityMetricsRecordsActiveSignals(t *testing.T) {
 	m.ObserveConflictReviewDuration(2.5, "completed")
 	m.IncVerifyVerdict("verified")
 	m.IncSubmissionQuarantinePurgeFailure()
+	m.ObserveEmbeddingReconciliationRun("completed")
+	m.ObserveEmbeddingReconciliationCanary("succeeded")
+	m.ObserveEmbeddingReconciliationJobs("requeued", "evidence", "transient", "provider_timeout", 2)
+	m.ObserveEmbeddingReconciliationJobs("ignored", "evidence", "transient", "provider_timeout", 0)
+	m.ObserveEmbeddingReconciliationDuration(1.25, "completed")
 
 	if got := m.EmbeddingSamples(); len(got) != 1 || got[0].DurationMs != 123.4 || got[0].Outcome != "ok" {
 		t.Fatalf("embedding samples = %+v", got)
@@ -66,6 +71,18 @@ func TestInMemoryDiscoverabilityMetricsRecordsActiveSignals(t *testing.T) {
 	}
 	if got := m.SubmissionQuarantinePurgeFailureCount(); got != 1 {
 		t.Fatalf("quarantine purge failure count = %d; want 1", got)
+	}
+	if got := m.EmbeddingReconciliationRunCount("completed"); got != 1 {
+		t.Fatalf("reconciliation run count = %d; want 1", got)
+	}
+	if got := m.EmbeddingReconciliationCanaryCount("succeeded"); got != 1 {
+		t.Fatalf("reconciliation canary count = %d; want 1", got)
+	}
+	if got := m.reconciliationJobs["requeued:evidence:transient:provider_timeout"]; got != 2 {
+		t.Fatalf("reconciliation jobs = %d; want 2", got)
+	}
+	if len(m.reconciliationDurations) != 1 || m.reconciliationDurations[0] != 1.25 {
+		t.Fatalf("reconciliation durations = %#v", m.reconciliationDurations)
 	}
 }
 

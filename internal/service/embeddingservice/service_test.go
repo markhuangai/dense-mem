@@ -9,6 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -358,6 +362,27 @@ func TestEmbeddingWorkerClassifiesProviderFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEmbeddingWorkerQuotaFailureDoesNotSpendInlineRetryBudget(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-quota", 20)}
+	provider := &embeddingProviderStub{
+		available: true,
+		model:     "test-model",
+		dims:      3,
+		err:       &embedding.ProviderHTTPError{Status: 429, Code: "insufficient_quota", Type: "insufficient_quota"},
+	}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search, Provider: provider, TeamID: "team-a", WorkerID: "worker-a",
+	})
+	result, err := worker.ProcessNextBatch(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, 1, result.Failed)
+	require.Len(t, search.failInputs, 1)
+	assert.True(t, search.failInputs[0].Terminal)
+	assert.Equal(t, string(domain.EmbeddingFailureProviderAction), search.failInputs[0].FailureClass)
+	assert.Equal(t, string(domain.EmbeddingFailureProviderQuotaExhausted), search.failInputs[0].FailureCode)
 }
 
 func TestEmbeddingWorkerFailsContractMismatchBeforeProviderCall(t *testing.T) {

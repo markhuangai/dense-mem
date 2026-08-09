@@ -158,6 +158,16 @@ func TestContractEnums(t *testing.T) {
 	if slices.Contains(EvidenceItemCategories(), "evidence_needs_review") {
 		t.Fatal("EvidenceItemCategories contains non-canonical evidence_needs_review category")
 	}
+	for _, class := range []string{"transient", "provider_action_required", "permanent"} {
+		if !slices.Contains(EmbeddingFailureClasses(), class) {
+			t.Fatalf("EmbeddingFailureClasses missing %s", class)
+		}
+	}
+	for _, code := range []string{"provider_quota_exhausted", "provider_authentication_failed", "embedding_input_rejected", "unknown_embedding_failure"} {
+		if !slices.Contains(EmbeddingFailureCodes(), code) {
+			t.Fatalf("EmbeddingFailureCodes missing %s", code)
+		}
+	}
 }
 
 func TestHypothesisStatusesAreCanonical(t *testing.T) {

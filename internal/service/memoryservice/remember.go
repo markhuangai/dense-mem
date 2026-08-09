@@ -125,10 +125,11 @@ type SubmissionAwaitingConfirmation struct {
 }
 
 type SubmissionEvidenceStatus struct {
-	EvidenceID            string   `json:"evidence_id"`
-	EvidenceIndex         int      `json:"evidence_index"`
-	SupersededEvidenceIDs []string `json:"superseded_evidence_ids"`
-	SearchState           string   `json:"search_state"`
+	EvidenceID            string                 `json:"evidence_id"`
+	EvidenceIndex         int                    `json:"evidence_index"`
+	SupersededEvidenceIDs []string               `json:"superseded_evidence_ids"`
+	SearchState           string                 `json:"search_state"`
+	Error                 *SubmissionStatusError `json:"error,omitempty"`
 }
 
 type SubmissionStatusError struct {
@@ -349,6 +350,7 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 		lineage[evidence.FragmentID] = append([]string(nil), evidence.SupersededEvidenceIDs...)
 	}
 	searchState := string(domain.SearchProjectionNotRequired)
+	searchErrorAdded := false
 	for _, item := range placement.Items {
 		itemSearchState := placementItemSearchState(item)
 		searchState = placementCombinedSearchState(searchState, itemSearchState)
@@ -356,17 +358,26 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 		if superseded == nil {
 			superseded = []string{}
 		}
+		var itemError *SubmissionStatusError
+		if itemSearchState == string(domain.SearchProjectionFailed) {
+			itemError = &SubmissionStatusError{Code: "search_indexing_delayed", Message: "Semantic search indexing is delayed."}
+			searchErrorAdded = true
+		}
 		items = append(items, SubmissionEvidenceStatus{
 			EvidenceID:            item.FragmentID,
 			EvidenceIndex:         item.EvidenceIndex,
 			SupersededEvidenceIDs: superseded,
 			SearchState:           itemSearchState,
+			Error:                 itemError,
 		})
 	}
 	processing := publicSubmissionProcessingState(placement.Status, placement.SemanticHoldState)
 	statusErrors := []SubmissionStatusError{}
 	if processing == "failed" {
 		statusErrors = append(statusErrors, SubmissionStatusError{Code: "submission_processing_failed", Message: "submission processing failed"})
+	}
+	if searchErrorAdded {
+		statusErrors = append(statusErrors, SubmissionStatusError{Code: "search_indexing_delayed", Message: "Semantic search indexing is delayed; recovery is automatic."})
 	}
 	return &SubmissionStatusResult{
 		SubmissionID:               placement.IngestID,

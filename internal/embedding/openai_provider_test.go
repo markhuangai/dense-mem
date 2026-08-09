@@ -246,7 +246,8 @@ func TestOpenAIProvider_Non200Response(t *testing.T) {
 	var httpErr *ProviderHTTPError
 	require.ErrorAs(t, err, &httpErr)
 	assert.Equal(t, 401, httpErr.Status)
-	assert.Contains(t, httpErr.Message, "Invalid API key")
+	assert.Equal(t, "provider returned status 401", httpErr.Message)
+	assert.NotContains(t, err.Error(), "Invalid API key")
 }
 
 func TestOpenAIProvider_NonJSONServerErrorIsHTTPError(t *testing.T) {
@@ -271,9 +272,61 @@ func TestOpenAIProvider_NonJSONServerErrorIsHTTPError(t *testing.T) {
 	var httpErr *ProviderHTTPError
 	require.ErrorAs(t, err, &httpErr)
 	assert.Equal(t, http.StatusBadGateway, httpErr.Status)
-	assert.Contains(t, httpErr.Message, "non-JSON response")
-	assert.Contains(t, httpErr.Message, "upstream unavailable")
+	assert.Equal(t, "provider returned a non-JSON error response", httpErr.Message)
+	assert.NotContains(t, err.Error(), "upstream unavailable")
 	assert.Equal(t, 2500*time.Millisecond, httpErr.RetryAfter)
+}
+
+func TestOpenAIProviderErrorHelpersBoundProviderMetadata(t *testing.T) {
+	if got := nonJSONHTTPMessage([]byte("provider body")); got != "provider returned a non-JSON error response" {
+		t.Fatalf("nonJSONHTTPMessage = %q", got)
+	}
+	if got := providerErrorCode(nil); got != "" {
+		t.Fatalf("providerErrorCode(nil) = %q", got)
+	}
+	if got := providerErrorType(nil); got != "" {
+		t.Fatalf("providerErrorType(nil) = %q", got)
+	}
+	value := struct {
+		Code string `json:"code"`
+		Type string `json:"type"`
+	}{Code: " quota ", Type: "type"}
+	if got := providerErrorCode(&value); got != "quota" {
+		t.Fatalf("providerErrorCode = %q", got)
+	}
+	if got := providerErrorType(&value); got != "type" {
+		t.Fatalf("providerErrorType = %q", got)
+	}
+	if got := retryAfterDuration(""); got != 0 {
+		t.Fatalf("retryAfterDuration(empty) = %s", got)
+	}
+	if got := retryAfterDuration("2.5"); got != 2500*time.Millisecond {
+		t.Fatalf("retryAfterDuration(seconds) = %s", got)
+	}
+	if got := retryAfterDuration("invalid"); got != 0 {
+		t.Fatalf("retryAfterDuration(invalid) = %s", got)
+	}
+}
+
+func TestOpenAIProviderParsesAllowlistedFailureCodeAndTypeWithoutMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"billing secret detail","code":"insufficient_quota","type":"insufficient_quota","unknown":"discard"}}`))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 2,
+	}, srv.Client())
+	_, _, err := p.Embed(context.Background(), "test")
+	var httpErr *ProviderHTTPError
+	require.ErrorAs(t, err, &httpErr)
+	assert.Equal(t, "insufficient_quota", httpErr.Code)
+	assert.Equal(t, "insufficient_quota", httpErr.Type)
+	assert.NotContains(t, err.Error(), "billing secret detail")
+	metadata := ClassifyFailure(err)
+	assert.Equal(t, "provider_action_required", metadata.Class)
+	assert.Equal(t, "provider_quota_exhausted", metadata.Code)
 }
 
 func TestOpenAIProvider_WrongDimensions(t *testing.T) {

@@ -95,8 +95,8 @@ func (r *SearchRepositoryImpl) RecallRelationships(ctx context.Context, input Re
 		}
 		hit.Score = candidate.Score
 		hit.SearchState = recallCombinedSearchState(candidate.SearchState, hit.SearchState)
-		if hit.SearchState == string(domain.SearchProjectionPending) {
-			searchState = string(domain.SearchProjectionPending)
+		if hit.SearchState == string(domain.SearchProjectionPending) || hit.SearchState == string(domain.SearchProjectionFailed) {
+			searchState = recallCombinedSearchState(searchState, hit.SearchState)
 		}
 		results = append(results, hit)
 		if len(results) == input.Limit {
@@ -491,7 +491,7 @@ func searchRecallRelationshipEntityExpansion(
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.projection_format_version = 2
 		 AND `+recallRelationshipGenerationDocumentSQL+`
-		 AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
+			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 		LEFT JOIN LATERAL (
 		    SELECT transition.to_status AS status
 		    FROM relationship_transition_events AS transition
@@ -609,7 +609,7 @@ func hydrateRecallRelationships(
 		     AND document.embedding_contract_id = ?::uuid
 		     AND document.projection_format_version = 2
 		     AND `+recallRelationshipGenerationDocumentSQL+`
-		     AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
+			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 		    LEFT JOIN LATERAL (
 		        SELECT transition.to_status AS status
 		        FROM relationship_transition_events AS transition

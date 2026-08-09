@@ -104,8 +104,8 @@ func (r *SearchRepositoryImpl) RecallEvidence(ctx context.Context, input RecallE
 		}
 		hit.Score = candidate.Score
 		hit.SearchState = recallCombinedSearchState(candidate.SearchState, hit.SearchState)
-		if hit.SearchState == string(domain.SearchProjectionPending) {
-			searchState = string(domain.SearchProjectionPending)
+		if hit.SearchState == string(domain.SearchProjectionPending) || hit.SearchState == string(domain.SearchProjectionFailed) {
+			searchState = recallCombinedSearchState(searchState, hit.SearchState)
 		}
 		hit.Rank = len(results) + 1
 		results = append(results, hit)
@@ -154,7 +154,7 @@ func searchRecallFullText(
 		WHERE team_id = ?::uuid
 		  AND source_kind = 'evidence'
 		  AND embedding_contract_id = ?::uuid
-		  AND (search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND search_state IN ('not_required', 'failed')))
+		  AND (search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND search_state = 'not_required'))
 		  AND search_tsv @@ plainto_tsquery('simple', ?)
 		ORDER BY text_rank DESC, updated_at DESC, search_document_id ASC
 		LIMIT ?
@@ -410,7 +410,7 @@ func searchRecallEntityExpansion(
 			 AND document.source_kind = 'evidence'
 			 AND document.source_id = support.fragment_id
 			 AND document.embedding_contract_id = ?::uuid
-			 AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
+			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 			LEFT JOIN evidence_quarantines AS quarantine
 			  ON quarantine.team_id = support.team_id
 			 AND quarantine.fragment_id = support.fragment_id
@@ -523,7 +523,7 @@ func hydrateRecallEvidence(
 			 AND document.source_kind = 'evidence'
 			 AND document.source_id = fragment.fragment_id
 			 AND document.embedding_contract_id = ?::uuid
-			 AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
+			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 			LEFT JOIN evidence_quarantines AS quarantine
 			  ON quarantine.team_id = fragment.team_id
 			 AND quarantine.fragment_id = fragment.fragment_id
@@ -819,6 +819,9 @@ func recallStringSet(values []string) map[string]struct{} {
 }
 
 func recallCombinedSearchState(left, right string) string {
+	if left == string(domain.SearchProjectionFailed) || right == string(domain.SearchProjectionFailed) {
+		return string(domain.SearchProjectionFailed)
+	}
 	if left == string(domain.SearchProjectionPending) || right == string(domain.SearchProjectionPending) {
 		return string(domain.SearchProjectionPending)
 	}

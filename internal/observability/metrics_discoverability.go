@@ -18,6 +18,15 @@ type DiscoverabilityMetrics interface {
 	IncVerifyVerdict(outcome string)
 }
 
+// EmbeddingReconciliationMetrics records bounded-cardinality recovery
+// progress. It is optional so existing metrics implementations remain valid.
+type EmbeddingReconciliationMetrics interface {
+	ObserveEmbeddingReconciliationRun(outcome string)
+	ObserveEmbeddingReconciliationCanary(outcome string)
+	ObserveEmbeddingReconciliationJobs(action, sourceKind, failureClass, failureCode string, count int)
+	ObserveEmbeddingReconciliationDuration(seconds float64, outcome string)
+}
+
 // AssessorMetrics is an optional V2.4 write-path metric surface. Its methods
 // deliberately accept no request identity, evidence, threshold, or rationale
 // so assessor telemetry cannot create sensitive or high-cardinality labels.
@@ -87,6 +96,10 @@ type InMemoryDiscoverabilityMetrics struct {
 	assessorReviewExpiry        int64
 	assessorTerminalFailures    map[string]int
 	quarantinePurgeFailures     int
+	reconciliationRuns          map[string]int
+	reconciliationCanaries      map[string]int
+	reconciliationJobs          map[string]int
+	reconciliationDurations     []float64
 }
 
 // AssessorCallSample records one bounded assessor conversation.
@@ -169,6 +182,9 @@ func NewInMemoryDiscoverabilityMetrics() *InMemoryDiscoverabilityMetrics {
 		assessorDuplicatePrevention: make(map[string]int),
 		assessorGateBands:           make(map[string]int),
 		assessorTerminalFailures:    make(map[string]int),
+		reconciliationRuns:          make(map[string]int),
+		reconciliationCanaries:      make(map[string]int),
+		reconciliationJobs:          make(map[string]int),
 	}
 }
 
@@ -437,4 +453,44 @@ func (m *InMemoryDiscoverabilityMetrics) SubmissionQuarantinePurgeFailureCount()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.quarantinePurgeFailures
+}
+
+func (m *InMemoryDiscoverabilityMetrics) ObserveEmbeddingReconciliationRun(outcome string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reconciliationRuns[strings.TrimSpace(outcome)]++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) ObserveEmbeddingReconciliationCanary(outcome string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reconciliationCanaries[strings.TrimSpace(outcome)]++
+}
+
+func (m *InMemoryDiscoverabilityMetrics) ObserveEmbeddingReconciliationJobs(action, sourceKind, failureClass, failureCode string, count int) {
+	if count <= 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := strings.Join([]string{strings.TrimSpace(action), strings.TrimSpace(sourceKind), strings.TrimSpace(failureClass), strings.TrimSpace(failureCode)}, ":")
+	m.reconciliationJobs[key] += count
+}
+
+func (m *InMemoryDiscoverabilityMetrics) ObserveEmbeddingReconciliationDuration(seconds float64, _ string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reconciliationDurations = append(m.reconciliationDurations, seconds)
+}
+
+func (m *InMemoryDiscoverabilityMetrics) EmbeddingReconciliationRunCount(outcome string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.reconciliationRuns[strings.TrimSpace(outcome)]
+}
+
+func (m *InMemoryDiscoverabilityMetrics) EmbeddingReconciliationCanaryCount(outcome string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.reconciliationCanaries[strings.TrimSpace(outcome)]
 }

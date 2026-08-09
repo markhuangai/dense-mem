@@ -17,6 +17,20 @@ type SearchRepository interface {
 	SearchExactVector(ctx context.Context, input ExactVectorSearchInput) ([]SearchHit, error)
 }
 
+// EmbeddingReconciliationRepository is the durable control-plane surface for
+// the always-on daily failed-embedding recovery loop. It is separate from the
+// tenant-scoped search interface because run leases and operator projections
+// are system-coordinated concerns.
+type EmbeddingReconciliationRepository interface {
+	GetSearchConvergence(ctx context.Context, input SearchConvergenceInput) (*SearchConvergence, error)
+	ReserveEmbeddingReconciliationRun(ctx context.Context, input ReserveEmbeddingReconciliationRunInput) (*EmbeddingReconciliationRun, bool, error)
+	SelectEmbeddingReconciliationCanary(ctx context.Context, input SelectEmbeddingReconciliationCanaryInput) (*EmbeddingJob, error)
+	MarkEmbeddingReconciliationCanaryAttempt(ctx context.Context, input MarkEmbeddingReconciliationCanaryAttemptInput) error
+	CompleteEmbeddingReconciliationCanary(ctx context.Context, input CompleteEmbeddingReconciliationCanaryInput) error
+	RequeueEmbeddingReconciliationJobs(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error)
+	CompleteEmbeddingReconciliationRun(ctx context.Context, input CompleteEmbeddingReconciliationRunInput) error
+}
+
 type RecallRepository interface {
 	RecallEvidence(ctx context.Context, input RecallEvidenceInput) (*RecallEvidenceResult, error)
 	RecallRelationships(ctx context.Context, input RecallRelationshipsInput) (*RecallRelationshipsResult, error)
@@ -124,6 +138,12 @@ type EmbeddingJob struct {
 	EmbeddingDimensions    int
 	Status                 string
 	Attempts               int
+	TotalAttempts          int
+	RecoveryCount          int
+	FailureClass           string
+	FailureCode            string
+	FirstFailedAt          *time.Time
+	LastFailedAt           *time.Time
 	LeaseUntil             *time.Time
 	DocumentText           string
 }
@@ -142,17 +162,149 @@ type FailEmbeddingJobInput struct {
 	WorkerID         string
 	ExpectedAttempts int
 	Error            string
+	FailureClass     string
+	FailureCode      string
 	RetryAfter       time.Duration
 	Terminal         bool
 }
 
 type EmbeddingJobFailureResult struct {
-	Status      string
-	RetryAfter  time.Duration
-	Terminal    bool
-	Stale       bool
-	Attempts    int
-	MaxAttempts int
+	Status       string
+	RetryAfter   time.Duration
+	Terminal     bool
+	Stale        bool
+	Attempts     int
+	MaxAttempts  int
+	FailureClass string
+	FailureCode  string
+}
+
+type SearchConvergenceInput struct {
+	EmbeddingContractID string
+	EmbeddingDimensions int
+}
+
+type SearchConvergence struct {
+	ObservedAt        time.Time
+	Status            string
+	Contract          *ActiveSearchContract
+	Queued            int64
+	Processing        int64
+	Failed            int64
+	ExpiredLeases     int64
+	OldestPendingAge  time.Duration
+	OldestFailureAge  time.Duration
+	AffectedTeamCount int64
+	Failures          []EmbeddingFailureCount
+	Incidents         []EmbeddingFailureIncident
+	LatestRun         *EmbeddingReconciliationRun
+}
+
+type EmbeddingFailureCount struct {
+	SourceKind   string
+	FailureClass string
+	FailureCode  string
+	Count        int64
+}
+
+type EmbeddingFailureIncident struct {
+	TeamID              string
+	TeamName            string
+	IncidentID          string
+	EmbeddingContractID string
+	EmbeddingDimensions int
+	SourceKind          string
+	FailureClass        string
+	FailureCode         string
+	Status              string
+	AffectedJobCount    int64
+	FirstSeenAt         time.Time
+	LastSeenAt          time.Time
+	Age                 time.Duration
+	RecoveringAt        *time.Time
+	ResolvedAt          *time.Time
+	Guidance            string
+}
+
+type EmbeddingReconciliationRun struct {
+	RunID               string
+	EmbeddingContractID string
+	EmbeddingDimensions int
+	LocalRunDate        time.Time
+	Status              string
+	CandidateCutoff     time.Time
+	WorkerID            string
+	LeaseToken          string
+	LeaseUntil          *time.Time
+	CanaryJobID         string
+	CanaryAttemptedAt   *time.Time
+	CanaryOutcome       string
+	CanaryFailureClass  string
+	CanaryFailureCode   string
+	RequeuedCount       int64
+	RecoveredCount      int64
+	LastError           string
+	StartedAt           *time.Time
+	CompletedAt         *time.Time
+	UpdatedAt           time.Time
+}
+
+type ReserveEmbeddingReconciliationRunInput struct {
+	EmbeddingContractID string
+	EmbeddingDimensions int
+	LocalRunDate        time.Time
+	WorkerID            string
+	Lease               time.Duration
+	Now                 time.Time
+}
+
+type SelectEmbeddingReconciliationCanaryInput struct {
+	RunID               string
+	EmbeddingContractID string
+	EmbeddingDimensions int
+	CandidateCutoff     time.Time
+}
+
+type MarkEmbeddingReconciliationCanaryAttemptInput struct {
+	RunID       string
+	CanaryJobID string
+	WorkerID    string
+	LeaseToken  string
+	AttemptedAt time.Time
+}
+
+type CompleteEmbeddingReconciliationCanaryInput struct {
+	RunID        string
+	CanaryJobID  string
+	WorkerID     string
+	LeaseToken   string
+	Succeeded    bool
+	FailureClass string
+	FailureCode  string
+}
+
+type RequeueEmbeddingReconciliationJobsInput struct {
+	RunID               string
+	WorkerID            string
+	LeaseToken          string
+	EmbeddingContractID string
+	EmbeddingDimensions int
+	CandidateCutoff     time.Time
+	BatchSize           int
+}
+
+type CompleteEmbeddingReconciliationRunInput struct {
+	RunID          string
+	WorkerID       string
+	LeaseToken     string
+	Status         string
+	CanaryOutcome  string
+	FailureClass   string
+	FailureCode    string
+	RequeuedCount  int64
+	RecoveredCount int64
+	LastError      string
+	CompletedAt    time.Time
 }
 
 type EmbeddingQueueStatsInput struct {

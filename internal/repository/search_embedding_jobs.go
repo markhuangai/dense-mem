@@ -67,6 +67,7 @@ updated AS (
 	UPDATE embedding_jobs AS job
 	SET status = 'processing',
 	    attempts = attempts + 1,
+	    total_attempts = total_attempts + 1,
 	    worker_id = ?,
 	    lease_until = now() + make_interval(secs => ?::integer),
 	    updated_at = now(),
@@ -80,6 +81,8 @@ updated AS (
 	          job.projection_format_version, COALESCE(job.projection_generation_id::text, ''),
 	          job.document_version, job.embedding_contract_id::text,
 	          job.embedding_dimensions, job.status, job.attempts,
+	          job.total_attempts, job.recovery_count, job.failure_class,
+	          job.failure_code, job.first_failed_at, job.last_failed_at,
 	          job.lease_until
 )
 SELECT updated.*, document.document_text
@@ -140,6 +143,12 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 				&job.EmbeddingDimensions,
 				&job.Status,
 				&job.Attempts,
+				&job.TotalAttempts,
+				&job.RecoveryCount,
+				&job.FailureClass,
+				&job.FailureCode,
+				&job.FirstFailedAt,
+				&job.LastFailedAt,
 				&job.LeaseUntil,
 				&job.DocumentText,
 			); err != nil {
@@ -251,6 +260,9 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 		if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobCompleted), ""); err != nil {
 			return err
 		}
+		if err := resolveEmbeddingIncidentsForJob(ctx, tx, input.TeamID, sourceKind, contractID, dims); err != nil {
+			return err
+		}
 		if sourceKind == "relationship" && projectionGenerationID != "" {
 			if err := refreshRelationshipProjectionGeneration(ctx, tx, input.TeamID, projectionGenerationID); err != nil {
 				return err
@@ -294,10 +306,12 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			terminalErr = ErrTeamInactive
 			return nil
 		}
-		var attempts, maxAttempts int
-		var sourceKind, projectionGenerationID string
+		var attempts, maxAttempts, dims int
+		var sourceKind, projectionGenerationID, contractID string
 		err = tx.WithContext(ctx).Raw(`
-				SELECT attempts, max_attempts, source_kind, COALESCE(projection_generation_id::text, '')
+				SELECT attempts, max_attempts, embedding_dimensions,
+				       embedding_contract_id::text, source_kind,
+				       COALESCE(projection_generation_id::text, '')
 				FROM embedding_jobs
 				WHERE team_id = ?::uuid
 				  AND embedding_job_id = ?::uuid
@@ -309,6 +323,8 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			`, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Row().Scan(
 			&attempts,
 			&maxAttempts,
+			&dims,
+			&contractID,
 			&sourceKind,
 			&projectionGenerationID,
 		)
@@ -393,7 +409,28 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 		if update.RowsAffected != 1 {
 			return ErrEmbeddingLeaseLost
 		}
+		failureClass := input.FailureClass
+		failureCode := input.FailureCode
+		if failureClass == "" {
+			failureClass = string(domain.EmbeddingFailurePermanent)
+		}
+		if failureCode == "" {
+			failureCode = string(domain.EmbeddingFailureUnknown)
+		}
+		if err := tx.WithContext(ctx).Exec(`
+			UPDATE embedding_jobs
+			SET failure_class = ?, failure_code = ?,
+			    total_attempts = GREATEST(total_attempts, attempts),
+			    first_failed_at = COALESCE(first_failed_at, now()),
+			    last_failed_at = now(), updated_at = now()
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, failureClass, failureCode, input.TeamID, input.EmbeddingJobID).Error; err != nil {
+			return err
+		}
 		if err := updateSearchDocumentAfterEmbeddingFailure(ctx, tx, input, status); err != nil {
+			return err
+		}
+		if err := upsertEmbeddingFailureIncident(ctx, tx, input.TeamID, failureClass, failureCode, contractID, dims, sourceKind); err != nil {
 			return err
 		}
 		if sourceKind == "relationship" && projectionGenerationID != "" {
@@ -402,11 +439,13 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			}
 		}
 		result = &EmbeddingJobFailureResult{
-			Status:      status,
-			RetryAfter:  retryAfter,
-			Terminal:    terminal,
-			Attempts:    attempts,
-			MaxAttempts: maxAttempts,
+			Status:       status,
+			RetryAfter:   retryAfter,
+			Terminal:     terminal,
+			Attempts:     attempts,
+			MaxAttempts:  maxAttempts,
+			FailureClass: failureClass,
+			FailureCode:  failureCode,
 		}
 		return nil
 	})
@@ -500,13 +539,16 @@ func markEmbeddingJobTerminal(ctx context.Context, tx *gorm.DB, input CompleteEm
 		    error = ?,
 		    completed_at = now(),
 		    updated_at = now(),
-		    lease_until = NULL
+		    lease_until = NULL,
+		    recovery_count = recovery_count + CASE WHEN ? = 'completed' AND ? LIKE 'reconciliation:%' THEN 1 ELSE 0 END,
+		    last_recovered_at = CASE WHEN ? = 'completed' AND ? LIKE 'reconciliation:%' THEN now() ELSE last_recovered_at END
 		WHERE team_id = ?::uuid
 		  AND embedding_job_id = ?::uuid
 		  AND worker_id = ?
 		  AND status = 'processing'
 		  AND attempts = ?
-	`, status, message, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Error
+		`, status, message, status, input.WorkerID, status, input.WorkerID,
+		input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Error
 }
 
 func embeddingJobFinalizationTeamActive(ctx context.Context, tx *gorm.DB, teamID string) (bool, error) {
@@ -833,30 +875,71 @@ func embeddingRetryBackoff(attempts int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func boundedEmbeddingError(message string) string {
-	message = strings.Join(strings.Fields(strings.TrimSpace(message)), " ")
-	if message == "" {
-		return "embedding job failed"
-	}
-	const limit = 512
-	if len(message) > limit {
-		return message[:limit]
-	}
-	return message
-}
-
 func normalizeFailEmbeddingJobInput(input FailEmbeddingJobInput) FailEmbeddingJobInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.EmbeddingJobID = strings.TrimSpace(input.EmbeddingJobID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
-	input.Error = boundedEmbeddingError(input.Error)
 	if input.RetryAfter < 0 {
 		input.RetryAfter = 0
 	}
 	if input.RetryAfter > 24*time.Hour {
 		input.RetryAfter = 24 * time.Hour
 	}
+	input.FailureClass, input.FailureCode = normalizeEmbeddingFailureContract(input.FailureClass, input.FailureCode)
+	input.Error = embeddingFailureStorageMessage(input.FailureCode)
 	return input
+}
+
+func embeddingFailureStorageMessage(code string) string {
+	switch code {
+	case string(domain.EmbeddingFailureProviderRateLimited):
+		return "embedding provider rate limited"
+	case string(domain.EmbeddingFailureProviderTimeout):
+		return "embedding provider timed out"
+	case string(domain.EmbeddingFailureProviderNetworkError):
+		return "embedding provider network failure"
+	case string(domain.EmbeddingFailureProviderServerError):
+		return "embedding provider server failure"
+	case string(domain.EmbeddingFailureProviderQuotaExhausted):
+		return "embedding provider quota exhausted"
+	case string(domain.EmbeddingFailureProviderAuthentication):
+		return "embedding provider authentication failed"
+	case string(domain.EmbeddingFailureProviderPermissionDenied):
+		return "embedding provider permission denied"
+	case string(domain.EmbeddingFailureProviderContractRejected):
+		return "embedding provider contract rejected"
+	case string(domain.EmbeddingFailureProviderResponseInvalid):
+		return "embedding provider response invalid"
+	case string(domain.EmbeddingFailureInputRejected):
+		return "embedding input rejected"
+	case string(domain.EmbeddingFailureContractMismatch):
+		return "embedding contract mismatch"
+	default:
+		return "embedding processing failed"
+	}
+}
+
+func normalizeEmbeddingFailureContract(failureClass, failureCode string) (string, string) {
+	failureClass = strings.TrimSpace(failureClass)
+	failureCode = strings.TrimSpace(failureCode)
+	validClass := false
+	for _, value := range domain.EmbeddingFailureClasses() {
+		if value == failureClass {
+			validClass = true
+			break
+		}
+	}
+	validCode := false
+	for _, value := range domain.EmbeddingFailureCodes() {
+		if value == failureCode {
+			validCode = true
+			break
+		}
+	}
+	if !validClass || !validCode {
+		return string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureUnknown)
+	}
+	return failureClass, failureCode
 }
 
 func validateFailEmbeddingJobInput(input FailEmbeddingJobInput) error {

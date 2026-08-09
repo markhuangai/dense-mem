@@ -1,5 +1,6 @@
 import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types";
 import type { CommunityStatus } from "./community-api-types";
+import type { SearchConvergence } from "./search-convergence-types";
 import { requestJson } from "./http";
 export { ApiError } from "./http";
 export type {
@@ -13,6 +14,7 @@ export type {
   ConflictQueueSupporter,
 } from "./conflict-queue-api-types";
 import type { ConflictQueuePage, ConflictQueueQuery } from "./conflict-queue-api-types";
+export type { SearchConvergence } from "./search-convergence-types";
 export type Team = {
   id: string;
   name: string;
@@ -312,6 +314,7 @@ export type SSOConfig = {
 
 export type GeneralRuntimeConfig = {
   timezone: string;
+  embedding_reconciliation_start_time_local?: string;
 };
 
 export type GeneralConfigItem = SSOConfigItem;
@@ -722,6 +725,10 @@ export class ControlApi {
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
     return this.requestEnvelope<ConflictQueuePage>(`/teams/${encodeURIComponent(teamId)}/conflicts/queue${suffix}`);
+  }
+
+  getSearchConvergence(): Promise<SearchConvergence> {
+    return this.requestEnvelope<SearchConvergence>("/search/convergence");
   }
 
   getTelemetry(query: ControlTelemetryQuery = {}, signal?: AbortSignal): Promise<TelemetrySnapshot> {

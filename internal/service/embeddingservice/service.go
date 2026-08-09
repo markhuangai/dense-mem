@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -29,6 +29,7 @@ type EmbeddingWorkerDependencies struct {
 	Search         repository.SearchRepository
 	Provider       embedding.EmbeddingProviderInterface
 	Metrics        observability.DiscoverabilityMetrics
+	Logger         observability.LogProvider
 	TeamID         string
 	WorkerID       string
 	BatchSize      int
@@ -49,6 +50,7 @@ type embeddingWorkerService struct {
 	search         repository.SearchRepository
 	provider       embedding.EmbeddingProviderInterface
 	metrics        observability.DiscoverabilityMetrics
+	logger         observability.LogProvider
 	teamID         string
 	workerID       string
 	batchSize      int
@@ -80,6 +82,7 @@ func NewEmbeddingWorkerService(deps EmbeddingWorkerDependencies) EmbeddingWorker
 		search:         deps.Search,
 		provider:       deps.Provider,
 		metrics:        metrics,
+		logger:         deps.Logger,
 		teamID:         strings.TrimSpace(deps.TeamID),
 		workerID:       strings.TrimSpace(deps.WorkerID),
 		batchSize:      batchSize,
@@ -111,12 +114,17 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 		return result, nil
 	}
 	if !s.provider.IsAvailable() {
-		err := errors.New("embedding provider is unavailable")
-		s.failJobs(ctx, contract, jobs, &result, err, "provider_unavailable", false, 0)
+		err := &embedding.ProviderError{
+			Provider:     "configured embedding provider",
+			Message:      "embedding provider is unavailable",
+			FailureClass: string(domain.EmbeddingFailureTransient),
+			FailureCode:  string(domain.EmbeddingFailureProviderNetworkError),
+		}
+		s.failJobs(ctx, contract, jobs, &result, err, string(domain.EmbeddingFailureProviderNetworkError), false, 0)
 		return result, err
 	}
 	if err := s.validateProvider(contract); err != nil {
-		s.failJobs(ctx, contract, jobs, &result, err, "contract_mismatch", true, 0)
+		s.failJobs(ctx, contract, jobs, &result, err, string(domain.EmbeddingFailureContractMismatch), true, 0)
 		return result, err
 	}
 	eligible := make([]repository.EmbeddingJob, 0, len(jobs))
@@ -125,7 +133,7 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 		if job.EmbeddingContractID != contract.EmbeddingContractID || job.EmbeddingDimensions != contract.EmbeddingDimensions {
 			err := fmt.Errorf("embedding job contract mismatch: job contract %s dimensions %d, active contract %s dimensions %d",
 				job.EmbeddingContractID, job.EmbeddingDimensions, contract.EmbeddingContractID, contract.EmbeddingDimensions)
-			s.failJob(ctx, contract, job, &result, err, "contract_mismatch", true, 0)
+			s.failJob(ctx, contract, job, &result, err, string(domain.EmbeddingFailureContractMismatch), true, 0)
 			continue
 		}
 		eligible = append(eligible, job)
@@ -140,23 +148,23 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 	if err != nil {
 		code, terminal, retryAfter := classifyProviderFailure(err)
 		s.failJobs(ctx, contract, eligible, &result, err, code, terminal, retryAfter)
-		return result, err
+		return result, fmt.Errorf("embedding processing failed: %s", code)
 	}
 	if model != "" && model != contract.EmbeddingModel {
 		err := fmt.Errorf("embedding provider returned model %q, active contract requires %q", model, contract.EmbeddingModel)
-		s.failJobs(ctx, contract, eligible, &result, err, "contract_mismatch", true, 0)
+		s.failJobs(ctx, contract, eligible, &result, err, string(domain.EmbeddingFailureContractMismatch), true, 0)
 		return result, err
 	}
 	if len(embeddings) != len(eligible) {
 		err := fmt.Errorf("embedding provider returned %d vectors for %d jobs", len(embeddings), len(eligible))
-		s.failJobs(ctx, contract, eligible, &result, err, "count_mismatch", true, 0)
+		s.failJobs(ctx, contract, eligible, &result, err, string(domain.EmbeddingFailureProviderResponseInvalid), true, 0)
 		return result, err
 	}
 	var firstErr error
 	for i, job := range eligible {
 		vector := embeddings[i]
 		if err := validateEmbeddingVector(vector, job.EmbeddingDimensions); err != nil {
-			s.failJob(ctx, contract, job, &result, err, "invalid_vector", true, 0)
+			s.failJob(ctx, contract, job, &result, err, string(domain.EmbeddingFailureProviderResponseInvalid), true, 0)
 			firstErr = errors.Join(firstErr, err)
 			continue
 		}
@@ -236,6 +244,18 @@ func (s *embeddingWorkerService) failJob(
 ) {
 	if contract != nil {
 		observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, code)
+		for _, legacy := range legacyEmbeddingMetricCodes(code) {
+			if legacy != code {
+				observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, legacy)
+			}
+		}
+	}
+	if s.logger != nil {
+		s.logger.Warn("embedding_failure_recorded",
+			observability.String("failure_class", failureClassForCode(code)),
+			observability.String("failure_code", code),
+			observability.String("source_kind", job.SourceKind),
+		)
 	}
 	failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.failureTimeout)
 	defer cancel()
@@ -244,7 +264,9 @@ func (s *embeddingWorkerService) failJob(
 		EmbeddingJobID:   job.EmbeddingJobID,
 		WorkerID:         s.workerID,
 		ExpectedAttempts: job.Attempts,
-		Error:            err.Error(),
+		Error:            embeddingFailureMessage(code),
+		FailureClass:     failureClassForCode(code),
+		FailureCode:      code,
 		RetryAfter:       retryAfter,
 		Terminal:         terminal,
 	})
@@ -259,6 +281,35 @@ func (s *embeddingWorkerService) failJob(
 		result.LeaseLost++
 	default:
 		result.Failed++
+	}
+}
+
+func embeddingFailureMessage(code string) string {
+	switch code {
+	case string(domain.EmbeddingFailureProviderRateLimited):
+		return "embedding provider rate limited"
+	case string(domain.EmbeddingFailureProviderTimeout):
+		return "embedding provider timed out"
+	case string(domain.EmbeddingFailureProviderNetworkError):
+		return "embedding provider network failure"
+	case string(domain.EmbeddingFailureProviderServerError):
+		return "embedding provider server failure"
+	case string(domain.EmbeddingFailureProviderQuotaExhausted):
+		return "embedding provider quota exhausted"
+	case string(domain.EmbeddingFailureProviderAuthentication):
+		return "embedding provider authentication failed"
+	case string(domain.EmbeddingFailureProviderPermissionDenied):
+		return "embedding provider permission denied"
+	case string(domain.EmbeddingFailureProviderContractRejected):
+		return "embedding provider contract rejected"
+	case string(domain.EmbeddingFailureProviderResponseInvalid):
+		return "embedding provider response invalid"
+	case string(domain.EmbeddingFailureContractMismatch):
+		return "embedding contract mismatch"
+	case string(domain.EmbeddingFailureInputRejected):
+		return "embedding input rejected"
+	default:
+		return "embedding processing failed"
 	}
 }
 
@@ -279,29 +330,39 @@ func classifyProviderFailure(err error) (string, bool, time.Duration) {
 	if err == nil {
 		return "ok", false, 0
 	}
-	if errors.Is(err, context.Canceled) {
-		return "cancelled", false, 0
+	metadata := embedding.ClassifyFailure(err)
+	terminal := metadata.Class == string(domain.EmbeddingFailureProviderAction) || metadata.Class == string(domain.EmbeddingFailurePermanent)
+	return metadata.Code, terminal, metadata.RetryAfter
+}
+
+func failureClassForCode(code string) string {
+	switch code {
+	case string(domain.EmbeddingFailureProviderRateLimited), string(domain.EmbeddingFailureProviderTimeout), string(domain.EmbeddingFailureProviderNetworkError), string(domain.EmbeddingFailureProviderServerError):
+		return string(domain.EmbeddingFailureTransient)
+	case string(domain.EmbeddingFailureProviderQuotaExhausted), string(domain.EmbeddingFailureProviderAuthentication), string(domain.EmbeddingFailureProviderPermissionDenied), string(domain.EmbeddingFailureProviderContractRejected), string(domain.EmbeddingFailureProviderResponseInvalid):
+		return string(domain.EmbeddingFailureProviderAction)
+	default:
+		return string(domain.EmbeddingFailurePermanent)
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, embedding.ErrEmbeddingTimeout) {
-		return "timeout", false, 0
+}
+
+func legacyEmbeddingMetricCodes(code string) []string {
+	switch code {
+	case string(domain.EmbeddingFailureProviderTimeout):
+		return []string{"timeout"}
+	case string(domain.EmbeddingFailureProviderRateLimited):
+		return []string{"rate_limited"}
+	case string(domain.EmbeddingFailureProviderNetworkError):
+		return []string{"provider_unavailable", "cancelled"}
+	case string(domain.EmbeddingFailureProviderResponseInvalid):
+		return []string{"invalid_vector", "count_mismatch"}
+	case string(domain.EmbeddingFailureContractMismatch):
+		return []string{"contract_mismatch"}
+	case string(domain.EmbeddingFailureProviderContractRejected):
+		return []string{"provider_permanent"}
+	default:
+		return nil
 	}
-	if errors.Is(err, embedding.ErrEmbeddingRateLimit) {
-		return "rate_limited", false, retryAfterFromError(err)
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return "timeout", false, 0
-	}
-	var httpErr *embedding.ProviderHTTPError
-	if errors.As(err, &httpErr) {
-		switch {
-		case httpErr.Status == 429:
-			return "rate_limited", false, retryAfterFromError(err)
-		case httpErr.Status >= 400 && httpErr.Status < 500:
-			return "provider_permanent", true, 0
-		}
-	}
-	return "provider_error", false, 0
 }
 
 func retryAfterFromError(err error) time.Duration {

@@ -77,6 +77,23 @@ func TestRetryProvider_Retries429(t *testing.T) {
 	assert.Equal(t, "model", model)
 }
 
+func TestRetryProviderDoesNotRetryInsufficientQuota429(t *testing.T) {
+	var calls int
+	inner := &MockEmbeddingProvider{
+		EmbedFunc: func(context.Context, string) ([]float32, string, error) {
+			calls++
+			return nil, "", &ProviderHTTPError{Status: 429, Code: "insufficient_quota", Type: "insufficient_quota"}
+		},
+	}
+	p := NewRetryEmbeddingProvider(inner, newTestLogger())
+	_, _, err := p.Embed(context.Background(), "x")
+	require.Error(t, err)
+	assert.Equal(t, 1, calls)
+	metadata := ClassifyFailure(err)
+	assert.Equal(t, "provider_action_required", metadata.Class)
+	assert.Equal(t, "provider_quota_exhausted", metadata.Code)
+}
+
 func TestRetryProvider_SetMetrics(t *testing.T) {
 	inner := &MockEmbeddingProvider{
 		EmbedFunc: func(ctx context.Context, text string) ([]float32, string, error) {
