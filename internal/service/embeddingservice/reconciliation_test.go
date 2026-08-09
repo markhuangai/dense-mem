@@ -22,16 +22,17 @@ func (s reconciliationConfigStub) GeneralRuntimeConfig(context.Context) (domain.
 }
 
 type reconciliationRepositoryStub struct {
-	run       *repository.EmbeddingReconciliationRun
-	job       *repository.EmbeddingJob
-	claimed   bool
-	reserved  []repository.ReserveEmbeddingReconciliationRunInput
-	marked    bool
-	canaryOK  bool
-	markErr   error
-	canaryErr error
-	requeued  int64
-	completed *repository.CompleteEmbeddingReconciliationRunInput
+	run        *repository.EmbeddingReconciliationRun
+	job        *repository.EmbeddingJob
+	claimed    bool
+	reserved   []repository.ReserveEmbeddingReconciliationRunInput
+	marked     bool
+	canaryOK   bool
+	markErr    error
+	canaryErr  error
+	requeued   int64
+	requeueErr error
+	completed  *repository.CompleteEmbeddingReconciliationRunInput
 }
 
 func (s *reconciliationRepositoryStub) GetSearchConvergence(context.Context, repository.SearchConvergenceInput) (*repository.SearchConvergence, error) {
@@ -69,8 +70,10 @@ func (s *reconciliationRepositoryStub) CompleteEmbeddingReconciliationCanary(_ c
 	return nil
 }
 func (s *reconciliationRepositoryStub) RequeueEmbeddingReconciliationJobs(context.Context, repository.RequeueEmbeddingReconciliationJobsInput) (int64, error) {
-	s.requeued = 3
-	return s.requeued, nil
+	if s.requeued == 0 {
+		s.requeued = 3
+	}
+	return s.requeued, s.requeueErr
 }
 func (s *reconciliationRepositoryStub) CompleteEmbeddingReconciliationRun(_ context.Context, input repository.CompleteEmbeddingReconciliationRunInput) error {
 	s.completed = &input
@@ -190,6 +193,35 @@ func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T
 	if reconciliation.completed.RequeuedCount != 3 || reconciliation.completed.RecoveredCount != 1 {
 		t.Fatalf("completed run = %#v", reconciliation.completed)
 	}
+}
+
+func TestEmbeddingReconciliationPersistsPartialRequeueProgress(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	reconciliation := &reconciliationRepositoryStub{
+		job:        &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", Attempts: 20, EmbeddingDimensions: 3, DocumentText: "canary"},
+		requeued:   500,
+		requeueErr: errors.New("later batch failed"),
+	}
+	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
+	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
+	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: provider,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1", Now: func() time.Time { return now },
+	})
+
+	result, err := service.ProcessDue(context.Background())
+	require.ErrorContains(t, err, "later batch failed")
+	assert.Equal(t, string(domain.EmbeddingReconciliationDeferred), result.Status)
+	assert.True(t, result.CanarySucceeded)
+	assert.EqualValues(t, 500, result.RequeuedCount)
+	assert.EqualValues(t, 1, result.RecoveredCount)
+	require.NotNil(t, reconciliation.completed)
+	assert.Equal(t, string(domain.EmbeddingReconciliationDeferred), reconciliation.completed.Status)
+	assert.Equal(t, "succeeded", reconciliation.completed.CanaryOutcome)
+	assert.EqualValues(t, 500, reconciliation.completed.RequeuedCount)
+	assert.EqualValues(t, 1, reconciliation.completed.RecoveredCount)
 }
 
 func TestEmbeddingReconciliationFailedCanaryDoesNotReleaseBacklog(t *testing.T) {

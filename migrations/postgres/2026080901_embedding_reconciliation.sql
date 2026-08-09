@@ -17,27 +17,82 @@ ALTER TABLE embedding_jobs
     ADD COLUMN IF NOT EXISTS last_recovered_at TIMESTAMPTZ NULL;
 
 UPDATE embedding_jobs
-SET total_attempts = GREATEST(total_attempts, attempts),
-    failure_class = CASE
-        WHEN status = 'failed' AND lower(error) LIKE '%429%' THEN 'transient'
-        WHEN status = 'failed' THEN 'permanent'
-        ELSE failure_class
-    END,
-    failure_code = CASE
-        WHEN status = 'failed' AND lower(error) LIKE '%429%' THEN 'provider_rate_limited'
-        WHEN status = 'failed' THEN 'unknown_embedding_failure'
-        ELSE failure_code
-    END,
-    first_failed_at = CASE
-        WHEN status = 'failed' THEN COALESCE(first_failed_at, completed_at, updated_at)
-        ELSE first_failed_at
-    END,
-    last_failed_at = CASE
-        WHEN status = 'failed' THEN COALESCE(last_failed_at, completed_at, updated_at)
-        ELSE last_failed_at
-    END
-WHERE total_attempts < attempts
-   OR (status = 'failed' AND (first_failed_at IS NULL OR last_failed_at IS NULL));
+SET total_attempts = GREATEST(total_attempts, attempts)
+WHERE total_attempts < attempts;
+
+WITH legacy_failure_classification AS (
+    SELECT team_id, embedding_job_id,
+           CASE
+               WHEN lower(error) LIKE '%insufficient_quota%'
+                 OR lower(error) LIKE '%quota_exhausted%'
+                 OR lower(error) LIKE '%exceeded your current quota%'
+                   THEN 'provider_action_required'
+               WHEN lower(error) ~ 'status([^0-9]{0,12})401'
+                   THEN 'provider_action_required'
+               WHEN lower(error) ~ 'status([^0-9]{0,12})403'
+                   THEN 'provider_action_required'
+               WHEN lower(error) ~ 'status([^0-9]{0,12})429'
+                 OR lower(error) LIKE '%rate limit%'
+                   THEN 'transient'
+               WHEN lower(error) LIKE '%embedding request timed out%'
+                 OR lower(error) LIKE '%context deadline exceeded%'
+                 OR lower(error) LIKE '%client.timeout exceeded%'
+                 OR lower(error) LIKE '%i/o timeout%'
+                 OR lower(error) LIKE '%tls handshake timeout%'
+                   THEN 'transient'
+               WHEN lower(error) LIKE '%connection reset%'
+                 OR lower(error) LIKE '%connection refused%'
+                 OR lower(error) LIKE '%network is unreachable%'
+                 OR lower(error) LIKE '%no such host%'
+                 OR lower(error) LIKE '%temporary failure in name resolution%'
+                 OR lower(error) LIKE '%unexpected eof%'
+                   THEN 'transient'
+               WHEN lower(error) LIKE '%provider is unavailable%'
+                 OR lower(error) ~ 'status([^0-9]{0,12})5[0-9]{2}'
+                   THEN 'transient'
+               ELSE 'permanent'
+           END AS failure_class,
+           CASE
+               WHEN lower(error) LIKE '%insufficient_quota%'
+                 OR lower(error) LIKE '%quota_exhausted%'
+                 OR lower(error) LIKE '%exceeded your current quota%'
+                   THEN 'provider_quota_exhausted'
+               WHEN lower(error) ~ 'status([^0-9]{0,12})401'
+                   THEN 'provider_authentication_failed'
+               WHEN lower(error) ~ 'status([^0-9]{0,12})403'
+                   THEN 'provider_permission_denied'
+               WHEN lower(error) ~ 'status([^0-9]{0,12})429'
+                 OR lower(error) LIKE '%rate limit%'
+                   THEN 'provider_rate_limited'
+               WHEN lower(error) LIKE '%embedding request timed out%'
+                 OR lower(error) LIKE '%context deadline exceeded%'
+                 OR lower(error) LIKE '%client.timeout exceeded%'
+                 OR lower(error) LIKE '%i/o timeout%'
+                 OR lower(error) LIKE '%tls handshake timeout%'
+                   THEN 'provider_timeout'
+               WHEN lower(error) LIKE '%connection reset%'
+                 OR lower(error) LIKE '%connection refused%'
+                 OR lower(error) LIKE '%network is unreachable%'
+                 OR lower(error) LIKE '%no such host%'
+                 OR lower(error) LIKE '%temporary failure in name resolution%'
+                 OR lower(error) LIKE '%unexpected eof%'
+                   THEN 'provider_network_error'
+               WHEN lower(error) LIKE '%provider is unavailable%'
+                 OR lower(error) ~ 'status([^0-9]{0,12})5[0-9]{2}'
+                   THEN 'provider_server_error'
+               ELSE 'unknown_embedding_failure'
+           END AS failure_code
+    FROM embedding_jobs
+    WHERE status = 'failed'
+)
+UPDATE embedding_jobs AS job
+SET failure_class = classified.failure_class,
+    failure_code = classified.failure_code,
+    first_failed_at = COALESCE(job.first_failed_at, job.completed_at, job.updated_at),
+    last_failed_at = COALESCE(job.last_failed_at, job.completed_at, job.updated_at)
+FROM legacy_failure_classification AS classified
+WHERE job.team_id = classified.team_id
+  AND job.embedding_job_id = classified.embedding_job_id;
 
 ALTER TABLE embedding_jobs
     DROP CONSTRAINT IF EXISTS embedding_jobs_total_attempts_check,

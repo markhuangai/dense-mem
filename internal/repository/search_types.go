@@ -311,6 +311,7 @@ type EmbeddingQueueStatsInput struct {
 	TeamID              string
 	EmbeddingContractID string
 	EmbeddingDimensions int
+	ActiveTeamsOnly     bool
 }
 
 type EmbeddingQueueStats struct {

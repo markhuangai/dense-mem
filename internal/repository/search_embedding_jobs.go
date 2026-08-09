@@ -486,32 +486,36 @@ func (r *SearchRepositoryImpl) GetEmbeddingQueueStats(
 	read := func(tx *gorm.DB) error {
 		where := []string{"1 = 1"}
 		args := []any{}
+		from := "embedding_jobs AS job"
+		if input.ActiveTeamsOnly {
+			from += " JOIN teams AS team ON team.id = job.team_id AND team.status = 'active' AND team.deleted_at IS NULL"
+		}
 		if input.TeamID != "" {
-			where = append(where, "team_id = ?::uuid")
+			where = append(where, "job.team_id = ?::uuid")
 			args = append(args, input.TeamID)
 		}
 		if input.EmbeddingContractID != "" {
-			where = append(where, "embedding_contract_id = ?::uuid")
+			where = append(where, "job.embedding_contract_id = ?::uuid")
 			args = append(args, input.EmbeddingContractID)
 		}
 		if input.EmbeddingDimensions > 0 {
-			where = append(where, "embedding_dimensions = ?")
+			where = append(where, "job.embedding_dimensions = ?")
 			args = append(args, input.EmbeddingDimensions)
 		}
 		query := fmt.Sprintf(`
 			SELECT
-			    COUNT(*) FILTER (WHERE status = 'queued') AS queued,
-			    COUNT(*) FILTER (WHERE status = 'processing') AS processing,
-			    COUNT(*) FILTER (WHERE status = 'completed') AS completed,
-			    COUNT(*) FILTER (WHERE status = 'failed') AS failed,
-			    COUNT(*) FILTER (WHERE status = 'stale') AS stale,
-			    COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled,
-			    COUNT(*) FILTER (WHERE status = 'processing' AND lease_until <= clock_timestamp()) AS expired_leases,
-			    COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(created_at) FILTER (WHERE status IN ('queued', 'processing')))), 0) AS oldest_pending_seconds,
-			    COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(lease_until) FILTER (WHERE status = 'processing' AND lease_until <= clock_timestamp()))), 0) AS oldest_lease_seconds
-			FROM embedding_jobs
+			    COUNT(*) FILTER (WHERE job.status = 'queued') AS queued,
+			    COUNT(*) FILTER (WHERE job.status = 'processing') AS processing,
+			    COUNT(*) FILTER (WHERE job.status = 'completed') AS completed,
+			    COUNT(*) FILTER (WHERE job.status = 'failed') AS failed,
+			    COUNT(*) FILTER (WHERE job.status = 'stale') AS stale,
+			    COUNT(*) FILTER (WHERE job.status = 'cancelled') AS cancelled,
+			    COUNT(*) FILTER (WHERE job.status = 'processing' AND job.lease_until <= clock_timestamp()) AS expired_leases,
+			    COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(job.created_at) FILTER (WHERE job.status IN ('queued', 'processing')))), 0) AS oldest_pending_seconds,
+			    COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(job.lease_until) FILTER (WHERE job.status = 'processing' AND job.lease_until <= clock_timestamp()))), 0) AS oldest_lease_seconds
+			FROM %s
 			WHERE %s
-		`, strings.Join(where, " AND "))
+		`, from, strings.Join(where, " AND "))
 		var oldestPendingSeconds, oldestLeaseSeconds float64
 		if err := tx.WithContext(ctx).Raw(query, args...).Row().Scan(
 			&stats.Queued,

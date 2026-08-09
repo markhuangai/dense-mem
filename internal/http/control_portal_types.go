@@ -45,6 +45,7 @@ type controlPortalHandler struct {
 	directory       *service.DirectoryIdentityService
 	controlIdentity *service.ControlIdentityService
 	appConfig       service.AppConfigService
+	logger          observability.LogProvider
 	verifierModel   string
 	embeddingModel  string
 }

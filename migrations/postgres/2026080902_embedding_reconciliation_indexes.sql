@@ -6,10 +6,10 @@
 DROP INDEX CONCURRENTLY IF EXISTS embedding_jobs_reconciliation_failed_idx;
 CREATE INDEX CONCURRENTLY embedding_jobs_reconciliation_failed_idx
     ON embedding_jobs(
-        embedding_contract_id, embedding_dimensions, status,
-        failure_class, failure_code, updated_at, embedding_job_id
+        embedding_contract_id, embedding_dimensions,
+        (COALESCE(last_failed_at, updated_at)), embedding_job_id
     )
-    WHERE status = 'failed';
+    WHERE status = 'failed' AND failure_class <> 'permanent';
 
 DROP INDEX CONCURRENTLY IF EXISTS embedding_jobs_reconciliation_team_idx;
 CREATE INDEX CONCURRENTLY embedding_jobs_reconciliation_team_idx

@@ -221,6 +221,74 @@ func TestSearchReadinessIgnoresAsynchronousEmbeddingFailures(t *testing.T) {
 	require.Equal(t, "provider_quota_exhausted", convergence.Incidents[0].FailureCode)
 }
 
+func TestSearchConvergenceExcludesDeletedTeams(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "convergence-deleted-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "convergence-deleted-owner")
+	insertSearchTestContract(t, adminDB, rls, "convergence-deleted", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "deleted team failure history", 1)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE embedding_jobs
+			SET status = 'failed', attempts = max_attempts, total_attempts = max_attempts,
+			    failure_class = 'transient', failure_code = 'provider_timeout',
+			    completed_at = now(), first_failed_at = now(), last_failed_at = now()
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, document.SearchDocumentID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'failed', embedding_error = 'provider timeout'
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, document.SearchDocumentID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO embedding_failure_incidents (
+				team_id, embedding_contract_id, embedding_dimensions, source_kind,
+				failure_class, failure_code, status, affected_job_count
+			) VALUES (
+				?::uuid,
+				(SELECT embedding_contract_id FROM embedding_jobs WHERE team_id = ?::uuid AND search_document_id = ?::uuid),
+				3, 'evidence', 'transient', 'provider_timeout', 'open', 1
+			)
+		`, teamID, teamID, document.SearchDocumentID).Error
+	}))
+
+	before, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
+	require.NoError(t, err)
+	require.Equal(t, "attention_required", before.Status)
+	require.EqualValues(t, 1, before.Failed)
+	require.Len(t, before.Incidents, 1)
+
+	profileRepo := NewProfileRepository(appDB, rls)
+	require.NoError(t, profileRepo.SoftDelete(ctx, uuid.MustParse(teamID)))
+
+	after, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
+	require.NoError(t, err)
+	require.Equal(t, "converged", after.Status)
+	require.Zero(t, after.Failed)
+	require.Empty(t, after.Failures)
+	require.Empty(t, after.Incidents)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var failedJobs, openIncidents int64
+		if err := tx.Raw(`SELECT count(*) FROM embedding_jobs WHERE team_id = ?::uuid AND status = 'failed'`, teamID).Scan(&failedJobs).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT count(*) FROM embedding_failure_incidents WHERE team_id = ?::uuid AND status = 'open'`, teamID).Scan(&openIncidents).Error; err != nil {
+			return err
+		}
+		require.EqualValues(t, 1, failedJobs)
+		require.EqualValues(t, 1, openIncidents)
+		return nil
+	}))
+}
+
 func TestSearchReadinessAcceptsFailedRelationshipProjection(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

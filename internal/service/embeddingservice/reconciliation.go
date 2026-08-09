@@ -213,18 +213,19 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	}); err != nil {
 		return result, s.deferRun(ctx, run, "", "", "daily embedding canary completion was ambiguous", err)
 	}
+	result.CanarySucceeded = true
+	result.RecoveredCount = 1
 	requeued, err := s.reconciliation.RequeueEmbeddingReconciliationJobs(ctx, repository.RequeueEmbeddingReconciliationJobsInput{
 		RunID: run.RunID, WorkerID: s.workerID, LeaseToken: run.LeaseToken,
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions, CandidateCutoff: run.CandidateCutoff,
 		BatchSize: reconciliationBatchSize,
 	})
-	if err != nil {
-		return result, s.deferRun(ctx, run, "", "", "reconciliation backlog release failed", err)
-	}
-	result.CanarySucceeded = true
 	result.RequeuedCount = requeued
-	result.RecoveredCount = 1
+	if err != nil {
+		result.Status = string(domain.EmbeddingReconciliationDeferred)
+		return result, s.deferRunAfterCanarySuccess(ctx, run, "reconciliation backlog release failed", requeued, err)
+	}
 	result.Status = string(domain.EmbeddingReconciliationCompleted)
 	if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
 		metrics.ObserveEmbeddingReconciliationCanary("succeeded")
@@ -286,6 +287,29 @@ func (s *embeddingReconciliationService) deferRun(ctx context.Context, run *repo
 			metrics.ObserveEmbeddingReconciliationRun(status)
 		}
 		s.logWarn(ctx, "embedding_reconciliation_deferred", run, map[string]any{"failure_code": failureCode})
+	}
+	if cause != nil {
+		return errors.Join(cause, err)
+	}
+	return err
+}
+
+func (s *embeddingReconciliationService) deferRunAfterCanarySuccess(ctx context.Context, run *repository.EmbeddingReconciliationRun, message string, requeuedCount int64, cause error) error {
+	err := s.reconciliation.CompleteEmbeddingReconciliationRun(ctx, repository.CompleteEmbeddingReconciliationRunInput{
+		RunID: run.RunID, WorkerID: s.workerID, LeaseToken: run.LeaseToken,
+		Status: string(domain.EmbeddingReconciliationDeferred), CanaryOutcome: "succeeded",
+		RequeuedCount: requeuedCount, RecoveredCount: 1,
+		LastError: message, CompletedAt: s.now().UTC(),
+	})
+	if err == nil {
+		if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
+			metrics.ObserveEmbeddingReconciliationCanary("succeeded")
+			metrics.ObserveEmbeddingReconciliationRun(string(domain.EmbeddingReconciliationDeferred))
+			if requeuedCount > 0 {
+				metrics.ObserveEmbeddingReconciliationJobs("requeued", "mixed", string(domain.EmbeddingFailureTransient), "", int(requeuedCount))
+			}
+		}
+		s.logWarn(ctx, "embedding_reconciliation_deferred", run, map[string]any{"requeued_count": requeuedCount})
 	}
 	if cause != nil {
 		return errors.Join(cause, err)

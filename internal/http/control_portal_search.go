@@ -8,6 +8,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
@@ -17,7 +18,10 @@ func (h *controlPortalHandler) getSearchConvergence(c echo.Context) error {
 	}
 	projection, err := h.convergence.GetSearchConvergence(c.Request().Context())
 	if err != nil {
-		return err
+		if h.logger != nil {
+			h.logger.Warn("control_search_convergence_failed", observability.String("error_code", "search_convergence_query_failed"))
+		}
+		return httperr.New(httperr.INTERNAL_ERROR, "failed to load search convergence")
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlSearchConvergence(projection)})
 }

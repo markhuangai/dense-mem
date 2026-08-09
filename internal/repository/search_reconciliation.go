@@ -33,6 +33,7 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 	stats, err := r.GetEmbeddingQueueStats(ctx, EmbeddingQueueStatsInput{
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions,
+		ActiveTeamsOnly:     true,
 	})
 	if err != nil {
 		return nil, err
@@ -50,10 +51,14 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
 			SELECT source_kind, failure_class, failure_code, count(*)
-			FROM embedding_jobs
-			WHERE embedding_contract_id = ?::uuid
-			  AND embedding_dimensions = ?
-			  AND status = 'failed'
+			FROM embedding_jobs AS job
+			JOIN teams AS team
+			  ON team.id = job.team_id
+			 AND team.status = 'active'
+			 AND team.deleted_at IS NULL
+			WHERE job.embedding_contract_id = ?::uuid
+			  AND job.embedding_dimensions = ?
+			  AND job.status = 'failed'
 			GROUP BY source_kind, failure_class, failure_code
 			ORDER BY source_kind, failure_class, failure_code
 		`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Rows()
@@ -73,21 +78,29 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 		}
 		var oldestFailureSeconds float64
 		if err := tx.WithContext(ctx).Raw(`
-			SELECT COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - min(COALESCE(last_failed_at, updated_at)))), 0)
-			FROM embedding_jobs
-			WHERE embedding_contract_id = ?::uuid
-			  AND embedding_dimensions = ?
-			  AND status = 'failed'
+			SELECT COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - min(COALESCE(job.last_failed_at, job.updated_at)))), 0)
+			FROM embedding_jobs AS job
+			JOIN teams AS team
+			  ON team.id = job.team_id
+			 AND team.status = 'active'
+			 AND team.deleted_at IS NULL
+			WHERE job.embedding_contract_id = ?::uuid
+			  AND job.embedding_dimensions = ?
+			  AND job.status = 'failed'
 		`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&oldestFailureSeconds).Error; err != nil {
 			return err
 		}
 		convergence.OldestFailureAge = time.Duration(oldestFailureSeconds * float64(time.Second))
 		if err := tx.WithContext(ctx).Raw(`
-			SELECT count(DISTINCT team_id)
-			FROM embedding_jobs
-			WHERE embedding_contract_id = ?::uuid
-			  AND embedding_dimensions = ?
-			  AND status = 'failed'
+			SELECT count(DISTINCT job.team_id)
+			FROM embedding_jobs AS job
+			JOIN teams AS team
+			  ON team.id = job.team_id
+			 AND team.status = 'active'
+			 AND team.deleted_at IS NULL
+			WHERE job.embedding_contract_id = ?::uuid
+			  AND job.embedding_dimensions = ?
+			  AND job.status = 'failed'
 		`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&convergence.AffectedTeamCount).Error; err != nil {
 			return err
 		}
@@ -99,7 +112,10 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 			       incident.affected_job_count, incident.first_seen_at,
 			       incident.last_seen_at, incident.recovering_at, incident.resolved_at
 			FROM embedding_failure_incidents AS incident
-			LEFT JOIN teams AS team ON team.id = incident.team_id
+			JOIN teams AS team
+			  ON team.id = incident.team_id
+			 AND team.status = 'active'
+			 AND team.deleted_at IS NULL
 			WHERE incident.embedding_contract_id = ?::uuid
 			  AND incident.embedding_dimensions = ?
 			  AND incident.status IN ('open', 'recovering')

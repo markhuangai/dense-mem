@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,15 +12,34 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 type controlSearchConvergenceReaderStub struct {
 	value *repository.SearchConvergence
+	err   error
 }
 
 func (s controlSearchConvergenceReaderStub) GetSearchConvergence(context.Context) (*repository.SearchConvergence, error) {
-	return s.value, nil
+	return s.value, s.err
+}
+
+type controlSearchLoggerStub struct {
+	warnings []string
+	errors   []string
+}
+
+func (*controlSearchLoggerStub) Info(string, ...observability.LogAttr) {}
+func (l *controlSearchLoggerStub) Error(_ string, err error, _ ...observability.LogAttr) {
+	l.errors = append(l.errors, err.Error())
+}
+func (l *controlSearchLoggerStub) Warn(message string, _ ...observability.LogAttr) {
+	l.warnings = append(l.warnings, message)
+}
+func (*controlSearchLoggerStub) Debug(string, ...observability.LogAttr) {}
+func (l *controlSearchLoggerStub) With(...observability.LogAttr) observability.LogProvider {
+	return l
 }
 
 func TestControlPortalSearchConvergenceIsBoundedAndReadOnly(t *testing.T) {
@@ -96,4 +116,29 @@ func TestControlSearchConvergenceConversionAndRunErrorsAreBounded(t *testing.T) 
 	require.Equal(t, int64(3), converted.Queue.Failed)
 	require.NotNil(t, converted.LatestRun)
 	require.Equal(t, now.Format(time.RFC3339), converted.LatestRun.CanaryAttemptedAt)
+}
+
+func TestControlPortalSearchConvergenceBoundsRepositoryErrors(t *testing.T) {
+	const backendMessage = "pq: relation secret_embedding_table does not exist"
+	logger := &controlSearchLoggerStub{}
+	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+		ControlHTTPAddr:    "127.0.0.1:8090",
+		ControlPortalToken: "secret",
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+		Convergence: controlSearchConvergenceReaderStub{err: errors.New(backendMessage)},
+	}, HealthConfig{}, logger)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/control/api/search/convergence", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Contains(t, rec.Body.String(), "failed to load search convergence")
+	require.NotContains(t, rec.Body.String(), backendMessage)
+	require.Contains(t, logger.warnings, "control_search_convergence_failed")
+	for _, loggedError := range logger.errors {
+		require.NotContains(t, loggedError, backendMessage)
+	}
 }
