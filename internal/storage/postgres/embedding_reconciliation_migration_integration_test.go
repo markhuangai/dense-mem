@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
 
@@ -93,8 +94,9 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 		return nil
 	}))
 
-	runGooseUpTo(t, ctx, sqlDB, 2026080901)
+	runGooseUpTo(t, ctx, sqlDB, 2026080904)
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		expectedIncidents := make(map[string]int64, len(fixtures))
 		for _, fixture := range fixtures {
 			var failureClass, failureCode string
 			var totalAttempts int
@@ -113,11 +115,32 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 			require.Equal(t, fixture.wantCode, failureCode, fixture.errorMessage)
 			require.Equal(t, 20, totalAttempts, fixture.errorMessage)
 			require.True(t, timestampsPresent, fixture.errorMessage)
+			expectedIncidents[fixture.wantClass+"|"+fixture.wantCode]++
 		}
+		rows, err := tx.QueryContext(ctx, `
+			SELECT failure_class, failure_code, affected_job_count
+			FROM embedding_failure_incidents
+			WHERE team_id = $1::uuid AND status = 'open'
+		`, teamID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		seen := map[string]int64{}
+		for rows.Next() {
+			var failureClass, failureCode string
+			var affected int64
+			if err := rows.Scan(&failureClass, &failureCode, &affected); err != nil {
+				return err
+			}
+			seen[failureClass+"|"+failureCode] = affected
+		}
+		require.NoError(t, rows.Err())
+		require.Equal(t, expectedIncidents, seen)
 		return nil
 	}))
 
-	runGooseUpTo(t, ctx, sqlDB, 2026080902)
+	runGooseUpTo(t, ctx, sqlDB, 2026080905)
 	var plan strings.Builder
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
@@ -151,4 +174,22 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	}))
 	require.Contains(t, plan.String(), "embedding_jobs_reconciliation_failed_idx")
 	require.NotContains(t, plan.String(), "Sort")
+
+	runGooseUpTo(t, ctx, sqlDB, 2026080907)
+	var validated int
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT count(*)
+			FROM pg_constraint
+			WHERE conrelid = 'embedding_jobs'::regclass
+			  AND conname = ANY($1::text[])
+			  AND convalidated
+		`, pq.Array([]string{
+			"embedding_jobs_total_attempts_check",
+			"embedding_jobs_recovery_count_check",
+			"embedding_jobs_failure_class_check",
+			"embedding_jobs_failure_code_check",
+		})).Scan(&validated)
+	}))
+	require.Equal(t, 4, validated)
 }

@@ -22,17 +22,19 @@ func (s reconciliationConfigStub) GeneralRuntimeConfig(context.Context) (domain.
 }
 
 type reconciliationRepositoryStub struct {
-	run        *repository.EmbeddingReconciliationRun
-	job        *repository.EmbeddingJob
-	claimed    bool
-	reserved   []repository.ReserveEmbeddingReconciliationRunInput
-	marked     bool
-	canaryOK   bool
-	markErr    error
-	canaryErr  error
-	requeued   int64
-	requeueErr error
-	completed  *repository.CompleteEmbeddingReconciliationRunInput
+	run          *repository.EmbeddingReconciliationRun
+	job          *repository.EmbeddingJob
+	claimed      bool
+	reserved     []repository.ReserveEmbeddingReconciliationRunInput
+	marked       bool
+	markInput    *repository.MarkEmbeddingReconciliationCanaryAttemptInput
+	canaryOK     bool
+	markErr      error
+	canaryErr    error
+	requeued     int64
+	requeueErr   error
+	requeueInput *repository.RequeueEmbeddingReconciliationJobsInput
+	completed    *repository.CompleteEmbeddingReconciliationRunInput
 }
 
 func (s *reconciliationRepositoryStub) GetSearchConvergence(context.Context, repository.SearchConvergenceInput) (*repository.SearchConvergence, error) {
@@ -52,8 +54,9 @@ func (s *reconciliationRepositoryStub) ReserveEmbeddingReconciliationRun(_ conte
 func (s *reconciliationRepositoryStub) SelectEmbeddingReconciliationCanary(context.Context, repository.SelectEmbeddingReconciliationCanaryInput) (*repository.EmbeddingJob, error) {
 	return s.job, nil
 }
-func (s *reconciliationRepositoryStub) MarkEmbeddingReconciliationCanaryAttempt(context.Context, repository.MarkEmbeddingReconciliationCanaryAttemptInput) error {
+func (s *reconciliationRepositoryStub) MarkEmbeddingReconciliationCanaryAttempt(_ context.Context, input repository.MarkEmbeddingReconciliationCanaryAttemptInput) error {
 	s.marked = true
+	s.markInput = &input
 	if s.markErr != nil {
 		return s.markErr
 	}
@@ -69,7 +72,8 @@ func (s *reconciliationRepositoryStub) CompleteEmbeddingReconciliationCanary(_ c
 	s.canaryOK = true
 	return nil
 }
-func (s *reconciliationRepositoryStub) RequeueEmbeddingReconciliationJobs(context.Context, repository.RequeueEmbeddingReconciliationJobsInput) (int64, error) {
+func (s *reconciliationRepositoryStub) RequeueEmbeddingReconciliationJobs(_ context.Context, input repository.RequeueEmbeddingReconciliationJobsInput) (int64, error) {
+	s.requeueInput = &input
 	if s.requeued == 0 {
 		s.requeued = 3
 	}
@@ -113,12 +117,47 @@ func (*reconciliationMetricsStub) ObserveEmbeddingReconciliationJobs(string, str
 }
 func (*reconciliationMetricsStub) ObserveEmbeddingReconciliationDuration(float64, string) {}
 
-type reconciliationLoggerStub struct{ warnings []string }
+type reconciliationLogRecord struct {
+	message string
+	attrs   []observability.LogAttr
+}
 
-func (*reconciliationLoggerStub) Info(string, ...observability.LogAttr)         {}
+type reconciliationLoggerStub struct {
+	infos     []reconciliationLogRecord
+	warnings  []string
+	warnAttrs []observability.LogAttr
+}
+
+func (l *reconciliationLoggerStub) Info(message string, attrs ...observability.LogAttr) {
+	l.infos = append(l.infos, reconciliationLogRecord{message: message, attrs: attrs})
+}
 func (*reconciliationLoggerStub) Error(string, error, ...observability.LogAttr) {}
-func (l *reconciliationLoggerStub) Warn(message string, _ ...observability.LogAttr) {
+func (l *reconciliationLoggerStub) Warn(message string, attrs ...observability.LogAttr) {
 	l.warnings = append(l.warnings, message)
+	l.warnAttrs = append(l.warnAttrs, attrs...)
+}
+
+func TestEmbeddingReconciliationLogsNumericRecoveryCounts(t *testing.T) {
+	logger := &reconciliationLoggerStub{}
+	service := &embeddingReconciliationService{logger: logger}
+	run := &repository.EmbeddingReconciliationRun{RunID: "run-1", Status: "running"}
+
+	service.logInfo(context.Background(), "completed", run, map[string]any{"recovered_count": 1, "requeued_count": int64(7)})
+	service.logWarn(context.Background(), "deferred", run, map[string]any{"requeued_count": int64(5)})
+
+	require.Len(t, logger.infos, 1)
+	assert.Equal(t, 1, reconciliationLogAttrValue(logger.infos[0].attrs, "recovered_count"))
+	assert.Equal(t, 7, reconciliationLogAttrValue(logger.infos[0].attrs, "requeued_count"))
+	assert.Equal(t, 5, reconciliationLogAttrValue(logger.warnAttrs, "requeued_count"))
+}
+
+func reconciliationLogAttrValue(attrs []observability.LogAttr, key string) any {
+	for _, attr := range attrs {
+		if attr.Key == key {
+			return attr.Value
+		}
+	}
+	return nil
 }
 func (*reconciliationLoggerStub) Debug(string, ...observability.LogAttr) {}
 func (l *reconciliationLoggerStub) With(...observability.LogAttr) observability.LogProvider {
@@ -189,6 +228,10 @@ func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T
 	if !reconciliation.marked || !reconciliation.canaryOK || reconciliation.requeued != 3 {
 		t.Fatalf("reconciliation state = %#v", reconciliation)
 	}
+	require.NotNil(t, reconciliation.markInput)
+	require.NotNil(t, reconciliation.requeueInput)
+	assert.Equal(t, reconciliationLease, reconciliation.markInput.Lease)
+	assert.Equal(t, reconciliationLease, reconciliation.requeueInput.Lease)
 	require.NotNil(t, reconciliation.completed)
 	if reconciliation.completed.RequeuedCount != 3 || reconciliation.completed.RecoveredCount != 1 {
 		t.Fatalf("completed run = %#v", reconciliation.completed)
@@ -354,8 +397,8 @@ func TestEmbeddingReconciliationDoesNotRunBeforeScheduledMinute(t *testing.T) {
 }
 
 func TestEmbeddingFailureMessageIsClosedAndDoesNotPersistProviderText(t *testing.T) {
-	assert.Equal(t, "embedding provider quota exhausted", embeddingFailureMessage(string(domain.EmbeddingFailureProviderQuotaExhausted)))
-	assert.Equal(t, "embedding processing failed", embeddingFailureMessage(string(domain.EmbeddingFailureUnknown)))
+	assert.Equal(t, "embedding provider quota exhausted", domain.EmbeddingFailureMessage(string(domain.EmbeddingFailureProviderQuotaExhausted)))
+	assert.Equal(t, "embedding processing failed", domain.EmbeddingFailureMessage(string(domain.EmbeddingFailureUnknown)))
 }
 
 func TestEmbeddingReconciliationStartStopIsIdempotent(t *testing.T) {

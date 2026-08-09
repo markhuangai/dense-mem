@@ -271,6 +271,7 @@ type MarkEmbeddingReconciliationCanaryAttemptInput struct {
 	WorkerID    string
 	LeaseToken  string
 	AttemptedAt time.Time
+	Lease       time.Duration
 }
 
 type CompleteEmbeddingReconciliationCanaryInput struct {
@@ -291,6 +292,7 @@ type RequeueEmbeddingReconciliationJobsInput struct {
 	EmbeddingDimensions int
 	CandidateCutoff     time.Time
 	BatchSize           int
+	Lease               time.Duration
 }
 
 type CompleteEmbeddingReconciliationRunInput struct {

@@ -91,6 +91,7 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 	var lastErr error
 	configuredModel := p.inner.ModelName()
 
+retryLoop:
 	for attempt := 0; attempt <= p.maxRetries; attempt++ {
 		attemptStart := time.Now()
 		vec, model, err := p.inner.Embed(ctx, text)
@@ -121,7 +122,8 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 			delay := p.retryDelay(attempt, err)
 			select {
 			case <-ctx.Done():
-				break
+				lastErr = ctx.Err()
+				break retryLoop
 			case <-time.After(delay):
 				continue
 			}
@@ -140,6 +142,7 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 	var lastErr error
 	configuredModel := p.inner.ModelName()
 
+retryLoop:
 	for attempt := 0; attempt <= p.maxRetries; attempt++ {
 		attemptStart := time.Now()
 		vecs, model, err := p.inner.EmbedBatch(ctx, texts)
@@ -170,7 +173,8 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 			delay := p.retryDelay(attempt, err)
 			select {
 			case <-ctx.Done():
-				break
+				lastErr = ctx.Err()
+				break retryLoop
 			case <-time.After(delay):
 				continue
 			}
@@ -243,7 +247,7 @@ func (p *RetryEmbeddingProvider) retryDelay(attempt int, err error) time.Duratio
 	var httpErr *ProviderHTTPError
 	if errors.As(err, &httpErr) {
 		if httpErr.RetryAfter > 0 {
-			return httpErr.RetryAfter
+			return boundedRetryAfter(httpErr.RetryAfter)
 		}
 		if httpErr.Status == 429 {
 			return 10 * time.Second
@@ -251,7 +255,7 @@ func (p *RetryEmbeddingProvider) retryDelay(attempt int, err error) time.Duratio
 	}
 	var rateLimitErr *RateLimitError
 	if errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
-		return time.Duration(rateLimitErr.RetryAfter) * time.Second
+		return boundedRetryAfter(time.Duration(rateLimitErr.RetryAfter) * time.Second)
 	}
 	return p.calculateDelay(attempt)
 }

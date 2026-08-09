@@ -339,18 +339,21 @@ func (r *SearchRepositoryImpl) MarkEmbeddingReconciliationCanaryAttempt(ctx cont
 	if err := validateMarkEmbeddingReconciliationCanaryAttemptInput(input); err != nil {
 		return err
 	}
+	leaseUntil := input.AttemptedAt.Add(input.Lease)
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE embedding_reconciliation_runs AS run
 			SET canary_job_id = ?::uuid,
 			    canary_attempted_at = ?,
+			    lease_until = ?,
 			    updated_at = now()
 			WHERE run.reconciliation_run_id = ?::uuid
 			  AND run.status = 'running'
 			  AND run.worker_id = ?
 			  AND run.lease_token = ?::uuid
+			  AND run.lease_until > clock_timestamp()
 			  AND run.canary_attempted_at IS NULL
-		`, input.CanaryJobID, input.AttemptedAt, input.RunID, input.WorkerID, input.LeaseToken)
+		`, input.CanaryJobID, input.AttemptedAt, leaseUntil, input.RunID, input.WorkerID, input.LeaseToken)
 		if result.Error != nil || result.RowsAffected != 1 {
 			if result.Error != nil {
 				return result.Error
@@ -366,7 +369,7 @@ func (r *SearchRepositoryImpl) MarkEmbeddingReconciliationCanaryAttempt(ctx cont
 			    updated_at = now()
 			WHERE embedding_job_id = ?::uuid
 			  AND status = 'failed'
-		`, "reconciliation:"+input.RunID, input.AttemptedAt.Add(10*time.Minute), input.CanaryJobID)
+		`, EmbeddingReconciliationWorkerIDPrefix+input.RunID, leaseUntil, input.CanaryJobID)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -426,16 +429,13 @@ func (r *SearchRepositoryImpl) RequeueEmbeddingReconciliationJobs(ctx context.Co
 			break
 		}
 	}
-	if err := r.markEmbeddingReconciliationIncidentsRecovering(ctx, input); err != nil {
-		return total, fmt.Errorf("search: requeue reconciliation jobs: %w", err)
-	}
 	return total, nil
 }
 
 func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error) {
 	var count int64
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		if err := assertEmbeddingReconciliationLease(ctx, tx, input.RunID, input.WorkerID, input.LeaseToken); err != nil {
+		if err := renewEmbeddingReconciliationLease(ctx, tx, input); err != nil {
 			return err
 		}
 		return tx.WithContext(ctx).Raw(`
@@ -478,7 +478,8 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(ctx context.C
 					FROM candidates
 					WHERE job.team_id = candidates.team_id
 					  AND job.embedding_job_id = candidates.embedding_job_id
-					RETURNING job.team_id, job.search_document_id,
+					RETURNING job.team_id, job.search_document_id, job.source_kind,
+					          job.failure_class, job.failure_code,
 					          job.source_version, job.projection_format_version,
 					          job.projection_generation_id, job.document_version,
 					          job.embedding_contract_id, job.embedding_dimensions
@@ -496,52 +497,46 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(ctx context.C
 				  AND document.embedding_contract_id = requeued.embedding_contract_id
 				  AND document.embedding_dimensions = requeued.embedding_dimensions
 				RETURNING 1
+				), incidents AS (
+					UPDATE embedding_failure_incidents AS incident
+					SET status = 'recovering',
+					    recovering_at = COALESCE(incident.recovering_at, now()),
+					    last_reconciliation_run_id = ?::uuid,
+					    updated_at = now()
+					WHERE incident.status = 'open'
+					  AND EXISTS (
+					      SELECT 1
+					      FROM requeued
+					      WHERE requeued.team_id = incident.team_id
+					        AND requeued.embedding_contract_id = incident.embedding_contract_id
+					        AND requeued.embedding_dimensions = incident.embedding_dimensions
+					        AND requeued.source_kind = incident.source_kind
+					        AND requeued.failure_class = incident.failure_class
+					        AND requeued.failure_code = incident.failure_code
+					  )
+					RETURNING 1
 				)
 				SELECT count(*) FROM requeued
-			`, input.RunID, input.WorkerID, input.LeaseToken, input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff, input.BatchSize).Scan(&count).Error
+			`, input.RunID, input.WorkerID, input.LeaseToken, input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff, input.BatchSize, input.RunID).Scan(&count).Error
 	})
 	return count, err
 }
 
-func (r *SearchRepositoryImpl) markEmbeddingReconciliationIncidentsRecovering(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) error {
-	return r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		if err := assertEmbeddingReconciliationLease(ctx, tx, input.RunID, input.WorkerID, input.LeaseToken); err != nil {
-			return err
-		}
-		return tx.WithContext(ctx).Exec(`
-			UPDATE embedding_failure_incidents AS incident
-			SET status = 'recovering', recovering_at = COALESCE(recovering_at, now()), updated_at = now()
-			WHERE incident.status = 'open'
-			  AND incident.embedding_contract_id = ?::uuid
-			  AND incident.embedding_dimensions = ?
-			  AND EXISTS (
-				SELECT 1 FROM embedding_jobs AS job
-				WHERE job.team_id = incident.team_id
-				  AND job.embedding_contract_id = incident.embedding_contract_id
-				  AND job.embedding_dimensions = incident.embedding_dimensions
-				  AND job.source_kind = incident.source_kind
-				  AND job.failure_class = incident.failure_class
-				  AND job.failure_code = incident.failure_code
-				  AND job.status = 'queued'
-			  )
-		`, input.EmbeddingContractID, input.EmbeddingDimensions).Error
-	})
-}
-
-func assertEmbeddingReconciliationLease(ctx context.Context, tx *gorm.DB, runID, workerID, leaseToken string) error {
-	var valid bool
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT EXISTS (
-			SELECT 1 FROM embedding_reconciliation_runs
-			WHERE reconciliation_run_id = ?::uuid
-			  AND status = 'running'
-			  AND worker_id = ?
-			  AND lease_token = ?::uuid
-		)
-	`, runID, workerID, leaseToken).Scan(&valid).Error; err != nil {
-		return err
+func renewEmbeddingReconciliationLease(ctx context.Context, tx *gorm.DB, input RequeueEmbeddingReconciliationJobsInput) error {
+	result := tx.WithContext(ctx).Exec(`
+		UPDATE embedding_reconciliation_runs
+		SET lease_until = clock_timestamp() + (? * interval '1 millisecond'),
+		    updated_at = now()
+		WHERE reconciliation_run_id = ?::uuid
+		  AND status = 'running'
+		  AND worker_id = ?
+		  AND lease_token = ?::uuid
+		  AND lease_until > clock_timestamp()
+	`, input.Lease.Milliseconds(), input.RunID, input.WorkerID, input.LeaseToken)
+	if result.Error != nil {
+		return result.Error
 	}
-	if !valid {
+	if result.RowsAffected != 1 {
 		return errors.New("reconciliation run lease lost")
 	}
 	return nil
@@ -735,6 +730,9 @@ func normalizeMarkEmbeddingReconciliationCanaryAttemptInput(input MarkEmbeddingR
 	input.CanaryJobID = strings.TrimSpace(input.CanaryJobID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
 	input.LeaseToken = strings.TrimSpace(input.LeaseToken)
+	if input.Lease <= 0 {
+		input.Lease = 10 * time.Minute
+	}
 	return input
 }
 
@@ -744,8 +742,8 @@ func validateMarkEmbeddingReconciliationCanaryAttemptInput(input MarkEmbeddingRe
 			return fmt.Errorf("%s is required: %w", name, err)
 		}
 	}
-	if input.WorkerID == "" || input.AttemptedAt.IsZero() {
-		return errors.New("worker_id and attempted_at are required")
+	if input.WorkerID == "" || input.AttemptedAt.IsZero() || input.Lease < time.Second {
+		return errors.New("worker_id, attempted_at, and lease are required")
 	}
 	return nil
 }
@@ -780,6 +778,9 @@ func normalizeRequeueEmbeddingReconciliationJobsInput(input RequeueEmbeddingReco
 	if input.BatchSize <= 0 || input.BatchSize > reconciliationBatchLimit {
 		input.BatchSize = reconciliationBatchLimit
 	}
+	if input.Lease <= 0 {
+		input.Lease = 10 * time.Minute
+	}
 	return input
 }
 
@@ -798,6 +799,9 @@ func validateRequeueEmbeddingReconciliationJobsInput(input RequeueEmbeddingRecon
 	}
 	if input.EmbeddingDimensions <= 0 || input.CandidateCutoff.IsZero() {
 		return errors.New("reconciliation contract and cutoff are required")
+	}
+	if input.Lease < time.Second {
+		return errors.New("reconciliation lease must be at least one second")
 	}
 	return nil
 }

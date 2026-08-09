@@ -14,6 +14,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+const EmbeddingReconciliationWorkerIDPrefix = "reconciliation:"
+
 const embeddingJobCandidateCTEsSQL = `
 queued_candidates AS MATERIALIZED (
 	SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
@@ -556,14 +558,14 @@ func markEmbeddingJobTerminal(ctx context.Context, tx *gorm.DB, input CompleteEm
 		    completed_at = now(),
 		    updated_at = now(),
 		    lease_until = NULL,
-		    recovery_count = recovery_count + CASE WHEN ? = 'completed' AND ? LIKE 'reconciliation:%' THEN 1 ELSE 0 END,
-		    last_recovered_at = CASE WHEN ? = 'completed' AND ? LIKE 'reconciliation:%' THEN now() ELSE last_recovered_at END
+		    recovery_count = recovery_count + CASE WHEN ? = 'completed' AND ? LIKE ? THEN 1 ELSE 0 END,
+		    last_recovered_at = CASE WHEN ? = 'completed' AND ? LIKE ? THEN now() ELSE last_recovered_at END
 		WHERE team_id = ?::uuid
 		  AND embedding_job_id = ?::uuid
 		  AND worker_id = ?
 		  AND status = 'processing'
 		  AND attempts = ?
-		`, status, message, status, input.WorkerID, status, input.WorkerID,
+		`, status, message, status, input.WorkerID, EmbeddingReconciliationWorkerIDPrefix+"%", status, input.WorkerID, EmbeddingReconciliationWorkerIDPrefix+"%",
 		input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Error
 }
 
@@ -852,37 +854,8 @@ func normalizeFailEmbeddingJobInput(input FailEmbeddingJobInput) FailEmbeddingJo
 		input.RetryAfter = 24 * time.Hour
 	}
 	input.FailureClass, input.FailureCode = normalizeEmbeddingFailureContract(input.FailureClass, input.FailureCode)
-	input.Error = embeddingFailureStorageMessage(input.FailureCode)
+	input.Error = domain.EmbeddingFailureMessage(input.FailureCode)
 	return input
-}
-
-func embeddingFailureStorageMessage(code string) string {
-	switch code {
-	case string(domain.EmbeddingFailureProviderRateLimited):
-		return "embedding provider rate limited"
-	case string(domain.EmbeddingFailureProviderTimeout):
-		return "embedding provider timed out"
-	case string(domain.EmbeddingFailureProviderNetworkError):
-		return "embedding provider network failure"
-	case string(domain.EmbeddingFailureProviderServerError):
-		return "embedding provider server failure"
-	case string(domain.EmbeddingFailureProviderQuotaExhausted):
-		return "embedding provider quota exhausted"
-	case string(domain.EmbeddingFailureProviderAuthentication):
-		return "embedding provider authentication failed"
-	case string(domain.EmbeddingFailureProviderPermissionDenied):
-		return "embedding provider permission denied"
-	case string(domain.EmbeddingFailureProviderContractRejected):
-		return "embedding provider contract rejected"
-	case string(domain.EmbeddingFailureProviderResponseInvalid):
-		return "embedding provider response invalid"
-	case string(domain.EmbeddingFailureInputRejected):
-		return "embedding input rejected"
-	case string(domain.EmbeddingFailureContractMismatch):
-		return "embedding contract mismatch"
-	default:
-		return "embedding processing failed"
-	}
 }
 
 func normalizeEmbeddingFailureContract(failureClass, failureCode string) (string, string) {

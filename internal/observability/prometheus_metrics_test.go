@@ -93,6 +93,9 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 			t.Fatalf("scraped metrics still contain retired metric %q\n%s", retired, body)
 		}
 	}
+	if strings.Contains(body, `densemem_embedding_reconciliation_jobs_total{action="ignored"`) {
+		t.Fatalf("scraped metrics recorded zero-count reconciliation jobs\n%s", body)
+	}
 	for _, blocked := range []string{"team_name=", "profile_name=", "Research", "Profile A"} {
 		if strings.Contains(body, blocked) {
 			t.Fatalf("scraped metrics leaked %q\n%s", blocked, body)

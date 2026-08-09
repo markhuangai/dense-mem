@@ -128,6 +128,108 @@ func TestEmbeddingReconciliationRunFencesOneCanaryAndRequeuesPreCutoffBacklog(t 
 	require.Equal(t, "queued", status)
 }
 
+func TestEmbeddingReconciliationRenewsLeaseAndTracksPartialIncidentRecovery(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "reconciliation-renew-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "reconciliation-renew-owner")
+	insertSearchTestContract(t, adminDB, rls, "reconciliation-renew", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	first := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "first recoverable failure", 1)
+	second := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "second recoverable failure", 1)
+	now := time.Now().UTC()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE embedding_jobs
+			SET status = 'failed', attempts = max_attempts, total_attempts = max_attempts,
+			    failure_class = 'transient', failure_code = 'provider_timeout',
+			    first_failed_at = ?, last_failed_at = ?, completed_at = ?
+			WHERE team_id = ?::uuid AND search_document_id IN (?::uuid, ?::uuid)
+		`, now.Add(-time.Minute), now.Add(-time.Minute), now.Add(-time.Minute), teamID, first.SearchDocumentID, second.SearchDocumentID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'failed', embedding_error = 'embedding provider timed out'
+			WHERE team_id = ?::uuid AND search_document_id IN (?::uuid, ?::uuid)
+		`, teamID, first.SearchDocumentID, second.SearchDocumentID).Error; err != nil {
+			return err
+		}
+		return upsertEmbeddingFailureIncident(ctx, tx, teamID, "transient", "provider_timeout", contract.EmbeddingContractID, 3, "evidence")
+	}))
+
+	run, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: 3,
+		LocalRunDate: now, WorkerID: "renew-worker", Lease: 30 * time.Second, Now: now,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	canary, err := repo.SelectEmbeddingReconciliationCanary(ctx, SelectEmbeddingReconciliationCanaryInput{
+		RunID: run.RunID, EmbeddingContractID: contract.EmbeddingContractID,
+		EmbeddingDimensions: 3, CandidateCutoff: run.CandidateCutoff,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, canary)
+	require.NoError(t, repo.MarkEmbeddingReconciliationCanaryAttempt(ctx, MarkEmbeddingReconciliationCanaryAttemptInput{
+		RunID: run.RunID, CanaryJobID: canary.EmbeddingJobID, WorkerID: "renew-worker",
+		LeaseToken: run.LeaseToken, AttemptedAt: now, Lease: 30 * time.Second,
+	}))
+
+	requeued, err := repo.RequeueEmbeddingReconciliationJobs(ctx, RequeueEmbeddingReconciliationJobsInput{
+		RunID: run.RunID, WorkerID: "renew-worker", LeaseToken: run.LeaseToken,
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: 3,
+		CandidateCutoff: run.CandidateCutoff, BatchSize: 500, Lease: 5 * time.Minute,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, requeued)
+
+	var renewedUntil time.Time
+	var incidentStatus, incidentRunID string
+	var affected int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT lease_until FROM embedding_reconciliation_runs WHERE reconciliation_run_id = ?::uuid`, run.RunID).Scan(&renewedUntil).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT status, affected_job_count, last_reconciliation_run_id::text
+			FROM embedding_failure_incidents
+			WHERE team_id = ?::uuid AND failure_code = 'provider_timeout'
+		`, teamID).Row().Scan(&incidentStatus, &affected, &incidentRunID)
+	}))
+	require.True(t, renewedUntil.After(now.Add(4*time.Minute)))
+	require.Equal(t, "recovering", incidentStatus)
+	require.EqualValues(t, 2, affected)
+	require.Equal(t, run.RunID, incidentRunID)
+
+	require.NoError(t, repo.CompleteEmbeddingJob(ctx, CompleteEmbeddingJobInput{
+		TeamID: teamID, EmbeddingJobID: canary.EmbeddingJobID,
+		WorkerID:         EmbeddingReconciliationWorkerIDPrefix + run.RunID,
+		ExpectedAttempts: 1, Embedding: []float32{1, 0, 0},
+	}))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT status, affected_job_count FROM embedding_failure_incidents WHERE team_id = ?::uuid AND failure_code = 'provider_timeout'`, teamID).Row().Scan(&incidentStatus, &affected)
+	}))
+	require.Equal(t, "recovering", incidentStatus)
+	require.EqualValues(t, 1, affected)
+
+	claimedJobs, err := repo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{TeamID: teamID, WorkerID: "normal-worker", Limit: 1, Lease: time.Minute})
+	require.NoError(t, err)
+	require.Len(t, claimedJobs, 1)
+	require.NoError(t, repo.CompleteEmbeddingJob(ctx, CompleteEmbeddingJobInput{
+		TeamID: teamID, EmbeddingJobID: claimedJobs[0].EmbeddingJobID,
+		WorkerID: "normal-worker", ExpectedAttempts: claimedJobs[0].Attempts,
+		Embedding: []float32{0, 1, 0},
+	}))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT status, affected_job_count FROM embedding_failure_incidents WHERE team_id = ?::uuid AND failure_code = 'provider_timeout'`, teamID).Row().Scan(&incidentStatus, &affected)
+	}))
+	require.Equal(t, "resolved", incidentStatus)
+	require.Zero(t, affected)
+}
+
 func TestEmbeddingFailureIncidentReopensResolvedLifecycle(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -275,18 +377,18 @@ func TestSearchConvergenceExcludesDeletedTeams(t *testing.T) {
 	require.Empty(t, after.Failures)
 	require.Empty(t, after.Incidents)
 
+	var failedJobs, openIncidents int64
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		var failedJobs, openIncidents int64
 		if err := tx.Raw(`SELECT count(*) FROM embedding_jobs WHERE team_id = ?::uuid AND status = 'failed'`, teamID).Scan(&failedJobs).Error; err != nil {
 			return err
 		}
 		if err := tx.Raw(`SELECT count(*) FROM embedding_failure_incidents WHERE team_id = ?::uuid AND status = 'open'`, teamID).Scan(&openIncidents).Error; err != nil {
 			return err
 		}
-		require.EqualValues(t, 1, failedJobs)
-		require.EqualValues(t, 1, openIncidents)
 		return nil
 	}))
+	require.EqualValues(t, 1, failedJobs)
+	require.EqualValues(t, 1, openIncidents)
 }
 
 func TestSearchReadinessAcceptsFailedRelationshipProjection(t *testing.T) {

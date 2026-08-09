@@ -81,6 +81,9 @@ func TestInMemoryDiscoverabilityMetricsRecordsActiveSignals(t *testing.T) {
 	if got := m.reconciliationJobs["requeued:evidence:transient:provider_timeout"]; got != 2 {
 		t.Fatalf("reconciliation jobs = %d; want 2", got)
 	}
+	if _, ok := m.reconciliationJobs["ignored:evidence:transient:provider_timeout"]; ok {
+		t.Fatal("zero-count reconciliation job observation was recorded")
+	}
 	if len(m.reconciliationDurations) != 1 || m.reconciliationDurations[0] != 1.25 {
 		t.Fatalf("reconciliation durations = %#v", m.reconciliationDurations)
 	}

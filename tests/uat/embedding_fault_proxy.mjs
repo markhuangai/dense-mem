@@ -6,6 +6,8 @@ import https from "node:https";
 const port = Number(process.env.EMBEDDING_PROXY_PORT ?? 8081);
 const upstreamURL = String(process.env.EMBEDDING_PROXY_UPSTREAM_URL ?? "").replace(/\/$/, "");
 const upstreamKey = String(process.env.EMBEDDING_PROXY_UPSTREAM_KEY ?? "");
+const maxBodyBytes = 4 * 1024 * 1024;
+const upstreamTimeoutMilliseconds = 110_000;
 let mode = process.env.EMBEDDING_PROXY_MODE === "forward" ? "forward" : "quota";
 const stats = { requests: 0, quota_failures: 0, forwarded: 0, upstream_failures: 0, request_item_counts: [] };
 
@@ -18,7 +20,8 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.url === "/control/mode" && (request.method === "GET" || request.method === "POST")) {
     if (request.method === "POST") {
-      const body = await readBody(request);
+      const body = await readRequestBody(request, response);
+      if (body === null) return;
       try {
         const requested = JSON.parse(body.toString("utf8")).mode;
         if (requested !== "quota" && requested !== "forward") {
@@ -36,7 +39,8 @@ const server = http.createServer(async (request, response) => {
   }
 
   stats.requests += 1;
-  const body = await readBody(request);
+  const body = await readRequestBody(request, response);
+  if (body === null) return;
   stats.request_item_counts.push(requestItemCount(body));
   if (mode === "quota") {
     stats.quota_failures += 1;
@@ -69,16 +73,48 @@ function readBody(request) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let length = 0;
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
     request.on("data", (chunk) => {
       length += chunk.length;
-      if (length <= 4 * 1024 * 1024) chunks.push(chunk);
+      if (length > maxBodyBytes) {
+        fail(new RequestBodyError("too_large"));
+        return;
+      }
+      chunks.push(chunk);
     });
     request.on("end", () => {
-      if (length > 4 * 1024 * 1024) reject(new Error("request too large"));
-      else resolve(Buffer.concat(chunks));
+      if (settled) return;
+      settled = true;
+      resolve(Buffer.concat(chunks));
     });
-    request.on("error", reject);
+    request.on("aborted", () => fail(new RequestBodyError("malformed")));
+    request.on("error", () => fail(new RequestBodyError("malformed")));
   });
+}
+
+class RequestBodyError extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+}
+
+async function readRequestBody(request, response) {
+  try {
+    return await readBody(request);
+  } catch (error) {
+    if (error instanceof RequestBodyError && error.code === "too_large") {
+      sendJSON(response, 413, { error: "request body too large" });
+    } else {
+      sendJSON(response, 400, { error: "invalid request body" });
+    }
+    return null;
+  }
 }
 
 function forward(body) {
@@ -96,6 +132,9 @@ function forward(body) {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => resolve({ status: response.statusCode ?? 502, headers: response.headers, body: Buffer.concat(chunks) }));
+    });
+    request.setTimeout(upstreamTimeoutMilliseconds, () => {
+      request.destroy(new Error("upstream request timed out"));
     });
     request.on("error", reject);
     request.end(body);

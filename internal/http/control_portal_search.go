@@ -1,12 +1,12 @@
 package http
 
 import (
-	nethttp "net/http"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -23,7 +23,7 @@ func (h *controlPortalHandler) getSearchConvergence(c echo.Context) error {
 		}
 		return httperr.New(httperr.INTERNAL_ERROR, "failed to load search convergence")
 	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlSearchConvergence(projection)})
+	return response.SuccessOK(c, toControlSearchConvergence(projection))
 }
 
 type controlSearchConvergenceResponse struct {

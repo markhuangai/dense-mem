@@ -133,7 +133,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	s.logInfo(ctx, "embedding_reconciliation_reserved", run, nil)
 	if run.CanaryAttemptedAt != nil {
 		result.Status = string(domain.EmbeddingReconciliationAmbiguous)
-		return result, s.deferRun(ctx, run, "", "", "daily embedding canary outcome was ambiguous after lease expiry", nil)
+		return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationAmbiguous), "", "", "daily embedding canary outcome was ambiguous after lease expiry", nil)
 	}
 
 	job, err := s.reconciliation.SelectEmbeddingReconciliationCanary(ctx, repository.SelectEmbeddingReconciliationCanaryInput{
@@ -141,7 +141,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 		EmbeddingDimensions: contract.EmbeddingDimensions, CandidateCutoff: run.CandidateCutoff,
 	})
 	if err != nil {
-		return result, s.deferRun(ctx, run, "", "", "canary selection failed", err)
+		return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationDeferred), "", "", "canary selection failed", err)
 	}
 	if job == nil {
 		result.Status = string(domain.EmbeddingReconciliationCompleted)
@@ -164,9 +164,9 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	attemptedAt := s.now().UTC()
 	if err := s.reconciliation.MarkEmbeddingReconciliationCanaryAttempt(ctx, repository.MarkEmbeddingReconciliationCanaryAttemptInput{
 		RunID: run.RunID, CanaryJobID: job.EmbeddingJobID, WorkerID: s.workerID,
-		LeaseToken: run.LeaseToken, AttemptedAt: attemptedAt,
+		LeaseToken: run.LeaseToken, AttemptedAt: attemptedAt, Lease: reconciliationLease,
 	}); err != nil {
-		return result, s.deferRun(ctx, run, "", "", "daily embedding canary attempt persistence failed", err)
+		return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationDeferred), "", "", "daily embedding canary attempt persistence failed", err)
 	}
 
 	providerCtx, cancel := context.WithTimeout(ctx, reconciliationCallTimeout)
@@ -174,13 +174,13 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	providerCtx = observability.WithMetricIdentity(providerCtx, job.TeamID, "")
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationBackgroundEmbedding, 1)
 	if !s.provider.IsAvailable() {
-		return result, s.finishFailedCanary(ctx, run, job, contract, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderContractRejected), "provider unavailable")
+		return result, s.finishFailedCanary(ctx, run, job, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderContractRejected), "provider unavailable")
 	}
 	if got := strings.TrimSpace(s.provider.ModelName()); got != "" && got != contract.EmbeddingModel {
-		return result, s.finishFailedCanary(ctx, run, job, contract, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), "active embedding contract does not match provider model")
+		return result, s.finishFailedCanary(ctx, run, job, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), "active embedding contract does not match provider model")
 	}
 	if got := s.provider.Dimensions(); got != 0 && got != contract.EmbeddingDimensions {
-		return result, s.finishFailedCanary(ctx, run, job, contract, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), "active embedding contract does not match provider dimensions")
+		return result, s.finishFailedCanary(ctx, run, job, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), "active embedding contract does not match provider dimensions")
 	}
 	vector, model, providerErr := s.provider.Embed(providerCtx, job.DocumentText)
 	if providerErr != nil {
@@ -192,26 +192,26 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 		if failureCode == "" {
 			failureCode = string(domain.EmbeddingFailureUnknown)
 		}
-		return result, s.finishFailedCanary(ctx, run, job, contract, failureClass, failureCode, "daily embedding canary failed")
+		return result, s.finishFailedCanary(ctx, run, job, failureClass, failureCode, "daily embedding canary failed")
 	}
 	if model != "" && model != contract.EmbeddingModel {
-		return result, s.finishFailedCanary(ctx, run, job, contract, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), "daily embedding canary returned an incompatible model")
+		return result, s.finishFailedCanary(ctx, run, job, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), "daily embedding canary returned an incompatible model")
 	}
 	if err := validateEmbeddingVector(vector, job.EmbeddingDimensions); err != nil {
-		return result, s.finishFailedCanary(ctx, run, job, contract, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderResponseInvalid), "daily embedding canary returned an invalid vector")
+		return result, s.finishFailedCanary(ctx, run, job, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderResponseInvalid), "daily embedding canary returned an invalid vector")
 	}
-	workerID := "reconciliation:" + run.RunID
+	workerID := repository.EmbeddingReconciliationWorkerIDPrefix + run.RunID
 	if err := s.search.CompleteEmbeddingJob(ctx, repository.CompleteEmbeddingJobInput{
 		TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: workerID,
 		ExpectedAttempts: 1, Embedding: vector,
 	}); err != nil {
-		return result, s.deferRun(ctx, run, "", "", "daily embedding canary completion was ambiguous", err)
+		return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationAmbiguous), "", "", "daily embedding canary completion was ambiguous", err)
 	}
 	if err := s.reconciliation.CompleteEmbeddingReconciliationCanary(ctx, repository.CompleteEmbeddingReconciliationCanaryInput{
 		RunID: run.RunID, CanaryJobID: job.EmbeddingJobID, WorkerID: s.workerID,
 		LeaseToken: run.LeaseToken, Succeeded: true,
 	}); err != nil {
-		return result, s.deferRun(ctx, run, "", "", "daily embedding canary completion was ambiguous", err)
+		return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationAmbiguous), "", "", "daily embedding canary completion was ambiguous", err)
 	}
 	result.CanarySucceeded = true
 	result.RecoveredCount = 1
@@ -219,7 +219,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 		RunID: run.RunID, WorkerID: s.workerID, LeaseToken: run.LeaseToken,
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions, CandidateCutoff: run.CandidateCutoff,
-		BatchSize: reconciliationBatchSize,
+		BatchSize: reconciliationBatchSize, Lease: reconciliationLease,
 	})
 	result.RequeuedCount = requeued
 	if err != nil {
@@ -229,7 +229,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	result.Status = string(domain.EmbeddingReconciliationCompleted)
 	if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
 		metrics.ObserveEmbeddingReconciliationCanary("succeeded")
-		metrics.ObserveEmbeddingReconciliationJobs("requeued", "mixed", string(domain.EmbeddingFailureTransient), "", int(requeued))
+		metrics.ObserveEmbeddingReconciliationJobs("requeued", "mixed", "mixed", "", int(requeued))
 	}
 	err = s.reconciliation.CompleteEmbeddingReconciliationRun(ctx, repository.CompleteEmbeddingReconciliationRunInput{
 		RunID: run.RunID, WorkerID: s.workerID, LeaseToken: run.LeaseToken,
@@ -246,31 +246,26 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	return result, err
 }
 
-func (s *embeddingReconciliationService) finishFailedCanary(ctx context.Context, run *repository.EmbeddingReconciliationRun, job *repository.EmbeddingJob, contract *repository.ActiveSearchContract, failureClass, failureCode, message string) error {
-	workerID := "reconciliation:" + run.RunID
-	_ = contract
+func (s *embeddingReconciliationService) finishFailedCanary(ctx context.Context, run *repository.EmbeddingReconciliationRun, job *repository.EmbeddingJob, failureClass, failureCode, message string) error {
+	workerID := repository.EmbeddingReconciliationWorkerIDPrefix + run.RunID
 	_, failErr := s.search.FailEmbeddingJob(ctx, repository.FailEmbeddingJobInput{
 		TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: workerID,
 		ExpectedAttempts: 1, Error: message,
 		FailureClass: failureClass, FailureCode: failureCode, Terminal: true,
 	})
 	if failErr != nil {
-		return s.deferRun(ctx, run, failureClass, failureCode, "daily embedding canary failure persistence was ambiguous", failErr)
+		return s.deferRun(ctx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding canary failure persistence was ambiguous", failErr)
 	}
 	if err := s.reconciliation.CompleteEmbeddingReconciliationCanary(ctx, repository.CompleteEmbeddingReconciliationCanaryInput{
 		RunID: run.RunID, CanaryJobID: job.EmbeddingJobID, WorkerID: s.workerID,
 		LeaseToken: run.LeaseToken, Succeeded: false, FailureClass: failureClass, FailureCode: failureCode,
 	}); err != nil {
-		return s.deferRun(ctx, run, failureClass, failureCode, "daily embedding canary completion was ambiguous", err)
+		return s.deferRun(ctx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding canary completion was ambiguous", err)
 	}
-	return s.deferRun(ctx, run, failureClass, failureCode, message, nil)
+	return s.deferRun(ctx, run, string(domain.EmbeddingReconciliationDeferred), failureClass, failureCode, message, nil)
 }
 
-func (s *embeddingReconciliationService) deferRun(ctx context.Context, run *repository.EmbeddingReconciliationRun, failureClass, failureCode, message string, cause error) error {
-	status := string(domain.EmbeddingReconciliationDeferred)
-	if strings.Contains(message, "ambiguous") {
-		status = string(domain.EmbeddingReconciliationAmbiguous)
-	}
+func (s *embeddingReconciliationService) deferRun(ctx context.Context, run *repository.EmbeddingReconciliationRun, status, failureClass, failureCode, message string, cause error) error {
 	err := s.reconciliation.CompleteEmbeddingReconciliationRun(ctx, repository.CompleteEmbeddingReconciliationRunInput{
 		RunID: run.RunID, WorkerID: s.workerID, LeaseToken: run.LeaseToken,
 		Status: status, CanaryOutcome: func() string {
@@ -306,7 +301,7 @@ func (s *embeddingReconciliationService) deferRunAfterCanarySuccess(ctx context.
 			metrics.ObserveEmbeddingReconciliationCanary("succeeded")
 			metrics.ObserveEmbeddingReconciliationRun(string(domain.EmbeddingReconciliationDeferred))
 			if requeuedCount > 0 {
-				metrics.ObserveEmbeddingReconciliationJobs("requeued", "mixed", string(domain.EmbeddingFailureTransient), "", int(requeuedCount))
+				metrics.ObserveEmbeddingReconciliationJobs("requeued", "mixed", "mixed", "", int(requeuedCount))
 			}
 		}
 		s.logWarn(ctx, "embedding_reconciliation_deferred", run, map[string]any{"requeued_count": requeuedCount})
@@ -401,14 +396,7 @@ func (s *embeddingReconciliationService) logInfo(ctx context.Context, message st
 		return
 	}
 	attrs := []observability.LogAttr{observability.String("reconciliation_run_id", run.RunID), observability.String("status", run.Status)}
-	for key, value := range extra {
-		switch typed := value.(type) {
-		case int64:
-			attrs = append(attrs, observability.Int(key, int(typed)))
-		case string:
-			attrs = append(attrs, observability.String(key, typed))
-		}
-	}
+	attrs = appendEmbeddingReconciliationLogAttrs(attrs, extra)
 	s.logger.Info(message, attrs...)
 }
 
@@ -417,10 +405,20 @@ func (s *embeddingReconciliationService) logWarn(ctx context.Context, message st
 		return
 	}
 	attrs := []observability.LogAttr{observability.String("reconciliation_run_id", run.RunID), observability.String("status", string(domain.EmbeddingReconciliationDeferred))}
+	attrs = appendEmbeddingReconciliationLogAttrs(attrs, extra)
+	s.logger.Warn(message, attrs...)
+}
+
+func appendEmbeddingReconciliationLogAttrs(attrs []observability.LogAttr, extra map[string]any) []observability.LogAttr {
 	for key, value := range extra {
-		if typed, ok := value.(string); ok {
+		switch typed := value.(type) {
+		case int:
+			attrs = append(attrs, observability.Int(key, typed))
+		case int64:
+			attrs = append(attrs, observability.Int(key, int(typed)))
+		case string:
 			attrs = append(attrs, observability.String(key, typed))
 		}
 	}
-	s.logger.Warn(message, attrs...)
+	return attrs
 }

@@ -39,6 +39,49 @@ func TestActiveEmbeddingLeaseCoversRetryWindow(t *testing.T) {
 	}
 }
 
+type searchConvergenceHealthStub struct {
+	value *repository.SearchConvergence
+	err   error
+}
+
+func (s searchConvergenceHealthStub) GetSearchConvergence(context.Context, repository.SearchConvergenceInput) (*repository.SearchConvergence, error) {
+	return s.value, s.err
+}
+
+type searchConvergenceHealthLogger struct {
+	warnings []string
+	attrs    []observability.LogAttr
+}
+
+func (*searchConvergenceHealthLogger) Info(string, ...observability.LogAttr)         {}
+func (*searchConvergenceHealthLogger) Error(string, error, ...observability.LogAttr) {}
+func (l *searchConvergenceHealthLogger) Warn(message string, attrs ...observability.LogAttr) {
+	l.warnings = append(l.warnings, message)
+	l.attrs = append(l.attrs, attrs...)
+}
+func (*searchConvergenceHealthLogger) Debug(string, ...observability.LogAttr) {}
+func (l *searchConvergenceHealthLogger) With(...observability.LogAttr) observability.LogProvider {
+	return l
+}
+
+func TestSearchConvergenceHealthCheckBoundsRepositoryErrors(t *testing.T) {
+	raw := errors.New("pq: secret relation does not exist")
+	logger := &searchConvergenceHealthLogger{}
+	check := searchConvergenceHealthCheck(searchConvergenceHealthStub{err: raw}, logger)
+
+	err := check(context.Background())
+
+	if !errors.Is(err, errSearchConvergenceQueryFailed) || errors.Is(err, raw) {
+		t.Fatalf("health error = %v", err)
+	}
+	if len(logger.warnings) != 1 || logger.warnings[0] != "search_convergence_health_query_failed" {
+		t.Fatalf("warnings = %#v", logger.warnings)
+	}
+	if len(logger.attrs) != 1 || logger.attrs[0].Key != "error_code" || logger.attrs[0].Value != "search_convergence_query_failed" {
+		t.Fatalf("warning attrs = %#v", logger.attrs)
+	}
+}
+
 func TestConflictReviewDueForTeamHonorsLocalStartAndJitter(t *testing.T) {
 	cfg := testConflictReviewConfig(t, "UTC", "04:00", "0")
 	before := time.Date(2026, 7, 25, 3, 59, 59, 0, time.UTC)

@@ -556,6 +556,35 @@ func EmbeddingFailureCodes() []string {
 	}
 }
 
+func EmbeddingFailureMessage(code string) string {
+	switch code {
+	case string(EmbeddingFailureProviderRateLimited):
+		return "embedding provider rate limited"
+	case string(EmbeddingFailureProviderTimeout):
+		return "embedding provider timed out"
+	case string(EmbeddingFailureProviderNetworkError):
+		return "embedding provider network failure"
+	case string(EmbeddingFailureProviderServerError):
+		return "embedding provider server failure"
+	case string(EmbeddingFailureProviderQuotaExhausted):
+		return "embedding provider quota exhausted"
+	case string(EmbeddingFailureProviderAuthentication):
+		return "embedding provider authentication failed"
+	case string(EmbeddingFailureProviderPermissionDenied):
+		return "embedding provider permission denied"
+	case string(EmbeddingFailureProviderContractRejected):
+		return "embedding provider contract rejected"
+	case string(EmbeddingFailureProviderResponseInvalid):
+		return "embedding provider response invalid"
+	case string(EmbeddingFailureInputRejected):
+		return "embedding input rejected"
+	case string(EmbeddingFailureContractMismatch):
+		return "embedding contract mismatch"
+	default:
+		return "embedding processing failed"
+	}
+}
+
 type EmbeddingIncidentStatus string
 
 const (

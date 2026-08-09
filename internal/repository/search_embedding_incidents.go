@@ -69,23 +69,32 @@ func upsertEmbeddingFailureIncident(
 
 func resolveEmbeddingIncidentsForJob(ctx context.Context, tx *gorm.DB, teamID, sourceKind, contractID string, dimensions int) error {
 	return tx.WithContext(ctx).Exec(`
+		WITH remaining AS (
+			SELECT incident.team_id, incident.incident_id,
+			       count(job.embedding_job_id) AS affected_job_count
+			FROM embedding_failure_incidents AS incident
+			LEFT JOIN embedding_jobs AS job
+			  ON job.team_id = incident.team_id
+			 AND job.embedding_contract_id = incident.embedding_contract_id
+			 AND job.embedding_dimensions = incident.embedding_dimensions
+			 AND job.source_kind = incident.source_kind
+			 AND job.failure_class = incident.failure_class
+			 AND job.failure_code = incident.failure_code
+			 AND job.status IN ('queued', 'processing', 'failed')
+			WHERE incident.team_id = ?::uuid
+			  AND incident.embedding_contract_id = ?::uuid
+			  AND incident.embedding_dimensions = ?
+			  AND incident.source_kind = ?
+			  AND incident.status IN ('open', 'recovering')
+			GROUP BY incident.team_id, incident.incident_id
+		)
 		UPDATE embedding_failure_incidents AS incident
-		SET status = 'resolved', resolved_at = now(), affected_job_count = 0,
+		SET status = CASE WHEN remaining.affected_job_count = 0 THEN 'resolved' ELSE incident.status END,
+		    resolved_at = CASE WHEN remaining.affected_job_count = 0 THEN now() ELSE NULL END,
+		    affected_job_count = remaining.affected_job_count,
 		    updated_at = now()
-		WHERE incident.team_id = ?::uuid
-		  AND incident.embedding_contract_id = ?::uuid
-		  AND incident.embedding_dimensions = ?
-		  AND incident.source_kind = ?
-		  AND incident.status IN ('open', 'recovering')
-		  AND NOT EXISTS (
-			SELECT 1 FROM embedding_jobs AS job
-			WHERE job.team_id = incident.team_id
-			  AND job.embedding_contract_id = incident.embedding_contract_id
-			  AND job.embedding_dimensions = incident.embedding_dimensions
-			  AND job.source_kind = incident.source_kind
-			  AND job.failure_class = incident.failure_class
-			  AND job.failure_code = incident.failure_code
-			  AND job.status IN ('queued', 'processing', 'failed')
-		  )
+		FROM remaining
+		WHERE incident.team_id = remaining.team_id
+		  AND incident.incident_id = remaining.incident_id
 	`, teamID, contractID, dimensions, sourceKind).Error
 }

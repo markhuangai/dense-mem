@@ -3,6 +3,7 @@ import type { CommunityStatus } from "./community-api-types";
 import type { SearchConvergence } from "./search-convergence-types";
 import { requestJson } from "./http";
 export { ApiError } from "./http";
+export { listControlIdentityProviders, type ControlIdentityProvider } from "./control-auth-api";
 export type {
   ConflictQueueItem,
   ConflictQueueLeaseState,
@@ -286,12 +287,6 @@ export type ControlAdminGroupInput = {
   group_id: string;
   group_name: string;
   enabled: boolean;
-};
-
-export type ControlIdentityProvider = {
-  id: string;
-  name: string;
-  kind: string;
 };
 
 export type ControlSession = {
@@ -998,9 +993,4 @@ export class ControlApi {
       csrf: this.token ? undefined : { cookieName: "dense_mem_control_csrf", headerName: "X-Dense-Mem-Control-CSRF" },
     });
   }
-}
-
-export async function listControlIdentityProviders(): Promise<ControlIdentityProvider[]> {
-  const payload = await requestJson<{ data: ControlIdentityProvider[] }>("/control/auth/providers", { credentials: "include" });
-  return payload.data;
 }

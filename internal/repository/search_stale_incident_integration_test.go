@@ -37,7 +37,7 @@ func TestSearchEmbeddingCompletionResolvesStaleIncident(t *testing.T) {
 				failure_class, failure_code, status, affected_job_count
 			)
 			SELECT team_id, embedding_contract_id, embedding_dimensions, source_kind,
-			       failure_class, failure_code, 'open', 1
+			       'permanent', 'unknown_embedding_failure', 'open', 1
 			FROM embedding_jobs WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
 		`, teamID, claimed[0].EmbeddingJobID).Error
 	}))

@@ -2,6 +2,7 @@ package serverapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -12,11 +13,20 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
 )
 
-func searchConvergenceHealthCheck(search *repository.SearchRepositoryImpl) func(context.Context) error {
+var errSearchConvergenceQueryFailed = errors.New("search convergence query failed")
+
+type searchConvergenceHealthReader interface {
+	GetSearchConvergence(context.Context, repository.SearchConvergenceInput) (*repository.SearchConvergence, error)
+}
+
+func searchConvergenceHealthCheck(search searchConvergenceHealthReader, logger observability.LogProvider) func(context.Context) error {
 	return func(ctx context.Context) error {
 		convergence, err := search.GetSearchConvergence(ctx, repository.SearchConvergenceInput{})
 		if err != nil {
-			return err
+			if logger != nil {
+				logger.Warn("search_convergence_health_query_failed", observability.String("error_code", "search_convergence_query_failed"))
+			}
+			return errSearchConvergenceQueryFailed
 		}
 		if convergence != nil && convergence.Status != "converged" {
 			return fmt.Errorf("search convergence is %s", convergence.Status)

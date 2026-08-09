@@ -618,6 +618,7 @@ func hydrateRecallEvidence(
 			           ARRAY[]::text[]
 		       ) AS relationship_ids,
 		       CASE
+		           WHEN bool_or(search_state = 'failed') THEN 'failed'
 		           WHEN bool_or(search_state = 'pending') THEN 'pending'
 		           ELSE 'current'
 		       END AS search_state

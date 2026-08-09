@@ -334,7 +334,7 @@ func RunActiveServer(
 		{Name: "search_readiness", Check: func(ctx context.Context) error {
 			return checkSearchReadiness(ctx, searchRepo)
 		}},
-		{Name: "search_convergence", Optional: true, Check: searchConvergenceHealthCheck(searchRepo)},
+		{Name: "search_convergence", Optional: true, Check: searchConvergenceHealthCheck(searchRepo, logger)},
 	}
 	if backend.redisPingFn != nil {
 		checks = append(checks, http.HealthCheck{Name: "redis", Check: backend.redisPingFn})
@@ -969,31 +969,6 @@ func startActiveWorkers(
 			return result.Claimed > 0, err
 		},
 	})
-}
-
-func activePlacementLease(verifierTimeoutSeconds int, commitTimeoutSeconds int) time.Duration {
-	if verifierTimeoutSeconds <= 0 {
-		verifierTimeoutSeconds = 60
-	}
-	if commitTimeoutSeconds <= 0 {
-		commitTimeoutSeconds = 10
-	}
-	lease := time.Duration((verifierTimeoutSeconds*memoryservice.SemanticPlacementMaxAssessorTurns)+commitTimeoutSeconds+30) * time.Second
-	if lease < 5*time.Minute {
-		return 5 * time.Minute
-	}
-	return lease
-}
-
-func activeEmbeddingLease(embeddingTimeoutSeconds int) time.Duration {
-	if embeddingTimeoutSeconds <= 0 {
-		embeddingTimeoutSeconds = 30
-	}
-	lease := time.Duration(embeddingTimeoutSeconds*(embedding.DefaultRetryEmbeddingMaxRetries+1)+30) * time.Second
-	if lease < 5*time.Minute {
-		return 5 * time.Minute
-	}
-	return lease
 }
 
 func logServerStartError(logger observability.LogProvider, message string, err error) {

@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
 var (
@@ -31,6 +33,31 @@ type activeTeamWorkerPoolConfig struct {
 	logger       observability.LogProvider
 	workerError  error
 	work         activeTeamWorkFunc
+}
+
+func activePlacementLease(verifierTimeoutSeconds int, commitTimeoutSeconds int) time.Duration {
+	if verifierTimeoutSeconds <= 0 {
+		verifierTimeoutSeconds = 60
+	}
+	if commitTimeoutSeconds <= 0 {
+		commitTimeoutSeconds = 10
+	}
+	lease := time.Duration((verifierTimeoutSeconds*memoryservice.SemanticPlacementMaxAssessorTurns)+commitTimeoutSeconds+30) * time.Second
+	if lease < 5*time.Minute {
+		return 5 * time.Minute
+	}
+	return lease
+}
+
+func activeEmbeddingLease(embeddingTimeoutSeconds int) time.Duration {
+	if embeddingTimeoutSeconds <= 0 {
+		embeddingTimeoutSeconds = 30
+	}
+	lease := time.Duration(embeddingTimeoutSeconds*(embedding.DefaultRetryEmbeddingMaxRetries+1)+30) * time.Second
+	if lease < 5*time.Minute {
+		return 5 * time.Minute
+	}
+	return lease
 }
 
 type activeTeamWorkResult struct {

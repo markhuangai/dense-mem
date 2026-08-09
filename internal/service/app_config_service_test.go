@@ -88,10 +88,16 @@ func TestAppConfigServiceGeneralSettingsDefaultsAndUpdate(t *testing.T) {
 
 	now = now.Add(time.Minute)
 	updated, err := svc.UpdateGeneralSettings(ctx, map[string]string{
-		domain.AppConfigTimezone: "America/New_York",
+		domain.AppConfigTimezone:                              "America/New_York",
+		domain.AppConfigEmbeddingReconciliationStartTimeLocal: "23:59",
 	}, "control", "127.0.0.1", "corr")
 	require.NoError(t, err)
 	assert.Equal(t, "America/New_York", generalConfigItemForTest(updated, domain.AppConfigTimezone).EffectiveValue)
+	assert.Equal(t, "23:59", generalConfigItemForTest(updated, domain.AppConfigEmbeddingReconciliationStartTimeLocal).EffectiveValue)
+
+	runtime, err = svc.GeneralRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "23:59", runtime.EmbeddingReconciliationStartTimeLocal)
 
 	dreaming, err = svc.DreamingRuntimeConfig(ctx)
 	require.NoError(t, err)

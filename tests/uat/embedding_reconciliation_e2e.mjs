@@ -19,15 +19,24 @@ const listedResponse = await mcpJSON("tools/list", {});
 if (listedResponse.error || !listedResponse.result) throw new Error("tools/list returned a bounded error");
 const listed = listedResponse.result;
 const toolNames = new Set((listed.tools ?? []).map((tool) => tool.name));
-for (const name of ["remember", "get_submission_status"]) {
+for (const name of ["remember", "get_submission_status", "recall_memory"]) {
   if (!toolNames.has(name)) throw new Error(`tools/list is missing ${name}`);
 }
 
 const remember = await mcpTool("remember", rememberInput());
 const submissionID = requiredString(remember.submission_id, "remember submission_id");
 const failed = await waitForFailedEmbeddingJobs();
+const writeFailureProxy = await proxyJSON("/stats");
+if (writeFailureProxy.mode !== "quota" || writeFailureProxy.requests !== 1 || writeFailureProxy.quota_failures !== 1) {
+  throw new Error(`quota proxy did not prove one non-amplified write request: ${JSON.stringify(writeFailureProxy)}`);
+}
 const failedStatus = await mcpTool("get_submission_status", { submission_id: submissionID });
 assertPublicDelayedStatus(failedStatus, submissionID);
+const failedRecall = await mcpTool("recall_memory", { query: `Embedding reconciliation ${runID}`, limit: 10 });
+const lexicalFailureVisible = (failedRecall.results ?? []).some((item) => String(item.context ?? "").includes(runID));
+if (!lexicalFailureVisible) {
+  throw new Error(`failed vectors were not recallable through lexical search: ${JSON.stringify(failedRecall)}`);
+}
 
 const ready = await httpJSON(`${userURL}/ready`, { method: "GET" }, false);
 if (ready.status !== "ready" || ready.dependencies?.search_readiness !== "ok") {
@@ -46,8 +55,12 @@ if (JSON.stringify(logs).includes("insufficient_quota") || JSON.stringify(logs).
 const metricBefore = await waitForPrometheusValue("sum(densemem_embedding_errors_total)", 1);
 
 const proxyBefore = await proxyJSON("/stats");
-if (proxyBefore.mode !== "quota" || proxyBefore.requests !== 1 || proxyBefore.quota_failures !== 1) {
-  throw new Error(`quota proxy did not prove one non-amplified request: ${JSON.stringify(proxyBefore)}`);
+const recallRequestIndex = writeFailureProxy.requests;
+if (proxyBefore.mode !== "quota"
+  || proxyBefore.requests !== writeFailureProxy.requests + 1
+  || proxyBefore.quota_failures !== writeFailureProxy.quota_failures + 1
+  || proxyBefore.request_item_counts[recallRequestIndex] !== 1) {
+  throw new Error(`quota proxy did not prove one bounded recall-query request: ${JSON.stringify(proxyBefore)}`);
 }
 if (failed.totalAttempts.some((value) => value !== 1)) {
   throw new Error(`inline retry budget was spent before reconciliation: ${JSON.stringify(failed.totalAttempts)}`);
@@ -80,7 +93,7 @@ if (recovered.latest_run?.status !== "completed" || recovered.latest_run?.canary
   throw new Error(`reconciliation did not complete successfully: ${JSON.stringify(recovered)}`);
 }
 if (recovered.latest_run.recovered_count !== 1 || recovered.latest_run.requeued_count < Math.max(failed.count - 1, 0)) {
-	throw new Error(`reconciliation accounting did not separate completed canary from requeued backlog: ${JSON.stringify(recovered.latest_run)}`);
+  throw new Error(`reconciliation accounting did not separate completed canary from requeued backlog: ${JSON.stringify(recovered.latest_run)}`);
 }
 
 const finalStatus = await waitForCurrentSubmission(submissionID);
@@ -98,7 +111,8 @@ console.log(JSON.stringify({
   run_id: runID,
   submission_id: submissionID,
   failed_jobs: failed.count,
-  initial_provider_requests: proxyBefore.requests,
+  initial_provider_requests: writeFailureProxy.requests,
+  failed_recall_query_requests: proxyBefore.requests - writeFailureProxy.requests,
   recovery_canary_item_count: proxyAfter.request_item_counts[proxyBefore.requests],
   final_search_status: finalStatus.search_state,
   reconciliation_status: recovered.status,
@@ -106,7 +120,7 @@ console.log(JSON.stringify({
   operator_guidance_verified: true,
   public_error_bounded: true,
   readiness_structural: true,
-  lexical_failure_visibility: true,
+  lexical_failure_visibility: lexicalFailureVisible,
   metrics_verified: true,
 }, null, 2));
 

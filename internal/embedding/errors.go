@@ -146,6 +146,9 @@ func ClassifyFailure(err error) FailureMetadata {
 	var httpErr *ProviderHTTPError
 	if errors.As(err, &httpErr) {
 		code := normalizeProviderCode(httpErr.Code, httpErr.Type)
+		if httpErr.Status == 408 {
+			return FailureMetadata{Class: "transient", Code: "provider_timeout", StatusCode: httpErr.Status}
+		}
 		if httpErr.Status == 429 {
 			if code == "insufficient_quota" || code == "quota_exhausted" || code == "quota" {
 				return FailureMetadata{Class: "provider_action_required", Code: "provider_quota_exhausted", StatusCode: httpErr.Status}
@@ -169,7 +172,7 @@ func ClassifyFailure(err error) FailureMetadata {
 	}
 	var providerErr *ProviderError
 	if errors.As(err, &providerErr) {
-		if providerErr.FailureCode != "" && providerErr.FailureClass != "" {
+		if validFailureContract(providerErr.FailureClass, providerErr.FailureCode) {
 			return FailureMetadata{Class: providerErr.FailureClass, Code: providerErr.FailureCode, StatusCode: providerErr.StatusCode}
 		}
 		return FailureMetadata{Class: "permanent", Code: "unknown_embedding_failure", StatusCode: providerErr.StatusCode}
@@ -178,6 +181,19 @@ func ClassifyFailure(err error) FailureMetadata {
 		return FailureMetadata{Class: "transient", Code: "provider_rate_limited"}
 	}
 	return FailureMetadata{Class: "permanent", Code: "unknown_embedding_failure"}
+}
+
+func validFailureContract(class, code string) bool {
+	switch class {
+	case "transient":
+		return code == "provider_rate_limited" || code == "provider_timeout" || code == "provider_network_error" || code == "provider_server_error"
+	case "provider_action_required":
+		return code == "provider_quota_exhausted" || code == "provider_authentication_failed" || code == "provider_permission_denied" || code == "provider_contract_rejected" || code == "provider_response_invalid"
+	case "permanent":
+		return code == "embedding_input_rejected" || code == "embedding_contract_mismatch" || code == "unknown_embedding_failure"
+	default:
+		return false
+	}
 }
 
 func normalizeProviderCode(code, typ string) string {

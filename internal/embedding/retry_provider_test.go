@@ -152,7 +152,55 @@ func TestRetryProvider_ContextCancelStopsRetry(t *testing.T) {
 	p := NewRetryEmbeddingProvider(inner, newTestLogger())
 	_, _, err := p.Embed(ctx, "x")
 	require.Error(t, err)
-	assert.LessOrEqual(t, calls, 2, "should stop after context cancellation")
+	assert.Equal(t, 1, calls, "should stop after context cancellation")
+}
+
+func TestRetryProviderCancellationDuringDelayDoesNotStartAnotherCall(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		t.Run(map[bool]string{false: "single", true: "batch"}[batch], func(t *testing.T) {
+			firstCall := make(chan struct{})
+			var calls int
+			inner := &MockEmbeddingProvider{
+				EmbedFunc: func(context.Context, string) ([]float32, string, error) {
+					calls++
+					if calls == 1 {
+						close(firstCall)
+					}
+					return nil, "", &ProviderHTTPError{Status: 500}
+				},
+				EmbedBatchFunc: func(context.Context, []string) ([][]float32, string, error) {
+					calls++
+					if calls == 1 {
+						close(firstCall)
+					}
+					return nil, "", &ProviderHTTPError{Status: 500}
+				},
+			}
+			provider := NewRetryEmbeddingProviderWithKeyAndOptions(inner, newTestLogger(), "", RetryEmbeddingOptions{BaseDelay: time.Second, MaxDelay: time.Second})
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() {
+				if batch {
+					_, _, err := provider.EmbedBatch(ctx, []string{"x"})
+					done <- err
+					return
+				}
+				_, _, err := provider.Embed(ctx, "x")
+				done <- err
+			}()
+			<-firstCall
+			time.Sleep(20 * time.Millisecond)
+			cancel()
+			require.ErrorIs(t, <-done, context.Canceled)
+			assert.Equal(t, 1, calls)
+		})
+	}
+}
+
+func TestRetryProviderCapsProviderRetryHintsAtPolicyMaximum(t *testing.T) {
+	provider := NewRetryEmbeddingProvider(&MockEmbeddingProvider{}, newTestLogger())
+	assert.Equal(t, maxProviderRetryAfter, provider.retryDelay(0, &ProviderHTTPError{Status: 429, RetryAfter: time.Hour}))
+	assert.Equal(t, maxProviderRetryAfter, provider.retryDelay(0, &RateLimitError{RetryAfter: 3600}))
 }
 
 func TestRetryProvider_SuccessAfterOneRetry(t *testing.T) {
