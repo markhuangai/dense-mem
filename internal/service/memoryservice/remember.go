@@ -377,7 +377,7 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 		statusErrors = append(statusErrors, SubmissionStatusError{Code: "submission_processing_failed", Message: "submission processing failed"})
 	}
 	if searchErrorAdded {
-		statusErrors = append(statusErrors, SubmissionStatusError{Code: "search_indexing_delayed", Message: "Semantic search indexing is delayed; recovery is automatic."})
+		statusErrors = append(statusErrors, SubmissionStatusError{Code: "search_indexing_delayed", Message: "Semantic search indexing is delayed; check the control portal for recovery guidance."})
 	}
 	return &SubmissionStatusResult{
 		SubmissionID:               placement.IngestID,

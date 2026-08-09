@@ -236,6 +236,11 @@ func TestSubmissionStatusProjectionMapsProcessingStatesAndErrors(t *testing.T) {
 		}
 		require.Equal(t, []string{}, result.Evidence[0].SupersededEvidenceIDs)
 	}
+	failedSearch := submissionStatusResultFromLedger(&repository.CreateIngestResult{
+		IngestID: "submission-1", Status: string(domain.PlacementRunCompleted),
+		Items: []repository.PlacementItem{{FragmentID: "evidence-1", Result: map[string]any{"search_document_states": []any{"failed"}}}},
+	})
+	require.Equal(t, "Semantic search indexing is delayed; check the control portal for recovery guidance.", failedSearch.Errors[0].Message)
 	hold := submissionStatusResultFromLedger(&repository.CreateIngestResult{IngestID: "submission-1", Status: string(domain.PlacementRunCompleted), SemanticHoldState: "awaiting_review"})
 	require.Equal(t, "rejected", hold.ProcessingState)
 	empty := submissionStatusResultFromLedger(nil)

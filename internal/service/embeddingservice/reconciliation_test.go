@@ -135,6 +135,34 @@ func TestEmbeddingReconciliationProcessDueErrorsAreObservable(t *testing.T) {
 	require.Equal(t, []string{"embedding_reconciliation_process_due_failed"}, logger.warnings)
 }
 
+func TestEmbeddingReconciliationDoesNotCompleteReclaimedCanaryAsSkipped(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	attemptedAt := time.Date(2026, 8, 10, 4, 31, 0, 0, time.UTC)
+	reconciliation := &reconciliationRepositoryStub{
+		run: &repository.EmbeddingReconciliationRun{
+			RunID: "run-1", LeaseToken: "lease-1", Status: string(domain.EmbeddingReconciliationRunning),
+			CandidateCutoff: attemptedAt, CanaryAttemptedAt: &attemptedAt,
+		},
+		job: &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", EmbeddingDimensions: 3, DocumentText: "canary"},
+	}
+	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
+	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: provider,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1", Now: func() time.Time { return attemptedAt.Add(time.Minute) },
+	})
+
+	result, err := svc.ProcessDue(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, string(domain.EmbeddingReconciliationAmbiguous), result.Status)
+	assert.Equal(t, 0, provider.calls)
+	assert.Zero(t, reconciliation.requeued)
+	require.NotNil(t, reconciliation.completed)
+	assert.Equal(t, string(domain.EmbeddingReconciliationAmbiguous), reconciliation.completed.Status)
+	assert.Equal(t, "ambiguous", reconciliation.completed.CanaryOutcome)
+}
+
 func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}

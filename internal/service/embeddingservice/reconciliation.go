@@ -131,6 +131,10 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 		metrics.ObserveEmbeddingReconciliationRun("reserved")
 	}
 	s.logInfo(ctx, "embedding_reconciliation_reserved", run, nil)
+	if run.CanaryAttemptedAt != nil {
+		result.Status = string(domain.EmbeddingReconciliationAmbiguous)
+		return result, s.deferRun(ctx, run, "", "", "daily embedding canary outcome was ambiguous after lease expiry", nil)
+	}
 
 	job, err := s.reconciliation.SelectEmbeddingReconciliationCanary(ctx, repository.SelectEmbeddingReconciliationCanaryInput{
 		RunID: run.RunID, EmbeddingContractID: contract.EmbeddingContractID,
