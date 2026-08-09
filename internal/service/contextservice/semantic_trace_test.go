@@ -39,3 +39,24 @@ func TestSemanticTraceRejectsMismatchedConflictTeam(t *testing.T) {
 	require.ErrorIs(t, err, ErrTraceRepositoryTeamMismatch)
 	require.Equal(t, teamID.String(), store.input.TeamID)
 }
+
+func TestSemanticTraceAllowsMatchingConflictTeam(t *testing.T) {
+	teamID := uuid.New()
+	conflictID := uuid.NewString()
+	store := &semanticTraceStoreStub{result: &repository.RelationshipTraceResult{
+		Conflicts: []repository.RelationshipConflictCaseRecord{{
+			TeamID:     teamID.String(),
+			ConflictID: conflictID,
+		}},
+	}}
+	service := NewSemantic(store)
+	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
+		TeamID:    teamID,
+		ProfileID: uuid.New(),
+	})
+
+	result, err := service.Trace(ctx, "", TraceRequest{RelationshipID: uuid.NewString()})
+	require.NoError(t, err)
+	require.Len(t, result.Semantic.Conflicts, 1)
+	require.Equal(t, conflictID, result.Semantic.Conflicts[0].ConflictID)
+}

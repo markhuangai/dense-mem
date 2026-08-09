@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -232,6 +234,87 @@ func TestSubmissionAssessmentCommitValidatesConflictContextAtomically(t *testing
 
 	after := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerA, staleIngest.PlacementRunID)
 	assert.Equal(t, before, after)
+}
+
+func TestRelationshipConflictContextValidationLocksConcurrentVersionChange(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "submission-assessment-conflict-lock", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-assessment-conflict-lock-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-conflict-lock-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-conflict-lock-owner-b")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
+	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL")
+	graphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB")
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerA, "submission-context-lock-seed-a",
+		"submission-context-lock-seed-a", "Dense-Mem uses PostgreSQL.", subject.EntityID, postgres.EntityID, "submission-context-lock-source-a",
+	)
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerB, "submission-context-lock-seed-b",
+		"submission-context-lock-seed-b", "Dense-Mem uses GraphDB.", subject.EntityID, graphdb.EntityID, "submission-context-lock-source-b",
+	)
+	conflictID, conflictVersion := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+
+	lockAcquired := make(chan struct{})
+	releaseLock := make(chan struct{})
+	validationDone := make(chan error, 1)
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() { close(releaseLock) })
+	}
+	defer release()
+	go func() {
+		validationDone <- rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+			if err := requireRelationshipConflictContextCurrent(ctx, tx, teamID, conflictID, conflictVersion); err != nil {
+				return err
+			}
+			close(lockAcquired)
+			<-releaseLock
+			return nil
+		})
+	}()
+
+	select {
+	case <-lockAcquired:
+	case err := <-validationDone:
+		require.NoError(t, err)
+		t.Fatal("conflict-context validation ended before its row lock could be observed")
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for conflict-context row lock")
+	}
+
+	var competingVersion int
+	lockErr := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT version
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+			FOR UPDATE NOWAIT
+		`, teamID, conflictID).Row().Scan(&competingVersion)
+	})
+	require.Error(t, lockErr)
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, lockErr, &pgErr)
+	assert.Equal(t, "55P03", pgErr.Code)
+
+	release()
+	select {
+	case err := <-validationDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for conflict-context validation to commit")
+	}
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return bumpRelationshipConflictCaseVersion(ctx, tx, teamID, conflictID)
+	}))
+	_, advancedVersion := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+	assert.Greater(t, advancedVersion, conflictVersion)
 }
 
 func TestSubmissionAssessmentCommitRequiresAssessmentForTheSameRun(t *testing.T) {

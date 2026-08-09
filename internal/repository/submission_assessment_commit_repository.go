@@ -61,20 +61,16 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 				return ErrPlacementStaleSource
 			}
 		}
+		conflictContexts := make([]PlacementConflictContextInput, 0, len(input.RelationshipObservations))
 		for _, entry := range input.RelationshipObservations {
 			conflictContext := entry.Observation.ConflictContext
 			if conflictContext == nil {
 				continue
 			}
-			if err := requireRelationshipConflictContextCurrent(
-				ctx,
-				tx,
-				input.TeamID,
-				conflictContext.ConflictID,
-				conflictContext.ExpectedVersion,
-			); err != nil {
-				return err
-			}
+			conflictContexts = append(conflictContexts, *conflictContext)
+		}
+		if err := requireRelationshipConflictContextsCurrent(ctx, tx, input.TeamID, conflictContexts); err != nil {
+			return err
 		}
 		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
 			return err

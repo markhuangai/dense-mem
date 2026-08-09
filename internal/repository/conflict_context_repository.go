@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -39,11 +41,30 @@ func ensureRelationshipConflictContextsCurrent(
 	tx *gorm.DB,
 	input CommitPlacementSemanticInput,
 ) error {
+	contexts := make([]PlacementConflictContextInput, 0, len(input.RelationshipObservations))
 	for _, observation := range input.RelationshipObservations {
 		if observation.ConflictContext == nil {
 			continue
 		}
-		if err := requireRelationshipConflictContextCurrent(ctx, tx, input.TeamID, observation.ConflictContext.ConflictID, observation.ConflictContext.ExpectedVersion); err != nil {
+		contexts = append(contexts, *observation.ConflictContext)
+	}
+	return requireRelationshipConflictContextsCurrent(ctx, tx, input.TeamID, contexts)
+}
+
+func requireRelationshipConflictContextsCurrent(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	contexts []PlacementConflictContextInput,
+) error {
+	sort.Slice(contexts, func(i, j int) bool {
+		if contexts[i].ConflictID == contexts[j].ConflictID {
+			return contexts[i].ExpectedVersion < contexts[j].ExpectedVersion
+		}
+		return contexts[i].ConflictID < contexts[j].ConflictID
+	})
+	for _, conflictContext := range contexts {
+		if err := requireRelationshipConflictContextCurrent(ctx, tx, teamID, conflictContext.ConflictID, conflictContext.ExpectedVersion); err != nil {
 			return err
 		}
 	}
@@ -57,20 +78,22 @@ func requireRelationshipConflictContextCurrent(
 	conflictID string,
 	expectedVersion int,
 ) error {
-	var found bool
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT EXISTS (
-			SELECT 1
-			FROM relationship_conflict_cases
-			WHERE team_id = ?::uuid
-			  AND conflict_id = ?::uuid
-			  AND version = ?
-			  AND status IN ('open', 'overdue')
-		)
-	`, teamID, conflictID, expectedVersion).Scan(&found).Error; err != nil {
+	var currentVersion int
+	err := tx.WithContext(ctx).Raw(`
+		SELECT version
+		FROM relationship_conflict_cases
+		WHERE team_id = ?::uuid
+		  AND conflict_id = ?::uuid
+		  AND status IN ('open', 'overdue')
+		FOR UPDATE
+	`, teamID, conflictID).Row().Scan(&currentVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrConflictContextStale
+	}
+	if err != nil {
 		return err
 	}
-	if !found {
+	if currentVersion != expectedVersion {
 		return ErrConflictContextStale
 	}
 	return nil

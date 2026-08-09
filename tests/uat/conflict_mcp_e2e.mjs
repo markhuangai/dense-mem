@@ -10,7 +10,10 @@ const seededTeamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const reviewDriver = requiredEnv("DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER");
-const placementTimeoutSeconds = positiveIntEnv("DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS", 180, 30, 900);
+const submissionTimeoutEnv = process.env.DENSE_MEM_E2E_SUBMISSION_TIMEOUT_SECONDS
+  ? "DENSE_MEM_E2E_SUBMISSION_TIMEOUT_SECONDS"
+  : "DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS";
+const submissionTimeoutSeconds = positiveIntEnv(submissionTimeoutEnv, 180, 30, 900);
 const runID = `conflict-e2e-${Date.now()}`;
 
 let rpcID = 0;
@@ -179,25 +182,26 @@ async function provenanceAndIsolationScenario() {
   const copiedPosition = positionForRelationship(beforeIndependent, fixture.relationshipA);
   assert(copiedPosition.supporter_count === 21, `copied supporter count = ${copiedPosition.supporter_count}`);
   assert(copiedPosition.support_group_count === 1, `copied source group increased independent weight: ${copiedPosition.support_group_count}`);
-  const staleVersion = Number(beforeIndependent.version);
+  const observedVersion = Number(beforeIndependent.version);
+  // Reusing this observed version must succeed once and be rejected after that commit advances the case.
   await submitPositionSupport(fixture, profileC, {
     label: "provenance-independent-c",
     sourceGroup: `${runID}:provenance:independent:c`,
     authority: "primary",
-    conflictContext: { conflict_id: fixture.conflictID, expected_version: staleVersion },
+    conflictContext: { conflict_id: fixture.conflictID, expected_version: observedVersion },
   });
 
   const afterIndependent = await currentConflict(profileC.apiKey, fixture.relationshipA, "open");
   const independentPosition = positionForRelationship(afterIndependent, fixture.relationshipA);
   assert(independentPosition.supporter_count === 21 && independentPosition.support_group_count === 2, `independent support counts are invalid: ${JSON.stringify(independentPosition)}`);
-  assert(Number(afterIndependent.version) > staleVersion, "fresh conflict_context support did not advance the conflict version");
+  assert(Number(afterIndependent.version) > observedVersion, "fresh conflict_context support did not advance the conflict version");
 
   const semanticBeforeStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
   const stale = await submitPositionSupport(fixture, profileC, {
     label: "provenance-stale-c",
     sourceGroup: `${runID}:provenance:stale:c`,
     authority: "primary",
-    conflictContext: { conflict_id: fixture.conflictID, expected_version: staleVersion },
+    conflictContext: { conflict_id: fixture.conflictID, expected_version: observedVersion },
     expectedState: "rejected",
   });
   assert(stale.status.processing_state === "rejected", `stale conflict submission was not rejected: ${JSON.stringify(stale.status)}`);
@@ -368,7 +372,7 @@ async function submitRelationship(apiKey, input) {
       AND observation.relationship_id IS NOT NULL
     ORDER BY observation.created_at, observation.observation_id
     LIMIT 1
-  `, { allowAnyTeam: true });
+  `);
   assert(relationshipID, `completed submission ${input.label} did not create a relationship observation`);
   return { submissionID, relationshipID, evidenceID, status };
 }
@@ -414,13 +418,13 @@ function relationshipHint(input, evidence) {
 }
 
 async function waitForSubmission(apiKey, submissionID) {
-  const attempts = Math.ceil((placementTimeoutSeconds * 1_000) / 250);
+  const attempts = Math.ceil((submissionTimeoutSeconds * 1_000) / 250);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const status = await mcpSuccess(apiKey, "get_submission_status", { submission_id: submissionID });
     if (["completed", "rejected", "failed", "quarantined"].includes(status.processing_state)) return status;
     await delay(250);
   }
-  throw new Error(`timed out waiting for submission ${submissionID} after ${placementTimeoutSeconds}s`);
+  throw new Error(`timed out waiting for submission ${submissionID} after ${submissionTimeoutSeconds}s`);
 }
 
 async function currentConflict(apiKey, relationshipID, status) {
@@ -454,7 +458,8 @@ function runReview(fixture, now) {
     timeout: 60_000,
   });
   if (result.status !== 0) {
-    throw new Error(`conflict review driver failed (${result.status}): ${redactText(result.stderr || result.stdout)}`);
+    const details = [result.error?.message, result.stderr || result.stdout].filter(Boolean).join(": ");
+    throw new Error(`conflict review driver failed (${result.status}): ${redactText(details)}`);
   }
   const line = result.stdout.trim().split(/\r?\n/).findLast((item) => item.trim().startsWith("{"));
   if (!line) throw new Error(`conflict review driver returned no JSON: ${redactText(result.stdout)}`);
@@ -574,7 +579,7 @@ function postgresJSON(sql) {
   return JSON.parse(raw);
 }
 
-function postgresQuery(sql, options = {}) {
+function postgresQuery(sql) {
   const normalized = sql.trim();
   if (!/^(SELECT|WITH)\b/i.test(normalized)) throw new Error("conflict e2e PostgreSQL helper permits read-only queries only");
   const result = spawnSync("docker", [
@@ -693,6 +698,7 @@ function provenanceFields(position) {
 }
 
 function statusTeamID(submissionID) {
+  // The globally unique ingest ID is the only unscoped fixture key; later lineage reads include its resolved team.
   const value = postgresQuery(`
     SELECT team_id::text
     FROM knowledge_ingests

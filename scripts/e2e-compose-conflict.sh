@@ -28,13 +28,6 @@ const mount = JSON.stringify(`${rootDir}/tests/uat/conflict_openai_stub.mjs:/e2e
 const contents = `${marker}
 services:
   server:
-    environment:
-      AI_API_URL: http://conflict-provider:8081/v1
-      AI_API_KEY: dense-mem-conflict-e2e-key
-      AI_VERIFIER_API_URL: http://conflict-provider:8081/v1
-      AI_VERIFIER_API_KEY: dense-mem-conflict-e2e-key
-      AI_VERIFIER_MODEL: dense-mem-conflict-e2e-verifier
-      AI_VERIFIER_DISABLE_TEMPERATURE: "true"
     depends_on:
       conflict-provider:
         condition: service_healthy

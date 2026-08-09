@@ -43,12 +43,12 @@ func main() {
 	nowRaw := flag.String("now", "", "explicit RFC3339 review time")
 	flag.Parse()
 
+	if strings.TrimSpace(*teamID) == "" || strings.TrimSpace(*conflictID) == "" {
+		fatal("--team-id and --conflict-id are required")
+	}
 	now, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(*nowRaw))
 	if err != nil {
 		fatal("parse --now: %v", err)
-	}
-	if strings.TrimSpace(*teamID) == "" || strings.TrimSpace(*conflictID) == "" {
-		fatal("--team-id and --conflict-id are required")
 	}
 
 	cfg := driverConfig()
@@ -211,7 +211,7 @@ func driverConfig() config.Config {
 		PostgresDSN:                         postgresDSN(),
 		AIVerifierAPIURL:                    requiredEnv("DENSE_MEM_E2E_CONFLICT_PROVIDER_URL"),
 		AIVerifierAPIKey:                    "dense-mem-conflict-e2e-key",
-		AIVerifierModel:                     "dense-mem-conflict-e2e-reviewer",
+		AIVerifierModel:                     "dense-mem-conflict-e2e-verifier",
 		AIVerifierDisableTemperature:        true,
 		AIVerifierTimeoutSeconds:            10,
 		AIVerifierMaxConcurrency:            1,
