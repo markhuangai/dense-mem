@@ -17,6 +17,7 @@ export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team 
   const [telemetryDegraded, setTelemetryDegraded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [loadedTeamID, setLoadedTeamID] = useState<string | null>(null);
   const requestSequence = useRef(0);
   const lastTeamID = useRef(team.id);
   const currentCursor = cursorHistory[cursorHistory.length - 1] ?? "";
@@ -39,12 +40,14 @@ export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team 
         return;
       }
       setPage(value);
+      setLoadedTeamID(team.id);
     }).catch((reason) => {
       if (!active || requestId !== requestSequence.current) {
         return;
       }
       setQueueError(reason);
       setPage(null);
+      setLoadedTeamID(null);
     }).finally(() => {
       if (active && requestId === requestSequence.current) {
         setLoading(false);
@@ -82,7 +85,8 @@ export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team 
     setCursorHistory([]);
   }
 
-  const summary = page?.summary;
+  const visiblePage = loadedTeamID === team.id ? page : null;
+  const summary = visiblePage?.summary;
   const oldestActive = Math.max(summary?.oldest_open_age_seconds ?? 0, summary?.oldest_overdue_age_seconds ?? 0);
   const queueErrorStatus = queueError instanceof ApiError ? queueError.status : 0;
 
@@ -136,14 +140,14 @@ export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team 
 
       {loading && <LoadingState label="Loading conflict queue" />}
       {!loading && Boolean(queueError) && <QueueErrorState status={queueErrorStatus} message={readError(queueError)} />}
-      {!loading && !queueError && page && page.items.length === 0 && <div className="table-placeholder" role="status">No active conflicts match this view.</div>}
-      {!loading && !queueError && page && page.items.length > 0 && <ConflictQueueTable items={page.items} />}
+      {!loading && !queueError && visiblePage && visiblePage.items.length === 0 && <div className="table-placeholder" role="status">No active conflicts match this view.</div>}
+      {!loading && !queueError && visiblePage && visiblePage.items.length > 0 && <ConflictQueueTable items={visiblePage.items} />}
 
-      {!loading && !queueError && page && (
+      {!loading && !queueError && visiblePage && (
         <div className="conflict-queue-pagination" aria-label="Conflict queue pagination">
           <button className="ghost-button" type="button" disabled={cursorHistory.length === 0} onClick={() => setCursorHistory((current) => current.slice(0, -1))}>Previous</button>
           <span>Page {cursorHistory.length + 1}</span>
-          <button className="ghost-button" type="button" disabled={!page.next_cursor} onClick={() => page.next_cursor && setCursorHistory((current) => [...current, page.next_cursor as string])}>Next</button>
+          <button className="ghost-button" type="button" disabled={!visiblePage.next_cursor} onClick={() => visiblePage.next_cursor && setCursorHistory((current) => [...current, visiblePage.next_cursor as string])}>Next</button>
         </div>
       )}
     </section>

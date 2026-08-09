@@ -130,7 +130,7 @@ func TestConflictQueueRepositoryIsTeamScopedAndKeysetOrdered(t *testing.T) {
 				'relationship_conflict_ai_assessment_events_failed_idx',
 				'relationship_conflict_resolution_plans_applied_idx'
 			)
-			ORDER BY indexname
+			ORDER BY index_class.relname
 		`).Scan(&summaryIndexes).Error
 	}))
 	require.True(t, queueIndexExists)

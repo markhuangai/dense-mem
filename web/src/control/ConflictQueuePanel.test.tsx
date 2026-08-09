@@ -37,16 +37,31 @@ describe("ConflictQueuePanel", () => {
   });
 
   it("resets cursor pagination when the selected team changes", async () => {
-    const getConflictQueue = vi.fn().mockResolvedValue(queuePage({ next_cursor: "cursor-2" }));
+    const teamOnePage = queuePage({ next_cursor: "cursor-2" });
+    teamOnePage.items[0].question = "Team one conflict";
+    const teamTwoPage = queuePage();
+    teamTwoPage.items[0].question = "Team two conflict";
+    let resolveTeamTwo: ((value: ConflictQueuePage) => void) | undefined;
+    const getConflictQueue = vi.fn()
+      .mockResolvedValueOnce(teamOnePage)
+      .mockResolvedValueOnce(teamOnePage)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveTeamTwo = resolve;
+      }));
     const api = fakeApi(getConflictQueue);
     const { rerender } = render(<ConflictQueuePanel api={api} team={team()} />);
 
-    await screen.findByText("Conflict question");
-    await userEvent.setup().click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("Team one conflict");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Next" }));
     await waitFor(() => expect(getConflictQueue).toHaveBeenLastCalledWith("team-1", { status: "", limit: 25, cursor: "cursor-2" }));
 
     rerender(<ConflictQueuePanel api={api} team={team({ id: "team-2" })} />);
     await waitFor(() => expect(getConflictQueue).toHaveBeenLastCalledWith("team-2", { status: "", limit: 25, cursor: "" }));
+    expect(screen.queryByText("Team one conflict")).not.toBeInTheDocument();
+    expect(screen.getByText("Loading conflict queue")).toBeInTheDocument();
+    resolveTeamTwo?.(teamTwoPage);
+    expect(await screen.findByText("Team two conflict")).toBeInTheDocument();
   });
 
   it("renders queue data before optional telemetry settles", async () => {
@@ -63,6 +78,7 @@ describe("ConflictQueuePanel", () => {
     expect(await screen.findByText("Conflict question")).toBeInTheDocument();
     expect(screen.queryByText("Loading conflict queue")).not.toBeInTheDocument();
     resolveTelemetry?.({ available: false, current_cards: [] });
+    expect(await screen.findByText("Queue telemetry is unavailable; queue data may still be current.")).toBeInTheDocument();
   });
 
   it("distinguishes authorization failure from collector degradation", async () => {

@@ -230,12 +230,19 @@ func TestReadOnlyRepeatableReadTransactionOptions(t *testing.T) {
 
 	rls := NewRLS()
 	teamID := createTestTeam(t, db, "Read-only team")
+	otherTeamID := createTestTeam(t, db, "Other read-only team")
+	createTestTeamProfile(t, db, teamID, "Authorized profile")
+	createTestTeamProfile(t, db, otherTeamID, "Foreign profile")
 	var isolation, readOnly string
+	var visibleProfiles int64
 	err := rls.WithTeamReadOnlyRepeatableTx(ctx, db, teamID.String(), func(tx *gorm.DB) error {
 		if err := tx.Raw("SHOW transaction_isolation").Scan(&isolation).Error; err != nil {
 			return err
 		}
 		if err := tx.Raw("SHOW transaction_read_only").Scan(&readOnly).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&TeamProfile{}).Count(&visibleProfiles).Error; err != nil {
 			return err
 		}
 		return tx.Exec("UPDATE teams SET updated_at = updated_at WHERE id = ?", teamID).Error
@@ -249,6 +256,9 @@ func TestReadOnlyRepeatableReadTransactionOptions(t *testing.T) {
 	}
 	if readOnly != "on" {
 		t.Fatalf("expected read-only transaction, got %q", readOnly)
+	}
+	if visibleProfiles != 1 {
+		t.Fatalf("expected one team-scoped profile, got %d", visibleProfiles)
 	}
 }
 

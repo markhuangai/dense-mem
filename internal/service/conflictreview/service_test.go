@@ -233,6 +233,9 @@ func TestServiceObservesPendingResolutionOnlyOnTransition(t *testing.T) {
 
 	_, err = service.ReviewRelationshipConflictCase(context.Background(), conflictReviewInput())
 	require.NoError(t, err)
+	before := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(before, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.NotContains(t, before.Body.String(), `densemem_conflict_resolutions_total{`)
 	repo.pendingResult.PendingTransitioned = true
 	_, err = service.ReviewRelationshipConflictCase(context.Background(), conflictReviewInput())
 	require.NoError(t, err)
