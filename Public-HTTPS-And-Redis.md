@@ -166,7 +166,7 @@ Verify:
 
 - certificate/hostname and HTTP-to-HTTPS behavior
 - control/metrics/data ports are unreachable publicly
-- `dense-mem.v2.4` routes/tools work
+- current `tools/list` routes/tools work
 - wrong/missing keys fail safely
 - body/rate/in-flight limits
 - Redis outage drains replicas

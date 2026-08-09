@@ -36,6 +36,10 @@ records, not Prometheus.
 | `densemem_embedding_errors_total` | `model`, `code` | Embedding provider errors. |
 | `densemem_embedding_duration_seconds` | `model`, `outcome` | Embedding provider request duration. |
 | `densemem_embedding_tokens_total` | `model`, `kind` | Reported embedding tokens; `kind` is `prompt` or `total`. |
+| `densemem_embedding_reconciliation_runs_total` | `outcome` | Daily durable reconciliation run outcomes. |
+| `densemem_embedding_reconciliation_canaries_total` | `outcome` | One-canary outcomes; a successful run records `succeeded`. |
+| `densemem_embedding_reconciliation_jobs_total` | `action`, `source_kind`, `failure_class`, `failure_code` | Bounded job changes made after a successful canary. |
+| `densemem_embedding_reconciliation_duration_seconds` | `outcome` | Reconciliation run duration histogram. |
 | `densemem_verifier_requests_total` | `model`, `outcome` | Verifier provider calls. |
 | `densemem_verifier_duration_seconds` | `model`, `outcome` | Verifier provider request duration. |
 | `densemem_verifier_tokens_total` | `model`, `kind` | Reported verifier tokens; `kind` is `prompt`, `completion`, or `total`. |
@@ -62,6 +66,11 @@ records, not Prometheus.
 
 The conflict-review histogram uses second buckets of `0.1`, `1`, `5`, `15`,
 `30`, `60`, `300`, and `900`.
+
+Reconciliation counters are operator health signals, not evidence or team
+content. Failure labels are the closed provider/input contract only. Query the
+control Search convergence projection for current queue counts, affected teams,
+guidance, and run state; do not infer current state from counter values alone.
 
 ## Cost Rate Card
 

@@ -141,6 +141,9 @@ The control portal manages:
 - provider/embedding and search-index generation visibility without exposing
   secret values
 - placement and embedding backlog/search freshness
+- Search convergence: structural readiness versus asynchronous embedding recovery,
+  allowlisted failure codes, affected teams, guidance, run/canary state, logs,
+  and metrics
 - PostgreSQL, pgvector, query, and backup health
 - operation/audit/security views
 - telemetry and feedback summaries
@@ -149,6 +152,19 @@ The control portal manages:
 
 It is not a general memory editor. Semantic changes use versioned review,
 correction, merge/split, retraction, or import workflows with audit.
+
+The Search convergence view is read-only. It has no retry button or provider
+credential editor. Quota, authentication, access, and transient provider
+incidents are retried by the daily scheduler after one raw-provider canary;
+input, contract, and unknown failures remain blocked. Public users see only the
+bounded `search_indexing_delayed` status error, while operators see the exact
+allowlisted code and guidance. A provider change is guidance only and must keep
+the active model and dimensions compatible.
+
+The corresponding operator endpoint is `GET /control/api/search/convergence`.
+It is protected by the control-plane authentication boundary and returns only
+the active contract summary, bounded queue/failure data, team names, guidance,
+and durable run state.
 
 ## API Keys
 

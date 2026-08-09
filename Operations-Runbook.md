@@ -379,6 +379,59 @@ During a vector backlog:
 Never copy an older vector onto a newer document or mark `search_state=current`
 without the source/document/contract version predicate succeeding.
 
+### Daily failed-embedding reconciliation
+
+`/ready` is a structural safety probe. A `200` response can coexist with an
+optional `search_convergence` dependency in `degraded`, `attention_required`,
+or `recovering` state. Start triage at the private control API and Search
+convergence panel:
+
+```bash
+curl -fsS "$CONTROL_URL/control/api/search/convergence" \
+  -H "Authorization: Bearer $CONTROL_PORTAL_TOKEN"
+```
+
+The response contains the active provider/model/dimensions and index
+generation, queue counts, allowlisted failure codes, affected teams, guidance,
+and the latest durable run/canary. The operation-log view records bounded
+`embedding_failure_recorded` and reconciliation events; Prometheus exposes
+`densemem_embedding_reconciliation_runs_total`,
+`densemem_embedding_reconciliation_canaries_total`,
+`densemem_embedding_reconciliation_jobs_total`, and the duration histogram.
+Only active teams contribute to this operational projection. Soft-deleted-team
+jobs and incidents remain as history but cannot keep active convergence in
+`attention_required`. A projection query failure returns a bounded internal
+error and safe event code rather than PostgreSQL details.
+
+Recovery is automatic and daily at the strict General-configured
+`EMBEDDING_RECONCILIATION_START_TIME_LOCAL` in `APP_TIMEZONE` (default
+`04:30`). One durable run per active contract/local date claims one failed
+document. The marker is committed before the raw provider call, so a restart
+cannot silently make a second same-day canary. A successful canary completes
+that job and requeues the pre-cutoff recoverable backlog in batches capped at
+500; a failed or ambiguous canary leaves the backlog blocked for the next day.
+If later batch or incident accounting fails after one or more batches commit,
+the run remains deferred but retains the successful canary outcome and exact
+committed `requeued_count`.
+
+During upgrade, bounded legacy timeout, network, rate-limit, quota, auth, and
+provider 5xx strings are mapped to the closed failure contract. Unknown legacy
+strings remain permanent rather than being guessed recoverable.
+
+| Code/class | Automatic policy | Operator guidance |
+| --- | --- | --- |
+| `provider_quota_exhausted` / provider action | retry on the next daily canary indefinitely | add provider credit or repair billing |
+| `provider_authentication_failed` / provider action | retry on the next daily canary indefinitely | replace the credential |
+| `provider_permission_denied` / provider action | retry on the next daily canary indefinitely | restore access or endpoint permission |
+| transient provider/network/server | retry on the next daily canary indefinitely | inspect provider health and capacity |
+| `embedding_input_rejected`, `embedding_contract_mismatch`, `unknown_embedding_failure` | remain blocked | inspect data/contract compatibility |
+
+Do not add a manual retry endpoint, edit job state directly, or change model or
+dimensions as a “fix.” Provider changes are guidance only and must preserve the
+active embedding contract. Failed text remains lexical-recall eligible while
+failed vectors remain excluded; resolve the provider or contract cause, then
+let the canary prove recovery.
+
 ### Relationship projection upgrade
 
 Use this release procedure for projection format `2`; the canonical state

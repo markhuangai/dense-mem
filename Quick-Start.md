@@ -1,7 +1,7 @@
 # Quick Start
 
-This is the local PostgreSQL setup and `dense-mem.v2.4` smoke test. Use a
-pinned release that advertises that contract.
+This is the local PostgreSQL setup and current closed-schema smoke test. Use a
+pinned release and discover its authorized catalog with MCP `tools/list`.
 
 ## Local Shape
 
@@ -37,7 +37,8 @@ cp .env.example .env
 ```
 
 Verify the release tag, artifact checksum/signature, and release notes. Stop if
-the release does not advertise `dense-mem.v2.4` and PostgreSQL authority.
+the release does not advertise PostgreSQL authority or its `tools/list` catalog
+does not match the expected closed schemas.
 
 Release candidates use `vX.Y.Z-rc.N` for the release image and
 `demo-vX.Y.Z-rc.N` for the demo image. Stable promotion reuses those exact
@@ -152,7 +153,7 @@ export DENSE_MEM_API_KEY="dm_..."
 Follow [MCP Clients](MCP-Clients) and connect the LLM host. The host initializes
 the server and calls `tools/list`; verify:
 
-- contract `dense-mem.v2.4`
+- one current closed schema discovered through `tools/list`; callers cannot select a contract version
 - `remember` requires evidence plus exact span-grounded proposals
 - `get_submission_status` returns owner-scoped processing and search state
 - legacy placement and review tools are absent

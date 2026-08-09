@@ -48,9 +48,10 @@ The version-sensitive source is the
 
 After connection, the host initializes the MCP server and calls tools/list.
 Use the host’s MCP status/tool view to confirm the visible catalog. Visibility
-depends on scope, role, feature flags, and contract version.
+depends on scope, role, and feature flags. The server exposes one current
+closed schema; callers do not select a contract version.
 
-For dense-mem.v2.4, verify:
+Verify:
 
 - remember requires evidence and a proposal with exact Unicode code-point spans;
 - get_submission_status accepts a submission_id and exposes only safe,
@@ -114,7 +115,7 @@ Use [Quick Start](Quick-Start) and
 | --- | --- |
 | server absent | URL, network, TLS, client restart |
 | unauthorized | Environment variable exported to client process, key expiry/revocation |
-| tool missing | Scopes, feature flag, contract version |
+| tool missing | Scopes, feature flag, and current `tools/list` visibility |
 | remember rejected | Exact proposal spans, closed schema, source rules, and security scan |
 | submission stays queued/processing | Worker/readiness/provider health and safe status error |
 | submission failed | Read `errors[].message` for the bounded terminal stage; never expect provider or database details |

@@ -64,9 +64,8 @@ Follow [MCP Clients](MCP-Clients) with:
 https://demo-dense-mem.markhuang.ai/mcp
 ```
 
-Run tool discovery. Verify that discovery/server metadata
-advertises Dense-Mem contract `dense-mem.v2.4`, that `remember` requires an
-exact-span proposal, and that `get_submission_status` is present while the
+Run tool discovery. Verify that the current closed schema is returned, that
+`remember` requires an exact-span proposal, and that `get_submission_status` is present while the
 retired placement/review tools are absent.
 
 ## Step 3: Test Shared Memory
@@ -124,12 +123,12 @@ evidence. The safe behavior is:
 
 | Symptom | Check |
 | --- | --- |
-| tool names/fields differ | deployed contract version and `tools/list` |
+| tool names/fields differ | reconnect and compare the current `tools/list` schema |
 | another client sees nothing | both clients use exactly the same key |
 | submission is not searchable | inspect submission processing outcome and search freshness |
 | rejected or quarantined status | do not use the content; submit a new complete request only when appropriate |
 | quota/expiry error | current limits on demo page/runtime response |
-| deployed behavior differs from this page | check the current release tag and `tools/list` metadata |
+| deployed behavior differs from this page | check the current release tag and `tools/list` schema |
 
 ## Next
 

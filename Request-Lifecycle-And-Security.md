@@ -287,11 +287,10 @@ sequenceDiagram
 The runtime advertises supported MCP protocol versions. Do not hardcode one
 protocol date in the manual as timeless.
 
-The negotiated MCP protocol version and Dense-Mem tool contract
-`dense-mem.v2.4` are
-different versions. The host follows the current `tools/list` schemas and
-server instructions instead of applying a cached input shape from another
-Dense-Mem release.
+The negotiated MCP protocol version is distinct from Dense-Mem's current closed
+tool schema. The host follows the current `tools/list` schemas and server
+instructions instead of applying a cached input shape from another Dense-Mem
+release.
 
 The protocol boundary guarantees authenticated MCP semantics; it cannot prove
 that a particular model produced the request because any conforming host can
@@ -368,14 +367,22 @@ weaken the promised global limit.
 
 Readiness includes PostgreSQL migrations/RLS, `pgvector`, the persisted
 embedding contract, active search-index generation/topology parity, required
-provider contracts, complete Relationship text projection, submission-assessment
-and embedding backlog policy, and Redis when distributed coordination is required.
-Relationship vector-generation warming is an optional recall degradation after
-text convergence; incomplete Relationship text projection is a readiness
-failure. Optional feature outages appear as degradation unless deployment
-policy makes them required.
+provider contracts, complete Relationship text projection, and Redis when
+distributed coordination is required. Queued, processing, expired, or failed
+embedding jobs are asynchronous convergence state and do not make `/ready`
+fail. `search_convergence` is exposed as an optional health dependency and
+operator projection; it can report `attention_required` or `recovering` while
+structural readiness remains `200 ready`. Incomplete Relationship text
+projection is still a readiness failure.
 
 Do not use liveness as a readiness gate.
+
+The daily reconciliation scheduler reserves one durable local-date run per
+active embedding contract. It fences workers with a lease token, marks the
+canary before the provider call, calls the raw provider exactly once, and
+releases the recoverable backlog only after successful completion. Ambiguous
+provider or database completion is fail-closed and remains visible to
+operators.
 
 ## Error Boundary
 
@@ -388,6 +395,12 @@ and correlation ID. They never include:
 - credentials/cookies/tokens
 - embeddings
 - cross-team existence hints
+
+Embedding failure codes are closed and bounded. Public submission status uses
+`search_indexing_delayed`; operator-only convergence exposes allowlisted codes
+such as `provider_quota_exhausted`, affected teams, guidance, run state, and
+metrics. Provider messages, response bodies, request text, and credentials are
+not copied into those surfaces.
 
 Typed error schema is in
 [Technical Reference](Technical-Reference#authentication-errors-and-audit).

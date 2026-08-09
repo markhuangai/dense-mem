@@ -4,8 +4,8 @@ Dense-Mem accepts exact evidence plus a complete client-generated relationship
 array. The server owns every durable decision. There is no client review loop,
 placement selection, or request for follow-up evidence.
 
-The public write contract is dense-mem.v2.4. Discover the current schema with
-MCP tools/list; this page explains the lifecycle behind remember and
+The public write contract is the current closed schema. Discover it with MCP
+tools/list; callers do not select a contract version. This page explains the lifecycle behind remember and
 get_submission_status.
 
 ## End-To-End Flow
@@ -298,6 +298,21 @@ provider, database, prompt, and credential details never appear in status.
 search_state=pending means canonical promotion may be complete while a derived
 embedding is still being built. current and not_required are ready for the
 evaluation/recall freshness gate; failed is a visible degradation.
+
+Failed embedding is an asynchronous search degradation, not a rollback of
+accepted evidence or canonical Relationships. The aggregate and affected
+Evidence status may include the bounded `search_indexing_delayed` code; it
+never includes a provider body, credential, prompt, or raw transport error.
+Failed documents remain eligible for lexical recall, while their vectors stay
+out of vector search.
+
+An always-on daily reconciliation run records a durable incident, makes one
+raw-provider canary request, and only after a successful canary requeues the
+pre-cutoff recoverable backlog in bounded batches. Quota, authentication, and
+provider-access failures remain eligible for the next daily canary; input,
+contract, and unknown failures stay blocked. There is no user retry action.
+Operators use the control Search convergence view for failure codes, affected
+teams, guidance, run/canary state, operation logs, and metrics.
 
 There is deliberately no client-facing placement/review tool, review task,
 client confidence value, or follow-up-evidence action in this contract.

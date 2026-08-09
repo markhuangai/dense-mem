@@ -128,6 +128,20 @@ move semantic authority to Redis, a model provider, or a secondary graph store.
 | `AI_API_EMBEDDING_MAX_CONCURRENCY` | `8` | process-wide concurrency |
 | `EMBEDDING_NORMALIZATION_VERSION` | required | canonical preprocessing version |
 
+Daily failed-embedding reconciliation is always enabled. Its schedule is
+PostgreSQL-backed General configuration, not an environment feature flag:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `EMBEDDING_RECONCILIATION_START_TIME_LOCAL` | `04:30` | strict local `HH:MM` calendar time for one run per active embedding contract and local date |
+
+The scheduler uses `APP_TIMEZONE` from the same General configuration. A
+successful run performs one raw-provider canary, then releases at most 500
+eligible failed jobs per batch. Quota, authentication, access, and other
+provider-action failures remain eligible for the next daily canary; input,
+contract, and unknown failures remain blocked. The active model and dimensions
+are never changed by recovery guidance.
+
 Provider adapter, model, dimensions, normalization, and query construction are
 one persisted numerical embedding contract. Projection format is separately
 versioned per `source_kind`; changing the Relationship renderer does not change
@@ -488,15 +502,16 @@ model or configuration exists.
 
 A team may set only `review_ttl_days` as a PostgreSQL-backed override in the
 same 1–30 range. The control-plane change is audited and applies to cases opened
-afterward; an existing case retains its captured deadline and policy version.
-New evidence does not extend the original deadline. The override cannot disable
-review, weaken either evidence floor, or select a preferred position. Conflict
-policy is not exposed through MCP and no portal conflict inbox is implied.
+afterward; an existing case retains its captured deadline and is migrated to the
+sole deployed supporter policy during a policy rollout. New evidence does not
+extend the original deadline. The override cannot disable review or select a
+preferred position. Conflict policy is not exposed through MCP and no portal
+conflict inbox is implied.
 
 Conflict `policy_version` is not runtime configuration. It is a server-owned
-resolver contract identifier captured on case and Relationship transition events
-for audit, replay, and migration safety. Changing that resolver contract is a
-code/schema rollout with evaluation gates, not an operator or team override.
+resolver policy identifier captured on case and Relationship transition events
+for audit, replay, and migration safety. Only one policy is active at a time;
+changing it is a code/schema rollout, not an operator or team override.
 
 The scheduler performs bounded catch-up after downtime by reserving at most one
 run per team/local date. Missing the nominal start time does not skip due cases,

@@ -1,6 +1,6 @@
 # Using Dense-Mem
 
-Dense-Mem is an MCP memory service. The dense-mem.v2.4 workflow is
+Dense-Mem is an MCP memory service. The current workflow is
 evidence-first: the client submits exact evidence with a required, span-grounded
 proposal; the server assesses and promotes it without a client review loop.
 

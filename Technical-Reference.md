@@ -1,6 +1,6 @@
 # Technical Reference
 
-This page defines the dense-mem.v2.4 public memory contract. MCP discovery is
+This page defines the current public memory contract. MCP discovery is
 the authoritative source for the exact schema visible to an authenticated
 principal:
 
@@ -352,30 +352,30 @@ trace_memory takes a same-team relationship_id and can include bounded evidence,
 verification, transitions, and graph context. It is the provenance path for a
 specific Relationship.
 
-In `dense-mem.v2.4`, conflict positions in both recall and trace include the
-same additive bounded supporter projection:
+Conflict positions in both recall and trace include the same bounded supporter
+projection:
 
 ```json
 {
   "supporter_count": 3,
-  "support_group_count": 2,
-  "authoritative_group_count": 1,
   "supporters_truncated": false,
   "supporters": [{
     "profile_id": "profile-id",
     "profile_name": "Current display name",
     "strongest_authority": "authoritative",
     "evidence_id": "evidence-id",
-    "accepted_at": "2026-08-06T00:00:00Z",
-    "source_group_count": 1
+    "accepted_at": "2026-08-06T00:00:00Z"
   }]
 }
 ```
 
 The summary limit is 20. Ordering is strongest authority, newest accepted
 Evidence at that authority, then immutable profile ID. Counts cover all
-effective support even when summaries are truncated. Names are hydrated under
-the same team scope; raw source-group keys and Evidence content are excluded.
+effective profile votes even when summaries are truncated. A profile with
+multiple positions contributes only its uniquely newest position; an exact
+newest-time tie abstains. Names are hydrated under the same team scope;
+source-group keys and Evidence content remain internal provenance and are
+excluded from the conflict projection.
 
 ## Authentication, Errors, and Audit
 
