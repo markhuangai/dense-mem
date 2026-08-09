@@ -83,6 +83,8 @@ type PrometheusMetrics struct {
 	communityRuns                *prometheus.CounterVec
 	communitySummaries           *prometheus.CounterVec
 	communityRecalls             *prometheus.CounterVec
+	conflictAssessments          *prometheus.CounterVec
+	conflictResolutions          *prometheus.CounterVec
 }
 
 var _ DiscoverabilityMetrics = (*PrometheusMetrics)(nil)
@@ -272,6 +274,14 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 			Name: "densemem_community_recall_total",
 			Help: "Community recall outcomes.",
 		}, append(identityLabels(), "outcome")),
+		conflictAssessments: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_conflict_assessments_total",
+			Help: "Durably committed conflict assessment decisions by bounded outcome.",
+		}, []string{"team_id", "decision", "failure_class"}),
+		conflictResolutions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_conflict_resolutions_total",
+			Help: "Durably committed conflict resolutions by bounded method and outcome.",
+		}, []string{"team_id", "method", "outcome"}),
 	}
 	m.registry.MustRegister(
 		m.httpRequests, m.httpDuration,
@@ -287,6 +297,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		m.assessorConfidenceGate, m.assessorReviewExpiry,
 		m.assessorTerminalFailures,
 		m.quarantinePurgeFailures, m.communityRuns, m.communitySummaries, m.communityRecalls,
+		m.conflictAssessments, m.conflictResolutions,
 	)
 	return m
 }

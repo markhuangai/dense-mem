@@ -673,6 +673,18 @@ func loadRelationshipConflictRecordsByID(
 	conflictIDs []string,
 	knownAt *time.Time,
 ) ([]RelationshipConflictCaseRecord, error) {
+	return loadRelationshipConflictRecordsByIDBounded(ctx, tx, teamID, conflictIDs, knownAt, 0, relationshipConflictSupporterLimit)
+}
+
+func loadRelationshipConflictRecordsByIDBounded(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	conflictIDs []string,
+	knownAt *time.Time,
+	positionLimit int,
+	supporterLimit int,
+) ([]RelationshipConflictCaseRecord, error) {
 	conflictIDs = normalizeRecallUUIDList(conflictIDs)
 	if len(conflictIDs) == 0 {
 		return []RelationshipConflictCaseRecord{}, nil
@@ -681,11 +693,11 @@ func loadRelationshipConflictRecordsByID(
 	if err != nil {
 		return nil, err
 	}
-	positions, err := loadRelationshipConflictPositionRows(ctx, tx, teamID, conflictIDs, knownAt)
+	positions, err := loadRelationshipConflictPositionRowsWithLimit(ctx, tx, teamID, conflictIDs, knownAt, positionLimit)
 	if err != nil {
 		return nil, err
 	}
-	if err := loadRelationshipConflictSupporters(ctx, tx, teamID, conflictIDs, knownAt, positions); err != nil {
+	if err := loadRelationshipConflictSupporters(ctx, tx, teamID, conflictIDs, knownAt, positions, supporterLimit); err != nil {
 		return nil, err
 	}
 	for i := range cases {
@@ -775,6 +787,17 @@ func loadRelationshipConflictPositionRows(
 	conflictIDs []string,
 	knownAt *time.Time,
 ) ([]RelationshipConflictPositionRecord, error) {
+	return loadRelationshipConflictPositionRowsWithLimit(ctx, tx, teamID, conflictIDs, knownAt, 0)
+}
+
+func loadRelationshipConflictPositionRowsWithLimit(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	conflictIDs []string,
+	knownAt *time.Time,
+	positionLimit int,
+) ([]RelationshipConflictPositionRecord, error) {
 	dispositionSelect := "position.disposition"
 	dispositionGroup := ", position.disposition"
 	if knownAt != nil {
@@ -782,20 +805,21 @@ func loadRelationshipConflictPositionRows(
 		dispositionGroup = ""
 	}
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
-		SELECT position.conflict_id::text,
-		       position.position_id::text,
-		       position.position_key,
-		       COALESCE(position.object_entity_id::text, ''),
-		       COALESCE(position.object_value_id::text, ''),
-		       %s,
-		       COUNT(DISTINCT member.source_group_key)::int,
-		       (COUNT(DISTINCT member.source_group_key) FILTER (WHERE member.authority = 'authoritative'))::int,
-		       COALESCE(array_remove(array_agg(DISTINCT member.relationship_id::text ORDER BY member.relationship_id::text), NULL), ARRAY[]::text[]),
-		       COALESCE(array_remove(array_agg(DISTINCT member.owner_profile_id::text ORDER BY member.owner_profile_id::text), NULL), ARRAY[]::text[]),
-		       COALESCE(array_remove(array_agg(DISTINCT member.fragment_id::text ORDER BY member.fragment_id::text), NULL), ARRAY[]::text[]),
-		       max(member.effective_at),
-		       max(member.effective_time_basis),
-		       COALESCE(bool_and(member.recorded_fallback), false)
+		WITH grouped AS (
+			SELECT position.conflict_id::text AS conflict_id,
+			       position.position_id::text AS position_id,
+			       position.position_key,
+			       COALESCE(position.object_entity_id::text, '') AS object_entity_id,
+			       COALESCE(position.object_value_id::text, '') AS object_value_id,
+			       %s AS disposition,
+			       COUNT(DISTINCT member.source_group_key)::int AS support_group_count,
+			       (COUNT(DISTINCT member.source_group_key) FILTER (WHERE member.authority = 'authoritative'))::int AS authoritative_group_count,
+			       COALESCE(array_remove(array_agg(DISTINCT member.relationship_id::text ORDER BY member.relationship_id::text), NULL), ARRAY[]::text[]) AS relationship_ids,
+			       COALESCE(array_remove(array_agg(DISTINCT member.owner_profile_id::text ORDER BY member.owner_profile_id::text), NULL), ARRAY[]::text[]) AS owner_profile_ids,
+			       COALESCE(array_remove(array_agg(DISTINCT member.fragment_id::text ORDER BY member.fragment_id::text), NULL), ARRAY[]::text[]) AS evidence_ids,
+			       max(member.effective_at) AS effective_at,
+			       max(member.effective_time_basis) AS effective_time_basis,
+			       COALESCE(bool_and(member.recorded_fallback), false) AS recorded_fallback
 			FROM relationship_conflict_positions AS position
 			LEFT JOIN relationship_conflict_position_members AS member
 			 ON member.team_id = position.team_id
@@ -820,11 +844,23 @@ func loadRelationshipConflictPositionRows(
 			  )
 			GROUP BY position.conflict_id, position.position_id, position.position_key,
 			         position.object_entity_id, position.object_value_id%s
-			ORDER BY position.conflict_id, position.position_key
+		), ranked AS (
+			SELECT grouped.*,
+			       row_number() OVER (PARTITION BY conflict_id ORDER BY position_key, position_id) AS position_rank
+			FROM grouped
+		)
+		SELECT conflict_id, position_id, position_key, object_entity_id, object_value_id,
+		       disposition, support_group_count, authoritative_group_count,
+		       relationship_ids, owner_profile_ids, evidence_ids, effective_at,
+		       effective_time_basis, recorded_fallback
+		FROM ranked
+		WHERE ?::int <= 0 OR position_rank <= ?::int
+		ORDER BY conflict_id, position_key, position_id
 		`, dispositionSelect, dispositionGroup),
 		knownAt, knownAt, knownAt, knownAt,
 		teamID, pq.Array(conflictIDs),
-		knownAt, knownAt, knownAt, knownAt).Rows()
+		knownAt, knownAt, knownAt, knownAt,
+		positionLimit, positionLimit).Rows()
 	if err != nil {
 		return nil, err
 	}

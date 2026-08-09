@@ -26,6 +26,7 @@ const relationshipConflictSupporterRowsSQL = `
 		 AND position.position_id = member.position_id
 		WHERE member.team_id = ?::uuid
 		  AND member.conflict_id = ANY(?::uuid[])
+		  AND (cardinality(?::uuid[]) = 0 OR member.position_id = ANY(?::uuid[]))
 		  AND (
 		      (?::timestamptz IS NULL AND member.active)
 		      OR (
@@ -126,13 +127,14 @@ func loadRelationshipConflictSupporters(
 	conflictIDs []string,
 	knownAt *time.Time,
 	positions []RelationshipConflictPositionRecord,
+	supporterLimit int,
 ) error {
 	if len(positions) == 0 {
 		return nil
 	}
 	rows, err := tx.WithContext(ctx).Raw(
 		relationshipConflictSupporterRowsSQL,
-		relationshipConflictSupporterRowsArgs(teamID, conflictIDs, knownAt)...,
+		relationshipConflictSupporterRowsArgsWithLimit(teamID, conflictIDs, positionIDs(positions), knownAt, supporterLimit)...,
 	).Rows()
 	if err != nil {
 		return err
@@ -178,12 +180,29 @@ func loadRelationshipConflictSupporters(
 }
 
 func relationshipConflictSupporterRowsArgs(teamID string, conflictIDs []string, knownAt *time.Time) []any {
+	return relationshipConflictSupporterRowsArgsWithLimit(teamID, conflictIDs, nil, knownAt, relationshipConflictSupporterLimit)
+}
+
+func relationshipConflictSupporterRowsArgsWithLimit(teamID string, conflictIDs, positionIDs []string, knownAt *time.Time, supporterLimit int) []any {
+	if supporterLimit <= 0 {
+		supporterLimit = relationshipConflictSupporterLimit
+	}
 	return []any{
 		teamID,
 		pq.Array(conflictIDs),
+		pq.Array(positionIDs),
+		pq.Array(positionIDs),
 		knownAt, knownAt, knownAt, knownAt,
 		knownAt, knownAt, knownAt, knownAt,
 		teamID,
-		relationshipConflictSupporterLimit,
+		supporterLimit,
 	}
+}
+
+func positionIDs(positions []RelationshipConflictPositionRecord) []string {
+	ids := make([]string, 0, len(positions))
+	for _, position := range positions {
+		ids = append(ids, position.PositionID)
+	}
+	return ids
 }

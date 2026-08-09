@@ -28,6 +28,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
+	"github.com/markhuangai/dense-mem/internal/service/conflictqueue"
 	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
@@ -117,12 +118,12 @@ func RunActiveServer(
 			Timezone:      cfg.GetAppTimezone(),
 		},
 	)
+	conflictQueueService := conflictqueue.New(ledgerRepo)
 	searchRepo := repository.NewSearchRepositoryWithEmbeddingJobMaxAttempts(
 		pgDB.GetDB(),
 		rlsHelper,
 		cfg.GetEmbeddingJobMaxAttempts(),
 	)
-
 	if err := checkActiveAuthority(authority); err != nil {
 		log.Fatalf("active boot blocked: %v", err)
 	}
@@ -205,6 +206,9 @@ func RunActiveServer(
 				EmbeddingInputUSDPerMillionTokens: pricing.EmbeddingInputUSDPerMillionTokens,
 			}, nil
 		}))
+		if err := prometheusMetrics.RegisterConflictQueueCollector(observability.NewConflictQueueCollector(ledgerRepo.CollectConflictQueueMetrics)); err != nil {
+			log.Fatalf("failed to register conflict queue metrics: %v", err)
+		}
 		discoverabilityMetrics = prometheusMetrics
 		telemetryHTTPMetrics = prometheusMetrics
 		telemetryScrapeHandler = prometheusMetrics.Handler()
@@ -227,7 +231,6 @@ func RunActiveServer(
 	if err != nil {
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
-
 	securityRejectionAuditor := newSecurityRejectionAuditAdapter(auditService)
 	rememberSvc := memoryservice.NewRememberService(memoryservice.RememberDependencies{
 		Ledger:  ledgerRepo,
@@ -422,6 +425,7 @@ func RunActiveServer(
 				RecallFeedback:  recallFeedbackEventService,
 				Dreams:          controlDreamSvc,
 				Communities:     communitySvc,
+				ConflictQueue:   conflictQueueService,
 			},
 			healthConfig,
 			logger,
