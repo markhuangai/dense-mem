@@ -1,0 +1,84 @@
+E2E_CONFLICT_PROVIDER_PORT=""
+E2E_CONFLICT_REVIEW_DRIVER=""
+
+append_conflict_e2e_environment() {
+  if [[ "$E2E_SCENARIO" != "conflict" ]]; then
+    return
+  fi
+  printf '%s\n' \
+    "AI_API_URL=http://conflict-provider:8081/v1" \
+    "AI_API_KEY=dense-mem-conflict-e2e-key" \
+    "AI_API_EMBEDDING_MODEL=dense-mem-conflict-e2e-embedding" \
+    "AI_VERIFIER_API_URL=http://conflict-provider:8081/v1" \
+    "AI_VERIFIER_API_KEY=dense-mem-conflict-e2e-key" \
+    "AI_VERIFIER_MODEL=dense-mem-conflict-e2e-verifier" \
+    "AI_VERIFIER_DISABLE_TEMPERATURE=true" >> "$E2E_ENV_FILE"
+}
+
+prepare_conflict_provider_files() {
+  if [[ "$E2E_SCENARIO" != "conflict" ]]; then
+    return
+  fi
+  E2E_COMPOSE_OVERLAY_FILE="${ROOT_DIR}/docker-compose.conflict-e2e-${E2E_FILE_ID}.yml"
+  node - "$E2E_COMPOSE_OVERLAY_FILE" "$ROOT_DIR" "$E2E_CONFLICT_PROVIDER_PORT" "$E2E_MARKER" <<'NODE'
+const fs = require("node:fs");
+
+const [destination, rootDir, providerPort, marker] = process.argv.slice(2);
+const mount = JSON.stringify(`${rootDir}/tests/uat/conflict_openai_stub.mjs:/e2e/conflict_openai_stub.mjs:ro`);
+const contents = `${marker}
+services:
+  server:
+    depends_on:
+      conflict-provider:
+        condition: service_healthy
+  conflict-provider:
+    image: node:24-alpine
+    working_dir: /e2e
+    command: ["node", "/e2e/conflict_openai_stub.mjs"]
+    volumes:
+      - ${mount}
+    ports:
+      - "127.0.0.1:${providerPort}:8081"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+`;
+fs.writeFileSync(destination, contents);
+NODE
+}
+
+prepare_conflict_review_driver() {
+  if [[ "$E2E_SCENARIO" != "conflict" ]]; then
+    return
+  fi
+  E2E_CONFLICT_REVIEW_DRIVER="${TEMP_DIR}/conflict-review-driver"
+  go build -o "$E2E_CONFLICT_REVIEW_DRIVER" ./tests/uat/conflict_review_driver
+}
+
+run_conflict_e2e() {
+  local team_id="$1"
+  local runtime_postgres_user
+  local runtime_postgres_password
+  local runtime_postgres_database
+
+  echo "Running deterministic compose-backed MCP conflict e2e."
+  runtime_postgres_user="$(compose_server_environment_value POSTGRES_USER)"
+  runtime_postgres_password="$(compose_server_environment_value POSTGRES_PASSWORD)"
+  runtime_postgres_database="$(compose_server_environment_value POSTGRES_DB)"
+  DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
+  DENSE_MEM_USER_URL="$USER_URL" \
+  DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
+  DENSE_MEM_E2E_TEAM_ID="$team_id" \
+  DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
+  DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
+  DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER="$E2E_CONFLICT_REVIEW_DRIVER" \
+  DENSE_MEM_E2E_CONFLICT_PROVIDER_URL="http://127.0.0.1:${E2E_CONFLICT_PROVIDER_PORT}/v1" \
+  DENSE_MEM_E2E_POSTGRES_HOST="127.0.0.1" \
+  DENSE_MEM_E2E_POSTGRES_PORT="$POSTGRES_HOST_PORT" \
+  DENSE_MEM_E2E_POSTGRES_USER="$runtime_postgres_user" \
+  DENSE_MEM_E2E_POSTGRES_PASSWORD="$runtime_postgres_password" \
+  DENSE_MEM_E2E_POSTGRES_DB="$runtime_postgres_database" \
+  node "$ROOT_DIR/tests/uat/conflict_mcp_e2e.mjs"
+}

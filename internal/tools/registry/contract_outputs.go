@@ -345,6 +345,7 @@ func traceConflictOutputs(records []repository.RelationshipConflictCaseRecord) [
 
 const (
 	traceConflictPositionLimit         = 10
+	traceConflictSupporterLimit        = 20
 	traceConflictRelationshipIDLimit   = 20
 	traceConflictOwnerProfileIDLimit   = 20
 	traceConflictResultEvidenceIDLimit = 50
@@ -356,12 +357,36 @@ func traceConflictPositionOutputs(records []repository.RelationshipConflictPosit
 	}
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
+		supportersTruncated := record.SupportersTruncated || len(record.Supporters) > traceConflictSupporterLimit
 		out = append(out, map[string]any{
-			"position_id":         record.PositionID,
-			"disposition":         record.Disposition,
-			"relationship_ids":    traceBoundedStringArray(record.RelationshipIDs, traceConflictRelationshipIDLimit),
-			"owner_profile_ids":   traceBoundedStringArray(record.OwnerProfileIDs, traceConflictOwnerProfileIDLimit),
-			"result_evidence_ids": traceBoundedStringArray(record.EvidenceIDs, traceConflictResultEvidenceIDLimit),
+			"position_id":               record.PositionID,
+			"disposition":               record.Disposition,
+			"supporter_count":           record.SupporterCount,
+			"support_group_count":       record.SupportGroupCount,
+			"authoritative_group_count": record.AuthoritativeGroupCount,
+			"supporters_truncated":      supportersTruncated,
+			"supporters":                traceConflictSupporterOutputs(record.Supporters),
+			"relationship_ids":          traceBoundedStringArray(record.RelationshipIDs, traceConflictRelationshipIDLimit),
+			"owner_profile_ids":         traceBoundedStringArray(record.OwnerProfileIDs, traceConflictOwnerProfileIDLimit),
+			"result_evidence_ids":       traceBoundedStringArray(record.EvidenceIDs, traceConflictResultEvidenceIDLimit),
+		})
+	}
+	return out
+}
+
+func traceConflictSupporterOutputs(records []repository.RelationshipConflictSupporterRecord) []map[string]any {
+	if len(records) > traceConflictSupporterLimit {
+		records = records[:traceConflictSupporterLimit]
+	}
+	out := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		out = append(out, map[string]any{
+			"profile_id":          record.ProfileID,
+			"profile_name":        record.ProfileName,
+			"strongest_authority": record.StrongestAuthority,
+			"evidence_id":         record.EvidenceID,
+			"accepted_at":         record.AcceptedAt.UTC().Format(time.RFC3339Nano),
+			"source_group_count":  record.SourceGroupCount,
 		})
 	}
 	return out

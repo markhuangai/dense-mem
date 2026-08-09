@@ -36,6 +36,12 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 			wantStage:  "commit_review",
 		},
 		{
+			name:       "stale conflict context requires review",
+			commitErr:  repository.ErrConflictContextStale,
+			wantStatus: string(domain.SemanticReviewReviewRequired),
+			wantStage:  "conflict_context_stale",
+		},
+		{
 			name:       "scope mismatch terminalizes",
 			commitErr:  repository.ErrSubmissionAssessmentScopeMismatch,
 			wantStatus: string(domain.SemanticReviewTerminalFailure),

@@ -685,6 +685,9 @@ func loadRelationshipConflictRecordsByID(
 	if err != nil {
 		return nil, err
 	}
+	if err := loadRelationshipConflictSupporters(ctx, tx, teamID, conflictIDs, knownAt, positions); err != nil {
+		return nil, err
+	}
 	for i := range cases {
 		cases[i].Positions = positionsForConflict(cases[i].ConflictID, positions)
 		applyConflictPositionKnownAtDispositions(&cases[i], knownAt)

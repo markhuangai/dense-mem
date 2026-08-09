@@ -23,6 +23,7 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	conflictID := uuid.NewString()
 	positionID := uuid.NewString()
 	evidenceCreatedAt := time.Date(2026, 7, 20, 10, 30, 0, 0, time.UTC)
+	supportAcceptedAt := time.Date(2026, 7, 20, 10, 31, 0, 0, time.UTC)
 	reviewDueAt := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
 	search := &recallSearchStub{
 		contract: &repository.ActiveSearchContract{
@@ -43,6 +44,7 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 				CreatedAt:       evidenceCreatedAt,
 			}},
 			Conflicts: []repository.RelationshipConflictCaseRecord{{
+				TeamID:              teamID.String(),
 				ConflictID:          conflictID,
 				Version:             1,
 				Kind:                "cross_profile_current_state",
@@ -52,12 +54,22 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 				PolicyVersion:       domain.ConflictPolicyVersion,
 				PreferredPositionID: "",
 				Positions: []repository.RelationshipConflictPositionRecord{{
-					PositionID:        positionID,
-					Disposition:       "candidate",
-					RelationshipIDs:   []string{relationshipID},
-					OwnerProfileIDs:   []string{profileID.String()},
-					EvidenceIDs:       []string{evidenceID},
-					SupportGroupCount: 1,
+					PositionID:              positionID,
+					Disposition:             "candidate",
+					SupporterCount:          1,
+					SupportGroupCount:       1,
+					AuthoritativeGroupCount: 1,
+					Supporters: []repository.RelationshipConflictSupporterRecord{{
+						ProfileID:          profileID.String(),
+						ProfileName:        "Profile A",
+						StrongestAuthority: "authoritative",
+						EvidenceID:         evidenceID,
+						AcceptedAt:         supportAcceptedAt,
+						SourceGroupCount:   1,
+					}},
+					RelationshipIDs: []string{relationshipID},
+					OwnerProfileIDs: []string{profileID.String()},
+					EvidenceIDs:     []string{evidenceID},
 				}},
 			}},
 		},
@@ -86,6 +98,18 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	require.Equal(t, conflictID, result.Conflicts[0].ConflictID)
 	require.Equal(t, &reviewDueAt, result.Conflicts[0].ReviewDueAt)
 	require.Equal(t, []string{relationshipID}, result.Conflicts[0].Positions[0].RelationshipIDs)
+	require.Equal(t, 1, result.Conflicts[0].Positions[0].SupporterCount)
+	require.Equal(t, 1, result.Conflicts[0].Positions[0].SupportGroupCount)
+	require.Equal(t, 1, result.Conflicts[0].Positions[0].AuthoritativeGroupCount)
+	require.False(t, result.Conflicts[0].Positions[0].SupportersTruncated)
+	require.Equal(t, []RecallConflictSupporter{{
+		ProfileID:          profileID.String(),
+		ProfileName:        "Profile A",
+		StrongestAuthority: "authoritative",
+		EvidenceID:         evidenceID,
+		AcceptedAt:         supportAcceptedAt,
+		SourceGroupCount:   1,
+	}}, result.Conflicts[0].Positions[0].Supporters)
 	require.NotEmpty(t, result.DiscoveryGuidance)
 	require.Empty(t, result.DiscoveryPaths)
 	require.Empty(t, result.RelatedHypotheses)
@@ -94,12 +118,34 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	require.Equal(t, "PostgreSQL memory", provider.query)
 }
 
+func TestRecallRejectsMismatchedConflictTeam(t *testing.T) {
+	teamID := uuid.New()
+	search := &recallSearchStub{
+		contract: &repository.ActiveSearchContract{},
+		result: &repository.RecallEvidenceResult{
+			SearchState: string(domain.SearchProjectionCurrent),
+			Conflicts: []repository.RelationshipConflictCaseRecord{{
+				TeamID:     uuid.NewString(),
+				ConflictID: uuid.NewString(),
+			}},
+		},
+	}
+	svc := NewRecallService(RecallDependencies{Search: search})
+
+	_, err := svc.Recall(authenticatedRememberContext(teamID, uuid.New(), uuid.New()), RecallRequest{
+		ContractVersion: domain.ContractVersion,
+	})
+	require.ErrorIs(t, err, ErrRecallRepositoryTeamMismatch)
+}
+
 func TestRecallConflictSummariesEnforcePositionBounds(t *testing.T) {
 	records := make([]repository.RelationshipConflictPositionRecord, 0, 11)
 	for i := 0; i < 11; i++ {
+		supporters := make([]repository.RelationshipConflictSupporterRecord, 21)
 		records = append(records, repository.RelationshipConflictPositionRecord{
 			PositionID:      uuid.NewString(),
 			Disposition:     "candidate",
+			Supporters:      supporters,
 			RelationshipIDs: make([]string, 21),
 			OwnerProfileIDs: make([]string, 21),
 			EvidenceIDs:     make([]string, 51),
@@ -121,6 +167,8 @@ func TestRecallConflictSummariesEnforcePositionBounds(t *testing.T) {
 	require.Len(t, summaries[0].Positions[0].RelationshipIDs, 20)
 	require.Len(t, summaries[0].Positions[0].OwnerProfileIDs, 20)
 	require.Len(t, summaries[0].Positions[0].ResultEvidenceIDs, 50)
+	require.Len(t, summaries[0].Positions[0].Supporters, 20)
+	require.True(t, summaries[0].Positions[0].SupportersTruncated)
 }
 
 func TestPublicHypothesisGeneratorKindPreservesProvider(t *testing.T) {

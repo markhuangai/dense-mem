@@ -213,14 +213,6 @@ type RecallConflictSummary struct {
 	PositionsTruncated  bool                     `json:"positions_truncated"`
 }
 
-type RecallConflictPosition struct {
-	PositionID        string   `json:"position_id"`
-	Disposition       string   `json:"disposition"`
-	RelationshipIDs   []string `json:"relationship_ids"`
-	OwnerProfileIDs   []string `json:"owner_profile_ids"`
-	ResultEvidenceIDs []string `json:"result_evidence_ids"`
-}
-
 type RecallRelationshipHandle struct {
 	RelationshipID string         `json:"relationship_id"`
 	Subject        EntityHandle   `json:"subject"`
@@ -333,6 +325,9 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 		ExpandFromEntityIDs:  req.ExpandFromEntityIDs,
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := validateRecallConflictTeams(recalled, actor.TeamID.String()); err != nil {
 		return nil, err
 	}
 	result = recallResultFromRepository(recalled, degradations)

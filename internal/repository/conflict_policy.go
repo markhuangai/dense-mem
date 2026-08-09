@@ -25,6 +25,7 @@ const (
 )
 
 type RelationshipConflictPositionRecord = domain.RelationshipConflictPositionRecord
+type RelationshipConflictSupporterRecord = domain.RelationshipConflictSupporterRecord
 type RelationshipConflictEvaluationInput = domain.RelationshipConflictEvaluationInput
 type RelationshipConflictEvaluation = domain.RelationshipConflictEvaluation
 
