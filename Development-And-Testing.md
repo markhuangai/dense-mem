@@ -461,23 +461,23 @@ policy or projections.
   `known_at` before B/C/resolution excludes later case events
 - one fragment supporting suppressed A and an unrelated current Relationship
   remains eligible through the unrelated support path
-- before TTL, a case resolves only with at least four independent source groups
-  and more than 75% support; at/after TTL, a unique authority or at least two
-  independent source groups with more than 50% support may resolve
-- authoritative opposition blocks ordinary resolution unless the timed strong
-  override has assessor-confirmed later replacement time; recorded fallback
-  cannot override authority
+- before TTL, a case never resolves deterministically; at/after TTL, a strict
+  majority of distinct effective supporter profiles resolves it
+- one profile with multiple source groups contributes one vote, and a profile
+  whose newest positions tie abstains
+- authority does not veto a supporter majority; it remains available to the
+  group-free AI and last-write-wins fallback paths
 - nightly resolution atomically sets losing stale Relationships to
   `status=superseded`, writes `valid_to`, appends Relationship and Conflict
   events, marks the case resolved, and queues search refresh
 - repeated nightly runs, duplicate source-group evidence, and stale claimed
   versions are idempotent and do not extend the original deadline
-- exact early quorum, due unique-authoritative, due majority, AI selection, AI
-  abstention fallback, and fifth-failed-day fallback each assert one terminal
-  stage and preferred position
+- exact pre-TTL hold, supporter-majority resolution, supporter tie, AI
+  selection, AI abstention fallback, and fifth-failed-day fallback each assert
+  one terminal stage and preferred position
 - recall and trace return identical supporter counts and summaries; 21 effective
   profiles return 20 summaries with `supporters_truncated=true`, current renamed
-  profile names, and copied versus independent source-group behavior
+  profile names, and copied-source-group evidence still counted once per profile
 - a fresh `conflict_context` advances support, while a stale version reaches a
   bounded rejected submission state without changing semantic counts
 - same-team A/B/C reads, owner-only mutation, separate-team non-disclosure, and

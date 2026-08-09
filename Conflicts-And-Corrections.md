@@ -188,7 +188,7 @@ ConflictPosition
   member Relationship IDs and versions
   owner profile IDs
   accepted evidence and source-group handles
-  distinct supporter, source-group, and authoritative-group counts
+  distinct effective supporter count and bounded supporter summaries
   at most 20 deterministic supporter summaries
 
 ConflictEvent
@@ -220,25 +220,22 @@ provenance for each effective position at the requested `known_at`. The
 position keeps its existing Relationship, profile, and Evidence ID arrays and
 adds:
 
-- `supporter_count`: distinct effective owner profiles
-- `support_group_count`: distinct effective server-derived source groups
-- `authoritative_group_count`: effective source groups with authoritative
-  support
+- `supporter_count`: distinct effective owner profiles that currently vote for
+  this position
 - `supporters_truncated`: whether the total exceeds the returned summaries
 - `supporters`: at most 20 current same-team profile summaries
 
 Each profile appears once. Its summary reports the strongest effective
-authority, the most recently accepted Evidence at that authority, its accepted
-time, and the profile's distinct effective source-group count. Summaries order
-by authority rank descending, accepted time descending, then immutable profile
-ID. The profile name is hydrated from the current same-team directory at read
-time; the immutable profile and Evidence IDs remain the audit identity.
+authority and the most recently accepted Evidence at that authority. Summaries
+order by authority rank descending, accepted time descending, then immutable
+profile ID. The profile name is hydrated from the current same-team directory
+at read time; the immutable profile and Evidence IDs remain the audit identity.
 
-Copied support can therefore display several profiles while contributing only
-one independent group. Multiple independent groups from one profile increase
-group weight but do not duplicate that profile in `supporters`. Raw source-group
-keys, Evidence content, provider output, and cross-team identities are never
-included.
+Source-group keys remain immutable provenance and conflict-member identity, but
+they do not add votes. If one profile supports multiple positions, only its
+uniquely newest accepted position contributes one vote. Equal newest timestamps
+across positions abstain that profile. Raw source-group keys, Evidence content,
+provider output, and cross-team identities are never included.
 
 A conflict case is created or changed only from committed, schema-valid state.
 Vector similarity alone cannot open one. The initial durable-case scope is a
@@ -249,28 +246,23 @@ review continue to use their existing review workflows.
 
 ### Deterministic resolution policy
 
-The counting unit is a current accepted independent source group. Profile count,
-Relationship row count, copied fragments, summaries, adoptions, and repeated
-source revisions are not votes.
+The trust unit is one provisioned same-team profile with effective accepted
+support. A profile is never counted twice because it submitted multiple rows,
+source groups, copied fragments, adoptions, or revisions. Source groups remain
+available for provenance and Dreaming lineage, not for conflict votes.
 
-Before `review_due_at`, one position qualifies only when it has at least four
-independent source groups and more than 75% of counted support for the material
-case. At or after `review_due_at`, one position qualifies when either:
+Before `review_due_at`, no deterministic winner is allowed. At or after
+`review_due_at`, one position qualifies only when its distinct supporter count
+is strictly greater than half of all non-abstaining effective profile votes.
+There is no minimum group threshold, early quorum, unique-authority shortcut, or
+authoritative veto. Authority remains visible in provenance and may inform the
+bounded fallback paths.
 
-1. it is the unique position with an allowed authoritative source group; or
-2. it has at least two independent source groups and more than 50% of counted
-   support.
-
-In all cases, every counted support must be accepted, entailed, currently
-effective, and applicable to the conflict scope. A source group that currently
-supports incompatible positions counts toward neither side until its support is
-cleaned up.
-
-Authoritative opposition normally blocks automatic replacement. A timed strong
-override is allowed only when the proposed winner has at least four independent
-source groups, more than 75% of counted support, and assessor-confirmed evidence
-that the replacement became effective after the losing authoritative position.
-`recorded_fallback` time cannot override authoritative opposition.
+If no strict majority exists, the case becomes `overdue` and uses the existing
+bounded AI assessment followed by the existing authority/recency last-write-
+wins fallback. The AI receives supporter counts, deterministic supporter
+references, authority, accepted/effective time, and evidence content; it never
+receives source-group keys or group counts.
 
 The cutoff is the evidence-supported effective time when the assessor confirms
 the extracted temporal bound. If no reliable bound exists and no authority
@@ -313,11 +305,11 @@ For each case whose `next_review_at` is due, whether before or after
 `review_due_at`, the job:
 
 1. claims bounded team-local work with a durable lease
-2. reloads current Relationship versions, effective supports, source groups,
-   cross-references, scope, and temporal bounds from PostgreSQL
+2. reloads current Relationship versions, effective supports, source-group
+   lineage, cross-references, scope, and temporal bounds from PostgreSQL
 3. repairs stale position membership and recomputes the policy view
-4. resolves only when exactly one position meets the automatic floor for the
-   current pre-TTL or post-TTL phase
+4. resolves only when one position has a strict majority of the current
+   effective supporter projection after TTL
 5. marks the case `overdue`, appends an escalation event, and schedules the next
    nightly check when no unique position qualifies
 6. for an overdue case, reserves at most one `(case version, model, policy,
@@ -341,16 +333,16 @@ For each case whose `next_review_at` is due, whether before or after
 An abandoned assessment reservation expires only after its local date ends and
 then counts as a failed attempt. A case-version change supersedes reserved work;
 a stale completion cannot apply. The assessor receives server-owned position
-metadata (authority, independent source groups, distinct-owner counts, accepted
-and effective time) and effective evidence only. It receives neither profile
-identities nor authority to choose an ID that was not in that dossier.
+metadata (supporter counts, bounded supporter references, authority, accepted
+and effective time) and effective evidence only. It receives no source-group
+keys or group counts and cannot choose an ID that was not in that dossier.
 Evidence without a durable Conflict case does not become stale merely because of
 its age or lack of a later source revision.
 
-The review deadline comes from the versioned team policy. Reaching it is not
-evidence and does not force a winner; it only enables the lower automatic
-threshold. Duplicate evidence from the same source group does not extend the
-deadline. New independent support updates membership and may resolve on a later
+The review deadline comes from the server-owned policy identifier. Reaching it
+is not evidence and does not force a winner; it only enables the supporter
+majority decision. Duplicate evidence from the same source group does not
+extend the deadline. New support updates membership and may resolve on a later
 nightly run, but it does not move the original deadline. A later contradictory
 business change opens a new conflict episode instead of reopening a resolved
 case. Database/worker failure leaves the case due and unresolved.
