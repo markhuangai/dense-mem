@@ -1,185 +1,410 @@
 #!/usr/bin/env node
+
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const userUrl = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
-const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
+const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
+const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
-const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
+const seededTeamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
-const placementTimeoutSeconds = positiveIntEnv("DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS", 720, 30, 1800);
-const conflictReviewTimeoutSeconds = positiveIntEnv("DENSE_MEM_E2E_CONFLICT_REVIEW_TIMEOUT_SECONDS", 240, 60, 600);
+const reviewDriver = requiredEnv("DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER");
+const placementTimeoutSeconds = positiveIntEnv("DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS", 180, 30, 900);
+const runID = `conflict-e2e-${Date.now()}`;
 
 let rpcID = 0;
 
-const runID = `conflict-e2e-${Date.now()}`;
-const olderEffectiveAt = "2026-07-20T00:00:00Z";
-const newerEffectiveAt = "2026-07-22T00:00:00Z";
-const primaryProjectName = `ConflictE2E ${runID} project`;
-const postgresName = `ConflictE2E ${runID} PostgreSQL`;
-const graphDBName = `ConflictE2E ${runID} GraphDB`;
-
-const profileA = await createProfile("Conflict E2E A");
-const profileB = await createProfile("Conflict E2E B");
-const profileC = await createProfile("Conflict E2E C");
-
-const first = await rememberAndWait(profileA.apiKey, {
-  idempotencyKey: `${runID}:a`,
-  evidence: `ConflictE2E ${runID}: Effective ${newerEffectiveAt}, 🚀 ${primaryProjectName} primary database is ${postgresName} according to profile A.`,
-  sourceGroup: `${runID}:source:a`,
-  validFrom: newerEffectiveAt,
-  subject: { ref: "project", name: primaryProjectName, kind: "project" },
-  object: { ref: "postgres", name: postgresName, kind: "product" },
-  relationshipID: "rel:primary-db-a",
-});
-const firstTrace = await mcpTool(profileA.apiKey, "trace_memory", {
-  relationship_id: first.relationshipID,
-  include_evidence_content: true,
-});
-const subjectEntityID = stringAt(firstTrace, ["relationship", "subject_entity_id"]);
-const postgresEntityID = stringAt(firstTrace, ["relationship", "object_entity_id"]);
-if (!subjectEntityID || !postgresEntityID) {
-  throw new Error(`trace did not return canonical entity IDs: ${JSON.stringify(firstTrace)}`);
-}
-
-const second = await rememberAndWait(profileB.apiKey, {
-  idempotencyKey: `${runID}:b`,
-  evidence: `ConflictE2E ${runID}: Effective ${olderEffectiveAt}, ${primaryProjectName} primary database is ${graphDBName} according to profile B.`,
-  sourceGroup: `${runID}:source:b`,
-  validFrom: olderEffectiveAt,
-  subject: { ref: "project", name: primaryProjectName, kind: "project", knownEntityID: subjectEntityID },
-  object: { ref: "graphdb", name: graphDBName, kind: "product" },
-  relationshipID: "rel:primary-db-b",
-});
-
-const openConflict = await waitForRelationshipConflict(profileB.apiKey, second.relationshipID, "open");
-const conflictID = String(openConflict.conflict_id);
-const conflictVersion = Number(openConflict.version);
-if (!conflictID || !Number.isInteger(conflictVersion) || conflictVersion < 1) {
-  throw new Error(`invalid open conflict summary: ${JSON.stringify(openConflict)}`);
-}
-
-await rememberAndWait(profileC.apiKey, {
-  idempotencyKey: `${runID}:c`,
-  evidence: `ConflictE2E ${runID}: Effective ${newerEffectiveAt}, ${primaryProjectName} primary database is ${postgresName} according to profile C.`,
-  sourceGroup: `${runID}:source:c`,
-  validFrom: newerEffectiveAt,
-  subject: { ref: "project", name: primaryProjectName, kind: "project", knownEntityID: subjectEntityID },
-  object: { ref: "postgres", name: postgresName, kind: "product", knownEntityID: postgresEntityID },
-  relationshipID: "rel:primary-db-c",
-  conflictContext: { conflict_id: conflictID, expected_version: conflictVersion },
-});
-
-const review = await runAutomaticConflictReview(conflictID);
-if (review.status !== "resolved") {
-  throw new Error(`automatic conflict reviewer did not resolve ${conflictID}: ${JSON.stringify(review)}`);
-}
-
-const resolvedConflict = await waitForRelationshipConflict(profileB.apiKey, second.relationshipID, "resolved");
-if (resolvedConflict.conflict_id !== conflictID || resolvedConflict.status !== "resolved") {
-  throw new Error(`resolved recall returned wrong conflict: ${JSON.stringify(resolvedConflict)}`);
-}
-
-const loserTrace = await mcpTool(profileB.apiKey, "trace_memory", {
-  relationship_id: second.relationshipID,
-  include_transitions: true,
-  include_evidence_content: true,
-});
-if (stringAt(loserTrace, ["relationship", "relationship_status"]) !== "superseded") {
-  throw new Error(`losing relationship was not superseded: ${JSON.stringify(loserTrace.relationship)}`);
-}
-if (!Array.isArray(loserTrace.conflicts) || !loserTrace.conflicts.some((item) => item.conflict_id === conflictID && item.status === "resolved")) {
-  throw new Error(`trace did not include resolved conflict: ${JSON.stringify(loserTrace.conflicts)}`);
-}
-
-const overdueResolution = await resolveOverdueConflictThroughVerifier();
+const early = await earlyQuorumScenario(seededTeamID);
+await assertRemovedPlacementTools(early.profileA.apiKey);
+const authoritative = await dueUniqueAuthoritativeScenario();
+const majority = await dueMajorityScenario();
+const selected = await aiSelectionScenario();
+const abstained = await aiAbstentionScenario();
+const failedDays = await fiveFailedDaysScenario();
+const provenance = await provenanceAndIsolationScenario();
 
 console.log(JSON.stringify({
   status: "ok",
   run_id: runID,
-  conflict_id: conflictID,
-  first_relationship_id: first.relationshipID,
-  losing_relationship_id: second.relationshipID,
-  overdue_conflict_id: overdueResolution.conflictID,
-  overdue_resolution_method: overdueResolution.method,
+  contract_version: "dense-mem.v2.4",
+  early_quorum: early.summary,
+  due_unique_authoritative: authoritative,
+  due_majority: majority,
+  ai_selection: selected,
+  ai_abstention_last_write_wins: abstained,
+  five_failed_days_last_write_wins: failedDays,
+  supporter_provenance: provenance,
+  removed_placement_tools_absent: true,
 }, null, 2));
 
-async function createProfile(name) {
-  const response = await httpJSON(`${controlUrl}/control/api/teams/${teamID}/profiles`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${controlToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      name,
-      role: "member",
-      scopes: ["read", "write"],
-      rate_limit: 300,
-    }),
+async function earlyQuorumScenario(teamID) {
+  const fixture = await createConflictFixture("early-quorum", {
+    teamID,
+    authorityA: "primary",
+    authorityB: "secondary",
   });
-  const apiKey = stringAt(response, ["data", "api_key"]);
-  const profileID = stringAt(response, ["data", "key", "id"]);
-  if (!apiKey || !profileID) {
-    throw new Error(`profile creation response missing api key/profile id (api_key_present=${Boolean(apiKey)}, profile_id_present=${Boolean(profileID)})`);
+  for (let index = 2; index <= 4; index += 1) {
+    await submitPositionSupport(fixture, fixture.profileA, {
+      label: `early-quorum-a-${index}`,
+      sourceGroup: `${runID}:early-quorum:independent:${index}`,
+      authority: "primary",
+    });
   }
-  return { apiKey, profileID };
+  const open = await currentConflict(fixture.profileA.apiKey, fixture.relationshipA, "open");
+  const winner = positionForRelationship(open, fixture.relationshipA);
+  assert(winner.support_group_count === 4, `early quorum winner group count = ${winner.support_group_count}`);
+  const result = runReview(fixture, offsetTime(open.review_due_at, -60_000));
+  assertReview(result, "resolve", "early_quorum", fixture.positionAID, "");
+  const state = conflictState(fixture.teamID, fixture.conflictID);
+  assert(state.status === "resolved" && state.resolution_reason === "early_quorum_support", `early quorum lineage is invalid: ${JSON.stringify(state)}`);
+  return {
+    profileA: fixture.profileA,
+    summary: { conflict_id: fixture.conflictID, preferred_position_id: fixture.positionAID, stage: result.stage },
+  };
 }
 
-async function rememberAndWait(apiKey, input) {
-  const evidence = input.evidence;
-  const result = await mcpTool(apiKey, "remember", {
+async function dueUniqueAuthoritativeScenario() {
+  const fixture = await createConflictFixture("due-authoritative", {
+    authorityA: "authoritative",
+    authorityB: "primary",
+    validFromA: "2026-08-01T00:00:00Z",
+    validFromB: "2026-08-01T00:00:00Z",
+  });
+  const result = runReview(fixture, offsetTime(fixture.reviewDueAt, 1_000));
+  assertReview(result, "resolve", "due_unique_authoritative", fixture.positionAID, "");
+  const state = conflictState(fixture.teamID, fixture.conflictID);
+  assert(state.status === "resolved" && state.resolution_reason === "unique_authoritative_source", `authoritative lineage is invalid: ${JSON.stringify(state)}`);
+  return { conflict_id: fixture.conflictID, preferred_position_id: fixture.positionAID, stage: result.stage };
+}
+
+async function dueMajorityScenario() {
+  const fixture = await createConflictFixture("due-majority", {
+    authorityA: "primary",
+    authorityB: "secondary",
+  });
+  await submitPositionSupport(fixture, fixture.profileA, {
+    label: "due-majority-a-2",
+    sourceGroup: `${runID}:due-majority:independent:2`,
+    authority: "primary",
+  });
+  const open = await currentConflict(fixture.profileA.apiKey, fixture.relationshipA, "open");
+  const winner = positionForRelationship(open, fixture.relationshipA);
+  assert(winner.support_group_count === 2, `due majority winner group count = ${winner.support_group_count}`);
+  const result = runReview(fixture, offsetTime(open.review_due_at, 1_000));
+  assertReview(result, "resolve", "due_majority", fixture.positionAID, "");
+  const state = conflictState(fixture.teamID, fixture.conflictID);
+  assert(state.status === "resolved" && state.resolution_reason === "due_majority_support", `majority lineage is invalid: ${JSON.stringify(state)}`);
+  return { conflict_id: fixture.conflictID, preferred_position_id: fixture.positionAID, stage: result.stage };
+}
+
+async function aiSelectionScenario() {
+  const fixture = await createConflictFixture("ai-selection", {
+    authorityA: "primary",
+    authorityB: "primary",
+    markerA: "[conflict-ai-select-winner]",
+  });
+  const result = runReview(fixture, offsetTime(fixture.reviewDueAt, 1_000));
+  assertReview(result, "resolve", "overdue_ai", fixture.positionAID, "ai");
+  const attempts = assessmentAttempts(fixture.teamID, fixture.conflictID);
+  assert(attempts.length === 1 && attempts[0].status === "selected" && attempts[0].selected_position_id === fixture.positionAID, `AI selection attempt lineage is invalid: ${JSON.stringify(attempts)}`);
+  const plan = latestResolutionPlan(fixture.teamID, fixture.conflictID);
+  assert(plan.method === "ai" && plan.status === "applied" && plan.preferred_position_id === fixture.positionAID, `AI selection plan is invalid: ${JSON.stringify(plan)}`);
+  assert(conflictDerivationCount(fixture.teamID, fixture.conflictID) >= 1, "AI selection did not preserve retraction derivation lineage");
+  return { conflict_id: fixture.conflictID, preferred_position_id: fixture.positionAID, method: plan.method };
+}
+
+async function aiAbstentionScenario() {
+  const fixture = await createConflictFixture("ai-abstention", {
+    authorityA: "authoritative",
+    authorityB: "secondary",
+    markerA: "[conflict-ai-abstain]",
+  });
+  const accepted = positionAcceptedTimes(fixture.teamID, fixture.conflictID, fixture.positionAID, fixture.positionBID);
+  assert(Date.parse(accepted.position_b) > Date.parse(accepted.position_a), `abstention fixture does not make the lower-authority position newer: ${JSON.stringify(accepted)}`);
+  const result = runReview(fixture, offsetTime(fixture.reviewDueAt, 1_000));
+  assertReview(result, "resolve", "overdue_last_write_wins", fixture.positionAID, "last_write_wins");
+  const attempts = assessmentAttempts(fixture.teamID, fixture.conflictID);
+  assert(attempts.length === 1 && attempts[0].status === "abstained", `abstention attempt lineage is invalid: ${JSON.stringify(attempts)}`);
+  const plan = latestResolutionPlan(fixture.teamID, fixture.conflictID);
+  assert(plan.method === "last_write_wins" && plan.status === "applied" && plan.preferred_position_id === fixture.positionAID, `abstention fallback plan is invalid: ${JSON.stringify(plan)}`);
+  return { conflict_id: fixture.conflictID, preferred_position_id: fixture.positionAID, method: plan.method, authority_preceded_recency: true };
+}
+
+async function fiveFailedDaysScenario() {
+  const fixture = await createConflictFixture("five-failed-days", {
+    authorityA: "primary",
+    authorityB: "secondary",
+    markerA: "[conflict-ai-fail]",
+  });
+  const firstReviewAt = Date.parse(fixture.reviewDueAt) + 1_000;
+  let finalResult;
+  for (let day = 0; day < 5; day += 1) {
+    finalResult = runReview(fixture, new Date(firstReviewAt + day * 25 * 60 * 60 * 1_000).toISOString());
+    const attempts = assessmentAttempts(fixture.teamID, fixture.conflictID);
+    assert(attempts.length === day + 1 && attempts.every((attempt) => attempt.status === "failed" && attempt.failure_class), `failed assessment day ${day + 1} lineage is invalid: ${JSON.stringify(attempts)}`);
+    const state = conflictState(fixture.teamID, fixture.conflictID);
+    if (day < 4) {
+      assert(finalResult.outcome === "overdue" && finalResult.stage === "overdue_assessment_failed", `failed assessment day ${day + 1} resolved too early: ${JSON.stringify(finalResult)}`);
+      assert(state.status === "overdue" && Object.keys(latestResolutionPlan(fixture.teamID, fixture.conflictID)).length === 0, `failed assessment day ${day + 1} changed terminal state: ${JSON.stringify(state)}`);
+    }
+  }
+  assertReview(finalResult, "resolve", "overdue_last_write_wins", fixture.positionAID, "last_write_wins");
+  const plan = latestResolutionPlan(fixture.teamID, fixture.conflictID);
+  assert(plan.method === "last_write_wins" && plan.status === "applied", `fifth-day fallback plan is invalid: ${JSON.stringify(plan)}`);
+  return { conflict_id: fixture.conflictID, failed_assessment_days: 5, preferred_position_id: fixture.positionAID, method: plan.method };
+}
+
+async function provenanceAndIsolationScenario() {
+  const fixture = await createConflictFixture("supporter-provenance", {
+    authorityA: "authoritative",
+    authorityB: "secondary",
+  });
+  const profileC = await createProfile(fixture.teamID, `${runID} provenance C`);
+  await submitPositionSupport(fixture, profileC, {
+    label: "provenance-copied-c",
+    sourceGroup: fixture.sourceGroupA,
+    authority: "primary",
+  });
+  for (let index = 1; index <= 19; index += 1) {
+    const profile = await createProfile(fixture.teamID, `${runID} provenance copied ${index}`);
+    await submitPositionSupport(fixture, profile, {
+      label: `provenance-copied-${index}`,
+      sourceGroup: fixture.sourceGroupA,
+      authority: "primary",
+    });
+  }
+
+  const beforeIndependent = await currentConflict(profileC.apiKey, fixture.relationshipA, "open");
+  const copiedPosition = positionForRelationship(beforeIndependent, fixture.relationshipA);
+  assert(copiedPosition.supporter_count === 21, `copied supporter count = ${copiedPosition.supporter_count}`);
+  assert(copiedPosition.support_group_count === 1, `copied source group increased independent weight: ${copiedPosition.support_group_count}`);
+  const staleVersion = Number(beforeIndependent.version);
+  await submitPositionSupport(fixture, profileC, {
+    label: "provenance-independent-c",
+    sourceGroup: `${runID}:provenance:independent:c`,
+    authority: "primary",
+    conflictContext: { conflict_id: fixture.conflictID, expected_version: staleVersion },
+  });
+
+  const afterIndependent = await currentConflict(profileC.apiKey, fixture.relationshipA, "open");
+  const independentPosition = positionForRelationship(afterIndependent, fixture.relationshipA);
+  assert(independentPosition.supporter_count === 21 && independentPosition.support_group_count === 2, `independent support counts are invalid: ${JSON.stringify(independentPosition)}`);
+  assert(Number(afterIndependent.version) > staleVersion, "fresh conflict_context support did not advance the conflict version");
+
+  const semanticBeforeStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
+  const stale = await submitPositionSupport(fixture, profileC, {
+    label: "provenance-stale-c",
+    sourceGroup: `${runID}:provenance:stale:c`,
+    authority: "primary",
+    conflictContext: { conflict_id: fixture.conflictID, expected_version: staleVersion },
+    expectedState: "rejected",
+  });
+  assert(stale.status.processing_state === "rejected", `stale conflict submission was not rejected: ${JSON.stringify(stale.status)}`);
+  const semanticAfterStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
+  assert(stableJSON(semanticAfterStale) === stableJSON(semanticBeforeStale), `stale conflict submission changed semantic state: before=${JSON.stringify(semanticBeforeStale)} after=${JSON.stringify(semanticAfterStale)}`);
+
+  const renamedA = `${runID} provenance A renamed`;
+  await renameProfile(fixture.teamID, fixture.profileA.profileID, renamedA);
+  const traceA = await mcpSuccess(profileC.apiKey, "trace_memory", {
+    relationship_id: fixture.relationshipA,
+    include_transitions: true,
+  });
+  const traceB = await mcpSuccess(profileC.apiKey, "trace_memory", { relationship_id: fixture.relationshipB });
+  assert(stringAt(traceA, ["relationship", "relationship_id"]) === fixture.relationshipA, "same-team profile C could not trace profile A");
+  assert(stringAt(traceB, ["relationship", "relationship_id"]) === fixture.relationshipB, "same-team profile C could not trace profile B");
+  const recall = await waitForConflictRecall(profileC.apiKey, fixture.subjectName, fixture.conflictID);
+  const traceConflict = conflictByID(traceA.conflicts, fixture.conflictID);
+  const recallConflict = conflictByID(recall.conflicts, fixture.conflictID);
+  const tracePosition = positionByID(traceConflict, fixture.positionAID);
+  const recallPosition = positionByID(recallConflict, fixture.positionAID);
+  assert(stableJSON(provenanceFields(tracePosition)) === stableJSON(provenanceFields(recallPosition)), `recall/trace supporter provenance differs: trace=${JSON.stringify(tracePosition)} recall=${JSON.stringify(recallPosition)}`);
+  assert(tracePosition.supporter_count === 21 && tracePosition.supporters.length === 20 && tracePosition.supporters_truncated === true, `supporter bound is invalid: ${JSON.stringify(tracePosition)}`);
+  const supporterA = tracePosition.supporters.find((supporter) => supporter.profile_id === fixture.profileA.profileID);
+  const supporterC = tracePosition.supporters.find((supporter) => supporter.profile_id === profileC.profileID);
+  assert(supporterA?.profile_name === renamedA && supporterA.strongest_authority === "authoritative", `current profile rename was not hydrated: ${JSON.stringify(supporterA)}`);
+  assert(supporterC?.source_group_count === 2, `one profile's independent source groups were not projected: ${JSON.stringify(supporterC)}`);
+
+  const nonOwnerRetraction = await mcpRaw(profileC.apiKey, "retract_evidence", {
+    evidence_ids: [fixture.evidenceA],
+    reason: "Conflict e2e verifies owner-only mutation.",
+    idempotency_key: `${runID}:provenance:non-owner-retract`,
+  });
+  assert(nonOwnerRetraction.error && nonOwnerRetraction.result === undefined && !JSON.stringify(nonOwnerRetraction).includes(fixture.evidenceA), "same-team non-owner retraction was allowed or leaked the evidence ID");
+
+  const foreignTeamID = await createTeam("foreign-isolation");
+  const foreign = await createProfile(foreignTeamID, `${runID} foreign reader`);
+  const foreignRecall = await mcpSuccess(foreign.apiKey, "recall_memory", { query: fixture.subjectName, limit: 10 });
+  assert(!(foreignRecall.conflicts ?? []).some((conflict) => conflict.conflict_id === fixture.conflictID), "separate-team recall disclosed the conflict");
+  const foreignTrace = await mcpRaw(foreign.apiKey, "trace_memory", { relationship_id: fixture.relationshipA });
+  assert(foreignTrace.error && foreignTrace.result === undefined && !JSON.stringify(foreignTrace).includes(fixture.conflictID), "separate-team trace disclosed the conflict");
+
+  const ownerRetraction = await mcpSuccess(fixture.profileA.apiKey, "retract_evidence", {
+    evidence_ids: [fixture.evidenceA],
+    reason: "Conflict e2e owner mutation control.",
+    idempotency_key: `${runID}:provenance:owner-retract`,
+  });
+  assert(ownerRetraction.processing_state === "completed", `owner retraction did not complete: ${JSON.stringify(ownerRetraction)}`);
+
+  return {
+    conflict_id: fixture.conflictID,
+    supporter_count: tracePosition.supporter_count,
+    returned_supporters: tracePosition.supporters.length,
+    supporters_truncated: tracePosition.supporters_truncated,
+    support_group_count: tracePosition.support_group_count,
+    recall_trace_parity: true,
+    current_profile_name_hydrated: true,
+    fresh_conflict_context_applied: true,
+    stale_version_rejected_without_semantic_change: true,
+    same_team_read_visibility: true,
+    owner_only_mutation: true,
+    separate_team_isolation: true,
+  };
+}
+
+async function createConflictFixture(label, options = {}) {
+  const teamID = options.teamID ?? await createTeam(label);
+  const profileA = await createProfile(teamID, `${runID} ${label} A`);
+  const profileB = await createProfile(teamID, `${runID} ${label} B`);
+  const subjectName = `${runID} ${label} project`;
+  const objectAName = `${runID} ${label} PostgreSQL`;
+  const objectBName = `${runID} ${label} GraphDB`;
+  const sourceGroupA = `${runID}:${label}:source:a`;
+  const first = await submitRelationship(profileA.apiKey, {
+    label: `${label}-a`,
+    subjectName,
+    objectName: objectAName,
+    sourceGroup: sourceGroupA,
+    authority: options.authorityA ?? "primary",
+    validFrom: options.validFromA,
+    marker: options.markerA,
+  });
+  const firstTrace = await mcpSuccess(profileA.apiKey, "trace_memory", {
+    relationship_id: first.relationshipID,
+    include_evidence_content: true,
+  });
+  const subjectEntityID = stringAt(firstTrace, ["relationship", "subject_entity_id"]);
+  const objectAEntityID = stringAt(firstTrace, ["relationship", "object_entity_id"]);
+  assert(subjectEntityID && objectAEntityID, `first ${label} trace did not return canonical entity IDs`);
+
+  const second = await submitRelationship(profileB.apiKey, {
+    label: `${label}-b`,
+    subjectName,
+    objectName: objectBName,
+    subjectEntityID,
+    sourceGroup: `${runID}:${label}:source:b`,
+    authority: options.authorityB ?? "primary",
+    validFrom: options.validFromB,
+    marker: options.markerB,
+  });
+  const conflict = await currentConflict(profileB.apiKey, second.relationshipID, "open");
+  const positionA = positionForRelationship(conflict, first.relationshipID);
+  const positionB = positionForRelationship(conflict, second.relationshipID);
+  return {
+    label,
+    teamID,
+    profileA,
+    profileB,
+    subjectName,
+    objectAName,
+    objectBName,
+    subjectEntityID,
+    objectAEntityID,
+    sourceGroupA,
+    relationshipA: first.relationshipID,
+    relationshipB: second.relationshipID,
+    evidenceA: first.evidenceID,
+    evidenceB: second.evidenceID,
+    conflictID: String(conflict.conflict_id),
+    positionAID: String(positionA.position_id),
+    positionBID: String(positionB.position_id),
+    reviewDueAt: String(conflict.review_due_at),
+  };
+}
+
+async function submitPositionSupport(fixture, profile, options) {
+  return submitRelationship(profile.apiKey, {
+    label: options.label,
+    subjectName: fixture.subjectName,
+    objectName: fixture.objectAName,
+    subjectEntityID: fixture.subjectEntityID,
+    objectEntityID: fixture.objectAEntityID,
+    sourceGroup: options.sourceGroup,
+    authority: options.authority,
+    conflictContext: options.conflictContext,
+    expectedState: options.expectedState,
+  });
+}
+
+async function submitRelationship(apiKey, input) {
+  const evidence = relationshipEvidence(input);
+  const receipt = await mcpSuccess(apiKey, "remember", {
+    idempotency_key: `${runID}:${input.label}`,
     evidence: [{
       content: evidence,
       source_type: "document",
       source: input.sourceGroup,
       source_group: input.sourceGroup,
-      idempotency_key: input.idempotencyKey,
-      ...(input.authority ? { authority: input.authority } : {}),
+      authority: input.authority,
+      idempotency_key: `${runID}:${input.label}:evidence`,
     }],
     relationships: [relationshipHint(input, evidence)],
   });
-  const submissionID = String(result.submission_id ?? "");
-  if (!submissionID) {
-    throw new Error(`remember did not return submission_id: ${JSON.stringify(result)}`);
+  const submissionID = String(receipt.submission_id ?? "");
+  assert(submissionID && receipt.status_tool === "get_submission_status", `remember receipt is invalid: ${JSON.stringify(receipt)}`);
+  const status = await waitForSubmission(apiKey, submissionID);
+  const expectedState = input.expectedState ?? "completed";
+  assert(status.processing_state === expectedState, `submission ${input.label} state = ${status.processing_state}, want ${expectedState}: ${JSON.stringify(status)}`);
+  const evidenceID = String(status.evidence?.[0]?.evidence_id ?? "");
+  assert(evidenceID, `submission ${input.label} did not return evidence lineage`);
+  if (expectedState !== "completed") {
+    return { submissionID, evidenceID, status };
   }
-  return await waitForPlacement(apiKey, submissionID, input.relationshipID);
+  const relationshipID = postgresQuery(`
+    SELECT observation.relationship_id::text
+    FROM relationship_observations AS observation
+    WHERE observation.team_id = ${sqlLiteral(statusTeamID(submissionID))}::uuid
+      AND observation.ingest_id = ${sqlLiteral(submissionID)}::uuid
+      AND observation.relationship_id IS NOT NULL
+    ORDER BY observation.created_at, observation.observation_id
+    LIMIT 1
+  `, { allowAnyTeam: true });
+  assert(relationshipID, `completed submission ${input.label} did not create a relationship observation`);
+  return { submissionID, relationshipID, evidenceID, status };
+}
+
+function relationshipEvidence(input) {
+  const effective = input.validFrom ? `Effective ${input.validFrom}, ` : "";
+  const marker = input.marker ? ` ${input.marker}` : "";
+  return `${effective}${input.subjectName} primary database is ${input.objectName}.${marker}`;
 }
 
 function relationshipHint(input, evidence) {
   const predicateSurface = "primary database";
-  const subjectStart = evidence.indexOf(input.subject.name);
+  const subjectStart = evidence.indexOf(input.subjectName);
   const predicateStart = evidence.indexOf(predicateSurface, subjectStart);
-  const objectStart = evidence.indexOf(input.object.name, predicateStart);
-  if (subjectStart < 0 || predicateStart < 0 || objectStart < 0) {
-    throw new Error(`could not derive relationship spans for ${input.relationshipID}`);
-  }
-  const codePointOffset = (utf16Offset) => Array.from(evidence.slice(0, utf16Offset)).length;
-  const subjectEnd = subjectStart + input.subject.name.length;
-  const predicateEnd = predicateStart + predicateSurface.length;
-  const objectEnd = objectStart + input.object.name.length;
+  const objectStart = evidence.indexOf(input.objectName, predicateStart);
+  assert(subjectStart >= 0 && predicateStart >= 0 && objectStart >= 0, `could not derive spans for ${input.label}`);
+  const runeOffset = (offset) => Array.from(evidence.slice(0, offset)).length;
   return {
-    ref: input.relationshipID,
+    ref: `${input.label}:relationship`,
     subject: {
-      name: input.subject.name,
-      entity_kind: input.subject.kind,
-      ...(input.subject.knownEntityID ? { known_entity_id: input.subject.knownEntityID } : {}),
-      span: { evidence_index: 0, start: codePointOffset(subjectStart), end: codePointOffset(subjectEnd) },
+      name: input.subjectName,
+      entity_kind: "project",
+      ...(input.subjectEntityID ? { known_entity_id: input.subjectEntityID } : {}),
+      span: { evidence_index: 0, start: runeOffset(subjectStart), end: runeOffset(subjectStart + input.subjectName.length) },
     },
     predicate: {
       proposed_key: "primary_database",
       surface: predicateSurface,
-      span: { evidence_index: 0, start: codePointOffset(predicateStart), end: codePointOffset(predicateEnd) },
+      span: { evidence_index: 0, start: runeOffset(predicateStart), end: runeOffset(predicateStart + predicateSurface.length) },
     },
-    object: {
-      entity: {
-        name: input.object.name,
-        entity_kind: input.object.kind,
-        ...(input.object.knownEntityID ? { known_entity_id: input.object.knownEntityID } : {}),
-        span: { evidence_index: 0, start: codePointOffset(objectStart), end: codePointOffset(objectEnd) },
-      },
-    },
+    object: { entity: {
+      name: input.objectName,
+      entity_kind: "product",
+      ...(input.objectEntityID ? { known_entity_id: input.objectEntityID } : {}),
+      span: { evidence_index: 0, start: runeOffset(objectStart), end: runeOffset(objectStart + input.objectName.length) },
+    } },
     polarity: "+",
     modality: "statement",
     ...(input.validFrom ? { valid_from: input.validFrom } : {}),
@@ -188,342 +413,346 @@ function relationshipHint(input, evidence) {
   };
 }
 
-async function waitForPlacement(apiKey, submissionID, proposalID) {
-  let lastSummary = {};
-  const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2_000);
+async function waitForSubmission(apiKey, submissionID) {
+  const attempts = Math.ceil((placementTimeoutSeconds * 1_000) / 250);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const placement = await mcpTool(apiKey, "get_submission_status", { submission_id: submissionID });
-    if (["rejected", "failed", "quarantined"].includes(placement.processing_state)) {
-      throw new Error(`placement failed: ${JSON.stringify(placement)}`);
-    }
-    const row = postgresQuery(`
-      SELECT COALESCE(observation.relationship_id::text, ''), observation.owner_profile_id::text
-      FROM relationship_observations AS observation
-      WHERE observation.team_id = ${sqlLiteral(teamID)}::uuid
-        AND observation.ingest_id = ${sqlLiteral(submissionID)}::uuid
-        AND observation.relationship_id IS NOT NULL
-      ORDER BY observation.created_at ASC, observation.observation_id ASC
-      LIMIT 1
-    `).split("|");
-    lastSummary = { processing_state: placement.processing_state, relationship_id: row[0] || "" };
-    if (placement.processing_state === "completed" && row[0]) {
-      return {
-        ingestID: submissionID,
-        relationshipID: String(row[0]),
-        ownerProfileID: String(row[1]),
-      };
-    }
-    await delay(2_000);
+    const status = await mcpSuccess(apiKey, "get_submission_status", { submission_id: submissionID });
+    if (["completed", "rejected", "failed", "quarantined"].includes(status.processing_state)) return status;
+    await delay(250);
   }
-  throw new Error(`timed out waiting for placement ${submissionID} after ${placementTimeoutSeconds}s: ${JSON.stringify(lastSummary)}`);
+  throw new Error(`timed out waiting for submission ${submissionID} after ${placementTimeoutSeconds}s`);
 }
 
-async function waitForRelationshipConflict(apiKey, relationshipID, status) {
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    const trace = await mcpTool(apiKey, "trace_memory", { relationship_id: relationshipID });
-    const conflict = (trace.conflicts ?? []).find((item) => (
-      item.status === status
-      && (item.positions ?? []).some((position) => (position.relationship_ids ?? []).includes(relationshipID))
-    ));
-    if (conflict) {
-      return conflict;
-    }
-    await delay(2_000);
+async function currentConflict(apiKey, relationshipID, status) {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    const trace = await mcpSuccess(apiKey, "trace_memory", { relationship_id: relationshipID });
+    const conflict = (trace.conflicts ?? []).find((item) => item.status === status && (item.positions ?? []).some((position) => (position.relationship_ids ?? []).includes(relationshipID)));
+    if (conflict) return conflict;
+    await delay(250);
   }
   throw new Error(`timed out waiting for ${status} conflict for relationship ${relationshipID}`);
 }
 
-async function waitForConflictID(apiKey, query, conflictID, status) {
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    const recall = await mcpTool(apiKey, "recall_memory", { query, limit: 10 });
-    const conflict = (recall.conflicts ?? []).find((item) => item.conflict_id === conflictID && item.status === status);
-    if (conflict) {
-      return conflict;
-    }
-    await delay(2_000);
+async function waitForConflictRecall(apiKey, query, conflictID) {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    const recall = await mcpSuccess(apiKey, "recall_memory", { query, limit: 10, relationship_limit: 10 });
+    if ((recall.conflicts ?? []).some((conflict) => conflict.conflict_id === conflictID)) return recall;
+    await delay(250);
   }
-  throw new Error(`timed out waiting for ${status} conflict ${conflictID}`);
+  throw new Error(`timed out waiting for recall conflict ${conflictID}`);
 }
 
-async function resolveOverdueConflictThroughVerifier() {
-  const marker = `Overdue Conflict E2E ${runID}`;
-  const overdueProjectName = `${marker} project`;
-  const overduePostgresName = `${marker} PostgreSQL`;
-  const overdueGraphDBName = `${marker} GraphDB`;
-  const firstOverdue = await rememberAndWait(profileA.apiKey, {
-    idempotencyKey: `${runID}:overdue:a`,
-    evidence: `${marker}: ${overdueProjectName} primary database is ${overduePostgresName} according to profile A.`,
-    sourceGroup: `${runID}:overdue:source:a`,
-    authority: "primary",
-    subject: { ref: "overdue-project", name: overdueProjectName, kind: "project" },
-    object: { ref: "overdue-postgres", name: overduePostgresName, kind: "product" },
-    relationshipID: "rel:overdue-primary-db-a",
+function runReview(fixture, now) {
+  const result = spawnSync(reviewDriver, [
+    "--team-id", fixture.teamID,
+    "--conflict-id", fixture.conflictID,
+    "--now", now,
+  ], {
+    cwd: fileURLToPath(new URL("../..", import.meta.url)),
+    env: process.env,
+    encoding: "utf8",
+    timeout: 60_000,
   });
-  const overdueTrace = await mcpTool(profileA.apiKey, "trace_memory", {
-    relationship_id: firstOverdue.relationshipID,
-    include_evidence_content: true,
-  });
-  const overdueSubjectEntityID = stringAt(overdueTrace, ["relationship", "subject_entity_id"]);
-  const overduePostgresEntityID = stringAt(overdueTrace, ["relationship", "object_entity_id"]);
-  if (!overdueSubjectEntityID || !overduePostgresEntityID) {
-    throw new Error(`overdue trace did not return canonical entity IDs: ${JSON.stringify(overdueTrace)}`);
+  if (result.status !== 0) {
+    throw new Error(`conflict review driver failed (${result.status}): ${redactText(result.stderr || result.stdout)}`);
   }
-  if (overdueSubjectEntityID === subjectEntityID) {
-    throw new Error(`overdue fixture resolved onto the earlier conflict subject: ${JSON.stringify(overdueTrace.relationship)}`);
-  }
-
-  const secondOverdue = await rememberAndWait(profileB.apiKey, {
-    idempotencyKey: `${runID}:overdue:b`,
-    evidence: `${marker}: ${overdueProjectName} primary database is ${overdueGraphDBName} according to profile B.`,
-    sourceGroup: `${runID}:overdue:source:b`,
-    authority: "primary",
-    subject: { ref: "overdue-project", name: overdueProjectName, kind: "project", knownEntityID: overdueSubjectEntityID },
-    object: { ref: "overdue-graphdb", name: overdueGraphDBName, kind: "product" },
-    relationshipID: "rel:overdue-primary-db-b",
-  });
-  const openOverdueConflict = await waitForRelationshipConflict(profileB.apiKey, secondOverdue.relationshipID, "open");
-  const overdueConflictID = stringAt(openOverdueConflict, ["conflict_id"]);
-  if (!overdueConflictID) {
-    throw new Error(`overdue conflict did not return an ID: ${JSON.stringify(openOverdueConflict)}`);
-  }
-  const overdueRelationshipIDs = new Set((openOverdueConflict.positions ?? [])
-    .flatMap((position) => position.relationship_ids ?? []));
-  if (overdueRelationshipIDs.size !== 2 || !overdueRelationshipIDs.has(firstOverdue.relationshipID) || !overdueRelationshipIDs.has(secondOverdue.relationshipID)) {
-    throw new Error(`overdue conflict did not contain the two tied positions: ${JSON.stringify(openOverdueConflict)}`);
-  }
-
-  if (!Number.isFinite(Date.parse(stringAt(openOverdueConflict, ["review_due_at"])))) {
-    throw new Error(`overdue conflict did not return a valid review_due_at: ${JSON.stringify(openOverdueConflict)}`);
-  }
-  const overdueReview = await runAutomaticConflictReview(overdueConflictID);
-  if (overdueReview.status !== "resolved" || overdueReview.planStatus !== "applied") {
-    throw new Error(`overdue conflict reviewer did not complete: ${JSON.stringify(overdueReview)}`);
-  }
-  if (!["ai", "last_write_wins"].includes(overdueReview.method)) {
-    throw new Error(`overdue conflict used an unexpected resolution method: ${JSON.stringify(overdueReview)}`);
-  }
-  if (!overdueReview.assessmentAttemptID || overdueReview.derivationCount < 1) {
-    throw new Error(`overdue conflict did not record assessment/retraction lineage: ${JSON.stringify(overdueReview)}`);
-  }
-
-  await waitForConflictID(profileA.apiKey, marker, overdueConflictID, "resolved");
-  const overdueTraces = await Promise.all([
-    mcpTool(profileA.apiKey, "trace_memory", { relationship_id: firstOverdue.relationshipID, include_transitions: true }),
-    mcpTool(profileB.apiKey, "trace_memory", { relationship_id: secondOverdue.relationshipID, include_transitions: true }),
-  ]);
-  const supersededCount = overdueTraces.filter((trace) => stringAt(trace, ["relationship", "relationship_status"]) === "superseded").length;
-  if (supersededCount !== 1) {
-    throw new Error(`overdue conflict did not suppress exactly one losing relationship: ${JSON.stringify(overdueTraces)}`);
-  }
-  return { conflictID: overdueConflictID, method: overdueReview.method };
+  const line = result.stdout.trim().split(/\r?\n/).findLast((item) => item.trim().startsWith("{"));
+  if (!line) throw new Error(`conflict review driver returned no JSON: ${redactText(result.stdout)}`);
+  return JSON.parse(line);
 }
 
-async function runAutomaticConflictReview(conflictID) {
-  markConflictReviewDue(conflictID);
-
-  let last = {};
-  const attempts = Math.ceil((conflictReviewTimeoutSeconds * 1000) / 2_000);
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const row = postgresQuery(`
-      SELECT conflict.status,
-             COALESCE(plan.method, ''),
-             COALESCE(plan.assessment_attempt_id::text, ''),
-             COALESCE(plan.status, ''),
-             (
-               SELECT count(*)
-               FROM relationship_conflict_evidence_derivations derivation
-               WHERE derivation.team_id = conflict.team_id
-                 AND derivation.conflict_id = conflict.conflict_id
-             )
-      FROM relationship_conflict_cases conflict
-      LEFT JOIN LATERAL (
-        SELECT method, assessment_attempt_id, status
-        FROM relationship_conflict_resolution_plans
-        WHERE team_id = conflict.team_id
-          AND conflict_id = conflict.conflict_id
-        ORDER BY created_at DESC, resolution_plan_id DESC
-        LIMIT 1
-      ) plan ON true
-      WHERE conflict.team_id = ${sqlLiteral(teamID)}::uuid
-        AND conflict.conflict_id = ${sqlLiteral(conflictID)}::uuid;
-    `);
-    const [status, method, assessmentAttemptID, planStatus, derivationCountRaw] = row.split("|");
-    last = {
-      status,
-      method,
-      assessmentAttemptID,
-      planStatus,
-      derivationCount: Number(derivationCountRaw),
-    };
-    if (status === "resolved") {
-      return last;
-    }
-    if (attempt % 5 === 0) {
-      markConflictReviewDue(conflictID);
-      requeueCompletedConflictReviewRun(conflictID);
-    }
-    await delay(2_000);
-  }
-  throw new Error(`timed out waiting for automatic conflict review ${conflictID}: ${JSON.stringify(last)}`);
+function assertReview(result, outcome, stage, preferredPositionID, method) {
+  assert(result.outcome === outcome, `review outcome = ${result.outcome}, want ${outcome}: ${JSON.stringify(result)}`);
+  assert(result.stage === stage, `review stage = ${result.stage}, want ${stage}: ${JSON.stringify(result)}`);
+  assert(result.preferred_position_id === preferredPositionID, `review preferred position = ${result.preferred_position_id}, want ${preferredPositionID}`);
+  assert(result.resolution_method === method, `review method = ${result.resolution_method}, want ${method}`);
 }
 
-function markConflictReviewDue(conflictID) {
-  postgresQuery(`
-    UPDATE relationship_conflict_cases
-    SET review_due_at = clock_timestamp() - interval '1 second',
-        next_review_at = clock_timestamp() - interval '1 second',
-        attempts = 0,
-        lease_worker_id = '',
-        lease_until = NULL,
-        last_error = '',
-        updated_at = now()
-    WHERE team_id = ${sqlLiteral(teamID)}::uuid
-      AND conflict_id = ${sqlLiteral(conflictID)}::uuid
-      AND status IN ('open', 'overdue')
-      AND (lease_until IS NULL OR lease_until < clock_timestamp());
-  `);
-}
-
-function requeueCompletedConflictReviewRun(conflictID) {
-  postgresQuery(`
-    WITH latest_run AS (
-      SELECT review_run_id
-      FROM relationship_conflict_review_runs
-      WHERE team_id = ${sqlLiteral(teamID)}::uuid
-        AND status = 'completed'
-        AND local_run_date = CURRENT_DATE
-      ORDER BY completed_at DESC NULLS LAST, review_run_id DESC
-      LIMIT 1
-    )
-    UPDATE relationship_conflict_cases AS conflict
-    SET last_review_run_id = latest_run.review_run_id,
-        updated_at = now()
-    FROM latest_run
+function conflictState(teamID, conflictID) {
+  return postgresJSON(`
+    SELECT json_build_object(
+      'status', conflict.status,
+      'version', conflict.version,
+      'preferred_position_id', COALESCE(conflict.preferred_position_id::text, ''),
+      'resolution_reason', conflict.resolution_reason
+    )::text
+    FROM relationship_conflict_cases AS conflict
     WHERE conflict.team_id = ${sqlLiteral(teamID)}::uuid
       AND conflict.conflict_id = ${sqlLiteral(conflictID)}::uuid
-      AND conflict.last_review_run_id IS NULL
-      AND conflict.status IN ('open', 'overdue')
-      AND conflict.next_review_at <= clock_timestamp();
-  `);
-  postgresQuery(`
-    UPDATE relationship_conflict_review_runs AS review_run
-    SET status = 'failed',
-        lease_until = NULL,
-        completed_at = NULL,
-        last_error = 'compose e2e automatic review requeue',
-        updated_at = now()
-      WHERE review_run.team_id = ${sqlLiteral(teamID)}::uuid
-      AND review_run.status = 'completed'
-      AND review_run.local_run_date = CURRENT_DATE
-      AND EXISTS (
-        SELECT 1
-        FROM relationship_conflict_cases AS conflict
-        WHERE conflict.team_id = review_run.team_id
-          AND conflict.conflict_id = ${sqlLiteral(conflictID)}::uuid
-          AND conflict.last_review_run_id = review_run.review_run_id
-          AND conflict.status IN ('open', 'overdue')
-          AND conflict.next_review_at <= clock_timestamp()
-      );
   `);
 }
 
-function postgresQuery(sql) {
+function assessmentAttempts(teamID, conflictID) {
+  return postgresJSON(`
+    SELECT COALESCE(json_agg(item ORDER BY local_assessment_date), '[]'::json)::text
+    FROM (
+      SELECT assessment.local_assessment_date,
+             json_build_object(
+               'assessment_attempt_id', assessment.assessment_attempt_id::text,
+               'status', assessment.status,
+               'selected_position_id', COALESCE(assessment.selected_position_id::text, ''),
+               'failure_class', assessment.failure_class,
+               'local_assessment_date', assessment.local_assessment_date
+             ) AS item
+      FROM relationship_conflict_ai_assessment_attempts AS assessment
+      WHERE assessment.team_id = ${sqlLiteral(teamID)}::uuid
+        AND assessment.conflict_id = ${sqlLiteral(conflictID)}::uuid
+    ) AS attempts
+  `);
+}
+
+function latestResolutionPlan(teamID, conflictID) {
+  return postgresJSON(`
+    SELECT COALESCE((
+      SELECT json_build_object(
+        'method', plan.method,
+        'status', plan.status,
+        'preferred_position_id', plan.preferred_position_id::text,
+        'assessment_attempt_id', COALESCE(plan.assessment_attempt_id::text, '')
+      )::text
+      FROM relationship_conflict_resolution_plans AS plan
+      WHERE plan.team_id = ${sqlLiteral(teamID)}::uuid
+        AND plan.conflict_id = ${sqlLiteral(conflictID)}::uuid
+      ORDER BY plan.created_at DESC, plan.resolution_plan_id DESC
+      LIMIT 1
+    ), '{}')
+  `);
+}
+
+function conflictDerivationCount(teamID, conflictID) {
+  return Number(postgresQuery(`
+    SELECT count(*)
+    FROM relationship_conflict_evidence_derivations
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND conflict_id = ${sqlLiteral(conflictID)}::uuid
+  `));
+}
+
+function positionAcceptedTimes(teamID, conflictID, positionAID, positionBID) {
+  return postgresJSON(`
+    SELECT json_build_object(
+      'position_a', max(member.accepted_at) FILTER (WHERE member.position_id = ${sqlLiteral(positionAID)}::uuid),
+      'position_b', max(member.accepted_at) FILTER (WHERE member.position_id = ${sqlLiteral(positionBID)}::uuid)
+    )::text
+    FROM relationship_conflict_position_members AS member
+    WHERE member.team_id = ${sqlLiteral(teamID)}::uuid
+      AND member.conflict_id = ${sqlLiteral(conflictID)}::uuid
+      AND member.active
+  `);
+}
+
+function conflictSemanticSnapshot(teamID, conflictID) {
+  return postgresJSON(`
+    SELECT json_build_object(
+      'version', conflict.version,
+      'active_positions', (
+        SELECT count(*) FROM relationship_conflict_positions AS position
+        WHERE position.team_id = conflict.team_id AND position.conflict_id = conflict.conflict_id AND position.active
+      ),
+      'active_members', (
+        SELECT count(*) FROM relationship_conflict_position_members AS member
+        WHERE member.team_id = conflict.team_id AND member.conflict_id = conflict.conflict_id AND member.active
+      ),
+      'member_relationships', (
+        SELECT count(DISTINCT member.relationship_id) FROM relationship_conflict_position_members AS member
+        WHERE member.team_id = conflict.team_id AND member.conflict_id = conflict.conflict_id AND member.active
+      ),
+      'member_supports', (
+        SELECT count(DISTINCT member.support_id) FROM relationship_conflict_position_members AS member
+        WHERE member.team_id = conflict.team_id AND member.conflict_id = conflict.conflict_id AND member.active
+      )
+    )::text
+    FROM relationship_conflict_cases AS conflict
+    WHERE conflict.team_id = ${sqlLiteral(teamID)}::uuid
+      AND conflict.conflict_id = ${sqlLiteral(conflictID)}::uuid
+  `);
+}
+
+function postgresJSON(sql) {
+  const raw = postgresQuery(sql);
+  if (!raw) throw new Error("PostgreSQL lineage query returned no JSON");
+  return JSON.parse(raw);
+}
+
+function postgresQuery(sql, options = {}) {
+  const normalized = sql.trim();
+  if (!/^(SELECT|WITH)\b/i.test(normalized)) throw new Error("conflict e2e PostgreSQL helper permits read-only queries only");
   const result = spawnSync("docker", [
-    "compose",
-    "-p",
-    composeProject,
-    "-f",
-    composeFile,
-    "exec",
-    "-T",
-    "postgres",
-    "sh",
-    "-ec",
-    'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
-    "conflict-e2e",
-    sql,
+    "compose", "-p", composeProject, "-f", composeFile,
+    "exec", "-T", "postgres", "sh", "-ec",
+    'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
+    "conflict-e2e", sql,
   ], {
     cwd: fileURLToPath(new URL("../..", import.meta.url)),
     encoding: "utf8",
   });
-  if (result.status !== 0) {
-    throw new Error(`postgres query failed (${result.status}): ${result.stderr || result.stdout}`);
-  }
+  if (result.status !== 0) throw new Error(`PostgreSQL read failed (${result.status}): ${redactText(result.stderr || result.stdout)}`);
   return result.stdout.trim();
+}
+
+async function assertRemovedPlacementTools(apiKey) {
+  const listed = await rpc(apiKey, "tools/list", {});
+  assert(!listed.error && listed.result, "tools/list failed in conflict e2e");
+  const names = new Set((listed.result.tools ?? []).map((tool) => tool.name));
+  for (const name of ["get_memory_placement", "resolve_memory_placement"]) {
+    assert(!names.has(name), `removed placement tool ${name} is listed`);
+    const response = await rpc(apiKey, "tools/call", { name, arguments: {} });
+    assert(response.error?.code === -32601 && response.result === undefined, `removed placement tool ${name} is callable`);
+  }
+}
+
+async function createTeam(label) {
+  const response = await controlJSON("/teams", {
+    method: "POST",
+    body: JSON.stringify({ name: `${runID} ${label} team`, description: "isolated conflict e2e fixture" }),
+  });
+  const teamID = String(response.data?.id ?? "");
+  assert(teamID, `control API did not create team ${label}`);
+  return teamID;
+}
+
+async function createProfile(teamID, name) {
+  const response = await controlJSON(`/teams/${teamID}/profiles`, {
+    method: "POST",
+    body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }),
+  });
+  const apiKey = String(response.data?.api_key ?? "");
+  const profileID = String(response.data?.key?.id ?? "");
+  assert(apiKey && profileID, "control API profile response omitted credentials or profile ID");
+  return { apiKey, profileID, name };
+}
+
+async function renameProfile(teamID, profileID, name) {
+  const response = await controlJSON(`/teams/${teamID}/profiles/${profileID}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+  assert(response.data?.id === profileID && response.data?.name === name, "control API did not rename the profile");
+}
+
+async function mcpSuccess(apiKey, name, args) {
+  const response = await mcpRaw(apiKey, name, args);
+  if (response.error || response.result === undefined) throw new Error(`MCP ${name} returned an error: ${redactText(JSON.stringify(response.error ?? {}))}`);
+  const text = response.result?.content?.[0]?.text;
+  if (typeof text !== "string") throw new Error(`MCP ${name} result omitted JSON content`);
+  return JSON.parse(text);
+}
+
+async function mcpRaw(apiKey, name, args) {
+  return rpc(apiKey, "tools/call", { name, arguments: args });
+}
+
+async function rpc(apiKey, method, params) {
+  return httpJSON(`${userURL}/mcp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method, params }),
+  });
+}
+
+async function controlJSON(path, options) {
+  return httpJSON(`${controlURL}/control/api${path}`, {
+    ...options,
+    headers: { Authorization: `Bearer ${controlToken}`, "Content-Type": "application/json" },
+  });
+}
+
+async function httpJSON(url, options) {
+  const response = await fetch(url, options);
+  const text = await response.text();
+  if (!response.ok) throw new Error(`HTTP ${response.status} ${url}: ${redactText(text)}`);
+  return text ? JSON.parse(text) : {};
+}
+
+function positionForRelationship(conflict, relationshipID) {
+  const position = (conflict.positions ?? []).find((item) => (item.relationship_ids ?? []).includes(relationshipID));
+  if (!position) throw new Error(`conflict ${conflict.conflict_id} omitted relationship ${relationshipID}`);
+  return position;
+}
+
+function positionByID(conflict, positionID) {
+  const position = (conflict?.positions ?? []).find((item) => item.position_id === positionID);
+  if (!position) throw new Error(`conflict ${conflict?.conflict_id ?? "unknown"} omitted position ${positionID}`);
+  return position;
+}
+
+function conflictByID(conflicts, conflictID) {
+  const conflict = (conflicts ?? []).find((item) => item.conflict_id === conflictID);
+  if (!conflict) throw new Error(`output omitted conflict ${conflictID}`);
+  return conflict;
+}
+
+function provenanceFields(position) {
+  return {
+    supporter_count: position.supporter_count,
+    support_group_count: position.support_group_count,
+    authoritative_group_count: position.authoritative_group_count,
+    supporters_truncated: position.supporters_truncated,
+    supporters: position.supporters,
+  };
+}
+
+function statusTeamID(submissionID) {
+  const value = postgresQuery(`
+    SELECT team_id::text
+    FROM knowledge_ingests
+    WHERE ingest_id = ${sqlLiteral(submissionID)}::uuid
+    LIMIT 1
+  `);
+  assert(value, `submission ${submissionID} has no durable team`);
+  return value;
+}
+
+function offsetTime(value, milliseconds) {
+  const parsed = Date.parse(value);
+  assert(Number.isFinite(parsed), `invalid RFC3339 time ${value}`);
+  return new Date(parsed + milliseconds).toISOString();
+}
+
+function stableJSON(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJSON).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJSON(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
 }
 
 function sqlLiteral(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
 
-async function mcpTool(apiKey, name, args) {
-  const response = await httpJSON(`${userUrl}/mcp`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: ++rpcID,
-      method: "tools/call",
-      params: { name, arguments: args },
-    }),
-  });
-  if (response.error) {
-    throw new Error(`MCP ${name} error: ${JSON.stringify(response.error)}`);
-  }
-  const text = response.result?.content?.[0]?.text;
-  if (typeof text !== "string") {
-    throw new Error(`MCP ${name} result missing text: ${JSON.stringify(response)}`);
-  }
-  return JSON.parse(text);
-}
-
-async function httpJSON(url, options) {
-  const response = await fetch(url, options);
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} ${url}: ${redactHTTPBody(text)}`);
-  }
-  return text ? JSON.parse(text) : {};
-}
-
-function redactHTTPBody(text) {
-  return text.replace(/"api_key"\s*:\s*"[^"]*"/g, "\"api_key\":\"<redacted>\"");
-}
-
-function requiredEnv(name) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is required`);
-  }
-  return value;
-}
-
-function positiveIntEnv(name, fallback, minimum, maximum) {
-  const raw = process.env[name];
-  if (!raw) {
-    return fallback;
-  }
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < minimum || value > maximum) {
-    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
-  }
-  return value;
-}
-
 function stringAt(value, path) {
   let current = value;
   for (const key of path) {
-    if (current === null || typeof current !== "object") {
-      return "";
-    }
+    if (!current || typeof current !== "object") return "";
     current = current[key];
   }
   return typeof current === "string" ? current : "";
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function redactText(value) {
+  return String(value)
+    .replace(/"api_key"\s*:\s*"[^"]*"/g, '"api_key":"<redacted>"')
+    .replace(/postgres:\/\/[^@\s]+@/g, "postgres://<redacted>@")
+    .slice(0, 2_000);
+}
+
+function requiredEnv(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function positiveIntEnv(name, fallback, minimum, maximum) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < minimum || value > maximum) throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  return value;
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

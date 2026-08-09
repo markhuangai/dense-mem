@@ -31,6 +31,7 @@ func recallConflictSummaries(records []repository.RelationshipConflictCaseRecord
 
 const (
 	recallConflictPositionLimit         = 10
+	recallConflictSupporterLimit        = 20
 	recallConflictRelationshipIDLimit   = 20
 	recallConflictOwnerProfileIDLimit   = 20
 	recallConflictResultEvidenceIDLimit = 50
@@ -42,12 +43,36 @@ func recallConflictPositions(records []repository.RelationshipConflictPositionRe
 	}
 	out := make([]RecallConflictPosition, 0, len(records))
 	for _, record := range records {
+		supportersTruncated := record.SupportersTruncated || len(record.Supporters) > recallConflictSupporterLimit
 		out = append(out, RecallConflictPosition{
-			PositionID:        record.PositionID,
-			Disposition:       record.Disposition,
-			RelationshipIDs:   limitStrings(record.RelationshipIDs, recallConflictRelationshipIDLimit),
-			OwnerProfileIDs:   limitStrings(record.OwnerProfileIDs, recallConflictOwnerProfileIDLimit),
-			ResultEvidenceIDs: limitStrings(record.EvidenceIDs, recallConflictResultEvidenceIDLimit),
+			PositionID:              record.PositionID,
+			Disposition:             record.Disposition,
+			SupporterCount:          record.SupporterCount,
+			SupportGroupCount:       record.SupportGroupCount,
+			AuthoritativeGroupCount: record.AuthoritativeGroupCount,
+			SupportersTruncated:     supportersTruncated,
+			Supporters:              recallConflictSupporters(record.Supporters),
+			RelationshipIDs:         limitStrings(record.RelationshipIDs, recallConflictRelationshipIDLimit),
+			OwnerProfileIDs:         limitStrings(record.OwnerProfileIDs, recallConflictOwnerProfileIDLimit),
+			ResultEvidenceIDs:       limitStrings(record.EvidenceIDs, recallConflictResultEvidenceIDLimit),
+		})
+	}
+	return out
+}
+
+func recallConflictSupporters(records []repository.RelationshipConflictSupporterRecord) []RecallConflictSupporter {
+	if len(records) > recallConflictSupporterLimit {
+		records = records[:recallConflictSupporterLimit]
+	}
+	out := make([]RecallConflictSupporter, 0, len(records))
+	for _, record := range records {
+		out = append(out, RecallConflictSupporter{
+			ProfileID:          record.ProfileID,
+			ProfileName:        record.ProfileName,
+			StrongestAuthority: record.StrongestAuthority,
+			EvidenceID:         record.EvidenceID,
+			AcceptedAt:         record.AcceptedAt,
+			SourceGroupCount:   record.SourceGroupCount,
 		})
 	}
 	return out

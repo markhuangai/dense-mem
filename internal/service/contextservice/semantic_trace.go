@@ -12,7 +12,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-var ErrTraceAuthContext = errors.New("trace: authenticated actor context is required")
+var (
+	ErrTraceAuthContext            = errors.New("trace: authenticated actor context is required")
+	ErrTraceRepositoryTeamMismatch = errors.New("trace: repository returned a mismatched team")
+)
 
 type SemanticTraceStore interface {
 	TraceRelationship(ctx context.Context, input repository.TraceRelationshipInput) (*repository.RelationshipTraceResult, error)
@@ -78,7 +81,22 @@ func (s *semanticTraceService) Trace(ctx context.Context, _ string, req TraceReq
 	if err != nil {
 		return nil, fmt.Errorf("trace: %w", err)
 	}
+	if err := validateTraceConflictTeams(trace, actor.TeamID.String()); err != nil {
+		return nil, err
+	}
 	return &TraceResult{Semantic: semanticTraceFromRepository(trace)}, nil
+}
+
+func validateTraceConflictTeams(trace *repository.RelationshipTraceResult, expectedTeamID string) error {
+	if trace == nil {
+		return nil
+	}
+	for _, conflict := range trace.Conflicts {
+		if conflict.TeamID != expectedTeamID {
+			return ErrTraceRepositoryTeamMismatch
+		}
+	}
+	return nil
 }
 
 func semanticTraceFromRepository(trace *repository.RelationshipTraceResult) *SemanticTrace {

@@ -218,6 +218,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 			return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "replacement_conflict")
 		})
 	}
+	if errors.Is(err, repository.ErrConflictContextStale) {
+		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewReviewRequired), "candidate", "conflict_context_stale")
+	}
 	if errors.Is(err, repository.ErrSubmissionAssessmentScopeMismatch) {
 		return true, terminalizeAfterError(err, func() error {
 			return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_scope")

@@ -23,6 +23,8 @@ E2E_FILE_ID=""
 E2E_SERVER_IMAGE=""
 E2E_PLAYWRIGHT_CONTAINER=""
 
+source "${ROOT_DIR}/scripts/e2e-compose-conflict.sh"
+
 sanitize_project_name() {
   local raw="$1"
   local sanitized
@@ -289,6 +291,7 @@ prepare_e2e_environment() {
   printf '%s\n' \
     "CONFLICT_REVIEW_START_TIME_LOCAL=00:00" \
     "CONFLICT_REVIEW_JITTER_SECONDS=0" >> "$E2E_ENV_FILE"
+  append_conflict_e2e_environment
   ROOT_ENV_FILE="$E2E_ENV_FILE"
 }
 
@@ -704,8 +707,8 @@ if [[ "$E2E_MODE" != "standard" && "$E2E_MODE" != "entra_scim" ]]; then
   exit 1
 fi
 
-if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "all" ]]; then
-  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, submission_status, security_intake, submission_assessment, semantic_holds, community, or all." >&2
+if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "all" ]]; then
+  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, submission_status, security_intake, submission_assessment, semantic_holds, community, conflict, or all." >&2
   exit 1
 fi
 
@@ -719,7 +722,7 @@ if [[ "$E2E_SCENARIO" == "all" ]]; then
     echo "DENSE_MEM_E2E_SCENARIO=all requires DENSE_MEM_E2E_MODE=standard." >&2
     exit 1
   fi
-  for scenario in mcp_boundaries submission_status security_intake submission_assessment semantic_holds community full; do
+  for scenario in mcp_boundaries submission_status security_intake submission_assessment semantic_holds community conflict full; do
     echo "Running compose e2e scenario ${scenario} as part of all."
     DENSE_MEM_E2E_SCENARIO="$scenario" \
     DENSE_MEM_E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-all}-$(printf '%s' "$scenario" | tr '[:upper:]' '[:lower:]')" \
@@ -754,7 +757,8 @@ read -r \
   generated_neo4j_http_port \
   generated_neo4j_bolt_port \
   generated_redis_port \
-  generated_entra_port < <(pick_ports 8)
+  generated_entra_port \
+  generated_conflict_provider_port < <(pick_ports 9)
 DENSE_MEM_PORT="${DENSE_MEM_E2E_API_PORT:-$generated_api_port}"
 CONTROL_PORTAL_PORT="${DENSE_MEM_E2E_CONTROL_PORT:-$generated_control_port}"
 PROMETHEUS_PORT="${DENSE_MEM_E2E_PROMETHEUS_PORT:-$generated_prometheus_port}"
@@ -763,6 +767,7 @@ NEO4J_HTTP_HOST_PORT="${DENSE_MEM_E2E_NEO4J_HTTP_PORT:-$generated_neo4j_http_por
 NEO4J_BOLT_HOST_PORT="${DENSE_MEM_E2E_NEO4J_BOLT_PORT:-$generated_neo4j_bolt_port}"
 REDIS_PORT="${DENSE_MEM_E2E_REDIS_PORT:-$generated_redis_port}"
 E2E_ENTRA_PORT="${DENSE_MEM_E2E_ENTRA_PORT:-$generated_entra_port}"
+E2E_CONFLICT_PROVIDER_PORT="${DENSE_MEM_E2E_CONFLICT_PROVIDER_PORT:-$generated_conflict_provider_port}"
 PROMETHEUS_CONTAINER_NAME="${DENSE_MEM_E2E_PROMETHEUS_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME}-prometheus}"
 CONTROL_URL="${DENSE_MEM_CONTROL_URL:-http://127.0.0.1:${CONTROL_PORTAL_PORT}}"
 USER_URL="${DENSE_MEM_USER_URL:-http://127.0.0.1:${DENSE_MEM_PORT}}"
@@ -825,10 +830,13 @@ else
     -count=1
 fi
 
+prepare_conflict_review_driver
+
 prepare_e2e_compose_files
 prepare_postgres_e2e_overlay
 prepare_e2e_prometheus_files
 prepare_entra_mock_files
+prepare_conflict_provider_files
 
 if ! compose config -q; then
   echo "Generated E2E compose configuration is invalid." >&2
@@ -959,6 +967,10 @@ if [[ "$E2E_SCENARIO" == "community" ]]; then
   echo "Running compose-backed community recall e2e with the configured live verifier."; export DENSE_MEM_CONTROL_URL="$CONTROL_URL" DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_API_KEY="$api_key" DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE"; node "$ROOT_DIR/tests/uat/community_recall_mcp_e2e.mjs"
   if [[ "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" == "1" ]]; then echo "Skipping compose-backed community Playwright tests by DENSE_MEM_E2E_SKIP_PLAYWRIGHT."; else echo "Running compose-backed community Playwright tests."; export DENSE_MEM_E2E_TEAM_NAME="E2E Team"; run_compose_playwright_tests community; fi; exit 0
 fi
+if [[ "$E2E_SCENARIO" == "conflict" ]]; then
+  run_conflict_e2e "$team_id"
+  exit 0
+fi
 echo "Running compose-backed scheduled team dreaming e2e."
 dream_json="$(DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
 DENSE_MEM_USER_URL="$USER_URL" \
@@ -985,15 +997,3 @@ else
   echo "Running compose-backed Playwright tests."
   run_compose_playwright_tests
 fi
-
-echo "Running compose-backed MCP conflict e2e."
-echo "Seeding isolated conflict e2e team through the private control API."
-create_control_team "Conflict E2E Team" "compose conflict e2e seed"
-conflict_team_id="$CREATED_TEAM_ID"
-DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
-DENSE_MEM_USER_URL="$USER_URL" \
-DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
-DENSE_MEM_E2E_TEAM_ID="$conflict_team_id" \
-DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
-DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
-node "$ROOT_DIR/tests/uat/conflict_mcp_e2e.mjs"

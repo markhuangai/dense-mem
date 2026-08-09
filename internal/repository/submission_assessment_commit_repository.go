@@ -61,6 +61,21 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 				return ErrPlacementStaleSource
 			}
 		}
+		for _, entry := range input.RelationshipObservations {
+			conflictContext := entry.Observation.ConflictContext
+			if conflictContext == nil {
+				continue
+			}
+			if err := requireRelationshipConflictContextCurrent(
+				ctx,
+				tx,
+				input.TeamID,
+				conflictContext.ConflictID,
+				conflictContext.ExpectedVersion,
+			); err != nil {
+				return err
+			}
+		}
 		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
 			return err
 		}
@@ -126,6 +141,17 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 			decision, err := relationshipDecisionFromPlacementObservation(ctx, tx, commit, entry.Observation, entitiesByRef)
 			if err != nil {
 				return err
+			}
+			if entry.Observation.ConflictContext != nil {
+				if err := requireRelationshipConflictContextMatchesDecision(
+					ctx,
+					tx,
+					input.TeamID,
+					*entry.Observation.ConflictContext,
+					decision,
+				); err != nil {
+					return err
+				}
 			}
 			appliedBefore := len(semanticResult.RelationshipResults)
 			if err := applyPlacementRelationshipDecision(

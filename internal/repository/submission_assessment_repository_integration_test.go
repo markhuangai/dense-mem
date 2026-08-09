@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -166,6 +167,70 @@ func TestSubmissionAssessmentRollsBackEverySemanticWriteWhenOneRelationshipFails
 	assert.Contains(t, err.Error(), "unresolved relationship endpoint")
 
 	after := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerID, ingest.PlacementRunID)
+	assert.Equal(t, before, after)
+}
+
+func TestSubmissionAssessmentCommitValidatesConflictContextAtomically(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "submission-assessment-conflict-context", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-assessment-conflict-context-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-conflict-context-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-conflict-context-owner-b")
+	ownerC := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-conflict-context-owner-c")
+	repo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
+	otherSubject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Other Project")
+	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL")
+	graphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB")
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, repo, teamID, ownerA, "submission-context-seed-a",
+		"submission-context-seed-a", "Dense-Mem uses PostgreSQL.", subject.EntityID, postgres.EntityID, "submission-context-source-a",
+	)
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, repo, teamID, ownerB, "submission-context-seed-b",
+		"submission-context-seed-b", "Dense-Mem uses GraphDB.", subject.EntityID, graphdb.EntityID, "submission-context-source-b",
+	)
+	conflictID, conflictVersion := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+
+	_, freshInput := submissionAssessmentConflictCommitFixture(
+		t, ctx, repo, teamID, ownerC, "submission-context-fresh-worker", "submission-context-fresh",
+		"Dense-Mem uses PostgreSQL according to owner C.", subject.EntityID, postgres.EntityID,
+		"submission-context-source-c", PlacementConflictContextInput{ConflictID: conflictID, ExpectedVersion: conflictVersion},
+	)
+	committed, err := repo.CommitSubmissionAssessment(ctx, freshInput)
+	require.NoError(t, err)
+	require.Len(t, committed.RelationshipResults, 1)
+	_, currentVersion := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+	require.Greater(t, currentVersion, conflictVersion)
+
+	mismatchedIngest, mismatchedInput := submissionAssessmentConflictCommitFixture(
+		t, ctx, repo, teamID, ownerC, "submission-context-mismatched-worker", "submission-context-mismatched",
+		"Other Project uses PostgreSQL according to owner C.", otherSubject.EntityID, postgres.EntityID,
+		"submission-context-source-mismatched", PlacementConflictContextInput{ConflictID: conflictID, ExpectedVersion: currentVersion},
+	)
+	beforeMismatch := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerA, mismatchedIngest.PlacementRunID)
+	_, err = repo.CommitSubmissionAssessment(ctx, mismatchedInput)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConflictContextStale), err)
+	afterMismatch := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerA, mismatchedIngest.PlacementRunID)
+	assert.Equal(t, beforeMismatch, afterMismatch)
+
+	staleIngest, staleInput := submissionAssessmentConflictCommitFixture(
+		t, ctx, repo, teamID, ownerC, "submission-context-stale-worker", "submission-context-stale",
+		"Dense-Mem still uses PostgreSQL according to owner C.", subject.EntityID, postgres.EntityID,
+		"submission-context-source-stale", PlacementConflictContextInput{ConflictID: conflictID, ExpectedVersion: conflictVersion},
+	)
+	before := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerA, staleIngest.PlacementRunID)
+
+	_, err = repo.CommitSubmissionAssessment(ctx, staleInput)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConflictContextStale), err)
+
+	after := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerA, staleIngest.PlacementRunID)
 	assert.Equal(t, before, after)
 }
 
@@ -592,6 +657,75 @@ func submissionAssessmentPersistInput(run PlacementRun) PersistSubmissionAssessm
 		ResponseHash:            "sha256:submission-assessment-test",
 		ValidatedAt:             time.Now().UTC(),
 	}
+}
+
+func submissionAssessmentConflictCommitFixture(
+	t *testing.T,
+	ctx context.Context,
+	repo *LedgerRepositoryImpl,
+	teamID string,
+	ownerID string,
+	workerID string,
+	idempotencyKey string,
+	content string,
+	subjectEntityID string,
+	objectEntityID string,
+	sourceGroupKey string,
+	conflictContext PlacementConflictContextInput,
+) (*CreateIngestResult, CommitSubmissionAssessmentInput) {
+	t.Helper()
+	ingest := createSemanticIngest(t, ctx, repo, teamID, ownerID, idempotencyKey, content)
+	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, workerID, time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+	threshold := 0.7
+	confidence := 0.9
+	input := CommitSubmissionAssessmentInput{
+		SubmissionAssessmentRunScope: SubmissionAssessmentRunScope{
+			TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID, PlacementRunID: ingest.PlacementRunID,
+			WorkerID: workerID, ExpectedAttempts: claimed.Attempts,
+		},
+		AssessmentID: assessment.AssessmentID,
+		Items: []SubmissionAssessmentItemInput{{
+			PlacementItemID: ingest.Items[0].PlacementItemID,
+			FragmentID:      ingest.Evidence[0].FragmentID,
+		}},
+		EntityResolutions: []SubmissionAssessmentEntityResolutionInput{
+			{
+				PlacementItemID: ingest.Items[0].PlacementItemID,
+				Resolution: PlacementEntityResolutionInput{
+					MentionRef: "subject", Action: string(domain.EntityResolutionReuse), EntityID: subjectEntityID,
+					FragmentID: ingest.Evidence[0].FragmentID, AssessmentID: assessment.AssessmentID,
+				},
+			},
+			{
+				PlacementItemID: ingest.Items[0].PlacementItemID,
+				Resolution: PlacementEntityResolutionInput{
+					MentionRef: "object", Action: string(domain.EntityResolutionReuse), EntityID: objectEntityID,
+					FragmentID: ingest.Evidence[0].FragmentID, AssessmentID: assessment.AssessmentID,
+				},
+			},
+		},
+		RelationshipObservations: []SubmissionAssessmentRelationshipObservationInput{{
+			PlacementItemID: ingest.Items[0].PlacementItemID,
+			Observation: PlacementRelationshipDecisionInput{
+				Ref: "relationship", SubjectRef: "subject", OriginalPredicate: "primary database",
+				PredicateKey: "primary_database", PredicateVersion: 1, ObjectRef: "object", Polarity: "+",
+				EvidenceVerdict: string(domain.VerificationEntailed), Confidence: &confidence,
+				Rationale: "The evidence explicitly states the relationship.", Model: "submission-assessment-test",
+				ResponseHash: "sha256:submission-assessment-test", AssessmentID: assessment.AssessmentID,
+				AssessmentPolicyVersion: "submission-assessment-test", ThresholdUsed: &threshold,
+				GateResult: "meets_write_threshold", ConflictContext: &conflictContext,
+				Support: &EvidenceSupportInput{
+					FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: sourceGroupKey,
+					SpanStart: 0, SpanEnd: len(content), Quote: content, Authority: "primary",
+				},
+			},
+		}},
+		Payload: map[string]any{"assessor_contract": domain.ContractVersion},
+	}
+	return ingest, input
 }
 
 func submissionAssessmentCommitFixture(run PlacementRun, ingest *CreateIngestResult, assessmentID string, invalidSecondRelationship bool) CommitSubmissionAssessmentInput {

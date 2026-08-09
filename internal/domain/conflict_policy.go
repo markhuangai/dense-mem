@@ -35,14 +35,26 @@ type RelationshipConflictPositionRecord struct {
 	Disposition             string
 	ObjectEntityID          string
 	ObjectValueID           string
+	SupporterCount          int
 	SupportGroupCount       int
 	AuthoritativeGroupCount int
+	SupportersTruncated     bool
+	Supporters              []RelationshipConflictSupporterRecord
 	RelationshipIDs         []string
 	OwnerProfileIDs         []string
 	EvidenceIDs             []string
 	EffectiveAt             *time.Time
 	EffectiveTimeBasis      string
 	RecordedFallback        bool
+}
+
+type RelationshipConflictSupporterRecord struct {
+	ProfileID          string
+	ProfileName        string
+	StrongestAuthority string
+	EvidenceID         string
+	AcceptedAt         time.Time
+	SourceGroupCount   int
 }
 
 type RelationshipConflictEvaluationInput struct {

@@ -17,6 +17,7 @@ func TestFirstNonEmptyReturnsTrimmedNonNilValue(t *testing.T) {
 func TestTraceConflictOutputsIncludePositionsAndResolution(t *testing.T) {
 	dueAt := time.Date(2026, 7, 25, 4, 0, 0, 0, time.UTC)
 	effectiveAt := dueAt.Add(time.Hour)
+	acceptedAt := dueAt.Add(-time.Hour)
 	out := traceConflictOutputs([]repository.RelationshipConflictCaseRecord{{
 		ConflictID:          "00000000-0000-0000-0000-000000000101",
 		Version:             2,
@@ -28,8 +29,19 @@ func TestTraceConflictOutputsIncludePositionsAndResolution(t *testing.T) {
 		EffectiveTimeBasis:  "valid_from",
 		PreferredPositionID: "00000000-0000-0000-0000-000000000201",
 		Positions: []repository.RelationshipConflictPositionRecord{{
-			PositionID:      "00000000-0000-0000-0000-000000000201",
-			Disposition:     "preferred",
+			PositionID:              "00000000-0000-0000-0000-000000000201",
+			Disposition:             "preferred",
+			SupporterCount:          1,
+			SupportGroupCount:       2,
+			AuthoritativeGroupCount: 1,
+			Supporters: []repository.RelationshipConflictSupporterRecord{{
+				ProfileID:          "00000000-0000-0000-0000-000000000401",
+				ProfileName:        "Profile A",
+				StrongestAuthority: "authoritative",
+				EvidenceID:         "00000000-0000-0000-0000-000000000501",
+				AcceptedAt:         acceptedAt,
+				SourceGroupCount:   2,
+			}},
 			RelationshipIDs: []string{"00000000-0000-0000-0000-000000000301"},
 			OwnerProfileIDs: []string{"00000000-0000-0000-0000-000000000401"},
 			EvidenceIDs:     []string{"00000000-0000-0000-0000-000000000501"},
@@ -55,6 +67,20 @@ func TestTraceConflictOutputsIncludePositionsAndResolution(t *testing.T) {
 		position["disposition"] != "preferred" {
 		t.Fatalf("position output = %#v", position)
 	}
+	if position["supporter_count"] != 1 || position["support_group_count"] != 2 ||
+		position["authoritative_group_count"] != 1 || position["supporters_truncated"] != false {
+		t.Fatalf("position provenance output = %#v", position)
+	}
+	supporters, ok := position["supporters"].([]map[string]any)
+	if !ok || len(supporters) != 1 {
+		t.Fatalf("supporters = %#v", position["supporters"])
+	}
+	if supporters[0]["profile_name"] != "Profile A" ||
+		supporters[0]["strongest_authority"] != "authoritative" ||
+		supporters[0]["accepted_at"] != acceptedAt.Format(time.RFC3339Nano) ||
+		supporters[0]["source_group_count"] != 2 {
+		t.Fatalf("supporter output = %#v", supporters[0])
+	}
 	if got := position["relationship_ids"].([]string); len(got) != 1 || got[0] != "00000000-0000-0000-0000-000000000301" {
 		t.Fatalf("relationship_ids = %#v", position["relationship_ids"])
 	}
@@ -72,6 +98,7 @@ func TestTraceConflictOutputsEnforcePositionBounds(t *testing.T) {
 		positions = append(positions, repository.RelationshipConflictPositionRecord{
 			PositionID:      "00000000-0000-0000-0000-000000000201",
 			Disposition:     "candidate",
+			Supporters:      make([]repository.RelationshipConflictSupporterRecord, 21),
 			RelationshipIDs: make([]string, 21),
 			OwnerProfileIDs: make([]string, 21),
 			EvidenceIDs:     make([]string, 51),
@@ -97,7 +124,39 @@ func TestTraceConflictOutputsEnforcePositionBounds(t *testing.T) {
 	first := bounded[0]
 	if len(first["relationship_ids"].([]string)) != 20 ||
 		len(first["owner_profile_ids"].([]string)) != 20 ||
-		len(first["result_evidence_ids"].([]string)) != 50 {
+		len(first["result_evidence_ids"].([]string)) != 50 ||
+		len(first["supporters"].([]map[string]any)) != 20 ||
+		first["supporters_truncated"] != true {
 		t.Fatalf("bounded position = %#v", first)
+	}
+}
+
+func TestRecallConflictPositionSchemaValidatesSupporterProvenance(t *testing.T) {
+	acceptedAt := time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC)
+	output := map[string]any{
+		"position_id":               "00000000-0000-0000-0000-000000000201",
+		"disposition":               "candidate",
+		"supporter_count":           1,
+		"support_group_count":       2,
+		"authoritative_group_count": 1,
+		"supporters_truncated":      false,
+		"supporters": []any{map[string]any{
+			"profile_id":          "00000000-0000-0000-0000-000000000401",
+			"profile_name":        "Profile A",
+			"strongest_authority": "authoritative",
+			"evidence_id":         "00000000-0000-0000-0000-000000000501",
+			"accepted_at":         acceptedAt.Format(time.RFC3339),
+			"source_group_count":  2,
+		}},
+		"relationship_ids":    []any{"00000000-0000-0000-0000-000000000301"},
+		"owner_profile_ids":   []any{"00000000-0000-0000-0000-000000000401"},
+		"result_evidence_ids": []any{"00000000-0000-0000-0000-000000000501"},
+	}
+	if err := ValidateInput(Tool{InputSchema: recallConflictPositionSchema()}, output); err != nil {
+		t.Fatalf("validate conflict supporter output: %v", err)
+	}
+	delete(output, "supporters")
+	if err := ValidateInput(Tool{InputSchema: recallConflictPositionSchema()}, output); err == nil {
+		t.Fatal("missing supporters unexpectedly passed closed output validation")
 	}
 }
