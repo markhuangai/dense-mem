@@ -156,11 +156,11 @@ func TestRelationshipConflictSupporterProjectionUsesOneLatestPositionPerProfile(
 	commitPlacementRelationshipForConflictTest(t, ctx, ledgerRepo, teamID, ownerA, "latest-a", "latest-a", "A", subject.EntityID, valueA.EntityID, "copied-source")
 	commitPlacementRelationshipForConflictTest(t, ctx, ledgerRepo, teamID, ownerB, "latest-b", "latest-b", "B", subject.EntityID, valueB.EntityID, "copied-source")
 	latestCA := commitPlacementRelationshipForConflictTest(t, ctx, ledgerRepo, teamID, ownerC, "latest-c-a", "latest-c-a", "C supports A", subject.EntityID, valueA.EntityID, "copied-source")
-	latestCB := commitPlacementRelationshipForConflictTest(t, ctx, ledgerRepo, teamID, ownerC, "latest-c-b", "latest-c-b", "C supports B", subject.EntityID, valueB.EntityID, "copied-source")
 
 	conflictID, _ := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
 	knownAt := databaseNowForTest(t, adminDB, rls)
-	latestAt := knownAt.Add(time.Minute)
+	latestCB := commitPlacementRelationshipForConflictTest(t, ctx, ledgerRepo, teamID, ownerC, "latest-c-b", "latest-c-b", "C supports B", subject.EntityID, valueB.EntityID, "copied-source")
+	latestAt := knownAt.Add(2 * time.Minute)
 	// Reactivate the superseded snapshot member so the projection test can exercise two effective positions for one profile.
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		result := tx.Exec(`
@@ -176,7 +176,7 @@ func TestRelationshipConflictSupporterProjectionUsesOneLatestPositionPerProfile(
 			  AND conflict_id = ?::uuid
 			  AND owner_profile_id = ?::uuid
 			  AND relationship_id IN (?::uuid, ?::uuid)
-		`, latestCA.RelationshipResults[0].Relationship.RelationshipID, knownAt.Add(-time.Second),
+		`, latestCA.RelationshipResults[0].Relationship.RelationshipID, latestAt.Add(-time.Minute),
 			latestCB.RelationshipResults[0].Relationship.RelationshipID, latestAt,
 			teamID, conflictID, ownerC,
 			latestCA.RelationshipResults[0].Relationship.RelationshipID,
