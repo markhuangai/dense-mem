@@ -284,7 +284,9 @@ func TestRelationshipConflictPlacementPreservesNewestSupportTimestampForGroupRep
 			FROM relationship_conflict_position_members AS member
 			JOIN relationship_evidence_supports AS support
 			  ON support.team_id = member.team_id
-			 AND support.support_id = member.support_id
+			 AND support.relationship_id = member.relationship_id
+			 AND support.owner_profile_id = member.owner_profile_id
+			 AND support.source_group_key = member.source_group_key
 			WHERE member.team_id = ?::uuid
 			  AND member.conflict_id = ?::uuid
 			  AND member.relationship_id = ?::uuid

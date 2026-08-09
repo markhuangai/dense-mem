@@ -284,11 +284,13 @@ func TestSupporterConflictPolicyMigrationRewritesActiveWorkflow(t *testing.T) {
 		return err
 	}))
 	var repeatEvents int
-	require.NoError(t, sqlDB.QueryRowContext(ctx, `
-		SELECT count(*)
-		FROM relationship_conflict_events
-		WHERE team_id = $1::uuid AND action = 'policy_migrated'
-	`, teamID).Scan(&repeatEvents))
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT count(*)
+			FROM relationship_conflict_events
+			WHERE team_id = $1::uuid AND action = 'policy_migrated'
+		`, teamID).Scan(&repeatEvents)
+	}))
 	assert.Equal(t, 2, repeatEvents)
 
 	runGooseUpTo(t, ctx, sqlDB, 2026080903)

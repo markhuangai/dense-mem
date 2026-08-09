@@ -27,7 +27,8 @@ SELECT team_id,
        review_due_at,
        CASE WHEN review_due_at <= clock_timestamp() THEN clock_timestamp() ELSE review_due_at END AS next_review_at
 FROM relationship_conflict_cases
-WHERE status IN ('open', 'overdue');
+WHERE status IN ('open', 'overdue')
+FOR UPDATE;
 
 CREATE TEMP TABLE conflict_policy_migration_attempts ON COMMIT DROP AS
 SELECT attempt.team_id,
@@ -39,7 +40,8 @@ FROM relationship_conflict_ai_assessment_attempts AS attempt
 JOIN conflict_policy_migration_cases AS migration
   ON migration.team_id = attempt.team_id
  AND migration.conflict_id = attempt.conflict_id
-WHERE attempt.status = 'reserved';
+WHERE attempt.status = 'reserved'
+FOR UPDATE OF attempt;
 
 UPDATE relationship_conflict_ai_assessment_attempts AS attempt
 SET status = 'superseded',
@@ -47,7 +49,8 @@ SET status = 'superseded',
     completed_at = clock_timestamp()
 FROM conflict_policy_migration_attempts AS migration
 WHERE attempt.team_id = migration.team_id
-  AND attempt.assessment_attempt_id = migration.assessment_attempt_id;
+  AND attempt.assessment_attempt_id = migration.assessment_attempt_id
+  AND attempt.status = 'reserved';
 
 INSERT INTO relationship_conflict_ai_assessment_events (
     team_id, assessment_attempt_id, action, outcome, metadata
@@ -74,6 +77,7 @@ WHERE plan.team_id = migration.team_id
 UPDATE relationship_conflict_review_runs
 SET status = 'failed',
     last_error = 'policy_replaced',
+    worker_id = '',
     lease_until = NULL,
     completed_at = COALESCE(completed_at, clock_timestamp()),
     updated_at = clock_timestamp()
@@ -92,7 +96,9 @@ SET policy_version = 'cross_profile_supporter_majority_after_ttl',
     updated_at = clock_timestamp()
 FROM conflict_policy_migration_cases AS migration
 WHERE conflict.team_id = migration.team_id
-  AND conflict.conflict_id = migration.conflict_id;
+  AND conflict.conflict_id = migration.conflict_id
+  AND conflict.version = migration.previous_case_version
+  AND conflict.status IN ('open', 'overdue');
 
 INSERT INTO relationship_conflict_events (
     team_id, conflict_id, action, outcome, actor_kind, policy_version,
