@@ -159,7 +159,8 @@ func TestRelationshipConflictSupporterProjectionUsesOneLatestPositionPerProfile(
 	latestCB := commitPlacementRelationshipForConflictTest(t, ctx, ledgerRepo, teamID, ownerC, "latest-c-b", "latest-c-b", "C supports B", subject.EntityID, valueB.EntityID, "copied-source")
 
 	conflictID, _ := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
-	latestAt := time.Date(2026, 8, 9, 0, 0, 1, 0, time.UTC)
+	knownAt := databaseNowForTest(t, adminDB, rls)
+	latestAt := knownAt.Add(time.Minute)
 	// Reactivate the superseded snapshot member so the projection test can exercise two effective positions for one profile.
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		result := tx.Exec(`
@@ -175,7 +176,7 @@ func TestRelationshipConflictSupporterProjectionUsesOneLatestPositionPerProfile(
 			  AND conflict_id = ?::uuid
 			  AND owner_profile_id = ?::uuid
 			  AND relationship_id IN (?::uuid, ?::uuid)
-		`, latestCA.RelationshipResults[0].Relationship.RelationshipID, latestAt.Add(-time.Second),
+		`, latestCA.RelationshipResults[0].Relationship.RelationshipID, knownAt.Add(-time.Second),
 			latestCB.RelationshipResults[0].Relationship.RelationshipID, latestAt,
 			teamID, conflictID, ownerC,
 			latestCA.RelationshipResults[0].Relationship.RelationshipID,
@@ -192,6 +193,15 @@ func TestRelationshipConflictSupporterProjectionUsesOneLatestPositionPerProfile(
 	assert.NotContains(t, supporterIDs(positionA.Supporters), ownerC)
 	assert.Contains(t, supporterIDs(positionB.Supporters), ownerC)
 
+	historical := loadConflictSupporterTestRecords(t, ctx, appDB, rls, teamID, ownerA, conflictID, nil, &knownAt)
+	require.Len(t, historical, 1)
+	historicalPositionA := conflictSupporterTestPosition(t, historical[0].Positions, valueA.EntityID)
+	historicalPositionB := conflictSupporterTestPosition(t, historical[0].Positions, valueB.EntityID)
+	assert.Equal(t, 2, historicalPositionA.SupporterCount)
+	assert.Equal(t, 1, historicalPositionB.SupporterCount)
+	assert.Contains(t, supporterIDs(historicalPositionA.Supporters), ownerC)
+	assert.NotContains(t, supporterIDs(historicalPositionB.Supporters), ownerC)
+
 	// A bounded caller may request only position A. Hidden positions must still
 	// participate in the per-profile latest-position vote calculation.
 	requested := []RelationshipConflictPositionRecord{{
@@ -206,7 +216,7 @@ func TestRelationshipConflictSupporterProjectionUsesOneLatestPositionPerProfile(
 
 	// Equal newest timestamps across positions abstain the profile instead of
 	// selecting a position by UUID or source-group identity.
-	tieAt := time.Date(2026, 8, 9, 0, 0, 2, 0, time.UTC)
+	tieAt := latestAt.Add(time.Second)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE relationship_conflict_position_members

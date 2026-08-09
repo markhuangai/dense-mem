@@ -25,8 +25,10 @@ export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team 
   useEffect(() => {
     if (lastTeamID.current !== team.id) {
       lastTeamID.current = team.id;
-      setCursorHistory([]);
-      return;
+      if (cursorHistory.length > 0) {
+        setCursorHistory([]);
+        return;
+      }
     }
     const requestId = ++requestSequence.current;
     let active = true;

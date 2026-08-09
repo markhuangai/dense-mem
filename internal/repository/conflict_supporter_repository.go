@@ -35,6 +35,7 @@ const relationshipConflictSupporterRowsSQL = `
 		          ?::timestamptz IS NOT NULL
 		          AND member.first_seen_at <= ?::timestamptz
 		          AND (member.retired_at IS NULL OR member.retired_at > ?::timestamptz)
+		          AND member.accepted_at <= ?::timestamptz
 		      )
 		  )
 		  AND (
@@ -225,6 +226,7 @@ func relationshipConflictSupporterRowsArgsWithLimit(teamID string, conflictIDs, 
 		teamID,
 		pq.Array(conflictIDs),
 		knownAt, knownAt, knownAt, knownAt,
+		knownAt,
 		knownAt, knownAt, knownAt, knownAt,
 		teamID,
 		pq.Array(positionIDs),

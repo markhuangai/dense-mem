@@ -721,7 +721,7 @@ if [[ "$E2E_SCENARIO" == "all" ]]; then
     echo "DENSE_MEM_E2E_SCENARIO=all requires DENSE_MEM_E2E_MODE=standard." >&2
     exit 1
   fi
-  for scenario in mcp_boundaries submission_status security_intake submission_assessment semantic_holds community conflict full; do
+  for scenario in mcp_boundaries submission_status security_intake submission_assessment semantic_holds community conflict conflict_queue full; do
     echo "Running compose e2e scenario ${scenario} as part of all."
     DENSE_MEM_E2E_SCENARIO="$scenario" \
     DENSE_MEM_E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-all}-$(printf '%s' "$scenario" | tr '[:upper:]' '[:lower:]')" \

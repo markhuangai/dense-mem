@@ -64,6 +64,24 @@ describe("ConflictQueuePanel", () => {
     expect(await screen.findByText("Team two conflict")).toBeInTheDocument();
   });
 
+  it("fetches the first page when the selected team changes from the first page", async () => {
+    const teamOnePage = queuePage();
+    teamOnePage.items[0].question = "Team one conflict";
+    const teamTwoPage = queuePage();
+    teamTwoPage.items[0].question = "Team two conflict";
+    const getConflictQueue = vi.fn()
+      .mockResolvedValueOnce(teamOnePage)
+      .mockResolvedValueOnce(teamTwoPage);
+    const api = fakeApi(getConflictQueue);
+    const { rerender } = render(<ConflictQueuePanel api={api} team={team()} />);
+
+    await screen.findByText("Team one conflict");
+    rerender(<ConflictQueuePanel api={api} team={team({ id: "team-2" })} />);
+
+    expect(await screen.findByText("Team two conflict")).toBeInTheDocument();
+    expect(getConflictQueue).toHaveBeenLastCalledWith("team-2", { status: "", limit: 25, cursor: "" });
+  });
+
   it("renders queue data before optional telemetry settles", async () => {
     let resolveTelemetry: ((value: unknown) => void) | undefined;
     const getTelemetry = vi.fn(() => new Promise((resolve) => {
