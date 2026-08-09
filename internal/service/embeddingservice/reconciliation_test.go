@@ -11,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
@@ -27,6 +28,8 @@ type reconciliationRepositoryStub struct {
 	reserved  []repository.ReserveEmbeddingReconciliationRunInput
 	marked    bool
 	canaryOK  bool
+	markErr   error
+	canaryErr error
 	requeued  int64
 	completed *repository.CompleteEmbeddingReconciliationRunInput
 }
@@ -50,12 +53,18 @@ func (s *reconciliationRepositoryStub) SelectEmbeddingReconciliationCanary(conte
 }
 func (s *reconciliationRepositoryStub) MarkEmbeddingReconciliationCanaryAttempt(context.Context, repository.MarkEmbeddingReconciliationCanaryAttemptInput) error {
 	s.marked = true
+	if s.markErr != nil {
+		return s.markErr
+	}
 	if s.job != nil {
 		s.job.Attempts = 1
 	}
 	return nil
 }
 func (s *reconciliationRepositoryStub) CompleteEmbeddingReconciliationCanary(_ context.Context, _ repository.CompleteEmbeddingReconciliationCanaryInput) error {
+	if s.canaryErr != nil {
+		return s.canaryErr
+	}
 	s.canaryOK = true
 	return nil
 }
@@ -88,6 +97,44 @@ func (p *reconciliationRawProvider) ModelName() string { return p.model }
 func (p *reconciliationRawProvider) Dimensions() int   { return p.dims }
 func (p *reconciliationRawProvider) IsAvailable() bool { return p.available }
 
+type reconciliationMetricsStub struct {
+	observability.DiscoverabilityMetrics
+	runs []string
+}
+
+func (m *reconciliationMetricsStub) ObserveEmbeddingReconciliationRun(outcome string) {
+	m.runs = append(m.runs, outcome)
+}
+func (*reconciliationMetricsStub) ObserveEmbeddingReconciliationCanary(string) {}
+func (*reconciliationMetricsStub) ObserveEmbeddingReconciliationJobs(string, string, string, string, int) {
+}
+func (*reconciliationMetricsStub) ObserveEmbeddingReconciliationDuration(float64, string) {}
+
+type reconciliationLoggerStub struct{ warnings []string }
+
+func (*reconciliationLoggerStub) Info(string, ...observability.LogAttr)         {}
+func (*reconciliationLoggerStub) Error(string, error, ...observability.LogAttr) {}
+func (l *reconciliationLoggerStub) Warn(message string, _ ...observability.LogAttr) {
+	l.warnings = append(l.warnings, message)
+}
+func (*reconciliationLoggerStub) Debug(string, ...observability.LogAttr) {}
+func (l *reconciliationLoggerStub) With(...observability.LogAttr) observability.LogProvider {
+	return l
+}
+
+func TestEmbeddingReconciliationProcessDueErrorsAreObservable(t *testing.T) {
+	metrics := &reconciliationMetricsStub{}
+	logger := &reconciliationLoggerStub{}
+	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Metrics: metrics, Logger: logger,
+	}).(*embeddingReconciliationService)
+
+	svc.recordProcessDueError()
+
+	require.Equal(t, []string{"scheduler_error"}, metrics.runs)
+	require.Equal(t, []string{"embedding_reconciliation_process_due_failed"}, logger.warnings)
+}
+
 func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
@@ -112,7 +159,7 @@ func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T
 		t.Fatalf("reconciliation state = %#v", reconciliation)
 	}
 	require.NotNil(t, reconciliation.completed)
-	if reconciliation.completed.RequeuedCount != 3 || reconciliation.completed.RecoveredCount != 4 {
+	if reconciliation.completed.RequeuedCount != 3 || reconciliation.completed.RecoveredCount != 1 {
 		t.Fatalf("completed run = %#v", reconciliation.completed)
 	}
 }
@@ -140,6 +187,52 @@ func TestEmbeddingReconciliationFailedCanaryDoesNotReleaseBacklog(t *testing.T) 
 	}
 }
 
+func TestEmbeddingReconciliationDefersWhenCanaryOutcomePersistenceFails(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	reconciliation := &reconciliationRepositoryStub{
+		job:       &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", EmbeddingDimensions: 3, DocumentText: "canary"},
+		canaryErr: errors.New("canary outcome persistence failed"),
+	}
+	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
+	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
+	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: provider,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1", Now: func() time.Time { return now },
+	})
+
+	_, err := svc.ProcessDue(context.Background())
+	require.Error(t, err)
+	require.NotNil(t, reconciliation.completed)
+	assert.Equal(t, string(domain.EmbeddingReconciliationAmbiguous), reconciliation.completed.Status)
+	assert.Equal(t, "ambiguous", reconciliation.completed.CanaryOutcome)
+	assert.Zero(t, reconciliation.requeued)
+}
+
+func TestEmbeddingReconciliationDefersFailedCanaryOutcomePersistence(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	reconciliation := &reconciliationRepositoryStub{
+		job:       &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", EmbeddingDimensions: 3, DocumentText: "canary"},
+		canaryErr: errors.New("canary outcome persistence failed"),
+	}
+	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, err: &embedding.ProviderHTTPError{Status: 429, Code: "insufficient_quota"}}
+	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
+	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: provider,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1", Now: func() time.Time { return now },
+	})
+
+	_, err := svc.ProcessDue(context.Background())
+	require.Error(t, err)
+	require.NotNil(t, reconciliation.completed)
+	assert.Equal(t, string(domain.EmbeddingReconciliationAmbiguous), reconciliation.completed.Status)
+	assert.Equal(t, "ambiguous", reconciliation.completed.CanaryOutcome)
+	assert.Equal(t, string(domain.EmbeddingFailureProviderQuotaExhausted), reconciliation.completed.FailureCode)
+}
+
 func TestEmbeddingReconciliationUsesConfiguredLocalCalendarDate(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
@@ -161,7 +254,27 @@ func TestEmbeddingReconciliationUsesConfiguredLocalCalendarDate(t *testing.T) {
 	assert.Equal(t, "America/Los_Angeles", reconciliation.reserved[0].LocalRunDate.Location().String())
 }
 
-func TestEmbeddingReconciliationDoesNotRunOutsideScheduledMinute(t *testing.T) {
+func TestEmbeddingReconciliationRunsAfterMissedConfiguredMinute(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	reconciliation := &reconciliationRepositoryStub{}
+	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3}
+	now := time.Date(2026, 8, 10, 4, 31, 20, 0, time.UTC)
+	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: provider,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1", Now: func() time.Time { return now },
+	})
+
+	result, err := svc.ProcessDue(context.Background())
+	require.NoError(t, err)
+	require.Len(t, reconciliation.reserved, 1)
+	assert.Equal(t, string(domain.EmbeddingReconciliationCompleted), result.Status)
+	require.NotNil(t, reconciliation.completed)
+	assert.Empty(t, reconciliation.completed.CanaryOutcome, "a run without candidates must not claim a successful canary")
+}
+
+func TestEmbeddingReconciliationDoesNotRunBeforeScheduledMinute(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
 	reconciliation := &reconciliationRepositoryStub{}

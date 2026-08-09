@@ -346,6 +346,7 @@ func (r *SearchRepositoryImpl) MarkEmbeddingReconciliationCanaryAttempt(ctx cont
 			SET status = 'processing', attempts = 1,
 			    total_attempts = total_attempts + 1,
 			    worker_id = ?, lease_until = ?, completed_at = NULL,
+			    error = '',
 			    updated_at = now()
 			WHERE embedding_job_id = ?::uuid
 			  AND status = 'failed'
@@ -396,13 +397,32 @@ func (r *SearchRepositoryImpl) RequeueEmbeddingReconciliationJobs(ctx context.Co
 		return 0, err
 	}
 	var total int64
+	for {
+		count, err := r.requeueEmbeddingReconciliationBatch(ctx, input)
+		if err != nil {
+			return total, fmt.Errorf("search: requeue reconciliation jobs: %w", err)
+		}
+		if count == 0 {
+			break
+		}
+		total += count
+		if count < int64(input.BatchSize) {
+			break
+		}
+	}
+	if err := r.markEmbeddingReconciliationIncidentsRecovering(ctx, input); err != nil {
+		return total, fmt.Errorf("search: requeue reconciliation jobs: %w", err)
+	}
+	return total, nil
+}
+
+func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error) {
+	var count int64
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		if err := assertEmbeddingReconciliationLease(ctx, tx, input.RunID, input.WorkerID, input.LeaseToken); err != nil {
 			return err
 		}
-		for {
-			var count int64
-			err := tx.WithContext(ctx).Raw(`
+		return tx.WithContext(ctx).Raw(`
 				WITH candidates AS MATERIALIZED (
 					SELECT job.team_id, job.embedding_job_id, job.search_document_id,
 					       job.source_version, job.projection_format_version,
@@ -463,18 +483,16 @@ func (r *SearchRepositoryImpl) RequeueEmbeddingReconciliationJobs(ctx context.Co
 				)
 				SELECT count(*) FROM requeued
 			`, input.RunID, input.WorkerID, input.LeaseToken, input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff, input.BatchSize).Scan(&count).Error
-			if err != nil {
-				return err
-			}
-			if count == 0 {
-				break
-			}
-			total += count
-			if count < int64(input.BatchSize) {
-				break
-			}
+	})
+	return count, err
+}
+
+func (r *SearchRepositoryImpl) markEmbeddingReconciliationIncidentsRecovering(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) error {
+	return r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		if err := assertEmbeddingReconciliationLease(ctx, tx, input.RunID, input.WorkerID, input.LeaseToken); err != nil {
+			return err
 		}
-		if err := tx.WithContext(ctx).Exec(`
+		return tx.WithContext(ctx).Exec(`
 			UPDATE embedding_failure_incidents AS incident
 			SET status = 'recovering', recovering_at = COALESCE(recovering_at, now()), updated_at = now()
 			WHERE incident.status = 'open'
@@ -490,15 +508,8 @@ func (r *SearchRepositoryImpl) RequeueEmbeddingReconciliationJobs(ctx context.Co
 				  AND job.failure_code = incident.failure_code
 				  AND job.status = 'queued'
 			  )
-		`, input.EmbeddingContractID, input.EmbeddingDimensions).Error; err != nil {
-			return err
-		}
-		return nil
+		`, input.EmbeddingContractID, input.EmbeddingDimensions).Error
 	})
-	if err != nil {
-		return total, fmt.Errorf("search: requeue reconciliation jobs: %w", err)
-	}
-	return total, nil
 }
 
 func assertEmbeddingReconciliationLease(ctx context.Context, tx *gorm.DB, runID, workerID, leaseToken string) error {

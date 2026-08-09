@@ -109,6 +109,9 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 		if err := markStaleClaimableEmbeddingJobs(ctx, tx, input.TeamID, cleanupLimit); err != nil {
 			return err
 		}
+		if err := resolveEmbeddingIncidentsWithoutActiveJobs(ctx, tx, input.TeamID); err != nil {
+			return err
+		}
 		if err := failExpiredMaxAttemptEmbeddingJobs(ctx, tx, input.TeamID, cleanupLimit); err != nil {
 			return err
 		}
@@ -222,6 +225,9 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobStale), "active search contract changed before embedding completion"); err != nil {
 				return err
 			}
+			if err := resolveEmbeddingIncidentsForJob(ctx, tx, input.TeamID, sourceKind, contractID, dims); err != nil {
+				return err
+			}
 			terminalErr = ErrSearchContractMismatch
 			return nil
 		}
@@ -252,6 +258,9 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 		}
 		if result.RowsAffected != 1 {
 			if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobStale), "source or document version changed before embedding completion"); err != nil {
+				return err
+			}
+			if err := resolveEmbeddingIncidentsForJob(ctx, tx, input.TeamID, sourceKind, contractID, dims); err != nil {
 				return err
 			}
 			terminalErr = ErrSearchStaleVersion
@@ -345,6 +354,9 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 				WorkerID:         input.WorkerID,
 				ExpectedAttempts: input.ExpectedAttempts,
 			}, string(domain.EmbeddingJobStale), "source or document version changed before embedding failure"); err != nil {
+				return err
+			}
+			if err := resolveEmbeddingIncidentsForJob(ctx, tx, input.TeamID, sourceKind, contractID, dims); err != nil {
 				return err
 			}
 			if sourceKind == "relationship" && projectionGenerationID != "" {
@@ -745,56 +757,6 @@ func markStaleEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) err
 		        AND document.embedding_dimensions = job.embedding_dimensions
 		  )
 	`, teamID).Error
-}
-
-func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string, limit int) error {
-	return tx.WithContext(ctx).Exec(`
-		WITH exhausted AS MATERIALIZED (
-			SELECT job.team_id, job.embedding_job_id
-			FROM embedding_jobs AS job
-			WHERE job.team_id = ?::uuid
-			  AND job.status = 'processing'
-			  AND job.lease_until <= clock_timestamp()
-			  AND job.attempts >= job.max_attempts
-			ORDER BY job.lease_until ASC, job.embedding_job_id ASC
-			LIMIT ?
-			FOR UPDATE SKIP LOCKED
-		),
-		failed AS (
-			UPDATE embedding_jobs AS job
-			SET status = 'failed',
-			    error = ?,
-			    completed_at = now(),
-			    lease_until = NULL,
-			    worker_id = '',
-			    updated_at = now()
-			FROM exhausted
-			WHERE job.team_id = exhausted.team_id
-			  AND job.embedding_job_id = exhausted.embedding_job_id
-			RETURNING job.team_id, job.search_document_id, job.source_version,
-			          job.projection_format_version, job.projection_generation_id,
-			          job.document_version, job.embedding_contract_id,
-			          job.embedding_dimensions
-		)
-		UPDATE search_documents AS document
-		SET search_state = 'failed',
-		    embedding_error = ?,
-		    updated_at = now()
-		FROM failed
-		WHERE document.team_id = failed.team_id
-		  AND document.search_document_id = failed.search_document_id
-		  AND document.source_version = failed.source_version
-		  AND document.projection_format_version = failed.projection_format_version
-		  AND document.projection_generation_id IS NOT DISTINCT FROM failed.projection_generation_id
-		  AND document.document_version = failed.document_version
-		  AND document.embedding_contract_id = failed.embedding_contract_id
-		  AND document.embedding_dimensions = failed.embedding_dimensions
-	`,
-		teamID,
-		limit,
-		embeddingJobAttemptsExhaustedMessage,
-		embeddingJobAttemptsExhaustedMessage,
-	).Error
 }
 
 func embeddingContractHasActiveSearchGeneration(ctx context.Context, tx *gorm.DB, contractID string, dimensions int) (bool, error) {

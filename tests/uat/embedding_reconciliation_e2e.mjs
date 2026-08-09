@@ -54,16 +54,18 @@ if (failed.totalAttempts.some((value) => value !== 1)) {
 }
 
 const scheduledAt = nextUTCMinute(2);
+const reconciliationTimezone = chooseReconciliationTimezone(beforeConvergence.data?.latest_run?.local_run_date);
+const scheduledLocalTime = formatTimeInZone(scheduledAt, reconciliationTimezone);
 await controlJSON("/config/general", {
   method: "PATCH",
   body: JSON.stringify({ items: [
-    { key: "APP_TIMEZONE", value: "UTC" },
-    { key: "EMBEDDING_RECONCILIATION_START_TIME_LOCAL", value: formatTime(scheduledAt) },
+    { key: "APP_TIMEZONE", value: reconciliationTimezone },
+    { key: "EMBEDDING_RECONCILIATION_START_TIME_LOCAL", value: scheduledLocalTime },
   ] }),
 });
 const config = await controlJSON("/config/general");
 const configured = (config.data?.items ?? []).find((item) => item.key === "EMBEDDING_RECONCILIATION_START_TIME_LOCAL");
-if (configured?.effective_value !== formatTime(scheduledAt)) {
+if (configured?.effective_value !== scheduledLocalTime) {
   throw new Error(`control portal did not persist strict reconciliation schedule: ${JSON.stringify(config.data)}`);
 }
 
@@ -77,8 +79,8 @@ const recovered = await waitForConvergedProjection();
 if (recovered.latest_run?.status !== "completed" || recovered.latest_run?.canary_outcome !== "succeeded") {
   throw new Error(`reconciliation did not complete successfully: ${JSON.stringify(recovered)}`);
 }
-if (recovered.latest_run.recovered_count < failed.count) {
-  throw new Error(`reconciliation recovered fewer jobs than failed: ${JSON.stringify(recovered.latest_run)}`);
+if (recovered.latest_run.recovered_count !== 1 || recovered.latest_run.requeued_count < Math.max(failed.count - 1, 0)) {
+	throw new Error(`reconciliation accounting did not separate completed canary from requeued backlog: ${JSON.stringify(recovered.latest_run)}`);
 }
 
 const finalStatus = await waitForCurrentSubmission(submissionID);
@@ -268,7 +270,25 @@ function nextUTCMinute(offset) {
   return value;
 }
 
-function formatTime(value) { return value.toISOString().slice(11, 16); }
+function chooseReconciliationTimezone(existingLocalRunDate) {
+  if (!existingLocalRunDate) return "UTC";
+  for (const timezone of ["Pacific/Kiritimati", "Etc/GMT+12"]) {
+    if (formatDateInZone(new Date(), timezone) !== existingLocalRunDate) return timezone;
+  }
+  throw new Error(`could not choose a fresh reconciliation local date for ${existingLocalRunDate}`);
+}
+
+function formatDateInZone(value, timezone) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(value);
+  const fields = Object.fromEntries(parts.filter(({ type }) => type !== "literal").map(({ type, value: part }) => [type, part]));
+  return `${fields.year}-${fields.month}-${fields.day}`;
+}
+
+function formatTimeInZone(value, timezone) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(value);
+  const fields = Object.fromEntries(parts.filter(({ type }) => type !== "literal").map(({ type, value: part }) => [type, part]));
+  return `${fields.hour}:${fields.minute}`;
+}
 function requiredEnv(name) { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }
 function requiredString(value, label) { if (typeof value !== "string" || !value) throw new Error(`${label} is required`); return value; }
 function sqlLiteral(value) { return `'${String(value).replaceAll("'", "''")}'`; }

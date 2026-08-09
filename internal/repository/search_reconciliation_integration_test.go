@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestEmbeddingReconciliationRunFencesOneCanaryAndRequeuesPreCutoffBacklog(t *testing.T) {
@@ -90,6 +92,15 @@ func TestEmbeddingReconciliationRunFencesOneCanaryAndRequeuesPreCutoffBacklog(t 
 		RunID: run.RunID, CanaryJobID: canary.EmbeddingJobID, WorkerID: workerID,
 		LeaseToken: run.LeaseToken, AttemptedAt: cutoff,
 	}))
+	var canaryError string
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, canary.TeamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT error
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, canary.TeamID, canary.EmbeddingJobID).Row().Scan(&canaryError)
+	}))
+	require.Empty(t, canaryError, "a retried canary must not retain its prior failure")
 
 	canaryAgain, err := repo.SelectEmbeddingReconciliationCanary(ctx, SelectEmbeddingReconciliationCanaryInput{
 		RunID: run.RunID, EmbeddingContractID: contract.EmbeddingContractID,
@@ -101,7 +112,7 @@ func TestEmbeddingReconciliationRunFencesOneCanaryAndRequeuesPreCutoffBacklog(t 
 	secondRunCount, err := repo.RequeueEmbeddingReconciliationJobs(ctx, RequeueEmbeddingReconciliationJobsInput{
 		RunID: run.RunID, WorkerID: workerID, LeaseToken: run.LeaseToken,
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-		CandidateCutoff: cutoff, BatchSize: 500,
+		CandidateCutoff: cutoff, BatchSize: 1,
 	})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, secondRunCount, "the canary remains processing; only the other failed row is released")
@@ -115,6 +126,57 @@ func TestEmbeddingReconciliationRunFencesOneCanaryAndRequeuesPreCutoffBacklog(t 
 		return tx.Raw(`SELECT status FROM embedding_jobs WHERE team_id = ?::uuid AND search_document_id = ?::uuid`, teamID, backlogDocumentID).Scan(&status).Error
 	}))
 	require.Equal(t, "queued", status)
+}
+
+func TestEmbeddingFailureIncidentReopensResolvedLifecycle(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "incident-reopen-team")
+	insertSearchTestContract(t, adminDB, rls, "incident-reopen", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		if err := upsertEmbeddingFailureIncident(ctx, tx, teamID,
+			string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderTimeout),
+			contract.EmbeddingContractID, contract.EmbeddingDimensions, "evidence"); err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			UPDATE embedding_failure_incidents
+			SET status = 'resolved', resolved_at = now()
+			WHERE team_id = ?::uuid
+			  AND embedding_contract_id = ?::uuid
+			  AND embedding_dimensions = ?
+			  AND source_kind = 'evidence'
+			  AND failure_class = 'transient'
+			  AND failure_code = 'provider_timeout'
+		`, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Error; err != nil {
+			return err
+		}
+		return upsertEmbeddingFailureIncident(ctx, tx, teamID,
+			string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderTimeout),
+			contract.EmbeddingContractID, contract.EmbeddingDimensions, "evidence")
+	})
+	require.NoError(t, err)
+
+	var status string
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status
+			FROM embedding_failure_incidents
+			WHERE team_id = ?::uuid
+			  AND embedding_contract_id = ?::uuid
+			  AND embedding_dimensions = ?
+			  AND source_kind = 'evidence'
+			  AND failure_class = 'transient'
+			  AND failure_code = 'provider_timeout'
+		`, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Row().Scan(&status)
+	})
+	require.NoError(t, err)
+	require.Equal(t, "open", status)
 }
 
 func TestSearchReadinessIgnoresAsynchronousEmbeddingFailures(t *testing.T) {

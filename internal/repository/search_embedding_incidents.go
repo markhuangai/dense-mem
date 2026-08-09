@@ -37,7 +37,7 @@ func upsertEmbeddingFailureIncident(
 		  AND source_kind = ?
 		  AND failure_class = ?
 		  AND failure_code = ?
-		  AND status IN ('open', 'recovering')
+		  AND status IN ('open', 'recovering', 'resolved')
 	`, teamID, contractID, dimensions, sourceKind, failureClass, failureCode,
 		teamID, contractID, dimensions, sourceKind, failureClass, failureCode)
 	if result.Error != nil {

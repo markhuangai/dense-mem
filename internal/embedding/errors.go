@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -154,6 +155,9 @@ func ClassifyFailure(err error) FailureMetadata {
 		if httpErr.Status >= 500 {
 			return FailureMetadata{Class: "transient", Code: "provider_server_error", StatusCode: httpErr.Status}
 		}
+		if isInputRejection(httpErr.Status, code) {
+			return FailureMetadata{Class: "permanent", Code: "embedding_input_rejected", StatusCode: httpErr.Status}
+		}
 		switch httpErr.Status {
 		case 401:
 			return FailureMetadata{Class: "provider_action_required", Code: "provider_authentication_failed", StatusCode: httpErr.Status}
@@ -181,6 +185,23 @@ func normalizeProviderCode(code, typ string) string {
 		return code
 	}
 	return typ
+}
+
+func isInputRejection(status int, code string) bool {
+	if status == 413 {
+		return true
+	}
+	if status != 400 {
+		return false
+	}
+	switch strings.NewReplacer("-", "_", ".", "_").Replace(strings.ToLower(strings.TrimSpace(code))) {
+	case "context_length_exceeded", "input_too_large", "input_too_long",
+		"max_input_tokens", "payload_too_large", "content_too_large",
+		"string_above_max_length":
+		return true
+	default:
+		return false
+	}
 }
 
 func boundedRetryAfter(value time.Duration) time.Duration {

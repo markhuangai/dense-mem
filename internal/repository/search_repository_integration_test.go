@@ -11,11 +11,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-
-	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 const searchTestHNSWIndexName = "search_documents_test_3_halfvec_hnsw_idx"
@@ -559,11 +559,14 @@ func TestSearchClaimEmbeddingJobsFailsExpiredExhaustedJobs(t *testing.T) {
 	var jobStatus string
 	var jobCompleted bool
 	var jobError string
+	var failureClass string
+	var failureCode string
 	var documentState string
 	var documentError string
 	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
 		return tx.Raw(`
 			SELECT job.status, job.completed_at IS NOT NULL, job.error,
+			       job.failure_class, job.failure_code,
 			       document.search_state, document.embedding_error
 			FROM embedding_jobs AS job
 			JOIN search_documents AS document
@@ -575,6 +578,8 @@ func TestSearchClaimEmbeddingJobsFailsExpiredExhaustedJobs(t *testing.T) {
 			&jobStatus,
 			&jobCompleted,
 			&jobError,
+			&failureClass,
+			&failureCode,
 			&documentState,
 			&documentError,
 		)
@@ -583,8 +588,23 @@ func TestSearchClaimEmbeddingJobsFailsExpiredExhaustedJobs(t *testing.T) {
 	assert.Equal(t, "failed", jobStatus)
 	assert.True(t, jobCompleted)
 	assert.Equal(t, embeddingJobAttemptsExhaustedMessage, jobError)
+	assert.Equal(t, string(domain.EmbeddingFailureTransient), failureClass)
+	assert.Equal(t, string(domain.EmbeddingFailureProviderTimeout), failureCode)
 	assert.Equal(t, "failed", documentState)
 	assert.Equal(t, embeddingJobAttemptsExhaustedMessage, documentError)
+	var incidentCount int
+	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM embedding_failure_incidents
+			WHERE team_id = ?::uuid
+			  AND failure_class = 'transient'
+			  AND failure_code = 'provider_timeout'
+			  AND status = 'open'
+		`, teamID).Row().Scan(&incidentCount)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, incidentCount)
 }
 
 func TestSearchExactVectorRequiresBoundedContract(t *testing.T) {
