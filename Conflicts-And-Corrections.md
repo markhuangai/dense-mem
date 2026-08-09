@@ -36,7 +36,7 @@ sequenceDiagram
   Host->>User: Ask the exact conflict question
   User-->>Host: Decision plus evidence
   Host->>DM: get_submission_status(submission_id)
-  DM-->>Host: Bounded terminal/search state; no client review decision
+  DM-->>Host: Bounded terminal/search state, with no client review decision
 ```
 
 An unresolved same-owner conflicting observation is not an active edge. The
