@@ -186,19 +186,21 @@ type SearchConvergenceInput struct {
 }
 
 type SearchConvergence struct {
-	ObservedAt        time.Time
-	Status            string
-	Contract          *ActiveSearchContract
-	Queued            int64
-	Processing        int64
-	Failed            int64
-	ExpiredLeases     int64
-	OldestPendingAge  time.Duration
-	OldestFailureAge  time.Duration
-	AffectedTeamCount int64
-	Failures          []EmbeddingFailureCount
-	Incidents         []EmbeddingFailureIncident
-	LatestRun         *EmbeddingReconciliationRun
+	ObservedAt         time.Time
+	Status             string
+	Contract           *ActiveSearchContract
+	Queued             int64
+	Processing         int64
+	Failed             int64
+	ExpiredLeases      int64
+	OldestPendingAge   time.Duration
+	OldestFailureAge   time.Duration
+	AffectedTeamCount  int64
+	Failures           []EmbeddingFailureCount
+	Incidents          []EmbeddingFailureIncident
+	IncidentCount      int64
+	IncidentsTruncated bool
+	LatestRun          *EmbeddingReconciliationRun
 }
 
 type EmbeddingFailureCount struct {

@@ -27,13 +27,15 @@ func (h *controlPortalHandler) getSearchConvergence(c echo.Context) error {
 }
 
 type controlSearchConvergenceResponse struct {
-	ObservedAt string                          `json:"observed_at"`
-	Status     string                          `json:"status"`
-	Contract   *controlSearchContractResponse  `json:"contract,omitempty"`
-	Queue      controlSearchQueueResponse      `json:"queue"`
-	Failures   []controlSearchFailureResponse  `json:"failures"`
-	Incidents  []controlSearchIncidentResponse `json:"incidents"`
-	LatestRun  *controlSearchRunResponse       `json:"latest_run,omitempty"`
+	ObservedAt         string                          `json:"observed_at"`
+	Status             string                          `json:"status"`
+	Contract           *controlSearchContractResponse  `json:"contract,omitempty"`
+	Queue              controlSearchQueueResponse      `json:"queue"`
+	Failures           []controlSearchFailureResponse  `json:"failures"`
+	Incidents          []controlSearchIncidentResponse `json:"incidents"`
+	IncidentCount      int64                           `json:"incident_count"`
+	IncidentsTruncated bool                            `json:"incidents_truncated"`
+	LatestRun          *controlSearchRunResponse       `json:"latest_run,omitempty"`
 }
 
 type controlSearchContractResponse struct {
@@ -122,6 +124,8 @@ func toControlSearchConvergence(value *repository.SearchConvergence) controlSear
 			AgeSeconds: incident.Age.Seconds(), Guidance: incident.Guidance,
 		})
 	}
+	response.IncidentCount = value.IncidentCount
+	response.IncidentsTruncated = value.IncidentsTruncated
 	if run := value.LatestRun; run != nil {
 		response.LatestRun = &controlSearchRunResponse{
 			RunID: run.RunID, LocalRunDate: run.LocalRunDate.Format("2006-01-02"), Status: run.Status,

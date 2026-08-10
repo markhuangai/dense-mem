@@ -128,7 +128,10 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	}
 	result.RunID = run.RunID
 	result.Status = run.Status
-	started := time.Now()
+	if run.StartedAt == nil {
+		started := s.now().UTC()
+		run.StartedAt = &started
+	}
 	if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
 		metrics.ObserveEmbeddingReconciliationRun("reserved")
 	}
@@ -157,7 +160,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 				if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
 					metrics.ObserveEmbeddingReconciliationCanary("skipped")
 					metrics.ObserveEmbeddingReconciliationRun("completed")
-					metrics.ObserveEmbeddingReconciliationDuration(time.Since(started).Seconds(), "completed")
+					metrics.ObserveEmbeddingReconciliationDuration(reconciliationElapsedSeconds(run, s.now().UTC()), "completed")
 				}
 				run.Status = result.Status
 				s.logInfo(ctx, "embedding_reconciliation_completed", run, map[string]any{"canary_outcome": "skipped"})
@@ -305,7 +308,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 		if err == nil {
 			if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
 				metrics.ObserveEmbeddingReconciliationRun("completed")
-				metrics.ObserveEmbeddingReconciliationDuration(time.Since(started).Seconds(), "completed")
+				metrics.ObserveEmbeddingReconciliationDuration(reconciliationElapsedSeconds(run, s.now().UTC()), "completed")
 			}
 			run.Status = result.Status
 			s.logInfo(ctx, "embedding_reconciliation_completed", run, map[string]any{"requeued_count": requeued, "recovered_count": result.RecoveredCount})
@@ -365,6 +368,7 @@ func (s *embeddingReconciliationService) deferRun(ctx context.Context, run *repo
 				metrics.ObserveEmbeddingReconciliationCanary("failed")
 			}
 			metrics.ObserveEmbeddingReconciliationRun(status)
+			metrics.ObserveEmbeddingReconciliationDuration(reconciliationElapsedSeconds(run, s.now().UTC()), status)
 		}
 		s.logWarn(ctx, "embedding_reconciliation_deferred", run, map[string]any{"failure_code": failureCode})
 	}
@@ -385,6 +389,7 @@ func (s *embeddingReconciliationService) deferRunAfterCanarySuccess(ctx context.
 		if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
 			metrics.ObserveEmbeddingReconciliationCanary("succeeded")
 			metrics.ObserveEmbeddingReconciliationRun(string(domain.EmbeddingReconciliationDeferred))
+			metrics.ObserveEmbeddingReconciliationDuration(reconciliationElapsedSeconds(run, s.now().UTC()), string(domain.EmbeddingReconciliationDeferred))
 			if requeuedCount > 0 {
 				metrics.ObserveEmbeddingReconciliationJobs("requeued", "mixed", "mixed", "", int(requeuedCount))
 			}
@@ -395,6 +400,17 @@ func (s *embeddingReconciliationService) deferRunAfterCanarySuccess(ctx context.
 		return errors.Join(cause, err)
 	}
 	return err
+}
+
+func reconciliationElapsedSeconds(run *repository.EmbeddingReconciliationRun, now time.Time) float64 {
+	if run == nil || run.StartedAt == nil {
+		return 0
+	}
+	seconds := now.Sub(*run.StartedAt).Seconds()
+	if seconds < 0 {
+		return 0
+	}
+	return seconds
 }
 
 func (s *embeddingReconciliationService) validate() error {

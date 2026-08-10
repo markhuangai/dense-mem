@@ -14,7 +14,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-const reconciliationBatchLimit = 500
+const (
+	reconciliationBatchLimit = 500
+)
 
 var _ EmbeddingReconciliationRepository = (*SearchRepositoryImpl)(nil)
 
@@ -149,52 +151,14 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 		`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&convergence.AffectedTeamCount).Error; err != nil {
 			return err
 		}
-		rows, err = tx.WithContext(ctx).Raw(`
-			SELECT incident.incident_id::text, incident.team_id::text,
-			       COALESCE(team.name, ''), incident.embedding_contract_id::text,
-			       incident.embedding_dimensions, incident.source_kind,
-			       incident.failure_class, incident.failure_code, incident.status,
-			       incident.affected_job_count, incident.first_seen_at,
-			       incident.last_seen_at, incident.recovering_at, incident.resolved_at
-			FROM embedding_failure_incidents AS incident
-			JOIN teams AS team
-			  ON team.id = incident.team_id
-			 AND team.status = 'active'
-			 AND team.deleted_at IS NULL
-			WHERE incident.embedding_contract_id = ?::uuid
-			  AND incident.embedding_dimensions = ?
-			  AND incident.status IN ('open', 'recovering')
-			ORDER BY incident.last_seen_at DESC, incident.incident_id ASC
-		`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Rows()
+		incidents, incidentCount, incidentsTruncated, err := readSearchConvergenceIncidents(ctx, tx, contract.EmbeddingContractID, contract.EmbeddingDimensions)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var item EmbeddingFailureIncident
-			var recoveringAt, resolvedAt sql.NullTime
-			if err := rows.Scan(
-				&item.IncidentID, &item.TeamID, &item.TeamName,
-				&item.EmbeddingContractID, &item.EmbeddingDimensions,
-				&item.SourceKind, &item.FailureClass, &item.FailureCode,
-				&item.Status, &item.AffectedJobCount, &item.FirstSeenAt,
-				&item.LastSeenAt, &recoveringAt, &resolvedAt,
-			); err != nil {
-				return err
-			}
-			if recoveringAt.Valid {
-				value := recoveringAt.Time.UTC()
-				item.RecoveringAt = &value
-			}
-			if resolvedAt.Valid {
-				value := resolvedAt.Time.UTC()
-				item.ResolvedAt = &value
-			}
-			item.Age = time.Since(item.LastSeenAt)
-			item.Guidance = embeddingFailureGuidance(item.FailureCode)
-			convergence.Incidents = append(convergence.Incidents, item)
-		}
-		return rows.Err()
+		convergence.Incidents = incidents
+		convergence.IncidentCount = incidentCount
+		convergence.IncidentsTruncated = incidentsTruncated
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("search: convergence projection: %w", err)
@@ -250,8 +214,12 @@ func (r *SearchRepositoryImpl) ReserveEmbeddingReconciliationRun(ctx context.Con
 				  AND document.search_state = 'failed'
 			)
 			ON CONFLICT (embedding_contract_id, embedding_dimensions, local_run_date) DO NOTHING
-		`, input.EmbeddingContractID, input.EmbeddingDimensions, localRunDate, input.Now,
+			`, input.EmbeddingContractID, input.EmbeddingDimensions, localRunDate, input.Now,
 			input.EmbeddingContractID, input.EmbeddingDimensions, input.Now).Error; err != nil {
+			return err
+		}
+		var databaseNow time.Time
+		if err := tx.WithContext(ctx).Raw(`SELECT clock_timestamp()`).Scan(&databaseNow).Error; err != nil {
 			return err
 		}
 		var leaseUntil sql.NullTime
@@ -308,18 +276,18 @@ func (r *SearchRepositoryImpl) ReserveEmbeddingReconciliationRun(ctx context.Con
 		if run.Status == string(domain.EmbeddingReconciliationCompleted) || run.Status == string(domain.EmbeddingReconciliationDeferred) || run.Status == string(domain.EmbeddingReconciliationAmbiguous) {
 			return nil
 		}
-		if run.LeaseUntil != nil && run.LeaseUntil.After(input.Now) {
+		if run.LeaseUntil != nil && run.LeaseUntil.After(databaseNow) {
 			return nil
 		}
 		newToken := uuid.New()
-		leaseUntilValue := input.Now.Add(input.Lease)
+		leaseUntilValue := databaseNow.Add(input.Lease)
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE embedding_reconciliation_runs
 			SET status = 'running', worker_id = ?, lease_token = ?::uuid,
 			    lease_until = ?, started_at = COALESCE(started_at, ?),
 			    updated_at = now()
 			WHERE reconciliation_run_id = ?::uuid
-		`, input.WorkerID, newToken.String(), leaseUntilValue, input.Now, run.RunID)
+		`, input.WorkerID, newToken.String(), leaseUntilValue, databaseNow, run.RunID)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -330,6 +298,9 @@ func (r *SearchRepositoryImpl) ReserveEmbeddingReconciliationRun(ctx context.Con
 		run.WorkerID = input.WorkerID
 		run.LeaseToken = newToken.String()
 		run.LeaseUntil = &leaseUntilValue
+		if run.StartedAt == nil {
+			run.StartedAt = &databaseNow
+		}
 		claimed = true
 		return nil
 	})
@@ -412,8 +383,12 @@ func (r *SearchRepositoryImpl) MarkEmbeddingReconciliationCanaryAttempt(ctx cont
 	if err := validateMarkEmbeddingReconciliationCanaryAttemptInput(input); err != nil {
 		return err
 	}
-	leaseUntil := input.AttemptedAt.Add(input.Lease)
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		var databaseNow time.Time
+		if err := tx.WithContext(ctx).Raw(`SELECT clock_timestamp()`).Scan(&databaseNow).Error; err != nil {
+			return err
+		}
+		leaseUntil := databaseNow.Add(input.Lease)
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE embedding_jobs
 			SET status = 'processing', attempts = 1,
@@ -443,7 +418,7 @@ func (r *SearchRepositoryImpl) MarkEmbeddingReconciliationCanaryAttempt(ctx cont
 			  AND run.lease_token = ?::uuid
 			  AND run.lease_until > clock_timestamp()
 			  AND run.canary_attempted_at IS NULL
-		`, input.CanaryJobID, input.AttemptedAt, leaseUntil, input.RunID, input.WorkerID, input.LeaseToken)
+		`, input.CanaryJobID, databaseNow, leaseUntil, input.RunID, input.WorkerID, input.LeaseToken)
 		if result.Error != nil || result.RowsAffected != 1 {
 			if result.Error != nil {
 				return result.Error

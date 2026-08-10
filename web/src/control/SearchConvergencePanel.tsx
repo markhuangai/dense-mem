@@ -51,7 +51,7 @@ export function SearchConvergencePanel({ api }: { api: ControlApi }) {
             <SummaryCard label="Status" value={snapshot.status.replaceAll("_", " ")} detail="Automatic recovery" tone={snapshot.status === "converged" ? "neutral" : "warning"} />
             <SummaryCard label="Queued" value={snapshot.queue.queued} detail="Awaiting embedding" />
             <SummaryCard label="Failed" value={snapshot.queue.failed} detail={`${snapshot.queue.affected_team_count} affected teams`} tone={snapshot.queue.failed > 0 ? "warning" : "neutral"} />
-            <SummaryCard label="Incidents" value={snapshot.incidents.length} detail="Operator visibility" tone={snapshot.incidents.length > 0 ? "warning" : "neutral"} />
+            <SummaryCard label="Incidents" value={snapshot.incident_count} detail={snapshot.incidents_truncated ? `Showing first ${snapshot.incidents.length}` : "Operator visibility"} tone={snapshot.incident_count > 0 ? "warning" : "neutral"} />
           </div>
           <p className="form-meta">Failed vectors stay out of vector search. Valid text remains eligible for lexical recall while the daily canary attempts recovery.</p>
           {snapshot.contract && <p className="form-meta">{snapshot.contract.provider} · {snapshot.contract.model} · {snapshot.contract.dimensions} dimensions · index generation {snapshot.contract.index_generation}</p>}
@@ -80,6 +80,7 @@ export function SearchConvergencePanel({ api }: { api: ControlApi }) {
                 ))}
               </div>
             )}
+            {snapshot.incidents_truncated && <p className="form-meta">Showing the most recent {snapshot.incidents.length} of {snapshot.incident_count} incidents.</p>}
           </section>
         </>
       )}

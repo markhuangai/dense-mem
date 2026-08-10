@@ -32,6 +32,8 @@ export type SearchConvergence = {
     age_seconds: number;
     guidance: string;
   }>;
+  incident_count: number;
+  incidents_truncated: boolean;
   latest_run?: {
     run_id: string;
     local_run_date: string;

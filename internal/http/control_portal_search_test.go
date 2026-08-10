@@ -60,6 +60,8 @@ func TestControlPortalSearchConvergenceIsBoundedAndReadOnly(t *testing.T) {
 				Guidance:    "Add provider credit or repair billing before the next daily canary.",
 				FirstSeenAt: now, LastSeenAt: now, Age: time.Minute,
 			}},
+			IncidentCount:      101,
+			IncidentsTruncated: true,
 			LatestRun: &repository.EmbeddingReconciliationRun{
 				RunID: "run-1", LocalRunDate: now, Status: "deferred",
 				CanaryFailureCode: "provider_quota_exhausted",
@@ -80,6 +82,8 @@ func TestControlPortalSearchConvergenceIsBoundedAndReadOnly(t *testing.T) {
 	require.Contains(t, body, "provider_quota_exhausted")
 	require.Contains(t, body, "Payments")
 	require.Contains(t, body, "Add provider credit")
+	require.Contains(t, body, `"incident_count":101`)
+	require.Contains(t, body, `"incidents_truncated":true`)
 	require.Contains(t, body, "reconciliation failed: provider_quota_exhausted")
 	require.NotContains(t, body, "provider response contained a secret")
 }
@@ -108,12 +112,15 @@ func TestControlSearchConvergenceConversionAndRunErrorsAreBounded(t *testing.T) 
 		Status:     "recovering",
 		Contract:   &repository.ActiveSearchContract{EmbeddingProvider: "openai", EmbeddingModel: "model", EmbeddingDimensions: 3, IndexGeneration: 2, IndexStrategy: "exact"},
 		Queued:     1, Processing: 2, Failed: 3, ExpiredLeases: 4, AffectedTeamCount: 5,
+		IncidentCount: 7, IncidentsTruncated: true,
 		OldestPendingAge: time.Minute, OldestFailureAge: 2 * time.Minute,
 		LatestRun: &repository.EmbeddingReconciliationRun{RunID: "run", LocalRunDate: now, Status: "completed", CanaryAttemptedAt: &now, CanaryOutcome: "succeeded", UpdatedAt: now},
 	})
 	require.NotNil(t, converted.Contract)
 	require.Equal(t, "model", converted.Contract.Model)
 	require.Equal(t, int64(3), converted.Queue.Failed)
+	require.Equal(t, int64(7), converted.IncidentCount)
+	require.True(t, converted.IncidentsTruncated)
 	require.NotNil(t, converted.LatestRun)
 	require.Equal(t, now.Format(time.RFC3339), converted.LatestRun.CanaryAttemptedAt)
 }

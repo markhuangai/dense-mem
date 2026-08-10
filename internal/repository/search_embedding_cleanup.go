@@ -14,6 +14,38 @@ type embeddingFailureIncidentLockKey struct {
 	failureCode  string
 }
 
+type embeddingFailureIncidentIdentity struct {
+	sourceKind   string
+	contractID   string
+	dimensions   int
+	failureClass string
+	failureCode  string
+}
+
+func lockEmbeddingFailureIncidentIdentities(ctx context.Context, tx *gorm.DB, teamID string, identities []embeddingFailureIncidentIdentity) error {
+	sort.Slice(identities, func(i, j int) bool {
+		if identities[i].failureClass != identities[j].failureClass {
+			return identities[i].failureClass < identities[j].failureClass
+		}
+		if identities[i].failureCode != identities[j].failureCode {
+			return identities[i].failureCode < identities[j].failureCode
+		}
+		if identities[i].sourceKind != identities[j].sourceKind {
+			return identities[i].sourceKind < identities[j].sourceKind
+		}
+		if identities[i].contractID != identities[j].contractID {
+			return identities[i].contractID < identities[j].contractID
+		}
+		return identities[i].dimensions < identities[j].dimensions
+	})
+	for _, identity := range identities {
+		if err := lockEmbeddingFailureIncident(ctx, tx, teamID, identity.sourceKind, identity.contractID, identity.failureClass, identity.failureCode, identity.dimensions); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func lockEmbeddingFailureIncidentTransition(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -99,6 +131,40 @@ func resolveEmbeddingIncidentKey(
 }
 
 func resolveEmbeddingIncidentsWithoutActiveJobs(ctx context.Context, tx *gorm.DB, teamID string) error {
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT source_kind, embedding_contract_id::text, embedding_dimensions,
+		       failure_class, failure_code
+		FROM embedding_failure_incidents
+		WHERE team_id = ?::uuid
+		  AND status IN ('open', 'recovering')
+	`, teamID).Rows()
+	if err != nil {
+		return err
+	}
+	identities := make([]embeddingFailureIncidentIdentity, 0)
+	seen := make(map[embeddingFailureIncidentIdentity]struct{})
+	for rows.Next() {
+		var identity embeddingFailureIncidentIdentity
+		if err := rows.Scan(&identity.sourceKind, &identity.contractID, &identity.dimensions, &identity.failureClass, &identity.failureCode); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if _, ok := seen[identity]; ok {
+			continue
+		}
+		seen[identity] = struct{}{}
+		identities = append(identities, identity)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := lockEmbeddingFailureIncidentIdentities(ctx, tx, teamID, identities); err != nil {
+		return err
+	}
 	return tx.WithContext(ctx).Exec(`
 		UPDATE embedding_failure_incidents AS incident
 		SET status = 'resolved', resolved_at = now(), affected_job_count = 0,

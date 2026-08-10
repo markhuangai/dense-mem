@@ -83,6 +83,75 @@ func TestReserveEmbeddingReconciliationRunWaitsForRecoverableCandidate(t *testin
 	require.NotNil(t, run)
 }
 
+func TestEmbeddingReconciliationLeasesUseDatabaseClock(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "reconciliation-database-clock-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "reconciliation-database-clock-owner")
+	insertSearchTestContract(t, adminDB, rls, "reconciliation-database-clock", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "database clock candidate", 1)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		failedAt := time.Now().UTC().Add(-time.Minute)
+		if err := tx.Exec(`
+			UPDATE embedding_jobs
+			SET status = 'failed', attempts = max_attempts, total_attempts = max_attempts,
+			    failure_class = 'transient', failure_code = 'provider_timeout',
+			    first_failed_at = ?, last_failed_at = ?, completed_at = ?, error = 'timeout'
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, failedAt, failedAt, failedAt, teamID, document.SearchDocumentID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'failed', embedding_error = 'timeout'
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, document.SearchDocumentID).Error
+	}))
+
+	future := time.Now().UTC().Add(24 * time.Hour)
+	run, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: 3,
+		LocalRunDate: future, WorkerID: "database-clock-worker", Lease: time.Minute, Now: future,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	var leaseSeconds float64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT EXTRACT(EPOCH FROM (lease_until - clock_timestamp()))
+			FROM embedding_reconciliation_runs
+			WHERE reconciliation_run_id = ?::uuid
+		`, run.RunID).Scan(&leaseSeconds).Error
+	}))
+	require.Greater(t, leaseSeconds, 30.0)
+	require.Less(t, leaseSeconds, 90.0)
+
+	canary, err := repo.SelectEmbeddingReconciliationCanary(ctx, SelectEmbeddingReconciliationCanaryInput{
+		RunID: run.RunID, EmbeddingContractID: contract.EmbeddingContractID,
+		EmbeddingDimensions: 3, CandidateCutoff: run.CandidateCutoff,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, canary)
+	require.NoError(t, repo.MarkEmbeddingReconciliationCanaryAttempt(ctx, MarkEmbeddingReconciliationCanaryAttemptInput{
+		TeamID: canary.TeamID, RunID: run.RunID, CanaryJobID: canary.EmbeddingJobID,
+		WorkerID: "database-clock-worker", LeaseToken: run.LeaseToken,
+		AttemptedAt: future, Lease: time.Minute,
+	}))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT EXTRACT(EPOCH FROM (lease_until - clock_timestamp()))
+			FROM embedding_reconciliation_runs
+			WHERE reconciliation_run_id = ?::uuid
+		`, run.RunID).Scan(&leaseSeconds).Error
+	}))
+	require.Greater(t, leaseSeconds, 30.0)
+	require.Less(t, leaseSeconds, 90.0)
+}
+
 func TestEmbeddingReconciliationRunFencesOneCanaryAndRequeuesPreCutoffBacklog(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -427,6 +496,102 @@ func TestEmbeddingFailureIncidentReopensResolvedLifecycle(t *testing.T) {
 	require.Equal(t, "open", status)
 }
 
+func TestBulkIncidentResolutionSerializesWithFailureWriter(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "incident-resolution-race-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "incident-resolution-race-owner")
+	insertSearchTestContract(t, adminDB, rls, "incident-resolution-race", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "incident resolution race", 1)
+	claimed, err := repo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{TeamID: teamID, WorkerID: "failure-writer", Limit: 1, Lease: time.Minute})
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return upsertEmbeddingFailureIncident(ctx, tx, teamID,
+			string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderTimeout),
+			contract.EmbeddingContractID, contract.EmbeddingDimensions, "evidence")
+	}))
+
+	writerTx := appDB.WithContext(ctx).Begin()
+	require.NoError(t, writerTx.Error)
+	defer writerTx.Rollback()
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{"SELECT set_config('app.current_team_id', ?, true)", []any{teamID}},
+		{"SELECT set_config('app.current_profile_id', ?, true)", []any{teamID}},
+		{"SELECT set_config('app.tx_mode', 'team', true)", nil},
+		{"SELECT set_config('app.embedding_job_failure_writer', 'current', true)", nil},
+	} {
+		if err := writerTx.Exec(statement.query, statement.args...).Error; err != nil {
+			t.Fatalf("set writer transaction context: %v", err)
+		}
+	}
+	require.NoError(t, lockEmbeddingFailureIncident(ctx, writerTx, teamID, "evidence", contract.EmbeddingContractID,
+		string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderTimeout), contract.EmbeddingDimensions))
+	require.NoError(t, writerTx.Exec(`
+		UPDATE embedding_jobs
+		SET status = 'failed', error = 'provider timed out',
+		    failure_class = 'transient', failure_code = 'provider_timeout',
+		    first_failed_at = now(), last_failed_at = now(), completed_at = now(),
+		    lease_until = NULL, worker_id = '', updated_at = now()
+		WHERE team_id = ?::uuid AND search_document_id = ?::uuid AND status = 'processing'
+	`, teamID, document.SearchDocumentID).Error)
+
+	resolverCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	resolverResult := make(chan error, 1)
+	go func() {
+		_, resolveErr := repo.ClaimEmbeddingJobs(resolverCtx, ClaimEmbeddingJobsInput{
+			TeamID: teamID, WorkerID: "incident-resolver", Limit: 1, Lease: time.Minute,
+		})
+		resolverResult <- resolveErr
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting int64
+		lockErr := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			return tx.Raw(`
+				SELECT count(*)
+				FROM pg_locks
+				WHERE locktype = 'advisory' AND NOT granted
+			`).Scan(&waiting).Error
+		})
+		if lockErr == nil && waiting > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("bulk incident resolver did not wait for the failure-writer incident lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.NoError(t, writerTx.Commit().Error)
+	require.NoError(t, <-resolverResult)
+
+	var status string
+	var affected int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status, affected_job_count
+			FROM embedding_failure_incidents
+			WHERE team_id = ?::uuid
+			  AND embedding_contract_id = ?::uuid
+			  AND embedding_dimensions = ?
+			  AND source_kind = 'evidence'
+			  AND failure_class = 'transient'
+			  AND failure_code = 'provider_timeout'
+			  AND status = 'open'
+		`, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Row().Scan(&status, &affected)
+	}))
+	require.Equal(t, "open", status)
+	require.EqualValues(t, 1, affected)
+}
+
 func TestSearchReadinessIgnoresAsynchronousEmbeddingFailures(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -471,6 +636,56 @@ func TestSearchReadinessIgnoresAsynchronousEmbeddingFailures(t *testing.T) {
 	require.Equal(t, "provider_quota_exhausted", convergence.Failures[0].FailureCode)
 	require.Len(t, convergence.Incidents, 1)
 	require.Equal(t, "provider_quota_exhausted", convergence.Incidents[0].FailureCode)
+}
+
+func TestSearchConvergenceBoundsIncidentProjection(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "convergence-incident-bound", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+
+	teamIDs := []string{
+		createLedgerTeam(t, adminDB, rls, "convergence-incident-bound-a"),
+		createLedgerTeam(t, adminDB, rls, "convergence-incident-bound-b"),
+		createLedgerTeam(t, adminDB, rls, "convergence-incident-bound-c"),
+		createLedgerTeam(t, adminDB, rls, "convergence-incident-bound-d"),
+	}
+	failureClasses := []string{"transient", "provider_action_required", "permanent"}
+	failureCodes := []string{
+		"provider_rate_limited", "provider_timeout", "provider_network_error", "provider_server_error",
+		"provider_quota_exhausted", "provider_authentication_failed", "provider_permission_denied",
+		"provider_contract_rejected", "provider_response_invalid", "embedding_input_rejected",
+		"embedding_contract_mismatch", "unknown_embedding_failure",
+	}
+	sourceKinds := []string{"evidence", "relationship", "entity"}
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		for _, teamID := range teamIDs {
+			for classIndex, failureClass := range failureClasses {
+				for codeIndex, failureCode := range failureCodes {
+					if err := tx.Exec(`
+						INSERT INTO embedding_failure_incidents (
+							team_id, embedding_contract_id, embedding_dimensions, source_kind,
+							failure_class, failure_code, status, affected_job_count
+						) VALUES (?::uuid, ?::uuid, ?, ?, ?, ?, 'open', 1)
+					`, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions,
+						sourceKinds[(classIndex+codeIndex)%len(sourceKinds)], failureClass, failureCode).Error; err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return nil
+	}))
+
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
+	require.NoError(t, err)
+	require.EqualValues(t, 144, convergence.IncidentCount)
+	require.Len(t, convergence.Incidents, searchConvergenceIncidentLimit)
+	require.True(t, convergence.IncidentsTruncated)
+	require.Equal(t, "attention_required", convergence.Status)
 }
 
 func TestSearchConvergenceExcludesDeletedTeams(t *testing.T) {
@@ -641,6 +856,13 @@ func TestEmbeddingReconciliationExcludesPermanentFailuresAndFencesExpiredLease(t
 	})
 	require.NoError(t, err)
 	require.True(t, claimed)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_reconciliation_runs
+			SET lease_until = clock_timestamp() - interval '1 second'
+			WHERE reconciliation_run_id = ?::uuid
+		`, first.RunID).Error
+	}))
 	second, reclaimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: 3,
 		LocalRunDate: cutoff, WorkerID: "worker-new", Lease: time.Minute, Now: cutoff.Add(2 * time.Minute),

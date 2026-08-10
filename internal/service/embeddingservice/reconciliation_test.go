@@ -148,8 +148,10 @@ func (p *reconciliationRawProvider) IsAvailable() bool { return p.available }
 
 type reconciliationMetricsStub struct {
 	observability.DiscoverabilityMetrics
-	runs     []string
-	canaries []string
+	runs             []string
+	canaries         []string
+	durationOutcomes []string
+	durations        []float64
 }
 
 func (m *reconciliationMetricsStub) ObserveEmbeddingReconciliationRun(outcome string) {
@@ -160,7 +162,10 @@ func (m *reconciliationMetricsStub) ObserveEmbeddingReconciliationCanary(outcome
 }
 func (*reconciliationMetricsStub) ObserveEmbeddingReconciliationJobs(string, string, string, string, int) {
 }
-func (*reconciliationMetricsStub) ObserveEmbeddingReconciliationDuration(float64, string) {}
+func (m *reconciliationMetricsStub) ObserveEmbeddingReconciliationDuration(seconds float64, outcome string) {
+	m.durations = append(m.durations, seconds)
+	m.durationOutcomes = append(m.durationOutcomes, outcome)
+}
 
 type reconciliationLogRecord struct {
 	message string
@@ -226,16 +231,19 @@ func TestEmbeddingReconciliationDoesNotCompleteReclaimedCanaryAsSkipped(t *testi
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
 	attemptedAt := time.Date(2026, 8, 10, 4, 31, 0, 0, time.UTC)
+	startedAt := attemptedAt.Add(-time.Minute)
 	reconciliation := &reconciliationRepositoryStub{
 		run: &repository.EmbeddingReconciliationRun{
 			RunID: "run-1", LeaseToken: "lease-1", Status: string(domain.EmbeddingReconciliationRunning),
-			CandidateCutoff: attemptedAt, CanaryAttemptedAt: &attemptedAt,
+			CandidateCutoff: attemptedAt, CanaryAttemptedAt: &attemptedAt, StartedAt: &startedAt,
 		},
 		job: &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", EmbeddingDimensions: 3, DocumentText: "canary"},
 	}
 	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
+	metrics := &reconciliationMetricsStub{}
 	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
 		Search: search, Reconciliation: reconciliation, Provider: provider,
+		Metrics:   metrics,
 		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
 		WorkerID:  "worker-1", Now: func() time.Time { return attemptedAt.Add(time.Minute) },
 	})
@@ -248,6 +256,8 @@ func TestEmbeddingReconciliationDoesNotCompleteReclaimedCanaryAsSkipped(t *testi
 	require.NotNil(t, reconciliation.completed)
 	assert.Equal(t, string(domain.EmbeddingReconciliationAmbiguous), reconciliation.completed.Status)
 	assert.Equal(t, "ambiguous", reconciliation.completed.CanaryOutcome)
+	assert.Equal(t, []string{string(domain.EmbeddingReconciliationAmbiguous)}, metrics.durationOutcomes)
+	assert.Greater(t, metrics.durations[0], float64(0))
 }
 
 func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T) {
@@ -362,15 +372,19 @@ func TestEmbeddingReconciliationSkipsStaleCanaryAndReleasesBacklog(t *testing.T)
 func TestEmbeddingReconciliationPersistsPartialRequeueProgress(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
+	startedAt := now.Add(-time.Minute)
 	reconciliation := &reconciliationRepositoryStub{
+		run:        &repository.EmbeddingReconciliationRun{StartedAt: &startedAt},
 		job:        &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", Attempts: 20, EmbeddingDimensions: 3, DocumentText: "canary"},
 		requeued:   500,
 		requeueErr: errors.New("later batch failed"),
 	}
+	metrics := &reconciliationMetricsStub{}
 	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
-	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
 	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
 		Search: search, Reconciliation: reconciliation, Provider: provider,
+		Metrics:   metrics,
 		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
 		WorkerID:  "worker-1", Now: func() time.Time { return now },
 	})
@@ -387,6 +401,9 @@ func TestEmbeddingReconciliationPersistsPartialRequeueProgress(t *testing.T) {
 	assert.EqualValues(t, 500, reconciliation.completed.RequeuedCount)
 	assert.EqualValues(t, 1, reconciliation.completed.RecoveredCount)
 	assert.NotSame(t, reconciliation.requeueContext, reconciliation.completeContext)
+	assert.Equal(t, []string{string(domain.EmbeddingReconciliationDeferred)}, metrics.durationOutcomes)
+	assert.Len(t, metrics.durations, 1)
+	assert.GreaterOrEqual(t, metrics.durations[0], float64(0))
 }
 
 func TestEmbeddingReconciliationFailedCanaryDoesNotReleaseBacklog(t *testing.T) {
@@ -394,9 +411,11 @@ func TestEmbeddingReconciliationFailedCanaryDoesNotReleaseBacklog(t *testing.T) 
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
 	reconciliation := &reconciliationRepositoryStub{job: &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", Attempts: 20, EmbeddingDimensions: 3, DocumentText: "canary"}}
 	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, err: &embedding.ProviderHTTPError{Status: 429, Code: "insufficient_quota"}}
+	metrics := &reconciliationMetricsStub{}
 	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
 	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
 		Search: search, Reconciliation: reconciliation, Provider: provider,
+		Metrics:   metrics,
 		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
 		WorkerID:  "worker-1", Now: func() time.Time { return now },
 	})
@@ -410,6 +429,7 @@ func TestEmbeddingReconciliationFailedCanaryDoesNotReleaseBacklog(t *testing.T) 
 	if reconciliation.completed.Status != string(domain.EmbeddingReconciliationDeferred) || reconciliation.completed.FailureCode != string(domain.EmbeddingFailureProviderQuotaExhausted) {
 		t.Fatalf("completed run = %#v", reconciliation.completed)
 	}
+	assert.Equal(t, []string{string(domain.EmbeddingReconciliationDeferred)}, metrics.durationOutcomes)
 }
 
 func TestEmbeddingReconciliationSkipsInputRejectedCanary(t *testing.T) {
