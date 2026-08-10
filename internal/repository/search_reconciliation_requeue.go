@@ -5,10 +5,27 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
+
+type embeddingReconciliationCursor struct {
+	failedAt time.Time
+	jobID    string
+}
+
+type embeddingReconciliationCandidate struct {
+	teamID   string
+	jobID    string
+	failedAt time.Time
+}
+
+type embeddingReconciliationBatchResult struct {
+	requeued int64
+	cursor   *embeddingReconciliationCursor
+}
 
 func (r *SearchRepositoryImpl) RequeueEmbeddingReconciliationJobs(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error) {
 	input = normalizeRequeueEmbeddingReconciliationJobsInput(input)
@@ -16,64 +33,111 @@ func (r *SearchRepositoryImpl) RequeueEmbeddingReconciliationJobs(ctx context.Co
 		return 0, err
 	}
 	var total int64
+	var cursor *embeddingReconciliationCursor
 	for {
-		count, err := r.requeueEmbeddingReconciliationBatch(ctx, input)
+		batch, err := r.requeueEmbeddingReconciliationBatch(ctx, input, cursor)
 		if err != nil {
 			return total, fmt.Errorf("search: requeue reconciliation jobs: %w", err)
 		}
-		if count == 0 {
+		total += batch.requeued
+		if batch.cursor == nil {
 			break
 		}
-		total += count
-		if count < int64(input.BatchSize) {
-			break
-		}
+		cursor = batch.cursor
 	}
 	return total, nil
 }
 
-func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error) {
-	var count int64
+func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
+	ctx context.Context,
+	input RequeueEmbeddingReconciliationJobsInput,
+	cursor *embeddingReconciliationCursor,
+) (embeddingReconciliationBatchResult, error) {
+	var batch embeddingReconciliationBatchResult
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		if err := renewEmbeddingReconciliationLease(ctx, tx, input); err != nil {
 			return err
 		}
-		rows, err := tx.WithContext(ctx).Raw(`
-			WITH document_candidates AS MATERIALIZED (
-				SELECT document.team_id, document.search_document_id,
-				       job.embedding_job_id,
-				       COALESCE(job.last_failed_at, job.updated_at) AS failed_at
-				FROM embedding_jobs AS job
-				JOIN search_documents AS document
-				  ON document.team_id = job.team_id
-				 AND document.search_document_id = job.search_document_id
-				 AND document.source_version = job.source_version
-				 AND document.projection_format_version = job.projection_format_version
-				 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
-				 AND document.document_version = job.document_version
-				 AND document.embedding_contract_id = job.embedding_contract_id
-				 AND document.embedding_dimensions = job.embedding_dimensions
-				JOIN teams AS team
-				  ON team.id = job.team_id AND team.status = 'active' AND team.deleted_at IS NULL
-				JOIN embedding_reconciliation_runs AS run
-				  ON run.reconciliation_run_id = ?::uuid
-				 AND run.status = 'running'
-				 AND run.worker_id = ?
-				 AND run.lease_token = ?::uuid
-				WHERE job.status = 'failed'
-				  AND job.failure_class <> 'permanent'
-				  AND job.embedding_contract_id = ?::uuid
-				  AND job.embedding_dimensions = ?
-				  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
-				  AND document.search_state = 'failed'
-				ORDER BY COALESCE(job.last_failed_at, job.updated_at), job.embedding_job_id
-				LIMIT ?
-				FOR UPDATE OF document SKIP LOCKED
-			)
+		query := `
+			SELECT job.team_id::text, job.embedding_job_id::text,
+			       COALESCE(job.last_failed_at, job.updated_at) AS failed_at
+			FROM embedding_jobs AS job
+			JOIN search_documents AS document
+			  ON document.team_id = job.team_id
+			 AND document.search_document_id = job.search_document_id
+			 AND document.source_version = job.source_version
+			 AND document.projection_format_version = job.projection_format_version
+			 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+			 AND document.document_version = job.document_version
+			 AND document.embedding_contract_id = job.embedding_contract_id
+			 AND document.embedding_dimensions = job.embedding_dimensions
+			JOIN teams AS team
+			  ON team.id = job.team_id AND team.status = 'active' AND team.deleted_at IS NULL
+			JOIN embedding_reconciliation_runs AS run
+			  ON run.reconciliation_run_id = ?::uuid
+			 AND run.status = 'running'
+			 AND run.worker_id = ?
+			 AND run.lease_token = ?::uuid
+			WHERE job.status = 'failed'
+			  AND job.failure_class <> 'permanent'
+			  AND job.embedding_contract_id = ?::uuid
+			  AND job.embedding_dimensions = ?
+			  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
+			  AND document.search_state = 'failed'
+		`
+		args := []any{
+			input.RunID, input.WorkerID, input.LeaseToken,
+			input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff,
+		}
+		if cursor != nil {
+			query += `
+			  AND (COALESCE(job.last_failed_at, job.updated_at), job.embedding_job_id) > (?::timestamptz, ?::uuid)
+			`
+			args = append(args, cursor.failedAt, cursor.jobID)
+		}
+		query += `
+			ORDER BY COALESCE(job.last_failed_at, job.updated_at), job.embedding_job_id
+			LIMIT ?
+			FOR UPDATE OF document SKIP LOCKED
+		`
+		args = append(args, input.BatchSize)
+		rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
+		if err != nil {
+			return err
+		}
+		candidates := make([]embeddingReconciliationCandidate, 0, input.BatchSize)
+		for rows.Next() {
+			var candidate embeddingReconciliationCandidate
+			if err := rows.Scan(&candidate.teamID, &candidate.jobID, &candidate.failedAt); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			candidates = append(candidates, candidate)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if len(candidates) == 0 {
+			return nil
+		}
+		lastCandidate := candidates[len(candidates)-1]
+		batch.cursor = &embeddingReconciliationCursor{failedAt: lastCandidate.failedAt, jobID: lastCandidate.jobID}
+		candidateTeamIDs := make([]string, 0, len(candidates))
+		candidateJobIDs := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			candidateTeamIDs = append(candidateTeamIDs, candidate.teamID)
+			candidateJobIDs = append(candidateJobIDs, candidate.jobID)
+		}
+
+		rows, err = tx.WithContext(ctx).Raw(`
 			SELECT job.team_id::text, job.embedding_job_id::text,
 			       job.source_kind, job.failure_class, job.failure_code,
 			       job.embedding_contract_id::text, job.embedding_dimensions
-			FROM document_candidates AS candidate
+			FROM unnest(?::uuid[], ?::uuid[]) WITH ORDINALITY AS candidate(team_id, embedding_job_id, position)
 			JOIN embedding_jobs AS job
 			  ON job.team_id = candidate.team_id
 			 AND job.embedding_job_id = candidate.embedding_job_id
@@ -92,10 +156,9 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(ctx context.C
 			  AND job.embedding_dimensions = ?
 			  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
 			  AND document.search_state = 'failed'
-			ORDER BY candidate.failed_at, job.embedding_job_id
+			ORDER BY candidate.position
 			FOR UPDATE OF job SKIP LOCKED
-		`, input.RunID, input.WorkerID, input.LeaseToken,
-			input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff, input.BatchSize,
+		`, pq.Array(candidateTeamIDs), pq.Array(candidateJobIDs),
 			input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff).Rows()
 		if err != nil {
 			return err
@@ -236,9 +299,9 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(ctx context.C
 		`, pq.Array(jobTeamIDs), pq.Array(jobIDs),
 			input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff,
 			input.RunID, input.WorkerID, input.LeaseToken,
-			input.RunID, input.CandidateCutoff).Row().Scan(&count, &documentCount, &incidentCount)
+			input.RunID, input.CandidateCutoff).Row().Scan(&batch.requeued, &documentCount, &incidentCount)
 	})
-	return count, err
+	return batch, err
 }
 
 func renewEmbeddingReconciliationLease(ctx context.Context, tx *gorm.DB, input RequeueEmbeddingReconciliationJobsInput) error {

@@ -60,7 +60,7 @@ func (r *SearchRepositoryImpl) CheckSearchConvergence(ctx context.Context) error
 		return fmt.Errorf("search: convergence health: %w", err)
 	}
 	if attentionRequired {
-		return errors.New("search convergence is attention_required")
+		return ErrSearchConvergenceAttentionRequired
 	}
 	return nil
 }
@@ -194,7 +194,7 @@ func (r *SearchRepositoryImpl) ReserveEmbeddingReconciliationRun(ctx context.Con
 				embedding_contract_id, embedding_dimensions, local_run_date,
 				candidate_cutoff, status
 			)
-			SELECT ?::uuid, ?, ?, ?, 'reserved'
+			SELECT ?::uuid, ?, ?, statement_timestamp(), 'reserved'
 			WHERE EXISTS (
 				SELECT 1
 				FROM embedding_jobs AS job
@@ -213,12 +213,12 @@ func (r *SearchRepositoryImpl) ReserveEmbeddingReconciliationRun(ctx context.Con
 				  AND job.failure_class <> 'permanent'
 				  AND job.embedding_contract_id = ?::uuid
 				  AND job.embedding_dimensions = ?
-				  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
+				  AND COALESCE(job.last_failed_at, job.updated_at) <= statement_timestamp()
 				  AND document.search_state = 'failed'
 			)
 			ON CONFLICT (embedding_contract_id, embedding_dimensions, local_run_date) DO NOTHING
-			`, input.EmbeddingContractID, input.EmbeddingDimensions, localRunDate, input.Now,
-			input.EmbeddingContractID, input.EmbeddingDimensions, input.Now).Error; err != nil {
+			`, input.EmbeddingContractID, input.EmbeddingDimensions, localRunDate,
+			input.EmbeddingContractID, input.EmbeddingDimensions).Error; err != nil {
 			return err
 		}
 		var databaseNow time.Time

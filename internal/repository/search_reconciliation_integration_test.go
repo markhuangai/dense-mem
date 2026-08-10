@@ -24,7 +24,9 @@ func TestCheckSearchConvergenceDetectsActiveBacklog(t *testing.T) {
 
 	require.NoError(t, repo.CheckSearchConvergence(ctx))
 	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "convergence health backlog", 1)
-	require.ErrorContains(t, repo.CheckSearchConvergence(ctx), "attention_required")
+	err := repo.CheckSearchConvergence(ctx)
+	require.ErrorIs(t, err, ErrSearchConvergenceAttentionRequired)
+	require.ErrorContains(t, err, "attention_required")
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
@@ -83,7 +85,7 @@ func TestReserveEmbeddingReconciliationRunWaitsForRecoverableCandidate(t *testin
 	require.NotNil(t, run)
 }
 
-func TestEmbeddingReconciliationLeasesUseDatabaseClock(t *testing.T) {
+func TestEmbeddingReconciliationCutoffAndLeasesUseDatabaseClock(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -113,12 +115,16 @@ func TestEmbeddingReconciliationLeasesUseDatabaseClock(t *testing.T) {
 	}))
 
 	future := time.Now().UTC().Add(24 * time.Hour)
+	databaseBefore := databaseNowForTest(t, adminDB, rls)
 	run, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: 3,
 		LocalRunDate: future, WorkerID: "database-clock-worker", Lease: time.Minute, Now: future,
 	})
 	require.NoError(t, err)
 	require.True(t, claimed)
+	databaseAfter := databaseNowForTest(t, adminDB, rls)
+	require.False(t, run.CandidateCutoff.Before(databaseBefore))
+	require.False(t, run.CandidateCutoff.After(databaseAfter))
 	var leaseSeconds float64
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Raw(`

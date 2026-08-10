@@ -81,6 +81,20 @@ func TestSearchConvergenceHealthCheckBoundsRepositoryErrors(t *testing.T) {
 	}
 }
 
+func TestSearchConvergenceHealthCheckDoesNotLogExpectedDegradation(t *testing.T) {
+	logger := &searchConvergenceHealthLogger{}
+	check := searchConvergenceHealthCheck(searchConvergenceHealthStub{err: repository.ErrSearchConvergenceAttentionRequired}, logger)
+
+	err := check(context.Background())
+
+	if !errors.Is(err, repository.ErrSearchConvergenceAttentionRequired) {
+		t.Fatalf("health error = %v", err)
+	}
+	if len(logger.warnings) != 0 {
+		t.Fatalf("warnings = %#v", logger.warnings)
+	}
+}
+
 func TestConflictReviewDueForTeamHonorsLocalStartAndJitter(t *testing.T) {
 	cfg := testConflictReviewConfig(t, "UTC", "04:00", "0")
 	before := time.Date(2026, 7, 25, 3, 59, 59, 0, time.UTC)

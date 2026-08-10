@@ -23,6 +23,9 @@ func searchConvergenceHealthCheck(search searchConvergenceHealthReader, logger o
 	return func(ctx context.Context) error {
 		err := search.CheckSearchConvergence(ctx)
 		if err != nil {
+			if errors.Is(err, repository.ErrSearchConvergenceAttentionRequired) {
+				return err
+			}
 			if logger != nil {
 				logger.Warn("search_convergence_health_query_failed", observability.String("error_code", "search_convergence_query_failed"))
 			}

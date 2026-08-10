@@ -187,6 +187,81 @@ func TestEmbeddingReconciliationLocksDocumentBeforeJob(t *testing.T) {
 	require.Equal(t, "queued", newStatus)
 }
 
+func TestEmbeddingReconciliationScansPastLockedJob(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "reconciliation-locked-job-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "reconciliation-locked-job-owner")
+	insertSearchTestContract(t, adminDB, rls, "reconciliation-locked-job", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	oldest := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "locked oldest failure", 1)
+	failEmbeddingDocumentForReconciliationTest(t, ctx, repo, teamID, oldest.SearchDocumentID, "locked-oldest-writer")
+	later := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "unlocked later failure", 1)
+	failEmbeddingDocumentForReconciliationTest(t, ctx, repo, teamID, later.SearchDocumentID, "unlocked-later-writer")
+	orderingTime := databaseNowForTest(t, adminDB, rls)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_jobs
+			SET last_failed_at = CASE embedding_job_id
+			    WHEN ?::uuid THEN ?::timestamptz
+			    ELSE ?::timestamptz
+			END
+			WHERE embedding_job_id IN (?::uuid, ?::uuid)
+		`, oldest.QueuedJobID, orderingTime.Add(-2*time.Minute), orderingTime.Add(-time.Minute),
+			oldest.QueuedJobID, later.QueuedJobID).Error
+	}))
+	run, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: orderingTime, WorkerID: "locked-job-reconciler", Lease: time.Minute, Now: orderingTime,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	jobLock := appDB.WithContext(ctx).Begin()
+	require.NoError(t, jobLock.Error)
+	defer jobLock.Rollback()
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{"SELECT set_config('app.current_team_id', ?, true)", []any{teamID}},
+		{"SELECT set_config('app.current_profile_id', ?, true)", []any{ownerID}},
+		{"SELECT set_config('app.tx_mode', 'team', true)", nil},
+	} {
+		require.NoError(t, jobLock.Exec(statement.query, statement.args...).Error)
+	}
+	var locked int
+	require.NoError(t, jobLock.Raw(`
+		SELECT 1
+		FROM embedding_jobs
+		WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		FOR UPDATE
+	`, teamID, oldest.QueuedJobID).Row().Scan(&locked))
+
+	requeueCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	count, err := repo.RequeueEmbeddingReconciliationJobs(requeueCtx, RequeueEmbeddingReconciliationJobsInput{
+		RunID: run.RunID, WorkerID: "locked-job-reconciler", LeaseToken: run.LeaseToken,
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		CandidateCutoff: run.CandidateCutoff, BatchSize: 1, Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, count)
+
+	var oldestStatus, laterStatus string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT status FROM embedding_jobs WHERE embedding_job_id = ?::uuid`, oldest.QueuedJobID).Row().Scan(&oldestStatus); err != nil {
+			return err
+		}
+		return tx.Raw(`SELECT status FROM embedding_jobs WHERE embedding_job_id = ?::uuid`, later.QueuedJobID).Row().Scan(&laterStatus)
+	}))
+	require.Equal(t, "failed", oldestStatus)
+	require.Equal(t, "queued", laterStatus)
+}
+
 func failEmbeddingDocumentForReconciliationTest(
 	t *testing.T,
 	ctx context.Context,
