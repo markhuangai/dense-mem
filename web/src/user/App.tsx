@@ -13,6 +13,7 @@ import {
   Users,
 } from "lucide-react";
 import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
+import { useVisiblePolling } from "../telemetry/useVisiblePolling";
 import {
   RotateResponse,
   SSOProvider,
@@ -518,22 +519,29 @@ function UserTelemetryPanel({ api, session }: { api: UserApi; session: UserSessi
   const [windowKey, setWindowKey] = useState<TelemetryWindowKey>("1h");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const requestRef = useRef(0);
 
-  async function loadTelemetry(nextWindow = windowKey) {
+  async function loadTelemetry(nextWindow = windowKey, signal?: AbortSignal) {
+    const requestID = ++requestRef.current;
     setLoading(true);
     setError("");
     try {
-      setSnapshot(await api.telemetry({ window: nextWindow }));
+      setSnapshot(await api.telemetry({ window: nextWindow }, signal));
     } catch (err) {
-      setError(readError(err));
+      if (!isAbortError(err)) {
+        setError(readError(err));
+      }
     } finally {
-      setLoading(false);
+      if (requestRef.current === requestID) {
+        setLoading(false);
+      }
     }
   }
 
-  useEffect(() => {
-    void loadTelemetry();
-  }, [windowKey]);
+  const refreshTelemetry = useVisiblePolling(
+    (signal) => loadTelemetry(windowKey, signal),
+    [api, windowKey],
+  );
 
   return (
     <section className="surface">
@@ -544,10 +552,14 @@ function UserTelemetryPanel({ api, session }: { api: UserApi; session: UserSessi
         loading={loading}
         error={error}
         onWindowChange={setWindowKey}
-        onRefresh={() => void loadTelemetry()}
+        onRefresh={() => void refreshTelemetry()}
       />
     </section>
   );
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function KeyPanel({

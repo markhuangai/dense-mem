@@ -29,9 +29,26 @@ type HealthCheck struct {
 
 // HealthConfig configures the health and ready endpoints.
 type HealthConfig struct {
-	Checks   []HealthCheck
-	Degraded bool
-	Reason   string
+	Checks            []HealthCheck
+	Degraded          bool
+	Reason            string
+	dependencyFlights *dependencyCheckFlightRegistry
+}
+
+// WithSharedDependencyChecks makes copies of this configuration share one
+// in-flight registry, which keeps checks single-flight across listeners.
+func (h HealthConfig) WithSharedDependencyChecks() HealthConfig {
+	if h.dependencyFlights == nil {
+		h.dependencyFlights = newDependencyCheckFlightRegistry()
+	}
+	return h
+}
+
+func (h HealthConfig) dependencyCheckRegistry() *dependencyCheckFlightRegistry {
+	if h.dependencyFlights != nil {
+		return h.dependencyFlights
+	}
+	return newDependencyCheckFlightRegistry()
 }
 
 // Server is the Echo server wrapper.
@@ -71,6 +88,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // The health and ready endpoints are not behind auth, profile, or rate-limit middleware.
 func NewServer(cfg config.Config, logger observability.LogProvider, health HealthConfig) *echo.Echo {
 	e := echo.New()
+	if health.dependencyFlights == nil {
+		health.dependencyFlights = newDependencyCheckFlightRegistry()
+	}
 	applyServerLimits(e)
 	applyIPExtractor(e)
 

@@ -17,25 +17,26 @@ func registerPublicRoutes(e *echo.Echo, healthConfig HealthConfig) {
 
 	// Ready endpoint - readiness check with dependency validation.
 	// Optional check failures are reported as degraded without blocking readiness.
-	e.GET("/ready", handleReady(healthConfig.Checks))
+	e.GET("/ready", handleReady(healthConfig))
 }
 
 // handleHealth handles the /health endpoint.
 // It always returns 200. In normal mode it returns {"status":"ok","checks":{...}}.
 // In degraded (in-memory) mode it returns 200 with degraded=true, a reason, and checks.
 func handleHealth(healthConfig HealthConfig) echo.HandlerFunc {
+	registry := healthConfig.dependencyCheckRegistry()
 	return func(c echo.Context) error {
 		ctx := c.Request().Context()
 		checks := make(map[string]string)
-		for _, check := range healthConfig.Checks {
-			if err := check.Check(ctx); err != nil {
-				if check.Optional {
-					checks[check.Name] = "degraded"
+		for _, result := range runDependencyChecks(ctx, registry, healthConfig.Checks) {
+			if result.Err != nil || result.TimedOut {
+				if result.Check.Optional {
+					checks[result.Check.Name] = "degraded"
 				} else {
-					checks[check.Name] = "failed"
+					checks[result.Check.Name] = "failed"
 				}
 			} else {
-				checks[check.Name] = "ok"
+				checks[result.Check.Name] = "ok"
 			}
 		}
 
@@ -56,23 +57,23 @@ func handleHealth(healthConfig HealthConfig) echo.HandlerFunc {
 
 // handleReady returns a handler function for the /ready endpoint.
 // It executes all health checks and returns the appropriate status.
-func handleReady(checks []HealthCheck) echo.HandlerFunc {
+func handleReady(healthConfig HealthConfig) echo.HandlerFunc {
+	registry := healthConfig.dependencyCheckRegistry()
 	return func(c echo.Context) error {
 		ctx := c.Request().Context()
 		dependencies := make(map[string]string)
 		allPass := true
 
-		// Execute all health checks
-		for _, check := range checks {
-			if err := check.Check(ctx); err != nil {
-				if check.Optional {
-					dependencies[check.Name] = "degraded"
+		for _, result := range runDependencyChecks(ctx, registry, healthConfig.Checks) {
+			if result.Err != nil || result.TimedOut {
+				if result.Check.Optional {
+					dependencies[result.Check.Name] = "degraded"
 				} else {
-					dependencies[check.Name] = "failed"
+					dependencies[result.Check.Name] = "failed"
 					allPass = false
 				}
 			} else {
-				dependencies[check.Name] = "ok"
+				dependencies[result.Check.Name] = "ok"
 			}
 		}
 

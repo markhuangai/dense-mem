@@ -85,9 +85,11 @@ ${EDITOR:-vi} .env
 docker compose up -d
 ```
 
-The base stack uses PostgreSQL with pgvector as the durable authority. Leave
-`NEO4J_*` unset for normal operation; a legacy Neo4j corpus is migration input,
-not a runtime fallback. The local ports are:
+The base stack uses PostgreSQL with pgvector as the durable authority. Current
+releases reject every `NEO4J_*` setting. If an installation still has a legacy
+Neo4j corpus, run the guided migration with v2.1.2 first, then upgrade with
+those variables unset. Neo4j is migration input, not a runtime fallback. The
+local ports are:
 
 ```text
 MCP:            http://127.0.0.1:8080/mcp
@@ -165,8 +167,9 @@ startup validation requires a complete provider configuration.
 - Set `AI_VERIFIER_MODEL` to a model that exists on the selected chat endpoint.
   Startup validates the model configuration before the service accepts memory
   writes. A 7B-8B class model works for local smoke tests; larger models can
-  exceed the default 60-second timeout while they load, leaving processing
-  attempts retryable until the model responds.
+  exceed the default 60-second timeout while they load. Retryable processing
+  stays within the durable placement-attempt budget and becomes terminal after
+  that budget is exhausted.
 
 ## Evidence Lifecycle
 
@@ -336,9 +339,10 @@ depend on retired `/api/v1` paths.
 
 ## Telemetry Overlay
 
-Prometheus telemetry is optional and off by default. To collect HTTP,
-embedding, verifier, recall, feedback, and conflict-review metrics for the
-first-party dashboards, start the base stack with the overlay:
+Prometheus telemetry is optional and off by default. To collect HTTP, embedding,
+verifier, assessor, recall feedback, Remember, conflict-review, cost, and
+Relationship lifecycle telemetry for the first-party dashboards, start the
+base stack with the overlay:
 
 ```bash
 curl -fsSLo prometheus.yml \
@@ -351,11 +355,16 @@ docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
 ```
 
 The overlay starts Prometheus on `127.0.0.1:9090` and scopes dashboard queries
-to `TELEMETRY_PROMETHEUS_JOB=dense-mem`. Free-text recall-feedback comments stay
-in bounded investigation records; Prometheus receives only bounded labels.
-Conflict queue state gauges are emitted by each instance, so multi-instance
-dashboards should use `max by (team_id, status)` (or the equivalent label set),
-while event counters retain normal `sum` and `rate` semantics.
+to `TELEMETRY_PROMETHEUS_JOB=dense-mem`. Dashboard snapshots report whether each
+item is ready, inactive, unavailable, or unsupported. A valid zero is shown as
+zero; missing provider usage or pricing stays unavailable. Partial source
+failures keep successful cards and charts visible. System, team, and profile
+scopes apply the same visibility rules as the underlying data. Free-text
+recall-feedback comments stay in bounded investigation records; Prometheus
+receives only bounded labels. Conflict queue state gauges are emitted by each
+instance, so multi-instance dashboards should use `max by (team_id, status)` (or
+the equivalent label set), while event counters retain normal `sum` and `rate`
+semantics.
 
 ## Responsibility Boundary
 

@@ -38,13 +38,20 @@ export function TelemetryDashboard({
   const currentCards = snapshot ? telemetryCurrentCards(snapshot) : [];
   const activitySeries = snapshot ? telemetryActivitySeries(snapshot) : [];
   const stateSeries = snapshot ? telemetryStateSeries(snapshot) : [];
+  const snapshotStatus = snapshot?.status ?? (snapshot?.available === false ? "unavailable" : "ready");
+  const nonReadyItems = [
+    ...windowedCards,
+    ...currentCards,
+    ...activitySeries,
+    ...stateSeries,
+  ].filter((item) => itemStatus(item) !== "ready");
   const windowControlId = `${title.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || "telemetry"}-telemetry-window`;
 
   return (
     <div className="telemetry-dashboard">
       <SectionHeading
         title={title}
-        subtitle={snapshot ? `${formatTelemetryTime(snapshot.window.from)} - ${formatTelemetryTime(snapshot.window.to)}` : undefined}
+        subtitle={snapshot ? `${formatTelemetryTime(snapshot.window.from)} - ${formatTelemetryTime(snapshot.window.to)}${snapshot.generated_at ? ` · observed ${formatTelemetryTime(snapshot.generated_at)}` : ""}` : undefined}
         actions={(
           <button className="icon-button" type="button" aria-label="Refresh telemetry" onClick={onRefresh} disabled={loading}>
             <RefreshCw size={16} aria-hidden="true" />
@@ -67,7 +74,9 @@ export function TelemetryDashboard({
       </div>
 
       {error && <div className="banner error" role="alert">{error}</div>}
-      {snapshot?.message && <div className="banner neutral">{snapshot.message}</div>}
+      {snapshotStatus === "degraded" && <div className="banner warning" role="status">Some telemetry is unavailable. Successful items remain visible.</div>}
+      {snapshotStatus === "unavailable" && <div className="banner error" role="alert">Telemetry is unavailable.</div>}
+      {snapshot?.message && snapshotStatus !== "degraded" && <div className="banner neutral">{snapshot.message}</div>}
       {loading && !snapshot && <LoadingState label="Loading telemetry" compact />}
 
       {snapshot && (
@@ -96,6 +105,7 @@ export function TelemetryDashboard({
             from={snapshot.window.from}
             to={snapshot.window.to}
           />
+          <TelemetryReasonLedger items={nonReadyItems} />
         </>
       )}
     </div>
@@ -107,14 +117,15 @@ function TelemetryCardSection({ title, ariaLabel, cards }: {
   ariaLabel: string;
   cards: TelemetrySnapshot["cards"];
 }) {
-  if (cards.length === 0) {
+  const readyCards = cards.filter((card) => itemStatus(card) === "ready");
+  if (readyCards.length === 0) {
     return null;
   }
   return (
     <section className="telemetry-section">
       <h3>{title}</h3>
       <div className="telemetry-card-grid" aria-label={ariaLabel}>
-        {cards.map((card) => (
+        {readyCards.map((card) => (
           <SummaryCard key={card.id} label={card.label} value={formatTelemetryCardValue(card)} />
         ))}
       </div>
@@ -129,16 +140,16 @@ function TelemetryChartSection({ title, ariaLabel, series, from, to }: {
   from: string;
   to: string;
 }) {
-  if (series.length === 0) {
+  const readySeries = series.filter((item) => itemStatus(item) === "ready");
+  if (readySeries.length === 0) {
     return null;
   }
   return (
     <section className="telemetry-section">
       <h3>{title}</h3>
       <div className="telemetry-chart-grid" aria-label={ariaLabel}>
-        {series.map((item) => {
+        {readySeries.map((item) => {
           const samplePoints = Array.isArray(item.points) ? item.points : [];
-          const hasSamples = samplePoints.length > 0;
           const chartPoints = telemetryChartPoints(samplePoints, from, to);
 
           return (
@@ -148,7 +159,6 @@ function TelemetryChartSection({ title, ariaLabel, series, from, to }: {
                 <span>{item.unit}</span>
               </div>
               <div className="telemetry-chart-body">
-                {!hasSamples && <div className="chart-empty-label">No samples</div>}
                 <ResponsiveContainer
                   width="100%"
                   height="100%"
@@ -180,16 +190,14 @@ function TelemetryChartSection({ title, ariaLabel, series, from, to }: {
                       labelFormatter={(label) => formatTelemetryTime(String(label))}
                       formatter={(value) => [formatTelemetryValue(Number(value), item.unit), item.label]}
                     />
-                    {hasSamples && (
-                      <Line
-                        type="monotone"
-                        dataKey="value"
-                        stroke="var(--accent)"
-                        strokeWidth={2}
-                        dot={false}
-                        isAnimationActive={false}
-                      />
-                    )}
+                    <Line
+                      type="monotone"
+                      dataKey="value"
+                      stroke="var(--accent)"
+                      strokeWidth={2}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -198,6 +206,33 @@ function TelemetryChartSection({ title, ariaLabel, series, from, to }: {
         })}
       </div>
     </section>
+  );
+}
+
+function TelemetryReasonLedger({ items }: { items: Array<TelemetrySnapshot["cards"][number] | TelemetrySnapshot["series"][number]> }) {
+  if (items.length === 0) {
+    return null;
+  }
+  const groups = new Map<string, typeof items>();
+  for (const item of items) {
+    const key = item.reason_code || itemStatus(item);
+    const group = groups.get(key) ?? [];
+    group.push(item);
+    groups.set(key, group);
+  }
+  return (
+    <details className="telemetry-reason-ledger">
+      <summary>Inactive / unavailable ({items.length})</summary>
+      <div className="telemetry-reason-groups">
+        {[...groups.entries()].map(([reason, group]) => (
+          <div className="telemetry-reason-group" key={reason}>
+            <strong>{reason}</strong>
+            <span>{group.map((item) => item.label).join(", ")}</span>
+            {group[0].reason && <small>{group[0].reason}</small>}
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -222,6 +257,19 @@ export function formatTelemetryCardValue(card: Pick<TelemetrySnapshot["cards"][n
     return "No data";
   }
   return formatTelemetryValue(card.value, card.unit);
+}
+
+function itemStatus(item: { status?: string; available?: boolean; points?: TelemetrySnapshot["series"][number]["points"] }) {
+  if (item.status) {
+    return item.status;
+  }
+  if (item.available === false) {
+    return "unavailable";
+  }
+  if ("points" in item) {
+    return (item.points?.length ?? 0) > 0 ? "ready" : "inactive";
+  }
+  return "ready";
 }
 
 export function formatTelemetryValue(value: number, unit: string) {
@@ -274,13 +322,7 @@ export function telemetryChartPoints(
   from: string,
   to: string,
 ) {
-  if (points.length > 0) {
-    return points;
-  }
-  return [
-    { timestamp: from, value: 0 },
-    { timestamp: to, value: 0 },
-  ];
+  return points;
 }
 
 function telemetryYAxisDomain(points: TelemetrySnapshot["series"][number]["points"]) {

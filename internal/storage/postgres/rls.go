@@ -15,6 +15,7 @@ type RLSHelper interface {
 	WithTeamTx(ctx context.Context, db *gorm.DB, teamID string, fn func(tx *gorm.DB) error) error
 	WithSystemTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error
 	WithTeamReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, teamID string, fn func(tx *gorm.DB) error) error
+	WithTeamProfileReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, teamID string, profileID string, fn func(tx *gorm.DB) error) error
 	WithSystemReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error
 }
 
@@ -109,6 +110,23 @@ func (r *RLS) WithTeamReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, tea
 			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
 		}
 		if err := tx.Exec("SELECT set_config('app.tx_mode', 'team', true)").Error; err != nil {
+			return fmt.Errorf("failed to set app.tx_mode: %w", err)
+		}
+		return fn(tx)
+	})
+}
+
+// WithTeamProfileReadOnlyRepeatableTx executes an owner-scoped read model query
+// in a repeatable-read, read-only transaction with both RLS identities set.
+func (r *RLS) WithTeamProfileReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, teamID, profileID string, fn func(tx *gorm.DB) error) error {
+	return r.withReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT set_config('app.current_team_id', ?, true)", teamID).Error; err != nil {
+			return fmt.Errorf("failed to set app.current_team_id: %w", err)
+		}
+		if err := tx.Exec("SELECT set_config('app.current_profile_id', ?, true)", profileID).Error; err != nil {
+			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
+		}
+		if err := tx.Exec("SELECT set_config('app.tx_mode', 'profile', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.tx_mode: %w", err)
 		}
 		return fn(tx)

@@ -172,8 +172,10 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   const currentCardLabels = telemetryLabels(telemetryBody.data?.current_cards);
   const activitySeriesLabels = telemetryLabels(telemetryBody.data?.activity_series);
   const stateSeriesLabels = telemetryLabels(telemetryBody.data?.state_series);
+  const readyWindowedCardLabels = telemetryReadyLabels(telemetryBody.data?.windowed_cards);
+  const readyActivitySeriesLabels = telemetryReadyLabels(telemetryBody.data?.activity_series);
   expect(windowedCardLabels.length).toBeGreaterThan(0);
-  expect(currentCardLabels).toEqual([]);
+  expect(currentCardLabels).toContain("Relationships: active");
   expect(activitySeriesLabels.length).toBeGreaterThan(0);
   expect(stateSeriesLabels).toEqual([]);
 
@@ -182,18 +184,18 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   await expect(page.getByRole("heading", { name: "Telemetry" })).toBeVisible();
   await expect(page.getByLabel("Telemetry totals")).toContainText("HTTP requests");
   await expect(page.getByLabel("Telemetry charts")).toContainText("HTTP requests");
-  await expect(page.getByLabel("Telemetry current state")).toHaveCount(0);
+  await expect(page.getByLabel("Telemetry current state")).toContainText("Relationships: active");
   await expect(page.getByLabel("Telemetry state history")).toHaveCount(0);
 
   await openUserPortal(page, seedApiKey);
   await page.getByRole("button", { name: "Usage" }).click();
-  for (const label of windowedCardLabels) {
+  for (const label of readyWindowedCardLabels) {
     await expect(page.getByLabel(`${expectedUsageTitle} totals`)).toContainText(label);
   }
-  for (const label of activitySeriesLabels) {
+  for (const label of readyActivitySeriesLabels) {
     await expect(page.getByLabel(`${expectedUsageTitle} charts`)).toContainText(label);
   }
-  await expect(page.getByLabel(`${expectedUsageTitle} current state`)).toHaveCount(0);
+  await expect(page.getByLabel(`${expectedUsageTitle} current state`)).toContainText("Relationships: active");
   await expect(page.getByLabel(`${expectedUsageTitle} state history`)).toHaveCount(0);
   await expectNoShellOverlap(page);
 });
@@ -735,6 +737,13 @@ function telemetryLabels(value: unknown) {
   return value
     .map((item) => (isRecord(item) && typeof item.label === "string" ? item.label : ""))
     .filter(Boolean);
+}
+
+function telemetryReadyLabels(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return telemetryLabels(value.filter((item) => isRecord(item) && item.status === "ready"));
 }
 
 async function userTelemetry(request: APIRequestContext) {

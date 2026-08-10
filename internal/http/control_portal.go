@@ -73,6 +73,9 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	if cfg == nil {
 		return nil, fmt.Errorf("control portal: config is required")
 	}
+	if health.dependencyFlights == nil {
+		health.dependencyFlights = newDependencyCheckFlightRegistry()
+	}
 	if strings.TrimSpace(cfg.GetControlPortalToken()) == "" {
 		return nil, fmt.Errorf("control portal: token is required")
 	}
@@ -227,13 +230,15 @@ func (h *controlPortalHandler) getMetrics(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	dependencyReport := observeDependencies(c.Request().Context(), h.health)
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": controlMetricsResponse{
-		Window:       snapshot.Window,
-		System:       snapshot.System,
-		Dependencies: controlDependencySnapshot(c.Request().Context(), h.health),
-		Teams:        snapshot.Teams,
-		Keys:         snapshot.Keys,
-		Routes:       snapshot.Routes,
+		Window:                snapshot.Window,
+		System:                snapshot.System,
+		DependenciesCheckedAt: dependencyReport.CheckedAt,
+		Dependencies:          dependencyReport.Dependencies,
+		Teams:                 snapshot.Teams,
+		Keys:                  snapshot.Keys,
+		Routes:                snapshot.Routes,
 	}})
 }
 
@@ -652,19 +657,21 @@ type controlCreateSecurityBanRequest struct {
 }
 
 type controlMetricsResponse struct {
-	Window       domain.UsageMetricsWindow   `json:"window"`
-	System       domain.UsageMetricTotal     `json:"system"`
-	Dependencies []controlDependencyResponse `json:"dependencies"`
-	Teams        []domain.UsageTeamMetric    `json:"teams"`
-	Keys         []domain.UsageKeyMetric     `json:"keys"`
-	Routes       []domain.UsageRouteMetric   `json:"routes"`
+	Window                domain.UsageMetricsWindow   `json:"window"`
+	System                domain.UsageMetricTotal     `json:"system"`
+	DependenciesCheckedAt string                      `json:"dependencies_checked_at"`
+	Dependencies          []controlDependencyResponse `json:"dependencies"`
+	Teams                 []domain.UsageTeamMetric    `json:"teams"`
+	Keys                  []domain.UsageKeyMetric     `json:"keys"`
+	Routes                []domain.UsageRouteMetric   `json:"routes"`
 }
 
 type controlDependencyResponse struct {
-	Name      string  `json:"name"`
-	Status    string  `json:"status"`
-	LatencyMS *int64  `json:"latency_ms"`
-	Message   *string `json:"message,omitempty"`
+	Name       string  `json:"name"`
+	Status     string  `json:"status"`
+	LatencyMS  *int64  `json:"latency_ms"`
+	Message    *string `json:"message,omitempty"`
+	ReasonCode *string `json:"reason_code,omitempty"`
 }
 
 const (

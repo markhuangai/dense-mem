@@ -388,6 +388,7 @@ function Portal({
                 team={selectedTeam}
                 activeTab={teamWorkspaceTab}
                 onSelectTab={openTeamWorkspace}
+                onOpenMetrics={() => setActiveTab("metrics")}
                 onUpdated={(team) => {
                   setTeams((current) => current.map((item) => (item.id === team.id ? team : item)));
                 }}
@@ -543,6 +544,7 @@ function TeamWorkspace({
   team,
   activeTab,
   onSelectTab,
+  onOpenMetrics,
   onUpdated,
   onDeleted,
 }: {
@@ -550,12 +552,13 @@ function TeamWorkspace({
   team: Team;
   activeTab: TeamWorkspaceTab;
   onSelectTab: (tab: TeamWorkspaceTab) => void;
+  onOpenMetrics: () => void;
   onUpdated: (team: Team) => void;
   onDeleted: () => void;
 }) {
   return (
     <TeamWorkspaceShell team={team} activeTab={activeTab} onSelectTab={onSelectTab}>
-      {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} onOpenSettings={() => onSelectTab("settings")} />}
+      {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} onOpenMetrics={onOpenMetrics} />}
       {activeTab === "profiles" && <TeamProfilesPanel api={api} team={team} embedded />}
       {activeTab === "conflicts" && (
         <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading conflict queue" /></div>}>

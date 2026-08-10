@@ -11,6 +11,7 @@ export class ApiError extends Error {
 export type JsonRequestOptions = {
   method?: string;
   body?: unknown;
+  signal?: AbortSignal;
   token?: string;
   credentials?: RequestCredentials;
   csrf?: {
@@ -38,6 +39,7 @@ export async function requestJson<T>(url: string, options: JsonRequestOptions = 
     method,
     headers,
     credentials: options.credentials,
+    signal: options.signal,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
 

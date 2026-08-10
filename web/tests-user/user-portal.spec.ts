@@ -216,7 +216,7 @@ const telemetry = {
   scope: { type: "self", team_id: team.id, profile_id: readKey.id },
   cards: telemetryCards,
   windowed_cards: telemetryCards,
-  current_cards: [],
+  current_cards: [{ id: "relationships_active", label: "Relationships: active", unit: "relationships", value: 2, status: "ready", available: true }],
   series: telemetrySeries,
   activity_series: telemetrySeries,
   state_series: [],
@@ -455,7 +455,7 @@ async function expectUsageDashboard(page: Page, title: string, snapshot: typeof 
   for (const card of snapshot.windowed_cards) {
     await expect(usageTotals).toContainText(card.label);
   }
-	await expect(page.getByLabel(`${title} current state`)).toHaveCount(0);
+  await expect(page.getByLabel(`${title} current state`)).toContainText("Relationships: active");
   const usageCharts = page.getByLabel(`${title} charts`);
   for (const series of snapshot.activity_series) {
     await expect(usageCharts).toContainText(series.label);
