@@ -371,6 +371,7 @@ func telemetryWindowedCardSpecsForAudience(scope TelemetryScope, baseLabels map[
 	if !includeCost {
 		return bindTelemetryCatalog(specs)
 	}
+	includeAssessorTelemetry := strings.EqualFold(scope.Type, "system")
 	assessorSpecs := []telemetryQuerySpec{
 		{ID: "assessor_requests", Label: "Assessor requests", Unit: "requests", Query: telemetrySparseCounterIncrease("densemem_assessor_requests_total", scope, baseLabels, nil, window)},
 		{ID: "assessor_request_failures", Label: "Assessor request failures", Unit: "failures", Query: telemetrySparseCounterIncrease("densemem_assessor_requests_total", scope, baseLabels, map[string]string{"outcome": "~\"provider_error|malformed_exhausted\""}, window)},
@@ -379,7 +380,9 @@ func telemetryWindowedCardSpecsForAudience(scope TelemetryScope, baseLabels map[
 		{ID: "avg_assessor_duration", Label: "Avg assessor duration", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_assessor_duration_seconds", scope, baseLabels, nil, window, 1000)},
 		{ID: "assessor_terminal_failures", Label: "Assessor terminal failures", Unit: "failures", Query: telemetrySparseCounterIncrease("densemem_assessor_terminal_failures_total", scope, baseLabels, nil, window)},
 	}
-	specs = append(specs, assessorSpecs...)
+	if includeAssessorTelemetry {
+		specs = append(specs, assessorSpecs...)
+	}
 	costSpecs := []telemetryQuerySpec{
 		{ID: "ai_cost_usd", Label: "AI cost", Unit: "USD", Query: telemetryAICost(scope, baseLabels, "", window)},
 		telemetryQuerySpec{ID: "verifier_cost_usd", Label: "Verifier cost", Unit: "USD", Query: telemetryAICost(scope, baseLabels, observability.AIComponentVerifier, window)},

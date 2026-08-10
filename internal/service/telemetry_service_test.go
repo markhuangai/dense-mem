@@ -150,9 +150,17 @@ func TestTelemetryTerminalFailureSeriesIsOperatorSystemOnly(t *testing.T) {
 	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	team := TelemetryScope{Type: "team", TeamID: &teamID}
 	teamCard := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(team, nil, "1h", true), "assessor_terminal_failures")
-	require.NotNil(t, teamCard)
-	require.True(t, telemetryScopeUnsupported(teamCard.ID, team))
-	require.False(t, telemetryScopeUnsupported(teamCard.ID, system))
+	require.Nil(t, teamCard)
+
+	profileID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	profile := TelemetryScope{Type: "profile", TeamID: &teamID, ProfileID: &profileID}
+	profileCard := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(profile, nil, "1h", true), "assessor_terminal_failures")
+	require.Nil(t, profileCard)
+
+	teamCost := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(team, nil, "1h", true), "verifier_cost_usd")
+	require.NotNil(t, teamCost)
+	profileCost := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(profile, nil, "1h", true), "verifier_cost_usd")
+	require.NotNil(t, profileCost)
 }
 
 func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
@@ -638,8 +646,9 @@ func TestPrometheusTelemetryServiceReportsFeatureAndScopeStates(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, TelemetryItemInactive, telemetrySpecByID(snapshot.WindowedCards, "llm_recall_used_rate").Status)
 	require.Equal(t, "feature_disabled", telemetrySpecByID(snapshot.WindowedCards, "dream_feedbacks").ReasonCode)
+	require.Equal(t, TelemetryItemUnsupported, telemetrySpecByID(snapshot.WindowedCards, "embedding_requests").Status)
 	require.Equal(t, TelemetryItemUnsupported, telemetrySpecByID(snapshot.WindowedCards, "embedding_cost_usd").Status)
-	require.Equal(t, TelemetryItemUnsupported, telemetrySpecByID(snapshot.WindowedCards, "assessor_requests").Status)
+	require.Nil(t, telemetrySpecByID(snapshot.WindowedCards, "assessor_requests"))
 	require.Equal(t, TelemetryItemReady, telemetrySpecByID(snapshot.WindowedCards, "verifier_cost_usd").Status)
 }
 
