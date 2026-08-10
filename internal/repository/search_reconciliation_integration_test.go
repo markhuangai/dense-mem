@@ -524,7 +524,7 @@ func TestBulkIncidentResolutionSerializesWithFailureWriter(t *testing.T) {
 		args  []any
 	}{
 		{"SELECT set_config('app.current_team_id', ?, true)", []any{teamID}},
-		{"SELECT set_config('app.current_profile_id', ?, true)", []any{teamID}},
+		{"SELECT set_config('app.current_profile_id', ?, true)", []any{ownerID}},
 		{"SELECT set_config('app.tx_mode', 'team', true)", nil},
 		{"SELECT set_config('app.embedding_job_failure_writer', 'current', true)", nil},
 	} {
@@ -552,24 +552,8 @@ func TestBulkIncidentResolutionSerializesWithFailureWriter(t *testing.T) {
 		})
 		resolverResult <- resolveErr
 	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		var waiting int64
-		lockErr := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-			return tx.Raw(`
-				SELECT count(*)
-				FROM pg_locks
-				WHERE locktype = 'advisory' AND NOT granted
-			`).Scan(&waiting).Error
-		})
-		if lockErr == nil && waiting > 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("bulk incident resolver did not wait for the failure-writer incident lock")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	requireEmbeddingFailureIncidentWaiter(t, ctx, adminDB, rls, teamID, "evidence", contract.EmbeddingContractID,
+		string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderTimeout), contract.EmbeddingDimensions)
 	require.NoError(t, writerTx.Commit().Error)
 	require.NoError(t, <-resolverResult)
 
@@ -677,7 +661,26 @@ func TestSearchConvergenceBoundsIncidentProjection(t *testing.T) {
 				}
 			}
 		}
-		return nil
+		return tx.Exec(`
+			WITH oldest AS (
+				SELECT incident_id
+				FROM embedding_failure_incidents
+				WHERE embedding_contract_id = ?::uuid AND embedding_dimensions = ?
+				ORDER BY incident_id
+				LIMIT 1
+			)
+			UPDATE embedding_failure_incidents AS incident
+			SET status = CASE WHEN incident.incident_id = oldest.incident_id THEN 'open' ELSE 'recovering' END,
+			    recovering_at = CASE WHEN incident.incident_id = oldest.incident_id THEN NULL ELSE clock_timestamp() END,
+			    last_seen_at = CASE
+			        WHEN incident.incident_id = oldest.incident_id THEN clock_timestamp() - interval '1 day'
+			        ELSE clock_timestamp() + interval '1 minute'
+			    END,
+			    updated_at = now()
+			FROM oldest
+			WHERE incident.embedding_contract_id = ?::uuid AND incident.embedding_dimensions = ?
+		`, contract.EmbeddingContractID, contract.EmbeddingDimensions,
+			contract.EmbeddingContractID, contract.EmbeddingDimensions).Error
 	}))
 
 	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
@@ -685,6 +688,10 @@ func TestSearchConvergenceBoundsIncidentProjection(t *testing.T) {
 	require.EqualValues(t, 144, convergence.IncidentCount)
 	require.Len(t, convergence.Incidents, searchConvergenceIncidentLimit)
 	require.True(t, convergence.IncidentsTruncated)
+	for _, incident := range convergence.Incidents {
+		require.Equal(t, "recovering", incident.Status)
+		require.GreaterOrEqual(t, incident.Age, time.Duration(0))
+	}
 	require.Equal(t, "attention_required", convergence.Status)
 }
 

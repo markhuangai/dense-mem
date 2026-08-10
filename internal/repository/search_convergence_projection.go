@@ -10,10 +10,13 @@ import (
 
 const searchConvergenceIncidentLimit = 100
 
-func readSearchConvergenceIncidents(ctx context.Context, tx *gorm.DB, contractID string, dimensions int) ([]EmbeddingFailureIncident, int64, bool, error) {
+func readSearchConvergenceIncidents(ctx context.Context, tx *gorm.DB, contractID string, dimensions int) ([]EmbeddingFailureIncident, int64, bool, bool, bool, error) {
 	var incidentCount int64
+	var hasOpen, hasRecovering bool
 	if err := tx.WithContext(ctx).Raw(`
-		SELECT count(*)
+		SELECT count(*),
+		       COALESCE(bool_or(incident.status = 'open'), false),
+		       COALESCE(bool_or(incident.status = 'recovering'), false)
 		FROM embedding_failure_incidents AS incident
 		JOIN teams AS team
 		  ON team.id = incident.team_id
@@ -22,8 +25,8 @@ func readSearchConvergenceIncidents(ctx context.Context, tx *gorm.DB, contractID
 		WHERE incident.embedding_contract_id = ?::uuid
 		  AND incident.embedding_dimensions = ?
 		  AND incident.status IN ('open', 'recovering')
-	`, contractID, dimensions).Scan(&incidentCount).Error; err != nil {
-		return nil, 0, false, err
+	`, contractID, dimensions).Row().Scan(&incidentCount, &hasOpen, &hasRecovering); err != nil {
+		return nil, 0, false, false, false, err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT incident.incident_id::text, incident.team_id::text,
@@ -31,7 +34,8 @@ func readSearchConvergenceIncidents(ctx context.Context, tx *gorm.DB, contractID
 		       incident.embedding_dimensions, incident.source_kind,
 		       incident.failure_class, incident.failure_code, incident.status,
 		       incident.affected_job_count, incident.first_seen_at,
-		       incident.last_seen_at, incident.recovering_at, incident.resolved_at
+		       incident.last_seen_at, incident.recovering_at, incident.resolved_at,
+		       GREATEST(EXTRACT(EPOCH FROM (clock_timestamp() - incident.last_seen_at)), 0)
 		FROM embedding_failure_incidents AS incident
 		JOIN teams AS team
 		  ON team.id = incident.team_id
@@ -44,21 +48,22 @@ func readSearchConvergenceIncidents(ctx context.Context, tx *gorm.DB, contractID
 		LIMIT ?
 	`, contractID, dimensions, searchConvergenceIncidentLimit).Rows()
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, false, false, false, err
 	}
 	defer rows.Close()
-	incidents := make([]EmbeddingFailureIncident, 0, minInt64(incidentCount, searchConvergenceIncidentLimit))
+	incidents := make([]EmbeddingFailureIncident, 0, min(int(incidentCount), searchConvergenceIncidentLimit))
 	for rows.Next() {
 		var item EmbeddingFailureIncident
 		var recoveringAt, resolvedAt sql.NullTime
+		var ageSeconds float64
 		if err := rows.Scan(
 			&item.IncidentID, &item.TeamID, &item.TeamName,
 			&item.EmbeddingContractID, &item.EmbeddingDimensions,
 			&item.SourceKind, &item.FailureClass, &item.FailureCode,
 			&item.Status, &item.AffectedJobCount, &item.FirstSeenAt,
-			&item.LastSeenAt, &recoveringAt, &resolvedAt,
+			&item.LastSeenAt, &recoveringAt, &resolvedAt, &ageSeconds,
 		); err != nil {
-			return nil, 0, false, err
+			return nil, 0, false, false, false, err
 		}
 		if recoveringAt.Valid {
 			value := recoveringAt.Time.UTC()
@@ -68,19 +73,12 @@ func readSearchConvergenceIncidents(ctx context.Context, tx *gorm.DB, contractID
 			value := resolvedAt.Time.UTC()
 			item.ResolvedAt = &value
 		}
-		item.Age = time.Since(item.LastSeenAt)
+		item.Age = time.Duration(ageSeconds * float64(time.Second))
 		item.Guidance = embeddingFailureGuidance(item.FailureCode)
 		incidents = append(incidents, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, false, err
+		return nil, 0, false, false, false, err
 	}
-	return incidents, incidentCount, incidentCount > int64(len(incidents)), nil
-}
-
-func minInt64(value int64, limit int) int {
-	if value < int64(limit) {
-		return int(value)
-	}
-	return limit
+	return incidents, incidentCount, hasOpen, hasRecovering, incidentCount > int64(len(incidents)), nil
 }

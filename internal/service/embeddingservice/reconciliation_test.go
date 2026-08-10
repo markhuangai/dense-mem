@@ -260,6 +260,34 @@ func TestEmbeddingReconciliationDoesNotCompleteReclaimedCanaryAsSkipped(t *testi
 	assert.Greater(t, metrics.durations[0], float64(0))
 }
 
+func TestEmbeddingReconciliationReportsDatabaseClockSkew(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	now := time.Date(2026, 8, 10, 4, 31, 0, 0, time.UTC)
+	startedAt := now.Add(time.Minute)
+	reconciliation := &reconciliationRepositoryStub{
+		run: &repository.EmbeddingReconciliationRun{
+			RunID: "run-1", LeaseToken: "lease-1", Status: string(domain.EmbeddingReconciliationRunning),
+			CandidateCutoff: now, StartedAt: &startedAt,
+		},
+	}
+	metrics := &reconciliationMetricsStub{}
+	logger := &reconciliationLoggerStub{}
+	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation,
+		Provider: &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}},
+		Metrics:  metrics, Logger: logger,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1", Now: func() time.Time { return now },
+	})
+
+	result, err := service.ProcessDue(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, string(domain.EmbeddingReconciliationCompleted), result.Status)
+	require.Equal(t, []float64{0}, metrics.durations)
+	require.Contains(t, logger.warnings, "embedding_reconciliation_clock_skew")
+}
+
 func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}

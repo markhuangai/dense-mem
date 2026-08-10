@@ -77,3 +77,11 @@ func TestTelemetryCatalogIsOrderedAndComplete(t *testing.T) {
 	require.NotNil(t, conflictProfile)
 	require.True(t, telemetryScopeUnsupported(conflictProfile.ID, scopes[2]))
 }
+
+func TestEmbeddingErrorTelemetryCountsCanonicalSeriesOnly(t *testing.T) {
+	const canonicalCodeMatcher = `code=~"provider_rate_limited|provider_timeout|provider_network_error|provider_server_error|provider_quota_exhausted|provider_authentication_failed|provider_permission_denied|provider_contract_rejected|provider_response_invalid|embedding_input_rejected|embedding_contract_mismatch|unknown_embedding_failure|stale|lease_lost"`
+	card := telemetryQuerySpecByID(telemetryWindowedCardSpecs(TelemetryScope{}, nil, "1h"), "embedding_errors")
+	require.Contains(t, card.Query, canonicalCodeMatcher)
+	series := telemetryQuerySpecByID(telemetryActivitySeriesSpecs("", "1m"), "embedding_errors")
+	require.Contains(t, series.Query, canonicalCodeMatcher)
+}

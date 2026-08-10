@@ -1,0 +1,262 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+
+	"github.com/lib/pq"
+	"gorm.io/gorm"
+)
+
+func (r *SearchRepositoryImpl) RequeueEmbeddingReconciliationJobs(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error) {
+	input = normalizeRequeueEmbeddingReconciliationJobsInput(input)
+	if err := validateRequeueEmbeddingReconciliationJobsInput(input); err != nil {
+		return 0, err
+	}
+	var total int64
+	for {
+		count, err := r.requeueEmbeddingReconciliationBatch(ctx, input)
+		if err != nil {
+			return total, fmt.Errorf("search: requeue reconciliation jobs: %w", err)
+		}
+		if count == 0 {
+			break
+		}
+		total += count
+		if count < int64(input.BatchSize) {
+			break
+		}
+	}
+	return total, nil
+}
+
+func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error) {
+	var count int64
+	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		if err := renewEmbeddingReconciliationLease(ctx, tx, input); err != nil {
+			return err
+		}
+		rows, err := tx.WithContext(ctx).Raw(`
+			WITH document_candidates AS MATERIALIZED (
+				SELECT document.team_id, document.search_document_id,
+				       job.embedding_job_id,
+				       COALESCE(job.last_failed_at, job.updated_at) AS failed_at
+				FROM embedding_jobs AS job
+				JOIN search_documents AS document
+				  ON document.team_id = job.team_id
+				 AND document.search_document_id = job.search_document_id
+				 AND document.source_version = job.source_version
+				 AND document.projection_format_version = job.projection_format_version
+				 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+				 AND document.document_version = job.document_version
+				 AND document.embedding_contract_id = job.embedding_contract_id
+				 AND document.embedding_dimensions = job.embedding_dimensions
+				JOIN teams AS team
+				  ON team.id = job.team_id AND team.status = 'active' AND team.deleted_at IS NULL
+				JOIN embedding_reconciliation_runs AS run
+				  ON run.reconciliation_run_id = ?::uuid
+				 AND run.status = 'running'
+				 AND run.worker_id = ?
+				 AND run.lease_token = ?::uuid
+				WHERE job.status = 'failed'
+				  AND job.failure_class <> 'permanent'
+				  AND job.embedding_contract_id = ?::uuid
+				  AND job.embedding_dimensions = ?
+				  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
+				  AND document.search_state = 'failed'
+				ORDER BY COALESCE(job.last_failed_at, job.updated_at), job.embedding_job_id
+				LIMIT ?
+				FOR UPDATE OF document SKIP LOCKED
+			)
+			SELECT job.team_id::text, job.embedding_job_id::text,
+			       job.source_kind, job.failure_class, job.failure_code,
+			       job.embedding_contract_id::text, job.embedding_dimensions
+			FROM document_candidates AS candidate
+			JOIN embedding_jobs AS job
+			  ON job.team_id = candidate.team_id
+			 AND job.embedding_job_id = candidate.embedding_job_id
+			JOIN search_documents AS document
+			  ON document.team_id = job.team_id
+			 AND document.search_document_id = job.search_document_id
+			 AND document.source_version = job.source_version
+			 AND document.projection_format_version = job.projection_format_version
+			 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+			 AND document.document_version = job.document_version
+			 AND document.embedding_contract_id = job.embedding_contract_id
+			 AND document.embedding_dimensions = job.embedding_dimensions
+			WHERE job.status = 'failed'
+			  AND job.failure_class <> 'permanent'
+			  AND job.embedding_contract_id = ?::uuid
+			  AND job.embedding_dimensions = ?
+			  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
+			  AND document.search_state = 'failed'
+			ORDER BY candidate.failed_at, job.embedding_job_id
+			FOR UPDATE OF job SKIP LOCKED
+		`, input.RunID, input.WorkerID, input.LeaseToken,
+			input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff, input.BatchSize,
+			input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff).Rows()
+		if err != nil {
+			return err
+		}
+		jobTeamIDs := make([]string, 0, input.BatchSize)
+		jobIDs := make([]string, 0, input.BatchSize)
+		identitiesByTeam := make(map[string]map[embeddingFailureIncidentIdentity]struct{})
+		for rows.Next() {
+			var teamID, jobID string
+			var identity embeddingFailureIncidentIdentity
+			if err := rows.Scan(&teamID, &jobID, &identity.sourceKind, &identity.failureClass,
+				&identity.failureCode, &identity.contractID, &identity.dimensions); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			jobTeamIDs = append(jobTeamIDs, teamID)
+			jobIDs = append(jobIDs, jobID)
+			if identitiesByTeam[teamID] == nil {
+				identitiesByTeam[teamID] = make(map[embeddingFailureIncidentIdentity]struct{})
+			}
+			identitiesByTeam[teamID][identity] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if len(jobIDs) == 0 {
+			return nil
+		}
+		teamIDs := make([]string, 0, len(identitiesByTeam))
+		for teamID := range identitiesByTeam {
+			teamIDs = append(teamIDs, teamID)
+		}
+		sort.Strings(teamIDs)
+		for _, teamID := range teamIDs {
+			identities := make([]embeddingFailureIncidentIdentity, 0, len(identitiesByTeam[teamID]))
+			for identity := range identitiesByTeam[teamID] {
+				identities = append(identities, identity)
+			}
+			if err := lockEmbeddingFailureIncidentIdentities(ctx, tx, teamID, identities); err != nil {
+				return err
+			}
+		}
+
+		var documentCount, incidentCount int64
+		return tx.WithContext(ctx).Raw(`
+			WITH selected AS MATERIALIZED (
+				SELECT *
+				FROM unnest(?::uuid[], ?::uuid[]) AS item(team_id, embedding_job_id)
+			), requeued AS (
+				UPDATE embedding_jobs AS job
+				SET status = 'queued', attempts = 0, available_at = now(),
+				    lease_until = NULL, worker_id = '', completed_at = NULL,
+				    error = '', recovery_count = recovery_count + 1,
+				    last_recovered_at = now(), updated_at = now()
+				FROM selected
+				WHERE job.team_id = selected.team_id
+				  AND job.embedding_job_id = selected.embedding_job_id
+				  AND job.status = 'failed'
+				  AND job.failure_class <> 'permanent'
+				  AND job.embedding_contract_id = ?::uuid
+				  AND job.embedding_dimensions = ?
+				  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
+				  AND EXISTS (
+				      SELECT 1
+				      FROM embedding_reconciliation_runs AS run
+				      WHERE run.reconciliation_run_id = ?::uuid
+				        AND run.status = 'running'
+				        AND run.worker_id = ?
+				        AND run.lease_token = ?::uuid
+				  )
+				RETURNING job.team_id, job.search_document_id, job.source_kind,
+				          job.failure_class, job.failure_code,
+				          job.source_version, job.projection_format_version,
+				          job.projection_generation_id, job.document_version,
+				          job.embedding_contract_id, job.embedding_dimensions
+			), documents AS (
+				UPDATE search_documents AS document
+				SET search_state = 'pending', embedding_error = '', updated_at = now()
+				FROM requeued
+				WHERE document.team_id = requeued.team_id
+				  AND document.search_document_id = requeued.search_document_id
+				  AND document.source_version = requeued.source_version
+				  AND document.projection_format_version = requeued.projection_format_version
+				  AND document.projection_generation_id IS NOT DISTINCT FROM requeued.projection_generation_id
+				  AND document.document_version = requeued.document_version
+				  AND document.embedding_contract_id = requeued.embedding_contract_id
+				  AND document.embedding_dimensions = requeued.embedding_dimensions
+				RETURNING 1
+			), incidents AS (
+				UPDATE embedding_failure_incidents AS incident
+				SET status = 'recovering',
+				    recovering_at = COALESCE(incident.recovering_at, now()),
+				    last_reconciliation_run_id = ?::uuid,
+				    updated_at = now()
+				WHERE incident.status = 'open'
+				  AND EXISTS (
+				      SELECT 1
+				      FROM requeued
+				      WHERE requeued.team_id = incident.team_id
+				        AND requeued.embedding_contract_id = incident.embedding_contract_id
+				        AND requeued.embedding_dimensions = incident.embedding_dimensions
+				        AND requeued.source_kind = incident.source_kind
+				        AND requeued.failure_class = incident.failure_class
+				        AND requeued.failure_code = incident.failure_code
+				  )
+				  AND NOT EXISTS (
+				      SELECT 1
+				      FROM embedding_jobs AS newer_failure
+				      JOIN search_documents AS document
+				        ON document.team_id = newer_failure.team_id
+				       AND document.search_document_id = newer_failure.search_document_id
+				       AND document.source_version = newer_failure.source_version
+				       AND document.projection_format_version = newer_failure.projection_format_version
+				       AND document.projection_generation_id IS NOT DISTINCT FROM newer_failure.projection_generation_id
+				       AND document.document_version = newer_failure.document_version
+				       AND document.embedding_contract_id = newer_failure.embedding_contract_id
+				       AND document.embedding_dimensions = newer_failure.embedding_dimensions
+				      JOIN teams AS team
+				        ON team.id = newer_failure.team_id AND team.status = 'active' AND team.deleted_at IS NULL
+				      WHERE newer_failure.team_id = incident.team_id
+				        AND newer_failure.embedding_contract_id = incident.embedding_contract_id
+				        AND newer_failure.embedding_dimensions = incident.embedding_dimensions
+				        AND newer_failure.source_kind = incident.source_kind
+				        AND newer_failure.failure_class = incident.failure_class
+				        AND newer_failure.failure_code = incident.failure_code
+				        AND newer_failure.status = 'failed'
+				        AND COALESCE(newer_failure.last_failed_at, newer_failure.updated_at) > ?
+				  )
+				RETURNING 1
+			)
+			SELECT (SELECT count(*) FROM requeued),
+			       (SELECT count(*) FROM documents),
+			       (SELECT count(*) FROM incidents)
+		`, pq.Array(jobTeamIDs), pq.Array(jobIDs),
+			input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff,
+			input.RunID, input.WorkerID, input.LeaseToken,
+			input.RunID, input.CandidateCutoff).Row().Scan(&count, &documentCount, &incidentCount)
+	})
+	return count, err
+}
+
+func renewEmbeddingReconciliationLease(ctx context.Context, tx *gorm.DB, input RequeueEmbeddingReconciliationJobsInput) error {
+	result := tx.WithContext(ctx).Exec(`
+		UPDATE embedding_reconciliation_runs
+		SET lease_until = clock_timestamp() + (? * interval '1 millisecond'),
+		    updated_at = now()
+		WHERE reconciliation_run_id = ?::uuid
+		  AND status = 'running'
+		  AND worker_id = ?
+		  AND lease_token = ?::uuid
+		  AND lease_until > clock_timestamp()
+	`, input.Lease.Milliseconds(), input.RunID, input.WorkerID, input.LeaseToken)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("reconciliation run lease lost")
+	}
+	return nil
+}

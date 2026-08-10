@@ -95,6 +95,7 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 		ExpiredLeases:    stats.ExpiredLeases,
 		OldestPendingAge: stats.OldestPendingAge,
 	}
+	var hasOpenIncident, hasRecoveringIncident bool
 	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
 			SELECT source_kind, failure_class, failure_code, count(*)
@@ -151,13 +152,15 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 		`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&convergence.AffectedTeamCount).Error; err != nil {
 			return err
 		}
-		incidents, incidentCount, incidentsTruncated, err := readSearchConvergenceIncidents(ctx, tx, contract.EmbeddingContractID, contract.EmbeddingDimensions)
+		incidents, incidentCount, openIncident, recoveringIncident, incidentsTruncated, err := readSearchConvergenceIncidents(ctx, tx, contract.EmbeddingContractID, contract.EmbeddingDimensions)
 		if err != nil {
 			return err
 		}
 		convergence.Incidents = incidents
 		convergence.IncidentCount = incidentCount
 		convergence.IncidentsTruncated = incidentsTruncated
+		hasOpenIncident = openIncident
+		hasRecoveringIncident = recoveringIncident
 		return nil
 	})
 	if err != nil {
@@ -167,10 +170,10 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 	if err != nil {
 		return nil, err
 	}
-	if convergence.Queued > 0 || convergence.Processing > 0 || convergence.Failed > 0 || len(convergence.Incidents) > 0 {
+	if convergence.Queued > 0 || convergence.Processing > 0 || convergence.Failed > 0 || convergence.IncidentCount > 0 {
 		convergence.Status = "attention_required"
-		if !hasOpenIncident(convergence.Incidents) &&
-			(convergence.Queued > 0 || convergence.Processing > 0 || hasRecoveringIncident(convergence.Incidents)) {
+		if !hasOpenIncident &&
+			(convergence.Queued > 0 || convergence.Processing > 0 || hasRecoveringIncident) {
 			convergence.Status = "recovering"
 		}
 	}
@@ -491,138 +494,6 @@ func (r *SearchRepositoryImpl) ResetEmbeddingReconciliationCanary(ctx context.Co
 	})
 }
 
-func (r *SearchRepositoryImpl) RequeueEmbeddingReconciliationJobs(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error) {
-	input = normalizeRequeueEmbeddingReconciliationJobsInput(input)
-	if err := validateRequeueEmbeddingReconciliationJobsInput(input); err != nil {
-		return 0, err
-	}
-	var total int64
-	for {
-		count, err := r.requeueEmbeddingReconciliationBatch(ctx, input)
-		if err != nil {
-			return total, fmt.Errorf("search: requeue reconciliation jobs: %w", err)
-		}
-		if count == 0 {
-			break
-		}
-		total += count
-		if count < int64(input.BatchSize) {
-			break
-		}
-	}
-	return total, nil
-}
-
-func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error) {
-	var count int64
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		if err := renewEmbeddingReconciliationLease(ctx, tx, input); err != nil {
-			return err
-		}
-		return tx.WithContext(ctx).Raw(`
-				WITH candidates AS MATERIALIZED (
-					SELECT job.team_id, job.embedding_job_id, job.search_document_id,
-					       job.source_version, job.projection_format_version,
-					       job.projection_generation_id, job.document_version,
-					       job.embedding_contract_id, job.embedding_dimensions
-					FROM embedding_jobs AS job
-					JOIN search_documents AS document
-					  ON document.team_id = job.team_id
-					 AND document.search_document_id = job.search_document_id
-					 AND document.source_version = job.source_version
-					 AND document.projection_format_version = job.projection_format_version
-					 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
-					 AND document.document_version = job.document_version
-					 AND document.embedding_contract_id = job.embedding_contract_id
-					 AND document.embedding_dimensions = job.embedding_dimensions
-					JOIN teams AS team ON team.id = job.team_id AND team.status = 'active' AND team.deleted_at IS NULL
-					JOIN embedding_reconciliation_runs AS run
-					  ON run.reconciliation_run_id = ?::uuid
-					 AND run.status = 'running'
-					 AND run.worker_id = ?
-					 AND run.lease_token = ?::uuid
-					WHERE job.status = 'failed'
-					  AND job.failure_class <> 'permanent'
-					  AND job.embedding_contract_id = ?::uuid
-					  AND job.embedding_dimensions = ?
-					  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
-					  AND document.search_state = 'failed'
-					ORDER BY COALESCE(job.last_failed_at, job.updated_at), job.embedding_job_id
-					LIMIT ?
-					FOR UPDATE OF job SKIP LOCKED
-				), requeued AS (
-					UPDATE embedding_jobs AS job
-					SET status = 'queued', attempts = 0, available_at = now(),
-					    lease_until = NULL, worker_id = '', completed_at = NULL,
-					    error = '', recovery_count = recovery_count + 1,
-					    last_recovered_at = now(), updated_at = now()
-					FROM candidates
-					WHERE job.team_id = candidates.team_id
-					  AND job.embedding_job_id = candidates.embedding_job_id
-					RETURNING job.team_id, job.search_document_id, job.source_kind,
-					          job.failure_class, job.failure_code,
-					          job.source_version, job.projection_format_version,
-					          job.projection_generation_id, job.document_version,
-					          job.embedding_contract_id, job.embedding_dimensions
-				)
-				, documents AS (
-					UPDATE search_documents AS document
-				SET search_state = 'pending', embedding_error = '', updated_at = now()
-				FROM requeued
-				WHERE document.team_id = requeued.team_id
-				  AND document.search_document_id = requeued.search_document_id
-				  AND document.source_version = requeued.source_version
-				  AND document.projection_format_version = requeued.projection_format_version
-				  AND document.projection_generation_id IS NOT DISTINCT FROM requeued.projection_generation_id
-				  AND document.document_version = requeued.document_version
-				  AND document.embedding_contract_id = requeued.embedding_contract_id
-				  AND document.embedding_dimensions = requeued.embedding_dimensions
-				RETURNING 1
-				), incidents AS (
-					UPDATE embedding_failure_incidents AS incident
-					SET status = 'recovering',
-					    recovering_at = COALESCE(incident.recovering_at, now()),
-					    last_reconciliation_run_id = ?::uuid,
-					    updated_at = now()
-					WHERE incident.status = 'open'
-					  AND EXISTS (
-					      SELECT 1
-					      FROM requeued
-					      WHERE requeued.team_id = incident.team_id
-					        AND requeued.embedding_contract_id = incident.embedding_contract_id
-					        AND requeued.embedding_dimensions = incident.embedding_dimensions
-					        AND requeued.source_kind = incident.source_kind
-					        AND requeued.failure_class = incident.failure_class
-					        AND requeued.failure_code = incident.failure_code
-					  )
-					RETURNING 1
-				)
-				SELECT count(*) FROM requeued
-			`, input.RunID, input.WorkerID, input.LeaseToken, input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff, input.BatchSize, input.RunID).Scan(&count).Error
-	})
-	return count, err
-}
-
-func renewEmbeddingReconciliationLease(ctx context.Context, tx *gorm.DB, input RequeueEmbeddingReconciliationJobsInput) error {
-	result := tx.WithContext(ctx).Exec(`
-		UPDATE embedding_reconciliation_runs
-		SET lease_until = clock_timestamp() + (? * interval '1 millisecond'),
-		    updated_at = now()
-		WHERE reconciliation_run_id = ?::uuid
-		  AND status = 'running'
-		  AND worker_id = ?
-		  AND lease_token = ?::uuid
-		  AND lease_until > clock_timestamp()
-	`, input.Lease.Milliseconds(), input.RunID, input.WorkerID, input.LeaseToken)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return errors.New("reconciliation run lease lost")
-	}
-	return nil
-}
-
 func (r *SearchRepositoryImpl) CompleteEmbeddingReconciliationRun(ctx context.Context, input CompleteEmbeddingReconciliationRunInput) error {
 	input = normalizeCompleteEmbeddingReconciliationRunInput(input)
 	if err := validateCompleteEmbeddingReconciliationRunInput(input); err != nil {
@@ -704,24 +575,6 @@ func (r *SearchRepositoryImpl) latestEmbeddingReconciliationRun(ctx context.Cont
 		run.CompletedAt = &value
 	}
 	return &run, nil
-}
-
-func hasRecoveringIncident(items []EmbeddingFailureIncident) bool {
-	for _, item := range items {
-		if item.Status == "recovering" {
-			return true
-		}
-	}
-	return false
-}
-
-func hasOpenIncident(items []EmbeddingFailureIncident) bool {
-	for _, item := range items {
-		if item.Status == "open" {
-			return true
-		}
-	}
-	return false
 }
 
 func embeddingFailureGuidance(code string) string {
