@@ -164,7 +164,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	result.CanaryAttempted = true
 	attemptedAt := s.now().UTC()
 	if err := s.reconciliation.MarkEmbeddingReconciliationCanaryAttempt(ctx, repository.MarkEmbeddingReconciliationCanaryAttemptInput{
-		RunID: run.RunID, CanaryJobID: job.EmbeddingJobID, WorkerID: s.workerID,
+		TeamID: job.TeamID, RunID: run.RunID, CanaryJobID: job.EmbeddingJobID, WorkerID: s.workerID,
 		LeaseToken: run.LeaseToken, AttemptedAt: attemptedAt, Lease: reconciliationLease,
 	}); err != nil {
 		return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationDeferred), "", "", "daily embedding canary attempt persistence failed", err)

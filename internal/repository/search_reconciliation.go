@@ -180,9 +180,32 @@ func (r *SearchRepositoryImpl) ReserveEmbeddingReconciliationRun(ctx context.Con
 			INSERT INTO embedding_reconciliation_runs (
 				embedding_contract_id, embedding_dimensions, local_run_date,
 				candidate_cutoff, status
-			) VALUES (?::uuid, ?, ?, ?, 'reserved')
+			)
+			SELECT ?::uuid, ?, ?, ?, 'reserved'
+			WHERE EXISTS (
+				SELECT 1
+				FROM embedding_jobs AS job
+				JOIN search_documents AS document
+				  ON document.team_id = job.team_id
+				 AND document.search_document_id = job.search_document_id
+				 AND document.source_version = job.source_version
+				 AND document.projection_format_version = job.projection_format_version
+				 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+				 AND document.document_version = job.document_version
+				 AND document.embedding_contract_id = job.embedding_contract_id
+				 AND document.embedding_dimensions = job.embedding_dimensions
+				JOIN teams AS team ON team.id = job.team_id
+				 AND team.status = 'active' AND team.deleted_at IS NULL
+				WHERE job.status = 'failed'
+				  AND job.failure_class <> 'permanent'
+				  AND job.embedding_contract_id = ?::uuid
+				  AND job.embedding_dimensions = ?
+				  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
+				  AND document.search_state = 'failed'
+			)
 			ON CONFLICT (embedding_contract_id, embedding_dimensions, local_run_date) DO NOTHING
-		`, input.EmbeddingContractID, input.EmbeddingDimensions, localRunDate, input.Now).Error; err != nil {
+		`, input.EmbeddingContractID, input.EmbeddingDimensions, localRunDate, input.Now,
+			input.EmbeddingContractID, input.EmbeddingDimensions, input.Now).Error; err != nil {
 			return err
 		}
 		var leaseUntil sql.NullTime
@@ -210,6 +233,10 @@ func (r *SearchRepositoryImpl) ReserveEmbeddingReconciliationRun(ctx context.Con
 			&run.RequeuedCount, &run.RecoveredCount, &run.LastError,
 			&startedAt, &completedAt, &run.UpdatedAt,
 		)
+		if errors.Is(err, sql.ErrNoRows) {
+			run = nil
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -342,6 +369,23 @@ func (r *SearchRepositoryImpl) MarkEmbeddingReconciliationCanaryAttempt(ctx cont
 	leaseUntil := input.AttemptedAt.Add(input.Lease)
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		result := tx.WithContext(ctx).Exec(`
+			UPDATE embedding_jobs
+			SET status = 'processing', attempts = 1,
+			    total_attempts = total_attempts + 1,
+			    worker_id = ?, lease_until = ?, completed_at = NULL,
+			    error = '',
+			    updated_at = now()
+			WHERE team_id = ?::uuid
+			  AND embedding_job_id = ?::uuid
+			  AND status = 'failed'
+		`, EmbeddingReconciliationWorkerIDPrefix+input.RunID, leaseUntil, input.TeamID, input.CanaryJobID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("reconciliation canary job was already claimed")
+		}
+		result = tx.WithContext(ctx).Exec(`
 			UPDATE embedding_reconciliation_runs AS run
 			SET canary_job_id = ?::uuid,
 			    canary_attempted_at = ?,
@@ -359,22 +403,6 @@ func (r *SearchRepositoryImpl) MarkEmbeddingReconciliationCanaryAttempt(ctx cont
 				return result.Error
 			}
 			return errors.New("reconciliation canary marker already claimed or lease lost")
-		}
-		result = tx.WithContext(ctx).Exec(`
-			UPDATE embedding_jobs
-			SET status = 'processing', attempts = 1,
-			    total_attempts = total_attempts + 1,
-			    worker_id = ?, lease_until = ?, completed_at = NULL,
-			    error = '',
-			    updated_at = now()
-			WHERE embedding_job_id = ?::uuid
-			  AND status = 'failed'
-		`, EmbeddingReconciliationWorkerIDPrefix+input.RunID, leaseUntil, input.CanaryJobID)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return errors.New("reconciliation canary job was already claimed")
 		}
 		return nil
 	})
@@ -726,6 +754,7 @@ func validateSelectEmbeddingReconciliationCanaryInput(input SelectEmbeddingRecon
 }
 
 func normalizeMarkEmbeddingReconciliationCanaryAttemptInput(input MarkEmbeddingReconciliationCanaryAttemptInput) MarkEmbeddingReconciliationCanaryAttemptInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.RunID = strings.TrimSpace(input.RunID)
 	input.CanaryJobID = strings.TrimSpace(input.CanaryJobID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
@@ -737,7 +766,7 @@ func normalizeMarkEmbeddingReconciliationCanaryAttemptInput(input MarkEmbeddingR
 }
 
 func validateMarkEmbeddingReconciliationCanaryAttemptInput(input MarkEmbeddingReconciliationCanaryAttemptInput) error {
-	for name, value := range map[string]string{"run_id": input.RunID, "canary_job_id": input.CanaryJobID, "lease_token": input.LeaseToken} {
+	for name, value := range map[string]string{"team_id": input.TeamID, "run_id": input.RunID, "canary_job_id": input.CanaryJobID, "lease_token": input.LeaseToken} {
 		if _, err := uuid.Parse(value); err != nil {
 			return fmt.Errorf("%s is required: %w", name, err)
 		}

@@ -72,6 +72,22 @@ func TestUpsertSearchDocumentRetiresSupersededFailedEmbeddingJob(t *testing.T) {
 	require.Equal(t, string(domain.EmbeddingJobStale), oldStatus)
 	require.Equal(t, string(domain.EmbeddingJobQueued), replacementStatus)
 
+	third, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: sourceID,
+		SourceVersion: 2, ProjectionFormat: 1, DocumentText: "revised embedding text", DocumentHash: "sha256:revised",
+	})
+	require.NoError(t, err)
+	require.Equal(t, second.DocumentVersion, third.DocumentVersion, "a source-only revision keeps the document version")
+	require.NotEmpty(t, third.QueuedJobID)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status FROM embedding_jobs
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, teamID, second.QueuedJobID).Row().Scan(&oldStatus)
+	}))
+	require.Equal(t, string(domain.EmbeddingJobStale), oldStatus,
+		"a newer source version must retire the same-version predecessor job")
+
 	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
 	require.NoError(t, err)
 	require.Zero(t, convergence.Failed, "superseded failed rows must not keep convergence attention required")

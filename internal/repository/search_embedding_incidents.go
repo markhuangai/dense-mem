@@ -21,6 +21,9 @@ func upsertEmbeddingFailureIncident(
 	if strings.TrimSpace(failureCode) == "" {
 		return errors.New("embedding failure code is required")
 	}
+	if err := lockEmbeddingFailureIncident(ctx, tx, teamID, sourceKind, contractID, failureClass, failureCode, dimensions); err != nil {
+		return err
+	}
 	result := tx.WithContext(ctx).Exec(`
 		UPDATE embedding_failure_incidents
 		SET status = 'open', affected_job_count = (
@@ -28,6 +31,7 @@ func upsertEmbeddingFailureIncident(
 			WHERE team_id = ?::uuid AND embedding_contract_id = ?::uuid
 			  AND embedding_dimensions = ? AND source_kind = ?
 			  AND failure_class = ? AND failure_code = ?
+			  AND first_failed_at IS NOT NULL
 			  AND status IN ('queued', 'processing', 'failed')
 		), last_seen_at = now(), resolved_at = NULL, recovering_at = NULL,
 		    updated_at = now()
@@ -55,9 +59,10 @@ func upsertEmbeddingFailureIncident(
 			?::uuid, ?::uuid, ?, ?, ?, ?, 'open',
 			(SELECT count(*) FROM embedding_jobs
 			 WHERE team_id = ?::uuid AND embedding_contract_id = ?::uuid
-			   AND embedding_dimensions = ? AND source_kind = ?
-			   AND failure_class = ? AND failure_code = ?
-			   AND status IN ('queued', 'processing', 'failed')),
+				   AND embedding_dimensions = ? AND source_kind = ?
+				   AND failure_class = ? AND failure_code = ?
+				   AND first_failed_at IS NOT NULL
+				   AND status IN ('queued', 'processing', 'failed')),
 			now(), now(), now()
 		)
 		ON CONFLICT (team_id, embedding_contract_id, embedding_dimensions, source_kind, failure_class, failure_code, status)
@@ -78,9 +83,10 @@ func resolveEmbeddingIncidentsForJob(ctx context.Context, tx *gorm.DB, teamID, s
 			 AND job.embedding_contract_id = incident.embedding_contract_id
 			 AND job.embedding_dimensions = incident.embedding_dimensions
 			 AND job.source_kind = incident.source_kind
-			 AND job.failure_class = incident.failure_class
-			 AND job.failure_code = incident.failure_code
-			 AND job.status IN ('queued', 'processing', 'failed')
+				 AND job.failure_class = incident.failure_class
+				 AND job.failure_code = incident.failure_code
+				 AND job.first_failed_at IS NOT NULL
+				 AND job.status IN ('queued', 'processing', 'failed')
 			WHERE incident.team_id = ?::uuid
 			  AND incident.embedding_contract_id = ?::uuid
 			  AND incident.embedding_dimensions = ?

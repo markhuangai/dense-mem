@@ -702,10 +702,17 @@ func retireSupersededEmbeddingJobs(ctx context.Context, tx *gorm.DB, document Se
 		  AND job.source_kind = ?
 		  AND job.source_id = ?::uuid
 		  AND job.embedding_contract_id = ?::uuid
-		  AND job.document_version < ?
+		  AND (
+		      job.document_version < ?
+		      OR (
+		          job.document_version = ?
+		          AND job.source_version < ?
+		      )
+		  )
 		  AND job.status IN ('queued', 'processing', 'failed')
 	`, document.TeamID, document.SourceKind, document.SourceID,
-		document.EmbeddingContractID, document.DocumentVersion).Error
+		document.EmbeddingContractID, document.DocumentVersion,
+		document.DocumentVersion, document.SourceVersion).Error
 }
 
 func normalizeEmbeddingJobMaxAttempts(maxAttempts int) int {

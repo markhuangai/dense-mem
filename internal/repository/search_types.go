@@ -266,6 +266,7 @@ type SelectEmbeddingReconciliationCanaryInput struct {
 }
 
 type MarkEmbeddingReconciliationCanaryAttemptInput struct {
+	TeamID      string
 	RunID       string
 	CanaryJobID string
 	WorkerID    string

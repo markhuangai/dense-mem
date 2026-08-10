@@ -319,10 +319,12 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 		}
 		var attempts, maxAttempts, dims int
 		var sourceKind, projectionGenerationID, contractID string
+		var previousFailureClass, previousFailureCode string
 		err = tx.WithContext(ctx).Raw(`
 				SELECT attempts, max_attempts, embedding_dimensions,
 				       embedding_contract_id::text, source_kind,
-				       COALESCE(projection_generation_id::text, '')
+				       COALESCE(projection_generation_id::text, ''),
+				       failure_class, failure_code
 				FROM embedding_jobs
 				WHERE team_id = ?::uuid
 				  AND embedding_job_id = ?::uuid
@@ -338,6 +340,8 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			&contractID,
 			&sourceKind,
 			&projectionGenerationID,
+			&previousFailureClass,
+			&previousFailureCode,
 		)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrEmbeddingLeaseLost
@@ -434,6 +438,12 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 		}
 		if err := updateSearchDocumentAfterEmbeddingFailure(ctx, tx, input, status); err != nil {
 			return err
+		}
+		if (previousFailureClass != "" || previousFailureCode != "") &&
+			(previousFailureClass != failureClass || previousFailureCode != failureCode) {
+			if err := resolveEmbeddingIncidentKey(ctx, tx, input.TeamID, sourceKind, contractID, previousFailureClass, previousFailureCode, dims); err != nil {
+				return err
+			}
 		}
 		if err := upsertEmbeddingFailureIncident(ctx, tx, input.TeamID, failureClass, failureCode, contractID, dims, sourceKind); err != nil {
 			return err

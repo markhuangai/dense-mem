@@ -140,37 +140,40 @@ func recallEvidenceSearchState(
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	var state string
 	err := tx.WithContext(ctx).Raw(`
+		WITH eligible AS NOT MATERIALIZED (
+			SELECT document.search_state
+			FROM search_documents AS document
+			JOIN evidence_fragments AS fragment
+			  ON fragment.team_id = document.team_id
+			 AND fragment.fragment_id = document.source_id
+			LEFT JOIN evidence_quarantines AS quarantine
+			  ON quarantine.team_id = fragment.team_id
+			 AND quarantine.fragment_id = fragment.fragment_id
+			 AND quarantine.status = 'active'
+			LEFT JOIN evidence_sources AS source
+			  ON source.team_id = fragment.team_id
+			 AND source.source_id = fragment.source_id
+			WHERE document.team_id = ?::uuid
+			  AND document.source_kind = 'evidence'
+			  AND document.embedding_contract_id = ?::uuid
+			  AND (document.search_state IN ('pending', 'current', 'failed')
+			       OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
+			  AND quarantine.quarantine_id IS NULL
+			  AND NOT EXISTS (
+			      SELECT 1
+			      FROM evidence_lifecycle_events AS lifecycle
+			      WHERE lifecycle.team_id = fragment.team_id
+			        AND lifecycle.target_fragment_id = fragment.fragment_id
+			        AND (?::timestamptz IS NULL OR lifecycle.created_at <= ?::timestamptz)
+			  )
+			  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
+			  AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
+		)
 		SELECT CASE
-		           WHEN count(*) FILTER (WHERE document.search_state = 'failed') > 0 THEN 'failed'
-		           WHEN count(*) FILTER (WHERE document.search_state = 'pending') > 0 THEN 'pending'
+		           WHEN EXISTS (SELECT 1 FROM eligible WHERE search_state = 'failed') THEN 'failed'
+		           WHEN EXISTS (SELECT 1 FROM eligible WHERE search_state = 'pending') THEN 'pending'
 		           ELSE 'current'
 		       END
-		FROM search_documents AS document
-		JOIN evidence_fragments AS fragment
-		  ON fragment.team_id = document.team_id
-		 AND fragment.fragment_id = document.source_id
-		LEFT JOIN evidence_quarantines AS quarantine
-		  ON quarantine.team_id = fragment.team_id
-		 AND quarantine.fragment_id = fragment.fragment_id
-		 AND quarantine.status = 'active'
-		LEFT JOIN evidence_sources AS source
-		  ON source.team_id = fragment.team_id
-		 AND source.source_id = fragment.source_id
-		WHERE document.team_id = ?::uuid
-		  AND document.source_kind = 'evidence'
-		  AND document.embedding_contract_id = ?::uuid
-		  AND (document.search_state IN ('pending', 'current', 'failed')
-		       OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
-		  AND quarantine.quarantine_id IS NULL
-		  AND NOT EXISTS (
-		      SELECT 1
-		      FROM evidence_lifecycle_events AS lifecycle
-		      WHERE lifecycle.team_id = fragment.team_id
-		        AND lifecycle.target_fragment_id = fragment.fragment_id
-		        AND (?::timestamptz IS NULL OR lifecycle.created_at <= ?::timestamptz)
-		  )
-		  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
-		  AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
 	`, input.TeamID, contract.EmbeddingContractID, eventAt, eventAt, eventAt, eventAt, eventAt).Scan(&state).Error
 	if err != nil {
 		return "", err

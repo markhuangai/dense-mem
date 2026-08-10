@@ -268,6 +268,39 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	}))
 	require.Equal(t, 4, validated)
 
+	legacyPreQueuedJobID := uuid.NewString()
+	legacyPreQueuedDocumentID := uuid.NewString()
+	legacyPreQueuedSourceID := uuid.NewString()
+	legacyPreQueuedError := "embedding provider error: connection reset by peer"
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO search_documents (
+				team_id, search_document_id, owner_profile_id, source_kind, source_id,
+				source_version, document_version, embedding_contract_id,
+				embedding_dimensions, search_state, document_text, document_hash
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, 'relationship', $4::uuid,
+				1, 1, $5::uuid, 3, 'pending', 'legacy queued before compatibility', $6
+			)
+		`, teamID, legacyPreQueuedDocumentID, profileID, legacyPreQueuedSourceID, contractID,
+			"sha256:"+strings.ReplaceAll(legacyPreQueuedDocumentID, "-", "")); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_jobs (
+				team_id, embedding_job_id, search_document_id, owner_profile_id,
+				source_kind, source_id, source_version, document_version,
+				embedding_contract_id, embedding_dimensions, status, attempts,
+				max_attempts, error
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				'relationship', $5::uuid, 1, 1, $6::uuid, 3,
+				'queued', 1, 20, $7
+			)
+		`, teamID, legacyPreQueuedJobID, legacyPreQueuedDocumentID, profileID, legacyPreQueuedSourceID, contractID, legacyPreQueuedError)
+		return err
+	}))
+
 	runGooseUpTo(t, ctx, sqlDB, 2026081001)
 	legacyEntityJobID := uuid.NewString()
 	legacyEntityDocumentID := uuid.NewString()
@@ -327,6 +360,20 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	require.True(t, timestampsPresent)
 	require.Equal(t, "failed", searchState)
 
+	var queuedFailureClass, queuedFailureCode, queuedSearchState string
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT job.failure_class, job.failure_code, document.search_state
+			FROM embedding_jobs AS job
+			JOIN search_documents AS document
+			  ON document.team_id = job.team_id AND document.search_document_id = job.search_document_id
+			WHERE job.team_id = $1::uuid AND job.embedding_job_id = $2::uuid
+		`, teamID, legacyPreQueuedJobID).Scan(&queuedFailureClass, &queuedFailureCode, &queuedSearchState)
+	}))
+	require.Equal(t, "transient", queuedFailureClass)
+	require.Equal(t, "provider_network_error", queuedFailureCode)
+	require.Equal(t, "pending", queuedSearchState)
+
 	var incidentStatus string
 	var affectedJobs int64
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
@@ -343,4 +390,92 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	}))
 	require.Equal(t, "open", incidentStatus)
 	require.EqualValues(t, 1, affectedJobs)
+
+	var embeddingErrorLength int
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE embedding_jobs
+			SET status = 'failed', error = repeat('x', 2048), completed_at = now()
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+		`, teamID, legacyEntityJobID)
+		return err
+	}))
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT length(document.embedding_error)
+			FROM search_documents AS document
+			WHERE document.team_id = $1::uuid AND document.search_document_id = $2::uuid
+		`, teamID, legacyEntityDocumentID).Scan(&embeddingErrorLength)
+	}))
+	require.Equal(t, 1024, embeddingErrorLength)
+
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE embedding_jobs
+			SET status = 'completed', error = '', completed_at = now()
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+		`, teamID, legacyEntityJobID)
+		return err
+	}))
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT status, affected_job_count
+			FROM embedding_failure_incidents
+			WHERE team_id = $1::uuid
+			  AND embedding_contract_id = $2::uuid
+			  AND embedding_dimensions = 3
+			  AND source_kind = 'entity'
+			  AND failure_class = 'transient'
+			  AND failure_code = 'provider_network_error'
+		`, teamID, contractID).Scan(&incidentStatus, &affectedJobs)
+	}))
+	require.Equal(t, "resolved", incidentStatus)
+	require.Zero(t, affectedJobs)
+
+	legacyQueuedJobID := uuid.NewString()
+	legacyQueuedDocumentID := uuid.NewString()
+	legacyQueuedSourceID := uuid.NewString()
+	legacyQueuedError := "embedding provider error: connection reset by peer"
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO search_documents (
+				team_id, search_document_id, owner_profile_id, source_kind, source_id,
+				source_version, document_version, embedding_contract_id,
+				embedding_dimensions, search_state, document_text, document_hash
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, 'entity', $4::uuid,
+				1, 1, $5::uuid, 3, 'pending', 'legacy queued document', $6
+			)
+		`, teamID, legacyQueuedDocumentID, profileID, legacyQueuedSourceID, contractID,
+			"sha256:"+strings.ReplaceAll(legacyQueuedDocumentID, "-", "")); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_jobs (
+				team_id, embedding_job_id, search_document_id, owner_profile_id,
+				source_kind, source_id, source_version, document_version,
+				embedding_contract_id, embedding_dimensions, status, attempts,
+				max_attempts, error
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				'entity', $5::uuid, 1, 1, $6::uuid, 3,
+				'queued', 1, 20, $7
+			)
+		`, teamID, legacyQueuedJobID, legacyQueuedDocumentID, profileID, legacyQueuedSourceID, contractID, legacyQueuedError)
+		return err
+	}))
+
+	var postQueuedFailureClass, postQueuedFailureCode, postQueuedSearchState string
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT job.failure_class, job.failure_code, document.search_state
+			FROM embedding_jobs AS job
+			JOIN search_documents AS document
+			  ON document.team_id = job.team_id AND document.search_document_id = job.search_document_id
+			WHERE job.team_id = $1::uuid AND job.embedding_job_id = $2::uuid
+		`, teamID, legacyQueuedJobID).Scan(&postQueuedFailureClass, &postQueuedFailureCode, &postQueuedSearchState)
+	}))
+	require.Equal(t, "transient", postQueuedFailureClass)
+	require.Equal(t, "provider_network_error", postQueuedFailureCode)
+	require.Equal(t, "pending", postQueuedSearchState)
 }
