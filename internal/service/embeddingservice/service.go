@@ -131,7 +131,7 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 	texts := make([]string, 0, len(jobs))
 	for _, job := range jobs {
 		if job.EmbeddingContractID != contract.EmbeddingContractID || job.EmbeddingDimensions != contract.EmbeddingDimensions {
-			s.failJob(ctx, contract, job, &result, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), true, 0)
+			s.failJob(ctx, contract, job, &result, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), true, 0, true)
 			continue
 		}
 		eligible = append(eligible, job)
@@ -162,7 +162,7 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 	for i, job := range eligible {
 		vector := embeddings[i]
 		if err := validateEmbeddingVector(vector, job.EmbeddingDimensions); err != nil {
-			s.failJob(ctx, contract, job, &result, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderResponseInvalid), true, 0)
+			s.failJob(ctx, contract, job, &result, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderResponseInvalid), true, 0, true)
 			firstErr = errors.Join(firstErr, err)
 			continue
 		}
@@ -225,8 +225,16 @@ func (s *embeddingWorkerService) failJobs(
 	terminal bool,
 	retryAfter time.Duration,
 ) {
+	if len(jobs) > 0 && s.logger != nil {
+		s.logger.Warn("embedding_failure_recorded",
+			observability.String("failure_class", failureClass),
+			observability.String("failure_code", code),
+			observability.String("aggregation", "batch"),
+			observability.Int("batch_size", len(jobs)),
+		)
+	}
 	for _, job := range jobs {
-		s.failJob(ctx, contract, job, result, failureClass, code, terminal, retryAfter)
+		s.failJob(ctx, contract, job, result, failureClass, code, terminal, retryAfter, false)
 	}
 }
 
@@ -239,6 +247,7 @@ func (s *embeddingWorkerService) failJob(
 	code string,
 	terminal bool,
 	retryAfter time.Duration,
+	emitLog bool,
 ) {
 	if contract != nil {
 		observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, code)
@@ -248,7 +257,7 @@ func (s *embeddingWorkerService) failJob(
 			}
 		}
 	}
-	if s.logger != nil {
+	if emitLog && s.logger != nil {
 		s.logger.Warn("embedding_failure_recorded",
 			observability.String("failure_class", failureClass),
 			observability.String("failure_code", code),

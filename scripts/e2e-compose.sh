@@ -783,7 +783,7 @@ require_env_value AI_API_URL >/dev/null
 require_env_value AI_API_KEY >/dev/null
 require_env_value AI_API_EMBEDDING_MODEL >/dev/null
 require_env_value AI_API_EMBEDDING_DIMENSIONS >/dev/null
-if [[ "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "semantic_holds" || "$E2E_SCENARIO" == "community" || "$E2E_SCENARIO" == "conflict_queue" || "$E2E_SCENARIO" == "embedding_reconciliation" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
+if [[ "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "semantic_holds" || "$E2E_SCENARIO" == "community" || "$E2E_SCENARIO" == "conflict_queue" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
   require_env_value AI_VERIFIER_API_URL >/dev/null
   require_env_value AI_VERIFIER_API_KEY >/dev/null
   require_env_value AI_VERIFIER_MODEL >/dev/null

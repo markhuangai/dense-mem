@@ -27,6 +27,7 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 
 	runGooseUpTo(t, ctx, sqlDB, 2026080803)
 	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	teamBID, profileBID := insertMigrationTeamProfile(t, ctx, sqlDB)
 	contractID := uuid.NewString()
 	fixtures := []legacyEmbeddingFailureFixture{
 		{jobID: uuid.NewString(), errorMessage: "embedding request timed out: openai: request timed out", wantClass: "transient", wantCode: "provider_timeout"},
@@ -36,12 +37,21 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 		{jobID: uuid.NewString(), errorMessage: "embedding provider http error: status=429 code=insufficient_quota", wantClass: "provider_action_required", wantCode: "provider_quota_exhausted"},
 		{jobID: uuid.NewString(), errorMessage: "embedding dimensions 2, expected 3", wantClass: "permanent", wantCode: "unknown_embedding_failure"},
 	}
+	teamBFixture := legacyEmbeddingFailureFixture{
+		jobID: uuid.NewString(), errorMessage: "embedding request timed out: secondary team", wantClass: "transient", wantCode: "provider_timeout",
+	}
 
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO semantic_team_refs (team_id) VALUES ($1::uuid)`, teamID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO semantic_profile_refs (team_id, profile_id) VALUES ($1::uuid, $2::uuid)`, teamID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO semantic_team_refs (team_id) VALUES ($1::uuid)`, teamBID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO semantic_profile_refs (team_id, profile_id) VALUES ($1::uuid, $2::uuid)`, teamBID, profileBID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -59,6 +69,10 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 		for index := range fixtures {
 			documentID := uuid.NewString()
 			sourceID := uuid.NewString()
+			attempts := 20
+			if index == 0 {
+				attempts = 19
+			}
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO search_documents (
 					team_id, search_document_id, owner_profile_id, source_kind, source_id,
@@ -84,17 +98,60 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 				) VALUES (
 					$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 					'evidence', $5::uuid, 1, 1,
-					$6::uuid, 3, 'failed', 20, 20, $7, now()
+					$6::uuid, 3, 'failed', $7, 20, $8, now()
 				)
 			`, teamID, fixtures[index].jobID, documentID, profileID, sourceID,
-				contractID, fixtures[index].errorMessage); err != nil {
+				contractID, attempts, fixtures[index].errorMessage); err != nil {
 				return err
 			}
+		}
+		teamBDocumentID := uuid.NewString()
+		teamBSourceID := uuid.NewString()
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO search_documents (
+				team_id, search_document_id, owner_profile_id, source_kind, source_id,
+				source_version, document_version, embedding_contract_id,
+				embedding_dimensions, search_state, document_text, document_hash,
+				embedding_error
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, 'evidence', $4::uuid,
+				1, 1, $5::uuid, 3, 'failed', $6, $7, $8
+			)
+		`, teamBID, teamBDocumentID, profileBID, teamBSourceID, contractID,
+			"legacy failure "+teamBFixture.jobID,
+			"sha256:"+strings.ReplaceAll(teamBFixture.jobID, "-", ""),
+			teamBFixture.errorMessage); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_jobs (
+				team_id, embedding_job_id, search_document_id, owner_profile_id,
+				source_kind, source_id, source_version, document_version,
+				embedding_contract_id, embedding_dimensions, status, attempts,
+				max_attempts, error, completed_at
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				'evidence', $5::uuid, 1, 1,
+				$6::uuid, 3, 'failed', 20, 20, $7, now()
+			)
+		`, teamBID, teamBFixture.jobID, teamBDocumentID, profileBID, teamBSourceID,
+			contractID, teamBFixture.errorMessage); err != nil {
+			return err
 		}
 		return nil
 	}))
 
 	runGooseUpTo(t, ctx, sqlDB, 2026080904)
+	var compatibilityTotalAttempts int
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			UPDATE embedding_jobs
+			SET attempts = attempts + 1
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+			RETURNING total_attempts
+		`, teamID, fixtures[0].jobID).Scan(&compatibilityTotalAttempts)
+	}))
+	require.Equal(t, 20, compatibilityTotalAttempts, "legacy claim updates must preserve total_attempts")
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		expectedIncidents := make(map[string]int64, len(fixtures))
 		for _, fixture := range fixtures {
@@ -113,30 +170,48 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 			}
 			require.Equal(t, fixture.wantClass, failureClass, fixture.errorMessage)
 			require.Equal(t, fixture.wantCode, failureCode, fixture.errorMessage)
-			require.Equal(t, 20, totalAttempts, fixture.errorMessage)
+			wantTotalAttempts := 20
+			if fixture.jobID == fixtures[0].jobID {
+				wantTotalAttempts = compatibilityTotalAttempts
+			}
+			require.Equal(t, wantTotalAttempts, totalAttempts, fixture.errorMessage)
 			require.True(t, timestampsPresent, fixture.errorMessage)
 			expectedIncidents[fixture.wantClass+"|"+fixture.wantCode]++
 		}
-		rows, err := tx.QueryContext(ctx, `
-			SELECT failure_class, failure_code, affected_job_count
-			FROM embedding_failure_incidents
-			WHERE team_id = $1::uuid AND status = 'open'
-		`, teamID)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		seen := map[string]int64{}
-		for rows.Next() {
-			var failureClass, failureCode string
-			var affected int64
-			if err := rows.Scan(&failureClass, &failureCode, &affected); err != nil {
+		for _, scoped := range []struct {
+			teamID   string
+			expected map[string]int64
+		}{
+			{teamID: teamID, expected: expectedIncidents},
+			{teamID: teamBID, expected: map[string]int64{teamBFixture.wantClass + "|" + teamBFixture.wantCode: 1}},
+		} {
+			rows, err := tx.QueryContext(ctx, `
+				SELECT failure_class, failure_code, affected_job_count
+				FROM embedding_failure_incidents
+				WHERE team_id = $1::uuid AND status = 'open'
+			`, scoped.teamID)
+			if err != nil {
 				return err
 			}
-			seen[failureClass+"|"+failureCode] = affected
+			seen := map[string]int64{}
+			for rows.Next() {
+				var failureClass, failureCode string
+				var affected int64
+				if err := rows.Scan(&failureClass, &failureCode, &affected); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				seen[failureClass+"|"+failureCode] = affected
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+			require.Equal(t, scoped.expected, seen, "incident aggregation for team %s", scoped.teamID)
 		}
-		require.NoError(t, rows.Err())
-		require.Equal(t, expectedIncidents, seen)
 		return nil
 	}))
 

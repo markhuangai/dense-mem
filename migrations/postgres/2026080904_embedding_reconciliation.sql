@@ -17,6 +17,27 @@ ALTER TABLE embedding_jobs
     ADD COLUMN IF NOT EXISTS last_failed_at TIMESTAMPTZ NULL,
     ADD COLUMN IF NOT EXISTS last_recovered_at TIMESTAMPTZ NULL;
 
+-- Older workers only increment attempts while claiming a job. Keep the new
+-- lifetime counter valid during a rolling deployment until every worker has
+-- adopted the paired update.
+CREATE OR REPLACE FUNCTION dense_mem_sync_embedding_job_total_attempts()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $function$
+BEGIN
+    IF NEW.total_attempts < NEW.attempts THEN
+        NEW.total_attempts := NEW.attempts;
+    END IF;
+    RETURN NEW;
+END
+$function$;
+
+DROP TRIGGER IF EXISTS embedding_jobs_total_attempts_compatibility_trigger ON embedding_jobs;
+CREATE TRIGGER embedding_jobs_total_attempts_compatibility_trigger
+    BEFORE INSERT OR UPDATE OF attempts, total_attempts ON embedding_jobs
+    FOR EACH ROW
+    EXECUTE FUNCTION dense_mem_sync_embedding_job_total_attempts();
+
 CREATE TABLE IF NOT EXISTS embedding_failure_incidents (
     team_id UUID NOT NULL,
     incident_id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -310,6 +331,8 @@ SELECT set_config('app.current_profile_id', '', true);
 
 DROP TABLE IF EXISTS embedding_reconciliation_runs;
 DROP TABLE IF EXISTS embedding_failure_incidents;
+DROP TRIGGER IF EXISTS embedding_jobs_total_attempts_compatibility_trigger ON embedding_jobs;
+DROP FUNCTION IF EXISTS dense_mem_sync_embedding_job_total_attempts();
 ALTER TABLE embedding_jobs
     DROP CONSTRAINT IF EXISTS embedding_jobs_total_attempts_check,
     DROP CONSTRAINT IF EXISTS embedding_jobs_recovery_count_check,

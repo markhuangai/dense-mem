@@ -386,6 +386,33 @@ func TestEmbeddingWorkerQuotaFailureDoesNotSpendInlineRetryBudget(t *testing.T) 
 	assert.Equal(t, string(domain.EmbeddingFailureProviderQuotaExhausted), search.failInputs[0].FailureCode)
 }
 
+func TestEmbeddingWorkerAggregatesBatchFailureLog(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{
+		embeddingJobForTest("job-a", 1),
+		embeddingJobForTest("job-b", 1),
+	}
+	logger := &reconciliationLoggerStub{}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search,
+		Provider: &embeddingProviderStub{
+			available: true,
+			model:     "test-model",
+			dims:      3,
+			err:       &embedding.ProviderHTTPError{Status: 429, Code: "insufficient_quota", Type: "insufficient_quota"},
+		},
+		Logger:   logger,
+		TeamID:   "team-a",
+		WorkerID: "worker-a",
+	})
+
+	_, err := worker.ProcessNextBatch(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, []string{"embedding_failure_recorded"}, logger.warnings)
+	assert.Equal(t, "batch", reconciliationLogAttrValue(logger.warnAttrs, "aggregation"))
+	assert.Equal(t, 2, reconciliationLogAttrValue(logger.warnAttrs, "batch_size"))
+}
+
 func TestEmbeddingWorkerFailsContractMismatchBeforeProviderCall(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-a", 1)}

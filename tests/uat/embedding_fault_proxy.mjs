@@ -38,9 +38,9 @@ const server = http.createServer(async (request, response) => {
     return sendJSON(response, 404, { error: "not found" });
   }
 
-  stats.requests += 1;
   const body = await readRequestBody(request, response);
   if (body === null) return;
+  stats.requests += 1;
   stats.request_item_counts.push(requestItemCount(body));
   if (mode === "quota") {
     stats.quota_failures += 1;

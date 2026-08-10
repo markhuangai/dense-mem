@@ -713,7 +713,9 @@ func normalizeGeneralConfigValues(values map[string]string) (map[string]string, 
 
 func validateStrictHHMM(key, value string) error {
 	parsed, err := time.Parse("15:04", value)
-	if err != nil || parsed.Format("15:04") != value {
+	canonical := err == nil && parsed.Format("15:04") == value
+	legacySingleDigitHour := err == nil && len(value) == 4 && parsed.Format("15:04") == "0"+value
+	if err != nil || (!canonical && !legacySingleDigitHour) {
 		return fmt.Errorf("%w: %s must use strict HH:MM", ErrInvalidAppConfig, key)
 	}
 	return nil

@@ -108,6 +108,25 @@ func TestAppConfigServiceGeneralSettingsDefaultsAndUpdate(t *testing.T) {
 	assert.Equal(t, "America/New_York", community.Timezone)
 }
 
+func TestAppConfigServiceReadsLegacySingleDigitSchedule(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 16, 9, 0, 0, 0, time.UTC)
+	repo := newAppConfigRepoStub(now, map[string]string{
+		domain.AppConfigUpdateTimeKey:                         now.Format(time.RFC3339Nano),
+		domain.AppConfigTimezone:                              "UTC",
+		domain.AppConfigEmbeddingReconciliationStartTimeLocal: "4:30",
+	})
+	svc := NewAppConfigService(repo, nil)
+
+	settings, err := svc.GetGeneralSettings(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "4:30", generalConfigItemForTest(settings, domain.AppConfigEmbeddingReconciliationStartTimeLocal).EffectiveValue)
+
+	runtime, err := svc.GeneralRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "4:30", runtime.EmbeddingReconciliationStartTimeLocal)
+}
+
 func TestAppConfigServiceDreamingSettingsDefaultsAndUpdate(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC)
@@ -496,9 +515,9 @@ func TestAppConfigServiceValidation(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 	require.ErrorContains(t, err, "APP_TIMEZONE must be a valid IANA timezone or Local")
 
-	_, err = svc.UpdateGeneralSettings(ctx, map[string]string{domain.AppConfigEmbeddingReconciliationStartTimeLocal: "4:30"}, "control", "", "")
-	require.ErrorIs(t, err, ErrInvalidAppConfig)
-	require.ErrorContains(t, err, "strict HH:MM")
+	updated, err := svc.UpdateGeneralSettings(ctx, map[string]string{domain.AppConfigEmbeddingReconciliationStartTimeLocal: "4:30"}, "control", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "4:30", generalConfigItemForTest(updated, domain.AppConfigEmbeddingReconciliationStartTimeLocal).EffectiveValue)
 
 	_, err = svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "canonical"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)

@@ -238,6 +238,30 @@ func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T
 	}
 }
 
+func TestEmbeddingReconciliationSkipsStaleCanaryAndReleasesBacklog(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	search.completeErrs["job-1"] = repository.ErrSearchStaleVersion
+	reconciliation := &reconciliationRepositoryStub{job: &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", Attempts: 20, EmbeddingDimensions: 3, DocumentText: "stale canary"}}
+	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
+	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
+	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: provider,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1", Now: func() time.Time { return now },
+	})
+
+	result, err := service.ProcessDue(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, string(domain.EmbeddingReconciliationCompleted), result.Status)
+	assert.True(t, result.CanarySucceeded)
+	assert.Zero(t, result.RecoveredCount, "a stale canary proves provider availability but does not recover a job")
+	assert.EqualValues(t, 3, result.RequeuedCount)
+	require.NotNil(t, reconciliation.completed)
+	assert.Equal(t, "succeeded", reconciliation.completed.CanaryOutcome)
+	assert.Zero(t, reconciliation.completed.RecoveredCount)
+}
+
 func TestEmbeddingReconciliationPersistsPartialRequeueProgress(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
@@ -288,6 +312,27 @@ func TestEmbeddingReconciliationFailedCanaryDoesNotReleaseBacklog(t *testing.T) 
 	if reconciliation.completed.Status != string(domain.EmbeddingReconciliationDeferred) || reconciliation.completed.FailureCode != string(domain.EmbeddingFailureProviderQuotaExhausted) {
 		t.Fatalf("completed run = %#v", reconciliation.completed)
 	}
+}
+
+func TestEmbeddingReconciliationClassifiesUnavailableProviderAsTransient(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	reconciliation := &reconciliationRepositoryStub{job: &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", Attempts: 20, EmbeddingDimensions: 3, DocumentText: "canary"}}
+	provider := &reconciliationRawProvider{available: false, model: "model", dims: 3}
+	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
+	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: provider,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1", Now: func() time.Time { return now },
+	})
+
+	_, err := service.ProcessDue(context.Background())
+	require.NoError(t, err)
+	require.Len(t, search.failInputs, 1)
+	assert.Equal(t, string(domain.EmbeddingFailureTransient), search.failInputs[0].FailureClass)
+	assert.Equal(t, string(domain.EmbeddingFailureProviderNetworkError), search.failInputs[0].FailureCode)
+	require.NotNil(t, reconciliation.completed)
+	assert.Equal(t, string(domain.EmbeddingFailureProviderNetworkError), reconciliation.completed.FailureCode)
 }
 
 func TestEmbeddingReconciliationDefersWhenCanaryOutcomePersistenceFails(t *testing.T) {

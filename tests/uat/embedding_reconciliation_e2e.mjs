@@ -66,7 +66,7 @@ if (failed.totalAttempts.some((value) => value !== 1)) {
   throw new Error(`inline retry budget was spent before reconciliation: ${JSON.stringify(failed.totalAttempts)}`);
 }
 
-const scheduledAt = nextUTCMinute(2);
+const scheduledAt = nextUTCMinute(5);
 const reconciliationTimezone = chooseReconciliationTimezone(beforeConvergence.data?.latest_run?.local_run_date);
 const scheduledLocalTime = formatTimeInZone(scheduledAt, reconciliationTimezone);
 await controlJSON("/config/general", {
@@ -272,7 +272,7 @@ function postgresQuery(sql) {
 }
 
 async function httpJSON(url, options, throwOnError = true) {
-  const response = await fetch(url, options);
+  const response = await fetch(url, { ...options, signal: options?.signal ?? AbortSignal.timeout(30_000) });
   const text = await response.text();
   if (throwOnError && !response.ok) throw new Error(`HTTP ${response.status} ${url}: response body redacted`);
   return text ? JSON.parse(text) : { status: response.status };
