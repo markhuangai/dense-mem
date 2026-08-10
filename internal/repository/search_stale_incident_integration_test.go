@@ -58,7 +58,14 @@ func TestSearchEmbeddingCompletionResolvesStaleIncident(t *testing.T) {
 	require.True(t, errors.Is(err, ErrSearchStaleVersion) || errors.Is(err, ErrEmbeddingLeaseLost), "err=%v", err)
 	var status string
 	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT status FROM embedding_failure_incidents WHERE team_id = ?::uuid AND source_kind = 'relationship'`, teamID).Row().Scan(&status)
+		return tx.Raw(`
+			SELECT status
+			FROM embedding_failure_incidents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND failure_class = 'permanent'
+			  AND failure_code = 'unknown_embedding_failure'
+		`, teamID).Row().Scan(&status)
 	}))
 	require.Equal(t, "resolved", status)
 }

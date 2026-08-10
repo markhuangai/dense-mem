@@ -132,7 +132,7 @@ type relationshipRecallCandidate struct {
 
 func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID string, contract *ActiveSearchContract) (string, error) {
 	var latestState string
-	var eligibleCount, currentCount, pendingCount, failedCount int64
+	var eligibleCount, currentCount, failedCount int64
 	err := tx.WithContext(ctx).Raw(`
 	WITH `+recallRelationshipGenerationScopeSQL+`,
 	selected_generation AS (
@@ -151,10 +151,9 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 		      AND relationship.support_count > 0
 		)
 	SELECT COALESCE((SELECT state FROM selected_generation), '') AS latest_state,
-		       COUNT(eligible.relationship_id) AS eligible_count,
-		       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'current') AS current_count,
-		       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'pending') AS pending_count,
-		       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'failed') AS failed_count
+	       COUNT(eligible.relationship_id) AS eligible_count,
+	       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'current') AS current_count,
+	       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'failed') AS failed_count
 		FROM eligible
 		 LEFT JOIN search_documents AS document
 		  ON document.team_id = ?::uuid
@@ -177,7 +176,6 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 		&latestState,
 		&eligibleCount,
 		&currentCount,
-		&pendingCount,
 		&failedCount,
 	)
 	if err != nil {
@@ -185,17 +183,20 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 	}
 	switch latestState {
 	case "current":
+		if failedCount > 0 {
+			return string(domain.SearchProjectionFailed), nil
+		}
 		if eligibleCount == 0 || currentCount == eligibleCount {
 			return string(domain.SearchProjectionCurrent), nil
 		}
 	case "failed":
 		return string(domain.SearchProjectionFailed), nil
 	case "":
+		if failedCount > 0 {
+			return string(domain.SearchProjectionFailed), nil
+		}
 		if eligibleCount == 0 || currentCount == eligibleCount {
 			return string(domain.SearchProjectionCurrent), nil
-		}
-		if failedCount > 0 && pendingCount == 0 {
-			return string(domain.SearchProjectionFailed), nil
 		}
 	}
 	return string(domain.SearchProjectionPending), nil

@@ -2,20 +2,94 @@
 -- +goose Up
 -- +goose StatementBegin
 
--- This compatibility layer is reversible through the goose Down section. It
--- only repairs embedding-job projection state and incident metadata; accepted
+-- The compatibility triggers and functions are removable through the goose
+-- Down section. The backfill below is an irreversible data boundary: it
+-- rewrites failure_class, failure_code, total_attempts, first_failed_at, and
+-- last_failed_at on existing rows, and the previous values are not retained.
+-- The Down section cannot restore those rewritten row values; accepted
 -- evidence and search history remain append-only.
 
 SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 
+CREATE OR REPLACE FUNCTION dense_mem_classify_embedding_failure_compatibility(error_value TEXT)
+RETURNS TABLE (failure_class TEXT, failure_code TEXT)
+LANGUAGE SQL
+IMMUTABLE
+AS $function$
+    WITH normalized AS (
+        SELECT lower(COALESCE(error_value, '')) AS error_text
+    )
+    SELECT CASE
+               WHEN error_text LIKE '%insufficient_quota%'
+                 OR error_text LIKE '%quota_exhausted%'
+                 OR error_text LIKE '%exceeded your current quota%'
+                   THEN 'provider_action_required'
+               WHEN error_text ~ 'status([^0-9]{0,12})401'
+                   THEN 'provider_action_required'
+               WHEN error_text ~ 'status([^0-9]{0,12})403'
+                   THEN 'provider_action_required'
+               WHEN error_text ~ 'status([^0-9]{0,12})429'
+                 OR error_text LIKE '%rate limit%'
+                   THEN 'transient'
+               WHEN error_text LIKE '%embedding request timed out%'
+                 OR error_text LIKE '%context deadline exceeded%'
+                 OR error_text LIKE '%client.timeout exceeded%'
+                 OR error_text LIKE '%i/o timeout%'
+                 OR error_text LIKE '%tls handshake timeout%'
+                   THEN 'transient'
+               WHEN error_text LIKE '%connection reset%'
+                 OR error_text LIKE '%connection refused%'
+                 OR error_text LIKE '%network is unreachable%'
+                 OR error_text LIKE '%no such host%'
+                 OR error_text LIKE '%temporary failure in name resolution%'
+                 OR error_text LIKE '%unexpected eof%'
+                   THEN 'transient'
+               WHEN error_text LIKE '%provider is unavailable%'
+                 OR error_text ~ 'status([^0-9]{0,12})5[0-9]{2}'
+                   THEN 'transient'
+               ELSE 'permanent'
+           END,
+           CASE
+               WHEN error_text LIKE '%insufficient_quota%'
+                 OR error_text LIKE '%quota_exhausted%'
+                 OR error_text LIKE '%exceeded your current quota%'
+                   THEN 'provider_quota_exhausted'
+               WHEN error_text ~ 'status([^0-9]{0,12})401'
+                   THEN 'provider_authentication_failed'
+               WHEN error_text ~ 'status([^0-9]{0,12})403'
+                   THEN 'provider_permission_denied'
+               WHEN error_text ~ 'status([^0-9]{0,12})429'
+                 OR error_text LIKE '%rate limit%'
+                   THEN 'provider_rate_limited'
+               WHEN error_text LIKE '%embedding request timed out%'
+                 OR error_text LIKE '%context deadline exceeded%'
+                 OR error_text LIKE '%client.timeout exceeded%'
+                 OR error_text LIKE '%i/o timeout%'
+                 OR error_text LIKE '%tls handshake timeout%'
+                   THEN 'provider_timeout'
+               WHEN error_text LIKE '%connection reset%'
+                 OR error_text LIKE '%connection refused%'
+                 OR error_text LIKE '%network is unreachable%'
+                 OR error_text LIKE '%no such host%'
+                 OR error_text LIKE '%temporary failure in name resolution%'
+                 OR error_text LIKE '%unexpected eof%'
+                   THEN 'provider_network_error'
+               WHEN error_text LIKE '%provider is unavailable%'
+                 OR error_text ~ 'status([^0-9]{0,12})5[0-9]{2}'
+                   THEN 'provider_server_error'
+               ELSE 'unknown_embedding_failure'
+           END
+    FROM normalized;
+$function$;
+
 CREATE OR REPLACE FUNCTION dense_mem_classify_embedding_job_failure_compatibility()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $function$
 DECLARE
-    error_text TEXT := lower(COALESCE(NEW.error, ''));
+    classification RECORD;
 BEGIN
     IF NEW.status = 'queued' AND btrim(COALESCE(NEW.error, '')) = '' THEN
         RETURN NEW;
@@ -24,41 +98,11 @@ BEGIN
         -- A pre-reconciliation worker leaves the new columns at their defaults.
         -- Preserve explicit classifications from current workers.
         IF NEW.failure_class = 'permanent' AND NEW.failure_code = 'unknown_embedding_failure' THEN
-            IF error_text LIKE '%insufficient_quota%'
-              OR error_text LIKE '%quota_exhausted%'
-              OR error_text LIKE '%exceeded your current quota%' THEN
-                NEW.failure_class := 'provider_action_required';
-                NEW.failure_code := 'provider_quota_exhausted';
-            ELSIF error_text ~ 'status([^0-9]{0,12})401' THEN
-                NEW.failure_class := 'provider_action_required';
-                NEW.failure_code := 'provider_authentication_failed';
-            ELSIF error_text ~ 'status([^0-9]{0,12})403' THEN
-                NEW.failure_class := 'provider_action_required';
-                NEW.failure_code := 'provider_permission_denied';
-            ELSIF error_text ~ 'status([^0-9]{0,12})429'
-              OR error_text LIKE '%rate limit%' THEN
-                NEW.failure_class := 'transient';
-                NEW.failure_code := 'provider_rate_limited';
-            ELSIF error_text LIKE '%embedding request timed out%'
-              OR error_text LIKE '%context deadline exceeded%'
-              OR error_text LIKE '%client.timeout exceeded%'
-              OR error_text LIKE '%i/o timeout%'
-              OR error_text LIKE '%tls handshake timeout%' THEN
-                NEW.failure_class := 'transient';
-                NEW.failure_code := 'provider_timeout';
-            ELSIF error_text LIKE '%connection reset%'
-              OR error_text LIKE '%connection refused%'
-              OR error_text LIKE '%network is unreachable%'
-              OR error_text LIKE '%no such host%'
-              OR error_text LIKE '%temporary failure in name resolution%'
-              OR error_text LIKE '%unexpected eof%' THEN
-                NEW.failure_class := 'transient';
-                NEW.failure_code := 'provider_network_error';
-            ELSIF error_text LIKE '%provider is unavailable%'
-              OR error_text ~ 'status([^0-9]{0,12})5[0-9]{2}' THEN
-                NEW.failure_class := 'transient';
-                NEW.failure_code := 'provider_server_error';
-            END IF;
+            SELECT *
+            INTO classification
+            FROM dense_mem_classify_embedding_failure_compatibility(NEW.error);
+            NEW.failure_class := classification.failure_class;
+            NEW.failure_code := classification.failure_code;
         END IF;
         NEW.total_attempts := GREATEST(NEW.total_attempts, NEW.attempts);
         IF TG_OP = 'INSERT' THEN
@@ -273,6 +317,8 @@ BEGIN
     PERFORM set_config('app.current_profile_id', '', true);
 
     LOOP
+        ALTER TABLE embedding_jobs DISABLE TRIGGER embedding_jobs_failure_compatibility_after;
+
         WITH batch AS MATERIALIZED (
             SELECT team_id, embedding_job_id, status, error, attempts,
                    completed_at, updated_at
@@ -287,82 +333,133 @@ BEGIN
             ORDER BY team_id, embedding_job_id
             LIMIT 1000
             FOR UPDATE SKIP LOCKED
+        ), changed AS (
+            UPDATE embedding_jobs AS job
+            SET (failure_class, failure_code) = (
+                    SELECT classification.failure_class, classification.failure_code
+                    FROM dense_mem_classify_embedding_failure_compatibility(batch.error) AS classification
+                ),
+                total_attempts = GREATEST(job.total_attempts, job.attempts),
+                first_failed_at = COALESCE(job.first_failed_at, batch.completed_at, batch.updated_at, now()),
+                last_failed_at = COALESCE(job.last_failed_at, batch.completed_at, batch.updated_at, now()),
+                updated_at = now()
+            FROM batch
+            WHERE job.team_id = batch.team_id
+              AND job.embedding_job_id = batch.embedding_job_id
+            RETURNING job.team_id, job.search_document_id, job.status, job.error,
+                      job.source_version, job.projection_format_version,
+                      job.projection_generation_id, job.document_version,
+                      job.embedding_contract_id, job.embedding_dimensions
+        ), projection_updates AS (
+            UPDATE search_documents AS document
+            SET search_state = CASE WHEN changed.status = 'failed' THEN 'failed' ELSE 'pending' END,
+                embedding_error = left(COALESCE(changed.error, ''), 1024),
+                updated_at = now()
+            FROM changed
+            WHERE document.team_id = changed.team_id
+              AND document.search_document_id = changed.search_document_id
+              AND document.source_version = changed.source_version
+              AND document.projection_format_version = changed.projection_format_version
+              AND document.projection_generation_id IS NOT DISTINCT FROM changed.projection_generation_id
+              AND document.document_version = changed.document_version
+              AND document.embedding_contract_id = changed.embedding_contract_id
+              AND document.embedding_dimensions = changed.embedding_dimensions
+            RETURNING 1
         )
-        UPDATE embedding_jobs AS job
-        SET failure_class = CASE
-                WHEN lower(COALESCE(batch.error, '')) LIKE '%insufficient_quota%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%quota_exhausted%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%exceeded your current quota%'
-                    THEN 'provider_action_required'
-                WHEN lower(COALESCE(batch.error, '')) ~ 'status([^0-9]{0,12})401'
-                    THEN 'provider_action_required'
-                WHEN lower(COALESCE(batch.error, '')) ~ 'status([^0-9]{0,12})403'
-                    THEN 'provider_action_required'
-                WHEN lower(COALESCE(batch.error, '')) ~ 'status([^0-9]{0,12})429'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%rate limit%'
-                    THEN 'transient'
-                WHEN lower(COALESCE(batch.error, '')) LIKE '%embedding request timed out%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%context deadline exceeded%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%client.timeout exceeded%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%i/o timeout%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%tls handshake timeout%'
-                    THEN 'transient'
-                WHEN lower(COALESCE(batch.error, '')) LIKE '%connection reset%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%connection refused%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%network is unreachable%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%no such host%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%temporary failure in name resolution%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%unexpected eof%'
-                    THEN 'transient'
-                WHEN lower(COALESCE(batch.error, '')) LIKE '%provider is unavailable%'
-                  OR lower(COALESCE(batch.error, '')) ~ 'status([^0-9]{0,12})5[0-9]{2}'
-                    THEN 'transient'
-                ELSE 'permanent'
-            END,
-            failure_code = CASE
-                WHEN lower(COALESCE(batch.error, '')) LIKE '%insufficient_quota%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%quota_exhausted%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%exceeded your current quota%'
-                    THEN 'provider_quota_exhausted'
-                WHEN lower(COALESCE(batch.error, '')) ~ 'status([^0-9]{0,12})401'
-                    THEN 'provider_authentication_failed'
-                WHEN lower(COALESCE(batch.error, '')) ~ 'status([^0-9]{0,12})403'
-                    THEN 'provider_permission_denied'
-                WHEN lower(COALESCE(batch.error, '')) ~ 'status([^0-9]{0,12})429'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%rate limit%'
-                    THEN 'provider_rate_limited'
-                WHEN lower(COALESCE(batch.error, '')) LIKE '%embedding request timed out%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%context deadline exceeded%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%client.timeout exceeded%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%i/o timeout%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%tls handshake timeout%'
-                    THEN 'provider_timeout'
-                WHEN lower(COALESCE(batch.error, '')) LIKE '%connection reset%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%connection refused%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%network is unreachable%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%no such host%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%temporary failure in name resolution%'
-                  OR lower(COALESCE(batch.error, '')) LIKE '%unexpected eof%'
-                    THEN 'provider_network_error'
-                WHEN lower(COALESCE(batch.error, '')) LIKE '%provider is unavailable%'
-                  OR lower(COALESCE(batch.error, '')) ~ 'status([^0-9]{0,12})5[0-9]{2}'
-                    THEN 'provider_server_error'
-                ELSE 'unknown_embedding_failure'
-            END,
-            total_attempts = GREATEST(job.total_attempts, job.attempts),
-            first_failed_at = COALESCE(job.first_failed_at, batch.completed_at, batch.updated_at, now()),
-            last_failed_at = COALESCE(job.last_failed_at, batch.completed_at, batch.updated_at, now()),
-            updated_at = now()
-        FROM batch
-        WHERE job.team_id = batch.team_id
-          AND job.embedding_job_id = batch.embedding_job_id;
-        GET DIAGNOSTICS updated_rows = ROW_COUNT;
+        SELECT count(changed.team_id)
+        INTO updated_rows
+        FROM changed
+        CROSS JOIN (SELECT count(*) FROM projection_updates) AS projection_update_count;
+
+        ALTER TABLE embedding_jobs ENABLE TRIGGER embedding_jobs_failure_compatibility_after;
         COMMIT;
         EXIT WHEN updated_rows = 0;
         PERFORM set_config('app.tx_mode', 'migration', true);
         PERFORM set_config('app.current_team_id', '', true);
         PERFORM set_config('app.current_profile_id', '', true);
     END LOOP;
+
+    PERFORM set_config('app.tx_mode', 'migration', true);
+    PERFORM set_config('app.current_team_id', '', true);
+    PERFORM set_config('app.current_profile_id', '', true);
+
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        concat_ws('|', grouped.team_id::text, grouped.embedding_contract_id::text,
+                  grouped.embedding_dimensions::text, grouped.source_kind,
+                  grouped.failure_class, grouped.failure_code), 0
+    ))
+    FROM (
+        SELECT DISTINCT team_id, embedding_contract_id, embedding_dimensions,
+                        source_kind, failure_class, failure_code
+        FROM embedding_jobs
+        WHERE first_failed_at IS NOT NULL
+        AND status IN ('queued', 'processing', 'failed')
+    ) AS grouped;
+
+    UPDATE embedding_failure_incidents AS incident
+    SET status = 'open',
+        affected_job_count = active.affected_job_count,
+        last_seen_at = active.last_seen_at,
+        resolved_at = NULL,
+        recovering_at = NULL,
+        updated_at = now()
+    FROM (
+        SELECT job.team_id, job.embedding_contract_id, job.embedding_dimensions,
+               job.source_kind, job.failure_class, job.failure_code,
+               count(*) AS affected_job_count, max(job.last_failed_at) AS last_seen_at
+        FROM embedding_jobs AS job
+        WHERE job.first_failed_at IS NOT NULL
+          AND job.status IN ('queued', 'processing', 'failed')
+        GROUP BY job.team_id, job.embedding_contract_id, job.embedding_dimensions,
+                 job.source_kind, job.failure_class, job.failure_code
+    ) AS active
+    WHERE incident.team_id = active.team_id
+      AND incident.embedding_contract_id = active.embedding_contract_id
+      AND incident.embedding_dimensions = active.embedding_dimensions
+      AND incident.source_kind = active.source_kind
+      AND incident.failure_class = active.failure_class
+      AND incident.failure_code = active.failure_code
+      AND incident.status IN ('recovering', 'resolved');
+
+    INSERT INTO embedding_failure_incidents (
+        team_id, embedding_contract_id, embedding_dimensions, source_kind,
+        failure_class, failure_code, status, affected_job_count,
+        first_seen_at, last_seen_at, updated_at
+    )
+    SELECT job.team_id, job.embedding_contract_id, job.embedding_dimensions,
+           job.source_kind, job.failure_class, job.failure_code, 'open', count(*),
+           min(job.first_failed_at), max(job.last_failed_at), now()
+    FROM embedding_jobs AS job
+    WHERE job.first_failed_at IS NOT NULL
+      AND job.status IN ('queued', 'processing', 'failed')
+    GROUP BY job.team_id, job.embedding_contract_id, job.embedding_dimensions,
+             job.source_kind, job.failure_class, job.failure_code
+    ON CONFLICT (team_id, embedding_contract_id, embedding_dimensions, source_kind, failure_class, failure_code, status)
+    DO UPDATE SET status = 'open',
+                  affected_job_count = EXCLUDED.affected_job_count,
+                  last_seen_at = EXCLUDED.last_seen_at,
+                  resolved_at = NULL,
+                  recovering_at = NULL,
+                  updated_at = now();
+
+    UPDATE embedding_failure_incidents AS incident
+    SET status = 'resolved',
+        affected_job_count = 0,
+        resolved_at = COALESCE(incident.resolved_at, now()),
+        updated_at = now()
+    WHERE incident.status IN ('open', 'recovering')
+      AND NOT EXISTS (
+          SELECT 1
+          FROM embedding_jobs AS job
+          WHERE job.team_id = incident.team_id
+            AND job.embedding_contract_id = incident.embedding_contract_id
+            AND job.embedding_dimensions = incident.embedding_dimensions
+            AND job.source_kind = incident.source_kind
+            AND job.failure_class = incident.failure_class
+            AND job.failure_code = incident.failure_code
+            AND job.first_failed_at IS NOT NULL
+            AND job.status IN ('queued', 'processing', 'failed')
+      );
 END
 $procedure$;
 -- +goose StatementEnd
@@ -381,5 +478,6 @@ DROP TRIGGER IF EXISTS embedding_jobs_failure_compatibility_after ON embedding_j
 DROP TRIGGER IF EXISTS embedding_jobs_failure_compatibility_before ON embedding_jobs;
 DROP FUNCTION IF EXISTS dense_mem_record_embedding_job_failure_compatibility();
 DROP FUNCTION IF EXISTS dense_mem_classify_embedding_job_failure_compatibility();
+DROP FUNCTION IF EXISTS dense_mem_classify_embedding_failure_compatibility(TEXT);
 
 -- +goose StatementEnd

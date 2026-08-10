@@ -36,6 +36,8 @@ type reconciliationRepositoryStub struct {
 	requeued           int64
 	requeueErr         error
 	requeueInput       *repository.RequeueEmbeddingReconciliationJobsInput
+	requeueContext     context.Context
+	requeueContextErr  error
 	completed          *repository.CompleteEmbeddingReconciliationRunInput
 	completeContext    context.Context
 	completeContextErr error
@@ -78,7 +80,9 @@ func (s *reconciliationRepositoryStub) CompleteEmbeddingReconciliationCanary(ctx
 	s.canaryOK = true
 	return nil
 }
-func (s *reconciliationRepositoryStub) RequeueEmbeddingReconciliationJobs(_ context.Context, input repository.RequeueEmbeddingReconciliationJobsInput) (int64, error) {
+func (s *reconciliationRepositoryStub) RequeueEmbeddingReconciliationJobs(ctx context.Context, input repository.RequeueEmbeddingReconciliationJobsInput) (int64, error) {
+	s.requeueContext = ctx
+	s.requeueContextErr = ctx.Err()
 	s.requeueInput = &input
 	if s.requeued == 0 {
 		s.requeued = 3
@@ -245,6 +249,32 @@ func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T
 	if reconciliation.completed.RequeuedCount != 3 || reconciliation.completed.RecoveredCount != 1 {
 		t.Fatalf("completed run = %#v", reconciliation.completed)
 	}
+}
+
+func TestEmbeddingReconciliationFinalizesSuccessfulCanaryAfterContextCancellation(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	reconciliation := &reconciliationRepositoryStub{job: &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", Attempts: 20, EmbeddingDimensions: 3, DocumentText: "canary"}}
+	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
+	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
+	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: provider,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1", Now: func() time.Time { return now },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := service.ProcessDue(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, string(domain.EmbeddingReconciliationCompleted), result.Status)
+	assert.True(t, result.CanarySucceeded)
+	assert.NoError(t, search.completeContextErr)
+	assert.NoError(t, reconciliation.canaryContextErr)
+	assert.NoError(t, reconciliation.requeueContextErr)
+	assert.NoError(t, reconciliation.completeContextErr)
+	assert.NotNil(t, reconciliation.completed)
+	assert.Equal(t, "succeeded", reconciliation.completed.CanaryOutcome)
 }
 
 func TestEmbeddingReconciliationSkipsStaleCanaryAndReleasesBacklog(t *testing.T) {

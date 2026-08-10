@@ -201,22 +201,24 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	if err := validateEmbeddingVector(vector, job.EmbeddingDimensions); err != nil {
 		return result, s.finishFailedCanary(ctx, run, job, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderResponseInvalid), "daily embedding canary returned an invalid vector")
 	}
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), reconciliationCleanupTimeout)
+	defer cleanupCancel()
 	workerID := repository.EmbeddingReconciliationWorkerIDPrefix + run.RunID
 	staleCanary := false
-	if err := s.search.CompleteEmbeddingJob(ctx, repository.CompleteEmbeddingJobInput{
+	if err := s.search.CompleteEmbeddingJob(cleanupCtx, repository.CompleteEmbeddingJobInput{
 		TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: workerID,
 		ExpectedAttempts: 1, Embedding: vector,
 	}); err != nil {
 		if !isExpectedStaleCanary(err) {
-			return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationAmbiguous), "", "", "daily embedding canary completion was ambiguous", err)
+			return result, s.deferRun(cleanupCtx, run, string(domain.EmbeddingReconciliationAmbiguous), "", "", "daily embedding canary completion was ambiguous", err)
 		}
 		staleCanary = true
 	}
-	if err := s.reconciliation.CompleteEmbeddingReconciliationCanary(ctx, repository.CompleteEmbeddingReconciliationCanaryInput{
+	if err := s.reconciliation.CompleteEmbeddingReconciliationCanary(cleanupCtx, repository.CompleteEmbeddingReconciliationCanaryInput{
 		RunID: run.RunID, CanaryJobID: job.EmbeddingJobID, WorkerID: s.workerID,
 		LeaseToken: run.LeaseToken, Succeeded: true,
 	}); err != nil {
-		return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationAmbiguous), "", "", "daily embedding canary completion was ambiguous", err)
+		return result, s.deferRun(cleanupCtx, run, string(domain.EmbeddingReconciliationAmbiguous), "", "", "daily embedding canary completion was ambiguous", err)
 	}
 	result.CanarySucceeded = true
 	if !staleCanary {
@@ -224,7 +226,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	} else {
 		s.logInfo(ctx, "embedding_reconciliation_stale_canary_skipped", run, map[string]any{"canary_job_id": job.EmbeddingJobID})
 	}
-	requeued, err := s.reconciliation.RequeueEmbeddingReconciliationJobs(ctx, repository.RequeueEmbeddingReconciliationJobsInput{
+	requeued, err := s.reconciliation.RequeueEmbeddingReconciliationJobs(cleanupCtx, repository.RequeueEmbeddingReconciliationJobsInput{
 		RunID: run.RunID, WorkerID: s.workerID, LeaseToken: run.LeaseToken,
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions, CandidateCutoff: run.CandidateCutoff,
@@ -233,14 +235,14 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	result.RequeuedCount = requeued
 	if err != nil {
 		result.Status = string(domain.EmbeddingReconciliationDeferred)
-		return result, s.deferRunAfterCanarySuccess(ctx, run, "reconciliation backlog release failed", requeued, result.RecoveredCount, err)
+		return result, s.deferRunAfterCanarySuccess(cleanupCtx, run, "reconciliation backlog release failed", requeued, result.RecoveredCount, err)
 	}
 	result.Status = string(domain.EmbeddingReconciliationCompleted)
 	if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
 		metrics.ObserveEmbeddingReconciliationCanary("succeeded")
 		metrics.ObserveEmbeddingReconciliationJobs("requeued", "mixed", "mixed", "", int(requeued))
 	}
-	err = s.reconciliation.CompleteEmbeddingReconciliationRun(ctx, repository.CompleteEmbeddingReconciliationRunInput{
+	err = s.reconciliation.CompleteEmbeddingReconciliationRun(cleanupCtx, repository.CompleteEmbeddingReconciliationRunInput{
 		RunID: run.RunID, WorkerID: s.workerID, LeaseToken: run.LeaseToken,
 		Status: string(domain.EmbeddingReconciliationCompleted), CanaryOutcome: "succeeded",
 		RequeuedCount: requeued, RecoveredCount: result.RecoveredCount, CompletedAt: s.now().UTC(),

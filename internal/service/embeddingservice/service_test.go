@@ -607,15 +607,17 @@ func embeddingJobForTest(id string, attempts int) repository.EmbeddingJob {
 }
 
 type embeddingSearchStub struct {
-	contract       repository.ActiveSearchContract
-	jobs           []repository.EmbeddingJob
-	completeInputs []repository.CompleteEmbeddingJobInput
-	failInputs     []repository.FailEmbeddingJobInput
-	failContext    context.Context
-	failContextErr error
-	completeErrs   map[string]error
-	claimErr       error
-	claimLimit     int
+	contract           repository.ActiveSearchContract
+	jobs               []repository.EmbeddingJob
+	completeInputs     []repository.CompleteEmbeddingJobInput
+	completeContext    context.Context
+	completeContextErr error
+	failInputs         []repository.FailEmbeddingJobInput
+	failContext        context.Context
+	failContextErr     error
+	completeErrs       map[string]error
+	claimErr           error
+	claimLimit         int
 }
 
 func (s *embeddingSearchStub) GetActiveSearchContract(context.Context) (*repository.ActiveSearchContract, error) {
@@ -638,7 +640,9 @@ func (s *embeddingSearchStub) ClaimEmbeddingJobs(_ context.Context, input reposi
 	return s.jobs, nil
 }
 
-func (s *embeddingSearchStub) CompleteEmbeddingJob(_ context.Context, input repository.CompleteEmbeddingJobInput) error {
+func (s *embeddingSearchStub) CompleteEmbeddingJob(ctx context.Context, input repository.CompleteEmbeddingJobInput) error {
+	s.completeContext = ctx
+	s.completeContextErr = ctx.Err()
 	s.completeInputs = append(s.completeInputs, input)
 	if err := s.completeErrs[input.EmbeddingJobID]; err != nil {
 		return err
