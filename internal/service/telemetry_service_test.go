@@ -720,6 +720,56 @@ func TestTelemetryParentActivityMakesMissingDerivedItemsUnavailable(t *testing.T
 	require.Equal(t, "no_activity", zeroUsage.ReasonCode)
 }
 
+func TestAssessorFailureTelemetryUsesReadyZeroWhenRequestsAreHealthy(t *testing.T) {
+	scope := TelemetryScope{Type: "system"}
+	windowedSpecs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", true)
+	windowedResults := map[string]telemetryInstantResult{
+		"assessor_requests":            {Scalar: telemetryScalar{Value: 2, Available: true}},
+		"assessor_request_failures":    {Scalar: telemetryScalar{Value: 0, Available: false}},
+		"assessor_validation_failures": {Scalar: telemetryScalar{Value: 0, Available: false}},
+		"assessor_terminal_failures":   {Scalar: telemetryScalar{Value: 0, Available: false}},
+	}
+	cards := buildTelemetryCards(windowedSpecs, windowedResults, repository.TelemetryLifecycleSnapshot{}, nil, nil, scope)
+	for _, id := range []string{"assessor_request_failures", "assessor_validation_failures", "assessor_terminal_failures"} {
+		card := telemetrySpecByID(cards, id)
+		require.NotNil(t, card, id)
+		require.Equal(t, TelemetryItemReady, card.Status, id)
+		require.Equal(t, 0.0, card.Value, id)
+	}
+
+	seriesSpecs := telemetryActivitySeriesSpecsForAudience("", "1m", true)
+	series := buildTelemetrySeries(
+		[]telemetryQuerySpec{
+			*telemetryQuerySpecByID(seriesSpecs, "assessor_request_failures"),
+			*telemetryQuerySpecByID(seriesSpecs, "assessor_validation_failures"),
+			*telemetryQuerySpecByID(seriesSpecs, "assessor_terminal_failures"),
+		},
+		map[string]telemetryRangeResult{
+			"assessor_request_failures":    {Points: []TelemetryPoint{}},
+			"assessor_validation_failures": {Points: []TelemetryPoint{}},
+			"assessor_terminal_failures":   {Points: []TelemetryPoint{}},
+		},
+		nil,
+		time.Unix(1770000000, 0).UTC(),
+		time.Unix(1770000060, 0).UTC(),
+		cards,
+		scope,
+	)
+	require.Len(t, series, 3)
+	for _, item := range series {
+		require.Equal(t, TelemetryItemReady, item.Status, item.ID)
+		require.Len(t, item.Points, 2, item.ID)
+		require.Equal(t, 0.0, item.Points[0].Value, item.ID)
+		require.Equal(t, 0.0, item.Points[1].Value, item.ID)
+	}
+
+	noParent := buildTelemetryCards(windowedSpecs, map[string]telemetryInstantResult{}, repository.TelemetryLifecycleSnapshot{}, nil, nil, scope)
+	missingParentFailure := telemetrySpecByID(noParent, "assessor_request_failures")
+	require.NotNil(t, missingParentFailure)
+	require.Equal(t, TelemetryItemUnavailable, missingParentFailure.Status)
+	require.Equal(t, "query_failed", missingParentFailure.ReasonCode)
+}
+
 func TestTelemetrySnapshotDispositionIgnoresUnsupportedItems(t *testing.T) {
 	status, available, message := telemetrySnapshotDisposition(
 		[]TelemetryCard{{ID: "unsupported", Status: TelemetryItemUnsupported}},

@@ -21,28 +21,43 @@ type dependencyCheckResult struct {
 	TimedOut bool
 }
 
+type dependencyCheckOutcome struct {
+	Err      error
+	TimedOut bool
+}
+
+type dependencyCheckFlight struct {
+	done    chan struct{}
+	outcome dependencyCheckOutcome
+}
+
 type dependencyCheckFlightRegistry struct {
 	mu     sync.Mutex
-	active map[string]struct{}
+	active map[string]*dependencyCheckFlight
 }
 
-func (r *dependencyCheckFlightRegistry) acquire(key string) bool {
+func (r *dependencyCheckFlightRegistry) acquire(key string) (*dependencyCheckFlight, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.active[key]; exists {
-		return false
+	if flight, exists := r.active[key]; exists {
+		return flight, false
 	}
-	r.active[key] = struct{}{}
-	return true
+	flight := &dependencyCheckFlight{done: make(chan struct{})}
+	r.active[key] = flight
+	return flight, true
 }
 
-func (r *dependencyCheckFlightRegistry) release(key string) {
+func (r *dependencyCheckFlightRegistry) release(key string, flight *dependencyCheckFlight, outcome dependencyCheckOutcome) {
+	flight.outcome = outcome
+	close(flight.done)
 	r.mu.Lock()
-	delete(r.active, key)
+	if r.active[key] == flight {
+		delete(r.active, key)
+	}
 	r.mu.Unlock()
 }
 
-var dependencyCheckFlights = dependencyCheckFlightRegistry{active: make(map[string]struct{})}
+var dependencyCheckFlights = dependencyCheckFlightRegistry{active: make(map[string]*dependencyCheckFlight)}
 
 func runDependencyChecks(ctx context.Context, checks []HealthCheck) []dependencyCheckResult {
 	results := make([]dependencyCheckResult, len(checks))
@@ -81,25 +96,28 @@ func runDependencyCheck(ctx context.Context, check HealthCheck) dependencyCheckR
 		return dependencyCheckResult{Check: check, Latency: time.Since(started)}
 	}
 	key := dependencyCheckKey(check)
-	if !dependencyCheckFlights.acquire(key) {
-		err := context.DeadlineExceeded
-		if ctx.Err() != nil {
-			err = ctx.Err()
-		}
-		return dependencyCheckResult{Check: check, Err: err, Latency: time.Since(started), TimedOut: errors.Is(err, context.DeadlineExceeded)}
+	flight, owner := dependencyCheckFlights.acquire(key)
+	if !owner {
+		return waitForDependencyCheck(check, checkCtx, started, flight)
 	}
-	result := make(chan error, 1)
 	go func() {
-		defer dependencyCheckFlights.release(key)
-		result <- check.Check(checkCtx)
+		err := check.Check(checkCtx)
+		dependencyCheckFlights.release(key, flight, dependencyCheckOutcome{
+			Err:      err,
+			TimedOut: errors.Is(checkCtx.Err(), context.DeadlineExceeded),
+		})
 	}()
+	return waitForDependencyCheck(check, checkCtx, started, flight)
+}
+
+func waitForDependencyCheck(check HealthCheck, checkCtx context.Context, started time.Time, flight *dependencyCheckFlight) dependencyCheckResult {
 	select {
-	case err := <-result:
+	case <-flight.done:
 		return dependencyCheckResult{
 			Check:    check,
-			Err:      err,
+			Err:      flight.outcome.Err,
 			Latency:  time.Since(started),
-			TimedOut: errors.Is(checkCtx.Err(), context.DeadlineExceeded),
+			TimedOut: flight.outcome.TimedOut || errors.Is(checkCtx.Err(), context.DeadlineExceeded),
 		}
 	case <-checkCtx.Done():
 		return dependencyCheckResult{

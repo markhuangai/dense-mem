@@ -347,14 +347,17 @@ func applyTelemetryCardParentPolicies(cards []TelemetryCard) {
 	for index := range cards {
 		byID[cards[index].ID] = &cards[index]
 	}
-	for _, childID := range []string{"http_errors", "embedding_errors"} {
+	for _, childID := range []string{"http_errors", "embedding_errors", "assessor_request_failures", "assessor_validation_failures", "assessor_terminal_failures"} {
 		child := byID[childID]
 		if child == nil || child.Status != TelemetryItemInactive {
 			continue
 		}
 		parentID := "http_requests"
-		if childID == "embedding_errors" {
+		switch childID {
+		case "embedding_errors":
 			parentID = "embedding_requests"
+		case "assessor_request_failures", "assessor_validation_failures", "assessor_terminal_failures":
+			parentID = "assessor_requests"
 		}
 		if parent := byID[parentID]; parent != nil && parent.Status == TelemetryItemReady {
 			child.Status = TelemetryItemReady
@@ -437,6 +440,8 @@ func telemetrySeriesCanProveZero(id string, cards []TelemetryCard) bool {
 		parent = "http_requests"
 	case "embedding_errors":
 		parent = "embedding_requests"
+	case "assessor_request_failures", "assessor_validation_failures", "assessor_terminal_failures":
+		parent = "assessor_requests"
 	}
 	if parent == "" {
 		return false
