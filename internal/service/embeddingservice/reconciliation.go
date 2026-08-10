@@ -159,6 +159,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 					metrics.ObserveEmbeddingReconciliationRun("completed")
 					metrics.ObserveEmbeddingReconciliationDuration(time.Since(started).Seconds(), "completed")
 				}
+				run.Status = result.Status
 				s.logInfo(ctx, "embedding_reconciliation_completed", run, map[string]any{"canary_outcome": "skipped"})
 			}
 			return result, err
@@ -306,6 +307,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 				metrics.ObserveEmbeddingReconciliationRun("completed")
 				metrics.ObserveEmbeddingReconciliationDuration(time.Since(started).Seconds(), "completed")
 			}
+			run.Status = result.Status
 			s.logInfo(ctx, "embedding_reconciliation_completed", run, map[string]any{"requeued_count": requeued, "recovered_count": result.RecoveredCount})
 		}
 		return result, err

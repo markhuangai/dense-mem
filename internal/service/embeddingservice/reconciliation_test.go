@@ -255,9 +255,11 @@ func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
 	reconciliation := &reconciliationRepositoryStub{job: &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", Attempts: 20, EmbeddingDimensions: 3, DocumentText: "canary"}}
 	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
+	logger := &reconciliationLoggerStub{}
 	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
 	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
 		Search: search, Reconciliation: reconciliation, Provider: provider,
+		Logger:    logger,
 		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
 		WorkerID:  "worker-1", Now: func() time.Time { return now },
 	})
@@ -281,6 +283,30 @@ func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T
 	if reconciliation.completed.RequeuedCount != 3 || reconciliation.completed.RecoveredCount != 1 {
 		t.Fatalf("completed run = %#v", reconciliation.completed)
 	}
+	require.Len(t, logger.infos, 2)
+	assert.Equal(t, "embedding_reconciliation_completed", logger.infos[1].message)
+	assert.Equal(t, string(domain.EmbeddingReconciliationCompleted), reconciliationLogAttrValue(logger.infos[1].attrs, "status"))
+}
+
+func TestEmbeddingReconciliationLogsCompletedStatusWhenCanaryIsSkipped(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	reconciliation := &reconciliationRepositoryStub{}
+	logger := &reconciliationLoggerStub{}
+	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
+	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: &reconciliationRawProvider{available: true, model: "model", dims: 3},
+		Logger:    logger,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1", Now: func() time.Time { return now },
+	})
+
+	result, err := service.ProcessDue(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, string(domain.EmbeddingReconciliationCompleted), result.Status)
+	require.Len(t, logger.infos, 2)
+	assert.Equal(t, "embedding_reconciliation_completed", logger.infos[1].message)
+	assert.Equal(t, string(domain.EmbeddingReconciliationCompleted), reconciliationLogAttrValue(logger.infos[1].attrs, "status"))
 }
 
 func TestEmbeddingReconciliationFinalizesSuccessfulCanaryAfterContextCancellation(t *testing.T) {

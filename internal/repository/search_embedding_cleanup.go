@@ -120,6 +120,9 @@ func resolveEmbeddingIncidentsWithoutActiveJobs(ctx context.Context, tx *gorm.DB
 }
 
 func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string, limit int) error {
+	if err := tx.WithContext(ctx).Exec(`SELECT set_config('app.embedding_job_failure_writer', 'current', true)`).Error; err != nil {
+		return err
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH exhausted AS MATERIALIZED (
 			SELECT job.team_id, job.embedding_job_id
