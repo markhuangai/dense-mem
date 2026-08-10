@@ -355,7 +355,7 @@ type controlDependencyObservation struct {
 }
 
 func observeDependencies(ctx context.Context, health HealthConfig) controlDependencyObservation {
-	results := runDependencyChecks(ctx, health.Checks)
+	results := runDependencyChecks(ctx, health.dependencyCheckRegistry(), health.Checks)
 	responses := make([]controlDependencyResponse, 0, len(results)+1)
 	for _, result := range results {
 		if result.Check.Check == nil {

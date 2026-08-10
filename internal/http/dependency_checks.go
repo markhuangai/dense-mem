@@ -36,9 +36,16 @@ type dependencyCheckFlightRegistry struct {
 	active map[string]*dependencyCheckFlight
 }
 
+func newDependencyCheckFlightRegistry() *dependencyCheckFlightRegistry {
+	return &dependencyCheckFlightRegistry{active: make(map[string]*dependencyCheckFlight)}
+}
+
 func (r *dependencyCheckFlightRegistry) acquire(key string) (*dependencyCheckFlight, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.active == nil {
+		r.active = make(map[string]*dependencyCheckFlight)
+	}
 	if flight, exists := r.active[key]; exists {
 		return flight, false
 	}
@@ -57,9 +64,10 @@ func (r *dependencyCheckFlightRegistry) release(key string, flight *dependencyCh
 	r.mu.Unlock()
 }
 
-var dependencyCheckFlights = dependencyCheckFlightRegistry{active: make(map[string]*dependencyCheckFlight)}
-
-func runDependencyChecks(ctx context.Context, checks []HealthCheck) []dependencyCheckResult {
+func runDependencyChecks(ctx context.Context, registry *dependencyCheckFlightRegistry, checks []HealthCheck) []dependencyCheckResult {
+	if registry == nil {
+		registry = newDependencyCheckFlightRegistry()
+	}
 	results := make([]dependencyCheckResult, len(checks))
 	jobs := make(chan int)
 	workerCount := dependencyCheckConcurrency
@@ -76,7 +84,7 @@ func runDependencyChecks(ctx context.Context, checks []HealthCheck) []dependency
 		go func() {
 			defer workers.Done()
 			for index := range jobs {
-				results[index] = runDependencyCheck(ctx, checks[index])
+				results[index] = runDependencyCheck(ctx, registry, checks[index])
 			}
 		}()
 	}
@@ -88,7 +96,7 @@ func runDependencyChecks(ctx context.Context, checks []HealthCheck) []dependency
 	return results
 }
 
-func runDependencyCheck(ctx context.Context, check HealthCheck) dependencyCheckResult {
+func runDependencyCheck(ctx context.Context, registry *dependencyCheckFlightRegistry, check HealthCheck) dependencyCheckResult {
 	started := time.Now()
 	checkCtx, cancel := context.WithTimeout(ctx, dependencyCheckTimeout)
 	defer cancel()
@@ -96,28 +104,41 @@ func runDependencyCheck(ctx context.Context, check HealthCheck) dependencyCheckR
 		return dependencyCheckResult{Check: check, Latency: time.Since(started)}
 	}
 	key := dependencyCheckKey(check)
-	flight, owner := dependencyCheckFlights.acquire(key)
+	flight, owner := registry.acquire(key)
 	if !owner {
-		return waitForDependencyCheck(check, checkCtx, started, flight)
+		return waitForDependencyCheck(checkCtx, check, started, flight)
 	}
+	sharedCtx, sharedCancel := context.WithTimeout(context.WithoutCancel(ctx), dependencyCheckTimeout)
 	go func() {
-		err := check.Check(checkCtx)
-		dependencyCheckFlights.release(key, flight, dependencyCheckOutcome{
+		defer sharedCancel()
+		err := check.Check(sharedCtx)
+		registry.release(key, flight, dependencyCheckOutcome{
 			Err:      err,
-			TimedOut: errors.Is(checkCtx.Err(), context.DeadlineExceeded),
+			TimedOut: err != nil && errors.Is(sharedCtx.Err(), context.DeadlineExceeded),
 		})
 	}()
-	return waitForDependencyCheck(check, checkCtx, started, flight)
+	return waitForDependencyCheck(checkCtx, check, started, flight)
 }
 
-func waitForDependencyCheck(check HealthCheck, checkCtx context.Context, started time.Time, flight *dependencyCheckFlight) dependencyCheckResult {
+func waitForDependencyCheck(checkCtx context.Context, check HealthCheck, started time.Time, flight *dependencyCheckFlight) dependencyCheckResult {
 	select {
 	case <-flight.done:
+		err := flight.outcome.Err
+		timedOut := flight.outcome.TimedOut
+		if timedOut && err == nil {
+			err = context.DeadlineExceeded
+		}
+		if errors.Is(checkCtx.Err(), context.DeadlineExceeded) {
+			timedOut = true
+			if err == nil {
+				err = checkCtx.Err()
+			}
+		}
 		return dependencyCheckResult{
 			Check:    check,
-			Err:      flight.outcome.Err,
+			Err:      err,
 			Latency:  time.Since(started),
-			TimedOut: flight.outcome.TimedOut || errors.Is(checkCtx.Err(), context.DeadlineExceeded),
+			TimedOut: timedOut,
 		}
 	case <-checkCtx.Done():
 		return dependencyCheckResult{

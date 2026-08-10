@@ -12,6 +12,7 @@ import (
 )
 
 func TestRunDependencyChecksPreservesOrderAndCapsConcurrency(t *testing.T) {
+	registry := newDependencyCheckFlightRegistry()
 	var active atomic.Int32
 	var maximum atomic.Int32
 	checks := make([]HealthCheck, 7)
@@ -34,7 +35,7 @@ func TestRunDependencyChecksPreservesOrderAndCapsConcurrency(t *testing.T) {
 		}
 	}
 
-	results := runDependencyChecks(context.Background(), checks)
+	results := runDependencyChecks(context.Background(), registry, checks)
 	require.Len(t, results, len(checks))
 	require.LessOrEqual(t, maximum.Load(), int32(dependencyCheckConcurrency))
 	for index, result := range results {
@@ -65,6 +66,7 @@ func TestDependencyDisclosureBoundsFailureAndTimeout(t *testing.T) {
 }
 
 func TestRunDependencyChecksReturnsWhenCheckIgnoresCancellation(t *testing.T) {
+	registry := newDependencyCheckFlightRegistry()
 	started := make(chan struct{})
 	release := make(chan struct{})
 	checks := []HealthCheck{{
@@ -77,7 +79,7 @@ func TestRunDependencyChecksReturnsWhenCheckIgnoresCancellation(t *testing.T) {
 	}}
 
 	done := make(chan []dependencyCheckResult, 1)
-	go func() { done <- runDependencyChecks(context.Background(), checks) }()
+	go func() { done <- runDependencyChecks(context.Background(), registry, checks) }()
 	<-started
 
 	select {
@@ -92,6 +94,7 @@ func TestRunDependencyChecksReturnsWhenCheckIgnoresCancellation(t *testing.T) {
 }
 
 func TestRunDependencyChecksDoesNotRelaunchTimedOutCheckWhileInFlight(t *testing.T) {
+	registry := newDependencyCheckFlightRegistry()
 	started := make(chan struct{})
 	release := make(chan struct{})
 	finished := make(chan struct{})
@@ -109,7 +112,7 @@ func TestRunDependencyChecksDoesNotRelaunchTimedOutCheckWhileInFlight(t *testing
 	}}
 
 	firstDone := make(chan []dependencyCheckResult, 1)
-	go func() { firstDone <- runDependencyChecks(context.Background(), checks) }()
+	go func() { firstDone <- runDependencyChecks(context.Background(), registry, checks) }()
 	<-started
 	first := <-firstDone
 	require.Len(t, first, 1)
@@ -118,7 +121,7 @@ func TestRunDependencyChecksDoesNotRelaunchTimedOutCheckWhileInFlight(t *testing
 
 	secondCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	second := runDependencyChecks(secondCtx, checks)
+	second := runDependencyChecks(secondCtx, registry, checks)
 	require.Len(t, second, 1)
 	require.ErrorIs(t, second[0].Err, context.DeadlineExceeded)
 	require.Equal(t, int32(1), calls.Load())
@@ -127,8 +130,8 @@ func TestRunDependencyChecksDoesNotRelaunchTimedOutCheckWhileInFlight(t *testing
 	<-finished
 	deadline := time.Now().Add(time.Second)
 	for calls.Load() < 2 && time.Now().Before(deadline) {
-		third := runDependencyChecks(context.Background(), checks)
-		if len(third) == 1 && third[0].Err == nil {
+		third := runDependencyChecks(context.Background(), registry, checks)
+		if len(third) == 1 && third[0].Err == nil && !third[0].TimedOut && calls.Load() >= 2 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -137,32 +140,74 @@ func TestRunDependencyChecksDoesNotRelaunchTimedOutCheckWhileInFlight(t *testing
 }
 
 func TestRunDependencyChecksSharesInFlightResult(t *testing.T) {
+	registry := newDependencyCheckFlightRegistry()
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var calls atomic.Int32
 	checks := []HealthCheck{{
 		Name: "shared-success",
 		Check: func(context.Context) error {
-			calls.Add(1)
-			close(started)
+			if calls.Add(1) == 1 {
+				close(started)
+			}
 			<-release
 			return nil
 		},
 	}}
 
 	firstDone := make(chan []dependencyCheckResult, 1)
-	go func() { firstDone <- runDependencyChecks(context.Background(), checks) }()
+	go func() { firstDone <- runDependencyChecks(context.Background(), registry, checks) }()
 	<-started
 
 	go func() {
 		time.Sleep(25 * time.Millisecond)
 		close(release)
 	}()
-	second := runDependencyChecks(context.Background(), checks)
+	second := runDependencyChecks(context.Background(), registry, checks)
 	first := <-firstDone
 	require.Len(t, first, 1)
 	require.NoError(t, first[0].Err)
 	require.Len(t, second, 1)
 	require.NoError(t, second[0].Err)
+	require.Equal(t, int32(1), calls.Load())
+}
+
+func TestRunDependencyChecksSharedFlightOutlivesFirstCaller(t *testing.T) {
+	registry := newDependencyCheckFlightRegistry()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	checks := []HealthCheck{{
+		Name: "shared-independent-context",
+		Check: func(ctx context.Context) error {
+			if calls.Add(1) == 1 {
+				close(started)
+			}
+			select {
+			case <-release:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	}}
+
+	firstCtx, cancel := context.WithCancel(context.Background())
+	firstDone := make(chan []dependencyCheckResult, 1)
+	go func() { firstDone <- runDependencyChecks(firstCtx, registry, checks) }()
+	<-started
+	cancel()
+	first := <-firstDone
+	require.Len(t, first, 1)
+	require.ErrorIs(t, first[0].Err, context.Canceled)
+
+	secondDone := make(chan []dependencyCheckResult, 1)
+	go func() { secondDone <- runDependencyChecks(context.Background(), registry, checks) }()
+	time.Sleep(10 * time.Millisecond)
+	close(release)
+	second := <-secondDone
+	require.Len(t, second, 1)
+	require.NoError(t, second[0].Err)
+	require.False(t, second[0].TimedOut)
 	require.Equal(t, int32(1), calls.Load())
 }

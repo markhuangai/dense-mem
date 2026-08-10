@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -310,17 +311,17 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	require.Equal(t, `{status_class=~"4xx|5xx"}`, telemetrySelector(TelemetryScope{}, map[string]string{"status_class": `~"4xx|5xx"`}))
 	require.Equal(t, `{job="dense-mem-demo",status_class=~"4xx|5xx"}`, telemetrySelector(TelemetryScope{}, mergeTelemetryLabels(map[string]string{"job": "dense-mem-demo"}, map[string]string{"status_class": `~"4xx|5xx"`})))
 	feedbackRateQuery := telemetryRecallFeedbackRate(TelemetryScope{}, nil, map[string]string{"used": "true"}, "1h")
-	require.Contains(t, feedbackRateQuery, `min_over_time(densemem_recall_feedback_total{used="true"}[1h]) unless densemem_recall_feedback_total{used="true"} offset 1h`)
+	require.Contains(t, feedbackRateQuery, `min_over_time(densemem_recall_feedback_total{used="true"}[1h]) unless ignoring(__name__) last_over_time(densemem_recall_feedback_total{used="true"}[1h] offset 1h)`)
 	require.Contains(t, feedbackRateQuery, `0 * increase(densemem_recall_feedback_total{used="true"}[1h])`)
 	require.NotContains(t, feedbackRateQuery, `count_over_time(densemem_recall_feedback_total{used="true"}[1h]) < bool on(job, instance) group_left() count_over_time(up[1h])`)
-	require.Contains(t, feedbackRateQuery, `min_over_time(densemem_recall_feedback_total[1h]) unless densemem_recall_feedback_total offset 1h`)
+	require.Contains(t, feedbackRateQuery, `min_over_time(densemem_recall_feedback_total[1h]) unless ignoring(__name__) last_over_time(densemem_recall_feedback_total[1h] offset 1h)`)
 	require.Contains(t, feedbackRateQuery, `0 * increase(densemem_recall_feedback_total[1h])`)
 	qualityQuery := telemetrySparseHistogramAverage("densemem_recall_feedback_quality_score", TelemetryScope{}, nil, nil, "1h", 100)
-	require.Contains(t, qualityQuery, `min_over_time(densemem_recall_feedback_quality_score_sum[1h]) unless densemem_recall_feedback_quality_score_sum offset 1h`)
-	require.Contains(t, qualityQuery, `min_over_time(densemem_recall_feedback_quality_score_count[1h]) unless densemem_recall_feedback_quality_score_count offset 1h`)
+	require.Contains(t, qualityQuery, `min_over_time(densemem_recall_feedback_quality_score_sum[1h]) unless ignoring(__name__) last_over_time(densemem_recall_feedback_quality_score_sum[1h] offset 1h)`)
+	require.Contains(t, qualityQuery, `min_over_time(densemem_recall_feedback_quality_score_count[1h]) unless ignoring(__name__) last_over_time(densemem_recall_feedback_quality_score_count[1h] offset 1h)`)
 	require.Contains(t, feedbackRateQuery, `or vector(0)`)
 	rangeFeedbackQuery := telemetryRangeRecallFeedbackRate(`{job="dense-mem"}`, `used="true"`, "1m")
-	require.Contains(t, rangeFeedbackQuery, `min_over_time(densemem_recall_feedback_total{job="dense-mem",used="true"}[1m]) unless densemem_recall_feedback_total{job="dense-mem",used="true"} offset 1m`)
+	require.Contains(t, rangeFeedbackQuery, `min_over_time(densemem_recall_feedback_total{job="dense-mem",used="true"}[1m]) unless ignoring(__name__) last_over_time(densemem_recall_feedback_total{job="dense-mem",used="true"}[1m] offset 1m)`)
 	require.NotContains(t, rangeFeedbackQuery, `count_over_time(densemem_recall_feedback_total{job="dense-mem",used="true"}[1m]) < bool on(job, instance) group_left() count_over_time(up[1m])`)
 	require.Condition(t, func() bool {
 		for _, spec := range telemetryCardSpecs(TelemetryScope{}, nil, "1h") {
@@ -364,11 +365,11 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	}
 	require.NotEmpty(t, telemetryCurrentCardSpecs(TelemetryScope{}, nil))
 	operatorCards := telemetryCurrentCardSpecsForAudience(TelemetryScope{Type: "system"}, nil, true)
-	require.Len(t, operatorCards, 9)
 	require.Equal(t, "conflict_queue_collection_success", operatorCards[len(operatorCards)-1].ID)
 	require.Contains(t, operatorCards[len(operatorCards)-1].Query, "min(densemem_conflict_queue_collection_success")
 	userCards := telemetryCurrentCardSpecsForAudience(TelemetryScope{Type: "system"}, nil, false)
 	require.NotEmpty(t, userCards)
+	require.Len(t, operatorCards, len(userCards)+1)
 	require.NotContains(t, telemetryQuerySpecIDs(userCards), "conflict_queue_collection_success")
 	require.Empty(t, telemetryStateSeriesSpecs(""))
 
@@ -383,6 +384,9 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	_, err = normalizeTelemetryScope(TelemetryFilter{Scope: "profile", ProfileID: &profileID})
 	require.ErrorContains(t, err, "team_id is required")
 	_, err = normalizeTelemetryScope(TelemetryFilter{Scope: "profile"})
+	require.ErrorContains(t, err, "team_id is required")
+	nilTeamID := uuid.Nil
+	_, err = normalizeTelemetryScope(TelemetryFilter{Scope: "profile", TeamID: &nilTeamID, ProfileID: &profileID})
 	require.ErrorContains(t, err, "team_id is required")
 	_, err = normalizeTelemetryScope(TelemetryFilter{Scope: "other"})
 	require.ErrorContains(t, err, "scope must be one of")
@@ -608,7 +612,9 @@ func TestPrometheusTelemetryServiceLimitsQueryConcurrency(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, snapshot)
 	require.LessOrEqual(t, maximum.Load(), int32(telemetryQueryConcurrency))
-	require.Greater(t, maximum.Load(), int32(1))
+	if runtime.GOMAXPROCS(0) > 1 {
+		require.Greater(t, maximum.Load(), int32(1))
+	}
 }
 
 func TestPrometheusTelemetryServiceReportsFeatureAndScopeStates(t *testing.T) {
@@ -679,6 +685,77 @@ func TestTelemetryAggregateCostIncludesUnpricedEmbeddingActivity(t *testing.T) {
 	require.NotNil(t, aggregate)
 	require.Equal(t, TelemetryItemUnavailable, aggregate.Status)
 	require.Equal(t, "pricing_missing", aggregate.ReasonCode)
+}
+
+func TestTelemetryCostCardsPreserveUnpricedUsageReasons(t *testing.T) {
+	scope := TelemetryScope{Type: "system"}
+	specs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", true)
+	baseResults := map[string]telemetryInstantResult{
+		"verifier_requests":  {Scalar: telemetryScalar{Value: 1, Available: true}},
+		"embedding_requests": {Scalar: telemetryScalar{Value: 0, Available: true}},
+	}
+	for _, tc := range []struct {
+		name   string
+		reason string
+		code   string
+	}{
+		{name: "missing usage", reason: "missing_usage", code: "provider_usage_missing"},
+		{name: "invalid usage", reason: "invalid_usage", code: "usage_invalid"},
+		{name: "tokenizer failure", reason: "tokenizer_error", code: "usage_invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			results := make(map[string]telemetryInstantResult, len(baseResults)+1)
+			for id, result := range baseResults {
+				results[id] = result
+			}
+			results["verifier_cost_usd"] = telemetryInstantResult{Scalar: telemetryScalar{
+				Labels: map[string]string{"reason": tc.reason},
+			}}
+			cards := buildTelemetryCards(specs, results, repository.TelemetryLifecycleSnapshot{
+				Transitions: map[string]float64{},
+				Current:     map[string]float64{},
+			}, nil, nil, scope)
+			card := telemetrySpecByID(cards, "verifier_cost_usd")
+			require.NotNil(t, card)
+			require.Equal(t, TelemetryItemUnavailable, card.Status)
+			require.Equal(t, tc.code, card.ReasonCode)
+		})
+	}
+}
+
+func TestTelemetryConflictQueueFailureSentinelIsUnavailable(t *testing.T) {
+	scope := TelemetryScope{Type: "system"}
+	specs := telemetryCurrentCardSpecsForAudience(scope, nil, true)
+	cards := buildTelemetryCards(specs, map[string]telemetryInstantResult{
+		"conflict_queue_collection_success": {Scalar: telemetryScalar{Value: 0, Available: true}},
+	}, repository.TelemetryLifecycleSnapshot{
+		Transitions: map[string]float64{},
+		Current:     map[string]float64{},
+	}, nil, nil, scope)
+	card := telemetrySpecByID(cards, "conflict_queue_collection_success")
+	require.NotNil(t, card)
+	require.Equal(t, TelemetryItemUnavailable, card.Status)
+	require.Equal(t, "query_failed", card.ReasonCode)
+}
+
+func TestTelemetryRecallFeedbackParentUsesEventCount(t *testing.T) {
+	scope := TelemetryScope{Type: "system"}
+	specs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", false)
+	cards := buildTelemetryCards(specs, map[string]telemetryInstantResult{
+		telemetryRecallFeedbackActivityID: {Scalar: telemetryScalar{Value: 3, Available: true}},
+		"llm_recall_used_rate":            {Scalar: telemetryScalar{Value: 0, Available: true}},
+	}, repository.TelemetryLifecycleSnapshot{
+		Transitions: map[string]float64{},
+		Current:     map[string]float64{},
+	}, nil, nil, scope)
+	quality := telemetrySpecByID(cards, "llm_recall_quality_score")
+	require.NotNil(t, quality)
+	require.Equal(t, TelemetryItemUnavailable, quality.Status)
+	require.Equal(t, "query_failed", quality.ReasonCode)
+	parent := telemetrySpecByID(cards, telemetryRecallFeedbackActivityID)
+	require.NotNil(t, parent)
+	require.Equal(t, TelemetryItemReady, parent.Status)
+	require.Len(t, visibleTelemetryCards(cards), len(cards)-1)
 }
 
 func TestTelemetryParentActivityMakesMissingDerivedItemsUnavailable(t *testing.T) {
@@ -778,6 +855,14 @@ func TestTelemetrySnapshotDispositionIgnoresUnsupportedItems(t *testing.T) {
 	require.Equal(t, TelemetrySnapshotUnavailable, status)
 	require.False(t, available)
 	require.Equal(t, "telemetry sources are unavailable", message)
+
+	status, available, message = telemetrySnapshotDisposition(
+		[]TelemetryCard{{ID: "unsupported", Status: TelemetryItemUnsupported}},
+		[]TelemetrySeries{{ID: "ready", Status: TelemetryItemReady}},
+	)
+	require.NotEqual(t, TelemetrySnapshotUnavailable, status)
+	require.True(t, available)
+	require.Empty(t, message)
 }
 
 type captureTelemetryLogger struct {

@@ -29,15 +29,16 @@ type telemetryCatalogEntry struct {
 }
 
 const (
-	telemetrySourceCollector   = "collector"
-	telemetrySourceLedger      = "ledger"
-	telemetryAudienceUser      = "user"
-	telemetryAudienceOperator  = "operator"
-	telemetryParentNone        = "none"
-	telemetryZeroValid         = "valid_zero"
-	telemetryZeroParent        = "parent_activity_zero"
-	telemetryZeroUnavailable   = "unavailable_without_source"
-	telemetryZeroNotApplicable = "not_applicable"
+	telemetrySourceCollector          = "collector"
+	telemetrySourceLedger             = "ledger"
+	telemetryAudienceUser             = "user"
+	telemetryAudienceOperator         = "operator"
+	telemetryParentNone               = "none"
+	telemetryZeroValid                = "valid_zero"
+	telemetryZeroParent               = "parent_activity_zero"
+	telemetryZeroUnavailable          = "unavailable_without_source"
+	telemetryZeroNotApplicable        = "not_applicable"
+	telemetryRecallFeedbackActivityID = "llm_recall_feedback_events"
 )
 
 var telemetryAllScopes = []string{"system", "team", "profile"}
@@ -94,6 +95,14 @@ func telemetryCatalogEntryFor(id string) (telemetryCatalogEntry, bool) {
 		if entry.ID == id {
 			return entry, true
 		}
+	}
+	if id == telemetryRecallFeedbackActivityID {
+		return telemetryCatalogEntry{
+			ID: id, Source: "densemem_recall_feedback_total", SourceKind: telemetrySourceCollector,
+			Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes,
+			RuntimePrerequisite: "recall_feedback_enabled", ParentActivitySource: telemetryParentNone,
+			ZeroPolicy: telemetryZeroValid, Presentations: []string{"internal"},
+		}, true
 	}
 	if strings.HasPrefix(id, "relationship_transitions_") {
 		return telemetryCatalogEntry{
@@ -283,6 +292,10 @@ func buildTelemetryCards(specs []telemetryQuerySpec, results map[string]telemetr
 			}
 		} else if result, ok := results[spec.ID]; !ok || result.Err != nil {
 			disposition = telemetryUnavailable("query_failed")
+		} else if reason, ok := result.Scalar.Labels["reason"]; ok && strings.TrimSpace(reason) != "" {
+			disposition = telemetryUnavailable(telemetryUnpricedReasonCode(reason))
+		} else if spec.ID == "conflict_queue_collection_success" && result.Scalar.Available && result.Scalar.Value <= 0 {
+			disposition = telemetryUnavailable("query_failed")
 		} else if result.Scalar.Available {
 			value = result.Scalar.Value
 			disposition = telemetryReady()
@@ -303,6 +316,17 @@ func buildTelemetryCards(specs []telemetryQuerySpec, results map[string]telemetr
 	}
 	applyTelemetryCardParentPolicies(cards)
 	return cards
+}
+
+func visibleTelemetryCards(cards []TelemetryCard) []TelemetryCard {
+	visible := make([]TelemetryCard, 0, len(cards))
+	for _, card := range cards {
+		if card.ID == telemetryRecallFeedbackActivityID {
+			continue
+		}
+		visible = append(visible, card)
+	}
+	return visible
 }
 
 func buildTelemetrySeries(specs []telemetryQuerySpec, results map[string]telemetryRangeResult, features map[string]telemetryFeatureState, from, to time.Time, cards []TelemetryCard, scope TelemetryScope) []TelemetrySeries {
@@ -464,6 +488,13 @@ func telemetryParentCard(id string, cards []TelemetryCard) *TelemetryCard {
 	if !ok || entry.ParentActivitySource == telemetryParentNone {
 		return nil
 	}
+	if entry.ParentActivitySource == "densemem_recall_feedback_total" {
+		for index := range cards {
+			if cards[index].ID == telemetryRecallFeedbackActivityID {
+				return &cards[index]
+			}
+		}
+	}
 	for index := range cards {
 		parentEntry, ok := telemetryCatalogEntryFor(cards[index].ID)
 		if ok && parentEntry.Source == entry.ParentActivitySource {
@@ -569,6 +600,19 @@ func telemetryReason(code string) string {
 		return "The lifecycle ledger is unavailable."
 	default:
 		return "Telemetry is unavailable."
+	}
+}
+
+func telemetryUnpricedReasonCode(reason string) string {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "missing_usage":
+		return "provider_usage_missing"
+	case "invalid_usage", "tokenizer_error":
+		return "usage_invalid"
+	case "missing_price", "pricing_unavailable":
+		return "pricing_missing"
+	default:
+		return "pricing_missing"
 	}
 }
 

@@ -229,8 +229,8 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		if s != nil {
 			featureStates = s.telemetryFeatureStates(ctx, scope)
 		}
-		windowedCards := buildTelemetryCards(initialWindowedSpecs, nil, lifecycle, lifecycleErr, featureStates, scope)
-		currentCards := buildTelemetryCards(initialCurrentSpecs, nil, lifecycle, lifecycleErr, featureStates, scope)
+		windowedCards := visibleTelemetryCards(buildTelemetryCards(initialWindowedSpecs, nil, lifecycle, lifecycleErr, featureStates, scope))
+		currentCards := visibleTelemetryCards(buildTelemetryCards(initialCurrentSpecs, nil, lifecycle, lifecycleErr, featureStates, scope))
 		markTelemetryUnavailableForNonLedger(windowedCards, initialWindowedSpecs, "source_unconfigured")
 		markTelemetryUnavailableForNonLedger(currentCards, initialCurrentSpecs, "source_unconfigured")
 		markTelemetryUnavailableSeries(snapshot.ActivitySeries, "source_unconfigured")
@@ -270,10 +270,12 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		lifecycleErr = fmt.Errorf("telemetry lifecycle source is unavailable")
 	}
 
-	windowedCards := buildTelemetryCards(windowedCardSpecs, windowedResults, lifecycle, lifecycleErr, featureStates, scope)
-	currentCards := buildTelemetryCards(currentCardSpecs, currentResults, lifecycle, lifecycleErr, featureStates, scope)
-	activitySeries := buildTelemetrySeries(activitySpecs, activityResults, featureStates, from, to, windowedCards, scope)
-	stateSeries := buildTelemetrySeries(stateSpecs, stateResults, featureStates, from, to, windowedCards, scope)
+	windowedCardsWithInternal := buildTelemetryCards(windowedCardSpecs, windowedResults, lifecycle, lifecycleErr, featureStates, scope)
+	currentCardsWithInternal := buildTelemetryCards(currentCardSpecs, currentResults, lifecycle, lifecycleErr, featureStates, scope)
+	activitySeries := buildTelemetrySeries(activitySpecs, activityResults, featureStates, from, to, windowedCardsWithInternal, scope)
+	stateSeries := buildTelemetrySeries(stateSpecs, stateResults, featureStates, from, to, windowedCardsWithInternal, scope)
+	windowedCards := visibleTelemetryCards(windowedCardsWithInternal)
+	currentCards := visibleTelemetryCards(currentCardsWithInternal)
 
 	snapshot.WindowedCards = windowedCards
 	snapshot.CurrentCards = currentCards
@@ -309,12 +311,13 @@ func (s *PrometheusTelemetryService) logQueryFailure(kind string, spec telemetry
 }
 
 type telemetryQuerySpec struct {
-	ID      string
-	Label   string
-	Unit    string
-	Query   string
-	Ledger  bool
-	Catalog telemetryCatalogEntry
+	ID       string
+	Label    string
+	Unit     string
+	Query    string
+	Ledger   bool
+	Internal bool
+	Catalog  telemetryCatalogEntry
 }
 
 func (s *PrometheusTelemetryService) telemetryBaseLabels() map[string]string {
@@ -362,6 +365,7 @@ func telemetryWindowedCardSpecsForAudience(scope TelemetryScope, baseLabels map[
 		{ID: "p95_remember_acknowledgement_latency", Label: "P95 remember acknowledgement", Unit: "ms", Query: telemetryHistogramQuantile("densemem_remember_acknowledgement_duration_seconds", scope, baseLabels, nil, window, 0.95, 1000)},
 		{ID: "remember_first_dispositions", Label: "First remember dispositions", Unit: "requests", Query: telemetrySparseCounterIncrease("densemem_remember_first_disposition_total", scope, baseLabels, nil, window)},
 		{ID: "p95_remember_first_disposition_latency", Label: "P95 first disposition", Unit: "ms", Query: telemetryHistogramQuantile("densemem_remember_first_disposition_duration_seconds", scope, baseLabels, nil, window, 0.95, 1000)},
+		{ID: telemetryRecallFeedbackActivityID, Query: telemetrySparseCounterIncrease("densemem_recall_feedback_total", scope, baseLabels, nil, window), Internal: true},
 	}
 	specs = append(specs, telemetryLifecycleWindowedCardSpecs()...)
 	if !includeCost {
@@ -511,9 +515,17 @@ func telemetrySparseCounterIncrease(metric string, scope TelemetryScope, baseLab
 func telemetrySparseCounterIncreaseForSelector(metric string, selector string, window string) string {
 	ranged := fmt.Sprintf("increase(%s%s[%s])", metric, selector, window)
 	first := fmt.Sprintf("min_over_time(%s%s[%s])", metric, selector, window)
-	offset := fmt.Sprintf("%s%s offset %s", metric, selector, window)
-	fallback := fmt.Sprintf("((%s unless %s) or (0 * %s))", first, offset, ranged)
+	previous := fmt.Sprintf("last_over_time(%s%s[%s] offset %s)", metric, selector, window, window)
+	fallback := fmt.Sprintf("((%s unless ignoring(__name__) %s) or (0 * %s))", first, previous, ranged)
 	return fmt.Sprintf("sum(%s + %s)", ranged, fallback)
+}
+
+func telemetrySparseCounterIncreaseByLabelForSelector(metric, selector, window, label string) string {
+	ranged := fmt.Sprintf("increase(%s%s[%s])", metric, selector, window)
+	first := fmt.Sprintf("min_over_time(%s%s[%s])", metric, selector, window)
+	previous := fmt.Sprintf("last_over_time(%s%s[%s] offset %s)", metric, selector, window, window)
+	fallback := fmt.Sprintf("((%s unless ignoring(__name__) %s) or (0 * %s))", first, previous, ranged)
+	return fmt.Sprintf("sum by (%s) (%s + %s)", label, ranged, fallback)
 }
 
 func telemetryAICost(scope TelemetryScope, baseLabels map[string]string, component string, window string) string {
@@ -523,10 +535,12 @@ func telemetryAICost(scope TelemetryScope, baseLabels map[string]string, compone
 	}
 	cost := telemetrySparseCounterIncrease("densemem_ai_operation_cost_usd_total", scope, baseLabels, extra, window)
 	unpriced := telemetryOrZero(telemetrySparseCounterIncrease("densemem_ai_operation_unpriced_total", scope, baseLabels, extra, window))
+	unpricedByReason := telemetrySparseCounterIncreaseByLabelForSelector("densemem_ai_operation_unpriced_total", telemetrySelector(scope, mergeTelemetryLabels(baseLabels, extra)), window, "reason")
 	activity := telemetryAIRequestActivity(scope, baseLabels, component, window)
 	completeCost := fmt.Sprintf("((%s) unless ((%s) > 0))", cost, unpriced)
 	zeroWhenInactive := fmt.Sprintf("(vector(0) unless (((%s) + (%s)) > 0))", activity, unpriced)
-	return fmt.Sprintf("(%s or %s)", completeCost, zeroWhenInactive)
+	reasonWhenUnpriced := fmt.Sprintf("(0 * topk(1, (%s) > 0))", unpricedByReason)
+	return fmt.Sprintf("(%s or %s or %s)", completeCost, zeroWhenInactive, reasonWhenUnpriced)
 }
 
 func telemetryAIRequestActivity(scope TelemetryScope, baseLabels map[string]string, component string, window string) string {
@@ -571,8 +585,8 @@ func telemetrySparseHistogramQuantileForSelector(metric, selector, rateWindow st
 	bucket := metric + "_bucket"
 	ranged := fmt.Sprintf("increase(%s%s[%s])", bucket, selector, rateWindow)
 	first := fmt.Sprintf("min_over_time(%s%s[%s])", bucket, selector, rateWindow)
-	offset := fmt.Sprintf("%s%s offset %s", bucket, selector, rateWindow)
-	fallback := fmt.Sprintf("((%s unless %s) or (0 * %s))", first, offset, ranged)
+	previous := fmt.Sprintf("last_over_time(%s%s[%s] offset %s)", bucket, selector, rateWindow, rateWindow)
+	fallback := fmt.Sprintf("((%s unless ignoring(__name__) %s) or (0 * %s))", first, previous, ranged)
 	return fmt.Sprintf("%g * histogram_quantile(%g, sum by (le) ((%s) / %d))", multiplier, quantile, ranged+" + "+fallback, telemetryWindowSeconds(rateWindow))
 }
 
@@ -725,6 +739,7 @@ func (s *PrometheusTelemetryService) queryRange(ctx context.Context, query strin
 type telemetryScalar struct {
 	Value     float64
 	Available bool
+	Labels    map[string]string
 }
 
 func (s *PrometheusTelemetryService) queryInstant(ctx context.Context, query string) (telemetryScalar, error) {
@@ -746,7 +761,12 @@ func (s *PrometheusTelemetryService) queryInstant(ctx context.Context, query str
 	if len(resp.Data.Result) == 0 {
 		return telemetryScalar{}, nil
 	}
-	return decodePrometheusValue(resp.Data.Result[0].Value)
+	scalar, err := decodePrometheusValue(resp.Data.Result[0].Value)
+	if err != nil {
+		return telemetryScalar{}, err
+	}
+	scalar.Labels = resp.Data.Result[0].Metric
+	return scalar, nil
 }
 
 func (s *PrometheusTelemetryService) get(ctx context.Context, rawURL string, out any) error {
@@ -780,7 +800,8 @@ type prometheusInstantResponse struct {
 	Error  string `json:"error"`
 	Data   struct {
 		Result []struct {
-			Value []json.RawMessage `json:"value"`
+			Metric map[string]string `json:"metric"`
+			Value  []json.RawMessage `json:"value"`
 		} `json:"result"`
 	} `json:"data"`
 }
@@ -867,6 +888,9 @@ func telemetryEmptyStateSeries() []TelemetrySeries {
 func telemetryEmptyCardsFromSpecs(specs []telemetryQuerySpec) []TelemetryCard {
 	cards := make([]TelemetryCard, 0, len(specs))
 	for _, spec := range specs {
+		if spec.Internal {
+			continue
+		}
 		cards = append(cards, TelemetryCard{ID: spec.ID, Label: spec.Label, Unit: spec.Unit})
 	}
 	return cards

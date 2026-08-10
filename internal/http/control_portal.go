@@ -73,6 +73,9 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	if cfg == nil {
 		return nil, fmt.Errorf("control portal: config is required")
 	}
+	if health.dependencyFlights == nil {
+		health.dependencyFlights = newDependencyCheckFlightRegistry()
+	}
 	if strings.TrimSpace(cfg.GetControlPortalToken()) == "" {
 		return nil, fmt.Errorf("control portal: token is required")
 	}
