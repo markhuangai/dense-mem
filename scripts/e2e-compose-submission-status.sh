@@ -31,6 +31,12 @@ run_submission_status_e2e() {
   E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID="$(printf '%s' "$submission_status_json" | json_field graph_corrected_object_entity_id)"
   E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID="$(printf '%s' "$submission_status_json" | json_field relationship_id)"
   E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID="$(printf '%s' "$submission_status_json" | json_field successor_relationship_id)"
+  if [[ -z "$E2E_GRAPH_ANCHOR_ENTITY_ID" || -z "$E2E_GRAPH_ORIGINAL_OBJECT_ENTITY_ID" ||
+        -z "$E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID" || -z "$E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID" ||
+        -z "$E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID" ]]; then
+    echo "submission-status UAT did not return required graph fixture identifiers" >&2
+    return 1
+  fi
   dream_statement="submission status e2e"
   if [[ "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" == "1" ]]; then
     echo "Skipping compose-backed submission-status Playwright tests by DENSE_MEM_E2E_SKIP_PLAYWRIGHT."

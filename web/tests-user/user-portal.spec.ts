@@ -299,6 +299,11 @@ test("graph refresh replaces a corrected endpoint while the graph stays open", a
   await page.addInitScript(() => {
     const trackedWindow = window as Window & { __denseMemGraphLabels?: string[] };
     trackedWindow.__denseMemGraphLabels = [];
+    const clearRect = CanvasRenderingContext2D.prototype.clearRect;
+    CanvasRenderingContext2D.prototype.clearRect = function (x, y, width, height) {
+      trackedWindow.__denseMemGraphLabels = [];
+      return clearRect.call(this, x, y, width, height);
+    };
     const fillText = CanvasRenderingContext2D.prototype.fillText;
     CanvasRenderingContext2D.prototype.fillText = function (text, x, y, maxWidth) {
       const labels = trackedWindow.__denseMemGraphLabels ?? [];
@@ -345,17 +350,13 @@ test("graph refresh replaces a corrected endpoint while the graph stays open", a
   const requestsBeforeRefresh = harness.graphRequests.length;
 
   harness.correctRelationship();
-  await page.evaluate(() => {
-    (window as Window & { __denseMemGraphLabels?: string[] }).__denseMemGraphLabels = [];
-  });
   await page.getByLabel("Graph controls").getByRole("button", { name: "Refresh", exact: true }).click();
   await expect.poll(() => harness.graphRequests.length).toBeGreaterThan(requestsBeforeRefresh);
   await expect.poll(() => graphCanvasLabels(page)).toContain("Corrected Project");
   await page.waitForTimeout(300);
   const labels = await graphCanvasLabels(page);
-  const firstCorrected = labels.indexOf("Corrected Project");
-  expect(firstCorrected).toBeGreaterThanOrEqual(0);
-  expect(labels.lastIndexOf("Wrong Project")).toBeLessThan(firstCorrected);
+  expect(labels).toContain("Corrected Project");
+  expect(labels).not.toContain("Wrong Project");
 });
 
 test("read-only key cannot regenerate itself", async ({ page }) => {
