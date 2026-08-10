@@ -23,7 +23,9 @@ E2E_FILE_ID=""
 E2E_SERVER_IMAGE=""
 E2E_PLAYWRIGHT_CONTAINER=""
 
-source "${ROOT_DIR}/scripts/e2e-compose-conflict.sh"; source "${ROOT_DIR}/scripts/e2e-compose-embedding-reconciliation.sh"
+source "${ROOT_DIR}/scripts/e2e-compose-conflict.sh"
+source "${ROOT_DIR}/scripts/e2e-compose-embedding-reconciliation.sh"
+source "${ROOT_DIR}/scripts/e2e-compose-submission-status.sh"
 
 sanitize_project_name() {
   local raw="$1"
@@ -625,6 +627,8 @@ run_compose_playwright_tests() {
       -g
       "remembered API-key login uses a seven-day server session"
     )
+  elif [[ "${1:-}" == "submission_status" ]]; then
+    set_submission_status_playwright_args
   elif [[ "${1:-}" == "community" ]]; then test_args=("tests-compose/community-recall.spec.ts");
   elif [[ "${1:-}" == "conflict_queue" ]]; then test_args=("tests-compose/compose-conflict-queue.spec.ts");
   fi
@@ -655,6 +659,11 @@ run_compose_playwright_tests() {
     -e "DENSE_MEM_E2E_API_KEY=$api_key" \
     -e "DENSE_MEM_E2E_DREAM_STATEMENT=${dream_statement:-}" \
     -e "DENSE_MEM_PROMETHEUS_URL=$PROMETHEUS_URL" \
+    -e "DENSE_MEM_E2E_GRAPH_ANCHOR_ENTITY_ID=$E2E_GRAPH_ANCHOR_ENTITY_ID" \
+    -e "DENSE_MEM_E2E_GRAPH_ORIGINAL_OBJECT_ENTITY_ID=$E2E_GRAPH_ORIGINAL_OBJECT_ENTITY_ID" \
+    -e "DENSE_MEM_E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID=$E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID" \
+    -e "DENSE_MEM_E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID=$E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID" \
+    -e "DENSE_MEM_E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID=$E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID" \
     "$E2E_PLAYWRIGHT_CONTAINER" \
     sh -ec 'cd /tmp/web && npm ci && ./node_modules/.bin/playwright test --config playwright.compose.config.ts "$@"' \
     sh "${test_args[@]}"
@@ -924,15 +933,7 @@ if [[ "$E2E_SCENARIO" == "security_intake" ]]; then
 fi
 
 if [[ "$E2E_SCENARIO" == "submission_status" ]]; then
-  echo "Running compose-backed submission status and public-contract e2e with the configured live verifier."
-  DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
-  DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
-  DENSE_MEM_USER_URL="$USER_URL" \
-  DENSE_MEM_E2E_TEAM_ID="$team_id" \
-  DENSE_MEM_E2E_API_KEY="$api_key" \
-  DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
-  DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
-  node "$ROOT_DIR/tests/uat/submission_status_mcp_e2e.mjs"
+  run_submission_status_e2e "$team_id"
   exit 0
 fi
 if [[ "$E2E_SCENARIO" == "submission_assessment" ]]; then

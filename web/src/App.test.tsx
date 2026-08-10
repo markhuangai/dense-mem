@@ -527,6 +527,29 @@ describe("App", () => {
     expect(screen.getByLabelText("Top signals")).toHaveTextContent("n/a");
   });
 
+  it("keeps dependency diagnostics in a dedicated wrapping metric row", async () => {
+    const degradedMetrics: ControlMetrics = {
+      ...metricsSnapshot,
+      dependencies: [
+        { name: "postgres", status: "ok", latency_ms: 3 },
+        { name: "search_readiness", status: "error", reason_code: "check_failed", latency_ms: 161 },
+        { name: "redis", status: "degraded", reason_code: "single_node_mode", latency_ms: null },
+      ],
+    };
+    mockPortalFetch({ teams: [profileA], keys: [keyA()], metrics: degradedMetrics });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+
+    const dependencyRow = (await screen.findByText("Dependency checks")).closest(".metric-row");
+    expect(dependencyRow).not.toBeNull();
+    expect(within(dependencyRow as HTMLElement).getByText("Dependency checks")).toHaveClass("metric-label");
+    expect(within(dependencyRow as HTMLElement).getByText(/search_readiness/)).toHaveClass("metric-detail");
+    expect(dependencyRow).toHaveTextContent("1/3");
+    expect(dependencyRow).toHaveTextContent("redis · single_node_mode · latency n/a");
+  });
+
   it("shows operation log details, raw log expansion, and page size selection", async () => {
     const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });
     sessionStorage.setItem("denseMem.controlToken", "secret");

@@ -1,4 +1,4 @@
-import { expect, Page, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 const team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -103,7 +103,7 @@ const relationships = [
 
 const graphSnapshot = {
   scope: "overview",
-  depth: 1,
+  depth: 2,
   limit: 80,
   truncated: false,
   nodes: [
@@ -280,6 +280,82 @@ test("graph tab renders a nonblank memory graph", async ({ page }) => {
     return painted;
   })).toBeGreaterThan(0);
   expect(calls.graphRequests.some((url) => url.includes("/ui/api/graph?scope=overview"))).toBe(true);
+
+  const controls = page.getByLabel("Graph controls");
+  await controls.getByRole("button", { name: "Local" }).click();
+  await controls.getByLabel("Anchor ID").fill("entity-alice");
+  await controls.getByLabel("Depth").focus();
+  await controls.getByLabel("Depth").press("End");
+  await expect(controls.getByLabel("Depth")).toHaveValue("5");
+  await controls.getByLabel("Relationship limit").fill("181");
+  await controls.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect.poll(() => calls.graphRequests.some((requestUrl) => {
+    const url = new URL(requestUrl);
+    return url.searchParams.get("depth") === "5" && url.searchParams.get("limit") === "181";
+  })).toBe(true);
+});
+
+test("graph refresh replaces a corrected endpoint while the graph stays open", async ({ page }) => {
+  await page.addInitScript(() => {
+    const trackedWindow = window as Window & { __denseMemGraphLabels?: string[] };
+    trackedWindow.__denseMemGraphLabels = [];
+    const fillText = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (text, x, y, maxWidth) {
+      const labels = trackedWindow.__denseMemGraphLabels ?? [];
+      labels.push(String(text));
+      if (labels.length > 10_000) {
+        labels.splice(0, labels.length - 5_000);
+      }
+      trackedWindow.__denseMemGraphLabels = labels;
+      if (maxWidth === undefined) {
+        return fillText.call(this, text, x, y);
+      }
+      return fillText.call(this, text, x, y, maxWidth);
+    };
+  });
+  const original = {
+    ...graphSnapshot,
+    nodes: [
+      { key: "entity:entity-alice", id: "entity-alice", type: "entity", title: "Alice" },
+      { key: "entity:entity-wrong-project", id: "entity-wrong-project", type: "entity", title: "Wrong Project" },
+    ],
+    edges: [
+      { id: "relationship-original", source: "entity:entity-alice", target: "entity:entity-wrong-project", relationship: "USES", directed: true },
+    ],
+  };
+  const corrected = {
+    ...graphSnapshot,
+    nodes: [
+      { key: "entity:entity-alice", id: "entity-alice", type: "entity", title: "Alice" },
+      { key: "entity:entity-corrected-project", id: "entity-corrected-project", type: "entity", title: "Corrected Project" },
+    ],
+    edges: [
+      { id: "relationship-successor", source: "entity:entity-alice", target: "entity:entity-corrected-project", relationship: "USES", directed: true },
+    ],
+  };
+  const harness = await mockUserApi(page, {
+    key: readKey,
+    canRotate: false,
+    graphSnapshots: [original, corrected],
+  });
+  await openUserPortal(page, "dm_read");
+
+  await page.getByRole("button", { name: "Graph" }).click();
+  await expect.poll(() => graphCanvasLabels(page)).toContain("Wrong Project");
+  const requestsBeforeRefresh = harness.graphRequests.length;
+
+  harness.correctRelationship();
+  await page.evaluate(() => {
+    (window as Window & { __denseMemGraphLabels?: string[] }).__denseMemGraphLabels = [];
+  });
+  await page.getByLabel("Graph controls").getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect.poll(() => harness.graphRequests.length).toBeGreaterThan(requestsBeforeRefresh);
+  await expect.poll(() => graphCanvasLabels(page)).toContain("Corrected Project");
+  await page.waitForTimeout(300);
+  const labels = await graphCanvasLabels(page);
+  const firstCorrected = labels.indexOf("Corrected Project");
+  expect(firstCorrected).toBeGreaterThanOrEqual(0);
+  expect(labels.lastIndexOf("Wrong Project")).toBeLessThan(firstCorrected);
 });
 
 test("read-only key cannot regenerate itself", async ({ page }) => {
@@ -472,7 +548,13 @@ function rectanglesOverlap(
 
 async function mockUserApi(
   page: Page,
-  state: { key: TestKey; canRotate: boolean; canManageTeam?: boolean; profiles?: TestKey[] },
+  state: {
+    key: TestKey;
+    canRotate: boolean;
+    canManageTeam?: boolean;
+    profiles?: TestKey[];
+    graphSnapshots?: Array<typeof graphSnapshot>;
+  },
 ) {
   const calls = {
     rotateBodies: [] as string[],
@@ -485,6 +567,7 @@ async function mockUserApi(
   let currentCanRotate = state.canRotate;
   let currentProfiles = (state.profiles ?? []).map((profile) => ({ ...profile }));
   let portalSessionCreated = false;
+  let graphSnapshotIndex = 0;
 
   await page.route("**/ui/api/sso/providers", async (route) => {
     await route.fulfill({
@@ -620,10 +703,13 @@ async function mockUserApi(
 
   await page.route("**/ui/api/graph**", async (route) => {
     calls.graphRequests.push(route.request().url());
+    const snapshots = state.graphSnapshots ?? [graphSnapshot];
+    const snapshot = snapshots[Math.min(graphSnapshotIndex, snapshots.length - 1)];
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ data: graphSnapshot }),
+      headers: { "Cache-Control": "no-store" },
+      body: JSON.stringify({ data: snapshot }),
     });
   });
 
@@ -646,7 +732,18 @@ async function mockUserApi(
     });
   });
 
-  return calls;
+  return {
+    ...calls,
+    correctRelationship() {
+      graphSnapshotIndex = Math.max(0, (state.graphSnapshots?.length ?? 1) - 1);
+    },
+  };
+}
+
+async function graphCanvasLabels(page: Page): Promise<string[]> {
+  return page.evaluate(() => (
+    (window as Window & { __denseMemGraphLabels?: string[] }).__denseMemGraphLabels ?? []
+  ));
 }
 
 function telemetryForKey(key: TestKey) {

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -295,4 +296,52 @@ func TestSemanticGraphReadsEntityValueEdgesAndNodeDetail(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "July 17, 2026", valueNode.Title)
+}
+
+func TestSemanticGraphLocalDepthDefaultsToTwoAndCapsAtFive(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "graph-depth-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "graph-depth-owner")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	entities := make([]*EntityRecord, 7)
+	for index := range entities {
+		entities[index] = createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "concept", fmt.Sprintf("Depth Node %d", index))
+	}
+	for index := 0; index < len(entities)-1; index++ {
+		content := fmt.Sprintf("Depth Node %d uses Depth Node %d.", index, index+1)
+		ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID, fmt.Sprintf("graph-depth-%d", index), content)
+		applied := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+			TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+			SubjectEntityID: entities[index].EntityID, PredicateKey: "uses", ObjectEntityID: entities[index+1].EntityID,
+			Support: &EvidenceSupportInput{
+				FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: fmt.Sprintf("conversation:graph-depth:%d", index),
+				SpanStart: 0, SpanEnd: len(content), Authority: "primary",
+			},
+		})
+		require.NotNil(t, applied.Relationship)
+	}
+
+	defaults, err := semanticRepo.SemanticGraph(ctx, SemanticGraphQuery{
+		TeamID: teamID, Scope: "local", AnchorType: "entity", AnchorID: entities[0].EntityID, Limit: 181,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, defaults.Depth)
+	assert.Equal(t, 181, defaults.Limit)
+	assert.Len(t, defaults.Edges, 2)
+	assert.Contains(t, semanticGraphNodeIDs(defaults.Nodes), entities[2].EntityID)
+	assert.NotContains(t, semanticGraphNodeIDs(defaults.Nodes), entities[3].EntityID)
+
+	capped, err := semanticRepo.SemanticGraph(ctx, SemanticGraphQuery{
+		TeamID: teamID, Scope: "local", AnchorType: "entity", AnchorID: entities[0].EntityID, Depth: 99, Limit: 181,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 5, capped.Depth)
+	assert.Equal(t, 181, capped.Limit)
+	assert.Len(t, capped.Edges, 5)
+	assert.Contains(t, semanticGraphNodeIDs(capped.Nodes), entities[5].EntityID)
+	assert.NotContains(t, semanticGraphNodeIDs(capped.Nodes), entities[6].EntityID)
 }

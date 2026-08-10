@@ -20,6 +20,22 @@ func assertGraphHasNode(t *testing.T, nodes []SemanticGraphNode, nodeType, id, t
 	t.Fatalf("missing %s node %s in %+v", nodeType, id, nodes)
 }
 
+func semanticGraphNodeIDs(nodes []SemanticGraphNode) []string {
+	ids := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		ids = append(ids, node.ID)
+	}
+	return ids
+}
+
+func semanticGraphEdgeIDs(edges []SemanticGraphEdge) []string {
+	ids := make([]string, 0, len(edges))
+	for _, edge := range edges {
+		ids = append(ids, edge.ID)
+	}
+	return ids
+}
+
 func createSemanticEntity(
 	t *testing.T,
 	ctx context.Context,

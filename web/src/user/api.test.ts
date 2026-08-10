@@ -142,6 +142,7 @@ describe("UserApi", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/ui/api/graph?scope=local&q=project+graph&types=entity%2Cvalue&anchor_type=entity&anchor_id=entity-1&depth=2&limit=40",
       expect.objectContaining({
+        cache: "no-store",
         headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
       }),
     );
@@ -165,6 +166,7 @@ describe("UserApi", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/ui/api/node-detail?type=entity&id=entity-1",
       expect.objectContaining({
+        cache: "no-store",
         headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
       }),
     );

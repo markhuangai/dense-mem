@@ -158,6 +158,7 @@ func (h *userPortalHandler) telemetrySnapshot(c echo.Context) error {
 }
 
 func (h *userPortalHandler) graphSnapshot(c echo.Context) error {
+	c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
 	if h.graph == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "graph view unavailable")
 	}
@@ -197,6 +198,7 @@ func (h *userPortalHandler) graphSnapshot(c echo.Context) error {
 }
 
 func (h *userPortalHandler) graphNodeDetail(c echo.Context) error {
+	c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
 	if h.graph == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "graph view unavailable")
 	}

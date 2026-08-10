@@ -272,7 +272,7 @@ describe("UserPortalApp", () => {
 
     expect(await screen.findByLabelText("Knowledge graph")).toBeInTheDocument();
     const controls = screen.getByLabelText("Graph controls");
-    expect(within(controls).queryByLabelText("Limit")).not.toBeInTheDocument();
+    expect(within(controls).getByLabelText("Relationship limit")).toHaveValue(80);
     expect((await screen.findAllByText("Alice")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText("Graph totals")).toHaveTextContent("2");
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("Select a node");
@@ -284,14 +284,14 @@ describe("UserPortalApp", () => {
     expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2",
+        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2&limit=80",
         expect.any(Object),
       );
     });
     await userEvent.click(within(controls).getByRole("button", { name: "Refresh" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2",
+        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2&limit=80",
         expect.any(Object),
       );
     });
@@ -339,7 +339,7 @@ describe("UserPortalApp", () => {
     const controls = await screen.findByLabelText("Graph controls");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2",
+        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2&limit=80",
         expect.any(Object),
       );
     });

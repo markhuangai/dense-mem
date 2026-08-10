@@ -268,9 +268,9 @@ function MetricRow({
   return (
     <div className={`metric-row ${tone}`}>
       <span className="metric-icon">{icon}</span>
-      <span>{label}</span>
+      <span className="metric-label">{label}</span>
       <strong>{value}</strong>
-      <small>{trend}</small>
+      <small className="metric-detail">{trend}</small>
     </div>
   );
 }

@@ -25,9 +25,8 @@ const (
 	defaultTraceFragmentRunes = 2000
 	maxTraceFragmentRunes     = 8000
 	defaultSemanticGraphLimit = 80
-	maxSemanticGraphLimit     = 180
-	defaultSemanticGraphDepth = 1
-	maxSemanticGraphDepth     = 2
+	defaultSemanticGraphDepth = 2
+	maxSemanticGraphDepth     = 5
 )
 
 func (r *SemanticRepositoryImpl) TraceRelationship(
@@ -244,7 +243,7 @@ func normalizeSemanticGraphQuery(input SemanticGraphQuery) SemanticGraphQuery {
 	input.AnchorID = strings.TrimSpace(input.AnchorID)
 	input.Types = normalizeSemanticGraphTypes(input.Types)
 	input.Depth = clampInt(input.Depth, defaultSemanticGraphDepth, maxSemanticGraphDepth)
-	input.Limit = clampInt(input.Limit, defaultSemanticGraphLimit, maxSemanticGraphLimit)
+	input.Limit = defaultPositiveInt(input.Limit, defaultSemanticGraphLimit)
 	input.MinRelevance = normalizeRelevance(input.MinRelevance)
 	return input
 }
@@ -958,6 +957,13 @@ func clampInt(value, defaultValue, maxValue int) int {
 	}
 	if value > maxValue {
 		return maxValue
+	}
+	return value
+}
+
+func defaultPositiveInt(value, defaultValue int) int {
+	if value <= 0 {
+		return defaultValue
 	}
 	return value
 }

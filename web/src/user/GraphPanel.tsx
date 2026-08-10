@@ -21,6 +21,7 @@ type ForceNode = NodeObject<GraphNode> & GraphNode;
 type ForceLink = LinkObject<GraphNode, GraphEdge> & GraphEdge;
 
 const graphNodeTypes: GraphNodeType[] = ["entity", "value"];
+const defaultGraphLimit = 80;
 
 const defaultTypes: TypeFilter = {
   entity: true,
@@ -36,6 +37,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
   const [anchorId, setAnchorId] = useState("");
   const [types, setTypes] = useState<TypeFilter>(defaultTypes);
   const [depth, setDepth] = useState(2);
+  const [limitInput, setLimitInput] = useState(String(defaultGraphLimit));
   const [nodeSize, setNodeSize] = useState(5);
   const [linkDistance, setLinkDistance] = useState(92);
   const [showArrows, setShowArrows] = useState(true);
@@ -48,7 +50,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
   const [detailError, setDetailError] = useState("");
   const [graphRevision, setGraphRevision] = useState(0);
 
-  async function loadGraph(query: GraphQuery = buildQuery({ searchText, scope, anchorType, anchorId, types, depth })) {
+  async function loadGraph(query: GraphQuery) {
     if (query.types?.length === 0) {
       setError("Select at least one type.");
       return;
@@ -76,7 +78,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
   }
 
   useEffect(() => {
-    void loadGraph(buildQuery({ searchText: "", scope: "overview", anchorType, anchorId: "", types, depth: 2 }));
+    void loadGraph(buildQuery({ searchText: "", scope: "overview", anchorType, anchorId: "", types, depth: 2, limit: defaultGraphLimit }));
   }, [api]);
 
   const selectedNode = selectedKey ? snapshot?.nodes.find((node) => node.key === selectedKey) ?? null : null;
@@ -122,7 +124,12 @@ export function GraphPanel({ api }: { api: UserApi }) {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void loadGraph();
+    const limit = parseGraphLimit(limitInput);
+    if (limit === null) {
+      setError("Relationship limit must be a positive integer.");
+      return;
+    }
+    void loadGraph(buildQuery({ searchText, scope, anchorType, anchorId, types, depth, limit }));
   }
 
   function toggleType(type: GraphNodeType) {
@@ -136,7 +143,7 @@ export function GraphPanel({ api }: { api: UserApi }) {
           title="Graph"
           meta={snapshot ? `${snapshot.nodes.length} nodes / ${snapshot.edges.length} edges` : undefined}
         />
-        <form className="graph-control-form" onSubmit={submit}>
+        <form className="graph-control-form" noValidate onSubmit={submit}>
           <label htmlFor="graph-query">Search</label>
           <div className="search-input-wrap">
             <Search size={16} aria-hidden="true" />
@@ -184,8 +191,20 @@ export function GraphPanel({ api }: { api: UserApi }) {
 
           <div className="graph-slider-row">
             <label htmlFor="graph-depth">Depth</label>
-            <input id="graph-depth" type="range" min={1} max={2} step={1} value={depth} disabled={scope !== "local"} onChange={(event) => setDepth(Number(event.target.value))} />
+            <input id="graph-depth" type="range" min={1} max={5} step={1} value={depth} disabled={scope !== "local"} onChange={(event) => setDepth(Number(event.target.value))} />
             <span>{depth}</span>
+          </div>
+          <div className="graph-limit-row">
+            <label htmlFor="graph-relationship-limit">Relationship limit</label>
+            <input
+              id="graph-relationship-limit"
+              type="number"
+              min={1}
+              step={1}
+              inputMode="numeric"
+              value={limitInput}
+              onChange={(event) => setLimitInput(event.target.value)}
+            />
           </div>
           <div className="graph-slider-row">
             <label htmlFor="graph-node-size">Node size</label>
@@ -536,6 +555,7 @@ function buildQuery({
   anchorId,
   types,
   depth,
+  limit,
 }: {
   searchText: string;
   scope: "overview" | "local";
@@ -543,6 +563,7 @@ function buildQuery({
   anchorId: string;
   types: TypeFilter;
   depth: number;
+  limit: number;
 }): GraphQuery {
   const enabledTypes = graphNodeTypes.filter((type) => types[type]);
   return {
@@ -552,7 +573,13 @@ function buildQuery({
     anchorType: scope === "local" ? anchorType : undefined,
     anchorId: scope === "local" ? anchorId.trim() : undefined,
     depth,
+    limit,
   };
+}
+
+function parseGraphLimit(value: string): number | null {
+  const parsed = Number(value.trim());
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function drawNode(

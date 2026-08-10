@@ -131,6 +131,60 @@
   box-shadow: none;
 }
 
+.metric-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  column-gap: 10px;
+  row-gap: 3px;
+  align-items: center;
+  min-height: 32px;
+  padding: 7px 0;
+  color: var(--muted);
+  font-size: 13px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+}
+
+.metric-row:first-of-type {
+  border-top: 0;
+}
+
+.metric-icon {
+  display: inline-grid;
+  place-items: center;
+  align-self: start;
+  margin-top: 1px;
+  color: var(--accent-strong);
+}
+
+.metric-label {
+  min-width: 0;
+}
+
+.metric-row strong {
+  color: var(--text);
+  font-weight: 760;
+}
+
+.metric-detail {
+  grid-column: 2 / -1;
+  min-width: 0;
+  color: var(--subtle);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.metric-row.danger small,
+.metric-row.danger strong {
+  color: var(--danger);
+}
+
+.metric-row.warning small,
+.metric-row.warning strong {
+  color: var(--warning);
+}
+
 .summary-item,
 .metric-card {
   position: relative;

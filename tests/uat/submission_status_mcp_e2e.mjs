@@ -73,6 +73,36 @@ if (!relationshipID) {
   throw new Error("completed submission did not produce a relationship observation");
 }
 
+const relationshipEndpoints = postgresQuery(`
+  SELECT concat(subject_entity_id::text, '|', object_entity_id::text)
+  FROM relationship_records
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND relationship_id = ${sqlLiteral(relationshipID)}::uuid;
+`);
+const [subjectEntityID, originalObjectEntityID] = relationshipEndpoints.split("|");
+if (!subjectEntityID || !originalObjectEntityID) {
+  throw new Error(`could not resolve graph endpoints: ${relationshipEndpoints}`);
+}
+
+const defaultGraph = await userGraph();
+if (defaultGraph.depth !== 2 || defaultGraph.limit !== 80) {
+  throw new Error(`graph defaults are invalid: depth=${defaultGraph.depth}, limit=${defaultGraph.limit}`);
+}
+assertGraphContains(defaultGraph, relationshipID, originalObjectEntityID);
+
+const graphBeforeCorrection = await userGraph({
+  scope: "local",
+  anchor_type: "entity",
+  anchor_id: subjectEntityID,
+  depth: "5",
+  limit: "181",
+  types: "entity,value",
+});
+if (graphBeforeCorrection.depth !== 5 || graphBeforeCorrection.limit !== 181) {
+  throw new Error(`explicit graph bounds are invalid: depth=${graphBeforeCorrection.depth}, limit=${graphBeforeCorrection.limit}`);
+}
+assertGraphContains(graphBeforeCorrection, relationshipID, originalObjectEntityID);
+
 const trace = await mcpSuccess("trace_memory", { relationship_id: relationshipID, include_evidence_content: true });
 assertNoLegacySubmissionFields(trace);
 for (const observation of trace.observations ?? []) {
@@ -175,6 +205,26 @@ if (originalState !== "superseded" || successorState !== "active" || successorOw
   throw new Error(`relationship correction state is invalid: ${correctionState}`);
 }
 
+const correctedObjectEntityID = postgresQuery(`
+  SELECT object_entity_id::text
+  FROM relationship_records
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND relationship_id = ${sqlLiteral(successorID)}::uuid;
+`);
+if (!correctedObjectEntityID || correctedObjectEntityID === originalObjectEntityID) {
+  throw new Error(`correction did not replace the graph endpoint: ${correctedObjectEntityID || "missing"}`);
+}
+const graphAfterCorrection = await userGraph({
+  scope: "local",
+  anchor_type: "entity",
+  anchor_id: subjectEntityID,
+  depth: "5",
+  limit: "181",
+  types: "entity,value",
+});
+assertGraphContains(graphAfterCorrection, successorID, correctedObjectEntityID);
+assertGraphOmits(graphAfterCorrection, relationshipID, originalObjectEntityID);
+
 const ledgerTables = postgresQuery(`
   SELECT concat(
     COALESCE(to_regclass('public.skill_pack_imports')::text, ''), '|',
@@ -197,6 +247,9 @@ console.log(JSON.stringify({
   relationship_id: relationshipID,
   correction_submission_id: correction.submission_id,
   successor_relationship_id: successorID,
+  graph_anchor_entity_id: subjectEntityID,
+  graph_original_object_entity_id: originalObjectEntityID,
+  graph_corrected_object_entity_id: correctedObjectEntityID,
   listed_tool_count: listedNames.size,
   removed_tools_absent: true,
   profile_isolation: true,
@@ -336,6 +389,45 @@ async function createProfile(targetTeamID, name) {
     throw new Error("control API did not return a second profile key");
   }
   return { apiKey: key };
+}
+
+async function userGraph(params = {}) {
+  const query = new URLSearchParams(params);
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  const response = await fetch(`${userURL}/ui/api/graph${suffix}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    cache: "no-store",
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`graph HTTP ${response.status}: response body redacted`);
+  }
+  if (response.headers.get("cache-control") !== "no-store") {
+    throw new Error(`graph cache-control = ${response.headers.get("cache-control") ?? "missing"}`);
+  }
+  const graph = text ? JSON.parse(text).data : undefined;
+  if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
+    throw new Error("graph response is missing nodes or edges");
+  }
+  return graph;
+}
+
+function assertGraphContains(graph, relationshipID, nodeID) {
+  if (!graph.edges.some((edge) => edge.id === relationshipID)) {
+    throw new Error(`graph is missing relationship ${relationshipID}`);
+  }
+  if (!graph.nodes.some((node) => node.id === nodeID)) {
+    throw new Error(`graph is missing node ${nodeID}`);
+  }
+}
+
+function assertGraphOmits(graph, relationshipID, nodeID) {
+  if (graph.edges.some((edge) => edge.id === relationshipID)) {
+    throw new Error(`graph retained superseded relationship ${relationshipID}`);
+  }
+  if (graph.nodes.some((node) => node.id === nodeID)) {
+    throw new Error(`graph retained orphaned endpoint ${nodeID}`);
+  }
 }
 
 function postgresQuery(sql) {

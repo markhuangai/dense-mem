@@ -148,6 +148,32 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	})
 	require.NoError(t, err)
 
+	freshGraph, err := semantic.SemanticGraph(ctx, SemanticGraphQuery{TeamID: teamA, Limit: 181})
+	require.NoError(t, err)
+	assert.Contains(t, semanticGraphEdgeIDs(freshGraph.Edges), result.Correction.SuccessorRelationshipID)
+	assert.NotContains(t, semanticGraphEdgeIDs(freshGraph.Edges), original.RelationshipID)
+	assertGraphHasNode(t, freshGraph.Nodes, "entity", correctObject.EntityID, "Dense-Mem")
+	assert.NotContains(t, semanticGraphNodeIDs(freshGraph.Nodes), wrongObject.EntityID)
+
+	otherSubject := createSemanticEntity(t, ctx, semantic, teamA, ownerB, "person", "Other Owner")
+	otherContent := "Other Owner works on Wrong Project."
+	otherIngest := createSemanticIngest(t, ctx, ledger, teamA, ownerB, "relationship-correction-shared-endpoint", otherContent)
+	shared := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamA, OwnerProfileID: ownerB, IngestID: otherIngest.IngestID,
+		SubjectEntityID: otherSubject.EntityID, PredicateKey: "works_on", ObjectEntityID: wrongObject.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID: otherIngest.Evidence[0].FragmentID, SourceGroupKey: "conversation:correction:shared",
+			SpanStart: 0, SpanEnd: len(otherContent), Authority: "primary",
+		},
+	}).Relationship
+	require.NotNil(t, shared)
+
+	sharedGraph, err := semantic.SemanticGraph(ctx, SemanticGraphQuery{TeamID: teamA, Limit: 181})
+	require.NoError(t, err)
+	assert.Contains(t, semanticGraphEdgeIDs(sharedGraph.Edges), shared.RelationshipID)
+	assert.NotContains(t, semanticGraphEdgeIDs(sharedGraph.Edges), original.RelationshipID)
+	assertGraphHasNode(t, sharedGraph.Nodes, "entity", wrongObject.EntityID, "Wrong Project")
+
 	_, err = semantic.GetRelationshipCorrection(ctx, GetRelationshipCorrectionInput{
 		TeamID: teamA, OwnerProfileID: ownerB, SubmissionID: result.SubmissionID,
 	})
