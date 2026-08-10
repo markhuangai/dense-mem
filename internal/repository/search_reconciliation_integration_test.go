@@ -13,6 +13,29 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+func TestCheckSearchConvergenceDetectsActiveBacklog(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "convergence-health-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "convergence-health-owner")
+	insertSearchTestContract(t, adminDB, rls, "convergence-health", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+
+	require.NoError(t, repo.CheckSearchConvergence(ctx))
+	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "convergence health backlog", 1)
+	require.ErrorContains(t, repo.CheckSearchConvergence(ctx), "attention_required")
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_jobs
+			SET status = 'stale', completed_at = now(), updated_at = now()
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, teamID, document.QueuedJobID).Error
+	}))
+	require.NoError(t, repo.CheckSearchConvergence(ctx))
+}
+
 func TestReserveEmbeddingReconciliationRunWaitsForRecoverableCandidate(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

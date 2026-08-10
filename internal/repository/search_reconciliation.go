@@ -18,6 +18,51 @@ const reconciliationBatchLimit = 500
 
 var _ EmbeddingReconciliationRepository = (*SearchRepositoryImpl)(nil)
 
+// CheckSearchConvergence returns an error when the active search contract has
+// any queued, processing, or failed jobs, or an unresolved embedding incident.
+// It intentionally uses bounded existence checks for health probes instead of
+// building the full operator convergence projection.
+func (r *SearchRepositoryImpl) CheckSearchConvergence(ctx context.Context) error {
+	contract, err := r.GetActiveSearchContract(ctx)
+	if err != nil {
+		return err
+	}
+	var attentionRequired bool
+	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		return tx.WithContext(ctx).Raw(`
+			SELECT EXISTS (
+			    SELECT 1
+			    FROM embedding_jobs AS job
+			    JOIN teams AS team
+			      ON team.id = job.team_id
+			     AND team.status = 'active'
+			     AND team.deleted_at IS NULL
+			    WHERE job.embedding_contract_id = ?::uuid
+			      AND job.embedding_dimensions = ?
+			      AND job.status IN ('queued', 'processing', 'failed')
+			) OR EXISTS (
+			    SELECT 1
+			    FROM embedding_failure_incidents AS incident
+			    JOIN teams AS team
+			      ON team.id = incident.team_id
+			     AND team.status = 'active'
+			     AND team.deleted_at IS NULL
+			    WHERE incident.embedding_contract_id = ?::uuid
+			      AND incident.embedding_dimensions = ?
+			      AND incident.status IN ('open', 'recovering')
+			)
+		`, contract.EmbeddingContractID, contract.EmbeddingDimensions,
+			contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&attentionRequired).Error
+	})
+	if err != nil {
+		return fmt.Errorf("search: convergence health: %w", err)
+	}
+	if attentionRequired {
+		return errors.New("search convergence is attention_required")
+	}
+	return nil
+}
+
 func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input SearchConvergenceInput) (*SearchConvergence, error) {
 	input = normalizeSearchConvergenceInput(input)
 	if err := validateSearchConvergenceInput(input); err != nil {

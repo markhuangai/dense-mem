@@ -40,12 +40,11 @@ func TestActiveEmbeddingLeaseCoversRetryWindow(t *testing.T) {
 }
 
 type searchConvergenceHealthStub struct {
-	value *repository.SearchConvergence
-	err   error
+	err error
 }
 
-func (s searchConvergenceHealthStub) GetSearchConvergence(context.Context, repository.SearchConvergenceInput) (*repository.SearchConvergence, error) {
-	return s.value, s.err
+func (s searchConvergenceHealthStub) CheckSearchConvergence(context.Context) error {
+	return s.err
 }
 
 type searchConvergenceHealthLogger struct {
