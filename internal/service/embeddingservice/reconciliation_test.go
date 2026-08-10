@@ -3,6 +3,7 @@ package embeddingservice
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -400,6 +401,39 @@ func TestEmbeddingReconciliationSkipsInputRejectedCanary(t *testing.T) {
 	require.Len(t, reconciliation.resetInputs, 1)
 	assert.Equal(t, "bad-job", reconciliation.resetInputs[0].CanaryJobID)
 	assert.EqualValues(t, 3, result.RequeuedCount)
+}
+
+func TestEmbeddingReconciliationDefersAfterInputRejectedCanaryLimit(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	jobs := make([]*repository.EmbeddingJob, reconciliationCanaryAttemptLimit)
+	errs := make([]error, reconciliationCanaryAttemptLimit)
+	for i := range jobs {
+		jobs[i] = &repository.EmbeddingJob{
+			TeamID: "team-1", EmbeddingJobID: fmt.Sprintf("rejected-job-%d", i), Attempts: 20,
+			EmbeddingDimensions: 3, DocumentText: "rejected input",
+		}
+		errs[i] = &embedding.ProviderHTTPError{Status: 413}
+	}
+	reconciliation := &reconciliationRepositoryStub{jobs: jobs}
+	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, errs: errs}
+	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
+	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: provider,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1", Now: func() time.Time { return now },
+	})
+
+	result, err := service.ProcessDue(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, string(domain.EmbeddingReconciliationDeferred), result.Status)
+	assert.Equal(t, reconciliationCanaryAttemptLimit, provider.calls)
+	assert.Len(t, search.failInputs, reconciliationCanaryAttemptLimit)
+	assert.Len(t, reconciliation.resetInputs, reconciliationCanaryAttemptLimit)
+	require.NotNil(t, reconciliation.completed)
+	assert.Equal(t, string(domain.EmbeddingReconciliationDeferred), reconciliation.completed.Status)
+	assert.Equal(t, string(domain.EmbeddingFailurePermanent), reconciliation.completed.FailureClass)
+	assert.Equal(t, string(domain.EmbeddingFailureInputRejected), reconciliation.completed.FailureCode)
 }
 
 func TestEmbeddingReconciliationFinalizesFailedCanaryAfterContextCancellation(t *testing.T) {

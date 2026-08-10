@@ -671,6 +671,7 @@ func TestAppendEvidenceVectorFailureDegradationIsBounded(t *testing.T) {
 	if len(result.Degradations) != 1 || result.Degradations[0].Code != "evidence_vector_failed" || result.Degradation != &result.Degradations[0] {
 		t.Fatalf("failed search state projection = %#v", result)
 	}
+	require.Equal(t, "Some evidence vectors are unavailable; lexical recall remains available. Check the control portal for recovery guidance.", result.Degradations[0].Message)
 	appendEvidenceVectorFailureDegradation(nil, string(domain.SearchProjectionFailed))
 }
 

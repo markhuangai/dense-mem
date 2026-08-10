@@ -10,7 +10,7 @@ func appendEvidenceVectorFailureDegradation(result *RecallResult, searchState st
 		Frontier: "evidence",
 		Optional: true,
 		Code:     "evidence_vector_failed",
-		Message:  "Some evidence vectors are unavailable; lexical recall remains available while recovery is automatic.",
+		Message:  "Some evidence vectors are unavailable; lexical recall remains available. Check the control portal for recovery guidance.",
 	})
 	result.Degradation = &result.Degradations[len(result.Degradations)-1]
 }
