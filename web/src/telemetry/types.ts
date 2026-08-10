@@ -20,6 +20,9 @@ export type TelemetryCard = {
   unit: string;
   value: number;
   available?: boolean;
+  status?: "ready" | "inactive" | "unavailable" | "unsupported";
+  reason_code?: string;
+  reason?: string;
 };
 
 export type TelemetryPoint = {
@@ -32,10 +35,15 @@ export type TelemetrySeries = {
   label: string;
   unit: string;
   points: TelemetryPoint[];
+  status?: "ready" | "inactive" | "unavailable" | "unsupported";
+  reason_code?: string;
+  reason?: string;
 };
 
 export type TelemetrySnapshot = {
   available: boolean;
+  status?: "ready" | "degraded" | "unavailable";
+  generated_at?: string;
   message?: string;
   window: TelemetryWindow;
   scope: TelemetryScope;

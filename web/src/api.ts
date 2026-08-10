@@ -120,7 +120,7 @@ export type MetricsDependency = {
   name: string;
   status: "ok" | "error" | "degraded";
   latency_ms: number | null;
-  message?: string;
+  message?: string; reason_code?: string;
 };
 
 export type MetricsTeam = MetricsTotal & {
@@ -143,7 +143,7 @@ export type MetricsRoute = MetricsTotal & {
 };
 
 export type ControlMetrics = {
-  window: MetricsWindow;
+  window: MetricsWindow; dependencies_checked_at?: string;
   system: MetricsTotal;
   dependencies: MetricsDependency[];
   teams: MetricsTeam[];
@@ -621,10 +621,10 @@ export type DreamListResponse = {
   items: Dream[];
   next_cursor?: string;
 };
-
 type RequestOptions = {
   method?: string;
   body?: unknown;
+  signal?: AbortSignal;
 };
 
 export class ControlApi {
@@ -697,7 +697,7 @@ export class ControlApi {
     return this.requestEnvelope<{ status: string }>(`/security/bans/${encodeURIComponent(ip)}`, { method: "DELETE" });
   }
 
-  getMetrics(query: MetricsQuery = {}): Promise<ControlMetrics> {
+  getMetrics(query: MetricsQuery = {}, signal?: AbortSignal): Promise<ControlMetrics> {
     const params = new URLSearchParams();
     if (query.window_minutes !== undefined) {
       params.set("window_minutes", String(query.window_minutes));
@@ -706,7 +706,7 @@ export class ControlApi {
       params.set("team_id", query.team_id);
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    return this.requestEnvelope<ControlMetrics>(`/metrics${suffix}`);
+    return this.requestEnvelope<ControlMetrics>(`/metrics${suffix}`, { signal });
   }
 
   getConflictQueue(teamId: string, query: ConflictQueueQuery = {}): Promise<ConflictQueuePage> {
@@ -724,7 +724,7 @@ export class ControlApi {
     return this.requestEnvelope<ConflictQueuePage>(`/teams/${encodeURIComponent(teamId)}/conflicts/queue${suffix}`);
   }
 
-  getTelemetry(query: ControlTelemetryQuery = {}): Promise<TelemetrySnapshot> {
+  getTelemetry(query: ControlTelemetryQuery = {}, signal?: AbortSignal): Promise<TelemetrySnapshot> {
     const params = new URLSearchParams();
     if (query.window) {
       params.set("window", query.window);
@@ -739,7 +739,7 @@ export class ControlApi {
       params.set("profile_id", query.profile_id);
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    return this.requestEnvelope<TelemetrySnapshot>(`/telemetry${suffix}`);
+    return this.requestEnvelope<TelemetrySnapshot>(`/telemetry${suffix}`, { signal });
   }
 
   listSSOProviders(): Promise<SSOProvider[]> {
@@ -986,6 +986,7 @@ export class ControlApi {
       method: options.method ?? "GET",
       token: this.token || undefined,
       body: options.body,
+      signal: options.signal,
       credentials: this.token ? undefined : "include",
       csrf: this.token ? undefined : { cookieName: "dense_mem_control_csrf", headerName: "X-Dense-Mem-Control-CSRF" },
     });

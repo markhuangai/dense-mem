@@ -27,15 +27,15 @@ func handleHealth(healthConfig HealthConfig) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		ctx := c.Request().Context()
 		checks := make(map[string]string)
-		for _, check := range healthConfig.Checks {
-			if err := check.Check(ctx); err != nil {
-				if check.Optional {
-					checks[check.Name] = "degraded"
+		for _, result := range runDependencyChecks(ctx, healthConfig.Checks) {
+			if result.Err != nil || result.TimedOut {
+				if result.Check.Optional {
+					checks[result.Check.Name] = "degraded"
 				} else {
-					checks[check.Name] = "failed"
+					checks[result.Check.Name] = "failed"
 				}
 			} else {
-				checks[check.Name] = "ok"
+				checks[result.Check.Name] = "ok"
 			}
 		}
 
@@ -62,17 +62,16 @@ func handleReady(checks []HealthCheck) echo.HandlerFunc {
 		dependencies := make(map[string]string)
 		allPass := true
 
-		// Execute all health checks
-		for _, check := range checks {
-			if err := check.Check(ctx); err != nil {
-				if check.Optional {
-					dependencies[check.Name] = "degraded"
+		for _, result := range runDependencyChecks(ctx, checks) {
+			if result.Err != nil || result.TimedOut {
+				if result.Check.Optional {
+					dependencies[result.Check.Name] = "degraded"
 				} else {
-					dependencies[check.Name] = "failed"
+					dependencies[result.Check.Name] = "failed"
 					allPass = false
 				}
 			} else {
-				dependencies[check.Name] = "ok"
+				dependencies[result.Check.Name] = "ok"
 			}
 		}
 

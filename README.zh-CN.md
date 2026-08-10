@@ -77,8 +77,9 @@ ${EDITOR:-vi} .env
 docker compose up -d
 ```
 
-基础 stack 使用带 pgvector 的 PostgreSQL 作为持久权威。正常运行时保持 `NEO4J_*`
-未设置；遗留 Neo4j 语料只能作为迁移输入，不是运行时回退。默认本机端口：
+基础 stack 使用带 pgvector 的 PostgreSQL 作为持久权威。当前版本会拒绝任何
+`NEO4J_*` 设置。如果安装仍有遗留 Neo4j 语料，先使用 v2.1.2 完成引导迁移，
+再在升级时清除这些变量。Neo4j 只能作为迁移输入，不是运行时回退。默认本机端口：
 
 ```text
 MCP:            http://127.0.0.1:8080/mcp
@@ -150,7 +151,8 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 
 - `AI_VERIFIER_MODEL` 要设为 chat endpoint 上真实存在的模型。启动校验会在开始
   写入 memory 前发现缺失或错误配置。7B-8B 级别模型适合本地 smoke test；更大的
-模型在加载期间可能超过默认 60 秒超时，处理会保持可重试直到模型可响应。
+模型在加载期间可能超过默认 60 秒超时。可重试处理受持久化的 placement 尝试预算限制，
+预算耗尽后会进入终态。
 
 ## 证据生命周期
 
@@ -307,7 +309,8 @@ memory-pack 仅导出当前的 `dense-mem.memory-pack.v2.4` artifact。导入和
 ## Telemetry Overlay
 
 Prometheus telemetry 默认关闭。若要为第一方 dashboard 收集 HTTP、embedding、
-verifier、recall、feedback 和 conflict-review 指标，请和基础 stack 一起启动 overlay：
+verifier、assessor、recall feedback、Remember、conflict-review、cost 和 Relationship
+生命周期指标，请和基础 stack 一起启动 overlay：
 
 ```bash
 curl -fsSLo prometheus.yml \
@@ -320,8 +323,13 @@ docker compose -f docker-compose.yml -f docker-compose.telemetry.yml up -d
 ```
 
 overlay 会在 `127.0.0.1:9090` 启动 Prometheus，并通过
-`TELEMETRY_PROMETHEUS_JOB=dense-mem` 限定 dashboard 查询。自由文本 recall-feedback
-comment 保存在有界调查记录中；Prometheus 只接收有界 labels。
+`TELEMETRY_PROMETHEUS_JOB=dense-mem` 限定 dashboard 查询。dashboard snapshot 会标明
+每个项目是 ready、inactive、unavailable 还是 unsupported。已证明的零值会显示为零；
+缺少 provider usage 或 pricing 时保持 unavailable。部分来源失败不会隐藏仍然成功的卡片和
+图表。system、team 和 profile scope 使用与底层数据相同的可见性规则。自由文本
+recall-feedback comment 保存在有界调查记录中；Prometheus 只接收有界 labels。冲突队列
+状态 gauge 由每个实例发出，多实例 dashboard 应使用 `max by (team_id, status)`（或等价
+的 label 集合），事件 counter 仍使用普通的 `sum` 和 `rate` 语义。
 
 ## 职责边界
 

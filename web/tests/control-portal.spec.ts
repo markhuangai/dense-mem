@@ -89,21 +89,22 @@ const metrics = {
 };
 
 const telemetryCards = [
-  { id: "http_requests", label: "HTTP requests", unit: "requests", value: 42 },
-  { id: "http_errors", label: "HTTP errors", unit: "requests", value: 2 },
-  { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens", value: 1200 },
-  { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens", value: 3200 },
-  { id: "recalls", label: "Recall requests", unit: "requests", value: 9 },
-  { id: "avg_recall_results", label: "Avg recall results", unit: "results", value: 3.2 },
-  { id: "llm_recall_used_rate", label: "LLM recall used", unit: "percent", value: 80 },
-  { id: "llm_recall_answer_supported_rate", label: "LLM answer supported", unit: "percent", value: 70 },
-  { id: "llm_recall_quality_score", label: "LLM recall quality", unit: "percent", value: 75 },
-  { id: "llm_recall_missing_context_rate", label: "LLM missing context", unit: "percent", value: 10 },
-  { id: "llm_recall_irrelevant_rate", label: "LLM irrelevant recall", unit: "percent", value: 5 },
-  { id: "avg_http_latency", label: "Avg HTTP latency", unit: "ms", value: 18.5 },
-  { id: "avg_embedding_latency", label: "Avg embedding latency", unit: "ms", value: 44.2 },
-  { id: "avg_verifier_latency", label: "Avg verifier latency", unit: "ms", value: 112.8 },
-  { id: "avg_conflict_review_duration", label: "Avg conflict review", unit: "ms", value: 210.4 },
+  { id: "http_requests", label: "HTTP requests", unit: "requests", value: 42, status: "ready", available: true },
+  { id: "http_errors", label: "HTTP errors", unit: "requests", value: 2, status: "ready", available: true },
+  { id: "verifier_tokens", label: "Verifier tokens", unit: "tokens", value: 1200, status: "ready", available: true },
+  { id: "embedding_tokens", label: "Embedding tokens", unit: "tokens", value: 3200, status: "ready", available: true },
+  { id: "recalls", label: "Recall requests", unit: "requests", value: 9, status: "ready", available: true },
+  { id: "avg_recall_results", label: "Avg recall results", unit: "results", value: 3.2, status: "ready", available: true },
+  { id: "llm_recall_used_rate", label: "LLM recall used", unit: "percent", value: 80, status: "ready", available: true },
+  { id: "llm_recall_answer_supported_rate", label: "LLM answer supported", unit: "percent", value: 70, status: "ready", available: true },
+  { id: "llm_recall_quality_score", label: "LLM recall quality", unit: "percent", value: 75, status: "ready", available: true },
+  { id: "llm_recall_missing_context_rate", label: "LLM missing context", unit: "percent", value: 10, status: "ready", available: true },
+  { id: "llm_recall_irrelevant_rate", label: "LLM irrelevant recall", unit: "percent", value: 5, status: "ready", available: true },
+  { id: "avg_http_latency", label: "Avg HTTP latency", unit: "ms", value: 18.5, status: "ready", available: true },
+  { id: "avg_embedding_latency", label: "Avg embedding latency", unit: "ms", value: 44.2, status: "ready", available: true },
+  { id: "avg_verifier_latency", label: "Avg verifier latency", unit: "ms", value: 112.8, status: "ready", available: true },
+  { id: "avg_conflict_review_duration", label: "Avg conflict review", unit: "ms", value: 210.4, status: "ready", available: true },
+  { id: "ai_cost_usd", label: "AI cost", unit: "USD", value: 0, status: "unavailable", available: false, reason_code: "pricing_missing", reason: "Pricing is not configured for this usage." },
 ];
 
 const telemetrySeries = [
@@ -121,6 +122,7 @@ const telemetrySeries = [
   { id: "conflict_review_duration", label: "Conflict review", unit: "ms" },
 ].map((series, index) => ({
   ...series,
+  status: "ready",
   points: [
     { timestamp: "2026-05-02T12:00:00Z", value: index / 10 },
     { timestamp: "2026-05-02T13:00:00Z", value: index / 10 + 0.4 },
@@ -139,10 +141,12 @@ const telemetry = {
   scope: { type: "system" },
   cards: telemetryCards,
   windowed_cards: telemetryCards,
-  current_cards: [],
+  current_cards: [{ id: "relationships_active", label: "Relationships: active", unit: "relationships", value: 4, status: "ready", available: true }],
   series: telemetrySeries,
   activity_series: telemetrySeries,
-  state_series: [],
+  state_series: [{ id: "relationships_active", label: "Relationships: active", unit: "relationships", points: [{ timestamp: "2026-05-02T12:00:00Z", value: 4 }, { timestamp: "2026-05-02T13:00:00Z", value: 4 }], status: "ready" }],
+  status: "degraded",
+  generated_at: "2026-05-02T13:00:00Z",
 };
 
 const operationLogs = [
@@ -369,15 +373,16 @@ test("metrics tab renders operational totals and filter queries", async ({ page 
   await expect(page.locator(".resource-rail")).toHaveCount(0);
 
   const telemetryTotals = page.getByLabel("Telemetry totals");
-  for (const card of telemetry.windowed_cards) {
+  for (const card of telemetry.windowed_cards.filter((item) => item.status === "ready")) {
     await expect(telemetryTotals).toContainText(card.label);
   }
-	await expect(page.getByLabel("Telemetry current state")).toHaveCount(0);
+  await expect(page.getByLabel("Telemetry current state")).toContainText("Relationships: active");
   const telemetryCharts = page.getByLabel("Telemetry charts");
   for (const series of telemetry.activity_series) {
     await expect(telemetryCharts).toContainText(series.label);
   }
-	await expect(page.getByLabel("Telemetry state history")).toHaveCount(0);
+  await expect(page.getByLabel("Telemetry state history")).toContainText("Relationships: active");
+  await expect(page.getByText("Inactive / unavailable (1)")).toBeVisible();
 
   const summary = page.getByLabel("Request metrics");
   await expect(summary).toContainText("42");
@@ -643,6 +648,10 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
     const method = route.request().method();
 
     if (url.endsWith("/session")) {
+      const authorization = route.request().headers().authorization ?? "";
+      if (authorization !== "Bearer secret") {
+        return route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ message: "missing token" }) });
+      }
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { authenticated: true } }) });
     }
     if (url.includes("/telemetry") && method === "GET") {

@@ -263,6 +263,11 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	_, err := controlOperationLogsFilter(c)
 	require.ErrorContains(t, err, "limit must be between 1 and 500")
 
+	req = httptest.NewRequest(http.MethodGet, "/control/api/telemetry?scope=unsupported", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlTelemetryFilter(c)
+	require.ErrorContains(t, err, "scope must be one of system, team, profile")
+
 	req = httptest.NewRequest(http.MethodGet, "/control/api/logs?severity=trace", nil)
 	c = e.NewContext(req, rec)
 	_, err = controlOperationLogsFilter(c)
@@ -389,9 +394,13 @@ func TestControlDependencySnapshotErrorAndDegraded(t *testing.T) {
 	assert.Equal(t, "postgres", snapshot[0].Name)
 	assert.Equal(t, "error", snapshot[0].Status)
 	require.NotNil(t, snapshot[0].Message)
-	assert.Contains(t, *snapshot[0].Message, assert.AnError.Error())
+	assert.Equal(t, "Dependency check failed.", *snapshot[0].Message)
+	require.NotNil(t, snapshot[0].ReasonCode)
+	assert.Equal(t, "check_failed", *snapshot[0].ReasonCode)
 	assert.Equal(t, "redis", snapshot[1].Name)
 	assert.Equal(t, "degraded", snapshot[1].Status)
+	require.NotNil(t, snapshot[1].ReasonCode)
+	assert.Equal(t, "single_node_mode", *snapshot[1].ReasonCode)
 }
 
 var _ service.OperationLogReader = (*controlOperationLogReaderStub)(nil)

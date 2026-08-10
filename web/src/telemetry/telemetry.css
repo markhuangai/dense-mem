@@ -30,6 +30,49 @@
   line-height: 1.2;
 }
 
+.telemetry-reason-ledger {
+  margin-top: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.telemetry-reason-ledger summary {
+  padding: 11px 13px;
+  color: var(--warning);
+  font-size: 13px;
+  font-weight: 740;
+  cursor: pointer;
+}
+
+.telemetry-reason-groups {
+  display: grid;
+  gap: 8px;
+  padding: 0 13px 13px;
+}
+
+.telemetry-reason-group {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.4fr) 1fr;
+  gap: 4px 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.telemetry-reason-group strong {
+  color: var(--text);
+}
+
+.telemetry-reason-group span,
+.telemetry-reason-group small {
+  color: var(--muted);
+}
+
+.telemetry-reason-group small {
+  grid-column: 2;
+}
+
 .telemetry-chart-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -88,6 +131,14 @@
 
   .telemetry-chart-grid {
     grid-template-columns: 1fr;
+  }
+
+  .telemetry-reason-group {
+    grid-template-columns: 1fr;
+  }
+
+  .telemetry-reason-group small {
+    grid-column: 1;
   }
 }
 

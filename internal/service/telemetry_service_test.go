@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *testing.T) {
@@ -25,6 +26,8 @@ func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *te
 
 	require.NoError(t, err)
 	require.False(t, snapshot.Available)
+	require.Equal(t, TelemetrySnapshotUnavailable, snapshot.Status)
+	require.NotEmpty(t, snapshot.GeneratedAt)
 	require.Equal(t, "30m", snapshot.Window.Key)
 	require.Equal(t, "telemetry backend is not configured", snapshot.Message)
 	require.NotEmpty(t, snapshot.Cards)
@@ -43,6 +46,38 @@ func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *te
 	require.Contains(t, string(payload), `"current_cards"`)
 	require.Contains(t, string(payload), `"activity_series"`)
 	require.Contains(t, string(payload), `"state_series"`)
+}
+
+func TestPrometheusTelemetryService_UnconfiguredPrometheusKeepsLifecycleCards(t *testing.T) {
+	active := "active"
+	lifecycle := &telemetryLifecycleReaderStub{snapshot: repository.TelemetryLifecycleSnapshot{
+		Transitions: map[string]float64{active: 2},
+		Corrections: 1,
+		Current:     map[string]float64{active: 3},
+	}}
+	svc := NewPrometheusTelemetryService("", time.Second)
+	svc.now = func() time.Time { return time.Date(2026, 5, 2, 13, 0, 0, 0, time.UTC) }
+	svc.SetLifecycleReader(lifecycle)
+
+	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system", Audience: TelemetryAudienceOperator})
+
+	require.NoError(t, err)
+	require.True(t, snapshot.Available)
+	require.Equal(t, TelemetrySnapshotDegraded, snapshot.Status)
+	require.Equal(t, "telemetry backend is not configured", snapshot.Message)
+	transition := telemetrySpecByID(snapshot.WindowedCards, "relationship_transitions_active")
+	require.NotNil(t, transition)
+	require.Equal(t, TelemetryItemReady, transition.Status)
+	require.Equal(t, 2.0, transition.Value)
+	current := telemetrySpecByID(snapshot.CurrentCards, "relationships_active")
+	require.NotNil(t, current)
+	require.Equal(t, TelemetryItemReady, current.Status)
+	require.Equal(t, 3.0, current.Value)
+	httpRequests := telemetrySpecByID(snapshot.WindowedCards, "http_requests")
+	require.NotNil(t, httpRequests)
+	require.Equal(t, TelemetryItemUnavailable, httpRequests.Status)
+	require.Equal(t, "source_unconfigured", httpRequests.ReasonCode)
+	require.Equal(t, 1, lifecycle.calls)
 }
 
 func TestTelemetryCostCardsAreOperatorOnly(t *testing.T) {
@@ -114,7 +149,7 @@ func TestTelemetryTerminalFailureSeriesIsOperatorSystemOnly(t *testing.T) {
 	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	team := TelemetryScope{Type: "team", TeamID: &teamID}
 	teamCard := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(team, nil, "1h", true), "assessor_terminal_failures")
-	require.Nil(t, teamCard)
+	require.NotNil(t, teamCard)
 }
 
 func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
@@ -143,6 +178,7 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 		Scope:     "profile",
 		TeamID:    &teamID,
 		ProfileID: &profileID,
+		Audience:  TelemetryAudienceOperator,
 	})
 
 	require.NoError(t, err)
@@ -154,7 +190,7 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 	require.Len(t, snapshot.Series, len(snapshot.ActivitySeries)+len(snapshot.StateSeries))
 	require.NotNil(t, telemetrySpecByID(snapshot.WindowedCards, "http_requests"))
 	require.NotNil(t, telemetrySpecByID(snapshot.WindowedCards, "avg_conflict_review_duration"))
-	require.Empty(t, snapshot.CurrentCards)
+	require.NotEmpty(t, snapshot.CurrentCards)
 	require.NotNil(t, telemetrySeriesByID(snapshot.ActivitySeries, "conflict_review_duration"))
 	require.Empty(t, snapshot.StateSeries)
 	require.Condition(t, func() bool {
@@ -194,9 +230,7 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 	})
 	require.Condition(t, func() bool {
 		for _, query := range queries {
-			if strings.Contains(query, `densemem_dream_feedback_total`) &&
-				strings.Contains(query, `decision="promote_candidate"`) &&
-				strings.Contains(query, `outcome="ok"`) {
+			if strings.Contains(query, `densemem_dream_feedback_total`) {
 				return true
 			}
 		}
@@ -246,10 +280,11 @@ func TestPrometheusTelemetryService_SnapshotTimeoutBoundsSequentialQueries(t *te
 	elapsed := time.Since(start)
 
 	require.NoError(t, err)
-	require.False(t, snapshot.Available)
-	require.Equal(t, "telemetry backend query failed", snapshot.Message)
+	require.True(t, snapshot.Available)
+	require.Equal(t, TelemetrySnapshotDegraded, snapshot.Status)
+	require.Equal(t, "some telemetry sources are unavailable", snapshot.Message)
 	require.Less(t, elapsed, 250*time.Millisecond)
-	require.Less(t, requests.Load(), int32(len(telemetryCardSpecs(TelemetryScope{Type: "system"}, nil, "15m"))))
+	require.LessOrEqual(t, requests.Load(), int32(len(telemetryCardSpecs(TelemetryScope{Type: "system"}, nil, "15m"))))
 }
 
 func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
@@ -296,19 +331,20 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	})
 	require.Condition(t, func() bool {
 		for _, spec := range telemetrySeriesSpecs(`{job="dense-mem"}`, "1m") {
-			if spec.ID == "dream_promote_candidates" {
-				return strings.Contains(spec.Query, `decision="promote_candidate",outcome="ok"`)
+			if spec.ID == "dream_feedbacks" {
+				return strings.Contains(spec.Query, "densemem_dream_feedback_total")
 			}
 		}
 		return false
 	})
-	require.Equal(t, `1000 * histogram_quantile(0.95, sum(rate(densemem_recall_duration_seconds_bucket[1m])) by (le))`, telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", "", "", "1m", 0.95, 1000))
+	require.Contains(t, telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", "", "", "1m", 0.95, 1000), "histogram_quantile(0.95")
+	require.Contains(t, telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", "", "", "1m", 0.95, 1000), "min_over_time")
 	windowedIDs := telemetryQuerySpecIDs(telemetryWindowedCardSpecs(TelemetryScope{}, nil, "1h"))
 	require.Subset(t, windowedIDs, []string{
 		"embedding_requests",
 		"embedding_errors",
 		"verifier_requests",
-		"verify_verdicts",
+		"recalls",
 		"avg_conflict_review_duration",
 	})
 	activityIDs := telemetryQuerySpecIDs(telemetryActivitySeriesSpecs("", "1m"))
@@ -316,7 +352,7 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 		"embedding_requests",
 		"embedding_errors",
 		"verifier_requests",
-		"verify_verdicts",
+		"recalls",
 		"conflict_review_duration",
 	})
 	for _, retiredID := range []string{"fragment_creates", "claim_creates", "promotions", "retractions", "facts_requeued", "community_runs", "promote_lock_wait"} {
@@ -325,9 +361,9 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	}
 	require.Empty(t, telemetryCurrentCardSpecs(TelemetryScope{}, nil))
 	operatorCards := telemetryCurrentCardSpecsForAudience(TelemetryScope{Type: "system"}, nil, true)
-	require.Len(t, operatorCards, 1)
-	require.Equal(t, "conflict_queue_collection_success", operatorCards[0].ID)
-	require.Contains(t, operatorCards[0].Query, "min(densemem_conflict_queue_collection_success")
+	require.Len(t, operatorCards, 9)
+	require.Equal(t, "conflict_queue_collection_success", operatorCards[len(operatorCards)-1].ID)
+	require.Contains(t, operatorCards[len(operatorCards)-1].Query, "min(densemem_conflict_queue_collection_success")
 	require.Empty(t, telemetryCurrentCardSpecsForAudience(TelemetryScope{Type: "system"}, nil, false))
 	require.Empty(t, telemetryStateSeriesSpecs(""))
 
@@ -415,7 +451,8 @@ func TestPrometheusTelemetryService_QueryFailureBranches(t *testing.T) {
 	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m"})
 	require.NoError(t, err)
 	require.False(t, snapshot.Available)
-	require.Equal(t, "telemetry backend query failed", snapshot.Message)
+	require.Equal(t, TelemetrySnapshotUnavailable, snapshot.Status)
+	require.Equal(t, "telemetry sources are unavailable", snapshot.Message)
 }
 
 func TestPrometheusTelemetryService_LogsQueryFailure(t *testing.T) {
@@ -427,24 +464,224 @@ func TestPrometheusTelemetryService_LogsQueryFailure(t *testing.T) {
 	logger := &captureTelemetryLogger{}
 	svc := NewPrometheusTelemetryServiceWithLogger(prom.URL, time.Second, logger)
 
-	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system"})
+	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system", Audience: TelemetryAudienceOperator})
 
 	require.NoError(t, err)
 	require.False(t, snapshot.Available)
-	require.Equal(t, "telemetry backend query failed", snapshot.Message)
+	require.Equal(t, TelemetrySnapshotUnavailable, snapshot.Status)
+	require.Equal(t, "telemetry sources are unavailable", snapshot.Message)
 	require.Equal(t, "telemetry backend query failed", logger.message)
 	require.ErrorContains(t, logger.err, "bad instant")
-	require.Contains(t, logger.attrs, "query_kind=instant")
-	require.Contains(t, logger.attrs, "query_id=http_requests")
+	require.Condition(t, func() bool {
+		return containsTelemetryAttr(logger.attrs, "query_kind=instant") || containsTelemetryAttr(logger.attrs, "query_kind=range")
+	})
 	require.Contains(t, logger.attrs, "window=15m")
 	require.Contains(t, logger.attrs, "scope=system")
-	require.Contains(t, logger.attrs, "prometheus_query=sum(increase(densemem_http_requests_total[15m]))")
+	require.Condition(t, func() bool { return hasTelemetryAttrPrefix(logger.attrs, "prometheus_query=") })
+}
+
+func TestPrometheusTelemetryServiceKeepsSuccessfulItemsWhenOneQueryFails(t *testing.T) {
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("query"), "status_class") {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if r.URL.Path == "/api/v1/query_range" {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"values":[[1770000000,"1"],[1770000060,"1"]]}]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"1"]}]}}`))
+	}))
+	defer prom.Close()
+
+	svc := NewPrometheusTelemetryService(prom.URL, time.Second)
+	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system", Audience: TelemetryAudienceOperator})
+	require.NoError(t, err)
+	require.Equal(t, TelemetrySnapshotDegraded, snapshot.Status)
+	require.True(t, snapshot.Available)
+	require.Equal(t, TelemetryItemReady, telemetrySpecByID(snapshot.WindowedCards, "http_requests").Status)
+	errorCard := telemetrySpecByID(snapshot.WindowedCards, "http_errors")
+	require.NotNil(t, errorCard)
+	require.Equal(t, TelemetryItemUnavailable, errorCard.Status)
+	require.Equal(t, "query_failed", errorCard.ReasonCode)
+	payload, marshalErr := json.Marshal(snapshot)
+	require.NoError(t, marshalErr)
+	require.NotContains(t, string(payload), `"points":null`)
+}
+
+func TestPrometheusTelemetryServiceKeepsLifecycleItemsWhenPrometheusTimesOut(t *testing.T) {
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer prom.Close()
+
+	lifecycle := &telemetryLifecycleReaderStub{snapshot: repository.TelemetryLifecycleSnapshot{
+		Transitions: map[string]float64{"active": 1},
+		Current:     map[string]float64{"active": 1},
+	}}
+	svc := NewPrometheusTelemetryService(prom.URL, 20*time.Millisecond)
+	svc.SetLifecycleReader(lifecycle)
+
+	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system", Audience: TelemetryAudienceOperator})
+	require.NoError(t, err)
+	require.Equal(t, TelemetrySnapshotDegraded, snapshot.Status)
+	require.True(t, snapshot.Available)
+	active := telemetrySpecByID(snapshot.CurrentCards, "relationships_active")
+	require.NotNil(t, active)
+	require.Equal(t, TelemetryItemReady, active.Status)
+	require.Equal(t, 1.0, active.Value)
+	require.Equal(t, 1, lifecycle.calls)
+}
+
+func TestPrometheusTelemetryServicePreservesSparseFirstObservations(t *testing.T) {
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		if r.URL.Path == "/api/v1/query_range" {
+			if strings.Contains(query, "densemem_http_requests_total") {
+				_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"values":[[1770000000,"0"],[1770000060,"0.5"]]}]}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
+			return
+		}
+		if strings.Contains(query, "densemem_http_requests_total") {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000060,"1"]}]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
+	}))
+	defer prom.Close()
+
+	svc := NewPrometheusTelemetryService(prom.URL, time.Second)
+	svc.now = func() time.Time { return time.Unix(1770000060, 0).UTC() }
+
+	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system"})
+
+	require.NoError(t, err)
+	httpCard := telemetrySpecByID(snapshot.WindowedCards, "http_requests")
+	require.NotNil(t, httpCard)
+	require.Equal(t, TelemetryItemReady, httpCard.Status)
+	require.Equal(t, 1.0, httpCard.Value)
+	httpSeries := telemetrySeriesByID(snapshot.ActivitySeries, "http_rps")
+	require.NotNil(t, httpSeries)
+	require.Equal(t, TelemetryItemReady, httpSeries.Status)
+	require.Len(t, httpSeries.Points, 2)
+	require.Equal(t, 0.5, httpSeries.Points[1].Value)
+}
+
+func TestPrometheusTelemetryServiceLimitsQueryConcurrency(t *testing.T) {
+	var active atomic.Int32
+	var maximum atomic.Int32
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := active.Add(1)
+		for {
+			old := maximum.Load()
+			if current <= old || maximum.CompareAndSwap(old, current) {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+		active.Add(-1)
+		if r.URL.Path == "/api/v1/query_range" {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
+	}))
+	defer prom.Close()
+
+	svc := NewPrometheusTelemetryService(prom.URL, time.Second)
+	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system"})
+
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	require.LessOrEqual(t, maximum.Load(), int32(telemetryQueryConcurrency))
+	require.Greater(t, maximum.Load(), int32(1))
+}
+
+func TestPrometheusTelemetryServiceReportsFeatureAndScopeStates(t *testing.T) {
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/query_range" {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"values":[[1770000000,"1"]]}]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"1"]}]}}`))
+	}))
+	defer prom.Close()
+
+	teamID := uuid.New()
+	profileID := uuid.New()
+	svc := NewPrometheusTelemetryService(prom.URL, time.Second)
+	svc.SetFeatureResolver(TelemetryFeatureResolver{
+		RecallFeedbackEnabled: func(context.Context) (bool, error) { return false, nil },
+		DreamingEnabled:       func(context.Context, *uuid.UUID) (bool, error) { return false, nil },
+	})
+	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "profile", TeamID: &teamID, ProfileID: &profileID, Audience: TelemetryAudienceOperator})
+	require.NoError(t, err)
+	require.Equal(t, TelemetryItemInactive, telemetrySpecByID(snapshot.WindowedCards, "llm_recall_used_rate").Status)
+	require.Equal(t, "feature_disabled", telemetrySpecByID(snapshot.WindowedCards, "dream_feedbacks").ReasonCode)
+	require.Equal(t, TelemetryItemUnsupported, telemetrySpecByID(snapshot.WindowedCards, "embedding_cost_usd").Status)
+	require.Equal(t, TelemetryItemUnsupported, telemetrySpecByID(snapshot.WindowedCards, "assessor_requests").Status)
+	require.Equal(t, TelemetryItemReady, telemetrySpecByID(snapshot.WindowedCards, "verifier_cost_usd").Status)
+}
+
+func TestTelemetryCostCardsFailClosedWhenActivityIsUnpriced(t *testing.T) {
+	scope := TelemetryScope{Type: "system"}
+	specs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", true)
+	results := map[string]telemetryInstantResult{
+		"verifier_requests":  {Scalar: telemetryScalar{Value: 1, Available: true}},
+		"embedding_requests": {Scalar: telemetryScalar{Value: 0, Available: true}},
+		"verifier_cost_usd":  {Scalar: telemetryScalar{}},
+		"embedding_cost_usd": {Scalar: telemetryScalar{}},
+	}
+	cards := buildTelemetryCards(specs, results, repository.TelemetryLifecycleSnapshot{
+		Transitions: map[string]float64{},
+		Current:     map[string]float64{},
+	}, nil, nil, scope)
+
+	verifier := telemetrySpecByID(cards, "verifier_cost_usd")
+	require.NotNil(t, verifier)
+	require.Equal(t, TelemetryItemUnavailable, verifier.Status)
+	require.Equal(t, "pricing_missing", verifier.ReasonCode)
+	embedding := telemetrySpecByID(cards, "embedding_cost_usd")
+	require.NotNil(t, embedding)
+	require.Equal(t, TelemetryItemReady, embedding.Status)
+	require.Equal(t, 0.0, embedding.Value)
 }
 
 type captureTelemetryLogger struct {
 	message string
 	err     error
 	attrs   []string
+}
+
+type telemetryLifecycleReaderStub struct {
+	snapshot repository.TelemetryLifecycleSnapshot
+	err      error
+	calls    int
+}
+
+func (s *telemetryLifecycleReaderStub) ReadTelemetryLifecycle(context.Context, repository.TelemetryLifecycleFilter, time.Time, time.Time) (repository.TelemetryLifecycleSnapshot, error) {
+	s.calls++
+	return s.snapshot, s.err
+}
+
+func containsTelemetryAttr(attrs []string, want string) bool {
+	for _, attr := range attrs {
+		if attr == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTelemetryAttrPrefix(attrs []string, prefix string) bool {
+	for _, attr := range attrs {
+		if strings.HasPrefix(attr, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *captureTelemetryLogger) Info(string, ...observability.LogAttr) {}

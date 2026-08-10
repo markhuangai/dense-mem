@@ -346,44 +346,63 @@ func optionalControlTime(raw string, name string) (*time.Time, error) {
 }
 
 func controlDependencySnapshot(ctx context.Context, health HealthConfig) []controlDependencyResponse {
-	responses := make([]controlDependencyResponse, 0, len(health.Checks)+1)
-	for _, check := range health.Checks {
-		if check.Check == nil {
+	return observeDependencies(ctx, health).Dependencies
+}
+
+type controlDependencyObservation struct {
+	CheckedAt    string
+	Dependencies []controlDependencyResponse
+}
+
+func observeDependencies(ctx context.Context, health HealthConfig) controlDependencyObservation {
+	results := runDependencyChecks(ctx, health.Checks)
+	responses := make([]controlDependencyResponse, 0, len(results)+1)
+	for _, result := range results {
+		if result.Check.Check == nil {
 			continue
 		}
-		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		start := time.Now()
-		err := check.Check(checkCtx)
-		latency := time.Since(start).Milliseconds()
-		cancel()
-
 		status := "ok"
-		var message *string
-		if err != nil {
+		if result.Err != nil || result.TimedOut {
 			status = "error"
-			if check.Optional {
+			if result.Check.Optional {
 				status = "degraded"
 			}
-			text := err.Error()
-			message = &text
 		}
+		message, reasonCode := dependencyFailureDisclosure(result)
+		latency := result.Latency.Milliseconds()
 		responses = append(responses, controlDependencyResponse{
-			Name:      check.Name,
-			Status:    status,
-			LatencyMS: &latency,
-			Message:   message,
+			Name:       result.Check.Name,
+			Status:     status,
+			LatencyMS:  &latency,
+			Message:    message,
+			ReasonCode: reasonCode,
 		})
 	}
 	if health.Degraded {
-		message := health.Reason
-		if message == "" {
-			message = "degraded mode"
-		}
+		message := "Single-node coordination is active."
+		reasonCode := "single_node_mode"
 		responses = append(responses, controlDependencyResponse{
-			Name:    "redis",
-			Status:  "degraded",
-			Message: &message,
+			Name:       "redis",
+			Status:     "degraded",
+			Message:    &message,
+			ReasonCode: &reasonCode,
 		})
 	}
-	return responses
+	return controlDependencyObservation{
+		CheckedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+		Dependencies: responses,
+	}
+}
+
+func dependencyFailureDisclosure(result dependencyCheckResult) (*string, *string) {
+	if result.Err == nil && !result.TimedOut {
+		return nil, nil
+	}
+	reasonCode := "check_failed"
+	message := "Dependency check failed."
+	if result.TimedOut {
+		reasonCode = "check_timeout"
+		message = "Dependency check timed out."
+	}
+	return &message, &reasonCode
 }

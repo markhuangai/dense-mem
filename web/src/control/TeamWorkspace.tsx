@@ -1,6 +1,7 @@
 import { CSSProperties, ReactNode, useEffect, useState } from "react";
 import { Activity, CheckCircle2, Moon, Network, Users } from "lucide-react";
 import { ControlApi, Team, TeamProfile } from "../api";
+import { useVisiblePolling } from "../telemetry/useVisiblePolling";
 import { SectionHeading, SummaryCard } from "../ui/components";
 import { formatDate, profilePermissionLabel, profileRoleLabel, shortId } from "./utils";
 
@@ -79,17 +80,18 @@ function TeamWorkspaceHeader({
 export function TeamOverviewPanel({
   api,
   team,
-  onOpenSettings,
+  onOpenMetrics,
 }: {
   api: ControlApi;
   team: Team;
-  onOpenSettings: () => void;
+  onOpenMetrics: () => void;
 }) {
   const [profiles, setProfiles] = useState<TeamProfile[]>([]);
   const [metrics, setMetrics] = useState<Awaited<ReturnType<ControlApi["getMetrics"]>> | null>(null);
   const [metricsUnavailable, setMetricsUnavailable] = useState(false);
   const [communityStatus, setCommunityStatus] = useState<Awaited<ReturnType<ControlApi["getTeamCommunityStatus"]>> | null>(null);
   const [loading, setLoading] = useState(false);
+  const [metricsLoading, setMetricsLoading] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -97,22 +99,14 @@ export function TeamOverviewPanel({
     setMetricsUnavailable(false);
     Promise.all([
       api.listTeamProfiles(team.id).then((page) => page.data).catch(() => [] as TeamProfile[]),
-      api.getMetrics({ team_id: team.id, window_minutes: 60 }).catch(() => {
-        if (active) {
-          setMetricsUnavailable(true);
-        }
-        return null;
-      }),
       api.getTeamCommunityStatus(team.id).catch(() => null),
     ])
-      .then(([nextProfiles, nextMetrics, nextCommunityStatus]) => {
+      .then(([nextProfiles, nextCommunityStatus]) => {
         if (!active) {
           return;
         }
         setProfiles(nextProfiles);
-        setMetrics(nextMetrics);
         setCommunityStatus(nextCommunityStatus);
-        setMetricsUnavailable(nextMetrics === null);
       })
       .finally(() => {
         if (active) {
@@ -124,8 +118,22 @@ export function TeamOverviewPanel({
     };
   }, [api, team.id]);
 
+  const refreshMetrics = useVisiblePolling(async (signal) => {
+    setMetricsLoading(true);
+    setMetricsUnavailable(false);
+    try {
+      setMetrics(await api.getMetrics({ team_id: team.id, window_minutes: 60 }, signal));
+    } catch (error) {
+      if (!isAbortError(error)) {
+        setMetricsUnavailable(true);
+      }
+    } finally {
+      setMetricsLoading(false);
+    }
+  }, [api, team.id]);
+
   const metricsReady = metrics !== null && !metricsUnavailable;
-  const metricsFailed = metricsUnavailable && !loading;
+  const metricsFailed = metricsUnavailable && !metricsLoading;
   const communityUnavailable = communityStatus === null && !loading;
   const communityEnabled = communityStatus?.effective_config.enabled === true;
   const teamMetrics = metricsReady ? metrics.teams.find((item) => item.team_id === team.id) : undefined;
@@ -134,13 +142,17 @@ export function TeamOverviewPanel({
   const health = requests === 0 ? 100 : Math.max(0, 100 - (errors / requests) * 100);
   const dependencies = metricsReady ? metrics.dependencies : [];
   const degradedDependencies = dependencies.filter((dependency) => dependency.status !== "ok");
+  const healthyDependencies = dependencies.filter((dependency) => dependency.status === "ok");
+  const dependencyDetail = degradedDependencies.length > 0
+    ? degradedDependencies.map((dependency) => `${dependency.name} · ${dependency.reason_code ?? dependency.status} · ${dependency.latency_ms === null || dependency.latency_ms === undefined ? "latency n/a" : `${Math.round(dependency.latency_ms)} ms`}`).join(", ")
+    : metrics?.dependencies_checked_at ? `Observed ${formatDate(metrics.dependencies_checked_at)}` : "Operational";
   const managerCount = profiles.filter((profile) => profile.role === "manager").length;
   const readWriteCount = profiles.filter((profile) => profile.scopes?.includes("write")).length;
   const recentProfiles = [...profiles].sort((left, right) => right.created_at.localeCompare(left.created_at)).slice(0, 5);
-  const requestValue = metricsReady ? compactNumber(requests) : loading ? "..." : "n/a";
-  const errorValue = metricsReady ? compactNumber(errors) : loading ? "..." : "n/a";
-  const healthValue = metricsReady ? `${health.toFixed(1)}%` : loading ? "..." : "n/a";
-  const healthDetail = loading ? <span className="inline-loading">Loading</span> : metricsFailed ? "Metrics unavailable" : "Operational";
+  const requestValue = metricsReady ? compactNumber(requests) : loading || metricsLoading ? "..." : "n/a";
+  const errorValue = metricsReady ? compactNumber(errors) : loading || metricsLoading ? "..." : "n/a";
+  const healthValue = metricsReady ? `${health.toFixed(1)}%` : loading || metricsLoading ? "..." : "n/a";
+  const healthDetail = loading || metricsLoading ? <span className="inline-loading">Loading</span> : metricsFailed ? "Metrics unavailable" : "Operational";
   const latencyValue = metricsReady ? `${Math.round(teamMetrics?.avg_latency_ms ?? metrics.system.avg_latency_ms)} ms` : "n/a";
   const maxLatencyValue = metricsReady ? `${Math.round(teamMetrics?.max_latency_ms ?? metrics.system.max_latency_ms)} ms` : "n/a";
 
@@ -160,7 +172,7 @@ export function TeamOverviewPanel({
 
       <div className="overview-grid">
         <section className="overview-panel" aria-label="Team activity">
-          <SectionHeading title="Team Activity (1h)" meta={loading ? <span className="inline-loading">Loading</span> : metricsFailed ? "metrics unavailable" : undefined} />
+          <SectionHeading title="Team Activity (1h)" meta={loading || metricsLoading ? <span className="inline-loading">Loading</span> : metricsFailed ? "metrics unavailable" : undefined} />
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="HTTP requests" value={requestValue} trend={metricsReady ? requests > 0 ? "+ active" : "idle" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="Errors" value={errorValue} trend={metricsReady ? errors > 0 ? "review" : "clear" : "unavailable"} tone={errors > 0 ? "danger" : metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Users size={15} aria-hidden="true" />} label="Writable profiles" value={readWriteCount} trend={`${profiles.length} total`} />
@@ -172,13 +184,13 @@ export function TeamOverviewPanel({
           <SectionHeading title="Top Signals" />
           <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Average latency" value={latencyValue} trend={metricsReady ? "p95 proxy" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Max latency" value={maxLatencyValue} trend={metricsReady ? "last hour" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
-          <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Dependency checks" value={metricsReady ? dependencies.length || "n/a" : "n/a"} trend={metricsReady ? degradedDependencies.length ? "attention" : "healthy" : "unavailable"} tone={metricsFailed || degradedDependencies.length ? "warning" : "neutral"} />
+          <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Dependency checks" value={metricsReady ? `${healthyDependencies.length}/${dependencies.length}` : "n/a"} trend={metricsReady ? degradedDependencies.length ? dependencyDetail : "healthy" : "unavailable"} tone={metricsFailed || degradedDependencies.length ? "warning" : "neutral"} />
           <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Profile freshness" value={recentProfiles[0] ? formatDate(recentProfiles[0].created_at) : "No profiles"} trend="latest" />
         </section>
       </div>
 
       <section className="overview-panel" aria-label="Recent alerts">
-        <SectionHeading title="Recent Alerts" actions={<button className="text-button" type="button" onClick={onOpenSettings}>Open settings</button>} />
+        <SectionHeading title="Recent Alerts" actions={<button className="text-button" type="button" onClick={onOpenMetrics}>Open Metrics</button>} />
         <div className="mini-table">
           <MiniTableRow columns={["Time", "Severity", "Alert", "Scope", "Status"]} heading />
           {metricsFailed && <MiniTableRow columns={["Now", "Medium", "Metrics unavailable", "Team", "Open"]} />}
@@ -186,7 +198,7 @@ export function TeamOverviewPanel({
           {degradedDependencies.map((dependency) => (
             <MiniTableRow
               key={dependency.name}
-              columns={["Now", "Medium", `${dependency.name} ${dependency.status}`, "Dependency", "Open"]}
+              columns={["Now", "Medium", `${dependency.name} ${dependency.status}${dependency.reason_code ? ` · ${dependency.reason_code}` : ""}`, "Dependency", "Open"]}
             />
           ))}
           {!metricsFailed && errors === 0 && degradedDependencies.length === 0 && (
@@ -272,4 +284,8 @@ function MiniTableRow({ columns, heading = false }: { columns: ReactNode[]; head
 
 function compactNumber(value: number): string {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }

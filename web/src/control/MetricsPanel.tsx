@@ -3,6 +3,7 @@ import { RefreshCw } from "lucide-react";
 import { ControlApi, ControlMetrics, Team, TeamProfile } from "../api";
 import { TelemetryDashboard } from "../telemetry/TelemetryDashboard";
 import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
+import { useVisiblePolling } from "../telemetry/useVisiblePolling";
 import { LoadingState, SectionHeading, SummaryCard } from "../ui/components";
 import { dependencyStatusClass, formatCount, formatDate, formatLatency, formatPercent, readError, shortId } from "./utils";
 
@@ -23,24 +24,27 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
   const [loading, setLoading] = useState(false);
   const [telemetryLoading, setTelemetryLoading] = useState(false);
 
-  async function loadMetrics(nextWindow = windowMinutes, nextTeamId = teamId) {
+  async function loadMetrics(nextWindow = windowMinutes, nextTeamId = teamId, signal?: AbortSignal) {
     setLoading(true);
     setError("");
     try {
       setMetrics(await api.getMetrics({
         window_minutes: nextWindow,
         team_id: nextTeamId || undefined,
-      }));
+      }, signal));
     } catch (err) {
-      setError(readError(err));
+      if (!isAbortError(err)) {
+        setError(readError(err));
+      }
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    void loadMetrics();
-  }, [windowMinutes, teamId]);
+  const refreshMetrics = useVisiblePolling(
+    (signal) => loadMetrics(windowMinutes, teamId, signal),
+    [api, windowMinutes, teamId],
+  );
 
   async function loadTeamProfiles(nextTeamId = telemetryTeamId) {
     if (!nextTeamId) {
@@ -63,6 +67,7 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
     nextScope = telemetryScope,
     nextTeamId = telemetryTeamId,
     nextProfileId = telemetryProfileId,
+    signal?: AbortSignal,
   ) {
     if (nextScope === "team" && !nextTeamId) {
       setTelemetryError("Select a team.");
@@ -80,17 +85,20 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
         scope: nextScope,
         team_id: nextScope === "team" || nextScope === "profile" ? nextTeamId || undefined : undefined,
         profile_id: nextScope === "profile" ? nextProfileId || undefined : undefined,
-      }));
+      }, signal));
     } catch (err) {
-      setTelemetryError(readError(err));
+      if (!isAbortError(err)) {
+        setTelemetryError(readError(err));
+      }
     } finally {
       setTelemetryLoading(false);
     }
   }
 
-  useEffect(() => {
-    void loadTelemetry();
-  }, [telemetryWindow, telemetryScope, telemetryTeamId, telemetryProfileId]);
+  const refreshTelemetry = useVisiblePolling(
+    (signal) => loadTelemetry(telemetryWindow, telemetryScope, telemetryTeamId, telemetryProfileId, signal),
+    [api, telemetryWindow, telemetryScope, telemetryTeamId, telemetryProfileId],
+  );
 
   useEffect(() => {
     if (telemetryScope === "profile") {
@@ -120,7 +128,7 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
         loading={telemetryLoading}
         error={telemetryError}
         onWindowChange={setTelemetryWindow}
-        onRefresh={() => void loadTelemetry()}
+        onRefresh={() => void refreshTelemetry()}
         controls={(
           <>
             <label htmlFor="telemetry-scope">Scope</label>
@@ -159,7 +167,7 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
         title="Usage Rollup"
         subtitle={metrics ? `${formatDate(metrics.window.from)} - ${formatDate(metrics.window.to)}` : undefined}
         actions={(
-          <button className="icon-button" type="button" aria-label="Refresh metrics" onClick={() => void loadMetrics()} disabled={loading}>
+          <button className="icon-button" type="button" aria-label="Refresh metrics" onClick={() => void refreshMetrics()} disabled={loading}>
             <RefreshCw size={16} aria-hidden="true" />
           </button>
         )}
@@ -191,7 +199,7 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
       {metrics && (
         <>
           <MetricsSummary metrics={metrics} />
-          <DependencySummary dependencies={metrics.dependencies} />
+          <DependencySummary dependencies={metrics.dependencies} checkedAt={metrics.dependencies_checked_at} />
           <MetricsTeamTable teams={metrics.teams} />
           <MetricsKeyTable keys={metrics.keys} />
           <MetricsRouteTable routes={metrics.routes} />
@@ -199,6 +207,10 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
       )}
     </section>
   );
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function MetricsSummary({ metrics }: { metrics: ControlMetrics }) {
@@ -213,7 +225,7 @@ function MetricsSummary({ metrics }: { metrics: ControlMetrics }) {
   );
 }
 
-function DependencySummary({ dependencies }: { dependencies: ControlMetrics["dependencies"] }) {
+function DependencySummary({ dependencies, checkedAt }: { dependencies: ControlMetrics["dependencies"]; checkedAt?: string }) {
   if (dependencies.length === 0) {
     return null;
   }
@@ -222,7 +234,7 @@ function DependencySummary({ dependencies }: { dependencies: ControlMetrics["dep
       <div className="list-toolbar">
         <div>
           <h3>Dependencies</h3>
-          <span>{dependencies.length}</span>
+          <span>{dependencies.filter((dependency) => dependency.status === "ok").length}/{dependencies.length} healthy{checkedAt ? ` · observed ${formatDate(checkedAt)}` : ""}</span>
         </div>
       </div>
       <div className="dependency-grid">
@@ -231,13 +243,21 @@ function DependencySummary({ dependencies }: { dependencies: ControlMetrics["dep
             key={dep.name}
             label={dep.name}
             value={<span className={`status-pill ${dependencyStatusClass(dep.status)}`}>{dep.status}</span>}
-            detail={dep.latency_ms === null || dep.latency_ms === undefined ? "n/a" : formatLatency(dep.latency_ms)}
+            detail={dependencyDetail(dep)}
             tone={dep.status === "error" ? "danger" : dep.status === "degraded" ? "warning" : "neutral"}
           />
         ))}
       </div>
     </div>
   );
+}
+
+function dependencyDetail(dependency: ControlMetrics["dependencies"][number]) {
+  const latency = dependency.latency_ms === null || dependency.latency_ms === undefined ? "n/a" : formatLatency(dependency.latency_ms);
+  if (dependency.reason_code) {
+    return `${latency} · ${dependency.reason_code}${dependency.message ? ` · ${dependency.message}` : ""}`;
+  }
+  return latency;
 }
 
 function MetricsTeamTable({ teams }: { teams: ControlMetrics["teams"] }) {

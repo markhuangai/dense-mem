@@ -303,6 +303,7 @@ export type GraphQuery = {
 type RequestOptions = {
   method?: string;
   body?: unknown;
+  signal?: AbortSignal;
 };
 
 export type UserAuthMode = "anonymous" | "api_key" | "api_key_session" | "sso";
@@ -401,13 +402,13 @@ export class UserApi {
     return payload.data;
   }
 
-  async telemetry(query: UserTelemetryQuery = {}): Promise<TelemetrySnapshot> {
+  async telemetry(query: UserTelemetryQuery = {}, signal?: AbortSignal): Promise<TelemetrySnapshot> {
     const params = new URLSearchParams();
     if (query.window) {
       params.set("window", query.window);
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    const payload = await this.request<Envelope<TelemetrySnapshot>>(`/ui/api/telemetry${suffix}`);
+    const payload = await this.request<Envelope<TelemetrySnapshot>>(`/ui/api/telemetry${suffix}`, { signal });
     return payload.data;
   }
 
@@ -517,6 +518,7 @@ export class UserApi {
       token: this.token || undefined,
       credentials: this.token ? "same-origin" : "include",
       body: options.body,
+      signal: options.signal,
       csrf: this.token ? undefined : {
         cookieName: this.authMode === "api_key_session" ? "dense_mem_ui_csrf" : "dense_mem_sso_csrf",
         headerName: "X-Dense-Mem-CSRF",

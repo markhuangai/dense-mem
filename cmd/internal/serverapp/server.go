@@ -146,7 +146,6 @@ func RunActiveServer(
 		observability.String("search_index_generation_id", searchContract.Contract.SearchIndexGenerationID),
 		observability.String("index_strategy", searchContract.Contract.IndexStrategy),
 	)
-
 	auditService := service.NewAuditService(pgDB.GetDB())
 	appConfigService := service.NewAppConfigService(appConfigRepo, auditService)
 	operationLogService := service.NewOperationLogService(operationLogRepo, appConfigService)
@@ -176,10 +175,10 @@ func RunActiveServer(
 		RLS:            rlsHelper,
 		Logger:         logger,
 	}
-
 	discoverabilityMetrics := observability.NoopDiscoverabilityMetrics()
 	var (
 		telemetryReader                service.TelemetryReader
+		telemetryPrometheusService     *service.PrometheusTelemetryService
 		telemetryHTTPMetrics           observability.HTTPMetrics
 		telemetryScrapeHandler         nethttp.Handler
 		pricingRefreshCancel           context.CancelFunc
@@ -212,14 +211,15 @@ func RunActiveServer(
 		discoverabilityMetrics = prometheusMetrics
 		telemetryHTTPMetrics = prometheusMetrics
 		telemetryScrapeHandler = prometheusMetrics.Handler()
-		telemetryReader = service.NewPrometheusTelemetryServiceWithJobAndLogger(
+		telemetryPrometheusService = service.NewPrometheusTelemetryServiceWithJobAndLogger(
 			cfg.GetTelemetryPrometheusURL(),
 			time.Duration(cfg.GetTelemetryQueryTimeoutSeconds())*time.Second,
 			cfg.GetTelemetryPrometheusJob(),
 			logger,
 		)
+		telemetryPrometheusService.SetLifecycleReader(ledgerRepo)
+		telemetryReader = telemetryPrometheusService
 	}
-
 	openaiProvider := embedding.NewOpenAIEmbeddingProvider(&cfg, nil)
 	openaiProvider.SetMetrics(discoverabilityMetrics)
 	retryEmbedder := embedding.NewRetryEmbeddingProviderWithKey(openaiProvider, logger, cfg.GetAIAPIKey())
@@ -273,6 +273,7 @@ func RunActiveServer(
 		ProviderCycleLease: time.Duration(cfg.GetAIVerifierTimeoutSeconds())*
 			time.Second*time.Duration(verifier.SemanticAssessmentMaxProviderTurns) + time.Minute,
 	})
+	configureTelemetryFeatures(telemetryPrometheusService, appConfigService, dreamSvc)
 	controlDreamSvc := dreamservice.NewControl(dreamservice.ControlDependencies{
 		Store:     semanticRepo,
 		AppConfig: appConfigService,
@@ -693,7 +694,7 @@ func processTeamConflictReview(
 	started := time.Now()
 	outcome := "completed"
 	defer func() {
-		observability.RecordConflictReviewDuration(ctx, metrics, time.Since(started).Seconds(), outcome)
+		observability.RecordConflictReviewDuration(observability.WithMetricIdentity(ctx, teamID, ""), metrics, time.Since(started).Seconds(), outcome)
 	}()
 	lease := time.Duration(cfg.GetConflictReviewLeaseSeconds()) * time.Second
 	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, repository.ConflictReviewRunInput{
