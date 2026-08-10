@@ -524,7 +524,9 @@ func normalizeDreamingConfigValues(values map[string]string) (map[string]string,
 			if trimmed == "" {
 				trimmed = "03:00"
 			}
-			if err := validateStrictHHMM(key, trimmed); err != nil {
+			var err error
+			trimmed, err = normalizeStrictHHMM(key, trimmed)
+			if err != nil {
 				return nil, err
 			}
 		case domain.AppConfigDreamingMaxOutputs:
@@ -601,7 +603,9 @@ func normalizeCommunityDetectionConfigValues(values map[string]string) (map[stri
 			if trimmed == "" {
 				trimmed = DefaultCommunityDetectionStartTimeLocal
 			}
-			if err := validateStrictHHMM(key, trimmed); err != nil {
+			var err error
+			trimmed, err = normalizeStrictHHMM(key, trimmed)
+			if err != nil {
 				return nil, err
 			}
 		case domain.AppConfigCommunityDetectionMaxConcurrency:
@@ -702,7 +706,9 @@ func normalizeGeneralConfigValues(values map[string]string) (map[string]string, 
 			if trimmed == "" {
 				trimmed = DefaultEmbeddingReconciliationStartTimeLocal
 			}
-			if err := validateStrictHHMM(key, trimmed); err != nil {
+			var err error
+			trimmed, err = normalizeStrictHHMM(key, trimmed)
+			if err != nil {
 				return nil, err
 			}
 		}
@@ -711,14 +717,14 @@ func normalizeGeneralConfigValues(values map[string]string) (map[string]string, 
 	return normalized, nil
 }
 
-func validateStrictHHMM(key, value string) error {
+func normalizeStrictHHMM(key, value string) (string, error) {
 	parsed, err := time.Parse("15:04", value)
 	canonical := err == nil && parsed.Format("15:04") == value
 	legacySingleDigitHour := err == nil && len(value) == 4 && parsed.Format("15:04") == "0"+value
 	if err != nil || (!canonical && !legacySingleDigitHour) {
-		return fmt.Errorf("%w: %s must use strict HH:MM", ErrInvalidAppConfig, key)
+		return "", fmt.Errorf("%w: %s must use strict HH:MM", ErrInvalidAppConfig, key)
 	}
-	return nil
+	return parsed.Format("15:04"), nil
 }
 
 func normalizeSSOConfigValues(values map[string]string) (map[string]string, error) {

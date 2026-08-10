@@ -267,4 +267,80 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 		})).Scan(&validated)
 	}))
 	require.Equal(t, 4, validated)
+
+	runGooseUpTo(t, ctx, sqlDB, 2026081001)
+	legacyEntityJobID := uuid.NewString()
+	legacyEntityDocumentID := uuid.NewString()
+	legacyEntityID := uuid.NewString()
+	legacyError := "embedding provider error: connection reset by peer"
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO search_documents (
+				team_id, search_document_id, owner_profile_id, source_kind, source_id,
+				source_version, document_version, embedding_contract_id,
+				embedding_dimensions, search_state, document_text, document_hash
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, 'entity', $4::uuid,
+				1, 1, $5::uuid, 3, 'pending', 'legacy entity document', $6
+			)
+		`, teamID, legacyEntityDocumentID, profileID, legacyEntityID, contractID,
+			"sha256:"+strings.ReplaceAll(legacyEntityDocumentID, "-", "")); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_jobs (
+				team_id, embedding_job_id, search_document_id, owner_profile_id,
+				source_kind, source_id, source_version, document_version,
+				embedding_contract_id, embedding_dimensions, status, attempts,
+				max_attempts, worker_id, lease_until, error
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				'entity', $5::uuid, 1, 1, $6::uuid, 3,
+				'processing', 1, 5, 'legacy-worker', now() + interval '1 minute', ''
+			)
+		`, teamID, legacyEntityJobID, legacyEntityDocumentID, profileID, legacyEntityID, contractID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			UPDATE embedding_jobs
+			SET status = 'failed', error = $1, worker_id = '', lease_until = NULL, completed_at = now()
+			WHERE team_id = $2::uuid AND embedding_job_id = $3::uuid
+		`, legacyError, teamID, legacyEntityJobID)
+		return err
+	}))
+
+	var failureClass, failureCode, searchState string
+	var timestampsPresent bool
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT job.failure_class, job.failure_code,
+			       job.first_failed_at IS NOT NULL AND job.last_failed_at IS NOT NULL,
+			       document.search_state
+			FROM embedding_jobs AS job
+			JOIN search_documents AS document
+			  ON document.team_id = job.team_id AND document.search_document_id = job.search_document_id
+			WHERE job.team_id = $1::uuid AND job.embedding_job_id = $2::uuid
+		`, teamID, legacyEntityJobID).Scan(&failureClass, &failureCode, &timestampsPresent, &searchState)
+	}))
+	require.Equal(t, "transient", failureClass)
+	require.Equal(t, "provider_network_error", failureCode)
+	require.True(t, timestampsPresent)
+	require.Equal(t, "failed", searchState)
+
+	var incidentStatus string
+	var affectedJobs int64
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT status, affected_job_count
+			FROM embedding_failure_incidents
+			WHERE team_id = $1::uuid
+			  AND embedding_contract_id = $2::uuid
+			  AND embedding_dimensions = 3
+			  AND source_kind = 'entity'
+			  AND failure_class = 'transient'
+			  AND failure_code = 'provider_network_error'
+		`, teamID, contractID).Scan(&incidentStatus, &affectedJobs)
+	}))
+	require.Equal(t, "open", incidentStatus)
+	require.EqualValues(t, 1, affectedJobs)
 }

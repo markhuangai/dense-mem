@@ -120,11 +120,11 @@ func TestAppConfigServiceReadsLegacySingleDigitSchedule(t *testing.T) {
 
 	settings, err := svc.GetGeneralSettings(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, "4:30", generalConfigItemForTest(settings, domain.AppConfigEmbeddingReconciliationStartTimeLocal).EffectiveValue)
+	assert.Equal(t, "04:30", generalConfigItemForTest(settings, domain.AppConfigEmbeddingReconciliationStartTimeLocal).EffectiveValue)
 
 	runtime, err := svc.GeneralRuntimeConfig(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, "4:30", runtime.EmbeddingReconciliationStartTimeLocal)
+	assert.Equal(t, "04:30", runtime.EmbeddingReconciliationStartTimeLocal)
 }
 
 func TestAppConfigServiceDreamingSettingsDefaultsAndUpdate(t *testing.T) {
@@ -517,7 +517,7 @@ func TestAppConfigServiceValidation(t *testing.T) {
 
 	updated, err := svc.UpdateGeneralSettings(ctx, map[string]string{domain.AppConfigEmbeddingReconciliationStartTimeLocal: "4:30"}, "control", "", "")
 	require.NoError(t, err)
-	assert.Equal(t, "4:30", generalConfigItemForTest(updated, domain.AppConfigEmbeddingReconciliationStartTimeLocal).EffectiveValue)
+	assert.Equal(t, "04:30", generalConfigItemForTest(updated, domain.AppConfigEmbeddingReconciliationStartTimeLocal).EffectiveValue)
 
 	_, err = svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "canonical"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)

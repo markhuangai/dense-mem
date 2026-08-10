@@ -22,19 +22,23 @@ func (s reconciliationConfigStub) GeneralRuntimeConfig(context.Context) (domain.
 }
 
 type reconciliationRepositoryStub struct {
-	run          *repository.EmbeddingReconciliationRun
-	job          *repository.EmbeddingJob
-	claimed      bool
-	reserved     []repository.ReserveEmbeddingReconciliationRunInput
-	marked       bool
-	markInput    *repository.MarkEmbeddingReconciliationCanaryAttemptInput
-	canaryOK     bool
-	markErr      error
-	canaryErr    error
-	requeued     int64
-	requeueErr   error
-	requeueInput *repository.RequeueEmbeddingReconciliationJobsInput
-	completed    *repository.CompleteEmbeddingReconciliationRunInput
+	run                *repository.EmbeddingReconciliationRun
+	job                *repository.EmbeddingJob
+	claimed            bool
+	reserved           []repository.ReserveEmbeddingReconciliationRunInput
+	marked             bool
+	markInput          *repository.MarkEmbeddingReconciliationCanaryAttemptInput
+	canaryOK           bool
+	canaryContext      context.Context
+	canaryContextErr   error
+	markErr            error
+	canaryErr          error
+	requeued           int64
+	requeueErr         error
+	requeueInput       *repository.RequeueEmbeddingReconciliationJobsInput
+	completed          *repository.CompleteEmbeddingReconciliationRunInput
+	completeContext    context.Context
+	completeContextErr error
 }
 
 func (s *reconciliationRepositoryStub) GetSearchConvergence(context.Context, repository.SearchConvergenceInput) (*repository.SearchConvergence, error) {
@@ -65,7 +69,9 @@ func (s *reconciliationRepositoryStub) MarkEmbeddingReconciliationCanaryAttempt(
 	}
 	return nil
 }
-func (s *reconciliationRepositoryStub) CompleteEmbeddingReconciliationCanary(_ context.Context, _ repository.CompleteEmbeddingReconciliationCanaryInput) error {
+func (s *reconciliationRepositoryStub) CompleteEmbeddingReconciliationCanary(ctx context.Context, _ repository.CompleteEmbeddingReconciliationCanaryInput) error {
+	s.canaryContext = ctx
+	s.canaryContextErr = ctx.Err()
 	if s.canaryErr != nil {
 		return s.canaryErr
 	}
@@ -79,7 +85,10 @@ func (s *reconciliationRepositoryStub) RequeueEmbeddingReconciliationJobs(_ cont
 	}
 	return s.requeued, s.requeueErr
 }
-func (s *reconciliationRepositoryStub) CompleteEmbeddingReconciliationRun(_ context.Context, input repository.CompleteEmbeddingReconciliationRunInput) error {
+
+func (s *reconciliationRepositoryStub) CompleteEmbeddingReconciliationRun(ctx context.Context, input repository.CompleteEmbeddingReconciliationRunInput) error {
+	s.completeContext = ctx
+	s.completeContextErr = ctx.Err()
 	s.completed = &input
 	return nil
 }
@@ -312,6 +321,28 @@ func TestEmbeddingReconciliationFailedCanaryDoesNotReleaseBacklog(t *testing.T) 
 	if reconciliation.completed.Status != string(domain.EmbeddingReconciliationDeferred) || reconciliation.completed.FailureCode != string(domain.EmbeddingFailureProviderQuotaExhausted) {
 		t.Fatalf("completed run = %#v", reconciliation.completed)
 	}
+}
+
+func TestEmbeddingReconciliationFinalizesFailedCanaryAfterContextCancellation(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	reconciliation := &reconciliationRepositoryStub{}
+	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, WorkerID: "worker-1",
+	}).(*embeddingReconciliationService)
+	run := &repository.EmbeddingReconciliationRun{RunID: "run-1", LeaseToken: "lease-1", Status: "running"}
+	job := &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := service.finishFailedCanary(ctx, run, job,
+		string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderTimeout), "provider timed out")
+	require.NoError(t, err)
+	require.NotNil(t, search.failContext)
+	require.NotNil(t, reconciliation.canaryContext)
+	require.NotNil(t, reconciliation.completeContext)
+	assert.NoError(t, search.failContextErr)
+	assert.NoError(t, reconciliation.canaryContextErr)
+	assert.NoError(t, reconciliation.completeContextErr)
 }
 
 func TestEmbeddingReconciliationClassifiesUnavailableProviderAsTransient(t *testing.T) {

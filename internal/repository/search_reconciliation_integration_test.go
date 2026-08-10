@@ -308,6 +308,8 @@ func TestSearchReadinessIgnoresAsynchronousEmbeddingFailures(t *testing.T) {
 				team_id, embedding_contract_id, embedding_dimensions, source_kind,
 				failure_class, failure_code, status, affected_job_count
 			) VALUES (?::uuid, (SELECT embedding_contract_id FROM embedding_jobs WHERE team_id = ?::uuid AND search_document_id = ?::uuid), 3, 'evidence', 'provider_action_required', 'provider_quota_exhausted', 'open', 1)
+			ON CONFLICT (team_id, embedding_contract_id, embedding_dimensions, source_kind, failure_class, failure_code, status)
+			DO UPDATE SET affected_job_count = EXCLUDED.affected_job_count, last_seen_at = now(), updated_at = now()
 		`, teamID, teamID, document.SearchDocumentID).Error
 	}))
 	readiness, err := repo.CheckSearchReadiness(ctx)
@@ -358,6 +360,8 @@ func TestSearchConvergenceExcludesDeletedTeams(t *testing.T) {
 				(SELECT embedding_contract_id FROM embedding_jobs WHERE team_id = ?::uuid AND search_document_id = ?::uuid),
 				3, 'evidence', 'transient', 'provider_timeout', 'open', 1
 			)
+			ON CONFLICT (team_id, embedding_contract_id, embedding_dimensions, source_kind, failure_class, failure_code, status)
+			DO UPDATE SET affected_job_count = EXCLUDED.affected_job_count, last_seen_at = now(), updated_at = now()
 		`, teamID, teamID, document.SearchDocumentID).Error
 	}))
 

@@ -381,6 +381,8 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 		if retryAfter <= 0 {
 			retryAfter = embeddingRetryBackoff(attempts)
 		}
+		failureClass := input.FailureClass
+		failureCode := input.FailureCode
 		completedExpr := "NULL"
 		if terminal {
 			status = string(domain.EmbeddingJobFailed)
@@ -391,6 +393,11 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			UPDATE embedding_jobs
 			SET status = ?,
 			    error = ?,
+			    failure_class = ?,
+			    failure_code = ?,
+			    total_attempts = GREATEST(total_attempts, attempts),
+			    first_failed_at = COALESCE(first_failed_at, now()),
+			    last_failed_at = now(),
 			    available_at = CASE
 			        WHEN ?::integer > 0 THEN now() + (?::integer * interval '1 second')
 			        ELSE now()
@@ -410,6 +417,8 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			query,
 			status,
 			input.Error,
+			failureClass,
+			failureCode,
 			retrySeconds,
 			retrySeconds,
 			input.TeamID,
@@ -422,24 +431,6 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 		}
 		if update.RowsAffected != 1 {
 			return ErrEmbeddingLeaseLost
-		}
-		failureClass := input.FailureClass
-		failureCode := input.FailureCode
-		if failureClass == "" {
-			failureClass = string(domain.EmbeddingFailurePermanent)
-		}
-		if failureCode == "" {
-			failureCode = string(domain.EmbeddingFailureUnknown)
-		}
-		if err := tx.WithContext(ctx).Exec(`
-			UPDATE embedding_jobs
-			SET failure_class = ?, failure_code = ?,
-			    total_attempts = GREATEST(total_attempts, attempts),
-			    first_failed_at = COALESCE(first_failed_at, now()),
-			    last_failed_at = now(), updated_at = now()
-			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
-		`, failureClass, failureCode, input.TeamID, input.EmbeddingJobID).Error; err != nil {
-			return err
 		}
 		if err := updateSearchDocumentAfterEmbeddingFailure(ctx, tx, input, status); err != nil {
 			return err

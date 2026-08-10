@@ -93,6 +93,8 @@ func TestRecallFailedDocumentsRemainLexicalAndTeamScopedWhileVectorsAreExcluded(
 	})
 	require.NoError(t, err)
 	require.Empty(t, evidenceVectorRecall.Results)
+	require.Equal(t, string(domain.SearchProjectionFailed), evidenceVectorRecall.SearchState,
+		"failed eligible documents must remain visible in recall state even without a matching hit")
 	relationshipVectorRecall, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
 		TeamID: teamID, Query: "vectoronlynomatchtoken", QueryEmbedding: []float32{1, 0, 0}, Limit: 5,
 	})

@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	reconciliationTickInterval = time.Minute
-	reconciliationLease        = 10 * time.Minute
-	reconciliationCallTimeout  = 2 * time.Minute
-	reconciliationBatchSize    = 500
+	reconciliationTickInterval   = time.Minute
+	reconciliationLease          = 10 * time.Minute
+	reconciliationCallTimeout    = 2 * time.Minute
+	reconciliationCleanupTimeout = 30 * time.Second
+	reconciliationBatchSize      = 500
 )
 
 type reconciliationRuntimeConfig interface {
@@ -261,22 +262,24 @@ func isExpectedStaleCanary(err error) bool {
 }
 
 func (s *embeddingReconciliationService) finishFailedCanary(ctx context.Context, run *repository.EmbeddingReconciliationRun, job *repository.EmbeddingJob, failureClass, failureCode, message string) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reconciliationCleanupTimeout)
+	defer cancel()
 	workerID := repository.EmbeddingReconciliationWorkerIDPrefix + run.RunID
-	_, failErr := s.search.FailEmbeddingJob(ctx, repository.FailEmbeddingJobInput{
+	_, failErr := s.search.FailEmbeddingJob(cleanupCtx, repository.FailEmbeddingJobInput{
 		TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: workerID,
 		ExpectedAttempts: 1, Error: message,
 		FailureClass: failureClass, FailureCode: failureCode, Terminal: true,
 	})
 	if failErr != nil {
-		return s.deferRun(ctx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding canary failure persistence was ambiguous", failErr)
+		return s.deferRun(cleanupCtx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding canary failure persistence was ambiguous", failErr)
 	}
-	if err := s.reconciliation.CompleteEmbeddingReconciliationCanary(ctx, repository.CompleteEmbeddingReconciliationCanaryInput{
+	if err := s.reconciliation.CompleteEmbeddingReconciliationCanary(cleanupCtx, repository.CompleteEmbeddingReconciliationCanaryInput{
 		RunID: run.RunID, CanaryJobID: job.EmbeddingJobID, WorkerID: s.workerID,
 		LeaseToken: run.LeaseToken, Succeeded: false, FailureClass: failureClass, FailureCode: failureCode,
 	}); err != nil {
-		return s.deferRun(ctx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding canary completion was ambiguous", err)
+		return s.deferRun(cleanupCtx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding canary completion was ambiguous", err)
 	}
-	return s.deferRun(ctx, run, string(domain.EmbeddingReconciliationDeferred), failureClass, failureCode, message, nil)
+	return s.deferRun(cleanupCtx, run, string(domain.EmbeddingReconciliationDeferred), failureClass, failureCode, message, nil)
 }
 
 func (s *embeddingReconciliationService) deferRun(ctx context.Context, run *repository.EmbeddingReconciliationRun, status, failureClass, failureCode, message string, cause error) error {

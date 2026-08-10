@@ -611,6 +611,8 @@ type embeddingSearchStub struct {
 	jobs           []repository.EmbeddingJob
 	completeInputs []repository.CompleteEmbeddingJobInput
 	failInputs     []repository.FailEmbeddingJobInput
+	failContext    context.Context
+	failContextErr error
 	completeErrs   map[string]error
 	claimErr       error
 	claimLimit     int
@@ -644,7 +646,9 @@ func (s *embeddingSearchStub) CompleteEmbeddingJob(_ context.Context, input repo
 	return nil
 }
 
-func (s *embeddingSearchStub) FailEmbeddingJob(_ context.Context, input repository.FailEmbeddingJobInput) (*repository.EmbeddingJobFailureResult, error) {
+func (s *embeddingSearchStub) FailEmbeddingJob(ctx context.Context, input repository.FailEmbeddingJobInput) (*repository.EmbeddingJobFailureResult, error) {
+	s.failContext = ctx
+	s.failContextErr = ctx.Err()
 	s.failInputs = append(s.failInputs, input)
 	status := "queued"
 	if input.Terminal {

@@ -403,6 +403,9 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 		if err := rows.Close(); err != nil {
 			return err
 		}
+		if err := retireSupersededEmbeddingJobs(ctx, tx, loaded); err != nil {
+			return err
+		}
 		jobID, err := enqueueEmbeddingJob(ctx, tx, loaded, r.embeddingJobMaxAttempts)
 		if err != nil {
 			return err
@@ -684,6 +687,25 @@ func enqueueEmbeddingJob(
 		return "", err
 	}
 	return jobID, nil
+}
+
+func retireSupersededEmbeddingJobs(ctx context.Context, tx *gorm.DB, document SearchDocumentResult) error {
+	return tx.WithContext(ctx).Exec(`
+		UPDATE embedding_jobs AS job
+		SET status = 'stale',
+		    error = 'superseded by newer document version',
+		    completed_at = COALESCE(job.completed_at, now()),
+		    lease_until = NULL,
+		    worker_id = '',
+		    updated_at = now()
+		WHERE job.team_id = ?::uuid
+		  AND job.source_kind = ?
+		  AND job.source_id = ?::uuid
+		  AND job.embedding_contract_id = ?::uuid
+		  AND job.document_version < ?
+		  AND job.status IN ('queued', 'processing', 'failed')
+	`, document.TeamID, document.SourceKind, document.SourceID,
+		document.EmbeddingContractID, document.DocumentVersion).Error
 }
 
 func normalizeEmbeddingJobMaxAttempts(maxAttempts int) int {
