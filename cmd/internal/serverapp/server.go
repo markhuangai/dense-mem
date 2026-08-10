@@ -338,11 +338,11 @@ func RunActiveServer(
 	if backend.redisPingFn != nil {
 		checks = append(checks, http.HealthCheck{Name: "redis", Check: backend.redisPingFn})
 	}
-	healthConfig := http.HealthConfig{
+	healthConfig := (http.HealthConfig{
 		Checks:   checks,
 		Degraded: backend.degraded,
 		Reason:   backend.reason,
-	}
+	}).WithSharedDependencyChecks()
 
 	e := http.NewServer(cfg, logger, healthConfig)
 	e.Use(middleware.CorrelationIDMiddleware())

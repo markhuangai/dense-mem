@@ -636,6 +636,9 @@ func markTelemetryUnavailableForNonLedger(cards []TelemetryCard, specs []telemet
 
 func markTelemetryUnavailableSeries(series []TelemetrySeries, code string) {
 	for index := range series {
+		if series[index].Status == TelemetryItemInactive || series[index].Status == TelemetryItemUnsupported {
+			continue
+		}
 		series[index].Status = TelemetryItemUnavailable
 		series[index].ReasonCode = code
 		series[index].Reason = telemetryReason(code)

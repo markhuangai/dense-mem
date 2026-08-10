@@ -35,6 +35,15 @@ type HealthConfig struct {
 	dependencyFlights *dependencyCheckFlightRegistry
 }
 
+// WithSharedDependencyChecks makes copies of this configuration share one
+// in-flight registry, which keeps checks single-flight across listeners.
+func (h HealthConfig) WithSharedDependencyChecks() HealthConfig {
+	if h.dependencyFlights == nil {
+		h.dependencyFlights = newDependencyCheckFlightRegistry()
+	}
+	return h
+}
+
 func (h HealthConfig) dependencyCheckRegistry() *dependencyCheckFlightRegistry {
 	if h.dependencyFlights != nil {
 		return h.dependencyFlights

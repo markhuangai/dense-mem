@@ -11,6 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestHealthConfigWithSharedDependencyChecksSurvivesCopies(t *testing.T) {
+	shared := (HealthConfig{}).WithSharedDependencyChecks()
+	copy := shared
+
+	require.Same(t, shared.dependencyCheckRegistry(), copy.dependencyCheckRegistry())
+}
+
 func TestRunDependencyChecksPreservesOrderAndCapsConcurrency(t *testing.T) {
 	registry := newDependencyCheckFlightRegistry()
 	var active atomic.Int32

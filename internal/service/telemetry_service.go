@@ -183,8 +183,7 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		return nil, err
 	}
 	includeCost := strings.EqualFold(strings.TrimSpace(filter.Audience), TelemetryAudienceOperator)
-	includeAssessorTelemetry := includeCost
-	includeTerminalFailures := includeCost && strings.EqualFold(scope.Type, "system")
+	includeAssessorTelemetry := includeCost && strings.EqualFold(scope.Type, "system")
 
 	nowFn := time.Now
 	if s != nil && s.now != nil {
@@ -192,10 +191,19 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 	}
 	to := nowFn().UTC()
 	from := to.Add(-windowDef.Duration)
+	var baseLabels map[string]string
+	if s != nil {
+		baseLabels = s.telemetryBaseLabels()
+	}
+	selector := telemetrySelector(scope, baseLabels)
 	initialWindowedSpecs := telemetryWindowedCardSpecsForAudience(scope, nil, windowKey, includeCost)
 	initialCurrentSpecs := telemetryCurrentCardSpecsForAudience(scope, nil, includeCost)
+	initialActivitySpecs := telemetryActivitySeriesSpecsForAudience(selector, windowDef.Rate, includeAssessorTelemetry)
+	initialStateSpecs := telemetryStateSeriesSpecs(selector)
 	initialWindowedCards := telemetryEmptyCardsFromSpecs(initialWindowedSpecs)
 	initialCurrentCards := telemetryEmptyCardsFromSpecs(initialCurrentSpecs)
+	initialActivitySeries := telemetryEmptySeriesFromSpecs(initialActivitySpecs)
+	initialStateSeries := telemetryEmptySeriesFromSpecs(initialStateSpecs)
 	snapshot := &TelemetrySnapshot{
 		Available:   true,
 		Status:      TelemetrySnapshotReady,
@@ -211,9 +219,9 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		Cards:          appendTelemetryCards(initialWindowedCards, initialCurrentCards),
 		WindowedCards:  initialWindowedCards,
 		CurrentCards:   initialCurrentCards,
-		Series:         telemetryEmptySeriesForAudience(includeTerminalFailures),
-		ActivitySeries: telemetryEmptyActivitySeriesForAudience(includeTerminalFailures),
-		StateSeries:    telemetryEmptyStateSeries(),
+		Series:         appendTelemetrySeries(initialActivitySeries, initialStateSeries),
+		ActivitySeries: initialActivitySeries,
+		StateSeries:    initialStateSeries,
 	}
 	if s == nil || s.baseURL == "" {
 		var lifecycle repository.TelemetryLifecycleSnapshot
@@ -229,16 +237,22 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		if s != nil {
 			featureStates = s.telemetryFeatureStates(ctx, scope)
 		}
-		windowedCards := visibleTelemetryCards(buildTelemetryCards(initialWindowedSpecs, nil, lifecycle, lifecycleErr, featureStates, scope))
-		currentCards := visibleTelemetryCards(buildTelemetryCards(initialCurrentSpecs, nil, lifecycle, lifecycleErr, featureStates, scope))
+		windowedCardsWithInternal := buildTelemetryCards(initialWindowedSpecs, nil, lifecycle, lifecycleErr, featureStates, scope)
+		currentCardsWithInternal := buildTelemetryCards(initialCurrentSpecs, nil, lifecycle, lifecycleErr, featureStates, scope)
+		activitySeries := buildTelemetrySeries(initialActivitySpecs, nil, featureStates, from, to, windowedCardsWithInternal, scope)
+		stateSeries := buildTelemetrySeries(initialStateSpecs, nil, featureStates, from, to, windowedCardsWithInternal, scope)
+		windowedCards := visibleTelemetryCards(windowedCardsWithInternal)
+		currentCards := visibleTelemetryCards(currentCardsWithInternal)
 		markTelemetryUnavailableForNonLedger(windowedCards, initialWindowedSpecs, "source_unconfigured")
 		markTelemetryUnavailableForNonLedger(currentCards, initialCurrentSpecs, "source_unconfigured")
-		markTelemetryUnavailableSeries(snapshot.ActivitySeries, "source_unconfigured")
-		markTelemetryUnavailableSeries(snapshot.StateSeries, "source_unconfigured")
+		markTelemetryUnavailableSeries(activitySeries, "source_unconfigured")
+		markTelemetryUnavailableSeries(stateSeries, "source_unconfigured")
 		snapshot.WindowedCards = windowedCards
 		snapshot.CurrentCards = currentCards
 		snapshot.Cards = appendTelemetryCards(windowedCards, currentCards)
-		snapshot.Series = appendTelemetrySeries(snapshot.ActivitySeries, snapshot.StateSeries)
+		snapshot.ActivitySeries = activitySeries
+		snapshot.StateSeries = stateSeries
+		snapshot.Series = appendTelemetrySeries(activitySeries, stateSeries)
 		snapshot.Status, snapshot.Available, snapshot.Message = telemetrySnapshotDisposition(snapshot.Cards, snapshot.Series)
 		if snapshot.Status != TelemetrySnapshotReady {
 			snapshot.Message = "telemetry backend is not configured"
@@ -248,12 +262,10 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 
 	queryCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
-	baseLabels := s.telemetryBaseLabels()
-	selector := telemetrySelector(scope, baseLabels)
 	windowedCardSpecs := telemetryWindowedCardSpecsForAudience(scope, baseLabels, windowKey, includeCost)
 	currentCardSpecs := telemetryCurrentCardSpecsForAudience(scope, baseLabels, includeCost)
-	activitySpecs := telemetryActivitySeriesSpecsForAudience(selector, windowDef.Rate, includeAssessorTelemetry)
-	stateSpecs := telemetryStateSeriesSpecs(selector)
+	activitySpecs := initialActivitySpecs
+	stateSpecs := initialStateSpecs
 	featureStates := s.telemetryFeatureStates(queryCtx, scope)
 	windowedResults := runTelemetryInstantQueries(queryCtx, s, telemetryExecutableSpecs(windowedCardSpecs, scope, featureStates), windowKey, scope)
 	currentResults := runTelemetryInstantQueries(queryCtx, s, telemetryExecutableSpecs(currentCardSpecs, scope, featureStates), windowKey, scope)
