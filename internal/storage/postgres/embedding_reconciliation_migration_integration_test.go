@@ -40,6 +40,10 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	teamBFixture := legacyEmbeddingFailureFixture{
 		jobID: uuid.NewString(), errorMessage: "embedding request timed out: secondary team", wantClass: "transient", wantCode: "provider_timeout",
 	}
+	supersededJobID := uuid.NewString()
+	supersededDocumentID := uuid.NewString()
+	supersededSourceID := uuid.NewString()
+	supersededError := "embedding provider http error: status=503 superseded"
 
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO semantic_team_refs (team_id) VALUES ($1::uuid)`, teamID); err != nil {
@@ -138,7 +142,32 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 			contractID, teamBFixture.errorMessage); err != nil {
 			return err
 		}
-		return nil
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO search_documents (
+				team_id, search_document_id, owner_profile_id, source_kind, source_id,
+				source_version, document_version, embedding_contract_id,
+				embedding_dimensions, search_state, document_text, document_hash
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, 'relationship', $4::uuid,
+				1, 2, $5::uuid, 3, 'current', 'superseding relationship document', $6
+			)
+		`, teamID, supersededDocumentID, profileID, supersededSourceID, contractID,
+			"sha256:"+strings.ReplaceAll(supersededDocumentID, "-", "")); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_jobs (
+				team_id, embedding_job_id, search_document_id, owner_profile_id,
+				source_kind, source_id, source_version, document_version,
+				embedding_contract_id, embedding_dimensions, status, attempts,
+				max_attempts, error, completed_at
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				'relationship', $5::uuid, 1, 1, $6::uuid, 3,
+				'failed', 20, 20, $7, now()
+			)
+		`, teamID, supersededJobID, supersededDocumentID, profileID, supersededSourceID, contractID, supersededError)
+		return err
 	}))
 
 	legacyBackfillQueuedJobID := uuid.NewString()
@@ -282,6 +311,31 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	require.Equal(t, "permanent", healthyBackfillFailureClass)
 	require.Equal(t, "unknown_embedding_failure", healthyBackfillFailureCode)
 	require.True(t, healthyBackfillFirstFailedAtIsNull)
+
+	var supersededStatus, supersededJobError string
+	var supersededIncidentCount int
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT status, error
+			FROM embedding_jobs
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+		`, teamID, supersededJobID).Scan(&supersededStatus, &supersededJobError); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `
+			SELECT count(*)
+			FROM embedding_failure_incidents
+			WHERE team_id = $1::uuid
+			  AND embedding_contract_id = $2::uuid
+			  AND embedding_dimensions = 3
+			  AND source_kind = 'relationship'
+			  AND failure_class = 'transient'
+			  AND failure_code = 'provider_server_error'
+		`, teamID, contractID).Scan(&supersededIncidentCount)
+	}))
+	require.Equal(t, "stale", supersededStatus)
+	require.Equal(t, "superseded by newer document version", supersededJobError)
+	require.Zero(t, supersededIncidentCount)
 
 	var plan strings.Builder
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
