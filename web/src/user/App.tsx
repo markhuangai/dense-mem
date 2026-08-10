@@ -519,8 +519,10 @@ function UserTelemetryPanel({ api, session }: { api: UserApi; session: UserSessi
   const [windowKey, setWindowKey] = useState<TelemetryWindowKey>("1h");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const requestRef = useRef(0);
 
   async function loadTelemetry(nextWindow = windowKey, signal?: AbortSignal) {
+    const requestID = ++requestRef.current;
     setLoading(true);
     setError("");
     try {
@@ -530,7 +532,9 @@ function UserTelemetryPanel({ api, session }: { api: UserApi; session: UserSessi
         setError(readError(err));
       }
     } finally {
-      setLoading(false);
+      if (requestRef.current === requestID) {
+        setLoading(false);
+      }
     }
   }
 

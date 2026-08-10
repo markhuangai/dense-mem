@@ -1,4 +1,4 @@
-import { CSSProperties, ReactNode, useEffect, useState } from "react";
+import { CSSProperties, ReactNode, useEffect, useRef, useState } from "react";
 import { Activity, CheckCircle2, Moon, Network, Users } from "lucide-react";
 import { ControlApi, Team, TeamProfile } from "../api";
 import { useVisiblePolling } from "../telemetry/useVisiblePolling";
@@ -92,6 +92,7 @@ export function TeamOverviewPanel({
   const [communityStatus, setCommunityStatus] = useState<Awaited<ReturnType<ControlApi["getTeamCommunityStatus"]>> | null>(null);
   const [loading, setLoading] = useState(false);
   const [metricsLoading, setMetricsLoading] = useState(false);
+  const metricsRequestRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -119,6 +120,7 @@ export function TeamOverviewPanel({
   }, [api, team.id]);
 
   const refreshMetrics = useVisiblePolling(async (signal) => {
+    const requestID = ++metricsRequestRef.current;
     setMetricsLoading(true);
     setMetricsUnavailable(false);
     try {
@@ -128,7 +130,9 @@ export function TeamOverviewPanel({
         setMetricsUnavailable(true);
       }
     } finally {
-      setMetricsLoading(false);
+      if (metricsRequestRef.current === requestID) {
+        setMetricsLoading(false);
+      }
     }
   }, [api, team.id]);
 

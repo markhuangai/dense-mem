@@ -150,6 +150,8 @@ func TestTelemetryTerminalFailureSeriesIsOperatorSystemOnly(t *testing.T) {
 	team := TelemetryScope{Type: "team", TeamID: &teamID}
 	teamCard := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(team, nil, "1h", true), "assessor_terminal_failures")
 	require.NotNil(t, teamCard)
+	require.True(t, telemetryScopeUnsupported(teamCard.ID, team))
+	require.False(t, telemetryScopeUnsupported(teamCard.ID, system))
 }
 
 func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
@@ -504,6 +506,11 @@ func TestPrometheusTelemetryServiceKeepsSuccessfulItemsWhenOneQueryFails(t *test
 	require.NotNil(t, errorCard)
 	require.Equal(t, TelemetryItemUnavailable, errorCard.Status)
 	require.Equal(t, "query_failed", errorCard.ReasonCode)
+	errorSeries := telemetrySeriesByID(snapshot.ActivitySeries, "http_errors_rps")
+	require.NotNil(t, errorSeries)
+	require.Equal(t, TelemetryItemUnavailable, errorSeries.Status)
+	require.Equal(t, "query_failed", errorSeries.ReasonCode)
+	require.Empty(t, errorSeries.Points)
 	payload, marshalErr := json.Marshal(snapshot)
 	require.NoError(t, marshalErr)
 	require.NotContains(t, string(payload), `"points":null`)
@@ -647,6 +654,58 @@ func TestTelemetryCostCardsFailClosedWhenActivityIsUnpriced(t *testing.T) {
 	require.NotNil(t, embedding)
 	require.Equal(t, TelemetryItemReady, embedding.Status)
 	require.Equal(t, 0.0, embedding.Value)
+}
+
+func TestTelemetryAggregateCostIncludesUnpricedEmbeddingActivity(t *testing.T) {
+	scope := TelemetryScope{Type: "system"}
+	specs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", true)
+	results := map[string]telemetryInstantResult{
+		"verifier_requests":  {Scalar: telemetryScalar{Value: 0, Available: true}},
+		"embedding_requests": {Scalar: telemetryScalar{Value: 2, Available: true}},
+		"ai_cost_usd":        {Scalar: telemetryScalar{}},
+		"embedding_cost_usd": {Scalar: telemetryScalar{}},
+	}
+	cards := buildTelemetryCards(specs, results, repository.TelemetryLifecycleSnapshot{
+		Transitions: map[string]float64{},
+		Current:     map[string]float64{},
+	}, nil, nil, scope)
+
+	aggregate := telemetrySpecByID(cards, "ai_cost_usd")
+	require.NotNil(t, aggregate)
+	require.Equal(t, TelemetryItemUnavailable, aggregate.Status)
+	require.Equal(t, "pricing_missing", aggregate.ReasonCode)
+}
+
+func TestTelemetryParentActivityMakesMissingDerivedItemsUnavailable(t *testing.T) {
+	scope := TelemetryScope{Type: "system"}
+	cardSpecs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", false)
+	cards := buildTelemetryCards(cardSpecs, map[string]telemetryInstantResult{
+		"recalls":            {Scalar: telemetryScalar{Value: 2, Available: true}},
+		"avg_recall_results": {Scalar: telemetryScalar{}},
+	}, repository.TelemetryLifecycleSnapshot{Transitions: map[string]float64{}, Current: map[string]float64{}}, nil, nil, scope)
+	card := telemetrySpecByID(cards, "avg_recall_results")
+	require.NotNil(t, card)
+	require.Equal(t, TelemetryItemUnavailable, card.Status)
+	require.Equal(t, "query_failed", card.ReasonCode)
+
+	seriesSpec := telemetryQuerySpecByID(telemetryActivitySeriesSpecsForAudience("", "1m", false), "recall_results")
+	require.NotNil(t, seriesSpec)
+	series := buildTelemetrySeries([]telemetryQuerySpec{*seriesSpec}, map[string]telemetryRangeResult{
+		"recall_results": {Points: []TelemetryPoint{}},
+	}, nil, time.Unix(1770000000, 0).UTC(), time.Unix(1770000060, 0).UTC(), cards, scope)
+	require.Len(t, series, 1)
+	require.Equal(t, TelemetryItemUnavailable, series[0].Status)
+	require.Equal(t, "query_failed", series[0].ReasonCode)
+}
+
+func TestTelemetrySnapshotDispositionIgnoresUnsupportedItems(t *testing.T) {
+	status, available, message := telemetrySnapshotDisposition(
+		[]TelemetryCard{{ID: "unsupported", Status: TelemetryItemUnsupported}},
+		[]TelemetrySeries{{ID: "failed", Status: TelemetryItemUnavailable}},
+	)
+	require.Equal(t, TelemetrySnapshotUnavailable, status)
+	require.False(t, available)
+	require.Equal(t, "telemetry sources are unavailable", message)
 }
 
 type captureTelemetryLogger struct {

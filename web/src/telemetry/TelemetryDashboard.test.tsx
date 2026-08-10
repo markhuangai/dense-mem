@@ -125,6 +125,28 @@ describe("TelemetryDashboard helpers", () => {
     expect(screen.getByText("pricing_missing")).toBeVisible();
     expect(screen.getByText("query_failed")).toBeVisible();
   });
+
+  it("shows an unavailable banner for legacy snapshots without status", () => {
+    const snapshot = telemetrySnapshot({
+      available: false,
+      status: undefined,
+      message: "Telemetry sources are unavailable",
+    });
+
+    render(
+      <TelemetryDashboard
+        title="Legacy telemetry"
+        snapshot={snapshot}
+        windowKey="1h"
+        loading={false}
+        error=""
+        onWindowChange={() => undefined}
+        onRefresh={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Telemetry is unavailable.");
+  });
 });
 
 function telemetrySnapshot(overrides: Partial<TelemetrySnapshot>): TelemetrySnapshot {

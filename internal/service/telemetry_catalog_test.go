@@ -63,4 +63,7 @@ func TestTelemetryCatalogIsOrderedAndComplete(t *testing.T) {
 	profileCost := telemetryQuerySpecByID(telemetryWindowedCardSpecsForAudience(scopes[2], nil, "1h", true), "embedding_cost_usd")
 	require.NotNil(t, profileCost)
 	require.True(t, telemetryScopeUnsupported(profileCost.ID, scopes[2]))
+	conflictProfile := telemetryQuerySpecByID(telemetryActivitySeriesSpecsForAudience("", "1m", false), "conflict_review_duration")
+	require.NotNil(t, conflictProfile)
+	require.True(t, telemetryScopeUnsupported(conflictProfile.ID, scopes[2]))
 }

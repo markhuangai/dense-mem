@@ -38,6 +38,7 @@ export function TelemetryDashboard({
   const currentCards = snapshot ? telemetryCurrentCards(snapshot) : [];
   const activitySeries = snapshot ? telemetryActivitySeries(snapshot) : [];
   const stateSeries = snapshot ? telemetryStateSeries(snapshot) : [];
+  const snapshotStatus = snapshot?.status ?? (snapshot?.available === false ? "unavailable" : "ready");
   const nonReadyItems = [
     ...windowedCards,
     ...currentCards,
@@ -73,9 +74,9 @@ export function TelemetryDashboard({
       </div>
 
       {error && <div className="banner error" role="alert">{error}</div>}
-      {snapshot?.status === "degraded" && <div className="banner warning" role="status">Some telemetry is unavailable. Successful items remain visible.</div>}
-      {snapshot?.status === "unavailable" && <div className="banner error" role="alert">Telemetry is unavailable.</div>}
-      {snapshot?.message && snapshot.status !== "degraded" && <div className="banner neutral">{snapshot.message}</div>}
+      {snapshotStatus === "degraded" && <div className="banner warning" role="status">Some telemetry is unavailable. Successful items remain visible.</div>}
+      {snapshotStatus === "unavailable" && <div className="banner error" role="alert">Telemetry is unavailable.</div>}
+      {snapshot?.message && snapshotStatus !== "degraded" && <div className="banner neutral">{snapshot.message}</div>}
       {loading && !snapshot && <LoadingState label="Loading telemetry" compact />}
 
       {snapshot && (

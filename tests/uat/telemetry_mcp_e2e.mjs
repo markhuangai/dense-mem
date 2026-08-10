@@ -181,8 +181,11 @@ async function validateDisabledFeatureReasons() {
     }
     return true;
   } finally {
-    await restoreConfig("/config/recall-feedback", recallBefore);
-    await restoreConfig("/config/dreaming", dreamingBefore);
+    try {
+      await restoreConfig("/config/recall-feedback", recallBefore);
+    } finally {
+      await restoreConfig("/config/dreaming", dreamingBefore);
+    }
   }
 }
 

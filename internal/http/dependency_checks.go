@@ -55,11 +55,24 @@ func runDependencyCheck(ctx context.Context, check HealthCheck) dependencyCheckR
 	if check.Check == nil {
 		return dependencyCheckResult{Check: check, Latency: time.Since(started)}
 	}
-	err := check.Check(checkCtx)
-	return dependencyCheckResult{
-		Check:    check,
-		Err:      err,
-		Latency:  time.Since(started),
-		TimedOut: errors.Is(checkCtx.Err(), context.DeadlineExceeded),
+	result := make(chan error, 1)
+	go func() {
+		result <- check.Check(checkCtx)
+	}()
+	select {
+	case err := <-result:
+		return dependencyCheckResult{
+			Check:    check,
+			Err:      err,
+			Latency:  time.Since(started),
+			TimedOut: errors.Is(checkCtx.Err(), context.DeadlineExceeded),
+		}
+	case <-checkCtx.Done():
+		return dependencyCheckResult{
+			Check:    check,
+			Err:      checkCtx.Err(),
+			Latency:  time.Since(started),
+			TimedOut: errors.Is(checkCtx.Err(), context.DeadlineExceeded),
+		}
 	}
 }

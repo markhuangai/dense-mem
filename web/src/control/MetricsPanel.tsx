@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { ControlApi, ControlMetrics, Team, TeamProfile } from "../api";
 import { TelemetryDashboard } from "../telemetry/TelemetryDashboard";
@@ -23,8 +23,11 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
   const [telemetryError, setTelemetryError] = useState("");
   const [loading, setLoading] = useState(false);
   const [telemetryLoading, setTelemetryLoading] = useState(false);
+  const metricsRequestRef = useRef(0);
+  const telemetryRequestRef = useRef(0);
 
   async function loadMetrics(nextWindow = windowMinutes, nextTeamId = teamId, signal?: AbortSignal) {
+    const requestID = ++metricsRequestRef.current;
     setLoading(true);
     setError("");
     try {
@@ -37,7 +40,9 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
         setError(readError(err));
       }
     } finally {
-      setLoading(false);
+      if (metricsRequestRef.current === requestID) {
+        setLoading(false);
+      }
     }
   }
 
@@ -69,12 +74,15 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
     nextProfileId = telemetryProfileId,
     signal?: AbortSignal,
   ) {
+    const requestID = ++telemetryRequestRef.current;
     if (nextScope === "team" && !nextTeamId) {
       setTelemetryError("Select a team.");
+      setTelemetryLoading(false);
       return;
     }
     if (nextScope === "profile" && !nextProfileId) {
       setTelemetryError("Select a profile.");
+      setTelemetryLoading(false);
       return;
     }
     setTelemetryLoading(true);
@@ -91,7 +99,9 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
         setTelemetryError(readError(err));
       }
     } finally {
-      setTelemetryLoading(false);
+      if (telemetryRequestRef.current === requestID) {
+        setTelemetryLoading(false);
+      }
     }
   }
 

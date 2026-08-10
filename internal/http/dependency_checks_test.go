@@ -63,3 +63,30 @@ func TestDependencyDisclosureBoundsFailureAndTimeout(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(payload), "raw database password")
 }
+
+func TestRunDependencyChecksReturnsWhenCheckIgnoresCancellation(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	checks := []HealthCheck{{
+		Name: "blocking",
+		Check: func(context.Context) error {
+			close(started)
+			<-release
+			return nil
+		},
+	}}
+
+	done := make(chan []dependencyCheckResult, 1)
+	go func() { done <- runDependencyChecks(context.Background(), checks) }()
+	<-started
+
+	select {
+	case results := <-done:
+		require.Len(t, results, 1)
+		require.ErrorIs(t, results[0].Err, context.DeadlineExceeded)
+		require.True(t, results[0].TimedOut)
+	case <-time.After(dependencyCheckTimeout + 500*time.Millisecond):
+		t.Fatal("dependency checks did not return after the timeout")
+	}
+	close(release)
+}

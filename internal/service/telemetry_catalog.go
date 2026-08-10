@@ -69,8 +69,8 @@ var orderedTelemetryCatalog = []telemetryCatalogEntry{
 	{ID: "avg_http_latency", Source: "densemem_http_request_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "http_instrumentation", ParentActivitySource: "densemem_http_requests_total", ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
 	{ID: "avg_embedding_latency", Source: "densemem_embedding_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "embedding_instrumentation", ParentActivitySource: "densemem_embedding_requests_total", ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
 	{ID: "avg_verifier_latency", Source: "densemem_verifier_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "verifier_instrumentation", ParentActivitySource: "densemem_verifier_requests_total", ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
-	{ID: "avg_conflict_review_duration", Source: "densemem_conflict_review_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "conflict_review_instrumentation", ParentActivitySource: telemetryParentNone, ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
-	{ID: "conflict_review_duration", Source: "densemem_conflict_review_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "conflict_review_instrumentation", ParentActivitySource: telemetryParentNone, ZeroPolicy: telemetryZeroParent, Presentations: []string{"chart"}},
+	{ID: "avg_conflict_review_duration", Source: "densemem_conflict_review_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: []string{"system", "team"}, RuntimePrerequisite: "conflict_review_instrumentation", ParentActivitySource: telemetryParentNone, ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
+	{ID: "conflict_review_duration", Source: "densemem_conflict_review_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: []string{"system", "team"}, RuntimePrerequisite: "conflict_review_instrumentation", ParentActivitySource: telemetryParentNone, ZeroPolicy: telemetryZeroParent, Presentations: []string{"chart"}},
 	{ID: "remember_acknowledgements", Source: "densemem_remember_acknowledgements_total", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "remember_instrumentation", ParentActivitySource: telemetryParentNone, ZeroPolicy: telemetryZeroValid, Presentations: []string{"card", "chart"}},
 	{ID: "avg_remember_acknowledgement_latency", Source: "densemem_remember_acknowledgement_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "remember_instrumentation", ParentActivitySource: "densemem_remember_acknowledgements_total", ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
 	{ID: "p95_remember_acknowledgement_latency", Source: "densemem_remember_acknowledgement_duration_seconds_bucket", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "remember_instrumentation", ParentActivitySource: "densemem_remember_acknowledgements_total", ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
@@ -322,9 +322,12 @@ func buildTelemetrySeries(specs []telemetryQuerySpec, results map[string]telemet
 			points = result.Points
 			disposition = telemetryReady()
 		}
-		if len(points) == 0 && telemetrySeriesCanProveZero(spec.ID, cards) {
+		if len(points) == 0 && disposition.Status == TelemetryItemInactive && telemetrySeriesCanProveZero(spec.ID, cards) {
 			points = []TelemetryPoint{{Timestamp: from.Format(time.RFC3339), Value: 0}, {Timestamp: to.Format(time.RFC3339), Value: 0}}
 			disposition = telemetryReady()
+		}
+		if len(points) == 0 && disposition.Status == TelemetryItemInactive && telemetrySeriesParentActivityMissing(spec.ID, cards) {
+			disposition = telemetryUnavailable("query_failed")
 		}
 		series = append(series, TelemetrySeries{
 			ID:         spec.ID,
@@ -377,26 +380,52 @@ func applyTelemetryCardParentPolicies(cards []TelemetryCard) {
 		if !strings.HasSuffix(cards[index].ID, "_cost_usd") || cards[index].Status != TelemetryItemInactive {
 			continue
 		}
-		parentID := "verifier_requests"
-		if cards[index].ID == "embedding_cost_usd" {
-			parentID = "embedding_requests"
+		parents := make([]*TelemetryCard, 0, 2)
+		switch cards[index].ID {
+		case "ai_cost_usd":
+			parents = append(parents, byID["verifier_requests"], byID["embedding_requests"])
+		case "embedding_cost_usd":
+			parents = append(parents, byID["embedding_requests"])
+		default:
+			parents = append(parents, byID["verifier_requests"])
 		}
-		parent := byID[parentID]
-		if parent == nil {
-			continue
+		activeParent := false
+		allParentsIdle := true
+		for _, parent := range parents {
+			if parent == nil {
+				allParentsIdle = false
+				continue
+			}
+			if parent.Status == TelemetryItemReady && parent.Value > 0 {
+				activeParent = true
+			}
+			if parent.Status != TelemetryItemInactive && !(parent.Status == TelemetryItemReady && parent.Value == 0) {
+				allParentsIdle = false
+			}
 		}
-		if parent.Status == TelemetryItemReady && parent.Value > 0 {
+		if activeParent {
 			cards[index].Status = TelemetryItemUnavailable
 			cards[index].Available = false
 			cards[index].ReasonCode = "pricing_missing"
 			cards[index].Reason = telemetryReason("pricing_missing")
 			continue
 		}
-		if parent.Status == TelemetryItemReady || parent.Status == TelemetryItemInactive {
+		if allParentsIdle {
 			cards[index].Status = TelemetryItemReady
 			cards[index].Available = true
 			cards[index].ReasonCode = ""
 			cards[index].Reason = ""
+		}
+	}
+	for index := range cards {
+		if cards[index].Status != TelemetryItemInactive {
+			continue
+		}
+		if parent := telemetryParentCard(cards[index].ID, byID); parent != nil && parent.Status == TelemetryItemReady && parent.Value > 0 {
+			cards[index].Status = TelemetryItemUnavailable
+			cards[index].Available = false
+			cards[index].ReasonCode = "query_failed"
+			cards[index].Reason = telemetryReason("query_failed")
 		}
 	}
 }
@@ -420,16 +449,39 @@ func telemetrySeriesCanProveZero(id string, cards []TelemetryCard) bool {
 	return false
 }
 
+func telemetrySeriesParentActivityMissing(id string, cards []TelemetryCard) bool {
+	byID := make(map[string]*TelemetryCard, len(cards))
+	for index := range cards {
+		byID[cards[index].ID] = &cards[index]
+	}
+	parent := telemetryParentCard(id, byID)
+	return parent != nil && parent.Status == TelemetryItemReady && parent.Value > 0
+}
+
+func telemetryParentCard(id string, cards map[string]*TelemetryCard) *TelemetryCard {
+	entry, ok := telemetryCatalogEntryFor(id)
+	if !ok || entry.ParentActivitySource == telemetryParentNone {
+		return nil
+	}
+	for cardID, card := range cards {
+		parentEntry, ok := telemetryCatalogEntryFor(cardID)
+		if ok && parentEntry.Source == entry.ParentActivitySource {
+			return card
+		}
+	}
+	return nil
+}
+
 func telemetrySnapshotDisposition(cards []TelemetryCard, series []TelemetrySeries) (string, bool, string) {
 	hasUnavailable := false
 	hasUsable := false
 	for _, card := range cards {
 		hasUnavailable = hasUnavailable || card.Status == TelemetryItemUnavailable
-		hasUsable = hasUsable || card.Status != TelemetryItemUnavailable
+		hasUsable = hasUsable || card.Status == TelemetryItemReady || card.Status == TelemetryItemInactive
 	}
 	for _, item := range series {
 		hasUnavailable = hasUnavailable || item.Status == TelemetryItemUnavailable
-		hasUsable = hasUsable || item.Status != TelemetryItemUnavailable
+		hasUsable = hasUsable || item.Status == TelemetryItemReady || item.Status == TelemetryItemInactive
 	}
 	if hasUnavailable && !hasUsable {
 		return TelemetrySnapshotUnavailable, false, "telemetry sources are unavailable"
@@ -516,15 +568,6 @@ func telemetryReason(code string) string {
 		return "The lifecycle ledger is unavailable."
 	default:
 		return "Telemetry is unavailable."
-	}
-}
-
-func markTelemetryUnavailable(cards []TelemetryCard, code string) {
-	for index := range cards {
-		cards[index].Available = false
-		cards[index].Status = TelemetryItemUnavailable
-		cards[index].ReasonCode = code
-		cards[index].Reason = telemetryReason(code)
 	}
 }
 
