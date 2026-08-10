@@ -105,6 +105,102 @@ func TestUpsertSearchDocumentRetiresSupersededFailedEmbeddingJob(t *testing.T) {
 	require.Equal(t, "resolved", incidentStatus)
 }
 
+func TestUpsertSearchDocumentRetiresSupersededJobWhenProjectionGenerationChanges(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "superseded-generation-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "superseded-generation-owner")
+	insertSearchTestContract(t, adminDB, rls, "superseded-generation", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return ensureSemanticRefs(ctx, tx, teamID, ownerID)
+	}))
+
+	firstGenerationID := uuid.NewString()
+	secondGenerationID := uuid.NewString()
+	thirdGenerationID := uuid.NewString()
+	insertRelationshipProjectionGenerationForTest(t, appDB, rls, teamID, firstGenerationID, 1, "failed")
+	insertRelationshipProjectionGenerationForTest(t, appDB, rls, teamID, secondGenerationID, 2, "embedding")
+	insertRelationshipProjectionGenerationForTest(t, appDB, rls, teamID, thirdGenerationID, 3, "embedding")
+
+	sourceID := uuid.NewString()
+	first, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship", SourceID: sourceID,
+		SourceVersion: 1, ProjectionFormat: 2, ProjectionGenerationID: firstGenerationID,
+		DocumentText: "relationship generation text", DocumentHash: "sha256:generation-text",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, first.QueuedJobID)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_jobs
+			SET status = 'failed', attempts = max_attempts, total_attempts = max_attempts,
+			    failure_class = 'transient', failure_code = 'provider_timeout',
+			    first_failed_at = now(), last_failed_at = now(), completed_at = now(),
+			    error = 'provider timeout'
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, teamID, first.QueuedJobID).Error
+	}))
+
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	input := normalizeUpsertSearchDocumentInput(UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship", SourceID: sourceID,
+		SourceVersion: 1, ProjectionFormat: 2, ProjectionGenerationID: secondGenerationID,
+		DocumentText: "relationship generation text", DocumentHash: "sha256:generation-text",
+	})
+	var second *SearchDocumentResult
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		var err error
+		second, err = upsertSearchDocumentInTx(ctx, tx, input, contract, defaultEmbeddingJobMaxAttempts)
+		return err
+	}))
+	require.NotNil(t, second)
+	require.EqualValues(t, first.DocumentVersion+1, second.DocumentVersion)
+	require.NotEmpty(t, second.QueuedJobID)
+
+	third, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship", SourceID: sourceID,
+		SourceVersion: 1, ProjectionFormat: 2, ProjectionGenerationID: thirdGenerationID,
+		DocumentText: "relationship generation text", DocumentHash: "sha256:generation-text",
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, second.DocumentVersion+1, third.DocumentVersion)
+	require.NotEmpty(t, third.QueuedJobID)
+
+	statuses := map[string]string{}
+	generations := map[string]string{}
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		rows, err := tx.Raw(`
+			SELECT embedding_job_id::text, status, projection_generation_id::text
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+		`, teamID, sourceID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var jobID, status, generationID string
+			if err := rows.Scan(&jobID, &status, &generationID); err != nil {
+				return err
+			}
+			statuses[jobID] = status
+			generations[jobID] = generationID
+		}
+		return rows.Err()
+	}))
+	assert.Equal(t, string(domain.EmbeddingJobStale), statuses[first.QueuedJobID])
+	assert.Equal(t, string(domain.EmbeddingJobStale), statuses[second.QueuedJobID])
+	assert.Equal(t, string(domain.EmbeddingJobQueued), statuses[third.QueuedJobID])
+	assert.Equal(t, firstGenerationID, generations[first.QueuedJobID])
+	assert.Equal(t, secondGenerationID, generations[second.QueuedJobID])
+	assert.Equal(t, thirdGenerationID, generations[third.QueuedJobID])
+}
+
 func TestTransactionalPlacementUpsertRetiresSupersededFailedEmbeddingJob(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
