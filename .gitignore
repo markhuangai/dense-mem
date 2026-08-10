@@ -12,7 +12,6 @@ user-dist/
 .env
 .env.local
 .env.*.local
-.env.git-vibe
 .env.e2e-*
 
 # Local docker-compose files created from examples/docker-compose.*.yml
@@ -62,5 +61,4 @@ temp/
 telemetry-scrape-token
 prometheus.yml
 densemem-e2e-prometheus-*/
-.env.mcp
 .codex
