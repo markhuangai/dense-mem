@@ -120,16 +120,18 @@ func (s *reconciliationRepositoryStub) CompleteEmbeddingReconciliationRun(ctx co
 }
 
 type reconciliationRawProvider struct {
-	available bool
-	model     string
-	dims      int
-	vector    []float32
-	err       error
-	errs      []error
-	calls     int
+	available     bool
+	model         string
+	dims          int
+	vector        []float32
+	err           error
+	errs          []error
+	calls         int
+	embedContexts []context.Context
 }
 
-func (p *reconciliationRawProvider) Embed(_ context.Context, _ string) ([]float32, string, error) {
+func (p *reconciliationRawProvider) Embed(ctx context.Context, _ string) ([]float32, string, error) {
+	p.embedContexts = append(p.embedContexts, ctx)
 	p.calls++
 	err := p.err
 	if index := p.calls - 1; index < len(p.errs) {
@@ -146,13 +148,16 @@ func (p *reconciliationRawProvider) IsAvailable() bool { return p.available }
 
 type reconciliationMetricsStub struct {
 	observability.DiscoverabilityMetrics
-	runs []string
+	runs     []string
+	canaries []string
 }
 
 func (m *reconciliationMetricsStub) ObserveEmbeddingReconciliationRun(outcome string) {
 	m.runs = append(m.runs, outcome)
 }
-func (*reconciliationMetricsStub) ObserveEmbeddingReconciliationCanary(string) {}
+func (m *reconciliationMetricsStub) ObserveEmbeddingReconciliationCanary(outcome string) {
+	m.canaries = append(m.canaries, outcome)
+}
 func (*reconciliationMetricsStub) ObserveEmbeddingReconciliationJobs(string, string, string, string, int) {
 }
 func (*reconciliationMetricsStub) ObserveEmbeddingReconciliationDuration(float64, string) {}
@@ -444,6 +449,9 @@ func TestEmbeddingReconciliationDefersAfterInputRejectedCanaryLimit(t *testing.T
 	assert.Equal(t, string(domain.EmbeddingReconciliationDeferred), reconciliation.completed.Status)
 	assert.Equal(t, string(domain.EmbeddingFailurePermanent), reconciliation.completed.FailureClass)
 	assert.Equal(t, string(domain.EmbeddingFailureInputRejected), reconciliation.completed.FailureCode)
+	for _, embedContext := range provider.embedContexts {
+		assert.ErrorIs(t, embedContext.Err(), context.Canceled)
+	}
 }
 
 func TestEmbeddingReconciliationDefersWhenInputRejectedResetFails(t *testing.T) {
@@ -509,7 +517,7 @@ func TestEmbeddingReconciliationFinalizesFailedCanaryAfterContextCancellation(t 
 	cancel()
 
 	err := service.finishFailedCanary(ctx, run, job,
-		string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderTimeout), "provider timed out")
+		string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderTimeout), "provider timed out", true)
 	require.NoError(t, err)
 	require.NotNil(t, search.failContext)
 	require.NotNil(t, reconciliation.canaryContext)
@@ -523,10 +531,11 @@ func TestEmbeddingReconciliationClassifiesUnavailableProviderAsTransient(t *test
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
 	reconciliation := &reconciliationRepositoryStub{job: &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", Attempts: 20, EmbeddingDimensions: 3, DocumentText: "canary"}}
+	metrics := &reconciliationMetricsStub{}
 	provider := &reconciliationRawProvider{available: false, model: "model", dims: 3}
 	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
 	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
-		Search: search, Reconciliation: reconciliation, Provider: provider,
+		Search: search, Reconciliation: reconciliation, Provider: provider, Metrics: metrics,
 		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
 		WorkerID:  "worker-1", Now: func() time.Time { return now },
 	})
@@ -538,6 +547,8 @@ func TestEmbeddingReconciliationClassifiesUnavailableProviderAsTransient(t *test
 	assert.Equal(t, string(domain.EmbeddingFailureProviderNetworkError), search.failInputs[0].FailureCode)
 	require.NotNil(t, reconciliation.completed)
 	assert.Equal(t, string(domain.EmbeddingFailureProviderNetworkError), reconciliation.completed.FailureCode)
+	assert.Empty(t, reconciliation.completed.CanaryOutcome)
+	assert.Empty(t, metrics.canaries)
 }
 
 func TestEmbeddingReconciliationDefersWhenCanaryOutcomePersistenceFails(t *testing.T) {
@@ -561,6 +572,30 @@ func TestEmbeddingReconciliationDefersWhenCanaryOutcomePersistenceFails(t *testi
 	assert.Equal(t, string(domain.EmbeddingReconciliationAmbiguous), reconciliation.completed.Status)
 	assert.Equal(t, "ambiguous", reconciliation.completed.CanaryOutcome)
 	assert.Zero(t, reconciliation.requeued)
+}
+
+func TestEmbeddingReconciliationDoesNotRecordCanaryBeforeProviderAttempt(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	reconciliation := &reconciliationRepositoryStub{
+		job:     &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", EmbeddingDimensions: 3, DocumentText: "canary"},
+		markErr: errors.New("canary claim persistence failed"),
+	}
+	metrics := &reconciliationMetricsStub{}
+	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
+	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
+	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: provider, Metrics: metrics,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1", Now: func() time.Time { return now },
+	})
+
+	_, err := svc.ProcessDue(context.Background())
+	require.ErrorContains(t, err, "canary claim persistence failed")
+	require.NotNil(t, reconciliation.completed)
+	assert.Empty(t, reconciliation.completed.CanaryOutcome)
+	assert.Empty(t, metrics.canaries)
+	assert.Zero(t, provider.calls)
 }
 
 func TestEmbeddingReconciliationDefersFailedCanaryOutcomePersistence(t *testing.T) {

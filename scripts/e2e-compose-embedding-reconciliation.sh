@@ -75,7 +75,8 @@ NODE
 }
 
 append_embedding_proxy_compose_args() {
-  if [[ -n "$E2E_EMBEDDING_PROXY_OVERLAY_FILE" ]]; then compose_args+=(-f "$E2E_EMBEDDING_PROXY_OVERLAY_FILE"); fi
+  local -n compose_args_ref="$1"
+  if [[ -n "$E2E_EMBEDDING_PROXY_OVERLAY_FILE" ]]; then compose_args_ref+=(-f "$E2E_EMBEDDING_PROXY_OVERLAY_FILE"); fi
 }
 
 cleanup_embedding_proxy_files() {

@@ -160,7 +160,8 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 	}
 	if convergence.Queued > 0 || convergence.Processing > 0 || convergence.Failed > 0 || len(convergence.Incidents) > 0 {
 		convergence.Status = "attention_required"
-		if convergence.Queued > 0 || convergence.Processing > 0 || hasRecoveringIncident(convergence.Incidents) {
+		if !hasOpenIncident(convergence.Incidents) &&
+			(convergence.Queued > 0 || convergence.Processing > 0 || hasRecoveringIncident(convergence.Incidents)) {
 			convergence.Status = "recovering"
 		}
 	}
@@ -688,6 +689,15 @@ func (r *SearchRepositoryImpl) latestEmbeddingReconciliationRun(ctx context.Cont
 func hasRecoveringIncident(items []EmbeddingFailureIncident) bool {
 	for _, item := range items {
 		if item.Status == "recovering" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasOpenIncident(items []EmbeddingFailureIncident) bool {
+	for _, item := range items {
+		if item.Status == "open" {
 			return true
 		}
 	}

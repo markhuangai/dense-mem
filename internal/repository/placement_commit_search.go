@@ -184,6 +184,9 @@ func upsertSearchDocumentInTx(
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	if err := retireSupersededEmbeddingJobs(ctx, tx, loaded); err != nil {
+		return nil, err
+	}
 	jobID, err := enqueueEmbeddingJob(ctx, tx, loaded, embeddingJobMaxAttempts)
 	if err != nil {
 		return nil, err

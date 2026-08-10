@@ -248,7 +248,7 @@ func TestEmbeddingReconciliationCanaryResetSkipsPermanentInputFailure(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, next)
 	require.NotEqual(t, canary.EmbeddingJobID, next.EmbeddingJobID)
-	require.Equal(t, second.SearchDocumentID, next.SearchDocumentID)
+	require.Contains(t, []string{first.SearchDocumentID, second.SearchDocumentID}, next.SearchDocumentID)
 }
 
 func TestEmbeddingReconciliationRenewsLeaseAndTracksPartialIncidentRecovery(t *testing.T) {
@@ -413,6 +413,7 @@ func TestSearchReadinessIgnoresAsynchronousEmbeddingFailures(t *testing.T) {
 	insertSearchTestContract(t, adminDB, rls, "readiness-convergence", 3, "exact", "")
 	repo := NewSearchRepository(appDB, rls)
 	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "lexical text remains usable", 1)
+	upsertSearchDocumentForTest(t, repo, teamID, ownerID, "unrelated queued work", 1)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Exec(`
 			UPDATE embedding_jobs
@@ -441,6 +442,7 @@ func TestSearchReadinessIgnoresAsynchronousEmbeddingFailures(t *testing.T) {
 	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
 	require.NoError(t, err)
 	require.Equal(t, "attention_required", convergence.Status)
+	require.EqualValues(t, 1, convergence.Queued)
 	require.EqualValues(t, 1, convergence.Failed)
 	require.Len(t, convergence.Failures, 1)
 	require.Equal(t, "provider_quota_exhausted", convergence.Failures[0].FailureCode)

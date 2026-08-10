@@ -211,7 +211,7 @@ compose() {
   fi
   if [[ -n "$E2E_COMPOSE_OVERLAY_FILE" ]]; then
     compose_args+=(-f "$E2E_COMPOSE_OVERLAY_FILE")
-  fi; append_embedding_proxy_compose_args
+  fi; append_embedding_proxy_compose_args compose_args
   docker compose "${compose_args[@]}" "$@"
 }
 
@@ -291,7 +291,7 @@ prepare_e2e_environment() {
   printf '%s\n' \
     "CONFLICT_REVIEW_START_TIME_LOCAL=00:00" \
     "CONFLICT_REVIEW_JITTER_SECONDS=0" >> "$E2E_ENV_FILE"
-  append_conflict_e2e_environment; append_embedding_reconciliation_environment; prepare_embedding_proxy_files; ROOT_ENV_FILE="$E2E_ENV_FILE"
+  append_conflict_e2e_environment && append_embedding_reconciliation_environment && prepare_embedding_proxy_files && ROOT_ENV_FILE="$E2E_ENV_FILE"
 }
 
 prepare_e2e_compose_files() {

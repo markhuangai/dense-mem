@@ -540,12 +540,60 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	require.Equal(t, "resolved", incidentStatus)
 	require.Zero(t, affectedJobs)
 
+	completionEntityJobID := uuid.NewString()
+	completionEntityDocumentID := uuid.NewString()
+	completionEntityID := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO search_documents (
+				team_id, search_document_id, owner_profile_id, source_kind, source_id,
+				source_version, document_version, embedding_contract_id,
+				embedding_dimensions, search_state, document_text, document_hash,
+				embedding_error
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, 'entity', $4::uuid,
+				1, 1, $5::uuid, 3, 'failed', 'completion entity document', $6, $7
+			)
+		`, teamID, completionEntityDocumentID, profileID, completionEntityID, contractID,
+			"sha256:"+strings.ReplaceAll(completionEntityDocumentID, "-", ""), legacyError); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_jobs (
+				team_id, embedding_job_id, search_document_id, owner_profile_id,
+				source_kind, source_id, source_version, document_version,
+				embedding_contract_id, embedding_dimensions, status, attempts,
+				max_attempts, error, completed_at, failure_class, failure_code,
+				first_failed_at, last_failed_at
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				'entity', $5::uuid, 1, 1, $6::uuid, 3, 'failed', 20, 20,
+				$7, now(), 'transient', 'provider_network_error', now(), now()
+			)
+		`, teamID, completionEntityJobID, completionEntityDocumentID, profileID, completionEntityID, contractID, legacyError)
+		return err
+	}))
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT status, affected_job_count
+			FROM embedding_failure_incidents
+			WHERE team_id = $1::uuid
+			  AND embedding_contract_id = $2::uuid
+			  AND embedding_dimensions = 3
+			  AND source_kind = 'entity'
+			  AND failure_class = 'transient'
+			  AND failure_code = 'provider_network_error'
+		`, teamID, contractID).Scan(&incidentStatus, &affectedJobs)
+	}))
+	require.Equal(t, "open", incidentStatus)
+	require.EqualValues(t, 1, affectedJobs)
+
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			UPDATE embedding_jobs
 			SET status = 'completed', error = '', completed_at = now()
 			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
-		`, teamID, legacyEntityJobID)
+		`, teamID, completionEntityJobID)
 		return err
 	}))
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {

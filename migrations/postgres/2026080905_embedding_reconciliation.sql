@@ -752,6 +752,7 @@ CREATE OR REPLACE PROCEDURE dense_mem_backfill_embedding_reconciliation_compatib
 LANGUAGE plpgsql
 AS $procedure$
 DECLARE
+    candidate_rows INTEGER;
     updated_rows INTEGER;
 BEGIN
     PERFORM set_config('app.tx_mode', 'migration', true);
@@ -808,13 +809,16 @@ BEGIN
               AND document.embedding_dimensions = changed.embedding_dimensions
             RETURNING 1
         )
-        SELECT count(changed.team_id)
-        INTO updated_rows
+        SELECT (SELECT count(*) FROM batch), count(changed.team_id)
+        INTO candidate_rows, updated_rows
         FROM changed
         CROSS JOIN (SELECT count(*) FROM projection_updates) AS projection_update_count;
 
         COMMIT;
-        EXIT WHEN updated_rows = 0;
+        EXIT WHEN candidate_rows = 0;
+        IF updated_rows = 0 THEN
+            PERFORM pg_sleep(1);
+        END IF;
         PERFORM set_config('app.tx_mode', 'migration', true);
         PERFORM set_config('app.current_team_id', '', true);
         PERFORM set_config('app.current_profile_id', '', true);
