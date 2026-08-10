@@ -163,14 +163,17 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 			}
 			return result, err
 		}
-		result.CanaryAttempted = true
 		attemptedAt := s.now().UTC()
 		if err := s.reconciliation.MarkEmbeddingReconciliationCanaryAttempt(ctx, repository.MarkEmbeddingReconciliationCanaryAttemptInput{
 			TeamID: job.TeamID, RunID: run.RunID, CanaryJobID: job.EmbeddingJobID, WorkerID: s.workerID,
 			LeaseToken: run.LeaseToken, AttemptedAt: attemptedAt, Lease: reconciliationLease,
 		}); err != nil {
+			if errors.Is(err, repository.ErrEmbeddingReconciliationCanarySkipped) {
+				continue
+			}
 			return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationDeferred), "", "", "daily embedding canary attempt persistence failed", err)
 		}
+		result.CanaryAttempted = true
 
 		providerCtx, cancel := context.WithTimeout(ctx, reconciliationCallTimeout)
 		defer cancel()
@@ -267,16 +270,18 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 			BatchSize: reconciliationBatchSize, Lease: reconciliationLease,
 		})
 		result.RequeuedCount = requeued
+		finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx), reconciliationCleanupTimeout)
+		defer finalizeCancel()
 		if err != nil {
 			result.Status = string(domain.EmbeddingReconciliationDeferred)
-			return result, s.deferRunAfterCanarySuccess(cleanupCtx, run, "reconciliation backlog release failed", requeued, result.RecoveredCount, err)
+			return result, s.deferRunAfterCanarySuccess(finalizeCtx, run, "reconciliation backlog release failed", requeued, result.RecoveredCount, err)
 		}
 		result.Status = string(domain.EmbeddingReconciliationCompleted)
 		if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
 			metrics.ObserveEmbeddingReconciliationCanary("succeeded")
 			metrics.ObserveEmbeddingReconciliationJobs("requeued", "mixed", "mixed", "", int(requeued))
 		}
-		err = s.reconciliation.CompleteEmbeddingReconciliationRun(cleanupCtx, repository.CompleteEmbeddingReconciliationRunInput{
+		err = s.reconciliation.CompleteEmbeddingReconciliationRun(finalizeCtx, repository.CompleteEmbeddingReconciliationRunInput{
 			RunID: run.RunID, WorkerID: s.workerID, LeaseToken: run.LeaseToken,
 			Status: string(domain.EmbeddingReconciliationCompleted), CanaryOutcome: "succeeded",
 			RequeuedCount: requeued, RecoveredCount: result.RecoveredCount, CompletedAt: s.now().UTC(),

@@ -122,7 +122,6 @@ retryLoop:
 			delay := p.retryDelay(attempt, err)
 			select {
 			case <-ctx.Done():
-				lastErr = ctx.Err()
 				break retryLoop
 			case <-time.After(delay):
 				continue
@@ -173,7 +172,6 @@ retryLoop:
 			delay := p.retryDelay(attempt, err)
 			select {
 			case <-ctx.Done():
-				lastErr = ctx.Err()
 				break retryLoop
 			case <-time.After(delay):
 				continue

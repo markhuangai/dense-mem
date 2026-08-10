@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,6 +69,73 @@ func TestSearchEmbeddingCompletionResolvesStaleIncident(t *testing.T) {
 		`, teamID).Row().Scan(&status)
 	}))
 	require.Equal(t, "resolved", status)
+}
+
+func TestSearchEmbeddingFailureClassificationTransitionsDoNotDeadlock(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-failure-transition-lock-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-failure-transition-lock-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-failure-transition-lock", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	first := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "failure transition one", 1)
+	second := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "failure transition two", 1)
+	claimed, err := repo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{
+		TeamID: teamID, WorkerID: "failure-transition-initial", Limit: 2, Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimed, 2)
+
+	for index, job := range claimed {
+		failureClass, failureCode := "transient", "provider_timeout"
+		if index == 1 {
+			failureCode = "provider_server_error"
+		}
+		_, err := repo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
+			TeamID: teamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: "failure-transition-initial",
+			ExpectedAttempts: job.Attempts, FailureClass: failureClass, FailureCode: failureCode, Terminal: true,
+		})
+		require.NoError(t, err)
+	}
+
+	for iteration := 0; iteration < 8; iteration++ {
+		require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			return tx.Exec(`
+				UPDATE embedding_jobs
+				SET status = 'processing', worker_id = 'failure-transition-worker',
+				    lease_until = now() + interval '1 minute', completed_at = NULL
+				WHERE team_id = ?::uuid AND embedding_job_id IN (?::uuid, ?::uuid)
+			`, teamID, first.QueuedJobID, second.QueuedJobID).Error
+		}))
+		iterationCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+
+		var wg sync.WaitGroup
+		errs := make(chan error, 2)
+		wg.Add(2)
+		go func(jobID, failureCode string) {
+			defer wg.Done()
+			_, callErr := repo.FailEmbeddingJob(iterationCtx, FailEmbeddingJobInput{
+				TeamID: teamID, EmbeddingJobID: jobID, WorkerID: "failure-transition-worker",
+				ExpectedAttempts: 1, FailureClass: "transient", FailureCode: failureCode, Terminal: true,
+			})
+			errs <- callErr
+		}(first.QueuedJobID, "provider_server_error")
+		go func(jobID, failureCode string) {
+			defer wg.Done()
+			_, callErr := repo.FailEmbeddingJob(iterationCtx, FailEmbeddingJobInput{
+				TeamID: teamID, EmbeddingJobID: jobID, WorkerID: "failure-transition-worker",
+				ExpectedAttempts: 1, FailureClass: "transient", FailureCode: failureCode, Terminal: true,
+			})
+			errs <- callErr
+		}(second.QueuedJobID, "provider_timeout")
+		wg.Wait()
+		cancel()
+		close(errs)
+		for callErr := range errs {
+			require.NoError(t, callErr)
+		}
+	}
 }
 
 func TestSearchEmbeddingFailureClassificationChangeResolvesPriorIncident(t *testing.T) {

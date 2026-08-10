@@ -184,7 +184,7 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 		return nil
 	}))
 
-	runGooseUpTo(t, ctx, sqlDB, 2026080904)
+	runGooseUpTo(t, ctx, sqlDB, 2026080905)
 	var compatibilityTotalAttempts int
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
@@ -490,6 +490,59 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			UPDATE embedding_jobs
+			SET status = 'failed', error = 'embedding provider http error: status=401', completed_at = now()
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+		`, teamID, legacyEntityJobID)
+		return err
+	}))
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT failure_class, failure_code
+			FROM embedding_jobs
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+		`, teamID, legacyEntityJobID).Scan(&failureClass, &failureCode)
+	}))
+	require.Equal(t, "provider_action_required", failureClass)
+	require.Equal(t, "provider_authentication_failed", failureCode)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.embedding_job_failure_writer', 'current', true)`); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			UPDATE embedding_jobs
+			SET status = 'failed', error = 'embedding provider http error: status=401',
+			    failure_class = 'transient', failure_code = 'provider_timeout', completed_at = now()
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+		`, teamID, legacyEntityJobID)
+		return err
+	}))
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT failure_class, failure_code
+			FROM embedding_jobs
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+		`, teamID, legacyEntityJobID).Scan(&failureClass, &failureCode)
+	}))
+	require.Equal(t, "transient", failureClass)
+	require.Equal(t, "provider_timeout", failureCode)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT status, affected_job_count
+			FROM embedding_failure_incidents
+			WHERE team_id = $1::uuid
+			  AND embedding_contract_id = $2::uuid
+			  AND embedding_dimensions = 3
+			  AND source_kind = 'entity'
+			  AND failure_class = 'transient'
+			  AND failure_code = 'provider_network_error'
+		`, teamID, contractID).Scan(&incidentStatus, &affectedJobs)
+	}))
+	require.Equal(t, "resolved", incidentStatus)
+	require.Zero(t, affectedJobs)
+
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE embedding_jobs
 			SET status = 'completed', error = '', completed_at = now()
 			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
 		`, teamID, legacyEntityJobID)
@@ -511,6 +564,7 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	require.Zero(t, affectedJobs)
 
 	var embeddingErrorLength int
+	var repeatedFailureClass, repeatedFailureCode string
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			UPDATE embedding_jobs
@@ -527,6 +581,15 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 		`, teamID, legacyEntityDocumentID).Scan(&embeddingErrorLength)
 	}))
 	require.Equal(t, 1024, embeddingErrorLength)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT failure_class, failure_code
+			FROM embedding_jobs
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+		`, teamID, legacyEntityJobID).Scan(&repeatedFailureClass, &repeatedFailureCode)
+	}))
+	require.Equal(t, "permanent", repeatedFailureClass)
+	require.Equal(t, "unknown_embedding_failure", repeatedFailureCode)
 
 	legacyQueuedJobID := uuid.NewString()
 	legacyQueuedDocumentID := uuid.NewString()

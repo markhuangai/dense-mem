@@ -19,9 +19,10 @@ const (
 )
 
 var (
-	ErrSearchStaleVersion     = errors.New("search stale source or document version")
-	ErrSearchContractMismatch = errors.New("search contract mismatch")
-	ErrEmbeddingLeaseLost     = errors.New("embedding lease lost")
+	ErrSearchStaleVersion                   = errors.New("search stale source or document version")
+	ErrSearchContractMismatch               = errors.New("search contract mismatch")
+	ErrEmbeddingLeaseLost                   = errors.New("embedding lease lost")
+	ErrEmbeddingReconciliationCanarySkipped = errors.New("embedding reconciliation canary was no longer claimable")
 )
 
 type SearchRepositoryImpl struct {

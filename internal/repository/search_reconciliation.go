@@ -383,7 +383,7 @@ func (r *SearchRepositoryImpl) MarkEmbeddingReconciliationCanaryAttempt(ctx cont
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return errors.New("reconciliation canary job was already claimed")
+			return ErrEmbeddingReconciliationCanarySkipped
 		}
 		result = tx.WithContext(ctx).Exec(`
 			UPDATE embedding_reconciliation_runs AS run

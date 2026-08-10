@@ -145,7 +145,7 @@ CREATE POLICY embedding_reconciliation_runs_system_access ON embedding_reconcili
 -- The procedure commits every bounded batch so upgrade repair does not retain
 -- row locks or one transaction-wide snapshot across the legacy job table.
 -- +goose StatementBegin
-CREATE OR REPLACE PROCEDURE dense_mem_backfill_embedding_reconciliation_2026080904()
+CREATE OR REPLACE PROCEDURE dense_mem_backfill_embedding_reconciliation_2026080905()
 LANGUAGE plpgsql
 AS $procedure$
 DECLARE
@@ -262,8 +262,8 @@ END
 $procedure$;
 -- +goose StatementEnd
 
-CALL dense_mem_backfill_embedding_reconciliation_2026080904();
-DROP PROCEDURE dense_mem_backfill_embedding_reconciliation_2026080904();
+CALL dense_mem_backfill_embedding_reconciliation_2026080905();
+DROP PROCEDURE dense_mem_backfill_embedding_reconciliation_2026080905();
 
 -- Install the checks after the committed backfill so old workers cannot touch
 -- a row whose legacy attempts have not yet been repaired. Validation follows
@@ -475,8 +475,19 @@ BEGIN
     END IF;
     IF NEW.status IN ('queued', 'failed') THEN
         -- A pre-reconciliation worker leaves the new columns at their defaults.
-        -- Preserve explicit classifications from current workers.
-        IF NEW.failure_class = 'permanent' AND NEW.failure_code = 'unknown_embedding_failure' THEN
+        -- Reclassify changed errors from old workers, while preserving explicit
+        -- classifications from current workers through a transaction-local guard.
+        IF TG_OP = 'UPDATE'
+           AND COALESCE(current_setting('app.embedding_job_failure_writer', true), '') <> 'current'
+           AND NEW.error IS DISTINCT FROM OLD.error
+           AND NEW.failure_class IS NOT DISTINCT FROM OLD.failure_class
+           AND NEW.failure_code IS NOT DISTINCT FROM OLD.failure_code THEN
+            SELECT *
+            INTO classification
+            FROM dense_mem_classify_embedding_failure_compatibility(NEW.error);
+            NEW.failure_class := classification.failure_class;
+            NEW.failure_code := classification.failure_code;
+        ELSIF NEW.failure_class = 'permanent' AND NEW.failure_code = 'unknown_embedding_failure' THEN
             SELECT *
             INTO classification
             FROM dense_mem_classify_embedding_failure_compatibility(NEW.error);
@@ -506,7 +517,59 @@ SET search_path = public, pg_temp
 AS $function$
 DECLARE
     affected_count BIGINT;
+    old_failure_key TEXT;
+    new_failure_key TEXT;
 BEGIN
+    IF COALESCE(current_setting('app.embedding_reconciliation_backfill', true), '') = 'on' THEN
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'UPDATE'
+       AND (OLD.failure_class IS DISTINCT FROM NEW.failure_class
+            OR OLD.failure_code IS DISTINCT FROM NEW.failure_code) THEN
+        old_failure_key := concat_ws('|', OLD.team_id::text, OLD.embedding_contract_id::text,
+                                     OLD.embedding_dimensions::text, OLD.source_kind,
+                                     OLD.failure_class, OLD.failure_code);
+        new_failure_key := concat_ws('|', NEW.team_id::text, NEW.embedding_contract_id::text,
+                                     NEW.embedding_dimensions::text, NEW.source_kind,
+                                     NEW.failure_class, NEW.failure_code);
+        IF old_failure_key < new_failure_key THEN
+            PERFORM pg_advisory_xact_lock(hashtextextended(old_failure_key, 0));
+            PERFORM pg_advisory_xact_lock(hashtextextended(new_failure_key, 0));
+        ELSE
+            PERFORM pg_advisory_xact_lock(hashtextextended(new_failure_key, 0));
+            PERFORM pg_advisory_xact_lock(hashtextextended(old_failure_key, 0));
+        END IF;
+        WITH remaining AS (
+            SELECT incident.team_id, incident.incident_id,
+                   count(job.embedding_job_id) AS affected_job_count
+            FROM embedding_failure_incidents AS incident
+            LEFT JOIN embedding_jobs AS job
+              ON job.team_id = incident.team_id
+             AND job.embedding_contract_id = incident.embedding_contract_id
+             AND job.embedding_dimensions = incident.embedding_dimensions
+             AND job.source_kind = incident.source_kind
+             AND job.failure_class = incident.failure_class
+             AND job.failure_code = incident.failure_code
+             AND job.first_failed_at IS NOT NULL
+             AND job.status IN ('queued', 'processing', 'failed')
+            WHERE incident.team_id = OLD.team_id
+              AND incident.embedding_contract_id = OLD.embedding_contract_id
+              AND incident.embedding_dimensions = OLD.embedding_dimensions
+              AND incident.source_kind = OLD.source_kind
+              AND incident.failure_class = OLD.failure_class
+              AND incident.failure_code = OLD.failure_code
+              AND incident.status IN ('open', 'recovering')
+            GROUP BY incident.team_id, incident.incident_id
+        )
+        UPDATE embedding_failure_incidents AS incident
+        SET status = CASE WHEN remaining.affected_job_count = 0 THEN 'resolved' ELSE incident.status END,
+            resolved_at = CASE WHEN remaining.affected_job_count = 0 THEN now() ELSE NULL END,
+            affected_job_count = remaining.affected_job_count,
+            updated_at = now()
+        FROM remaining
+        WHERE incident.team_id = remaining.team_id
+          AND incident.incident_id = remaining.incident_id;
+    END IF;
     IF TG_OP = 'UPDATE' AND NEW.status IN ('completed', 'stale')
        AND OLD.status IN ('queued', 'processing', 'failed') THEN
         PERFORM pg_advisory_xact_lock(hashtextextended(
@@ -696,7 +759,7 @@ BEGIN
     PERFORM set_config('app.current_profile_id', '', true);
 
     LOOP
-        ALTER TABLE embedding_jobs DISABLE TRIGGER embedding_jobs_failure_compatibility_after;
+        PERFORM set_config('app.embedding_reconciliation_backfill', 'on', true);
 
         WITH batch AS MATERIALIZED (
             SELECT team_id, embedding_job_id, status, error, attempts,
@@ -750,7 +813,6 @@ BEGIN
         FROM changed
         CROSS JOIN (SELECT count(*) FROM projection_updates) AS projection_update_count;
 
-        ALTER TABLE embedding_jobs ENABLE TRIGGER embedding_jobs_failure_compatibility_after;
         COMMIT;
         EXIT WHEN updated_rows = 0;
         PERFORM set_config('app.tx_mode', 'migration', true);
@@ -761,19 +823,6 @@ BEGIN
     PERFORM set_config('app.tx_mode', 'migration', true);
     PERFORM set_config('app.current_team_id', '', true);
     PERFORM set_config('app.current_profile_id', '', true);
-
-    PERFORM pg_advisory_xact_lock(hashtextextended(
-        concat_ws('|', grouped.team_id::text, grouped.embedding_contract_id::text,
-                  grouped.embedding_dimensions::text, grouped.source_kind,
-                  grouped.failure_class, grouped.failure_code), 0
-    ))
-    FROM (
-        SELECT DISTINCT team_id, embedding_contract_id, embedding_dimensions,
-                        source_kind, failure_class, failure_code
-        FROM embedding_jobs
-        WHERE first_failed_at IS NOT NULL
-        AND status IN ('queued', 'processing', 'failed')
-    ) AS grouped;
 
     UPDATE embedding_failure_incidents AS incident
     SET status = 'open',
@@ -849,26 +898,25 @@ DROP PROCEDURE dense_mem_backfill_embedding_reconciliation_compatibility();
 
 -- +goose Down
 -- +goose StatementBegin
-
-SELECT set_config('app.tx_mode', 'migration', true);
-SELECT set_config('app.current_team_id', '', true);
-SELECT set_config('app.current_profile_id', '', true);
-
-DROP TRIGGER IF EXISTS embedding_jobs_failure_compatibility_after ON embedding_jobs;
-DROP TRIGGER IF EXISTS embedding_jobs_failure_compatibility_before ON embedding_jobs;
-DROP FUNCTION IF EXISTS dense_mem_record_embedding_job_failure_compatibility();
-DROP FUNCTION IF EXISTS dense_mem_classify_embedding_job_failure_compatibility();
-DROP FUNCTION IF EXISTS dense_mem_classify_embedding_failure_compatibility(TEXT);
-
--- +goose StatementEnd
-
 -- Validation and the legacy rewrite are irreversible. This preserves the prior
 -- multi-migration boundary: compatibility objects can be removed, but the
 -- validated constraints and rewritten row values cannot be safely rolled back.
--- +goose StatementBegin
 DO $dense_mem_irreversible_embedding_reconciliation$
 BEGIN
     RAISE EXCEPTION 'embedding reconciliation migration is irreversible because validated constraints and rewritten failure metadata cannot be restored';
 END
 $dense_mem_irreversible_embedding_reconciliation$;
+-- +goose StatementEnd
+
+-- These objects are intentionally unreachable because the irreversible block
+-- above always aborts goose down before cleanup can run.
+-- +goose StatementBegin
+SELECT set_config('app.tx_mode', 'migration', true);
+SELECT set_config('app.current_team_id', '', true);
+SELECT set_config('app.current_profile_id', '', true);
+DROP TRIGGER IF EXISTS embedding_jobs_failure_compatibility_after ON embedding_jobs;
+DROP TRIGGER IF EXISTS embedding_jobs_failure_compatibility_before ON embedding_jobs;
+DROP FUNCTION IF EXISTS dense_mem_record_embedding_job_failure_compatibility();
+DROP FUNCTION IF EXISTS dense_mem_classify_embedding_job_failure_compatibility();
+DROP FUNCTION IF EXISTS dense_mem_classify_embedding_failure_compatibility(TEXT);
 -- +goose StatementEnd

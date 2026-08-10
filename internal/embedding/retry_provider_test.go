@@ -191,7 +191,11 @@ func TestRetryProviderCancellationDuringDelayDoesNotStartAnotherCall(t *testing.
 			<-firstCall
 			time.Sleep(20 * time.Millisecond)
 			cancel()
-			require.ErrorIs(t, <-done, context.Canceled)
+			err := <-done
+			require.Error(t, err)
+			var providerErr *ProviderHTTPError
+			require.ErrorAs(t, err, &providerErr)
+			assert.Equal(t, 500, providerErr.Status)
 			assert.Equal(t, 1, calls)
 		})
 	}

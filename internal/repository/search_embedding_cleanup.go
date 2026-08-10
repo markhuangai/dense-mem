@@ -2,11 +2,45 @@ package repository
 
 import (
 	"context"
+	"sort"
 
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
+
+type embeddingFailureIncidentLockKey struct {
+	failureClass string
+	failureCode  string
+}
+
+func lockEmbeddingFailureIncidentTransition(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID, sourceKind, contractID string,
+	dimensions int,
+	previousClass, previousCode, nextClass, nextCode string,
+) error {
+	if previousClass == nextClass && previousCode == nextCode {
+		return nil
+	}
+	keys := []embeddingFailureIncidentLockKey{
+		{failureClass: previousClass, failureCode: previousCode},
+		{failureClass: nextClass, failureCode: nextCode},
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].failureClass != keys[j].failureClass {
+			return keys[i].failureClass < keys[j].failureClass
+		}
+		return keys[i].failureCode < keys[j].failureCode
+	})
+	for _, key := range keys {
+		if err := lockEmbeddingFailureIncident(ctx, tx, teamID, sourceKind, contractID, key.failureClass, key.failureCode, dimensions); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func lockEmbeddingFailureIncident(
 	ctx context.Context,

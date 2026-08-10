@@ -387,6 +387,13 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 		}
 		failureClass := input.FailureClass
 		failureCode := input.FailureCode
+		if err := tx.WithContext(ctx).Exec(`SELECT set_config('app.embedding_job_failure_writer', 'current', true)`).Error; err != nil {
+			return err
+		}
+		if err := lockEmbeddingFailureIncidentTransition(ctx, tx, input.TeamID, sourceKind, contractID, dims,
+			previousFailureClass, previousFailureCode, failureClass, failureCode); err != nil {
+			return err
+		}
 		completedExpr := "NULL"
 		if terminal {
 			status = string(domain.EmbeddingJobFailed)
