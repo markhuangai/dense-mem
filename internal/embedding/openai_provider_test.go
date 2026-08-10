@@ -3,6 +3,7 @@ package embedding
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +17,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type truncatedResponseReader struct {
+	done bool
+}
+
+func (r *truncatedResponseReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, io.ErrUnexpectedEOF
+	}
+	r.done = true
+	return copy(p, `{"data":[`), io.ErrUnexpectedEOF
+}
+
+func (r *truncatedResponseReader) Close() error { return nil }
 
 func TestOpenAIProvider_Embed_SendsBearerAuth(t *testing.T) {
 	var gotAuth string
@@ -276,6 +291,29 @@ func TestOpenAIProvider_NonJSONServerErrorIsHTTPError(t *testing.T) {
 	assert.NotContains(t, err.Error(), "upstream unavailable")
 	assert.Equal(t, 2500*time.Millisecond, httpErr.RetryAfter)
 }
+
+func TestOpenAIProvider_ClassifiesTruncatedResponseAsTransientNetworkFailure(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       &truncatedResponseReader{},
+			Header:     make(http.Header),
+		}, nil
+	})}
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: "http://embedding.test", AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 2,
+	}, client)
+
+	_, _, err := p.Embed(context.Background(), "truncated")
+	require.Error(t, err)
+	metadata := ClassifyFailure(err)
+	assert.Equal(t, "transient", metadata.Class)
+	assert.Equal(t, "provider_network_error", metadata.Code)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func TestOpenAIProviderErrorHelpersBoundProviderMetadata(t *testing.T) {
 	if got := nonJSONHTTPMessage([]byte("provider body")); got != "provider returned a non-JSON error response" {

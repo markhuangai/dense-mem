@@ -141,6 +141,49 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 		return nil
 	}))
 
+	legacyBackfillQueuedJobID := uuid.NewString()
+	legacyBackfillQueuedDocumentID := uuid.NewString()
+	legacyBackfillQueuedSourceID := uuid.NewString()
+	healthyBackfillQueuedJobID := uuid.NewString()
+	healthyBackfillQueuedDocumentID := uuid.NewString()
+	healthyBackfillQueuedSourceID := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		for _, fixture := range []struct {
+			jobID, documentID, sourceID, text, hash, errorMessage string
+		}{
+			{legacyBackfillQueuedJobID, legacyBackfillQueuedDocumentID, legacyBackfillQueuedSourceID, "legacy queued backfill", "sha256:" + strings.ReplaceAll(legacyBackfillQueuedDocumentID, "-", ""), "embedding provider error: connection reset by peer"},
+			{healthyBackfillQueuedJobID, healthyBackfillQueuedDocumentID, healthyBackfillQueuedSourceID, "healthy queued backfill", "sha256:" + strings.ReplaceAll(healthyBackfillQueuedDocumentID, "-", ""), ""},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO search_documents (
+					team_id, search_document_id, owner_profile_id, source_kind, source_id,
+					source_version, document_version, embedding_contract_id,
+					embedding_dimensions, search_state, document_text, document_hash
+				) VALUES (
+					$1::uuid, $2::uuid, $3::uuid, 'relationship', $4::uuid,
+					1, 1, $5::uuid, 3, 'pending', $6, $7
+				)
+			`, teamID, fixture.documentID, profileID, fixture.sourceID, contractID, fixture.text, fixture.hash); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO embedding_jobs (
+					team_id, embedding_job_id, search_document_id, owner_profile_id,
+					source_kind, source_id, source_version, document_version,
+					embedding_contract_id, embedding_dimensions, status, attempts,
+					max_attempts, error
+				) VALUES (
+					$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+					'relationship', $5::uuid, 1, 1, $6::uuid, 3,
+					'queued', 1, 20, $7
+				)
+			`, teamID, fixture.jobID, fixture.documentID, profileID, fixture.sourceID, contractID, fixture.errorMessage); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
 	runGooseUpTo(t, ctx, sqlDB, 2026080904)
 	var compatibilityTotalAttempts int
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
@@ -214,8 +257,32 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 		}
 		return nil
 	}))
+	var backfillFailureClass, backfillFailureCode, backfillSearchState string
+	var healthyBackfillFailureClass, healthyBackfillFailureCode string
+	var healthyBackfillFirstFailedAtIsNull bool
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT job.failure_class, job.failure_code, document.search_state
+			FROM embedding_jobs AS job
+			JOIN search_documents AS document
+			  ON document.team_id = job.team_id AND document.search_document_id = job.search_document_id
+			WHERE job.team_id = $1::uuid AND job.embedding_job_id = $2::uuid
+		`, teamID, legacyBackfillQueuedJobID).Scan(&backfillFailureClass, &backfillFailureCode, &backfillSearchState); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `
+			SELECT failure_class, failure_code, first_failed_at IS NULL
+			FROM embedding_jobs
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+		`, teamID, healthyBackfillQueuedJobID).Scan(&healthyBackfillFailureClass, &healthyBackfillFailureCode, &healthyBackfillFirstFailedAtIsNull)
+	}))
+	require.Equal(t, "transient", backfillFailureClass)
+	require.Equal(t, "provider_network_error", backfillFailureCode)
+	require.Equal(t, "pending", backfillSearchState)
+	require.Equal(t, "permanent", healthyBackfillFailureClass)
+	require.Equal(t, "unknown_embedding_failure", healthyBackfillFailureCode)
+	require.True(t, healthyBackfillFirstFailedAtIsNull)
 
-	runGooseUpTo(t, ctx, sqlDB, 2026080905)
 	var plan strings.Builder
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
@@ -250,7 +317,6 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	require.Contains(t, plan.String(), "embedding_jobs_reconciliation_failed_idx")
 	require.NotContains(t, plan.String(), "Sort")
 
-	runGooseUpTo(t, ctx, sqlDB, 2026080907)
 	var validated int
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
@@ -332,7 +398,6 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 		return err
 	}))
 
-	runGooseUpTo(t, ctx, sqlDB, 2026081001)
 	legacyEntityJobID := uuid.NewString()
 	legacyEntityDocumentID := uuid.NewString()
 	legacyEntityID := uuid.NewString()

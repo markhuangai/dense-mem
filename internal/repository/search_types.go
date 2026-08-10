@@ -27,6 +27,7 @@ type EmbeddingReconciliationRepository interface {
 	SelectEmbeddingReconciliationCanary(ctx context.Context, input SelectEmbeddingReconciliationCanaryInput) (*EmbeddingJob, error)
 	MarkEmbeddingReconciliationCanaryAttempt(ctx context.Context, input MarkEmbeddingReconciliationCanaryAttemptInput) error
 	CompleteEmbeddingReconciliationCanary(ctx context.Context, input CompleteEmbeddingReconciliationCanaryInput) error
+	ResetEmbeddingReconciliationCanary(ctx context.Context, input ResetEmbeddingReconciliationCanaryInput) error
 	RequeueEmbeddingReconciliationJobs(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error)
 	CompleteEmbeddingReconciliationRun(ctx context.Context, input CompleteEmbeddingReconciliationRunInput) error
 }
@@ -283,6 +284,13 @@ type CompleteEmbeddingReconciliationCanaryInput struct {
 	Succeeded    bool
 	FailureClass string
 	FailureCode  string
+}
+
+type ResetEmbeddingReconciliationCanaryInput struct {
+	RunID       string
+	CanaryJobID string
+	WorkerID    string
+	LeaseToken  string
 }
 
 type RequeueEmbeddingReconciliationJobsInput struct {

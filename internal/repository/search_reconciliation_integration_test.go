@@ -180,6 +180,77 @@ func TestEmbeddingReconciliationRunFencesOneCanaryAndRequeuesPreCutoffBacklog(t 
 	require.Equal(t, "queued", status)
 }
 
+func TestEmbeddingReconciliationCanaryResetSkipsPermanentInputFailure(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "reconciliation-input-skip-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "reconciliation-input-skip-owner")
+	insertSearchTestContract(t, adminDB, rls, "reconciliation-input-skip", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	first := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "input rejected canary", 1)
+	second := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "healthy canary", 1)
+	now := time.Now().UTC().Truncate(time.Minute)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE embedding_jobs
+			SET status = 'failed', attempts = max_attempts, total_attempts = max_attempts,
+			    failure_class = 'transient', failure_code = 'provider_timeout',
+			    first_failed_at = ?, last_failed_at = ?, completed_at = ?, error = 'timeout'
+			WHERE team_id = ?::uuid AND search_document_id IN (?::uuid, ?::uuid)
+		`, now.Add(-time.Minute), now.Add(-time.Minute), now.Add(-time.Minute), teamID, first.SearchDocumentID, second.SearchDocumentID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'failed', embedding_error = 'timeout'
+			WHERE team_id = ?::uuid AND search_document_id IN (?::uuid, ?::uuid)
+		`, teamID, first.SearchDocumentID, second.SearchDocumentID).Error
+	}))
+
+	run, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: 3,
+		LocalRunDate: now, WorkerID: "input-skip-worker", Lease: time.Minute, Now: now,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	canary, err := repo.SelectEmbeddingReconciliationCanary(ctx, SelectEmbeddingReconciliationCanaryInput{
+		RunID: run.RunID, EmbeddingContractID: contract.EmbeddingContractID,
+		EmbeddingDimensions: 3, CandidateCutoff: run.CandidateCutoff,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, canary)
+	require.NoError(t, repo.MarkEmbeddingReconciliationCanaryAttempt(ctx, MarkEmbeddingReconciliationCanaryAttemptInput{
+		TeamID: canary.TeamID, RunID: run.RunID, CanaryJobID: canary.EmbeddingJobID,
+		WorkerID: "input-skip-worker", LeaseToken: run.LeaseToken, AttemptedAt: now,
+	}))
+	_, err = repo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
+		TeamID: canary.TeamID, EmbeddingJobID: canary.EmbeddingJobID,
+		WorkerID:         EmbeddingReconciliationWorkerIDPrefix + run.RunID,
+		ExpectedAttempts: 1, Error: "daily embedding canary rejected the input",
+		FailureClass: string(domain.EmbeddingFailurePermanent), FailureCode: string(domain.EmbeddingFailureInputRejected), Terminal: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, repo.CompleteEmbeddingReconciliationCanary(ctx, CompleteEmbeddingReconciliationCanaryInput{
+		RunID: run.RunID, CanaryJobID: canary.EmbeddingJobID, WorkerID: "input-skip-worker",
+		LeaseToken: run.LeaseToken, FailureClass: string(domain.EmbeddingFailurePermanent), FailureCode: string(domain.EmbeddingFailureInputRejected),
+	}))
+	require.NoError(t, repo.ResetEmbeddingReconciliationCanary(ctx, ResetEmbeddingReconciliationCanaryInput{
+		RunID: run.RunID, CanaryJobID: canary.EmbeddingJobID, WorkerID: "input-skip-worker", LeaseToken: run.LeaseToken,
+	}))
+
+	next, err := repo.SelectEmbeddingReconciliationCanary(ctx, SelectEmbeddingReconciliationCanaryInput{
+		RunID: run.RunID, EmbeddingContractID: contract.EmbeddingContractID,
+		EmbeddingDimensions: 3, CandidateCutoff: run.CandidateCutoff,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, next)
+	require.NotEqual(t, canary.EmbeddingJobID, next.EmbeddingJobID)
+	require.Equal(t, second.SearchDocumentID, next.SearchDocumentID)
+}
+
 func TestEmbeddingReconciliationRenewsLeaseAndTracksPartialIncidentRecovery(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

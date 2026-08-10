@@ -30,6 +30,9 @@ func (searchConvergenceRepositoryStub) MarkEmbeddingReconciliationCanaryAttempt(
 func (searchConvergenceRepositoryStub) CompleteEmbeddingReconciliationCanary(context.Context, repository.CompleteEmbeddingReconciliationCanaryInput) error {
 	return nil
 }
+func (searchConvergenceRepositoryStub) ResetEmbeddingReconciliationCanary(context.Context, repository.ResetEmbeddingReconciliationCanaryInput) error {
+	return nil
+}
 func (searchConvergenceRepositoryStub) RequeueEmbeddingReconciliationJobs(context.Context, repository.RequeueEmbeddingReconciliationJobsInput) (int64, error) {
 	return 0, nil
 }

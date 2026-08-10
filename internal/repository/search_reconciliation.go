@@ -438,6 +438,38 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingReconciliationCanary(ctx context
 	})
 }
 
+func (r *SearchRepositoryImpl) ResetEmbeddingReconciliationCanary(ctx context.Context, input ResetEmbeddingReconciliationCanaryInput) error {
+	input = normalizeResetEmbeddingReconciliationCanaryInput(input)
+	if err := validateResetEmbeddingReconciliationCanaryInput(input); err != nil {
+		return err
+	}
+	return r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		result := tx.WithContext(ctx).Exec(`
+			UPDATE embedding_reconciliation_runs
+			SET canary_job_id = NULL,
+			    canary_attempted_at = NULL,
+			    canary_outcome = '',
+			    canary_failure_class = '',
+			    canary_failure_code = '',
+			    updated_at = now()
+			WHERE reconciliation_run_id = ?::uuid
+			  AND canary_job_id = ?::uuid
+			  AND status = 'running'
+			  AND worker_id = ?
+			  AND lease_token = ?::uuid
+			  AND lease_until > clock_timestamp()
+			  AND canary_attempted_at IS NOT NULL
+		`, input.RunID, input.CanaryJobID, input.WorkerID, input.LeaseToken)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("reconciliation canary lease lost")
+		}
+		return nil
+	})
+}
+
 func (r *SearchRepositoryImpl) RequeueEmbeddingReconciliationJobs(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error) {
 	input = normalizeRequeueEmbeddingReconciliationJobsInput(input)
 	if err := validateRequeueEmbeddingReconciliationJobsInput(input); err != nil {
@@ -787,8 +819,30 @@ func normalizeCompleteEmbeddingReconciliationCanaryInput(input CompleteEmbedding
 	return input
 }
 
+func normalizeResetEmbeddingReconciliationCanaryInput(input ResetEmbeddingReconciliationCanaryInput) ResetEmbeddingReconciliationCanaryInput {
+	input.RunID = strings.TrimSpace(input.RunID)
+	input.CanaryJobID = strings.TrimSpace(input.CanaryJobID)
+	input.WorkerID = strings.TrimSpace(input.WorkerID)
+	input.LeaseToken = strings.TrimSpace(input.LeaseToken)
+	return input
+}
+
 func validateCompleteEmbeddingReconciliationCanaryInput(input CompleteEmbeddingReconciliationCanaryInput) error {
 	for name, value := range map[string]string{"run_id": input.RunID, "canary_job_id": input.CanaryJobID, "lease_token": input.LeaseToken} {
+		if _, err := uuid.Parse(value); err != nil {
+			return fmt.Errorf("%s is required: %w", name, err)
+		}
+	}
+	if input.WorkerID == "" {
+		return errors.New("worker_id is required")
+	}
+	return nil
+}
+
+func validateResetEmbeddingReconciliationCanaryInput(input ResetEmbeddingReconciliationCanaryInput) error {
+	for name, value := range map[string]string{
+		"run_id": input.RunID, "canary_job_id": input.CanaryJobID, "lease_token": input.LeaseToken,
+	} {
 		if _, err := uuid.Parse(value); err != nil {
 			return fmt.Errorf("%s is required: %w", name, err)
 		}

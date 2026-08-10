@@ -158,9 +158,11 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, "", &ProviderError{
-			Provider: "openai",
-			Message:  "failed to read response",
-			Cause:    err,
+			Provider:     "openai",
+			Message:      "failed to read response",
+			Cause:        err,
+			FailureCode:  "provider_network_error",
+			FailureClass: "transient",
 		}
 	}
 
