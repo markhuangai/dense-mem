@@ -389,10 +389,10 @@ func telemetryCurrentCardSpecs(scope TelemetryScope, baseLabels map[string]strin
 }
 
 func telemetryCurrentCardSpecsForAudience(scope TelemetryScope, baseLabels map[string]string, operator bool) []telemetryQuerySpec {
-	if !operator {
-		return nil
-	}
 	specs := telemetryLifecycleCurrentCardSpecs()
+	if !operator {
+		return bindTelemetryCatalog(specs)
+	}
 	if strings.EqualFold(scope.Type, "system") {
 		specs = append(specs, telemetryQuerySpec{
 			ID: "conflict_queue_collection_success", Label: "Conflict queue collection", Unit: "state",
@@ -512,10 +512,7 @@ func telemetrySparseCounterIncreaseForSelector(metric string, selector string, w
 	ranged := fmt.Sprintf("increase(%s%s[%s])", metric, selector, window)
 	first := fmt.Sprintf("min_over_time(%s%s[%s])", metric, selector, window)
 	offset := fmt.Sprintf("%s%s offset %s", metric, selector, window)
-	current := fmt.Sprintf("%s%s", metric, selector)
-	sampleCount := fmt.Sprintf("count_over_time(%s%s[%s])", metric, selector, window)
-	targetScrapeCount := fmt.Sprintf("count_over_time(up[%s])", window)
-	fallback := fmt.Sprintf("((%s unless %s) or (%s * (%s >= bool 0) * (%s < bool on(job, instance) group_left() %s)) or (0 * %s))", first, offset, first, current, sampleCount, targetScrapeCount, ranged)
+	fallback := fmt.Sprintf("((%s unless %s) or (0 * %s))", first, offset, ranged)
 	return fmt.Sprintf("sum(%s + %s)", ranged, fallback)
 }
 
@@ -575,10 +572,7 @@ func telemetrySparseHistogramQuantileForSelector(metric, selector, rateWindow st
 	ranged := fmt.Sprintf("increase(%s%s[%s])", bucket, selector, rateWindow)
 	first := fmt.Sprintf("min_over_time(%s%s[%s])", bucket, selector, rateWindow)
 	offset := fmt.Sprintf("%s%s offset %s", bucket, selector, rateWindow)
-	current := fmt.Sprintf("%s%s", bucket, selector)
-	sampleCount := fmt.Sprintf("count_over_time(%s%s[%s])", bucket, selector, rateWindow)
-	targetScrapeCount := fmt.Sprintf("count_over_time(up[%s])", rateWindow)
-	fallback := fmt.Sprintf("((%s unless %s) or (%s * (%s >= bool 0) * (%s < bool on(job, instance) group_left() %s)) or (0 * %s))", first, offset, first, current, sampleCount, targetScrapeCount, ranged)
+	fallback := fmt.Sprintf("((%s unless %s) or (0 * %s))", first, offset, ranged)
 	return fmt.Sprintf("%g * histogram_quantile(%g, sum by (le) ((%s) / %d))", multiplier, quantile, ranged+" + "+fallback, telemetryWindowSeconds(rateWindow))
 }
 
@@ -691,6 +685,9 @@ func normalizeTelemetryScope(filter TelemetryFilter) (TelemetryScope, error) {
 		}
 		return TelemetryScope{Type: scope, TeamID: filter.TeamID}, nil
 	case "profile", "self":
+		if filter.TeamID == nil || *filter.TeamID == uuid.Nil {
+			return TelemetryScope{}, httperr.New(httperr.VALIDATION_ERROR, "team_id is required for profile telemetry")
+		}
 		if filter.ProfileID == nil || *filter.ProfileID == uuid.Nil {
 			return TelemetryScope{}, httperr.New(httperr.VALIDATION_ERROR, "profile_id is required for profile telemetry")
 		}

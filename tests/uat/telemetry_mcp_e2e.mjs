@@ -96,6 +96,8 @@ const telemetryMatrix = await validateTelemetryMatrix(profileID);
 const disabledFeatures = await validateDisabledFeatureReasons();
 const isolation = await validateTelemetryIsolation(profileID);
 const unsupportedScope = await validateUnsupportedScope();
+const profileScopeValidation = await validateProfileScopeRequiresTeam(profileID);
+const userLifecycle = await validateUserLifecycleCards();
 const partialFailure = await validatePartialPrometheusFailure();
 
 console.log(JSON.stringify({
@@ -110,6 +112,8 @@ console.log(JSON.stringify({
   disabled_features: disabledFeatures,
   isolation,
   unsupported_scope: unsupportedScope,
+  profile_scope_validation: profileScopeValidation,
+  user_lifecycle: userLifecycle,
   partial_prometheus_failure: partialFailure,
 }, null, 2));
 
@@ -224,6 +228,31 @@ async function validateUnsupportedScope() {
   assert(response.status === 422, `unsupported telemetry scope returned HTTP ${response.status}`);
   assert(!body.match(/password|stack trace|select .* from/i), "unsupported telemetry scope exposed an internal error");
   return { status: response.status, bounded: true };
+}
+
+async function validateProfileScopeRequiresTeam(profileID) {
+  const response = await fetch(`${controlURL}/control/api/telemetry?window=15m&scope=profile&profile_id=${encodeURIComponent(profileID)}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${controlToken}` },
+  });
+  const body = await response.text();
+  assert(response.status === 422, `profile telemetry without team returned HTTP ${response.status}`);
+  assert(body.includes("team_id is required"), "profile telemetry without team omitted the bounded validation reason");
+  assert(!body.match(/password|stack trace|select .* from/i), "profile scope validation exposed an internal error");
+  return { status: response.status, requires_team: true };
+}
+
+async function validateUserLifecycleCards() {
+  const response = await fetch(`${userURL}/ui/api/telemetry?window=15m`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  const body = await response.text();
+  assert(response.ok, `user telemetry returned HTTP ${response.status}: ${body}`);
+  const snapshot = JSON.parse(body).data;
+  const currentCards = snapshot?.current_cards ?? [];
+  assert(currentCards.some((card) => card.id === "relationships_active"), "user telemetry omitted current Relationship cards");
+  return { current_relationship_cards: true };
 }
 
 async function validatePartialPrometheusFailure() {

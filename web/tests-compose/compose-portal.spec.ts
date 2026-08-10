@@ -175,7 +175,7 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   const readyWindowedCardLabels = telemetryReadyLabels(telemetryBody.data?.windowed_cards);
   const readyActivitySeriesLabels = telemetryReadyLabels(telemetryBody.data?.activity_series);
   expect(windowedCardLabels.length).toBeGreaterThan(0);
-  expect(currentCardLabels).toEqual([]);
+  expect(currentCardLabels).toContain("Relationships: active");
   expect(activitySeriesLabels.length).toBeGreaterThan(0);
   expect(stateSeriesLabels).toEqual([]);
 
@@ -195,7 +195,7 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   for (const label of readyActivitySeriesLabels) {
     await expect(page.getByLabel(`${expectedUsageTitle} charts`)).toContainText(label);
   }
-  await expect(page.getByLabel(`${expectedUsageTitle} current state`)).toHaveCount(0);
+  await expect(page.getByLabel(`${expectedUsageTitle} current state`)).toContainText("Relationships: active");
   await expect(page.getByLabel(`${expectedUsageTitle} state history`)).toHaveCount(0);
   await expectNoShellOverlap(page);
 });

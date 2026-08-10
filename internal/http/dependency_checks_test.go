@@ -90,3 +90,46 @@ func TestRunDependencyChecksReturnsWhenCheckIgnoresCancellation(t *testing.T) {
 	}
 	close(release)
 }
+
+func TestRunDependencyChecksDoesNotRelaunchTimedOutCheckWhileInFlight(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	var calls atomic.Int32
+	checks := []HealthCheck{{
+		Name: "blocking-shared",
+		Check: func(context.Context) error {
+			if calls.Add(1) == 1 {
+				close(started)
+				<-release
+				close(finished)
+			}
+			return nil
+		},
+	}}
+
+	firstDone := make(chan []dependencyCheckResult, 1)
+	go func() { firstDone <- runDependencyChecks(context.Background(), checks) }()
+	<-started
+	first := <-firstDone
+	require.Len(t, first, 1)
+	require.ErrorIs(t, first[0].Err, context.DeadlineExceeded)
+	require.Equal(t, int32(1), calls.Load())
+
+	second := runDependencyChecks(context.Background(), checks)
+	require.Len(t, second, 1)
+	require.ErrorIs(t, second[0].Err, context.DeadlineExceeded)
+	require.Equal(t, int32(1), calls.Load())
+
+	close(release)
+	<-finished
+	deadline := time.Now().Add(time.Second)
+	for calls.Load() < 2 && time.Now().Before(deadline) {
+		third := runDependencyChecks(context.Background(), checks)
+		if len(third) == 1 && third[0].Err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.Equal(t, int32(2), calls.Load())
+}

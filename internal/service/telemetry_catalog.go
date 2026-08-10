@@ -369,7 +369,7 @@ func applyTelemetryCardParentPolicies(cards []TelemetryCard) {
 			continue
 		}
 		parentID := strings.TrimSuffix(childID, "_tokens") + "_requests"
-		if parent := byID[parentID]; parent != nil && parent.Status == TelemetryItemReady {
+		if parent := byID[parentID]; parent != nil && parent.Status == TelemetryItemReady && parent.Value > 0 {
 			child.Status = TelemetryItemUnavailable
 			child.Available = false
 			child.ReasonCode = "provider_usage_missing"
@@ -421,7 +421,7 @@ func applyTelemetryCardParentPolicies(cards []TelemetryCard) {
 		if cards[index].Status != TelemetryItemInactive {
 			continue
 		}
-		if parent := telemetryParentCard(cards[index].ID, byID); parent != nil && parent.Status == TelemetryItemReady && parent.Value > 0 {
+		if parent := telemetryParentCard(cards[index].ID, cards); parent != nil && parent.Status == TelemetryItemReady && parent.Value > 0 {
 			cards[index].Status = TelemetryItemUnavailable
 			cards[index].Available = false
 			cards[index].ReasonCode = "query_failed"
@@ -450,23 +450,19 @@ func telemetrySeriesCanProveZero(id string, cards []TelemetryCard) bool {
 }
 
 func telemetrySeriesParentActivityMissing(id string, cards []TelemetryCard) bool {
-	byID := make(map[string]*TelemetryCard, len(cards))
-	for index := range cards {
-		byID[cards[index].ID] = &cards[index]
-	}
-	parent := telemetryParentCard(id, byID)
+	parent := telemetryParentCard(id, cards)
 	return parent != nil && parent.Status == TelemetryItemReady && parent.Value > 0
 }
 
-func telemetryParentCard(id string, cards map[string]*TelemetryCard) *TelemetryCard {
+func telemetryParentCard(id string, cards []TelemetryCard) *TelemetryCard {
 	entry, ok := telemetryCatalogEntryFor(id)
 	if !ok || entry.ParentActivitySource == telemetryParentNone {
 		return nil
 	}
-	for cardID, card := range cards {
-		parentEntry, ok := telemetryCatalogEntryFor(cardID)
+	for index := range cards {
+		parentEntry, ok := telemetryCatalogEntryFor(cards[index].ID)
 		if ok && parentEntry.Source == entry.ParentActivitySource {
-			return card
+			return &cards[index]
 		}
 	}
 	return nil
