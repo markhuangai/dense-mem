@@ -151,7 +151,9 @@ func TestRetryProvider_ContextCancelStopsRetry(t *testing.T) {
 
 	p := NewRetryEmbeddingProvider(inner, newTestLogger())
 	_, _, err := p.Embed(ctx, "x")
-	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+	var providerErr *ProviderHTTPError
+	assert.NotErrorAs(t, err, &providerErr)
 	assert.Equal(t, 1, calls, "should stop after context cancellation")
 }
 
@@ -192,10 +194,9 @@ func TestRetryProviderCancellationDuringDelayDoesNotStartAnotherCall(t *testing.
 			time.Sleep(20 * time.Millisecond)
 			cancel()
 			err := <-done
-			require.Error(t, err)
+			require.ErrorIs(t, err, context.Canceled)
 			var providerErr *ProviderHTTPError
-			require.ErrorAs(t, err, &providerErr)
-			assert.Equal(t, 500, providerErr.Status)
+			assert.NotErrorAs(t, err, &providerErr)
 			assert.Equal(t, 1, calls)
 		})
 	}

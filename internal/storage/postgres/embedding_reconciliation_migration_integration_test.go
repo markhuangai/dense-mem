@@ -161,6 +161,19 @@ func TestEmbeddingReconciliationCompatibilityTriggerDoesNotWaitBehindPlacementDo
 	case <-time.After(2 * time.Second):
 		t.Fatal("legacy worker waited behind the placement document lock")
 	}
+	require.NoError(t, execPostgresTxModeRollback(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.embedding_job_failure_writer', 'current', true)`); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			UPDATE embedding_jobs
+			SET status = 'failed', error = 'embedding request timed out',
+			    failure_class = 'transient', failure_code = 'provider_timeout',
+			    worker_id = '', lease_until = NULL, completed_at = now()
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+		`, teamID, jobID)
+		return err
+	}))
 
 	_, err = placementTx.ExecContext(ctx, `
 		UPDATE embedding_jobs
@@ -787,20 +800,19 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	require.Equal(t, "provider_authentication_failed", failureCode)
 	require.True(t, lastFailedAt.After(legacyFailureTimestamp))
 	explicitFailureTimestamp := time.Date(2002, time.January, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+	require.NoError(t, execPostgresTxModeRollback(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.embedding_job_failure_writer', 'current', true)`); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 			UPDATE embedding_jobs
 			SET status = 'failed', error = 'embedding provider http error: status=401',
 			    failure_class = 'transient', failure_code = 'provider_timeout',
 			    last_failed_at = $1, completed_at = now()
 			WHERE team_id = $2::uuid AND embedding_job_id = $3::uuid
-		`, explicitFailureTimestamp, teamID, legacyEntityJobID)
-		return err
-	}))
-	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		`, explicitFailureTimestamp, teamID, legacyEntityJobID); err != nil {
+			return err
+		}
 		return tx.QueryRowContext(ctx, `
 			SELECT failure_class, failure_code, last_failed_at
 			FROM embedding_jobs

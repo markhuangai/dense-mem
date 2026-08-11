@@ -584,7 +584,8 @@ DECLARE
     old_failure_key TEXT;
     new_failure_key TEXT;
 BEGIN
-    IF COALESCE(current_setting('app.embedding_reconciliation_backfill', true), '') = 'on' THEN
+    IF COALESCE(current_setting('app.embedding_reconciliation_backfill', true), '') = 'on'
+       OR COALESCE(current_setting('app.embedding_job_failure_writer', true), '') = 'current' THEN
         RETURN NEW;
     END IF;
     IF TG_OP = 'UPDATE'
@@ -688,7 +689,6 @@ BEGIN
        AND OLD.last_failed_at IS NOT DISTINCT FROM NEW.last_failed_at THEN
         RETURN NEW;
     END IF;
-
     PERFORM document.search_document_id
     FROM search_documents AS document
     WHERE document.team_id = NEW.team_id

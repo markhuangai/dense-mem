@@ -91,7 +91,6 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 	var lastErr error
 	configuredModel := p.inner.ModelName()
 
-retryLoop:
 	for attempt := 0; attempt <= p.maxRetries; attempt++ {
 		attemptStart := time.Now()
 		vec, model, err := p.inner.Embed(ctx, text)
@@ -113,8 +112,8 @@ retryLoop:
 		}
 
 		// Check if context was cancelled or deadline exceeded
-		if ctx.Err() != nil {
-			break
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
 		}
 
 		// Don't sleep after the last attempt
@@ -122,7 +121,7 @@ retryLoop:
 			delay := p.retryDelay(attempt, err)
 			select {
 			case <-ctx.Done():
-				break retryLoop
+				return nil, "", ctx.Err()
 			case <-time.After(delay):
 				continue
 			}
@@ -141,7 +140,6 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 	var lastErr error
 	configuredModel := p.inner.ModelName()
 
-retryLoop:
 	for attempt := 0; attempt <= p.maxRetries; attempt++ {
 		attemptStart := time.Now()
 		vecs, model, err := p.inner.EmbedBatch(ctx, texts)
@@ -163,8 +161,8 @@ retryLoop:
 		}
 
 		// Check if context was cancelled or deadline exceeded
-		if ctx.Err() != nil {
-			break
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
 		}
 
 		// Don't sleep after the last attempt
@@ -172,7 +170,7 @@ retryLoop:
 			delay := p.retryDelay(attempt, err)
 			select {
 			case <-ctx.Done():
-				break retryLoop
+				return nil, "", ctx.Err()
 			case <-time.After(delay):
 				continue
 			}
