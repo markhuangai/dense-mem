@@ -204,6 +204,10 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 		vector, model, providerErr := s.provider.Embed(providerCtx, job.DocumentText)
 		cancel()
 		if providerErr != nil {
+			if errors.Is(providerErr, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+				result.Status = string(domain.EmbeddingReconciliationAmbiguous)
+				return result, s.deferRun(ctx, run, result.Status, "", "", "daily embedding canary completion was ambiguous", true, nil)
+			}
 			metadata := embedding.ClassifyFailure(providerErr)
 			failureClass, failureCode := metadata.Class, metadata.Code
 			if failureClass == "" {

@@ -46,8 +46,14 @@ func TestEmbeddingReconciliationSupersededRetirementIsBatched(t *testing.T) {
 	retirementStart := strings.Index(procedure, "superseded_batch AS MATERIALIZED")
 	require.NotEqual(t, -1, retirementStart)
 	retirement := procedure[retirementStart:]
-	require.Contains(t, retirement, "LIMIT 1000")
-	require.Contains(t, retirement, "COMMIT;")
+	retirementEnd := strings.Index(retirement, "END LOOP;")
+	require.NotEqual(t, -1, retirementEnd)
+	retirementLoop := retirement[:retirementEnd+len("END LOOP;")]
+	limitIndex := strings.Index(retirementLoop, "LIMIT 1000")
+	commitIndex := strings.Index(retirementLoop, "COMMIT;")
+	require.NotEqual(t, -1, limitIndex)
+	require.NotEqual(t, -1, commitIndex)
+	require.Greater(t, commitIndex, limitIndex)
 	require.Equal(t, 1, strings.Count(string(body), "SET status = 'stale'"))
 }
 
