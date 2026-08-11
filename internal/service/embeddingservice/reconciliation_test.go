@@ -276,7 +276,7 @@ func TestEmbeddingReconciliationResumesReclaimedSuccessfulCanary(t *testing.T) {
 		run: &repository.EmbeddingReconciliationRun{
 			RunID: "run-1", LeaseToken: "lease-2", Status: string(domain.EmbeddingReconciliationRunning),
 			CandidateCutoff: attemptedAt, CanaryAttemptedAt: &attemptedAt, CanaryOutcome: "succeeded",
-			RecoveredCount: 1, StartedAt: &startedAt,
+			RequeuedCount: 2, RecoveredCount: 1, StartedAt: &startedAt,
 		},
 	}
 	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
@@ -293,10 +293,11 @@ func TestEmbeddingReconciliationResumesReclaimedSuccessfulCanary(t *testing.T) {
 	assert.True(t, result.CanaryAttempted)
 	assert.True(t, result.CanarySucceeded)
 	assert.EqualValues(t, 1, result.RecoveredCount)
-	assert.EqualValues(t, 3, result.RequeuedCount)
+	assert.EqualValues(t, 5, result.RequeuedCount)
 	assert.Zero(t, provider.calls)
 	require.NotNil(t, reconciliation.completed)
 	assert.Equal(t, "succeeded", reconciliation.completed.CanaryOutcome)
+	assert.EqualValues(t, 5, reconciliation.completed.RequeuedCount)
 	assert.EqualValues(t, 1, reconciliation.completed.RecoveredCount)
 }
 
@@ -696,9 +697,11 @@ func TestEmbeddingReconciliationTreatsWorkerCancellationAsAmbiguous(t *testing.T
 	provider := &reconciliationRawProvider{
 		available: true, model: "model", dims: 3, err: context.Canceled, onEmbed: cancel,
 	}
+	logger := &reconciliationLoggerStub{}
 	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
 	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
 		Search: search, Reconciliation: reconciliation, Provider: provider,
+		Logger:    logger,
 		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
 		WorkerID:  "worker-1", Now: func() time.Time { return now },
 	})
@@ -714,6 +717,7 @@ func TestEmbeddingReconciliationTreatsWorkerCancellationAsAmbiguous(t *testing.T
 	assert.Empty(t, reconciliation.completed.FailureClass)
 	assert.Empty(t, reconciliation.completed.FailureCode)
 	assert.NoError(t, reconciliation.completeContextErr)
+	assert.Equal(t, string(domain.EmbeddingReconciliationAmbiguous), reconciliationLogAttrValue(logger.warnAttrs, "status"))
 }
 
 func TestEmbeddingReconciliationDefersWhenCanaryOutcomePersistenceFails(t *testing.T) {

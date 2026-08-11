@@ -223,7 +223,7 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 		}
 
 		var documentCount, incidentCount int64
-		return tx.WithContext(ctx).Raw(`
+		if err := tx.WithContext(ctx).Raw(`
 			WITH selected AS MATERIALIZED (
 				SELECT *
 				FROM unnest(?::uuid[], ?::uuid[]) AS item(team_id, embedding_job_id)
@@ -315,7 +315,26 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 		`, pq.Array(jobTeamIDs), pq.Array(jobIDs),
 			input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff,
 			input.RunID, input.WorkerID, input.LeaseToken,
-			input.RunID, input.CandidateCutoff).Row().Scan(&batch.requeued, &documentCount, &incidentCount)
+			input.RunID, input.CandidateCutoff).Row().Scan(&batch.requeued, &documentCount, &incidentCount); err != nil {
+			return err
+		}
+		if batch.requeued == 0 {
+			return nil
+		}
+		result := tx.WithContext(ctx).Exec(`
+			UPDATE embedding_reconciliation_runs
+			SET requeued_count = requeued_count + ?, updated_at = now()
+			WHERE reconciliation_run_id = ?::uuid
+			  AND status = 'running' AND worker_id = ? AND lease_token = ?::uuid
+			  AND lease_until > clock_timestamp()
+		`, batch.requeued, input.RunID, input.WorkerID, input.LeaseToken)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("reconciliation run lease lost")
+		}
+		return nil
 	})
 	return batch, err
 }

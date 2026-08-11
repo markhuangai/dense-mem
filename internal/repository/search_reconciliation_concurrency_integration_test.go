@@ -512,6 +512,8 @@ func TestEmbeddingReconciliationSuccessfulCanaryLeaseTakeoverResumesBacklog(t *t
 	failEmbeddingDocumentForReconciliationTest(t, ctx, repo, teamID, canaryDocument.SearchDocumentID, "success-takeover-canary-failure")
 	backlogDocument := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "successful takeover backlog", 1)
 	failEmbeddingDocumentForReconciliationTest(t, ctx, repo, teamID, backlogDocument.SearchDocumentID, "success-takeover-backlog-failure")
+	secondBacklogDocument := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "successful takeover second backlog", 1)
+	failEmbeddingDocumentForReconciliationTest(t, ctx, repo, teamID, secondBacklogDocument.SearchDocumentID, "success-takeover-second-backlog-failure")
 	now := databaseNowForTest(t, adminDB, rls)
 
 	first, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
@@ -539,6 +541,13 @@ func TestEmbeddingReconciliationSuccessfulCanaryLeaseTakeoverResumesBacklog(t *t
 		RunID: first.RunID, CanaryJobID: canary.EmbeddingJobID, WorkerID: first.WorkerID,
 		LeaseToken: first.LeaseToken, Succeeded: true, RecoveredCount: 1,
 	}))
+	firstBatch, err := repo.requeueEmbeddingReconciliationBatch(ctx, RequeueEmbeddingReconciliationJobsInput{
+		RunID: first.RunID, WorkerID: first.WorkerID, LeaseToken: first.LeaseToken,
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		CandidateCutoff: first.CandidateCutoff, BatchSize: 1, Lease: time.Minute,
+	}, nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, firstBatch.requeued)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE embedding_reconciliation_runs
@@ -555,6 +564,7 @@ func TestEmbeddingReconciliationSuccessfulCanaryLeaseTakeoverResumesBacklog(t *t
 	require.True(t, reclaimed)
 	require.Equal(t, "succeeded", second.CanaryOutcome)
 	require.EqualValues(t, 1, second.RecoveredCount)
+	require.EqualValues(t, 1, second.RequeuedCount)
 	require.NotEqual(t, first.LeaseToken, second.LeaseToken)
 
 	requeued, err := repo.RequeueEmbeddingReconciliationJobs(ctx, RequeueEmbeddingReconciliationJobsInput{
@@ -574,16 +584,19 @@ func TestEmbeddingReconciliationSuccessfulCanaryLeaseTakeoverResumesBacklog(t *t
 	require.NoError(t, repo.CompleteEmbeddingReconciliationRun(ctx, CompleteEmbeddingReconciliationRunInput{
 		RunID: second.RunID, WorkerID: second.WorkerID, LeaseToken: second.LeaseToken,
 		Status: string(domain.EmbeddingReconciliationCompleted), CanaryOutcome: "succeeded",
-		RequeuedCount: requeued, RecoveredCount: second.RecoveredCount, CompletedAt: time.Now().UTC(),
+		RequeuedCount: second.RequeuedCount + requeued, RecoveredCount: second.RecoveredCount, CompletedAt: time.Now().UTC(),
 	}))
 
-	var canaryStatus, backlogStatus, runStatus string
+	var canaryStatus, backlogStatus, secondBacklogStatus, runStatus string
 	var recoveredCount, requeuedCount int64
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Raw(`SELECT status FROM embedding_jobs WHERE embedding_job_id = ?::uuid`, canary.EmbeddingJobID).Scan(&canaryStatus).Error; err != nil {
 			return err
 		}
 		if err := tx.Raw(`SELECT status FROM embedding_jobs WHERE embedding_job_id = ?::uuid`, backlogDocument.QueuedJobID).Scan(&backlogStatus).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT status FROM embedding_jobs WHERE embedding_job_id = ?::uuid`, secondBacklogDocument.QueuedJobID).Scan(&secondBacklogStatus).Error; err != nil {
 			return err
 		}
 		return tx.Raw(`
@@ -594,9 +607,10 @@ func TestEmbeddingReconciliationSuccessfulCanaryLeaseTakeoverResumesBacklog(t *t
 	}))
 	require.Equal(t, "completed", canaryStatus)
 	require.Equal(t, "queued", backlogStatus)
+	require.Equal(t, "queued", secondBacklogStatus)
 	require.Equal(t, string(domain.EmbeddingReconciliationCompleted), runStatus)
 	require.EqualValues(t, 1, recoveredCount)
-	require.EqualValues(t, 1, requeuedCount)
+	require.EqualValues(t, 2, requeuedCount)
 }
 
 func TestEmbeddingReconciliationCompletionRejectsExpiredLease(t *testing.T) {

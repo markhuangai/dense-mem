@@ -319,6 +319,7 @@ func (s *embeddingReconciliationService) releaseReconciliationBacklog(
 		EmbeddingDimensions: contract.EmbeddingDimensions, CandidateCutoff: run.CandidateCutoff,
 		BatchSize: reconciliationBatchSize, Lease: reconciliationLease,
 	})
+	requeued += run.RequeuedCount
 	result.RequeuedCount = requeued
 	cleanupCancel()
 
@@ -392,6 +393,7 @@ func (s *embeddingReconciliationService) deferRun(ctx context.Context, run *repo
 		FailureClass: failureClass, FailureCode: failureCode, LastError: message, CompletedAt: s.now().UTC(),
 	})
 	if err == nil {
+		run.Status = status
 		if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
 			if canaryAttempted {
 				metrics.ObserveEmbeddingReconciliationCanary(canaryOutcome)
@@ -415,6 +417,7 @@ func (s *embeddingReconciliationService) deferRunAfterCanarySuccess(ctx context.
 		LastError: message, CompletedAt: s.now().UTC(),
 	})
 	if err == nil {
+		run.Status = string(domain.EmbeddingReconciliationDeferred)
 		if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
 			metrics.ObserveEmbeddingReconciliationCanary("succeeded")
 			metrics.ObserveEmbeddingReconciliationRun(string(domain.EmbeddingReconciliationDeferred))
@@ -541,7 +544,7 @@ func (s *embeddingReconciliationService) logWarn(ctx context.Context, message st
 	if s.logger == nil {
 		return
 	}
-	attrs := []observability.LogAttr{observability.String("reconciliation_run_id", run.RunID), observability.String("status", string(domain.EmbeddingReconciliationDeferred))}
+	attrs := []observability.LogAttr{observability.String("reconciliation_run_id", run.RunID), observability.String("status", run.Status)}
 	attrs = appendEmbeddingReconciliationLogAttrs(attrs, extra)
 	s.logger.Warn(message, attrs...)
 }

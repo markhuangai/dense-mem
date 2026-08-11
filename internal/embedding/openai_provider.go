@@ -110,10 +110,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	case p.sem <- struct{}{}:
 		defer func() { <-p.sem }()
 	case <-ctx.Done():
-		return nil, "", &TimeoutError{
-			Provider: "openai",
-			Message:  ctx.Err().Error(),
-		}
+		return nil, "", ctx.Err()
 	}
 
 	url := strings.TrimSuffix(p.baseURL, "/") + "/embeddings"

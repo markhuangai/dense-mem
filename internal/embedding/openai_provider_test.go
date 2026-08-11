@@ -648,7 +648,8 @@ func TestOpenAIProvider_EmbedBatchWaitHonorsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, _, err := provider.EmbedBatch(ctx, []string{"second"})
-	require.ErrorIs(t, err, ErrEmbeddingTimeout)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.NotErrorIs(t, err, ErrEmbeddingTimeout)
 
 	releaseOnce.Do(func() { close(release) })
 	require.NoError(t, <-firstDone)
