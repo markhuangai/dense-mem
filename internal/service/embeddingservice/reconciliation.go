@@ -394,7 +394,7 @@ func (s *embeddingReconciliationService) deferRun(ctx context.Context, run *repo
 	if err == nil {
 		if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
 			if canaryAttempted {
-				metrics.ObserveEmbeddingReconciliationCanary("failed")
+				metrics.ObserveEmbeddingReconciliationCanary(canaryOutcome)
 			}
 			metrics.ObserveEmbeddingReconciliationRun(status)
 			metrics.ObserveEmbeddingReconciliationDuration(s.reconciliationElapsedSeconds(run, s.now().UTC()), status)

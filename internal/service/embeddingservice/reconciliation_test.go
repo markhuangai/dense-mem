@@ -262,6 +262,7 @@ func TestEmbeddingReconciliationDoesNotCompleteReclaimedCanaryAsSkipped(t *testi
 	require.NotNil(t, reconciliation.completed)
 	assert.Equal(t, string(domain.EmbeddingReconciliationAmbiguous), reconciliation.completed.Status)
 	assert.Equal(t, "ambiguous", reconciliation.completed.CanaryOutcome)
+	assert.Equal(t, []string{"ambiguous"}, metrics.canaries)
 	assert.Equal(t, []string{string(domain.EmbeddingReconciliationAmbiguous)}, metrics.durationOutcomes)
 	assert.Greater(t, metrics.durations[0], float64(0))
 }

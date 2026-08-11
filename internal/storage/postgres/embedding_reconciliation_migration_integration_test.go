@@ -56,7 +56,7 @@ func TestEmbeddingReconciliationSupersededRetirementIsBatched(t *testing.T) {
 	require.NotEqual(t, -1, limitIndex)
 	require.NotEqual(t, -1, commitIndex)
 	require.Greater(t, commitIndex, limitIndex)
-	require.Equal(t, 1, strings.Count(string(body), "SET status = 'stale'"))
+	require.Equal(t, 1, strings.Count(procedure, "SET status = 'stale'"))
 }
 
 func TestEmbeddingReconciliationCompatibilityTriggerDoesNotWaitBehindPlacementDocumentLock(t *testing.T) {

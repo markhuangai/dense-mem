@@ -347,9 +347,9 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 	}))
 
 	var conflictStatus, loserStatus, preferredAStatus, preferredCStatus, loserSearchState string
-	var loserEmbeddingJobStatus, loserIncidentStatus string
+	var loserEmbeddingJobStatus string
 	var loserRelationshipVersion, loserSearchSourceVersion int64
-	var preferredPositionCount, suppressedPositionCount, transitionCount, staleEmbeddingJobs, queuedEmbeddingJobs int64
+	var preferredPositionCount, suppressedPositionCount, transitionCount, staleEmbeddingJobs, queuedEmbeddingJobs, loserResolvedIncidentCount int64
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Raw(`
 			SELECT status
@@ -394,13 +394,17 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 			  AND embedding_job_id = ?::uuid
 		`, teamID, loserEmbeddingJob.EmbeddingJobID).Scan(&loserEmbeddingJobStatus).Error)
 		require.NoError(t, tx.Raw(`
-			SELECT status
+			SELECT COUNT(*)
 			FROM embedding_failure_incidents
 			WHERE team_id = ?::uuid
+			  AND embedding_contract_id = ?::uuid
+			  AND embedding_dimensions = ?
 			  AND source_kind = 'relationship'
 			  AND failure_class = ?
 			  AND failure_code = ?
-		`, teamID, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderQuotaExhausted)).Scan(&loserIncidentStatus).Error)
+			  AND status = 'resolved'
+		`, teamID, loserEmbeddingJob.EmbeddingContractID, loserEmbeddingJob.EmbeddingDimensions,
+			string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderQuotaExhausted)).Scan(&loserResolvedIncidentCount).Error)
 		require.NoError(t, tx.Raw(`
 			SELECT status
 			FROM relationship_records
@@ -441,7 +445,7 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 	assert.Equal(t, loserRelationshipVersion, loserSearchSourceVersion)
 	assert.Equal(t, "not_required", loserSearchState)
 	assert.Equal(t, "stale", loserEmbeddingJobStatus)
-	assert.Equal(t, "resolved", loserIncidentStatus)
+	assert.EqualValues(t, 1, loserResolvedIncidentCount)
 	assert.GreaterOrEqual(t, staleEmbeddingJobs, int64(1))
 	assert.Equal(t, int64(0), queuedEmbeddingJobs)
 	assert.Equal(t, "active", preferredAStatus)
