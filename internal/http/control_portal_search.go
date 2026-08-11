@@ -27,15 +27,15 @@ func (h *controlPortalHandler) getSearchConvergence(c echo.Context) error {
 }
 
 type controlSearchConvergenceResponse struct {
-	ObservedAt         string                          `json:"observed_at"`
-	Status             string                          `json:"status"`
-	Contract           *controlSearchContractResponse  `json:"contract,omitempty"`
-	Queue              controlSearchQueueResponse      `json:"queue"`
-	Failures           []controlSearchFailureResponse  `json:"failures"`
-	Incidents          []controlSearchIncidentResponse `json:"incidents"`
-	IncidentCount      int64                           `json:"incident_count"`
-	IncidentsTruncated bool                            `json:"incidents_truncated"`
-	LatestRun          *controlSearchRunResponse       `json:"latest_run,omitempty"`
+	ObservedAt             string                              `json:"observed_at"`
+	Status                 string                              `json:"status"`
+	Contract               *controlSearchContractResponse      `json:"contract,omitempty"`
+	Queue                  controlSearchQueueResponse          `json:"queue"`
+	Failures               []controlSearchFailureResponse      `json:"failures"`
+	FailureGroups          []controlSearchFailureGroupResponse `json:"failure_groups"`
+	FailureGroupCount      int64                               `json:"failure_group_count"`
+	FailureGroupsTruncated bool                                `json:"failure_groups_truncated"`
+	LatestRun              *controlSearchRunResponse           `json:"latest_run,omitempty"`
 }
 
 type controlSearchContractResponse struct {
@@ -63,19 +63,21 @@ type controlSearchFailureResponse struct {
 	Count        int64  `json:"count"`
 }
 
-type controlSearchIncidentResponse struct {
-	TeamID           string  `json:"team_id"`
-	TeamName         string  `json:"team_name"`
-	IncidentID       string  `json:"incident_id"`
-	SourceKind       string  `json:"source_kind"`
-	FailureClass     string  `json:"failure_class"`
-	FailureCode      string  `json:"failure_code"`
-	Status           string  `json:"status"`
-	AffectedJobCount int64   `json:"affected_job_count"`
-	FirstSeenAt      string  `json:"first_seen_at"`
-	LastSeenAt       string  `json:"last_seen_at"`
-	AgeSeconds       float64 `json:"age_seconds"`
-	Guidance         string  `json:"guidance"`
+type controlSearchFailureGroupResponse struct {
+	TeamID             string  `json:"team_id"`
+	TeamName           string  `json:"team_name"`
+	SourceKind         string  `json:"source_kind"`
+	FailureClass       string  `json:"failure_class"`
+	FailureCode        string  `json:"failure_code"`
+	Status             string  `json:"status"`
+	FailedJobCount     int64   `json:"failed_job_count"`
+	QueuedJobCount     int64   `json:"queued_job_count"`
+	ProcessingJobCount int64   `json:"processing_job_count"`
+	AffectedJobCount   int64   `json:"affected_job_count"`
+	FirstFailedAt      string  `json:"first_failed_at"`
+	LastFailedAt       string  `json:"last_failed_at"`
+	AgeSeconds         float64 `json:"age_seconds"`
+	Guidance           string  `json:"guidance"`
 }
 
 type controlSearchRunResponse struct {
@@ -94,7 +96,7 @@ type controlSearchRunResponse struct {
 }
 
 func toControlSearchConvergence(value *repository.SearchConvergence) controlSearchConvergenceResponse {
-	response := controlSearchConvergenceResponse{Failures: []controlSearchFailureResponse{}, Incidents: []controlSearchIncidentResponse{}}
+	response := controlSearchConvergenceResponse{Failures: []controlSearchFailureResponse{}, FailureGroups: []controlSearchFailureGroupResponse{}}
 	if value == nil {
 		return response
 	}
@@ -115,17 +117,19 @@ func toControlSearchConvergence(value *repository.SearchConvergence) controlSear
 	for _, failure := range value.Failures {
 		response.Failures = append(response.Failures, controlSearchFailureResponse{SourceKind: failure.SourceKind, FailureClass: failure.FailureClass, FailureCode: failure.FailureCode, Count: failure.Count})
 	}
-	for _, incident := range value.Incidents {
-		response.Incidents = append(response.Incidents, controlSearchIncidentResponse{
-			TeamID: incident.TeamID, TeamName: incident.TeamName, IncidentID: incident.IncidentID,
-			SourceKind: incident.SourceKind, FailureClass: incident.FailureClass, FailureCode: incident.FailureCode,
-			Status: incident.Status, AffectedJobCount: incident.AffectedJobCount,
-			FirstSeenAt: incident.FirstSeenAt.UTC().Format(time.RFC3339), LastSeenAt: incident.LastSeenAt.UTC().Format(time.RFC3339),
-			AgeSeconds: incident.Age.Seconds(), Guidance: incident.Guidance,
+	for _, group := range value.FailureGroups {
+		response.FailureGroups = append(response.FailureGroups, controlSearchFailureGroupResponse{
+			TeamID: group.TeamID, TeamName: group.TeamName,
+			SourceKind: group.SourceKind, FailureClass: group.FailureClass, FailureCode: group.FailureCode,
+			Status: group.Status, FailedJobCount: group.FailedJobCount,
+			QueuedJobCount: group.QueuedJobCount, ProcessingJobCount: group.ProcessingJobCount,
+			AffectedJobCount: group.AffectedJobCount,
+			FirstFailedAt:    group.FirstFailedAt.UTC().Format(time.RFC3339), LastFailedAt: group.LastFailedAt.UTC().Format(time.RFC3339),
+			AgeSeconds: group.Age.Seconds(), Guidance: group.Guidance,
 		})
 	}
-	response.IncidentCount = value.IncidentCount
-	response.IncidentsTruncated = value.IncidentsTruncated
+	response.FailureGroupCount = value.FailureGroupCount
+	response.FailureGroupsTruncated = value.FailureGroupsTruncated
 	if run := value.LatestRun; run != nil {
 		response.LatestRun = &controlSearchRunResponse{
 			RunID: run.RunID, LocalRunDate: run.LocalRunDate.Format("2006-01-02"), Status: run.Status,

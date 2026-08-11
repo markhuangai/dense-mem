@@ -49,7 +49,11 @@ if (ready.dependencies?.search_convergence !== "degraded") {
 const beforeConvergence = await controlJSON("/search/convergence");
 assertAttentionProjection(beforeConvergence.data);
 const logs = await waitForFailureLog();
-if (JSON.stringify(logs).includes("insufficient_quota") || JSON.stringify(logs).includes("provider response")) {
+const serializedFailureLogs = JSON.stringify(logs);
+if (!serializedFailureLogs.includes(teamID) || !serializedFailureLogs.includes("aggregation") || !serializedFailureLogs.includes("job_count")) {
+  throw new Error("embedding failure operation log omitted bounded team or aggregation fields");
+}
+if (serializedFailureLogs.includes("insufficient_quota") || serializedFailureLogs.includes("provider response")) {
   throw new Error("operation logs exposed raw provider response details");
 }
 const metricBefore = await waitForPrometheusValue("sum(densemem_embedding_errors_total)", 1);
@@ -105,6 +109,11 @@ if (proxyAfter.forwarded < 1 || proxyAfter.request_item_counts[proxyBefore.reque
   throw new Error(`proxy did not forward the recovery canary: ${JSON.stringify(proxyAfter)}`);
 }
 await waitForPrometheusValue("sum(densemem_embedding_reconciliation_canaries_total{outcome=\"succeeded\"})", 1);
+const recoveryLogs = await waitForRecoveryLog();
+const serializedRecoveryLogs = JSON.stringify(recoveryLogs);
+if (!serializedRecoveryLogs.includes(teamID) || !serializedRecoveryLogs.includes("aggregation") || !serializedRecoveryLogs.includes("job_count")) {
+  throw new Error("embedding recovery operation log omitted bounded team or aggregation fields");
+}
 
 console.log(JSON.stringify({
   status: "ok",
@@ -122,6 +131,7 @@ console.log(JSON.stringify({
   readiness_structural: true,
   lexical_failure_visibility: lexicalFailureVisible,
   metrics_verified: true,
+  recovery_log_verified: true,
 }, null, 2));
 
 function rememberInput() {
@@ -181,6 +191,16 @@ async function waitForFailureLog() {
   throw new Error("timed out waiting for bounded embedding failure operation log");
 }
 
+async function waitForRecoveryLog() {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const page = await controlJSON("/logs?limit=100&severity=info");
+    const serialized = JSON.stringify(page.data ?? page);
+    if (serialized.includes("embedding_recovery_completed") && serialized.includes(teamID)) return page;
+    await delay(1_000);
+  }
+  throw new Error("timed out waiting for bounded embedding recovery operation log");
+}
+
 async function waitForCanaryRequest(previousRequests, scheduledAt) {
   const deadline = scheduledAt.getTime() + 180_000;
   while (Date.now() < deadline) {
@@ -194,7 +214,7 @@ async function waitForCanaryRequest(previousRequests, scheduledAt) {
 async function waitForConvergedProjection() {
   for (let attempt = 0; attempt < 180; attempt += 1) {
     const projection = (await controlJSON("/search/convergence")).data;
-    if (projection?.status === "converged" && projection.queue?.failed === 0 && projection.queue?.queued === 0 && projection.queue?.processing === 0 && (projection.incidents ?? []).length === 0) return projection;
+    if (projection?.status === "converged" && projection.queue?.failed === 0 && projection.queue?.queued === 0 && projection.queue?.processing === 0 && (projection.failure_groups ?? []).length === 0) return projection;
     await delay(2_000);
   }
   throw new Error("timed out waiting for search convergence");
@@ -218,8 +238,10 @@ function assertPublicDelayedStatus(status, id) {
 function assertAttentionProjection(projection) {
   if (!projection || !["attention_required", "recovering"].includes(projection.status)) throw new Error(`operator projection did not require attention: ${JSON.stringify(projection)}`);
   if (!projection.failures?.some((item) => item.failure_code === "provider_quota_exhausted")) throw new Error("operator projection omitted quota failure code");
-  const incident = projection.incidents?.find((item) => item.team_id === teamID && item.failure_code === "provider_quota_exhausted");
-  if (!incident || !incident.guidance.includes("provider credit")) throw new Error(`operator projection omitted affected-team guidance: ${JSON.stringify(projection)}`);
+  const failureGroup = projection.failure_groups?.find((item) => item.team_id === teamID && item.failure_code === "provider_quota_exhausted");
+  if (!failureGroup || failureGroup.status !== "attention_required" || failureGroup.failed_job_count < 1 || !failureGroup.guidance.includes("provider credit")) {
+    throw new Error(`operator projection omitted affected-team guidance: ${JSON.stringify(projection)}`);
+  }
 }
 
 async function mcpTool(name, args) {

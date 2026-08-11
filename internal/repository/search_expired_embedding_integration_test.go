@@ -62,30 +62,19 @@ func TestSearchClaimEmbeddingJobsPreservesTimeoutClassificationAfterLeaseExpiry(
 	require.Empty(t, nextClaim)
 
 	var status, failureClass, failureCode string
-	var incidentStatus string
-	var affectedJobCount int64
 	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
-		if err := tx.Raw(`
+		return tx.Raw(`
 			SELECT status, failure_class, failure_code
 			FROM embedding_jobs
 			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
-		`, teamID, secondClaim[0].EmbeddingJobID).Row().Scan(&status, &failureClass, &failureCode); err != nil {
-			return err
-		}
-		return tx.Raw(`
-			SELECT status, affected_job_count
-			FROM embedding_failure_incidents
-			WHERE team_id = ?::uuid
-			  AND embedding_contract_id = (SELECT embedding_contract_id FROM embedding_jobs WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid)
-			  AND embedding_dimensions = 3
-			  AND source_kind = 'evidence'
-			  AND failure_class = 'transient'
-			  AND failure_code = 'provider_timeout'
-		`, teamID, teamID, secondClaim[0].EmbeddingJobID).Row().Scan(&incidentStatus, &affectedJobCount)
+		`, teamID, secondClaim[0].EmbeddingJobID).Row().Scan(&status, &failureClass, &failureCode)
 	}))
 	assert.Equal(t, string(domain.EmbeddingJobFailed), status)
 	assert.Equal(t, string(domain.EmbeddingFailureTransient), failureClass)
 	assert.Equal(t, string(domain.EmbeddingFailureProviderTimeout), failureCode)
-	assert.Equal(t, "open", incidentStatus)
-	assert.EqualValues(t, 1, affectedJobCount)
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
+	require.NoError(t, err)
+	require.Len(t, convergence.FailureGroups, 1)
+	assert.Equal(t, "attention_required", convergence.FailureGroups[0].Status)
+	assert.EqualValues(t, 1, convergence.FailureGroups[0].FailedJobCount)
 }

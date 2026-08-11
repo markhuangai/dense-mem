@@ -92,17 +92,7 @@ func TestUpsertSearchDocumentRetiresSupersededFailedEmbeddingJob(t *testing.T) {
 	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
 	require.NoError(t, err)
 	require.Zero(t, convergence.Failed, "superseded failed rows must not keep convergence attention required")
-	var incidentStatus string
-	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			SELECT status FROM embedding_failure_incidents
-			WHERE team_id = ?::uuid
-			  AND source_kind = 'evidence'
-			  AND failure_class = 'transient'
-			  AND failure_code = 'provider_timeout'
-		`, teamID).Row().Scan(&incidentStatus)
-	}))
-	require.Equal(t, "resolved", incidentStatus)
+	require.Empty(t, convergence.FailureGroups)
 }
 
 func TestUpsertSearchDocumentRetiresSupersededJobWhenProjectionGenerationChanges(t *testing.T) {

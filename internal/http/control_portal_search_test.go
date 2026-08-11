@@ -55,13 +55,14 @@ func TestControlPortalSearchConvergenceIsBoundedAndReadOnly(t *testing.T) {
 				SourceKind: "evidence", FailureClass: "provider_action_required",
 				FailureCode: "provider_quota_exhausted", Count: 2,
 			}},
-			Incidents: []repository.EmbeddingFailureIncident{{
+			FailureGroups: []repository.EmbeddingFailureGroup{{
 				TeamID: "team-1", TeamName: "Payments", FailureCode: "provider_quota_exhausted",
-				Guidance:    "Add provider credit or repair billing before the next daily canary.",
-				FirstSeenAt: now, LastSeenAt: now, Age: time.Minute,
+				Status: "attention_required", FailedJobCount: 2, AffectedJobCount: 2,
+				Guidance:      "Add provider credit or repair billing before the next daily canary.",
+				FirstFailedAt: now, LastFailedAt: now, Age: time.Minute,
 			}},
-			IncidentCount:      101,
-			IncidentsTruncated: true,
+			FailureGroupCount:      101,
+			FailureGroupsTruncated: true,
 			LatestRun: &repository.EmbeddingReconciliationRun{
 				RunID: "run-1", LocalRunDate: now, Status: "deferred",
 				CanaryFailureCode: "provider_quota_exhausted",
@@ -82,8 +83,8 @@ func TestControlPortalSearchConvergenceIsBoundedAndReadOnly(t *testing.T) {
 	require.Contains(t, body, "provider_quota_exhausted")
 	require.Contains(t, body, "Payments")
 	require.Contains(t, body, "Add provider credit")
-	require.Contains(t, body, `"incident_count":101`)
-	require.Contains(t, body, `"incidents_truncated":true`)
+	require.Contains(t, body, `"failure_group_count":101`)
+	require.Contains(t, body, `"failure_groups_truncated":true`)
 	require.Contains(t, body, "reconciliation failed: provider_quota_exhausted")
 	require.NotContains(t, body, "provider response contained a secret")
 }
@@ -92,7 +93,7 @@ func TestControlSearchConvergenceConversionAndRunErrorsAreBounded(t *testing.T) 
 	empty := toControlSearchConvergence(nil)
 	require.Empty(t, empty.Status)
 	require.Empty(t, empty.Failures)
-	require.Empty(t, empty.Incidents)
+	require.Empty(t, empty.FailureGroups)
 
 	for _, test := range []struct {
 		message, code, want string
@@ -112,15 +113,15 @@ func TestControlSearchConvergenceConversionAndRunErrorsAreBounded(t *testing.T) 
 		Status:     "recovering",
 		Contract:   &repository.ActiveSearchContract{EmbeddingProvider: "openai", EmbeddingModel: "model", EmbeddingDimensions: 3, IndexGeneration: 2, IndexStrategy: "exact"},
 		Queued:     1, Processing: 2, Failed: 3, ExpiredLeases: 4, AffectedTeamCount: 5,
-		IncidentCount: 7, IncidentsTruncated: true,
+		FailureGroupCount: 7, FailureGroupsTruncated: true,
 		OldestPendingAge: time.Minute, OldestFailureAge: 2 * time.Minute,
 		LatestRun: &repository.EmbeddingReconciliationRun{RunID: "run", LocalRunDate: now, Status: "completed", CanaryAttemptedAt: &now, CanaryOutcome: "succeeded", UpdatedAt: now},
 	})
 	require.NotNil(t, converted.Contract)
 	require.Equal(t, "model", converted.Contract.Model)
 	require.Equal(t, int64(3), converted.Queue.Failed)
-	require.Equal(t, int64(7), converted.IncidentCount)
-	require.True(t, converted.IncidentsTruncated)
+	require.Equal(t, int64(7), converted.FailureGroupCount)
+	require.True(t, converted.FailureGroupsTruncated)
 	require.NotNil(t, converted.LatestRun)
 	require.Equal(t, now.Format(time.RFC3339), converted.LatestRun.CanaryAttemptedAt)
 }

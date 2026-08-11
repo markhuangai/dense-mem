@@ -2,83 +2,90 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"time"
 
 	"gorm.io/gorm"
 )
 
-const searchConvergenceIncidentLimit = 100
+const searchConvergenceFailureGroupLimit = 100
 
-func readSearchConvergenceIncidents(ctx context.Context, tx *gorm.DB, contractID string, dimensions int) ([]EmbeddingFailureIncident, int64, bool, bool, bool, error) {
-	var incidentCount int64
-	var hasOpen, hasRecovering bool
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT count(*),
-		       COALESCE(bool_or(incident.status = 'open'), false),
-		       COALESCE(bool_or(incident.status = 'recovering'), false)
-		FROM embedding_failure_incidents AS incident
-		JOIN teams AS team
-		  ON team.id = incident.team_id
-		 AND team.status = 'active'
-		 AND team.deleted_at IS NULL
-		WHERE incident.embedding_contract_id = ?::uuid
-		  AND incident.embedding_dimensions = ?
-		  AND incident.status IN ('open', 'recovering')
-	`, contractID, dimensions).Row().Scan(&incidentCount, &hasOpen, &hasRecovering); err != nil {
-		return nil, 0, false, false, false, err
-	}
+func readSearchConvergenceFailureGroups(
+	ctx context.Context,
+	tx *gorm.DB,
+	contractID string,
+	dimensions int,
+) ([]EmbeddingFailureGroup, int64, bool, bool, bool, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT incident.incident_id::text, incident.team_id::text,
-		       COALESCE(team.name, ''), incident.embedding_contract_id::text,
-		       incident.embedding_dimensions, incident.source_kind,
-		       incident.failure_class, incident.failure_code, incident.status,
-		       incident.affected_job_count, incident.first_seen_at,
-		       incident.last_seen_at, incident.recovering_at, incident.resolved_at,
-		       GREATEST(EXTRACT(EPOCH FROM (clock_timestamp() - incident.last_seen_at)), 0)
-		FROM embedding_failure_incidents AS incident
-		JOIN teams AS team
-		  ON team.id = incident.team_id
-		 AND team.status = 'active'
-		 AND team.deleted_at IS NULL
-		WHERE incident.embedding_contract_id = ?::uuid
-		  AND incident.embedding_dimensions = ?
-		  AND incident.status IN ('open', 'recovering')
-		ORDER BY incident.last_seen_at DESC, incident.incident_id ASC
+		WITH failure_groups AS MATERIALIZED (
+			SELECT job.team_id, COALESCE(team.name, '') AS team_name,
+			       job.embedding_contract_id, job.embedding_dimensions,
+			       job.source_kind, job.failure_class, job.failure_code,
+			       count(*) FILTER (WHERE job.status = 'failed') AS failed_job_count,
+			       count(*) FILTER (WHERE job.status = 'queued') AS queued_job_count,
+			       count(*) FILTER (WHERE job.status = 'processing') AS processing_job_count,
+			       count(*) AS affected_job_count,
+			       min(job.first_failed_at) AS first_failed_at,
+			       max(COALESCE(job.last_failed_at, job.first_failed_at)) AS last_failed_at
+			FROM embedding_jobs AS job
+			JOIN teams AS team
+			  ON team.id = job.team_id
+			 AND team.status = 'active'
+			 AND team.deleted_at IS NULL
+			WHERE job.embedding_contract_id = ?::uuid
+			  AND job.embedding_dimensions = ?
+			  AND job.first_failed_at IS NOT NULL
+			  AND job.status IN ('queued', 'processing', 'failed')
+			GROUP BY job.team_id, team.name, job.embedding_contract_id,
+			         job.embedding_dimensions, job.source_kind,
+			         job.failure_class, job.failure_code
+		), ranked AS (
+			SELECT failure_groups.*, count(*) OVER () AS failure_group_count
+			FROM failure_groups
+		)
+		SELECT team_id::text, team_name, embedding_contract_id::text,
+		       embedding_dimensions, source_kind, failure_class, failure_code,
+		       failed_job_count, queued_job_count, processing_job_count,
+		       affected_job_count, first_failed_at, last_failed_at,
+		       GREATEST(EXTRACT(EPOCH FROM (clock_timestamp() - last_failed_at)), 0),
+		       failure_group_count
+		FROM ranked
+		ORDER BY last_failed_at DESC, team_id, source_kind, failure_class, failure_code
 		LIMIT ?
-	`, contractID, dimensions, searchConvergenceIncidentLimit).Rows()
+	`, contractID, dimensions, searchConvergenceFailureGroupLimit).Rows()
 	if err != nil {
 		return nil, 0, false, false, false, err
 	}
 	defer rows.Close()
-	incidents := make([]EmbeddingFailureIncident, 0, min(int(incidentCount), searchConvergenceIncidentLimit))
+
+	groups := make([]EmbeddingFailureGroup, 0, searchConvergenceFailureGroupLimit)
+	var groupCount int64
+	var hasFailed, hasRecovering bool
 	for rows.Next() {
-		var item EmbeddingFailureIncident
-		var recoveringAt, resolvedAt sql.NullTime
+		var item EmbeddingFailureGroup
 		var ageSeconds float64
 		if err := rows.Scan(
-			&item.IncidentID, &item.TeamID, &item.TeamName,
+			&item.TeamID, &item.TeamName,
 			&item.EmbeddingContractID, &item.EmbeddingDimensions,
 			&item.SourceKind, &item.FailureClass, &item.FailureCode,
-			&item.Status, &item.AffectedJobCount, &item.FirstSeenAt,
-			&item.LastSeenAt, &recoveringAt, &resolvedAt, &ageSeconds,
+			&item.FailedJobCount, &item.QueuedJobCount, &item.ProcessingJobCount,
+			&item.AffectedJobCount, &item.FirstFailedAt, &item.LastFailedAt,
+			&ageSeconds, &groupCount,
 		); err != nil {
 			return nil, 0, false, false, false, err
 		}
-		if recoveringAt.Valid {
-			value := recoveringAt.Time.UTC()
-			item.RecoveringAt = &value
-		}
-		if resolvedAt.Valid {
-			value := resolvedAt.Time.UTC()
-			item.ResolvedAt = &value
+		item.Status = "recovering"
+		if item.FailedJobCount > 0 {
+			item.Status = "attention_required"
+			hasFailed = true
+		} else {
+			hasRecovering = true
 		}
 		item.Age = time.Duration(ageSeconds * float64(time.Second))
 		item.Guidance = embeddingFailureGuidance(item.FailureCode)
-		incidents = append(incidents, item)
+		groups = append(groups, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, false, false, false, err
 	}
-	return incidents, incidentCount, hasOpen, hasRecovering, incidentCount > int64(len(incidents)), nil
+	return groups, groupCount, hasFailed, hasRecovering, groupCount > int64(len(groups)), nil
 }

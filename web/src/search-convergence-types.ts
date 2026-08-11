@@ -18,22 +18,24 @@ export type SearchConvergence = {
     oldest_failure_age_seconds: number;
   };
   failures: Array<{ source_kind: string; failure_class: string; failure_code: string; count: number }>;
-  incidents: Array<{
+  failure_groups: Array<{
     team_id: string;
     team_name: string;
-    incident_id: string;
     source_kind: string;
     failure_class: string;
     failure_code: string;
     status: string;
+    failed_job_count: number;
+    queued_job_count: number;
+    processing_job_count: number;
     affected_job_count: number;
-    first_seen_at: string;
-    last_seen_at: string;
+    first_failed_at: string;
+    last_failed_at: string;
     age_seconds: number;
     guidance: string;
   }>;
-  incident_count: number;
-  incidents_truncated: boolean;
+  failure_group_count: number;
+  failure_groups_truncated: boolean;
   latest_run?: {
     run_id: string;
     local_run_date: string;

@@ -12,7 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func TestEmbeddingReconciliationKeepsIncidentOpenForPostCutoffFailure(t *testing.T) {
+func TestEmbeddingReconciliationLeavesPostCutoffFailureAttentionRequired(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -27,7 +27,7 @@ func TestEmbeddingReconciliationKeepsIncidentOpenForPostCutoffFailure(t *testing
 	cutoff := databaseNowForTest(t, adminDB, rls)
 	run, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-		LocalRunDate: cutoff, WorkerID: "new-failure-reconciler", Lease: time.Minute, Now: cutoff,
+		LocalRunDate: cutoff, CreateIfMissing: true, WorkerID: "new-failure-reconciler", Lease: time.Minute,
 	})
 	require.NoError(t, err)
 	require.True(t, claimed)
@@ -39,73 +39,36 @@ func TestEmbeddingReconciliationKeepsIncidentOpenForPostCutoffFailure(t *testing
 	require.Len(t, claimedJobs, 1)
 	require.Equal(t, newFailure.SearchDocumentID, claimedJobs[0].SearchDocumentID)
 
-	writerTx := appDB.WithContext(ctx).Begin()
-	require.NoError(t, writerTx.Error)
-	defer writerTx.Rollback()
-	for _, statement := range []struct {
-		query string
-		args  []any
-	}{
-		{"SELECT set_config('app.current_team_id', ?, true)", []any{teamID}},
-		{"SELECT set_config('app.current_profile_id', ?, true)", []any{ownerID}},
-		{"SELECT set_config('app.tx_mode', 'team', true)", nil},
-		{"SELECT set_config('app.embedding_job_failure_writer', 'current', true)", nil},
-	} {
-		require.NoError(t, writerTx.Exec(statement.query, statement.args...).Error)
-	}
-	require.NoError(t, lockEmbeddingFailureIncident(ctx, writerTx, teamID, "evidence", contract.EmbeddingContractID,
-		string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderTimeout), contract.EmbeddingDimensions))
-	require.NoError(t, writerTx.Exec(`
-		UPDATE embedding_jobs
-		SET status = 'failed', error = 'embedding provider timed out',
-		    failure_class = 'transient', failure_code = 'provider_timeout',
-		    first_failed_at = clock_timestamp(), last_failed_at = clock_timestamp(),
-		    completed_at = clock_timestamp(), lease_until = NULL, worker_id = '', updated_at = now()
-		WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
-		  AND worker_id = 'new-failure-writer' AND status = 'processing'
-	`, teamID, claimedJobs[0].EmbeddingJobID).Error)
+	_, err = repo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
+		TeamID: teamID, EmbeddingJobID: claimedJobs[0].EmbeddingJobID,
+		WorkerID: "new-failure-writer", ExpectedAttempts: claimedJobs[0].Attempts,
+		Error: "embedding provider timed out", FailureClass: string(domain.EmbeddingFailureTransient),
+		FailureCode: string(domain.EmbeddingFailureProviderTimeout), Terminal: true,
+	})
+	require.NoError(t, err)
+	requeued, err := repo.RequeueEmbeddingReconciliationJobs(ctx, RequeueEmbeddingReconciliationJobsInput{
+		RunID: run.RunID, WorkerID: "new-failure-reconciler", LeaseToken: run.LeaseToken,
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		CandidateCutoff: run.CandidateCutoff, BatchSize: 500, Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, requeued)
 
-	requeueCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	type requeueResult struct {
-		count int64
-		err   error
-	}
-	requeueResults := make(chan requeueResult, 1)
-	go func() {
-		count, requeueErr := repo.RequeueEmbeddingReconciliationJobs(requeueCtx, RequeueEmbeddingReconciliationJobsInput{
-			RunID: run.RunID, WorkerID: "new-failure-reconciler", LeaseToken: run.LeaseToken,
-			EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-			CandidateCutoff: run.CandidateCutoff, BatchSize: 500, Lease: time.Minute,
-		})
-		requeueResults <- requeueResult{count: count, err: requeueErr}
-	}()
-	requireEmbeddingFailureIncidentWaiter(t, ctx, adminDB, rls, teamID, "evidence", contract.EmbeddingContractID,
-		string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderTimeout), contract.EmbeddingDimensions)
-	require.NoError(t, writerTx.Commit().Error)
-	requeue := <-requeueResults
-	require.NoError(t, requeue.err)
-	require.EqualValues(t, 1, requeue.count)
-
-	var backlogStatus, newFailureStatus, incidentStatus string
+	var backlogStatus, newFailureStatus string
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Raw(`SELECT status FROM embedding_jobs WHERE embedding_job_id = ?::uuid`, backlog.QueuedJobID).Row().Scan(&backlogStatus); err != nil {
 			return err
 		}
-		if err := tx.Raw(`SELECT status FROM embedding_jobs WHERE embedding_job_id = ?::uuid`, newFailure.QueuedJobID).Row().Scan(&newFailureStatus); err != nil {
-			return err
-		}
-		return tx.Raw(`
-			SELECT status
-			FROM embedding_failure_incidents
-			WHERE team_id = ?::uuid AND embedding_contract_id = ?::uuid
-			  AND embedding_dimensions = ? AND source_kind = 'evidence'
-			  AND failure_class = 'transient' AND failure_code = 'provider_timeout'
-		`, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Row().Scan(&incidentStatus)
+		return tx.Raw(`SELECT status FROM embedding_jobs WHERE embedding_job_id = ?::uuid`, newFailure.QueuedJobID).Row().Scan(&newFailureStatus)
 	}))
 	require.Equal(t, "queued", backlogStatus)
 	require.Equal(t, "failed", newFailureStatus)
-	require.Equal(t, "open", incidentStatus)
+	projection, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
+	require.NoError(t, err)
+	require.Equal(t, "attention_required", projection.Status)
+	require.Len(t, projection.FailureGroups, 1)
+	require.EqualValues(t, 1, projection.FailureGroups[0].FailedJobCount)
+	require.EqualValues(t, 1, projection.FailureGroups[0].QueuedJobCount)
 }
 
 func TestEmbeddingReconciliationLocksDocumentBeforeJob(t *testing.T) {
@@ -124,7 +87,7 @@ func TestEmbeddingReconciliationLocksDocumentBeforeJob(t *testing.T) {
 	cutoff := databaseNowForTest(t, adminDB, rls)
 	run, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-		LocalRunDate: cutoff, WorkerID: "lock-order-reconciler", Lease: time.Minute, Now: cutoff,
+		LocalRunDate: cutoff, CreateIfMissing: true, WorkerID: "lock-order-reconciler", Lease: time.Minute,
 	})
 	require.NoError(t, err)
 	require.True(t, claimed)
@@ -253,7 +216,7 @@ func TestEmbeddingReconciliationRevisitsLockedCandidates(t *testing.T) {
 			}))
 			run, reserved, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
 				EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-				LocalRunDate: orderingTime, WorkerID: "locked-candidate-reconciler", Lease: time.Minute, Now: orderingTime,
+				LocalRunDate: orderingTime, CreateIfMissing: true, WorkerID: "locked-candidate-reconciler", Lease: time.Minute,
 			})
 			require.NoError(t, err)
 			require.True(t, reserved)
@@ -519,7 +482,7 @@ func TestEmbeddingReconciliationSuccessfulCanaryLeaseTakeoverResumesBacklog(t *t
 
 	first, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-		LocalRunDate: now, WorkerID: "success-takeover-old", Lease: time.Minute, Now: now,
+		LocalRunDate: now, CreateIfMissing: true, WorkerID: "success-takeover-old", Lease: time.Minute,
 	})
 	require.NoError(t, err)
 	require.True(t, claimed)
@@ -549,28 +512,23 @@ func TestEmbeddingReconciliationSuccessfulCanaryLeaseTakeoverResumesBacklog(t *t
 	}, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, firstBatch.requeued)
-	var incidentStatus string
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
+	require.NoError(t, err)
+	require.Len(t, convergence.FailureGroups, 1)
+	require.Equal(t, "attention_required", convergence.FailureGroups[0].Status)
+	require.EqualValues(t, 1, convergence.FailureGroups[0].FailedJobCount)
+	require.EqualValues(t, 1, convergence.FailureGroups[0].QueuedJobCount)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		if err := tx.Raw(`
-			SELECT status
-			FROM embedding_failure_incidents
-			WHERE team_id = ?::uuid AND embedding_contract_id = ?::uuid
-			  AND embedding_dimensions = ? AND source_kind = 'evidence'
-			  AND failure_class = 'transient' AND failure_code = 'provider_timeout'
-		`, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&incidentStatus).Error; err != nil {
-			return err
-		}
 		return tx.Exec(`
 			UPDATE embedding_reconciliation_runs
 			SET lease_until = clock_timestamp() - interval '1 second'
 			WHERE reconciliation_run_id = ?::uuid
 		`, first.RunID).Error
 	}))
-	require.Equal(t, "open", incidentStatus)
 
 	second, reclaimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-		LocalRunDate: now, WorkerID: "success-takeover-new", Lease: time.Minute, Now: now.Add(time.Minute),
+		LocalRunDate: now, CreateIfMissing: false, WorkerID: "success-takeover-new", Lease: time.Minute,
 	})
 	require.NoError(t, err)
 	require.True(t, reclaimed)
@@ -586,16 +544,12 @@ func TestEmbeddingReconciliationSuccessfulCanaryLeaseTakeoverResumesBacklog(t *t
 	})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, requeued)
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			SELECT status
-			FROM embedding_failure_incidents
-			WHERE team_id = ?::uuid AND embedding_contract_id = ?::uuid
-			  AND embedding_dimensions = ? AND source_kind = 'evidence'
-			  AND failure_class = 'transient' AND failure_code = 'provider_timeout'
-		`, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&incidentStatus).Error
-	}))
-	require.Equal(t, "recovering", incidentStatus)
+	convergence, err = repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
+	require.NoError(t, err)
+	require.Len(t, convergence.FailureGroups, 1)
+	require.Equal(t, "recovering", convergence.FailureGroups[0].Status)
+	require.Zero(t, convergence.FailureGroups[0].FailedJobCount)
+	require.EqualValues(t, 2, convergence.FailureGroups[0].QueuedJobCount)
 	requeuedAgain, err := repo.RequeueEmbeddingReconciliationJobs(ctx, RequeueEmbeddingReconciliationJobsInput{
 		RunID: second.RunID, WorkerID: second.WorkerID, LeaseToken: second.LeaseToken,
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
@@ -650,7 +604,7 @@ func TestEmbeddingReconciliationCompletionRejectsExpiredLease(t *testing.T) {
 	cutoff := databaseNowForTest(t, adminDB, rls)
 	run, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-		LocalRunDate: cutoff, WorkerID: "expired-completion-reconciler", Lease: time.Minute, Now: cutoff,
+		LocalRunDate: cutoff, CreateIfMissing: true, WorkerID: "expired-completion-reconciler", Lease: time.Minute,
 	})
 	require.NoError(t, err)
 	require.True(t, claimed)
@@ -736,15 +690,20 @@ func TestCompleteEmbeddingReconciliationRunUsesDatabaseClock(t *testing.T) {
 		Status: string(domain.EmbeddingReconciliationCompleted),
 	}))
 
-	var startedAt, completedAt time.Time
+	var startedAt, completedAt, databaseNow time.Time
+	var status string
+	var leaseUntil *time.Time
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Raw(`
-			SELECT started_at, completed_at
+			SELECT started_at, completed_at, status, lease_until, clock_timestamp()
 			FROM embedding_reconciliation_runs
 			WHERE reconciliation_run_id = ?::uuid
-		`, runID).Row().Scan(&startedAt, &completedAt)
+		`, runID).Row().Scan(&startedAt, &completedAt, &status, &leaseUntil, &databaseNow)
 	}))
 	require.False(t, completedAt.Before(startedAt))
+	require.False(t, completedAt.After(databaseNow))
+	require.Equal(t, string(domain.EmbeddingReconciliationCompleted), status)
+	require.Nil(t, leaseUntil)
 }
 
 func failEmbeddingDocumentForReconciliationTest(
@@ -772,50 +731,6 @@ func failEmbeddingDocumentForReconciliationTest(
 	})
 	require.NoError(t, err)
 	require.True(t, result.Terminal)
-}
-
-func requireEmbeddingFailureIncidentWaiter(
-	t *testing.T,
-	ctx context.Context,
-	adminDB *gorm.DB,
-	rls interface {
-		WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
-	},
-	teamID string,
-	sourceKind string,
-	contractID string,
-	failureClass string,
-	failureCode string,
-	dimensions int,
-) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		var waiting int64
-		lockErr := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-			return tx.Raw(`
-				WITH expected AS (
-					SELECT hashtextextended(
-						concat_ws('|', ?::uuid::text, ?::uuid::text, ?::integer::text, ?::text, ?::text, ?::text), 0
-					) AS lock_id
-				)
-				SELECT count(*)
-				FROM pg_locks
-				CROSS JOIN expected
-				WHERE locktype = 'advisory' AND NOT granted
-				  AND objsubid = 1
-				  AND classid::bigint = ((expected.lock_id >> 32) & 4294967295)
-				  AND objid::bigint = (expected.lock_id & 4294967295)
-			`, teamID, contractID, dimensions, sourceKind, failureClass, failureCode).Scan(&waiting).Error
-		})
-		if lockErr == nil && waiting > 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("expected transaction did not wait for the failure-writer incident lock")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
 }
 
 func requirePostgresBackendBlockedBy(

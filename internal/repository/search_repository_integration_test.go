@@ -592,19 +592,12 @@ func TestSearchClaimEmbeddingJobsFailsExpiredExhaustedJobs(t *testing.T) {
 	assert.Equal(t, string(domain.EmbeddingFailureProviderTimeout), failureCode)
 	assert.Equal(t, "failed", documentState)
 	assert.Equal(t, embeddingJobAttemptsExhaustedMessage, documentError)
-	var incidentCount int
-	err = rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			SELECT count(*)
-			FROM embedding_failure_incidents
-			WHERE team_id = ?::uuid
-			  AND failure_class = 'transient'
-			  AND failure_code = 'provider_timeout'
-			  AND status = 'open'
-		`, teamID).Row().Scan(&incidentCount)
-	})
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
 	require.NoError(t, err)
-	assert.Equal(t, 1, incidentCount)
+	require.Len(t, convergence.FailureGroups, 1)
+	assert.Equal(t, teamID, convergence.FailureGroups[0].TeamID)
+	assert.Equal(t, string(domain.EmbeddingFailureProviderTimeout), convergence.FailureGroups[0].FailureCode)
+	assert.EqualValues(t, 1, convergence.FailureGroups[0].FailedJobCount)
 }
 
 func TestSearchExactVectorRequiresBoundedContract(t *testing.T) {

@@ -162,6 +162,7 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 		return result, err
 	}
 	var firstErr error
+	recoveredJobs := 0
 	for i, job := range eligible {
 		vector := embeddings[i]
 		if err := validateEmbeddingVector(vector, job.EmbeddingDimensions); err != nil {
@@ -179,6 +180,9 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 		switch {
 		case err == nil:
 			result.Completed++
+			if job.FirstFailedAt != nil {
+				recoveredJobs++
+			}
 		case errors.Is(err, repository.ErrSearchStaleVersion), errors.Is(err, repository.ErrSearchContractMismatch):
 			result.Stale++
 			observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, "stale")
@@ -188,6 +192,9 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 		default:
 			firstErr = errors.Join(firstErr, err)
 		}
+	}
+	if recoveredJobs > 0 {
+		logEmbeddingRecoveryCompleted(s.logger, s.teamID, "batch", recoveredJobs)
 	}
 	return result, firstErr
 }
@@ -228,16 +235,14 @@ func (s *embeddingWorkerService) failJobs(
 	terminal bool,
 	retryAfter time.Duration,
 ) {
-	if len(jobs) > 0 && s.logger != nil {
-		s.logger.Warn("embedding_failure_recorded",
-			observability.String("failure_class", failureClass),
-			observability.String("failure_code", code),
-			observability.String("aggregation", "batch"),
-			observability.Int("batch_size", len(jobs)),
-		)
-	}
+	recorded := 0
 	for _, job := range jobs {
-		s.failJob(ctx, contract, job, result, failureClass, code, terminal, retryAfter, false)
+		if s.failJob(ctx, contract, job, result, failureClass, code, terminal, retryAfter, false) {
+			recorded++
+		}
+	}
+	if recorded > 0 {
+		logEmbeddingFailureRecorded(s.logger, s.teamID, "mixed", failureClass, code, "batch", recorded)
 	}
 }
 
@@ -251,7 +256,7 @@ func (s *embeddingWorkerService) failJob(
 	terminal bool,
 	retryAfter time.Duration,
 	emitLog bool,
-) {
+) bool {
 	if contract != nil {
 		observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, code)
 		for _, legacy := range legacyEmbeddingMetricCodes(code) {
@@ -259,13 +264,6 @@ func (s *embeddingWorkerService) failJob(
 				observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, legacy)
 			}
 		}
-	}
-	if emitLog && s.logger != nil {
-		s.logger.Warn("embedding_failure_recorded",
-			observability.String("failure_class", failureClass),
-			observability.String("failure_code", code),
-			observability.String("source_kind", job.SourceKind),
-		)
 	}
 	failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.failureTimeout)
 	defer cancel()
@@ -285,13 +283,59 @@ func (s *embeddingWorkerService) failJob(
 		result.Stale++
 	case failErr == nil && failed != nil && failed.Terminal:
 		result.Failed++
-	case failErr == nil:
+		if emitLog {
+			logEmbeddingFailureRecorded(s.logger, job.TeamID, job.SourceKind, failureClass, code, "single", 1)
+		}
+		return true
+	case failErr == nil && failed != nil:
 		result.Retried++
+		if emitLog {
+			logEmbeddingFailureRecorded(s.logger, job.TeamID, job.SourceKind, failureClass, code, "single", 1)
+		}
+		return true
+	case failErr == nil:
+		result.Failed++
 	case errors.Is(failErr, repository.ErrEmbeddingLeaseLost):
 		result.LeaseLost++
 	default:
 		result.Failed++
 	}
+	return false
+}
+
+func logEmbeddingFailureRecorded(
+	logger observability.LogProvider,
+	teamID, sourceKind, failureClass, failureCode, aggregation string,
+	jobCount int,
+) {
+	if logger == nil || jobCount <= 0 {
+		return
+	}
+	logger.Warn("embedding_failure_recorded",
+		observability.String("team_id", teamID),
+		observability.String("source_kind", sourceKind),
+		observability.String("failure_class", failureClass),
+		observability.String("failure_code", failureCode),
+		observability.String("aggregation", aggregation),
+		observability.Int("job_count", jobCount),
+	)
+}
+
+func logEmbeddingRecoveryCompleted(
+	logger observability.LogProvider,
+	teamID, aggregation string,
+	jobCount int,
+	extra ...observability.LogAttr,
+) {
+	if logger == nil || jobCount <= 0 {
+		return
+	}
+	attrs := []observability.LogAttr{
+		observability.String("team_id", teamID),
+		observability.String("aggregation", aggregation),
+		observability.Int("job_count", jobCount),
+	}
+	logger.Info("embedding_recovery_completed", append(attrs, extra...)...)
 }
 
 func validateEmbeddingVector(vector []float32, dimensions int) error {

@@ -111,9 +111,6 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 		if err := markStaleClaimableEmbeddingJobs(ctx, tx, input.TeamID, cleanupLimit); err != nil {
 			return err
 		}
-		if err := resolveEmbeddingIncidentsWithoutActiveJobs(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
 		if err := failExpiredMaxAttemptEmbeddingJobs(ctx, tx, input.TeamID, cleanupLimit); err != nil {
 			return err
 		}
@@ -197,11 +194,10 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			return err
 		}
 		var dims int
-		var contractID, sourceKind, projectionGenerationID, failureClass, failureCode string
+		var contractID, sourceKind, projectionGenerationID string
 		err = tx.WithContext(ctx).Raw(`
 				SELECT embedding_dimensions, embedding_contract_id::text,
-				       source_kind, COALESCE(projection_generation_id::text, ''),
-				       failure_class, failure_code
+				       source_kind, COALESCE(projection_generation_id::text, '')
 				FROM embedding_jobs
 				WHERE team_id = ?::uuid
 				  AND embedding_job_id = ?::uuid
@@ -215,8 +211,6 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			&contractID,
 			&sourceKind,
 			&projectionGenerationID,
-			&failureClass,
-			&failureCode,
 		)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -233,9 +227,6 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 		}
 		if !active {
 			if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobStale), "active search contract changed before embedding completion"); err != nil {
-				return err
-			}
-			if err := resolveEmbeddingIncidentKey(ctx, tx, input.TeamID, sourceKind, contractID, failureClass, failureCode, dims); err != nil {
 				return err
 			}
 			terminalErr = ErrSearchContractMismatch
@@ -270,16 +261,10 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobStale), "source or document version changed before embedding completion"); err != nil {
 				return err
 			}
-			if err := resolveEmbeddingIncidentKey(ctx, tx, input.TeamID, sourceKind, contractID, failureClass, failureCode, dims); err != nil {
-				return err
-			}
 			terminalErr = ErrSearchStaleVersion
 			return nil
 		}
 		if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobCompleted), ""); err != nil {
-			return err
-		}
-		if err := resolveEmbeddingIncidentKey(ctx, tx, input.TeamID, sourceKind, contractID, failureClass, failureCode, dims); err != nil {
 			return err
 		}
 		if sourceKind == "relationship" && projectionGenerationID != "" {
@@ -330,14 +315,11 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 		); err != nil {
 			return err
 		}
-		var attempts, maxAttempts, dims int
-		var sourceKind, projectionGenerationID, contractID string
-		var previousFailureClass, previousFailureCode string
+		var attempts, maxAttempts int
+		var sourceKind, projectionGenerationID string
 		err = tx.WithContext(ctx).Raw(`
-				SELECT attempts, max_attempts, embedding_dimensions,
-				       embedding_contract_id::text, source_kind,
-				       COALESCE(projection_generation_id::text, ''),
-				       failure_class, failure_code
+				SELECT attempts, max_attempts, source_kind,
+				       COALESCE(projection_generation_id::text, '')
 				FROM embedding_jobs
 				WHERE team_id = ?::uuid
 				  AND embedding_job_id = ?::uuid
@@ -349,12 +331,8 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			`, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Row().Scan(
 			&attempts,
 			&maxAttempts,
-			&dims,
-			&contractID,
 			&sourceKind,
 			&projectionGenerationID,
-			&previousFailureClass,
-			&previousFailureCode,
 		)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrEmbeddingLeaseLost
@@ -373,9 +351,6 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 				WorkerID:         input.WorkerID,
 				ExpectedAttempts: input.ExpectedAttempts,
 			}, string(domain.EmbeddingJobStale), "source or document version changed before embedding failure"); err != nil {
-				return err
-			}
-			if err := resolveEmbeddingIncidentKey(ctx, tx, input.TeamID, sourceKind, contractID, previousFailureClass, previousFailureCode, dims); err != nil {
 				return err
 			}
 			if sourceKind == "relationship" && projectionGenerationID != "" {
@@ -400,13 +375,6 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 		}
 		failureClass := input.FailureClass
 		failureCode := input.FailureCode
-		if err := tx.WithContext(ctx).Exec(`SELECT set_config('app.embedding_job_failure_writer', 'current', true)`).Error; err != nil {
-			return err
-		}
-		if err := lockEmbeddingFailureIncidentTransition(ctx, tx, input.TeamID, sourceKind, contractID, dims,
-			previousFailureClass, previousFailureCode, failureClass, failureCode); err != nil {
-			return err
-		}
 		completedExpr := "NULL"
 		if terminal {
 			status = string(domain.EmbeddingJobFailed)
@@ -457,15 +425,6 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			return ErrEmbeddingLeaseLost
 		}
 		if err := updateSearchDocumentAfterEmbeddingFailure(ctx, tx, input, status); err != nil {
-			return err
-		}
-		if (previousFailureClass != "" || previousFailureCode != "") &&
-			(previousFailureClass != failureClass || previousFailureCode != failureCode) {
-			if err := resolveEmbeddingIncidentKey(ctx, tx, input.TeamID, sourceKind, contractID, previousFailureClass, previousFailureCode, dims); err != nil {
-				return err
-			}
-		}
-		if err := upsertEmbeddingFailureIncident(ctx, tx, input.TeamID, failureClass, failureCode, contractID, dims, sourceKind); err != nil {
 			return err
 		}
 		if sourceKind == "relationship" && projectionGenerationID != "" {
@@ -730,9 +689,6 @@ func refreshRelationshipProjectionGeneration(ctx context.Context, tx *gorm.DB, t
 }
 
 func markStaleClaimableEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string, limit int) error {
-	if err := tx.WithContext(ctx).Exec(`SELECT set_config('app.embedding_job_failure_writer', 'current', true)`).Error; err != nil {
-		return err
-	}
 	return tx.WithContext(ctx).Exec(`
 		WITH queued_candidates AS MATERIALIZED (
 			SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at

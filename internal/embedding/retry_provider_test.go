@@ -213,10 +213,7 @@ func TestRetryProviderDeadlineDuringDelayPreservesProviderFailure(t *testing.T) 
 					return nil, "", &ProviderHTTPError{Status: 429}
 				},
 			}
-			provider := NewRetryEmbeddingProviderWithKeyAndOptions(inner, newTestLogger(), "", RetryEmbeddingOptions{
-				BaseDelay: time.Second,
-				MaxDelay:  time.Second,
-			})
+			provider := NewRetryEmbeddingProvider(inner, newTestLogger())
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancel()
 			var err error

@@ -57,7 +57,7 @@ func (s *reconciliationRepositoryStub) GetEmbeddingReconciliationTime(context.Co
 		return time.Time{}, s.databaseNowErr
 	}
 	if s.databaseNow.IsZero() {
-		return time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC), nil
+		return time.Date(2026, 8, 10, 4, 30, 0, 0, time.UTC), nil
 	}
 	return s.databaseNow, nil
 }
@@ -68,6 +68,9 @@ func (s *reconciliationRepositoryStub) GetSearchConvergence(context.Context, rep
 func (s *reconciliationRepositoryStub) ReserveEmbeddingReconciliationRun(_ context.Context, input repository.ReserveEmbeddingReconciliationRunInput) (*repository.EmbeddingReconciliationRun, bool, error) {
 	s.reserved = append(s.reserved, input)
 	if s.run == nil {
+		if !input.CreateIfMissing {
+			return nil, false, nil
+		}
 		s.run = &repository.EmbeddingReconciliationRun{RunID: "run-1", LeaseToken: "lease-1", Status: "running", CandidateCutoff: time.Now().UTC()}
 	}
 	if s.claimed {
@@ -191,26 +194,6 @@ func (m *reconciliationMetricsStub) ObserveEmbeddingReconciliationDuration(secon
 	m.durationOutcomes = append(m.durationOutcomes, outcome)
 }
 
-type reconciliationLogRecord struct {
-	message string
-	attrs   []observability.LogAttr
-}
-
-type reconciliationLoggerStub struct {
-	infos     []reconciliationLogRecord
-	warnings  []string
-	warnAttrs []observability.LogAttr
-}
-
-func (l *reconciliationLoggerStub) Info(message string, attrs ...observability.LogAttr) {
-	l.infos = append(l.infos, reconciliationLogRecord{message: message, attrs: attrs})
-}
-func (*reconciliationLoggerStub) Error(string, error, ...observability.LogAttr) {}
-func (l *reconciliationLoggerStub) Warn(message string, attrs ...observability.LogAttr) {
-	l.warnings = append(l.warnings, message)
-	l.warnAttrs = append(l.warnAttrs, attrs...)
-}
-
 func TestEmbeddingReconciliationLogsNumericRecoveryCounts(t *testing.T) {
 	logger := &reconciliationLoggerStub{}
 	service := &embeddingReconciliationService{logger: logger}
@@ -223,19 +206,6 @@ func TestEmbeddingReconciliationLogsNumericRecoveryCounts(t *testing.T) {
 	assert.Equal(t, 1, reconciliationLogAttrValue(logger.infos[0].attrs, "recovered_count"))
 	assert.Equal(t, 7, reconciliationLogAttrValue(logger.infos[0].attrs, "requeued_count"))
 	assert.Equal(t, 5, reconciliationLogAttrValue(logger.warnAttrs, "requeued_count"))
-}
-
-func reconciliationLogAttrValue(attrs []observability.LogAttr, key string) any {
-	for _, attr := range attrs {
-		if attr.Key == key {
-			return attr.Value
-		}
-	}
-	return nil
-}
-func (*reconciliationLoggerStub) Debug(string, ...observability.LogAttr) {}
-func (l *reconciliationLoggerStub) With(...observability.LogAttr) observability.LogProvider {
-	return l
 }
 
 func TestEmbeddingReconciliationProcessDueErrorsAreObservable(t *testing.T) {
@@ -422,9 +392,14 @@ func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T
 	if reconciliation.completed.RequeuedCount != 3 || reconciliation.completed.RecoveredCount != 1 {
 		t.Fatalf("completed run = %#v", reconciliation.completed)
 	}
-	require.Len(t, logger.infos, 2)
-	assert.Equal(t, "embedding_reconciliation_completed", logger.infos[1].message)
-	assert.Equal(t, string(domain.EmbeddingReconciliationCompleted), reconciliationLogAttrValue(logger.infos[1].attrs, "status"))
+	require.Len(t, logger.infos, 3)
+	assert.Equal(t, "embedding_recovery_completed", logger.infos[1].message)
+	assert.Equal(t, "team-1", reconciliationLogAttrValue(logger.infos[1].attrs, "team_id"))
+	assert.Equal(t, "canary", reconciliationLogAttrValue(logger.infos[1].attrs, "aggregation"))
+	assert.Equal(t, 1, reconciliationLogAttrValue(logger.infos[1].attrs, "job_count"))
+	assert.Equal(t, "run-1", reconciliationLogAttrValue(logger.infos[1].attrs, "reconciliation_run_id"))
+	assert.Equal(t, "embedding_reconciliation_completed", logger.infos[2].message)
+	assert.Equal(t, string(domain.EmbeddingReconciliationCompleted), reconciliationLogAttrValue(logger.infos[2].attrs, "status"))
 }
 
 func TestEmbeddingReconciliationLogsCompletedStatusWhenCanaryIsSkipped(t *testing.T) {
@@ -720,28 +695,51 @@ func TestEmbeddingReconciliationFinalizesFailedCanaryAfterContextCancellation(t 
 	assert.NoError(t, reconciliation.completeContextErr)
 }
 
-func TestEmbeddingReconciliationClassifiesUnavailableProviderAsTransient(t *testing.T) {
-	search := newEmbeddingSearchStub()
-	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
-	reconciliation := &reconciliationRepositoryStub{job: &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", Attempts: 20, EmbeddingDimensions: 3, DocumentText: "canary"}}
-	metrics := &reconciliationMetricsStub{}
-	provider := &reconciliationRawProvider{available: false, model: "model", dims: 3}
-	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
-	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
-		Search: search, Reconciliation: reconciliation, Provider: provider, Metrics: metrics,
-		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
-		WorkerID:  "worker-1", Now: func() time.Time { return now },
-	})
+func TestEmbeddingReconciliationPersistsPreflightCanaryFailures(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		provider     *reconciliationRawProvider
+		failureClass string
+		failureCode  string
+	}{
+		{
+			name: "provider unavailable", provider: &reconciliationRawProvider{available: false, model: "model", dims: 3},
+			failureClass: string(domain.EmbeddingFailureTransient), failureCode: string(domain.EmbeddingFailureProviderNetworkError),
+		},
+		{
+			name: "model mismatch", provider: &reconciliationRawProvider{available: true, model: "other-model", dims: 3},
+			failureClass: string(domain.EmbeddingFailurePermanent), failureCode: string(domain.EmbeddingFailureContractMismatch),
+		},
+		{
+			name: "dimension mismatch", provider: &reconciliationRawProvider{available: true, model: "model", dims: 4},
+			failureClass: string(domain.EmbeddingFailurePermanent), failureCode: string(domain.EmbeddingFailureContractMismatch),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			search := newEmbeddingSearchStub()
+			search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+			reconciliation := &reconciliationRepositoryStub{job: &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "job-1", Attempts: 20, EmbeddingDimensions: 3, DocumentText: "canary"}}
+			metrics := &reconciliationMetricsStub{}
+			now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
+			service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+				Search: search, Reconciliation: reconciliation, Provider: test.provider, Metrics: metrics,
+				AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+				WorkerID:  "worker-1", Now: func() time.Time { return now },
+			})
 
-	_, err := service.ProcessDue(context.Background())
-	require.NoError(t, err)
-	require.Len(t, search.failInputs, 1)
-	assert.Equal(t, string(domain.EmbeddingFailureTransient), search.failInputs[0].FailureClass)
-	assert.Equal(t, string(domain.EmbeddingFailureProviderNetworkError), search.failInputs[0].FailureCode)
-	require.NotNil(t, reconciliation.completed)
-	assert.Equal(t, string(domain.EmbeddingFailureProviderNetworkError), reconciliation.completed.FailureCode)
-	assert.Empty(t, reconciliation.completed.CanaryOutcome)
-	assert.Empty(t, metrics.canaries)
+			result, err := service.ProcessDue(context.Background())
+			require.NoError(t, err)
+			assert.True(t, result.CanaryAttempted)
+			require.Len(t, search.failInputs, 1)
+			assert.Equal(t, test.failureClass, search.failInputs[0].FailureClass)
+			assert.Equal(t, test.failureCode, search.failInputs[0].FailureCode)
+			require.NotNil(t, reconciliation.completed)
+			assert.Equal(t, test.failureCode, reconciliation.completed.FailureCode)
+			assert.Equal(t, "failed", reconciliation.completed.CanaryOutcome)
+			assert.Equal(t, []string{"failed"}, metrics.canaries)
+			assert.Zero(t, test.provider.calls)
+		})
+	}
 }
 
 func TestEmbeddingReconciliationTreatsWorkerCancellationAsAmbiguous(t *testing.T) {
@@ -868,13 +866,14 @@ func TestEmbeddingReconciliationUsesConfiguredLocalCalendarDate(t *testing.T) {
 	_, err := svc.ProcessDue(context.Background())
 	require.NoError(t, err)
 	require.Len(t, reconciliation.reserved, 1)
+	assert.True(t, reconciliation.reserved[0].CreateIfMissing)
 	assert.Equal(t, 2026, reconciliation.reserved[0].LocalRunDate.Year())
 	assert.Equal(t, time.August, reconciliation.reserved[0].LocalRunDate.Month())
 	assert.Equal(t, 10, reconciliation.reserved[0].LocalRunDate.Day())
 	assert.Equal(t, "America/Los_Angeles", reconciliation.reserved[0].LocalRunDate.Location().String())
 }
 
-func TestEmbeddingReconciliationRunsAfterMissedConfiguredMinute(t *testing.T) {
+func TestEmbeddingReconciliationDoesNotCreateRunAfterMissedConfiguredMinute(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
 	databaseNow := time.Date(2026, 8, 10, 4, 31, 20, 0, time.UTC)
@@ -890,9 +889,9 @@ func TestEmbeddingReconciliationRunsAfterMissedConfiguredMinute(t *testing.T) {
 	result, err := svc.ProcessDue(context.Background())
 	require.NoError(t, err)
 	require.Len(t, reconciliation.reserved, 1)
-	assert.Equal(t, string(domain.EmbeddingReconciliationCompleted), result.Status)
-	require.NotNil(t, reconciliation.completed)
-	assert.Empty(t, reconciliation.completed.CanaryOutcome, "a run without candidates must not claim a successful canary")
+	assert.False(t, reconciliation.reserved[0].CreateIfMissing)
+	assert.Empty(t, result.RunID)
+	assert.Nil(t, reconciliation.completed)
 }
 
 func TestEmbeddingReconciliationDoesNotRunBeforeScheduledMinute(t *testing.T) {
@@ -911,7 +910,8 @@ func TestEmbeddingReconciliationDoesNotRunBeforeScheduledMinute(t *testing.T) {
 	result, err := svc.ProcessDue(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, result.RunID)
-	assert.Empty(t, reconciliation.reserved)
+	require.Len(t, reconciliation.reserved, 1)
+	assert.False(t, reconciliation.reserved[0].CreateIfMissing)
 	assert.Zero(t, provider.calls)
 }
 

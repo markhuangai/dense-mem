@@ -187,21 +187,21 @@ type SearchConvergenceInput struct {
 }
 
 type SearchConvergence struct {
-	ObservedAt         time.Time
-	Status             string
-	Contract           *ActiveSearchContract
-	Queued             int64
-	Processing         int64
-	Failed             int64
-	ExpiredLeases      int64
-	OldestPendingAge   time.Duration
-	OldestFailureAge   time.Duration
-	AffectedTeamCount  int64
-	Failures           []EmbeddingFailureCount
-	Incidents          []EmbeddingFailureIncident
-	IncidentCount      int64
-	IncidentsTruncated bool
-	LatestRun          *EmbeddingReconciliationRun
+	ObservedAt             time.Time
+	Status                 string
+	Contract               *ActiveSearchContract
+	Queued                 int64
+	Processing             int64
+	Failed                 int64
+	ExpiredLeases          int64
+	OldestPendingAge       time.Duration
+	OldestFailureAge       time.Duration
+	AffectedTeamCount      int64
+	Failures               []EmbeddingFailureCount
+	FailureGroups          []EmbeddingFailureGroup
+	FailureGroupCount      int64
+	FailureGroupsTruncated bool
+	LatestRun              *EmbeddingReconciliationRun
 }
 
 type EmbeddingFailureCount struct {
@@ -211,22 +211,22 @@ type EmbeddingFailureCount struct {
 	Count        int64
 }
 
-type EmbeddingFailureIncident struct {
+type EmbeddingFailureGroup struct {
 	TeamID              string
 	TeamName            string
-	IncidentID          string
 	EmbeddingContractID string
 	EmbeddingDimensions int
 	SourceKind          string
 	FailureClass        string
 	FailureCode         string
 	Status              string
+	FailedJobCount      int64
+	QueuedJobCount      int64
+	ProcessingJobCount  int64
 	AffectedJobCount    int64
-	FirstSeenAt         time.Time
-	LastSeenAt          time.Time
+	FirstFailedAt       time.Time
+	LastFailedAt        time.Time
 	Age                 time.Duration
-	RecoveringAt        *time.Time
-	ResolvedAt          *time.Time
 	Guidance            string
 }
 
@@ -257,9 +257,9 @@ type ReserveEmbeddingReconciliationRunInput struct {
 	EmbeddingContractID string
 	EmbeddingDimensions int
 	LocalRunDate        time.Time
+	CreateIfMissing     bool
 	WorkerID            string
 	Lease               time.Duration
-	Now                 time.Time
 }
 
 type SelectEmbeddingReconciliationCanaryInput struct {

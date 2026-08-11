@@ -51,7 +51,7 @@ export function SearchConvergencePanel({ api }: { api: ControlApi }) {
             <SummaryCard label="Status" value={snapshot.status.replaceAll("_", " ")} detail="Automatic recovery" tone={snapshot.status === "converged" ? "neutral" : "warning"} />
             <SummaryCard label="Queued" value={snapshot.queue.queued} detail="Awaiting embedding" />
             <SummaryCard label="Failed" value={snapshot.queue.failed} detail={`${snapshot.queue.affected_team_count} affected teams`} tone={snapshot.queue.failed > 0 ? "warning" : "neutral"} />
-            <SummaryCard label="Incidents" value={snapshot.incident_count} detail={snapshot.incidents_truncated ? `Showing first ${snapshot.incidents.length}` : "Operator visibility"} tone={snapshot.incident_count > 0 ? "warning" : "neutral"} />
+            <SummaryCard label="Failure groups" value={snapshot.failure_group_count} detail={snapshot.failure_groups_truncated ? `Showing first ${snapshot.failure_groups.length}` : "Operator visibility"} tone={snapshot.failure_group_count > 0 ? "warning" : "neutral"} />
           </div>
           <p className="form-meta">Failed vectors stay out of vector search. Valid text remains eligible for lexical recall while the daily canary attempts recovery.</p>
           {snapshot.contract && <p className="form-meta">{snapshot.contract.provider} · {snapshot.contract.model} · {snapshot.contract.dimensions} dimensions · index generation {snapshot.contract.index_generation}</p>}
@@ -66,21 +66,21 @@ export function SearchConvergencePanel({ api }: { api: ControlApi }) {
               </div>
             </section>
           )}
-          <section className="overview-panel" aria-label="Embedding incidents">
-            <SectionHeading title="Embedding incidents" meta="Read-only guidance" />
-            {snapshot.incidents.length === 0 ? <p className="form-meta">No open incidents.</p> : (
+          <section className="overview-panel" aria-label="Embedding failure groups">
+            <SectionHeading title="Embedding failure groups" meta="Derived from current jobs" />
+            {snapshot.failure_groups.length === 0 ? <p className="form-meta">No unresolved failure groups.</p> : (
               <div className="mini-table">
-                <div className="mini-table-row" aria-hidden="true"><span>Team / reason</span><span>Jobs</span><span>Guidance</span></div>
-                {snapshot.incidents.map((incident) => (
-                  <div className="mini-table-row" key={incident.incident_id}>
-                    <span><strong>{incident.team_name || incident.team_id}</strong><br />{incident.failure_code}</span>
-                    <span>{incident.affected_job_count}</span>
-                    <span>{incident.guidance}</span>
+                <div className="mini-table-row" aria-hidden="true"><span>Team / reason</span><span>Failed / recovering</span><span>Guidance</span></div>
+                {snapshot.failure_groups.map((group) => (
+                  <div className="mini-table-row" key={[group.team_id, group.source_kind, group.failure_class, group.failure_code].join(":")}>
+                    <span><strong>{group.team_name || group.team_id}</strong><br />{group.failure_code}</span>
+                    <span>{group.failed_job_count} / {group.queued_job_count + group.processing_job_count}</span>
+                    <span>{group.guidance}</span>
                   </div>
                 ))}
               </div>
             )}
-            {snapshot.incidents_truncated && <p className="form-meta">Showing the most recent {snapshot.incidents.length} of {snapshot.incident_count} incidents.</p>}
+            {snapshot.failure_groups_truncated && <p className="form-meta">Showing the most recent {snapshot.failure_groups.length} of {snapshot.failure_group_count} failure groups.</p>}
           </section>
         </>
       )}

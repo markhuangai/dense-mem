@@ -521,9 +521,6 @@ func suppressConflictLosingRelationships(
 		if err := markStaleEmbeddingJobs(ctx, tx, input.TeamID); err != nil {
 			return nil, err
 		}
-		if err := resolveEmbeddingIncidentsWithoutActiveJobs(ctx, tx, input.TeamID); err != nil {
-			return nil, err
-		}
 	}
 	return updatedIDs, nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/lib/pq"
@@ -150,9 +149,7 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 		}
 
 		rows, err = tx.WithContext(ctx).Raw(`
-			SELECT job.team_id::text, job.embedding_job_id::text,
-			       job.source_kind, job.failure_class, job.failure_code,
-			       job.embedding_contract_id::text, job.embedding_dimensions
+			SELECT job.team_id::text, job.embedding_job_id::text
 			FROM unnest(?::uuid[], ?::uuid[]) WITH ORDINALITY AS candidate(team_id, embedding_job_id, position)
 			JOIN embedding_jobs AS job
 			  ON job.team_id = candidate.team_id
@@ -181,21 +178,14 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 		}
 		jobTeamIDs := make([]string, 0, input.BatchSize)
 		jobIDs := make([]string, 0, input.BatchSize)
-		identitiesByTeam := make(map[string]map[embeddingFailureIncidentIdentity]struct{})
 		for rows.Next() {
 			var teamID, jobID string
-			var identity embeddingFailureIncidentIdentity
-			if err := rows.Scan(&teamID, &jobID, &identity.sourceKind, &identity.failureClass,
-				&identity.failureCode, &identity.contractID, &identity.dimensions); err != nil {
+			if err := rows.Scan(&teamID, &jobID); err != nil {
 				_ = rows.Close()
 				return err
 			}
 			jobTeamIDs = append(jobTeamIDs, teamID)
 			jobIDs = append(jobIDs, jobID)
-			if identitiesByTeam[teamID] == nil {
-				identitiesByTeam[teamID] = make(map[embeddingFailureIncidentIdentity]struct{})
-			}
-			identitiesByTeam[teamID][identity] = struct{}{}
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
@@ -207,22 +197,8 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 		if len(jobIDs) == 0 {
 			return nil
 		}
-		teamIDs := make([]string, 0, len(identitiesByTeam))
-		for teamID := range identitiesByTeam {
-			teamIDs = append(teamIDs, teamID)
-		}
-		sort.Strings(teamIDs)
-		for _, teamID := range teamIDs {
-			identities := make([]embeddingFailureIncidentIdentity, 0, len(identitiesByTeam[teamID]))
-			for identity := range identitiesByTeam[teamID] {
-				identities = append(identities, identity)
-			}
-			if err := lockEmbeddingFailureIncidentIdentities(ctx, tx, teamID, identities); err != nil {
-				return err
-			}
-		}
 
-		var documentCount, incidentCount int64
+		var documentCount int64
 		if err := tx.WithContext(ctx).Raw(`
 			WITH selected AS MATERIALIZED (
 				SELECT *
@@ -249,9 +225,8 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 				        AND run.worker_id = ?
 				        AND run.lease_token = ?::uuid
 				  )
-				RETURNING job.team_id, job.embedding_job_id, job.search_document_id, job.source_kind,
-				          job.failure_class, job.failure_code,
-				          job.source_version, job.projection_format_version,
+					RETURNING job.team_id, job.embedding_job_id, job.search_document_id,
+					          job.source_version, job.projection_format_version,
 				          job.projection_generation_id, job.document_version,
 				          job.embedding_contract_id, job.embedding_dimensions
 			), documents AS (
@@ -266,61 +241,13 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 				  AND document.document_version = requeued.document_version
 				  AND document.embedding_contract_id = requeued.embedding_contract_id
 				  AND document.embedding_dimensions = requeued.embedding_dimensions
-				RETURNING 1
-			), incidents AS (
-				UPDATE embedding_failure_incidents AS incident
-				SET status = 'recovering',
-				    recovering_at = COALESCE(incident.recovering_at, now()),
-				    last_reconciliation_run_id = ?::uuid,
-				    updated_at = now()
-				WHERE incident.status = 'open'
-				  AND EXISTS (
-				      SELECT 1
-				      FROM requeued
-				      WHERE requeued.team_id = incident.team_id
-				        AND requeued.embedding_contract_id = incident.embedding_contract_id
-				        AND requeued.embedding_dimensions = incident.embedding_dimensions
-				        AND requeued.source_kind = incident.source_kind
-				        AND requeued.failure_class = incident.failure_class
-				        AND requeued.failure_code = incident.failure_code
-				  )
-				  AND NOT EXISTS (
-				      SELECT 1
-				      FROM embedding_jobs AS remaining_failure
-				      JOIN search_documents AS document
-				        ON document.team_id = remaining_failure.team_id
-				       AND document.search_document_id = remaining_failure.search_document_id
-				       AND document.source_version = remaining_failure.source_version
-				       AND document.projection_format_version = remaining_failure.projection_format_version
-				       AND document.projection_generation_id IS NOT DISTINCT FROM remaining_failure.projection_generation_id
-				       AND document.document_version = remaining_failure.document_version
-				       AND document.embedding_contract_id = remaining_failure.embedding_contract_id
-				       AND document.embedding_dimensions = remaining_failure.embedding_dimensions
-				      JOIN teams AS team
-				        ON team.id = remaining_failure.team_id AND team.status = 'active' AND team.deleted_at IS NULL
-				      WHERE remaining_failure.team_id = incident.team_id
-				        AND remaining_failure.embedding_contract_id = incident.embedding_contract_id
-				        AND remaining_failure.embedding_dimensions = incident.embedding_dimensions
-				        AND remaining_failure.source_kind = incident.source_kind
-				        AND remaining_failure.failure_class = incident.failure_class
-				        AND remaining_failure.failure_code = incident.failure_code
-				        AND remaining_failure.status = 'failed'
-				        AND NOT EXISTS (
-				            SELECT 1
-				            FROM requeued
-				            WHERE requeued.team_id = remaining_failure.team_id
-				              AND requeued.embedding_job_id = remaining_failure.embedding_job_id
-				        )
-				  )
-				RETURNING 1
-			)
-			SELECT (SELECT count(*) FROM requeued),
-			       (SELECT count(*) FROM documents),
-			       (SELECT count(*) FROM incidents)
-		`, pq.Array(jobTeamIDs), pq.Array(jobIDs),
+					RETURNING 1
+				)
+				SELECT (SELECT count(*) FROM requeued),
+				       (SELECT count(*) FROM documents)
+			`, pq.Array(jobTeamIDs), pq.Array(jobIDs),
 			input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff,
-			input.RunID, input.WorkerID, input.LeaseToken,
-			input.RunID).Row().Scan(&batch.requeued, &documentCount, &incidentCount); err != nil {
+			input.RunID, input.WorkerID, input.LeaseToken).Row().Scan(&batch.requeued, &documentCount); err != nil {
 			return err
 		}
 		if batch.requeued == 0 {

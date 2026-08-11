@@ -32,7 +32,7 @@ func (r *SearchRepositoryImpl) GetEmbeddingReconciliationTime(ctx context.Contex
 }
 
 // CheckSearchConvergence returns an error when the active search contract has
-// any queued, processing, or failed jobs, or an unresolved embedding incident.
+// any queued, processing, or failed jobs.
 // It intentionally uses bounded existence checks for health probes instead of
 // building the full operator convergence projection.
 func (r *SearchRepositoryImpl) CheckSearchConvergence(ctx context.Context) error {
@@ -53,19 +53,8 @@ func (r *SearchRepositoryImpl) CheckSearchConvergence(ctx context.Context) error
 			    WHERE job.embedding_contract_id = ?::uuid
 			      AND job.embedding_dimensions = ?
 			      AND job.status IN ('queued', 'processing', 'failed')
-			) OR EXISTS (
-			    SELECT 1
-			    FROM embedding_failure_incidents AS incident
-			    JOIN teams AS team
-			      ON team.id = incident.team_id
-			     AND team.status = 'active'
-			     AND team.deleted_at IS NULL
-			    WHERE incident.embedding_contract_id = ?::uuid
-			      AND incident.embedding_dimensions = ?
-			      AND incident.status IN ('open', 'recovering')
-			)
-		`, contract.EmbeddingContractID, contract.EmbeddingDimensions,
-			contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&attentionRequired).Error
+				)
+			`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&attentionRequired).Error
 	})
 	if err != nil {
 		return fmt.Errorf("search: convergence health: %w", err)
@@ -106,7 +95,7 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 		ExpiredLeases:    stats.ExpiredLeases,
 		OldestPendingAge: stats.OldestPendingAge,
 	}
-	var hasOpenIncident, hasRecoveringIncident bool
+	var hasFailedGroup, hasRecoveringGroup bool
 	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
 			SELECT source_kind, failure_class, failure_code, count(*)
@@ -163,15 +152,15 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 		`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&convergence.AffectedTeamCount).Error; err != nil {
 			return err
 		}
-		incidents, incidentCount, openIncident, recoveringIncident, incidentsTruncated, err := readSearchConvergenceIncidents(ctx, tx, contract.EmbeddingContractID, contract.EmbeddingDimensions)
+		groups, groupCount, failedGroup, recoveringGroup, groupsTruncated, err := readSearchConvergenceFailureGroups(ctx, tx, contract.EmbeddingContractID, contract.EmbeddingDimensions)
 		if err != nil {
 			return err
 		}
-		convergence.Incidents = incidents
-		convergence.IncidentCount = incidentCount
-		convergence.IncidentsTruncated = incidentsTruncated
-		hasOpenIncident = openIncident
-		hasRecoveringIncident = recoveringIncident
+		convergence.FailureGroups = groups
+		convergence.FailureGroupCount = groupCount
+		convergence.FailureGroupsTruncated = groupsTruncated
+		hasFailedGroup = failedGroup
+		hasRecoveringGroup = recoveringGroup
 		return nil
 	})
 	if err != nil {
@@ -181,12 +170,10 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 	if err != nil {
 		return nil, err
 	}
-	if convergence.Queued > 0 || convergence.Processing > 0 || convergence.Failed > 0 || convergence.IncidentCount > 0 {
+	if convergence.Failed > 0 || hasFailedGroup {
 		convergence.Status = "attention_required"
-		if !hasOpenIncident &&
-			(convergence.Queued > 0 || convergence.Processing > 0 || hasRecoveringIncident) {
-			convergence.Status = "recovering"
-		}
+	} else if convergence.Queued > 0 || convergence.Processing > 0 || hasRecoveringGroup {
+		convergence.Status = "recovering"
 	}
 	return convergence, nil
 }
@@ -200,8 +187,9 @@ func (r *SearchRepositoryImpl) ReserveEmbeddingReconciliationRun(ctx context.Con
 	claimed := false
 	localRunDate := reconciliationLocalDate(input.LocalRunDate)
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).Exec(`
-			INSERT INTO embedding_reconciliation_runs (
+		if input.CreateIfMissing {
+			if err := tx.WithContext(ctx).Exec(`
+				INSERT INTO embedding_reconciliation_runs (
 				embedding_contract_id, embedding_dimensions, local_run_date,
 				candidate_cutoff, status
 			)
@@ -228,9 +216,10 @@ func (r *SearchRepositoryImpl) ReserveEmbeddingReconciliationRun(ctx context.Con
 				  AND document.search_state = 'failed'
 			)
 			ON CONFLICT (embedding_contract_id, embedding_dimensions, local_run_date) DO NOTHING
-			`, input.EmbeddingContractID, input.EmbeddingDimensions, localRunDate,
-			input.EmbeddingContractID, input.EmbeddingDimensions).Error; err != nil {
-			return err
+				`, input.EmbeddingContractID, input.EmbeddingDimensions, localRunDate,
+				input.EmbeddingContractID, input.EmbeddingDimensions).Error; err != nil {
+				return err
+			}
 		}
 		var databaseNow time.Time
 		if err := tx.WithContext(ctx).Raw(`SELECT clock_timestamp()`).Scan(&databaseNow).Error; err != nil {
@@ -631,9 +620,6 @@ func normalizeReserveEmbeddingReconciliationRunInput(input ReserveEmbeddingRecon
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
 	if input.Lease <= 0 {
 		input.Lease = 10 * time.Minute
-	}
-	if input.Now.IsZero() {
-		input.Now = time.Now().UTC()
 	}
 	return input
 }

@@ -18,6 +18,39 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
+type reconciliationLogRecord struct {
+	message string
+	attrs   []observability.LogAttr
+}
+
+type reconciliationLoggerStub struct {
+	infos     []reconciliationLogRecord
+	warnings  []string
+	warnAttrs []observability.LogAttr
+}
+
+func (l *reconciliationLoggerStub) Info(message string, attrs ...observability.LogAttr) {
+	l.infos = append(l.infos, reconciliationLogRecord{message: message, attrs: attrs})
+}
+func (*reconciliationLoggerStub) Error(string, error, ...observability.LogAttr) {}
+func (l *reconciliationLoggerStub) Warn(message string, attrs ...observability.LogAttr) {
+	l.warnings = append(l.warnings, message)
+	l.warnAttrs = append(l.warnAttrs, attrs...)
+}
+func (*reconciliationLoggerStub) Debug(string, ...observability.LogAttr) {}
+func (l *reconciliationLoggerStub) With(...observability.LogAttr) observability.LogProvider {
+	return l
+}
+
+func reconciliationLogAttrValue(attrs []observability.LogAttr, key string) any {
+	for _, attr := range attrs {
+		if attr.Key == key {
+			return attr.Value
+		}
+	}
+	return nil
+}
+
 func TestEmbeddingWorkerRequiresDependenciesAndScope(t *testing.T) {
 	validDeps := func() EmbeddingWorkerDependencies {
 		return EmbeddingWorkerDependencies{
@@ -431,8 +464,48 @@ func TestEmbeddingWorkerAggregatesBatchFailureLog(t *testing.T) {
 	_, err := worker.ProcessNextBatch(context.Background())
 	require.Error(t, err)
 	assert.Equal(t, []string{"embedding_failure_recorded"}, logger.warnings)
+	assert.Equal(t, "team-a", reconciliationLogAttrValue(logger.warnAttrs, "team_id"))
+	assert.Equal(t, "mixed", reconciliationLogAttrValue(logger.warnAttrs, "source_kind"))
+	assert.Equal(t, string(domain.EmbeddingFailureProviderAction), reconciliationLogAttrValue(logger.warnAttrs, "failure_class"))
+	assert.Equal(t, string(domain.EmbeddingFailureProviderQuotaExhausted), reconciliationLogAttrValue(logger.warnAttrs, "failure_code"))
 	assert.Equal(t, "batch", reconciliationLogAttrValue(logger.warnAttrs, "aggregation"))
-	assert.Equal(t, 2, reconciliationLogAttrValue(logger.warnAttrs, "batch_size"))
+	assert.Equal(t, 2, reconciliationLogAttrValue(logger.warnAttrs, "job_count"))
+	for _, attr := range logger.warnAttrs {
+		assert.NotContains(t, strings.ToLower(attr.Key), "provider response")
+		if value, ok := attr.Value.(string); ok {
+			assert.NotContains(t, value, "insufficient_quota")
+		}
+	}
+}
+
+func TestEmbeddingWorkerAggregatesRecoveredJobsInOperationLog(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	failedAt := time.Now().UTC().Add(-time.Hour)
+	first := embeddingJobForTest("job-a", 1)
+	first.FirstFailedAt = &failedAt
+	second := embeddingJobForTest("job-b", 1)
+	second.FirstFailedAt = &failedAt
+	search.jobs = []repository.EmbeddingJob{first, second}
+	logger := &reconciliationLoggerStub{}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search,
+		Provider: &embeddingProviderStub{
+			available: true,
+			model:     "test-model",
+			dims:      3,
+			vectors:   [][]float32{{1, 0, 0}, {0, 1, 0}},
+		},
+		Logger: logger, TeamID: "team-a", WorkerID: "worker-a",
+	})
+
+	result, err := worker.ProcessNextBatch(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Completed)
+	require.Len(t, logger.infos, 1)
+	assert.Equal(t, "embedding_recovery_completed", logger.infos[0].message)
+	assert.Equal(t, "team-a", reconciliationLogAttrValue(logger.infos[0].attrs, "team_id"))
+	assert.Equal(t, "batch", reconciliationLogAttrValue(logger.infos[0].attrs, "aggregation"))
+	assert.Equal(t, 2, reconciliationLogAttrValue(logger.infos[0].attrs, "job_count"))
 }
 
 func TestEmbeddingWorkerFailsContractMismatchBeforeProviderCall(t *testing.T) {
