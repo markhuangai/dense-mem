@@ -109,6 +109,25 @@ func TestAPIKeyActivityWriterReportsFlushFailureAndRequeues(t *testing.T) {
 	require.Equal(t, 1, activityLogAttrValue(logger.warnings[0].attrs, "update_count"))
 }
 
+func TestAPIKeyActivityWriterReportsQueueDrops(t *testing.T) {
+	repo := &activityBatchRepo{}
+	logger := &activityLogger{}
+	writer := NewAPIKeyActivityWriter(repo, logger)
+	at := time.Now().UTC()
+	for range apiKeyActivityMaxPending {
+		writer.RecordLastUsed(uuid.New(), at)
+	}
+	writer.RecordLastUsed(uuid.New(), at)
+
+	writer.flushAndReport(context.Background())
+
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	require.Len(t, logger.warnings, 1)
+	require.Equal(t, "api_key_activity_dropped", logger.warnings[0].message)
+	require.Equal(t, 1, activityLogAttrValue(logger.warnings[0].attrs, "event_count"))
+}
+
 func activityLogAttrValue(attrs []observability.LogAttr, key string) any {
 	for _, attr := range attrs {
 		if attr.Key == key {

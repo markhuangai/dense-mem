@@ -25,6 +25,7 @@ type APIKeyActivityWriter struct {
 
 	mu       sync.Mutex
 	pending  map[uuid.UUID]time.Time
+	dropped  int
 	wake     chan struct{}
 	lastWake time.Time
 	stop     chan struct{}
@@ -67,6 +68,7 @@ func (w *APIKeyActivityWriter) RecordLastUsed(id uuid.UUID, at time.Time) {
 		return
 	}
 	if _, exists := w.pending[id]; !exists && len(w.pending) >= apiKeyActivityMaxPending {
+		w.dropped++
 		w.mu.Unlock()
 		return
 	}
@@ -128,8 +130,12 @@ func (w *APIKeyActivityWriter) flush(ctx context.Context) error {
 
 func (w *APIKeyActivityWriter) flushAndReport(ctx context.Context) {
 	count, err := w.flushWithCount(ctx)
+	dropped := w.takeDropped()
 	if err != nil && w.logger != nil {
 		w.logger.Warn("api_key_activity_flush_failed", observability.Int("update_count", count))
+	}
+	if dropped > 0 && w.logger != nil {
+		w.logger.Warn("api_key_activity_dropped", observability.Int("event_count", dropped))
 	}
 }
 
@@ -173,10 +179,19 @@ func (w *APIKeyActivityWriter) requeue(updates []repository.LastUsedUpdate) {
 			continue
 		}
 		if _, exists := w.pending[update.ID]; !exists && len(w.pending) >= apiKeyActivityMaxPending {
+			w.dropped++
 			continue
 		}
 		w.pending[update.ID] = update.At
 	}
+}
+
+func (w *APIKeyActivityWriter) takeDropped() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	dropped := w.dropped
+	w.dropped = 0
+	return dropped
 }
 
 func (w *APIKeyActivityWriter) Shutdown(ctx context.Context) error {

@@ -159,9 +159,6 @@ func (s *embeddingWorkerService) processEmbeddingBatch(
 		return nil
 	}
 	resolved, err := s.resolveEmbeddingBatch(ctx, jobs, contract.EmbeddingModel, leaseScope)
-	if leaseScope != nil {
-		leaseScope.Close()
-	}
 	if err != nil {
 		if errors.Is(err, repository.ErrEmbeddingLeaseLost) {
 			result.LeaseLost += len(jobs)
@@ -335,7 +332,7 @@ func (s *embeddingWorkerService) embedBatchWithLease(
 	texts []string,
 	leaseScope *embeddingLeaseScope,
 ) ([][]float32, string, error) {
-	providerCtx := ctx
+	var providerCtx context.Context
 	var cancel context.CancelFunc
 	if leaseScope != nil {
 		providerCtx = leaseScope.Context()

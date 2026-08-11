@@ -23,6 +23,7 @@ func TestCoalesceLastUsedUpdatesKeepsNewestTimestampPerKey(t *testing.T) {
 		{ID: id, At: time.Time{}},
 	})
 
+	require.Len(t, got, 2)
 	byID := make(map[uuid.UUID]time.Time, len(got))
 	for _, update := range got {
 		byID[update.ID] = update.At

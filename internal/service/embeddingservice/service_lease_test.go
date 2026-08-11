@@ -94,6 +94,48 @@ func TestEmbeddingWorkerRenewsJobsWaitingBehindRecursiveSplits(t *testing.T) {
 	assert.Equal(t, len(base.jobs), result.Completed)
 }
 
+func TestEmbeddingWorkerRenewsLeasesThroughFinalization(t *testing.T) {
+	base := newEmbeddingSearchStub()
+	base.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-finalization", 1)}
+	search := &finalizationLeaseSearchStub{
+		embeddingSearchStub:       base,
+		completeStarted:           make(chan struct{}),
+		releaseComplete:           make(chan struct{}),
+		renewedDuringFinalization: make(chan struct{}),
+	}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search, Provider: &embeddingProviderStub{
+			available: true, model: "test-model", dims: 3, vectors: [][]float32{{1, 0, 0}},
+		},
+		TeamID: "team-a", WorkerID: "worker-a", Lease: 30 * time.Millisecond,
+	})
+
+	type outcome struct {
+		result EmbeddingWorkerResult
+		err    error
+	}
+	outcomes := make(chan outcome, 1)
+	go func() {
+		result, err := worker.ProcessNextBatch(context.Background())
+		outcomes <- outcome{result: result, err: err}
+	}()
+
+	select {
+	case <-search.renewedDuringFinalization:
+	case <-time.After(time.Second):
+		t.Fatal("embedding lease was not renewed while finalization was blocked")
+	}
+	close(search.releaseComplete)
+
+	select {
+	case result := <-outcomes:
+		require.NoError(t, result.err)
+		assert.Equal(t, 1, result.result.Completed)
+	case <-time.After(time.Second):
+		t.Fatal("embedding worker did not finish after finalization was released")
+	}
+}
+
 type concurrentLeaseSearchStub struct {
 	*embeddingSearchStub
 	mu      sync.Mutex
@@ -110,6 +152,34 @@ type recursiveLeaseSearchStub struct {
 	renewed         map[string]struct{}
 	laterJobRenewed chan struct{}
 	once            sync.Once
+}
+
+type finalizationLeaseSearchStub struct {
+	*embeddingSearchStub
+	completeStarted               chan struct{}
+	releaseComplete               chan struct{}
+	renewedDuringFinalization     chan struct{}
+	completeOnce                  sync.Once
+	renewedDuringFinalizationOnce sync.Once
+}
+
+func (s *finalizationLeaseSearchStub) CompleteEmbeddingJob(ctx context.Context, input repository.CompleteEmbeddingJobInput) error {
+	s.completeOnce.Do(func() { close(s.completeStarted) })
+	select {
+	case <-s.releaseComplete:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return s.embeddingSearchStub.CompleteEmbeddingJob(ctx, input)
+}
+
+func (s *finalizationLeaseSearchStub) RenewEmbeddingJobLease(ctx context.Context, input repository.RenewEmbeddingJobLeaseInput) error {
+	select {
+	case <-s.completeStarted:
+		s.renewedDuringFinalizationOnce.Do(func() { close(s.renewedDuringFinalization) })
+	default:
+	}
+	return s.embeddingSearchStub.RenewEmbeddingJobLease(ctx, input)
 }
 
 func (s *recursiveLeaseSearchStub) RenewEmbeddingJobLease(_ context.Context, input repository.RenewEmbeddingJobLeaseInput) error {
