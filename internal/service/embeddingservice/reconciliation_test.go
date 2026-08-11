@@ -796,3 +796,20 @@ func TestEmbeddingReconciliationValidatesDependenciesAndTimezone(t *testing.T) {
 	_, err := loadReconciliationLocation("Invalid/Timezone")
 	require.Error(t, err)
 }
+
+func TestEmbeddingReconciliationRequiresSharedTimezoneForDistributedCoordination(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	repositoryStub := &reconciliationRepositoryStub{}
+	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3}
+	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: repositoryStub, Provider: provider,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{
+			Timezone: "Local", EmbeddingReconciliationStartTimeLocal: "04:30",
+		}},
+		WorkerID: "worker", DistributedCoordinationRequired: true,
+	})
+
+	_, err := svc.ProcessDue(context.Background())
+	require.ErrorContains(t, err, "APP_TIMEZONE must be an explicit IANA timezone")
+	assert.Empty(t, repositoryStub.reserved)
+}

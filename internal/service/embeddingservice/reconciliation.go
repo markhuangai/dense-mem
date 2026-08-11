@@ -28,14 +28,15 @@ type reconciliationRuntimeConfig interface {
 }
 
 type EmbeddingReconciliationDependencies struct {
-	Search         repository.SearchRepository
-	Reconciliation repository.EmbeddingReconciliationRepository
-	Provider       embedding.EmbeddingProviderInterface
-	AppConfig      reconciliationRuntimeConfig
-	Logger         observability.LogProvider
-	Metrics        observability.DiscoverabilityMetrics
-	WorkerID       string
-	Now            func() time.Time
+	Search                          repository.SearchRepository
+	Reconciliation                  repository.EmbeddingReconciliationRepository
+	Provider                        embedding.EmbeddingProviderInterface
+	AppConfig                       reconciliationRuntimeConfig
+	Logger                          observability.LogProvider
+	Metrics                         observability.DiscoverabilityMetrics
+	WorkerID                        string
+	Now                             func() time.Time
+	DistributedCoordinationRequired bool
 }
 
 type EmbeddingReconciliationResult struct {
@@ -63,6 +64,7 @@ type embeddingReconciliationService struct {
 	metrics        observability.DiscoverabilityMetrics
 	workerID       string
 	now            func() time.Time
+	distributed    bool
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -82,6 +84,7 @@ func NewEmbeddingReconciliationService(deps EmbeddingReconciliationDependencies)
 		search: deps.Search, reconciliation: deps.Reconciliation, provider: deps.Provider,
 		appConfig: deps.AppConfig, logger: deps.Logger, metrics: metrics,
 		workerID: strings.TrimSpace(deps.WorkerID), now: now,
+		distributed: deps.DistributedCoordinationRequired,
 	}
 }
 
@@ -94,6 +97,10 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	runtime, err := s.appConfig.GeneralRuntimeConfig(ctx)
 	if err != nil {
 		return result, err
+	}
+	timezone := strings.TrimSpace(runtime.Timezone)
+	if s.distributed && (timezone == "" || timezone == "Local") {
+		return result, errors.New("embedding reconciliation: APP_TIMEZONE must be an explicit IANA timezone when distributed coordination is required")
 	}
 	location, err := loadReconciliationLocation(runtime.Timezone)
 	if err != nil {

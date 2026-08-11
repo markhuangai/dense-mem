@@ -5,8 +5,11 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -18,6 +21,18 @@ type legacyEmbeddingFailureFixture struct {
 	errorMessage string
 	wantClass    string
 	wantCode     string
+}
+
+func TestEmbeddingReconciliationBackfillDoesNotSkipLockedCandidates(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(getMigrationsDir(), "2026080905_embedding_reconciliation.sql"))
+	require.NoError(t, err)
+	start := strings.Index(string(body), "CREATE OR REPLACE PROCEDURE dense_mem_backfill_embedding_reconciliation_compatibility()")
+	end := strings.Index(string(body), "CALL dense_mem_backfill_embedding_reconciliation_compatibility()")
+	require.NotEqual(t, -1, start)
+	require.Greater(t, end, start)
+	backfill := string(body)[start:end]
+	require.Contains(t, backfill, "FOR UPDATE")
+	require.NotContains(t, backfill, "FOR UPDATE SKIP LOCKED")
 }
 
 func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing.T) {
@@ -556,6 +571,15 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	}))
 	require.Equal(t, "open", incidentStatus)
 	require.EqualValues(t, 1, affectedJobs)
+	legacyFailureTimestamp := time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE embedding_jobs
+			SET last_failed_at = $1
+			WHERE team_id = $2::uuid AND embedding_job_id = $3::uuid
+		`, legacyFailureTimestamp, teamID, legacyEntityJobID)
+		return err
+	}))
 
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
@@ -565,15 +589,18 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 		`, teamID, legacyEntityJobID)
 		return err
 	}))
+	var lastFailedAt time.Time
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
-			SELECT failure_class, failure_code
+			SELECT failure_class, failure_code, last_failed_at
 			FROM embedding_jobs
 			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
-		`, teamID, legacyEntityJobID).Scan(&failureClass, &failureCode)
+		`, teamID, legacyEntityJobID).Scan(&failureClass, &failureCode, &lastFailedAt)
 	}))
 	require.Equal(t, "provider_action_required", failureClass)
 	require.Equal(t, "provider_authentication_failed", failureCode)
+	require.True(t, lastFailedAt.After(legacyFailureTimestamp))
+	explicitFailureTimestamp := time.Date(2002, time.January, 1, 0, 0, 0, 0, time.UTC)
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.embedding_job_failure_writer', 'current', true)`); err != nil {
 			return err
@@ -581,20 +608,22 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 		_, err := tx.ExecContext(ctx, `
 			UPDATE embedding_jobs
 			SET status = 'failed', error = 'embedding provider http error: status=401',
-			    failure_class = 'transient', failure_code = 'provider_timeout', completed_at = now()
-			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
-		`, teamID, legacyEntityJobID)
+			    failure_class = 'transient', failure_code = 'provider_timeout',
+			    last_failed_at = $1, completed_at = now()
+			WHERE team_id = $2::uuid AND embedding_job_id = $3::uuid
+		`, explicitFailureTimestamp, teamID, legacyEntityJobID)
 		return err
 	}))
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
-			SELECT failure_class, failure_code
+			SELECT failure_class, failure_code, last_failed_at
 			FROM embedding_jobs
 			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
-		`, teamID, legacyEntityJobID).Scan(&failureClass, &failureCode)
+		`, teamID, legacyEntityJobID).Scan(&failureClass, &failureCode, &lastFailedAt)
 	}))
 	require.Equal(t, "transient", failureClass)
 	require.Equal(t, "provider_timeout", failureCode)
+	require.True(t, explicitFailureTimestamp.Equal(lastFailedAt))
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
 			SELECT status, affected_job_count

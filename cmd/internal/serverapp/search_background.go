@@ -41,10 +41,12 @@ func newEmbeddingReconciliationService(
 	appConfig service.AppConfigService,
 	logger observability.LogProvider,
 	metrics observability.DiscoverabilityMetrics,
+	distributedCoordinationRequired bool,
 ) embeddingservice.EmbeddingReconciliationService {
 	hostname, _ := os.Hostname()
 	return embeddingservice.NewEmbeddingReconciliationService(embeddingservice.EmbeddingReconciliationDependencies{
 		Search: search, Reconciliation: search, Provider: provider, AppConfig: appConfig,
 		Logger: logger, Metrics: metrics, WorkerID: fmt.Sprintf("embedding-reconciliation-%s-%d", hostname, os.Getpid()),
+		DistributedCoordinationRequired: distributedCoordinationRequired,
 	})
 }

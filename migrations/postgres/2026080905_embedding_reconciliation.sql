@@ -532,7 +532,9 @@ BEGIN
            OR OLD.failure_class IS DISTINCT FROM NEW.failure_class
            OR OLD.failure_code IS DISTINCT FROM NEW.failure_code THEN
             NEW.first_failed_at := COALESCE(NEW.first_failed_at, now());
-            NEW.last_failed_at := COALESCE(NEW.last_failed_at, now());
+            IF NEW.last_failed_at IS NOT DISTINCT FROM OLD.last_failed_at THEN
+                NEW.last_failed_at := now();
+            END IF;
         END IF;
     END IF;
     RETURN NEW;
@@ -805,7 +807,7 @@ BEGIN
               )
             ORDER BY team_id, embedding_job_id
             LIMIT 1000
-            FOR UPDATE SKIP LOCKED
+            FOR UPDATE
         ), changed AS (
             UPDATE embedding_jobs AS job
             SET (failure_class, failure_code) = (

@@ -342,6 +342,87 @@ func TestEmbeddingFinalizationLocksDocumentBeforeJob(t *testing.T) {
 	}
 }
 
+func TestExpiredMaxAttemptCleanupLocksDocumentBeforeJob(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "expired-cleanup-lock-order-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "expired-cleanup-lock-order-owner")
+	insertSearchTestContract(t, adminDB, rls, "expired-cleanup-lock-order", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "expired cleanup before", 1)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_jobs
+			SET status = 'processing', attempts = max_attempts,
+			    worker_id = 'expired-cleanup-worker',
+			    lease_until = clock_timestamp() - interval '1 second',
+			    updated_at = now()
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, teamID, document.QueuedJobID).Error
+	}))
+
+	placementTx := appDB.WithContext(ctx).Begin()
+	require.NoError(t, placementTx.Error)
+	defer placementTx.Rollback()
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{"SELECT set_config('app.current_team_id', ?, true)", []any{teamID}},
+		{"SELECT set_config('app.current_profile_id', ?, true)", []any{ownerID}},
+		{"SELECT set_config('app.tx_mode', 'team', true)", nil},
+	} {
+		require.NoError(t, placementTx.Exec(statement.query, statement.args...).Error)
+	}
+	var locked int
+	require.NoError(t, placementTx.Raw(`
+		SELECT 1
+		FROM search_documents
+		WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		FOR UPDATE
+	`, teamID, document.SearchDocumentID).Row().Scan(&locked))
+
+	claimCtx, cancelClaim := context.WithTimeout(ctx, 2*time.Second)
+	defer cancelClaim()
+	type claimResult struct {
+		jobs []EmbeddingJob
+		err  error
+	}
+	claimed := make(chan claimResult, 1)
+	go func() {
+		jobs, claimErr := repo.ClaimEmbeddingJobs(claimCtx, ClaimEmbeddingJobsInput{
+			TeamID: teamID, WorkerID: "next-worker", Limit: 1, Lease: time.Minute,
+		})
+		claimed <- claimResult{jobs: jobs, err: claimErr}
+	}()
+	select {
+	case result := <-claimed:
+		require.NoError(t, result.err)
+		require.Empty(t, result.jobs)
+	case <-claimCtx.Done():
+		t.Fatal("expired max-attempt cleanup locked the job before the document")
+	}
+
+	updated, err := upsertSearchDocumentInTx(ctx, placementTx, normalizeUpsertSearchDocumentInput(UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: document.SourceKind, SourceID: document.SourceID,
+		SourceVersion: document.SourceVersion + 1, ProjectionFormat: document.ProjectionFormat,
+		ProjectionGenerationID: document.ProjectionGenerationID, DocumentText: "expired cleanup after",
+	}), contract, defaultEmbeddingJobMaxAttempts)
+	require.NoError(t, err)
+	require.NoError(t, placementTx.Commit().Error)
+	require.NotNil(t, updated)
+	require.NotEmpty(t, updated.QueuedJobID)
+
+	var oldStatus string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT status FROM embedding_jobs WHERE embedding_job_id = ?::uuid`, document.QueuedJobID).Row().Scan(&oldStatus)
+	}))
+	require.Equal(t, "stale", oldStatus)
+}
+
 func TestEmbeddingReconciliationCompletionRejectsExpiredLease(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

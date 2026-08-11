@@ -190,16 +190,36 @@ func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID
 		return err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		WITH exhausted AS MATERIALIZED (
+		WITH document_candidates AS MATERIALIZED (
 			SELECT job.team_id, job.embedding_job_id
 			FROM embedding_jobs AS job
+			JOIN search_documents AS document
+			  ON document.team_id = job.team_id
+			 AND document.search_document_id = job.search_document_id
+			 AND document.source_version = job.source_version
+			 AND document.projection_format_version = job.projection_format_version
+			 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+			 AND document.document_version = job.document_version
+			 AND document.embedding_contract_id = job.embedding_contract_id
+			 AND document.embedding_dimensions = job.embedding_dimensions
 			WHERE job.team_id = ?::uuid
 			  AND job.status = 'processing'
 			  AND job.lease_until <= clock_timestamp()
 			  AND job.attempts >= job.max_attempts
 			ORDER BY job.lease_until ASC, job.embedding_job_id ASC
 			LIMIT ?
-			FOR UPDATE SKIP LOCKED
+			FOR UPDATE OF document SKIP LOCKED
+		), exhausted AS MATERIALIZED (
+			SELECT job.team_id, job.embedding_job_id
+			FROM document_candidates AS candidate
+			JOIN embedding_jobs AS job
+			  ON job.team_id = candidate.team_id
+			 AND job.embedding_job_id = candidate.embedding_job_id
+			WHERE job.status = 'processing'
+			  AND job.lease_until <= clock_timestamp()
+			  AND job.attempts >= job.max_attempts
+			ORDER BY job.lease_until ASC, job.embedding_job_id ASC
+			FOR UPDATE OF job SKIP LOCKED
 		), failed AS (
 			UPDATE embedding_jobs AS job
 			SET status = 'failed', error = ?,
@@ -234,23 +254,22 @@ func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID
 	if err != nil {
 		return err
 	}
-	incidentKeys := make(map[struct {
-		contractID string
-		dimensions int
-		sourceKind string
-	}]struct{})
+	identities := make([]embeddingFailureIncidentIdentity, 0)
+	seen := make(map[embeddingFailureIncidentIdentity]struct{})
 	for rows.Next() {
-		var contractID, sourceKind string
-		var dimensions int
-		if err := rows.Scan(&contractID, &dimensions, &sourceKind); err != nil {
+		identity := embeddingFailureIncidentIdentity{
+			failureClass: string(domain.EmbeddingFailureTransient),
+			failureCode:  string(domain.EmbeddingFailureProviderTimeout),
+		}
+		if err := rows.Scan(&identity.contractID, &identity.dimensions, &identity.sourceKind); err != nil {
 			_ = rows.Close()
 			return err
 		}
-		incidentKeys[struct {
-			contractID string
-			dimensions int
-			sourceKind string
-		}{contractID: contractID, dimensions: dimensions, sourceKind: sourceKind}] = struct{}{}
+		if _, ok := seen[identity]; ok {
+			continue
+		}
+		seen[identity] = struct{}{}
+		identities = append(identities, identity)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -259,10 +278,13 @@ func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	for key := range incidentKeys {
+	if err := lockEmbeddingFailureIncidentIdentities(ctx, tx, teamID, identities); err != nil {
+		return err
+	}
+	for _, identity := range identities {
 		if err := upsertEmbeddingFailureIncident(ctx, tx, teamID,
-			string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderTimeout),
-			key.contractID, key.dimensions, key.sourceKind); err != nil {
+			identity.failureClass, identity.failureCode,
+			identity.contractID, identity.dimensions, identity.sourceKind); err != nil {
 			return err
 		}
 	}

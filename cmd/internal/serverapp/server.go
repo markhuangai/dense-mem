@@ -469,7 +469,10 @@ func RunActiveServer(
 
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
-	reconciliationSvc := newEmbeddingReconciliationService(searchRepo, openaiProvider, appConfigService, logger, discoverabilityMetrics)
+	reconciliationSvc := newEmbeddingReconciliationService(
+		searchRepo, openaiProvider, appConfigService, logger, discoverabilityMetrics,
+		cfg.GetDistributedCoordinationRequired(),
+	)
 	reconciliationSvc.Start(workerCtx)
 	defer reconciliationSvc.Stop()
 	var quarantinePurgeMetrics repository.SubmissionQuarantinePurgeMetrics
