@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
@@ -20,24 +21,31 @@ const (
 type APIKeyActivityWriter struct {
 	repo      repository.APIKeyRepository
 	batchRepo repository.APIKeyLastUsedBatchRepository
+	logger    observability.LogProvider
 
-	mu      sync.Mutex
-	pending map[uuid.UUID]time.Time
-	wake    chan struct{}
-	stop    chan struct{}
-	done    chan struct{}
-	start   sync.Once
-	stopOne sync.Once
+	mu       sync.Mutex
+	pending  map[uuid.UUID]time.Time
+	wake     chan struct{}
+	lastWake time.Time
+	stop     chan struct{}
+	done     chan struct{}
+	start    sync.Once
+	stopOne  sync.Once
 }
 
-func NewAPIKeyActivityWriter(repo repository.APIKeyRepository) *APIKeyActivityWriter {
+func NewAPIKeyActivityWriter(repo repository.APIKeyRepository, loggers ...observability.LogProvider) *APIKeyActivityWriter {
 	var batchRepo repository.APIKeyLastUsedBatchRepository
 	if candidate, ok := repo.(repository.APIKeyLastUsedBatchRepository); ok {
 		batchRepo = candidate
 	}
+	var logger observability.LogProvider
+	if len(loggers) > 0 {
+		logger = loggers[0]
+	}
 	return &APIKeyActivityWriter{
 		repo:      repo,
 		batchRepo: batchRepo,
+		logger:    logger,
 		pending:   make(map[uuid.UUID]time.Time),
 		wake:      make(chan struct{}, 1),
 		stop:      make(chan struct{}),
@@ -63,7 +71,14 @@ func (w *APIKeyActivityWriter) RecordLastUsed(id uuid.UUID, at time.Time) {
 		return
 	}
 	w.pending[id] = at
+	shouldWake := w.lastWake.IsZero() || time.Since(w.lastWake) >= apiKeyActivityFlushInterval
+	if shouldWake {
+		w.lastWake = time.Now()
+	}
 	w.mu.Unlock()
+	if !shouldWake {
+		return
+	}
 	select {
 	case w.wake <- struct{}{}:
 	default:
@@ -89,17 +104,17 @@ func (w *APIKeyActivityWriter) run(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			_ = w.flush(context.Background())
+			w.flushAndReport(context.Background())
 		case <-w.wake:
-			_ = w.flush(context.Background())
+			w.flushAndReport(context.Background())
 		case <-ctx.Done():
 			flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_ = w.flush(flushCtx)
+			w.flushAndReport(flushCtx)
 			cancel()
 			return
 		case <-w.stop:
 			flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_ = w.flush(flushCtx)
+			w.flushAndReport(flushCtx)
 			cancel()
 			return
 		}
@@ -107,9 +122,21 @@ func (w *APIKeyActivityWriter) run(ctx context.Context) {
 }
 
 func (w *APIKeyActivityWriter) flush(ctx context.Context) error {
+	_, err := w.flushWithCount(ctx)
+	return err
+}
+
+func (w *APIKeyActivityWriter) flushAndReport(ctx context.Context) {
+	count, err := w.flushWithCount(ctx)
+	if err != nil && w.logger != nil {
+		w.logger.Warn("api_key_activity_flush_failed", observability.Int("update_count", count))
+	}
+}
+
+func (w *APIKeyActivityWriter) flushWithCount(ctx context.Context) (int, error) {
 	updates := w.takePending()
 	if len(updates) == 0 || w.repo == nil {
-		return nil
+		return len(updates), nil
 	}
 	var err error
 	if w.batchRepo != nil {
@@ -124,7 +151,7 @@ func (w *APIKeyActivityWriter) flush(ctx context.Context) error {
 	if err != nil {
 		w.requeue(updates)
 	}
-	return err
+	return len(updates), err
 }
 
 func (w *APIKeyActivityWriter) takePending() []repository.LastUsedUpdate {

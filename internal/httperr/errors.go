@@ -75,18 +75,22 @@ type APIError struct {
 	Details []ErrorDetail `json:"details"`
 }
 
-// boundedMessage keeps public error text finite without splitting a UTF-8
-// sequence. It is deliberately applied at the transport boundary so internal
-// errors retain their diagnostic context for server-side handling.
-func boundedMessage(value string, maxRunes int) string {
+func boundedText(value string, maxRunes int) string {
 	value = strings.TrimSpace(value)
-	if value == "" {
-		return "unknown error"
-	}
 	if utf8.RuneCountInString(value) <= maxRunes {
 		return value
 	}
 	return string([]rune(value)[:maxRunes])
+}
+
+// boundedMessage keeps public error text finite without splitting a UTF-8
+// sequence. It is deliberately applied at the transport boundary so internal
+// errors retain their diagnostic context for server-side handling.
+func boundedMessage(value string, maxRunes int) string {
+	if bounded := boundedText(value, maxRunes); bounded != "" {
+		return bounded
+	}
+	return "unknown error"
 }
 
 func (e *APIError) bounded(status int) *APIError {
@@ -109,7 +113,7 @@ func (e *APIError) bounded(status int) *APIError {
 	copyErr.Details = make([]ErrorDetail, 0, limit)
 	for _, detail := range e.Details[:limit] {
 		copyErr.Details = append(copyErr.Details, ErrorDetail{
-			Field:   boundedMessage(detail.Field, maxPublicErrorFieldRunes),
+			Field:   boundedText(detail.Field, maxPublicErrorFieldRunes),
 			Message: boundedMessage(detail.Message, maxPublicDetailMessageRunes),
 		})
 	}

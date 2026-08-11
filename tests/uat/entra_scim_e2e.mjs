@@ -22,7 +22,10 @@ await verifyUserSession(userSession.session);
 
 const controlSession = await completeControlOIDCLogin(provider.id);
 await verifyControlSession(controlSession.session);
-await assertLogoutCSRF(userSession, controlSession);
+await assertLogoutCSRF(
+  await completeUserOIDCLogin(provider.id),
+  await completeControlOIDCLogin(provider.id),
+);
 
 await deactivateDirectoryUser(connector.id, scimToken, user.id);
 await verifySessionsRevoked(userSession.session, controlSession.session);

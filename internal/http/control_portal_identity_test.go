@@ -284,7 +284,7 @@ func TestControlIdentityHTTPHandlersValidateInputAndFailSafely(t *testing.T) {
 	c, logoutFailureRec := controlDirectoryContext(nethttp.MethodPost, "", nil)
 	c.Request().AddCookie(&nethttp.Cookie{Name: service.ControlSessionCookieName, Value: "session"})
 	require.Error(t, handler.logoutControlIdentity(c))
-	requireControlIdentityCookiesCleared(t, logoutFailureRec.Result().Cookies())
+	require.Empty(t, logoutFailureRec.Result().Cookies())
 	handler.controlIdentity = readyUnavailable
 	c, rec := controlDirectoryContext(nethttp.MethodPost, "", nil)
 	require.NoError(t, handler.logoutControlIdentity(c))

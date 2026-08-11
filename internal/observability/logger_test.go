@@ -269,7 +269,7 @@ func TestParseLevelIsCaseInsensitiveAndStrict(t *testing.T) {
 func TestSlogDefaultRedactsNestedAndInlineSecrets(t *testing.T) {
 	var buf bytes.Buffer
 	logger := NewWithHandler(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	logger.Slog().Info("request failed password=hunter2", slog.Group("request",
+	logger.Slog().Info(`request failed password=hunter2 metadata={"token":"json-secret"}`, slog.Group("request",
 		slog.String("path", "/control/api/logs?token=hunter2"),
 		slog.String("authorization", "Bearer bearer-secret"),
 		slog.Any("metadata", map[string]any{"safe": "visible", "nested": map[string]any{"secret": "hidden"}}),
@@ -277,6 +277,7 @@ func TestSlogDefaultRedactsNestedAndInlineSecrets(t *testing.T) {
 	output := buf.String()
 	assert.Contains(t, output, "visible")
 	assert.NotContains(t, output, "hunter2")
+	assert.NotContains(t, output, "json-secret")
 	assert.NotContains(t, output, "bearer-secret")
 	assert.NotContains(t, output, "authorization")
 	assert.NotContains(t, output, "secret")

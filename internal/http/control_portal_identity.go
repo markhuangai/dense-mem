@@ -96,7 +96,6 @@ func (h *controlPortalHandler) completeControlIdentityLogin(c echo.Context) erro
 
 func (h *controlPortalHandler) logoutControlIdentity(c echo.Context) error {
 	secure := h.controlIdentity.CookieSecure(c.Request().Context())
-	clearControlIdentityCookies(c, secure)
 
 	var sessionCookie *nethttp.Cookie
 	if cookie, err := c.Cookie(service.ControlSessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
@@ -118,6 +117,7 @@ func (h *controlPortalHandler) logoutControlIdentity(c echo.Context) error {
 	if logoutErr != nil {
 		return controlIdentityHTTPError(logoutErr)
 	}
+	clearControlIdentityCookies(c, secure)
 	return c.NoContent(nethttp.StatusNoContent)
 }
 

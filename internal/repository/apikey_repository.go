@@ -727,12 +727,13 @@ func (r *APIKeyRepositoryImpl) TouchLastUsedBatch(ctx context.Context, updates [
 	if len(updates) == 0 {
 		return nil
 	}
+	updates = coalesceLastUsedUpdates(updates)
+	if len(updates) == 0 {
+		return nil
+	}
 	values := make([]string, 0, len(updates))
 	args := make([]interface{}, 0, len(updates)*2)
 	for _, update := range updates {
-		if update.ID == uuid.Nil || update.At.IsZero() {
-			continue
-		}
 		values = append(values, "(?::uuid, ?::timestamptz)")
 		args = append(args, update.ID, update.At.UTC())
 	}
@@ -759,4 +760,22 @@ func (r *APIKeyRepositoryImpl) TouchLastUsedBatch(ctx context.Context, updates [
 	}
 
 	return nil
+}
+
+func coalesceLastUsedUpdates(updates []LastUsedUpdate) []LastUsedUpdate {
+	latest := make(map[uuid.UUID]time.Time, len(updates))
+	for _, update := range updates {
+		if update.ID == uuid.Nil || update.At.IsZero() {
+			continue
+		}
+		at := update.At.UTC()
+		if previous, ok := latest[update.ID]; !ok || at.After(previous) {
+			latest[update.ID] = at
+		}
+	}
+	coalesced := make([]LastUsedUpdate, 0, len(latest))
+	for id, at := range latest {
+		coalesced = append(coalesced, LastUsedUpdate{ID: id, At: at})
+	}
+	return coalesced
 }

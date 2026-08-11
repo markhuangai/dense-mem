@@ -204,6 +204,16 @@ func TestErrorHandler(t *testing.T) {
 		assert.Equal(t, http.StatusBadGateway, rec.Code)
 		assert.Contains(t, rec.Body.String(), `"message":"upstream service error"`)
 		assert.NotContains(t, rec.Body.String(), long)
+
+		rec = httptest.NewRecorder()
+		c = e.NewContext(req, rec)
+		ErrorHandler(NewWithDetails(VALIDATION_ERROR, "validation failed", []ErrorDetail{{Message: "value is invalid"}}), c)
+		var emptyFieldBody struct {
+			Details []ErrorDetail `json:"details"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &emptyFieldBody))
+		require.Len(t, emptyFieldBody.Details, 1)
+		assert.Empty(t, emptyFieldBody.Details[0].Field)
 	})
 
 	t.Run("does not write committed response", func(t *testing.T) {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
@@ -16,35 +18,56 @@ type activityBatchRepo struct {
 	repository.APIKeyRepository
 	mu      sync.Mutex
 	updates []repository.LastUsedUpdate
+	err     error
 }
 
 func (r *activityBatchRepo) TouchLastUsedBatch(_ context.Context, updates []repository.LastUsedUpdate) error {
+	if r.err != nil {
+		return r.err
+	}
 	r.mu.Lock()
 	r.updates = append(r.updates, updates...)
 	r.mu.Unlock()
 	return nil
 }
 
+type activityLogger struct {
+	mu       sync.Mutex
+	warnings []struct {
+		message string
+		attrs   []observability.LogAttr
+	}
+}
+
+func (*activityLogger) Info(string, ...observability.LogAttr)         {}
+func (*activityLogger) Error(string, error, ...observability.LogAttr) {}
+func (l *activityLogger) Warn(message string, attrs ...observability.LogAttr) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.warnings = append(l.warnings, struct {
+		message string
+		attrs   []observability.LogAttr
+	}{message: message, attrs: attrs})
+}
+func (*activityLogger) Debug(string, ...observability.LogAttr)                    {}
+func (l *activityLogger) With(...observability.LogAttr) observability.LogProvider { return l }
+
 func TestAPIKeyActivityWriterCoalescesAndFlushesNewestTimestamp(t *testing.T) {
 	repo := &activityBatchRepo{}
 	writer := NewAPIKeyActivityWriter(repo)
-	writer.Start(context.Background())
 
 	id := uuid.New()
 	older := time.Now().UTC().Add(-time.Minute)
 	newer := older.Add(time.Second)
 	writer.RecordLastUsed(id, newer)
 	writer.RecordLastUsed(id, older)
+	require.NoError(t, writer.flush(context.Background()))
 
-	require.Eventually(t, func() bool {
-		repo.mu.Lock()
-		defer repo.mu.Unlock()
-		return len(repo.updates) == 1 && repo.updates[0].ID == id && repo.updates[0].At.Equal(newer)
-	}, time.Second, 5*time.Millisecond)
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	require.NoError(t, writer.Shutdown(shutdownCtx))
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Len(t, repo.updates, 1)
+	require.Equal(t, id, repo.updates[0].ID)
+	require.True(t, repo.updates[0].At.Equal(newer))
 }
 
 func TestAPIKeyActivityWriterFlushesOnContextCancellation(t *testing.T) {
@@ -64,4 +87,33 @@ func TestAPIKeyActivityWriterFlushesOnContextCancellation(t *testing.T) {
 	defer repo.mu.Unlock()
 	require.Len(t, repo.updates, 1)
 	require.Equal(t, id, repo.updates[0].ID)
+}
+
+func TestAPIKeyActivityWriterReportsFlushFailureAndRequeues(t *testing.T) {
+	repo := &activityBatchRepo{err: errors.New("activity persistence failed")}
+	logger := &activityLogger{}
+	writer := NewAPIKeyActivityWriter(repo, logger)
+	id := uuid.New()
+	writer.RecordLastUsed(id, time.Now().UTC())
+
+	writer.flushAndReport(context.Background())
+
+	writer.mu.Lock()
+	_, requeued := writer.pending[id]
+	writer.mu.Unlock()
+	require.True(t, requeued)
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	require.Len(t, logger.warnings, 1)
+	require.Equal(t, "api_key_activity_flush_failed", logger.warnings[0].message)
+	require.Equal(t, 1, activityLogAttrValue(logger.warnings[0].attrs, "update_count"))
+}
+
+func activityLogAttrValue(attrs []observability.LogAttr, key string) any {
+	for _, attr := range attrs {
+		if attr.Key == key {
+			return attr.Value
+		}
+	}
+	return nil
 }

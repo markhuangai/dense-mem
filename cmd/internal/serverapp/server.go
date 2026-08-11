@@ -101,7 +101,7 @@ func RunActiveServer(
 	profileRepo := repository.NewProfileRepository(pgDB.GetDB(), rlsHelper)
 	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)
 	credentialVerifier := crypto.NewArgon2Verifier(cfg.AuthVerifyMaxConcurrency)
-	activityWriter := service.NewAPIKeyActivityWriter(apiKeyRepo)
+	activityWriter := service.NewAPIKeyActivityWriter(apiKeyRepo, logger)
 	activityWriter.Start(context.Background())
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -72,7 +72,7 @@ type LogRecord struct {
 
 var (
 	bearerSecretPattern   = regexp.MustCompile(`(?i)(bearer\s+)[^\s,;]+`)
-	keyValueSecretPattern = regexp.MustCompile(`(?i)((?:password|secret|token|api[_-]?key|authorization|cookie)\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;]+)`)
+	keyValueSecretPattern = regexp.MustCompile(`(?i)((?:password|secret|token|api[_-]?key|authorization|cookie)\s*"?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;]+)`)
 )
 
 // LogSink receives structured application log records. Implementations must not
