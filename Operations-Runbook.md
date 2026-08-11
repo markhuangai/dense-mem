@@ -86,6 +86,45 @@ Readiness should expose component-level state:
 | Relationship projection | any eligible Relationship lacks format-2 text or any ineligible Relationship is not marked `not_required` |
 | authority state | missing, incompatible, or corrupt PostgreSQL authority metadata |
 
+### Dependency disclosure and telemetry smoke checks
+
+The control usage rollup reports the current dependency observation as
+`healthy/total`, lists every non-healthy dependency, and includes bounded reason
+codes, latency, and `dependencies_checked_at`. The six normal checks are
+PostgreSQL, PostgreSQL topology, `pgvector`, authority, search readiness, and
+Redis. The server runs at most three checks at once and gives each check two
+seconds. A failed check reports `check_failed`; a deadline reports
+`check_timeout`. When Redis is intentionally absent for a single-node
+deployment, the control portal reports `single_node_mode` for Redis. That mode
+does not provide distributed rate limiting or cleanup. A multi-instance
+deployment must configure and pass the Redis check.
+
+The Overview, usage rollup, and telemetry views refresh every 60 seconds while
+their browser tab is visible. A hidden tab cancels the current request. The
+portal shows the observation or generation time, and a Metrics link opens the
+full dependency list.
+
+Telemetry snapshots distinguish `ready`, `inactive`, `unavailable`, and
+`unsupported` items. A valid zero is ready. No activity and disabled features
+are inactive. Missing provider usage or pricing, invalid usage, failed
+Prometheus queries, and failed lifecycle-ledger reads remain unavailable.
+Successful cards and charts remain visible when another item fails. The portal
+groups non-ready items in a collapsed reason ledger and does not draw an empty
+chart axis for them.
+
+For every production release, run this smoke matrix after a real Remember event
+and a real recall, then wait for a Prometheus scrape:
+
+| Scope | Windows | Required evidence |
+| --- | --- | --- |
+| system | 15m, 1h | dependency observation, all applicable operator cards, assessor data, cost boundary, Relationship ledgers |
+| team | 15m, 1h | team-owned counts, feature state, supported costs, and no other-team data |
+| profile | 15m, 1h | owner-only lifecycle counts, verifier cost if priced, unsupported combined/embedding cost, and no other-owner data |
+
+Record any `unavailable` item with its exact reason. Do not replace it with a
+zero or declare the smoke successful until the source or configuration issue is
+understood.
+
 Do not report a single green dependency flag when write, vector recall, trace,
 and control readiness differ.
 
@@ -393,30 +432,59 @@ curl -fsS "$CONTROL_URL/control/api/search/convergence" \
 
 The response contains the active provider/model/dimensions and index
 generation, queue counts, allowlisted failure codes, affected teams, guidance,
-and the latest durable run/canary. The operation-log view records bounded
-`embedding_failure_recorded` and reconciliation events; Prometheus exposes
+job-derived failure groups, and the latest durable run/canary. A failure group
+is the current unresolved set of `embedding_jobs` with the same team, contract,
+dimensions, source kind, failure class, and failure code. A group with failed
+jobs is `attention_required`; a group whose jobs are queued or processing is
+`recovering`. Completing or superseding the last job removes the group without
+a separate lifecycle write. The operation-log view records bounded
+`embedding_failure_recorded`, `embedding_recovery_completed`, and reconciliation
+events; Prometheus exposes
 `densemem_embedding_reconciliation_runs_total`,
 `densemem_embedding_reconciliation_canaries_total`,
 `densemem_embedding_reconciliation_jobs_total`, and the duration histogram.
 Only active teams contribute to this operational projection. Soft-deleted-team
-jobs and incidents remain as history but cannot keep active convergence in
+jobs remain as history but cannot keep active convergence in
 `attention_required`. A projection query failure returns a bounded internal
 error and safe event code rather than PostgreSQL details.
 
-Recovery is automatic and daily at the strict General-configured
+Recovery is automatic and daily during the strict General-configured
 `EMBEDDING_RECONCILIATION_START_TIME_LOCAL` in `APP_TIMEZONE` (default
-`04:30`). One durable run per active contract/local date claims one failed
-document. The marker is committed before the raw provider call, so a restart
-cannot silently make a second same-day canary. A successful canary completes
-that job and requeues the pre-cutoff recoverable backlog in batches capped at
-500; a failed or ambiguous canary leaves the backlog blocked for the next day.
-If later batch or incident accounting fails after one or more batches commit,
-the run remains deferred but retains the successful canary outcome and exact
-committed `requeued_count`.
+`04:30`). A run may be created only during that local minute; missing it defers
+new work to the following local date. An incomplete run created during the
+minute remains resumable later that day under its fenced lease token. One
+durable run per active contract/local date claims one failed document. The
+marker is committed before the raw provider call, so a restart cannot silently
+make a second same-day canary. A successful canary completes that job and
+requeues the pre-cutoff recoverable backlog in independently committed batches
+capped at 500. Each batch renews the token-fenced run lease. Requeued jobs make
+their derived failure groups `recovering`; completed or superseded jobs leave no
+current group. A permanent input rejection is terminalized and
+skipped so it cannot gate other teams' recoverable failures; the service tries
+the next bounded canary. Source updates do not retire reconciliation-owned
+canaries; completion records the old projection as stale and the run continues
+with the provider-health result. A failed or ambiguous canary leaves the
+backlog blocked for the next day. If a later batch fails after earlier batches
+commit, the run remains deferred but retains the successful canary outcome and
+exact committed `requeued_count`. Prometheus canary and job counters record only
+newly performed durable transitions; a lease takeover does not replay the
+persisted cumulative totals.
 
-During upgrade, bounded legacy timeout, network, rate-limit, quota, auth, and
-provider 5xx strings are mapped to the closed failure contract. Unknown legacy
-strings remain permanent rather than being guessed recoverable.
+Multi-instance deployments with `DISTRIBUTED_COORDINATION_REQUIRED=true` must
+configure `APP_TIMEZONE` as an explicit IANA name. Reconciliation rejects
+process-relative `Local` in that mode so replicas cannot reserve different
+local dates for the same instant. The convergence view orders its latest run by
+the PostgreSQL creation timestamp rather than local date, so a timezone change
+cannot make an older run replace the current recovery result.
+
+During upgrade, stop old application workers and use a coordinated restart.
+Bounded legacy timeout, network, rate-limit, quota, auth, and provider 5xx
+strings are mapped to the closed failure contract. The migration repairs legacy
+jobs in 1,000-row committed batches, retires superseded failures, adds new job
+checks as `NOT VALID`, creates the concurrent recovery indexes, then validates
+those checks in the same no-transaction migration. No rolling-version
+compatibility trigger or incident table remains after the migration. Unknown
+legacy strings remain permanent rather than being guessed recoverable.
 
 | Code/class | Automatic policy | Operator guidance |
 | --- | --- | --- |

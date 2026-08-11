@@ -153,9 +153,29 @@ The control portal manages:
 It is not a general memory editor. Semantic changes use versioned review,
 correction, merge/split, retraction, or import workflows with audit.
 
+The control usage rollup shows the dependency observation time, `healthy/total`,
+every unhealthy dependency name, bounded reason code, and check latency. The
+normal checks are PostgreSQL, PostgreSQL topology, `pgvector`, authority,
+search readiness, and Redis. Redis may report `single_node_mode` when the
+single-node process-local coordination mode is intentionally enabled. That
+status is not sufficient for a multi-instance deployment.
+
+Telemetry cards and charts carry `ready`, `inactive`, `unavailable`, or
+`unsupported` status. Ready zero values remain visible. Disabled features,
+missing activity, missing provider usage/pricing, failed queries, and failed
+lifecycle reads explain themselves with bounded reasons. Successful items stay
+visible during partial degradation. Non-ready items appear in a collapsed
+Inactive / unavailable disclosure, and unavailable charts do not render empty
+axes. The user portal omits operator-only cards; control team/profile views
+show scope-unsupported entries where that boundary matters.
+
+Overview, usage rollup, and telemetry refresh every 60 seconds while visible.
+Changing a scope or window cancels the previous request, and manual refresh is
+kept available without allowing overlapping requests.
+
 The Search convergence view is read-only. It has no retry button or provider
 credential editor. Quota, authentication, access, and transient provider
-incidents are retried by the daily scheduler after one raw-provider canary;
+failure groups are retried by the daily scheduler after one raw-provider canary;
 input, contract, and unknown failures remain blocked. Public users see only the
 bounded `search_indexing_delayed` status error, while operators see the exact
 allowlisted code and guidance. A provider change is guidance only and must keep
@@ -163,8 +183,9 @@ the active model and dimensions compatible.
 
 The corresponding operator endpoint is `GET /control/api/search/convergence`.
 It is protected by the control-plane authentication boundary and returns only
-the active contract summary, bounded queue/failure data, team names, guidance,
-and durable run state.
+the active contract summary, bounded queue/failure data, current failure groups
+derived from `embedding_jobs`, team names, guidance, and durable run state. It
+does not expose or mutate a separate incident lifecycle.
 
 ## API Keys
 

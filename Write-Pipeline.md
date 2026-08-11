@@ -306,13 +306,17 @@ never includes a provider body, credential, prompt, or raw transport error.
 Failed documents remain eligible for lexical recall, while their vectors stay
 out of vector search.
 
-An always-on daily reconciliation run records a durable incident, makes one
+An always-on daily reconciliation run records durable run history, makes one
 raw-provider canary request, and only after a successful canary requeues the
-pre-cutoff recoverable backlog in bounded batches. Quota, authentication, and
-provider-access failures remain eligible for the next daily canary; input,
-contract, and unknown failures stay blocked. There is no user retry action.
-Operators use the control Search convergence view for failure codes, affected
-teams, guidance, run/canary state, operation logs, and metrics.
+pre-cutoff recoverable backlog in bounded batches. `embedding_jobs` is the only
+current failure authority. The control projection groups unresolved failed,
+queued-after-failure, and processing-after-failure jobs by team, contract,
+dimensions, source kind, failure class, and failure code. Quota,
+authentication, and provider-access failures remain eligible for the next daily
+canary; input, contract, and unknown failures stay blocked. There is no user
+retry action. Operators use the control Search convergence view for failure
+codes, affected teams, guidance, run/canary state, bounded operation logs, and
+metrics.
 
 There is deliberately no client-facing placement/review tool, review task,
 client confidence value, or follow-up-evidence action in this contract.

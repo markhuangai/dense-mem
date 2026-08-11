@@ -37,13 +37,13 @@ records, not Prometheus.
 | `densemem_embedding_duration_seconds` | `model`, `outcome` | Embedding provider request duration. |
 | `densemem_embedding_tokens_total` | `model`, `kind` | Reported embedding tokens; `kind` is `prompt` or `total`. |
 | `densemem_embedding_reconciliation_runs_total` | `outcome` | Daily durable reconciliation run outcomes. |
-| `densemem_embedding_reconciliation_canaries_total` | `outcome` | One-canary outcomes; a successful run records `succeeded`. |
-| `densemem_embedding_reconciliation_jobs_total` | `action`, `source_kind`, `failure_class`, `failure_code` | Bounded job changes made after a successful canary. |
+| `densemem_embedding_reconciliation_canaries_total` | `outcome` | One-canary outcomes: `succeeded`, `failed`, `ambiguous`, or `skipped`; `ambiguous` means completion could not be determined safely. |
+| `densemem_embedding_reconciliation_jobs_total` | `action`, `source_kind`, `failure_class`, `failure_code` | Newly committed job changes made after a successful canary; lease takeover does not replay persisted run totals, and aggregate backlog releases use `mixed` source/class labels rather than misclassifying provider-action jobs as transient. |
 | `densemem_embedding_reconciliation_duration_seconds` | `outcome` | Reconciliation run duration histogram. |
 | `densemem_verifier_requests_total` | `model`, `outcome` | Verifier provider calls. |
 | `densemem_verifier_duration_seconds` | `model`, `outcome` | Verifier provider request duration. |
 | `densemem_verifier_tokens_total` | `model`, `kind` | Reported verifier tokens; `kind` is `prompt`, `completion`, or `total`. |
-| `densemem_verify_verdict_total` | `model`, `outcome` | Server-recorded verifier verdict outcomes. |
+| `densemem_verify_verdict_total` | `model`, `outcome` | Compatibility collector for server-recorded verifier verdict outcomes; it is not a dashboard catalog item. |
 | `densemem_remember_acknowledgements_total` | `outcome` | Remember requests acknowledged after durable evidence staging. |
 | `densemem_remember_acknowledgement_duration_seconds` | `outcome` | Time from remember request receipt to durable acknowledgement. |
 | `densemem_remember_first_disposition_total` | `status` | First durable placement disposition: `completed`, `awaiting_review`, `failed`, or `quarantined`. |
@@ -60,6 +60,10 @@ records, not Prometheus.
 | `densemem_dream_feedback_total` | `decision`, `outcome`, `from_status` | Hypothesis feedback decisions. |
 | `densemem_conflict_review_duration_seconds` | `outcome` | Relationship conflict-review duration. |
 | `densemem_assessor_terminal_failures_total` | `stage` | Terminal integrated-assessor failures by bounded stage; system-only, with no team/profile labels. |
+| `densemem_assessor_requests_total` | `outcome` | Integrated-assessor conversations by bounded outcome; system-only. |
+| `densemem_assessor_duration_seconds` | `outcome` | Integrated-assessor conversation duration; system-only. |
+| `densemem_assessor_tokens_total` | `kind` | Server-accounted integrated-assessor tokens; system-only. |
+| `densemem_assessor_validation_failures_total` | `stage` | Integrated-assessor validation failures; system-only. |
 | `densemem_community_runs_total` | `status` | Team/profile-scoped community snapshot outcomes such as `completed`, `skipped`, `too_large`, or `failed`. |
 | `densemem_community_summaries_total` | `outcome` | Team/profile-scoped summary-provider outcomes. |
 | `densemem_community_recall_total` | `outcome` | Team/profile-scoped community recall outcomes. |
@@ -70,7 +74,10 @@ The conflict-review histogram uses second buckets of `0.1`, `1`, `5`, `15`,
 Reconciliation counters are operator health signals, not evidence or team
 content. Failure labels are the closed provider/input contract only. Query the
 control Search convergence projection for current queue counts, affected teams,
-guidance, and run state; do not infer current state from counter values alone.
+guidance, job-derived failure groups, and run state; do not infer current state
+from counter values alone. Bounded `embedding_failure_recorded` and
+`embedding_recovery_completed` operation logs provide retained transition
+evidence without storing a second current-state incident model.
 
 ## Cost Rate Card
 
@@ -90,7 +97,9 @@ separate model setting would duplicate runtime responsibility and could make
 cost reports disagree with the provider actually used.
 
 Costs cover placement assessment, recall-query embedding, and background
-embedding. They are estimates, not provider invoices. A blank rate, missing
+embedding. They are estimates, not provider invoices. Verifier cost remains
+profile-supported. Combined and embedding cost are unsupported at profile
+scope because their accounting can aggregate multiple owners. A blank rate, missing
 usage, or unavailable pricing service increments the bounded
 `densemem_ai_operation_unpriced_total` metric instead of fabricating a zero
 cost. Token source is `provider` when the provider reports usage; verifier
@@ -119,27 +128,34 @@ scan.
 
 ## First-Party Dashboards
 
-The user and control portals query Prometheus through their server-side
-telemetry reader. The reader supports 15m, 30m, 1h, 12h, 1d, 7d, and 30d
-windows, a 30-day retention display, and team/profile scoping.
+The user and control portals query Prometheus and PostgreSQL through their
+server-side telemetry reader. The reader supports 15m, 30m, 1h, 12h, 1d, 7d,
+and 30d windows, a 30-day retention display, and system/team/profile scoping.
 
 Windowed cards cover HTTP requests/errors, embedding and verifier requests and
-tokens, verifier verdicts, remember acknowledgement and first-disposition
-latency, recall volume/results/latency, recall-feedback quality rates, dream
-feedback, and average HTTP/provider/conflict-review latencies. The control
-dashboard additionally shows total verifier, recall-embedding, background
-embedding, and combined estimated USD costs, plus unpriced-operation count.
-User dashboards never receive cost cards. Activity charts show the matching
-rates, histogram-derived averages, and the system-only terminal-assessor stage
-series. There are intentionally no current-state cards or state-history series
-because the server exports no gauge families for them. A card or chart with no
-samples is displayed as unavailable, not as a zero; inspect metric inventory and
-scrape availability before treating it as a collection failure.
+tokens, Remember acknowledgement and first-disposition latency, recall
+volume/results/latency, recall-feedback quality rates, dream feedback, average
+HTTP/provider/conflict-review latencies, assessor requests/failures/validation/
+tokens/duration, and exact Relationship transition/correction ledger counts.
+Current cards show all eight Relationship statuses. The control dashboard also
+shows estimated USD costs and system-only assessor cards. User dashboards never
+receive cost or assessor cards. The raw verifier-verdict collector remains for
+compatibility, but `verify_verdicts` and `dream_promote_candidates` are not
+dashboard items.
+
+Every card and chart reports `ready`, `inactive`, `unavailable`, or
+`unsupported`. `ready` includes a proven zero. `inactive` explains no activity
+or a disabled feature. Missing usage, missing pricing, invalid usage, a failed
+Prometheus query, or a failed lifecycle ledger remains unavailable. Unsupported
+items are returned only where the operator catalog needs to explain a scope
+boundary; user responses omit operator-only items. Partial failures keep
+successful items visible and mark the snapshot degraded. An all-source failure
+marks it unavailable. Empty legacy series are not converted into zero lines.
 
 When `TELEMETRY_PROMETHEUS_JOB` is configured, dashboard queries add that
-Prometheus `job` selector. A missing or failed telemetry backend returns an
-unavailable snapshot with safe empty cards/series; it does not fabricate zero
-operational data.
+Prometheus `job` selector. A missing or failed source marks only the affected
+items when another source is healthy. The backend never fabricates zero
+operational data without a healthy parent activity source.
 
 ## Query Examples
 
@@ -186,7 +202,7 @@ sum(rate(densemem_embedding_errors_total{team_id="<team-uuid>"}[15m]))
 | --- | --- | --- |
 | Dead dashboard query | a dashboard still requests a removed metric family | migrate it to this active inventory or remove the panel. |
 | Sensitive-label leak | a query or evidence ID becomes a label | retain only the documented bounded labels. |
-| False zero | Prometheus is unavailable and a UI treats empty data as normal | honor the telemetry snapshot `available` flag and message. |
+| False zero | missing instrumentation is rendered as a normal zero | require a ready parent activity source and inspect the item status/reason ledger. |
 | False cost certainty | a missing rate or usage record is displayed as USD 0 | leave the operation unpriced and monitor the unpriced counter. |
 | Model drift | an operator changes a pricing model name independently of runtime configuration | show the existing verifier and embedding model settings read-only; price the model the server actually uses. |
 | Lifecycle inferred from metrics | an operator assumes a counter proves evidence state | use authorized trace/audit records for individual lifecycle decisions. |

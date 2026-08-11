@@ -133,11 +133,16 @@ PostgreSQL-backed General configuration, not an environment feature flag:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `EMBEDDING_RECONCILIATION_START_TIME_LOCAL` | `04:30` | strict local `HH:MM` calendar time for one run per active embedding contract and local date |
+| `EMBEDDING_RECONCILIATION_START_TIME_LOCAL` | `04:30` | strict local `HH:MM` minute in which a run may be created, at most once per active embedding contract and local date |
 
 The scheduler uses `APP_TIMEZONE` from the same General configuration. A
-successful run performs one raw-provider canary, then releases at most 500
-eligible failed jobs per batch. Quota, authentication, access, and other
+multi-instance deployment with `DISTRIBUTED_COORDINATION_REQUIRED=true` must
+use an explicit IANA timezone; `Local` remains valid for single-node use. A new
+run is created only during the configured minute. If that minute is missed, the
+next new run is the following local date; an already-created incomplete run can
+resume later the same day under a new lease token. A successful run performs one
+raw-provider canary, then releases at most 500 eligible failed jobs per committed
+batch while renewing its fenced run lease. Quota, authentication, access, and other
 provider-action failures remain eligible for the next daily canary; input,
 contract, and unknown failures remain blocked. The active model and dimensions
 are never changed by recovery guidance.
