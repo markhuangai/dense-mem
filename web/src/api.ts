@@ -1,7 +1,9 @@
 import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types";
 import type { CommunityStatus } from "./community-api-types";
+import type { SearchConvergence } from "./search-convergence-types";
 import { requestJson } from "./http";
 export { ApiError } from "./http";
+export { listControlIdentityProviders, type ControlIdentityProvider } from "./control-auth-api";
 export type {
   ConflictQueueItem,
   ConflictQueueLeaseState,
@@ -13,6 +15,7 @@ export type {
   ConflictQueueSupporter,
 } from "./conflict-queue-api-types";
 import type { ConflictQueuePage, ConflictQueueQuery } from "./conflict-queue-api-types";
+export type { SearchConvergence } from "./search-convergence-types";
 export type Team = {
   id: string;
   name: string;
@@ -286,12 +289,6 @@ export type ControlAdminGroupInput = {
   enabled: boolean;
 };
 
-export type ControlIdentityProvider = {
-  id: string;
-  name: string;
-  kind: string;
-};
-
 export type ControlSession = {
   authenticated: boolean;
   auth_method: "token" | "sso";
@@ -312,6 +309,7 @@ export type SSOConfig = {
 
 export type GeneralRuntimeConfig = {
   timezone: string;
+  embedding_reconciliation_start_time_local?: string;
 };
 
 export type GeneralConfigItem = SSOConfigItem;
@@ -724,6 +722,10 @@ export class ControlApi {
     return this.requestEnvelope<ConflictQueuePage>(`/teams/${encodeURIComponent(teamId)}/conflicts/queue${suffix}`);
   }
 
+  getSearchConvergence(): Promise<SearchConvergence> {
+    return this.requestEnvelope<SearchConvergence>("/search/convergence");
+  }
+
   getTelemetry(query: ControlTelemetryQuery = {}, signal?: AbortSignal): Promise<TelemetrySnapshot> {
     const params = new URLSearchParams();
     if (query.window) {
@@ -991,9 +993,4 @@ export class ControlApi {
       csrf: this.token ? undefined : { cookieName: "dense_mem_control_csrf", headerName: "X-Dense-Mem-Control-CSRF" },
     });
   }
-}
-
-export async function listControlIdentityProviders(): Promise<ControlIdentityProvider[]> {
-  const payload = await requestJson<{ data: ControlIdentityProvider[] }>("/control/auth/providers", { credentials: "include" });
-  return payload.data;
 }

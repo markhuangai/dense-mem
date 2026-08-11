@@ -661,6 +661,20 @@ func TestRecallAddsOptionalFrontierDegradations(t *testing.T) {
 	require.Equal(t, &result.Degradations[0], result.Degradation)
 }
 
+func TestAppendEvidenceVectorFailureDegradationIsBounded(t *testing.T) {
+	result := &RecallResult{}
+	appendEvidenceVectorFailureDegradation(result, string(domain.SearchProjectionCurrent))
+	if len(result.Degradations) != 0 {
+		t.Fatalf("current search state added degradations: %#v", result.Degradations)
+	}
+	appendEvidenceVectorFailureDegradation(result, string(domain.SearchProjectionFailed))
+	if len(result.Degradations) != 1 || result.Degradations[0].Code != "evidence_vector_failed" || result.Degradation != &result.Degradations[0] {
+		t.Fatalf("failed search state projection = %#v", result)
+	}
+	require.Equal(t, "Some evidence vectors are unavailable; lexical recall remains available. Check the control portal for recovery guidance.", result.Degradations[0].Message)
+	appendEvidenceVectorFailureDegradation(nil, string(domain.SearchProjectionFailed))
+}
+
 func TestRecallRequiresAuthenticatedActor(t *testing.T) {
 	svc := NewRecallService(RecallDependencies{Search: &recallSearchStub{}})
 	_, err := svc.Recall(context.Background(), RecallRequest{

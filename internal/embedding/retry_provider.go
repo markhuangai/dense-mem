@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"math/rand"
-	"net"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -106,14 +105,12 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 		observability.RecordEmbeddingLatency(ctx, p.metrics, configuredModel, dur, code)
 
 		lastErr = err
+		if ctx.Err() != nil {
+			return nil, "", p.retryContextError(ctx, lastErr)
+		}
 
 		// Check if we should retry
 		if !p.shouldRetry(err) {
-			break
-		}
-
-		// Check if context was cancelled or deadline exceeded
-		if ctx.Err() != nil {
 			break
 		}
 
@@ -122,7 +119,7 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 			delay := p.retryDelay(attempt, err)
 			select {
 			case <-ctx.Done():
-				break
+				return nil, "", p.retryContextError(ctx, lastErr)
 			case <-time.After(delay):
 				continue
 			}
@@ -155,14 +152,12 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 		observability.RecordEmbeddingLatency(ctx, p.metrics, configuredModel, dur, code)
 
 		lastErr = err
+		if ctx.Err() != nil {
+			return nil, "", p.retryContextError(ctx, lastErr)
+		}
 
 		// Check if we should retry
 		if !p.shouldRetry(err) {
-			break
-		}
-
-		// Check if context was cancelled or deadline exceeded
-		if ctx.Err() != nil {
 			break
 		}
 
@@ -171,7 +166,7 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 			delay := p.retryDelay(attempt, err)
 			select {
 			case <-ctx.Done():
-				break
+				return nil, "", p.retryContextError(ctx, lastErr)
 			case <-time.After(delay):
 				continue
 			}
@@ -184,6 +179,13 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 	return nil, "", SanitizeError(lastErr, p.apiKey)
 }
 
+func (p *RetryEmbeddingProvider) retryContextError(ctx context.Context, lastErr error) error {
+	if err := ctx.Err(); errors.Is(err, context.Canceled) {
+		return err
+	}
+	return SanitizeError(lastErr, p.apiKey)
+}
+
 // classifyEmbeddingError maps a provider error to a coarse-grained tag used
 // by metrics. Unknown errors fall back to "error" so the recorder always
 // sees a bounded label set — important for Prometheus cardinality.
@@ -191,28 +193,21 @@ func classifyEmbeddingError(err error) string {
 	if err == nil {
 		return "ok"
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	metadata := ClassifyFailure(err)
+	switch metadata.Code {
+	case "provider_timeout":
 		return "timeout"
-	}
-	var timeoutErr *TimeoutError
-	if errors.As(err, &timeoutErr) {
-		return "timeout"
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return "timeout"
-	}
-	var rateErr *RateLimitError
-	if errors.As(err, &rateErr) {
+	case "provider_rate_limited":
 		return "rate_limited"
+	case "provider_network_error":
+		return "network_error"
+	case "provider_server_error":
+		return "error"
+	case "provider_quota_exhausted", "provider_authentication_failed", "provider_permission_denied", "provider_contract_rejected", "provider_response_invalid":
+		return metadata.Code
+	default:
+		return "error"
 	}
-	var httpErr *ProviderHTTPError
-	if errors.As(err, &httpErr) {
-		if httpErr.Status == 429 {
-			return "rate_limited"
-		}
-	}
-	return "error"
 }
 
 // ModelName returns the configured model identifier.
@@ -241,47 +236,17 @@ func (p *RetryEmbeddingProvider) shouldRetry(err error) bool {
 	if err == nil {
 		return false
 	}
-
-	// Check for ProviderHTTPError
-	var httpErr *ProviderHTTPError
-	if errors.As(err, &httpErr) {
-		// Retry on 429 (rate limit) or 5xx (server errors)
-		if httpErr.Status == 429 || httpErr.Status >= 500 {
-			return true
-		}
-		// No retry on 4xx except 429
-		if httpErr.Status >= 400 && httpErr.Status < 500 {
-			return false
-		}
+	if errors.Is(err, context.Canceled) {
+		return false
 	}
-
-	// Check for context deadline exceeded
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-
-	// Check for network timeout errors
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return true
-	}
-
-	// Check for wrapped timeout errors
-	var timeoutErr *TimeoutError
-	if errors.As(err, &timeoutErr) {
-		return true
-	}
-
-	// Check for wrapped rate limit errors
-	var rateLimitErr *RateLimitError
-	return errors.As(err, &rateLimitErr)
+	return ClassifyFailure(err).Class == "transient"
 }
 
 func (p *RetryEmbeddingProvider) retryDelay(attempt int, err error) time.Duration {
 	var httpErr *ProviderHTTPError
 	if errors.As(err, &httpErr) {
 		if httpErr.RetryAfter > 0 {
-			return httpErr.RetryAfter
+			return boundedRetryAfter(httpErr.RetryAfter)
 		}
 		if httpErr.Status == 429 {
 			return 10 * time.Second
@@ -289,7 +254,7 @@ func (p *RetryEmbeddingProvider) retryDelay(attempt int, err error) time.Duratio
 	}
 	var rateLimitErr *RateLimitError
 	if errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
-		return time.Duration(rateLimitErr.RetryAfter) * time.Second
+		return boundedRetryAfter(time.Duration(rateLimitErr.RetryAfter) * time.Second)
 	}
 	return p.calculateDelay(attempt)
 }

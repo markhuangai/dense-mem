@@ -25,6 +25,7 @@ type ControlPortalTelemetry struct {
 	Dreams          dreamservice.ControlService
 	Communities     communityservice.Service
 	ConflictQueue   conflictqueue.Reader
+	Convergence     service.SearchConvergenceReader
 }
 
 type controlPortalHandler struct {
@@ -38,11 +39,13 @@ type controlPortalHandler struct {
 	dreams          dreamservice.ControlService
 	communities     communityservice.Service
 	conflictQueue   conflictqueue.Reader
+	convergence     service.SearchConvergenceReader
 	health          HealthConfig
 	sso             *service.SSOService
 	directory       *service.DirectoryIdentityService
 	controlIdentity *service.ControlIdentityService
 	appConfig       service.AppConfigService
+	logger          observability.LogProvider
 	verifierModel   string
 	embeddingModel  string
 }

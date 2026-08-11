@@ -8,6 +8,7 @@ type ConfigTab = "general" | "sso" | "dreaming" | "community" | "operation-logs"
 
 const CONFIG_LABELS: Record<string, string> = {
   APP_TIMEZONE: "Timezone",
+  EMBEDDING_RECONCILIATION_START_TIME_LOCAL: "Embedding recovery start time",
   SSO_PUBLIC_BASE_URL: "Public base URL",
   SCIM_PUBLIC_BASE_URL: "SCIM ingress URL",
   CONTROL_PUBLIC_BASE_URL: "Control portal ingress URL",
@@ -34,6 +35,7 @@ const CONFIG_LABELS: Record<string, string> = {
 
 const CONFIG_PLACEHOLDERS: Record<string, string> = {
   APP_TIMEZONE: "Local",
+  EMBEDDING_RECONCILIATION_START_TIME_LOCAL: "04:30",
   SCIM_PUBLIC_BASE_URL: "https://memory.example.com",
   CONTROL_PUBLIC_BASE_URL: "https://control.example.com",
   SSO_ENTITLEMENT_CACHE_TTL_SECONDS: "300",
@@ -420,7 +422,7 @@ function ConfigField({
 
   const pricing = item.key.startsWith("TELEMETRY_COST_");
   const numeric = pricing || item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
-  const time = item.key === "DREAMING_START_TIME_LOCAL" || item.key === "COMMUNITY_DETECTION_START_TIME_LOCAL";
+  const time = item.key === "DREAMING_START_TIME_LOCAL" || item.key === "COMMUNITY_DETECTION_START_TIME_LOCAL" || item.key === "EMBEDDING_RECONCILIATION_START_TIME_LOCAL";
   const min = item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric && !pricing ? 1 : undefined;
   return (
     <>

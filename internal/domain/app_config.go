@@ -5,7 +5,8 @@ import "time"
 const (
 	AppConfigUpdateTimeKey = "update_time"
 
-	AppConfigTimezone = "APP_TIMEZONE"
+	AppConfigTimezone                              = "APP_TIMEZONE"
+	AppConfigEmbeddingReconciliationStartTimeLocal = "EMBEDDING_RECONCILIATION_START_TIME_LOCAL"
 
 	AppConfigSSOPublicBaseURL              = "SSO_PUBLIC_BASE_URL"
 	AppConfigSCIMPublicBaseURL             = "SCIM_PUBLIC_BASE_URL"
@@ -60,7 +61,8 @@ type GeneralConfigItem struct {
 
 // GeneralRuntimeConfig is the effective shared runtime config.
 type GeneralRuntimeConfig struct {
-	Timezone string `json:"timezone"`
+	Timezone                              string `json:"timezone"`
+	EmbeddingReconciliationStartTimeLocal string `json:"embedding_reconciliation_start_time_local"`
 }
 
 type SSOConfigItem struct {

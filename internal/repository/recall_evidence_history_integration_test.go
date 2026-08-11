@@ -65,7 +65,12 @@ func TestRecallEvidenceHistoricalIncludesNonCurrentSearchDocuments(t *testing.T)
 				Limit:  10,
 			})
 			require.NoError(t, err)
-			require.Empty(t, current.Results)
+			if tc.state == "failed" {
+				require.Len(t, current.Results, 1)
+				require.Equal(t, ingest.Evidence[0].FragmentID, current.Results[0].EvidenceID)
+			} else {
+				require.Empty(t, current.Results)
+			}
 
 			historical, err := searchRepo.RecallEvidence(ctx, RecallEvidenceInput{
 				TeamID:  teamID,

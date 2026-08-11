@@ -14,6 +14,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+const EmbeddingReconciliationWorkerIDPrefix = "reconciliation:"
+
 const embeddingJobCandidateCTEsSQL = `
 queued_candidates AS MATERIALIZED (
 	SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
@@ -67,6 +69,7 @@ updated AS (
 	UPDATE embedding_jobs AS job
 	SET status = 'processing',
 	    attempts = attempts + 1,
+	    total_attempts = total_attempts + 1,
 	    worker_id = ?,
 	    lease_until = now() + make_interval(secs => ?::integer),
 	    updated_at = now(),
@@ -80,6 +83,8 @@ updated AS (
 	          job.projection_format_version, COALESCE(job.projection_generation_id::text, ''),
 	          job.document_version, job.embedding_contract_id::text,
 	          job.embedding_dimensions, job.status, job.attempts,
+	          job.total_attempts, job.recovery_count, job.failure_class,
+	          job.failure_code, job.first_failed_at, job.last_failed_at,
 	          job.lease_until
 )
 SELECT updated.*, document.document_text
@@ -140,6 +145,12 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 				&job.EmbeddingDimensions,
 				&job.Status,
 				&job.Attempts,
+				&job.TotalAttempts,
+				&job.RecoveryCount,
+				&job.FailureClass,
+				&job.FailureCode,
+				&job.FirstFailedAt,
+				&job.LastFailedAt,
 				&job.LeaseUntil,
 				&job.DocumentText,
 			); err != nil {
@@ -176,6 +187,11 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			}
 			terminalErr = ErrTeamInactive
 			return nil
+		}
+		if err := lockEmbeddingJobDocumentForFinalization(
+			ctx, tx, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts,
+		); err != nil {
+			return err
 		}
 		var dims int
 		var contractID, sourceKind, projectionGenerationID string
@@ -294,10 +310,16 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			terminalErr = ErrTeamInactive
 			return nil
 		}
+		if err := lockEmbeddingJobDocumentForFinalization(
+			ctx, tx, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts,
+		); err != nil {
+			return err
+		}
 		var attempts, maxAttempts int
 		var sourceKind, projectionGenerationID string
 		err = tx.WithContext(ctx).Raw(`
-				SELECT attempts, max_attempts, source_kind, COALESCE(projection_generation_id::text, '')
+				SELECT attempts, max_attempts, source_kind,
+				       COALESCE(projection_generation_id::text, '')
 				FROM embedding_jobs
 				WHERE team_id = ?::uuid
 				  AND embedding_job_id = ?::uuid
@@ -351,6 +373,8 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 		if retryAfter <= 0 {
 			retryAfter = embeddingRetryBackoff(attempts)
 		}
+		failureClass := input.FailureClass
+		failureCode := input.FailureCode
 		completedExpr := "NULL"
 		if terminal {
 			status = string(domain.EmbeddingJobFailed)
@@ -361,6 +385,11 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			UPDATE embedding_jobs
 			SET status = ?,
 			    error = ?,
+			    failure_class = ?,
+			    failure_code = ?,
+			    total_attempts = GREATEST(total_attempts, attempts),
+			    first_failed_at = COALESCE(first_failed_at, now()),
+			    last_failed_at = now(),
 			    available_at = CASE
 			        WHEN ?::integer > 0 THEN now() + (?::integer * interval '1 second')
 			        ELSE now()
@@ -380,6 +409,8 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			query,
 			status,
 			input.Error,
+			failureClass,
+			failureCode,
 			retrySeconds,
 			retrySeconds,
 			input.TeamID,
@@ -402,11 +433,13 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			}
 		}
 		result = &EmbeddingJobFailureResult{
-			Status:      status,
-			RetryAfter:  retryAfter,
-			Terminal:    terminal,
-			Attempts:    attempts,
-			MaxAttempts: maxAttempts,
+			Status:       status,
+			RetryAfter:   retryAfter,
+			Terminal:     terminal,
+			Attempts:     attempts,
+			MaxAttempts:  maxAttempts,
+			FailureClass: failureClass,
+			FailureCode:  failureCode,
 		}
 		return nil
 	})
@@ -435,32 +468,36 @@ func (r *SearchRepositoryImpl) GetEmbeddingQueueStats(
 	read := func(tx *gorm.DB) error {
 		where := []string{"1 = 1"}
 		args := []any{}
+		from := "embedding_jobs AS job"
+		if input.ActiveTeamsOnly {
+			from += " JOIN teams AS team ON team.id = job.team_id AND team.status = 'active' AND team.deleted_at IS NULL"
+		}
 		if input.TeamID != "" {
-			where = append(where, "team_id = ?::uuid")
+			where = append(where, "job.team_id = ?::uuid")
 			args = append(args, input.TeamID)
 		}
 		if input.EmbeddingContractID != "" {
-			where = append(where, "embedding_contract_id = ?::uuid")
+			where = append(where, "job.embedding_contract_id = ?::uuid")
 			args = append(args, input.EmbeddingContractID)
 		}
 		if input.EmbeddingDimensions > 0 {
-			where = append(where, "embedding_dimensions = ?")
+			where = append(where, "job.embedding_dimensions = ?")
 			args = append(args, input.EmbeddingDimensions)
 		}
 		query := fmt.Sprintf(`
 			SELECT
-			    COUNT(*) FILTER (WHERE status = 'queued') AS queued,
-			    COUNT(*) FILTER (WHERE status = 'processing') AS processing,
-			    COUNT(*) FILTER (WHERE status = 'completed') AS completed,
-			    COUNT(*) FILTER (WHERE status = 'failed') AS failed,
-			    COUNT(*) FILTER (WHERE status = 'stale') AS stale,
-			    COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled,
-			    COUNT(*) FILTER (WHERE status = 'processing' AND lease_until <= clock_timestamp()) AS expired_leases,
-			    COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(created_at) FILTER (WHERE status IN ('queued', 'processing')))), 0) AS oldest_pending_seconds,
-			    COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(lease_until) FILTER (WHERE status = 'processing' AND lease_until <= clock_timestamp()))), 0) AS oldest_lease_seconds
-			FROM embedding_jobs
+			    COUNT(*) FILTER (WHERE job.status = 'queued') AS queued,
+			    COUNT(*) FILTER (WHERE job.status = 'processing') AS processing,
+			    COUNT(*) FILTER (WHERE job.status = 'completed') AS completed,
+			    COUNT(*) FILTER (WHERE job.status = 'failed') AS failed,
+			    COUNT(*) FILTER (WHERE job.status = 'stale') AS stale,
+			    COUNT(*) FILTER (WHERE job.status = 'cancelled') AS cancelled,
+			    COUNT(*) FILTER (WHERE job.status = 'processing' AND job.lease_until <= clock_timestamp()) AS expired_leases,
+			    COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(job.created_at) FILTER (WHERE job.status IN ('queued', 'processing')))), 0) AS oldest_pending_seconds,
+			    COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - MIN(job.lease_until) FILTER (WHERE job.status = 'processing' AND job.lease_until <= clock_timestamp()))), 0) AS oldest_lease_seconds
+			FROM %s
 			WHERE %s
-		`, strings.Join(where, " AND "))
+		`, from, strings.Join(where, " AND "))
 		var oldestPendingSeconds, oldestLeaseSeconds float64
 		if err := tx.WithContext(ctx).Raw(query, args...).Row().Scan(
 			&stats.Queued,
@@ -500,13 +537,16 @@ func markEmbeddingJobTerminal(ctx context.Context, tx *gorm.DB, input CompleteEm
 		    error = ?,
 		    completed_at = now(),
 		    updated_at = now(),
-		    lease_until = NULL
+		    lease_until = NULL,
+		    recovery_count = recovery_count + CASE WHEN ? = 'completed' AND ? LIKE ? THEN 1 ELSE 0 END,
+		    last_recovered_at = CASE WHEN ? = 'completed' AND ? LIKE ? THEN now() ELSE last_recovered_at END
 		WHERE team_id = ?::uuid
 		  AND embedding_job_id = ?::uuid
 		  AND worker_id = ?
 		  AND status = 'processing'
 		  AND attempts = ?
-	`, status, message, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Error
+		`, status, message, status, input.WorkerID, EmbeddingReconciliationWorkerIDPrefix+"%", status, input.WorkerID, EmbeddingReconciliationWorkerIDPrefix+"%",
+		input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts).Error
 }
 
 func embeddingJobFinalizationTeamActive(ctx context.Context, tx *gorm.DB, teamID string) (bool, error) {
@@ -524,6 +564,35 @@ func embeddingJobFinalizationTeamActive(ctx context.Context, tx *gorm.DB, teamID
 		return false, err
 	}
 	return active, nil
+}
+
+func lockEmbeddingJobDocumentForFinalization(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	embeddingJobID string,
+	workerID string,
+	expectedAttempts int,
+) error {
+	var documentID string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT document.search_document_id::text
+		FROM embedding_jobs AS job
+		JOIN search_documents AS document
+		  ON document.team_id = job.team_id
+		 AND document.search_document_id = job.search_document_id
+		WHERE job.team_id = ?::uuid
+		  AND job.embedding_job_id = ?::uuid
+		  AND job.worker_id = ?
+		  AND job.status = 'processing'
+		  AND job.attempts = ?
+		  AND job.lease_until > clock_timestamp()
+		FOR UPDATE OF document
+	`, teamID, embeddingJobID, workerID, expectedAttempts).Row().Scan(&documentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrEmbeddingLeaseLost
+	}
+	return err
 }
 
 func refreshRelationshipProjectionGeneration(ctx context.Context, tx *gorm.DB, teamID string, projectionGenerationID string) error {
@@ -689,7 +758,8 @@ func markStaleEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) err
 		    worker_id = '',
 		    updated_at = now()
 		WHERE job.team_id = ?::uuid
-		  AND job.status IN ('queued', 'processing')
+		  AND job.status IN ('queued', 'processing', 'failed')
+		  AND job.worker_id NOT LIKE 'reconciliation:%'
 		  AND NOT EXISTS (
 		      SELECT 1
 		      FROM search_documents AS document
@@ -703,56 +773,6 @@ func markStaleEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) err
 		        AND document.embedding_dimensions = job.embedding_dimensions
 		  )
 	`, teamID).Error
-}
-
-func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string, limit int) error {
-	return tx.WithContext(ctx).Exec(`
-		WITH exhausted AS MATERIALIZED (
-			SELECT job.team_id, job.embedding_job_id
-			FROM embedding_jobs AS job
-			WHERE job.team_id = ?::uuid
-			  AND job.status = 'processing'
-			  AND job.lease_until <= clock_timestamp()
-			  AND job.attempts >= job.max_attempts
-			ORDER BY job.lease_until ASC, job.embedding_job_id ASC
-			LIMIT ?
-			FOR UPDATE SKIP LOCKED
-		),
-		failed AS (
-			UPDATE embedding_jobs AS job
-			SET status = 'failed',
-			    error = ?,
-			    completed_at = now(),
-			    lease_until = NULL,
-			    worker_id = '',
-			    updated_at = now()
-			FROM exhausted
-			WHERE job.team_id = exhausted.team_id
-			  AND job.embedding_job_id = exhausted.embedding_job_id
-			RETURNING job.team_id, job.search_document_id, job.source_version,
-			          job.projection_format_version, job.projection_generation_id,
-			          job.document_version, job.embedding_contract_id,
-			          job.embedding_dimensions
-		)
-		UPDATE search_documents AS document
-		SET search_state = 'failed',
-		    embedding_error = ?,
-		    updated_at = now()
-		FROM failed
-		WHERE document.team_id = failed.team_id
-		  AND document.search_document_id = failed.search_document_id
-		  AND document.source_version = failed.source_version
-		  AND document.projection_format_version = failed.projection_format_version
-		  AND document.projection_generation_id IS NOT DISTINCT FROM failed.projection_generation_id
-		  AND document.document_version = failed.document_version
-		  AND document.embedding_contract_id = failed.embedding_contract_id
-		  AND document.embedding_dimensions = failed.embedding_dimensions
-	`,
-		teamID,
-		limit,
-		embeddingJobAttemptsExhaustedMessage,
-		embeddingJobAttemptsExhaustedMessage,
-	).Error
 }
 
 func embeddingContractHasActiveSearchGeneration(ctx context.Context, tx *gorm.DB, contractID string, dimensions int) (bool, error) {
@@ -833,30 +853,28 @@ func embeddingRetryBackoff(attempts int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func boundedEmbeddingError(message string) string {
-	message = strings.Join(strings.Fields(strings.TrimSpace(message)), " ")
-	if message == "" {
-		return "embedding job failed"
-	}
-	const limit = 512
-	if len(message) > limit {
-		return message[:limit]
-	}
-	return message
-}
-
 func normalizeFailEmbeddingJobInput(input FailEmbeddingJobInput) FailEmbeddingJobInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.EmbeddingJobID = strings.TrimSpace(input.EmbeddingJobID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
-	input.Error = boundedEmbeddingError(input.Error)
 	if input.RetryAfter < 0 {
 		input.RetryAfter = 0
 	}
 	if input.RetryAfter > 24*time.Hour {
 		input.RetryAfter = 24 * time.Hour
 	}
+	input.FailureClass, input.FailureCode = normalizeEmbeddingFailureContract(input.FailureClass, input.FailureCode)
+	input.Error = domain.EmbeddingFailureMessage(input.FailureCode)
 	return input
+}
+
+func normalizeEmbeddingFailureContract(failureClass, failureCode string) (string, string) {
+	failureClass = strings.TrimSpace(failureClass)
+	failureCode = strings.TrimSpace(failureCode)
+	if !domain.EmbeddingFailureContractValid(failureClass, failureCode) {
+		return string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureUnknown)
+	}
+	return failureClass, failureCode
 }
 
 func validateFailEmbeddingJobInput(input FailEmbeddingJobInput) error {

@@ -99,6 +99,7 @@ func TestSearchEmbeddingClaimLocksOnlyReturnedJobs(t *testing.T) {
 				UPDATE embedding_jobs
 				SET status = 'processing',
 				    attempts = 1,
+				    total_attempts = 1,
 				    worker_id = 'expired-worker',
 				    lease_until = now() - interval '1 minute'
 				WHERE team_id = ?::uuid
@@ -159,13 +160,14 @@ func TestSearchEmbeddingClaimPlanStaysBoundedAtElevenThousandJobs(t *testing.T) 
 			    team_id, embedding_job_id, search_document_id, owner_profile_id,
 			    source_kind, source_id, source_version, projection_format_version,
 			    projection_generation_id, document_version, embedding_contract_id,
-			    embedding_dimensions, status, attempts, max_attempts, available_at,
+			    embedding_dimensions, status, attempts, total_attempts, max_attempts, available_at,
 			    lease_until, worker_id
 			)
 			SELECT ?::uuid, generated.embedding_job_id, generated.search_document_id,
 			       ?::uuid, 'evidence', generated.source_id, 1, 1, NULL, 1,
 			       ?::uuid, 3,
 			       CASE WHEN generated.sequence BETWEEN 11 AND 20 THEN 'processing' ELSE 'queued' END,
+			       CASE WHEN generated.sequence BETWEEN 11 AND 20 THEN 1 ELSE 0 END,
 			       CASE WHEN generated.sequence BETWEEN 11 AND 20 THEN 1 ELSE 0 END,
 			       20,
 			       CASE

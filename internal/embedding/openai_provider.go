@@ -98,10 +98,15 @@ type openAIEmbeddingResponse struct {
 		Embedding []float32 `json:"embedding"`
 	} `json:"data"`
 	Usage *openAIEmbeddingUsage `json:"usage"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	Error *openAIProviderError  `json:"error"`
 }
+
+type openAIProviderError struct {
+	Code string `json:"code"`
+	Type string `json:"type"`
+}
+
+const nonJSONProviderErrorMessage = "provider returned a non-JSON error response"
 
 // EmbedBatch returns embeddings for multiple texts in the same order as inputs.
 func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, string, error) {
@@ -109,10 +114,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	case p.sem <- struct{}{}:
 		defer func() { <-p.sem }()
 	case <-ctx.Done():
-		return nil, "", &TimeoutError{
-			Provider: "openai",
-			Message:  ctx.Err().Error(),
-		}
+		return nil, "", ctx.Err()
 	}
 
 	url := strings.TrimSuffix(p.baseURL, "/") + "/embeddings"
@@ -157,9 +159,11 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, "", &ProviderError{
-			Provider: "openai",
-			Message:  "failed to read response",
-			Cause:    err,
+			Provider:     "openai",
+			Message:      "failed to read response",
+			Cause:        err,
+			FailureCode:  "provider_network_error",
+			FailureClass: "transient",
 		}
 	}
 
@@ -168,7 +172,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 		if resp.StatusCode != http.StatusOK {
 			return nil, "", &ProviderHTTPError{
 				Status:     resp.StatusCode,
-				Message:    nonJSONHTTPMessage(rawBody),
+				Message:    nonJSONProviderErrorMessage,
 				RetryAfter: retryAfterDuration(resp.Header.Get("Retry-After")),
 			}
 		}
@@ -176,20 +180,20 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 			observability.RecordAIOperationUnpriced(ctx, p.metrics, observability.AIComponentEmbedding, p.model, "missing_usage")
 		}
 		return nil, "", &ProviderError{
-			Provider: "openai",
-			Message:  "failed to decode response",
-			Cause:    err,
+			Provider:     "openai",
+			Message:      "provider response was invalid",
+			Cause:        err,
+			FailureCode:  "provider_response_invalid",
+			FailureClass: "provider_action_required",
 		}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		msg := fmt.Sprintf("unexpected status code: %d", resp.StatusCode)
-		if respBody.Error != nil && respBody.Error.Message != "" {
-			msg = respBody.Error.Message
-		}
 		return nil, "", &ProviderHTTPError{
 			Status:     resp.StatusCode,
-			Message:    msg,
+			Message:    fmt.Sprintf("provider returned status %d", resp.StatusCode),
+			Code:       providerErrorCode(respBody.Error),
+			Type:       providerErrorType(respBody.Error),
 			RetryAfter: retryAfterDuration(resp.Header.Get("Retry-After")),
 		}
 	}
@@ -197,15 +201,21 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 
 	if len(respBody.Data) != len(texts) {
 		return nil, "", &ProviderError{
-			Provider: "openai",
-			Message:  fmt.Sprintf("expected %d embeddings, got %d", len(texts), len(respBody.Data)),
+			Provider:     "openai",
+			Message:      fmt.Sprintf("expected %d embeddings, got %d", len(texts), len(respBody.Data)),
+			FailureCode:  "provider_response_invalid",
+			FailureClass: "provider_action_required",
 		}
 	}
 
-	if len(respBody.Data) > 0 && len(respBody.Data[0].Embedding) != p.dimensions {
-		return nil, "", &ProviderError{
-			Provider: "openai",
-			Message:  fmt.Sprintf("expected %d dimensions, got %d", p.dimensions, len(respBody.Data[0].Embedding)),
+	for index, item := range respBody.Data {
+		if len(item.Embedding) != p.dimensions {
+			return nil, "", &ProviderError{
+				Provider:     "openai",
+				Message:      fmt.Sprintf("expected %d dimensions, got %d at index %d", p.dimensions, len(item.Embedding), index),
+				FailureCode:  "provider_response_invalid",
+				FailureClass: "provider_action_required",
+			}
 		}
 	}
 
@@ -236,16 +246,18 @@ func (p *OpenAIEmbeddingProvider) recordEmbeddingUsage(ctx context.Context, usag
 	})
 }
 
-func nonJSONHTTPMessage(body []byte) string {
-	msg := strings.TrimSpace(string(body))
-	if msg == "" {
-		return "non-JSON response"
+func providerErrorCode(err *openAIProviderError) string {
+	if err == nil {
+		return ""
 	}
-	const maxMessageLen = 240
-	if len(msg) > maxMessageLen {
-		msg = msg[:maxMessageLen] + "..."
+	return strings.TrimSpace(err.Code)
+}
+
+func providerErrorType(err *openAIProviderError) string {
+	if err == nil {
+		return ""
 	}
-	return "non-JSON response: " + msg
+	return strings.TrimSpace(err.Type)
 }
 
 func retryAfterDuration(value string) time.Duration {

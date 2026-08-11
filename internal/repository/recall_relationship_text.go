@@ -28,7 +28,7 @@ func searchRecallRelationshipFullText(
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.projection_format_version = 2
 		 AND `+recallRelationshipGenerationDocumentSQL+`
-		 AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
+		 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 		WHERE document.search_tsv @@ plainto_tsquery('simple', ?)
 		ORDER BY text_rank DESC, document.updated_at DESC, document.search_document_id ASC
 		LIMIT ?

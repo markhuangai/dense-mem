@@ -95,8 +95,8 @@ func (r *SearchRepositoryImpl) RecallRelationships(ctx context.Context, input Re
 		}
 		hit.Score = candidate.Score
 		hit.SearchState = recallCombinedSearchState(candidate.SearchState, hit.SearchState)
-		if hit.SearchState == string(domain.SearchProjectionPending) {
-			searchState = string(domain.SearchProjectionPending)
+		if hit.SearchState == string(domain.SearchProjectionPending) || hit.SearchState == string(domain.SearchProjectionFailed) {
+			searchState = recallCombinedSearchState(searchState, hit.SearchState)
 		}
 		results = append(results, hit)
 		if len(results) == input.Limit {
@@ -132,7 +132,7 @@ type relationshipRecallCandidate struct {
 
 func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID string, contract *ActiveSearchContract) (string, error) {
 	var latestState string
-	var eligibleCount, currentCount, pendingCount, failedCount int64
+	var eligibleCount, currentCount, failedCount int64
 	err := tx.WithContext(ctx).Raw(`
 	WITH `+recallRelationshipGenerationScopeSQL+`,
 	selected_generation AS (
@@ -151,10 +151,9 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 		      AND relationship.support_count > 0
 		)
 	SELECT COALESCE((SELECT state FROM selected_generation), '') AS latest_state,
-		       COUNT(eligible.relationship_id) AS eligible_count,
-		       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'current') AS current_count,
-		       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'pending') AS pending_count,
-		       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'failed') AS failed_count
+	       COUNT(eligible.relationship_id) AS eligible_count,
+	       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'current') AS current_count,
+	       COUNT(document.search_document_id) FILTER (WHERE document.search_state = 'failed') AS failed_count
 		FROM eligible
 		 LEFT JOIN search_documents AS document
 		  ON document.team_id = ?::uuid
@@ -177,7 +176,6 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 		&latestState,
 		&eligibleCount,
 		&currentCount,
-		&pendingCount,
 		&failedCount,
 	)
 	if err != nil {
@@ -185,17 +183,20 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 	}
 	switch latestState {
 	case "current":
+		if failedCount > 0 {
+			return string(domain.SearchProjectionFailed), nil
+		}
 		if eligibleCount == 0 || currentCount == eligibleCount {
 			return string(domain.SearchProjectionCurrent), nil
 		}
 	case "failed":
 		return string(domain.SearchProjectionFailed), nil
 	case "":
+		if failedCount > 0 {
+			return string(domain.SearchProjectionFailed), nil
+		}
 		if eligibleCount == 0 || currentCount == eligibleCount {
 			return string(domain.SearchProjectionCurrent), nil
-		}
-		if failedCount > 0 && pendingCount == 0 {
-			return string(domain.SearchProjectionFailed), nil
 		}
 	}
 	return string(domain.SearchProjectionPending), nil
@@ -491,7 +492,7 @@ func searchRecallRelationshipEntityExpansion(
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.projection_format_version = 2
 		 AND `+recallRelationshipGenerationDocumentSQL+`
-		 AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
+			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 		LEFT JOIN LATERAL (
 		    SELECT transition.to_status AS status
 		    FROM relationship_transition_events AS transition
@@ -609,7 +610,7 @@ func hydrateRecallRelationships(
 		     AND document.embedding_contract_id = ?::uuid
 		     AND document.projection_format_version = 2
 		     AND `+recallRelationshipGenerationDocumentSQL+`
-		     AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
+			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 		    LEFT JOIN LATERAL (
 		        SELECT transition.to_status AS status
 		        FROM relationship_transition_events AS transition

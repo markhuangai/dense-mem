@@ -327,6 +327,7 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 		return nil, err
 	}
 	result = recallResultFromRepository(recalled, degradations)
+	appendEvidenceVectorFailureDegradation(result, recalled.SearchState)
 	returnedEvidenceIDs := recallResultEvidenceIDs(result.Results)
 	coveredGroups, coverageAvailable, coverageDegradation := s.resolveCommunityCoverage(ctx, actor.TeamID.String(), req.KnownEvidenceIDs, returnedEvidenceIDs, req.KnownRelationshipIDs)
 	if coverageDegradation != nil {

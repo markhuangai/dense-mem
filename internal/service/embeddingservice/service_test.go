@@ -9,10 +9,47 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
+
+type reconciliationLogRecord struct {
+	message string
+	attrs   []observability.LogAttr
+}
+
+type reconciliationLoggerStub struct {
+	infos     []reconciliationLogRecord
+	warnings  []string
+	warnAttrs []observability.LogAttr
+}
+
+func (l *reconciliationLoggerStub) Info(message string, attrs ...observability.LogAttr) {
+	l.infos = append(l.infos, reconciliationLogRecord{message: message, attrs: attrs})
+}
+func (*reconciliationLoggerStub) Error(string, error, ...observability.LogAttr) {}
+func (l *reconciliationLoggerStub) Warn(message string, attrs ...observability.LogAttr) {
+	l.warnings = append(l.warnings, message)
+	l.warnAttrs = append(l.warnAttrs, attrs...)
+}
+func (*reconciliationLoggerStub) Debug(string, ...observability.LogAttr) {}
+func (l *reconciliationLoggerStub) With(...observability.LogAttr) observability.LogProvider {
+	return l
+}
+
+func reconciliationLogAttrValue(attrs []observability.LogAttr, key string) any {
+	for _, attr := range attrs {
+		if attr.Key == key {
+			return attr.Value
+		}
+	}
+	return nil
+}
 
 func TestEmbeddingWorkerRequiresDependenciesAndScope(t *testing.T) {
 	validDeps := func() EmbeddingWorkerDependencies {
@@ -229,9 +266,10 @@ func TestEmbeddingWorkerFailsProviderCountMismatch(t *testing.T) {
 			t.Fatalf("failure input = %#v", input)
 		}
 	}
-	if got := metrics.EmbeddingErrorCount("count_mismatch"); got != 2 {
-		t.Fatalf("count_mismatch metric = %d, want 2", got)
+	if got := metrics.EmbeddingErrorCount("count_mismatch"); got != 0 {
+		t.Fatalf("count_mismatch metric = %d, want 0", got)
 	}
+	assert.Equal(t, 2, metrics.EmbeddingErrorCount("invalid_vector"))
 }
 
 func TestEmbeddingWorkerRejectsInvalidVectorsWithoutDroppingValidJobs(t *testing.T) {
@@ -294,7 +332,7 @@ func TestEmbeddingWorkerClassifiesProviderFailures(t *testing.T) {
 		{
 			name:      "cancelled",
 			err:       context.Canceled,
-			wantCode:  "cancelled",
+			wantCode:  "provider_unavailable",
 			wantRetry: 1,
 		},
 		{
@@ -358,6 +396,134 @@ func TestEmbeddingWorkerClassifiesProviderFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEmbeddingWorkerDoesNotRecordShutdownCancellationAsProviderFailure(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-a", 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	provider := &embeddingProviderStub{
+		available:    true,
+		model:        "test-model",
+		dims:         3,
+		err:          context.Canceled,
+		onEmbedBatch: cancel,
+	}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search, Provider: provider, TeamID: "team-a", WorkerID: "worker-a",
+	})
+
+	result, err := worker.ProcessNextBatch(ctx)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, result.Claimed)
+	assert.Empty(t, search.failInputs)
+}
+
+func TestEmbeddingWorkerQuotaFailureDoesNotSpendInlineRetryBudget(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-quota", 20)}
+	provider := &embeddingProviderStub{
+		available: true,
+		model:     "test-model",
+		dims:      3,
+		err:       &embedding.ProviderHTTPError{Status: 429, Code: "insufficient_quota", Type: "insufficient_quota"},
+	}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search, Provider: provider, TeamID: "team-a", WorkerID: "worker-a",
+	})
+	result, err := worker.ProcessNextBatch(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, 1, result.Failed)
+	assert.Zero(t, result.Retried)
+	require.Len(t, search.failInputs, 1)
+	assert.True(t, search.failInputs[0].Terminal)
+	assert.Equal(t, string(domain.EmbeddingFailureProviderAction), search.failInputs[0].FailureClass)
+	assert.Equal(t, string(domain.EmbeddingFailureProviderQuotaExhausted), search.failInputs[0].FailureCode)
+}
+
+func TestEmbeddingWorkerAggregatesBatchFailureLog(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{
+		embeddingJobForTest("job-a", 1),
+		embeddingJobForTest("job-b", 1),
+	}
+	logger := &reconciliationLoggerStub{}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search,
+		Provider: &embeddingProviderStub{
+			available: true,
+			model:     "test-model",
+			dims:      3,
+			err:       &embedding.ProviderHTTPError{Status: 429, Code: "insufficient_quota", Type: "insufficient_quota"},
+		},
+		Logger:   logger,
+		TeamID:   "team-a",
+		WorkerID: "worker-a",
+	})
+
+	_, err := worker.ProcessNextBatch(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, []string{"embedding_failure_recorded"}, logger.warnings)
+	assert.Equal(t, "team-a", reconciliationLogAttrValue(logger.warnAttrs, "team_id"))
+	assert.Equal(t, "mixed", reconciliationLogAttrValue(logger.warnAttrs, "source_kind"))
+	assert.Equal(t, string(domain.EmbeddingFailureProviderAction), reconciliationLogAttrValue(logger.warnAttrs, "failure_class"))
+	assert.Equal(t, string(domain.EmbeddingFailureProviderQuotaExhausted), reconciliationLogAttrValue(logger.warnAttrs, "failure_code"))
+	assert.Equal(t, "batch", reconciliationLogAttrValue(logger.warnAttrs, "aggregation"))
+	assert.Equal(t, 2, reconciliationLogAttrValue(logger.warnAttrs, "job_count"))
+	for _, attr := range logger.warnAttrs {
+		if value, ok := attr.Value.(string); ok {
+			assert.NotContains(t, value, "insufficient_quota")
+			assert.NotContains(t, value, "429")
+		}
+	}
+}
+
+func TestEmbeddingWorkerBoundsReturnedProviderModel(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-a", 1)}
+	provider := &embeddingProviderStub{
+		available: true, model: "test-model", returnedModel: "provider-controlled-model",
+		dims: 3, vectors: [][]float32{{1, 0, 0}},
+	}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search, Provider: provider, TeamID: "team-a", WorkerID: "worker-a",
+	})
+
+	_, err := worker.ProcessNextBatch(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), string(domain.EmbeddingFailureContractMismatch))
+	assert.NotContains(t, err.Error(), provider.returnedModel)
+}
+
+func TestEmbeddingWorkerAggregatesRecoveredJobsInOperationLog(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	failedAt := time.Now().UTC().Add(-time.Hour)
+	first := embeddingJobForTest("job-a", 1)
+	first.FirstFailedAt = &failedAt
+	second := embeddingJobForTest("job-b", 1)
+	second.FirstFailedAt = &failedAt
+	search.jobs = []repository.EmbeddingJob{first, second}
+	logger := &reconciliationLoggerStub{}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search,
+		Provider: &embeddingProviderStub{
+			available: true,
+			model:     "test-model",
+			dims:      3,
+			vectors:   [][]float32{{1, 0, 0}, {0, 1, 0}},
+		},
+		Logger: logger, TeamID: "team-a", WorkerID: "worker-a",
+	})
+
+	result, err := worker.ProcessNextBatch(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Completed)
+	require.Len(t, logger.infos, 1)
+	assert.Equal(t, "embedding_recovery_completed", logger.infos[0].message)
+	assert.Equal(t, "team-a", reconciliationLogAttrValue(logger.infos[0].attrs, "team_id"))
+	assert.Equal(t, "batch", reconciliationLogAttrValue(logger.infos[0].attrs, "aggregation"))
+	assert.Equal(t, 2, reconciliationLogAttrValue(logger.infos[0].attrs, "job_count"))
 }
 
 func TestEmbeddingWorkerFailsContractMismatchBeforeProviderCall(t *testing.T) {
@@ -482,6 +648,7 @@ func TestEmbeddingWorkerTreatsUnavailableProviderAsRetryable(t *testing.T) {
 	if got := metrics.EmbeddingErrorCount("provider_unavailable"); got != 1 {
 		t.Fatalf("provider_unavailable metric = %d, want 1", got)
 	}
+	assert.Zero(t, metrics.EmbeddingErrorCount("cancelled"))
 }
 
 func TestEmbeddingWorkerCountsStaleAndLeaseLostCompletions(t *testing.T) {
@@ -554,13 +721,18 @@ func embeddingJobForTest(id string, attempts int) repository.EmbeddingJob {
 }
 
 type embeddingSearchStub struct {
-	contract       repository.ActiveSearchContract
-	jobs           []repository.EmbeddingJob
-	completeInputs []repository.CompleteEmbeddingJobInput
-	failInputs     []repository.FailEmbeddingJobInput
-	completeErrs   map[string]error
-	claimErr       error
-	claimLimit     int
+	contract           repository.ActiveSearchContract
+	jobs               []repository.EmbeddingJob
+	completeInputs     []repository.CompleteEmbeddingJobInput
+	completeContext    context.Context
+	completeContextErr error
+	failInputs         []repository.FailEmbeddingJobInput
+	failContext        context.Context
+	failContextErr     error
+	completeErrs       map[string]error
+	failErr            error
+	claimErr           error
+	claimLimit         int
 }
 
 func (s *embeddingSearchStub) GetActiveSearchContract(context.Context) (*repository.ActiveSearchContract, error) {
@@ -583,7 +755,9 @@ func (s *embeddingSearchStub) ClaimEmbeddingJobs(_ context.Context, input reposi
 	return s.jobs, nil
 }
 
-func (s *embeddingSearchStub) CompleteEmbeddingJob(_ context.Context, input repository.CompleteEmbeddingJobInput) error {
+func (s *embeddingSearchStub) CompleteEmbeddingJob(ctx context.Context, input repository.CompleteEmbeddingJobInput) error {
+	s.completeContext = ctx
+	s.completeContextErr = ctx.Err()
 	s.completeInputs = append(s.completeInputs, input)
 	if err := s.completeErrs[input.EmbeddingJobID]; err != nil {
 		return err
@@ -591,8 +765,13 @@ func (s *embeddingSearchStub) CompleteEmbeddingJob(_ context.Context, input repo
 	return nil
 }
 
-func (s *embeddingSearchStub) FailEmbeddingJob(_ context.Context, input repository.FailEmbeddingJobInput) (*repository.EmbeddingJobFailureResult, error) {
+func (s *embeddingSearchStub) FailEmbeddingJob(ctx context.Context, input repository.FailEmbeddingJobInput) (*repository.EmbeddingJobFailureResult, error) {
+	s.failContext = ctx
+	s.failContextErr = ctx.Err()
 	s.failInputs = append(s.failInputs, input)
+	if s.failErr != nil {
+		return nil, s.failErr
+	}
 	status := "queued"
 	if input.Terminal {
 		status = "failed"
@@ -613,13 +792,15 @@ func (s *embeddingSearchStub) SearchExactVector(context.Context, repository.Exac
 }
 
 type embeddingProviderStub struct {
-	available    bool
-	model        string
-	dims         int
-	vectors      [][]float32
-	err          error
-	gotTexts     []string
-	observeUsage func(context.Context, int)
+	available     bool
+	model         string
+	returnedModel string
+	dims          int
+	vectors       [][]float32
+	err           error
+	gotTexts      []string
+	observeUsage  func(context.Context, int)
+	onEmbedBatch  func()
 }
 
 func (p *embeddingProviderStub) Embed(context.Context, string) ([]float32, string, error) {
@@ -631,10 +812,17 @@ func (p *embeddingProviderStub) EmbedBatch(ctx context.Context, texts []string) 
 	if p.observeUsage != nil {
 		p.observeUsage(ctx, len(texts))
 	}
+	if p.onEmbedBatch != nil {
+		p.onEmbedBatch()
+	}
 	if p.err != nil {
 		return nil, "", p.err
 	}
-	return p.vectors, p.model, nil
+	model := p.returnedModel
+	if model == "" {
+		model = p.model
+	}
+	return p.vectors, model, nil
 }
 
 func (p *embeddingProviderStub) ModelName() string {

@@ -21,6 +21,7 @@ const DefaultRecallFeedbackRetentionDays = 30
 const DefaultCommunityDetectionStartTimeLocal = "03:30"
 const DefaultCommunityDetectionMaxConcurrency = 1
 const DefaultCommunityDetectionJitterSeconds = 600
+const DefaultEmbeddingReconciliationStartTimeLocal = "04:30"
 
 var ErrInvalidAppConfig = errors.New("invalid app config")
 
@@ -407,10 +408,15 @@ func generalRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (
 	}
 
 	timezone := configString(normalized[domain.AppConfigTimezone], DefaultAppTimezone)
-	runtime := domain.GeneralRuntimeConfig{Timezone: timezone}
+	reconciliationStart := configString(normalized[domain.AppConfigEmbeddingReconciliationStartTimeLocal], DefaultEmbeddingReconciliationStartTimeLocal)
+	runtime := domain.GeneralRuntimeConfig{
+		Timezone:                              timezone,
+		EmbeddingReconciliationStartTimeLocal: reconciliationStart,
+	}
 	updateTime := entries[domain.AppConfigUpdateTimeKey].Value
 	items := []domain.GeneralConfigItem{
 		generalConfigItem(entries, domain.AppConfigTimezone, timezone),
+		generalConfigItem(entries, domain.AppConfigEmbeddingReconciliationStartTimeLocal, reconciliationStart),
 	}
 	return domain.GeneralConfigSettings{UpdateTime: updateTime, Items: items, Effective: runtime}, nil
 }
@@ -518,8 +524,10 @@ func normalizeDreamingConfigValues(values map[string]string) (map[string]string,
 			if trimmed == "" {
 				trimmed = "03:00"
 			}
-			if _, err := time.Parse("15:04", trimmed); err != nil {
-				return nil, fmt.Errorf("%w: DREAMING_START_TIME_LOCAL must use HH:MM 24-hour format", ErrInvalidAppConfig)
+			var err error
+			trimmed, err = normalizeStrictHHMM(key, trimmed)
+			if err != nil {
+				return nil, err
 			}
 		case domain.AppConfigDreamingMaxOutputs:
 			if trimmed == "" {
@@ -595,8 +603,10 @@ func normalizeCommunityDetectionConfigValues(values map[string]string) (map[stri
 			if trimmed == "" {
 				trimmed = DefaultCommunityDetectionStartTimeLocal
 			}
-			if _, err := time.Parse("15:04", trimmed); err != nil {
-				return nil, fmt.Errorf("%w: COMMUNITY_DETECTION_START_TIME_LOCAL must use HH:MM 24-hour format", ErrInvalidAppConfig)
+			var err error
+			trimmed, err = normalizeStrictHHMM(key, trimmed)
+			if err != nil {
+				return nil, err
 			}
 		case domain.AppConfigCommunityDetectionMaxConcurrency:
 			if trimmed == "" {
@@ -692,10 +702,29 @@ func normalizeGeneralConfigValues(values map[string]string) (map[string]string, 
 			if _, err := time.LoadLocation(trimmed); err != nil {
 				return nil, fmt.Errorf("%w: APP_TIMEZONE must be a valid IANA timezone or Local", ErrInvalidAppConfig)
 			}
+		case domain.AppConfigEmbeddingReconciliationStartTimeLocal:
+			if trimmed == "" {
+				trimmed = DefaultEmbeddingReconciliationStartTimeLocal
+			}
+			var err error
+			trimmed, err = normalizeStrictHHMM(key, trimmed)
+			if err != nil {
+				return nil, err
+			}
 		}
 		normalized[key] = trimmed
 	}
 	return normalized, nil
+}
+
+func normalizeStrictHHMM(key, value string) (string, error) {
+	parsed, err := time.Parse("15:04", value)
+	canonical := err == nil && parsed.Format("15:04") == value
+	legacySingleDigitHour := err == nil && len(value) == 4 && parsed.Format("15:04") == "0"+value
+	if err != nil || (!canonical && !legacySingleDigitHour) {
+		return "", fmt.Errorf("%w: %s must use strict HH:MM", ErrInvalidAppConfig, key)
+	}
+	return parsed.Format("15:04"), nil
 }
 
 func normalizeSSOConfigValues(values map[string]string) (map[string]string, error) {
@@ -756,6 +785,7 @@ func normalizeSSOConfigValues(values map[string]string) (map[string]string, erro
 func editableGeneralConfigKeys() []string {
 	return []string{
 		domain.AppConfigTimezone,
+		domain.AppConfigEmbeddingReconciliationStartTimeLocal,
 	}
 }
 

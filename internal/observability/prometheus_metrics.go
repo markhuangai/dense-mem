@@ -43,48 +43,52 @@ type PrometheusMetrics struct {
 	registry *prometheus.Registry
 	pricing  AIPricingResolver
 
-	httpRequests                 *prometheus.CounterVec
-	httpDuration                 *prometheus.HistogramVec
-	embeddingCalls               *prometheus.CounterVec
-	embeddingErrors              *prometheus.CounterVec
-	embeddingDur                 *prometheus.HistogramVec
-	embeddingTokens              *prometheus.CounterVec
-	verifierCalls                *prometheus.CounterVec
-	verifierDur                  *prometheus.HistogramVec
-	verifierTokens               *prometheus.CounterVec
-	recallCalls                  *prometheus.CounterVec
-	recallDur                    *prometheus.HistogramVec
-	recallResults                *prometheus.HistogramVec
-	recallFeedback               *prometheus.CounterVec
-	recallQuality                *prometheus.HistogramVec
-	dreamFeedback                *prometheus.CounterVec
-	conflictReview               *prometheus.HistogramVec
-	verifyVerdicts               *prometheus.CounterVec
-	rememberAcknowledgements     *prometheus.CounterVec
-	rememberAcknowledgementDur   *prometheus.HistogramVec
-	rememberFirstDisposition     *prometheus.CounterVec
-	rememberFirstDispositionDur  *prometheus.HistogramVec
-	aiOperationTokens            *prometheus.CounterVec
-	aiOperationCosts             *prometheus.CounterVec
-	aiOperationItems             *prometheus.CounterVec
-	aiOperationUnpriced          *prometheus.CounterVec
-	assessorCalls                *prometheus.CounterVec
-	assessorDur                  *prometheus.HistogramVec
-	assessorTokens               *prometheus.CounterVec
-	assessorValidation           *prometheus.CounterVec
-	assessorValidationFields     *prometheus.CounterVec
-	assessorCandidateTruncations *prometheus.CounterVec
-	assessorPersistence          *prometheus.CounterVec
-	assessorDuplicatePrevention  *prometheus.CounterVec
-	assessorConfidenceGate       *prometheus.CounterVec
-	assessorReviewExpiry         prometheus.Counter
-	assessorTerminalFailures     *prometheus.CounterVec
-	quarantinePurgeFailures      prometheus.Counter
-	communityRuns                *prometheus.CounterVec
-	communitySummaries           *prometheus.CounterVec
-	communityRecalls             *prometheus.CounterVec
-	conflictAssessments          *prometheus.CounterVec
-	conflictResolutions          *prometheus.CounterVec
+	httpRequests                    *prometheus.CounterVec
+	httpDuration                    *prometheus.HistogramVec
+	embeddingCalls                  *prometheus.CounterVec
+	embeddingErrors                 *prometheus.CounterVec
+	embeddingDur                    *prometheus.HistogramVec
+	embeddingTokens                 *prometheus.CounterVec
+	verifierCalls                   *prometheus.CounterVec
+	verifierDur                     *prometheus.HistogramVec
+	verifierTokens                  *prometheus.CounterVec
+	recallCalls                     *prometheus.CounterVec
+	recallDur                       *prometheus.HistogramVec
+	recallResults                   *prometheus.HistogramVec
+	recallFeedback                  *prometheus.CounterVec
+	recallQuality                   *prometheus.HistogramVec
+	dreamFeedback                   *prometheus.CounterVec
+	conflictReview                  *prometheus.HistogramVec
+	verifyVerdicts                  *prometheus.CounterVec
+	rememberAcknowledgements        *prometheus.CounterVec
+	rememberAcknowledgementDur      *prometheus.HistogramVec
+	rememberFirstDisposition        *prometheus.CounterVec
+	rememberFirstDispositionDur     *prometheus.HistogramVec
+	aiOperationTokens               *prometheus.CounterVec
+	aiOperationCosts                *prometheus.CounterVec
+	aiOperationItems                *prometheus.CounterVec
+	aiOperationUnpriced             *prometheus.CounterVec
+	assessorCalls                   *prometheus.CounterVec
+	assessorDur                     *prometheus.HistogramVec
+	assessorTokens                  *prometheus.CounterVec
+	assessorValidation              *prometheus.CounterVec
+	assessorValidationFields        *prometheus.CounterVec
+	assessorCandidateTruncations    *prometheus.CounterVec
+	assessorPersistence             *prometheus.CounterVec
+	assessorDuplicatePrevention     *prometheus.CounterVec
+	assessorConfidenceGate          *prometheus.CounterVec
+	assessorReviewExpiry            prometheus.Counter
+	assessorTerminalFailures        *prometheus.CounterVec
+	quarantinePurgeFailures         prometheus.Counter
+	communityRuns                   *prometheus.CounterVec
+	communitySummaries              *prometheus.CounterVec
+	communityRecalls                *prometheus.CounterVec
+	conflictAssessments             *prometheus.CounterVec
+	conflictResolutions             *prometheus.CounterVec
+	embeddingReconciliationRuns     *prometheus.CounterVec
+	embeddingReconciliationCanaries *prometheus.CounterVec
+	embeddingReconciliationJobs     *prometheus.CounterVec
+	embeddingReconciliationDuration *prometheus.HistogramVec
 }
 
 var _ DiscoverabilityMetrics = (*PrometheusMetrics)(nil)
@@ -93,6 +97,7 @@ var _ HTTPMetrics = (*PrometheusMetrics)(nil)
 var _ AssessorMetrics = (*PrometheusMetrics)(nil)
 var _ SubmissionQuarantineMetrics = (*PrometheusMetrics)(nil)
 var _ AIOperationMetrics = (*PrometheusMetrics)(nil)
+var _ EmbeddingReconciliationMetrics = (*PrometheusMetrics)(nil)
 
 // NewPrometheusMetrics creates a Prometheus recorder with a private registry so
 // tests and multiple server instances do not collide with global collectors.
@@ -282,6 +287,23 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 			Name: "densemem_conflict_resolutions_total",
 			Help: "Durably committed conflict resolutions by bounded method and outcome.",
 		}, []string{"team_id", "method", "outcome"}),
+		embeddingReconciliationRuns: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_embedding_reconciliation_runs_total",
+			Help: "Daily embedding reconciliation runs by bounded outcome.",
+		}, []string{"outcome"}),
+		embeddingReconciliationCanaries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_embedding_reconciliation_canaries_total",
+			Help: "Daily embedding reconciliation canaries by bounded outcome.",
+		}, []string{"outcome"}),
+		embeddingReconciliationJobs: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "densemem_embedding_reconciliation_jobs_total",
+			Help: "Embedding jobs changed by daily reconciliation.",
+		}, []string{"action", "source_kind", "failure_class", "failure_code"}),
+		embeddingReconciliationDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "densemem_embedding_reconciliation_duration_seconds",
+			Help:    "Daily embedding reconciliation duration.",
+			Buckets: []float64{0.1, 1, 5, 15, 30, 60, 300, 900},
+		}, []string{"outcome"}),
 	}
 	m.registry.MustRegister(
 		m.httpRequests, m.httpDuration,
@@ -298,6 +320,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		m.assessorTerminalFailures,
 		m.quarantinePurgeFailures, m.communityRuns, m.communitySummaries, m.communityRecalls,
 		m.conflictAssessments, m.conflictResolutions,
+		m.embeddingReconciliationRuns, m.embeddingReconciliationCanaries, m.embeddingReconciliationJobs, m.embeddingReconciliationDuration,
 	)
 	return m
 }
@@ -312,6 +335,25 @@ func (m *PrometheusMetrics) ObserveCommunitySummary(ctx context.Context, outcome
 
 func (m *PrometheusMetrics) ObserveCommunityRecall(ctx context.Context, outcome string, _, _ int) {
 	m.communityRecalls.WithLabelValues(append(identityValues(ctx), normalizeLabel(outcome))...).Inc()
+}
+
+func (m *PrometheusMetrics) ObserveEmbeddingReconciliationRun(outcome string) {
+	m.embeddingReconciliationRuns.WithLabelValues(normalizeLabel(outcome)).Inc()
+}
+
+func (m *PrometheusMetrics) ObserveEmbeddingReconciliationCanary(outcome string) {
+	m.embeddingReconciliationCanaries.WithLabelValues(normalizeLabel(outcome)).Inc()
+}
+
+func (m *PrometheusMetrics) ObserveEmbeddingReconciliationJobs(action, sourceKind, failureClass, failureCode string, count int) {
+	if count <= 0 {
+		return
+	}
+	m.embeddingReconciliationJobs.WithLabelValues(normalizeLabel(action), normalizeLabel(sourceKind), normalizeLabel(failureClass), normalizeLabel(failureCode)).Add(float64(count))
+}
+
+func (m *PrometheusMetrics) ObserveEmbeddingReconciliationDuration(seconds float64, outcome string) {
+	m.embeddingReconciliationDuration.WithLabelValues(normalizeLabel(outcome)).Observe(seconds)
 }
 
 func (m *PrometheusMetrics) Handler() http.Handler {

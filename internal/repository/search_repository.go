@@ -19,9 +19,11 @@ const (
 )
 
 var (
-	ErrSearchStaleVersion     = errors.New("search stale source or document version")
-	ErrSearchContractMismatch = errors.New("search contract mismatch")
-	ErrEmbeddingLeaseLost     = errors.New("embedding lease lost")
+	ErrSearchStaleVersion                   = errors.New("search stale source or document version")
+	ErrSearchContractMismatch               = errors.New("search contract mismatch")
+	ErrSearchConvergenceAttentionRequired   = errors.New("search convergence is attention_required")
+	ErrEmbeddingLeaseLost                   = errors.New("embedding lease lost")
+	ErrEmbeddingReconciliationCanarySkipped = errors.New("embedding reconciliation canary was no longer claimable")
 )
 
 type SearchRepositoryImpl struct {
@@ -200,34 +202,6 @@ func (r *SearchRepositoryImpl) CheckSearchReadiness(ctx context.Context) (*Searc
 			})
 		}
 	}
-	stats, err := r.GetEmbeddingQueueStats(ctx, EmbeddingQueueStatsInput{
-		EmbeddingContractID: contract.EmbeddingContractID,
-		EmbeddingDimensions: contract.EmbeddingDimensions,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if stats.CutoverBlocking {
-		readiness.Ready = false
-		if stats.Queued+stats.Processing > 0 {
-			readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
-				Code:    "embedding_backlog_pending",
-				Message: fmt.Sprintf("%d embedding jobs are queued or processing for active search contract", stats.Queued+stats.Processing),
-			})
-		}
-		if stats.ExpiredLeases > 0 {
-			readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
-				Code:    "expired_embedding_leases",
-				Message: fmt.Sprintf("%d embedding jobs have expired leases for active search contract", stats.ExpiredLeases),
-			})
-		}
-		if stats.TerminalFailures > 0 {
-			readiness.Reasons = append(readiness.Reasons, SearchReadinessReason{
-				Code:    "terminal_embedding_failures",
-				Message: fmt.Sprintf("%d terminal embedding jobs exist for active search contract", stats.TerminalFailures),
-			})
-		}
-	}
 	incompleteRelationships, err := r.relationshipProjectionTextIncomplete(ctx, contract)
 	if err != nil {
 		return nil, err
@@ -288,7 +262,7 @@ func (r *SearchRepositoryImpl) relationshipProjectionTextIncomplete(ctx context.
 			            AND document.embedding_contract_id = ?::uuid
 			            AND document.embedding_dimensions = ?
 			            AND document.projection_format_version = 2
-			            AND document.search_state IN ('pending', 'current')
+			            AND document.search_state IN ('pending', 'current', 'failed')
 			            AND (
 			                document.projection_generation_id = generation.projection_generation_id
 			                OR (
@@ -351,14 +325,16 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 				    document_version = CASE
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
 				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
 				        THEN search_documents.document_version
 				        ELSE search_documents.document_version + 1
 				    END,
 				    search_state = CASE
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
 				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
-				         AND search_documents.search_state = 'current'
-				        THEN 'current'
+				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
+				         AND search_documents.search_state IN ('current', 'failed')
+				        THEN search_documents.search_state
 				        ELSE 'pending'
 				    END,
 				    document_text = EXCLUDED.document_text,
@@ -366,18 +342,21 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 				    embedding = CASE
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
 				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
 				        THEN search_documents.embedding
 				        ELSE NULL
 				    END,
 				    embedding_updated_at = CASE
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
 				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
 				        THEN search_documents.embedding_updated_at
 				        ELSE NULL
 				    END,
 				    embedding_error = CASE
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
 				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
 				        THEN search_documents.embedding_error
 				        ELSE ''
 				    END,
@@ -431,6 +410,9 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 		if err := rows.Close(); err != nil {
 			return err
 		}
+		if err := retireSupersededEmbeddingJobs(ctx, tx, loaded); err != nil {
+			return err
+		}
 		jobID, err := enqueueEmbeddingJob(ctx, tx, loaded, r.embeddingJobMaxAttempts)
 		if err != nil {
 			return err
@@ -469,7 +451,7 @@ func (r *SearchRepositoryImpl) SearchFullText(ctx context.Context, input FullTex
 			FROM recall_relationship_generation AS generation
 			JOIN search_documents AS document
 			  ON document.team_id = ?::uuid
-			WHERE document.search_state IN ('pending', 'current')
+			WHERE document.search_state IN ('pending', 'current', 'failed')
 			  AND document.search_tsv @@ plainto_tsquery('simple', ?)
 			  AND (
 			      document.source_kind <> 'relationship'
@@ -712,6 +694,33 @@ func enqueueEmbeddingJob(
 		return "", err
 	}
 	return jobID, nil
+}
+
+func retireSupersededEmbeddingJobs(ctx context.Context, tx *gorm.DB, document SearchDocumentResult) error {
+	return tx.WithContext(ctx).Exec(`
+		UPDATE embedding_jobs AS job
+		SET status = 'stale',
+		    error = 'superseded by newer document version',
+		    completed_at = COALESCE(job.completed_at, now()),
+		    lease_until = NULL,
+		    worker_id = '',
+		    updated_at = now()
+		WHERE job.team_id = ?::uuid
+		  AND job.source_kind = ?
+		  AND job.source_id = ?::uuid
+		  AND job.embedding_contract_id = ?::uuid
+		  AND (
+		      job.document_version < ?
+		      OR (
+		          job.document_version = ?
+		          AND job.source_version < ?
+		      )
+		  )
+		  AND job.worker_id NOT LIKE ?
+		  AND job.status IN ('queued', 'processing', 'failed')
+	`, document.TeamID, document.SourceKind, document.SourceID,
+		document.EmbeddingContractID, document.DocumentVersion,
+		document.DocumentVersion, document.SourceVersion, EmbeddingReconciliationWorkerIDPrefix+"%").Error
 }
 
 func normalizeEmbeddingJobMaxAttempts(maxAttempts int) int {

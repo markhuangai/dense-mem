@@ -355,7 +355,7 @@ func telemetryWindowedCardSpecsForAudience(scope TelemetryScope, baseLabels map[
 		{ID: "http_requests", Label: "HTTP requests", Unit: "requests", Query: telemetryIncrease("densemem_http_requests_total", scope, baseLabels, nil, window)},
 		{ID: "http_errors", Label: "HTTP errors", Unit: "requests", Query: telemetryIncrease("densemem_http_requests_total", scope, baseLabels, map[string]string{"status_class": "~\"4xx|5xx\""}, window)},
 		{ID: "embedding_requests", Label: "Embedding requests", Unit: "requests", Query: telemetrySparseCounterIncrease("densemem_embedding_requests_total", scope, baseLabels, nil, window)},
-		{ID: "embedding_errors", Label: "Embedding errors", Unit: "errors", Query: telemetrySparseCounterIncrease("densemem_embedding_errors_total", scope, baseLabels, nil, window)},
+		{ID: "embedding_errors", Label: "Embedding errors", Unit: "errors", Query: telemetrySparseCounterIncrease("densemem_embedding_errors_total", scope, baseLabels, map[string]string{"code": telemetryEmbeddingErrorCodeMatcher()}, window)},
 		{ID: "embedding_tokens", Label: "Embedding tokens", Unit: "tokens", Query: telemetrySparseCounterIncrease("densemem_embedding_tokens_total", scope, baseLabels, map[string]string{"kind": "total"}, window)},
 		{ID: "verifier_requests", Label: "Verifier requests", Unit: "requests", Query: telemetrySparseCounterIncrease("densemem_verifier_requests_total", scope, baseLabels, nil, window)},
 		{ID: "verifier_tokens", Label: "Verifier tokens", Unit: "tokens", Query: telemetrySparseCounterIncrease("densemem_verifier_tokens_total", scope, baseLabels, map[string]string{"kind": "total"}, window)},
@@ -468,7 +468,7 @@ func telemetryActivitySeriesSpecsForAudience(selector string, rateWindow string,
 		{ID: "http_rps", Label: "HTTP requests", Unit: "rps", Query: telemetryRangeSparseCounterRate("densemem_http_requests_total", selector, rateWindow)},
 		{ID: "http_errors_rps", Label: "HTTP errors", Unit: "rps", Query: telemetryRangeSparseCounterRate("densemem_http_requests_total", telemetrySelectorWithRaw(selector, `status_class=~"4xx|5xx"`), rateWindow)},
 		{ID: "embedding_requests", Label: "Embedding requests", Unit: "requests/s", Query: telemetryRangeSparseCounterRate("densemem_embedding_requests_total", selector, rateWindow)},
-		{ID: "embedding_errors", Label: "Embedding errors", Unit: "errors/s", Query: telemetryRangeSparseCounterRate("densemem_embedding_errors_total", selector, rateWindow)},
+		{ID: "embedding_errors", Label: "Embedding errors", Unit: "errors/s", Query: telemetryRangeSparseCounterRate("densemem_embedding_errors_total", telemetrySelectorWithRaw(selector, "code="+telemetryEmbeddingErrorCodeMatcher()), rateWindow)},
 		{ID: "embedding_tokens", Label: "Embedding tokens", Unit: "tokens/s", Query: telemetryRangeSparseCounterRate("densemem_embedding_tokens_total", telemetrySelectorWithRaw(selector, `kind="total"`), rateWindow)},
 		{ID: "verifier_requests", Label: "Verifier requests", Unit: "requests/s", Query: telemetryRangeSparseCounterRate("densemem_verifier_requests_total", selector, rateWindow)},
 		{ID: "verifier_tokens", Label: "Verifier tokens", Unit: "tokens/s", Query: telemetryRangeSparseCounterRate("densemem_verifier_tokens_total", telemetrySelectorWithRaw(selector, `kind="total"`), rateWindow)},
@@ -494,6 +494,12 @@ func telemetryActivitySeriesSpecsForAudience(selector string, rateWindow string,
 		telemetryQuerySpec{ID: "assessor_duration", Label: "Assessor duration", Unit: "ms", Query: telemetryRangeSparseHistogramAverage("densemem_assessor_duration_seconds", selector, "", rateWindow, 1000)},
 		telemetryQuerySpec{ID: "assessor_terminal_failures", Label: "Assessor terminal failures", Unit: "failures/s", Query: telemetryRangeSparseCounterRate("densemem_assessor_terminal_failures_total", selector, rateWindow)},
 	))
+}
+
+func telemetryEmbeddingErrorCodeMatcher() string {
+	codes := domain.EmbeddingFailureCodes()
+	codes = append(codes, "stale", "lease_lost")
+	return `~"` + strings.Join(codes, "|") + `"`
 }
 
 func telemetryStateSeriesSpecs(selector string) []telemetryQuerySpec {

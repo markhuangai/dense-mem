@@ -38,6 +38,11 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 	metrics.ObserveDreamFeedbackFor(ctx, DreamFeedback{Decision: "confirm_true", Outcome: "ok", FromStatus: "proposed"})
 	metrics.ObserveConflictReviewDurationFor(ctx, 2.5, "completed")
 	metrics.IncSubmissionQuarantinePurgeFailure()
+	metrics.ObserveEmbeddingReconciliationRun("completed")
+	metrics.ObserveEmbeddingReconciliationCanary("succeeded")
+	metrics.ObserveEmbeddingReconciliationJobs("requeued", "evidence", "transient", "provider_timeout", 2)
+	metrics.ObserveEmbeddingReconciliationJobs("ignored", "evidence", "transient", "provider_timeout", 0)
+	metrics.ObserveEmbeddingReconciliationDuration(1.25, "completed")
 
 	body := scrapePrometheusMetrics(t, metrics)
 	for _, want := range []string{
@@ -65,6 +70,10 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 		`densemem_conflict_review_duration_seconds_bucket{`,
 		`outcome="completed"`,
 		`densemem_submission_quarantine_purge_failures_total 1`,
+		`densemem_embedding_reconciliation_runs_total{outcome="completed"}`,
+		`densemem_embedding_reconciliation_canaries_total{outcome="succeeded"}`,
+		`densemem_embedding_reconciliation_jobs_total{action="requeued",failure_class="transient",failure_code="provider_timeout",source_kind="evidence"}`,
+		`densemem_embedding_reconciliation_duration_seconds_bucket{outcome="completed",le=`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scraped metrics missing %q\n%s", want, body)
@@ -83,6 +92,9 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 		if strings.Contains(body, retired) {
 			t.Fatalf("scraped metrics still contain retired metric %q\n%s", retired, body)
 		}
+	}
+	if strings.Contains(body, `densemem_embedding_reconciliation_jobs_total{action="ignored"`) {
+		t.Fatalf("scraped metrics recorded zero-count reconciliation jobs\n%s", body)
 	}
 	for _, blocked := range []string{"team_name=", "profile_name=", "Research", "Profile A"} {
 		if strings.Contains(body, blocked) {

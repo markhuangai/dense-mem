@@ -109,12 +109,14 @@ func upsertSearchDocumentInTx(
 			    document_version = CASE
 			        WHEN search_documents.document_hash = EXCLUDED.document_hash
 			         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+			         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
 			        THEN search_documents.document_version
 			        ELSE search_documents.document_version + 1
 			    END,
 			    search_state = CASE
 			        WHEN search_documents.document_hash = EXCLUDED.document_hash
 			         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+			         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
 			         AND search_documents.search_state = 'current'
 			        THEN 'current'
 			        ELSE 'pending'
@@ -124,18 +126,21 @@ func upsertSearchDocumentInTx(
 			    embedding = CASE
 			        WHEN search_documents.document_hash = EXCLUDED.document_hash
 			         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+			         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
 			        THEN search_documents.embedding
 			        ELSE NULL
 			    END,
 			    embedding_updated_at = CASE
 			        WHEN search_documents.document_hash = EXCLUDED.document_hash
 			         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+			         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
 			        THEN search_documents.embedding_updated_at
 			        ELSE NULL
 			    END,
 			    embedding_error = CASE
 			        WHEN search_documents.document_hash = EXCLUDED.document_hash
 			         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
+			         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
 			        THEN search_documents.embedding_error
 			        ELSE ''
 			    END,
@@ -182,6 +187,9 @@ func upsertSearchDocumentInTx(
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := retireSupersededEmbeddingJobs(ctx, tx, loaded); err != nil {
 		return nil, err
 	}
 	jobID, err := enqueueEmbeddingJob(ctx, tx, loaded, embeddingJobMaxAttempts)

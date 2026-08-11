@@ -158,6 +158,42 @@ func TestContractEnums(t *testing.T) {
 	if slices.Contains(EvidenceItemCategories(), "evidence_needs_review") {
 		t.Fatal("EvidenceItemCategories contains non-canonical evidence_needs_review category")
 	}
+	for _, class := range []string{"transient", "provider_action_required", "permanent"} {
+		if !slices.Contains(EmbeddingFailureClasses(), class) {
+			t.Fatalf("EmbeddingFailureClasses missing %s", class)
+		}
+	}
+	wantFailureCodes := []string{
+		"provider_rate_limited", "provider_timeout", "provider_network_error", "provider_server_error",
+		"provider_quota_exhausted", "provider_authentication_failed", "provider_permission_denied",
+		"provider_contract_rejected", "provider_response_invalid", "embedding_input_rejected",
+		"embedding_contract_mismatch", "unknown_embedding_failure",
+	}
+	if got := EmbeddingFailureCodes(); !slices.Equal(got, wantFailureCodes) {
+		t.Fatalf("EmbeddingFailureCodes = %#v, want %#v", got, wantFailureCodes)
+	}
+}
+
+func TestEmbeddingFailureContractValidatesClassCodePairs(t *testing.T) {
+	for _, test := range []struct {
+		class string
+		code  string
+		want  bool
+	}{
+		{"transient", "provider_timeout", true},
+		{"provider_action_required", "provider_quota_exhausted", true},
+		{"permanent", "embedding_input_rejected", true},
+		{"transient", "provider_quota_exhausted", false},
+		{"permanent", "provider_timeout", false},
+		{"unknown", "unknown_embedding_failure", false},
+	} {
+		if got := EmbeddingFailureContractValid(test.class, test.code); got != test.want {
+			t.Fatalf("EmbeddingFailureContractValid(%q, %q) = %t, want %t", test.class, test.code, got, test.want)
+		}
+	}
+	if !EmbeddingFailureCodeValid("provider_timeout") || EmbeddingFailureCodeValid("provider_broken") {
+		t.Fatal("EmbeddingFailureCodeValid accepted an invalid code")
+	}
 }
 
 func TestHypothesisStatusesAreCanonical(t *testing.T) {

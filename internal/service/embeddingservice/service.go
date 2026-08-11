@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -29,6 +29,7 @@ type EmbeddingWorkerDependencies struct {
 	Search         repository.SearchRepository
 	Provider       embedding.EmbeddingProviderInterface
 	Metrics        observability.DiscoverabilityMetrics
+	Logger         observability.LogProvider
 	TeamID         string
 	WorkerID       string
 	BatchSize      int
@@ -49,6 +50,7 @@ type embeddingWorkerService struct {
 	search         repository.SearchRepository
 	provider       embedding.EmbeddingProviderInterface
 	metrics        observability.DiscoverabilityMetrics
+	logger         observability.LogProvider
 	teamID         string
 	workerID       string
 	batchSize      int
@@ -80,6 +82,7 @@ func NewEmbeddingWorkerService(deps EmbeddingWorkerDependencies) EmbeddingWorker
 		search:         deps.Search,
 		provider:       deps.Provider,
 		metrics:        metrics,
+		logger:         deps.Logger,
 		teamID:         strings.TrimSpace(deps.TeamID),
 		workerID:       strings.TrimSpace(deps.WorkerID),
 		batchSize:      batchSize,
@@ -111,21 +114,24 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 		return result, nil
 	}
 	if !s.provider.IsAvailable() {
-		err := errors.New("embedding provider is unavailable")
-		s.failJobs(ctx, contract, jobs, &result, err, "provider_unavailable", false, 0)
+		err := &embedding.ProviderError{
+			Provider:     "configured embedding provider",
+			Message:      "embedding provider is unavailable",
+			FailureClass: string(domain.EmbeddingFailureTransient),
+			FailureCode:  string(domain.EmbeddingFailureProviderNetworkError),
+		}
+		s.failJobs(ctx, contract, jobs, &result, string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderNetworkError), false, 0)
 		return result, err
 	}
 	if err := s.validateProvider(contract); err != nil {
-		s.failJobs(ctx, contract, jobs, &result, err, "contract_mismatch", true, 0)
+		s.failJobs(ctx, contract, jobs, &result, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), true, 0)
 		return result, err
 	}
 	eligible := make([]repository.EmbeddingJob, 0, len(jobs))
 	texts := make([]string, 0, len(jobs))
 	for _, job := range jobs {
 		if job.EmbeddingContractID != contract.EmbeddingContractID || job.EmbeddingDimensions != contract.EmbeddingDimensions {
-			err := fmt.Errorf("embedding job contract mismatch: job contract %s dimensions %d, active contract %s dimensions %d",
-				job.EmbeddingContractID, job.EmbeddingDimensions, contract.EmbeddingContractID, contract.EmbeddingDimensions)
-			s.failJob(ctx, contract, job, &result, err, "contract_mismatch", true, 0)
+			s.failJob(ctx, contract, job, &result, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), true, 0, true)
 			continue
 		}
 		eligible = append(eligible, job)
@@ -138,25 +144,29 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationBackgroundEmbedding, len(eligible))
 	embeddings, model, err := s.provider.EmbedBatch(providerCtx, texts)
 	if err != nil {
-		code, terminal, retryAfter := classifyProviderFailure(err)
-		s.failJobs(ctx, contract, eligible, &result, err, code, terminal, retryAfter)
-		return result, err
+		if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+			return result, ctx.Err()
+		}
+		failureClass, code, terminal, retryAfter := classifyProviderFailure(err)
+		s.failJobs(ctx, contract, eligible, &result, failureClass, code, terminal, retryAfter)
+		return result, fmt.Errorf("embedding processing failed: %s", code)
 	}
 	if model != "" && model != contract.EmbeddingModel {
-		err := fmt.Errorf("embedding provider returned model %q, active contract requires %q", model, contract.EmbeddingModel)
-		s.failJobs(ctx, contract, eligible, &result, err, "contract_mismatch", true, 0)
+		err := fmt.Errorf("embedding processing failed: %s", domain.EmbeddingFailureContractMismatch)
+		s.failJobs(ctx, contract, eligible, &result, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), true, 0)
 		return result, err
 	}
 	if len(embeddings) != len(eligible) {
 		err := fmt.Errorf("embedding provider returned %d vectors for %d jobs", len(embeddings), len(eligible))
-		s.failJobs(ctx, contract, eligible, &result, err, "count_mismatch", true, 0)
+		s.failJobs(ctx, contract, eligible, &result, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderResponseInvalid), true, 0)
 		return result, err
 	}
 	var firstErr error
+	recoveredJobs := 0
 	for i, job := range eligible {
 		vector := embeddings[i]
 		if err := validateEmbeddingVector(vector, job.EmbeddingDimensions); err != nil {
-			s.failJob(ctx, contract, job, &result, err, "invalid_vector", true, 0)
+			s.failJob(ctx, contract, job, &result, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderResponseInvalid), true, 0, true)
 			firstErr = errors.Join(firstErr, err)
 			continue
 		}
@@ -170,6 +180,9 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 		switch {
 		case err == nil:
 			result.Completed++
+			if job.FirstFailedAt != nil {
+				recoveredJobs++
+			}
 		case errors.Is(err, repository.ErrSearchStaleVersion), errors.Is(err, repository.ErrSearchContractMismatch):
 			result.Stale++
 			observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, "stale")
@@ -179,6 +192,9 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 		default:
 			firstErr = errors.Join(firstErr, err)
 		}
+	}
+	if recoveredJobs > 0 {
+		logEmbeddingRecoveryCompleted(s.logger, s.teamID, "batch", recoveredJobs)
 	}
 	return result, firstErr
 }
@@ -214,13 +230,19 @@ func (s *embeddingWorkerService) failJobs(
 	contract *repository.ActiveSearchContract,
 	jobs []repository.EmbeddingJob,
 	result *EmbeddingWorkerResult,
-	err error,
+	failureClass string,
 	code string,
 	terminal bool,
 	retryAfter time.Duration,
 ) {
+	recorded := 0
 	for _, job := range jobs {
-		s.failJob(ctx, contract, job, result, err, code, terminal, retryAfter)
+		if s.failJob(ctx, contract, job, result, failureClass, code, terminal, retryAfter, false) {
+			recorded++
+		}
+	}
+	if recorded > 0 {
+		logEmbeddingFailureRecorded(s.logger, s.teamID, "mixed", failureClass, code, "batch", recorded)
 	}
 }
 
@@ -229,13 +251,19 @@ func (s *embeddingWorkerService) failJob(
 	contract *repository.ActiveSearchContract,
 	job repository.EmbeddingJob,
 	result *EmbeddingWorkerResult,
-	err error,
+	failureClass string,
 	code string,
 	terminal bool,
 	retryAfter time.Duration,
-) {
+	emitLog bool,
+) bool {
 	if contract != nil {
 		observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, code)
+		for _, legacy := range legacyEmbeddingMetricCodes(code) {
+			if legacy != code {
+				observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, legacy)
+			}
+		}
 	}
 	failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.failureTimeout)
 	defer cancel()
@@ -244,7 +272,9 @@ func (s *embeddingWorkerService) failJob(
 		EmbeddingJobID:   job.EmbeddingJobID,
 		WorkerID:         s.workerID,
 		ExpectedAttempts: job.Attempts,
-		Error:            err.Error(),
+		Error:            domain.EmbeddingFailureMessage(code),
+		FailureClass:     failureClass,
+		FailureCode:      code,
 		RetryAfter:       retryAfter,
 		Terminal:         terminal,
 	})
@@ -253,13 +283,59 @@ func (s *embeddingWorkerService) failJob(
 		result.Stale++
 	case failErr == nil && failed != nil && failed.Terminal:
 		result.Failed++
-	case failErr == nil:
+		if emitLog {
+			logEmbeddingFailureRecorded(s.logger, job.TeamID, job.SourceKind, failureClass, code, "single", 1)
+		}
+		return true
+	case failErr == nil && failed != nil:
 		result.Retried++
+		if emitLog {
+			logEmbeddingFailureRecorded(s.logger, job.TeamID, job.SourceKind, failureClass, code, "single", 1)
+		}
+		return true
+	case failErr == nil:
+		result.Failed++
 	case errors.Is(failErr, repository.ErrEmbeddingLeaseLost):
 		result.LeaseLost++
 	default:
 		result.Failed++
 	}
+	return false
+}
+
+func logEmbeddingFailureRecorded(
+	logger observability.LogProvider,
+	teamID, sourceKind, failureClass, failureCode, aggregation string,
+	jobCount int,
+) {
+	if logger == nil || jobCount <= 0 {
+		return
+	}
+	logger.Warn("embedding_failure_recorded",
+		observability.String("team_id", teamID),
+		observability.String("source_kind", sourceKind),
+		observability.String("failure_class", failureClass),
+		observability.String("failure_code", failureCode),
+		observability.String("aggregation", aggregation),
+		observability.Int("job_count", jobCount),
+	)
+}
+
+func logEmbeddingRecoveryCompleted(
+	logger observability.LogProvider,
+	teamID, aggregation string,
+	jobCount int,
+	extra ...observability.LogAttr,
+) {
+	if logger == nil || jobCount <= 0 {
+		return
+	}
+	attrs := []observability.LogAttr{
+		observability.String("team_id", teamID),
+		observability.String("aggregation", aggregation),
+		observability.Int("job_count", jobCount),
+	}
+	logger.Info("embedding_recovery_completed", append(attrs, extra...)...)
 }
 
 func validateEmbeddingVector(vector []float32, dimensions int) error {
@@ -275,33 +351,32 @@ func validateEmbeddingVector(vector []float32, dimensions int) error {
 	return nil
 }
 
-func classifyProviderFailure(err error) (string, bool, time.Duration) {
+func classifyProviderFailure(err error) (string, string, bool, time.Duration) {
 	if err == nil {
-		return "ok", false, 0
+		return "", "ok", false, 0
 	}
-	if errors.Is(err, context.Canceled) {
-		return "cancelled", false, 0
+	metadata := embedding.ClassifyFailure(err)
+	terminal := metadata.Class == string(domain.EmbeddingFailureProviderAction) || metadata.Class == string(domain.EmbeddingFailurePermanent)
+	return metadata.Class, metadata.Code, terminal, metadata.RetryAfter
+}
+
+func legacyEmbeddingMetricCodes(code string) []string {
+	switch code {
+	case string(domain.EmbeddingFailureProviderTimeout):
+		return []string{"timeout"}
+	case string(domain.EmbeddingFailureProviderRateLimited):
+		return []string{"rate_limited"}
+	case string(domain.EmbeddingFailureProviderNetworkError):
+		return []string{"provider_unavailable"}
+	case string(domain.EmbeddingFailureProviderResponseInvalid):
+		return []string{"invalid_vector"}
+	case string(domain.EmbeddingFailureContractMismatch):
+		return []string{"contract_mismatch"}
+	case string(domain.EmbeddingFailureProviderContractRejected):
+		return []string{"provider_permanent"}
+	default:
+		return nil
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, embedding.ErrEmbeddingTimeout) {
-		return "timeout", false, 0
-	}
-	if errors.Is(err, embedding.ErrEmbeddingRateLimit) {
-		return "rate_limited", false, retryAfterFromError(err)
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return "timeout", false, 0
-	}
-	var httpErr *embedding.ProviderHTTPError
-	if errors.As(err, &httpErr) {
-		switch {
-		case httpErr.Status == 429:
-			return "rate_limited", false, retryAfterFromError(err)
-		case httpErr.Status >= 400 && httpErr.Status < 500:
-			return "provider_permanent", true, 0
-		}
-	}
-	return "provider_error", false, 0
 }
 
 func retryAfterFromError(err error) time.Duration {

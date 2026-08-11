@@ -3,6 +3,7 @@ package embedding
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +17,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type truncatedResponseReader struct {
+	done bool
+}
+
+func (r *truncatedResponseReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, io.ErrUnexpectedEOF
+	}
+	r.done = true
+	return copy(p, `{"data":[`), io.ErrUnexpectedEOF
+}
+
+func (r *truncatedResponseReader) Close() error { return nil }
 
 func TestOpenAIProvider_Embed_SendsBearerAuth(t *testing.T) {
 	var gotAuth string
@@ -246,7 +261,8 @@ func TestOpenAIProvider_Non200Response(t *testing.T) {
 	var httpErr *ProviderHTTPError
 	require.ErrorAs(t, err, &httpErr)
 	assert.Equal(t, 401, httpErr.Status)
-	assert.Contains(t, httpErr.Message, "Invalid API key")
+	assert.Equal(t, "provider returned status 401", httpErr.Message)
+	assert.NotContains(t, err.Error(), "Invalid API key")
 }
 
 func TestOpenAIProvider_NonJSONServerErrorIsHTTPError(t *testing.T) {
@@ -271,9 +287,95 @@ func TestOpenAIProvider_NonJSONServerErrorIsHTTPError(t *testing.T) {
 	var httpErr *ProviderHTTPError
 	require.ErrorAs(t, err, &httpErr)
 	assert.Equal(t, http.StatusBadGateway, httpErr.Status)
-	assert.Contains(t, httpErr.Message, "non-JSON response")
-	assert.Contains(t, httpErr.Message, "upstream unavailable")
+	assert.Equal(t, nonJSONProviderErrorMessage, httpErr.Message)
+	assert.NotContains(t, err.Error(), "upstream unavailable")
 	assert.Equal(t, 2500*time.Millisecond, httpErr.RetryAfter)
+}
+
+func TestOpenAIProvider_ClassifiesTruncatedResponseAsTransientNetworkFailure(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       &truncatedResponseReader{},
+			Header:     make(http.Header),
+		}, nil
+	})}
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: "http://embedding.test", AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 2,
+	}, client)
+
+	_, _, err := p.Embed(context.Background(), "truncated")
+	require.Error(t, err)
+	metadata := ClassifyFailure(err)
+	assert.Equal(t, "transient", metadata.Class)
+	assert.Equal(t, "provider_network_error", metadata.Code)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestOpenAIProviderErrorHelpersBoundProviderMetadata(t *testing.T) {
+	if got := providerErrorCode(nil); got != "" {
+		t.Fatalf("providerErrorCode(nil) = %q", got)
+	}
+	if got := providerErrorType(nil); got != "" {
+		t.Fatalf("providerErrorType(nil) = %q", got)
+	}
+	value := openAIProviderError{Code: " quota ", Type: "type"}
+	if got := providerErrorCode(&value); got != "quota" {
+		t.Fatalf("providerErrorCode = %q", got)
+	}
+	if got := providerErrorType(&value); got != "type" {
+		t.Fatalf("providerErrorType = %q", got)
+	}
+	if got := retryAfterDuration(""); got != 0 {
+		t.Fatalf("retryAfterDuration(empty) = %s", got)
+	}
+	if got := retryAfterDuration("2.5"); got != 2500*time.Millisecond {
+		t.Fatalf("retryAfterDuration(seconds) = %s", got)
+	}
+	if got := retryAfterDuration("invalid"); got != 0 {
+		t.Fatalf("retryAfterDuration(invalid) = %s", got)
+	}
+}
+
+func TestOpenAIProviderRejectsDimensionMismatchAfterFirstEmbedding(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"embedding":[1,0]},{"embedding":[1]}],"model":"test-model"}`))
+	}))
+	defer srv.Close()
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "test-model", AIEmbeddingDimensions: 2,
+	}, srv.Client())
+
+	_, _, err := p.EmbedBatch(context.Background(), []string{"first", "second"})
+	require.Error(t, err)
+	metadata := ClassifyFailure(err)
+	assert.Equal(t, "provider_action_required", metadata.Class)
+	assert.Equal(t, "provider_response_invalid", metadata.Code)
+}
+
+func TestOpenAIProviderParsesAllowlistedFailureCodeAndTypeWithoutMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"billing secret detail","code":"insufficient_quota","type":"insufficient_quota","unknown":"discard"}}`))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 2,
+	}, srv.Client())
+	_, _, err := p.Embed(context.Background(), "test")
+	var httpErr *ProviderHTTPError
+	require.ErrorAs(t, err, &httpErr)
+	assert.Equal(t, "insufficient_quota", httpErr.Code)
+	assert.Equal(t, "insufficient_quota", httpErr.Type)
+	assert.NotContains(t, err.Error(), "billing secret detail")
+	metadata := ClassifyFailure(err)
+	assert.Equal(t, "provider_action_required", metadata.Class)
+	assert.Equal(t, "provider_quota_exhausted", metadata.Code)
 }
 
 func TestOpenAIProvider_WrongDimensions(t *testing.T) {
@@ -557,7 +659,8 @@ func TestOpenAIProvider_EmbedBatchWaitHonorsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, _, err := provider.EmbedBatch(ctx, []string{"second"})
-	require.ErrorIs(t, err, ErrEmbeddingTimeout)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.NotErrorIs(t, err, ErrEmbeddingTimeout)
 
 	releaseOnce.Do(func() { close(release) })
 	require.NoError(t, <-firstDone)

@@ -42,6 +42,7 @@ func (r *SearchRepositoryImpl) RecallEvidence(ctx context.Context, input RecallE
 	overfetch := recallOverfetchLimit(input.Limit)
 	acc := map[string]*recallCandidate{}
 	var textHits, vectorHits, expansionHits []SearchHit
+	searchState := string(domain.SearchProjectionCurrent)
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
 		if input.Query != "" {
@@ -62,7 +63,8 @@ func (r *SearchRepositoryImpl) RecallEvidence(ctx context.Context, input RecallE
 				return err
 			}
 		}
-		return nil
+		searchState, err = recallEvidenceSearchState(ctx, tx, input, contract)
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("recall: search evidence: %w", err)
@@ -75,7 +77,7 @@ func (r *SearchRepositoryImpl) RecallEvidence(ctx context.Context, input RecallE
 	if len(candidates) == 0 {
 		return &RecallEvidenceResult{
 			TeamID:      input.TeamID,
-			SearchState: string(domain.SearchProjectionCurrent),
+			SearchState: searchState,
 			Results:     []RecallEvidenceHit{},
 		}, nil
 	}
@@ -96,7 +98,6 @@ func (r *SearchRepositoryImpl) RecallEvidence(ctx context.Context, input RecallE
 		return nil, fmt.Errorf("recall: hydrate evidence: %w", err)
 	}
 	results := make([]RecallEvidenceHit, 0, input.Limit)
-	searchState := string(domain.SearchProjectionCurrent)
 	for _, candidate := range candidates {
 		hit, ok := hydrated[candidate.EvidenceID]
 		if !ok {
@@ -104,8 +105,8 @@ func (r *SearchRepositoryImpl) RecallEvidence(ctx context.Context, input RecallE
 		}
 		hit.Score = candidate.Score
 		hit.SearchState = recallCombinedSearchState(candidate.SearchState, hit.SearchState)
-		if hit.SearchState == string(domain.SearchProjectionPending) {
-			searchState = string(domain.SearchProjectionPending)
+		if hit.SearchState == string(domain.SearchProjectionPending) || hit.SearchState == string(domain.SearchProjectionFailed) {
+			searchState = recallCombinedSearchState(searchState, hit.SearchState)
 		}
 		hit.Rank = len(results) + 1
 		results = append(results, hit)
@@ -128,6 +129,59 @@ func (r *SearchRepositoryImpl) RecallEvidence(ctx context.Context, input RecallE
 		Results:     results,
 		Conflicts:   conflicts,
 	}, nil
+}
+
+func recallEvidenceSearchState(
+	ctx context.Context,
+	tx *gorm.DB,
+	input RecallEvidenceInput,
+	contract *ActiveSearchContract,
+) (string, error) {
+	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
+	var state string
+	err := tx.WithContext(ctx).Raw(`
+		WITH eligible AS NOT MATERIALIZED (
+			SELECT document.search_state
+			FROM search_documents AS document
+			JOIN evidence_fragments AS fragment
+			  ON fragment.team_id = document.team_id
+			 AND fragment.fragment_id = document.source_id
+			LEFT JOIN evidence_quarantines AS quarantine
+			  ON quarantine.team_id = fragment.team_id
+			 AND quarantine.fragment_id = fragment.fragment_id
+			 AND quarantine.status = 'active'
+			LEFT JOIN evidence_sources AS source
+			  ON source.team_id = fragment.team_id
+			 AND source.source_id = fragment.source_id
+			WHERE document.team_id = ?::uuid
+			  AND document.source_kind = 'evidence'
+			  AND document.embedding_contract_id = ?::uuid
+			  AND (document.search_state IN ('pending', 'current', 'failed')
+			       OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
+			  AND quarantine.quarantine_id IS NULL
+			  AND NOT EXISTS (
+			      SELECT 1
+			      FROM evidence_lifecycle_events AS lifecycle
+			      WHERE lifecycle.team_id = fragment.team_id
+			        AND lifecycle.target_fragment_id = fragment.fragment_id
+			        AND (?::timestamptz IS NULL OR lifecycle.created_at <= ?::timestamptz)
+			  )
+			  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
+			  AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
+		)
+		SELECT CASE
+		           WHEN EXISTS (SELECT 1 FROM eligible WHERE search_state = 'failed') THEN 'failed'
+		           WHEN EXISTS (SELECT 1 FROM eligible WHERE search_state = 'pending') THEN 'pending'
+		           ELSE 'current'
+		       END
+	`, input.TeamID, contract.EmbeddingContractID, eventAt, eventAt, eventAt, eventAt, eventAt).Scan(&state).Error
+	if err != nil {
+		return "", err
+	}
+	if state == "" {
+		state = string(domain.SearchProjectionCurrent)
+	}
+	return state, nil
 }
 
 type recallCandidate struct {
@@ -154,7 +208,7 @@ func searchRecallFullText(
 		WHERE team_id = ?::uuid
 		  AND source_kind = 'evidence'
 		  AND embedding_contract_id = ?::uuid
-		  AND (search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND search_state IN ('not_required', 'failed')))
+		  AND (search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND search_state = 'not_required'))
 		  AND search_tsv @@ plainto_tsquery('simple', ?)
 		ORDER BY text_rank DESC, updated_at DESC, search_document_id ASC
 		LIMIT ?
@@ -410,7 +464,7 @@ func searchRecallEntityExpansion(
 			 AND document.source_kind = 'evidence'
 			 AND document.source_id = support.fragment_id
 			 AND document.embedding_contract_id = ?::uuid
-			 AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
+			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 			LEFT JOIN evidence_quarantines AS quarantine
 			  ON quarantine.team_id = support.team_id
 			 AND quarantine.fragment_id = support.fragment_id
@@ -523,7 +577,7 @@ func hydrateRecallEvidence(
 			 AND document.source_kind = 'evidence'
 			 AND document.source_id = fragment.fragment_id
 			 AND document.embedding_contract_id = ?::uuid
-			 AND (document.search_state IN ('pending', 'current') OR (?::timestamptz IS NOT NULL AND document.search_state IN ('not_required', 'failed')))
+			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 			LEFT JOIN evidence_quarantines AS quarantine
 			  ON quarantine.team_id = fragment.team_id
 			 AND quarantine.fragment_id = fragment.fragment_id
@@ -618,6 +672,7 @@ func hydrateRecallEvidence(
 			           ARRAY[]::text[]
 		       ) AS relationship_ids,
 		       CASE
+		           WHEN bool_or(search_state = 'failed') THEN 'failed'
 		           WHEN bool_or(search_state = 'pending') THEN 'pending'
 		           ELSE 'current'
 		       END AS search_state
@@ -819,6 +874,9 @@ func recallStringSet(values []string) map[string]struct{} {
 }
 
 func recallCombinedSearchState(left, right string) string {
+	if left == string(domain.SearchProjectionFailed) || right == string(domain.SearchProjectionFailed) {
+		return string(domain.SearchProjectionFailed)
+	}
 	if left == string(domain.SearchProjectionPending) || right == string(domain.SearchProjectionPending) {
 		return string(domain.SearchProjectionPending)
 	}

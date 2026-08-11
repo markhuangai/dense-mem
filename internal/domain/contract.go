@@ -503,6 +503,130 @@ func EmbeddingJobStatuses() []string {
 	}
 }
 
+// EmbeddingFailureClass is the server-owned recovery policy for a failed
+// provider or input operation. Unknown failures are intentionally classified
+// as permanent by the embedding adapter.
+type EmbeddingFailureClass string
+
+const (
+	EmbeddingFailureTransient      EmbeddingFailureClass = "transient"
+	EmbeddingFailureProviderAction EmbeddingFailureClass = "provider_action_required"
+	EmbeddingFailurePermanent      EmbeddingFailureClass = "permanent"
+)
+
+type EmbeddingFailureCode string
+
+const (
+	EmbeddingFailureProviderRateLimited      EmbeddingFailureCode = "provider_rate_limited"
+	EmbeddingFailureProviderTimeout          EmbeddingFailureCode = "provider_timeout"
+	EmbeddingFailureProviderNetworkError     EmbeddingFailureCode = "provider_network_error"
+	EmbeddingFailureProviderServerError      EmbeddingFailureCode = "provider_server_error"
+	EmbeddingFailureProviderQuotaExhausted   EmbeddingFailureCode = "provider_quota_exhausted"
+	EmbeddingFailureProviderAuthentication   EmbeddingFailureCode = "provider_authentication_failed"
+	EmbeddingFailureProviderPermissionDenied EmbeddingFailureCode = "provider_permission_denied"
+	EmbeddingFailureProviderContractRejected EmbeddingFailureCode = "provider_contract_rejected"
+	EmbeddingFailureProviderResponseInvalid  EmbeddingFailureCode = "provider_response_invalid"
+	EmbeddingFailureInputRejected            EmbeddingFailureCode = "embedding_input_rejected"
+	EmbeddingFailureContractMismatch         EmbeddingFailureCode = "embedding_contract_mismatch"
+	EmbeddingFailureUnknown                  EmbeddingFailureCode = "unknown_embedding_failure"
+)
+
+func EmbeddingFailureClasses() []string {
+	return []string{
+		string(EmbeddingFailureTransient),
+		string(EmbeddingFailureProviderAction),
+		string(EmbeddingFailurePermanent),
+	}
+}
+
+func EmbeddingFailureCodes() []string {
+	return []string{
+		string(EmbeddingFailureProviderRateLimited),
+		string(EmbeddingFailureProviderTimeout),
+		string(EmbeddingFailureProviderNetworkError),
+		string(EmbeddingFailureProviderServerError),
+		string(EmbeddingFailureProviderQuotaExhausted),
+		string(EmbeddingFailureProviderAuthentication),
+		string(EmbeddingFailureProviderPermissionDenied),
+		string(EmbeddingFailureProviderContractRejected),
+		string(EmbeddingFailureProviderResponseInvalid),
+		string(EmbeddingFailureInputRejected),
+		string(EmbeddingFailureContractMismatch),
+		string(EmbeddingFailureUnknown),
+	}
+}
+
+func EmbeddingFailureCodeValid(code string) bool {
+	for _, candidate := range EmbeddingFailureCodes() {
+		if code == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func EmbeddingFailureContractValid(class, code string) bool {
+	switch EmbeddingFailureClass(class) {
+	case EmbeddingFailureTransient:
+		return code == string(EmbeddingFailureProviderRateLimited) ||
+			code == string(EmbeddingFailureProviderTimeout) ||
+			code == string(EmbeddingFailureProviderNetworkError) ||
+			code == string(EmbeddingFailureProviderServerError)
+	case EmbeddingFailureProviderAction:
+		return code == string(EmbeddingFailureProviderQuotaExhausted) ||
+			code == string(EmbeddingFailureProviderAuthentication) ||
+			code == string(EmbeddingFailureProviderPermissionDenied) ||
+			code == string(EmbeddingFailureProviderContractRejected) ||
+			code == string(EmbeddingFailureProviderResponseInvalid)
+	case EmbeddingFailurePermanent:
+		return code == string(EmbeddingFailureInputRejected) ||
+			code == string(EmbeddingFailureContractMismatch) ||
+			code == string(EmbeddingFailureUnknown)
+	default:
+		return false
+	}
+}
+
+func EmbeddingFailureMessage(code string) string {
+	switch code {
+	case string(EmbeddingFailureProviderRateLimited):
+		return "embedding provider rate limited"
+	case string(EmbeddingFailureProviderTimeout):
+		return "embedding provider timed out"
+	case string(EmbeddingFailureProviderNetworkError):
+		return "embedding provider network failure"
+	case string(EmbeddingFailureProviderServerError):
+		return "embedding provider server failure"
+	case string(EmbeddingFailureProviderQuotaExhausted):
+		return "embedding provider quota exhausted"
+	case string(EmbeddingFailureProviderAuthentication):
+		return "embedding provider authentication failed"
+	case string(EmbeddingFailureProviderPermissionDenied):
+		return "embedding provider permission denied"
+	case string(EmbeddingFailureProviderContractRejected):
+		return "embedding provider contract rejected"
+	case string(EmbeddingFailureProviderResponseInvalid):
+		return "embedding provider response invalid"
+	case string(EmbeddingFailureInputRejected):
+		return "embedding input rejected"
+	case string(EmbeddingFailureContractMismatch):
+		return "embedding contract mismatch"
+	default:
+		return "embedding processing failed"
+	}
+}
+
+type EmbeddingReconciliationRunStatus string
+
+const (
+	EmbeddingReconciliationReserved  EmbeddingReconciliationRunStatus = "reserved"
+	EmbeddingReconciliationRunning   EmbeddingReconciliationRunStatus = "running"
+	EmbeddingReconciliationCompleted EmbeddingReconciliationRunStatus = "completed"
+	EmbeddingReconciliationDeferred  EmbeddingReconciliationRunStatus = "deferred"
+	EmbeddingReconciliationFailed    EmbeddingReconciliationRunStatus = "failed"
+	EmbeddingReconciliationAmbiguous EmbeddingReconciliationRunStatus = "ambiguous"
+)
+
 func RelationshipConflictStatuses() []string {
 	return []string{
 		string(RelationshipConflictOpen),
