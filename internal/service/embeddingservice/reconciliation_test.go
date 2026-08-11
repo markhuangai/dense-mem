@@ -168,6 +168,7 @@ type reconciliationMetricsStub struct {
 	observability.DiscoverabilityMetrics
 	runs             []string
 	canaries         []string
+	jobCounts        []int
 	durationOutcomes []string
 	durations        []float64
 }
@@ -178,7 +179,8 @@ func (m *reconciliationMetricsStub) ObserveEmbeddingReconciliationRun(outcome st
 func (m *reconciliationMetricsStub) ObserveEmbeddingReconciliationCanary(outcome string) {
 	m.canaries = append(m.canaries, outcome)
 }
-func (*reconciliationMetricsStub) ObserveEmbeddingReconciliationJobs(string, string, string, string, int) {
+func (m *reconciliationMetricsStub) ObserveEmbeddingReconciliationJobs(_, _, _, _ string, count int) {
+	m.jobCounts = append(m.jobCounts, count)
 }
 func (m *reconciliationMetricsStub) ObserveEmbeddingReconciliationDuration(seconds float64, outcome string) {
 	m.durations = append(m.durations, seconds)
@@ -292,8 +294,10 @@ func TestEmbeddingReconciliationResumesReclaimedSuccessfulCanary(t *testing.T) {
 		},
 	}
 	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
+	metrics := &reconciliationMetricsStub{}
 	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
 		Search: search, Reconciliation: reconciliation, Provider: provider,
+		Metrics:   metrics,
 		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
 		WorkerID:  "worker-2", Now: func() time.Time { return attemptedAt.Add(time.Minute) },
 	})
@@ -311,6 +315,8 @@ func TestEmbeddingReconciliationResumesReclaimedSuccessfulCanary(t *testing.T) {
 	assert.Equal(t, "succeeded", reconciliation.completed.CanaryOutcome)
 	assert.EqualValues(t, 5, reconciliation.completed.RequeuedCount)
 	assert.EqualValues(t, 1, reconciliation.completed.RecoveredCount)
+	assert.Empty(t, metrics.canaries, "a persisted canary outcome must not be counted again")
+	assert.Equal(t, []int{3}, metrics.jobCounts, "only newly requeued jobs must be counted")
 }
 
 func TestEmbeddingReconciliationPreservesReclaimedFailedCanary(t *testing.T) {

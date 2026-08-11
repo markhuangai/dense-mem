@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -605,7 +606,7 @@ func TestEmbeddingReconciliationSuccessfulCanaryLeaseTakeoverResumesBacklog(t *t
 	require.NoError(t, repo.CompleteEmbeddingReconciliationRun(ctx, CompleteEmbeddingReconciliationRunInput{
 		RunID: second.RunID, WorkerID: second.WorkerID, LeaseToken: second.LeaseToken,
 		Status: string(domain.EmbeddingReconciliationCompleted), CanaryOutcome: "succeeded",
-		RequeuedCount: second.RequeuedCount + requeued, RecoveredCount: second.RecoveredCount, CompletedAt: time.Now().UTC(),
+		RequeuedCount: second.RequeuedCount + requeued, RecoveredCount: second.RecoveredCount,
 	}))
 
 	var canaryStatus, backlogStatus, secondBacklogStatus, runStatus string
@@ -666,7 +667,7 @@ func TestEmbeddingReconciliationCompletionRejectsExpiredLease(t *testing.T) {
 	}))
 	require.Error(t, repo.CompleteEmbeddingReconciliationRun(ctx, CompleteEmbeddingReconciliationRunInput{
 		RunID: run.RunID, WorkerID: run.WorkerID, LeaseToken: run.LeaseToken,
-		Status: string(domain.EmbeddingReconciliationCompleted), CanaryOutcome: "succeeded", CompletedAt: time.Now(),
+		Status: string(domain.EmbeddingReconciliationCompleted), CanaryOutcome: "succeeded",
 	}))
 	var status, canaryOutcome string
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
@@ -678,6 +679,72 @@ func TestEmbeddingReconciliationCompletionRejectsExpiredLease(t *testing.T) {
 	}))
 	require.Equal(t, string(domain.EmbeddingReconciliationRunning), status)
 	require.Empty(t, canaryOutcome)
+}
+
+func TestSearchConvergenceUsesChronologicallyLatestReconciliationRun(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "reconciliation-latest-run", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	olderRunID := uuid.NewString()
+	newerRunID := uuid.NewString()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO embedding_reconciliation_runs (
+				reconciliation_run_id, embedding_contract_id, embedding_dimensions,
+				local_run_date, status, created_at, updated_at
+			) VALUES
+				(?::uuid, ?::uuid, 3, DATE '2026-08-11', 'completed',
+				 clock_timestamp() - interval '2 hours', clock_timestamp() - interval '2 hours'),
+				(?::uuid, ?::uuid, 3, DATE '2026-08-10', 'completed',
+				 clock_timestamp() - interval '1 hour', clock_timestamp() - interval '1 hour')
+		`, olderRunID, contract.EmbeddingContractID, newerRunID, contract.EmbeddingContractID).Error
+	}))
+
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
+	require.NoError(t, err)
+	require.NotNil(t, convergence.LatestRun)
+	require.Equal(t, newerRunID, convergence.LatestRun.RunID)
+}
+
+func TestCompleteEmbeddingReconciliationRunUsesDatabaseClock(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "reconciliation-completion-clock", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	runID := uuid.NewString()
+	leaseToken := uuid.NewString()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO embedding_reconciliation_runs (
+				reconciliation_run_id, embedding_contract_id, embedding_dimensions,
+				local_run_date, status, worker_id, lease_token, lease_until, started_at
+			) VALUES (
+				?::uuid, ?::uuid, 3, DATE '2026-08-10', 'running', ?, ?::uuid,
+				clock_timestamp() + interval '1 minute', clock_timestamp()
+			)
+		`, runID, contract.EmbeddingContractID, "completion-clock-worker", leaseToken).Error
+	}))
+	require.NoError(t, repo.CompleteEmbeddingReconciliationRun(ctx, CompleteEmbeddingReconciliationRunInput{
+		RunID: runID, WorkerID: "completion-clock-worker", LeaseToken: leaseToken,
+		Status: string(domain.EmbeddingReconciliationCompleted),
+	}))
+
+	var startedAt, completedAt time.Time
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT started_at, completed_at
+			FROM embedding_reconciliation_runs
+			WHERE reconciliation_run_id = ?::uuid
+		`, runID).Row().Scan(&startedAt, &completedAt)
+	}))
+	require.False(t, completedAt.Before(startedAt))
 }
 
 func failEmbeddingDocumentForReconciliationTest(

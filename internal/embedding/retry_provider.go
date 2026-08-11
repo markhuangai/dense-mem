@@ -113,7 +113,7 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 
 		// Check if context was cancelled or deadline exceeded
 		if err := ctx.Err(); err != nil {
-			return nil, "", err
+			return nil, "", p.retryContextError(ctx, lastErr)
 		}
 
 		// Don't sleep after the last attempt
@@ -121,7 +121,7 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 			delay := p.retryDelay(attempt, err)
 			select {
 			case <-ctx.Done():
-				return nil, "", ctx.Err()
+				return nil, "", p.retryContextError(ctx, lastErr)
 			case <-time.After(delay):
 				continue
 			}
@@ -162,7 +162,7 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 
 		// Check if context was cancelled or deadline exceeded
 		if err := ctx.Err(); err != nil {
-			return nil, "", err
+			return nil, "", p.retryContextError(ctx, lastErr)
 		}
 
 		// Don't sleep after the last attempt
@@ -170,7 +170,7 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 			delay := p.retryDelay(attempt, err)
 			select {
 			case <-ctx.Done():
-				return nil, "", ctx.Err()
+				return nil, "", p.retryContextError(ctx, lastErr)
 			case <-time.After(delay):
 				continue
 			}
@@ -181,6 +181,13 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 
 	// Sanitize the error before returning
 	return nil, "", SanitizeError(lastErr, p.apiKey)
+}
+
+func (p *RetryEmbeddingProvider) retryContextError(ctx context.Context, lastErr error) error {
+	if err := ctx.Err(); errors.Is(err, context.Canceled) {
+		return err
+	}
+	return SanitizeError(lastErr, p.apiKey)
 }
 
 // classifyEmbeddingError maps a provider error to a coarse-grained tag used

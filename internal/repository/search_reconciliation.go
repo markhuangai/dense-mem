@@ -518,12 +518,12 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingReconciliationRun(ctx context.Co
 			UPDATE embedding_reconciliation_runs
 			SET status = ?, canary_outcome = ?, canary_failure_class = ?, canary_failure_code = ?,
 			    requeued_count = ?, recovered_count = ?, last_error = ?,
-			    completed_at = ?, lease_until = NULL, updated_at = now()
+			    completed_at = clock_timestamp(), lease_until = NULL, updated_at = now()
 			WHERE reconciliation_run_id = ?::uuid
 			  AND status = 'running' AND worker_id = ? AND lease_token = ?::uuid
 			  AND lease_until > clock_timestamp()
 		`, input.Status, input.CanaryOutcome, input.FailureClass, input.FailureCode,
-			input.RequeuedCount, input.RecoveredCount, input.LastError, input.CompletedAt,
+			input.RequeuedCount, input.RecoveredCount, input.LastError,
 			input.RunID, input.WorkerID, input.LeaseToken)
 		if result.Error != nil {
 			return result.Error
@@ -550,7 +550,7 @@ func (r *SearchRepositoryImpl) latestEmbeddingReconciliationRun(ctx context.Cont
 			       started_at, completed_at, updated_at
 			FROM embedding_reconciliation_runs
 			WHERE embedding_contract_id = ?::uuid AND embedding_dimensions = ?
-			ORDER BY local_run_date DESC, created_at DESC LIMIT 1
+			ORDER BY created_at DESC, reconciliation_run_id DESC LIMIT 1
 		`, contractID, dimensions).Row().Scan(
 			&run.RunID, &run.EmbeddingContractID, &run.EmbeddingDimensions,
 			&localDate, &run.Status, &run.CandidateCutoff, &run.WorkerID,
@@ -834,8 +834,8 @@ func validateCompleteEmbeddingReconciliationRunInput(input CompleteEmbeddingReco
 			return fmt.Errorf("%s is required: %w", name, err)
 		}
 	}
-	if input.WorkerID == "" || input.Status == "" || input.CompletedAt.IsZero() {
-		return errors.New("worker_id, status, and completed_at are required")
+	if input.WorkerID == "" || input.Status == "" {
+		return errors.New("worker_id and status are required")
 	}
 	return nil
 }

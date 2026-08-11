@@ -202,6 +202,38 @@ func TestRetryProviderCancellationDuringDelayDoesNotStartAnotherCall(t *testing.
 	}
 }
 
+func TestRetryProviderDeadlineDuringDelayPreservesProviderFailure(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		t.Run(map[bool]string{false: "single", true: "batch"}[batch], func(t *testing.T) {
+			inner := &MockEmbeddingProvider{
+				EmbedFunc: func(context.Context, string) ([]float32, string, error) {
+					return nil, "", &ProviderHTTPError{Status: 429}
+				},
+				EmbedBatchFunc: func(context.Context, []string) ([][]float32, string, error) {
+					return nil, "", &ProviderHTTPError{Status: 429}
+				},
+			}
+			provider := NewRetryEmbeddingProviderWithKeyAndOptions(inner, newTestLogger(), "", RetryEmbeddingOptions{
+				BaseDelay: time.Second,
+				MaxDelay:  time.Second,
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			defer cancel()
+			var err error
+			if batch {
+				_, _, err = provider.EmbedBatch(ctx, []string{"x"})
+			} else {
+				_, _, err = provider.Embed(ctx, "x")
+			}
+
+			var providerErr *ProviderHTTPError
+			require.ErrorAs(t, err, &providerErr)
+			assert.Equal(t, 429, providerErr.Status)
+			assert.NotErrorIs(t, err, context.DeadlineExceeded)
+		})
+	}
+}
+
 func TestRetryProviderCapsProviderRetryHintsAtPolicyMaximum(t *testing.T) {
 	provider := NewRetryEmbeddingProvider(&MockEmbeddingProvider{}, newTestLogger())
 	assert.Equal(t, maxProviderRetryAfter, provider.retryDelay(0, &ProviderHTTPError{Status: 429, RetryAfter: time.Hour}))

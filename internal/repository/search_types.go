@@ -319,7 +319,6 @@ type CompleteEmbeddingReconciliationRunInput struct {
 	RequeuedCount  int64
 	RecoveredCount int64
 	LastError      string
-	CompletedAt    time.Time
 }
 
 type EmbeddingQueueStatsInput struct {
