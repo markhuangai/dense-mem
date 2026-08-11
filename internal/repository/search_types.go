@@ -279,13 +279,14 @@ type MarkEmbeddingReconciliationCanaryAttemptInput struct {
 }
 
 type CompleteEmbeddingReconciliationCanaryInput struct {
-	RunID        string
-	CanaryJobID  string
-	WorkerID     string
-	LeaseToken   string
-	Succeeded    bool
-	FailureClass string
-	FailureCode  string
+	RunID          string
+	CanaryJobID    string
+	WorkerID       string
+	LeaseToken     string
+	Succeeded      bool
+	RecoveredCount int64
+	FailureClass   string
+	FailureCode    string
 }
 
 type ResetEmbeddingReconciliationCanaryInput struct {

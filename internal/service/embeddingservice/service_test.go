@@ -364,6 +364,28 @@ func TestEmbeddingWorkerClassifiesProviderFailures(t *testing.T) {
 	}
 }
 
+func TestEmbeddingWorkerDoesNotRecordShutdownCancellationAsProviderFailure(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-a", 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	provider := &embeddingProviderStub{
+		available:    true,
+		model:        "test-model",
+		dims:         3,
+		err:          context.Canceled,
+		onEmbedBatch: cancel,
+	}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search, Provider: provider, TeamID: "team-a", WorkerID: "worker-a",
+	})
+
+	result, err := worker.ProcessNextBatch(ctx)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, result.Claimed)
+	assert.Empty(t, search.failInputs)
+}
+
 func TestEmbeddingWorkerQuotaFailureDoesNotSpendInlineRetryBudget(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-quota", 20)}
@@ -681,6 +703,7 @@ type embeddingProviderStub struct {
 	err          error
 	gotTexts     []string
 	observeUsage func(context.Context, int)
+	onEmbedBatch func()
 }
 
 func (p *embeddingProviderStub) Embed(context.Context, string) ([]float32, string, error) {
@@ -691,6 +714,9 @@ func (p *embeddingProviderStub) EmbedBatch(ctx context.Context, texts []string) 
 	p.gotTexts = append([]string(nil), texts...)
 	if p.observeUsage != nil {
 		p.observeUsage(ctx, len(texts))
+	}
+	if p.onEmbedBatch != nil {
+		p.onEmbedBatch()
 	}
 	if p.err != nil {
 		return nil, "", p.err

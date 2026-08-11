@@ -144,6 +144,9 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationBackgroundEmbedding, len(eligible))
 	embeddings, model, err := s.provider.EmbedBatch(providerCtx, texts)
 	if err != nil {
+		if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+			return result, ctx.Err()
+		}
 		failureClass, code, terminal, retryAfter := classifyProviderFailure(err)
 		s.failJobs(ctx, contract, eligible, &result, failureClass, code, terminal, retryAfter)
 		return result, fmt.Errorf("embedding processing failed: %s", code)

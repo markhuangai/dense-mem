@@ -677,6 +677,18 @@ BEGIN
         RETURN NEW;
     END IF;
 
+    PERFORM document.search_document_id
+    FROM search_documents AS document
+    WHERE document.team_id = NEW.team_id
+      AND document.search_document_id = NEW.search_document_id
+      AND document.source_version = NEW.source_version
+      AND document.projection_format_version = NEW.projection_format_version
+      AND document.projection_generation_id IS NOT DISTINCT FROM NEW.projection_generation_id
+      AND document.document_version = NEW.document_version
+      AND document.embedding_contract_id = NEW.embedding_contract_id
+      AND document.embedding_dimensions = NEW.embedding_dimensions
+    FOR UPDATE NOWAIT;
+
     PERFORM pg_advisory_xact_lock(hashtextextended(
         concat_ws('|', NEW.team_id::text, NEW.embedding_contract_id::text,
                   NEW.embedding_dimensions::text, NEW.source_kind,

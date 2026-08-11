@@ -498,6 +498,107 @@ func TestExpiredMaxAttemptCleanupLocksDocumentBeforeJob(t *testing.T) {
 	require.Equal(t, "stale", oldStatus)
 }
 
+func TestEmbeddingReconciliationSuccessfulCanaryLeaseTakeoverResumesBacklog(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "reconciliation-success-takeover-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "reconciliation-success-takeover-owner")
+	insertSearchTestContract(t, adminDB, rls, "reconciliation-success-takeover", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	canaryDocument := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "successful takeover canary", 1)
+	failEmbeddingDocumentForReconciliationTest(t, ctx, repo, teamID, canaryDocument.SearchDocumentID, "success-takeover-canary-failure")
+	backlogDocument := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "successful takeover backlog", 1)
+	failEmbeddingDocumentForReconciliationTest(t, ctx, repo, teamID, backlogDocument.SearchDocumentID, "success-takeover-backlog-failure")
+	now := databaseNowForTest(t, adminDB, rls)
+
+	first, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: now, WorkerID: "success-takeover-old", Lease: time.Minute, Now: now,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	canary, err := repo.SelectEmbeddingReconciliationCanary(ctx, SelectEmbeddingReconciliationCanaryInput{
+		RunID: first.RunID, EmbeddingContractID: contract.EmbeddingContractID,
+		EmbeddingDimensions: contract.EmbeddingDimensions, CandidateCutoff: first.CandidateCutoff,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, canary)
+	require.NoError(t, repo.MarkEmbeddingReconciliationCanaryAttempt(ctx, MarkEmbeddingReconciliationCanaryAttemptInput{
+		TeamID: canary.TeamID, RunID: first.RunID, CanaryJobID: canary.EmbeddingJobID,
+		WorkerID: first.WorkerID, LeaseToken: first.LeaseToken, AttemptedAt: now, Lease: time.Minute,
+	}))
+	require.NoError(t, repo.CompleteEmbeddingJob(ctx, CompleteEmbeddingJobInput{
+		TeamID: canary.TeamID, EmbeddingJobID: canary.EmbeddingJobID,
+		WorkerID: EmbeddingReconciliationWorkerIDPrefix + first.RunID, ExpectedAttempts: 1,
+		Embedding: []float32{1, 0, 0},
+	}))
+	require.NoError(t, repo.CompleteEmbeddingReconciliationCanary(ctx, CompleteEmbeddingReconciliationCanaryInput{
+		RunID: first.RunID, CanaryJobID: canary.EmbeddingJobID, WorkerID: first.WorkerID,
+		LeaseToken: first.LeaseToken, Succeeded: true, RecoveredCount: 1,
+	}))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_reconciliation_runs
+			SET lease_until = clock_timestamp() - interval '1 second'
+			WHERE reconciliation_run_id = ?::uuid
+		`, first.RunID).Error
+	}))
+
+	second, reclaimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: now, WorkerID: "success-takeover-new", Lease: time.Minute, Now: now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.True(t, reclaimed)
+	require.Equal(t, "succeeded", second.CanaryOutcome)
+	require.EqualValues(t, 1, second.RecoveredCount)
+	require.NotEqual(t, first.LeaseToken, second.LeaseToken)
+
+	requeued, err := repo.RequeueEmbeddingReconciliationJobs(ctx, RequeueEmbeddingReconciliationJobsInput{
+		RunID: second.RunID, WorkerID: second.WorkerID, LeaseToken: second.LeaseToken,
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		CandidateCutoff: second.CandidateCutoff, BatchSize: 500, Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, requeued)
+	requeuedAgain, err := repo.RequeueEmbeddingReconciliationJobs(ctx, RequeueEmbeddingReconciliationJobsInput{
+		RunID: second.RunID, WorkerID: second.WorkerID, LeaseToken: second.LeaseToken,
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		CandidateCutoff: second.CandidateCutoff, BatchSize: 500, Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.Zero(t, requeuedAgain)
+	require.NoError(t, repo.CompleteEmbeddingReconciliationRun(ctx, CompleteEmbeddingReconciliationRunInput{
+		RunID: second.RunID, WorkerID: second.WorkerID, LeaseToken: second.LeaseToken,
+		Status: string(domain.EmbeddingReconciliationCompleted), CanaryOutcome: "succeeded",
+		RequeuedCount: requeued, RecoveredCount: second.RecoveredCount, CompletedAt: time.Now().UTC(),
+	}))
+
+	var canaryStatus, backlogStatus, runStatus string
+	var recoveredCount, requeuedCount int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT status FROM embedding_jobs WHERE embedding_job_id = ?::uuid`, canary.EmbeddingJobID).Scan(&canaryStatus).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT status FROM embedding_jobs WHERE embedding_job_id = ?::uuid`, backlogDocument.QueuedJobID).Scan(&backlogStatus).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT status, recovered_count, requeued_count
+			FROM embedding_reconciliation_runs
+			WHERE reconciliation_run_id = ?::uuid
+		`, second.RunID).Row().Scan(&runStatus, &recoveredCount, &requeuedCount)
+	}))
+	require.Equal(t, "completed", canaryStatus)
+	require.Equal(t, "queued", backlogStatus)
+	require.Equal(t, string(domain.EmbeddingReconciliationCompleted), runStatus)
+	require.EqualValues(t, 1, recoveredCount)
+	require.EqualValues(t, 1, requeuedCount)
+}
+
 func TestEmbeddingReconciliationCompletionRejectsExpiredLease(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

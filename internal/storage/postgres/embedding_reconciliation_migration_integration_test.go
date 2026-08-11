@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
@@ -55,6 +57,127 @@ func TestEmbeddingReconciliationSupersededRetirementIsBatched(t *testing.T) {
 	require.NotEqual(t, -1, commitIndex)
 	require.Greater(t, commitIndex, limitIndex)
 	require.Equal(t, 1, strings.Count(string(body), "SET status = 'stale'"))
+}
+
+func TestEmbeddingReconciliationCompatibilityTriggerDoesNotWaitBehindPlacementDocumentLock(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, sqlDB, 2026080905)
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	contractID := uuid.NewString()
+	documentID := uuid.NewString()
+	jobID := uuid.NewString()
+	sourceID := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO semantic_team_refs (team_id) VALUES ($1::uuid)`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_profile_refs (team_id, profile_id)
+			VALUES ($1::uuid, $2::uuid)
+		`, teamID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_contracts (
+				embedding_contract_id, contract_key, version, provider, model,
+				dimensions, distance_metric, vector_normalization,
+				document_format_version, query_format_version, lifecycle_state
+			) VALUES (
+				$1::uuid, $2, 1, 'openai', 'rolling-worker-model',
+				3, 'cosine', 'provider', 1, 1, 'active'
+			)
+		`, contractID, "embedding-reconciliation-lock-"+contractID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO search_documents (
+				team_id, search_document_id, owner_profile_id, source_kind, source_id,
+				source_version, document_version, embedding_contract_id,
+				embedding_dimensions, search_state, document_text, document_hash
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, 'evidence', $4::uuid,
+				1, 1, $5::uuid, 3, 'pending', 'rolling worker lock order', $6
+			)
+		`, teamID, documentID, profileID, sourceID, contractID,
+			"sha256:"+strings.ReplaceAll(documentID, "-", "")); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_jobs (
+				team_id, embedding_job_id, search_document_id, owner_profile_id,
+				source_kind, source_id, source_version, document_version,
+				embedding_contract_id, embedding_dimensions, status, attempts,
+				max_attempts, worker_id, lease_until
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				'evidence', $5::uuid, 1, 1, $6::uuid, 3,
+				'processing', 1, 20, 'legacy-worker', now() + interval '1 minute'
+			)
+		`, teamID, jobID, documentID, profileID, sourceID, contractID)
+		return err
+	}))
+
+	placementTx, err := sqlDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer placementTx.Rollback()
+	for _, statement := range []string{
+		`SELECT set_config('app.tx_mode', 'migration', true)`,
+		`SELECT set_config('app.current_team_id', '', true)`,
+		`SELECT set_config('app.current_profile_id', '', true)`,
+	} {
+		_, err = placementTx.ExecContext(ctx, statement)
+		require.NoError(t, err)
+	}
+	var lockedDocumentID string
+	require.NoError(t, placementTx.QueryRowContext(ctx, `
+		SELECT search_document_id::text
+		FROM search_documents
+		WHERE team_id = $1::uuid AND search_document_id = $2::uuid
+		FOR UPDATE
+	`, teamID, documentID).Scan(&lockedDocumentID))
+	require.Equal(t, documentID, lockedDocumentID)
+
+	legacyResult := make(chan error, 1)
+	go func() {
+		legacyResult <- execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+			_, updateErr := tx.ExecContext(ctx, `
+				UPDATE embedding_jobs
+				SET status = 'failed', error = 'embedding request timed out',
+				    worker_id = '', lease_until = NULL, completed_at = now()
+				WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+			`, teamID, jobID)
+			return updateErr
+		})
+	}()
+	select {
+	case legacyErr := <-legacyResult:
+		require.Error(t, legacyErr)
+		var pgErr *pgconn.PgError
+		require.True(t, errors.As(legacyErr, &pgErr), "legacy worker error = %T: %v", legacyErr, legacyErr)
+		require.Equal(t, "55P03", pgErr.Code)
+	case <-time.After(2 * time.Second):
+		t.Fatal("legacy worker waited behind the placement document lock")
+	}
+
+	_, err = placementTx.ExecContext(ctx, `
+		UPDATE embedding_jobs
+		SET status = 'stale', error = 'superseded by placement',
+		    worker_id = '', lease_until = NULL, completed_at = now()
+		WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+	`, teamID, jobID)
+	require.NoError(t, err)
+	require.NoError(t, placementTx.Commit())
+	var status string
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT status FROM embedding_jobs
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+		`, teamID, jobID).Scan(&status)
+	}))
+	require.Equal(t, "stale", status)
 }
 
 func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing.T) {

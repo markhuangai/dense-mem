@@ -448,11 +448,13 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingReconciliationCanary(ctx context
 	return r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE embedding_reconciliation_runs
-			SET canary_outcome = ?, canary_failure_class = ?, canary_failure_code = ?, updated_at = now()
+			SET canary_outcome = ?, canary_failure_class = ?, canary_failure_code = ?,
+			    recovered_count = ?, updated_at = now()
 			WHERE reconciliation_run_id = ?::uuid
 			  AND status = 'running' AND worker_id = ? AND lease_token = ?::uuid
 			  AND lease_until > clock_timestamp()
-		`, outcome, input.FailureClass, input.FailureCode, input.RunID, input.WorkerID, input.LeaseToken)
+		`, outcome, input.FailureClass, input.FailureCode, input.RecoveredCount,
+			input.RunID, input.WorkerID, input.LeaseToken)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -720,6 +722,9 @@ func validateCompleteEmbeddingReconciliationCanaryInput(input CompleteEmbeddingR
 	}
 	if input.WorkerID == "" {
 		return errors.New("worker_id is required")
+	}
+	if input.RecoveredCount < 0 {
+		return errors.New("recovered_count must not be negative")
 	}
 	return nil
 }

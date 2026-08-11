@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestPlacementSemanticCommitOpensCrossProfileConflictCase(t *testing.T) {
@@ -267,10 +269,31 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 		t, ctx, ledgerRepo, teamID, ownerC, "worker-review-c",
 		"review-conflict-c", "Dense-Mem uses PostgreSQL according to team C.", subject.EntityID, postgres.EntityID, "source-group-review-c",
 	)
+	searchRepo := NewSearchRepository(appDB, rls)
+	claimedJobs, err := searchRepo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{
+		TeamID: teamID, WorkerID: "conflict-review-embedding-worker", Limit: 10, Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	var loserEmbeddingJob EmbeddingJob
+	for _, job := range claimedJobs {
+		if job.SourceKind == "relationship" && job.SourceID == loser.RelationshipResults[0].Relationship.RelationshipID {
+			loserEmbeddingJob = job
+			break
+		}
+	}
+	require.NotEmpty(t, loserEmbeddingJob.EmbeddingJobID)
+	failedJob, err := searchRepo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
+		TeamID: teamID, EmbeddingJobID: loserEmbeddingJob.EmbeddingJobID,
+		WorkerID: "conflict-review-embedding-worker", ExpectedAttempts: loserEmbeddingJob.Attempts,
+		Error: "embedding provider quota exhausted", FailureClass: string(domain.EmbeddingFailureProviderAction),
+		FailureCode: string(domain.EmbeddingFailureProviderQuotaExhausted), Terminal: true,
+	})
+	require.NoError(t, err)
+	require.True(t, failedJob.Terminal)
 
 	var conflictID string
 	var dueAt time.Time
-	err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
 		return tx.Raw(`
 			SELECT conflict_id::text, review_due_at
 			FROM relationship_conflict_cases
@@ -324,6 +347,7 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 	}))
 
 	var conflictStatus, loserStatus, preferredAStatus, preferredCStatus, loserSearchState string
+	var loserEmbeddingJobStatus, loserIncidentStatus string
 	var loserRelationshipVersion, loserSearchSourceVersion int64
 	var preferredPositionCount, suppressedPositionCount, transitionCount, staleEmbeddingJobs, queuedEmbeddingJobs int64
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
@@ -365,6 +389,20 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 		`, teamID, loser.RelationshipResults[0].Relationship.RelationshipID, loserRelationshipVersion).Scan(&queuedEmbeddingJobs).Error)
 		require.NoError(t, tx.Raw(`
 			SELECT status
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND embedding_job_id = ?::uuid
+		`, teamID, loserEmbeddingJob.EmbeddingJobID).Scan(&loserEmbeddingJobStatus).Error)
+		require.NoError(t, tx.Raw(`
+			SELECT status
+			FROM embedding_failure_incidents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND failure_class = ?
+			  AND failure_code = ?
+		`, teamID, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderQuotaExhausted)).Scan(&loserIncidentStatus).Error)
+		require.NoError(t, tx.Raw(`
+			SELECT status
 			FROM relationship_records
 			WHERE team_id = ?::uuid
 			  AND relationship_id = ?::uuid
@@ -402,6 +440,8 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 	assert.Equal(t, "superseded", loserStatus)
 	assert.Equal(t, loserRelationshipVersion, loserSearchSourceVersion)
 	assert.Equal(t, "not_required", loserSearchState)
+	assert.Equal(t, "stale", loserEmbeddingJobStatus)
+	assert.Equal(t, "resolved", loserIncidentStatus)
 	assert.GreaterOrEqual(t, staleEmbeddingJobs, int64(1))
 	assert.Equal(t, int64(0), queuedEmbeddingJobs)
 	assert.Equal(t, "active", preferredAStatus)
@@ -410,7 +450,6 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 	assert.Equal(t, int64(1), suppressedPositionCount)
 	assert.Equal(t, int64(1), transitionCount)
 
-	searchRepo := NewSearchRepository(appDB, rls)
 	currentRecall, err := searchRepo.RecallEvidence(ctx, RecallEvidenceInput{
 		TeamID: teamID,
 		Query:  "PostgreSQL",

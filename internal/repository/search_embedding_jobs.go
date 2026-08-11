@@ -796,7 +796,7 @@ func markStaleEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) err
 		    worker_id = '',
 		    updated_at = now()
 		WHERE job.team_id = ?::uuid
-		  AND job.status IN ('queued', 'processing')
+		  AND job.status IN ('queued', 'processing', 'failed')
 		  AND NOT EXISTS (
 		      SELECT 1
 		      FROM search_documents AS document

@@ -31,6 +31,7 @@ type reconciliationRepositoryStub struct {
 	marked             bool
 	markInput          *repository.MarkEmbeddingReconciliationCanaryAttemptInput
 	canaryOK           bool
+	canaryInput        *repository.CompleteEmbeddingReconciliationCanaryInput
 	canaryContext      context.Context
 	canaryContextErr   error
 	markErr            error
@@ -89,7 +90,8 @@ func (s *reconciliationRepositoryStub) MarkEmbeddingReconciliationCanaryAttempt(
 	}
 	return nil
 }
-func (s *reconciliationRepositoryStub) CompleteEmbeddingReconciliationCanary(ctx context.Context, _ repository.CompleteEmbeddingReconciliationCanaryInput) error {
+func (s *reconciliationRepositoryStub) CompleteEmbeddingReconciliationCanary(ctx context.Context, input repository.CompleteEmbeddingReconciliationCanaryInput) error {
+	s.canaryInput = &input
 	s.canaryContext = ctx
 	s.canaryContextErr = ctx.Err()
 	if s.canaryErr != nil {
@@ -264,6 +266,39 @@ func TestEmbeddingReconciliationDoesNotCompleteReclaimedCanaryAsSkipped(t *testi
 	assert.Greater(t, metrics.durations[0], float64(0))
 }
 
+func TestEmbeddingReconciliationResumesReclaimedSuccessfulCanary(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	attemptedAt := time.Date(2026, 8, 10, 4, 31, 0, 0, time.UTC)
+	startedAt := attemptedAt.Add(-time.Minute)
+	reconciliation := &reconciliationRepositoryStub{
+		run: &repository.EmbeddingReconciliationRun{
+			RunID: "run-1", LeaseToken: "lease-2", Status: string(domain.EmbeddingReconciliationRunning),
+			CandidateCutoff: attemptedAt, CanaryAttemptedAt: &attemptedAt, CanaryOutcome: "succeeded",
+			RecoveredCount: 1, StartedAt: &startedAt,
+		},
+	}
+	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
+	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: provider,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-2", Now: func() time.Time { return attemptedAt.Add(time.Minute) },
+	})
+
+	result, err := svc.ProcessDue(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, string(domain.EmbeddingReconciliationCompleted), result.Status)
+	assert.True(t, result.CanaryAttempted)
+	assert.True(t, result.CanarySucceeded)
+	assert.EqualValues(t, 1, result.RecoveredCount)
+	assert.EqualValues(t, 3, result.RequeuedCount)
+	assert.Zero(t, provider.calls)
+	require.NotNil(t, reconciliation.completed)
+	assert.Equal(t, "succeeded", reconciliation.completed.CanaryOutcome)
+	assert.EqualValues(t, 1, reconciliation.completed.RecoveredCount)
+}
+
 func TestEmbeddingReconciliationReportsDatabaseClockSkew(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
@@ -318,8 +353,10 @@ func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T
 		t.Fatalf("reconciliation state = %#v", reconciliation)
 	}
 	require.NotNil(t, reconciliation.markInput)
+	require.NotNil(t, reconciliation.canaryInput)
 	require.NotNil(t, reconciliation.requeueInput)
 	assert.Equal(t, reconciliationLease, reconciliation.markInput.Lease)
+	assert.EqualValues(t, 1, reconciliation.canaryInput.RecoveredCount)
 	assert.Equal(t, reconciliationLease, reconciliation.requeueInput.Lease)
 	require.NotNil(t, reconciliation.completed)
 	if reconciliation.completed.RequeuedCount != 3 || reconciliation.completed.RecoveredCount != 1 {
