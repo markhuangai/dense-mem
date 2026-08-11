@@ -13,6 +13,20 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
+func TestEmbeddingReconciliationTimingUsesConfiguredProviderTimeout(t *testing.T) {
+	callTimeout, lease := embeddingReconciliationTiming(0)
+	assert.Equal(t, reconciliationCallTimeout, callTimeout)
+	assert.Equal(t, reconciliationLease, lease)
+
+	callTimeout, lease = embeddingReconciliationTiming(3 * time.Minute)
+	assert.Equal(t, 3*time.Minute, callTimeout)
+	assert.Equal(t, reconciliationLease, lease)
+
+	callTimeout, lease = embeddingReconciliationTiming(12 * time.Minute)
+	assert.Equal(t, 12*time.Minute, callTimeout)
+	assert.Equal(t, 12*time.Minute+reconciliationCleanupTimeout, lease)
+}
+
 func TestEmbeddingReconciliationLeavesPreCanaryRunReclaimableOnCancellation(t *testing.T) {
 	for _, test := range []struct {
 		name           string

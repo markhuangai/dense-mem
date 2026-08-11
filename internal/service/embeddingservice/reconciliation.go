@@ -36,6 +36,7 @@ type EmbeddingReconciliationDependencies struct {
 	Metrics                         observability.DiscoverabilityMetrics
 	WorkerID                        string
 	Now                             func() time.Time
+	ProviderTimeout                 time.Duration
 	DistributedCoordinationRequired bool
 }
 
@@ -56,15 +57,17 @@ type EmbeddingReconciliationService interface {
 }
 
 type embeddingReconciliationService struct {
-	search         repository.SearchRepository
-	reconciliation repository.EmbeddingReconciliationRepository
-	provider       embedding.EmbeddingProviderInterface
-	appConfig      reconciliationRuntimeConfig
-	logger         observability.LogProvider
-	metrics        observability.DiscoverabilityMetrics
-	workerID       string
-	now            func() time.Time
-	distributed    bool
+	search          repository.SearchRepository
+	reconciliation  repository.EmbeddingReconciliationRepository
+	provider        embedding.EmbeddingProviderInterface
+	appConfig       reconciliationRuntimeConfig
+	logger          observability.LogProvider
+	metrics         observability.DiscoverabilityMetrics
+	workerID        string
+	now             func() time.Time
+	providerTimeout time.Duration
+	lease           time.Duration
+	distributed     bool
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -80,12 +83,25 @@ func NewEmbeddingReconciliationService(deps EmbeddingReconciliationDependencies)
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
+	providerTimeout, lease := embeddingReconciliationTiming(deps.ProviderTimeout)
 	return &embeddingReconciliationService{
 		search: deps.Search, reconciliation: deps.Reconciliation, provider: deps.Provider,
 		appConfig: deps.AppConfig, logger: deps.Logger, metrics: metrics,
 		workerID: strings.TrimSpace(deps.WorkerID), now: now,
+		providerTimeout: providerTimeout, lease: lease,
 		distributed: deps.DistributedCoordinationRequired,
 	}
+}
+
+func embeddingReconciliationTiming(providerTimeout time.Duration) (time.Duration, time.Duration) {
+	if providerTimeout <= 0 {
+		providerTimeout = reconciliationCallTimeout
+	}
+	lease := reconciliationLease
+	if required := providerTimeout + reconciliationCleanupTimeout; required > lease {
+		lease = required
+	}
+	return providerTimeout, lease
 }
 
 func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (EmbeddingReconciliationResult, error) {
@@ -125,7 +141,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 		LocalRunDate:        localNow,
 		CreateIfMissing:     createIfMissing,
 		WorkerID:            s.workerID,
-		Lease:               reconciliationLease,
+		Lease:               s.lease,
 	})
 	if err != nil {
 		return result, err
@@ -190,7 +206,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 		attemptedAt := s.now().UTC()
 		if err := s.reconciliation.MarkEmbeddingReconciliationCanaryAttempt(ctx, repository.MarkEmbeddingReconciliationCanaryAttemptInput{
 			TeamID: job.TeamID, RunID: run.RunID, CanaryJobID: job.EmbeddingJobID, WorkerID: s.workerID,
-			LeaseToken: run.LeaseToken, AttemptedAt: attemptedAt, Lease: reconciliationLease,
+			LeaseToken: run.LeaseToken, AttemptedAt: attemptedAt, Lease: s.lease,
 		}); err != nil {
 			if errors.Is(err, repository.ErrEmbeddingReconciliationCanarySkipped) {
 				continue
@@ -202,7 +218,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 		}
 		result.CanaryAttempted = true
 
-		providerCtx, cancel := context.WithTimeout(ctx, reconciliationCallTimeout)
+		providerCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
 		providerCtx = observability.WithMetricIdentity(providerCtx, job.TeamID, "")
 		providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationBackgroundEmbedding, 1)
 		if !s.provider.IsAvailable() {
@@ -330,7 +346,7 @@ func (s *embeddingReconciliationService) releaseReconciliationBacklog(
 		RunID: run.RunID, WorkerID: s.workerID, LeaseToken: run.LeaseToken,
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions, CandidateCutoff: run.CandidateCutoff,
-		BatchSize: reconciliationBatchSize, Lease: reconciliationLease,
+		BatchSize: reconciliationBatchSize, Lease: s.lease,
 	})
 	requeued := newlyRequeued + run.RequeuedCount
 	result.RequeuedCount = requeued

@@ -368,10 +368,11 @@ func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T
 		Search: search, Reconciliation: reconciliation, Provider: provider,
 		Logger:    logger,
 		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
-		WorkerID:  "worker-1", Now: func() time.Time { return now },
+		WorkerID:  "worker-1", Now: func() time.Time { return now }, ProviderTimeout: 3 * time.Minute,
 	})
-
+	startedAt := time.Now()
 	result, err := service.ProcessDue(context.Background())
+	finishedAt := time.Now()
 	require.NoError(t, err)
 	if result.Status != string(domain.EmbeddingReconciliationCompleted) || !result.CanarySucceeded {
 		t.Fatalf("result = %#v", result)
@@ -379,6 +380,11 @@ func TestEmbeddingReconciliationUsesOneRawCanaryThenRequeuesBacklog(t *testing.T
 	if provider.calls != 1 {
 		t.Fatalf("provider calls = %d, want one raw canary", provider.calls)
 	}
+	require.Len(t, provider.embedContexts, 1)
+	deadline, ok := provider.embedContexts[0].Deadline()
+	require.True(t, ok)
+	assert.False(t, deadline.Before(startedAt.Add(3*time.Minute)))
+	assert.False(t, deadline.After(finishedAt.Add(3*time.Minute)))
 	if !reconciliation.marked || !reconciliation.canaryOK || reconciliation.requeued != 3 {
 		t.Fatalf("reconciliation state = %#v", reconciliation)
 	}

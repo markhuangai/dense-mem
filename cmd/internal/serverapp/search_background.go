@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -41,12 +42,14 @@ func newEmbeddingReconciliationService(
 	appConfig service.AppConfigService,
 	logger observability.LogProvider,
 	metrics observability.DiscoverabilityMetrics,
+	providerTimeout time.Duration,
 	distributedCoordinationRequired bool,
 ) embeddingservice.EmbeddingReconciliationService {
 	hostname, _ := os.Hostname()
 	return embeddingservice.NewEmbeddingReconciliationService(embeddingservice.EmbeddingReconciliationDependencies{
 		Search: search, Reconciliation: search, Provider: provider, AppConfig: appConfig,
 		Logger: logger, Metrics: metrics, WorkerID: fmt.Sprintf("embedding-reconciliation-%s-%d", hostname, os.Getpid()),
+		ProviderTimeout:                 providerTimeout,
 		DistributedCoordinationRequired: distributedCoordinationRequired,
 	})
 }

@@ -325,13 +325,15 @@ func TestMarkStaleEmbeddingJobsLeavesReconciliationCanaryFenced(t *testing.T) {
 	}))
 
 	var status, workerID string
+	var leaseActive bool
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Raw(`
-			SELECT status, worker_id
+			SELECT status, worker_id, lease_until > clock_timestamp()
 			FROM embedding_jobs
 			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
-		`, teamID, document.QueuedJobID).Row().Scan(&status, &workerID)
+		`, teamID, document.QueuedJobID).Row().Scan(&status, &workerID, &leaseActive)
 	}))
 	require.Equal(t, string(domain.EmbeddingJobProcessing), status)
 	require.Equal(t, EmbeddingReconciliationWorkerIDPrefix+"run-1", workerID)
+	require.True(t, leaseActive)
 }

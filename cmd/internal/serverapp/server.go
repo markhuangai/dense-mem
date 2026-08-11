@@ -471,6 +471,7 @@ func RunActiveServer(
 	defer workerCancel()
 	reconciliationSvc := newEmbeddingReconciliationService(
 		searchRepo, openaiProvider, appConfigService, logger, discoverabilityMetrics,
+		time.Duration(cfg.GetAIEmbeddingTimeoutSeconds())*time.Second,
 		cfg.GetDistributedCoordinationRequired(),
 	)
 	reconciliationSvc.Start(workerCtx)
