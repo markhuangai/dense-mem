@@ -18,6 +18,7 @@ import (
 const (
 	defaultBatchSize      = 64
 	maxBatchSize          = 256
+	maxLeaseRenewWorkers  = 8
 	defaultLease          = time.Minute
 	defaultFailureTimeout = 10 * time.Second
 )
@@ -257,22 +258,16 @@ func (s *embeddingWorkerService) embedBatchWithLease(
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					for _, job := range jobs {
-						renewCtx, renewCancel := context.WithTimeout(context.WithoutCancel(ctx), s.failureTimeout)
-						err := renewer.RenewEmbeddingJobLease(renewCtx, repository.RenewEmbeddingJobLeaseInput{
-							TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: s.workerID,
-							ExpectedAttempts: job.Attempts, Lease: s.lease,
-						})
-						renewCancel()
-						if err != nil {
-							select {
-							case leaseLost <- err:
-							default:
-							}
-							cancel()
-							return
-						}
+					err := renewEmbeddingLeases(ctx, renewer, jobs, s.workerID, s.lease, s.failureTimeout)
+					if err == nil {
+						continue
 					}
+					select {
+					case leaseLost <- err:
+					default:
+					}
+					cancel()
+					return
 				}
 			}
 		}()
@@ -288,6 +283,68 @@ func (s *embeddingWorkerService) embedBatchWithLease(
 	default:
 	}
 	return embeddings, model, err
+}
+
+func renewEmbeddingLeases(
+	ctx context.Context,
+	renewer repository.EmbeddingJobLeaseRenewer,
+	jobs []repository.EmbeddingJob,
+	workerID string,
+	lease time.Duration,
+	failureTimeout time.Duration,
+) error {
+	if len(jobs) == 0 {
+		return nil
+	}
+	workerCount := min(len(jobs), maxLeaseRenewWorkers)
+	groupCtx, stop := context.WithCancel(context.WithoutCancel(ctx))
+	defer stop()
+	jobCh := make(chan repository.EmbeddingJob, len(jobs))
+	for _, job := range jobs {
+		jobCh <- job
+	}
+	close(jobCh)
+	errs := make(chan error, 1)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-groupCtx.Done():
+					return
+				case job, ok := <-jobCh:
+					if !ok {
+						return
+					}
+					renewCtx, renewCancel := context.WithTimeout(groupCtx, failureTimeout)
+					err := renewer.RenewEmbeddingJobLease(renewCtx, repository.RenewEmbeddingJobLeaseInput{
+						TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: workerID,
+						ExpectedAttempts: job.Attempts, Lease: lease,
+					})
+					renewCancel()
+					if err != nil {
+						select {
+						case errs <- err:
+						default:
+						}
+						stop()
+						return
+					}
+				}
+			}
+		}()
+	}
+	workers.Wait()
+	select {
+	case err := <-errs:
+		return err
+	default:
+		return nil
+	}
 }
 
 func (s *embeddingWorkerService) validate() error {
