@@ -11,6 +11,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const embeddingReconciliationLockedCandidateRetryInterval = time.Second
+
 type embeddingReconciliationCursor struct {
 	failedAt time.Time
 	jobID    string
@@ -23,8 +25,9 @@ type embeddingReconciliationCandidate struct {
 }
 
 type embeddingReconciliationBatchResult struct {
-	requeued int64
-	cursor   *embeddingReconciliationCursor
+	requeued  int64
+	cursor    *embeddingReconciliationCursor
+	remaining bool
 }
 
 func (r *SearchRepositoryImpl) RequeueEmbeddingReconciliationJobs(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error) {
@@ -40,10 +43,21 @@ func (r *SearchRepositoryImpl) RequeueEmbeddingReconciliationJobs(ctx context.Co
 			return total, fmt.Errorf("search: requeue reconciliation jobs: %w", err)
 		}
 		total += batch.requeued
-		if batch.cursor == nil {
+		if batch.cursor != nil {
+			cursor = batch.cursor
+			continue
+		}
+		if !batch.remaining {
 			break
 		}
-		cursor = batch.cursor
+		cursor = nil
+		timer := time.NewTimer(embeddingReconciliationLockedCandidateRetryInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return total, fmt.Errorf("search: requeue reconciliation jobs: %w", ctx.Err())
+		case <-timer.C:
+		}
 	}
 	return total, nil
 }
@@ -122,7 +136,9 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 			return err
 		}
 		if len(candidates) == 0 {
-			return nil
+			remaining, err := embeddingReconciliationCandidatesRemain(ctx, tx, input)
+			batch.remaining = remaining
+			return err
 		}
 		lastCandidate := candidates[len(candidates)-1]
 		batch.cursor = &embeddingReconciliationCursor{failedAt: lastCandidate.failedAt, jobID: lastCandidate.jobID}
@@ -302,6 +318,45 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 			input.RunID, input.CandidateCutoff).Row().Scan(&batch.requeued, &documentCount, &incidentCount)
 	})
 	return batch, err
+}
+
+func embeddingReconciliationCandidatesRemain(
+	ctx context.Context,
+	tx *gorm.DB,
+	input RequeueEmbeddingReconciliationJobsInput,
+) (bool, error) {
+	var remaining bool
+	err := tx.WithContext(ctx).Raw(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM embedding_jobs AS job
+			JOIN search_documents AS document
+			  ON document.team_id = job.team_id
+			 AND document.search_document_id = job.search_document_id
+			 AND document.source_version = job.source_version
+			 AND document.projection_format_version = job.projection_format_version
+			 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+			 AND document.document_version = job.document_version
+			 AND document.embedding_contract_id = job.embedding_contract_id
+			 AND document.embedding_dimensions = job.embedding_dimensions
+			JOIN teams AS team
+			  ON team.id = job.team_id AND team.status = 'active' AND team.deleted_at IS NULL
+			JOIN embedding_reconciliation_runs AS run
+			  ON run.reconciliation_run_id = ?::uuid
+			 AND run.status = 'running'
+			 AND run.worker_id = ?
+			 AND run.lease_token = ?::uuid
+			WHERE job.status = 'failed'
+			  AND job.failure_class <> 'permanent'
+			  AND job.embedding_contract_id = ?::uuid
+			  AND job.embedding_dimensions = ?
+			  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
+			  AND document.search_state = 'failed'
+		)
+	`, input.RunID, input.WorkerID, input.LeaseToken,
+		input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff,
+	).Scan(&remaining).Error
+	return remaining, err
 }
 
 func renewEmbeddingReconciliationLease(ctx context.Context, tx *gorm.DB, input RequeueEmbeddingReconciliationJobsInput) error {
