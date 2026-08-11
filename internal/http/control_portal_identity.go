@@ -1,6 +1,7 @@
 package http
 
 import (
+	"crypto/subtle"
 	"errors"
 	nethttp "net/http"
 	"strings"
@@ -94,19 +95,37 @@ func (h *controlPortalHandler) completeControlIdentityLogin(c echo.Context) erro
 }
 
 func (h *controlPortalHandler) logoutControlIdentity(c echo.Context) error {
-	var logoutErr error
-	if cookie, err := c.Cookie(service.ControlSessionCookieName); err == nil {
-		logoutErr = h.controlIdentity.Logout(c.Request().Context(), cookie.Value)
-	}
 	secure := h.controlIdentity.CookieSecure(c.Request().Context())
-	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: service.ControlSessionCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
-	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: service.ControlSessionCookieName, Value: "", Path: "/control", MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
-	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: service.ControlCSRFCookieName, Value: "", Path: "/control", MaxAge: -1, HttpOnly: false, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
-	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: service.ControlCSRFCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: false, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
+	clearControlIdentityCookies(c, secure)
+
+	var sessionCookie *nethttp.Cookie
+	if cookie, err := c.Cookie(service.ControlSessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+		sessionCookie = cookie
+		csrfCookie, csrfErr := c.Cookie(service.ControlCSRFCookieName)
+		csrfHeader := strings.TrimSpace(c.Request().Header.Get(service.ControlCSRFHeaderName))
+		if csrfErr != nil || strings.TrimSpace(csrfCookie.Value) == "" || csrfHeader == "" || subtle.ConstantTimeCompare([]byte(csrfHeader), []byte(csrfCookie.Value)) != 1 {
+			return controlIdentityHTTPError(service.ErrControlCSRFInvalid)
+		}
+		if _, authErr := h.controlIdentity.AuthenticateSession(c.Request().Context(), sessionCookie.Value, csrfHeader, true); authErr != nil {
+			return controlIdentityHTTPError(authErr)
+		}
+	}
+
+	var logoutErr error
+	if sessionCookie != nil {
+		logoutErr = h.controlIdentity.Logout(c.Request().Context(), sessionCookie.Value)
+	}
 	if logoutErr != nil {
 		return controlIdentityHTTPError(logoutErr)
 	}
 	return c.NoContent(nethttp.StatusNoContent)
+}
+
+func clearControlIdentityCookies(c echo.Context, secure bool) {
+	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: service.ControlSessionCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
+	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: service.ControlSessionCookieName, Value: "", Path: "/control", MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
+	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: service.ControlCSRFCookieName, Value: "", Path: "/control", MaxAge: -1, HttpOnly: false, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
+	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: service.ControlCSRFCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: false, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
 }
 
 func (h *controlPortalHandler) listControlAdminGroups(c echo.Context) error {
@@ -246,7 +265,10 @@ func controlIdentityHTTPError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, service.ErrControlAccessDenied) || errors.Is(err, service.ErrControlSessionInvalid) || errors.Is(err, service.ErrControlCSRFInvalid) {
+	if errors.Is(err, service.ErrControlCSRFInvalid) {
+		return httperr.New(httperr.FORBIDDEN, "invalid control csrf token")
+	}
+	if errors.Is(err, service.ErrControlAccessDenied) || errors.Is(err, service.ErrControlSessionInvalid) {
 		return httperr.New(httperr.AUTH_INVALID, "control sign-in is invalid or no longer authorized")
 	}
 	if errors.Is(err, service.ErrControlSSOUnavailable) {

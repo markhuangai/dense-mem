@@ -33,14 +33,16 @@ var (
 )
 
 type DirectoryIdentityConfig struct {
-	OAuthTokenTTL time.Duration
-	Now           func() time.Time
+	OAuthTokenTTL      time.Duration
+	Now                func() time.Time
+	CredentialVerifier cryptoutil.CredentialVerifier
 }
 
 type DirectoryIdentityService struct {
 	repo          repository.DirectoryIdentityRepository
 	oauthTokenTTL time.Duration
 	now           func() time.Time
+	verifier      cryptoutil.CredentialVerifier
 }
 
 func NewDirectoryIdentityService(repo repository.DirectoryIdentityRepository, cfg DirectoryIdentityConfig) *DirectoryIdentityService {
@@ -52,7 +54,11 @@ func NewDirectoryIdentityService(repo repository.DirectoryIdentityRepository, cf
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &DirectoryIdentityService{repo: repo, oauthTokenTTL: ttl, now: now}
+	verifier := cfg.CredentialVerifier
+	if verifier == nil {
+		verifier = cryptoutil.NewArgon2Verifier(0)
+	}
+	return &DirectoryIdentityService{repo: repo, oauthTokenTTL: ttl, now: now, verifier: verifier}
 }
 
 func (s *DirectoryIdentityService) CreateConnector(ctx context.Context, connector domain.DirectoryConnector) (*domain.DirectoryConnector, *domain.DirectoryCredential, error) {
@@ -219,8 +225,14 @@ func (s *DirectoryIdentityService) AuthenticateSCIM(ctx context.Context, connect
 	if strings.TrimSpace(rawToken) == "" {
 		return false, ErrDirectoryCredentialInvalid
 	}
-	if connector.BearerTokenHash != "" && cryptoutil.VerifyKey(rawToken, connector.BearerTokenHash) {
-		return true, nil
+	if connector.BearerTokenHash != "" {
+		valid, verifyErr := s.verifier.Verify(ctx, rawToken, connector.BearerTokenHash)
+		if verifyErr != nil {
+			return false, verifyErr
+		}
+		if valid {
+			return true, nil
+		}
 	}
 	valid, err := s.repo.GetDirectoryOAuthToken(ctx, connectorID, HashSSOToken(rawToken))
 	if err != nil {
@@ -240,7 +252,14 @@ func (s *DirectoryIdentityService) IssueOAuthToken(ctx context.Context, clientID
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	if connector == nil || connector.Status == domain.DirectoryConnectorDisabled || !cryptoutil.VerifyKey(clientSecret, connector.OAuthClientSecretHash) {
+	if connector == nil || connector.Status == domain.DirectoryConnectorDisabled {
+		return "", time.Time{}, ErrDirectoryCredentialInvalid
+	}
+	valid, verifyErr := s.verifier.Verify(ctx, clientSecret, connector.OAuthClientSecretHash)
+	if verifyErr != nil {
+		return "", time.Time{}, verifyErr
+	}
+	if !valid {
 		return "", time.Time{}, ErrDirectoryCredentialInvalid
 	}
 	raw, err := directorySecret("dm_scim_oauth_")

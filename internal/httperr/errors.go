@@ -2,6 +2,15 @@ package httperr
 
 import (
 	"fmt"
+	"strings"
+	"unicode/utf8"
+)
+
+const (
+	maxPublicErrorMessageRunes  = 512
+	maxPublicErrorDetails       = 20
+	maxPublicErrorFieldRunes    = 128
+	maxPublicDetailMessageRunes = 512
 )
 
 // ErrorCode represents a typed error code for API errors.
@@ -64,6 +73,64 @@ type APIError struct {
 	Code    ErrorCode     `json:"code"`
 	Message string        `json:"message"`
 	Details []ErrorDetail `json:"details"`
+}
+
+// boundedMessage keeps public error text finite without splitting a UTF-8
+// sequence. It is deliberately applied at the transport boundary so internal
+// errors retain their diagnostic context for server-side handling.
+func boundedMessage(value string, maxRunes int) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown error"
+	}
+	if utf8.RuneCountInString(value) <= maxRunes {
+		return value
+	}
+	return string([]rune(value)[:maxRunes])
+}
+
+func (e *APIError) bounded(status int) *APIError {
+	if e == nil {
+		return New(INTERNAL_ERROR, stablePublicMessage(httpStatusInternalServerError))
+	}
+	copyErr := &APIError{Code: e.Code, Message: e.Message}
+	if status >= 500 {
+		copyErr.Message = stablePublicMessage(status)
+		return copyErr
+	}
+	copyErr.Message = boundedMessage(e.Message, maxPublicErrorMessageRunes)
+	if len(e.Details) == 0 {
+		return copyErr
+	}
+	limit := len(e.Details)
+	if limit > maxPublicErrorDetails {
+		limit = maxPublicErrorDetails
+	}
+	copyErr.Details = make([]ErrorDetail, 0, limit)
+	for _, detail := range e.Details[:limit] {
+		copyErr.Details = append(copyErr.Details, ErrorDetail{
+			Field:   boundedMessage(detail.Field, maxPublicErrorFieldRunes),
+			Message: boundedMessage(detail.Message, maxPublicDetailMessageRunes),
+		})
+	}
+	return copyErr
+}
+
+const (
+	httpStatusInternalServerError = 500
+)
+
+func stablePublicMessage(status int) string {
+	switch status {
+	case 502:
+		return "upstream service error"
+	case 503:
+		return "service unavailable"
+	case 504:
+		return "upstream service timeout"
+	default:
+		return "internal server error"
+	}
 }
 
 // Error implements the error interface.

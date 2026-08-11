@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,6 +37,18 @@ type APIKeyRepository interface {
 	// RotateForProfile replaces key material for one team profile in place.
 	RotateForProfile(ctx context.Context, profileID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (int64, error)
 	TouchLastUsed(ctx context.Context, id uuid.UUID) error
+}
+
+// LastUsedUpdate is one admitted credential activity timestamp.
+type LastUsedUpdate struct {
+	ID uuid.UUID
+	At time.Time
+}
+
+// APIKeyLastUsedBatchRepository is implemented by the production repository
+// so activity writers can persist coalesced timestamps in one transaction.
+type APIKeyLastUsedBatchRepository interface {
+	TouchLastUsedBatch(ctx context.Context, updates []LastUsedUpdate) error
 }
 
 // APIKeyRepositoryImpl implements the APIKeyRepository interface.
@@ -762,16 +775,40 @@ func (r *APIKeyRepositoryImpl) CountByProfile(ctx context.Context, profileID uui
 // TouchLastUsed updates the last_used_at timestamp for an API key.
 // This should be called asynchronously to avoid blocking the request.
 func (r *APIKeyRepositoryImpl) TouchLastUsed(ctx context.Context, id uuid.UUID) error {
-	now := time.Now().UTC()
+	return r.TouchLastUsedBatch(ctx, []LastUsedUpdate{{ID: id, At: time.Now().UTC()}})
+}
+
+// TouchLastUsedBatch persists the newest activity timestamp per key in one
+// system transaction. Older queued events cannot move a timestamp backwards.
+func (r *APIKeyRepositoryImpl) TouchLastUsedBatch(ctx context.Context, updates []LastUsedUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	values := make([]string, 0, len(updates))
+	args := make([]interface{}, 0, len(updates)*2)
+	for _, update := range updates {
+		if update.ID == uuid.Nil || update.At.IsZero() {
+			continue
+		}
+		values = append(values, "(?, ?)")
+		args = append(args, update.ID, update.At.UTC())
+	}
+	if len(values) == 0 {
+		return nil
+	}
 
 	// Auth-path update: callers only know the key ID from bearer authentication,
 	// so this write runs without a profile-scoped transaction.
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			UPDATE team_profiles
-			SET last_used_at = $1
-			WHERE id = $2 AND auth_source = 'api_key'
-		`, now, id).Error
+		query := `
+			UPDATE team_profiles AS profile
+			SET last_used_at = updates.last_used_at
+			FROM (VALUES ` + strings.Join(values, ",") + `) AS updates(id, last_used_at)
+			WHERE profile.id = updates.id
+			  AND profile.auth_source = 'api_key'
+			  AND (profile.last_used_at IS NULL OR profile.last_used_at < updates.last_used_at)
+		`
+		return tx.Exec(query, args...).Error
 	})
 
 	if err != nil {

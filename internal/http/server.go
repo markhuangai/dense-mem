@@ -190,7 +190,10 @@ func applyServerLimits(e *echo.Echo) {
 }
 
 func applyIPExtractor(e *echo.Echo) {
-	e.IPExtractor = echo.ExtractIPDirect()
+	// The deployment ingress is responsible for overwriting X-Forwarded-For.
+	// Extract the client address consistently across public, control, and MCP
+	// listeners; trusting only the socket peer would attribute proxy traffic.
+	e.IPExtractor = echo.ExtractIPFromXFFHeader()
 }
 
 func effectiveMaxBodyBytes(value int) int {

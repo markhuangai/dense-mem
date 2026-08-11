@@ -39,7 +39,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	portalSessionAPI.Use(publicIPRateLimitMiddleware("public-user-session", deps.RateLimitSvc, deps.Config))
 	portalSessionAPI.POST("/logout", portal.logoutPortalSession)
 
-	authOpts := httpmw.AuthOptions{}
+	authOpts := httpmw.AuthOptions{CredentialVerifier: deps.CredentialVerifier}
 	if deps.SSOService != nil {
 		authOpts.SSOEntitlementValidator = deps.SSOService
 		authOpts.SSOSessionAuthenticator = deps.SSOService
@@ -104,7 +104,7 @@ func useUserPortalMiddleware(api *echo.Group, deps UserPortalDeps, authOpts http
 	api.Use(deps.ExtraMiddleware...)
 	api.Use(httpmw.UsageMetricsMiddleware(deps.UsageMetrics))
 	api.Use(httpmw.RateLimitMiddleware(deps.RateLimitSvc, deps.Config, deps.AuditSvc))
-	api.Use(httpmw.LastUsedMiddleware(deps.APIKeyRepo))
+	api.Use(httpmw.LastUsedMiddleware(deps.LastUsedRecorder))
 }
 
 func userPortalServiceAvailable(available bool, message string) echo.MiddlewareFunc {

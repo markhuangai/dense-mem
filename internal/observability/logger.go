@@ -2,8 +2,11 @@ package observability
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -13,6 +16,24 @@ import (
 // Logger is a structured logger wrapper that includes correlation and request context.
 type Logger struct {
 	logger *slog.Logger
+}
+
+// ParseLevel parses the operator-facing LOG_LEVEL value. Empty values retain
+// the production default; unknown values fail startup instead of silently
+// changing the configured verbosity.
+func ParseLevel(value string) (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "info":
+		return slog.LevelInfo, nil
+	case "debug":
+		return slog.LevelDebug, nil
+	case "warn", "warning":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return slog.LevelInfo, fmt.Errorf("invalid LOG_LEVEL %q", value)
+	}
 }
 
 // LogProvider is the companion interface for Logger.
@@ -48,6 +69,11 @@ type LogRecord struct {
 	Error         string
 	Attrs         map[string]any
 }
+
+var (
+	bearerSecretPattern   = regexp.MustCompile(`(?i)(bearer\s+)[^\s,;]+`)
+	keyValueSecretPattern = regexp.MustCompile(`(?i)((?:password|secret|token|api[_-]?key|authorization|cookie)\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;]+)`)
+)
 
 // LogSink receives structured application log records. Implementations must not
 // call back into the application logger from WriteLog.
@@ -104,11 +130,11 @@ func New(level slog.Level) *Logger {
 // to any additional sinks.
 func NewWithSinks(level slog.Level, sinks ...LogSink) *Logger {
 	handlers := []slog.Handler{
-		slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}),
+		newRedactingHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})),
 	}
 	for _, sink := range sinks {
 		if sink != nil {
-			handlers = append(handlers, newOperationLogHandler(level, sink))
+			handlers = append(handlers, newRedactingHandler(newOperationLogHandler(level, sink)))
 		}
 	}
 	handler := newTeeHandler(handlers...)
@@ -120,7 +146,7 @@ func NewWithSinks(level slog.Level, sinks ...LogSink) *Logger {
 // NewWithHandler creates a new Logger with a custom handler.
 func NewWithHandler(handler slog.Handler) *Logger {
 	return &Logger{
-		logger: slog.New(handler),
+		logger: slog.New(newRedactingHandler(handler)),
 	}
 }
 
@@ -408,9 +434,81 @@ func sanitizeLogValue(key string, value any) any {
 			out = append(out, sanitizeLogValue("", child))
 		}
 		return out
+	case string:
+		return redactSensitiveText(typed)
 	default:
 		return value
 	}
+}
+
+func redactSensitiveText(value string) string {
+	value = bearerSecretPattern.ReplaceAllString(value, `${1}[REDACTED]`)
+	return keyValueSecretPattern.ReplaceAllString(value, `${1}[REDACTED]`)
+}
+
+type redactingHandler struct {
+	delegate slog.Handler
+}
+
+func newRedactingHandler(delegate slog.Handler) slog.Handler {
+	if delegate == nil {
+		return slog.NewTextHandler(io.Discard, nil)
+	}
+	return redactingHandler{delegate: delegate}
+}
+
+func (h redactingHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.delegate.Enabled(ctx, level)
+}
+
+func (h redactingHandler) Handle(ctx context.Context, record slog.Record) error {
+	sanitized := slog.NewRecord(record.Time, record.Level, redactSensitiveText(record.Message), record.PC)
+	record.Attrs(func(attr slog.Attr) bool {
+		if safe, ok := sanitizeSlogAttr(attr); ok {
+			sanitized.AddAttrs(safe)
+		}
+		return true
+	})
+	return h.delegate.Handle(ctx, sanitized)
+}
+
+func (h redactingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	safe := make([]slog.Attr, 0, len(attrs))
+	for _, attr := range attrs {
+		if sanitized, ok := sanitizeSlogAttr(attr); ok {
+			safe = append(safe, sanitized)
+		}
+	}
+	return redactingHandler{delegate: h.delegate.WithAttrs(safe)}
+}
+
+func (h redactingHandler) WithGroup(name string) slog.Handler {
+	return redactingHandler{delegate: h.delegate.WithGroup(name)}
+}
+
+func sanitizeSlogAttr(attr slog.Attr) (slog.Attr, bool) {
+	attr.Value = attr.Value.Resolve()
+	if attr.Key == "" || isSensitiveField(attr.Key) {
+		return slog.Attr{}, false
+	}
+	if attr.Value.Kind() == slog.KindGroup {
+		children := make([]slog.Attr, 0)
+		for _, child := range attr.Value.Group() {
+			if safe, ok := sanitizeSlogAttr(child); ok {
+				children = append(children, safe)
+			}
+		}
+		return slog.Group(attr.Key, attrsToAny(children)...), true
+	}
+	return slog.Any(attr.Key, sanitizeLogValue(attr.Key, slogValueAny(attr.Value))), true
+}
+
+func attrsToAny(attrs []slog.Attr) []any {
+	out := make([]any, 0, len(attrs)*2)
+	for _, attr := range attrs {
+		out = append(out, attr)
+	}
+	return out
 }
 
 func severityName(level slog.Level) string {

@@ -213,8 +213,9 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, rec.Code)
 	})
 
-	t.Run("rate limit service error fails open", func(t *testing.T) {
+	t.Run("rate limit service error fails closed", func(t *testing.T) {
 		e := echo.New()
+		e.HTTPErrorHandler = httperr.ErrorHandler
 		limiter := &stubRateLimitService{err: errors.New("store down")}
 		e.Use(RateLimitMiddleware(limiter, cfg, nil))
 		e.GET("/ui/api/other", func(c echo.Context) error {
@@ -230,7 +231,7 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 		assert.Equal(t, 100, limiter.lastLimit)
 	})
 

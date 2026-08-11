@@ -42,10 +42,8 @@ func RateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.Confi
 			rateLimitSubject := profileID + ":key:" + principal.KeyID.String()
 			allowed, remaining, resetAt, err := svc.Check(ctx, rateLimitSubject, routePath, limit)
 			if err != nil {
-				// On error, let the request through (fail open)
-				// But log the error
 				c.Logger().Errorf("rate limit check failed: %v", err)
-				return next(c)
+				return httperr.New(httperr.SERVICE_UNAVAILABLE, "rate limit service unavailable")
 			}
 
 			// Set rate limit headers on all responses

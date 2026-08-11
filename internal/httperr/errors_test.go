@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
@@ -168,6 +170,40 @@ func TestErrorHandler(t *testing.T) {
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 		assert.Contains(t, rec.Body.String(), `"code":"INTERNAL_ERROR"`)
+		assert.Contains(t, rec.Body.String(), `"message":"internal server error"`)
+		assert.NotContains(t, rec.Body.String(), assert.AnError.Error())
+	})
+
+	t.Run("bounds public details and fixes server messages", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+		long := strings.Repeat("x", maxPublicDetailMessageRunes+100)
+		details := make([]ErrorDetail, maxPublicErrorDetails+5)
+		for i := range details {
+			details[i] = ErrorDetail{Field: strings.Repeat("f", maxPublicErrorFieldRunes+10), Message: long}
+		}
+		ErrorHandler(NewWithDetails(VALIDATION_ERROR, long, details), c)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		var body struct {
+			Code    ErrorCode     `json:"code"`
+			Message string        `json:"message"`
+			Details []ErrorDetail `json:"details"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, VALIDATION_ERROR, body.Code)
+		assert.LessOrEqual(t, utf8.RuneCountInString(body.Message), maxPublicErrorMessageRunes)
+		assert.Len(t, body.Details, maxPublicErrorDetails)
+		assert.LessOrEqual(t, utf8.RuneCountInString(body.Details[0].Field), maxPublicErrorFieldRunes)
+		assert.LessOrEqual(t, utf8.RuneCountInString(body.Details[0].Message), maxPublicDetailMessageRunes)
+
+		rec = httptest.NewRecorder()
+		c = e.NewContext(req, rec)
+		ErrorHandler(echo.NewHTTPError(http.StatusBadGateway, long), c)
+		assert.Equal(t, http.StatusBadGateway, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"message":"upstream service error"`)
+		assert.NotContains(t, rec.Body.String(), long)
 	})
 
 	t.Run("does not write committed response", func(t *testing.T) {

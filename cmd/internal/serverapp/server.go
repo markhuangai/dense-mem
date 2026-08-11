@@ -19,6 +19,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/http"
@@ -99,6 +100,14 @@ func RunActiveServer(
 	rlsHelper := postgres.NewRLS()
 	profileRepo := repository.NewProfileRepository(pgDB.GetDB(), rlsHelper)
 	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)
+	credentialVerifier := crypto.NewArgon2Verifier(cfg.AuthVerifyMaxConcurrency)
+	activityWriter := service.NewAPIKeyActivityWriter(apiKeyRepo)
+	activityWriter.Start(context.Background())
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = activityWriter.Shutdown(shutdownCtx)
+	}()
 	ssoRepo := repository.NewSSORepository(pgDB.GetDB(), rlsHelper)
 	portalSessionRepo := repository.NewUserPortalSessionRepository(pgDB.GetDB(), rlsHelper)
 	directoryIdentityRepo := repository.NewDirectoryIdentityRepository(pgDB.GetDB(), rlsHelper)
@@ -163,7 +172,7 @@ func RunActiveServer(
 		Logger:        logger,
 	})
 	portalSessionService := service.NewUserPortalSessionService(portalSessionRepo, apiKeyRepo, nil)
-	directoryIdentityService := service.NewDirectoryIdentityService(directoryIdentityRepo, service.DirectoryIdentityConfig{})
+	directoryIdentityService := service.NewDirectoryIdentityService(directoryIdentityRepo, service.DirectoryIdentityConfig{CredentialVerifier: credentialVerifier})
 	controlIdentityService := service.NewControlIdentityService(controlIdentityRepo, ssoRepo, service.ControlIdentityConfig{RuntimeConfig: appConfigService})
 	rateLimitService := backend.rateLimitService
 	runtimeCtx := RuntimeContext{
@@ -364,16 +373,18 @@ func RunActiveServer(
 		}
 	}
 	protectedDeps := http.ProtectedDeps{
-		APIKeyRepo:       apiKeyRepo,
-		ProfileService:   profileService,
-		ProfileSvc:       profileService,
-		RateLimitService: rateLimitService,
-		UsageMetrics:     usageMetricsService,
-		AuditService:     auditService,
-		SecurityService:  securityService,
-		SSOAuthenticator: ssoService,
-		Config:           &cfg,
-		Logger:           logger,
+		APIKeyRepo:         apiKeyRepo,
+		ProfileService:     profileService,
+		ProfileSvc:         profileService,
+		RateLimitService:   rateLimitService,
+		UsageMetrics:       usageMetricsService,
+		AuditService:       auditService,
+		SecurityService:    securityService,
+		SSOAuthenticator:   ssoService,
+		Config:             &cfg,
+		Logger:             logger,
+		CredentialVerifier: credentialVerifier,
+		LastUsedRecorder:   activityWriter,
 	}
 	protectedDeps.PostAuthMiddleware = append(protectedDeps.PostAuthMiddleware, options.PostAuthMiddleware...)
 	if telemetryHTTPMetrics != nil {
@@ -384,21 +395,23 @@ func RunActiveServer(
 		MCPGet:  mcpHandler.HandleGet,
 	})
 	userPortalDeps := http.UserPortalDeps{
-		APIKeyRepo:    apiKeyRepo,
-		ProfileSvc:    profileService,
-		APIKeySvc:     apiKeyService,
-		RateLimitSvc:  rateLimitService,
-		UsageMetrics:  usageMetricsService,
-		Telemetry:     telemetryReader,
-		GraphView:     graphViewSvc,
-		RecallSvc:     recallSvc,
-		DreamSvc:      dreamSvc,
-		AuditSvc:      auditService,
-		SecuritySvc:   securityService,
-		SSOService:    ssoService,
-		PortalSession: portalSessionService,
-		AppConfig:     appConfigService,
-		Config:        &cfg,
+		APIKeyRepo:         apiKeyRepo,
+		ProfileSvc:         profileService,
+		APIKeySvc:          apiKeyService,
+		RateLimitSvc:       rateLimitService,
+		UsageMetrics:       usageMetricsService,
+		Telemetry:          telemetryReader,
+		GraphView:          graphViewSvc,
+		RecallSvc:          recallSvc,
+		DreamSvc:           dreamSvc,
+		AuditSvc:           auditService,
+		SecuritySvc:        securityService,
+		SSOService:         ssoService,
+		PortalSession:      portalSessionService,
+		AppConfig:          appConfigService,
+		Config:             &cfg,
+		CredentialVerifier: credentialVerifier,
+		LastUsedRecorder:   activityWriter,
 	}
 	userPortalDeps.ExtraMiddleware = append(userPortalDeps.ExtraMiddleware, options.UserPortalMiddleware...)
 	if telemetryHTTPMetrics != nil {

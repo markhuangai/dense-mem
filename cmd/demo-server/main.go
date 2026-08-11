@@ -14,7 +14,6 @@ import (
 	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
 	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
 	"github.com/markhuangai/dense-mem/internal/config"
-	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -34,14 +33,12 @@ func main() {
 		log.Fatalf("invalid demo startup config: %v", err)
 	}
 
-	level := slog.LevelInfo
-	if os.Getenv("LOG_LEVEL") == "debug" {
-		level = slog.LevelDebug
+	level, err := observability.ParseLevel(os.Getenv("LOG_LEVEL"))
+	if err != nil {
+		log.Fatal(err)
 	}
 	logger := observability.New(level)
 	slog.SetDefault(logger.Slog())
-
-	middleware.SetAuthVerificationConcurrency(cfg.AuthVerifyMaxConcurrency)
 
 	preflightCtx, preflightCancel := context.WithTimeout(context.Background(), startupTimeout)
 

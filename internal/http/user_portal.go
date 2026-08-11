@@ -17,6 +17,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -30,23 +31,25 @@ import (
 
 // UserPortalDeps holds the dependencies for the API-key user portal.
 type UserPortalDeps struct {
-	APIKeyRepo      repository.APIKeyRepository
-	ProfileSvc      handler.ProfileServiceInterface
-	APIKeySvc       handler.APIKeyServiceInterface
-	RateLimitSvc    service.RateLimitServiceInterface
-	UsageMetrics    service.UsageMetricsRecorder
-	Telemetry       service.TelemetryReader
-	GraphView       graphview.Service
-	RecallSvc       memoryservice.RecallService
-	DreamSvc        dreamservice.Service
-	AuditSvc        service.AuditService
-	SecuritySvc     httpmw.SecurityBanService
-	SSOService      *service.SSOService
-	PortalSession   service.UserPortalSessionManager
-	AppConfig       service.AppConfigService
-	Config          config.ConfigProvider
-	UserStaticDir   string
-	ExtraMiddleware []echo.MiddlewareFunc
+	APIKeyRepo         repository.APIKeyRepository
+	ProfileSvc         handler.ProfileServiceInterface
+	APIKeySvc          handler.APIKeyServiceInterface
+	RateLimitSvc       service.RateLimitServiceInterface
+	UsageMetrics       service.UsageMetricsRecorder
+	Telemetry          service.TelemetryReader
+	GraphView          graphview.Service
+	RecallSvc          memoryservice.RecallService
+	DreamSvc           dreamservice.Service
+	AuditSvc           service.AuditService
+	SecuritySvc        httpmw.SecurityBanService
+	SSOService         *service.SSOService
+	PortalSession      service.UserPortalSessionManager
+	AppConfig          service.AppConfigService
+	Config             config.ConfigProvider
+	CredentialVerifier crypto.CredentialVerifier
+	LastUsedRecorder   httpmw.LastUsedRecorder
+	UserStaticDir      string
+	ExtraMiddleware    []echo.MiddlewareFunc
 }
 
 type userPortalHandler struct {
@@ -828,7 +831,7 @@ func publicIPRateLimitMiddleware(subjectNamespace string, svc service.RateLimitS
 			allowed, remaining, resetAt, err := svc.Check(c.Request().Context(), subject, routePath, limit)
 			if err != nil {
 				c.Logger().Error("public ip rate limit check failed")
-				return next(c)
+				return httperr.New(httperr.SERVICE_UNAVAILABLE, "rate limit service unavailable")
 			}
 			c.Response().Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))
 			c.Response().Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))

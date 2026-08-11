@@ -131,6 +131,7 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 	cookies := response.Result().Cookies()
 	require.Len(t, cookies, 2)
 	var sessionToken string
+	var csrfToken string
 	for _, cookie := range cookies {
 		if cookie.Name == service.ControlSessionCookieName {
 			sessionToken = cookie.Value
@@ -138,11 +139,13 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 			require.Equal(t, "/", cookie.Path)
 		}
 		if cookie.Name == service.ControlCSRFCookieName {
+			csrfToken = cookie.Value
 			require.True(t, cookie.Secure)
 			require.Equal(t, "/", cookie.Path)
 		}
 	}
 	require.NotEmpty(t, sessionToken)
+	require.NotEmpty(t, csrfToken)
 
 	c, rec := controlDirectoryContext(nethttp.MethodGet, "", map[string]string{"providerId": providerID.String()})
 	handler.controlIdentity = identity
@@ -170,6 +173,8 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 
 	request = httptest.NewRequest(nethttp.MethodPost, "/control/auth/logout", nil)
 	request.AddCookie(&nethttp.Cookie{Name: service.ControlSessionCookieName, Value: sessionToken})
+	request.AddCookie(&nethttp.Cookie{Name: service.ControlCSRFCookieName, Value: csrfToken})
+	request.Header.Set(service.ControlCSRFHeaderName, csrfToken)
 	response = httptest.NewRecorder()
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusNoContent, response.Code, response.Body.String())

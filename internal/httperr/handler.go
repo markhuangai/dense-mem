@@ -66,9 +66,10 @@ func ErrorHandler(err error, c echo.Context) {
 		statusCode = HTTPStatusCode(ae.Code)
 	} else {
 		// Handle generic errors
-		apiErr = New(INTERNAL_ERROR, err.Error())
+		apiErr = New(INTERNAL_ERROR, stablePublicMessage(http.StatusInternalServerError))
 		statusCode = http.StatusInternalServerError
 	}
+	apiErr = apiErr.bounded(statusCode)
 
 	// Don't overwrite the response if already committed
 	if c.Response().Committed {

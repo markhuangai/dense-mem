@@ -26,7 +26,7 @@ func newTelemetryScrapeServer(scrapeHandler nethttp.Handler, scrapeToken string)
 	e.Server.ReadHeaderTimeout = 5 * time.Second
 	e.Server.ReadTimeout = 30 * time.Second
 	e.Server.IdleTimeout = 60 * time.Second
-	e.IPExtractor = echo.ExtractIPDirect()
+	e.IPExtractor = echo.ExtractIPFromXFFHeader()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(echomw.Recover())
 	e.GET("/metrics", echo.WrapHandler(scrapeHandler), telemetryScrapeTokenMiddleware(scrapeToken))
