@@ -93,7 +93,6 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	if err := s.validate(); err != nil {
 		return result, err
 	}
-	now := s.now().UTC()
 	runtime, err := s.appConfig.GeneralRuntimeConfig(ctx)
 	if err != nil {
 		return result, err
@@ -109,6 +108,10 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	start, err := time.Parse("15:04", runtime.EmbeddingReconciliationStartTimeLocal)
 	if err != nil {
 		return result, fmt.Errorf("embedding reconciliation: invalid configured start time: %w", err)
+	}
+	now, err := s.reconciliation.GetEmbeddingReconciliationTime(ctx)
+	if err != nil {
+		return result, err
 	}
 	localNow := now.In(location)
 	if localNow.Hour() < start.Hour() ||
@@ -136,7 +139,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	result.RunID = run.RunID
 	result.Status = run.Status
 	if run.StartedAt == nil {
-		started := s.now().UTC()
+		started := now
 		run.StartedAt = &started
 	}
 	if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
@@ -144,11 +147,16 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 	}
 	s.logInfo(ctx, "embedding_reconciliation_reserved", run, nil)
 	if run.CanaryAttemptedAt != nil {
+		result.CanaryAttempted = true
 		if run.CanaryOutcome == "succeeded" {
-			result.CanaryAttempted = true
 			result.CanarySucceeded = true
 			result.RecoveredCount = run.RecoveredCount
 			return result, s.releaseReconciliationBacklog(ctx, run, contract, &result)
+		}
+		if run.CanaryOutcome == "failed" {
+			result.Status = string(domain.EmbeddingReconciliationDeferred)
+			return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationDeferred),
+				run.CanaryFailureClass, run.CanaryFailureCode, "daily embedding canary failed before run completion", true, nil)
 		}
 		result.Status = string(domain.EmbeddingReconciliationAmbiguous)
 		return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationAmbiguous), "", "", "daily embedding canary outcome was ambiguous after lease expiry", true, nil)

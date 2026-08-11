@@ -23,6 +23,8 @@ func (s reconciliationConfigStub) GeneralRuntimeConfig(context.Context) (domain.
 }
 
 type reconciliationRepositoryStub struct {
+	databaseNow        time.Time
+	databaseNowErr     error
 	run                *repository.EmbeddingReconciliationRun
 	job                *repository.EmbeddingJob
 	jobs               []*repository.EmbeddingJob
@@ -47,6 +49,16 @@ type reconciliationRepositoryStub struct {
 	resetInputs        []repository.ResetEmbeddingReconciliationCanaryInput
 	resetErr           error
 	markErrs           []error
+}
+
+func (s *reconciliationRepositoryStub) GetEmbeddingReconciliationTime(context.Context) (time.Time, error) {
+	if s.databaseNowErr != nil {
+		return time.Time{}, s.databaseNowErr
+	}
+	if s.databaseNow.IsZero() {
+		return time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC), nil
+	}
+	return s.databaseNow, nil
 }
 
 func (s *reconciliationRepositoryStub) GetSearchConvergence(context.Context, repository.SearchConvergenceInput) (*repository.SearchConvergence, error) {
@@ -299,6 +311,42 @@ func TestEmbeddingReconciliationResumesReclaimedSuccessfulCanary(t *testing.T) {
 	assert.Equal(t, "succeeded", reconciliation.completed.CanaryOutcome)
 	assert.EqualValues(t, 5, reconciliation.completed.RequeuedCount)
 	assert.EqualValues(t, 1, reconciliation.completed.RecoveredCount)
+}
+
+func TestEmbeddingReconciliationPreservesReclaimedFailedCanary(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	attemptedAt := time.Date(2026, 8, 10, 4, 31, 0, 0, time.UTC)
+	reconciliation := &reconciliationRepositoryStub{
+		run: &repository.EmbeddingReconciliationRun{
+			RunID: "run-1", LeaseToken: "lease-2", Status: string(domain.EmbeddingReconciliationRunning),
+			CandidateCutoff: attemptedAt, CanaryAttemptedAt: &attemptedAt, CanaryOutcome: "failed",
+			CanaryFailureClass: string(domain.EmbeddingFailureProviderAction),
+			CanaryFailureCode:  string(domain.EmbeddingFailureProviderQuotaExhausted),
+		},
+	}
+	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, vector: []float32{1, 0, 0}}
+	metrics := &reconciliationMetricsStub{}
+	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation, Provider: provider, Metrics: metrics,
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-2", Now: func() time.Time { return attemptedAt.Add(time.Minute) },
+	})
+
+	result, err := service.ProcessDue(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, string(domain.EmbeddingReconciliationDeferred), result.Status)
+	assert.True(t, result.CanaryAttempted)
+	assert.False(t, result.CanarySucceeded)
+	assert.Zero(t, provider.calls)
+	assert.Zero(t, reconciliation.requeued)
+	require.NotNil(t, reconciliation.completed)
+	assert.Equal(t, string(domain.EmbeddingReconciliationDeferred), reconciliation.completed.Status)
+	assert.Equal(t, "failed", reconciliation.completed.CanaryOutcome)
+	assert.Equal(t, string(domain.EmbeddingFailureProviderAction), reconciliation.completed.FailureClass)
+	assert.Equal(t, string(domain.EmbeddingFailureProviderQuotaExhausted), reconciliation.completed.FailureCode)
+	assert.Equal(t, []string{"failed"}, metrics.canaries)
 }
 
 func TestEmbeddingReconciliationReportsDatabaseClockSkew(t *testing.T) {
@@ -797,13 +845,14 @@ func TestEmbeddingReconciliationDefersFailedCanaryOutcomePersistence(t *testing.
 func TestEmbeddingReconciliationUsesConfiguredLocalCalendarDate(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
-	reconciliation := &reconciliationRepositoryStub{}
+	databaseNow := time.Date(2026, 8, 10, 11, 30, 20, 0, time.UTC) // 04:30 in America/Los_Angeles.
+	hostNow := databaseNow.Add(24 * time.Hour)
+	reconciliation := &reconciliationRepositoryStub{databaseNow: databaseNow}
 	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3}
-	now := time.Date(2026, 8, 10, 11, 30, 20, 0, time.UTC) // 04:30 in America/Los_Angeles.
 	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
 		Search: search, Reconciliation: reconciliation, Provider: provider,
 		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "America/Los_Angeles", EmbeddingReconciliationStartTimeLocal: "04:30"}},
-		WorkerID:  "worker-1", Now: func() time.Time { return now },
+		WorkerID:  "worker-1", Now: func() time.Time { return hostNow },
 	})
 
 	_, err := svc.ProcessDue(context.Background())
@@ -818,13 +867,14 @@ func TestEmbeddingReconciliationUsesConfiguredLocalCalendarDate(t *testing.T) {
 func TestEmbeddingReconciliationRunsAfterMissedConfiguredMinute(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
-	reconciliation := &reconciliationRepositoryStub{}
+	databaseNow := time.Date(2026, 8, 10, 4, 31, 20, 0, time.UTC)
+	hostNow := databaseNow.Add(-time.Hour)
+	reconciliation := &reconciliationRepositoryStub{databaseNow: databaseNow}
 	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3}
-	now := time.Date(2026, 8, 10, 4, 31, 20, 0, time.UTC)
 	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
 		Search: search, Reconciliation: reconciliation, Provider: provider,
 		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
-		WorkerID:  "worker-1", Now: func() time.Time { return now },
+		WorkerID:  "worker-1", Now: func() time.Time { return hostNow },
 	})
 
 	result, err := svc.ProcessDue(context.Background())
@@ -838,13 +888,14 @@ func TestEmbeddingReconciliationRunsAfterMissedConfiguredMinute(t *testing.T) {
 func TestEmbeddingReconciliationDoesNotRunBeforeScheduledMinute(t *testing.T) {
 	search := newEmbeddingSearchStub()
 	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
-	reconciliation := &reconciliationRepositoryStub{}
+	databaseNow := time.Date(2026, 8, 10, 4, 29, 59, 0, time.UTC)
+	hostNow := databaseNow.Add(time.Hour)
+	reconciliation := &reconciliationRepositoryStub{databaseNow: databaseNow}
 	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3}
-	now := time.Date(2026, 8, 10, 4, 29, 59, 0, time.UTC)
 	svc := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
 		Search: search, Reconciliation: reconciliation, Provider: provider,
 		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
-		WorkerID:  "worker-1", Now: func() time.Time { return now },
+		WorkerID:  "worker-1", Now: func() time.Time { return hostNow },
 	})
 
 	result, err := svc.ProcessDue(context.Background())
@@ -852,6 +903,24 @@ func TestEmbeddingReconciliationDoesNotRunBeforeScheduledMinute(t *testing.T) {
 	assert.Empty(t, result.RunID)
 	assert.Empty(t, reconciliation.reserved)
 	assert.Zero(t, provider.calls)
+}
+
+func TestEmbeddingReconciliationFailsClosedWhenDatabaseClockIsUnavailable(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+	clockErr := errors.New("database clock unavailable")
+	reconciliation := &reconciliationRepositoryStub{databaseNowErr: clockErr}
+	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+		Search: search, Reconciliation: reconciliation,
+		Provider:  &reconciliationRawProvider{available: true, model: "model", dims: 3},
+		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:  "worker-1",
+	})
+
+	_, err := service.ProcessDue(context.Background())
+
+	require.ErrorIs(t, err, clockErr)
+	assert.Empty(t, reconciliation.reserved)
 }
 
 func TestEmbeddingFailureMessageIsClosedAndDoesNotPersistProviderText(t *testing.T) {

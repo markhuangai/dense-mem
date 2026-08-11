@@ -548,13 +548,24 @@ func TestEmbeddingReconciliationSuccessfulCanaryLeaseTakeoverResumesBacklog(t *t
 	}, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, firstBatch.requeued)
+	var incidentStatus string
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT status
+			FROM embedding_failure_incidents
+			WHERE team_id = ?::uuid AND embedding_contract_id = ?::uuid
+			  AND embedding_dimensions = ? AND source_kind = 'evidence'
+			  AND failure_class = 'transient' AND failure_code = 'provider_timeout'
+		`, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&incidentStatus).Error; err != nil {
+			return err
+		}
 		return tx.Exec(`
 			UPDATE embedding_reconciliation_runs
 			SET lease_until = clock_timestamp() - interval '1 second'
 			WHERE reconciliation_run_id = ?::uuid
 		`, first.RunID).Error
 	}))
+	require.Equal(t, "open", incidentStatus)
 
 	second, reclaimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
@@ -574,6 +585,16 @@ func TestEmbeddingReconciliationSuccessfulCanaryLeaseTakeoverResumesBacklog(t *t
 	})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, requeued)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status
+			FROM embedding_failure_incidents
+			WHERE team_id = ?::uuid AND embedding_contract_id = ?::uuid
+			  AND embedding_dimensions = ? AND source_kind = 'evidence'
+			  AND failure_class = 'transient' AND failure_code = 'provider_timeout'
+		`, teamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&incidentStatus).Error
+	}))
+	require.Equal(t, "recovering", incidentStatus)
 	requeuedAgain, err := repo.RequeueEmbeddingReconciliationJobs(ctx, RequeueEmbeddingReconciliationJobsInput{
 		RunID: second.RunID, WorkerID: second.WorkerID, LeaseToken: second.LeaseToken,
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,

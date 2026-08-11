@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/stretchr/testify/require"
@@ -12,6 +13,10 @@ import (
 type searchConvergenceRepositoryStub struct {
 	value *repository.SearchConvergence
 	err   error
+}
+
+func (searchConvergenceRepositoryStub) GetEmbeddingReconciliationTime(context.Context) (time.Time, error) {
+	return time.Time{}, nil
 }
 
 func (s searchConvergenceRepositoryStub) GetSearchConvergence(context.Context, repository.SearchConvergenceInput) (*repository.SearchConvergence, error) {

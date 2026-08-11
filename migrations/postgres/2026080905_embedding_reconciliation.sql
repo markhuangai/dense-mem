@@ -204,6 +204,7 @@ BEGIN
                     THEN 'provider_action_required'
                 WHEN lower(batch.error) ~ 'status([^0-9]{0,12})429'
                   OR lower(batch.error) LIKE '%rate limit%'
+                  OR lower(batch.error) ~ 'status([^0-9]{0,12})408'
                   OR lower(batch.error) LIKE '%embedding request timed out%'
                   OR lower(batch.error) LIKE '%context deadline exceeded%'
                   OR lower(batch.error) LIKE '%client.timeout exceeded%'
@@ -218,6 +219,8 @@ BEGIN
                   OR lower(batch.error) LIKE '%provider is unavailable%'
                   OR lower(batch.error) ~ 'status([^0-9]{0,12})5[0-9]{2}'
                     THEN 'transient'
+                WHEN lower(batch.error) ~ 'status([^0-9]{0,12})413' THEN 'permanent'
+                WHEN lower(batch.error) ~ 'status([^0-9]{0,12})4[0-9]{2}' THEN 'provider_action_required'
                 ELSE 'permanent'
             END,
             failure_code = CASE
@@ -232,6 +235,9 @@ BEGIN
                 WHEN lower(batch.error) ~ 'status([^0-9]{0,12})429'
                   OR lower(batch.error) LIKE '%rate limit%'
                     THEN 'provider_rate_limited'
+                WHEN lower(batch.error) ~ 'status([^0-9]{0,12})408' THEN 'provider_timeout'
+                WHEN lower(batch.error) ~ 'status([^0-9]{0,12})413' THEN 'embedding_input_rejected'
+                WHEN lower(batch.error) ~ 'status([^0-9]{0,12})4[0-9]{2}' THEN 'provider_contract_rejected'
                 WHEN lower(batch.error) LIKE '%embedding request timed out%'
                   OR lower(batch.error) LIKE '%context deadline exceeded%'
                   OR lower(batch.error) LIKE '%client.timeout exceeded%'
@@ -462,6 +468,7 @@ AS $function$
                WHEN error_text ~ 'status([^0-9]{0,12})429'
                  OR error_text LIKE '%rate limit%'
                    THEN 'transient'
+               WHEN error_text ~ 'status([^0-9]{0,12})408' THEN 'transient'
                WHEN error_text LIKE '%embedding request timed out%'
                  OR error_text LIKE '%context deadline exceeded%'
                  OR error_text LIKE '%client.timeout exceeded%'
@@ -478,6 +485,8 @@ AS $function$
                WHEN error_text LIKE '%provider is unavailable%'
                  OR error_text ~ 'status([^0-9]{0,12})5[0-9]{2}'
                    THEN 'transient'
+               WHEN error_text ~ 'status([^0-9]{0,12})413' THEN 'permanent'
+               WHEN error_text ~ 'status([^0-9]{0,12})4[0-9]{2}' THEN 'provider_action_required'
                ELSE 'permanent'
            END,
            CASE
@@ -492,6 +501,9 @@ AS $function$
                WHEN error_text ~ 'status([^0-9]{0,12})429'
                  OR error_text LIKE '%rate limit%'
                    THEN 'provider_rate_limited'
+               WHEN error_text ~ 'status([^0-9]{0,12})408' THEN 'provider_timeout'
+               WHEN error_text ~ 'status([^0-9]{0,12})413' THEN 'embedding_input_rejected'
+               WHEN error_text ~ 'status([^0-9]{0,12})4[0-9]{2}' THEN 'provider_contract_rejected'
                WHEN error_text LIKE '%embedding request timed out%'
                  OR error_text LIKE '%context deadline exceeded%'
                  OR error_text LIKE '%client.timeout exceeded%'
@@ -959,11 +971,8 @@ BEGIN
 END
 $procedure$;
 -- +goose StatementEnd
-
 CALL dense_mem_backfill_embedding_reconciliation_compatibility();
 DROP PROCEDURE dense_mem_backfill_embedding_reconciliation_compatibility();
-
-
 -- +goose Down
 -- +goose StatementBegin
 -- Validation and the legacy rewrite are irreversible. This preserves the prior

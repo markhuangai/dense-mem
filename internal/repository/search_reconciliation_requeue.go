@@ -249,7 +249,7 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 				        AND run.worker_id = ?
 				        AND run.lease_token = ?::uuid
 				  )
-				RETURNING job.team_id, job.search_document_id, job.source_kind,
+				RETURNING job.team_id, job.embedding_job_id, job.search_document_id, job.source_kind,
 				          job.failure_class, job.failure_code,
 				          job.source_version, job.projection_format_version,
 				          job.projection_generation_id, job.document_version,
@@ -286,26 +286,31 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 				  )
 				  AND NOT EXISTS (
 				      SELECT 1
-				      FROM embedding_jobs AS newer_failure
+				      FROM embedding_jobs AS remaining_failure
 				      JOIN search_documents AS document
-				        ON document.team_id = newer_failure.team_id
-				       AND document.search_document_id = newer_failure.search_document_id
-				       AND document.source_version = newer_failure.source_version
-				       AND document.projection_format_version = newer_failure.projection_format_version
-				       AND document.projection_generation_id IS NOT DISTINCT FROM newer_failure.projection_generation_id
-				       AND document.document_version = newer_failure.document_version
-				       AND document.embedding_contract_id = newer_failure.embedding_contract_id
-				       AND document.embedding_dimensions = newer_failure.embedding_dimensions
+				        ON document.team_id = remaining_failure.team_id
+				       AND document.search_document_id = remaining_failure.search_document_id
+				       AND document.source_version = remaining_failure.source_version
+				       AND document.projection_format_version = remaining_failure.projection_format_version
+				       AND document.projection_generation_id IS NOT DISTINCT FROM remaining_failure.projection_generation_id
+				       AND document.document_version = remaining_failure.document_version
+				       AND document.embedding_contract_id = remaining_failure.embedding_contract_id
+				       AND document.embedding_dimensions = remaining_failure.embedding_dimensions
 				      JOIN teams AS team
-				        ON team.id = newer_failure.team_id AND team.status = 'active' AND team.deleted_at IS NULL
-				      WHERE newer_failure.team_id = incident.team_id
-				        AND newer_failure.embedding_contract_id = incident.embedding_contract_id
-				        AND newer_failure.embedding_dimensions = incident.embedding_dimensions
-				        AND newer_failure.source_kind = incident.source_kind
-				        AND newer_failure.failure_class = incident.failure_class
-				        AND newer_failure.failure_code = incident.failure_code
-				        AND newer_failure.status = 'failed'
-				        AND COALESCE(newer_failure.last_failed_at, newer_failure.updated_at) > ?
+				        ON team.id = remaining_failure.team_id AND team.status = 'active' AND team.deleted_at IS NULL
+				      WHERE remaining_failure.team_id = incident.team_id
+				        AND remaining_failure.embedding_contract_id = incident.embedding_contract_id
+				        AND remaining_failure.embedding_dimensions = incident.embedding_dimensions
+				        AND remaining_failure.source_kind = incident.source_kind
+				        AND remaining_failure.failure_class = incident.failure_class
+				        AND remaining_failure.failure_code = incident.failure_code
+				        AND remaining_failure.status = 'failed'
+				        AND NOT EXISTS (
+				            SELECT 1
+				            FROM requeued
+				            WHERE requeued.team_id = remaining_failure.team_id
+				              AND requeued.embedding_job_id = remaining_failure.embedding_job_id
+				        )
 				  )
 				RETURNING 1
 			)
@@ -315,7 +320,7 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 		`, pq.Array(jobTeamIDs), pq.Array(jobIDs),
 			input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff,
 			input.RunID, input.WorkerID, input.LeaseToken,
-			input.RunID, input.CandidateCutoff).Row().Scan(&batch.requeued, &documentCount, &incidentCount); err != nil {
+			input.RunID).Row().Scan(&batch.requeued, &documentCount, &incidentCount); err != nil {
 			return err
 		}
 		if batch.requeued == 0 {

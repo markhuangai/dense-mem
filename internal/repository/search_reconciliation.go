@@ -20,6 +20,17 @@ const (
 
 var _ EmbeddingReconciliationRepository = (*SearchRepositoryImpl)(nil)
 
+func (r *SearchRepositoryImpl) GetEmbeddingReconciliationTime(ctx context.Context) (time.Time, error) {
+	var now time.Time
+	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		return tx.WithContext(ctx).Raw(`SELECT clock_timestamp()`).Scan(&now).Error
+	})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("search: reconciliation clock: %w", err)
+	}
+	return now.UTC(), nil
+}
+
 // CheckSearchConvergence returns an error when the active search contract has
 // any queued, processing, or failed jobs, or an unresolved embedding incident.
 // It intentionally uses bounded existence checks for health probes instead of

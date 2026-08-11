@@ -195,6 +195,9 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 		{jobID: uuid.NewString(), errorMessage: "embedding provider http error: status=503 message=unavailable", wantClass: "transient", wantCode: "provider_server_error"},
 		{jobID: uuid.NewString(), errorMessage: "embedding provider http error: status=429 message=rate limit exceeded", wantClass: "transient", wantCode: "provider_rate_limited"},
 		{jobID: uuid.NewString(), errorMessage: "embedding provider http error: status=429 code=insufficient_quota", wantClass: "provider_action_required", wantCode: "provider_quota_exhausted"},
+		{jobID: uuid.NewString(), errorMessage: "embedding provider http error: status=408", wantClass: "transient", wantCode: "provider_timeout"},
+		{jobID: uuid.NewString(), errorMessage: "embedding provider http error: status=413", wantClass: "permanent", wantCode: "embedding_input_rejected"},
+		{jobID: uuid.NewString(), errorMessage: "embedding provider http error: status=422", wantClass: "provider_action_required", wantCode: "provider_contract_rejected"},
 		{jobID: uuid.NewString(), errorMessage: "embedding dimensions 2, expected 3", wantClass: "permanent", wantCode: "unknown_embedding_failure"},
 	}
 	teamBFixture := legacyEmbeddingFailureFixture{
@@ -389,6 +392,18 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	}))
 
 	runGooseUpTo(t, ctx, sqlDB, 2026080905)
+	var compatibilityClass, compatibilityCode string
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT failure_class, failure_code
+			FROM dense_mem_classify_embedding_failure_compatibility(
+				'embedding provider http error: status=404'
+			)
+		`).Scan(&compatibilityClass, &compatibilityCode)
+	}))
+	require.Equal(t, "provider_action_required", compatibilityClass)
+	require.Equal(t, "provider_contract_rejected", compatibilityCode)
+
 	var compatibilityTotalAttempts int
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `

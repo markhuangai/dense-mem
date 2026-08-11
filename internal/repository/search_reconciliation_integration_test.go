@@ -113,16 +113,20 @@ func TestEmbeddingReconciliationCutoffAndLeasesUseDatabaseClock(t *testing.T) {
 			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
 		`, teamID, document.SearchDocumentID).Error
 	}))
-
-	future := time.Now().UTC().Add(24 * time.Hour)
 	databaseBefore := databaseNowForTest(t, adminDB, rls)
+	sharedTime, err := repo.GetEmbeddingReconciliationTime(ctx)
+	require.NoError(t, err)
+	databaseAfter := databaseNowForTest(t, adminDB, rls)
+	require.WithinRange(t, sharedTime, databaseBefore, databaseAfter)
+	future := time.Now().UTC().Add(24 * time.Hour)
+	databaseBefore = databaseNowForTest(t, adminDB, rls)
 	run, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: 3,
 		LocalRunDate: future, WorkerID: "database-clock-worker", Lease: time.Minute, Now: future,
 	})
 	require.NoError(t, err)
 	require.True(t, claimed)
-	databaseAfter := databaseNowForTest(t, adminDB, rls)
+	databaseAfter = databaseNowForTest(t, adminDB, rls)
 	require.False(t, run.CandidateCutoff.Before(databaseBefore))
 	require.False(t, run.CandidateCutoff.After(databaseAfter))
 	var leaseSeconds float64
@@ -135,7 +139,6 @@ func TestEmbeddingReconciliationCutoffAndLeasesUseDatabaseClock(t *testing.T) {
 	}))
 	require.Greater(t, leaseSeconds, 30.0)
 	require.Less(t, leaseSeconds, 90.0)
-
 	canary, err := repo.SelectEmbeddingReconciliationCanary(ctx, SelectEmbeddingReconciliationCanaryInput{
 		RunID: run.RunID, EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: 3, CandidateCutoff: run.CandidateCutoff,

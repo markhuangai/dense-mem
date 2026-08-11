@@ -22,6 +22,7 @@ type SearchRepository interface {
 // tenant-scoped search interface because run leases and operator projections
 // are system-coordinated concerns.
 type EmbeddingReconciliationRepository interface {
+	GetEmbeddingReconciliationTime(ctx context.Context) (time.Time, error)
 	GetSearchConvergence(ctx context.Context, input SearchConvergenceInput) (*SearchConvergence, error)
 	ReserveEmbeddingReconciliationRun(ctx context.Context, input ReserveEmbeddingReconciliationRunInput) (*EmbeddingReconciliationRun, bool, error)
 	SelectEmbeddingReconciliationCanary(ctx context.Context, input SelectEmbeddingReconciliationCanaryInput) (*EmbeddingJob, error)
