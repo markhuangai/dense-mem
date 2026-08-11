@@ -23,8 +23,7 @@ E2E_FILE_ID=""
 E2E_SERVER_IMAGE=""
 E2E_PLAYWRIGHT_CONTAINER=""
 
-source "${ROOT_DIR}/scripts/e2e-compose-conflict.sh"
-source "${ROOT_DIR}/scripts/e2e-compose-embedding-reconciliation.sh"
+source "${ROOT_DIR}/scripts/e2e-compose-conflict.sh"; source "${ROOT_DIR}/scripts/e2e-compose-embedding-reconciliation.sh"
 source "${ROOT_DIR}/scripts/e2e-compose-submission-status.sh"
 
 sanitize_project_name() {
