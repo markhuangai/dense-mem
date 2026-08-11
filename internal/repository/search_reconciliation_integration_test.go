@@ -22,10 +22,12 @@ func TestCheckSearchConvergenceDetectsActiveBacklog(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "convergence-health-owner")
 	insertSearchTestContract(t, adminDB, rls, "convergence-health", 3, "exact", "")
 	repo := NewSearchRepository(appDB, rls)
+	_, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{EmbeddingDimensions: 4})
+	require.ErrorIs(t, err, ErrSearchContractMismatch)
 
 	require.NoError(t, repo.CheckSearchConvergence(ctx))
 	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "convergence health backlog", 1)
-	err := repo.CheckSearchConvergence(ctx)
+	err = repo.CheckSearchConvergence(ctx)
 	require.ErrorIs(t, err, ErrSearchConvergenceAttentionRequired)
 	require.ErrorContains(t, err, "attention_required")
 
@@ -84,6 +86,42 @@ func TestReserveEmbeddingReconciliationRunWaitsForRecoverableCandidate(t *testin
 	require.NoError(t, err)
 	require.True(t, claimed)
 	require.NotNil(t, run)
+}
+
+func TestReserveEmbeddingReconciliationRunDoesNotReclaimFailedRun(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "reconciliation-failed-run-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "reconciliation-failed-run-owner")
+	insertSearchTestContract(t, adminDB, rls, "reconciliation-failed-run", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "failed run candidate", 1)
+	failEmbeddingDocumentForReconciliationTest(t, ctx, repo, teamID, document.SearchDocumentID, "failed-run-writer")
+	now := databaseNowForTest(t, adminDB, rls)
+	run, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: now, CreateIfMissing: true, WorkerID: "failed-run-worker", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_reconciliation_runs
+			SET status = 'failed', completed_at = now(), lease_until = now() - interval '1 second'
+			WHERE reconciliation_run_id = ?::uuid
+		`, run.RunID).Error
+	}))
+
+	reloaded, reclaimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: now, CreateIfMissing: false, WorkerID: "failed-run-worker-2", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.False(t, reclaimed)
+	require.Equal(t, string(domain.EmbeddingReconciliationFailed), reloaded.Status)
 }
 
 func TestEmbeddingReconciliationCutoffAndLeasesUseDatabaseClock(t *testing.T) {
@@ -408,11 +446,15 @@ func TestEmbeddingReconciliationRenewsLeaseAndTracksDerivedFailureGroupRecovery(
 	require.NoError(t, err)
 	require.EqualValues(t, 1, requeued)
 
-	var renewedUntil time.Time
+	var renewedSeconds float64
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT lease_until FROM embedding_reconciliation_runs WHERE reconciliation_run_id = ?::uuid`, run.RunID).Scan(&renewedUntil).Error
+		return tx.Raw(`
+			SELECT EXTRACT(EPOCH FROM (lease_until - clock_timestamp()))
+			FROM embedding_reconciliation_runs
+			WHERE reconciliation_run_id = ?::uuid
+		`, run.RunID).Scan(&renewedSeconds).Error
 	}))
-	require.True(t, renewedUntil.After(now.Add(4*time.Minute)))
+	require.Greater(t, renewedSeconds, 240.0)
 	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
 	require.NoError(t, err)
 	require.Len(t, convergence.FailureGroups, 1)
@@ -511,23 +553,32 @@ func TestSearchConvergenceBoundsDerivedFailureGroups(t *testing.T) {
 			return ensureSemanticRefs(ctx, tx, teams[index].teamID, teams[index].ownerID)
 		}))
 	}
-	failureClasses := []string{"transient", "provider_action_required", "permanent"}
-	failureCodes := []string{
-		"provider_rate_limited", "provider_timeout", "provider_network_error", "provider_server_error",
-		"provider_quota_exhausted", "provider_authentication_failed", "provider_permission_denied",
-		"provider_contract_rejected", "provider_response_invalid", "embedding_input_rejected",
-		"embedding_contract_mismatch", "unknown_embedding_failure",
+	failureContracts := []struct {
+		class string
+		code  string
+	}{
+		{"transient", "provider_rate_limited"},
+		{"transient", "provider_timeout"},
+		{"transient", "provider_network_error"},
+		{"transient", "provider_server_error"},
+		{"provider_action_required", "provider_quota_exhausted"},
+		{"provider_action_required", "provider_authentication_failed"},
+		{"provider_action_required", "provider_permission_denied"},
+		{"provider_action_required", "provider_contract_rejected"},
+		{"provider_action_required", "provider_response_invalid"},
+		{"permanent", "embedding_input_rejected"},
+		{"permanent", "embedding_contract_mismatch"},
+		{"permanent", "unknown_embedding_failure"},
 	}
 	sourceKinds := []string{"evidence", "relationship", "entity"}
 	groupIndex := 0
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		for _, team := range teams {
-			for classIndex, failureClass := range failureClasses {
-				for codeIndex, failureCode := range failureCodes {
+			for _, failure := range failureContracts {
+				for _, sourceKind := range sourceKinds {
 					documentID := uuid.NewString()
 					sourceID := uuid.NewString()
 					jobID := uuid.NewString()
-					sourceKind := sourceKinds[(classIndex+codeIndex)%len(sourceKinds)]
 					status := "queued"
 					searchState := "pending"
 					attempts := 1
@@ -569,7 +620,7 @@ func TestSearchConvergenceBoundsDerivedFailureGroups(t *testing.T) {
 						)
 					`, team.teamID, jobID, documentID, team.ownerID,
 						sourceKind, sourceID, contract.EmbeddingContractID, contract.EmbeddingDimensions,
-						status, attempts, attempts, completedAt, failureClass, failureCode, failedAt, failedAt).Error; err != nil {
+						status, attempts, attempts, completedAt, failure.class, failure.code, failedAt, failedAt).Error; err != nil {
 						return err
 					}
 					groupIndex++
@@ -599,6 +650,8 @@ func TestSearchConvergenceExcludesDeletedTeams(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "convergence-deleted-owner")
 	insertSearchTestContract(t, adminDB, rls, "convergence-deleted", 3, "exact", "")
 	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
 	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "deleted team failure history", 1)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Exec(`
@@ -622,9 +675,23 @@ func TestSearchConvergenceExcludesDeletedTeams(t *testing.T) {
 	require.Equal(t, "attention_required", before.Status)
 	require.EqualValues(t, 1, before.Failed)
 	require.Len(t, before.FailureGroups, 1)
+	run, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: databaseNowForTest(t, adminDB, rls), CreateIfMissing: true,
+		WorkerID: "deleted-team-reconciler", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
 
 	profileRepo := NewProfileRepository(appDB, rls)
 	require.NoError(t, profileRepo.SoftDelete(ctx, uuid.MustParse(teamID)))
+	requeued, err := repo.RequeueEmbeddingReconciliationJobs(ctx, RequeueEmbeddingReconciliationJobsInput{
+		RunID: run.RunID, WorkerID: run.WorkerID, LeaseToken: run.LeaseToken,
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		CandidateCutoff: run.CandidateCutoff, BatchSize: 500, Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.Zero(t, requeued)
 
 	after, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
 	require.NoError(t, err)
@@ -862,4 +929,22 @@ func TestFailedEmbeddingRemainsLexicalRecallEligibleButNotVectorEligible(t *test
 	vectorHits, err := repo.SearchExactVector(ctx, ExactVectorSearchInput{TeamID: teamID, QueryEmbedding: []float32{1, 0, 0}, Limit: 10})
 	require.NoError(t, err)
 	require.Empty(t, vectorHits)
+}
+
+func TestEmbeddingReconciliationFailureValidationIsClosed(t *testing.T) {
+	validID := uuid.NewString()
+	valid := CompleteEmbeddingReconciliationCanaryInput{
+		RunID: validID, CanaryJobID: uuid.NewString(), WorkerID: "worker", LeaseToken: uuid.NewString(),
+		FailureClass: string(domain.EmbeddingFailureTransient), FailureCode: string(domain.EmbeddingFailureProviderTimeout),
+	}
+	require.NoError(t, validateCompleteEmbeddingReconciliationCanaryInput(valid))
+	invalid := valid
+	invalid.FailureCode = string(domain.EmbeddingFailureProviderQuotaExhausted)
+	require.Error(t, validateCompleteEmbeddingReconciliationCanaryInput(invalid))
+	invalidRun := CompleteEmbeddingReconciliationRunInput{
+		RunID: validID, WorkerID: "worker", LeaseToken: uuid.NewString(), Status: string(domain.EmbeddingReconciliationDeferred),
+		FailureClass: string(domain.EmbeddingFailurePermanent), FailureCode: string(domain.EmbeddingFailureProviderTimeout),
+	}
+	require.Error(t, validateCompleteEmbeddingReconciliationRunInput(invalidRun))
+	require.Equal(t, "reconciliation operation failed", boundedReconciliationError("provider failed", "provider-controlled-code"))
 }

@@ -266,9 +266,10 @@ func TestEmbeddingWorkerFailsProviderCountMismatch(t *testing.T) {
 			t.Fatalf("failure input = %#v", input)
 		}
 	}
-	if got := metrics.EmbeddingErrorCount("count_mismatch"); got != 2 {
-		t.Fatalf("count_mismatch metric = %d, want 2", got)
+	if got := metrics.EmbeddingErrorCount("count_mismatch"); got != 0 {
+		t.Fatalf("count_mismatch metric = %d, want 0", got)
 	}
+	assert.Equal(t, 2, metrics.EmbeddingErrorCount("invalid_vector"))
 }
 
 func TestEmbeddingWorkerRejectsInvalidVectorsWithoutDroppingValidJobs(t *testing.T) {
@@ -331,7 +332,7 @@ func TestEmbeddingWorkerClassifiesProviderFailures(t *testing.T) {
 		{
 			name:      "cancelled",
 			err:       context.Canceled,
-			wantCode:  "cancelled",
+			wantCode:  "provider_unavailable",
 			wantRetry: 1,
 		},
 		{
@@ -471,11 +472,28 @@ func TestEmbeddingWorkerAggregatesBatchFailureLog(t *testing.T) {
 	assert.Equal(t, "batch", reconciliationLogAttrValue(logger.warnAttrs, "aggregation"))
 	assert.Equal(t, 2, reconciliationLogAttrValue(logger.warnAttrs, "job_count"))
 	for _, attr := range logger.warnAttrs {
-		assert.NotContains(t, strings.ToLower(attr.Key), "provider response")
 		if value, ok := attr.Value.(string); ok {
 			assert.NotContains(t, value, "insufficient_quota")
+			assert.NotContains(t, value, "429")
 		}
 	}
+}
+
+func TestEmbeddingWorkerBoundsReturnedProviderModel(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-a", 1)}
+	provider := &embeddingProviderStub{
+		available: true, model: "test-model", returnedModel: "provider-controlled-model",
+		dims: 3, vectors: [][]float32{{1, 0, 0}},
+	}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search, Provider: provider, TeamID: "team-a", WorkerID: "worker-a",
+	})
+
+	_, err := worker.ProcessNextBatch(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), string(domain.EmbeddingFailureContractMismatch))
+	assert.NotContains(t, err.Error(), provider.returnedModel)
 }
 
 func TestEmbeddingWorkerAggregatesRecoveredJobsInOperationLog(t *testing.T) {
@@ -630,6 +648,7 @@ func TestEmbeddingWorkerTreatsUnavailableProviderAsRetryable(t *testing.T) {
 	if got := metrics.EmbeddingErrorCount("provider_unavailable"); got != 1 {
 		t.Fatalf("provider_unavailable metric = %d, want 1", got)
 	}
+	assert.Zero(t, metrics.EmbeddingErrorCount("cancelled"))
 }
 
 func TestEmbeddingWorkerCountsStaleAndLeaseLostCompletions(t *testing.T) {
@@ -773,14 +792,15 @@ func (s *embeddingSearchStub) SearchExactVector(context.Context, repository.Exac
 }
 
 type embeddingProviderStub struct {
-	available    bool
-	model        string
-	dims         int
-	vectors      [][]float32
-	err          error
-	gotTexts     []string
-	observeUsage func(context.Context, int)
-	onEmbedBatch func()
+	available     bool
+	model         string
+	returnedModel string
+	dims          int
+	vectors       [][]float32
+	err           error
+	gotTexts      []string
+	observeUsage  func(context.Context, int)
+	onEmbedBatch  func()
 }
 
 func (p *embeddingProviderStub) Embed(context.Context, string) ([]float32, string, error) {
@@ -798,7 +818,11 @@ func (p *embeddingProviderStub) EmbedBatch(ctx context.Context, texts []string) 
 	if p.err != nil {
 		return nil, "", p.err
 	}
-	return p.vectors, p.model, nil
+	model := p.returnedModel
+	if model == "" {
+		model = p.model
+	}
+	return p.vectors, model, nil
 }
 
 func (p *embeddingProviderStub) ModelName() string {

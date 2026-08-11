@@ -27,6 +27,7 @@ func TestClassifyFailureUsesClosedProviderContract(t *testing.T) {
 		{"network error", embeddingNetworkError{}, "transient", "provider_network_error"},
 		{"rate limit", &RateLimitError{RetryAfter: 2}, "transient", "provider_rate_limited"},
 		{"quota", &ProviderHTTPError{Status: 429, Code: "insufficient_quota"}, "provider_action_required", "provider_quota_exhausted"},
+		{"normalized quota", &ProviderHTTPError{Status: 429, Code: "Insufficient-Quota"}, "provider_action_required", "provider_quota_exhausted"},
 		{"rate limited http", &ProviderHTTPError{Status: 429, RetryAfter: 10 * time.Minute}, "transient", "provider_rate_limited"},
 		{"request timeout http", &ProviderHTTPError{Status: 408}, "transient", "provider_timeout"},
 		{"server", &ProviderHTTPError{Status: 503}, "transient", "provider_server_error"},

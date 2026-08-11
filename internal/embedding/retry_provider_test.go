@@ -33,7 +33,7 @@ func TestRetryProvider_Retries5xxUpToMax(t *testing.T) {
 	inner := &MockEmbeddingProvider{
 		EmbedFunc: func(ctx context.Context, _ string) ([]float32, string, error) {
 			calls++
-			return nil, "", &ProviderHTTPError{Status: 500, Body: "bad"}
+			return nil, "", &ProviderHTTPError{Status: 500}
 		},
 	}
 	p := NewRetryEmbeddingProvider(inner, newTestLogger())
@@ -150,11 +150,14 @@ func TestRetryProvider_ContextCancelStopsRetry(t *testing.T) {
 	cancel() // Cancel immediately
 
 	p := NewRetryEmbeddingProvider(inner, newTestLogger())
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	p.SetMetrics(metrics)
 	_, _, err := p.Embed(ctx, "x")
 	require.ErrorIs(t, err, context.Canceled)
 	var providerErr *ProviderHTTPError
 	assert.NotErrorAs(t, err, &providerErr)
 	assert.Equal(t, 1, calls, "should stop after context cancellation")
+	assert.Zero(t, metrics.EmbeddingErrorCount("network_error"))
 }
 
 func TestRetryProviderCancellationDuringDelayDoesNotStartAnotherCall(t *testing.T) {

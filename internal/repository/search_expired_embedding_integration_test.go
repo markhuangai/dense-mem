@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestSearchClaimEmbeddingJobsPreservesTimeoutClassificationAfterLeaseExpiry(t *testing.T) {
+func TestSearchClaimEmbeddingJobsClassifiesExpiredMaxAttemptAsTimeout(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -29,8 +29,8 @@ func TestSearchClaimEmbeddingJobsPreservesTimeoutClassificationAfterLeaseExpiry(
 	_, err = repo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
 		TeamID: teamID, EmbeddingJobID: firstClaim[0].EmbeddingJobID,
 		WorkerID: "worker-timeout-first", ExpectedAttempts: firstClaim[0].Attempts,
-		Error:        "embedding request timed out: context deadline exceeded",
-		FailureClass: string(domain.EmbeddingFailureTransient), FailureCode: string(domain.EmbeddingFailureProviderTimeout),
+		Error:        "embedding request rate limited",
+		FailureClass: string(domain.EmbeddingFailureTransient), FailureCode: string(domain.EmbeddingFailureProviderRateLimited),
 	})
 	require.NoError(t, err)
 	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {

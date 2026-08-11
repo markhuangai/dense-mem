@@ -295,7 +295,7 @@ func TestSearchEmbeddingCompletionRejectsStaleJobs(t *testing.T) {
 		Embedding:        []float32{1, 0, 0},
 	})
 	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrSearchStaleVersion) || errors.Is(err, ErrEmbeddingLeaseLost), "err=%v", err)
+	require.ErrorIs(t, err, ErrEmbeddingLeaseLost)
 
 	var jobStatus string
 	var jobCompleted bool

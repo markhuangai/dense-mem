@@ -759,6 +759,7 @@ func markStaleEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) err
 		    updated_at = now()
 		WHERE job.team_id = ?::uuid
 		  AND job.status IN ('queued', 'processing', 'failed')
+		  AND job.worker_id NOT LIKE 'reconciliation:%'
 		  AND NOT EXISTS (
 		      SELECT 1
 		      FROM search_documents AS document
@@ -870,21 +871,7 @@ func normalizeFailEmbeddingJobInput(input FailEmbeddingJobInput) FailEmbeddingJo
 func normalizeEmbeddingFailureContract(failureClass, failureCode string) (string, string) {
 	failureClass = strings.TrimSpace(failureClass)
 	failureCode = strings.TrimSpace(failureCode)
-	validClass := false
-	for _, value := range domain.EmbeddingFailureClasses() {
-		if value == failureClass {
-			validClass = true
-			break
-		}
-	}
-	validCode := false
-	for _, value := range domain.EmbeddingFailureCodes() {
-		if value == failureCode {
-			validCode = true
-			break
-		}
-	}
-	if !validClass || !validCode {
+	if !domain.EmbeddingFailureContractValid(failureClass, failureCode) {
 		return string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureUnknown)
 	}
 	return failureClass, failureCode

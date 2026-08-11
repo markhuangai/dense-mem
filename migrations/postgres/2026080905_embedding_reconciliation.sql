@@ -47,6 +47,23 @@ CREATE TABLE IF NOT EXISTS embedding_reconciliation_runs (
         CHECK (status IN ('reserved', 'running', 'completed', 'deferred', 'failed', 'ambiguous')),
     CONSTRAINT embedding_reconciliation_runs_outcome_check
         CHECK (canary_outcome IN ('', 'succeeded', 'failed', 'ambiguous')),
+    CONSTRAINT embedding_reconciliation_runs_failure_contract_check
+        CHECK (
+            (canary_failure_class = '' AND canary_failure_code = '')
+            OR (canary_failure_class = 'transient' AND canary_failure_code IN (
+                'provider_rate_limited', 'provider_timeout',
+                'provider_network_error', 'provider_server_error'
+            ))
+            OR (canary_failure_class = 'provider_action_required' AND canary_failure_code IN (
+                'provider_quota_exhausted', 'provider_authentication_failed',
+                'provider_permission_denied', 'provider_contract_rejected',
+                'provider_response_invalid'
+            ))
+            OR (canary_failure_class = 'permanent' AND canary_failure_code IN (
+                'embedding_input_rejected', 'embedding_contract_mismatch',
+                'unknown_embedding_failure'
+            ))
+        ),
     CONSTRAINT embedding_reconciliation_runs_count_check
         CHECK (requeued_count >= 0 AND recovered_count >= 0)
 );
@@ -69,13 +86,12 @@ LANGUAGE plpgsql
 AS $procedure$
 DECLARE
     updated_rows INTEGER;
-    projection_rows INTEGER;
 BEGIN
-    PERFORM set_config('app.tx_mode', 'migration', true);
-    PERFORM set_config('app.current_team_id', '', true);
-    PERFORM set_config('app.current_profile_id', '', true);
-
     LOOP
+        PERFORM set_config('app.tx_mode', 'migration', true);
+        PERFORM set_config('app.current_team_id', '', true);
+        PERFORM set_config('app.current_profile_id', '', true);
+
         WITH batch AS MATERIALIZED (
             SELECT team_id, embedding_job_id
             FROM embedding_jobs
@@ -92,12 +108,13 @@ BEGIN
         GET DIAGNOSTICS updated_rows = ROW_COUNT;
         COMMIT;
         EXIT WHEN updated_rows = 0;
-        PERFORM set_config('app.tx_mode', 'migration', true);
-        PERFORM set_config('app.current_team_id', '', true);
-        PERFORM set_config('app.current_profile_id', '', true);
     END LOOP;
 
     LOOP
+        PERFORM set_config('app.tx_mode', 'migration', true);
+        PERFORM set_config('app.current_team_id', '', true);
+        PERFORM set_config('app.current_profile_id', '', true);
+
         WITH batch AS MATERIALIZED (
             SELECT team_id, embedding_job_id, status, error, completed_at, updated_at
             FROM embedding_jobs
@@ -206,16 +223,16 @@ BEGIN
               AND document.embedding_dimensions = changed.embedding_dimensions
             RETURNING 1
         )
-        SELECT (SELECT count(*) FROM changed), (SELECT count(*) FROM projection_updates)
-        INTO updated_rows, projection_rows;
+        SELECT count(*) INTO updated_rows FROM changed;
         COMMIT;
         EXIT WHEN updated_rows = 0;
-        PERFORM set_config('app.tx_mode', 'migration', true);
-        PERFORM set_config('app.current_team_id', '', true);
-        PERFORM set_config('app.current_profile_id', '', true);
     END LOOP;
 
     LOOP
+        PERFORM set_config('app.tx_mode', 'migration', true);
+        PERFORM set_config('app.current_team_id', '', true);
+        PERFORM set_config('app.current_profile_id', '', true);
+
         WITH superseded_batch AS MATERIALIZED (
             SELECT job.team_id, job.embedding_job_id
             FROM embedding_jobs AS job
@@ -251,9 +268,6 @@ BEGIN
         GET DIAGNOSTICS updated_rows = ROW_COUNT;
         COMMIT;
         EXIT WHEN updated_rows = 0;
-        PERFORM set_config('app.tx_mode', 'migration', true);
-        PERFORM set_config('app.current_team_id', '', true);
-        PERFORM set_config('app.current_profile_id', '', true);
     END LOOP;
 END
 $procedure$;
@@ -271,7 +285,8 @@ ALTER TABLE embedding_jobs
     DROP CONSTRAINT IF EXISTS embedding_jobs_total_attempts_check,
     DROP CONSTRAINT IF EXISTS embedding_jobs_recovery_count_check,
     DROP CONSTRAINT IF EXISTS embedding_jobs_failure_class_check,
-    DROP CONSTRAINT IF EXISTS embedding_jobs_failure_code_check;
+    DROP CONSTRAINT IF EXISTS embedding_jobs_failure_code_check,
+    DROP CONSTRAINT IF EXISTS embedding_jobs_failure_contract_check;
 
 ALTER TABLE embedding_jobs
     ADD CONSTRAINT embedding_jobs_total_attempts_check
@@ -288,7 +303,23 @@ ALTER TABLE embedding_jobs
             'provider_permission_denied', 'provider_contract_rejected',
             'provider_response_invalid', 'embedding_input_rejected',
             'embedding_contract_mismatch', 'unknown_embedding_failure'
-        )) NOT VALID;
+        )) NOT VALID,
+    ADD CONSTRAINT embedding_jobs_failure_contract_check
+        CHECK (
+            (failure_class = 'transient' AND failure_code IN (
+                'provider_rate_limited', 'provider_timeout',
+                'provider_network_error', 'provider_server_error'
+            ))
+            OR (failure_class = 'provider_action_required' AND failure_code IN (
+                'provider_quota_exhausted', 'provider_authentication_failed',
+                'provider_permission_denied', 'provider_contract_rejected',
+                'provider_response_invalid'
+            ))
+            OR (failure_class = 'permanent' AND failure_code IN (
+                'embedding_input_rejected', 'embedding_contract_mismatch',
+                'unknown_embedding_failure'
+            ))
+        ) NOT VALID;
 -- +goose StatementEnd
 
 DROP INDEX CONCURRENTLY IF EXISTS embedding_jobs_reconciliation_failed_idx;
@@ -322,6 +353,8 @@ ALTER TABLE embedding_jobs
     VALIDATE CONSTRAINT embedding_jobs_failure_class_check;
 ALTER TABLE embedding_jobs
     VALIDATE CONSTRAINT embedding_jobs_failure_code_check;
+ALTER TABLE embedding_jobs
+    VALIDATE CONSTRAINT embedding_jobs_failure_contract_check;
 -- +goose StatementEnd
 
 -- +goose Down

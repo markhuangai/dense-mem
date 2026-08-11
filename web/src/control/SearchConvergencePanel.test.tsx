@@ -27,6 +27,7 @@ describe("SearchConvergencePanel", () => {
     snapshot.status = "converged";
     snapshot.queue.failed = 0;
     snapshot.queue.affected_team_count = 0;
+    snapshot.failures = [];
     snapshot.failure_groups = [];
     snapshot.failure_group_count = 0;
     snapshot.failure_groups_truncated = false;
@@ -36,6 +37,7 @@ describe("SearchConvergencePanel", () => {
 
     expect(await screen.findByText("No unresolved failure groups.")).toBeInTheDocument();
     expect(screen.queryByText("Payments")).not.toBeInTheDocument();
+    expect(screen.queryByText("provider_quota_exhausted")).not.toBeInTheDocument();
   });
 });
 

@@ -14,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type controlSearchConvergenceReaderStub struct {
@@ -149,4 +150,21 @@ func TestControlPortalSearchConvergenceBoundsRepositoryErrors(t *testing.T) {
 	for _, loggedError := range logger.errors {
 		require.NotContains(t, loggedError, backendMessage)
 	}
+}
+
+func TestControlPortalSearchConvergenceMapsUnavailableServiceTo503(t *testing.T) {
+	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+		ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret",
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+		Convergence: controlSearchConvergenceReaderStub{err: service.ErrSearchConvergenceUnavailable},
+	}, HealthConfig{}, nil)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/control/api/search/convergence", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Contains(t, rec.Body.String(), "search convergence unavailable")
 }

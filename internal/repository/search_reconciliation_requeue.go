@@ -163,6 +163,10 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 			 AND document.document_version = job.document_version
 			 AND document.embedding_contract_id = job.embedding_contract_id
 			 AND document.embedding_dimensions = job.embedding_dimensions
+			JOIN teams AS team
+			  ON team.id = job.team_id
+			 AND team.status = 'active'
+			 AND team.deleted_at IS NULL
 			WHERE job.status = 'failed'
 			  AND job.failure_class <> 'permanent'
 			  AND job.embedding_contract_id = ?::uuid
@@ -219,6 +223,13 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 				  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
 				  AND EXISTS (
 				      SELECT 1
+				      FROM teams AS team
+				      WHERE team.id = job.team_id
+				        AND team.status = 'active'
+				        AND team.deleted_at IS NULL
+				  )
+				  AND EXISTS (
+				      SELECT 1
 				      FROM embedding_reconciliation_runs AS run
 				      WHERE run.reconciliation_run_id = ?::uuid
 				        AND run.status = 'running'
@@ -252,6 +263,9 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 		}
 		if batch.requeued == 0 {
 			return nil
+		}
+		if documentCount != batch.requeued {
+			return errors.New("reconciliation document state update count mismatch")
 		}
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE embedding_reconciliation_runs

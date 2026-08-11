@@ -5,10 +5,58 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
+
+func TestSearchUpsertPreservesSameVersionFailedJobForReconciliation(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-failed-reupsert-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-failed-reupsert-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-failed-reupsert", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	input := UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: uuid.NewString(),
+		SourceVersion: 1, ProjectionFormat: 1, DocumentText: "same failed document",
+	}
+	first, err := repo.UpsertSearchDocument(ctx, input)
+	require.NoError(t, err)
+	claimed, err := repo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{
+		TeamID: teamID, WorkerID: "failed-reupsert-worker", Limit: 1, Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	_, err = repo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
+		TeamID: teamID, EmbeddingJobID: claimed[0].EmbeddingJobID,
+		WorkerID: "failed-reupsert-worker", ExpectedAttempts: claimed[0].Attempts,
+		FailureClass: string(domain.EmbeddingFailureTransient),
+		FailureCode:  string(domain.EmbeddingFailureProviderTimeout), Terminal: true,
+	})
+	require.NoError(t, err)
+
+	second, err := repo.UpsertSearchDocument(ctx, input)
+	require.NoError(t, err)
+	require.Equal(t, first.SearchDocumentID, second.SearchDocumentID)
+	require.Equal(t, string(domain.SearchProjectionFailed), second.SearchState)
+	require.Empty(t, second.QueuedJobID)
+
+	var failedJobs int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND search_document_id = ?::uuid
+			  AND status = 'failed'
+		`, teamID, first.SearchDocumentID).Scan(&failedJobs).Error
+	}))
+	require.EqualValues(t, 1, failedJobs)
+}
 
 func TestSearchConvergenceDerivesFailureGroupLifecycleFromJobs(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
@@ -70,6 +118,17 @@ func TestSearchConvergenceDerivesFailureGroupLifecycleFromJobs(t *testing.T) {
 		WorkerID:         EmbeddingReconciliationWorkerIDPrefix + run.RunID,
 		ExpectedAttempts: canary.Attempts, Embedding: []float32{1, 0, 0},
 	}))
+	var recoveryCount int
+	var recoveredAtPresent bool
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT recovery_count, last_recovered_at IS NOT NULL
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, canary.TeamID, canary.EmbeddingJobID).Row().Scan(&recoveryCount, &recoveredAtPresent)
+	}))
+	require.Equal(t, 1, recoveryCount)
+	require.True(t, recoveredAtPresent)
 	require.NoError(t, repo.CompleteEmbeddingReconciliationCanary(ctx, CompleteEmbeddingReconciliationCanaryInput{
 		RunID: run.RunID, CanaryJobID: canary.EmbeddingJobID, WorkerID: run.WorkerID,
 		LeaseToken: run.LeaseToken, Succeeded: true, RecoveredCount: 1,

@@ -152,7 +152,7 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 		return result, fmt.Errorf("embedding processing failed: %s", code)
 	}
 	if model != "" && model != contract.EmbeddingModel {
-		err := fmt.Errorf("embedding provider returned model %q, active contract requires %q", model, contract.EmbeddingModel)
+		err := fmt.Errorf("embedding processing failed: %s", domain.EmbeddingFailureContractMismatch)
 		s.failJobs(ctx, contract, eligible, &result, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), true, 0)
 		return result, err
 	}
@@ -367,9 +367,9 @@ func legacyEmbeddingMetricCodes(code string) []string {
 	case string(domain.EmbeddingFailureProviderRateLimited):
 		return []string{"rate_limited"}
 	case string(domain.EmbeddingFailureProviderNetworkError):
-		return []string{"provider_unavailable", "cancelled"}
+		return []string{"provider_unavailable"}
 	case string(domain.EmbeddingFailureProviderResponseInvalid):
-		return []string{"invalid_vector", "count_mismatch"}
+		return []string{"invalid_vector"}
 	case string(domain.EmbeddingFailureContractMismatch):
 		return []string{"contract_mismatch"}
 	case string(domain.EmbeddingFailureProviderContractRejected):

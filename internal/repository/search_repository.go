@@ -333,8 +333,8 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
 				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
 				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
-				         AND search_documents.search_state = 'current'
-				        THEN 'current'
+				         AND search_documents.search_state IN ('current', 'failed')
+				        THEN search_documents.search_state
 				        ELSE 'pending'
 				    END,
 				    document_text = EXCLUDED.document_text,

@@ -37,6 +37,8 @@ func TestEmbeddingReconciliationMigrationHasOneRestartGatedBackfill(t *testing.T
 	require.NotContains(t, migration, "SKIP LOCKED")
 	require.GreaterOrEqual(t, strings.Count(migration, "LIMIT 1000"), 3)
 	require.GreaterOrEqual(t, strings.Count(migration, "COMMIT;"), 3)
+	require.Equal(t, 3, strings.Count(migration, "LOOP\n        PERFORM set_config('app.tx_mode', 'migration', true);"))
+	require.NotContains(t, migration, "EXIT WHEN updated_rows = 0;\n        PERFORM set_config")
 	require.NotContains(t, migration, "embedding_failure_incidents")
 	require.NotContains(t, migration, "CREATE TRIGGER")
 	require.NotContains(t, migration, "pg_advisory")
@@ -146,10 +148,11 @@ func TestEmbeddingReconciliationMigrationBackfillsJobsWithoutIncidentState(t *te
 			'embedding_jobs_total_attempts_check',
 			'embedding_jobs_recovery_count_check',
 			'embedding_jobs_failure_class_check',
-			'embedding_jobs_failure_code_check'
+			'embedding_jobs_failure_code_check',
+			'embedding_jobs_failure_contract_check'
 		  )
 	`).Scan(&constraintsValidated))
-	require.Equal(t, 4, constraintsValidated)
+	require.Equal(t, 5, constraintsValidated)
 
 	var rowSecurity, forceRowSecurity bool
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
@@ -171,6 +174,62 @@ func TestEmbeddingReconciliationMigrationBackfillsJobsWithoutIncidentState(t *te
 	require.Contains(t, policyQual.String, "migration")
 	require.Contains(t, policyCheck.String, "system")
 	require.Contains(t, policyCheck.String, "migration")
+
+	runID := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_reconciliation_runs (
+				reconciliation_run_id, embedding_contract_id, embedding_dimensions,
+				local_run_date, status
+			) VALUES ($1::uuid, $2::uuid, 3, CURRENT_DATE, 'completed')
+		`, runID, contractID)
+		return err
+	}))
+	roleName := "dense_mem_reconciliation_rls_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	quotedRole := quoteMigrationIdentifier(roleName)
+	if _, err := sqlDB.ExecContext(ctx, "CREATE ROLE "+quotedRole+" NOLOGIN NOSUPERUSER NOBYPASSRLS"); err != nil {
+		if isPostgresInsufficientPrivilege(err) {
+			t.Skipf("reconciliation RLS behavior test requires role administration: %v", err)
+		}
+		require.NoError(t, err)
+	}
+	defer func() {
+		_, _ = sqlDB.ExecContext(ctx, "DROP OWNED BY "+quotedRole)
+		_, _ = sqlDB.ExecContext(ctx, "DROP ROLE IF EXISTS "+quotedRole)
+	}()
+	_, err := sqlDB.ExecContext(ctx, "GRANT USAGE ON SCHEMA public TO "+quotedRole)
+	require.NoError(t, err)
+	_, err = sqlDB.ExecContext(ctx, "GRANT SELECT, INSERT, UPDATE ON embedding_reconciliation_runs TO "+quotedRole)
+	require.NoError(t, err)
+	requestTx, err := sqlDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer requestTx.Rollback()
+	_, err = requestTx.ExecContext(ctx, "SET LOCAL ROLE "+quotedRole)
+	require.NoError(t, err)
+	for key, value := range map[string]string{
+		"app.tx_mode": "team", "app.current_team_id": teamID, "app.current_profile_id": profileID,
+	} {
+		_, err = requestTx.ExecContext(ctx, `SELECT set_config($1, $2, true)`, key, value)
+		require.NoError(t, err)
+	}
+	var visibleRuns int
+	require.NoError(t, requestTx.QueryRowContext(ctx, `
+		SELECT count(*) FROM embedding_reconciliation_runs WHERE reconciliation_run_id = $1::uuid
+	`, runID).Scan(&visibleRuns))
+	require.Zero(t, visibleRuns)
+	update, err := requestTx.ExecContext(ctx, `
+		UPDATE embedding_reconciliation_runs SET status = 'failed' WHERE reconciliation_run_id = $1::uuid
+	`, runID)
+	require.NoError(t, err)
+	updatedRows, err := update.RowsAffected()
+	require.NoError(t, err)
+	require.Zero(t, updatedRows)
+	_, err = requestTx.ExecContext(ctx, `
+		INSERT INTO embedding_reconciliation_runs (
+			embedding_contract_id, embedding_dimensions, local_run_date, status
+		) VALUES ($1::uuid, 3, CURRENT_DATE + 1, 'reserved')
+	`, contractID)
+	require.Error(t, err)
 
 	var incidentTableAbsent bool
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT to_regclass('public.embedding_failure_incidents') IS NULL`).Scan(&incidentTableAbsent))

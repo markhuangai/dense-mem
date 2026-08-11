@@ -395,7 +395,7 @@ func TestExpiredMaxAttemptCleanupLocksDocumentBeforeJob(t *testing.T) {
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE embedding_jobs
-			SET status = 'processing', attempts = max_attempts,
+			SET status = 'processing', attempts = max_attempts, total_attempts = max_attempts,
 			    worker_id = 'expired-cleanup-worker',
 			    lease_until = clock_timestamp() - interval '1 second',
 			    updated_at = now()

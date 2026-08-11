@@ -556,6 +556,37 @@ func EmbeddingFailureCodes() []string {
 	}
 }
 
+func EmbeddingFailureCodeValid(code string) bool {
+	for _, candidate := range EmbeddingFailureCodes() {
+		if code == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func EmbeddingFailureContractValid(class, code string) bool {
+	switch EmbeddingFailureClass(class) {
+	case EmbeddingFailureTransient:
+		return code == string(EmbeddingFailureProviderRateLimited) ||
+			code == string(EmbeddingFailureProviderTimeout) ||
+			code == string(EmbeddingFailureProviderNetworkError) ||
+			code == string(EmbeddingFailureProviderServerError)
+	case EmbeddingFailureProviderAction:
+		return code == string(EmbeddingFailureProviderQuotaExhausted) ||
+			code == string(EmbeddingFailureProviderAuthentication) ||
+			code == string(EmbeddingFailureProviderPermissionDenied) ||
+			code == string(EmbeddingFailureProviderContractRejected) ||
+			code == string(EmbeddingFailureProviderResponseInvalid)
+	case EmbeddingFailurePermanent:
+		return code == string(EmbeddingFailureInputRejected) ||
+			code == string(EmbeddingFailureContractMismatch) ||
+			code == string(EmbeddingFailureUnknown)
+	default:
+		return false
+	}
+}
+
 func EmbeddingFailureMessage(code string) string {
 	switch code {
 	case string(EmbeddingFailureProviderRateLimited):
@@ -584,14 +615,6 @@ func EmbeddingFailureMessage(code string) string {
 		return "embedding processing failed"
 	}
 }
-
-type EmbeddingIncidentStatus string
-
-const (
-	EmbeddingIncidentOpen       EmbeddingIncidentStatus = "open"
-	EmbeddingIncidentRecovering EmbeddingIncidentStatus = "recovering"
-	EmbeddingIncidentResolved   EmbeddingIncidentStatus = "resolved"
-)
 
 type EmbeddingReconciliationRunStatus string
 

@@ -287,7 +287,7 @@ func TestOpenAIProvider_NonJSONServerErrorIsHTTPError(t *testing.T) {
 	var httpErr *ProviderHTTPError
 	require.ErrorAs(t, err, &httpErr)
 	assert.Equal(t, http.StatusBadGateway, httpErr.Status)
-	assert.Equal(t, "provider returned a non-JSON error response", httpErr.Message)
+	assert.Equal(t, nonJSONProviderErrorMessage, httpErr.Message)
 	assert.NotContains(t, err.Error(), "upstream unavailable")
 	assert.Equal(t, 2500*time.Millisecond, httpErr.RetryAfter)
 }
@@ -316,19 +316,13 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func TestOpenAIProviderErrorHelpersBoundProviderMetadata(t *testing.T) {
-	if got := nonJSONHTTPMessage([]byte("provider body")); got != "provider returned a non-JSON error response" {
-		t.Fatalf("nonJSONHTTPMessage = %q", got)
-	}
 	if got := providerErrorCode(nil); got != "" {
 		t.Fatalf("providerErrorCode(nil) = %q", got)
 	}
 	if got := providerErrorType(nil); got != "" {
 		t.Fatalf("providerErrorType(nil) = %q", got)
 	}
-	value := struct {
-		Code string `json:"code"`
-		Type string `json:"type"`
-	}{Code: " quota ", Type: "type"}
+	value := openAIProviderError{Code: " quota ", Type: "type"}
 	if got := providerErrorCode(&value); got != "quota" {
 		t.Fatalf("providerErrorCode = %q", got)
 	}
@@ -344,6 +338,23 @@ func TestOpenAIProviderErrorHelpersBoundProviderMetadata(t *testing.T) {
 	if got := retryAfterDuration("invalid"); got != 0 {
 		t.Fatalf("retryAfterDuration(invalid) = %s", got)
 	}
+}
+
+func TestOpenAIProviderRejectsDimensionMismatchAfterFirstEmbedding(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"embedding":[1,0]},{"embedding":[1]}],"model":"test-model"}`))
+	}))
+	defer srv.Close()
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "test-model", AIEmbeddingDimensions: 2,
+	}, srv.Client())
+
+	_, _, err := p.EmbedBatch(context.Background(), []string{"first", "second"})
+	require.Error(t, err)
+	metadata := ClassifyFailure(err)
+	assert.Equal(t, "provider_action_required", metadata.Class)
+	assert.Equal(t, "provider_response_invalid", metadata.Code)
 }
 
 func TestOpenAIProviderParsesAllowlistedFailureCodeAndTypeWithoutMessage(t *testing.T) {

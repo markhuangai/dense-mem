@@ -77,6 +77,9 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 	if input.EmbeddingContractID != "" && input.EmbeddingContractID != contract.EmbeddingContractID {
 		return nil, fmt.Errorf("%w: requested convergence contract is not active", ErrSearchContractMismatch)
 	}
+	if input.EmbeddingDimensions > 0 && input.EmbeddingDimensions != contract.EmbeddingDimensions {
+		return nil, fmt.Errorf("%w: requested convergence dimensions are not active", ErrSearchContractMismatch)
+	}
 	stats, err := r.GetEmbeddingQueueStats(ctx, EmbeddingQueueStatsInput{
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions,
@@ -276,7 +279,7 @@ func (r *SearchRepositoryImpl) ReserveEmbeddingReconciliationRun(ctx context.Con
 			value := completedAt.Time.UTC()
 			run.CompletedAt = &value
 		}
-		if run.Status == string(domain.EmbeddingReconciliationCompleted) || run.Status == string(domain.EmbeddingReconciliationDeferred) || run.Status == string(domain.EmbeddingReconciliationAmbiguous) {
+		if run.Status == string(domain.EmbeddingReconciliationCompleted) || run.Status == string(domain.EmbeddingReconciliationDeferred) || run.Status == string(domain.EmbeddingReconciliationFailed) || run.Status == string(domain.EmbeddingReconciliationAmbiguous) {
 			return nil
 		}
 		if run.LeaseUntil != nil && run.LeaseUntil.After(databaseNow) {
@@ -723,6 +726,13 @@ func validateCompleteEmbeddingReconciliationCanaryInput(input CompleteEmbeddingR
 	if input.RecoveredCount < 0 {
 		return errors.New("recovered_count must not be negative")
 	}
+	if input.Succeeded {
+		if input.FailureClass != "" || input.FailureCode != "" {
+			return errors.New("successful canary must not include failure metadata")
+		}
+	} else if !domain.EmbeddingFailureContractValid(input.FailureClass, input.FailureCode) {
+		return errors.New("failed canary requires a valid failure class and code")
+	}
 	return nil
 }
 
@@ -796,7 +806,10 @@ func boundedReconciliationError(message, failureCode string) string {
 	// Reconciliation messages are operator state, not a provider-error sink.
 	// Keep only the closed failure code or a short generic operation marker.
 	if failureCode != "" {
-		return "reconciliation failed: " + failureCode
+		if domain.EmbeddingFailureCodeValid(failureCode) {
+			return "reconciliation failed: " + failureCode
+		}
+		return "reconciliation operation failed"
 	}
 	const limit = 128
 	if len(message) > limit {
@@ -822,6 +835,11 @@ func validateCompleteEmbeddingReconciliationRunInput(input CompleteEmbeddingReco
 	}
 	if input.WorkerID == "" || input.Status == "" {
 		return errors.New("worker_id and status are required")
+	}
+	if input.FailureClass != "" || input.FailureCode != "" {
+		if !domain.EmbeddingFailureContractValid(input.FailureClass, input.FailureCode) {
+			return errors.New("reconciliation run requires a valid failure class and code")
+		}
 	}
 	return nil
 }

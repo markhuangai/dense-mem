@@ -295,3 +295,43 @@ func TestUpsertSearchDocumentPreservesReconciliationCanary(t *testing.T) {
 	assert.Equal(t, EmbeddingReconciliationWorkerIDPrefix+"run-1", workerID)
 	assert.True(t, leasePresent)
 }
+
+func TestMarkStaleEmbeddingJobsLeavesReconciliationCanaryFenced(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "stale-cleanup-canary-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "stale-cleanup-canary-owner")
+	insertSearchTestContract(t, adminDB, rls, "stale-cleanup-canary", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "stale cleanup canary", 1)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE embedding_jobs
+			SET status = 'processing', worker_id = ?, lease_until = now() + interval '5 minutes',
+			    attempts = 1, total_attempts = 1
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, EmbeddingReconciliationWorkerIDPrefix+"run-1", teamID, document.QueuedJobID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE search_documents
+			SET document_version = document_version + 1
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, document.SearchDocumentID).Error
+	}))
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return markStaleEmbeddingJobs(ctx, tx, teamID)
+	}))
+
+	var status, workerID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status, worker_id
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, teamID, document.QueuedJobID).Row().Scan(&status, &workerID)
+	}))
+	require.Equal(t, string(domain.EmbeddingJobProcessing), status)
+	require.Equal(t, EmbeddingReconciliationWorkerIDPrefix+"run-1", workerID)
+}

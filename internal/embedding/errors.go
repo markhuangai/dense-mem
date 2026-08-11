@@ -7,6 +7,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 // ErrEmbeddingTimeout is returned when an embedding request times out.
@@ -89,7 +91,6 @@ type ProviderHTTPError struct {
 	Message    string
 	Code       string
 	Type       string
-	Body       string
 	RetryAfter time.Duration
 }
 
@@ -173,7 +174,7 @@ func ClassifyFailure(err error) FailureMetadata {
 	}
 	var providerErr *ProviderError
 	if errors.As(err, &providerErr) {
-		if validFailureContract(providerErr.FailureClass, providerErr.FailureCode) {
+		if domain.EmbeddingFailureContractValid(providerErr.FailureClass, providerErr.FailureCode) {
 			return FailureMetadata{Class: providerErr.FailureClass, Code: providerErr.FailureCode, StatusCode: providerErr.StatusCode}
 		}
 		return FailureMetadata{Class: "permanent", Code: "unknown_embedding_failure", StatusCode: providerErr.StatusCode}
@@ -184,24 +185,15 @@ func ClassifyFailure(err error) FailureMetadata {
 	return FailureMetadata{Class: "permanent", Code: "unknown_embedding_failure"}
 }
 
-func validFailureContract(class, code string) bool {
-	switch class {
-	case "transient":
-		return code == "provider_rate_limited" || code == "provider_timeout" || code == "provider_network_error" || code == "provider_server_error"
-	case "provider_action_required":
-		return code == "provider_quota_exhausted" || code == "provider_authentication_failed" || code == "provider_permission_denied" || code == "provider_contract_rejected" || code == "provider_response_invalid"
-	case "permanent":
-		return code == "embedding_input_rejected" || code == "embedding_contract_mismatch" || code == "unknown_embedding_failure"
-	default:
-		return false
+func normalizeProviderCode(code, typ string) string {
+	if strings.TrimSpace(code) != "" {
+		return normalizeFailureToken(code)
 	}
+	return normalizeFailureToken(typ)
 }
 
-func normalizeProviderCode(code, typ string) string {
-	if code != "" {
-		return code
-	}
-	return typ
+func normalizeFailureToken(value string) string {
+	return strings.NewReplacer("-", "_", ".", "_").Replace(strings.ToLower(strings.TrimSpace(value)))
 }
 
 func isInputRejection(status int, code string) bool {
@@ -211,7 +203,7 @@ func isInputRejection(status int, code string) bool {
 	if status != 400 {
 		return false
 	}
-	switch strings.NewReplacer("-", "_", ".", "_").Replace(strings.ToLower(strings.TrimSpace(code))) {
+	switch normalizeFailureToken(code) {
 	case "context_length_exceeded", "input_too_large", "input_too_long",
 		"max_input_tokens", "payload_too_large", "content_too_large",
 		"string_above_max_length":

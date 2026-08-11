@@ -919,10 +919,12 @@ func columnExists(t *testing.T, ctx context.Context, db *sql.DB, tableName, colu
 
 func insertMigrationTeamProfile(t *testing.T, ctx context.Context, db *sql.DB) (string, string) {
 	t.Helper()
-	teamID := uuid.NewString()
-	profileID := uuid.NewString()
+	teamID, profileID := uuid.NewString(), uuid.NewString()
 	keyPrefix := strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_team_id', $1, true), set_config('app.current_profile_id', $2, true)`, teamID, profileID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO teams (id, name, description, metadata, config)
 			VALUES ($1::uuid, $2, '', '{}'::jsonb, '{}'::jsonb)

@@ -105,15 +105,13 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 		observability.RecordEmbeddingLatency(ctx, p.metrics, configuredModel, dur, code)
 
 		lastErr = err
+		if ctx.Err() != nil {
+			return nil, "", p.retryContextError(ctx, lastErr)
+		}
 
 		// Check if we should retry
 		if !p.shouldRetry(err) {
 			break
-		}
-
-		// Check if context was cancelled or deadline exceeded
-		if err := ctx.Err(); err != nil {
-			return nil, "", p.retryContextError(ctx, lastErr)
 		}
 
 		// Don't sleep after the last attempt
@@ -154,15 +152,13 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 		observability.RecordEmbeddingLatency(ctx, p.metrics, configuredModel, dur, code)
 
 		lastErr = err
+		if ctx.Err() != nil {
+			return nil, "", p.retryContextError(ctx, lastErr)
+		}
 
 		// Check if we should retry
 		if !p.shouldRetry(err) {
 			break
-		}
-
-		// Check if context was cancelled or deadline exceeded
-		if err := ctx.Err(); err != nil {
-			return nil, "", p.retryContextError(ctx, lastErr)
 		}
 
 		// Don't sleep after the last attempt

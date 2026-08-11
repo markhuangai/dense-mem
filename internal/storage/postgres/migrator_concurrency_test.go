@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -152,7 +154,38 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 	require.True(t, canCreateInDatabase)
 	require.True(t, canCreateInSchema)
 
+	require.NoError(t, goose.SetDialect("postgres"))
+	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026080803))
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	contractID := uuid.NewString()
+	legacyFailure := legacyEmbeddingFailureFixture{
+		jobID: uuid.NewString(), documentID: uuid.NewString(), sourceID: uuid.NewString(),
+		status: "failed", errorMessage: "embedding provider http error: status=429 code=insufficient_quota", attempts: 20,
+	}
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO semantic_team_refs (team_id) VALUES ($1::uuid)`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO semantic_profile_refs (team_id, profile_id) VALUES ($1::uuid, $2::uuid)`, teamID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_contracts (
+				embedding_contract_id, contract_key, version, provider, model,
+				dimensions, distance_metric, vector_normalization,
+				document_format_version, query_format_version, lifecycle_state
+			) VALUES ($1::uuid, $2, 1, 'openai', 'migration-role-model', 3, 'cosine', 'provider', 1, 1, 'active')
+		`, contractID, "migration-role-reconciliation-"+contractID); err != nil {
+			return err
+		}
+		return insertLegacyEmbeddingFailureFixture(ctx, tx, teamID, profileID, contractID, legacyFailure)
+	}))
+
 	require.NoError(t, NewMigratorWithDB(sqlDB).RunUp(ctx))
+	assertMigratedEmbeddingJob(t, ctx, sqlDB, legacyFailure.jobID, migratedEmbeddingJobExpectation{
+		status: "failed", totalAttempts: 20,
+		failureClass: "provider_action_required", failureCode: "provider_quota_exhausted", failedTimestamps: true,
+	})
 
 	var migrationApplied bool
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `

@@ -98,11 +98,15 @@ type openAIEmbeddingResponse struct {
 		Embedding []float32 `json:"embedding"`
 	} `json:"data"`
 	Usage *openAIEmbeddingUsage `json:"usage"`
-	Error *struct {
-		Code string `json:"code"`
-		Type string `json:"type"`
-	} `json:"error"`
+	Error *openAIProviderError  `json:"error"`
 }
+
+type openAIProviderError struct {
+	Code string `json:"code"`
+	Type string `json:"type"`
+}
+
+const nonJSONProviderErrorMessage = "provider returned a non-JSON error response"
 
 // EmbedBatch returns embeddings for multiple texts in the same order as inputs.
 func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, string, error) {
@@ -168,7 +172,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 		if resp.StatusCode != http.StatusOK {
 			return nil, "", &ProviderHTTPError{
 				Status:     resp.StatusCode,
-				Message:    "provider returned a non-JSON error response",
+				Message:    nonJSONProviderErrorMessage,
 				RetryAfter: retryAfterDuration(resp.Header.Get("Retry-After")),
 			}
 		}
@@ -204,12 +208,14 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 		}
 	}
 
-	if len(respBody.Data) > 0 && len(respBody.Data[0].Embedding) != p.dimensions {
-		return nil, "", &ProviderError{
-			Provider:     "openai",
-			Message:      fmt.Sprintf("expected %d dimensions, got %d", p.dimensions, len(respBody.Data[0].Embedding)),
-			FailureCode:  "provider_response_invalid",
-			FailureClass: "provider_action_required",
+	for index, item := range respBody.Data {
+		if len(item.Embedding) != p.dimensions {
+			return nil, "", &ProviderError{
+				Provider:     "openai",
+				Message:      fmt.Sprintf("expected %d dimensions, got %d at index %d", p.dimensions, len(item.Embedding), index),
+				FailureCode:  "provider_response_invalid",
+				FailureClass: "provider_action_required",
+			}
 		}
 	}
 
@@ -240,24 +246,14 @@ func (p *OpenAIEmbeddingProvider) recordEmbeddingUsage(ctx context.Context, usag
 	})
 }
 
-func nonJSONHTTPMessage(_ []byte) string {
-	return "provider returned a non-JSON error response"
-}
-
-func providerErrorCode(err *struct {
-	Code string `json:"code"`
-	Type string `json:"type"`
-}) string {
+func providerErrorCode(err *openAIProviderError) string {
 	if err == nil {
 		return ""
 	}
 	return strings.TrimSpace(err.Code)
 }
 
-func providerErrorType(err *struct {
-	Code string `json:"code"`
-	Type string `json:"type"`
-}) string {
+func providerErrorType(err *openAIProviderError) string {
 	if err == nil {
 		return ""
 	}
