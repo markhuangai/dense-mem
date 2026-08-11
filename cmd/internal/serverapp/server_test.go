@@ -28,14 +28,14 @@ func TestActivePlacementLeaseCoversVerifierAndCommitWindow(t *testing.T) {
 }
 
 func TestActiveEmbeddingLeaseCoversRetryWindow(t *testing.T) {
-	if got := activeEmbeddingLease(30); got != 5*time.Minute {
-		t.Fatalf("lease = %s, want 5m minimum", got)
+	if got := activeEmbeddingLease(30); got != 17*time.Minute+30*time.Second {
+		t.Fatalf("lease = %s, want four embedding attempts plus three maximum retry backoffs and buffer", got)
 	}
-	if got := activeEmbeddingLease(120); got != 8*time.Minute+30*time.Second {
-		t.Fatalf("lease = %s, want four embedding attempts plus buffer", got)
+	if got := activeEmbeddingLease(120); got != 23*time.Minute+30*time.Second {
+		t.Fatalf("lease = %s, want four embedding attempts plus three maximum retry backoffs and buffer", got)
 	}
-	if got := activeEmbeddingLease(600); got != 40*time.Minute+30*time.Second {
-		t.Fatalf("lease = %s, want four embedding attempts plus buffer", got)
+	if got := activeEmbeddingLease(600); got != 55*time.Minute+30*time.Second {
+		t.Fatalf("lease = %s, want four embedding attempts plus three maximum retry backoffs and buffer", got)
 	}
 }
 

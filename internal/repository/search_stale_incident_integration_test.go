@@ -71,6 +71,175 @@ func TestSearchEmbeddingCompletionResolvesStaleIncident(t *testing.T) {
 	require.Equal(t, "resolved", status)
 }
 
+func TestSearchClaimStaleCleanupBypassesCompatibilityIncidentTriggerLocks(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-stale-trigger-lock-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-stale-trigger-lock-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-stale-trigger-lock", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "stale trigger lock", 1)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`SELECT set_config('app.embedding_job_failure_writer', 'current', true)`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE embedding_jobs
+			SET document_version = document_version + 1,
+			    failure_class = 'transient', failure_code = 'provider_timeout',
+			    first_failed_at = now(), last_failed_at = now()
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, teamID, document.QueuedJobID).Error
+	}))
+
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	lockErr := make(chan error, 1)
+	go func() {
+		lockErr <- rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			if err := tx.Exec(`
+				SELECT pg_advisory_xact_lock(hashtextextended(
+					concat_ws('|', ?::uuid::text, ?::uuid::text, ?::integer::text, ?::text, ?::text, ?::text), 0
+				))
+			`, teamID, contract.EmbeddingContractID, 3, "evidence", "transient", "provider_timeout").Error; err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-locked:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("timed out acquiring incident advisory lock")
+	}
+
+	claimCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	jobs, claimErr := repo.ClaimEmbeddingJobs(claimCtx, ClaimEmbeddingJobsInput{
+		TeamID: teamID, WorkerID: "stale-trigger-lock-worker", Limit: 1, Lease: time.Minute,
+	})
+	cancel()
+	close(release)
+	require.NoError(t, <-lockErr)
+	require.NoError(t, claimErr)
+	require.Empty(t, jobs)
+
+	var status string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status FROM embedding_jobs
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, teamID, document.QueuedJobID).Row().Scan(&status)
+	}))
+	require.Equal(t, "stale", status)
+}
+
+func TestSearchEmbeddingCompletionDoesNotWaitOnUnrelatedIncidentIdentity(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-completion-incident-lock-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-completion-incident-lock-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-completion-incident-lock", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	first := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "completion incident one", 1)
+	second := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "completion incident two", 1)
+	claimed, err := repo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{
+		TeamID: teamID, WorkerID: "completion-incident-initial", Limit: 2, Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimed, 2)
+
+	jobs := make(map[string]EmbeddingJob, len(claimed))
+	for _, job := range claimed {
+		jobs[job.EmbeddingJobID] = job
+	}
+	firstJob := jobs[first.QueuedJobID]
+	secondJob := jobs[second.QueuedJobID]
+	_, err = repo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
+		TeamID: teamID, EmbeddingJobID: firstJob.EmbeddingJobID, WorkerID: "completion-incident-initial",
+		ExpectedAttempts: firstJob.Attempts, FailureClass: "transient", FailureCode: "provider_timeout", Terminal: true,
+	})
+	require.NoError(t, err)
+	_, err = repo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
+		TeamID: teamID, EmbeddingJobID: secondJob.EmbeddingJobID, WorkerID: "completion-incident-initial",
+		ExpectedAttempts: secondJob.Attempts, FailureClass: "transient", FailureCode: "provider_server_error", Terminal: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_jobs
+			SET status = 'processing', worker_id = 'completion-incident-worker',
+			    lease_until = now() + interval '1 minute', completed_at = NULL
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, teamID, firstJob.EmbeddingJobID).Error
+	}))
+
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	lockErr := make(chan error, 1)
+	go func() {
+		lockErr <- rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+			var incidentID string
+			if err := tx.Raw(`
+				SELECT incident_id::text
+				FROM embedding_failure_incidents
+				WHERE team_id = ?::uuid AND failure_code = 'provider_server_error' AND status = 'open'
+				FOR UPDATE
+			`, teamID).Row().Scan(&incidentID); err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-locked:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("timed out locking unrelated incident")
+	}
+
+	completeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	completeErr := repo.CompleteEmbeddingJob(completeCtx, CompleteEmbeddingJobInput{
+		TeamID: teamID, EmbeddingJobID: firstJob.EmbeddingJobID, WorkerID: "completion-incident-worker",
+		ExpectedAttempts: firstJob.Attempts, Embedding: []float32{1, 0, 0},
+	})
+	cancel()
+	close(release)
+	require.NoError(t, <-lockErr)
+	require.NoError(t, completeErr)
+
+	statuses := map[string]string{}
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		rows, err := tx.Raw(`
+			SELECT failure_code, status
+			FROM embedding_failure_incidents
+			WHERE team_id = ?::uuid AND failure_code IN ('provider_timeout', 'provider_server_error')
+		`, teamID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var code, status string
+			if err := rows.Scan(&code, &status); err != nil {
+				return err
+			}
+			statuses[code] = status
+		}
+		return rows.Err()
+	}))
+	require.Equal(t, "resolved", statuses["provider_timeout"])
+	require.Equal(t, "open", statuses["provider_server_error"])
+}
+
 func TestSearchEmbeddingFailureClassificationTransitionsDoNotDeadlock(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

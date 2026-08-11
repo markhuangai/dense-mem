@@ -114,7 +114,8 @@ type FailureMetadata struct {
 	RetryAfter time.Duration
 }
 
-const maxProviderRetryAfter = 5 * time.Minute
+// MaxProviderRetryAfter bounds a provider-directed delay before an embedding retry.
+const MaxProviderRetryAfter = 5 * time.Minute
 
 // ClassifyFailure converts an embedding error into the closed recovery
 // contract. Unknown errors fail closed as permanent unknown failures.
@@ -224,8 +225,8 @@ func boundedRetryAfter(value time.Duration) time.Duration {
 	if value <= 0 {
 		return 0
 	}
-	if value > maxProviderRetryAfter {
-		return maxProviderRetryAfter
+	if value > MaxProviderRetryAfter {
+		return MaxProviderRetryAfter
 	}
 	return value
 }

@@ -638,6 +638,7 @@ type embeddingSearchStub struct {
 	failContext        context.Context
 	failContextErr     error
 	completeErrs       map[string]error
+	failErr            error
 	claimErr           error
 	claimLimit         int
 }
@@ -676,6 +677,9 @@ func (s *embeddingSearchStub) FailEmbeddingJob(ctx context.Context, input reposi
 	s.failContext = ctx
 	s.failContextErr = ctx.Err()
 	s.failInputs = append(s.failInputs, input)
+	if s.failErr != nil {
+		return nil, s.failErr
+	}
 	status := "queued"
 	if input.Terminal {
 		status = "failed"

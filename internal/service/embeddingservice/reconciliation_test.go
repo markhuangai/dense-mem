@@ -37,6 +37,7 @@ type reconciliationRepositoryStub struct {
 	canaryContext      context.Context
 	canaryContextErr   error
 	markErr            error
+	selectErr          error
 	canaryErr          error
 	requeued           int64
 	requeueErr         error
@@ -77,6 +78,9 @@ func (s *reconciliationRepositoryStub) ReserveEmbeddingReconciliationRun(_ conte
 }
 
 func (s *reconciliationRepositoryStub) SelectEmbeddingReconciliationCanary(context.Context, repository.SelectEmbeddingReconciliationCanaryInput) (*repository.EmbeddingJob, error) {
+	if s.selectErr != nil {
+		return nil, s.selectErr
+	}
 	if len(s.jobs) > 0 {
 		job := s.jobs[0]
 		s.jobs = s.jobs[1:]

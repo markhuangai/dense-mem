@@ -53,7 +53,9 @@ func activeEmbeddingLease(embeddingTimeoutSeconds int) time.Duration {
 	if embeddingTimeoutSeconds <= 0 {
 		embeddingTimeoutSeconds = 30
 	}
-	lease := time.Duration(embeddingTimeoutSeconds*(embedding.DefaultRetryEmbeddingMaxRetries+1)+30) * time.Second
+	requestWindow := time.Duration(embeddingTimeoutSeconds*(embedding.DefaultRetryEmbeddingMaxRetries+1)) * time.Second
+	retryWindow := time.Duration(embedding.DefaultRetryEmbeddingMaxRetries) * embedding.MaxProviderRetryAfter
+	lease := requestWindow + retryWindow + 30*time.Second
 	if lease < 5*time.Minute {
 		return 5 * time.Minute
 	}

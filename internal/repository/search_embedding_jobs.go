@@ -197,10 +197,11 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			return err
 		}
 		var dims int
-		var contractID, sourceKind, projectionGenerationID string
+		var contractID, sourceKind, projectionGenerationID, failureClass, failureCode string
 		err = tx.WithContext(ctx).Raw(`
 				SELECT embedding_dimensions, embedding_contract_id::text,
-				       source_kind, COALESCE(projection_generation_id::text, '')
+				       source_kind, COALESCE(projection_generation_id::text, ''),
+				       failure_class, failure_code
 				FROM embedding_jobs
 				WHERE team_id = ?::uuid
 				  AND embedding_job_id = ?::uuid
@@ -214,6 +215,8 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			&contractID,
 			&sourceKind,
 			&projectionGenerationID,
+			&failureClass,
+			&failureCode,
 		)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -232,7 +235,7 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobStale), "active search contract changed before embedding completion"); err != nil {
 				return err
 			}
-			if err := resolveEmbeddingIncidentsForJob(ctx, tx, input.TeamID, sourceKind, contractID, dims); err != nil {
+			if err := resolveEmbeddingIncidentKey(ctx, tx, input.TeamID, sourceKind, contractID, failureClass, failureCode, dims); err != nil {
 				return err
 			}
 			terminalErr = ErrSearchContractMismatch
@@ -267,7 +270,7 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobStale), "source or document version changed before embedding completion"); err != nil {
 				return err
 			}
-			if err := resolveEmbeddingIncidentsForJob(ctx, tx, input.TeamID, sourceKind, contractID, dims); err != nil {
+			if err := resolveEmbeddingIncidentKey(ctx, tx, input.TeamID, sourceKind, contractID, failureClass, failureCode, dims); err != nil {
 				return err
 			}
 			terminalErr = ErrSearchStaleVersion
@@ -276,7 +279,7 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 		if err := markEmbeddingJobTerminal(ctx, tx, input, string(domain.EmbeddingJobCompleted), ""); err != nil {
 			return err
 		}
-		if err := resolveEmbeddingIncidentsForJob(ctx, tx, input.TeamID, sourceKind, contractID, dims); err != nil {
+		if err := resolveEmbeddingIncidentKey(ctx, tx, input.TeamID, sourceKind, contractID, failureClass, failureCode, dims); err != nil {
 			return err
 		}
 		if sourceKind == "relationship" && projectionGenerationID != "" {
@@ -372,7 +375,7 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			}, string(domain.EmbeddingJobStale), "source or document version changed before embedding failure"); err != nil {
 				return err
 			}
-			if err := resolveEmbeddingIncidentsForJob(ctx, tx, input.TeamID, sourceKind, contractID, dims); err != nil {
+			if err := resolveEmbeddingIncidentKey(ctx, tx, input.TeamID, sourceKind, contractID, previousFailureClass, previousFailureCode, dims); err != nil {
 				return err
 			}
 			if sourceKind == "relationship" && projectionGenerationID != "" {
@@ -727,6 +730,9 @@ func refreshRelationshipProjectionGeneration(ctx context.Context, tx *gorm.DB, t
 }
 
 func markStaleClaimableEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string, limit int) error {
+	if err := tx.WithContext(ctx).Exec(`SELECT set_config('app.embedding_job_failure_writer', 'current', true)`).Error; err != nil {
+		return err
+	}
 	return tx.WithContext(ctx).Exec(`
 		WITH queued_candidates AS MATERIALIZED (
 			SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at

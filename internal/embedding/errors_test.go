@@ -57,7 +57,7 @@ func TestBoundedRetryAfterClampsProviderHints(t *testing.T) {
 	for _, test := range []struct {
 		input, want time.Duration
 	}{
-		{0, 0}, {-time.Second, 0}, {2 * time.Second, 2 * time.Second}, {10 * time.Minute, maxProviderRetryAfter},
+		{0, 0}, {-time.Second, 0}, {2 * time.Second, 2 * time.Second}, {10 * time.Minute, MaxProviderRetryAfter},
 	} {
 		if got := boundedRetryAfter(test.input); got != test.want {
 			t.Fatalf("boundedRetryAfter(%s) = %s, want %s", test.input, got, test.want)

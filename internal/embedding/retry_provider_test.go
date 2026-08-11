@@ -236,8 +236,8 @@ func TestRetryProviderDeadlineDuringDelayPreservesProviderFailure(t *testing.T) 
 
 func TestRetryProviderCapsProviderRetryHintsAtPolicyMaximum(t *testing.T) {
 	provider := NewRetryEmbeddingProvider(&MockEmbeddingProvider{}, newTestLogger())
-	assert.Equal(t, maxProviderRetryAfter, provider.retryDelay(0, &ProviderHTTPError{Status: 429, RetryAfter: time.Hour}))
-	assert.Equal(t, maxProviderRetryAfter, provider.retryDelay(0, &RateLimitError{RetryAfter: 3600}))
+	assert.Equal(t, MaxProviderRetryAfter, provider.retryDelay(0, &ProviderHTTPError{Status: 429, RetryAfter: time.Hour}))
+	assert.Equal(t, MaxProviderRetryAfter, provider.retryDelay(0, &RateLimitError{RetryAfter: 3600}))
 }
 
 func TestRetryProvider_SuccessAfterOneRetry(t *testing.T) {

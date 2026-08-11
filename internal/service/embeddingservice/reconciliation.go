@@ -168,6 +168,9 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 			EmbeddingDimensions: contract.EmbeddingDimensions, CandidateCutoff: run.CandidateCutoff,
 		})
 		if err != nil {
+			if ctx.Err() != nil {
+				return result, ctx.Err()
+			}
 			return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationDeferred), "", "", "canary selection failed", false, err)
 		}
 		if job == nil {
@@ -194,6 +197,9 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 		}); err != nil {
 			if errors.Is(err, repository.ErrEmbeddingReconciliationCanarySkipped) {
 				continue
+			}
+			if ctx.Err() != nil {
+				return result, ctx.Err()
 			}
 			return result, s.deferRun(ctx, run, string(domain.EmbeddingReconciliationDeferred), "", "", "daily embedding canary attempt persistence failed", false, err)
 		}
@@ -377,7 +383,7 @@ func (s *embeddingReconciliationService) finishFailedCanary(ctx context.Context,
 		ExpectedAttempts: 1, Error: message,
 		FailureClass: failureClass, FailureCode: failureCode, Terminal: true,
 	})
-	if failErr != nil {
+	if failErr != nil && !errors.Is(failErr, repository.ErrTeamInactive) {
 		return s.deferRun(cleanupCtx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding canary failure persistence was ambiguous", canaryAttempted, failErr)
 	}
 	if err := s.reconciliation.CompleteEmbeddingReconciliationCanary(cleanupCtx, repository.CompleteEmbeddingReconciliationCanaryInput{
