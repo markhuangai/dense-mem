@@ -181,7 +181,7 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 		return nil, scanErr
 	}
 
-	normalized := s.normalizeEvidence(req.Evidence)
+	normalized := repositoryEvidenceInputs(req.Evidence)
 	requestHash, err := canonicalRequestHash(req)
 	if err != nil {
 		return nil, err
@@ -412,33 +412,6 @@ func publicSubmissionProcessingState(status, holdState string) string {
 	default:
 		return "failed"
 	}
-}
-
-func (s *rememberService) normalizeEvidence(evidence []RememberEvidenceInput) []repository.EvidenceInput {
-	out := make([]repository.EvidenceInput, 0, len(evidence))
-	sourceRevisionHashes := sourceRevisionContentHashes(evidence)
-	for _, item := range evidence {
-		event := submissionSecurityPassEvent()
-		authority, metadata := ledgerAuthorityAndMetadata(item.Authority, item.Metadata)
-		metadata = evidenceProcessingIntentMetadata(metadata, item)
-		out = append(out, repository.EvidenceInput{
-			Content:                       item.Content,
-			SourceType:                    evidenceSourceType(item.SourceType),
-			Authority:                     authority,
-			SourceRef:                     strings.TrimSpace(item.Source),
-			SourceKey:                     strings.TrimSpace(item.SourceKey),
-			SourceRevisionToken:           strings.TrimSpace(item.SourceRevision),
-			ExpectedPreviousRevisionToken: strings.TrimSpace(item.PreviousSourceRevision),
-			SourceRevisionContentHash:     sourceRevisionHashes[sourceRevisionBatchKey(item)],
-			SourceRevisionEnvelope:        sourceRevisionEnvelope(item),
-			SupersedesEvidenceIDs:         append([]string(nil), item.SupersedesEvidenceIDs...),
-			IdempotencyKey:                strings.TrimSpace(item.IdempotencyKey),
-			Labels:                        append([]string(nil), item.Labels...),
-			Metadata:                      metadata,
-			InitialEvent:                  &event,
-		})
-	}
-	return out
 }
 
 func sourceRevisionContentHashes(evidence []RememberEvidenceInput) map[string]string {

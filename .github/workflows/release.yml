@@ -222,6 +222,7 @@ jobs:
           latest_ref="${image}:latest"
           demo_source_ref="${image}:demo-${{ needs.prepare-release.outputs.source_tag }}"
           demo_release_ref="${image}:demo-${{ needs.prepare-release.outputs.release_tag }}"
+          demo_latest_ref="${image}:demo-latest"
 
           docker buildx imagetools create \
             -t "${release_ref}" \
@@ -229,6 +230,7 @@ jobs:
             "${source_ref}"
           docker buildx imagetools create \
             -t "${demo_release_ref}" \
+            -t "${demo_latest_ref}" \
             "${demo_source_ref}"
 
           source_digest="$(docker buildx imagetools inspect --raw "${source_ref}" | sha256sum | awk '{print $1}')"
@@ -236,13 +238,14 @@ jobs:
           latest_digest="$(docker buildx imagetools inspect --raw "${latest_ref}" | sha256sum | awk '{print $1}')"
           demo_source_digest="$(docker buildx imagetools inspect --raw "${demo_source_ref}" | sha256sum | awk '{print $1}')"
           demo_release_digest="$(docker buildx imagetools inspect --raw "${demo_release_ref}" | sha256sum | awk '{print $1}')"
+          demo_latest_digest="$(docker buildx imagetools inspect --raw "${demo_latest_ref}" | sha256sum | awk '{print $1}')"
 
           if [[ "${source_digest}" != "${release_digest}" || "${source_digest}" != "${latest_digest}" ]]; then
             echo "::error::stable release image tags do not match ${source_ref}"
             exit 1
           fi
-          if [[ "${demo_source_digest}" != "${demo_release_digest}" ]]; then
-            echo "::error::stable demo image tag does not match ${demo_source_ref}"
+          if [[ "${demo_source_digest}" != "${demo_release_digest}" || "${demo_source_digest}" != "${demo_latest_digest}" ]]; then
+            echo "::error::stable demo image tags do not match ${demo_source_ref}"
             exit 1
           fi
 

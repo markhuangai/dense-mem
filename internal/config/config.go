@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"math"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -478,6 +480,12 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	cfg.PostgresDSN = postgresDSN
 	if cfg.PostgresDSN == "" {
 		cfg.PostgresDSN = os.Getenv("POSTGRES_DSN")
+		if cfg.PostgresDSN == "" {
+			cfg.PostgresDSN, err = buildPostgresDSNFromComponents()
+			if err != nil {
+				return cfg, err
+			}
+		}
 	}
 	if strings.TrimSpace(os.Getenv("POSTGRES_READ_DSN")) != "" {
 		return cfg, &ValidationError{
@@ -834,6 +842,43 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func buildPostgresDSNFromComponents() (string, error) {
+	host := strings.TrimSpace(os.Getenv("POSTGRES_HOST"))
+	user := os.Getenv("POSTGRES_USER")
+	password := os.Getenv("POSTGRES_PASSWORD")
+	database := os.Getenv("POSTGRES_DB")
+	if host == "" && user == "" && password == "" && database == "" {
+		return "", nil
+	}
+	missing := []struct {
+		field string
+		value string
+	}{
+		{"POSTGRES_HOST", host},
+		{"POSTGRES_USER", user},
+		{"POSTGRES_PASSWORD", password},
+		{"POSTGRES_DB", database},
+	}
+	for _, item := range missing {
+		if item.value == "" {
+			return "", &ValidationError{Field: item.field, Message: "required when POSTGRES_DSN is not set"}
+		}
+	}
+	port := strings.TrimSpace(os.Getenv("POSTGRES_PORT"))
+	if port == "" {
+		port = "5432"
+	}
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	dsnURL := &url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(user, password),
+		Host:     net.JoinHostPort(host, port),
+		Path:     "/" + strings.TrimPrefix(database, "/"),
+		RawQuery: url.Values{"sslmode": []string{getEnvOrDefault("POSTGRES_SSLMODE", "disable")}}.Encode(),
+	}
+	return dsnURL.String(), nil
 }
 
 func rejectLegacyNeo4jConfig() *ValidationError {

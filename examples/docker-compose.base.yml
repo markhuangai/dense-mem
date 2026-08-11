@@ -39,7 +39,7 @@ services:
     restart: unless-stopped
 
   server:
-    image: ghcr.io/markhuangai/dense-mem:latest
+    image: ${DENSE_MEM_IMAGE:-ghcr.io/markhuangai/dense-mem:latest}
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CONTROL_HTTP_ADDR: ${CONTROL_HTTP_ADDR:-:8090}

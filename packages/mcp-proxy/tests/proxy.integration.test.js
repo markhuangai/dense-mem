@@ -80,7 +80,7 @@ function resultFor(rpc) {
   }
 
   return {
-    protocolVersion: rpc.params?.protocolVersion ?? "2024-11-05",
+    protocolVersion: rpc.params?.protocolVersion ?? "2025-11-25",
     capabilities: { tools: {} },
     serverInfo: { name: "mock-dense-mem", version: "0.0.0" },
   };

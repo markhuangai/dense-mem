@@ -1,7 +1,7 @@
 # Dense-Mem public demo compose example.
 #
-# This stack runs a pinned demo image, not the official release image:
-#   ghcr.io/markhuangai/dense-mem:demo-v2.4.1
+# This stack defaults to the floating demo promotion; override it for a
+# reproducible deployment with DENSE_MEM_DEMO_IMAGE.
 #
 # Required .env values:
 #   POSTGRES_PASSWORD
@@ -49,7 +49,7 @@ services:
     restart: unless-stopped
 
   demo:
-    image: ghcr.io/markhuangai/dense-mem:demo-v2.4.1
+    image: ${DENSE_MEM_DEMO_IMAGE:-ghcr.io/markhuangai/dense-mem:demo-latest}
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DEMO_PUBLIC_BASE_URL: ${DEMO_PUBLIC_BASE_URL:-}

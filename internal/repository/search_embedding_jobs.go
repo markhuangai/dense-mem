@@ -166,6 +166,40 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 	return jobs, nil
 }
 
+// RenewEmbeddingJobLease extends only the currently owned attempt. The
+// worker/attempt/status/expiry predicates make a late renewal a fencing event,
+// so a reclaimed job cannot be revived by the previous worker.
+func (r *SearchRepositoryImpl) RenewEmbeddingJobLease(ctx context.Context, input RenewEmbeddingJobLeaseInput) error {
+	input = normalizeRenewEmbeddingJobLeaseInput(input)
+	if err := validateRenewEmbeddingJobLeaseInput(input); err != nil {
+		return err
+	}
+	err := r.withActiveTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		result := tx.WithContext(ctx).Exec(`
+			UPDATE embedding_jobs
+			SET lease_until = clock_timestamp() + (? * interval '1 millisecond'),
+			    updated_at = now()
+			WHERE team_id = ?::uuid
+			  AND embedding_job_id = ?::uuid
+			  AND worker_id = ?
+			  AND status = 'processing'
+			  AND attempts = ?
+			  AND lease_until > clock_timestamp()
+		`, input.Lease.Milliseconds(), input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrEmbeddingLeaseLost
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("search: renew embedding job lease: %w", err)
+	}
+	return nil
+}
+
 func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input CompleteEmbeddingJobInput) error {
 	input = normalizeCompleteEmbeddingJobInput(input)
 	if err := validateCompleteEmbeddingJobInput(input); err != nil {

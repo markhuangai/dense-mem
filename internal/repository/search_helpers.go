@@ -130,6 +130,35 @@ func validateCompleteEmbeddingJobInput(input CompleteEmbeddingJobInput) error {
 	return nil
 }
 
+func normalizeRenewEmbeddingJobLeaseInput(input RenewEmbeddingJobLeaseInput) RenewEmbeddingJobLeaseInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.EmbeddingJobID = strings.TrimSpace(input.EmbeddingJobID)
+	input.WorkerID = strings.TrimSpace(input.WorkerID)
+	if input.Lease <= 0 {
+		input.Lease = time.Minute
+	}
+	return input
+}
+
+func validateRenewEmbeddingJobLeaseInput(input RenewEmbeddingJobLeaseInput) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.EmbeddingJobID); err != nil {
+		return fmt.Errorf("embedding_job_id is required: %w", err)
+	}
+	if input.WorkerID == "" {
+		return errors.New("worker_id is required")
+	}
+	if input.ExpectedAttempts < 1 {
+		return errors.New("expected_attempts must be greater than zero")
+	}
+	if input.Lease < time.Second {
+		return errors.New("lease must be at least one second")
+	}
+	return nil
+}
+
 func normalizeFullTextSearchInput(input FullTextSearchInput) FullTextSearchInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.Query = strings.TrimSpace(input.Query)

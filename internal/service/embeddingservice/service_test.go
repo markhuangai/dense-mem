@@ -156,6 +156,73 @@ func TestEmbeddingWorkerCompletesValidBatch(t *testing.T) {
 	}
 }
 
+func TestEmbeddingWorkerSplitsOnlyInputRejectedBatches(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{
+		embeddingJobForTest("job-good-a", 1),
+		embeddingJobForTest("job-bad", 1),
+		embeddingJobForTest("job-good-b", 1),
+	}
+	provider := &embeddingProviderStub{
+		available: true,
+		model:     "test-model",
+		dims:      3,
+		embedBatchFunc: func(_ context.Context, texts []string) ([][]float32, string, error) {
+			for _, text := range texts {
+				if strings.Contains(text, "job-bad") {
+					return nil, "", &embedding.ProviderHTTPError{Status: 413}
+				}
+			}
+			vectors := make([][]float32, len(texts))
+			for i := range vectors {
+				vectors[i] = []float32{1, 0, 0}
+			}
+			return vectors, "test-model", nil
+		},
+	}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search, Provider: provider, TeamID: "team-a", WorkerID: "worker-a",
+	})
+
+	result, err := worker.ProcessNextBatch(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, 2, result.Completed)
+	assert.Equal(t, 1, result.Failed)
+	assert.Len(t, search.completeInputs, 2)
+	require.Len(t, search.failInputs, 1)
+	assert.True(t, search.failInputs[0].Terminal)
+	assert.Equal(t, string(domain.EmbeddingFailureInputRejected), search.failInputs[0].FailureCode)
+	assert.GreaterOrEqual(t, len(provider.batches), 3, "the rejected batch should be recursively narrowed")
+}
+
+func TestEmbeddingWorkerRenewsLeasesDuringSlowProviderCall(t *testing.T) {
+	search := newEmbeddingSearchStub()
+	search.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-slow", 1)}
+	renewed := make(chan struct{})
+	search.renewSignal = renewed
+	provider := &embeddingProviderStub{
+		available: true,
+		model:     "test-model",
+		dims:      3,
+		embedBatchFunc: func(ctx context.Context, _ []string) ([][]float32, string, error) {
+			select {
+			case <-renewed:
+			case <-ctx.Done():
+				return nil, "", ctx.Err()
+			}
+			return [][]float32{{1, 0, 0}}, "test-model", nil
+		},
+	}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search, Provider: provider, TeamID: "team-a", WorkerID: "worker-a", Lease: 100 * time.Millisecond,
+	})
+
+	result, err := worker.ProcessNextBatch(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Completed)
+	assert.GreaterOrEqual(t, search.renewCalls, 1)
+}
+
 func TestEmbeddingWorkerBackgroundCostUsesTeamOnlyIdentityForMixedOwners(t *testing.T) {
 	teamID := "11111111-1111-4111-8111-111111111111"
 	ownerA := "22222222-2222-4222-8222-222222222222"
@@ -733,6 +800,9 @@ type embeddingSearchStub struct {
 	failErr            error
 	claimErr           error
 	claimLimit         int
+	renewCalls         int
+	renewErr           error
+	renewSignal        chan struct{}
 }
 
 func (s *embeddingSearchStub) GetActiveSearchContract(context.Context) (*repository.ActiveSearchContract, error) {
@@ -765,6 +835,18 @@ func (s *embeddingSearchStub) CompleteEmbeddingJob(ctx context.Context, input re
 	return nil
 }
 
+func (s *embeddingSearchStub) RenewEmbeddingJobLease(_ context.Context, _ repository.RenewEmbeddingJobLeaseInput) error {
+	s.renewCalls++
+	if s.renewSignal != nil {
+		select {
+		case <-s.renewSignal:
+		default:
+			close(s.renewSignal)
+		}
+	}
+	return s.renewErr
+}
+
 func (s *embeddingSearchStub) FailEmbeddingJob(ctx context.Context, input repository.FailEmbeddingJobInput) (*repository.EmbeddingJobFailureResult, error) {
 	s.failContext = ctx
 	s.failContextErr = ctx.Err()
@@ -792,15 +874,17 @@ func (s *embeddingSearchStub) SearchExactVector(context.Context, repository.Exac
 }
 
 type embeddingProviderStub struct {
-	available     bool
-	model         string
-	returnedModel string
-	dims          int
-	vectors       [][]float32
-	err           error
-	gotTexts      []string
-	observeUsage  func(context.Context, int)
-	onEmbedBatch  func()
+	available      bool
+	model          string
+	returnedModel  string
+	dims           int
+	vectors        [][]float32
+	err            error
+	gotTexts       []string
+	observeUsage   func(context.Context, int)
+	onEmbedBatch   func()
+	embedBatchFunc func(context.Context, []string) ([][]float32, string, error)
+	batches        [][]string
 }
 
 func (p *embeddingProviderStub) Embed(context.Context, string) ([]float32, string, error) {
@@ -809,11 +893,15 @@ func (p *embeddingProviderStub) Embed(context.Context, string) ([]float32, strin
 
 func (p *embeddingProviderStub) EmbedBatch(ctx context.Context, texts []string) ([][]float32, string, error) {
 	p.gotTexts = append([]string(nil), texts...)
+	p.batches = append(p.batches, append([]string(nil), texts...))
 	if p.observeUsage != nil {
 		p.observeUsage(ctx, len(texts))
 	}
 	if p.onEmbedBatch != nil {
 		p.onEmbedBatch()
+	}
+	if p.embedBatchFunc != nil {
+		return p.embedBatchFunc(ctx, texts)
 	}
 	if p.err != nil {
 		return nil, "", p.err

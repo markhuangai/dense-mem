@@ -284,7 +284,7 @@ test("MCP recall feedback is submitted and surfaced through compose telemetry", 
 
   try {
     await mcpCall(request, "initialize", {
-      protocolVersion: "2024-11-05",
+      protocolVersion: "2025-11-25",
       capabilities: {},
       clientInfo: { name: "compose-recall-feedback", version: "1.0.0" },
     });

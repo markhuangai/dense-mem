@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
@@ -176,7 +178,7 @@ func TestMCP_Initialize(t *testing.T) {
 	reg := registry.New()
 	s := NewServer(reg, "pA", logger)
 
-	out := runRPC(t, s, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	out := runRPC(t, s, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`)
 	var resp rpcResp
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
 		t.Fatalf("unmarshal: %v — out=%q", err, out)
@@ -335,7 +337,7 @@ func TestMCP_InitializeIncludesTeamContext(t *testing.T) {
 		Description: "Project memory only",
 	}, logger)
 
-	out := runRPC(t, s, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	out := runRPC(t, s, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`)
 	var resp rpcResp
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
 		t.Fatalf("unmarshal: %v — out=%q", err, out)
@@ -759,8 +761,39 @@ func TestMCP_HandlePayloadResultNotifications(t *testing.T) {
 	if err := json.Unmarshal(invalid.Payload, &resp); err != nil {
 		t.Fatalf("unmarshal invalid response: %v", err)
 	}
-	if resp.Error == nil || resp.Error.Code != errCodeMethodNotFound {
-		t.Fatalf("invalid no-id error = %+v; want method not found", resp.Error)
+	if resp.Error == nil || resp.Error.Code != errCodeInvalidRequest {
+		t.Fatalf("invalid no-id error = %+v; want invalid request", resp.Error)
+	}
+}
+
+func TestMCP_StrictJSONRPCAndInitializeValidation(t *testing.T) {
+	logger, _ := testLogger(t)
+	s := NewServer(registry.New(), "pA", logger)
+	for _, test := range []struct {
+		name string
+		body string
+		code int
+	}{
+		{"malformed JSON", `{"jsonrpc":"2.0"`, errCodeParseError},
+		{"non-object", `[]`, errCodeInvalidRequest},
+		{"wrong JSON-RPC revision", `{"jsonrpc":"1.0","id":1,"method":"tools/list"}`, errCodeInvalidRequest},
+		{"boolean ID", `{"jsonrpc":"2.0","id":true,"method":"tools/list"}`, errCodeInvalidRequest},
+		{"unknown envelope member", `{"jsonrpc":"2.0","id":1,"method":"tools/list","extra":true}`, errCodeInvalidRequest},
+		{"missing initialize params", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`, errCodeInvalidParams},
+		{"unsupported initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`, errCodeInvalidParams},
+		{"exact initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			out := runRPC(t, s, test.body)
+			var resp rpcResp
+			require.NoError(t, json.Unmarshal([]byte(out), &resp))
+			if test.code == 0 {
+				require.Nil(t, resp.Error)
+				return
+			}
+			require.NotNil(t, resp.Error)
+			require.Equal(t, test.code, resp.Error.Code)
+		})
 	}
 }
 
@@ -778,7 +811,7 @@ func TestMCP_HandlePayloadProducesOnlyJSONRPC(t *testing.T) {
 	s := NewServer(reg, "pA", logger)
 
 	requests := []string{
-		`{"jsonrpc":"2.0","id":1,"method":"initialize"}`,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"noop","arguments":{}}}`,
 	}

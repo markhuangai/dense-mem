@@ -289,7 +289,7 @@ func (s *service) persistHypotheses(
 	for _, input := range inputs {
 		byID[input.RelationshipID] = input
 	}
-	proposals := []repository.UpsertHypothesisInput{}
+	var proposals []repository.UpsertHypothesisInput
 	generatedRejected := 0
 	generatedPaths := []DreamPath{}
 	generatorModel := ""

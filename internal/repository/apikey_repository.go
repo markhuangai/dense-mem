@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -584,160 +585,102 @@ func (r *APIKeyRepositoryImpl) RotateForProfile(ctx context.Context, profileID, 
 	return rowsAffected, nil
 }
 
-// GetByIDForProfile retrieves an API key by ID only when it belongs to profileID.
-// Returns nil when the id/profile combination does not match (prevents existence oracle).
-// Excludes the key_hash field from results.
-//
-// Uses *sql.Rows + pq.Array() — see GetActiveByPrefix for the rationale.
-func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID, id uuid.UUID) (*domain.APIKey, error) {
-	var key domain.APIKey
-	var rowProfileID *uuid.UUID
-	var ssoIdentityID, ssoProviderID, ssoOwnerIdentityID string
-	found := false
+const apiKeyHydrationSelect = `
+	k.id, k.team_id, COALESCE(k.key_suffix, ''), k.name, k.scopes, k.role, k.rate_limit,
+	k.last_used_at, k.expires_at, k.created_at, k.revoked_at, COALESCE(k.auth_source, ''),
+	COALESCE(k.sso_identity_id::text, ''), COALESCE(k.sso_provider_id::text, ''),
+	COALESCE(k.sso_owner_identity_id::text, ''),
+	COALESCE(k.sso_subject, ''), COALESCE(k.sso_email, ''), COALESCE(k.sso_group_id, ''),
+	COALESCE(k.sso_entitlement_status, ''), k.sso_last_entitlement_checked_at, k.sso_last_login_at
+`
 
+type apiKeyHydrationState struct {
+	key                          domain.APIKey
+	rowProfileID                 *uuid.UUID
+	ssoIdentityID, ssoProviderID string
+	ssoOwnerIdentityID           string
+}
+
+func (s *apiKeyHydrationState) scan(rows *sql.Rows) error {
+	return rows.Scan(
+		&s.key.ID, &s.rowProfileID, &s.key.KeySuffix, &s.key.Label,
+		pq.Array(&s.key.Scopes), &s.key.Role, &s.key.RateLimit,
+		&s.key.LastUsedAt, &s.key.ExpiresAt, &s.key.CreatedAt, &s.key.RevokedAt,
+		&s.key.AuthSource, &s.ssoIdentityID, &s.ssoProviderID, &s.ssoOwnerIdentityID,
+		&s.key.SSOSubject, &s.key.SSOEmail, &s.key.SSOGroupID,
+		&s.key.SSOEntitlementStatus, &s.key.SSOLastEntitlementCheckedAt, &s.key.SSOLastLoginAt,
+	)
+}
+
+func (s *apiKeyHydrationState) result() *domain.APIKey {
+	if s.rowProfileID != nil {
+		s.key.ProfileID = *s.rowProfileID
+		s.key.TeamID = *s.rowProfileID
+	}
+	s.key.Name = s.key.Label
+	s.key.SSOIdentityID = parseOptionalUUID(s.ssoIdentityID)
+	s.key.SSOProviderID = parseOptionalUUID(s.ssoProviderID)
+	s.key.SSOOwnerIdentityID = parseOptionalUUID(s.ssoOwnerIdentityID)
+	return &s.key
+}
+
+func (r *APIKeyRepositoryImpl) getOneHydratedAPIKey(ctx context.Context, profileID uuid.UUID, query string, args ...any) (*domain.APIKey, error) {
+	state := &apiKeyHydrationState{}
+	found := false
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
-		rows, rerr := tx.Raw(`
-				SELECT
-					k.id, k.team_id, COALESCE(k.key_suffix, ''), k.name, k.scopes, k.role, k.rate_limit,
-					k.last_used_at, k.expires_at, k.created_at, k.revoked_at, COALESCE(k.auth_source, ''),
-					COALESCE(k.sso_identity_id::text, ''), COALESCE(k.sso_provider_id::text, ''),
-					COALESCE(k.sso_owner_identity_id::text, ''),
-					COALESCE(k.sso_subject, ''), COALESCE(k.sso_email, ''), COALESCE(k.sso_group_id, ''),
-					COALESCE(k.sso_entitlement_status, ''),
-					k.sso_last_entitlement_checked_at, k.sso_last_login_at
-				FROM team_profiles k
-				JOIN teams t ON t.id = k.team_id
-				WHERE k.id = $1 AND k.team_id = $2 AND k.auth_source = 'api_key'
-					AND t.status = 'active'
-					AND t.deleted_at IS NULL
-			`, id, profileID).Rows()
-		if rerr != nil {
-			return rerr
+		rows, err := tx.Raw(query, args...).Rows()
+		if err != nil {
+			return err
 		}
 		defer rows.Close()
-
 		if rows.Next() {
 			found = true
-			return rows.Scan(
-				&key.ID,
-				&rowProfileID,
-				&key.KeySuffix,
-				&key.Label,
-				pq.Array(&key.Scopes),
-				&key.Role,
-				&key.RateLimit,
-				&key.LastUsedAt,
-				&key.ExpiresAt,
-				&key.CreatedAt,
-				&key.RevokedAt,
-				&key.AuthSource,
-				&ssoIdentityID,
-				&ssoProviderID,
-				&ssoOwnerIdentityID,
-				&key.SSOSubject,
-				&key.SSOEmail,
-				&key.SSOGroupID,
-				&key.SSOEntitlementStatus,
-				&key.SSOLastEntitlementCheckedAt,
-				&key.SSOLastLoginAt,
-			)
+			if err := state.scan(rows); err != nil {
+				return err
+			}
 		}
 		return rows.Err()
 	})
-
 	if err != nil {
-		return nil, fmt.Errorf("failed to get api key for profile: %w", err)
+		return nil, err
 	}
 	if !found {
 		return nil, nil
 	}
-	if rowProfileID != nil {
-		key.ProfileID = *rowProfileID
-		key.TeamID = *rowProfileID
+	return state.result(), nil
+}
+
+// GetByIDForProfile retrieves an API key by ID only when it belongs to profileID.
+func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID, id uuid.UUID) (*domain.APIKey, error) {
+	key, err := r.getOneHydratedAPIKey(ctx, profileID, `
+		SELECT `+apiKeyHydrationSelect+`
+		FROM team_profiles k
+		JOIN teams t ON t.id = k.team_id
+		WHERE k.id = $1 AND k.team_id = $2 AND k.auth_source = 'api_key'
+		  AND t.status = 'active' AND t.deleted_at IS NULL
+	`, id, profileID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get api key for profile: %w", err)
 	}
-	key.Name = key.Label
-	key.SSOIdentityID = parseOptionalUUID(ssoIdentityID)
-	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
-	key.SSOOwnerIdentityID = parseOptionalUUID(ssoOwnerIdentityID)
-	return &key, nil
+	return key, nil
 }
 
 // GetSSOOwnedKey returns the active normal API key owned by an SSO identity for one team.
 func (r *APIKeyRepositoryImpl) GetSSOOwnedKey(ctx context.Context, profileID, identityID uuid.UUID) (*domain.APIKey, error) {
-	var key domain.APIKey
-	var rowProfileID *uuid.UUID
-	var ssoIdentityID, ssoProviderID, ssoOwnerIdentityID string
-	found := false
-
-	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
-		rows, rerr := tx.Raw(`
-				SELECT
-					k.id, k.team_id, COALESCE(k.key_suffix, ''), k.name, k.scopes, k.role, k.rate_limit,
-					k.last_used_at, k.expires_at, k.created_at, k.revoked_at, COALESCE(k.auth_source, ''),
-					COALESCE(k.sso_identity_id::text, ''), COALESCE(k.sso_provider_id::text, ''),
-					COALESCE(k.sso_owner_identity_id::text, ''),
-					COALESCE(k.sso_subject, ''), COALESCE(k.sso_email, ''), COALESCE(k.sso_group_id, ''),
-					COALESCE(k.sso_entitlement_status, ''),
-					k.sso_last_entitlement_checked_at, k.sso_last_login_at
-				FROM team_profiles k
-				JOIN teams t ON t.id = k.team_id
-				WHERE k.team_id = $1
-					AND k.sso_owner_identity_id = $2
-					AND k.auth_source = 'api_key'
-					AND k.revoked_at IS NULL
-					AND t.status = 'active'
-					AND t.deleted_at IS NULL
-				ORDER BY k.created_at DESC, k.id ASC
-				LIMIT 1
-			`, profileID, identityID).Rows()
-		if rerr != nil {
-			return rerr
-		}
-		defer rows.Close()
-
-		if rows.Next() {
-			found = true
-			return rows.Scan(
-				&key.ID,
-				&rowProfileID,
-				&key.KeySuffix,
-				&key.Label,
-				pq.Array(&key.Scopes),
-				&key.Role,
-				&key.RateLimit,
-				&key.LastUsedAt,
-				&key.ExpiresAt,
-				&key.CreatedAt,
-				&key.RevokedAt,
-				&key.AuthSource,
-				&ssoIdentityID,
-				&ssoProviderID,
-				&ssoOwnerIdentityID,
-				&key.SSOSubject,
-				&key.SSOEmail,
-				&key.SSOGroupID,
-				&key.SSOEntitlementStatus,
-				&key.SSOLastEntitlementCheckedAt,
-				&key.SSOLastLoginAt,
-			)
-		}
-		return rows.Err()
-	})
+	key, err := r.getOneHydratedAPIKey(ctx, profileID, `
+		SELECT `+apiKeyHydrationSelect+`
+		FROM team_profiles k
+		JOIN teams t ON t.id = k.team_id
+		WHERE k.team_id = $1 AND k.sso_owner_identity_id = $2
+		  AND k.auth_source = 'api_key' AND k.revoked_at IS NULL
+		  AND t.status = 'active' AND t.deleted_at IS NULL
+		ORDER BY k.created_at DESC, k.id ASC
+		LIMIT 1
+	`, profileID, identityID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sso-owned api key for profile: %w", err)
 	}
-	if !found {
-		return nil, nil
-	}
-	if rowProfileID != nil {
-		key.ProfileID = *rowProfileID
-		key.TeamID = *rowProfileID
-	}
-	key.Name = key.Label
-	key.SSOIdentityID = parseOptionalUUID(ssoIdentityID)
-	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
-	key.SSOOwnerIdentityID = parseOptionalUUID(ssoOwnerIdentityID)
-	return &key, nil
+	return key, nil
 }
 
 func parseOptionalUUID(raw string) *uuid.UUID {
@@ -790,7 +733,7 @@ func (r *APIKeyRepositoryImpl) TouchLastUsedBatch(ctx context.Context, updates [
 		if update.ID == uuid.Nil || update.At.IsZero() {
 			continue
 		}
-		values = append(values, "(?, ?)")
+		values = append(values, "(?::uuid, ?::timestamptz)")
 		args = append(args, update.ID, update.At.UTC())
 	}
 	if len(values) == 0 {

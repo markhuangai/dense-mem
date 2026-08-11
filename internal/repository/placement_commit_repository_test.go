@@ -156,7 +156,7 @@ func TestRelationshipDecisionFromPlacementObservationResolvesEntityRefs(t *testi
 	subjectID := uuid.NewString()
 	objectID := uuid.NewString()
 	confidence := 0.9
-	decision, err := relationshipDecisionFromPlacementObservation(nil, nil, commit, PlacementRelationshipDecisionInput{
+	decision, err := relationshipDecisionFromPlacementObservation(context.Background(), nil, commit, PlacementRelationshipDecisionInput{
 		Ref:               "rel-1",
 		SubjectRef:        "subject",
 		OriginalPredicate: "works on",
@@ -182,7 +182,7 @@ func TestRelationshipDecisionFromPlacementObservationResolvesEntityRefs(t *testi
 	if decision.SubjectEntityID != subjectID || decision.ObjectEntityID != objectID || decision.TeamID != commit.TeamID {
 		t.Fatalf("decision = %#v", decision)
 	}
-	if _, err := relationshipDecisionFromPlacementObservation(nil, nil, commit, PlacementRelationshipDecisionInput{
+	if _, err := relationshipDecisionFromPlacementObservation(context.Background(), nil, commit, PlacementRelationshipDecisionInput{
 		Ref:          "rel-1",
 		SubjectRef:   "missing",
 		PredicateKey: "works_on",
@@ -190,7 +190,7 @@ func TestRelationshipDecisionFromPlacementObservationResolvesEntityRefs(t *testi
 	}, map[string]string{"object": objectID}); err == nil {
 		t.Fatal("expected missing subject error")
 	}
-	if _, err := relationshipDecisionFromPlacementObservation(nil, nil, commit, PlacementRelationshipDecisionInput{
+	if _, err := relationshipDecisionFromPlacementObservation(context.Background(), nil, commit, PlacementRelationshipDecisionInput{
 		Ref:          "rel-1",
 		SubjectRef:   "subject",
 		PredicateKey: "works_on",

@@ -24,7 +24,7 @@ func TestMCPHandlerPostInitializeJSON(t *testing.T) {
 	h := NewMCPHandler(registry.New(), testMCPLogger())
 	e := echo.New()
 	profileID := uuid.New()
-	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
 	rec := httptest.NewRecorder()
@@ -39,14 +39,14 @@ func TestMCPHandlerPostInitializeJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.Equal(t, "2.0", resp["jsonrpc"])
 	result := resp["result"].(map[string]any)
-	require.Equal(t, "2024-11-05", result["protocolVersion"])
+	require.Equal(t, "2025-11-25", result["protocolVersion"])
 }
 
 func TestMCPHandlerPostInitializeUsesResolvedTeamContext(t *testing.T) {
 	h := NewMCPHandler(registry.New(), testMCPLogger())
 	e := echo.New()
 	profileID := uuid.New()
-	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	ctx := middleware.SetResolvedTeamContextForTest(req.Context(), middleware.ResolvedTeamContext{
 		ID:          profileID,
@@ -106,7 +106,7 @@ func TestMCPHandlerPostSSE(t *testing.T) {
 	h := NewMCPHandler(registry.New(), testMCPLogger())
 	e := echo.New()
 	profileID := uuid.New()
-	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`))
 	req.Header.Set(echo.HeaderAccept, "text/event-stream")
 	req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
 	rec := httptest.NewRecorder()
