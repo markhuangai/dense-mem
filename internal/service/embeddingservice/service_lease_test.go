@@ -136,6 +136,46 @@ func TestEmbeddingWorkerRenewsLeasesThroughFinalization(t *testing.T) {
 	}
 }
 
+func TestEmbeddingWorkerRenewsLeasesThroughEarlyFailureFinalization(t *testing.T) {
+	base := newEmbeddingSearchStub()
+	base.jobs = []repository.EmbeddingJob{embeddingJobForTest("job-early-failure", 1)}
+	search := &earlyFailureLeaseSearchStub{
+		embeddingSearchStub:  base,
+		failureStarted:       make(chan struct{}),
+		releaseFailure:       make(chan struct{}),
+		renewedDuringFailure: make(chan struct{}),
+	}
+	worker := NewEmbeddingWorkerService(EmbeddingWorkerDependencies{
+		Search: search, Provider: &embeddingProviderStub{available: false, model: "test-model", dims: 3},
+		TeamID: "team-a", WorkerID: "worker-a", Lease: 30 * time.Millisecond,
+	})
+
+	type outcome struct {
+		result EmbeddingWorkerResult
+		err    error
+	}
+	outcomes := make(chan outcome, 1)
+	go func() {
+		result, err := worker.ProcessNextBatch(context.Background())
+		outcomes <- outcome{result: result, err: err}
+	}()
+
+	select {
+	case <-search.renewedDuringFailure:
+	case <-time.After(time.Second):
+		t.Fatal("embedding lease was not renewed while early failure finalization was blocked")
+	}
+	close(search.releaseFailure)
+
+	select {
+	case result := <-outcomes:
+		require.Error(t, result.err)
+		assert.Equal(t, 1, result.result.Retried)
+	case <-time.After(time.Second):
+		t.Fatal("embedding worker did not finish after early failure finalization was released")
+	}
+}
+
 type concurrentLeaseSearchStub struct {
 	*embeddingSearchStub
 	mu      sync.Mutex
@@ -161,6 +201,34 @@ type finalizationLeaseSearchStub struct {
 	renewedDuringFinalization     chan struct{}
 	completeOnce                  sync.Once
 	renewedDuringFinalizationOnce sync.Once
+}
+
+type earlyFailureLeaseSearchStub struct {
+	*embeddingSearchStub
+	failureStarted       chan struct{}
+	releaseFailure       chan struct{}
+	renewedDuringFailure chan struct{}
+	failureOnce          sync.Once
+	renewedFailureOnce   sync.Once
+}
+
+func (s *earlyFailureLeaseSearchStub) FailEmbeddingJob(ctx context.Context, input repository.FailEmbeddingJobInput) (*repository.EmbeddingJobFailureResult, error) {
+	s.failureOnce.Do(func() { close(s.failureStarted) })
+	select {
+	case <-s.releaseFailure:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return s.embeddingSearchStub.FailEmbeddingJob(ctx, input)
+}
+
+func (s *earlyFailureLeaseSearchStub) RenewEmbeddingJobLease(ctx context.Context, input repository.RenewEmbeddingJobLeaseInput) error {
+	select {
+	case <-s.failureStarted:
+		s.renewedFailureOnce.Do(func() { close(s.renewedDuringFailure) })
+	default:
+	}
+	return s.embeddingSearchStub.RenewEmbeddingJobLease(ctx, input)
 }
 
 func (s *finalizationLeaseSearchStub) CompleteEmbeddingJob(ctx context.Context, input repository.CompleteEmbeddingJobInput) error {
