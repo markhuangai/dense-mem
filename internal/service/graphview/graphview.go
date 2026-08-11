@@ -16,9 +16,8 @@ const (
 	ScopeLocal    = "local"
 
 	DefaultLimit = 80
-	MaxLimit     = 180
-	DefaultDepth = 1
-	MaxDepth     = 2
+	DefaultDepth = 2
+	MaxDepth     = 5
 
 	maxNodeBodyRunes = 420
 )
@@ -171,7 +170,7 @@ func normalizeSemanticQuery(query Query) (normalizedSemanticQuery, error) {
 		scope:  scope,
 		search: strings.ToLower(strings.TrimSpace(query.Query)),
 		types:  normalizeSemanticGraphTypes(query.Types),
-		limit:  clamp(query.Limit, DefaultLimit, MaxLimit),
+		limit:  defaultPositive(query.Limit, DefaultLimit),
 		depth:  clamp(query.Depth, DefaultDepth, MaxDepth),
 	}
 	if normalized.scope == ScopeLocal {
@@ -224,6 +223,13 @@ func clamp(value, defaultValue, maxValue int) int {
 	}
 	if value > maxValue {
 		return maxValue
+	}
+	return value
+}
+
+func defaultPositive(value, defaultValue int) int {
+	if value <= 0 {
+		return defaultValue
 	}
 	return value
 }

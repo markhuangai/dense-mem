@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, type Page, test } from "@playwright/test";
+import { expect, type APIRequestContext, type Locator, type Page, test } from "@playwright/test";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const userUrl = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
@@ -8,6 +8,11 @@ const seedTeamName = requiredEnv("DENSE_MEM_E2E_TEAM_NAME");
 const seedApiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 const dreamStatement = requiredEnv("DENSE_MEM_E2E_DREAM_STATEMENT");
 const prometheusUrl = requiredEnv("DENSE_MEM_PROMETHEUS_URL").replace(/\/$/, "");
+const graphAnchorEntityId = process.env.DENSE_MEM_E2E_GRAPH_ANCHOR_ENTITY_ID ?? "";
+const graphOriginalObjectEntityId = process.env.DENSE_MEM_E2E_GRAPH_ORIGINAL_OBJECT_ENTITY_ID ?? "";
+const graphCorrectedObjectEntityId = process.env.DENSE_MEM_E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID ?? "";
+const graphOriginalRelationshipId = process.env.DENSE_MEM_E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID ?? "";
+const graphSuccessorRelationshipId = process.env.DENSE_MEM_E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID ?? "";
 
 type CreatedProfile = {
   api_key: string;
@@ -107,6 +112,20 @@ test("control panel shows operational metrics against compose", async ({ page })
   await page.getByLabel("Team", { exact: true }).selectOption(seedTeamId);
   await expect(page.getByRole("heading", { name: "Usage Rollup" })).toBeVisible();
   await expectNoShellOverlap(page);
+});
+
+test("control overview contains every Top Signals diagnostic", async ({ page }) => {
+  await openControlPanel(page);
+  await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
+
+  const topSignals = page.getByLabel("Top signals");
+  await expect(topSignals).toBeVisible();
+  const rows = topSignals.locator(".metric-row");
+  await expect(rows).toHaveCount(4);
+  for (let index = 0; index < await rows.count(); index += 1) {
+    const row = rows.nth(index);
+    await expectMetricDetailContained(row, row.locator(".metric-detail"));
+  }
 });
 
 test("control panel keeps security settings display-only against compose", async ({ page }) => {
@@ -396,6 +415,52 @@ test("user portal logs in with a real API key and shows only that profile", asyn
   await page.getByRole("button", { name: "Dreams" }).click();
   await expect(page.getByRole("heading", { name: "Dream Outputs" })).toBeVisible();
   await expect(page.getByText(dreamStatement, { exact: true })).toBeVisible();
+});
+
+test("user portal renders the corrected live graph with depth five and an uncapped limit", async ({ page }) => {
+  test.skip(
+    !graphAnchorEntityId || !graphOriginalObjectEntityId || !graphCorrectedObjectEntityId || !graphOriginalRelationshipId || !graphSuccessorRelationshipId,
+    "submission-status graph fixture is required",
+  );
+  await openUserPortal(page, seedApiKey);
+  await page.getByRole("button", { name: "Graph" }).click();
+
+  const controls = page.getByLabel("Graph controls");
+  await expect(controls.getByLabel("Relationship limit")).toHaveValue("80");
+  await expect(controls.getByLabel("Depth")).toHaveValue("2");
+  await expect(controls.getByLabel("Depth")).toHaveAttribute("max", "5");
+  await controls.getByRole("button", { name: "Local" }).click();
+  await controls.getByLabel("Anchor ID").fill(graphAnchorEntityId);
+  await controls.getByLabel("Depth").focus();
+  await controls.getByLabel("Depth").press("End");
+  await expect(controls.getByLabel("Depth")).toHaveValue("5");
+  await controls.getByLabel("Relationship limit").fill("181");
+
+  const graphResponsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/ui/api/graph" && url.searchParams.get("depth") === "5" && url.searchParams.get("limit") === "181";
+  });
+  await controls.getByRole("button", { name: "Refresh" }).click();
+  const graphResponse = await graphResponsePromise;
+  expect(graphResponse.status()).toBe(200);
+  expect(graphResponse.headers()["cache-control"]).toBe("no-store");
+  const graph = (await graphResponse.json() as {
+    data: {
+      depth: number;
+      limit: number;
+      nodes: Array<{ id: string }>;
+      edges: Array<{ id: string }>;
+    };
+  }).data;
+  expect(graph.depth).toBe(5);
+  expect(graph.limit).toBe(181);
+  expect(graph.nodes.map((node) => node.id)).toContain(graphCorrectedObjectEntityId);
+  expect(graph.nodes.map((node) => node.id)).not.toContain(graphOriginalObjectEntityId);
+  expect(graph.edges.map((edge) => edge.id)).toContain(graphSuccessorRelationshipId);
+  expect(graph.edges.map((edge) => edge.id)).not.toContain(graphOriginalRelationshipId);
+  await expect(page.getByLabel("Graph totals")).toContainText(new RegExp(`Nodes\\s*${graph.nodes.length}`));
+  await expect(page.getByLabel("Graph totals")).toContainText(new RegExp(`Edges\\s*${graph.edges.length}`));
+  await expect(page.locator(".graph-canvas canvas").first()).toBeVisible();
 });
 
 test("read-only user key cannot regenerate itself", async ({ page, request }, testInfo) => {
@@ -814,6 +879,36 @@ function rectanglesOverlap(
   second: { left: number; top: number; right: number; bottom: number },
 ) {
   return first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top;
+}
+
+async function expectMetricDetailContained(row: Locator, detail: Locator) {
+  const geometry = await row.evaluate((element) => {
+    const detailElement = element.querySelector<HTMLElement>(".metric-detail");
+    const labelElement = element.querySelector<HTMLElement>(".metric-label");
+    const valueElement = element.querySelector<HTMLElement>("strong");
+    if (!detailElement || !labelElement || !valueElement) {
+      throw new Error("metric row structure is incomplete");
+    }
+    const rowRect = element.getBoundingClientRect();
+    const detailRect = detailElement.getBoundingClientRect();
+    const labelRect = labelElement.getBoundingClientRect();
+    const valueRect = valueElement.getBoundingClientRect();
+    return {
+      row: { left: rowRect.left, right: rowRect.right, bottom: rowRect.bottom },
+      detail: { left: detailRect.left, right: detailRect.right, top: detailRect.top, bottom: detailRect.bottom },
+      firstLineBottom: Math.max(labelRect.bottom, valueRect.bottom),
+      clientWidth: detailElement.clientWidth,
+      scrollWidth: detailElement.scrollWidth,
+    };
+  });
+
+  expect(geometry.detail.left).toBeGreaterThanOrEqual(geometry.row.left);
+  expect(geometry.detail.right).toBeLessThanOrEqual(geometry.row.right + 1);
+  expect(geometry.detail.bottom).toBeLessThanOrEqual(geometry.row.bottom + 1);
+  expect(geometry.detail.top).toBeGreaterThanOrEqual(geometry.firstLineBottom);
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth + 1);
+  await expect(detail).toHaveCSS("overflow-wrap", "anywhere");
+  await expect(detail).toHaveCSS("white-space", "normal");
 }
 
 function bearer(token: string) {

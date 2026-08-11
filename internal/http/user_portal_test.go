@@ -385,20 +385,21 @@ func TestUserPortalGraphUsesAuthenticatedTeamScope(t *testing.T) {
 	graph := &userPortalGraphSvc{}
 	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.APIKey{authKey}}, "", nil, graph)
 
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/graph?scope=local&anchor_type=entity&anchor_id=entity-1&depth=2&limit=50&types=entity,value&q=memory", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/graph?scope=local&anchor_type=entity&anchor_id=entity-1&depth=5&limit=181&types=entity,value&q=memory", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "no-store", rec.Header().Get(echo.HeaderCacheControl))
 	require.Contains(t, rec.Body.String(), `"entity:entity-1"`)
 	require.Equal(t, 1, graph.calls)
 	require.Equal(t, teamID.String(), graph.profileID)
 	require.Equal(t, "local", graph.query.Scope)
 	require.Equal(t, "entity", graph.query.AnchorType)
 	require.Equal(t, "entity-1", graph.query.AnchorID)
-	require.Equal(t, 2, graph.query.Depth)
-	require.Equal(t, 50, graph.query.Limit)
+	require.Equal(t, 5, graph.query.Depth)
+	require.Equal(t, 181, graph.query.Limit)
 	require.Equal(t, []string{"entity", "value"}, graph.query.Types)
 	require.Equal(t, "memory", graph.query.Query)
 }
@@ -446,6 +447,7 @@ func TestUserPortalGraphNodeDetailUsesAuthenticatedTeamScope(t *testing.T) {
 	server.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "no-store", rec.Header().Get(echo.HeaderCacheControl))
 	require.Contains(t, rec.Body.String(), `"body":"entity detail"`)
 	require.Equal(t, 1, graph.detailCalls)
 	require.Equal(t, teamID.String(), graph.detailProfileID)

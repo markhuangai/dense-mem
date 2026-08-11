@@ -95,6 +95,17 @@
   text-align: right;
 }
 
+.graph-limit-row {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.graph-limit-row input {
+  min-width: 0;
+}
+
 .compact-toggle {
   min-height: 34px;
 }

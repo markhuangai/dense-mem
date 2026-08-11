@@ -1,4 +1,4 @@
-import { expect, Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 
 const team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -75,7 +75,11 @@ const metrics = {
   },
   dependencies: [
     { name: "postgres", status: "ok", latency_ms: 3 },
-    { name: "redis", status: "ok", latency_ms: 8 },
+    { name: "verifier", status: "ok", latency_ms: 52 },
+    { name: "embeddings", status: "ok", latency_ms: 41 },
+    { name: "telemetry", status: "ok", latency_ms: 6 },
+    { name: "search_readiness", status: "error", reason_code: "check_failed", latency_ms: 161 },
+    { name: "redis", status: "degraded", reason_code: "single_node_mode", latency_ms: null },
   ],
   teams: [
     { team_id: team.id, team_name: "Default", requests: 42, errors: 2, avg_latency_ms: 18.5, max_latency_ms: 90 },
@@ -484,6 +488,19 @@ test("team workspace header stays compact across team tabs", async ({ page }) =>
   expect(Math.max(...heights) - Math.min(...heights), `team header heights: ${heights.join(", ")}`).toBeLessThanOrEqual(8);
 });
 
+test("top signals keeps long dependency diagnostics inside its metric row", async ({ page }) => {
+  await mockApi(page, { teams: [team], keys: [key] });
+  await openPortal(page);
+
+  const topSignals = page.getByLabel("Top signals");
+  const dependencyRow = topSignals.locator(".metric-row", { hasText: "Dependency checks" });
+  const detail = dependencyRow.locator(".metric-detail");
+  await expect(dependencyRow).toContainText("4/6");
+  await expect(detail).toContainText("search_readiness · check_failed · 161 ms");
+  await expect(detail).toContainText("redis · single_node_mode · latency n/a");
+  await expectMetricDetailContained(dependencyRow, detail);
+});
+
 test("config tab uses horizontal subnavigation", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
@@ -623,6 +640,40 @@ function rectanglesOverlap(
   second: { left: number; top: number; right: number; bottom: number },
 ) {
   return first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top;
+}
+
+async function expectMetricDetailContained(row: Locator, detail: Locator) {
+  const geometry = await row.evaluate((element) => {
+    const detailElement = element.querySelector<HTMLElement>(".metric-detail");
+    const labelElement = element.querySelector<HTMLElement>(".metric-label");
+    const valueElement = element.querySelector<HTMLElement>("strong");
+    if (!detailElement || !labelElement || !valueElement) {
+      throw new Error("metric row structure is incomplete");
+    }
+    const rowRect = element.getBoundingClientRect();
+    const detailRect = detailElement.getBoundingClientRect();
+    const labelRect = labelElement.getBoundingClientRect();
+    const valueRect = valueElement.getBoundingClientRect();
+    const style = getComputedStyle(detailElement);
+    return {
+      row: { left: rowRect.left, right: rowRect.right, bottom: rowRect.bottom },
+      detail: { left: detailRect.left, right: detailRect.right, top: detailRect.top, bottom: detailRect.bottom },
+      firstLineBottom: Math.max(labelRect.bottom, valueRect.bottom),
+      clientWidth: detailElement.clientWidth,
+      scrollWidth: detailElement.scrollWidth,
+      overflowWrap: style.overflowWrap,
+      whiteSpace: style.whiteSpace,
+    };
+  });
+
+  expect(geometry.detail.left).toBeGreaterThanOrEqual(geometry.row.left);
+  expect(geometry.detail.right).toBeLessThanOrEqual(geometry.row.right + 1);
+  expect(geometry.detail.bottom).toBeLessThanOrEqual(geometry.row.bottom + 1);
+  expect(geometry.detail.top).toBeGreaterThanOrEqual(geometry.firstLineBottom);
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth + 1);
+  expect(geometry.overflowWrap).toBe("anywhere");
+  expect(geometry.whiteSpace).toBe("normal");
+  await expect(detail).toBeVisible();
 }
 
 async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[]; bans?: TestBan[] }) {

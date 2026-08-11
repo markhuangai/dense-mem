@@ -304,6 +304,7 @@ type RequestOptions = {
   method?: string;
   body?: unknown;
   signal?: AbortSignal;
+  cache?: RequestCache;
 };
 
 export type UserAuthMode = "anonymous" | "api_key" | "api_key_session" | "sso";
@@ -473,13 +474,13 @@ export class UserApi {
       params.set("limit", String(query.limit));
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    const payload = await this.request<Envelope<GraphSnapshot>>(`/ui/api/graph${suffix}`);
+    const payload = await this.request<Envelope<GraphSnapshot>>(`/ui/api/graph${suffix}`, { cache: "no-store" });
     return payload.data;
   }
 
   async nodeDetail(type: string, id: string): Promise<GraphNode> {
     const params = new URLSearchParams({ type, id });
-    const payload = await this.request<Envelope<GraphNode>>(`/ui/api/node-detail?${params.toString()}`);
+    const payload = await this.request<Envelope<GraphNode>>(`/ui/api/node-detail?${params.toString()}`, { cache: "no-store" });
     return payload.data;
   }
 
@@ -518,6 +519,7 @@ export class UserApi {
       token: this.token || undefined,
       credentials: this.token ? "same-origin" : "include",
       body: options.body,
+      cache: options.cache,
       signal: options.signal,
       csrf: this.token ? undefined : {
         cookieName: this.authMode === "api_key_session" ? "dense_mem_ui_csrf" : "dense_mem_sso_csrf",

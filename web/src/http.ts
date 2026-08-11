@@ -14,6 +14,7 @@ export type JsonRequestOptions = {
   signal?: AbortSignal;
   token?: string;
   credentials?: RequestCredentials;
+  cache?: RequestCache;
   csrf?: {
     cookieName: string;
     headerName: string;
@@ -39,6 +40,7 @@ export async function requestJson<T>(url: string, options: JsonRequestOptions = 
     method,
     headers,
     credentials: options.credentials,
+    cache: options.cache,
     signal: options.signal,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
