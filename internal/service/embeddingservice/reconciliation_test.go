@@ -528,28 +528,44 @@ func TestEmbeddingReconciliationDefersAfterInputRejectedCanaryLimit(t *testing.T
 	}
 }
 
-func TestEmbeddingReconciliationDefersWhenInputRejectedResetFails(t *testing.T) {
-	search := newEmbeddingSearchStub()
-	search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
-	reconciliation := &reconciliationRepositoryStub{
-		job:      &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "bad-job", Attempts: 20, EmbeddingDimensions: 3, DocumentText: "bad input"},
-		resetErr: errors.New("reset persistence failed"),
-	}
-	provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, errs: []error{&embedding.ProviderHTTPError{Status: 413}}}
-	now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
-	service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
-		Search: search, Reconciliation: reconciliation, Provider: provider,
-		AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
-		WorkerID:  "worker-1", Now: func() time.Time { return now },
-	})
+func TestEmbeddingReconciliationUsesFreshContextAfterInputRejectedCleanupFails(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		canaryErr error
+		resetErr  error
+	}{
+		{name: "outcome", canaryErr: errors.New("outcome persistence failed")},
+		{name: "reset", resetErr: errors.New("reset persistence failed")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			search := newEmbeddingSearchStub()
+			search.contract = repository.ActiveSearchContract{EmbeddingContractID: "contract-1", EmbeddingDimensions: 3, EmbeddingModel: "model"}
+			reconciliation := &reconciliationRepositoryStub{
+				job:       &repository.EmbeddingJob{TeamID: "team-1", EmbeddingJobID: "bad-job", Attempts: 20, EmbeddingDimensions: 3, DocumentText: "bad input"},
+				canaryErr: test.canaryErr,
+				resetErr:  test.resetErr,
+			}
+			provider := &reconciliationRawProvider{available: true, model: "model", dims: 3, errs: []error{&embedding.ProviderHTTPError{Status: 413}}}
+			now := time.Date(2026, 8, 10, 4, 30, 20, 0, time.UTC)
+			service := NewEmbeddingReconciliationService(EmbeddingReconciliationDependencies{
+				Search: search, Reconciliation: reconciliation, Provider: provider,
+				AppConfig: reconciliationConfigStub{runtime: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+				WorkerID:  "worker-1", Now: func() time.Time { return now },
+			})
 
-	result, err := service.ProcessDue(context.Background())
-	require.ErrorContains(t, err, "reset persistence failed")
-	assert.Equal(t, string(domain.EmbeddingReconciliationRunning), result.Status)
-	require.NotNil(t, reconciliation.completed)
-	assert.Equal(t, string(domain.EmbeddingReconciliationAmbiguous), reconciliation.completed.Status)
-	assert.Equal(t, string(domain.EmbeddingFailurePermanent), reconciliation.completed.FailureClass)
-	assert.Equal(t, string(domain.EmbeddingFailureInputRejected), reconciliation.completed.FailureCode)
+			result, err := service.ProcessDue(context.Background())
+			require.Error(t, err)
+			assert.Equal(t, string(domain.EmbeddingReconciliationRunning), result.Status)
+			require.NotNil(t, reconciliation.canaryContext)
+			require.NotNil(t, reconciliation.completeContext)
+			require.False(t, reconciliation.canaryContext == reconciliation.completeContext)
+			assert.NoError(t, reconciliation.completeContextErr)
+			require.NotNil(t, reconciliation.completed)
+			assert.Equal(t, string(domain.EmbeddingReconciliationAmbiguous), reconciliation.completed.Status)
+			assert.Equal(t, string(domain.EmbeddingFailurePermanent), reconciliation.completed.FailureClass)
+			assert.Equal(t, string(domain.EmbeddingFailureInputRejected), reconciliation.completed.FailureCode)
+		})
+	}
 }
 
 func TestEmbeddingReconciliationSkipsStaleCanaryClaim(t *testing.T) {

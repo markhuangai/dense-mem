@@ -32,7 +32,23 @@ func TestEmbeddingReconciliationBackfillDoesNotSkipLockedCandidates(t *testing.T
 	require.Greater(t, end, start)
 	backfill := string(body)[start:end]
 	require.Contains(t, backfill, "FOR UPDATE")
-	require.NotContains(t, backfill, "FOR UPDATE SKIP LOCKED")
+	require.NotContains(t, backfill, "SKIP LOCKED")
+}
+
+func TestEmbeddingReconciliationSupersededRetirementIsBatched(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(getMigrationsDir(), "2026080905_embedding_reconciliation.sql"))
+	require.NoError(t, err)
+	start := strings.Index(string(body), "CREATE OR REPLACE PROCEDURE dense_mem_backfill_embedding_reconciliation_2026080905()")
+	end := strings.Index(string(body), "CALL dense_mem_backfill_embedding_reconciliation_2026080905()")
+	require.NotEqual(t, -1, start)
+	require.Greater(t, end, start)
+	procedure := string(body)[start:end]
+	retirementStart := strings.Index(procedure, "superseded_batch AS MATERIALIZED")
+	require.NotEqual(t, -1, retirementStart)
+	retirement := procedure[retirementStart:]
+	require.Contains(t, retirement, "LIMIT 1000")
+	require.Contains(t, retirement, "COMMIT;")
+	require.Equal(t, 1, strings.Count(string(body), "SET status = 'stale'"))
 }
 
 func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing.T) {
@@ -59,6 +75,7 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	supersededDocumentID := uuid.NewString()
 	supersededSourceID := uuid.NewString()
 	supersededError := "embedding provider http error: status=503 superseded"
+	const supersededBatchSize = 1001
 
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO semantic_team_refs (team_id) VALUES ($1::uuid)`, teamID); err != nil {
@@ -170,7 +187,7 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 			"sha256:"+strings.ReplaceAll(supersededDocumentID, "-", "")); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO embedding_jobs (
 				team_id, embedding_job_id, search_document_id, owner_profile_id,
 				source_kind, source_id, source_version, document_version,
@@ -181,7 +198,21 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 				'relationship', $5::uuid, 1, 1, $6::uuid, 3,
 				'failed', 20, 20, $7, now()
 			)
-		`, teamID, supersededJobID, supersededDocumentID, profileID, supersededSourceID, contractID, supersededError)
+		`, teamID, supersededJobID, supersededDocumentID, profileID, supersededSourceID, contractID, supersededError); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_jobs (
+				team_id, embedding_job_id, search_document_id, owner_profile_id,
+				source_kind, source_id, source_version, document_version,
+				embedding_contract_id, embedding_dimensions, status, attempts,
+				max_attempts, error, completed_at
+			)
+			SELECT $1::uuid, gen_random_uuid(), $2::uuid, $3::uuid,
+			       'relationship', gen_random_uuid(), 1, 1, $4::uuid, 3,
+			       'failed', 20, 20, $5, now()
+			FROM generate_series(1, $6)
+		`, teamID, supersededDocumentID, profileID, contractID, supersededError, supersededBatchSize)
 		return err
 	}))
 
@@ -344,13 +375,23 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	require.True(t, healthyBackfillFirstFailedAtIsNull)
 
 	var supersededStatus, supersededJobError string
-	var supersededIncidentCount int
+	var supersededIncidentCount, supersededRetiredCount int
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		if err := tx.QueryRowContext(ctx, `
 			SELECT status, error
 			FROM embedding_jobs
 			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
 		`, teamID, supersededJobID).Scan(&supersededStatus, &supersededJobError); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `
+			SELECT count(*)
+			FROM embedding_jobs
+			WHERE team_id = $1::uuid
+			  AND search_document_id = $2::uuid
+			  AND status = 'stale'
+			  AND error = 'superseded by newer document version'
+		`, teamID, supersededDocumentID).Scan(&supersededRetiredCount); err != nil {
 			return err
 		}
 		return tx.QueryRowContext(ctx, `
@@ -366,6 +407,7 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	}))
 	require.Equal(t, "stale", supersededStatus)
 	require.Equal(t, "superseded by newer document version", supersededJobError)
+	require.Equal(t, supersededBatchSize+1, supersededRetiredCount)
 	require.Zero(t, supersededIncidentCount)
 
 	var plan strings.Builder

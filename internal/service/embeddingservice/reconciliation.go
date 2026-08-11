@@ -222,23 +222,29 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 					FailureCode: failureCode, Terminal: true,
 				})
 				if failErr != nil {
-					deferErr := s.deferRun(cleanupCtx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding input rejection persistence was ambiguous", true, failErr)
 					cleanupCancel()
+					finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx), reconciliationCleanupTimeout)
+					deferErr := s.deferRun(finalizeCtx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding input rejection persistence was ambiguous", true, failErr)
+					finalizeCancel()
 					return result, deferErr
 				}
 				if err := s.reconciliation.CompleteEmbeddingReconciliationCanary(cleanupCtx, repository.CompleteEmbeddingReconciliationCanaryInput{
 					RunID: run.RunID, CanaryJobID: job.EmbeddingJobID, WorkerID: s.workerID,
 					LeaseToken: run.LeaseToken, Succeeded: false, FailureClass: failureClass, FailureCode: failureCode,
 				}); err != nil {
-					deferErr := s.deferRun(cleanupCtx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding input rejection outcome was ambiguous", true, err)
 					cleanupCancel()
+					finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx), reconciliationCleanupTimeout)
+					deferErr := s.deferRun(finalizeCtx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding input rejection outcome was ambiguous", true, err)
+					finalizeCancel()
 					return result, deferErr
 				}
 				if err := s.reconciliation.ResetEmbeddingReconciliationCanary(cleanupCtx, repository.ResetEmbeddingReconciliationCanaryInput{
 					RunID: run.RunID, CanaryJobID: job.EmbeddingJobID, WorkerID: s.workerID, LeaseToken: run.LeaseToken,
 				}); err != nil {
-					deferErr := s.deferRun(cleanupCtx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding input rejection retry was ambiguous", true, err)
 					cleanupCancel()
+					finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx), reconciliationCleanupTimeout)
+					deferErr := s.deferRun(finalizeCtx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding input rejection retry was ambiguous", true, err)
+					finalizeCancel()
 					return result, deferErr
 				}
 				cleanupCancel()

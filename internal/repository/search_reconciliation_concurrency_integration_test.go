@@ -127,6 +127,8 @@ func TestEmbeddingReconciliationLocksDocumentBeforeJob(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.True(t, claimed)
+	require.NotNil(t, run.LeaseUntil)
+	initialLeaseUntil := *run.LeaseUntil
 
 	placementLocked := make(chan error, 1)
 	releasePlacement := make(chan struct{}, 1)
@@ -162,17 +164,50 @@ func TestEmbeddingReconciliationLocksDocumentBeforeJob(t *testing.T) {
 	}()
 	require.NoError(t, <-placementLocked)
 
-	requeueCtx, requeueCancel := context.WithTimeout(ctx, 2*time.Second)
-	count, requeueErr := repo.RequeueEmbeddingReconciliationJobs(requeueCtx, RequeueEmbeddingReconciliationJobsInput{
-		RunID: run.RunID, WorkerID: "lock-order-reconciler", LeaseToken: run.LeaseToken,
-		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-		CandidateCutoff: run.CandidateCutoff, BatchSize: 500, Lease: time.Minute,
-	})
-	requeueCancel()
+	requeueCtx, requeueCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer requeueCancel()
+	type requeueResult struct {
+		count int64
+		err   error
+	}
+	requeueResults := make(chan requeueResult, 1)
+	go func() {
+		count, requeueErr := repo.RequeueEmbeddingReconciliationJobs(requeueCtx, RequeueEmbeddingReconciliationJobsInput{
+			RunID: run.RunID, WorkerID: "lock-order-reconciler", LeaseToken: run.LeaseToken,
+			EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+			CandidateCutoff: run.CandidateCutoff, BatchSize: 500, Lease: time.Minute,
+		})
+		requeueResults <- requeueResult{count: count, err: requeueErr}
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		select {
+		case result := <-requeueResults:
+			t.Fatalf("reconciliation completed before the locked document was released: count=%d err=%v", result.count, result.err)
+		default:
+		}
+		var leaseUntil time.Time
+		require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			return tx.Raw(`SELECT lease_until FROM embedding_reconciliation_runs WHERE reconciliation_run_id = ?::uuid`, run.RunID).Row().Scan(&leaseUntil)
+		}))
+		if leaseUntil.After(initialLeaseUntil) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("reconciliation did not scan the locked document")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	releasePlacement <- struct{}{}
 	require.NoError(t, <-placementResult)
-	require.NoError(t, requeueErr)
-	require.Zero(t, count)
+	select {
+	case result := <-requeueResults:
+		require.NoError(t, result.err)
+		require.Zero(t, result.count)
+	case <-requeueCtx.Done():
+		t.Fatal("reconciliation did not revisit the released document")
+	}
 	require.NotNil(t, updated)
 	require.NotEmpty(t, updated.QueuedJobID)
 

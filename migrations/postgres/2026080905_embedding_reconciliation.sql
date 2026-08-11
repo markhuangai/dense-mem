@@ -262,6 +262,52 @@ BEGIN
         PERFORM set_config('app.current_team_id', '', true);
         PERFORM set_config('app.current_profile_id', '', true);
     END LOOP;
+
+    PERFORM set_config('app.tx_mode', 'migration', true);
+    PERFORM set_config('app.current_team_id', '', true);
+    PERFORM set_config('app.current_profile_id', '', true);
+
+    -- Retire failed rows whose exact document projection no longer exists before incident seeding.
+    LOOP
+        WITH superseded_batch AS MATERIALIZED (
+            SELECT job.team_id, job.embedding_job_id
+            FROM embedding_jobs AS job
+            WHERE job.status = 'failed'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM search_documents AS document
+                  WHERE document.team_id = job.team_id
+                    AND document.search_document_id = job.search_document_id
+                    AND document.source_kind = job.source_kind
+                    AND document.source_id = job.source_id
+                    AND document.source_version = job.source_version
+                    AND document.projection_format_version = job.projection_format_version
+                    AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+                    AND document.document_version = job.document_version
+                    AND document.embedding_contract_id = job.embedding_contract_id
+                    AND document.embedding_dimensions = job.embedding_dimensions
+              )
+            ORDER BY job.team_id, job.embedding_job_id
+            LIMIT 1000
+            FOR UPDATE OF job
+        )
+        UPDATE embedding_jobs AS job
+        SET status = 'stale',
+            error = 'superseded by newer document version',
+            completed_at = COALESCE(job.completed_at, job.updated_at, now()),
+            lease_until = NULL,
+            worker_id = '',
+            updated_at = now()
+        FROM superseded_batch AS batch
+        WHERE job.team_id = batch.team_id
+          AND job.embedding_job_id = batch.embedding_job_id;
+        GET DIAGNOSTICS updated_rows = ROW_COUNT;
+        COMMIT;
+        EXIT WHEN updated_rows = 0;
+        PERFORM set_config('app.tx_mode', 'migration', true);
+        PERFORM set_config('app.current_team_id', '', true);
+        PERFORM set_config('app.current_profile_id', '', true);
+    END LOOP;
 END
 $procedure$;
 -- +goose StatementEnd
@@ -307,32 +353,6 @@ ALTER TABLE embedding_jobs
 SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
-
--- A failed job can predate a newer document or projection generation. Retire
--- that historical row before seeding incidents so it cannot keep convergence
--- open after the current document has moved on.
-UPDATE embedding_jobs AS job
-SET status = 'stale',
-    error = 'superseded by newer document version',
-    completed_at = COALESCE(job.completed_at, job.updated_at, now()),
-    lease_until = NULL,
-    worker_id = '',
-    updated_at = now()
-WHERE job.status = 'failed'
-  AND NOT EXISTS (
-      SELECT 1
-      FROM search_documents AS document
-      WHERE document.team_id = job.team_id
-        AND document.search_document_id = job.search_document_id
-        AND document.source_kind = job.source_kind
-        AND document.source_id = job.source_id
-        AND document.source_version = job.source_version
-        AND document.projection_format_version = job.projection_format_version
-        AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
-        AND document.document_version = job.document_version
-        AND document.embedding_contract_id = job.embedding_contract_id
-        AND document.embedding_dimensions = job.embedding_dimensions
-  );
 
 INSERT INTO embedding_failure_incidents (
     team_id, embedding_contract_id, embedding_dimensions, source_kind,
