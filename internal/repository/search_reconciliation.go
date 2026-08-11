@@ -451,6 +451,7 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingReconciliationCanary(ctx context
 			SET canary_outcome = ?, canary_failure_class = ?, canary_failure_code = ?, updated_at = now()
 			WHERE reconciliation_run_id = ?::uuid
 			  AND status = 'running' AND worker_id = ? AND lease_token = ?::uuid
+			  AND lease_until > clock_timestamp()
 		`, outcome, input.FailureClass, input.FailureCode, input.RunID, input.WorkerID, input.LeaseToken)
 		if result.Error != nil {
 			return result.Error
@@ -507,6 +508,7 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingReconciliationRun(ctx context.Co
 			    completed_at = ?, lease_until = NULL, updated_at = now()
 			WHERE reconciliation_run_id = ?::uuid
 			  AND status = 'running' AND worker_id = ? AND lease_token = ?::uuid
+			  AND lease_until > clock_timestamp()
 		`, input.Status, input.CanaryOutcome, input.FailureClass, input.FailureCode,
 			input.RequeuedCount, input.RecoveredCount, input.LastError, input.CompletedAt,
 			input.RunID, input.WorkerID, input.LeaseToken)

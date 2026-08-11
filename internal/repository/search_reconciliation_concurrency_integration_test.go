@@ -262,6 +262,132 @@ func TestEmbeddingReconciliationScansPastLockedJob(t *testing.T) {
 	require.Equal(t, "queued", laterStatus)
 }
 
+func TestEmbeddingFinalizationLocksDocumentBeforeJob(t *testing.T) {
+	finalizers := []struct {
+		name string
+		run  func(context.Context, *SearchRepositoryImpl, EmbeddingJob, string) error
+	}{
+		{name: "complete", run: func(ctx context.Context, repo *SearchRepositoryImpl, job EmbeddingJob, workerID string) error {
+			return repo.CompleteEmbeddingJob(ctx, CompleteEmbeddingJobInput{
+				TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: workerID,
+				ExpectedAttempts: job.Attempts, Embedding: []float32{1, 0, 0},
+			})
+		}},
+		{name: "fail", run: func(ctx context.Context, repo *SearchRepositoryImpl, job EmbeddingJob, workerID string) error {
+			_, err := repo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
+				TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: workerID,
+				ExpectedAttempts: job.Attempts, FailureClass: string(domain.EmbeddingFailureTransient),
+				FailureCode: string(domain.EmbeddingFailureProviderTimeout), Terminal: true,
+			})
+			return err
+		}},
+	}
+	for _, finalizer := range finalizers {
+		t.Run(finalizer.name, func(t *testing.T) {
+			adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+			defer cleanup()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			teamID := createLedgerTeam(t, adminDB, rls, "embedding-finalization-lock-"+finalizer.name)
+			ownerID := createLedgerProfile(t, adminDB, rls, teamID, "embedding-finalization-owner-"+finalizer.name)
+			insertSearchTestContract(t, adminDB, rls, "embedding-finalization-"+finalizer.name, 3, "exact", "")
+			repo := NewSearchRepository(appDB, rls)
+			contract, err := repo.GetActiveSearchContract(ctx)
+			require.NoError(t, err)
+			document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "embedding finalization before "+finalizer.name, 1)
+			workerID := "embedding-finalization-" + finalizer.name
+			jobs, err := repo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{
+				TeamID: teamID, WorkerID: workerID, Limit: 1, Lease: time.Minute,
+			})
+			require.NoError(t, err)
+			require.Len(t, jobs, 1)
+
+			placementTx := appDB.WithContext(ctx).Begin()
+			require.NoError(t, placementTx.Error)
+			defer placementTx.Rollback()
+			for _, statement := range []struct {
+				query string
+				args  []any
+			}{
+				{"SELECT set_config('app.current_team_id', ?, true)", []any{teamID}},
+				{"SELECT set_config('app.current_profile_id', ?, true)", []any{ownerID}},
+				{"SELECT set_config('app.tx_mode', 'team', true)", nil},
+			} {
+				require.NoError(t, placementTx.Exec(statement.query, statement.args...).Error)
+			}
+			require.NoError(t, placementTx.Exec(`SET LOCAL lock_timeout = '2s'`).Error)
+			var blockerPID, locked int
+			require.NoError(t, placementTx.Raw(`SELECT pg_backend_pid()`).Row().Scan(&blockerPID))
+			require.NoError(t, placementTx.Raw(`
+				SELECT 1
+				FROM search_documents
+				WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+				FOR UPDATE
+			`, teamID, document.SearchDocumentID).Row().Scan(&locked))
+
+			finalized := make(chan error, 1)
+			go func() { finalized <- finalizer.run(ctx, repo, jobs[0], workerID) }()
+			requirePostgresBackendBlockedBy(t, ctx, adminDB, rls, blockerPID)
+			updated, err := upsertSearchDocumentInTx(ctx, placementTx, normalizeUpsertSearchDocumentInput(UpsertSearchDocumentInput{
+				TeamID: teamID, OwnerProfileID: ownerID, SourceKind: document.SourceKind, SourceID: document.SourceID,
+				SourceVersion: document.SourceVersion + 1, ProjectionFormat: document.ProjectionFormat,
+				ProjectionGenerationID: document.ProjectionGenerationID, DocumentText: "embedding finalization after " + finalizer.name,
+			}), contract, defaultEmbeddingJobMaxAttempts)
+			require.NoError(t, err)
+			require.NoError(t, placementTx.Commit().Error)
+			require.NotNil(t, updated)
+			require.NotEmpty(t, updated.QueuedJobID)
+			require.ErrorIs(t, <-finalized, ErrEmbeddingLeaseLost)
+		})
+	}
+}
+
+func TestEmbeddingReconciliationCompletionRejectsExpiredLease(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "reconciliation-expired-completion-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "reconciliation-expired-completion-owner")
+	insertSearchTestContract(t, adminDB, rls, "reconciliation-expired-completion", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "expired reconciliation completion", 1)
+	failEmbeddingDocumentForReconciliationTest(t, ctx, repo, teamID, document.SearchDocumentID, "expired-completion-failure")
+	cutoff := databaseNowForTest(t, adminDB, rls)
+	run, claimed, err := repo.ReserveEmbeddingReconciliationRun(ctx, ReserveEmbeddingReconciliationRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: cutoff, WorkerID: "expired-completion-reconciler", Lease: time.Minute, Now: cutoff,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_reconciliation_runs
+			SET lease_until = clock_timestamp() - interval '1 second'
+			WHERE reconciliation_run_id = ?::uuid
+		`, run.RunID).Error
+	}))
+	require.Error(t, repo.CompleteEmbeddingReconciliationCanary(ctx, CompleteEmbeddingReconciliationCanaryInput{
+		RunID: run.RunID, CanaryJobID: document.QueuedJobID, WorkerID: run.WorkerID,
+		LeaseToken: run.LeaseToken, Succeeded: true,
+	}))
+	require.Error(t, repo.CompleteEmbeddingReconciliationRun(ctx, CompleteEmbeddingReconciliationRunInput{
+		RunID: run.RunID, WorkerID: run.WorkerID, LeaseToken: run.LeaseToken,
+		Status: string(domain.EmbeddingReconciliationCompleted), CanaryOutcome: "succeeded", CompletedAt: time.Now(),
+	}))
+	var status, canaryOutcome string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status, canary_outcome
+			FROM embedding_reconciliation_runs
+			WHERE reconciliation_run_id = ?::uuid
+		`, run.RunID).Row().Scan(&status, &canaryOutcome)
+	}))
+	require.Equal(t, string(domain.EmbeddingReconciliationRunning), status)
+	require.Empty(t, canaryOutcome)
+}
+
 func failEmbeddingDocumentForReconciliationTest(
 	t *testing.T,
 	ctx context.Context,
@@ -328,6 +454,36 @@ func requireEmbeddingFailureIncidentWaiter(
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("expected transaction did not wait for the failure-writer incident lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func requirePostgresBackendBlockedBy(
+	t *testing.T,
+	ctx context.Context,
+	adminDB *gorm.DB,
+	rls interface {
+		WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
+	},
+	blockerPID int,
+) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting int64
+		err := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			return tx.Raw(`
+				SELECT count(*)
+				FROM pg_stat_activity AS activity
+				WHERE ?::integer = ANY(pg_blocking_pids(activity.pid))
+			`, blockerPID).Scan(&waiting).Error
+		})
+		if err == nil && waiting > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("expected embedding finalization to wait for the search document lock")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

@@ -25,7 +25,11 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $function$
 BEGIN
-    IF NEW.total_attempts < NEW.attempts THEN
+    IF TG_OP = 'UPDATE'
+       AND NEW.attempts > OLD.attempts
+       AND NEW.total_attempts IS NOT DISTINCT FROM OLD.total_attempts THEN
+        NEW.total_attempts := OLD.total_attempts + (NEW.attempts - OLD.attempts);
+    ELSIF NEW.total_attempts < NEW.attempts THEN
         NEW.total_attempts := NEW.attempts;
     END IF;
     RETURN NEW;

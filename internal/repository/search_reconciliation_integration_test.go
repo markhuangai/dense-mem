@@ -172,7 +172,7 @@ func TestEmbeddingReconciliationRunFencesOneCanaryAndRequeuesPreCutoffBacklog(t 
 
 	first := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "reconciliation canary", 1)
 	second := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "reconciliation backlog", 1)
-	cutoff := time.Now().UTC().Truncate(time.Minute).Add(2 * time.Minute)
+	cutoff := databaseNowForTest(t, adminDB, rls)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Exec(`
 			UPDATE embedding_jobs

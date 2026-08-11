@@ -191,6 +191,11 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 			terminalErr = ErrTeamInactive
 			return nil
 		}
+		if err := lockEmbeddingJobDocumentForFinalization(
+			ctx, tx, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts,
+		); err != nil {
+			return err
+		}
 		var dims int
 		var contractID, sourceKind, projectionGenerationID string
 		err = tx.WithContext(ctx).Raw(`
@@ -316,6 +321,11 @@ func (r *SearchRepositoryImpl) FailEmbeddingJob(
 			}
 			terminalErr = ErrTeamInactive
 			return nil
+		}
+		if err := lockEmbeddingJobDocumentForFinalization(
+			ctx, tx, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts,
+		); err != nil {
+			return err
 		}
 		var attempts, maxAttempts, dims int
 		var sourceKind, projectionGenerationID, contractID string
@@ -592,6 +602,35 @@ func embeddingJobFinalizationTeamActive(ctx context.Context, tx *gorm.DB, teamID
 		return false, err
 	}
 	return active, nil
+}
+
+func lockEmbeddingJobDocumentForFinalization(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	embeddingJobID string,
+	workerID string,
+	expectedAttempts int,
+) error {
+	var documentID string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT document.search_document_id::text
+		FROM embedding_jobs AS job
+		JOIN search_documents AS document
+		  ON document.team_id = job.team_id
+		 AND document.search_document_id = job.search_document_id
+		WHERE job.team_id = ?::uuid
+		  AND job.embedding_job_id = ?::uuid
+		  AND job.worker_id = ?
+		  AND job.status = 'processing'
+		  AND job.attempts = ?
+		  AND job.lease_until > clock_timestamp()
+		FOR UPDATE OF document
+	`, teamID, embeddingJobID, workerID, expectedAttempts).Row().Scan(&documentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrEmbeddingLeaseLost
+	}
+	return err
 }
 
 func refreshRelationshipProjectionGeneration(ctx context.Context, tx *gorm.DB, teamID string, projectionGenerationID string) error {

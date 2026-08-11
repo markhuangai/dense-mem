@@ -225,6 +225,22 @@ func TestEmbeddingReconciliationMigrationsPreserveRecoveryAndOrdering(t *testing
 	}))
 	require.Equal(t, 20, compatibilityTotalAttempts, "legacy claim updates must preserve total_attempts")
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE embedding_jobs
+			SET attempts = 0
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+		`, teamID, fixtures[0].jobID); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `
+			UPDATE embedding_jobs
+			SET attempts = attempts + 1
+			WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+			RETURNING total_attempts
+		`, teamID, fixtures[0].jobID).Scan(&compatibilityTotalAttempts)
+	}))
+	require.Equal(t, 21, compatibilityTotalAttempts, "legacy claims after recovery reset must increment lifetime attempts")
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
 		expectedIncidents := make(map[string]int64, len(fixtures))
 		for _, fixture := range fixtures {
 			var failureClass, failureCode string
