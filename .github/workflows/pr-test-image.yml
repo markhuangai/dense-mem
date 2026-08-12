@@ -15,7 +15,10 @@ env:
   PREVIEW_LABEL: deploy-test-image
 
 concurrency:
-  group: pr-test-image-${{ github.event.pull_request.number }}
+  group: >-
+    pr-test-image-${{ github.event.pull_request.number }}-${{
+      github.event.label.name || 'pull-request'
+    }}
   cancel-in-progress: false
 
 jobs:
