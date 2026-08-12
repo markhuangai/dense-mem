@@ -261,7 +261,9 @@ jobs:
           echo "preview_eligible=true" >> "${GITHUB_OUTPUT}"
 
       - name: Install pinned regctl
+        id: regctl
         if: steps.git.outputs.preview_eligible == 'true'
+        continue-on-error: true
         shell: bash
         env:
           REGCTL_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
@@ -276,7 +278,9 @@ jobs:
           "${RUNNER_TEMP}/regctl" config set --docker-cred=false --docker-cert=false
 
       - name: Log in to GHCR for preview validation
+        id: registry-login
         if: steps.git.outputs.preview_eligible == 'true'
+        continue-on-error: true
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -284,7 +288,12 @@ jobs:
 
       - name: Validate preview receipt for reuse
         id: image
-        if: steps.git.outputs.preview_eligible == 'true'
+        if: >-
+          ${{
+            steps.git.outputs.preview_eligible == 'true' &&
+            steps.regctl.outcome == 'success' &&
+            steps.registry-login.outcome == 'success'
+          }}
         continue-on-error: true
         shell: bash
         env:
@@ -296,14 +305,17 @@ jobs:
         run: |
           set -euo pipefail
           image="ghcr.io/${GITHUB_REPOSITORY,,}:test-${PREVIEW_PR}"
-          IFS=$'\t' read -r preview_digest preview_base < <(
+          receipt="$(
             .github/scripts/oci-image.sh preview-receipt \
               "${image}" \
               "${PREVIEW_PR}" \
               "${PREVIEW_HEAD}" \
               "${PREVIEW_RUN_ID}" \
               "${PREVIEW_RUN_ATTEMPT}"
-          )
+          )"
+          IFS=$'\t' read -r preview_digest preview_base <<<"${receipt}"
+          [[ "${preview_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${preview_base}" =~ ^[0-9a-f]{40}$ ]]
           echo "preview_base=${preview_base}" >> "${GITHUB_OUTPUT}"
           echo "preview_digest=${preview_digest}" >> "${GITHUB_OUTPUT}"
 
@@ -339,6 +351,7 @@ jobs:
           GIT_ELIGIBLE: ${{ steps.git.outputs.preview_eligible }}
           IMAGE_ELIGIBLE: ${{ steps.image.outcome }}
         run: |
+          set -euo pipefail
           if [[ \
             "${API_ELIGIBLE}" == "true" && \
             "${GIT_ELIGIBLE}" == "true" && \
@@ -354,10 +367,15 @@ jobs:
         id: export
         if: always()
         shell: bash
+        env:
+          PREVIEW_BASE: ${{ steps.image.outputs.preview_base }}
+          PREVIEW_DIGEST: ${{ steps.image.outputs.preview_digest }}
+          REUSE_PREVIEW: ${{ steps.final.outputs.reuse_preview }}
         run: |
-          echo "preview_base=${{ steps.image.outputs.preview_base }}" >> "${GITHUB_OUTPUT}"
-          echo "preview_digest=${{ steps.image.outputs.preview_digest }}" >> "${GITHUB_OUTPUT}"
-          echo "reuse_preview=${{ steps.final.outputs.reuse_preview }}" >> "${GITHUB_OUTPUT}"
+          set -euo pipefail
+          echo "preview_base=${PREVIEW_BASE}" >> "${GITHUB_OUTPUT}"
+          echo "preview_digest=${PREVIEW_DIGEST}" >> "${GITHUB_OUTPUT}"
+          echo "reuse_preview=${REUSE_PREVIEW}" >> "${GITHUB_OUTPUT}"
 
   publish-image:
     name: Publish prerelease image

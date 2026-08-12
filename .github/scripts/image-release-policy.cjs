@@ -44,15 +44,15 @@ function decidePreviewEvent({
     return {
       mode: "skipped",
       reason: "fork_isolation_unavailable",
-      removeLabel: hasPreviewLabel,
+      removeLabel: true,
     };
   }
 
   if (isFork && action !== "labeled") {
     return {
       mode: "skipped",
-      reason: hasPreviewLabel ? "fork_reapproval_required" : "label_absent",
-      removeLabel: hasPreviewLabel,
+      reason: "fork_reapproval_required",
+      removeLabel: true,
     };
   }
 
@@ -180,7 +180,7 @@ function resolvePullRequestEvent(payload, actorPermission) {
     eventLabel: payload.label?.name || "",
     triggerHead,
     pullNumber: pull.number,
-    isFork: pull.head.repo.full_name !== pull.base.repo.full_name,
+    isFork: pull.head.repo?.full_name !== pull.base.repo.full_name,
     actorPermission,
   };
 }
@@ -215,7 +215,7 @@ async function resolvePreviewAttempt({
     pull,
     pullNumber: pull.number,
     headSha: pull.head.sha,
-    headRepository: pull.head.repo.full_name,
+    headRepository: pull.head.repo?.full_name || "",
     isFork: event.isFork,
     hasPreviewLabel,
   };

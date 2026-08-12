@@ -9,8 +9,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
-  statuses: write
 
 env:
   POLICY_STATUS_CONTEXT: PR test image policy
@@ -24,6 +22,10 @@ jobs:
   resolve:
     name: Resolve preview request
     runs-on: docker-runner
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
     outputs:
       should_report: ${{ steps.event.outputs.should_report }}
       head_sha: ${{ steps.resolve.outputs.head_sha }}
@@ -185,7 +187,10 @@ jobs:
               description: "Building the requested test image.",
               target_url: targetUrl,
             });
-            const [headOwner, headRepository] = resolved.pull.head.repo.full_name.split("/");
+            if (!resolved.headRepository) {
+              throw new Error("The pull request head repository is unavailable.");
+            }
+            const [headOwner, headRepository] = resolved.headRepository.split("/");
             const { data: headCommit } = await github.rest.repos.getCommit({
               owner: headOwner,
               repo: headRepository,
@@ -197,7 +202,7 @@ jobs:
             }
             core.setOutput("head_sha", resolved.headSha);
             core.setOutput("head_created", headCreated);
-            core.setOutput("head_repository", resolved.pull.head.repo.full_name);
+            core.setOutput("head_repository", resolved.headRepository);
             core.setOutput("main_sha", mainSha);
             core.setOutput("pr_number", String(resolved.pullNumber));
             core.setOutput("should_build", "true");
@@ -278,7 +283,6 @@ jobs:
     needs: [resolve, build]
     if: >-
       ${{
-        always() &&
         needs.resolve.outputs.should_build == 'true' &&
         needs.build.result == 'success'
       }}

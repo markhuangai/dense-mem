@@ -89,6 +89,8 @@ platform_layers() {
 				.digest
 			'
 	)"
+	[[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+		fail "${ref} returned an invalid ${platform} manifest digest"
 	manifest_json "${ref%@*}@${digest}" | jq -cS '.layers'
 }
 
@@ -100,7 +102,7 @@ publish_preview() {
 	local main_revision="$5"
 	local run_id="$6"
 	local run_attempt="$7"
-	local source_ref="ocidir://${layout}"
+	local source_ref="ocidir://${layout}:test-${pull_number}"
 	local source_digest
 	local target_digest
 
@@ -172,6 +174,11 @@ promote_preview() {
 	source_layers_arm64="$(platform_layers "${source_ref}" linux/arm64)"
 	"${REGCTL_BIN}" image mod "${source_ref}" \
 		--create "${target_ref}" \
+		--label "io.dense-mem.preview.pr=" \
+		--label "io.dense-mem.preview.head=" \
+		--label "io.dense-mem.preview.main=" \
+		--label "io.dense-mem.preview.run-id=" \
+		--label "io.dense-mem.preview.run-attempt=" \
 		--label "org.opencontainers.image.version=${version}" \
 		--label "org.opencontainers.image.revision=${revision}" \
 		--label "org.opencontainers.image.created=${created}"
@@ -180,14 +187,19 @@ promote_preview() {
 		"${REGCTL_BIN}" image inspect "${target_ref}@${target_digest}" \
 			--platform "${platform}" \
 			--format '{{json .}}' |
-			jq -e \
-				--arg version "${version}" \
-				--arg revision "${revision}" \
-				--arg created "${created}" '
-					.config.Labels["org.opencontainers.image.version"] == $version and
-					.config.Labels["org.opencontainers.image.revision"] == $revision and
-					.config.Labels["org.opencontainers.image.created"] == $created
-				' >/dev/null || fail "${target_ref} has invalid ${platform} RC metadata"
+				jq -e \
+					--arg version "${version}" \
+					--arg revision "${revision}" \
+					--arg created "${created}" '
+						.config.Labels["org.opencontainers.image.version"] == $version and
+						.config.Labels["org.opencontainers.image.revision"] == $revision and
+						.config.Labels["org.opencontainers.image.created"] == $created and
+						(. as $image |
+							(["pr", "head", "main", "run-id", "run-attempt"] |
+								map("io.dense-mem.preview." + .)) as $preview_labels |
+							([$preview_labels[] as $label |
+								select($image.config.Labels | has($label))] | length == 0))
+					' >/dev/null || fail "${target_ref} has invalid ${platform} RC metadata"
 	done
 	[[ "$(platform_layers "${target_ref}@${target_digest}" linux/amd64)" == "${source_layers_amd64}" ]] ||
 		fail "${target_ref} changed linux/amd64 layer descriptors"

@@ -163,6 +163,69 @@ test("a newer failed policy status invalidates an older success", () => {
   assert.match(receipt.reason, /failure/);
 });
 
+test("policy receipts reject mismatched PRs, run URLs, and descriptions", () => {
+  const base = {
+    id: 2,
+    context: "PR test image policy",
+    state: "success",
+    description: "Published test-42 (run 123456, attempt 2).",
+    target_url: "https://github.com/markhuangai/dense-mem/actions/runs/123456",
+  };
+  const input = {
+    statuses: [base],
+    pullNumber: 42,
+    serverUrl: "https://github.com",
+    repository: "markhuangai/dense-mem",
+  };
+
+  assert.equal(
+    parseSuccessfulPolicyStatus({
+      ...input,
+      statuses: [{ ...base, description: base.description.replace("test-42", "test-43") }],
+    }).status,
+    null,
+  );
+  assert.match(
+    parseSuccessfulPolicyStatus({
+      ...input,
+      statuses: [{ ...base, target_url: "https://example.invalid/run/123456" }],
+    }).reason,
+    /run URL is invalid/,
+  );
+  assert.equal(
+    parseSuccessfulPolicyStatus({
+      ...input,
+      statuses: [{ ...base, description: "Published test-42." }],
+    }).status,
+    null,
+  );
+});
+
+test("deleted fork repositories resolve as unbuildable fork events", () => {
+  const headSha = "a".repeat(40);
+  assert.deepEqual(
+    policy.resolvePullRequestEvent(
+      {
+        action: "synchronize",
+        pull_request: {
+          number: 42,
+          head: { sha: headSha, repo: null },
+          base: { repo: { full_name: "markhuangai/dense-mem" } },
+        },
+      },
+      "write",
+    ),
+    {
+      action: "synchronize",
+      eventLabel: "",
+      triggerHead: headSha,
+      pullNumber: 42,
+      isFork: true,
+      actorPermission: "write",
+    },
+  );
+});
+
 test("RC reuse API policy requires the retained label and trusted run", () => {
   const pull = { number: 42 };
   const policyStatus = { runId: "123456", runAttempt: "2" };
