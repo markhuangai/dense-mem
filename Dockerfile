@@ -106,8 +106,26 @@ FROM runtime-base AS evaluation
 LABEL org.opencontainers.image.variant="evaluation"
 COPY --from=evaluation-builder --chown=densemem:densemem /out/server /app/server
 
-# Keep production last so an unqualified docker build remains production-only.
-FROM runtime-base AS production
+# Preview and production contain the same runtime; only preview carries the
+# trusted receipt that authorizes later release-candidate layer reuse.
+FROM runtime-base AS production-base
 
 LABEL org.opencontainers.image.variant="production"
 COPY --from=production-builder --chown=densemem:densemem /out/server /app/server
+
+FROM production-base AS preview
+
+ARG PREVIEW_PR=""
+ARG PREVIEW_HEAD=""
+ARG PREVIEW_MAIN=""
+ARG PREVIEW_RUN_ID=""
+ARG PREVIEW_RUN_ATTEMPT=""
+
+LABEL io.dense-mem.preview.pr="${PREVIEW_PR}" \
+      io.dense-mem.preview.head="${PREVIEW_HEAD}" \
+      io.dense-mem.preview.main="${PREVIEW_MAIN}" \
+      io.dense-mem.preview.run-id="${PREVIEW_RUN_ID}" \
+      io.dense-mem.preview.run-attempt="${PREVIEW_RUN_ATTEMPT}"
+
+# Keep production last so an unqualified docker build remains production-only.
+FROM production-base AS production

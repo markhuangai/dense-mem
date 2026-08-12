@@ -1,0 +1,514 @@
+name: PR test image
+run-name: "PR test image: PR #${{ github.event.pull_request.number }}"
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+
+env:
+  POLICY_STATUS_CONTEXT: PR test image policy
+  PREVIEW_LABEL: deploy-test-image
+
+concurrency:
+  group: pr-test-image-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve preview request
+    runs-on: docker-runner
+    outputs:
+      should_report: ${{ steps.event.outputs.should_report }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      head_created: ${{ steps.resolve.outputs.head_created }}
+      head_repository: ${{ steps.resolve.outputs.head_repository }}
+      main_sha: ${{ steps.resolve.outputs.main_sha }}
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      should_build: ${{ steps.resolve.outputs.should_build }}
+
+    steps:
+      - name: Checkout trusted policy helper
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          persist-credentials: false
+          ref: main
+          sparse-checkout: .github/scripts
+
+      - name: Classify event
+        id: event
+        shell: bash
+        env:
+          ACTION: ${{ github.event.action }}
+          EVENT_LABEL: ${{ github.event.label.name }}
+        run: |
+          set -euo pipefail
+          if [[ "${ACTION}" == "labeled" || "${ACTION}" == "unlabeled" ]]; then
+            if [[ "${EVENT_LABEL}" != "${PREVIEW_LABEL}" ]]; then
+              echo "should_report=false" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+          fi
+          echo "should_report=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Check actor permission
+        id: permission
+        uses: actions/github-script@v9
+        with:
+          script: |
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: context.actor,
+              });
+              core.setOutput("level", data.permission);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              core.setOutput("level", "none");
+            }
+
+      - name: Resolve current pull request state
+        id: resolve
+        uses: actions/github-script@v9
+        env:
+          ACTOR_PERMISSION: ${{ steps.permission.outputs.level }}
+        with:
+          script: |
+            const policy = require("./.github/scripts/image-release-policy.cjs");
+            const resolved = await policy.resolvePreviewAttempt({
+              github,
+              context,
+              actorPermission: process.env.ACTOR_PERMISSION,
+            });
+
+            if (resolved.mode === "noop") {
+              core.info(`No policy update: ${resolved.reason}.`);
+              core.setOutput("should_build", "false");
+              return;
+            }
+
+            if (resolved.removeLabel) {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: resolved.pullNumber,
+                name: process.env.PREVIEW_LABEL,
+              }).catch((error) => {
+                if (error.status !== 404) {
+                  throw error;
+                }
+              });
+            }
+
+            const targetUrl = `${context.serverUrl}/${context.repo.owner}/` +
+              `${context.repo.repo}/actions/runs/${context.runId}`;
+            if (resolved.mode === "skipped") {
+              const description = resolved.reason === "fork_isolation_unavailable"
+                ? "Fork previews require an isolated build runner."
+                : resolved.reason === "fork_reapproval_required"
+                  ? "Preview approval is required after every fork push."
+                  : "Preview image was not requested.";
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: resolved.headSha,
+                state: "success",
+                context: process.env.POLICY_STATUS_CONTEXT,
+                description,
+                target_url: targetUrl,
+              });
+              if (resolved.reason === "fork_isolation_unavailable") {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: resolved.pullNumber,
+                  body: "Test images for fork pull requests are disabled until an isolated " +
+                    `build runner is available.\n\n${targetUrl}`,
+                });
+              }
+              core.setOutput("should_build", "false");
+              return;
+            }
+
+            const { data: main } = await github.rest.repos.getBranch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              branch: "main",
+            });
+            const mainSha = main.commit.sha;
+            if (!mainSha) {
+              throw new Error("Could not resolve the current main revision.");
+            }
+
+            const comparison = await github.rest.repos.compareCommitsWithBasehead({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              basehead: `${mainSha}...${resolved.headSha}`,
+            });
+            if (!policy.compareContainsMain(comparison.data.status)) {
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: resolved.headSha,
+                state: "failure",
+                context: process.env.POLICY_STATUS_CONTEXT,
+                description: "Update the PR with the latest main before building.",
+                target_url: targetUrl,
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: resolved.pullNumber,
+                body: `Test image attempt failed for \`${resolved.headSha}\`: ` +
+                  `the branch does not contain current \`main\` (${mainSha}).\n\n${targetUrl}`,
+              });
+              core.setOutput("should_build", "false");
+              return;
+            }
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: resolved.headSha,
+              state: "pending",
+              context: process.env.POLICY_STATUS_CONTEXT,
+              description: "Building the requested test image.",
+              target_url: targetUrl,
+            });
+            const [headOwner, headRepository] = resolved.pull.head.repo.full_name.split("/");
+            const { data: headCommit } = await github.rest.repos.getCommit({
+              owner: headOwner,
+              repo: headRepository,
+              ref: resolved.headSha,
+            });
+            const headCreated = headCommit.commit.committer?.date || headCommit.commit.author?.date;
+            if (!headCreated) {
+              throw new Error("Could not resolve the PR head commit timestamp.");
+            }
+            core.setOutput("head_sha", resolved.headSha);
+            core.setOutput("head_created", headCreated);
+            core.setOutput("head_repository", resolved.pull.head.repo.full_name);
+            core.setOutput("main_sha", mainSha);
+            core.setOutput("pr_number", String(resolved.pullNumber));
+            core.setOutput("should_build", "true");
+
+  build:
+    name: Build untrusted preview
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true'
+    permissions:
+      contents: read
+    runs-on: rootless-docker
+    timeout-minutes: 60
+
+    steps:
+      - name: Validate controller outputs
+        shell: bash
+        env:
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          MAIN_SHA: ${{ needs.resolve.outputs.main_sha }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${MAIN_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]
+
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          repository: ${{ needs.resolve.outputs.head_repository }}
+          ref: ${{ needs.resolve.outputs.head_sha }}
+
+      - name: Verify checkout head
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ needs.resolve.outputs.head_sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build production OCI layout
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          target: preview
+          platforms: linux/amd64,linux/arm64/v8
+          push: false
+          provenance: false
+          outputs: type=oci,dest=${{ runner.temp }}/preview-oci,tar=false,name=dense-mem:test-${{ needs.resolve.outputs.pr_number }}
+          build-args: |
+            IMAGE_VERSION=test-${{ needs.resolve.outputs.pr_number }}
+            IMAGE_REVISION=${{ needs.resolve.outputs.head_sha }}
+            IMAGE_CREATED=${{ needs.resolve.outputs.head_created }}
+            PREVIEW_PR=${{ needs.resolve.outputs.pr_number }}
+            PREVIEW_HEAD=${{ needs.resolve.outputs.head_sha }}
+            PREVIEW_MAIN=${{ needs.resolve.outputs.main_sha }}
+            PREVIEW_RUN_ID=${{ github.run_id }}
+            PREVIEW_RUN_ATTEMPT=${{ github.run_attempt }}
+          cache-from: type=gha,scope=dense-mem-preview-${{ needs.resolve.outputs.pr_number }}
+          cache-to: type=gha,mode=max,scope=dense-mem-preview-${{ needs.resolve.outputs.pr_number }}
+
+      - name: Upload immutable OCI artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-oci-${{ needs.resolve.outputs.head_sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/preview-oci
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish trusted preview
+    needs: [resolve, build]
+    if: >-
+      ${{
+        always() &&
+        needs.resolve.outputs.should_build == 'true' &&
+        needs.build.result == 'success'
+      }}
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      pull-requests: write
+      statuses: write
+    runs-on: docker-runner
+    timeout-minutes: 20
+
+    steps:
+      - name: Validate controller outputs
+        shell: bash
+        env:
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          MAIN_SHA: ${{ needs.resolve.outputs.main_sha }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${MAIN_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]
+
+      - name: Checkout trusted workflow helpers
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          persist-credentials: false
+          ref: main
+          sparse-checkout: .github/scripts
+
+      - name: Download OCI artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: preview-oci-${{ needs.resolve.outputs.head_sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/preview-oci
+
+      - name: Install pinned regctl
+        shell: bash
+        env:
+          REGCTL_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
+        run: |
+          set -euo pipefail
+          export REGCTL_CONFIG="${RUNNER_TEMP}/regctl-config.json"
+          echo "REGCTL_CONFIG=${REGCTL_CONFIG}" >> "${GITHUB_ENV}"
+          curl -fsSL -o "${RUNNER_TEMP}/regctl" \
+            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
+          printf '%s  %s\n' "${REGCTL_SHA256}" "${RUNNER_TEMP}/regctl" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/regctl"
+          "${RUNNER_TEMP}/regctl" config set --docker-cred=false --docker-cert=false
+
+      - name: Revalidate pull request before publication
+        uses: actions/github-script@v9
+        env:
+          EXPECTED_HEAD: ${{ needs.resolve.outputs.head_sha }}
+          EXPECTED_MAIN: ${{ needs.resolve.outputs.main_sha }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+        with:
+          script: |
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: Number(process.env.PR_NUMBER),
+            });
+            const { data: main } = await github.rest.repos.getBranch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              branch: "main",
+            });
+            if (pull.state !== "open" || pull.base.ref !== "main") {
+              core.setFailed("The pull request is no longer open against main.");
+            } else if (pull.head.sha !== process.env.EXPECTED_HEAD) {
+              core.setFailed(`The pull request advanced to ${pull.head.sha}.`);
+            } else if (main.commit.sha !== process.env.EXPECTED_MAIN) {
+              core.setFailed(`Main advanced to ${main.commit.sha}.`);
+            } else if (!pull.labels.some((label) => label.name === process.env.PREVIEW_LABEL)) {
+              core.setFailed("The preview label was removed.");
+            }
+
+      - name: Log in to GHCR
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: echo "${GITHUB_TOKEN}" | "${RUNNER_TEMP}/regctl" registry login ghcr.io -u "${GITHUB_ACTOR}" --pass-stdin
+
+      - name: Validate and publish preview
+        shell: bash
+        env:
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          MAIN_SHA: ${{ needs.resolve.outputs.main_sha }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          REGCTL_BIN: ${{ runner.temp }}/regctl
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:test-${PR_NUMBER}"
+          .github/scripts/oci-image.sh publish-preview \
+            "${RUNNER_TEMP}/preview-oci" \
+            "${image}" \
+            "${PR_NUMBER}" \
+            "${HEAD_SHA}" \
+            "${MAIN_SHA}" \
+            "${GITHUB_RUN_ID}" \
+            "${GITHUB_RUN_ATTEMPT}"
+
+  report:
+    name: Report preview attempt
+    needs: [resolve, build, publish]
+    if: always() && needs.resolve.outputs.should_build == 'true'
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    runs-on: docker-runner
+
+    steps:
+      - name: Publish attempt result
+        uses: actions/github-script@v9
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          EXPECTED_HEAD: ${{ needs.resolve.outputs.head_sha }}
+          EXPECTED_MAIN: ${{ needs.resolve.outputs.main_sha }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+        with:
+          script: |
+            const pullNumber = Number(process.env.PR_NUMBER);
+            const targetUrl = `${context.serverUrl}/${context.repo.owner}/` +
+              `${context.repo.repo}/actions/runs/${context.runId}`;
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pullNumber,
+            });
+            if (pull.head.sha !== process.env.EXPECTED_HEAD) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullNumber,
+                body: `Test image attempt for \`${process.env.EXPECTED_HEAD}\` was superseded ` +
+                  `by \`${pull.head.sha}\`.\n\n${targetUrl}`,
+              });
+              return;
+            }
+
+            const { data: main } = await github.rest.repos.getBranch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              branch: "main",
+            });
+            const stateStillValid = pull.state === "open" && pull.base.ref === "main" &&
+              main.commit.sha === process.env.EXPECTED_MAIN &&
+              pull.labels.some((label) => label.name === process.env.PREVIEW_LABEL);
+            const succeeded = process.env.BUILD_RESULT === "success" &&
+              process.env.PUBLISH_RESULT === "success" && stateStillValid;
+            const description = succeeded
+              ? `Published test-${pullNumber} (run ${context.runId}, attempt ${process.env.GITHUB_RUN_ATTEMPT}).`
+              : "Preview image build or publication failed.";
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.EXPECTED_HEAD,
+              state: succeeded ? "success" : "failure",
+              context: process.env.POLICY_STATUS_CONTEXT,
+              description,
+              target_url: targetUrl,
+            });
+
+            const image = `ghcr.io/${context.repo.owner.toLowerCase()}/` +
+              `${context.repo.repo.toLowerCase()}:test-${pullNumber}`;
+            const body = succeeded
+              ? `Published test image \`${image}\` for \`${process.env.EXPECTED_HEAD}\`.\n\n${targetUrl}`
+              : `Test image attempt failed for \`${process.env.EXPECTED_HEAD}\`.\n\n${targetUrl}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pullNumber,
+              body,
+            });
+
+  resolve-failure:
+    name: Report controller failure
+    needs: resolve
+    if: >-
+      ${{
+        always() &&
+        needs.resolve.result == 'failure' &&
+        needs.resolve.outputs.should_report != 'false'
+      }}
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    runs-on: docker-runner
+
+    steps:
+      - name: Publish controller failure
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const pullNumber = context.payload.pull_request.number;
+            const eventHead = context.payload.pull_request.head.sha;
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pullNumber,
+            });
+            if (
+              pull.head.sha !== eventHead ||
+              !pull.labels.some((label) => label.name === process.env.PREVIEW_LABEL)
+            ) {
+              core.info("The failed controller no longer represents a labeled current head.");
+              return;
+            }
+
+            const targetUrl = `${context.serverUrl}/${context.repo.owner}/` +
+              `${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: eventHead,
+              state: "failure",
+              context: process.env.POLICY_STATUS_CONTEXT,
+              description: "Preview request validation failed.",
+              target_url: targetUrl,
+            });
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pullNumber,
+              body: `Test image request validation failed for \`${eventHead}\`.\n\n${targetUrl}`,
+            });
