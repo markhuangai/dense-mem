@@ -1,22 +1,20 @@
 version: 2
 
-updates:
-  - package-ecosystem: "gomod"
-    directory: "/"
+multi-ecosystem-groups:
+  all-dependencies:
     schedule:
       interval: "weekly"
       day: "monday"
       time: "09:00"
       timezone: "Etc/UTC"
-    open-pull-requests-limit: 5
+
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "all-dependencies"
     groups:
-      go-minor-patch:
-        applies-to: "version-updates"
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
       go-security:
         applies-to: "security-updates"
         patterns:
@@ -27,20 +25,10 @@ updates:
       - "/.lint"
       - "/web"
       - "/packages/mcp-proxy"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Etc/UTC"
-    open-pull-requests-limit: 5
+    patterns:
+      - "*"
+    multi-ecosystem-group: "all-dependencies"
     groups:
-      npm-minor-patch:
-        applies-to: "version-updates"
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
       npm-security:
         applies-to: "security-updates"
         patterns:
@@ -48,20 +36,10 @@ updates:
 
   - package-ecosystem: "docker"
     directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Etc/UTC"
-    open-pull-requests-limit: 5
+    patterns:
+      - "*"
+    multi-ecosystem-group: "all-dependencies"
     groups:
-      docker-minor-patch:
-        applies-to: "version-updates"
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
       docker-security:
         applies-to: "security-updates"
         patterns:
@@ -69,22 +47,12 @@ updates:
 
   - package-ecosystem: "github-actions"
     directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Etc/UTC"
-    open-pull-requests-limit: 5
+    patterns:
+      - "*"
+    multi-ecosystem-group: "all-dependencies"
     ignore:
       - dependency-name: "markhuangai/git-vibe"
     groups:
-      actions-minor-patch:
-        applies-to: "version-updates"
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
       actions-security:
         applies-to: "security-updates"
         patterns:
