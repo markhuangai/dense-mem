@@ -188,6 +188,8 @@ jobs:
 
     steps:
       - name: Checkout trusted release policy
+        id: policy_checkout
+        continue-on-error: true
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -196,6 +198,8 @@ jobs:
 
       - name: Resolve eligible pull request preview
         id: preview
+        if: steps.policy_checkout.outcome == 'success'
+        continue-on-error: true
         uses: actions/github-script@v9
         env:
           MAIN_COMMIT: ${{ github.event.workflow_run.head_sha }}
