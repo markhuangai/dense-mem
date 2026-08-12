@@ -247,6 +247,42 @@ func TestLoggerLogLevels(t *testing.T) {
 	})
 }
 
+func TestParseLevelIsCaseInsensitiveAndStrict(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  slog.Level
+	}{
+		{"", slog.LevelInfo},
+		{"INFO", slog.LevelInfo},
+		{"Debug", slog.LevelDebug},
+		{"warning", slog.LevelWarn},
+		{"ERROR", slog.LevelError},
+	} {
+		got, err := ParseLevel(test.input)
+		require.NoError(t, err)
+		assert.Equal(t, test.want, got)
+	}
+	_, err := ParseLevel("verbose")
+	assert.Error(t, err)
+}
+
+func TestSlogDefaultRedactsNestedAndInlineSecrets(t *testing.T) {
+	var buf bytes.Buffer
+	logger := NewWithHandler(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger.Slog().Info(`request failed password=hunter2 metadata={"token":"json-secret"}`, slog.Group("request",
+		slog.String("path", "/control/api/logs?token=hunter2"),
+		slog.String("authorization", "Bearer bearer-secret"),
+		slog.Any("metadata", map[string]any{"safe": "visible", "nested": map[string]any{"secret": "hidden"}}),
+	))
+	output := buf.String()
+	assert.Contains(t, output, "visible")
+	assert.NotContains(t, output, "hunter2")
+	assert.NotContains(t, output, "json-secret")
+	assert.NotContains(t, output, "bearer-secret")
+	assert.NotContains(t, output, "authorization")
+	assert.NotContains(t, output, "secret")
+}
+
 func TestLoggerWith(t *testing.T) {
 	var buf bytes.Buffer
 	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{

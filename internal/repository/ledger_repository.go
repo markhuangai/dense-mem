@@ -165,14 +165,9 @@ type PlacementReviewTask struct {
 	ExpiresAt    *time.Time
 }
 
-type rLSHelper interface {
-	WithTeamTx(ctx context.Context, db *gorm.DB, teamID string, fn func(tx *gorm.DB) error) error
-	WithTeamProfileTx(ctx context.Context, db *gorm.DB, teamID string, profileID string, fn func(tx *gorm.DB) error) error
-	WithSystemTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error
-	WithTeamReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, teamID string, fn func(tx *gorm.DB) error) error
-	WithTeamProfileReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, teamID string, profileID string, fn func(tx *gorm.DB) error) error
-	WithSystemReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error
-}
+// Keep the historical package-local name for tests and constructors while
+// using the canonical storage contract as the single interface definition.
+type rLSHelper = postgres.RLSHelper
 
 type LedgerRepositoryImpl struct {
 	db                      *gorm.DB

@@ -91,6 +91,10 @@ func (m *mockAPIKeyRepository) TouchLastUsed(ctx context.Context, id uuid.UUID) 
 	return nil
 }
 
+func (m *mockAPIKeyRepository) RecordLastUsed(id uuid.UUID, _ time.Time) {
+	_ = m.TouchLastUsed(context.Background(), id)
+}
+
 // mockAuditService is a mock implementation of service.AuditService
 type mockAuditService struct {
 	authFailureCalled bool
@@ -973,19 +977,12 @@ func TestPrincipalInterfaceAndRequireAuthHelpers(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
-func TestVerifyKeyWithLimitCanceledContext(t *testing.T) {
-	SetAuthVerificationConcurrency(1)
-	t.Cleanup(func() { SetAuthVerificationConcurrency(0) })
-
-	authVerifyLimiter.mu.RLock()
-	slots := authVerifyLimiter.slots
-	authVerifyLimiter.mu.RUnlock()
-	require.NotNil(t, slots)
-	slots <- struct{}{}
-	defer func() { <-slots }()
-
+func TestCredentialVerifierCanceledContext(t *testing.T) {
+	verifier := crypto.NewArgon2Verifier(1)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	assert.False(t, verifyKeyWithLimit(ctx, "raw-key", "hash"))
+	valid, err := verifier.Verify(ctx, "raw-key", "hash")
+	assert.False(t, valid)
+	assert.ErrorIs(t, err, context.Canceled)
 }

@@ -406,6 +406,7 @@ func TestUserPortalGraphUsesAuthenticatedTeamScope(t *testing.T) {
 
 func TestPublicIPRateLimitFailureDoesNotLogRawError(t *testing.T) {
 	e := echo.New()
+	e.HTTPErrorHandler = httperr.ErrorHandler
 	var logs bytes.Buffer
 	e.Logger.SetOutput(&logs)
 	e.GET("/rate-limited", func(c echo.Context) error {
@@ -415,7 +416,7 @@ func TestPublicIPRateLimitFailureDoesNotLogRawError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rate-limited", nil))
 
-	require.Equal(t, http.StatusNoContent, rec.Code)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	require.Contains(t, logs.String(), "public ip rate limit check failed")
 	require.NotContains(t, logs.String(), "postgres password=not-safe-to-log")
 }
@@ -861,10 +862,10 @@ func TestUserPortalMissingRouteServicesReturnUnavailable(t *testing.T) {
 		path string
 		want string
 	}{
-		{path: "/ui/api/session", want: "profile service unavailable"},
-		{path: "/ui/api/team", want: "profile service unavailable"},
-		{path: "/ui/api/team/profiles/" + uuid.NewString(), want: "api key service unavailable"},
-		{path: "/ui/api/dreams/dream-1", want: "dream service unavailable"},
+		{path: "/ui/api/session", want: "service unavailable"},
+		{path: "/ui/api/team", want: "service unavailable"},
+		{path: "/ui/api/team/profiles/" + uuid.NewString(), want: "service unavailable"},
+		{path: "/ui/api/dreams/dream-1", want: "service unavailable"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
 		req.Header.Set("Authorization", "Bearer "+rawKey)

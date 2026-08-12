@@ -82,9 +82,8 @@ COPY --chown=densemem:densemem migrations /app/migrations
 COPY --from=web-builder --chown=densemem:densemem /web/dist /app/web/dist
 COPY --from=web-builder --chown=densemem:densemem /web/user-dist /app/web/user-dist
 
-# Entrypoint wrapper assembles POSTGRES_DSN from component env vars if the
-# DSN is not supplied directly. Keeps the full credentialed URL literal out
-# of every tracked config file.
+# Entrypoint wrapper preserves signal/exit semantics; the application builds
+# and escapes POSTGRES_DSN from component environment variables when needed.
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 

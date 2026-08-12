@@ -194,10 +194,7 @@ func normalizeSemanticAssessmentSubmissionContract(
 
 	req.SubmittedEntities = make([]SemanticAssessmentSubmittedEntity, 0, len(contract.Entities))
 	for _, target := range contract.Entities {
-		req.SubmittedEntities = append(req.SubmittedEntities, SemanticAssessmentSubmittedEntity{
-			Ref: target.Ref, Surface: target.Surface, Kind: target.Kind,
-			EvidenceID: target.EvidenceID, Start: target.Start, End: target.End,
-		})
+		req.SubmittedEntities = append(req.SubmittedEntities, SemanticAssessmentSubmittedEntity(target))
 	}
 	req.SubmittedRelationships = make([]SemanticAssessmentSubmittedRelationship, 0, len(contract.Relationships))
 	for _, target := range contract.Relationships {

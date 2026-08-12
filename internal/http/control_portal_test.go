@@ -989,5 +989,5 @@ func TestControlPortalProfileDreamingConfigErrors(t *testing.T) {
 	server.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
-	require.Contains(t, rec.Body.String(), "load dreaming runtime config")
+	require.Contains(t, rec.Body.String(), `"message":"internal server error"`)
 }

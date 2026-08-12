@@ -56,18 +56,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          packages="$(
-            git ls-files '*.go' |
-              grep -Ev '^(tests/uat|tests/eval/runtime)/' |
-              xargs -r -n1 dirname |
-              sort -u |
-              while IFS= read -r dir; do
-                go list "./${dir#./}" 2>/dev/null || true
-              done
-          )"
+          packages="$(scripts/go-packages.sh)"
 
           printf '%s\n' "${packages}"
           go test ${packages}
+
+      - name: Run pinned Go static analysis
+        run: scripts/static-analysis.sh
 
       - name: Run Go vulnerability scan
         run: go tool govulncheck ./...

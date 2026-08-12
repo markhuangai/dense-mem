@@ -9,6 +9,12 @@ import (
 func clearEnv() {
 	envVars := []string{
 		"POSTGRES_DSN",
+		"POSTGRES_HOST",
+		"POSTGRES_PORT",
+		"POSTGRES_USER",
+		"POSTGRES_PASSWORD",
+		"POSTGRES_DB",
+		"POSTGRES_SSLMODE",
 		"POSTGRES_READ_DSN",
 		"POSTGRES_MAX_OPEN_CONNS",
 		"POSTGRES_MAX_IDLE_CONNS",
@@ -343,6 +349,27 @@ func TestLoadWithPostgresDSNUsesOperatorResolvedDSN(t *testing.T) {
 	}
 	if cfg.PostgresDSN != resolvedDSN {
 		t.Fatalf("PostgresDSN = %q, want resolved operator DSN", cfg.PostgresDSN)
+	}
+}
+
+func TestLoadBuildsEscapedPostgresDSNFromComponents(t *testing.T) {
+	clearEnv()
+	t.Cleanup(clearEnv)
+	os.Setenv("POSTGRES_HOST", "2001:db8::10")
+	os.Setenv("POSTGRES_PORT", "5432")
+	os.Setenv("POSTGRES_USER", "user:name")
+	os.Setenv("POSTGRES_PASSWORD", "p@ss word/?")
+	os.Setenv("POSTGRES_DB", "dense mem")
+	os.Setenv("POSTGRES_SSLMODE", "disable")
+	os.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+	want := "postgres://user%3Aname:p%40ss%20word%2F%3F@[2001:db8::10]:5432/dense%20mem?sslmode=disable"
+	if cfg.PostgresDSN != want {
+		t.Fatalf("PostgresDSN = %q, want %q", cfg.PostgresDSN, want)
 	}
 }
 

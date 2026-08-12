@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -73,21 +72,6 @@ func (p *Principal) GetRateLimit() int        { return p.RateLimit }
 // Using an unexported type prevents downstream code from constructing fake principals.
 type principalContextKey struct{}
 
-var authVerifyLimiter struct {
-	mu    sync.RWMutex
-	slots chan struct{}
-}
-
-func SetAuthVerificationConcurrency(limit int) {
-	authVerifyLimiter.mu.Lock()
-	defer authVerifyLimiter.mu.Unlock()
-	if limit <= 0 {
-		authVerifyLimiter.slots = nil
-		return
-	}
-	authVerifyLimiter.slots = make(chan struct{}, limit)
-}
-
 // AuthMiddleware creates an authentication middleware that validates API keys.
 // It requires the Authorization header in the format "Bearer <rawKey>".
 func AuthMiddleware(repo repository.APIKeyRepository, auditSvc service.AuditService) echo.MiddlewareFunc {
@@ -111,6 +95,7 @@ type UserPortalSessionAuthenticator interface {
 }
 
 type AuthOptions struct {
+	CredentialVerifier             crypto.CredentialVerifier
 	SSOEntitlementValidator        SSOEntitlementValidator
 	SSOSessionAuthenticator        SSOSessionAuthenticator
 	UserPortalSessionAuthenticator UserPortalSessionAuthenticator
@@ -118,6 +103,10 @@ type AuthOptions struct {
 }
 
 func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc service.AuditService, securitySvc SecurityBanService, opts AuthOptions) echo.MiddlewareFunc {
+	verifier := opts.CredentialVerifier
+	if verifier == nil {
+		verifier = crypto.NewArgon2Verifier(0)
+	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// Extract Authorization header
@@ -214,7 +203,11 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 			}
 
 			// Verify the raw key against the stored Argon2id hash
-			if !verifyKeyWithLimit(ctx, rawKey, key.KeyHash) {
+			verified, verifyErr := verifier.Verify(ctx, rawKey, key.KeyHash)
+			if verifyErr != nil {
+				return httperr.New(httperr.SERVICE_UNAVAILABLE, "authentication service unavailable")
+			}
+			if !verified {
 				teamID := key.GetTeamID().String()
 				logAuthFailure(c, auditSvc, securitySvc, &teamID, "AUTH_INVALID", "invalid api key")
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
@@ -410,19 +403,23 @@ func userPortalSessionAuthError(err error) error {
 	}
 }
 
+// LastUsedRecorder receives an admitted API-key activity event. Implementations
+// own batching and lifecycle; the request path only enqueues an identifier.
+type LastUsedRecorder interface {
+	RecordLastUsed(id uuid.UUID, at time.Time)
+}
+
 // LastUsedMiddleware updates API key last_used_at after earlier middleware has
-// admitted the request. Place it after rate limiting to avoid DB writes for
-// over-quota valid keys.
-func LastUsedMiddleware(repo repository.APIKeyRepository) echo.MiddlewareFunc {
+// admitted the request. Place it after rate limiting to avoid activity writes
+// for over-quota valid keys.
+func LastUsedMiddleware(recorder LastUsedRecorder) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			principal := GetPrincipal(c.Request().Context())
 			if principal != nil && principal.AuthMethod != "sso_session" && principal.AuthMethod != "api_key_session" && principal.KeyID != uuid.Nil {
-				go func(keyID uuid.UUID) {
-					touchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					defer cancel()
-					_ = repo.TouchLastUsed(touchCtx, keyID)
-				}(principal.KeyID)
+				if recorder != nil {
+					recorder.RecordLastUsed(principal.KeyID, time.Now().UTC())
+				}
 			}
 			return next(c)
 		}
@@ -456,22 +453,6 @@ func logAuthFailure(c echo.Context, auditSvc service.AuditService, securitySvc S
 	defer cancel()
 
 	_ = auditSvc.AuthFailure(ctx, profileID, "api_key", "", metadata, clientIP, correlationID)
-}
-
-func verifyKeyWithLimit(ctx context.Context, rawKey, keyHash string) bool {
-	authVerifyLimiter.mu.RLock()
-	slots := authVerifyLimiter.slots
-	authVerifyLimiter.mu.RUnlock()
-	if slots == nil {
-		return crypto.VerifyKey(rawKey, keyHash)
-	}
-	select {
-	case slots <- struct{}{}:
-		defer func() { <-slots }()
-		return crypto.VerifyKey(rawKey, keyHash)
-	case <-ctx.Done():
-		return false
-	}
 }
 
 func authFailureSurface(c echo.Context) string {

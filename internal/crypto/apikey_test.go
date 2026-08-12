@@ -1,12 +1,36 @@
 package crypto
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestArgon2VerifierRejectsNonCanonicalParameters(t *testing.T) {
+	rawKey, err := GenerateRawKey()
+	assert.NoError(t, err)
+	hash, err := HashKey(rawKey)
+	assert.NoError(t, err)
+	verifier := NewArgon2Verifier(2)
+
+	valid, err := verifier.Verify(context.Background(), rawKey, hash)
+	assert.NoError(t, err)
+	assert.True(t, valid)
+
+	for _, tampered := range []string{
+		strings.Replace(hash, "m=65536", "m=1", 1),
+		strings.Replace(hash, "t=3", "t=1", 1),
+		strings.Replace(hash, "p=4", "p=1", 1),
+		strings.Replace(hash, "v=19", "v=18", 1),
+	} {
+		valid, err = verifier.Verify(context.Background(), rawKey, tampered)
+		assert.NoError(t, err)
+		assert.False(t, valid)
+	}
+}
 
 // TestGenerateAPIKeyFormat verifies the raw key format
 func TestGenerateAPIKeyFormat(t *testing.T) {

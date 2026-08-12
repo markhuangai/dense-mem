@@ -13,6 +13,7 @@ import (
 type RLSHelper interface {
 	WithProfileTx(ctx context.Context, db *gorm.DB, profileID string, fn func(tx *gorm.DB) error) error
 	WithTeamTx(ctx context.Context, db *gorm.DB, teamID string, fn func(tx *gorm.DB) error) error
+	WithTeamProfileTx(ctx context.Context, db *gorm.DB, teamID string, profileID string, fn func(tx *gorm.DB) error) error
 	WithSystemTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error
 	WithTeamReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, teamID string, fn func(tx *gorm.DB) error) error
 	WithTeamProfileReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, teamID string, profileID string, fn func(tx *gorm.DB) error) error

@@ -4,6 +4,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -37,7 +38,9 @@ type ProtectedDeps struct {
 	// Config is the application configuration.
 	Config config.ConfigProvider
 	// Logger is the structured logger.
-	Logger observability.LogProvider
+	Logger             observability.LogProvider
+	CredentialVerifier crypto.CredentialVerifier
+	LastUsedRecorder   middleware.LastUsedRecorder
 	// PostAuthMiddleware runs after authentication, profile resolution, and
 	// authorization, and before usage metrics/rate limiting.
 	PostAuthMiddleware []echo.MiddlewareFunc
@@ -109,11 +112,12 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	// Create profile authorization service from audit service
 	profileAuthzSvc := middleware.NewProfileAuthorizationService(deps.AuditService)
 	apiKeyAuthMW := middleware.AuthMiddlewareWithOptions(deps.APIKeyRepo, deps.AuditService, deps.SecurityService, middleware.AuthOptions{
+		CredentialVerifier:      deps.CredentialVerifier,
 		SSOEntitlementValidator: deps.SSOAuthenticator,
 	})
 	usageMW := middleware.UsageMetricsMiddleware(deps.UsageMetrics)
 	rateLimitMW := middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService)
-	lastUsedMW := middleware.LastUsedMiddleware(deps.APIKeyRepo)
+	lastUsedMW := middleware.LastUsedMiddleware(deps.LastUsedRecorder)
 	protectedGroup := func(prefix string) *echo.Group {
 		group := e.Group(prefix)
 		group.Use(apiKeyAuthMW)

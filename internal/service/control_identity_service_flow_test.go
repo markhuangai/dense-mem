@@ -226,7 +226,7 @@ func TestControlIdentityServiceSafeFailureAndRefreshPaths(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"admins"}, groups)
 	require.Equal(t, "subject", resolver.subject)
-	providerCtx, cancel := svc.providerContext(nil, SSORuntimeConfig{HTTPTimeout: time.Second})
+	providerCtx, cancel := svc.providerContext(context.Background(), SSORuntimeConfig{HTTPTimeout: time.Second})
 	defer cancel()
 	require.NotNil(t, providerCtx.Value(oauth2.HTTPClient))
 

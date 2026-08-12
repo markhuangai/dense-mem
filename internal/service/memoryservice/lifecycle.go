@@ -437,33 +437,7 @@ func (s *lifecycleService) rejectUnsafeLifecycleEvidence(
 }
 
 func lifecycleEvidenceFromRequest(evidence []RememberEvidenceInput) []repository.EvidenceInput {
-	if len(evidence) == 0 {
-		return nil
-	}
-	out := make([]repository.EvidenceInput, 0, len(evidence))
-	sourceRevisionHashes := sourceRevisionContentHashes(evidence)
-	for _, item := range evidence {
-		event := submissionSecurityPassEvent()
-		authority, metadata := ledgerAuthorityAndMetadata(item.Authority, item.Metadata)
-		metadata = evidenceProcessingIntentMetadata(metadata, item)
-		out = append(out, repository.EvidenceInput{
-			Content:                       item.Content,
-			SourceType:                    evidenceSourceType(item.SourceType),
-			Authority:                     authority,
-			SourceRef:                     strings.TrimSpace(item.Source),
-			SourceKey:                     strings.TrimSpace(item.SourceKey),
-			SourceRevisionToken:           strings.TrimSpace(item.SourceRevision),
-			ExpectedPreviousRevisionToken: strings.TrimSpace(item.PreviousSourceRevision),
-			SourceRevisionContentHash:     sourceRevisionHashes[sourceRevisionBatchKey(item)],
-			SourceRevisionEnvelope:        sourceRevisionEnvelope(item),
-			SupersedesEvidenceIDs:         append([]string(nil), item.SupersedesEvidenceIDs...),
-			IdempotencyKey:                strings.TrimSpace(item.IdempotencyKey),
-			Labels:                        append([]string(nil), item.Labels...),
-			Metadata:                      metadata,
-			InitialEvent:                  &event,
-		})
-	}
-	return out
+	return repositoryEvidenceInputs(evidence)
 }
 
 func lifecycleCanReleaseQuarantine(role string) bool {

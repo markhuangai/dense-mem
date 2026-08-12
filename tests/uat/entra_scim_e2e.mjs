@@ -18,13 +18,17 @@ await createControlAdminGroup(provider.id);
 await verifyConfiguredProviders(provider.id);
 
 const userSession = await completeUserOIDCLogin(provider.id);
-await verifyUserSession(userSession);
+await verifyUserSession(userSession.session);
 
 const controlSession = await completeControlOIDCLogin(provider.id);
-await verifyControlSession(controlSession);
+await verifyControlSession(controlSession.session);
+await assertLogoutCSRF(
+  await completeUserOIDCLogin(provider.id),
+  await completeControlOIDCLogin(provider.id),
+);
 
 await deactivateDirectoryUser(connector.id, scimToken, user.id);
-await verifySessionsRevoked(userSession, controlSession);
+await verifySessionsRevoked(userSession.session, controlSession.session);
 
 console.log("Entra SCIM compose e2e passed.");
 
@@ -172,7 +176,10 @@ async function completeUserOIDCLogin(providerID) {
   const callback = requireLocation(consent, "user OIDC authorization");
   assert(new URL(callback).origin === new URL(userURL).origin, "user OIDC callback did not use the configured public ingress");
   const completed = await expectResponse(callback, { redirect: "manual" }, 302);
-  return cookieFromResponse(completed, "dense_mem_sso_session");
+  return {
+    session: cookieFromResponse(completed, "dense_mem_sso_session"),
+    csrf: cookieFromResponse(completed, "dense_mem_sso_csrf"),
+  };
 }
 
 async function completeControlOIDCLogin(providerID) {
@@ -181,7 +188,33 @@ async function completeControlOIDCLogin(providerID) {
   const consent = await expectResponse(authorization, { redirect: "manual" }, 302);
   const callback = rewriteControlCallback(requireLocation(consent, "control OIDC authorization"));
   const completed = await expectResponse(callback, { redirect: "manual" }, 302);
-  return cookieFromResponse(completed, "dense_mem_control_session");
+  return {
+    session: cookieFromResponse(completed, "dense_mem_control_session"),
+    csrf: cookieFromResponse(completed, "dense_mem_control_csrf"),
+  };
+}
+
+async function assertLogoutCSRF(userSession, controlSession) {
+  const userMissing = await expectResponse(`${userURL}/ui/api/sso/logout`, {
+    method: "POST",
+    headers: { Cookie: userSession.session },
+  }, 403);
+  assert(userMissing.status === 403, "user SSO logout without CSRF was not rejected");
+  const controlMissing = await expectResponse(`${controlURL}/control/auth/logout`, {
+    method: "POST",
+    headers: { Cookie: controlSession.session },
+  }, 403);
+  assert(controlMissing.status === 403, "control logout without CSRF was not rejected");
+  const userValid = await expectResponse(`${userURL}/ui/api/sso/logout`, {
+    method: "POST",
+    headers: { Cookie: `${userSession.session}; ${userSession.csrf}`, "X-Dense-Mem-CSRF": cookieValue(userSession.csrf) },
+  }, 200);
+  assert(userValid.status === 200, "user SSO logout with CSRF did not succeed");
+  const controlValid = await expectResponse(`${controlURL}/control/auth/logout`, {
+    method: "POST",
+    headers: { Cookie: `${controlSession.session}; ${controlSession.csrf}`, "X-Dense-Mem-Control-CSRF": cookieValue(controlSession.csrf) },
+  }, 204);
+  assert(controlValid.status === 204, "control logout with CSRF did not succeed");
 }
 
 async function verifyUserSession(sessionCookie) {
@@ -303,6 +336,11 @@ function cookieFromResponse(response, name) {
   }
   const separator = cookie.indexOf(";");
   return separator === -1 ? cookie : cookie.slice(0, separator);
+}
+
+function cookieValue(cookie) {
+  const separator = cookie.indexOf("=");
+  return separator === -1 ? "" : cookie.slice(separator + 1);
 }
 
 function safeURL(value) {

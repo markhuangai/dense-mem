@@ -28,13 +28,13 @@ func TestDockerComposeBaseExample_LocalOnly(t *testing.T) {
 	assert.Contains(t, server.Environment["AI_VERIFIER_MODEL"], "AI_VERIFIER_MODEL must be set")
 }
 
-func TestDockerComposeDemoPinsVersionedImage(t *testing.T) {
+func TestDockerComposeDemoAllowsImageOverride(t *testing.T) {
 	text := readExample(t, "docker-compose.demo.yml")
 	compose := readComposeExample(t, "docker-compose.demo.yml")
 	demo := requireComposeService(t, compose, "demo")
 
-	assert.Equal(t, "ghcr.io/markhuangai/dense-mem:demo-v2.4.1", demo.Image)
-	assert.NotContains(t, text, "DENSE_MEM_DEMO_IMAGE")
+	assert.Equal(t, "${DENSE_MEM_DEMO_IMAGE:-ghcr.io/markhuangai/dense-mem:demo-latest}", demo.Image)
+	assert.Contains(t, text, "DENSE_MEM_DEMO_IMAGE")
 	assert.NotContains(t, text, "DENSE_MEM_DEMO_VERSION")
 	assert.NotContains(t, text, "DENSE_MEM_DEMO_REPOSITORY")
 	assert.NotContains(t, text, "dense-mem:demo\n")
@@ -51,6 +51,10 @@ func TestDockerComposeExpertExample_HasOptionalProfiles(t *testing.T) {
 	assert.Contains(t, text, "Redis")
 	assert.Contains(t, text, "--entrypoints.websecure.http3")
 	assert.Contains(t, text, "${TRAEFIK_HTTPS_PORT:-443}:443/udp")
+	assert.Contains(t, text, "--providers.file.filename=/etc/traefik/dense-mem.yml")
+	assert.Contains(t, text, "http://server:8080")
+	assert.NotContains(t, text, "--providers.docker")
+	assert.NotContains(t, text, "docker.sock")
 	assert.NotContains(t, text, "\n      HTTP_ADDR:")
 	assert.NotContains(t, server.Environment, removedGraphEnvKey())
 	assert.NotContains(t, server.Environment, "AI_REVIEWER_MODEL")
@@ -61,8 +65,8 @@ func TestDockerComposeExpertExample_HasOptionalProfiles(t *testing.T) {
 func TestDockerComposeExpertExample_PreservesUiPathForCustomDomain(t *testing.T) {
 	text := strings.ToLower(readExample(t, "docker-compose.expert.yml"))
 
-	assert.Contains(t, text, "traefik.http.routers.densemem.rule=host(`${dense_mem_domain:-localhost}`)")
-	assert.Contains(t, text, "traefik.http.services.densemem.loadbalancer.server.port=8080")
+	assert.Contains(t, text, "rule: \"host(`${dense_mem_domain:-localhost}`)\"")
+	assert.Contains(t, text, "url: http://server:8080")
 	assert.NotContains(t, text, "stripprefix")
 	assert.NotContains(t, text, "replacepath")
 }

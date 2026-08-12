@@ -1,7 +1,7 @@
 E2E_EMBEDDING_PROXY_PORT=""; E2E_EMBEDDING_PROXY_OVERLAY_FILE=""; E2E_EMBEDDING_PROXY_SCRIPT=""
 
 append_embedding_reconciliation_environment() {
-  if [[ "$E2E_SCENARIO" != "embedding_reconciliation" ]]; then
+  if [[ "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" ]]; then
     return
   fi
   local live_api_url
@@ -28,7 +28,7 @@ is_generated_proxy_file() {
 }
 
 prepare_embedding_proxy_files() {
-  if [[ "$E2E_SCENARIO" != "embedding_reconciliation" ]]; then
+  if [[ "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" ]]; then
     return
   fi
   E2E_EMBEDDING_PROXY_PORT="${DENSE_MEM_E2E_EMBEDDING_PROXY_PORT:-$(pick_ports 1)}"
@@ -40,12 +40,13 @@ const [destination, source, marker] = process.argv.slice(2);
 const sourceText = fs.readFileSync(source, "utf8").replace(/^#![^\n]*\n/, "");
 fs.writeFileSync(destination, `// ${marker}\n${sourceText}`);
 NODE
-  node - "$E2E_EMBEDDING_PROXY_OVERLAY_FILE" "$E2E_EMBEDDING_PROXY_SCRIPT" "$E2E_EMBEDDING_PROXY_PORT" "$E2E_ENV_FILE" "$E2E_MARKER" <<'NODE'
+  node - "$E2E_EMBEDDING_PROXY_OVERLAY_FILE" "$E2E_EMBEDDING_PROXY_SCRIPT" "$E2E_EMBEDDING_PROXY_PORT" "$E2E_ENV_FILE" "$E2E_MARKER" "$E2E_SCENARIO" <<'NODE'
 const fs = require("node:fs");
 
-const [destination, proxyScript, proxyPort, envFile, marker] = process.argv.slice(2);
+const [destination, proxyScript, proxyPort, envFile, marker, scenario] = process.argv.slice(2);
 const quote = (value) => JSON.stringify(value);
 const mount = quote(`${proxyScript}:/e2e/embedding_fault_proxy.mjs:ro`);
+const proxyMode = scenario === "embedding_resilience" ? "input_rejected" : "quota";
 const contents = `${marker}
 services:
   server:
@@ -59,7 +60,7 @@ services:
     env_file:
       - ${quote(envFile)}
     environment:
-      EMBEDDING_PROXY_MODE: quota
+      EMBEDDING_PROXY_MODE: ${proxyMode}
     volumes:
       - ${mount}
     ports:
@@ -97,4 +98,18 @@ run_embedding_reconciliation_e2e() {
   DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" \
   DENSE_MEM_E2E_EMBEDDING_PROXY_URL="http://127.0.0.1:${E2E_EMBEDDING_PROXY_PORT}" \
   node "$ROOT_DIR/tests/uat/embedding_reconciliation_e2e.mjs"
+}
+
+run_embedding_resilience_e2e() {
+  local team_id="$1"
+  echo "Running compose-backed embedding lease and mixed-input resilience e2e."
+  DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
+  DENSE_MEM_USER_URL="$USER_URL" \
+  DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
+  DENSE_MEM_E2E_TEAM_ID="$team_id" \
+  DENSE_MEM_E2E_API_KEY="$api_key" \
+  DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
+  DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
+  DENSE_MEM_E2E_EMBEDDING_PROXY_URL="http://127.0.0.1:${E2E_EMBEDDING_PROXY_PORT}" \
+  node "$ROOT_DIR/tests/uat/embedding_resilience_e2e.mjs"
 }

@@ -2,7 +2,6 @@ package crypto
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"regexp"
@@ -128,43 +127,4 @@ func HashKey(rawKey string) (string, error) {
 	)
 
 	return phc, nil
-}
-
-// VerifyKey verifies a raw key against a PHC-encoded hash.
-// Uses constant-time comparison to prevent timing attacks.
-func VerifyKey(rawKey, phcHash string) bool {
-	// Parse the PHC string
-	parts := strings.Split(phcHash, "$")
-	if len(parts) != 6 {
-		return false
-	}
-
-	// parts[0] is empty (leading $)
-	// parts[1] should be "argon2id"
-	// parts[2] should be "v=19"
-	// parts[3] should be "m=65536,t=3,p=4"
-	// parts[4] is the salt (base64)
-	// parts[5] is the hash (base64)
-
-	if parts[1] != "argon2id" {
-		return false
-	}
-
-	// Decode salt
-	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil {
-		return false
-	}
-
-	// Decode expected hash
-	expectedHash, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil {
-		return false
-	}
-
-	// Recompute the hash with the same parameters
-	computedHash := argon2.IDKey([]byte(rawKey), salt, argon2Time, argon2Memory, argon2Threads, uint32(len(expectedHash)))
-
-	// Constant-time comparison
-	return subtle.ConstantTimeCompare(computedHash, expectedHash) == 1
 }

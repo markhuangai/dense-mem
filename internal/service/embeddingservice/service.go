@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -17,6 +18,7 @@ import (
 const (
 	defaultBatchSize      = 64
 	maxBatchSize          = 256
+	maxLeaseRenewWorkers  = 8
 	defaultLease          = time.Minute
 	defaultFailureTimeout = 10 * time.Second
 )
@@ -120,63 +122,145 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 			FailureClass: string(domain.EmbeddingFailureTransient),
 			FailureCode:  string(domain.EmbeddingFailureProviderNetworkError),
 		}
-		s.failJobs(ctx, contract, jobs, &result, string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderNetworkError), false, 0)
+		s.failJobsWithLease(ctx, contract, jobs, &result, string(domain.EmbeddingFailureTransient), string(domain.EmbeddingFailureProviderNetworkError), false, 0)
 		return result, err
 	}
 	if err := s.validateProvider(contract); err != nil {
-		s.failJobs(ctx, contract, jobs, &result, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), true, 0)
+		s.failJobsWithLease(ctx, contract, jobs, &result, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), true, 0)
 		return result, err
 	}
 	eligible := make([]repository.EmbeddingJob, 0, len(jobs))
-	texts := make([]string, 0, len(jobs))
+	ineligible := make([]repository.EmbeddingJob, 0)
 	for _, job := range jobs {
 		if job.EmbeddingContractID != contract.EmbeddingContractID || job.EmbeddingDimensions != contract.EmbeddingDimensions {
-			s.failJob(ctx, contract, job, &result, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), true, 0, true)
+			ineligible = append(ineligible, job)
 			continue
 		}
 		eligible = append(eligible, job)
-		texts = append(texts, job.DocumentText)
+	}
+	if len(ineligible) > 0 {
+		s.failIneligibleJobsWithLease(ctx, contract, ineligible, &result)
 	}
 	if len(eligible) == 0 {
 		return result, nil
 	}
-	providerCtx := observability.WithMetricIdentity(ctx, s.teamID, "")
-	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationBackgroundEmbedding, len(eligible))
-	embeddings, model, err := s.provider.EmbedBatch(providerCtx, texts)
-	if err != nil {
-		if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
-			return result, ctx.Err()
+	leaseScope := newEmbeddingLeaseScope(ctx, s.search, eligible, s.workerID, s.lease, s.failureTimeout)
+	if leaseScope != nil {
+		defer leaseScope.Close()
+	}
+	firstErr := s.processEmbeddingBatch(ctx, contract, eligible, &result, leaseScope)
+	return result, firstErr
+}
+
+func (s *embeddingWorkerService) failJobsWithLease(
+	ctx context.Context,
+	contract *repository.ActiveSearchContract,
+	jobs []repository.EmbeddingJob,
+	result *EmbeddingWorkerResult,
+	failureClass, code string,
+	terminal bool,
+	retryAfter time.Duration,
+) {
+	recorded := 0
+	for _, job := range jobs {
+		if s.failJobWithLease(ctx, contract, job, result, failureClass, code, terminal, retryAfter, false) {
+			recorded++
 		}
-		failureClass, code, terminal, retryAfter := classifyProviderFailure(err)
-		s.failJobs(ctx, contract, eligible, &result, failureClass, code, terminal, retryAfter)
-		return result, fmt.Errorf("embedding processing failed: %s", code)
 	}
-	if model != "" && model != contract.EmbeddingModel {
-		err := fmt.Errorf("embedding processing failed: %s", domain.EmbeddingFailureContractMismatch)
-		s.failJobs(ctx, contract, eligible, &result, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), true, 0)
-		return result, err
+	if recorded > 0 {
+		logEmbeddingFailureRecorded(s.logger, s.teamID, "mixed", failureClass, code, "batch", recorded)
 	}
-	if len(embeddings) != len(eligible) {
-		err := fmt.Errorf("embedding provider returned %d vectors for %d jobs", len(embeddings), len(eligible))
-		s.failJobs(ctx, contract, eligible, &result, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderResponseInvalid), true, 0)
-		return result, err
+}
+
+func (s *embeddingWorkerService) failIneligibleJobsWithLease(
+	ctx context.Context,
+	contract *repository.ActiveSearchContract,
+	jobs []repository.EmbeddingJob,
+	result *EmbeddingWorkerResult,
+) {
+	for _, job := range jobs {
+		s.failJobWithLease(ctx, contract, job, result, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), true, 0, true)
+	}
+}
+
+func (s *embeddingWorkerService) failJobWithLease(
+	ctx context.Context,
+	contract *repository.ActiveSearchContract,
+	job repository.EmbeddingJob,
+	result *EmbeddingWorkerResult,
+	failureClass, code string,
+	terminal bool,
+	retryAfter time.Duration,
+	emitLog bool,
+) bool {
+	leaseScope := newEmbeddingLeaseScope(ctx, s.search, []repository.EmbeddingJob{job}, s.workerID, s.lease, s.failureTimeout)
+	if leaseScope != nil {
+		defer leaseScope.Close()
+	}
+	return s.failJob(ctx, contract, job, result, failureClass, code, terminal, retryAfter, emitLog)
+}
+
+func (s *embeddingWorkerService) processEmbeddingBatch(
+	ctx context.Context,
+	contract *repository.ActiveSearchContract,
+	jobs []repository.EmbeddingJob,
+	result *EmbeddingWorkerResult,
+	leaseScope *embeddingLeaseScope,
+) error {
+	if len(jobs) == 0 {
+		return nil
+	}
+	resolved, err := s.resolveEmbeddingBatch(ctx, jobs, contract.EmbeddingModel, leaseScope)
+	if err != nil {
+		if errors.Is(err, repository.ErrEmbeddingLeaseLost) {
+			result.LeaseLost += len(jobs)
+			observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, "lease_lost")
+			return err
+		}
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return err
 	}
 	var firstErr error
 	recoveredJobs := 0
-	for i, job := range eligible {
-		vector := embeddings[i]
-		if err := validateEmbeddingVector(vector, job.EmbeddingDimensions); err != nil {
-			s.failJob(ctx, contract, job, &result, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderResponseInvalid), true, 0, true)
-			firstErr = errors.Join(firstErr, err)
+	aggregateFailures := make(map[string]struct {
+		failureClass string
+		code         string
+		count        int
+	})
+	for _, item := range resolved {
+		job := item.job
+		if item.err != nil {
+			failureClass, code, terminal, retryAfter := item.failureClass, item.failureCode, item.terminal, item.retryAfter
+			if code == "" {
+				failureClass, code, terminal, retryAfter = classifyProviderFailure(item.err)
+			}
+			if recorded := s.failJob(ctx, contract, job, result, failureClass, code, terminal, retryAfter, item.emitLog); recorded && !item.emitLog {
+				key := failureClass + "\x00" + code
+				failure := aggregateFailures[key]
+				failure.failureClass = failureClass
+				failure.code = code
+				failure.count++
+				aggregateFailures[key] = failure
+			}
+			if item.emitLog {
+				firstErr = errors.Join(firstErr, item.err)
+			} else {
+				firstErr = errors.Join(firstErr, fmt.Errorf("embedding processing failed: %s", code))
+			}
 			continue
 		}
-		err := s.search.CompleteEmbeddingJob(ctx, repository.CompleteEmbeddingJobInput{
-			TeamID:           job.TeamID,
-			EmbeddingJobID:   job.EmbeddingJobID,
-			WorkerID:         s.workerID,
-			ExpectedAttempts: job.Attempts,
-			Embedding:        vector,
-		})
+		complete := func() error {
+			return s.search.CompleteEmbeddingJob(ctx, repository.CompleteEmbeddingJobInput{
+				TeamID:           job.TeamID,
+				EmbeddingJobID:   job.EmbeddingJobID,
+				WorkerID:         s.workerID,
+				ExpectedAttempts: job.Attempts,
+				Embedding:        item.embedding,
+			})
+		}
+		err := complete()
 		switch {
 		case err == nil:
 			result.Completed++
@@ -189,14 +273,304 @@ func (s *embeddingWorkerService) ProcessNextBatch(ctx context.Context) (Embeddin
 		case errors.Is(err, repository.ErrEmbeddingLeaseLost):
 			result.LeaseLost++
 			observability.RecordEmbeddingError(ctx, s.metrics, contract.EmbeddingModel, "lease_lost")
-		default:
+		case err != nil:
 			firstErr = errors.Join(firstErr, err)
 		}
+	}
+	for _, failure := range aggregateFailures {
+		logEmbeddingFailureRecorded(s.logger, s.teamID, "mixed", failure.failureClass, failure.code, "batch", failure.count)
 	}
 	if recoveredJobs > 0 {
 		logEmbeddingRecoveryCompleted(s.logger, s.teamID, "batch", recoveredJobs)
 	}
-	return result, firstErr
+	return firstErr
+}
+
+type embeddingBatchResult struct {
+	job          repository.EmbeddingJob
+	embedding    []float32
+	err          error
+	failureClass string
+	failureCode  string
+	terminal     bool
+	retryAfter   time.Duration
+	emitLog      bool
+}
+
+func (s *embeddingWorkerService) resolveEmbeddingBatch(
+	ctx context.Context,
+	jobs []repository.EmbeddingJob,
+	expectedModel string,
+	leaseScope *embeddingLeaseScope,
+) ([]embeddingBatchResult, error) {
+	texts := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		texts = append(texts, job.DocumentText)
+	}
+	embeddings, model, err := s.embedBatchWithLease(ctx, jobs, texts, leaseScope)
+	if err != nil {
+		if errors.Is(err, repository.ErrEmbeddingLeaseLost) {
+			return nil, err
+		}
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		failureClass, code, terminal, retryAfter := classifyProviderFailure(err)
+		if code == string(domain.EmbeddingFailureInputRejected) && len(jobs) > 1 {
+			mid := len(jobs) / 2
+			left, leftErr := s.resolveEmbeddingBatch(ctx, jobs[:mid], expectedModel, leaseScope)
+			if leftErr != nil {
+				return nil, leftErr
+			}
+			right, rightErr := s.resolveEmbeddingBatch(ctx, jobs[mid:], expectedModel, leaseScope)
+			if rightErr != nil {
+				return nil, rightErr
+			}
+			return append(left, right...), nil
+		}
+		resolved := make([]embeddingBatchResult, 0, len(jobs))
+		for _, job := range jobs {
+			resolved = append(resolved, embeddingBatchResult{
+				job: job, err: err, failureClass: failureClass, failureCode: code,
+				terminal: terminal, retryAfter: retryAfter,
+			})
+		}
+		return resolved, nil
+	}
+	if model != "" && model != expectedModel {
+		err := fmt.Errorf("embedding processing failed: %s", domain.EmbeddingFailureContractMismatch)
+		return embeddingFailureResults(jobs, err, string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureContractMismatch), true, 0), nil
+	}
+	if len(embeddings) != len(jobs) {
+		err := fmt.Errorf("embedding provider returned %d vectors for %d jobs", len(embeddings), len(jobs))
+		return embeddingFailureResults(jobs, err, string(domain.EmbeddingFailureProviderAction), string(domain.EmbeddingFailureProviderResponseInvalid), true, 0), nil
+	}
+	resolved := make([]embeddingBatchResult, 0, len(jobs))
+	for i, job := range jobs {
+		vector := embeddings[i]
+		if err := validateEmbeddingVector(vector, job.EmbeddingDimensions); err != nil {
+			resolved = append(resolved, embeddingBatchResult{
+				job: job, err: err,
+				failureClass: string(domain.EmbeddingFailureProviderAction),
+				failureCode:  string(domain.EmbeddingFailureProviderResponseInvalid), terminal: true, emitLog: true,
+			})
+			continue
+		}
+		resolved = append(resolved, embeddingBatchResult{job: job, embedding: vector})
+	}
+	return resolved, nil
+}
+
+func embeddingFailureResults(
+	jobs []repository.EmbeddingJob,
+	err error,
+	failureClass, failureCode string,
+	terminal bool,
+	retryAfter time.Duration,
+) []embeddingBatchResult {
+	results := make([]embeddingBatchResult, 0, len(jobs))
+	for _, job := range jobs {
+		results = append(results, embeddingBatchResult{
+			job: job, err: err, failureClass: failureClass, failureCode: failureCode,
+			terminal: terminal, retryAfter: retryAfter,
+		})
+	}
+	return results
+}
+
+func (s *embeddingWorkerService) embedBatchWithLease(
+	ctx context.Context,
+	jobs []repository.EmbeddingJob,
+	texts []string,
+	leaseScope *embeddingLeaseScope,
+) ([][]float32, string, error) {
+	var providerCtx context.Context
+	var cancel context.CancelFunc
+	if leaseScope != nil {
+		providerCtx = leaseScope.Context()
+	} else {
+		providerCtx, cancel = context.WithCancel(ctx)
+		defer cancel()
+	}
+	providerCtx = observability.WithMetricIdentity(providerCtx, s.teamID, "")
+	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationBackgroundEmbedding, len(jobs))
+	embeddings, model, err := s.provider.EmbedBatch(providerCtx, texts)
+	if leaseScope != nil {
+		if renewErr := leaseScope.Err(); renewErr != nil && (err == nil || errors.Is(err, context.Canceled)) {
+			return nil, "", fmt.Errorf("%w: %v", repository.ErrEmbeddingLeaseLost, renewErr)
+		}
+	}
+	return embeddings, model, err
+}
+
+type embeddingLeaseScope struct {
+	ctx            context.Context
+	cancel         context.CancelFunc
+	renewer        repository.EmbeddingJobLeaseRenewer
+	workerID       string
+	lease          time.Duration
+	failureTimeout time.Duration
+	stop           chan struct{}
+	done           chan struct{}
+	jobs           []repository.EmbeddingJob
+	lostMu         sync.Mutex
+	lostErr        error
+	closeOnce      sync.Once
+}
+
+func newEmbeddingLeaseScope(
+	parent context.Context,
+	search repository.SearchRepository,
+	jobs []repository.EmbeddingJob,
+	workerID string,
+	lease time.Duration,
+	failureTimeout time.Duration,
+) *embeddingLeaseScope {
+	renewer, ok := search.(repository.EmbeddingJobLeaseRenewer)
+	if !ok || lease <= 0 || len(jobs) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(parent)
+	scope := &embeddingLeaseScope{
+		ctx:            ctx,
+		cancel:         cancel,
+		renewer:        renewer,
+		workerID:       workerID,
+		lease:          lease,
+		failureTimeout: failureTimeout,
+		stop:           make(chan struct{}),
+		done:           make(chan struct{}),
+		jobs:           append([]repository.EmbeddingJob(nil), jobs...),
+	}
+	go scope.run()
+	return scope
+}
+
+func (s *embeddingLeaseScope) Context() context.Context {
+	if s == nil {
+		return context.Background()
+	}
+	return s.ctx
+}
+
+func (s *embeddingLeaseScope) run() {
+	defer close(s.done)
+	interval := s.lease / 3
+	if interval < time.Second {
+		interval = s.lease / 2
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			err := renewEmbeddingLeases(s.ctx, s.renewer, s.jobs, s.workerID, s.lease, s.failureTimeout)
+			if err == nil {
+				continue
+			}
+			select {
+			case <-s.stop:
+				return
+			case <-s.ctx.Done():
+				return
+			default:
+			}
+			s.lostMu.Lock()
+			s.lostErr = err
+			s.lostMu.Unlock()
+			s.cancel()
+			return
+		}
+	}
+}
+
+func (s *embeddingLeaseScope) Err() error {
+	if s == nil {
+		return nil
+	}
+	s.lostMu.Lock()
+	defer s.lostMu.Unlock()
+	return s.lostErr
+}
+
+func (s *embeddingLeaseScope) Close() {
+	if s == nil {
+		return
+	}
+	s.closeOnce.Do(func() {
+		close(s.stop)
+		s.cancel()
+		<-s.done
+	})
+}
+
+func renewEmbeddingLeases(
+	ctx context.Context,
+	renewer repository.EmbeddingJobLeaseRenewer,
+	jobs []repository.EmbeddingJob,
+	workerID string,
+	lease time.Duration,
+	failureTimeout time.Duration,
+) error {
+	if len(jobs) == 0 {
+		return nil
+	}
+	workerCount := min(len(jobs), maxLeaseRenewWorkers)
+	groupCtx, stop := context.WithCancel(context.WithoutCancel(ctx))
+	defer stop()
+	jobCh := make(chan repository.EmbeddingJob, len(jobs))
+	for _, job := range jobs {
+		jobCh <- job
+	}
+	close(jobCh)
+	errs := make(chan error, 1)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-groupCtx.Done():
+					return
+				case job, ok := <-jobCh:
+					if !ok {
+						return
+					}
+					renewCtx, renewCancel := context.WithTimeout(groupCtx, failureTimeout)
+					err := renewer.RenewEmbeddingJobLease(renewCtx, repository.RenewEmbeddingJobLeaseInput{
+						TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: workerID,
+						ExpectedAttempts: job.Attempts, Lease: lease,
+					})
+					renewCancel()
+					if err != nil {
+						select {
+						case errs <- err:
+						default:
+						}
+						stop()
+						return
+					}
+				}
+			}
+		}()
+	}
+	workers.Wait()
+	select {
+	case err := <-errs:
+		return err
+	default:
+		return nil
+	}
 }
 
 func (s *embeddingWorkerService) validate() error {

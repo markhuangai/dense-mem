@@ -6,17 +6,10 @@ cd "${ROOT_DIR}"
 
 npm ci --prefix .lint
 npm run --prefix .lint lint:lines
+scripts/static-analysis.sh
 node --test tests/uat/team_dreaming_schedule.test.mjs
 bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
-packages="$(
-	git ls-files '*.go' |
-		grep -Ev '^(tests/uat|tests/eval/runtime)/' |
-		xargs -r -n1 dirname |
-		sort -u |
-		while IFS= read -r dir; do
-			go list "./${dir#./}" 2>/dev/null || true
-		done
-)"
+packages="$(scripts/go-packages.sh)"
 
 printf '%s\n' "${packages}"
 go test ${packages}

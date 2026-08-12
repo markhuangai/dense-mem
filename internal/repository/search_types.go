@@ -17,6 +17,14 @@ type SearchRepository interface {
 	SearchExactVector(ctx context.Context, input ExactVectorSearchInput) ([]SearchHit, error)
 }
 
+// EmbeddingJobLeaseRenewer is implemented by repositories that can extend a
+// claimed embedding job while an external provider call is in flight. It is
+// intentionally separate from SearchRepository so lightweight service fakes
+// and read-only adapters do not acquire a lease-management obligation.
+type EmbeddingJobLeaseRenewer interface {
+	RenewEmbeddingJobLease(ctx context.Context, input RenewEmbeddingJobLeaseInput) error
+}
+
 // EmbeddingReconciliationRepository is the durable control-plane surface for
 // the always-on daily failed-embedding recovery loop. It is separate from the
 // tenant-scoped search interface because run leases and operator projections
@@ -156,6 +164,14 @@ type CompleteEmbeddingJobInput struct {
 	WorkerID         string
 	ExpectedAttempts int
 	Embedding        []float32
+}
+
+type RenewEmbeddingJobLeaseInput struct {
+	TeamID           string
+	EmbeddingJobID   string
+	WorkerID         string
+	ExpectedAttempts int
+	Lease            time.Duration
 }
 
 type FailEmbeddingJobInput struct {

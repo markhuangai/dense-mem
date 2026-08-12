@@ -8,8 +8,10 @@ const upstreamURL = String(process.env.EMBEDDING_PROXY_UPSTREAM_URL ?? "").repla
 const upstreamKey = String(process.env.EMBEDDING_PROXY_UPSTREAM_KEY ?? "");
 const maxBodyBytes = 4 * 1024 * 1024;
 const upstreamTimeoutMilliseconds = 110_000;
-let mode = process.env.EMBEDDING_PROXY_MODE === "forward" ? "forward" : "quota";
-const stats = { requests: 0, quota_failures: 0, forwarded: 0, upstream_failures: 0, request_item_counts: [] };
+let mode = ["forward", "quota", "input_rejected"].includes(process.env.EMBEDDING_PROXY_MODE)
+  ? process.env.EMBEDDING_PROXY_MODE
+  : "quota";
+const stats = { requests: 0, quota_failures: 0, input_rejection_failures: 0, forwarded: 0, upstream_failures: 0, request_item_counts: [] };
 
 const server = http.createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
@@ -24,8 +26,8 @@ const server = http.createServer(async (request, response) => {
       if (body === null) return;
       try {
         const requested = JSON.parse(body.toString("utf8")).mode;
-        if (requested !== "quota" && requested !== "forward") {
-          return sendJSON(response, 400, { error: "mode must be quota or forward" });
+        if (!["quota", "forward", "input_rejected"].includes(requested)) {
+          return sendJSON(response, 400, { error: "mode must be quota, forward, or input_rejected" });
         }
         mode = requested;
       } catch {
@@ -45,6 +47,10 @@ const server = http.createServer(async (request, response) => {
   if (mode === "quota") {
     stats.quota_failures += 1;
     return sendJSON(response, 429, { error: { code: "insufficient_quota", type: "insufficient_quota" } }, { "retry-after": "1" });
+  }
+  if (mode === "input_rejected" && requestContainsRejectedInput(body)) {
+    stats.input_rejection_failures += 1;
+    return sendJSON(response, 413, { error: { code: "payload_too_large", type: "invalid_request_error" } });
   }
   if (!upstreamURL || !upstreamKey) {
     stats.upstream_failures += 1;
@@ -155,5 +161,14 @@ function requestItemCount(body) {
     return Array.isArray(parsed.input) ? parsed.input.length : 0;
   } catch {
     return 0;
+  }
+}
+
+function requestContainsRejectedInput(body) {
+  try {
+    const parsed = JSON.parse(body.toString("utf8"));
+    return Array.isArray(parsed.input) && parsed.input.some((value) => String(value).includes("embed-reject!"));
+  } catch {
+    return false;
   }
 }

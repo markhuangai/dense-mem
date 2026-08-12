@@ -284,7 +284,7 @@ func TestRecallHandlerMapsEmptyRequiredDegradationMessage(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d; want 503. body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "recall unavailable") {
+	if !strings.Contains(rec.Body.String(), `"message":"service unavailable"`) {
 		t.Fatalf("body = %s; want fallback message", rec.Body.String())
 	}
 }

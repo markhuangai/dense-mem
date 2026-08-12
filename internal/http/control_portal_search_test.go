@@ -144,7 +144,7 @@ func TestControlPortalSearchConvergenceBoundsRepositoryErrors(t *testing.T) {
 	server.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
-	require.Contains(t, rec.Body.String(), "failed to load search convergence")
+	require.Contains(t, rec.Body.String(), `"message":"internal server error"`)
 	require.NotContains(t, rec.Body.String(), backendMessage)
 	require.Contains(t, logger.warnings, "control_search_convergence_failed")
 	for _, loggedError := range logger.errors {
@@ -166,5 +166,5 @@ func TestControlPortalSearchConvergenceMapsUnavailableServiceTo503(t *testing.T)
 	server.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
-	require.Contains(t, rec.Body.String(), "search convergence unavailable")
+	require.Contains(t, rec.Body.String(), `"message":"service unavailable"`)
 }

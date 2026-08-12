@@ -122,7 +122,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		if strings.TrimSpace(telemetry.ScrapeToken) == "" {
 			return nil, fmt.Errorf("control portal: telemetry scrape token is required")
 		}
-		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), telemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
+		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), httpmw.TelemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
 	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, convergence: telemetry.Convergence, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
@@ -745,25 +745,6 @@ func controlTelemetryFilter(c echo.Context) (service.TelemetryFilter, error) {
 		ProfileID: profileID,
 		Audience:  service.TelemetryAudienceOperator,
 	}, nil
-}
-
-func telemetryScrapeTokenMiddleware(token string) echo.MiddlewareFunc {
-	expected := strings.TrimSpace(token)
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			got := c.Request().Header.Get("X-Telemetry-Scrape-Token")
-			if got == "" {
-				auth := c.Request().Header.Get(echo.HeaderAuthorization)
-				if strings.HasPrefix(auth, "Bearer ") {
-					got = strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
-				}
-			}
-			if subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
-				return httperr.New(httperr.AUTH_INVALID, "invalid telemetry scrape token")
-			}
-			return next(c)
-		}
-	}
 }
 
 type controlBodyLimitConfig interface {

@@ -22,7 +22,7 @@ import (
 )
 
 // ProtocolVersion is the MCP protocol revision this server speaks.
-const ProtocolVersion = "2024-11-05"
+const ProtocolVersion = "2025-11-25"
 
 // ServerName and ServerVersion are surfaced in the initialize response.
 const (
@@ -110,6 +110,67 @@ type rpcResponse struct {
 	Error   *rpcError       `json:"error,omitempty"`
 }
 
+var (
+	errRPCParse          = errors.New("mcp json parse error")
+	errRPCInvalidRequest = errors.New("mcp invalid request")
+)
+
+func decodeRPCRequest(payload []byte, req *rpcRequest) error {
+	if !json.Valid(payload) {
+		return errRPCParse
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil || fields == nil {
+		return errRPCInvalidRequest
+	}
+	for key := range fields {
+		switch key {
+		case "jsonrpc", "id", "method", "params":
+		default:
+			return errRPCInvalidRequest
+		}
+	}
+	jsonrpc, ok := fields["jsonrpc"]
+	if !ok || json.Unmarshal(jsonrpc, &req.JSONRPC) != nil || req.JSONRPC != "2.0" {
+		return errRPCInvalidRequest
+	}
+	method, ok := fields["method"]
+	if !ok || json.Unmarshal(method, &req.Method) != nil || strings.TrimSpace(req.Method) == "" {
+		return errRPCInvalidRequest
+	}
+	if id, ok := fields["id"]; ok {
+		if !validRPCID(id) {
+			return errRPCInvalidRequest
+		}
+		req.ID = append(req.ID[:0], id...)
+	}
+	if params, ok := fields["params"]; ok {
+		req.Params = append(req.Params[:0], params...)
+	}
+	return nil
+}
+
+func validRPCID(raw json.RawMessage) bool {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	switch value.(type) {
+	case nil, string, float64:
+		return true
+	default:
+		return false
+	}
+}
+
+func unmarshalObject(raw json.RawMessage, target any) error {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed[0] != '{' {
+		return errRPCInvalidRequest
+	}
+	return json.Unmarshal(raw, target)
+}
+
 type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -133,11 +194,15 @@ func (s *Server) HandlePayload(ctx context.Context, payload []byte) []byte {
 // must not receive a JSON-RPC response.
 func (s *Server) HandlePayloadResult(ctx context.Context, payload []byte) PayloadResult {
 	var req rpcRequest
-	if err := json.Unmarshal(payload, &req); err != nil {
-		s.logger.Warn("mcp: parse error", observability.String("error", err.Error()))
-		return PayloadResult{Payload: mustMarshalResponse(errorResponse(nil, errCodeParseError, "parse error")), Respond: true}
+	if err := decodeRPCRequest(payload, &req); err != nil {
+		if errors.Is(err, errRPCParse) {
+			s.logger.Warn("mcp: parse error")
+			return PayloadResult{Payload: mustMarshalResponse(errorResponse(nil, errCodeParseError, "parse error")), Respond: true}
+		}
+		return PayloadResult{Payload: mustMarshalResponse(errorResponse(nil, errCodeInvalidRequest, "invalid request")), Respond: true}
 	}
 	if req.isNotification() {
+		_ = s.dispatch(ctx, req)
 		return PayloadResult{Respond: false}
 	}
 	return PayloadResult{Payload: mustMarshalResponse(s.dispatch(ctx, req)), Respond: true}
@@ -147,7 +212,11 @@ func (s *Server) HandlePayloadResult(ctx context.Context, payload []byte) Payloa
 func (s *Server) dispatch(ctx context.Context, req rpcRequest) rpcResponse {
 	switch req.Method {
 	case "initialize":
-		return okResponse(req.ID, s.handleInitialize())
+		result, rpcErr := s.handleInitialize(req.Params)
+		if rpcErr != nil {
+			return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: rpcErr}
+		}
+		return okResponse(req.ID, result)
 	case "tools/list":
 		return okResponse(req.ID, s.handleToolsList(ctx))
 	case "tools/call":
@@ -166,7 +235,7 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) rpcResponse {
 		return okResponse(req.ID, result)
 	default:
 		s.logger.Warn("mcp: method not found", observability.String("method", req.Method))
-		return errorResponse(req.ID, errCodeMethodNotFound, fmt.Sprintf("method not found: %s", req.Method))
+		return errorResponse(req.ID, errCodeMethodNotFound, "method not found: "+boundedRPCText(req.Method))
 	}
 }
 
@@ -175,7 +244,18 @@ func (r rpcRequest) isNotification() bool {
 }
 
 // handleInitialize returns the server's capability block.
-func (s *Server) handleInitialize() map[string]any {
+type initializeParams struct {
+	ProtocolVersion string `json:"protocolVersion"`
+}
+
+func (s *Server) handleInitialize(raw json.RawMessage) (map[string]any, *rpcError) {
+	if len(raw) == 0 {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "initialize protocolVersion is required"}
+	}
+	var params initializeParams
+	if err := unmarshalObject(raw, &params); err != nil || params.ProtocolVersion != ProtocolVersion {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "unsupported protocolVersion"}
+	}
 	serverInfo := map[string]any{
 		"name":    s.serverName(),
 		"version": ServerVersion,
@@ -202,7 +282,7 @@ func (s *Server) handleInitialize() map[string]any {
 	if instructions := s.instructions(); instructions != "" {
 		out["instructions"] = instructions
 	}
-	return out
+	return out, nil
 }
 
 func (s *Server) handlePromptsList() map[string]any {
@@ -252,7 +332,7 @@ func (s *Server) handlePromptsGet(raw json.RawMessage) (map[string]any, *rpcErro
 		if !ok {
 			return nil, &rpcError{
 				Code:    errCodeInvalidParams,
-				Message: fmt.Sprintf("argument %q must be a string", key),
+				Message: fmt.Sprintf("argument %q must be a string", boundedRPCText(key)),
 			}
 		}
 		args[key] = text
@@ -260,9 +340,9 @@ func (s *Server) handlePromptsGet(raw json.RawMessage) (map[string]any, *rpcErro
 	prompt, text, err := s.prompts.Render(params.Name, args)
 	if err != nil {
 		if errors.Is(err, promptcatalog.ErrPromptNotFound) {
-			return nil, &rpcError{Code: errCodeMethodNotFound, Message: err.Error()}
+			return nil, &rpcError{Code: errCodeMethodNotFound, Message: boundedRPCText(err.Error())}
 		}
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: boundedRPCText(err.Error())}
 	}
 	return map[string]any{
 		"description": prompt.Description,
@@ -326,11 +406,11 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	}
 	tool, ok := s.registry.Get(params.Name)
 	if !ok {
-		return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", params.Name)}
+		return nil, &rpcError{Code: errCodeMethodNotFound, Message: "tool not found: " + boundedRPCText(params.Name)}
 	}
 	policy := registry.ResolveRuntimeToolPolicy(ctx, s.runtimeToolPolicy, tool)
 	if !registry.ToolVisible(ctx, tool, policy) {
-		return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", params.Name)}
+		return nil, &rpcError{Code: errCodeMethodNotFound, Message: "tool not found: " + boundedRPCText(params.Name)}
 	}
 	if !s.canUseTool(tool) {
 		return nil, &rpcError{Code: errCodeToolFailure, Message: "insufficient scope for tool"}
@@ -348,7 +428,7 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	}
 	if registry.IsContractTool(tool) {
 		if err := registry.ValidateContractInput(tool, args, s.validationScopes(tool)); err != nil {
-			return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
+			return nil, &rpcError{Code: errCodeInvalidParams, Message: boundedRPCText(err.Error())}
 		}
 	} else {
 		// Strip tenant IDs to prevent callers from overriding the fixed server
@@ -356,7 +436,7 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 		// may still receive a construction-time team for tests.
 		registry.StripTenantOverrideArgs(args)
 		if err := registry.ValidateInput(tool, args); err != nil {
-			return nil, &rpcError{Code: errCodeInvalidParams, Message: err.Error()}
+			return nil, &rpcError{Code: errCodeInvalidParams, Message: boundedRPCText(err.Error())}
 		}
 	}
 	ctx = registry.WithRuntimeToolPolicy(ctx, policy)
@@ -369,7 +449,7 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 			observability.String("tool", params.Name),
 			observability.ProfileID(s.profileID),
 		)
-		return nil, &rpcError{Code: errCodeToolFailure, Message: tools.SanitizeError(err)}
+		return nil, &rpcError{Code: errCodeToolFailure, Message: boundedRPCText(tools.SanitizeError(err))}
 	}
 
 	payload, err := json.Marshal(result)
@@ -534,4 +614,12 @@ func mustMarshalResponse(resp rpcResponse) []byte {
 		payload, _ = json.Marshal(fallback)
 	}
 	return payload
+}
+
+func boundedRPCText(value string) string {
+	value = strings.TrimSpace(value)
+	if len([]rune(value)) <= 512 {
+		return value
+	}
+	return string([]rune(value)[:512])
 }

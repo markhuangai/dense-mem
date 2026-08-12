@@ -1,7 +1,8 @@
 # Dense-Mem expert compose example.
 #
 # Download this file as docker-compose.yml when you need public HTTPS,
-# optional Redis, and Traefik edge controls:
+# optional Redis, and Traefik edge controls. Traefik uses an explicit
+# Compose config and never needs access to the Docker socket:
 #   curl -fsSLo docker-compose.yml \
 #     https://raw.githubusercontent.com/markhuangai/dense-mem/main/examples/docker-compose.expert.yml
 #
@@ -24,8 +25,8 @@ services:
     profiles: ["traefik"]
     image: traefik:v3
     command:
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.filename=/etc/traefik/dense-mem.yml"
+      - "--providers.file.watch=false"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
       - "--entrypoints.websecure.http3"
@@ -43,8 +44,10 @@ services:
       - "${TRAEFIK_HTTPS_PORT:-443}:443"
       - "${TRAEFIK_HTTPS_PORT:-443}:443/udp"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik-acme:/letsencrypt
+    configs:
+      - source: dense-mem-traefik
+        target: /etc/traefik/dense-mem.yml
     networks:
       - public
     restart: unless-stopped
@@ -83,7 +86,7 @@ services:
     networks:
       - private
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli ${REDIS_PASSWORD:+-a $$REDIS_PASSWORD} ping | grep -q PONG"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD:-}\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 10
@@ -91,7 +94,7 @@ services:
     restart: unless-stopped
 
   server:
-    image: ghcr.io/markhuangai/dense-mem:latest
+    image: ${DENSE_MEM_IMAGE:-ghcr.io/markhuangai/dense-mem:latest}
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CONTROL_HTTP_ADDR: ${CONTROL_HTTP_ADDR:-:8090}
@@ -145,28 +148,6 @@ services:
       TELEMETRY_SCRAPE_TOKEN: ${TELEMETRY_SCRAPE_TOKEN:-}
     ports:
       - "${CONTROL_PORTAL_BIND:-127.0.0.1}:${CONTROL_PORTAL_PORT:-8090}:8090"
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=${DENSE_MEM_PUBLIC_NETWORK:-dense-mem-public}"
-      - "traefik.http.routers.densemem.rule=Host(`${DENSE_MEM_DOMAIN:-localhost}`)"
-      - "traefik.http.routers.densemem.entrypoints=websecure"
-      - "traefik.http.routers.densemem.tls=true"
-      - "traefik.http.routers.densemem.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.densemem.middlewares=densemem-secure-headers,densemem-compress,densemem-rate-limit,densemem-buffer,densemem-inflight"
-      - "traefik.http.services.densemem.loadbalancer.server.port=8080"
-      - "traefik.http.middlewares.densemem-secure-headers.headers.stsSeconds=31536000"
-      - "traefik.http.middlewares.densemem-secure-headers.headers.stsIncludeSubdomains=true"
-      - "traefik.http.middlewares.densemem-secure-headers.headers.stsPreload=true"
-      - "traefik.http.middlewares.densemem-secure-headers.headers.contentTypeNosniff=true"
-      - "traefik.http.middlewares.densemem-secure-headers.headers.browserXssFilter=true"
-      - "traefik.http.middlewares.densemem-secure-headers.headers.referrerPolicy=no-referrer"
-      - "traefik.http.middlewares.densemem-secure-headers.headers.frameDeny=true"
-      - "traefik.http.middlewares.densemem-compress.compress=true"
-      - "traefik.http.middlewares.densemem-rate-limit.rateLimit.average=${TRAEFIK_RATE_AVERAGE:-60}"
-      - "traefik.http.middlewares.densemem-rate-limit.rateLimit.period=${TRAEFIK_RATE_PERIOD:-1m}"
-      - "traefik.http.middlewares.densemem-rate-limit.rateLimit.burst=${TRAEFIK_RATE_BURST:-30}"
-      - "traefik.http.middlewares.densemem-buffer.buffering.maxRequestBodyBytes=${TRAEFIK_MAX_BODY_BYTES:-1048576}"
-      - "traefik.http.middlewares.densemem-inflight.inFlightReq.amount=${TRAEFIK_INFLIGHT_REQUESTS:-32}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -185,3 +166,50 @@ networks:
     name: ${DENSE_MEM_PUBLIC_NETWORK:-dense-mem-public}
     external: ${DENSE_MEM_PUBLIC_NETWORK_EXTERNAL:-false}
   private:
+
+configs:
+  dense-mem-traefik:
+    content: |
+      http:
+        routers:
+          densemem:
+            rule: "Host(`${DENSE_MEM_DOMAIN:-localhost}`)"
+            entryPoints:
+              - websecure
+            middlewares:
+              - densemem-secure-headers
+              - densemem-compress
+              - densemem-rate-limit
+              - densemem-buffer
+              - densemem-inflight
+            service: densemem
+            tls:
+              certResolver: letsencrypt
+        services:
+          densemem:
+            loadBalancer:
+              servers:
+                - url: http://server:8080
+        middlewares:
+          densemem-secure-headers:
+            headers:
+              stsSeconds: 31536000
+              stsIncludeSubdomains: true
+              stsPreload: true
+              contentTypeNosniff: true
+              browserXssFilter: true
+              referrerPolicy: no-referrer
+              frameDeny: true
+          densemem-compress:
+            compress: {}
+          densemem-rate-limit:
+            rateLimit:
+              average: ${TRAEFIK_RATE_AVERAGE:-60}
+              period: ${TRAEFIK_RATE_PERIOD:-1m}
+              burst: ${TRAEFIK_RATE_BURST:-30}
+          densemem-buffer:
+            buffering:
+              maxRequestBodyBytes: ${TRAEFIK_MAX_BODY_BYTES:-1048576}
+          densemem-inflight:
+            inFlightReq:
+              amount: ${TRAEFIK_INFLIGHT_REQUESTS:-32}
