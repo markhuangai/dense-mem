@@ -24,6 +24,13 @@ import (
 // ProtocolVersion is the MCP protocol revision this server speaks.
 const ProtocolVersion = "2025-11-25"
 
+var supportedProtocolVersions = map[string]struct{}{
+	"2024-11-05":    {},
+	"2025-03-26":    {},
+	"2025-06-18":    {},
+	ProtocolVersion: {},
+}
+
 // ServerName and ServerVersion are surfaced in the initialize response.
 const (
 	ServerName    = "dense-mem"
@@ -202,7 +209,9 @@ func (s *Server) HandlePayloadResult(ctx context.Context, payload []byte) Payloa
 		return PayloadResult{Payload: mustMarshalResponse(errorResponse(nil, errCodeInvalidRequest, "invalid request")), Respond: true}
 	}
 	if req.isNotification() {
-		_ = s.dispatch(ctx, req)
+		if req.Method != "notifications/initialized" {
+			_ = s.dispatch(ctx, req)
+		}
 		return PayloadResult{Respond: false}
 	}
 	return PayloadResult{Payload: mustMarshalResponse(s.dispatch(ctx, req)), Respond: true}
@@ -253,8 +262,12 @@ func (s *Server) handleInitialize(raw json.RawMessage) (map[string]any, *rpcErro
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: "initialize protocolVersion is required"}
 	}
 	var params initializeParams
-	if err := unmarshalObject(raw, &params); err != nil || params.ProtocolVersion != ProtocolVersion {
+	if err := unmarshalObject(raw, &params); err != nil || strings.TrimSpace(params.ProtocolVersion) == "" {
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: "unsupported protocolVersion"}
+	}
+	negotiatedVersion := ProtocolVersion
+	if _, ok := supportedProtocolVersions[params.ProtocolVersion]; ok {
+		negotiatedVersion = params.ProtocolVersion
 	}
 	serverInfo := map[string]any{
 		"name":    s.serverName(),
@@ -275,7 +288,7 @@ func (s *Server) handleInitialize(raw json.RawMessage) (map[string]any, *rpcErro
 	}
 
 	out := map[string]any{
-		"protocolVersion": ProtocolVersion,
+		"protocolVersion": negotiatedVersion,
 		"capabilities":    capabilities,
 		"serverInfo":      serverInfo,
 	}

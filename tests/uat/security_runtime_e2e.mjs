@@ -4,6 +4,7 @@ const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const telemetryURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const telemetryToken = requiredEnv("DENSE_MEM_E2E_TELEMETRY_TOKEN");
 const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
+let rpcID = 100;
 
 const malformed = await rawMCP("{");
 assert(malformed.status === 200, `malformed JSON-RPC returned HTTP ${malformed.status}`);
@@ -14,8 +15,21 @@ const invalidEnvelope = await rawMCP(JSON.stringify({ jsonrpc: "1.0", id: { obje
 assert(invalidEnvelope.status === 200, `invalid JSON-RPC envelope returned HTTP ${invalidEnvelope.status}`);
 assert(invalidEnvelope.body.includes("invalid request"), "invalid JSON-RPC envelope did not return the bounded invalid-request error");
 
-const notification = await rawMCP(JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25" } }));
-assert(notification.status === 202 || notification.status === 204 || notification.body === "", "JSON-RPC notification unexpectedly returned a response body");
+for (const protocolVersion of ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]) {
+  const initialized = await mcpRPC("initialize", { protocolVersion });
+  assert(initialized.response.status === 200, `${protocolVersion} initialize returned HTTP ${initialized.response.status}`);
+  assert(initialized.payload?.result?.protocolVersion === protocolVersion, `${protocolVersion} was not negotiated`);
+
+  const notification = await rawMCP(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
+  assert(notification.status === 202 && notification.body === "", "initialized notification returned a response body");
+
+  const listed = await mcpRPC("tools/list", {});
+  assert(listed.response.status === 200, `${protocolVersion} tools/list returned HTTP ${listed.response.status}`);
+  assert(Array.isArray(listed.payload?.result?.tools) && listed.payload.result.tools.length > 0, `${protocolVersion} tools/list was empty`);
+}
+
+const future = await mcpRPC("initialize", { protocolVersion: "2099-01-01" });
+assert(future.payload?.result?.protocolVersion === "2025-11-25", "unknown protocol did not negotiate to the latest revision");
 
 const unknownTool = await fetch(`${userURL}/mcp`, {
   method: "POST",
@@ -36,6 +50,7 @@ assert(validToken.status === 200, `telemetry scrape with configured token return
 console.log(JSON.stringify({
   status: "ok",
   bounded_json_rpc_errors: true,
+  compatible_protocol_versions: true,
   notification_without_response: true,
   bounded_unknown_tool_error: true,
   telemetry_token_required: true,
@@ -48,6 +63,11 @@ async function rawMCP(body) {
     body,
   });
   return { status: response.status, body: await response.text() };
+}
+
+async function mcpRPC(method, params) {
+  const response = await rawMCP(JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method, params }));
+  return { response, payload: JSON.parse(response.body) };
 }
 
 function requiredEnv(name) { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }

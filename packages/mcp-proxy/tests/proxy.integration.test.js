@@ -6,6 +6,8 @@ import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+const legacyProtocolVersion = "2025-06-18";
+
 test("proxy forwards stdio MCP requests to Dense-Mem Streamable HTTP", async () => {
   const requests = [];
   const server = http.createServer(async (req, res) => {
@@ -18,7 +20,7 @@ test("proxy forwards stdio MCP requests to Dense-Mem Streamable HTTP", async () 
 
     const body = await readBody(req);
     const rpc = JSON.parse(body);
-    requests.push(rpc.method);
+    requests.push(rpc);
 
     if (!("id" in rpc)) {
       res.writeHead(202).end();
@@ -50,13 +52,28 @@ test("proxy forwards stdio MCP requests to Dense-Mem Streamable HTTP", async () 
     stderr += chunk;
   });
   const client = new Client({ name: "dense-mem-proxy-test", version: "0.0.0" });
+  const send = transport.send.bind(transport);
+  transport.send = (message) => {
+    if (message.method === "initialize") {
+      message = {
+        ...message,
+        params: { ...message.params, protocolVersion: legacyProtocolVersion },
+      };
+    }
+    return send(message);
+  };
 
   try {
     await withTimeout(client.connect(transport), 15000, () => stderr);
     const { tools } = await withTimeout(client.listTools(), 15000, () => stderr);
     assert.equal(tools[0].name, "remember");
 
-    assert.deepEqual(requests, ["initialize", "notifications/initialized", "tools/list"]);
+    assert.deepEqual(requests.map(({ method }) => method), [
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+    ]);
+    assert.equal(requests[0].params.protocolVersion, legacyProtocolVersion);
     assert.doesNotMatch(stderr, /dm_live_test/);
   } finally {
     await client.close();

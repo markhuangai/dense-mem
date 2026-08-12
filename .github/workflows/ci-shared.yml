@@ -27,12 +27,17 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
-          cache-dependency-path: .lint/package-lock.json
+          cache-dependency-path: |
+            .lint/package-lock.json
+            packages/mcp-proxy/package-lock.json
 
       - name: Install lint dependencies
         run: npm ci --prefix .lint
+
+      - name: Install MCP proxy dependencies
+        run: npm ci --prefix packages/mcp-proxy
 
       - name: Run npm vulnerability audits
         shell: bash
@@ -44,6 +49,9 @@ jobs:
 
       - name: Run repository lint
         run: npm run --prefix .lint lint:lines
+
+      - name: Run MCP proxy tests
+        run: npm test --prefix packages/mcp-proxy
 
       - name: Run scheduled-dreaming timing test
         run: node --test tests/uat/team_dreaming_schedule.test.mjs

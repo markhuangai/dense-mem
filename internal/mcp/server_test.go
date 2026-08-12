@@ -741,7 +741,7 @@ func TestMCP_UnknownMethodReturnsError(t *testing.T) {
 }
 
 func TestMCP_HandlePayloadResultNotifications(t *testing.T) {
-	logger, _ := testLogger(t)
+	logger, logBuf := testLogger(t)
 	reg := registry.New()
 	s := NewServer(reg, "pA", logger)
 
@@ -751,6 +751,9 @@ func TestMCP_HandlePayloadResultNotifications(t *testing.T) {
 	}
 	if len(notification.Payload) != 0 {
 		t.Fatalf("notification payload = %q; want empty", string(notification.Payload))
+	}
+	if strings.Contains(logBuf.String(), "method not found") {
+		t.Fatalf("initialized notification logged as unknown method: %s", logBuf.String())
 	}
 
 	invalid := s.HandlePayloadResult(context.Background(), []byte(`{"jsonrpc":"2.0"}`))
@@ -780,7 +783,9 @@ func TestMCP_StrictJSONRPCAndInitializeValidation(t *testing.T) {
 		{"boolean ID", `{"jsonrpc":"2.0","id":true,"method":"tools/list"}`, errCodeInvalidRequest},
 		{"unknown envelope member", `{"jsonrpc":"2.0","id":1,"method":"tools/list","extra":true}`, errCodeInvalidRequest},
 		{"missing initialize params", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`, errCodeInvalidParams},
-		{"unsupported initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`, errCodeInvalidParams},
+		{"empty initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":""}}`, errCodeInvalidParams},
+		{"whitespace initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":" "}}`, errCodeInvalidParams},
+		{"non-string initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":42}}`, errCodeInvalidParams},
 		{"exact initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
