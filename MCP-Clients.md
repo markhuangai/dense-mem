@@ -44,6 +44,17 @@ then use codex mcp list or /mcp.
 The version-sensitive source is the
 [official Codex MCP documentation](https://developers.openai.com/codex/mcp).
 
+## Protocol Revision And Contract Selection
+
+Dense-Mem speaks MCP protocol revision `2025-11-25`. The client must send that
+exact value in `initialize.params.protocolVersion`; the server rejects a
+missing or unsupported revision. This is the wire-protocol revision, not a
+client-selectable Dense-Mem schema or deployment version.
+
+Each running server exposes one current closed tool schema. Clients do not
+select a contract version, schema version, or server behavior variant; call
+`tools/list` after initialization and use that catalog for the connection.
+
 ## Tool Discovery
 
 After connection, the host initializes the MCP server and calls tools/list.

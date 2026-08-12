@@ -78,6 +78,11 @@ flowchart LR
 The authenticated principal fixes team, profile, role, and scopes before any
 application service runs. A request never chooses its tenant.
 
+Remember submissions are assessed by one canonical submission-wide worker. The
+retired standalone semantic-placement and retry-verifier implementations are
+not runtime paths; provider calls and durable promotion remain separated by
+the append-once assessment boundary.
+
 ## Runtime Composition
 
 Dependency direction is inward: transports call application services;
@@ -185,6 +190,13 @@ PostgreSQL authority validation is a readiness gate. Redis is a gate only when
 distributed coordination is required or explicitly configured as mandatory. A
 multi-instance deployment cannot silently fall back to process-local limits or
 leases.
+
+Embedding workers claim PostgreSQL jobs with worker/attempt-fenced renewable
+leases. A slow provider call cannot be reclaimed by another worker while its
+lease is renewed, and a late completion or renewal cannot overwrite a newer
+attempt. Input-rejection failures are recursively split only to isolate the
+bad document; other provider failures retain their existing bounded retry
+policy.
 
 Migrations finish before either HTTP listener serves traffic. Replicas sharing
 one writable PostgreSQL primary serialize startup migration work through the
@@ -401,3 +413,6 @@ change relies on it.
     directly creating a Hypothesis.
 21. V2.4 changes no search projection or embedding input and therefore requires
     no re-embedding.
+22. MCP has one current closed schema per running server; clients do not select
+    a Dense-Mem schema/server contract version. The wire protocol revision is
+    fixed by the `initialize` exchange.

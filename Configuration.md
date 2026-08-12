@@ -102,6 +102,13 @@ service instances * POSTGRES_MAX_OPEN_CONNS
 Adding service replicas without recalculating this budget fails the production
 preflight.
 
+When `POSTGRES_DSN` is empty, the application builds the writable DSN from
+`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`,
+`POSTGRES_DB`, and `POSTGRES_SSLMODE`, escaping each URL component. Compose and
+the release image therefore need only component settings; the entrypoint does
+not assemble or expose a credentialed URL. Set `POSTGRES_DSN` only when an
+operator intentionally supplies a complete single-primary DSN.
+
 Topology is detected from PostgreSQL at boot; it is not selected by an
 environment hint. This release requires a writable single primary and stops
 before migrations or normal service startup when `pg_is_in_recovery()` is true,
@@ -436,6 +443,12 @@ SSO and Entra directory mapping are in [User Portal SSO](User-Portal-SSO).
 
 Debug output still redacts secrets, evidence, vectors, and provider payloads.
 Metric definitions belong in [Telemetry](Telemetry).
+
+The Prometheus scrape endpoint is `/metrics` on the private control listener
+(or the metrics-only listener when the control portal is disabled). It requires
+`TELEMETRY_SCRAPE_TOKEN` through either `Authorization: Bearer ...` or the
+dedicated scrape-token header. Prometheus is a query/visualization service;
+its public port is not the Dense-Mem scrape-auth boundary.
 
 ## Feature-Gated Runtime Policy
 

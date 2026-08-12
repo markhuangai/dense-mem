@@ -29,6 +29,10 @@ and Docker administration remain private.
 
 Use a pinned release's expert Compose example. Configure the domain/contact
 values required by its ingress implementation, then enable its TLS profile.
+The bundled Traefik profile uses an explicit Compose file-provider config that
+routes to `http://server:8080`; it does not mount or require the Docker socket.
+An external ingress may be used instead and remains responsible for its own
+discovery and exposure policy.
 
 Protected requests may carry an MCP or user-portal API-key bearer credential,
 an opaque user-portal API-key session cookie, or a user-portal SSO session
@@ -54,6 +58,15 @@ Public edge controls include:
 
 They are defense in depth; application authentication, scopes, RLS, and
 team-scoped full-text/vector/adjacency reads remain required.
+
+## Forwarded Client IP
+
+Dense-Mem extracts the first client address from `X-Forwarded-For` on its main,
+control, and metrics listeners. The deployment ingress must overwrite and
+validate that header before forwarding requests. Dense-Mem intentionally does
+not maintain a trusted-proxy CIDR allowlist: operators own the proxy trust
+boundary, and automatic security bans are applied to the resulting real client
+IP rather than a changing pod or proxy address.
 
 ## Public Surface
 
@@ -99,6 +112,10 @@ Redis never owns:
 - verifier/submission assessment decisions
 - submission/embedding queues and results
 - API keys/audit
+
+Compose Redis healthchecks authenticate with `REDISCLI_AUTH` so the password is
+not placed in the `redis-cli` argument list. Keep the healthcheck and server
+credentials in the same secret environment or secret-manager scope.
 
 PostgreSQL remains the authoritative queue/ledger. Redis loss does not remove
 memory.

@@ -407,8 +407,11 @@ LOCKED`, marks them processing with renewable leases, calls the provider's
 ordered batch embedding API, and completes vector/document/job state in one
 transaction. If a batch fails, the worker recursively splits the batch to
 isolate bad or oversized documents instead of retrying every good document
-together. Upserting an unchanged search document must not clear an existing
-current vector or enqueue another embedding job.
+together, but only for the typed input-rejection failure. Every renewal and
+completion includes the worker ID and expected attempt; a reclaimed or expired
+job is fenced and cannot be revived by the previous worker. Upserting an
+unchanged search document must not clear an existing current vector or enqueue
+another embedding job.
 
 ### Relationship projection generation
 

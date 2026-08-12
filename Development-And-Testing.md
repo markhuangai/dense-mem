@@ -11,6 +11,9 @@ in this architecture page.
 - browser apps: React/Vite with Vitest and Playwright
 - checks: `scripts/ci-check.sh` runs line lint, Go tests, and a 90% unit coverage
   gate for selected internal packages
+- static analysis: `scripts/static-analysis.sh` resolves every tracked Go
+  package fail-closed, runs the module-pinned `staticcheck`, and checks
+  production clone groups with the module-pinned `dupl`
 - CI supply-chain gates: the module-pinned `govulncheck` tool scans all Go
   packages, and npm audit fails on high or critical findings in the repository
   lint, browser, and MCP proxy dependency trees
@@ -166,6 +169,12 @@ npm test --prefix web
 ```
 
 Exact targets may change during the refactor; update this page and CI together.
+
+The Compose E2E matrix includes MCP boundary validation, runtime token/error
+boundaries, infrastructure credential/socket checks, mixed embedding input
+recovery, and the existing submission, conflict, portal, and dreaming
+scenarios. The standard runner uses the supplied local `docker-compose.yml` and
+`.env`; generated credentials and runtime artifacts remain ignored.
 
 ## Database Change Rules
 
