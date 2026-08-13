@@ -215,7 +215,7 @@ jobs:
       - name: Review pull request
         id: reviewer
         continue-on-error: true
-        uses: markhuangai/ai-pr-reviewer@v1.0.0-rc.0
+        uses: markhuangai/ai-pr-reviewer@v1-prerelease
         with:
           pull-request-number: ${{ needs.resolve.outputs.pr_number }}
           expected-head-sha: ${{ needs.resolve.outputs.head_sha }}
