@@ -166,16 +166,347 @@ jobs:
               });
             }
 
-  publish-image:
-    name: Publish prerelease image
+  resolve-production-source:
+    name: Resolve production image source
     needs: prepare-prerelease
     if: needs.prepare-prerelease.outputs.should_publish == 'true'
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+      pull-requests: read
+      statuses: read
+    runs-on: docker-runner
+    outputs:
+      preview_base: ${{ steps.export.outputs.preview_base }}
+      preview_digest: ${{ steps.export.outputs.preview_digest }}
+      preview_head: ${{ steps.preview.outputs.preview_head }}
+      preview_pr: ${{ steps.preview.outputs.preview_pr }}
+      preview_run_attempt: ${{ steps.preview.outputs.preview_run_attempt }}
+      preview_run_id: ${{ steps.preview.outputs.preview_run_id }}
+      reuse_preview: ${{ steps.export.outputs.reuse_preview }}
+
+    steps:
+      - name: Checkout trusted release policy
+        id: policy_checkout
+        continue-on-error: true
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+          sparse-checkout: .github/scripts
+
+      - name: Resolve eligible pull request preview
+        id: preview
+        if: steps.policy_checkout.outcome == 'success'
+        continue-on-error: true
+        uses: actions/github-script@v9
+        env:
+          MAIN_COMMIT: ${{ github.event.workflow_run.head_sha }}
+        with:
+          script: |
+            const policy = require("./.github/scripts/image-release-policy.cjs");
+            const mainCommit = process.env.MAIN_COMMIT;
+            const { data: commit } = await github.rest.repos.getCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: mainCommit,
+            });
+            if (commit.parents.length !== 1) {
+              core.info("The main commit does not have exactly one parent; rebuilding production.");
+              core.setOutput("reuse_preview", "false");
+              return;
+            }
+
+            const resolved = await policy.resolveRcPreview({
+              github,
+              context,
+              mainCommit,
+            });
+            if (!resolved.eligible) {
+              core.info(`Rebuilding production: ${resolved.reason}.`);
+              core.setOutput("reuse_preview", "false");
+              return;
+            }
+
+            core.setOutput("preview_head", resolved.headSha);
+            core.setOutput("preview_pr", String(resolved.pullNumber));
+            core.setOutput("preview_run_attempt", resolved.runAttempt);
+            core.setOutput("preview_run_id", resolved.runId);
+            core.setOutput("reuse_preview", "true");
+
+      - name: Verify Git ancestry and tree identity
+        id: git
+        if: steps.preview.outputs.reuse_preview == 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          MAIN_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          PREVIEW_HEAD: ${{ steps.preview.outputs.preview_head }}
+          PREVIEW_PR: ${{ steps.preview.outputs.preview_pr }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+${MAIN_COMMIT}:refs/remotes/release/main" \
+            "+refs/pull/${PREVIEW_PR}/head:refs/remotes/preview/head"
+          if [[ "$(git rev-parse refs/remotes/preview/head)" != "${PREVIEW_HEAD}" ]]; then
+            echo "preview_eligible=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          previous_main="$(git rev-parse "${MAIN_COMMIT}^")"
+          if ! git merge-base --is-ancestor "${previous_main}" "${PREVIEW_HEAD}"; then
+            echo "preview_eligible=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          if [[ "$(git rev-parse "${PREVIEW_HEAD}^{tree}")" != "$(git rev-parse "${MAIN_COMMIT}^{tree}")" ]]; then
+            echo "preview_eligible=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "preview_eligible=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Install pinned regctl
+        id: regctl
+        if: steps.git.outputs.preview_eligible == 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          REGCTL_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
+        run: |
+          set -euo pipefail
+          export REGCTL_CONFIG="${RUNNER_TEMP}/regctl-config.json"
+          echo "REGCTL_CONFIG=${REGCTL_CONFIG}" >> "${GITHUB_ENV}"
+          curl -fsSL -o "${RUNNER_TEMP}/regctl" \
+            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
+          printf '%s  %s\n' "${REGCTL_SHA256}" "${RUNNER_TEMP}/regctl" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/regctl"
+          "${RUNNER_TEMP}/regctl" config set --docker-cred=false --docker-cert=false
+
+      - name: Log in to GHCR for preview validation
+        id: registry-login
+        if: steps.git.outputs.preview_eligible == 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: echo "${GITHUB_TOKEN}" | "${RUNNER_TEMP}/regctl" registry login ghcr.io -u "${GITHUB_ACTOR}" --pass-stdin
+
+      - name: Validate preview receipt for reuse
+        id: image
+        if: >-
+          ${{
+            steps.git.outputs.preview_eligible == 'true' &&
+            steps.regctl.outcome == 'success' &&
+            steps.registry-login.outcome == 'success'
+          }}
+        continue-on-error: true
+        shell: bash
+        env:
+          PREVIEW_HEAD: ${{ steps.preview.outputs.preview_head }}
+          PREVIEW_PR: ${{ steps.preview.outputs.preview_pr }}
+          PREVIEW_RUN_ATTEMPT: ${{ steps.preview.outputs.preview_run_attempt }}
+          PREVIEW_RUN_ID: ${{ steps.preview.outputs.preview_run_id }}
+          REGCTL_BIN: ${{ runner.temp }}/regctl
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:test-${PREVIEW_PR}"
+          receipt="$(
+            .github/scripts/oci-image.sh preview-receipt \
+              "${image}" \
+              "${PREVIEW_PR}" \
+              "${PREVIEW_HEAD}" \
+              "${PREVIEW_RUN_ID}" \
+              "${PREVIEW_RUN_ATTEMPT}"
+          )"
+          IFS=$'\t' read -r preview_digest preview_base <<<"${receipt}"
+          [[ "${preview_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${preview_base}" =~ ^[0-9a-f]{40}$ ]]
+          echo "preview_base=${preview_base}" >> "${GITHUB_OUTPUT}"
+          echo "preview_digest=${preview_digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check tested main ancestry
+        id: base
+        if: steps.image.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          MAIN_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          PREVIEW_BASE: ${{ steps.image.outputs.preview_base }}
+        run: |
+          set -euo pipefail
+          previous_main="$(git rev-parse "${MAIN_COMMIT}^")"
+          if [[ ! "${PREVIEW_BASE}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "preview_eligible=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          git fetch --no-tags origin "+${PREVIEW_BASE}:refs/remotes/preview/base"
+          if git merge-base --is-ancestor "${PREVIEW_BASE}" "${previous_main}"; then
+            echo "preview_eligible=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "preview_eligible=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Finalize preview decision
+        id: final
+        if: always()
+        shell: bash
+        env:
+          API_ELIGIBLE: ${{ steps.preview.outputs.reuse_preview }}
+          BASE_ELIGIBLE: ${{ steps.base.outputs.preview_eligible }}
+          GIT_ELIGIBLE: ${{ steps.git.outputs.preview_eligible }}
+          IMAGE_ELIGIBLE: ${{ steps.image.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ \
+            "${API_ELIGIBLE}" == "true" && \
+            "${GIT_ELIGIBLE}" == "true" && \
+            "${IMAGE_ELIGIBLE}" == "success" && \
+            "${BASE_ELIGIBLE}" == "true" \
+          ]]; then
+            echo "reuse_preview=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "reuse_preview=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Export final decision
+        id: export
+        if: always()
+        shell: bash
+        env:
+          PREVIEW_BASE: ${{ steps.image.outputs.preview_base }}
+          PREVIEW_DIGEST: ${{ steps.image.outputs.preview_digest }}
+          REUSE_PREVIEW: ${{ steps.final.outputs.reuse_preview }}
+        run: |
+          set -euo pipefail
+          echo "preview_base=${PREVIEW_BASE}" >> "${GITHUB_OUTPUT}"
+          echo "preview_digest=${PREVIEW_DIGEST}" >> "${GITHUB_OUTPUT}"
+          echo "reuse_preview=${REUSE_PREVIEW}" >> "${GITHUB_OUTPUT}"
+
+  publish-image:
+    name: Publish prerelease image
+    needs:
+      - prepare-prerelease
+      - resolve-production-source
+    if: >-
+      ${{
+        needs.prepare-prerelease.outputs.should_publish == 'true' &&
+        needs.resolve-production-source.outputs.reuse_preview != 'true'
+      }}
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/publish-image.yml
     with:
       tag: ${{ needs.prepare-prerelease.outputs.tag }}
+
+  promote-preview-image:
+    name: Promote preview image
+    needs:
+      - prepare-prerelease
+      - resolve-production-source
+    if: >-
+      ${{
+        needs.prepare-prerelease.outputs.should_publish == 'true' &&
+        needs.resolve-production-source.outputs.reuse_preview == 'true'
+      }}
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      pull-requests: read
+      statuses: read
+    runs-on: rootless-docker
+
+    steps:
+      - name: Checkout release helpers
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+          sparse-checkout: .github/scripts
+
+      - name: Revalidate preview receipt
+        uses: actions/github-script@v9
+        env:
+          EXPECTED_HEAD: ${{ needs.resolve-production-source.outputs.preview_head }}
+          EXPECTED_PR: ${{ needs.resolve-production-source.outputs.preview_pr }}
+          EXPECTED_RUN_ATTEMPT: ${{ needs.resolve-production-source.outputs.preview_run_attempt }}
+          EXPECTED_RUN_ID: ${{ needs.resolve-production-source.outputs.preview_run_id }}
+          MAIN_COMMIT: ${{ github.event.workflow_run.head_sha }}
+        with:
+          script: |
+            const policy = require("./.github/scripts/image-release-policy.cjs");
+            const resolved = await policy.resolveRcPreview({
+              github,
+              context,
+              mainCommit: process.env.MAIN_COMMIT,
+            });
+            if (
+              !resolved.eligible ||
+              resolved.pullNumber !== Number(process.env.EXPECTED_PR) ||
+              resolved.headSha !== process.env.EXPECTED_HEAD ||
+              resolved.runId !== process.env.EXPECTED_RUN_ID ||
+              resolved.runAttempt !== process.env.EXPECTED_RUN_ATTEMPT
+            ) {
+              core.setFailed(`The preview receipt changed before promotion: ${resolved.reason}.`);
+            }
+
+      - name: Install pinned regctl
+        shell: bash
+        env:
+          REGCTL_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
+        run: |
+          set -euo pipefail
+          export REGCTL_CONFIG="${RUNNER_TEMP}/regctl-config.json"
+          echo "REGCTL_CONFIG=${REGCTL_CONFIG}" >> "${GITHUB_ENV}"
+          curl -fsSL -o "${RUNNER_TEMP}/regctl" \
+            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
+          printf '%s  %s\n' "${REGCTL_SHA256}" "${RUNNER_TEMP}/regctl" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/regctl"
+          "${RUNNER_TEMP}/regctl" config set --docker-cred=false --docker-cert=false
+
+      - name: Log in to GHCR
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: echo "${GITHUB_TOKEN}" | "${RUNNER_TEMP}/regctl" registry login ghcr.io -u "${GITHUB_ACTOR}" --pass-stdin
+
+      - name: Validate and promote preview layers
+        shell: bash
+        env:
+          MAIN_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          PREVIEW_BASE: ${{ needs.resolve-production-source.outputs.preview_base }}
+          PREVIEW_DIGEST: ${{ needs.resolve-production-source.outputs.preview_digest }}
+          PREVIEW_HEAD: ${{ needs.resolve-production-source.outputs.preview_head }}
+          PREVIEW_PR: ${{ needs.resolve-production-source.outputs.preview_pr }}
+          PREVIEW_RUN_ATTEMPT: ${{ needs.resolve-production-source.outputs.preview_run_attempt }}
+          PREVIEW_RUN_ID: ${{ needs.resolve-production-source.outputs.preview_run_id }}
+          REGCTL_BIN: ${{ runner.temp }}/regctl
+          RC_TAG: ${{ needs.prepare-prerelease.outputs.tag }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          source_ref="${image}:test-${PREVIEW_PR}"
+          target_ref="${image}:${RC_TAG}"
+          current_digest="$("${REGCTL_BIN}" manifest head "${source_ref}")"
+          if [[ "${current_digest}" != "${PREVIEW_DIGEST}" ]]; then
+            echo "::error::${source_ref} moved from ${PREVIEW_DIGEST} to ${current_digest}"
+            exit 1
+          fi
+          source_pinned="${source_ref}@${PREVIEW_DIGEST}"
+          .github/scripts/oci-image.sh validate-preview \
+            "${source_pinned}" \
+            "${PREVIEW_PR}" \
+            "${PREVIEW_HEAD}" \
+            "${PREVIEW_BASE}" \
+            "${PREVIEW_RUN_ID}" \
+            "${PREVIEW_RUN_ATTEMPT}"
+          created="$(git show -s --format=%cI "${MAIN_COMMIT}")"
+          .github/scripts/oci-image.sh promote-preview \
+            "${source_pinned}" \
+            "${target_ref}" \
+            "${RC_TAG}" \
+            "${MAIN_COMMIT}" \
+            "${created}"
 
   publish-demo-image:
     name: Publish demo image

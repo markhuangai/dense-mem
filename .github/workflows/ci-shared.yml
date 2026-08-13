@@ -56,6 +56,9 @@ jobs:
       - name: Run scheduled-dreaming timing test
         run: node --test tests/uat/team_dreaming_schedule.test.mjs
 
+      - name: Run image release policy tests
+        run: node --test tests/uat/image_release_policy.test.mjs
+
       - name: Run evaluation monitor shell test
         run: bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
 
