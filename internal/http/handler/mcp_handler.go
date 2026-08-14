@@ -155,6 +155,9 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 		}
 		if sdkHeaderProtocolVersion(request.Header.Get("MCP-Protocol-Version")) == "2026-07-28" {
 			if err := populateSDKStandardHeaders(request, payload); err != nil {
+				if sdkNotificationPayload(payload) {
+					return c.NoContent(http.StatusAccepted)
+				}
 				return writeSDKProtocolError(c, http.StatusBadRequest, nil, err.Error())
 			}
 		}
@@ -250,6 +253,18 @@ func sdkInitializePayload(payload []byte) (json.RawMessage, string, bool) {
 		return nil, "", false
 	}
 	return envelope.ID, envelope.Params.ProtocolVersion, strings.TrimSpace(envelope.Params.ProtocolVersion) != ""
+}
+
+func sdkNotificationPayload(payload []byte) bool {
+	var envelope struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Method  string          `json:"method"`
+	}
+	if json.Unmarshal(payload, &envelope) != nil || envelope.JSONRPC != "2.0" || strings.TrimSpace(envelope.Method) == "" {
+		return false
+	}
+	return len(envelope.ID) == 0
 }
 
 func acceptsSDKResponse(value string) bool {

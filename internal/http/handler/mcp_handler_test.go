@@ -300,6 +300,15 @@ func TestMCPHandlerSDKPostValidationBranches(t *testing.T) {
 		require.NotContains(t, rec.Body.String(), `"jsonrpc"`)
 	})
 
+	t.Run("invalid named notification has no standard-header error response", func(t *testing.T) {
+		c, rec := newContext(`{"jsonrpc":"2.0","method":"tools/call","params":{}}`)
+		c.Request().Header.Set(echo.HeaderAccept, echo.MIMEApplicationJSON)
+		c.Request().Header.Set("MCP-Protocol-Version", "2026-07-28")
+		require.NoError(t, h.HandlePost(c))
+		require.Equal(t, http.StatusAccepted, rec.Code)
+		require.Empty(t, rec.Body.String())
+	})
+
 	t.Run("request body limit", func(t *testing.T) {
 		c, rec := newContext(strings.Repeat("x", 4<<20+1))
 		c.Request().Header.Set(echo.HeaderAccept, echo.MIMEApplicationJSON)
