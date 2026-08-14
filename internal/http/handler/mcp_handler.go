@@ -128,8 +128,9 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 	}
 	protocolHeaderErr := validateSDKProtocolHeader(request.Header.Get("MCP-Protocol-Version"))
 	accept := request.Header.Get("Accept")
+	var acceptErr error
 	if !acceptsSDKResponse(accept) {
-		return writeSDKProtocolError(c, http.StatusNotAcceptable, nil, "unsupported Accept header")
+		acceptErr = errors.New("unsupported Accept header")
 	}
 	// The SDK requires the combined Streamable HTTP Accept value even when the
 	// caller requested a single response mode. Preserve the caller's mode for
@@ -149,6 +150,12 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 				return c.NoContent(http.StatusAccepted)
 			}
 			return writeSDKProtocolError(c, http.StatusBadRequest, nil, protocolHeaderErr.Error())
+		}
+		if acceptErr != nil {
+			if sdkNotificationPayload(payload) {
+				return c.NoContent(http.StatusAccepted)
+			}
+			return writeSDKProtocolError(c, http.StatusNotAcceptable, nil, acceptErr.Error())
 		}
 		if int64(len(payload)) > bodyLimit {
 			return c.NoContent(http.StatusRequestEntityTooLarge)
