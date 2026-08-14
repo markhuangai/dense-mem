@@ -71,6 +71,7 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 					  AND c.relname = 'team_profiles'
 					  AND t.tgname = 'team_profiles_identity_bridge'
 					  AND NOT t.tgisinternal
+					  AND t.tgqual IS NULL
 					  AND t.tgenabled IN ('O', 'A')
 					  AND (t.tgtype & 1) <> 0
 					  AND (t.tgtype & 2) = 0
@@ -113,6 +114,7 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 					  AND c.relname = 'sso_identities'
 					  AND t.tgname = 'sso_identities_identity_bridge'
 					  AND NOT t.tgisinternal
+					  AND t.tgqual IS NULL
 					  AND t.tgenabled IN ('O', 'A')
 					  AND (t.tgtype & 1) <> 0
 					  AND (t.tgtype & 2) = 0
