@@ -123,9 +123,6 @@ func (h *MCPHandler) HandlePost(c echo.Context) error {
 
 func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principal *middleware.Principal) error {
 	request := c.Request()
-	if !sdkJSONContentType(request.Header.Get("Content-Type")) {
-		return writeSDKProtocolError(c, http.StatusUnsupportedMediaType, nil, "unsupported Content-Type")
-	}
 	protocolHeaderErr := validateSDKProtocolHeader(request.Header.Get("MCP-Protocol-Version"))
 	accept := request.Header.Get("Accept")
 	var acceptErr error
@@ -144,6 +141,12 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 		payload, err := io.ReadAll(io.LimitReader(request.Body, bodyLimit+1))
 		if err != nil {
 			return httperr.New(httperr.VALIDATION_ERROR, "failed to read request body")
+		}
+		if !sdkJSONContentType(request.Header.Get("Content-Type")) {
+			if sdkNotificationPayload(payload) {
+				return c.NoContent(http.StatusAccepted)
+			}
+			return writeSDKProtocolError(c, http.StatusUnsupportedMediaType, nil, "unsupported Content-Type")
 		}
 		if protocolHeaderErr != nil {
 			if sdkNotificationPayload(payload) {
@@ -172,6 +175,8 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 				return writeSDKProtocolError(c, http.StatusBadRequest, nil, err.Error())
 			}
 		}
+	} else if !sdkJSONContentType(request.Header.Get("Content-Type")) {
+		return writeSDKProtocolError(c, http.StatusUnsupportedMediaType, nil, "unsupported Content-Type")
 	}
 
 	team := mcp.TeamContext{}
