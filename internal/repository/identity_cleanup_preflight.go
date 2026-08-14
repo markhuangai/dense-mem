@@ -137,6 +137,36 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 			result.Blockers = append(result.Blockers, identityCleanupBlocker("identity_bridge_missing", "the additive identity bridge is not installed"))
 			return nil
 		}
+		var legacyBridgeFunctionSource, ssoBridgeFunctionSource string
+		if err := tx.Raw(`
+			SELECT
+				COALESCE((
+					SELECT p.prosrc
+					FROM pg_proc p
+					JOIN pg_namespace n ON n.oid = p.pronamespace
+					WHERE n.nspname = 'public'
+					  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
+					  AND p.prokind = 'f'
+					  AND pg_get_function_identity_arguments(p.oid) = ''
+					LIMIT 1
+				), ''),
+				COALESCE((
+					SELECT p.prosrc
+					FROM pg_proc p
+					JOIN pg_namespace n ON n.oid = p.pronamespace
+					WHERE n.nspname = 'public'
+					  AND p.proname = 'dense_mem_sync_sso_identity'
+					  AND p.prokind = 'f'
+					  AND pg_get_function_identity_arguments(p.oid) = ''
+					LIMIT 1
+				), '')
+			`).Row().Scan(&legacyBridgeFunctionSource, &ssoBridgeFunctionSource); err != nil {
+			return err
+		}
+		if !postgres.IdentityBridgeFunctionBodiesMatch(legacyBridgeFunctionSource, ssoBridgeFunctionSource) {
+			result.Blockers = append(result.Blockers, identityCleanupBlocker("identity_bridge_integrity_invalid", "the identity bridge function definitions do not match the running release"))
+			return nil
+		}
 
 		var backupCheckpoint, deploymentFingerprint string
 		err := tx.Raw(`

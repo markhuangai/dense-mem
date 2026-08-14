@@ -44,6 +44,13 @@ func migrationFunctionBodyMatches(source, expectedSHA256 string) bool {
 	return hex.EncodeToString(digest[:]) == expectedSHA256
 }
 
+// IdentityBridgeFunctionBodiesMatch applies the same release-bound function
+// body digests used by startup validation to runtime cleanup preflight.
+func IdentityBridgeFunctionBodiesMatch(legacySource, ssoSource string) bool {
+	return migrationFunctionBodyMatches(legacySource, legacyProfileIdentityBridgeFunctionSHA256) &&
+		migrationFunctionBodyMatches(ssoSource, ssoIdentityBridgeFunctionSHA256)
+}
+
 // ClassifyMigrationState distinguishes an empty database, a pre-bridge
 // deployment, a complete v2.5 bridge, and partial/corrupt state. It is read
 // only and safe to call before migration startup.
