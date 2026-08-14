@@ -25,8 +25,8 @@ func TestIdentityBridgeBackfillsStableIDsAndLegacyGovernance(t *testing.T) {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role)
-			VALUES ($1, $2, 'hash', 'dm_bridge_key', 'suffix', 'bridge-key', ARRAY['read','write'], 'manager')
+			INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit)
+			VALUES ($1, $2, 'hash', 'dm_bridge_key', 'suffix', 'bridge-key', ARRAY['read','write'], 'manager', 17)
 		`, profileID, teamID)
 		return err
 	}))
@@ -35,14 +35,17 @@ func TestIdentityBridgeBackfillsStableIDsAndLegacyGovernance(t *testing.T) {
 
 	var actorID, credentialID, aliasID uuid.UUID
 	var admin bool
+	var rateLimit int
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT id FROM actor_identities WHERE id = $1`, profileID).Scan(&actorID))
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT id FROM credentials WHERE legacy_profile_id = $1`, profileID).Scan(&credentialID))
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT legacy_owner_id FROM ownership_aliases WHERE team_id = $1 AND legacy_owner_id = $2`, teamID, profileID).Scan(&aliasID))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT rate_limit FROM credentials WHERE legacy_profile_id = $1`, profileID).Scan(&rateLimit))
 	require.Equal(t, profileID, actorID)
 	require.Equal(t, profileID, credentialID)
 	require.Equal(t, profileID, aliasID)
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT team_admin FROM team_memberships WHERE legacy_profile_id = $1`, profileID).Scan(&admin))
 	require.True(t, admin)
+	require.Equal(t, 17, rateLimit)
 }
 
 func TestMigrationStartupClassifierCoversFreshLegacyAndCompatibleStates(t *testing.T) {
@@ -83,9 +86,16 @@ func TestIdentityBridgeReconcilesLegacyWritesAndRLS(t *testing.T) {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, name, scopes)
 			VALUES ($1, $2, 'hash', 'dm_bridge_write', 'bridge-write', ARRAY['read'])
-		`, profileID, teamA)
+			`, profileID, teamA)
 		return err
 	}))
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE team_profiles SET rate_limit = 23 WHERE id = $1`, profileID)
+		return err
+	}))
+	var rateLimit int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT rate_limit FROM credentials WHERE legacy_profile_id = $1`, profileID).Scan(&rateLimit))
+	require.Equal(t, 23, rateLimit)
 	roleName := "dense_mem_identity_bridge_rls"
 	quotedRole := quoteMigrationIdentifier(roleName)
 	if _, err := sqlDB.ExecContext(ctx, "CREATE ROLE "+quotedRole+" NOLOGIN NOBYPASSRLS"); err != nil {

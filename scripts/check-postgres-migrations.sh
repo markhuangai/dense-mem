@@ -46,7 +46,10 @@ while IFS=$'\t' read -r status old new; do
       ;;
     A)
       added="${new:-$old}"
-      version="${added%%_*}"
+      [[ "${added}" =~ ^migrations/postgres/[0-9]{10,14}_[a-z0-9][a-z0-9_-]*\.sql$ ]] || continue
+      filename="${added##*/}"
+      [[ "${filename}" == *.sql ]] || continue
+      version="${filename%%_*}"
       if (( version <= base_max )); then
         echo "new migration ${added} does not advance beyond base version ${base_max}" >&2
         exit 1

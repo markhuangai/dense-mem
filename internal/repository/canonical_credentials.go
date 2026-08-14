@@ -33,8 +33,8 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 				WHERE scope = ANY(m.maximum_grants)
 				ORDER BY scope
 			),
+			c.rate_limit,
 			CASE WHEN m.team_admin THEN 'manager' ELSE 'member' END,
-			0,
 			c.last_used_at,
 			c.expires_at,
 			c.created_at,

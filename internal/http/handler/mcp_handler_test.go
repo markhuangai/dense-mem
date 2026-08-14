@@ -268,7 +268,7 @@ func TestMCPHandlerSDKHeaderHelpers(t *testing.T) {
 	require.Error(t, validateSDKProtocolHeader("2099-01-01"))
 	require.Equal(t, "2026-07-28", sdkHeaderProtocolVersion(" 2026-07-28 "))
 
-	for _, value := range []string{"", "application/json", "text/event-stream", "application/json; charset=utf-8, text/plain"} {
+	for _, value := range []string{"", "*/*", "application/json", "text/event-stream", "application/json; charset=utf-8, text/plain"} {
 		require.True(t, acceptsSDKResponse(value), "Accept %q", value)
 	}
 	require.False(t, acceptsSDKResponse("text/plain"))

@@ -35,6 +35,7 @@ CREATE TABLE public.credentials (
     key_suffix character varying(6),
     name character varying(100) DEFAULT ''::character varying NOT NULL,
     scopes text[] DEFAULT ARRAY[]::text[] NOT NULL,
+    rate_limit integer DEFAULT 0 NOT NULL,
     status text DEFAULT 'active'::text NOT NULL,
     expires_at timestamp with time zone,
     revoked_at timestamp with time zone,
@@ -45,6 +46,7 @@ CREATE TABLE public.credentials (
     CONSTRAINT credentials_check CHECK (((kind <> 'api_key'::text) OR ((key_hash IS NOT NULL) AND (key_prefix IS NOT NULL)))),
     CONSTRAINT credentials_kind_check CHECK ((kind = ANY (ARRAY['api_key'::text, 'oauth'::text, 'session'::text, 'system'::text]))),
     CONSTRAINT credentials_name_check CHECK ((char_length((name)::text) <= 100)),
+    CONSTRAINT credentials_rate_limit_check CHECK ((rate_limit >= 0)),
     CONSTRAINT credentials_scopes_check CHECK (((cardinality(scopes) IS NULL) OR (cardinality(scopes) <= 128))),
     CONSTRAINT credentials_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text, 'expired'::text, 'disabled'::text])))
 );

@@ -10,6 +10,8 @@ const discover = await rpc("server/discover", { _meta: { "io.modelcontextprotoco
 if (discover.error || !discover.result?.supportedVersions?.includes("2026-07-28")) throw new Error("2026-07-28 server/discover negotiation failed");
 const list = await rpc("tools/list", {}, { "MCP-Protocol-Version": "2025-11-25" });
 if (list.error || !list.result?.tools?.some((tool) => tool.name === "remember")) throw new Error("SDK tools/list did not expose the shared registry");
+const wildcard = await rawRPC("tools/list", {}, { "Accept": "*/*", "MCP-Protocol-Version": "2025-11-25" });
+if (wildcard.status !== 200 || JSON.parse(wildcard.body).error) throw new Error("wildcard Accept was not accepted");
 const unknownVersion = await rawRPC("initialize", { protocolVersion: "2099-01-01" }, { "MCP-Protocol-Version": "2099-01-01" });
 if (unknownVersion.status !== 400) throw new Error("unknown protocol version was not rejected");
 const invalidContent = await rawRPC("tools/list", {}, { "MCP-Protocol-Version": "2025-11-25", "Content-Type": "text/plain" });

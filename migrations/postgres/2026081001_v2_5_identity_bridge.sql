@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS credentials (
     key_suffix VARCHAR(6) NULL,
     name VARCHAR(100) NOT NULL DEFAULT '',
     scopes TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
+    rate_limit INTEGER NOT NULL DEFAULT 0 CHECK (rate_limit >= 0),
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked', 'expired', 'disabled')),
     expires_at TIMESTAMPTZ NULL,
     revoked_at TIMESTAMPTZ NULL,
@@ -265,8 +266,9 @@ ON CONFLICT (actor_identity_id, team_id) DO UPDATE SET
     legacy_profile_id = EXCLUDED.legacy_profile_id,
     updated_at = EXCLUDED.updated_at;
 
-INSERT INTO credentials (id, actor_identity_id, owner_identity_id, team_id, kind, key_hash, key_prefix, key_suffix, name, scopes, status, expires_at, revoked_at, legacy_profile_id, created_at, updated_at, last_used_at)
+INSERT INTO credentials (id, actor_identity_id, owner_identity_id, team_id, kind, key_hash, key_prefix, key_suffix, name, scopes, rate_limit, status, expires_at, revoked_at, legacy_profile_id, created_at, updated_at, last_used_at)
 SELECT p.id, p.id, NULL::uuid, p.team_id, 'api_key', p.key_hash, p.key_prefix, p.key_suffix, p.name, p.scopes,
+       p.rate_limit,
        CASE WHEN p.revoked_at IS NOT NULL THEN 'revoked' WHEN p.expires_at IS NOT NULL AND p.expires_at <= now() THEN 'expired' ELSE 'active' END,
        p.expires_at, p.revoked_at, p.id, p.created_at, p.updated_at, p.last_used_at
 FROM team_profiles p
@@ -277,6 +279,7 @@ ON CONFLICT (id) DO UPDATE SET
     key_suffix = EXCLUDED.key_suffix,
     name = EXCLUDED.name,
     scopes = EXCLUDED.scopes,
+    rate_limit = EXCLUDED.rate_limit,
     status = EXCLUDED.status,
     expires_at = EXCLUDED.expires_at,
     revoked_at = EXCLUDED.revoked_at,
@@ -373,11 +376,11 @@ BEGIN
     RETURNING id INTO new_membership_id;
 
     IF NEW.key_hash IS NOT NULL AND NEW.key_prefix IS NOT NULL THEN
-        INSERT INTO credentials (id, actor_identity_id, owner_identity_id, team_id, kind, key_hash, key_prefix, key_suffix, name, scopes, status, expires_at, revoked_at, legacy_profile_id, created_at, updated_at, last_used_at)
-        VALUES (NEW.id, NEW.id, CASE WHEN EXISTS (SELECT 1 FROM actor_identities a WHERE a.id = NEW.sso_owner_identity_id) THEN NEW.sso_owner_identity_id ELSE NULL END, NEW.team_id, 'api_key', NEW.key_hash, NEW.key_prefix, NEW.key_suffix, NEW.name, NEW.scopes,
+        INSERT INTO credentials (id, actor_identity_id, owner_identity_id, team_id, kind, key_hash, key_prefix, key_suffix, name, scopes, rate_limit, status, expires_at, revoked_at, legacy_profile_id, created_at, updated_at, last_used_at)
+        VALUES (NEW.id, NEW.id, CASE WHEN EXISTS (SELECT 1 FROM actor_identities a WHERE a.id = NEW.sso_owner_identity_id) THEN NEW.sso_owner_identity_id ELSE NULL END, NEW.team_id, 'api_key', NEW.key_hash, NEW.key_prefix, NEW.key_suffix, NEW.name, NEW.scopes, NEW.rate_limit,
                 CASE WHEN NEW.revoked_at IS NOT NULL THEN 'revoked' WHEN NEW.expires_at IS NOT NULL AND NEW.expires_at <= now() THEN 'expired' ELSE 'active' END,
                 NEW.expires_at, NEW.revoked_at, NEW.id, COALESCE(NEW.created_at, now()), now(), NEW.last_used_at)
-        ON CONFLICT (id) DO UPDATE SET key_hash = EXCLUDED.key_hash, key_prefix = EXCLUDED.key_prefix, key_suffix = EXCLUDED.key_suffix, name = EXCLUDED.name, scopes = EXCLUDED.scopes, status = EXCLUDED.status, expires_at = EXCLUDED.expires_at, revoked_at = EXCLUDED.revoked_at, owner_identity_id = EXCLUDED.owner_identity_id, updated_at = now(), last_used_at = EXCLUDED.last_used_at;
+        ON CONFLICT (id) DO UPDATE SET key_hash = EXCLUDED.key_hash, key_prefix = EXCLUDED.key_prefix, key_suffix = EXCLUDED.key_suffix, name = EXCLUDED.name, scopes = EXCLUDED.scopes, rate_limit = EXCLUDED.rate_limit, status = EXCLUDED.status, expires_at = EXCLUDED.expires_at, revoked_at = EXCLUDED.revoked_at, owner_identity_id = EXCLUDED.owner_identity_id, updated_at = now(), last_used_at = EXCLUDED.last_used_at;
     END IF;
 
     INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id, credential_id)
@@ -395,7 +398,7 @@ $$;
 
 DROP TRIGGER IF EXISTS team_profiles_identity_bridge ON team_profiles;
 CREATE TRIGGER team_profiles_identity_bridge
-AFTER INSERT OR UPDATE OF team_id, key_hash, key_prefix, key_suffix, name, scopes, role, expires_at, revoked_at, last_used_at OR DELETE
+AFTER INSERT OR UPDATE OF team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit, expires_at, revoked_at, last_used_at OR DELETE
 ON team_profiles
 FOR EACH ROW EXECUTE FUNCTION dense_mem_sync_legacy_profile_identity();
 

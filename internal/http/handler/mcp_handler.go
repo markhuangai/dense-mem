@@ -242,7 +242,7 @@ func acceptsSDKResponse(value string) bool {
 	}
 	for _, part := range strings.Split(value, ",") {
 		mediaType := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
-		if mediaType == "application/json" || mediaType == "text/event-stream" {
+		if mediaType == "*/*" || mediaType == "application/json" || mediaType == "text/event-stream" {
 			return true
 		}
 	}

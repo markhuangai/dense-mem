@@ -136,7 +136,7 @@ CREATE UNIQUE INDEX team_profiles_system_team_unique ON public.team_profiles USI
 -- Name: team_profiles team_profiles_identity_bridge; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER team_profiles_identity_bridge AFTER INSERT OR DELETE OR UPDATE OF team_id, key_hash, key_prefix, key_suffix, name, scopes, role, expires_at, revoked_at, last_used_at ON public.team_profiles FOR EACH ROW EXECUTE FUNCTION public.dense_mem_sync_legacy_profile_identity();
+CREATE TRIGGER team_profiles_identity_bridge AFTER INSERT OR DELETE OR UPDATE OF team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit, expires_at, revoked_at, last_used_at ON public.team_profiles FOR EACH ROW EXECUTE FUNCTION public.dense_mem_sync_legacy_profile_identity();
 
 
 --
