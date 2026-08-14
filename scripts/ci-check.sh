@@ -9,6 +9,7 @@ npm run --prefix .lint lint:lines
 scripts/static-analysis.sh
 node --test tests/uat/team_dreaming_schedule.test.mjs
 node --test tests/uat/image_release_policy.test.mjs
+node --test tests/uat/prerelease_version.test.mjs
 bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
 packages="$(scripts/go-packages.sh)"
 
