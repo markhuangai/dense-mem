@@ -341,10 +341,13 @@ func acceptsEventStream(accept string) bool {
 
 func prefersEventStream(accept string) bool {
 	eventQuality, eventSpecificity, eventMatched := bestAcceptedQuality(accept, "text/event-stream")
-	if !eventMatched || eventSpecificity == 0 || eventQuality <= 0 {
+	if !eventMatched || eventQuality <= 0 {
 		return false
 	}
-	jsonQuality, _, jsonMatched := bestAcceptedQuality(accept, "application/json")
+	jsonQuality, jsonSpecificity, jsonMatched := bestAcceptedQuality(accept, "application/json")
+	if eventSpecificity == 0 {
+		return jsonMatched && jsonSpecificity > 0 && jsonQuality <= 0
+	}
 	return !jsonMatched || eventQuality >= jsonQuality
 }
 

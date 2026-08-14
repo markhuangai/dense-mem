@@ -368,6 +368,7 @@ func TestMCPHandlerSDKHeaderHelpers(t *testing.T) {
 	require.False(t, prefersEventStream("application/json, text/event-stream;q=0.5"))
 	require.True(t, prefersEventStream("application/json;q=0.5, text/event-stream"))
 	require.False(t, prefersEventStream("*/*"))
+	require.True(t, prefersEventStream("application/json;q=0, */*;q=1"))
 	require.False(t, prefersEventStream("text/event-stream;q=0.1, text/*;q=1, application/json;q=0.5"))
 	require.False(t, acceptsSDKResponse("text/plain"))
 
