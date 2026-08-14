@@ -9,11 +9,15 @@ import test from "node:test";
 const resolver = fileURLToPath(
   new URL("../../.github/scripts/prerelease-version.sh", import.meta.url),
 );
+const isolatedGitEnvironment = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
+);
 
 function git(repository, ...args) {
   const result = spawnSync("git", args, {
     cwd: repository,
     encoding: "utf8",
+    env: isolatedGitEnvironment,
   });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
@@ -34,6 +38,7 @@ function resolve(repository, ...args) {
   return spawnSync("bash", [resolver, ...args], {
     cwd: repository,
     encoding: "utf8",
+    env: isolatedGitEnvironment,
   });
 }
 
