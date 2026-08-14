@@ -264,6 +264,15 @@ func TestMCPHandlerSDKPostValidationBranches(t *testing.T) {
 		require.Contains(t, rec.Body.String(), "unsupported MCP protocol version")
 	})
 
+	t.Run("unsupported header notification has no response", func(t *testing.T) {
+		c, rec := newContext(`{"jsonrpc":"2.0","method":"tools/list","params":{}}`)
+		c.Request().Header.Set(echo.HeaderAccept, echo.MIMEApplicationJSON)
+		c.Request().Header.Set("MCP-Protocol-Version", "2099-01-01")
+		require.NoError(t, h.HandlePost(c))
+		require.Equal(t, http.StatusAccepted, rec.Code)
+		require.Empty(t, rec.Body.String())
+	})
+
 	t.Run("unsupported content type precedes initialize validation", func(t *testing.T) {
 		c, rec := newContext(`{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{"protocolVersion":"2099-01-01"}}`)
 		c.Request().Header.Set(echo.HeaderContentType, echo.MIMETextPlain)

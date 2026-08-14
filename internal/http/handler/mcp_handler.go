@@ -126,9 +126,7 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 	if !sdkJSONContentType(request.Header.Get("Content-Type")) {
 		return writeSDKProtocolError(c, http.StatusUnsupportedMediaType, nil, "unsupported Content-Type")
 	}
-	if err := validateSDKProtocolHeader(request.Header.Get("MCP-Protocol-Version")); err != nil {
-		return writeSDKProtocolError(c, http.StatusBadRequest, nil, err.Error())
-	}
+	protocolHeaderErr := validateSDKProtocolHeader(request.Header.Get("MCP-Protocol-Version"))
 	accept := request.Header.Get("Accept")
 	if !acceptsSDKResponse(accept) {
 		return writeSDKProtocolError(c, http.StatusNotAcceptable, nil, "unsupported Accept header")
@@ -145,6 +143,12 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 		payload, err := io.ReadAll(io.LimitReader(request.Body, bodyLimit+1))
 		if err != nil {
 			return httperr.New(httperr.VALIDATION_ERROR, "failed to read request body")
+		}
+		if protocolHeaderErr != nil {
+			if sdkNotificationPayload(payload) {
+				return c.NoContent(http.StatusAccepted)
+			}
+			return writeSDKProtocolError(c, http.StatusBadRequest, nil, protocolHeaderErr.Error())
 		}
 		if int64(len(payload)) > bodyLimit {
 			return c.NoContent(http.StatusRequestEntityTooLarge)
