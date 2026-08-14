@@ -163,6 +163,54 @@ func TestIdentityCleanupPreflightUsesLiveBridgeCounts(t *testing.T) {
 	require.Equal(t, int64(0), second.UnresolvedCount)
 }
 
+func TestIdentityCleanupPreflightBlocksStaleCanonicalAuthorization(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "identity-cleanup-stale-authorization")
+	profileID := createLedgerProfile(t, adminDB, rls, teamID, "stale-authorization-profile")
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE identity_compatibility_state
+			SET state = 'reconciled', backup_checkpoint = 'checkpoint-stale-authorization', deployment_fingerprint = 'release-stale-authorization'
+			WHERE singleton = true
+		`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status)
+			VALUES ('identity_cutover', 'identity-bridge-stale-authorization', 'compatible')
+		`).Error
+	}))
+
+	preflight := NewIdentityCleanupPreflightRepository(adminDB, rls)
+	initial, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.True(t, initial.Ready)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE team_memberships
+			SET status = 'revoked', team_admin = true, maximum_grants = ARRAY['read']::text[]
+			WHERE legacy_profile_id = ?::uuid
+		`, profileID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE credentials
+			SET key_hash = 'stale-hash', scopes = ARRAY['read']::text[], rate_limit = 999,
+			    status = 'revoked', revoked_at = now()
+			WHERE legacy_profile_id = ?::uuid
+		`, profileID).Error
+	}))
+
+	report, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.False(t, report.Ready)
+	require.Equal(t, int64(1), report.UnresolvedCount)
+}
+
 func TestIdentityCleanupPreflightBlocksMissingMembershipsAndCredentials(t *testing.T) {
 	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

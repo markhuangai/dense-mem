@@ -75,30 +75,57 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 				(SELECT count(*) FROM ownership_aliases),
 				(SELECT count(*)
 				 FROM (
-					 SELECT p.id
-					 FROM team_profiles p
-					 WHERE NOT EXISTS (
+					SELECT p.id
+					FROM team_profiles p
+					LEFT JOIN actor_identities ai
+					  ON ai.id = p.id
+					 AND ai.team_id = p.team_id
+					LEFT JOIN team_memberships m
+					  ON m.team_id = p.team_id
+					 AND m.legacy_profile_id = p.id
+					LEFT JOIN credentials c
+					  ON c.team_id = p.team_id
+					 AND c.legacy_profile_id = p.id
+					WHERE NOT EXISTS (
 						 SELECT 1
 						 FROM ownership_aliases a
 						 WHERE a.team_id = p.team_id
 						   AND a.legacy_owner_id = p.id
-					 )
-					 OR NOT EXISTS (
-						 SELECT 1
-						 FROM team_memberships m
-						 WHERE m.team_id = p.team_id
-						   AND m.legacy_profile_id = p.id
-					 )
-					 OR (
+					)
+					OR ai.id IS NULL
+					OR ai.active IS DISTINCT FROM (p.revoked_at IS NULL)
+					OR m.id IS NULL
+					OR m.status IS DISTINCT FROM (CASE WHEN p.revoked_at IS NULL THEN 'active' ELSE 'revoked' END)
+					OR m.team_admin IS DISTINCT FROM (p.role = 'manager')
+					OR NOT (
+						 COALESCE(m.maximum_grants, ARRAY[]::text[]) @> COALESCE(p.scopes, ARRAY[]::text[])
+						 AND COALESCE(p.scopes, ARRAY[]::text[]) @> COALESCE(m.maximum_grants, ARRAY[]::text[])
+					)
+					OR (
 						 p.key_hash IS NOT NULL
 						 AND p.key_prefix IS NOT NULL
-						 AND NOT EXISTS (
-							 SELECT 1
-							 FROM credentials c
-							 WHERE c.team_id = p.team_id
-							   AND c.legacy_profile_id = p.id
+						 AND (
+							 c.id IS NULL
+							 OR c.key_hash IS DISTINCT FROM p.key_hash
+							 OR c.key_prefix IS DISTINCT FROM p.key_prefix
+							 OR c.key_suffix IS DISTINCT FROM p.key_suffix
+							 OR c.name IS DISTINCT FROM p.name
+							 OR c.rate_limit IS DISTINCT FROM p.rate_limit
+							 OR c.expires_at IS DISTINCT FROM p.expires_at
+							 OR c.revoked_at IS DISTINCT FROM p.revoked_at
+							 OR c.status IS DISTINCT FROM (
+								 CASE
+									 WHEN p.revoked_at IS NOT NULL THEN 'revoked'
+									 WHEN p.expires_at IS NOT NULL AND p.expires_at <= NOW() THEN 'expired'
+									 ELSE 'active'
+								 END
+							 )
+							 OR NOT (
+								 COALESCE(c.scopes, ARRAY[]::text[]) @> COALESCE(p.scopes, ARRAY[]::text[])
+								 AND COALESCE(p.scopes, ARRAY[]::text[]) @> COALESCE(c.scopes, ARRAY[]::text[])
+							 )
 						 )
-					 )
+					)
 					 UNION ALL
 					 SELECT i.id
 					 FROM sso_identities i

@@ -234,6 +234,16 @@ func TestMCPHandlerSDKPostValidationBranches(t *testing.T) {
 		require.Contains(t, rec.Body.String(), "unsupported MCP protocol version")
 	})
 
+	t.Run("unsupported content type precedes initialize validation", func(t *testing.T) {
+		c, rec := newContext(`{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{"protocolVersion":"2099-01-01"}}`)
+		c.Request().Header.Set(echo.HeaderContentType, echo.MIMETextPlain)
+		c.Request().Header.Set(echo.HeaderAccept, echo.MIMEApplicationJSON)
+		c.Request().Header.Set("MCP-Protocol-Version", "2025-11-25")
+		require.NoError(t, h.HandlePost(c))
+		require.Equal(t, http.StatusUnsupportedMediaType, rec.Code)
+		require.Contains(t, rec.Body.String(), "unsupported Content-Type")
+	})
+
 	t.Run("unsupported accept", func(t *testing.T) {
 		c, rec := newContext(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
 		c.Request().Header.Set(echo.HeaderAccept, "text/plain")
@@ -268,12 +278,14 @@ func TestMCPHandlerSDKHeaderHelpers(t *testing.T) {
 	require.Error(t, validateSDKProtocolHeader("2099-01-01"))
 	require.Equal(t, "2026-07-28", sdkHeaderProtocolVersion(" 2026-07-28 "))
 
-	for _, value := range []string{"", "*/*", "application/json", "text/event-stream", "application/json; charset=utf-8, text/plain"} {
+	for _, value := range []string{"", "*/*", "application/*", "text/*", "application/json", "text/event-stream", "application/json; charset=utf-8, text/plain"} {
 		require.True(t, acceptsSDKResponse(value), "Accept %q", value)
 	}
 	require.True(t, acceptsSDKResponse("application/json, text/event-stream;q=0"))
+	require.False(t, acceptsSDKResponse("application/*;q=0, text/*;q=0"))
 	require.False(t, acceptsSDKResponse("application/json;q=0, text/event-stream;q=0"))
 	require.False(t, acceptsEventStream("text/event-stream;q=0"))
+	require.True(t, acceptsEventStream("text/*"))
 	require.True(t, acceptsEventStream("application/json, text/event-stream;q=0.5"))
 	require.False(t, acceptsSDKResponse("text/plain"))
 

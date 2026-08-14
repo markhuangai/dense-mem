@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -115,6 +116,9 @@ func (h *MCPHandler) HandlePost(c echo.Context) error {
 
 func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principal *middleware.Principal) error {
 	request := c.Request()
+	if !sdkJSONContentType(request.Header.Get("Content-Type")) {
+		return writeSDKProtocolError(c, http.StatusUnsupportedMediaType, nil, "unsupported Content-Type")
+	}
 	if err := validateSDKProtocolHeader(request.Header.Get("MCP-Protocol-Version")); err != nil {
 		return writeSDKProtocolError(c, http.StatusBadRequest, nil, err.Error())
 	}
@@ -241,16 +245,31 @@ func acceptsSDKResponse(value string) bool {
 	if strings.TrimSpace(value) == "" {
 		return true
 	}
-	for _, part := range strings.Split(value, ",") {
-		mediaType, accepted := acceptedMediaType(part)
-		if !accepted {
-			continue
-		}
-		if mediaType == "*/*" || mediaType == "application/json" || mediaType == "text/event-stream" {
-			return true
+	for _, supported := range []string{"application/json", "text/event-stream"} {
+		for _, part := range strings.Split(value, ",") {
+			mediaType, accepted := acceptedMediaType(part)
+			if accepted && mediaTypeMatches(mediaType, supported) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func sdkJSONContentType(value string) bool {
+	mediaType, _, err := mime.ParseMediaType(value)
+	return err == nil && strings.EqualFold(mediaType, "application/json")
+}
+
+func mediaTypeMatches(mediaRange, supported string) bool {
+	if mediaRange == "*/*" {
+		return true
+	}
+	if strings.HasSuffix(mediaRange, "/*") {
+		prefix := strings.TrimSuffix(mediaRange, "/*")
+		return prefix != "" && strings.HasPrefix(supported, prefix+"/")
+	}
+	return mediaRange == supported
 }
 
 func writeSDKProtocolError(c echo.Context, status int, id json.RawMessage, message string) error {
@@ -309,7 +328,7 @@ func (h *MCPHandler) HandleGet(c echo.Context) error {
 func acceptsEventStream(accept string) bool {
 	for _, part := range strings.Split(accept, ",") {
 		mediaType, accepted := acceptedMediaType(part)
-		if accepted && mediaType == "text/event-stream" {
+		if accepted && mediaTypeMatches(mediaType, "text/event-stream") {
 			return true
 		}
 	}
