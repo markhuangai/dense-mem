@@ -50,6 +50,7 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 		return MigrationState{}, fmt.Errorf("migration state: set system context: %w", err)
 	}
 	var teams, goose, bridge, identities, memberships, credentials, grants, externalLinks, aliases bool
+	var legacyBridgeFunction, legacyBridgeTrigger, ssoBridgeFunction, ssoBridgeTrigger bool
 	row := tx.QueryRowContext(ctx, `
 		SELECT
 			to_regclass('public.teams') IS NOT NULL,
@@ -60,9 +61,57 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 			to_regclass('public.credentials') IS NOT NULL,
 			to_regclass('public.membership_grants') IS NOT NULL,
 			to_regclass('public.identity_external_links') IS NOT NULL,
-			to_regclass('public.ownership_aliases') IS NOT NULL
+			to_regclass('public.ownership_aliases') IS NOT NULL,
+			EXISTS (
+				SELECT 1
+				FROM pg_proc p
+				JOIN pg_namespace n ON n.oid = p.pronamespace
+				WHERE n.nspname = 'public'
+				  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
+				  AND p.prokind = 'f'
+				  AND pg_get_function_identity_arguments(p.oid) = ''
+			),
+			EXISTS (
+				SELECT 1
+				FROM pg_trigger t
+				JOIN pg_class c ON c.oid = t.tgrelid
+				JOIN pg_namespace n ON n.oid = c.relnamespace
+				JOIN pg_proc p ON p.oid = t.tgfoid
+				JOIN pg_namespace pn ON pn.oid = p.pronamespace
+				WHERE n.nspname = 'public'
+				  AND c.relname = 'team_profiles'
+				  AND t.tgname = 'team_profiles_identity_bridge'
+				  AND NOT t.tgisinternal
+				  AND pn.nspname = 'public'
+				  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
+				  AND pg_get_function_identity_arguments(p.oid) = ''
+			),
+			EXISTS (
+				SELECT 1
+				FROM pg_proc p
+				JOIN pg_namespace n ON n.oid = p.pronamespace
+				WHERE n.nspname = 'public'
+				  AND p.proname = 'dense_mem_sync_sso_identity'
+				  AND p.prokind = 'f'
+				  AND pg_get_function_identity_arguments(p.oid) = ''
+			),
+			EXISTS (
+				SELECT 1
+				FROM pg_trigger t
+				JOIN pg_class c ON c.oid = t.tgrelid
+				JOIN pg_namespace n ON n.oid = c.relnamespace
+				JOIN pg_proc p ON p.oid = t.tgfoid
+				JOIN pg_namespace pn ON pn.oid = p.pronamespace
+				WHERE n.nspname = 'public'
+				  AND c.relname = 'sso_identities'
+				  AND t.tgname = 'sso_identities_identity_bridge'
+				  AND NOT t.tgisinternal
+				  AND pn.nspname = 'public'
+				  AND p.proname = 'dense_mem_sync_sso_identity'
+				  AND pg_get_function_identity_arguments(p.oid) = ''
+			)
 	`)
-	if err := row.Scan(&teams, &goose, &bridge, &identities, &memberships, &credentials, &grants, &externalLinks, &aliases); err != nil {
+	if err := row.Scan(&teams, &goose, &bridge, &identities, &memberships, &credentials, &grants, &externalLinks, &aliases, &legacyBridgeFunction, &legacyBridgeTrigger, &ssoBridgeFunction, &ssoBridgeTrigger); err != nil {
 		return MigrationState{}, fmt.Errorf("migration state: inspect schema: %w", err)
 	}
 	state := MigrationState{RepositoryLatest: repositoryLatest}
@@ -90,11 +139,11 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 	if len(files) >= 2 && state.DatabaseLatest == files[len(files)-2].Version {
 		state.ExactLegacy = true
 	}
-	if !bridge && !identities && !memberships && !credentials && !grants && !externalLinks && !aliases {
+	if !bridge && !identities && !memberships && !credentials && !grants && !externalLinks && !aliases && !legacyBridgeFunction && !legacyBridgeTrigger && !ssoBridgeFunction && !ssoBridgeTrigger {
 		state.Kind = MigrationStateLegacy
 		return state, nil
 	}
-	if !(bridge && identities && memberships && credentials && grants && externalLinks && aliases) {
+	if !(bridge && identities && memberships && credentials && grants && externalLinks && aliases && legacyBridgeFunction && legacyBridgeTrigger && ssoBridgeFunction && ssoBridgeTrigger) {
 		state.Kind = MigrationStateInvalid
 		state.Reason = "identity bridge is only partially installed"
 		return state, nil

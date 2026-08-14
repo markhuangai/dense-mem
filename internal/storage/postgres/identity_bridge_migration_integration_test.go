@@ -89,6 +89,30 @@ func TestMigrationStartupRejectsMissingBridgeRelations(t *testing.T) {
 	require.Equal(t, "identity bridge is only partially installed", state.Reason)
 }
 
+func TestMigrationStartupRejectsMissingBridgeTriggers(t *testing.T) {
+	for _, trigger := range []string{"team_profiles_identity_bridge", "sso_identities_identity_bridge"} {
+		t.Run(trigger, func(t *testing.T) {
+			ctx := context.Background()
+			sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+			defer cleanup()
+			runGooseUpTo(t, ctx, sqlDB, 2026081001)
+
+			require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `DROP TRIGGER `+trigger+` ON `+map[string]string{
+					"team_profiles_identity_bridge":  "team_profiles",
+					"sso_identities_identity_bridge": "sso_identities",
+				}[trigger])
+				return err
+			}))
+
+			state, err := ClassifyMigrationState(ctx, sqlDB, getMigrationsDir())
+			require.NoError(t, err)
+			require.Equal(t, MigrationStateInvalid, state.Kind)
+			require.Equal(t, "identity bridge is only partially installed", state.Reason)
+		})
+	}
+}
+
 func TestIdentityBridgeReconcilesLegacyWritesAndRLS(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)

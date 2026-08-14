@@ -96,6 +96,33 @@ func TestIdentityBridgeSynchronizesNewAndUpdatedSSOIdentities(t *testing.T) {
 	require.Equal(t, identityID, ownerIdentity)
 }
 
+func TestIdentityBridgeDeletesLegacyOwnershipAlias(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "identity-bridge-delete-alias")
+	profileID := createLedgerProfile(t, adminDB, rls, teamID, "delete-alias-profile")
+
+	var aliasCount int
+	require.NoError(t, adminDB.Raw(`
+		SELECT count(*)
+		FROM ownership_aliases
+		WHERE team_id = ?::uuid AND legacy_owner_id = ?::uuid
+	`, teamID, profileID).Row().Scan(&aliasCount))
+	require.Equal(t, 1, aliasCount)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`DELETE FROM team_profiles WHERE id = ?::uuid`, profileID).Error
+	}))
+
+	require.NoError(t, adminDB.Raw(`
+		SELECT count(*)
+		FROM ownership_aliases
+		WHERE team_id = ?::uuid AND legacy_owner_id = ?::uuid
+	`, teamID, profileID).Row().Scan(&aliasCount))
+	require.Zero(t, aliasCount)
+}
+
 func TestIdentityCleanupPreflightUsesLiveBridgeCounts(t *testing.T) {
 	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -134,6 +161,46 @@ func TestIdentityCleanupPreflightUsesLiveBridgeCounts(t *testing.T) {
 	require.Equal(t, first.CredentialCount+1, second.CredentialCount)
 	require.Equal(t, first.AliasCount+1, second.AliasCount)
 	require.Equal(t, int64(0), second.UnresolvedCount)
+}
+
+func TestIdentityCleanupPreflightBlocksMissingMembershipsAndCredentials(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "identity-cleanup-required-rows")
+	membershipProfileID := createLedgerProfile(t, adminDB, rls, teamID, "missing-membership-profile")
+	credentialProfileID := createLedgerProfile(t, adminDB, rls, teamID, "missing-credential-profile")
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE identity_compatibility_state
+			SET state = 'reconciled', backup_checkpoint = 'checkpoint-required-rows', deployment_fingerprint = 'release-required-rows'
+			WHERE singleton = true
+		`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status)
+			VALUES ('identity_cutover', 'identity-bridge-required-rows', 'compatible')
+			ON CONFLICT (marker_kind, version) DO UPDATE SET status = EXCLUDED.status
+		`).Error
+	}))
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`DELETE FROM team_memberships WHERE legacy_profile_id = ?::uuid`, membershipProfileID).Error
+	}))
+	report, err := NewIdentityCleanupPreflightRepository(adminDB, rls).ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.False(t, report.Ready)
+	require.Equal(t, int64(1), report.UnresolvedCount)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`DELETE FROM credentials WHERE legacy_profile_id = ?::uuid`, credentialProfileID).Error
+	}))
+	report, err = NewIdentityCleanupPreflightRepository(adminDB, rls).ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.False(t, report.Ready)
+	require.Equal(t, int64(2), report.UnresolvedCount)
 }
 
 func TestIdentityCleanupPreflightUsesLatestCutoverMarker(t *testing.T) {

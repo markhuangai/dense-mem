@@ -366,6 +366,9 @@ BEGIN
         UPDATE actor_identities
            SET active = false, updated_at = now()
          WHERE id = OLD.id;
+        DELETE FROM ownership_aliases
+         WHERE team_id = OLD.team_id
+           AND legacy_owner_id = OLD.id;
         RETURN OLD;
     END IF;
 

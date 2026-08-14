@@ -73,12 +73,29 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 				(SELECT count(*) FROM team_memberships),
 				(SELECT count(*) FROM credentials),
 				(SELECT count(*) FROM ownership_aliases),
-				(SELECT count(*) FROM team_profiles p
+				(SELECT count(*)
+				 FROM team_profiles p
 				 WHERE NOT EXISTS (
 					 SELECT 1
 					 FROM ownership_aliases a
 					 WHERE a.team_id = p.team_id
 					   AND a.legacy_owner_id = p.id
+				 )
+				 OR NOT EXISTS (
+					 SELECT 1
+					 FROM team_memberships m
+					 WHERE m.team_id = p.team_id
+					   AND m.legacy_profile_id = p.id
+				 )
+				 OR (
+					 p.key_hash IS NOT NULL
+					 AND p.key_prefix IS NOT NULL
+					 AND NOT EXISTS (
+						 SELECT 1
+						 FROM credentials c
+						 WHERE c.team_id = p.team_id
+						   AND c.legacy_profile_id = p.id
+					 )
 				 ))
 		`).Row().Scan(
 			&result.LegacyProfileCount,
