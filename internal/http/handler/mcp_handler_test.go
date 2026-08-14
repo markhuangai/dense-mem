@@ -271,6 +271,10 @@ func TestMCPHandlerSDKHeaderHelpers(t *testing.T) {
 	for _, value := range []string{"", "*/*", "application/json", "text/event-stream", "application/json; charset=utf-8, text/plain"} {
 		require.True(t, acceptsSDKResponse(value), "Accept %q", value)
 	}
+	require.True(t, acceptsSDKResponse("application/json, text/event-stream;q=0"))
+	require.False(t, acceptsSDKResponse("application/json;q=0, text/event-stream;q=0"))
+	require.False(t, acceptsEventStream("text/event-stream;q=0"))
+	require.True(t, acceptsEventStream("application/json, text/event-stream;q=0.5"))
 	require.False(t, acceptsSDKResponse("text/plain"))
 
 	tests := []struct {

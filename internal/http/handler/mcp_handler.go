@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -241,7 +242,10 @@ func acceptsSDKResponse(value string) bool {
 		return true
 	}
 	for _, part := range strings.Split(value, ",") {
-		mediaType := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
+		mediaType, accepted := acceptedMediaType(part)
+		if !accepted {
+			continue
+		}
 		if mediaType == "*/*" || mediaType == "application/json" || mediaType == "text/event-stream" {
 			return true
 		}
@@ -304,12 +308,31 @@ func (h *MCPHandler) HandleGet(c echo.Context) error {
 
 func acceptsEventStream(accept string) bool {
 	for _, part := range strings.Split(accept, ",") {
-		mediaType := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
-		if mediaType == "text/event-stream" {
+		mediaType, accepted := acceptedMediaType(part)
+		if accepted && mediaType == "text/event-stream" {
 			return true
 		}
 	}
 	return false
+}
+
+func acceptedMediaType(part string) (string, bool) {
+	parameters := strings.Split(part, ";")
+	mediaType := strings.ToLower(strings.TrimSpace(parameters[0]))
+	if mediaType == "" {
+		return "", false
+	}
+	for _, parameter := range parameters[1:] {
+		key, value, ok := strings.Cut(parameter, "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "q") {
+			continue
+		}
+		quality, err := strconv.ParseFloat(strings.Trim(strings.TrimSpace(value), `"`), 64)
+		if err != nil || quality <= 0 || quality > 1 {
+			return "", false
+		}
+	}
+	return mediaType, true
 }
 
 func writeMCPSSE(c echo.Context, payload []byte) error {
