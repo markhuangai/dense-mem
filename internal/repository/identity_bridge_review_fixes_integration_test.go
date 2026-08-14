@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -94,6 +95,16 @@ func TestIdentityBridgeSynchronizesNewAndUpdatedSSOIdentities(t *testing.T) {
 		WHERE legacy_profile_id = ?::uuid
 	`, profileID).Row().Scan(&ownerIdentity))
 	require.Equal(t, identityID, ownerIdentity)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`DELETE FROM sso_identities WHERE id = ?::uuid`, identityID).Error
+	}))
+	require.NoError(t, adminDB.Raw(`
+		SELECT COALESCE(owner_identity_id::text, '')
+		FROM credentials
+		WHERE legacy_profile_id = ?::uuid
+	`, profileID).Row().Scan(&ownerIdentity))
+	require.Empty(t, ownerIdentity)
 }
 
 func TestIdentityBridgeDeletesLegacyOwnershipAlias(t *testing.T) {
@@ -261,6 +272,103 @@ func TestIdentityCleanupPreflightBlocksStaleSSOExternalLink(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, report.Ready)
 	require.Equal(t, int64(1), report.UnresolvedCount)
+}
+
+func TestIdentityCleanupPreflightBlocksStaleSSOActor(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	providerID := uuid.NewString()
+	identityID := uuid.NewString()
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO sso_providers (id, name, kind, issuer_url, client_id)
+			VALUES (?::uuid, 'stale-actor-provider', 'generic_oidc', 'https://stale-actor.example', 'stale-actor-client')
+		`, providerID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO sso_identities (id, provider_id, subject, external_id, email, display_name, active)
+			VALUES (?::uuid, ?::uuid, 'stale-actor-subject', 'stale-actor-external', 'stale-actor@example.com', 'Stale Actor', true)
+		`, identityID, providerID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			UPDATE identity_compatibility_state
+			SET state = 'reconciled', backup_checkpoint = 'checkpoint-stale-actor', deployment_fingerprint = 'release-stale-actor'
+			WHERE singleton = true
+		`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status)
+			VALUES ('identity_cutover', 'identity-bridge-stale-actor', 'compatible')
+		`).Error
+	}))
+
+	preflight := NewIdentityCleanupPreflightRepository(adminDB, rls)
+	initial, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.True(t, initial.Ready)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE actor_identities
+			SET provider = 'stale-provider', subject = 'stale-subject', display_name = 'Stale Name', active = false
+			WHERE id = ?::uuid
+		`, identityID).Error
+	}))
+
+	report, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.False(t, report.Ready)
+	require.Equal(t, int64(1), report.UnresolvedCount)
+}
+
+func TestIdentityBridgeLastUsedUpdateOnlyTouchesCanonicalCredential(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "identity-bridge-last-used")
+	profileID := createLedgerProfile(t, adminDB, rls, teamID, "last-used-profile")
+	var grantCreatedAt, membershipUpdatedAt string
+	require.NoError(t, adminDB.Raw(`
+		SELECT to_char(g.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF'), to_char(m.updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF')
+		FROM team_memberships m
+		JOIN membership_grants g ON g.membership_id = m.id
+		WHERE m.legacy_profile_id = ?::uuid
+		ORDER BY g.grant_name
+		LIMIT 1
+	`, profileID).Row().Scan(&grantCreatedAt, &membershipUpdatedAt))
+
+	lastUsed := "2026-08-14T12:00:00Z"
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE team_profiles
+			SET last_used_at = ?::timestamptz
+			WHERE id = ?::uuid
+		`, lastUsed, profileID).Error
+	}))
+
+	var canonicalLastUsed time.Time
+	require.NoError(t, adminDB.Raw(`
+		SELECT last_used_at
+		FROM credentials
+		WHERE legacy_profile_id = ?::uuid
+	`, profileID).Row().Scan(&canonicalLastUsed))
+	var nextGrantCreatedAt, nextMembershipUpdatedAt string
+	require.NoError(t, adminDB.Raw(`
+		SELECT to_char(g.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF'), to_char(m.updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF')
+		FROM team_memberships m
+		JOIN membership_grants g ON g.membership_id = m.id
+		WHERE m.legacy_profile_id = ?::uuid
+		ORDER BY g.grant_name
+		LIMIT 1
+	`, profileID).Row().Scan(&nextGrantCreatedAt, &nextMembershipUpdatedAt))
+	require.True(t, canonicalLastUsed.Equal(time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)))
+	require.Equal(t, grantCreatedAt, nextGrantCreatedAt)
+	require.Equal(t, membershipUpdatedAt, nextMembershipUpdatedAt)
 }
 
 func TestIdentityCleanupPreflightBlocksMissingMembershipsAndCredentials(t *testing.T) {

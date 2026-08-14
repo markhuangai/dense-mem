@@ -372,6 +372,30 @@ BEGIN
         RETURN OLD;
     END IF;
 
+    IF TG_OP = 'UPDATE'
+       AND NEW.last_used_at IS DISTINCT FROM OLD.last_used_at
+       AND NEW.team_id IS NOT DISTINCT FROM OLD.team_id
+       AND NEW.key_hash IS NOT DISTINCT FROM OLD.key_hash
+       AND NEW.key_prefix IS NOT DISTINCT FROM OLD.key_prefix
+       AND NEW.key_suffix IS NOT DISTINCT FROM OLD.key_suffix
+       AND NEW.name IS NOT DISTINCT FROM OLD.name
+       AND NEW.scopes IS NOT DISTINCT FROM OLD.scopes
+       AND NEW.role IS NOT DISTINCT FROM OLD.role
+       AND NEW.rate_limit IS NOT DISTINCT FROM OLD.rate_limit
+       AND NEW.expires_at IS NOT DISTINCT FROM OLD.expires_at
+       AND NEW.revoked_at IS NOT DISTINCT FROM OLD.revoked_at
+       AND NEW.auth_source IS NOT DISTINCT FROM OLD.auth_source
+       AND NEW.sso_owner_identity_id IS NOT DISTINCT FROM OLD.sso_owner_identity_id
+       AND NEW.created_at IS NOT DISTINCT FROM OLD.created_at
+       AND NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at
+    THEN
+        UPDATE credentials
+           SET last_used_at = NEW.last_used_at
+         WHERE id = NEW.id
+           AND last_used_at IS DISTINCT FROM NEW.last_used_at;
+        RETURN NEW;
+    END IF;
+
     INSERT INTO actor_identities (id, kind, team_id, display_name, active, created_at, updated_at)
     VALUES (NEW.id, CASE WHEN NEW.auth_source = 'sso' THEN 'human' ELSE 'api_client' END, NEW.team_id, COALESCE(NEW.name, ''), NEW.revoked_at IS NULL, COALESCE(NEW.created_at, now()), now())
     ON CONFLICT (id) DO UPDATE SET team_id = EXCLUDED.team_id, display_name = EXCLUDED.display_name, active = EXCLUDED.active, updated_at = now();
@@ -404,7 +428,7 @@ $$;
 
 DROP TRIGGER IF EXISTS team_profiles_identity_bridge ON team_profiles;
 CREATE TRIGGER team_profiles_identity_bridge
-AFTER INSERT OR UPDATE OF team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit, expires_at, revoked_at, last_used_at OR DELETE
+AFTER INSERT OR UPDATE OF team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit, expires_at, revoked_at, last_used_at, sso_owner_identity_id OR DELETE
 ON team_profiles
 FOR EACH ROW EXECUTE FUNCTION dense_mem_sync_legacy_profile_identity();
 

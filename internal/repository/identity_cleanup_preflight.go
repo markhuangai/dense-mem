@@ -126,18 +126,26 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 							 )
 						 )
 					)
-					 UNION ALL
-					 SELECT i.id
-					 FROM sso_identities i
-					 WHERE COALESCE(NULLIF(i.external_id, ''), NULLIF(i.subject, ''), '') <> ''
-					   AND NOT EXISTS (
-						 SELECT 1
-						 FROM identity_external_links l
-						 WHERE l.identity_id = i.id
-						   AND l.provider = i.provider_id::text
-						   AND l.external_id = COALESCE(NULLIF(i.external_id, ''), NULLIF(i.subject, ''), '')
-					   )
-				 ) AS unresolved)
+						 UNION ALL
+						 SELECT i.id
+						 FROM sso_identities i
+						 LEFT JOIN actor_identities ai ON ai.id = i.id
+						 WHERE COALESCE(NULLIF(i.external_id, ''), NULLIF(i.subject, ''), '') <> ''
+						   AND (
+							 ai.id IS NULL
+							 OR ai.provider IS DISTINCT FROM i.provider_id::text
+							 OR ai.subject IS DISTINCT FROM i.subject
+							 OR ai.display_name IS DISTINCT FROM COALESCE(i.display_name, '')
+							 OR ai.active IS DISTINCT FROM i.active
+							 OR NOT EXISTS (
+							 SELECT 1
+							 FROM identity_external_links l
+							 WHERE l.identity_id = i.id
+							   AND l.provider = i.provider_id::text
+							   AND l.external_id = COALESCE(NULLIF(i.external_id, ''), NULLIF(i.subject, ''), '')
+						   )
+						   )
+						 ) AS unresolved)
 		`).Row().Scan(
 			&result.LegacyProfileCount,
 			&result.IdentityCount,
