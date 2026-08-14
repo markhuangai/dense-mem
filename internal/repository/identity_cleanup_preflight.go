@@ -38,6 +38,8 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 			   AND to_regclass('public.actor_identities') IS NOT NULL
 			   AND to_regclass('public.team_memberships') IS NOT NULL
 			   AND to_regclass('public.credentials') IS NOT NULL
+			   AND to_regclass('public.membership_grants') IS NOT NULL
+			   AND to_regclass('public.identity_external_links') IS NOT NULL
 			   AND to_regclass('public.ownership_aliases') IS NOT NULL
 		`).Scan(&tables).Error; err != nil {
 			return err
@@ -104,17 +106,18 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 			result.Blockers = append(result.Blockers, identityCleanupBlocker("deployment_homogeneity_unproven", "all application replicas must report the compatible identity release"))
 		}
 
-		var marker bool
-		if err := tx.Raw(`
-			SELECT EXISTS (
-				SELECT 1 FROM v2_compatibility_markers
-				WHERE marker_kind = 'identity_cutover'
-				  AND status = 'compatible'
-			)
-		`).Scan(&marker).Error; err != nil {
-			return err
+		var markerStatus string
+		markerErr := tx.Raw(`
+			SELECT status
+			FROM v2_compatibility_markers
+			WHERE marker_kind = 'identity_cutover'
+			ORDER BY created_at DESC, marker_id DESC
+			LIMIT 1
+		`).Row().Scan(&markerStatus)
+		if markerErr != nil && markerErr != sql.ErrNoRows {
+			return markerErr
 		}
-		if !marker {
+		if markerErr == sql.ErrNoRows || markerStatus != "compatible" {
 			result.Blockers = append(result.Blockers, identityCleanupBlocker("identity_cutover_marker_missing", "the compatible identity cutover marker is absent"))
 		}
 		return nil

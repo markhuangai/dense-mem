@@ -49,7 +49,7 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 	`); err != nil {
 		return MigrationState{}, fmt.Errorf("migration state: set system context: %w", err)
 	}
-	var teams, goose, bridge, identities, memberships, credentials, aliases bool
+	var teams, goose, bridge, identities, memberships, credentials, grants, externalLinks, aliases bool
 	row := tx.QueryRowContext(ctx, `
 		SELECT
 			to_regclass('public.teams') IS NOT NULL,
@@ -58,9 +58,11 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 			to_regclass('public.actor_identities') IS NOT NULL,
 			to_regclass('public.team_memberships') IS NOT NULL,
 			to_regclass('public.credentials') IS NOT NULL,
+			to_regclass('public.membership_grants') IS NOT NULL,
+			to_regclass('public.identity_external_links') IS NOT NULL,
 			to_regclass('public.ownership_aliases') IS NOT NULL
 	`)
-	if err := row.Scan(&teams, &goose, &bridge, &identities, &memberships, &credentials, &aliases); err != nil {
+	if err := row.Scan(&teams, &goose, &bridge, &identities, &memberships, &credentials, &grants, &externalLinks, &aliases); err != nil {
 		return MigrationState{}, fmt.Errorf("migration state: inspect schema: %w", err)
 	}
 	state := MigrationState{RepositoryLatest: repositoryLatest}
@@ -88,11 +90,11 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 	if len(files) >= 2 && state.DatabaseLatest == files[len(files)-2].Version {
 		state.ExactLegacy = true
 	}
-	if !bridge && !identities && !memberships && !credentials && !aliases {
+	if !bridge && !identities && !memberships && !credentials && !grants && !externalLinks && !aliases {
 		state.Kind = MigrationStateLegacy
 		return state, nil
 	}
-	if !(bridge && identities && memberships && credentials && aliases) {
+	if !(bridge && identities && memberships && credentials && grants && externalLinks && aliases) {
 		state.Kind = MigrationStateInvalid
 		state.Reason = "identity bridge is only partially installed"
 		return state, nil

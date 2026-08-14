@@ -134,5 +134,60 @@ func TestIdentityCleanupPreflightUsesLiveBridgeCounts(t *testing.T) {
 	require.Equal(t, first.CredentialCount+1, second.CredentialCount)
 	require.Equal(t, first.AliasCount+1, second.AliasCount)
 	require.Equal(t, int64(0), second.UnresolvedCount)
+}
 
+func TestIdentityCleanupPreflightUsesLatestCutoverMarker(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "identity-cleanup-marker-order")
+	createLedgerProfile(t, adminDB, rls, teamID, "marker-profile")
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE identity_compatibility_state
+			SET state = 'reconciled', backup_checkpoint = 'checkpoint-marker', deployment_fingerprint = 'release-marker'
+			WHERE singleton = true
+		`).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status, created_at)
+			VALUES ('identity_cutover', 'identity-bridge-compatible', 'compatible', now() - interval '1 minute')
+		`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status, created_at)
+			VALUES ('identity_cutover', 'identity-bridge-incompatible', 'incompatible', now())
+		`).Error
+	}))
+
+	report, err := NewIdentityCleanupPreflightRepository(adminDB, rls).ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.False(t, report.Ready)
+	found := false
+	for _, blocker := range report.Blockers {
+		if blocker.Code == "identity_cutover_marker_missing" {
+			found = true
+			break
+		}
+	}
+	require.True(t, found)
+}
+
+func TestIdentityCleanupPreflightRejectsMissingBridgeRelations(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`DROP TABLE membership_grants, identity_external_links`).Error
+	}))
+
+	report, err := NewIdentityCleanupPreflightRepository(adminDB, rls).ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.False(t, report.Ready)
+	require.Len(t, report.Blockers, 1)
+	require.Equal(t, "identity_bridge_missing", report.Blockers[0].Code)
 }

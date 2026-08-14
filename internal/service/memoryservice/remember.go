@@ -272,6 +272,10 @@ func submissionItemFailureError(item repository.PlacementItem, processing string
 	if item.Status != string(domain.PlacementRunFailed) && item.Status != "failed" && item.Status != "rejected" && item.Status != "awaiting_review" {
 		return nil
 	}
+	if item.Status == "awaiting_review" {
+		errorValue := submissionStatusError(SubmissionErrorPolicyRejected)
+		return &errorValue
+	}
 	stage, _ := item.Result["failure_stage"].(string)
 	class, _ := item.Result["failure_class"].(string)
 	errorValue := submissionStatusError(submissionFailureCode(stage, class))

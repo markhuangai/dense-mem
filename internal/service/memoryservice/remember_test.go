@@ -255,6 +255,19 @@ func TestSubmissionStatusProjectionMapsProcessingStatesAndErrors(t *testing.T) {
 }
 
 func TestSubmissionStatusProjectionMapsDurableFailureReasonsAndDeduplicates(t *testing.T) {
+	reviewHeld := submissionStatusResultFromLedger(&repository.CreateIngestResult{
+		IngestID: "review-held-submission",
+		Status:   string(domain.PlacementRunAwaitingReview),
+		Items: []repository.PlacementItem{{
+			FragmentID: "review-held-evidence",
+			Status:     "awaiting_review",
+			Result:     map[string]any{},
+		}},
+	})
+	require.Len(t, reviewHeld.Errors, 1)
+	require.Equal(t, SubmissionErrorPolicyRejected, reviewHeld.Errors[0].Code)
+	require.Equal(t, SubmissionErrorPolicyRejected, reviewHeld.Evidence[0].Error.Code)
+
 	result := submissionStatusResultFromLedger(&repository.CreateIngestResult{
 		IngestID: "submission-1",
 		Status:   string(domain.PlacementRunFailed),
