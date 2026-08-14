@@ -1,0 +1,177 @@
+name: Start prerelease line
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_base:
+        description: "New prerelease base (example: v2.5.0)"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: release-version-tags
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  start-prerelease:
+    name: Start prerelease line
+    runs-on: docker-runner
+
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v7
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+
+      - name: Resolve and fence prerelease seed
+        id: version
+        shell: bash
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+          RELEASE_BASE: ${{ inputs.release_base }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${DISPATCH_REF}" != "refs/heads/main" ]]; then
+            echo "::error::start-prerelease must be dispatched from main"
+            exit 1
+          fi
+
+          git fetch --tags --force origin \
+            '+refs/tags/*:refs/tags/*' \
+            '+refs/heads/main:refs/remotes/origin/main'
+
+          target_sha="$(git rev-parse refs/remotes/origin/main)"
+          checkout_sha="$(git rev-parse HEAD)"
+          if [[ "${checkout_sha}" != "${target_sha}" ]]; then
+            echo "::error::checkout HEAD ${checkout_sha} does not match main ${target_sha}"
+            exit 1
+          fi
+
+          tag="$(.github/scripts/prerelease-version.sh start "${RELEASE_BASE}" "${target_sha}")"
+          tag_exists=false
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            tag_exists=true
+          fi
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=${tag_exists}" >> "$GITHUB_OUTPUT"
+          echo "target_sha=${target_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Require quiescent release state
+        uses: actions/github-script@v9
+        env:
+          TARGET_SHA: ${{ steps.version.outputs.target_sha }}
+        with:
+          script: |
+            const targetSha = process.env.TARGET_SHA;
+            const [automaticResponse, stableResponse] = await Promise.all([
+              github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "release-rc.yml",
+                event: "workflow_run",
+                head_sha: targetSha,
+                per_page: 10,
+              }),
+              github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "release.yml",
+                per_page: 100,
+              }),
+            ]);
+            const latest = automaticResponse.data.workflow_runs.sort(
+              (left, right) => right.id - left.id,
+            )[0];
+
+            if (!latest || latest.status !== "completed" || latest.conclusion !== "success") {
+              core.setFailed(
+                `main ${targetSha} does not have a completed successful automatic prerelease run`,
+              );
+            }
+
+            const activeStable = stableResponse.data.workflow_runs.find(
+              (run) => run.status !== "completed",
+            );
+            if (activeStable) {
+              core.setFailed(
+                `stable release run ${activeStable.id} is ${activeStable.status}; retry after it completes`,
+              );
+            }
+
+      - name: Create prerelease seed tag
+        if: steps.version.outputs.tag_exists != 'true'
+        shell: bash
+        env:
+          RELEASE_BASE: ${{ inputs.release_base }}
+          TAG: ${{ steps.version.outputs.tag }}
+          TARGET_SHA: ${{ steps.version.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force origin \
+            '+refs/tags/*:refs/tags/*' \
+            '+refs/heads/main:refs/remotes/origin/main'
+          current_main="$(git rev-parse refs/remotes/origin/main)"
+          if [[ "${current_main}" != "${TARGET_SHA}" ]]; then
+            echo "::error::main advanced to ${current_main}; expected ${TARGET_SHA}"
+            exit 1
+          fi
+
+          resolved_tag="$(.github/scripts/prerelease-version.sh start "${RELEASE_BASE}" "${TARGET_SHA}")"
+          if [[ "${resolved_tag}" != "${TAG}" ]]; then
+            echo "::error::prerelease seed changed from ${TAG} to ${resolved_tag}"
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "${TAG} already points to ${TARGET_SHA}."
+            exit 0
+          fi
+
+          git tag "${TAG}" "${TARGET_SHA}"
+          git push origin "refs/tags/${TAG}"
+
+      - name: Ensure blank GitHub prerelease
+        uses: actions/github-script@v9
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          TARGET_SHA: ${{ steps.version.outputs.target_sha }}
+        with:
+          script: |
+            const tag = process.env.TAG;
+            const request = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag,
+            };
+
+            try {
+              const { data } = await github.rest.repos.getReleaseByTag(request);
+              if (!data.prerelease) {
+                core.setFailed(`${tag} exists as a non-prerelease GitHub Release`);
+              } else {
+                core.info(`${tag} prerelease already exists`);
+              }
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+
+              await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                target_commitish: process.env.TARGET_SHA,
+                name: tag,
+                body: "",
+                prerelease: true,
+              });
+            }

@@ -244,7 +244,7 @@ jobs:
           ai-auth-mode: auth-token
           model: auto
           parallel-count: "5"
-          max-turns: "50"
+          max-turns: "100"
           auto-approve: "false"
           review-prompts: |
             [

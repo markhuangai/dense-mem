@@ -47,7 +47,7 @@ func (s *portalSessionManagerStub) Logout(_ context.Context, token string) error
 
 func TestCreatePortalSessionSetsHostOnlyUiCookies(t *testing.T) {
 	keyID := uuid.New()
-	expires := time.Date(2026, time.August, 13, 12, 0, 0, 0, time.UTC)
+	expires := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	manager := &portalSessionManagerStub{result: &service.UserPortalSessionResult{
 		SessionToken: "opaque-session",
 		CSRFToken:    "csrf-token",

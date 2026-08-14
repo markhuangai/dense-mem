@@ -21,7 +21,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26.5"
+          go-version: "1.26.6"
           cache: false
 
       - name: Set up Node.js
@@ -58,6 +58,9 @@ jobs:
 
       - name: Run image release policy tests
         run: node --test tests/uat/image_release_policy.test.mjs
+
+      - name: Run prerelease version tests
+        run: node --test tests/uat/prerelease_version.test.mjs
 
       - name: Run evaluation monitor shell test
         run: bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
