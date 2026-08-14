@@ -1,9 +1,11 @@
-# v2.5 migration baseline
+# v2.5 migrations
 
-`migrations/postgres/` is the executable Goose history. The SQL file in this
-directory is a non-executable hand-off record for the v2.5 rollout; it is kept
-separate so Goose cannot apply two files with the same historical version.
+The executable PostgreSQL history is split by release family:
 
-All v2.5 schema changes use new, monotonically increasing files in the parent
-directory. The compatibility bridge is additive. Cleanup of `team_profiles` is
+- `v2_4/` contains the immutable v2.4 and earlier migration files.
+- `v2_5/` contains additive v2.5 migrations with versions greater than the
+  v2.4 history.
+
+The runtime validates and loads both directories as one strictly ordered Goose
+history. The compatibility bridge is additive; cleanup of `team_profiles` is
 not part of this release.

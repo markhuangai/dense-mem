@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -111,7 +110,7 @@ func TestV24OneCallAssessmentDownMigrationNormalizesExpiredReviewTasks(t *testin
 		`, semantic.teamID, placement.semanticTaskID)
 		return err
 	}))
-	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026072901))
+	require.NoError(t, migrationDownTo(ctx, sqlDB, 2026072901))
 
 	var status string
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
@@ -186,7 +185,7 @@ func TestRemovePlacementAssessmentPromptRevisionMigrationPreservesAssessment(t *
 	assert.Equal(t, "o200k_base", tokenizer)
 	assert.Equal(t, "sha256:assessment", responseHash)
 
-	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026073001))
+	require.NoError(t, migrationDownTo(ctx, sqlDB, 2026073001))
 
 	var restoredPromptRevision string
 	var promptRevisionDefault sql.NullString

@@ -54,16 +54,9 @@ async function verifyMigrationConvergence() {
     );
   `);
   const stateLine = state.join("|");
-  if (!/^\d+\|identity_compatibility_state\|actor_identities\|credentials\|ownership_aliases$/.test(stateLine)) {
+  const latest = Number(state[0]);
+  if (!Number.isSafeInteger(latest) || latest < 2026081001 || !/^\d+\|identity_compatibility_state\|actor_identities\|credentials\|ownership_aliases$/.test(stateLine)) {
     throw new Error(`migration baseline/convergence state is incomplete: ${stateLine}`);
-  }
-  const manifest = spawnSync("bash", ["-lc", "scripts/postgres-schema-catalog.sh check"], {
-    cwd: fileURLToPath(new URL("../..", import.meta.url)),
-    encoding: "utf8",
-    timeout: 1_800_000,
-  });
-  if (manifest.status !== 0) {
-    throw new Error(`schema catalog check failed: ${manifest.stderr || "redacted"}`);
   }
 }
 

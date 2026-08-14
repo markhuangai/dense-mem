@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,4 +36,33 @@ func TestMigrationHistoryRejectsChangedBaseAndOutOfOrderAddition(t *testing.T) {
 	err = ValidateMigrationHistory(current, base)
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "does not advance") || strings.Contains(err.Error(), "order"))
+}
+
+func TestMigrationHistoryAllowsRelocatingAnImmutableVersion(t *testing.T) {
+	base := t.TempDir()
+	current := t.TempDir()
+	baseSQL := "-- +goose Up\nSELECT 1;\n-- +goose Down\nSELECT 1;\n"
+	require.NoError(t, os.Mkdir(filepath.Join(base, "v2_4"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(current, "v2_4"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(base, "v2_4", "2026080905_base.sql"), []byte(baseSQL), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(current, "v2_4", "2026080905_base.sql"), []byte(baseSQL), 0o644))
+	require.NoError(t, os.Rename(filepath.Join(current, "v2_4", "2026080905_base.sql"), filepath.Join(current, "2026080905_base.sql")))
+
+	require.NoError(t, ValidateMigrationHistory(current, base))
+}
+
+func TestMigrationFilesystemCombinesReleaseDirectories(t *testing.T) {
+	root := t.TempDir()
+	for _, release := range []string{"v2_4", "v2_5"} {
+		require.NoError(t, os.Mkdir(filepath.Join(root, release), 0o755))
+	}
+	contents := "-- +goose Up\nSELECT 1;\n-- +goose Down\nSELECT 1;\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "v2_4", "2026080905_old.sql"), []byte(contents), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "v2_5", "2026081001_new.sql"), []byte(contents), 0o644))
+
+	fsys, err := migrationFilesystem(root)
+	require.NoError(t, err)
+	paths, err := fs.Glob(fsys, "*.sql")
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"2026080905_old.sql", "2026081001_new.sql"}, paths)
 }

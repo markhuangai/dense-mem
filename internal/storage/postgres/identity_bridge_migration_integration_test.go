@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,8 +29,7 @@ func TestIdentityBridgeBackfillsStableIDsAndLegacyGovernance(t *testing.T) {
 		`, profileID, teamID)
 		return err
 	}))
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026081001))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026081001))
 
 	var actorID, credentialID, aliasID uuid.UUID
 	var admin bool

@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -154,8 +153,7 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 	require.True(t, canCreateInDatabase)
 	require.True(t, canCreateInSchema)
 
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026080803))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026080803))
 	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
 	contractID := uuid.NewString()
 	legacyFailure := legacyEmbeddingFailureFixture{

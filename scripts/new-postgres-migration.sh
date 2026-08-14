@@ -2,14 +2,15 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIGRATIONS_DIR="${ROOT_DIR}/migrations/postgres"
+MIGRATIONS_ROOT="${ROOT_DIR}/migrations/postgres"
+MIGRATIONS_DIR="${MIGRATIONS_ROOT}/v2_5"
 name="${1:-}"
 if [[ ! "${name}" =~ ^[a-z][a-z0-9_]*$ ]]; then
   echo "usage: $0 <snake_case_name>" >&2
   exit 2
 fi
 
-latest="$(find "${MIGRATIONS_DIR}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sed -nE 's/^([0-9]{10,14})_.*/\1/p' | sort -n | tail -1)"
+latest="$(find "${MIGRATIONS_ROOT}" -type f -name '*.sql' -printf '%f\n' | sed -nE 's/^([0-9]{10,14})_.*/\1/p' | sort -n | tail -1)"
 version="$(date -u +%Y%m%d%H%M%S)"
 if [[ "${version}" -le "${latest}" ]]; then
   version="$((latest + 1))"
