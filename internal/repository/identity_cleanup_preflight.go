@@ -74,29 +74,41 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 				(SELECT count(*) FROM credentials),
 				(SELECT count(*) FROM ownership_aliases),
 				(SELECT count(*)
-				 FROM team_profiles p
-				 WHERE NOT EXISTS (
-					 SELECT 1
-					 FROM ownership_aliases a
-					 WHERE a.team_id = p.team_id
-					   AND a.legacy_owner_id = p.id
-				 )
-				 OR NOT EXISTS (
-					 SELECT 1
-					 FROM team_memberships m
-					 WHERE m.team_id = p.team_id
-					   AND m.legacy_profile_id = p.id
-				 )
-				 OR (
-					 p.key_hash IS NOT NULL
-					 AND p.key_prefix IS NOT NULL
-					 AND NOT EXISTS (
+				 FROM (
+					 SELECT p.id
+					 FROM team_profiles p
+					 WHERE NOT EXISTS (
 						 SELECT 1
-						 FROM credentials c
-						 WHERE c.team_id = p.team_id
-						   AND c.legacy_profile_id = p.id
+						 FROM ownership_aliases a
+						 WHERE a.team_id = p.team_id
+						   AND a.legacy_owner_id = p.id
 					 )
-				 ))
+					 OR NOT EXISTS (
+						 SELECT 1
+						 FROM team_memberships m
+						 WHERE m.team_id = p.team_id
+						   AND m.legacy_profile_id = p.id
+					 )
+					 OR (
+						 p.key_hash IS NOT NULL
+						 AND p.key_prefix IS NOT NULL
+						 AND NOT EXISTS (
+							 SELECT 1
+							 FROM credentials c
+							 WHERE c.team_id = p.team_id
+							   AND c.legacy_profile_id = p.id
+						 )
+					 )
+					 UNION ALL
+					 SELECT i.id
+					 FROM sso_identities i
+					 WHERE COALESCE(NULLIF(i.external_id, ''), NULLIF(i.subject, ''), '') <> ''
+					   AND NOT EXISTS (
+						 SELECT 1
+						 FROM identity_external_links l
+						 WHERE l.identity_id = i.id
+					   )
+				 ) AS unresolved)
 		`).Row().Scan(
 			&result.LegacyProfileCount,
 			&result.IdentityCount,

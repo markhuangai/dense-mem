@@ -113,6 +113,23 @@ func TestMigrationStartupRejectsMissingBridgeTriggers(t *testing.T) {
 	}
 }
 
+func TestMigrationStartupRejectsDisabledBridgeTriggers(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, sqlDB, 2026081001)
+
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE team_profiles DISABLE TRIGGER team_profiles_identity_bridge`)
+		return err
+	}))
+
+	state, err := ClassifyMigrationState(ctx, sqlDB, getMigrationsDir())
+	require.NoError(t, err)
+	require.Equal(t, MigrationStateInvalid, state.Kind)
+	require.Equal(t, "identity bridge is only partially installed", state.Reason)
+}
+
 func TestIdentityBridgeReconcilesLegacyWritesAndRLS(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)

@@ -170,8 +170,22 @@ func TestIdentityCleanupPreflightBlocksMissingMembershipsAndCredentials(t *testi
 	teamID := createLedgerTeam(t, adminDB, rls, "identity-cleanup-required-rows")
 	membershipProfileID := createLedgerProfile(t, adminDB, rls, teamID, "missing-membership-profile")
 	credentialProfileID := createLedgerProfile(t, adminDB, rls, teamID, "missing-credential-profile")
+	providerID := uuid.NewString()
+	identityID := uuid.NewString()
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO sso_providers (id, name, kind, issuer_url, client_id)
+			VALUES (?::uuid, 'cleanup-provider', 'generic_oidc', 'https://cleanup.example', 'cleanup-client')
+		`, providerID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO sso_identities (id, provider_id, subject, external_id, email, display_name, active)
+			VALUES (?::uuid, ?::uuid, 'cleanup-subject', 'cleanup-external', 'cleanup@example.com', 'Cleanup Person', true)
+		`, identityID, providerID).Error; err != nil {
+			return err
+		}
 		if err := tx.Exec(`
 			UPDATE identity_compatibility_state
 			SET state = 'reconciled', backup_checkpoint = 'checkpoint-required-rows', deployment_fingerprint = 'release-required-rows'
@@ -197,10 +211,13 @@ func TestIdentityCleanupPreflightBlocksMissingMembershipsAndCredentials(t *testi
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`DELETE FROM credentials WHERE legacy_profile_id = ?::uuid`, credentialProfileID).Error
 	}))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`DELETE FROM identity_external_links WHERE identity_id = ?::uuid`, identityID).Error
+	}))
 	report, err = NewIdentityCleanupPreflightRepository(adminDB, rls).ReadIdentityCleanupPreflight(ctx)
 	require.NoError(t, err)
 	require.False(t, report.Ready)
-	require.Equal(t, int64(2), report.UnresolvedCount)
+	require.Equal(t, int64(3), report.UnresolvedCount)
 }
 
 func TestIdentityCleanupPreflightUsesLatestCutoverMarker(t *testing.T) {
