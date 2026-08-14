@@ -372,6 +372,58 @@ func TestIdentityCleanupPreflightBlocksWrongCredentialAndMembershipActors(t *tes
 	require.Equal(t, int64(1), report.UnresolvedCount)
 }
 
+func TestIdentityCleanupPreflightBlocksStaleProfileActorMetadata(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "identity-cleanup-stale-actor-metadata")
+	profileID := createLedgerProfile(t, adminDB, rls, teamID, "stale-actor-metadata-profile")
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE identity_compatibility_state
+			SET state = 'reconciled', backup_checkpoint = 'checkpoint-stale-actor-metadata', deployment_fingerprint = 'release-stale-actor-metadata'
+			WHERE singleton = true
+		`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status)
+			VALUES ('identity_cutover', 'identity-bridge-stale-actor-metadata', 'compatible')
+		`).Error
+	}))
+
+	preflight := NewIdentityCleanupPreflightRepository(adminDB, rls)
+	initial, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.True(t, initial.Ready)
+
+	for _, tt := range []struct {
+		name    string
+		column  string
+		value   string
+		restore string
+	}{
+		{name: "kind", column: "kind", value: "human", restore: "api_client"},
+		{name: "display name", column: "display_name", value: "stale actor name", restore: "stale-actor-metadata-profile"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+				return tx.Exec("UPDATE actor_identities SET "+tt.column+" = ? WHERE id = ?::uuid", tt.value, profileID).Error
+			}))
+
+			report, err := preflight.ReadIdentityCleanupPreflight(ctx)
+			require.NoError(t, err)
+			require.False(t, report.Ready)
+			require.Equal(t, int64(1), report.UnresolvedCount)
+
+			require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+				return tx.Exec("UPDATE actor_identities SET "+tt.column+" = ? WHERE id = ?::uuid", tt.restore, profileID).Error
+			}))
+		})
+	}
+}
+
 func TestIdentityCleanupPreflightUsesLiveBridgeCounts(t *testing.T) {
 	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

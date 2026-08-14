@@ -157,6 +157,8 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 							   )
 						 )
 						OR ai.id IS NULL
+						OR ai.kind IS DISTINCT FROM (CASE WHEN p.auth_source = 'sso' THEN 'human' ELSE 'api_client' END)
+						OR ai.display_name IS DISTINCT FROM COALESCE(p.name, '')
 						OR ai.active IS DISTINCT FROM (p.revoked_at IS NULL)
 						OR m.id IS NULL
 						OR m.actor_identity_id IS DISTINCT FROM p.id

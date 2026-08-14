@@ -107,7 +107,7 @@ func (h *MCPHandler) HandlePost(c echo.Context) error {
 		return c.NoContent(http.StatusAccepted)
 	}
 
-	if acceptsEventStream(c.Request().Header.Get("Accept")) {
+	if prefersEventStream(c.Request().Header.Get("Accept")) {
 		return writeMCPSSE(c, response.Payload)
 	}
 
@@ -155,7 +155,7 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 		team.Description = resolvedTeam.Description
 	}
 	server := mcp.NewServerWithScopesTeamContextAndRuntimeConfig(h.reg, profileID.String(), principal.Scopes, team, h.logger, h.recallFeedbackConfig, h.dreams)
-	serverHandler := server.NewSDKHTTPHandler(!acceptsEventStream(accept))
+	serverHandler := server.NewSDKHTTPHandler(!prefersEventStream(accept))
 	serverHandler.ServeHTTP(c.Response(), request)
 	return nil
 }
@@ -246,11 +246,9 @@ func acceptsSDKResponse(value string) bool {
 		return true
 	}
 	for _, supported := range []string{"application/json", "text/event-stream"} {
-		for _, part := range strings.Split(value, ",") {
-			mediaType, quality, accepted := acceptedMediaType(part)
-			if accepted && quality > 0 && mediaTypeMatches(mediaType, supported) {
-				return true
-			}
+		quality, _, matched := bestAcceptedQuality(value, supported)
+		if matched && quality > 0 {
+			return true
 		}
 	}
 	return false
@@ -326,18 +324,20 @@ func (h *MCPHandler) HandleGet(c echo.Context) error {
 }
 
 func acceptsEventStream(accept string) bool {
-	eventQuality, eventExplicit := bestAcceptedQuality(accept, "text/event-stream")
-	if !eventExplicit {
-		return false
-	}
-	jsonQuality, jsonExplicit := bestAcceptedQuality(accept, "application/json")
-	if !jsonExplicit {
-		return eventQuality > 0
-	}
-	return eventQuality >= jsonQuality
+	eventQuality, eventSpecificity, matched := bestAcceptedQuality(accept, "text/event-stream")
+	return matched && eventSpecificity > 0 && eventQuality > 0
 }
 
-func bestAcceptedQuality(accept, supported string) (float64, bool) {
+func prefersEventStream(accept string) bool {
+	eventQuality, eventSpecificity, eventMatched := bestAcceptedQuality(accept, "text/event-stream")
+	if !eventMatched || eventSpecificity == 0 || eventQuality <= 0 {
+		return false
+	}
+	jsonQuality, _, jsonMatched := bestAcceptedQuality(accept, "application/json")
+	return !jsonMatched || eventQuality >= jsonQuality
+}
+
+func bestAcceptedQuality(accept, supported string) (float64, int, bool) {
 	bestQuality := float64(-1)
 	bestSpecificity := -1
 	for _, part := range strings.Split(accept, ",") {
@@ -346,12 +346,12 @@ func bestAcceptedQuality(accept, supported string) (float64, bool) {
 			continue
 		}
 		specificity := mediaRangeSpecificity(mediaType, supported)
-		if quality > bestQuality || (quality == bestQuality && specificity > bestSpecificity) {
+		if specificity > bestSpecificity || (specificity == bestSpecificity && quality > bestQuality) {
 			bestQuality = quality
 			bestSpecificity = specificity
 		}
 	}
-	return bestQuality, bestSpecificity > 0
+	return bestQuality, bestSpecificity, bestSpecificity >= 0
 }
 
 func mediaRangeSpecificity(mediaRange, supported string) int {
@@ -385,7 +385,7 @@ func acceptedMediaType(part string) (string, float64, bool) {
 		}
 		quality = parsed
 	}
-	return mediaType, quality, quality > 0
+	return mediaType, quality, true
 }
 
 func writeMCPSSE(c echo.Context, payload []byte) error {

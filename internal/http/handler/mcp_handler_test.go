@@ -135,6 +135,21 @@ func TestMCPHandlerPostPrefersJSONWhenAcceptQualityIsHigher(t *testing.T) {
 	require.Equal(t, echo.MIMEApplicationJSON, rec.Header().Get(echo.HeaderContentType))
 }
 
+func TestMCPHandlerPostUsesMostSpecificAcceptRange(t *testing.T) {
+	h := NewMCPHandler(registry.New(), testMCPLogger())
+	e := echo.New()
+	profileID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`))
+	req.Header.Set(echo.HeaderAccept, "text/event-stream;q=0.1, text/*;q=1, application/json;q=0.5")
+	req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	require.NoError(t, h.HandlePost(c))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, echo.MIMEApplicationJSON, rec.Header().Get(echo.HeaderContentType))
+}
+
 func TestMCPHandlerPostNotificationAcceptedWithSSEAccept(t *testing.T) {
 	h := NewMCPHandler(registry.New(), testMCPLogger())
 	e := echo.New()
@@ -327,11 +342,17 @@ func TestMCPHandlerSDKHeaderHelpers(t *testing.T) {
 	require.True(t, acceptsSDKResponse("application/json, text/event-stream;q=0"))
 	require.False(t, acceptsSDKResponse("application/*;q=0, text/*;q=0"))
 	require.False(t, acceptsSDKResponse("application/json;q=0, text/event-stream;q=0"))
+	require.False(t, acceptsSDKResponse("application/json;q=0, application/*;q=1"))
 	require.False(t, acceptsEventStream("text/event-stream;q=0"))
 	require.False(t, acceptsEventStream("*/*"))
 	require.True(t, acceptsEventStream("text/*"))
-	require.False(t, acceptsEventStream("application/json, text/event-stream;q=0.5"))
+	require.True(t, acceptsEventStream("application/json, text/event-stream;q=0.5"))
 	require.True(t, acceptsEventStream("application/json;q=0.5, text/event-stream"))
+	require.False(t, acceptsEventStream("text/event-stream;q=0, */*;q=1"))
+	require.False(t, prefersEventStream("application/json, text/event-stream;q=0.5"))
+	require.True(t, prefersEventStream("application/json;q=0.5, text/event-stream"))
+	require.False(t, prefersEventStream("*/*"))
+	require.False(t, prefersEventStream("text/event-stream;q=0.1, text/*;q=1, application/json;q=0.5"))
 	require.False(t, acceptsSDKResponse("text/plain"))
 
 	tests := []struct {
@@ -429,6 +450,25 @@ func TestMCPHandlerGetBranches(t *testing.T) {
 
 		require.NoError(t, h.HandleGet(c))
 		require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+	})
+
+	t.Run("positive SSE quality is accepted when JSON is preferred", func(t *testing.T) {
+		h := NewMCPHandlerWithLifecycle(registry.New(), testMCPLogger(), &mockStreamLifecycle{
+			startFunc: func(ctx context.Context, profileID string, writer sse.SSEWriter, work func(context.Context) error) error {
+				workCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				return work(workCtx)
+			},
+		})
+		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+		req.Header.Set(echo.HeaderAccept, "application/json;q=1, text/event-stream;q=0.5")
+		req = req.WithContext(middleware.SetResolvedProfileIDForTest(req.Context(), profileID))
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		require.NoError(t, h.HandleGet(c))
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Contains(t, rec.Body.String(), ": dense-mem MCP stream ready")
 	})
 
 	t.Run("missing lifecycle", func(t *testing.T) {
