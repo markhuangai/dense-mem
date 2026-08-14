@@ -31,6 +31,12 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 				SELECT DISTINCT scope
 				FROM unnest(c.scopes) AS scope
 				WHERE scope = ANY(m.maximum_grants)
+				  AND EXISTS (
+					SELECT 1
+					FROM membership_grants g
+					WHERE g.membership_id = m.id
+					  AND g.grant_name = scope
+				  )
 				ORDER BY scope
 			),
 			c.rate_limit,
