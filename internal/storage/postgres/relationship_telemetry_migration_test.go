@@ -24,7 +24,7 @@ func TestRelationshipTelemetryMigrationRecoversInvalidIndexesAndRollsBack(t *tes
 	markRelationshipTelemetryIndexesInvalid(t, ctx, db)
 
 	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.UpContext(ctx, db, getMigrationsDir()))
+	require.NoError(t, goose.UpToContext(ctx, db, getMigrationsDir(), 2026080904))
 
 	for _, indexName := range relationshipTelemetryIndexNames {
 		assert.True(t, indexIsValid(t, ctx, db, indexName), "rebuilt index %s should be valid", indexName)

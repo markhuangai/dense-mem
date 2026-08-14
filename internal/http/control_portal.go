@@ -125,7 +125,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), httpmw.TelemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, convergence: telemetry.Convergence, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
+	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, convergence: telemetry.Convergence, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, identityCleanup: telemetry.IdentityCleanup, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
 	if telemetry.ControlIdentity != nil {
 		registerControlIdentityRoutes(e, control)
 	}
@@ -212,6 +212,9 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		api.POST("/sso/providers/:providerId/control-admin-groups", control.createControlAdminGroup)
 		api.PATCH("/sso/providers/:providerId/control-admin-groups/:groupId", control.updateControlAdminGroup)
 		api.DELETE("/sso/providers/:providerId/control-admin-groups/:groupId", control.deleteControlAdminGroup)
+	}
+	if telemetry.IdentityCleanup != nil {
+		api.GET("/identity-cleanup/preflight", control.identityCleanupPreflight)
 	}
 
 	if staticDir := defaultPortalStaticDir(); staticDir != "" {

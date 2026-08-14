@@ -112,6 +112,7 @@ func RunActiveServer(
 	portalSessionRepo := repository.NewUserPortalSessionRepository(pgDB.GetDB(), rlsHelper)
 	directoryIdentityRepo := repository.NewDirectoryIdentityRepository(pgDB.GetDB(), rlsHelper)
 	controlIdentityRepo := repository.NewControlIdentityRepository(pgDB.GetDB(), rlsHelper)
+	identityCleanupRepo := repository.NewIdentityCleanupPreflightRepository(pgDB.GetDB(), rlsHelper)
 	appConfigRepo := repository.NewAppConfigRepository(pgDB.GetDB(), rlsHelper)
 	securityRepo := repository.NewSecurityRepository(pgDB.GetDB(), rlsHelper)
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
@@ -174,6 +175,7 @@ func RunActiveServer(
 	portalSessionService := service.NewUserPortalSessionService(portalSessionRepo, apiKeyRepo, nil)
 	directoryIdentityService := service.NewDirectoryIdentityService(directoryIdentityRepo, service.DirectoryIdentityConfig{CredentialVerifier: credentialVerifier})
 	controlIdentityService := service.NewControlIdentityService(controlIdentityRepo, ssoRepo, service.ControlIdentityConfig{RuntimeConfig: appConfigService})
+	identityCleanupService := service.NewIdentityCleanupPreflightService(identityCleanupRepo)
 	rateLimitService := backend.rateLimitService
 	runtimeCtx := RuntimeContext{
 		Config:         &cfg,
@@ -325,7 +327,7 @@ func RunActiveServer(
 		time.Duration(cfg.GetSSEMaxDurationSeconds())*time.Second,
 		backend.streamCleanupRepo,
 	)
-	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(toolRegistry, logger, streamLifecycle, appConfigService, dreamSvc)
+	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(toolRegistry, logger, streamLifecycle, appConfigService, config.MCPTransportFor(&cfg), dreamSvc)
 
 	checks := []http.HealthCheck{
 		{Name: "postgres", Check: func(ctx context.Context) error {
@@ -435,6 +437,7 @@ func RunActiveServer(
 				SSO:             ssoService,
 				Directory:       directoryIdentityService,
 				ControlIdentity: controlIdentityService,
+				IdentityCleanup: identityCleanupService,
 				Config:          appConfigService,
 				Logs:            operationLogService,
 				RecallFeedback:  recallFeedbackEventService,

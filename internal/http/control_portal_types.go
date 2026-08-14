@@ -19,6 +19,7 @@ type ControlPortalTelemetry struct {
 	SSO             *service.SSOService
 	Directory       *service.DirectoryIdentityService
 	ControlIdentity *service.ControlIdentityService
+	IdentityCleanup service.IdentityCleanupPreflightReader
 	Config          service.AppConfigService
 	Logs            service.OperationLogReader
 	RecallFeedback  service.RecallFeedbackEventReader
@@ -44,6 +45,7 @@ type controlPortalHandler struct {
 	sso             *service.SSOService
 	directory       *service.DirectoryIdentityService
 	controlIdentity *service.ControlIdentityService
+	identityCleanup service.IdentityCleanupPreflightReader
 	appConfig       service.AppConfigService
 	logger          observability.LogProvider
 	verifierModel   string

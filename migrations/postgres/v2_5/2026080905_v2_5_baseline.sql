@@ -1,0 +1,10 @@
+-- v2.5 baseline manifest entry.
+--
+-- This file is intentionally outside Goose's executable directory. The
+-- immutable Goose history in ../ remains the only migration authority; this
+-- baseline records the exact hand-off point used by the v2.5 compatibility
+-- classifier and is never applied directly.
+--
+-- Baseline predecessor: the highest migration in migrations/postgres at the
+-- v2.4.8 release. Forward v2.5 changes are regular, ordered Goose files in
+-- migrations/postgres and must not edit or replace this record.

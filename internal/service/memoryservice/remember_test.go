@@ -229,7 +229,7 @@ func TestSubmissionStatusProjectionMapsProcessingStatesAndErrors(t *testing.T) {
 		if result.ProcessingState != want || result.SearchState != string(domain.SearchProjectionCurrent) {
 			t.Fatalf("status %q projection = %#v, want processing %q/current", status, result, want)
 		}
-		if status == string(domain.PlacementRunFailed) || status == "unexpected" {
+		if status == string(domain.PlacementRunFailed) || status == string(domain.PlacementRunAwaitingReview) || status == "unexpected" {
 			require.Len(t, result.Errors, 1)
 		} else {
 			require.Empty(t, result.Errors)
@@ -243,14 +243,38 @@ func TestSubmissionStatusProjectionMapsProcessingStatesAndErrors(t *testing.T) {
 	require.Len(t, failedSearch.Errors, 1)
 	require.Len(t, failedSearch.Evidence, 1)
 	require.NotNil(t, failedSearch.Evidence[0].Error)
-	require.Equal(t, "search_indexing_delayed", failedSearch.Evidence[0].Error.Code)
+	require.Equal(t, SubmissionErrorSearchIndexingDelayed, failedSearch.Evidence[0].Error.Code)
 	require.Equal(t, "Semantic search indexing is delayed.", failedSearch.Evidence[0].Error.Message)
 	require.Equal(t, "Semantic search indexing is delayed; check the control portal for recovery guidance.", failedSearch.Errors[0].Message)
 	hold := submissionStatusResultFromLedger(&repository.CreateIngestResult{IngestID: "submission-1", Status: string(domain.PlacementRunCompleted), SemanticHoldState: "awaiting_review"})
 	require.Equal(t, "rejected", hold.ProcessingState)
+	require.Equal(t, SubmissionErrorSemanticHold, hold.Errors[0].Code)
 	empty := submissionStatusResultFromLedger(nil)
 	require.Empty(t, empty.Evidence)
 	require.Empty(t, empty.Errors)
+}
+
+func TestSubmissionStatusProjectionMapsDurableFailureReasonsAndDeduplicates(t *testing.T) {
+	result := submissionStatusResultFromLedger(&repository.CreateIngestResult{
+		IngestID: "submission-1",
+		Status:   string(domain.PlacementRunFailed),
+		Items: []repository.PlacementItem{
+			{FragmentID: "e1", EvidenceIndex: 0, Status: "failed", Result: map[string]any{"failure_stage": "assessment", "failure_class": "malformed_response"}},
+			{FragmentID: "e2", EvidenceIndex: 1, Status: "failed", Result: map[string]any{"failure_stage": "assessment", "failure_class": "malformed_response"}},
+		},
+	})
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, SubmissionErrorAssessorInvalid, result.Errors[0].Code)
+	require.Equal(t, SubmissionErrorAssessorInvalid, result.Evidence[0].Error.Code)
+	require.Equal(t, SubmissionErrorAssessorInvalid, result.Evidence[1].Error.Code)
+
+	unknown := submissionStatusResultFromLedger(&repository.CreateIngestResult{
+		IngestID: "submission-2",
+		Status:   string(domain.PlacementRunFailed),
+		Items:    []repository.PlacementItem{{FragmentID: "e1", EvidenceIndex: 0, Status: "failed", Result: map[string]any{"failure_stage": "new_internal_stage", "failure_class": "new_internal_class"}}},
+	})
+	require.Len(t, unknown.Errors, 1)
+	require.Equal(t, SubmissionErrorProcessingFailed, unknown.Errors[0].Code)
 }
 
 func TestGetSubmissionStatusRejectsInvalidRequestsAndBoundsErrors(t *testing.T) {

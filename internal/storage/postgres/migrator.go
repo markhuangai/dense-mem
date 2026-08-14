@@ -61,6 +61,10 @@ func getMigrationsDir() string {
 	return "/app/dense-mem/migrations/postgres"
 }
 
+// MigrationsDir returns the executable Goose migration directory used by the
+// runtime and migration contract checks.
+func MigrationsDir() string { return getMigrationsDir() }
+
 // NewMigrator creates a new migrator instance for the given GORM database.
 // Migrations are loaded from the migrations/postgres directory.
 func NewMigrator(db *gorm.DB) (*Migrator, error) {

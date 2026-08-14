@@ -34,7 +34,6 @@ sanitize_project_name() {
   fi
   printf '%s' "$sanitized"
 }
-
 pick_ports() {
   local count="$1"
   node - "$count" <<'NODE'
@@ -273,7 +272,8 @@ prepare_e2e_environment() {
   fi
   printf '%s\n' \
     "CONFLICT_REVIEW_START_TIME_LOCAL=00:00" \
-    "CONFLICT_REVIEW_JITTER_SECONDS=0" >> "$E2E_ENV_FILE"
+    "CONFLICT_REVIEW_JITTER_SECONDS=0" \
+    "MCP_TRANSPORT=${DENSE_MEM_E2E_MCP_TRANSPORT:-sdk}" >> "$E2E_ENV_FILE"
   append_conflict_e2e_environment && append_embedding_reconciliation_environment && prepare_embedding_proxy_files && ROOT_ENV_FILE="$E2E_ENV_FILE"
 }
 
@@ -589,6 +589,7 @@ create_control_profile() {
     --data "$payload" \
     "${CONTROL_URL}/control/api/teams/${team_id}/profiles")"
   CREATED_API_KEY="$(printf '%s' "$response" | json_field data.api_key)"
+  CREATED_PROFILE_ID="$(printf '%s' "$response" | json_field data.key.id)"
 }
 
 remove_e2e_playwright_container() {
@@ -695,8 +696,8 @@ if [[ "$E2E_MODE" != "standard" && "$E2E_MODE" != "entra_scim" ]]; then
   echo "DENSE_MEM_E2E_MODE must be standard or entra_scim." >&2
   exit 1
 fi
-if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "security_runtime" && "$E2E_SCENARIO" != "infrastructure_credentials" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" && "$E2E_SCENARIO" != "all" ]]; then
-  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, security_runtime, infrastructure_credentials, submission_status, security_intake, submission_assessment, semantic_holds, community, conflict, conflict_queue, embedding_reconciliation, embedding_resilience, or all." >&2
+if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "mcp_sdk_parity" && "$E2E_SCENARIO" != "mcp_sdk_transport" && "$E2E_SCENARIO" != "security_runtime" && "$E2E_SCENARIO" != "infrastructure_credentials" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "submission_terminal_errors" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "identity_cutover" && "$E2E_SCENARIO" != "identity_cleanup_preflight" && "$E2E_SCENARIO" != "migration_convergence" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" && "$E2E_SCENARIO" != "all" ]]; then
+  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, mcp_sdk_parity, mcp_sdk_transport, security_runtime, infrastructure_credentials, submission_status, submission_terminal_errors, security_intake, submission_assessment, semantic_holds, identity_cutover, identity_cleanup_preflight, migration_convergence, community, conflict, conflict_queue, embedding_reconciliation, embedding_resilience, or all." >&2
   exit 1
 fi
 
@@ -710,7 +711,7 @@ if [[ "$E2E_SCENARIO" == "all" ]]; then
     echo "DENSE_MEM_E2E_SCENARIO=all requires DENSE_MEM_E2E_MODE=standard." >&2
     exit 1
   fi
-  for scenario in mcp_boundaries security_runtime infrastructure_credentials submission_status security_intake submission_assessment semantic_holds community conflict conflict_queue embedding_reconciliation embedding_resilience full; do
+  for scenario in mcp_boundaries mcp_sdk_parity mcp_sdk_transport security_runtime infrastructure_credentials submission_status submission_terminal_errors security_intake submission_assessment semantic_holds identity_cutover identity_cleanup_preflight migration_convergence community conflict conflict_queue embedding_reconciliation embedding_resilience full; do
     echo "Running compose e2e scenario ${scenario} as part of all."
     DENSE_MEM_E2E_SCENARIO="$scenario" \
     DENSE_MEM_E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-all}-$(printf '%s' "$scenario" | tr '[:upper:]' '[:lower:]')" \
@@ -773,7 +774,7 @@ require_env_value AI_API_URL >/dev/null
 require_env_value AI_API_KEY >/dev/null
 require_env_value AI_API_EMBEDDING_MODEL >/dev/null
 require_env_value AI_API_EMBEDDING_DIMENSIONS >/dev/null
-if [[ "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "semantic_holds" || "$E2E_SCENARIO" == "community" || "$E2E_SCENARIO" == "conflict_queue" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
+if [[ "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "submission_terminal_errors" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "semantic_holds" || "$E2E_SCENARIO" == "community" || "$E2E_SCENARIO" == "conflict_queue" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
   require_env_value AI_VERIFIER_API_URL >/dev/null
   require_env_value AI_VERIFIER_API_KEY >/dev/null
   require_env_value AI_VERIFIER_MODEL >/dev/null
@@ -859,7 +860,6 @@ if [[ "$E2E_SCENARIO" == "infrastructure_credentials" ]]; then
   run_infrastructure_credentials_e2e
   exit 0
 fi
-
 if [[ "$E2E_MODE" == "entra_scim" ]]; then
   wait_for_entra_mock
   echo "Running compose-backed Entra OIDC and SCIM e2e."
@@ -877,7 +877,6 @@ create_control_team "E2E Team" "compose e2e seed"
 team_id="$CREATED_TEAM_ID"
 create_control_profile "$team_id" "E2E Profile"
 api_key="$CREATED_API_KEY"
-
 if [[ "$E2E_SCENARIO" == "portal" ]]; then
   echo "Running compose-backed API-key portal cookie-auth e2e."
   dream_statement="portal cookie-auth e2e"
@@ -892,7 +891,6 @@ if [[ "$E2E_SCENARIO" == "portal" ]]; then
   run_compose_playwright_tests portal
   exit 0
 fi
-
 if [[ "$E2E_SCENARIO" == "mcp_boundaries" ]]; then
   echo "Running compose-backed MCP production/evaluation and feature-gate boundary e2e."
   DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
@@ -903,12 +901,16 @@ if [[ "$E2E_SCENARIO" == "mcp_boundaries" ]]; then
   node "$ROOT_DIR/tests/uat/mcp_boundaries_e2e.mjs"
   exit 0
 fi
-
+if [[ "$E2E_SCENARIO" == "mcp_sdk_parity" ]]; then
+  echo "Running the official Go MCP SDK differential conformance harness."; DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_CONTROL_URL="$CONTROL_URL" DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_API_KEY="$api_key" node "$ROOT_DIR/tests/uat/mcp_sdk_parity_e2e.mjs"; exit 0
+fi
+if [[ "$E2E_SCENARIO" == "mcp_sdk_transport" ]]; then
+  echo "Running the production SDK MCP transport matrix against live API credentials."; DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_CONTROL_URL="$CONTROL_URL" DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_API_KEY="$api_key" node "$ROOT_DIR/tests/uat/mcp_sdk_transport_e2e.mjs"; exit 0
+fi
 if [[ "$E2E_SCENARIO" == "security_runtime" ]]; then
   run_security_runtime_e2e
   exit 0
 fi
-
 if [[ "$E2E_SCENARIO" == "security_intake" ]]; then
   echo "Running compose-backed security intake e2e with the configured live verifier."
   DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
@@ -922,10 +924,12 @@ if [[ "$E2E_SCENARIO" == "security_intake" ]]; then
   node "$ROOT_DIR/tests/uat/security_intake_mcp_e2e.mjs"
   exit 0
 fi
-
 if [[ "$E2E_SCENARIO" == "submission_status" ]]; then
   run_submission_status_e2e "$team_id"
   exit 0
+fi
+if [[ "$E2E_SCENARIO" == "submission_terminal_errors" ]]; then
+  echo "Running compose-backed terminal submission error completeness e2e with the configured live verifier."; DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_E2E_API_KEY="$api_key" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" node "$ROOT_DIR/tests/uat/submission_terminal_errors_e2e.mjs"; exit 0
 fi
 if [[ "$E2E_SCENARIO" == "submission_assessment" ]]; then
   echo "Running compose-backed submission-wide assessor e2e with the configured live verifier."
@@ -951,6 +955,9 @@ if [[ "$E2E_SCENARIO" == "semantic_holds" ]]; then
   DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
   node "$ROOT_DIR/tests/uat/semantic_holds_mcp_e2e.mjs"
   exit 0
+fi
+if [[ "$E2E_SCENARIO" == "identity_cutover" || "$E2E_SCENARIO" == "identity_cleanup_preflight" || "$E2E_SCENARIO" == "migration_convergence" ]]; then
+  echo "Running compose-backed v2.5 identity/migration foundation e2e (${E2E_SCENARIO})."; DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_CONTROL_URL="$CONTROL_URL" DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_API_KEY="$api_key" DENSE_MEM_E2E_PROFILE_ID="$CREATED_PROFILE_ID" DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" DENSE_MEM_E2E_FOUNDATION_SCENARIO="$E2E_SCENARIO" node "$ROOT_DIR/tests/uat/v2_5_foundations_e2e.mjs"; exit 0
 fi
 if [[ "$E2E_SCENARIO" == "community" ]]; then
   echo "Running compose-backed community recall e2e with the configured live verifier."; export DENSE_MEM_CONTROL_URL="$CONTROL_URL" DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_API_KEY="$api_key" DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE"; node "$ROOT_DIR/tests/uat/community_recall_mcp_e2e.mjs"
