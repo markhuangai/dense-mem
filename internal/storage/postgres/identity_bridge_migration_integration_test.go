@@ -152,6 +152,56 @@ func TestMigrationStartupRejectsIncompleteBridgeTriggerEvents(t *testing.T) {
 	require.Equal(t, "identity bridge is only partially installed", state.Reason)
 }
 
+func TestMigrationStartupRejectsIncompleteBridgeTriggerUpdateColumns(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		table   string
+		trigger string
+		create  string
+	}{
+		{
+			name:    "legacy profile trigger",
+			table:   "team_profiles",
+			trigger: "team_profiles_identity_bridge",
+			create: `
+				CREATE TRIGGER team_profiles_identity_bridge
+				AFTER INSERT OR UPDATE OF last_used_at OR DELETE ON team_profiles
+				FOR EACH ROW EXECUTE FUNCTION dense_mem_sync_legacy_profile_identity()
+			`,
+		},
+		{
+			name:    "sso identity trigger",
+			table:   "sso_identities",
+			trigger: "sso_identities_identity_bridge",
+			create: `
+				CREATE TRIGGER sso_identities_identity_bridge
+				AFTER INSERT OR UPDATE OF active OR DELETE ON sso_identities
+				FOR EACH ROW EXECUTE FUNCTION dense_mem_sync_sso_identity()
+			`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+			defer cleanup()
+			runGooseUpTo(t, ctx, sqlDB, 2026081001)
+
+			require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+				if _, err := tx.ExecContext(ctx, "DROP TRIGGER "+tt.trigger+" ON "+tt.table); err != nil {
+					return err
+				}
+				_, err := tx.ExecContext(ctx, tt.create)
+				return err
+			}))
+
+			state, err := ClassifyMigrationState(ctx, sqlDB, getMigrationsDir())
+			require.NoError(t, err)
+			require.Equal(t, MigrationStateInvalid, state.Kind)
+			require.Equal(t, "identity bridge is only partially installed", state.Reason)
+		})
+	}
+}
+
 func TestIdentityBridgeReconcilesLegacyWritesAndRLS(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)

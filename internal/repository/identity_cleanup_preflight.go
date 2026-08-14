@@ -74,10 +74,22 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 					  AND t.tgenabled IN ('O', 'A')
 					  AND (t.tgtype & 1) <> 0
 					  AND (t.tgtype & 2) = 0
-					  AND (t.tgtype & 4) <> 0
-					  AND (t.tgtype & 8) <> 0
-					  AND (t.tgtype & 16) <> 0
-					  AND pn.nspname = 'public'
+						  AND (t.tgtype & 4) <> 0
+						  AND (t.tgtype & 8) <> 0
+						  AND (t.tgtype & 16) <> 0
+						  AND (
+								SELECT COALESCE(array_agg(a.attname::text ORDER BY a.attname), ARRAY[]::text[])
+								FROM pg_attribute a
+								WHERE a.attrelid = t.tgrelid
+								  AND a.attnum = ANY(t.tgattr)
+								  AND NOT a.attisdropped
+							) = ARRAY[
+								'auth_source', 'expires_at', 'is_system', 'key_hash', 'key_prefix', 'key_suffix',
+								'last_used_at', 'name', 'rate_limit', 'revoked_at', 'role', 'scopes', 'sso_email',
+								'sso_entitlement_status', 'sso_group_id', 'sso_identity_id', 'sso_owner_identity_id',
+								'sso_provider_id', 'sso_subject', 'team_id'
+							]::text[]
+						  AND pn.nspname = 'public'
 					  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
 					  AND pg_get_function_identity_arguments(p.oid) = ''
 				)
@@ -104,10 +116,17 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 					  AND t.tgenabled IN ('O', 'A')
 					  AND (t.tgtype & 1) <> 0
 					  AND (t.tgtype & 2) = 0
-					  AND (t.tgtype & 4) <> 0
-					  AND (t.tgtype & 8) <> 0
-					  AND (t.tgtype & 16) <> 0
-					  AND pn.nspname = 'public'
+						  AND (t.tgtype & 4) <> 0
+						  AND (t.tgtype & 8) <> 0
+						  AND (t.tgtype & 16) <> 0
+						  AND (
+								SELECT COALESCE(array_agg(a.attname::text ORDER BY a.attname), ARRAY[]::text[])
+								FROM pg_attribute a
+								WHERE a.attrelid = t.tgrelid
+								  AND a.attnum = ANY(t.tgattr)
+								  AND NOT a.attisdropped
+							) = ARRAY['active', 'display_name', 'external_id', 'provider_id', 'subject']::text[]
+						  AND pn.nspname = 'public'
 					  AND p.proname = 'dense_mem_sync_sso_identity'
 					  AND pg_get_function_identity_arguments(p.oid) = ''
 				)
