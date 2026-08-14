@@ -103,18 +103,30 @@ func ConformanceCall(ctx context.Context, legacy, sdk http.Handler, payload []by
 	if err != nil {
 		return false, err
 	}
-	return CompareConformanceResponses(legacyResponse, sdkResponse)
+	matched, err := CompareConformanceResponses(legacyResponse.body, sdkResponse.body)
+	if err != nil {
+		return false, err
+	}
+	if legacyResponse.status != sdkResponse.status {
+		return false, nil
+	}
+	return matched, nil
 }
 
-func conformanceHTTPRequest(ctx context.Context, handler http.Handler, payload []byte, headers http.Header) ([]byte, error) {
+type conformanceResponse struct {
+	status int
+	body   []byte
+}
+
+func conformanceHTTPRequest(ctx context.Context, handler http.Handler, payload []byte, headers http.Header) (conformanceResponse, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://mcp.test/mcp", bytes.NewReader(payload))
 	if err != nil {
-		return nil, err
+		return conformanceResponse{}, err
 	}
 	request.Header = headers.Clone()
 	response := newConformanceRecorder()
 	handler.ServeHTTP(response, request)
-	return response.body.Bytes(), nil
+	return conformanceResponse{status: response.code, body: response.body.Bytes()}, nil
 }
 
 type conformanceRecorder struct {

@@ -139,7 +139,7 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 			return c.NoContent(http.StatusRequestEntityTooLarge)
 		}
 		request.Body = io.NopCloser(bytes.NewReader(payload))
-		if id, version, ok := sdkInitializePayload(payload); ok && !sdkSupportedProtocolVersion(version) {
+		if id, version, ok := sdkInitializePayload(payload); ok && len(id) > 0 && !sdkSupportedProtocolVersion(version) {
 			return writeSDKProtocolError(c, http.StatusBadRequest, id, "unsupported protocolVersion")
 		}
 		if sdkHeaderProtocolVersion(request.Header.Get("MCP-Protocol-Version")) == "2026-07-28" {

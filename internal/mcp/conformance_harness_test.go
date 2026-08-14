@@ -47,3 +47,19 @@ func TestConformanceHarnessSupportsCancellation(t *testing.T) {
 	_, err := ConformanceCall(ctx, legacy, server.NewSDKHTTPHandler(true), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`), http.Header{"Content-Type": []string{"application/json"}, "Accept": []string{"application/json, text/event-stream"}, "MCP-Protocol-Version": []string{"2025-11-25"}})
 	require.Error(t, err)
 }
+
+func TestConformanceHarnessComparesHTTPStatus(t *testing.T) {
+	body := []byte(`{"jsonrpc":"2.0","id":1,"result":{}}`)
+	legacy := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	})
+	sdk := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write(body)
+	})
+
+	matched, err := ConformanceCall(context.Background(), legacy, sdk, []byte(`{}`), nil)
+	require.NoError(t, err)
+	require.False(t, matched)
+}

@@ -262,6 +262,14 @@ func TestMCPHandlerSDKPostValidationBranches(t *testing.T) {
 		require.Contains(t, rec.Body.String(), `"id":"init-1"`)
 	})
 
+	t.Run("unsupported initialize notification has no response", func(t *testing.T) {
+		c, rec := newContext(`{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2099-01-01"}}`)
+		c.Request().Header.Set(echo.HeaderAccept, echo.MIMEApplicationJSON)
+		c.Request().Header.Set("MCP-Protocol-Version", "2025-11-25")
+		require.NoError(t, h.HandlePost(c))
+		require.NotContains(t, rec.Body.String(), `"jsonrpc"`)
+	})
+
 	t.Run("request body limit", func(t *testing.T) {
 		c, rec := newContext(strings.Repeat("x", 4<<20+1))
 		c.Request().Header.Set(echo.HeaderAccept, echo.MIMEApplicationJSON)
