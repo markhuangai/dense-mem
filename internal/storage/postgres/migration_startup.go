@@ -187,7 +187,7 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 		state.Reason = "application tables and Goose history are incomplete"
 		return state, nil
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version`).Scan(&state.DatabaseLatest); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied`).Scan(&state.DatabaseLatest); err != nil {
 		return MigrationState{}, fmt.Errorf("migration state: inspect Goose version: %w", err)
 	}
 	if state.DatabaseLatest > repositoryLatest {

@@ -70,6 +70,33 @@ func TestMigrationStartupClassifierCoversFreshLegacyAndCompatibleStates(t *testi
 	require.NoError(t, ValidateStartupMigrationState(ctx, sqlDB, getMigrationsDir()))
 }
 
+func TestMigrationStartupRejectsUnappliedLatestMigration(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	files, err := ListMigrationFiles(getMigrationsDir())
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(files), 2)
+	latest := files[len(files)-1].Version
+	previous := files[len(files)-2].Version
+	runGooseUpTo(t, ctx, sqlDB, latest)
+
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE goose_db_version
+			SET is_applied = false
+			WHERE version_id = $1 AND is_applied
+		`, latest)
+		return err
+	}))
+
+	state, err := ClassifyMigrationState(ctx, sqlDB, getMigrationsDir())
+	require.NoError(t, err)
+	require.Equal(t, previous, state.DatabaseLatest)
+	require.Equal(t, MigrationStateCompatible, state.Kind)
+	require.ErrorIs(t, ValidateStartupMigrationState(ctx, sqlDB, getMigrationsDir()), ErrInvalidMigrationState)
+}
+
 func TestMigrationStartupRejectsMissingBridgeRelations(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
