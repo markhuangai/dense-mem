@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strings"
 
@@ -39,6 +40,9 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 	if req == nil || req.Body == nil || req.Method != http.MethodPost {
 		return false
 	}
+	if !sdkJSONContentType(req.Header.Get("Content-Type")) {
+		return false
+	}
 	payload, err := io.ReadAll(io.LimitReader(req.Body, 4<<20+1))
 	if err != nil || len(payload) > 4<<20 {
 		return false
@@ -52,7 +56,7 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 			Name string `json:"name"`
 		} `json:"params"`
 	}
-	if json.Unmarshal(payload, &envelope) != nil || envelope.JSONRPC != "2.0" || envelope.Method != "tools/call" || strings.TrimSpace(envelope.Params.Name) == "" {
+	if json.Unmarshal(payload, &envelope) != nil || envelope.JSONRPC != "2.0" || envelope.Method != "tools/call" || len(envelope.ID) == 0 || strings.TrimSpace(envelope.Params.Name) == "" {
 		return false
 	}
 	tool, ok := s.registry.Get(envelope.Params.Name)
@@ -81,6 +85,11 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 		_, _ = w.Write(encoded)
 	}
 	return true
+}
+
+func sdkJSONContentType(value string) bool {
+	mediaType, _, err := mime.ParseMediaType(value)
+	return err == nil && strings.EqualFold(mediaType, "application/json")
 }
 
 func (s *Server) newSDKServer(ctx context.Context) *sdkmcp.Server {

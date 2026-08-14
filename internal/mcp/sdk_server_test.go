@@ -136,6 +136,7 @@ func TestSDKHTTPHandlerMapsUnknownAndUnauthorizedTools(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"`+tc.tool+`","arguments":{}}}`))
+			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("Accept", tc.accept)
 			response := httptest.NewRecorder()
 			server.NewSDKHTTPHandler(tc.accept != "text/event-stream").ServeHTTP(response, request)
@@ -147,6 +148,25 @@ func TestSDKHTTPHandlerMapsUnknownAndUnauthorizedTools(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("unknown tool with invalid content type reaches SDK validation", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"missing_tool","arguments":{}}}`))
+		request.Header.Set("Content-Type", "text/plain")
+		request.Header.Set("Accept", "application/json")
+		response := httptest.NewRecorder()
+		server.NewSDKHTTPHandler(true).ServeHTTP(response, request)
+		require.Equal(t, http.StatusUnsupportedMediaType, response.Code)
+	})
+
+	t.Run("unknown tool notification has no response body", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"missing_tool","arguments":{}}}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "application/json")
+		response := httptest.NewRecorder()
+		server.NewSDKHTTPHandler(true).ServeHTTP(response, request)
+		require.Equal(t, http.StatusBadRequest, response.Code)
+		require.NotContains(t, response.Body.String(), `"jsonrpc"`)
+	})
 
 	require.False(t, server.writeSDKToolLookupError(httptest.NewRecorder(), &http.Request{Method: http.MethodGet}, true))
 }
