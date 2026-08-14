@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { devNull, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -12,25 +12,37 @@ const resolver = fileURLToPath(
 const isolatedGitEnvironment = Object.fromEntries(
   Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
 );
+isolatedGitEnvironment.GIT_CONFIG_GLOBAL = devNull;
+isolatedGitEnvironment.GIT_CONFIG_NOSYSTEM = "1";
 
-function git(repository, ...args) {
+function gitWithEnvironment(repository, environment, ...args) {
   const result = spawnSync("git", args, {
     cwd: repository,
     encoding: "utf8",
-    env: isolatedGitEnvironment,
+    env: environment,
   });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
 }
 
-function createRepository(t) {
+function git(repository, ...args) {
+  return gitWithEnvironment(repository, isolatedGitEnvironment, ...args);
+}
+
+function createRepository(t, environment = isolatedGitEnvironment) {
   const repository = mkdtempSync(join(tmpdir(), "dense-mem-prerelease-"));
   t.after(() => rmSync(repository, { recursive: true, force: true }));
 
-  git(repository, "init", "--quiet");
-  git(repository, "config", "user.email", "prerelease-test@example.invalid");
-  git(repository, "config", "user.name", "Prerelease Test");
-  git(repository, "commit", "--quiet", "--allow-empty", "-m", "initial");
+  gitWithEnvironment(repository, environment, "init", "--quiet");
+  gitWithEnvironment(
+    repository,
+    environment,
+    "config",
+    "user.email",
+    "prerelease-test@example.invalid",
+  );
+  gitWithEnvironment(repository, environment, "config", "user.name", "Prerelease Test");
+  gitWithEnvironment(repository, environment, "commit", "--quiet", "--allow-empty", "-m", "initial");
   return repository;
 }
 
@@ -47,6 +59,20 @@ function tag(repository, ...tags) {
     git(repository, "tag", name);
   }
 }
+
+test("temporary repositories ignore configured global hooks", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "dense-mem-prerelease-home-"));
+  const hooks = join(home, "hooks");
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  mkdirSync(hooks);
+  writeFileSync(join(home, ".gitconfig"), `[core]\n\thooksPath = ${hooks}\n`);
+  writeFileSync(join(hooks, "pre-commit"), "#!/bin/sh\nexit 97\n");
+  chmodSync(join(hooks, "pre-commit"), 0o755);
+
+  const repository = createRepository(t, { ...isolatedGitEnvironment, HOME: home });
+
+  assert.equal(git(repository, "log", "-1", "--format=%s"), "initial");
+});
 
 test("next defaults to a patch RC when no newer prerelease line exists", (t) => {
   const repository = createRepository(t);

@@ -17,8 +17,9 @@ permissions:
   packages: write
 
 concurrency:
-  group: release-${{ inputs.release_tag }}
+  group: release-version-tags
   cancel-in-progress: false
+  queue: max
 
 jobs:
   prepare-release:

@@ -13,8 +13,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-prerelease-main
+  group: release-version-tags
   cancel-in-progress: false
+  queue: max
 
 jobs:
   prepare-prerelease:
