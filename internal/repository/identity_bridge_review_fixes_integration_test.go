@@ -107,6 +107,110 @@ func TestIdentityBridgeSynchronizesNewAndUpdatedSSOIdentities(t *testing.T) {
 	require.Empty(t, ownerIdentity)
 }
 
+func TestIdentityBridgeUsesSSOActorForProfileMembership(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	providerID := uuid.NewString()
+	identityID := uuid.NewString()
+	teamID := createLedgerTeam(t, adminDB, rls, "sso-canonical-membership")
+	profileID := uuid.NewString()
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO sso_providers (id, name, kind, issuer_url, client_id)
+			VALUES (?::uuid, 'sso-canonical-provider', 'generic_oidc', 'https://sso-canonical.example', 'sso-canonical-client')
+		`, providerID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO sso_identities (id, provider_id, subject, external_id, email, display_name, active)
+			VALUES (?::uuid, ?::uuid, 'sso-canonical-subject', 'sso-canonical-external', 'sso-canonical@example.com', 'SSO Canonical User', true)
+		`, identityID, providerID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO team_profiles (
+				id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, auth_source,
+				sso_identity_id, sso_provider_id, sso_subject, sso_email, sso_group_id, sso_entitlement_status
+			) VALUES (?::uuid, ?::uuid, NULL, NULL, NULL, 'sso-canonical-profile', ARRAY['read']::text[], 'member', 'sso',
+				?::uuid, ?::uuid, 'sso-canonical-subject', 'sso-canonical@example.com', 'sso-canonical-group', 'active')
+		`, profileID, teamID, identityID, providerID).Error
+	}))
+
+	var membershipActor, aliasActor string
+	require.NoError(t, adminDB.Raw(`
+		SELECT actor_identity_id::text
+		FROM team_memberships
+		WHERE legacy_profile_id = ?::uuid
+	`, profileID).Row().Scan(&membershipActor))
+	require.Equal(t, identityID, membershipActor)
+	require.NoError(t, adminDB.Raw(`
+		SELECT canonical_identity_id::text
+		FROM ownership_aliases
+		WHERE team_id = ?::uuid AND legacy_owner_id = ?::uuid
+	`, teamID, profileID).Row().Scan(&aliasActor))
+	require.Equal(t, identityID, aliasActor)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE identity_compatibility_state
+			SET state = 'reconciled', backup_checkpoint = 'checkpoint-sso-canonical', deployment_fingerprint = 'release-sso-canonical'
+			WHERE singleton = true
+		`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status)
+			VALUES ('identity_cutover', 'identity-bridge-sso-canonical', 'compatible')
+		`).Error
+	}))
+
+	report, err := NewIdentityCleanupPreflightRepository(adminDB, rls).ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.True(t, report.Ready)
+}
+
+func TestIdentityBridgePreservesSystemActorKind(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "system-actor-kind")
+	profileID := uuid.NewString()
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO team_profiles (
+				id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, revoked_at, auth_source, is_system
+			) VALUES (?::uuid, ?::uuid, NULL, NULL, NULL, 'system-profile', ARRAY['read','write']::text[], 'manager', now(), 'system', true)
+		`, profileID, teamID).Error
+	}))
+
+	var kind string
+	require.NoError(t, adminDB.Raw(`
+		SELECT kind FROM actor_identities WHERE id = ?::uuid
+	`, profileID).Row().Scan(&kind))
+	require.Equal(t, "system", kind)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE identity_compatibility_state
+			SET state = 'reconciled', backup_checkpoint = 'checkpoint-system-actor', deployment_fingerprint = 'release-system-actor'
+			WHERE singleton = true
+		`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status)
+			VALUES ('identity_cutover', 'identity-bridge-system-actor', 'compatible')
+		`).Error
+	}))
+
+	report, err := NewIdentityCleanupPreflightRepository(adminDB, rls).ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.True(t, report.Ready)
+}
+
 func TestIdentityBridgeDeletesLegacyOwnershipAlias(t *testing.T) {
 	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -172,6 +276,29 @@ func TestIdentityCleanupPreflightRejectsDisabledBridgeTriggers(t *testing.T) {
 			require.Equal(t, "identity_bridge_missing", report.Blockers[0].Code)
 		})
 	}
+}
+
+func TestIdentityCleanupPreflightRejectsIncompleteBridgeTriggerEvents(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`DROP TRIGGER team_profiles_identity_bridge ON team_profiles`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			CREATE TRIGGER team_profiles_identity_bridge
+			AFTER INSERT ON team_profiles
+			FOR EACH ROW EXECUTE FUNCTION dense_mem_sync_legacy_profile_identity()
+		`).Error
+	}))
+
+	report, err := NewIdentityCleanupPreflightRepository(adminDB, rls).ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.False(t, report.Ready)
+	require.NotEmpty(t, report.Blockers)
+	require.Equal(t, "identity_bridge_missing", report.Blockers[0].Code)
 }
 
 func TestIdentityCleanupPreflightBlocksStaleMembershipGrants(t *testing.T) {

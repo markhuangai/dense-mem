@@ -83,6 +83,11 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 				  AND t.tgname = 'team_profiles_identity_bridge'
 				  AND NOT t.tgisinternal
 				  AND t.tgenabled IN ('O', 'A')
+				  AND (t.tgtype & 1) <> 0
+				  AND (t.tgtype & 2) = 0
+				  AND (t.tgtype & 4) <> 0
+				  AND (t.tgtype & 8) <> 0
+				  AND (t.tgtype & 16) <> 0
 				  AND pn.nspname = 'public'
 				  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
 				  AND pg_get_function_identity_arguments(p.oid) = ''
@@ -108,6 +113,11 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 				  AND t.tgname = 'sso_identities_identity_bridge'
 				  AND NOT t.tgisinternal
 				  AND t.tgenabled IN ('O', 'A')
+				  AND (t.tgtype & 1) <> 0
+				  AND (t.tgtype & 2) = 0
+				  AND (t.tgtype & 4) <> 0
+				  AND (t.tgtype & 8) <> 0
+				  AND (t.tgtype & 16) <> 0
 				  AND pn.nspname = 'public'
 				  AND p.proname = 'dense_mem_sync_sso_identity'
 				  AND pg_get_function_identity_arguments(p.oid) = ''

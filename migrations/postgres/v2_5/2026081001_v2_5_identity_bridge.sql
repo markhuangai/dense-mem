@@ -245,7 +245,11 @@ CREATE POLICY identity_compatibility_state_context_access ON identity_compatibil
 -- Existing API-key profiles retain their IDs as both actor and credential IDs.
 -- The statement is idempotent so a retry after a rolled-back deployment is safe.
 INSERT INTO actor_identities (id, kind, team_id, display_name, active, created_at, updated_at)
-SELECT p.id, CASE WHEN p.auth_source = 'sso' THEN 'human' ELSE 'api_client' END, p.team_id, COALESCE(p.name, ''), p.revoked_at IS NULL, p.created_at, p.updated_at
+SELECT p.id,
+       CASE WHEN p.auth_source = 'sso' THEN 'human'
+            WHEN p.auth_source = 'system' THEN 'system'
+            ELSE 'api_client' END,
+       p.team_id, COALESCE(p.name, ''), p.revoked_at IS NULL, p.created_at, p.updated_at
 FROM team_profiles p
 ON CONFLICT (id) DO UPDATE SET
     kind = EXCLUDED.kind,
@@ -329,6 +333,27 @@ JOIN sso_providers p ON p.id = i.provider_id
 WHERE COALESCE(NULLIF(i.external_id, ''), i.subject) <> ''
 ON CONFLICT (provider, external_id) DO NOTHING;
 
+-- SSO profiles keep their legacy IDs as aliases, but their stable SSO actors
+-- own the canonical membership and its existing grant rows.
+UPDATE team_memberships m
+SET actor_identity_id = p.sso_identity_id,
+    updated_at = now()
+FROM team_profiles p
+WHERE m.legacy_profile_id = p.id
+  AND p.auth_source = 'sso'
+  AND p.sso_identity_id IS NOT NULL
+  AND EXISTS (SELECT 1 FROM actor_identities a WHERE a.id = p.sso_identity_id);
+
+UPDATE ownership_aliases a
+SET canonical_identity_id = p.sso_identity_id,
+    credential_id = NULL
+FROM team_profiles p
+WHERE a.team_id = p.team_id
+  AND a.legacy_owner_id = p.id
+  AND p.auth_source = 'sso'
+  AND p.sso_identity_id IS NOT NULL
+  AND EXISTS (SELECT 1 FROM actor_identities i WHERE i.id = p.sso_identity_id);
+
 INSERT INTO identity_compatibility_state (singleton, bridge_version, state, legacy_profile_count, identity_count, membership_count, credential_count, alias_count, unresolved_count, updated_at)
 SELECT true, 'dense-mem.v2.5.identity.bridge.v1', 'bridge_active',
        (SELECT count(*) FROM team_profiles),
@@ -355,6 +380,7 @@ SET search_path = public
 AS $$
 DECLARE
     new_membership_id UUID;
+    canonical_actor_id UUID;
 BEGIN
     IF TG_OP = 'DELETE' THEN
         UPDATE credentials
@@ -362,7 +388,8 @@ BEGIN
          WHERE id = OLD.id;
         UPDATE team_memberships
            SET status = 'revoked', updated_at = now()
-         WHERE actor_identity_id = OLD.id AND team_id = OLD.team_id;
+         WHERE legacy_profile_id = OLD.id
+            OR (actor_identity_id = OLD.id AND team_id = OLD.team_id);
         UPDATE actor_identities
            SET active = false, updated_at = now()
          WHERE id = OLD.id;
@@ -385,6 +412,13 @@ BEGIN
        AND NEW.expires_at IS NOT DISTINCT FROM OLD.expires_at
        AND NEW.revoked_at IS NOT DISTINCT FROM OLD.revoked_at
        AND NEW.auth_source IS NOT DISTINCT FROM OLD.auth_source
+       AND NEW.is_system IS NOT DISTINCT FROM OLD.is_system
+       AND NEW.sso_identity_id IS NOT DISTINCT FROM OLD.sso_identity_id
+       AND NEW.sso_provider_id IS NOT DISTINCT FROM OLD.sso_provider_id
+       AND NEW.sso_subject IS NOT DISTINCT FROM OLD.sso_subject
+       AND NEW.sso_email IS NOT DISTINCT FROM OLD.sso_email
+       AND NEW.sso_group_id IS NOT DISTINCT FROM OLD.sso_group_id
+       AND NEW.sso_entitlement_status IS NOT DISTINCT FROM OLD.sso_entitlement_status
        AND NEW.sso_owner_identity_id IS NOT DISTINCT FROM OLD.sso_owner_identity_id
        AND NEW.created_at IS NOT DISTINCT FROM OLD.created_at
        AND NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at
@@ -397,13 +431,37 @@ BEGIN
     END IF;
 
     INSERT INTO actor_identities (id, kind, team_id, display_name, active, created_at, updated_at)
-    VALUES (NEW.id, CASE WHEN NEW.auth_source = 'sso' THEN 'human' ELSE 'api_client' END, NEW.team_id, COALESCE(NEW.name, ''), NEW.revoked_at IS NULL, COALESCE(NEW.created_at, now()), now())
+    VALUES (NEW.id,
+            CASE WHEN NEW.auth_source = 'sso' THEN 'human'
+                 WHEN NEW.auth_source = 'system' THEN 'system'
+                 ELSE 'api_client' END,
+            NEW.team_id, COALESCE(NEW.name, ''), NEW.revoked_at IS NULL, COALESCE(NEW.created_at, now()), now())
     ON CONFLICT (id) DO UPDATE SET team_id = EXCLUDED.team_id, display_name = EXCLUDED.display_name, active = EXCLUDED.active, updated_at = now();
 
-    INSERT INTO team_memberships (actor_identity_id, team_id, status, team_admin, maximum_grants, legacy_profile_id)
-    VALUES (NEW.id, NEW.team_id, CASE WHEN NEW.revoked_at IS NULL THEN 'active' ELSE 'revoked' END, NEW.role = 'manager', NEW.scopes, NEW.id)
-    ON CONFLICT (actor_identity_id, team_id) DO UPDATE SET status = EXCLUDED.status, team_admin = EXCLUDED.team_admin, maximum_grants = EXCLUDED.maximum_grants, updated_at = now()
-    RETURNING id INTO new_membership_id;
+    canonical_actor_id := NEW.id;
+    IF NEW.auth_source = 'sso'
+       AND NEW.sso_identity_id IS NOT NULL
+       AND EXISTS (SELECT 1 FROM actor_identities a WHERE a.id = NEW.sso_identity_id)
+    THEN
+        canonical_actor_id := NEW.sso_identity_id;
+    END IF;
+
+    UPDATE team_memberships
+       SET actor_identity_id = canonical_actor_id,
+           team_id = NEW.team_id,
+           status = CASE WHEN NEW.revoked_at IS NULL THEN 'active' ELSE 'revoked' END,
+           team_admin = NEW.role = 'manager',
+           maximum_grants = NEW.scopes,
+           updated_at = now()
+     WHERE legacy_profile_id = NEW.id
+     RETURNING id INTO new_membership_id;
+
+    IF NOT FOUND THEN
+        INSERT INTO team_memberships (actor_identity_id, team_id, status, team_admin, maximum_grants, legacy_profile_id)
+        VALUES (canonical_actor_id, NEW.team_id, CASE WHEN NEW.revoked_at IS NULL THEN 'active' ELSE 'revoked' END, NEW.role = 'manager', NEW.scopes, NEW.id)
+        ON CONFLICT (actor_identity_id, team_id) DO UPDATE SET status = EXCLUDED.status, team_admin = EXCLUDED.team_admin, maximum_grants = EXCLUDED.maximum_grants, legacy_profile_id = EXCLUDED.legacy_profile_id, updated_at = now()
+        RETURNING id INTO new_membership_id;
+    END IF;
 
     IF NEW.key_hash IS NOT NULL AND NEW.key_prefix IS NOT NULL THEN
         INSERT INTO credentials (id, actor_identity_id, owner_identity_id, team_id, kind, key_hash, key_prefix, key_suffix, name, scopes, rate_limit, status, expires_at, revoked_at, legacy_profile_id, created_at, updated_at, last_used_at)
@@ -414,7 +472,7 @@ BEGIN
     END IF;
 
     INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id, credential_id)
-    VALUES (NEW.team_id, NEW.id, NEW.id,
+    VALUES (NEW.team_id, NEW.id, canonical_actor_id,
             CASE WHEN NEW.key_hash IS NOT NULL AND NEW.key_prefix IS NOT NULL THEN NEW.id ELSE NULL END)
     ON CONFLICT (team_id, legacy_owner_id) DO UPDATE SET canonical_identity_id = EXCLUDED.canonical_identity_id, credential_id = EXCLUDED.credential_id;
 
@@ -428,7 +486,7 @@ $$;
 
 DROP TRIGGER IF EXISTS team_profiles_identity_bridge ON team_profiles;
 CREATE TRIGGER team_profiles_identity_bridge
-AFTER INSERT OR UPDATE OF team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit, expires_at, revoked_at, last_used_at, sso_owner_identity_id OR DELETE
+AFTER INSERT OR UPDATE OF team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit, expires_at, revoked_at, last_used_at, auth_source, is_system, sso_identity_id, sso_provider_id, sso_subject, sso_email, sso_group_id, sso_entitlement_status, sso_owner_identity_id OR DELETE
 ON team_profiles
 FOR EACH ROW EXECUTE FUNCTION dense_mem_sync_legacy_profile_identity();
 

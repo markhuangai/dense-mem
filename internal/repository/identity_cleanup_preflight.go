@@ -72,6 +72,11 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 					  AND t.tgname = 'team_profiles_identity_bridge'
 					  AND NOT t.tgisinternal
 					  AND t.tgenabled IN ('O', 'A')
+					  AND (t.tgtype & 1) <> 0
+					  AND (t.tgtype & 2) = 0
+					  AND (t.tgtype & 4) <> 0
+					  AND (t.tgtype & 8) <> 0
+					  AND (t.tgtype & 16) <> 0
 					  AND pn.nspname = 'public'
 					  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
 					  AND pg_get_function_identity_arguments(p.oid) = ''
@@ -97,6 +102,11 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 					  AND t.tgname = 'sso_identities_identity_bridge'
 					  AND NOT t.tgisinternal
 					  AND t.tgenabled IN ('O', 'A')
+					  AND (t.tgtype & 1) <> 0
+					  AND (t.tgtype & 2) = 0
+					  AND (t.tgtype & 4) <> 0
+					  AND (t.tgtype & 8) <> 0
+					  AND (t.tgtype & 16) <> 0
 					  AND pn.nspname = 'public'
 					  AND p.proname = 'dense_mem_sync_sso_identity'
 					  AND pg_get_function_identity_arguments(p.oid) = ''
@@ -137,9 +147,14 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 				 FROM (
 					SELECT p.id
 					FROM team_profiles p
+					LEFT JOIN sso_identities si
+					  ON si.id = p.sso_identity_id
 					LEFT JOIN actor_identities ai
-					  ON ai.id = p.id
-					 AND ai.team_id = p.team_id
+					  ON ai.id = CASE
+						WHEN p.auth_source = 'sso' AND p.sso_identity_id IS NOT NULL THEN p.sso_identity_id
+						ELSE p.id
+					  END
+					 AND (p.auth_source = 'sso' OR ai.team_id = p.team_id)
 					LEFT JOIN team_memberships m
 					  ON m.team_id = p.team_id
 					 AND m.legacy_profile_id = p.id
@@ -151,17 +166,24 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 							 FROM ownership_aliases a
 							 WHERE a.team_id = p.team_id
 							   AND a.legacy_owner_id = p.id
-							   AND a.canonical_identity_id = p.id
+							   AND a.canonical_identity_id = CASE
+								   WHEN p.auth_source = 'sso' AND p.sso_identity_id IS NOT NULL THEN p.sso_identity_id
+								   ELSE p.id
+							   END
 							   AND a.credential_id IS NOT DISTINCT FROM (
 								   CASE WHEN p.key_hash IS NOT NULL AND p.key_prefix IS NOT NULL THEN p.id ELSE NULL::uuid END
 							   )
 						 )
 						OR ai.id IS NULL
-						OR ai.kind IS DISTINCT FROM (CASE WHEN p.auth_source = 'sso' THEN 'human' ELSE 'api_client' END)
-						OR ai.display_name IS DISTINCT FROM COALESCE(p.name, '')
+						OR (p.auth_source = 'sso' AND p.sso_identity_id IS NOT NULL AND si.id IS NULL)
+						OR ai.kind IS DISTINCT FROM (CASE WHEN p.auth_source = 'sso' THEN 'human' WHEN p.auth_source = 'system' THEN 'system' ELSE 'api_client' END)
+						OR ai.display_name IS DISTINCT FROM CASE WHEN p.auth_source = 'sso' THEN COALESCE(si.display_name, '') ELSE COALESCE(p.name, '') END
 						OR ai.active IS DISTINCT FROM (p.revoked_at IS NULL)
 						OR m.id IS NULL
-						OR m.actor_identity_id IS DISTINCT FROM p.id
+						OR m.actor_identity_id IS DISTINCT FROM CASE
+							WHEN p.auth_source = 'sso' AND p.sso_identity_id IS NOT NULL THEN p.sso_identity_id
+							ELSE p.id
+						END
 						OR m.status IS DISTINCT FROM (CASE WHEN p.revoked_at IS NULL THEN 'active' ELSE 'revoked' END)
 					OR m.team_admin IS DISTINCT FROM (p.role = 'manager')
 					OR NOT (
