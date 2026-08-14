@@ -178,7 +178,10 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 						OR (p.auth_source = 'sso' AND p.sso_identity_id IS NOT NULL AND si.id IS NULL)
 						OR ai.kind IS DISTINCT FROM (CASE WHEN p.auth_source = 'sso' THEN 'human' WHEN p.auth_source = 'system' THEN 'system' ELSE 'api_client' END)
 						OR ai.display_name IS DISTINCT FROM CASE WHEN p.auth_source = 'sso' THEN COALESCE(si.display_name, '') ELSE COALESCE(p.name, '') END
-						OR ai.active IS DISTINCT FROM (p.revoked_at IS NULL)
+						OR (
+							(p.auth_source IS DISTINCT FROM 'sso' OR p.sso_identity_id IS NULL)
+							AND ai.active IS DISTINCT FROM (p.revoked_at IS NULL)
+						)
 						OR m.id IS NULL
 						OR m.actor_identity_id IS DISTINCT FROM CASE
 							WHEN p.auth_source = 'sso' AND p.sso_identity_id IS NOT NULL THEN p.sso_identity_id
@@ -201,9 +204,10 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 						OR (
 						 p.key_hash IS NOT NULL
 						 AND p.key_prefix IS NOT NULL
-							 AND (
-								 c.id IS NULL
-								 OR c.actor_identity_id IS DISTINCT FROM p.id
+								AND (
+									 c.id IS NULL
+									 OR c.kind IS DISTINCT FROM 'api_key'
+									 OR c.actor_identity_id IS DISTINCT FROM p.id
 								 OR c.owner_identity_id IS DISTINCT FROM p.sso_owner_identity_id
 								 OR c.key_hash IS DISTINCT FROM p.key_hash
 							 OR c.key_prefix IS DISTINCT FROM p.key_prefix
@@ -212,13 +216,21 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 							 OR c.rate_limit IS DISTINCT FROM p.rate_limit
 							 OR c.expires_at IS DISTINCT FROM p.expires_at
 							 OR c.revoked_at IS DISTINCT FROM p.revoked_at
-							 OR c.status IS DISTINCT FROM (
-								 CASE
-									 WHEN p.revoked_at IS NOT NULL THEN 'revoked'
-									 WHEN p.expires_at IS NOT NULL AND p.expires_at <= NOW() THEN 'expired'
-									 ELSE 'active'
-								 END
-							 )
+								 OR (
+									 p.revoked_at IS NOT NULL
+									 AND c.status IS DISTINCT FROM 'revoked'
+								 )
+								 OR (
+									 p.revoked_at IS NULL
+									 AND (p.expires_at IS NULL OR p.expires_at > NOW())
+									 AND c.status IS DISTINCT FROM 'active'
+								 )
+								 OR (
+									 p.revoked_at IS NULL
+									 AND p.expires_at IS NOT NULL
+									 AND p.expires_at <= NOW()
+									 AND c.status NOT IN ('active', 'expired')
+								 )
 							 OR NOT (
 								 COALESCE(c.scopes, ARRAY[]::text[]) @> COALESCE(p.scopes, ARRAY[]::text[])
 								 AND COALESCE(p.scopes, ARRAY[]::text[]) @> COALESCE(c.scopes, ARRAY[]::text[])
