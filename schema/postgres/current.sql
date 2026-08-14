@@ -102,6 +102,59 @@ $$;
 
 
 --
+-- Name: dense_mem_sync_sso_identity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.dense_mem_sync_sso_identity() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+    provider_key TEXT;
+    external_key TEXT;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        DELETE FROM identity_external_links
+        WHERE identity_id = OLD.id;
+
+        UPDATE actor_identities
+        SET active = false,
+            updated_at = now()
+        WHERE id = OLD.id;
+        RETURN OLD;
+    END IF;
+
+    provider_key := NEW.provider_id::text;
+    external_key := COALESCE(NULLIF(NEW.external_id, ''), NULLIF(NEW.subject, ''), '');
+
+    INSERT INTO actor_identities (id, kind, provider, subject, display_name, active, created_at, updated_at)
+    VALUES (NEW.id, 'human', provider_key, NEW.subject, COALESCE(NEW.display_name, ''), NEW.active, COALESCE(NEW.created_at, now()), now())
+    ON CONFLICT (id) DO UPDATE SET
+        kind = CASE WHEN actor_identities.kind = 'api_client' THEN actor_identities.kind ELSE EXCLUDED.kind END,
+        provider = EXCLUDED.provider,
+        subject = EXCLUDED.subject,
+        display_name = EXCLUDED.display_name,
+        active = EXCLUDED.active,
+        updated_at = now();
+
+    IF TG_OP = 'UPDATE' THEN
+        DELETE FROM identity_external_links
+        WHERE identity_id = OLD.id
+          AND (provider <> provider_key OR external_id <> external_key);
+    END IF;
+
+    IF external_key <> '' THEN
+        INSERT INTO identity_external_links (identity_id, provider, external_id)
+        VALUES (NEW.id, provider_key, external_key)
+        ON CONFLICT (provider, external_id) DO UPDATE
+        SET identity_id = EXCLUDED.identity_id;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: ensure_submission_hold_for_awaiting_review(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5950,6 +6003,13 @@ CREATE TRIGGER relationship_transitions_append_only BEFORE DELETE OR UPDATE ON p
 --
 
 CREATE TRIGGER search_index_generations_lifecycle_guard BEFORE INSERT OR DELETE OR UPDATE ON public.search_index_generations FOR EACH ROW EXECUTE FUNCTION public.guard_search_index_generation_lifecycle();
+
+
+--
+-- Name: sso_identities sso_identities_identity_bridge; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER sso_identities_identity_bridge AFTER INSERT OR DELETE OR UPDATE OF provider_id, subject, external_id, display_name, active ON public.sso_identities FOR EACH ROW EXECUTE FUNCTION public.dense_mem_sync_sso_identity();
 
 
 --

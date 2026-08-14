@@ -32,6 +32,7 @@ func TestLookupCanonicalCredentialScansRateLimitBeforeRole(t *testing.T) {
 	key, err := lookupCanonicalCredential(db, "dm_test_key")
 	require.NoError(t, err)
 	require.Equal(t, id, key.ID)
+	require.Equal(t, teamID, key.ProfileID)
 	require.Equal(t, "manager", key.Role)
 	require.Equal(t, 23, key.RateLimit)
 	require.Equal(t, []string{"read", "write"}, key.Scopes)

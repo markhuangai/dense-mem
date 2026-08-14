@@ -72,6 +72,13 @@ CREATE INDEX idx_sso_identities_provider_subject ON public.sso_identities USING 
 
 
 --
+-- Name: sso_identities sso_identities_identity_bridge; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER sso_identities_identity_bridge AFTER INSERT OR DELETE OR UPDATE OF provider_id, subject, external_id, display_name, active ON public.sso_identities FOR EACH ROW EXECUTE FUNCTION public.dense_mem_sync_sso_identity();
+
+
+--
 -- Name: sso_identities sso_identities_provider_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 

@@ -24,6 +24,7 @@ func TestSDKHTTPHandlerUsesTheSharedRegistryAndSupportsLegacyAndCurrentFlows(t *
 		Name:           "read_tool",
 		Description:    "read",
 		InputSchema:    map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}},
+		OutputSchema:   map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}, "required": []string{"value"}, "additionalProperties": false},
 		RequiredScopes: []string{"read"},
 		Invoke: func(_ context.Context, _ string, input map[string]any) (map[string]any, error) {
 			return map[string]any{"value": input["value"]}, nil
@@ -82,6 +83,7 @@ func TestSDKHTTPHandlerUsesTheSharedRegistryAndSupportsLegacyAndCurrentFlows(t *
 	handler.ServeHTTP(callResponse, callRequest)
 	require.Equal(t, http.StatusOK, callResponse.Code)
 	require.Contains(t, callResponse.Body.String(), `\"value\":\"ok\"`)
+	require.Contains(t, callResponse.Body.String(), `"structuredContent":{"value":"ok"}`)
 }
 
 func TestSDKHTTPHandlerRejectsUnknownProtocolHeader(t *testing.T) {
@@ -174,13 +176,13 @@ func TestSDKHTTPHandlerMapsUnknownAndUnauthorizedTools(t *testing.T) {
 func TestSDKToolHandlerRejectsInvalidAndUnserializableResults(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
-	register := func(name string, invoke registry.ToolInvoker) {
-		require.NoError(t, reg.Register(registry.Tool{Name: name, Invoke: invoke}))
+	register := func(name string, outputSchema map[string]any, invoke registry.ToolInvoker) {
+		require.NoError(t, reg.Register(registry.Tool{Name: name, OutputSchema: outputSchema, Invoke: invoke}))
 	}
-	register("good", func(context.Context, string, map[string]any) (map[string]any, error) {
-		return map[string]any{"content": []map[string]any{{"text": "ok"}}}, nil
+	register("good", map[string]any{"type": "object"}, func(context.Context, string, map[string]any) (map[string]any, error) {
+		return map[string]any{"value": "ok"}, nil
 	})
-	register("failed", func(context.Context, string, map[string]any) (map[string]any, error) {
+	register("failed", nil, func(context.Context, string, map[string]any) (map[string]any, error) {
 		return nil, errors.New("provider unavailable")
 	})
 	server := NewServer(reg, "profile-a", logger)
@@ -188,6 +190,7 @@ func TestSDKToolHandlerRejectsInvalidAndUnserializableResults(t *testing.T) {
 	good, err := server.sdkToolHandler("good")(context.Background(), &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage(`{"value":"ok"}`)}})
 	require.NoError(t, err)
 	require.Len(t, good.Content, 1)
+	require.Equal(t, map[string]any{"value": "ok"}, good.StructuredContent)
 
 	_, err = server.sdkToolHandler("good")(context.Background(), &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage("{")}})
 	requireSDKError(t, err, errCodeInvalidParams, "invalid params")

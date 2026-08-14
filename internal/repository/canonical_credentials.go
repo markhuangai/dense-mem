@@ -85,7 +85,7 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		return nil, err
 	}
 	key.TeamID = teamID
-	key.ProfileID = key.ID
+	key.ProfileID = teamID
 	key.Name = key.Label
 	key.AuthSource = "api_key"
 	key.SSOOwnerIdentityID = parseOptionalUUID(ownerIdentityID)

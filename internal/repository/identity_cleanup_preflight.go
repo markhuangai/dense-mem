@@ -49,19 +49,11 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 
 		var backupCheckpoint, deploymentFingerprint string
 		err := tx.Raw(`
-			SELECT state, legacy_profile_count, identity_count, membership_count,
-			       credential_count, alias_count, unresolved_count,
-			       backup_checkpoint, deployment_fingerprint
+			SELECT state, backup_checkpoint, deployment_fingerprint
 			FROM identity_compatibility_state
 			WHERE singleton = true
 		`).Row().Scan(
 			&result.BridgeState,
-			&result.LegacyProfileCount,
-			&result.IdentityCount,
-			&result.MembershipCount,
-			&result.CredentialCount,
-			&result.AliasCount,
-			&result.UnresolvedCount,
 			&backupCheckpoint,
 			&deploymentFingerprint,
 		)
@@ -70,6 +62,30 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 			return nil
 		}
 		if err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT
+				(SELECT count(*) FROM team_profiles),
+				(SELECT count(*) FROM actor_identities),
+				(SELECT count(*) FROM team_memberships),
+				(SELECT count(*) FROM credentials),
+				(SELECT count(*) FROM ownership_aliases),
+				(SELECT count(*) FROM team_profiles p
+				 WHERE NOT EXISTS (
+					 SELECT 1
+					 FROM ownership_aliases a
+					 WHERE a.team_id = p.team_id
+					   AND a.legacy_owner_id = p.id
+				 ))
+		`).Row().Scan(
+			&result.LegacyProfileCount,
+			&result.IdentityCount,
+			&result.MembershipCount,
+			&result.CredentialCount,
+			&result.AliasCount,
+			&result.UnresolvedCount,
+		); err != nil {
 			return err
 		}
 		if result.BridgeState != "reconciled" && result.BridgeState != "cutover_ready" {

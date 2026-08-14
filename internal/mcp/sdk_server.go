@@ -188,7 +188,16 @@ func (s *Server) sdkToolHandler(name string) sdkmcp.ToolHandler {
 		if !ok {
 			return nil, &sdkjsonrpc.Error{Code: errCodeToolFailure, Message: "tool result serialization failed"}
 		}
-		return &sdkmcp.CallToolResult{Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: text}}}, nil
+		response := &sdkmcp.CallToolResult{Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: text}}}
+		tool, exists := s.registry.Get(name)
+		if exists && tool.OutputSchema != nil {
+			var structured any
+			if err := json.Unmarshal([]byte(text), &structured); err != nil {
+				return nil, &sdkjsonrpc.Error{Code: errCodeToolFailure, Message: "tool result serialization failed"}
+			}
+			response.StructuredContent = structured
+		}
+		return response, nil
 	}
 }
 

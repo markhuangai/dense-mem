@@ -303,11 +303,14 @@ ON CONFLICT (team_id, legacy_owner_id) DO UPDATE SET
 
 -- SSO identities have stable external links. Existing profile IDs remain the
 -- ownership aliases; the SSO actor is added only when it is not already linked.
-INSERT INTO actor_identities (id, kind, display_name, active, created_at, updated_at)
-SELECT i.id, 'human', COALESCE(i.display_name, ''), i.active, i.created_at, i.updated_at
+INSERT INTO actor_identities (id, kind, provider, subject, display_name, active, created_at, updated_at)
+SELECT i.id, 'human', p.id::text, i.subject, COALESCE(i.display_name, ''), i.active, i.created_at, i.updated_at
 FROM sso_identities i
+JOIN sso_providers p ON p.id = i.provider_id
 ON CONFLICT (id) DO UPDATE SET
     kind = CASE WHEN actor_identities.kind = 'api_client' THEN actor_identities.kind ELSE EXCLUDED.kind END,
+    provider = EXCLUDED.provider,
+    subject = EXCLUDED.subject,
     display_name = EXCLUDED.display_name,
     active = EXCLUDED.active,
     updated_at = EXCLUDED.updated_at;
@@ -402,6 +405,62 @@ AFTER INSERT OR UPDATE OF team_id, key_hash, key_prefix, key_suffix, name, scope
 ON team_profiles
 FOR EACH ROW EXECUTE FUNCTION dense_mem_sync_legacy_profile_identity();
 
+CREATE OR REPLACE FUNCTION dense_mem_sync_sso_identity()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    provider_key TEXT;
+    external_key TEXT;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        DELETE FROM identity_external_links
+        WHERE identity_id = OLD.id;
+
+        UPDATE actor_identities
+        SET active = false,
+            updated_at = now()
+        WHERE id = OLD.id;
+        RETURN OLD;
+    END IF;
+
+    provider_key := NEW.provider_id::text;
+    external_key := COALESCE(NULLIF(NEW.external_id, ''), NULLIF(NEW.subject, ''), '');
+
+    INSERT INTO actor_identities (id, kind, provider, subject, display_name, active, created_at, updated_at)
+    VALUES (NEW.id, 'human', provider_key, NEW.subject, COALESCE(NEW.display_name, ''), NEW.active, COALESCE(NEW.created_at, now()), now())
+    ON CONFLICT (id) DO UPDATE SET
+        kind = CASE WHEN actor_identities.kind = 'api_client' THEN actor_identities.kind ELSE EXCLUDED.kind END,
+        provider = EXCLUDED.provider,
+        subject = EXCLUDED.subject,
+        display_name = EXCLUDED.display_name,
+        active = EXCLUDED.active,
+        updated_at = now();
+
+    IF TG_OP = 'UPDATE' THEN
+        DELETE FROM identity_external_links
+        WHERE identity_id = OLD.id
+          AND (provider <> provider_key OR external_id <> external_key);
+    END IF;
+
+    IF external_key <> '' THEN
+        INSERT INTO identity_external_links (identity_id, provider, external_id)
+        VALUES (NEW.id, provider_key, external_key)
+        ON CONFLICT (provider, external_id) DO UPDATE
+        SET identity_id = EXCLUDED.identity_id;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS sso_identities_identity_bridge ON sso_identities;
+CREATE TRIGGER sso_identities_identity_bridge
+AFTER INSERT OR UPDATE OF provider_id, subject, external_id, display_name, active OR DELETE
+ON sso_identities
+FOR EACH ROW EXECUTE FUNCTION dense_mem_sync_sso_identity();
+
 -- +goose StatementEnd
 
 -- +goose Down
@@ -409,6 +468,8 @@ FOR EACH ROW EXECUTE FUNCTION dense_mem_sync_legacy_profile_identity();
 
 DROP TRIGGER IF EXISTS team_profiles_identity_bridge ON team_profiles;
 DROP FUNCTION IF EXISTS dense_mem_sync_legacy_profile_identity();
+DROP TRIGGER IF EXISTS sso_identities_identity_bridge ON sso_identities;
+DROP FUNCTION IF EXISTS dense_mem_sync_sso_identity();
 DROP TABLE IF EXISTS identity_compatibility_state;
 DROP TABLE IF EXISTS ownership_aliases;
 DROP TABLE IF EXISTS identity_external_links;
