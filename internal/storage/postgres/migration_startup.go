@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 )
@@ -25,6 +27,22 @@ type MigrationState struct {
 }
 
 var ErrInvalidMigrationState = errors.New("postgres migration state is invalid")
+
+// These digests bind the runtime bridge check to the function bodies shipped
+// by the v2.5 identity migration. The migration history check separately
+// protects the SQL file itself from edits after deployment.
+const (
+	legacyProfileIdentityBridgeFunctionSHA256 = "6d3b719dfaf5cdd7d905c2d6f553d061b5c0f445e65939e5af70fdaaa7a0005f"
+	ssoIdentityBridgeFunctionSHA256           = "fef326cd83370c48e93998d62aff5a74906ae3a5edbf38350d78aca4110ea7b5"
+)
+
+func migrationFunctionBodyMatches(source, expectedSHA256 string) bool {
+	if source == "" {
+		return false
+	}
+	digest := sha256.Sum256([]byte(source))
+	return hex.EncodeToString(digest[:]) == expectedSHA256
+}
 
 // ClassifyMigrationState distinguishes an empty database, a pre-bridge
 // deployment, a complete v2.5 bridge, and partial/corrupt state. It is read
@@ -50,7 +68,10 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 		return MigrationState{}, fmt.Errorf("migration state: set system context: %w", err)
 	}
 	var teams, goose, bridge, identities, memberships, credentials, grants, externalLinks, aliases bool
-	var legacyBridgeFunction, legacyBridgeTrigger, ssoBridgeFunction, ssoBridgeTrigger bool
+	var legacyBridgeFunctionSource string
+	var legacyBridgeTrigger bool
+	var ssoBridgeFunctionSource string
+	var ssoBridgeTrigger bool
 	row := tx.QueryRowContext(ctx, `
 		SELECT
 			to_regclass('public.teams') IS NOT NULL,
@@ -62,15 +83,16 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 			to_regclass('public.membership_grants') IS NOT NULL,
 			to_regclass('public.identity_external_links') IS NOT NULL,
 			to_regclass('public.ownership_aliases') IS NOT NULL,
-			EXISTS (
-				SELECT 1
+			COALESCE((
+				SELECT p.prosrc
 				FROM pg_proc p
 				JOIN pg_namespace n ON n.oid = p.pronamespace
 				WHERE n.nspname = 'public'
 				  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
 				  AND p.prokind = 'f'
 				  AND pg_get_function_identity_arguments(p.oid) = ''
-			),
+			  LIMIT 1
+			), ''),
 			EXISTS (
 				SELECT 1
 				FROM pg_trigger t
@@ -104,15 +126,16 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 				  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
 				  AND pg_get_function_identity_arguments(p.oid) = ''
 			),
-			EXISTS (
-				SELECT 1
+			COALESCE((
+				SELECT p.prosrc
 				FROM pg_proc p
 				JOIN pg_namespace n ON n.oid = p.pronamespace
 				WHERE n.nspname = 'public'
 				  AND p.proname = 'dense_mem_sync_sso_identity'
 				  AND p.prokind = 'f'
 				  AND pg_get_function_identity_arguments(p.oid) = ''
-			),
+			  LIMIT 1
+			), ''),
 			EXISTS (
 				SELECT 1
 				FROM pg_trigger t
@@ -142,9 +165,11 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 				  AND pg_get_function_identity_arguments(p.oid) = ''
 			)
 	`)
-	if err := row.Scan(&teams, &goose, &bridge, &identities, &memberships, &credentials, &grants, &externalLinks, &aliases, &legacyBridgeFunction, &legacyBridgeTrigger, &ssoBridgeFunction, &ssoBridgeTrigger); err != nil {
+	if err := row.Scan(&teams, &goose, &bridge, &identities, &memberships, &credentials, &grants, &externalLinks, &aliases, &legacyBridgeFunctionSource, &legacyBridgeTrigger, &ssoBridgeFunctionSource, &ssoBridgeTrigger); err != nil {
 		return MigrationState{}, fmt.Errorf("migration state: inspect schema: %w", err)
 	}
+	legacyBridgeFunction := migrationFunctionBodyMatches(legacyBridgeFunctionSource, legacyProfileIdentityBridgeFunctionSHA256)
+	ssoBridgeFunction := migrationFunctionBodyMatches(ssoBridgeFunctionSource, ssoIdentityBridgeFunctionSHA256)
 	state := MigrationState{RepositoryLatest: repositoryLatest}
 	if !teams && !goose {
 		state.Kind = MigrationStateFresh

@@ -99,6 +99,20 @@ func TestSDKHTTPHandlerRejectsUnknownProtocolHeader(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, response.Code)
 }
 
+func TestSDKHTTPHandlerUsesConfiguredRequestBodyLimit(t *testing.T) {
+	logger, _ := testLogger(t)
+	server := NewServer(registry.New(), "profile-a", logger)
+	handler := server.NewSDKHTTPHandler(true, 128)
+	body := "{" + strings.Repeat(" ", 127) + "}"
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code, "response body: %s", response.Body.String())
+}
+
 func TestSDKErrorAdaptersPreserveJSONRPCDetails(t *testing.T) {
 	require.Nil(t, sdkRPCError(nil))
 

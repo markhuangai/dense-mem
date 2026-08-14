@@ -585,6 +585,52 @@ func TestPublicErrorSchemaContract(t *testing.T) {
 	}
 }
 
+func TestSubmissionStatusUsesClosedErrorCodeEnumForEveryErrorLocation(t *testing.T) {
+	tool, err := requireTool(toolMap(t), ToolGetSubmissionStatus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	props := schemaProperties(tool.OutputSchema)
+	expected := memoryservice.SubmissionErrorCodes()
+
+	evidenceItems, ok := props["evidence"]["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("evidence schema has no item object: %#v", props["evidence"])
+	}
+	evidenceErrorVariants, ok := evidenceItems["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("evidence item schema has no properties: %#v", evidenceItems)
+	}
+	evidenceError, ok := evidenceErrorVariants["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("evidence item schema has no error field: %#v", evidenceItems)
+	}
+	variants, ok := evidenceError["oneOf"].([]any)
+	if !ok || len(variants) != 2 {
+		t.Fatalf("evidence error schema variants = %#v", evidenceError["oneOf"])
+	}
+	nestedError, ok := variants[1].(map[string]any)
+	if !ok {
+		t.Fatalf("nested error schema = %#v", variants[1])
+	}
+	nestedCode, ok := schemaProperties(nestedError)["code"]["enum"].([]string)
+	if !ok {
+		t.Fatalf("nested error code enum = %#v", schemaProperties(nestedError)["code"])
+	}
+
+	topErrors, ok := props["errors"]["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("top-level errors schema has no item object: %#v", props["errors"])
+	}
+	topCode, ok := schemaProperties(topErrors)["code"]["enum"].([]string)
+	if !ok {
+		t.Fatalf("top-level error code enum = %#v", schemaProperties(topErrors)["code"])
+	}
+	if !slices.Equal(nestedCode, expected) || !slices.Equal(topCode, expected) {
+		t.Fatalf("submission error enums differ from closed vocabulary: nested=%v top=%v expected=%v", nestedCode, topCode, expected)
+	}
+}
+
 func TestRememberIngestIdempotencyKeyFromEvidence(t *testing.T) {
 	single := rememberIngestIdempotencyKey([]memoryservice.RememberEvidenceInput{{
 		IdempotencyKey: " eval:doc-alpha ",

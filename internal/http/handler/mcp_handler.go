@@ -31,6 +31,7 @@ type MCPHandler struct {
 	recallFeedbackConfig registry.RecallFeedbackConfigProvider
 	dreams               registry.DreamingConfigProvider
 	transport            string
+	maxRequestBodyBytes  int64
 }
 
 // MCPHandlerInterface is the companion interface for MCPHandler.
@@ -43,11 +44,11 @@ var _ MCPHandlerInterface = (*MCPHandler)(nil)
 
 // NewMCPHandler constructs a Streamable HTTP MCP handler.
 func NewMCPHandler(reg registry.Registry, logger observability.LogProvider) *MCPHandler {
-	return &MCPHandler{reg: reg, logger: logger, transport: "legacy"}
+	return &MCPHandler{reg: reg, logger: logger, transport: "legacy", maxRequestBodyBytes: mcp.SDKRequestBodyLimit(0)}
 }
 
 func NewMCPHandlerWithLifecycle(reg registry.Registry, logger observability.LogProvider, lifecycle sse.StreamLifecycle) *MCPHandler {
-	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle, transport: "legacy"}
+	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle, transport: "legacy", maxRequestBodyBytes: mcp.SDKRequestBodyLimit(0)}
 }
 
 // NewMCPHandlerWithLifecycleAndRuntimeConfig constructs a Streamable HTTP MCP
@@ -60,6 +61,12 @@ func NewMCPHandlerWithLifecycleAndRuntimeConfig(reg registry.Registry, logger ob
 // handler with a boot-only transport selector. The legacy constructor remains
 // available for focused compatibility tests and rollback.
 func NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(reg registry.Registry, logger observability.LogProvider, lifecycle sse.StreamLifecycle, recallFeedbackConfig registry.RecallFeedbackConfigProvider, transport string, dreams ...registry.DreamingConfigProvider) *MCPHandler {
+	return NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransportAndBodyLimit(reg, logger, lifecycle, recallFeedbackConfig, transport, 0, dreams...)
+}
+
+// NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransportAndBodyLimit adds the
+// boot-configured HTTP request bound to the SDK transport.
+func NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransportAndBodyLimit(reg registry.Registry, logger observability.LogProvider, lifecycle sse.StreamLifecycle, recallFeedbackConfig registry.RecallFeedbackConfigProvider, transport string, maxRequestBodyBytes int, dreams ...registry.DreamingConfigProvider) *MCPHandler {
 	var dreamConfig registry.DreamingConfigProvider
 	if len(dreams) > 0 {
 		dreamConfig = dreams[0]
@@ -67,7 +74,7 @@ func NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(reg registry.Registr
 	if transport != "sdk" {
 		transport = "legacy"
 	}
-	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle, recallFeedbackConfig: recallFeedbackConfig, dreams: dreamConfig, transport: transport}
+	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle, recallFeedbackConfig: recallFeedbackConfig, dreams: dreamConfig, transport: transport, maxRequestBodyBytes: mcp.SDKRequestBodyLimit(maxRequestBodyBytes)}
 }
 
 // HandlePost serves POST /mcp. It accepts a single JSON-RPC payload and returns
@@ -130,12 +137,16 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 	// caller requested a single response mode. Preserve the caller's mode for
 	// JSONResponse above while normalizing only the transport header.
 	request.Header.Set("Accept", "application/json, text/event-stream")
+	bodyLimit := h.maxRequestBodyBytes
+	if bodyLimit <= 0 {
+		bodyLimit = mcp.SDKRequestBodyLimit(0)
+	}
 	if request.Body != nil {
-		payload, err := io.ReadAll(io.LimitReader(request.Body, 4<<20+1))
+		payload, err := io.ReadAll(io.LimitReader(request.Body, bodyLimit+1))
 		if err != nil {
 			return httperr.New(httperr.VALIDATION_ERROR, "failed to read request body")
 		}
-		if len(payload) > 4<<20 {
+		if int64(len(payload)) > bodyLimit {
 			return c.NoContent(http.StatusRequestEntityTooLarge)
 		}
 		request.Body = io.NopCloser(bytes.NewReader(payload))
@@ -155,7 +166,7 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 		team.Description = resolvedTeam.Description
 	}
 	server := mcp.NewServerWithScopesTeamContextAndRuntimeConfig(h.reg, profileID.String(), principal.Scopes, team, h.logger, h.recallFeedbackConfig, h.dreams)
-	serverHandler := server.NewSDKHTTPHandler(!prefersEventStream(accept))
+	serverHandler := server.NewSDKHTTPHandler(!prefersEventStream(accept), bodyLimit)
 	serverHandler.ServeHTTP(c.Response(), request)
 	return nil
 }

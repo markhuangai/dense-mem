@@ -16,38 +16,58 @@ import (
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
+// SDKRequestBodyLimit returns the configured SDK transport limit, falling
+// back to the official SDK default when boot configuration is absent.
+func SDKRequestBodyLimit(value int) int64 {
+	if value > 0 {
+		return int64(value)
+	}
+	return sdkmcp.DefaultMaxRequestBodyBytes
+}
+
 // NewSDKHTTPHandler creates a stateless official-SDK transport backed by the
 // same request-scoped registry, authorization, and prompt catalog as the
 // legacy transport.
-func (s *Server) NewSDKHTTPHandler(jsonResponse bool) http.Handler {
+func (s *Server) NewSDKHTTPHandler(jsonResponse bool, maxRequestBodyBytes ...int64) http.Handler {
+	bodyLimit := int64(sdkmcp.DefaultMaxRequestBodyBytes)
+	if len(maxRequestBodyBytes) > 0 && maxRequestBodyBytes[0] > 0 {
+		bodyLimit = maxRequestBodyBytes[0]
+	}
 	transport := sdkmcp.NewStreamableHTTPHandler(func(req *http.Request) *sdkmcp.Server {
 		return s.newSDKServer(req.Context())
 	}, &sdkmcp.StreamableHTTPOptions{
 		Stateless:                    true,
 		JSONResponse:                 jsonResponse,
-		MaxRequestBodyBytes:          4 << 20,
+		MaxRequestBodyBytes:          bodyLimit,
 		PropagateRequestCancellation: true,
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if s.writeSDKToolLookupError(w, req, jsonResponse) {
+		if s.writeSDKToolLookupError(w, req, jsonResponse, bodyLimit) {
 			return
 		}
 		transport.ServeHTTP(w, req)
 	})
 }
 
-func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Request, jsonResponse bool) bool {
+func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Request, jsonResponse bool, maxRequestBodyBytes ...int64) bool {
 	if req == nil || req.Body == nil || req.Method != http.MethodPost {
 		return false
 	}
 	if !sdkJSONContentType(req.Header.Get("Content-Type")) {
 		return false
 	}
-	payload, err := io.ReadAll(io.LimitReader(req.Body, 4<<20+1))
-	if err != nil || len(payload) > 4<<20 {
+	bodyLimit := int64(sdkmcp.DefaultMaxRequestBodyBytes)
+	if len(maxRequestBodyBytes) > 0 && maxRequestBodyBytes[0] > 0 {
+		bodyLimit = maxRequestBodyBytes[0]
+	}
+	payload, err := io.ReadAll(io.LimitReader(req.Body, bodyLimit+1))
+	if err != nil {
 		return false
 	}
 	req.Body = io.NopCloser(bytes.NewReader(payload))
+	if int64(len(payload)) > bodyLimit {
+		return false
+	}
 	var envelope struct {
 		JSONRPC string          `json:"jsonrpc"`
 		ID      json.RawMessage `json:"id"`
