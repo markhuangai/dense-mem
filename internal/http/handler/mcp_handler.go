@@ -247,8 +247,8 @@ func acceptsSDKResponse(value string) bool {
 	}
 	for _, supported := range []string{"application/json", "text/event-stream"} {
 		for _, part := range strings.Split(value, ",") {
-			mediaType, accepted := acceptedMediaType(part)
-			if accepted && mediaTypeMatches(mediaType, supported) {
+			mediaType, quality, accepted := acceptedMediaType(part)
+			if accepted && quality > 0 && mediaTypeMatches(mediaType, supported) {
 				return true
 			}
 		}
@@ -326,32 +326,66 @@ func (h *MCPHandler) HandleGet(c echo.Context) error {
 }
 
 func acceptsEventStream(accept string) bool {
-	for _, part := range strings.Split(accept, ",") {
-		mediaType, accepted := acceptedMediaType(part)
-		if accepted && mediaType != "*/*" && mediaTypeMatches(mediaType, "text/event-stream") {
-			return true
-		}
+	eventQuality, eventExplicit := bestAcceptedQuality(accept, "text/event-stream")
+	if !eventExplicit {
+		return false
 	}
-	return false
+	jsonQuality, jsonExplicit := bestAcceptedQuality(accept, "application/json")
+	if !jsonExplicit {
+		return eventQuality > 0
+	}
+	return eventQuality >= jsonQuality
 }
 
-func acceptedMediaType(part string) (string, bool) {
+func bestAcceptedQuality(accept, supported string) (float64, bool) {
+	bestQuality := float64(-1)
+	bestSpecificity := -1
+	for _, part := range strings.Split(accept, ",") {
+		mediaType, quality, accepted := acceptedMediaType(part)
+		if !accepted || !mediaTypeMatches(mediaType, supported) {
+			continue
+		}
+		specificity := mediaRangeSpecificity(mediaType, supported)
+		if quality > bestQuality || (quality == bestQuality && specificity > bestSpecificity) {
+			bestQuality = quality
+			bestSpecificity = specificity
+		}
+	}
+	return bestQuality, bestSpecificity > 0
+}
+
+func mediaRangeSpecificity(mediaRange, supported string) int {
+	if mediaRange == "*/*" {
+		return 0
+	}
+	if mediaRange == supported {
+		return 2
+	}
+	if strings.HasSuffix(mediaRange, "/*") {
+		return 1
+	}
+	return 0
+}
+
+func acceptedMediaType(part string) (string, float64, bool) {
 	parameters := strings.Split(part, ";")
 	mediaType := strings.ToLower(strings.TrimSpace(parameters[0]))
 	if mediaType == "" {
-		return "", false
+		return "", 0, false
 	}
+	quality := float64(1)
 	for _, parameter := range parameters[1:] {
 		key, value, ok := strings.Cut(parameter, "=")
 		if !ok || !strings.EqualFold(strings.TrimSpace(key), "q") {
 			continue
 		}
-		quality, err := strconv.ParseFloat(strings.Trim(strings.TrimSpace(value), `"`), 64)
-		if err != nil || quality <= 0 || quality > 1 {
-			return "", false
+		parsed, err := strconv.ParseFloat(strings.Trim(strings.TrimSpace(value), `"`), 64)
+		if err != nil || parsed < 0 || parsed > 1 {
+			return "", 0, false
 		}
+		quality = parsed
 	}
-	return mediaType, true
+	return mediaType, quality, quality > 0
 }
 
 func writeMCPSSE(c echo.Context, payload []byte) error {

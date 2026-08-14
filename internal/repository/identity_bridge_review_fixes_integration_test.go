@@ -134,6 +134,244 @@ func TestIdentityBridgeDeletesLegacyOwnershipAlias(t *testing.T) {
 	require.Zero(t, aliasCount)
 }
 
+func TestIdentityCleanupPreflightRejectsDisabledBridgeTriggers(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	tests := []struct {
+		name    string
+		disable string
+		enable  string
+	}{
+		{
+			name:    "legacy profile trigger",
+			disable: `ALTER TABLE team_profiles DISABLE TRIGGER team_profiles_identity_bridge`,
+			enable:  `ALTER TABLE team_profiles ENABLE TRIGGER team_profiles_identity_bridge`,
+		},
+		{
+			name:    "sso identity trigger",
+			disable: `ALTER TABLE sso_identities DISABLE TRIGGER sso_identities_identity_bridge`,
+			enable:  `ALTER TABLE sso_identities ENABLE TRIGGER sso_identities_identity_bridge`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+				return tx.Exec(tt.disable).Error
+			}))
+			defer func() {
+				_ = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+					return tx.Exec(tt.enable).Error
+				})
+			}()
+
+			report, err := NewIdentityCleanupPreflightRepository(adminDB, rls).ReadIdentityCleanupPreflight(ctx)
+			require.NoError(t, err)
+			require.False(t, report.Ready)
+			require.NotEmpty(t, report.Blockers)
+			require.Equal(t, "identity_bridge_missing", report.Blockers[0].Code)
+		})
+	}
+}
+
+func TestIdentityCleanupPreflightBlocksStaleMembershipGrants(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "identity-cleanup-stale-grants")
+	profileID := createLedgerProfile(t, adminDB, rls, teamID, "stale-grants-profile")
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE identity_compatibility_state
+			SET state = 'reconciled', backup_checkpoint = 'checkpoint-stale-grants', deployment_fingerprint = 'release-stale-grants'
+			WHERE singleton = true
+		`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status)
+			VALUES ('identity_cutover', 'identity-bridge-stale-grants', 'compatible')
+		`).Error
+	}))
+
+	preflight := NewIdentityCleanupPreflightRepository(adminDB, rls)
+	initial, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.True(t, initial.Ready)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			DELETE FROM membership_grants
+			WHERE membership_id = (SELECT id FROM team_memberships WHERE legacy_profile_id = ?::uuid)
+			  AND grant_name = 'read'
+		`, profileID).Error
+	}))
+
+	report, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.False(t, report.Ready)
+	require.Equal(t, int64(1), report.UnresolvedCount)
+}
+
+func TestIdentityCleanupPreflightBlocksWrongOwnershipAliasTargets(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "identity-cleanup-stale-alias")
+	profileID := createLedgerProfile(t, adminDB, rls, teamID, "stale-alias-profile")
+	otherProfileID := createLedgerProfile(t, adminDB, rls, teamID, "other-alias-profile")
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE identity_compatibility_state
+			SET state = 'reconciled', backup_checkpoint = 'checkpoint-stale-alias', deployment_fingerprint = 'release-stale-alias'
+			WHERE singleton = true
+		`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status)
+			VALUES ('identity_cutover', 'identity-bridge-stale-alias', 'compatible')
+		`).Error
+	}))
+
+	preflight := NewIdentityCleanupPreflightRepository(adminDB, rls)
+	initial, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.True(t, initial.Ready)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE ownership_aliases
+			SET canonical_identity_id = ?::uuid, credential_id = ?::uuid
+			WHERE team_id = ?::uuid AND legacy_owner_id = ?::uuid
+		`, otherProfileID, otherProfileID, teamID, profileID).Error
+	}))
+
+	report, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.False(t, report.Ready)
+	require.Equal(t, int64(1), report.UnresolvedCount)
+}
+
+func TestIdentityCleanupPreflightBlocksStaleCredentialOwnerIdentity(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	providerID := uuid.NewString()
+	identityID := uuid.NewString()
+	teamID := createLedgerTeam(t, adminDB, rls, "identity-cleanup-stale-owner")
+	profileID := uuid.NewString()
+	keyPrefix := "dm_stale_" + uuid.NewString()[:15]
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO sso_providers (id, name, kind, issuer_url, client_id)
+			VALUES (?::uuid, 'stale-owner-provider', 'generic_oidc', 'https://stale-owner.example', 'stale-owner-client')
+		`, providerID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO sso_identities (id, provider_id, subject, external_id, email, display_name, active)
+			VALUES (?::uuid, ?::uuid, 'stale-owner-subject', 'stale-owner-external', 'stale-owner@example.com', 'Stale Owner', true)
+		`, identityID, providerID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO team_profiles (
+				id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, sso_owner_identity_id
+			) VALUES (?::uuid, ?::uuid, 'hash-stale-owner', ?, 'suffix', 'stale-owner-key', ARRAY['read','write']::text[], 'member', ?::uuid)
+		`, profileID, teamID, keyPrefix, identityID).Error
+	}))
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE identity_compatibility_state
+			SET state = 'reconciled', backup_checkpoint = 'checkpoint-stale-owner', deployment_fingerprint = 'release-stale-owner'
+			WHERE singleton = true
+		`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status)
+			VALUES ('identity_cutover', 'identity-bridge-stale-owner', 'compatible')
+		`).Error
+	}))
+
+	preflight := NewIdentityCleanupPreflightRepository(adminDB, rls)
+	initial, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.True(t, initial.Ready)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE credentials
+			SET owner_identity_id = NULL
+			WHERE legacy_profile_id = ?::uuid
+		`, profileID).Error
+	}))
+
+	report, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.False(t, report.Ready)
+	require.Equal(t, int64(1), report.UnresolvedCount)
+}
+
+func TestIdentityCleanupPreflightBlocksWrongCredentialAndMembershipActors(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "identity-cleanup-stale-actors")
+	profileID := createLedgerProfile(t, adminDB, rls, teamID, "stale-actors-profile")
+	fakeActorID := uuid.NewString()
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE identity_compatibility_state
+			SET state = 'reconciled', backup_checkpoint = 'checkpoint-stale-actors', deployment_fingerprint = 'release-stale-actors'
+			WHERE singleton = true
+		`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status)
+			VALUES ('identity_cutover', 'identity-bridge-stale-actors', 'compatible')
+		`).Error
+	}))
+
+	preflight := NewIdentityCleanupPreflightRepository(adminDB, rls)
+	initial, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.True(t, initial.Ready)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO actor_identities (id, kind, team_id, display_name)
+			VALUES (?::uuid, 'api_client', ?::uuid, 'Fake Actor')
+		`, fakeActorID, teamID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			UPDATE team_memberships
+			SET actor_identity_id = ?::uuid
+			WHERE legacy_profile_id = ?::uuid
+		`, fakeActorID, profileID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE credentials
+			SET actor_identity_id = ?::uuid
+			WHERE legacy_profile_id = ?::uuid
+		`, fakeActorID, profileID).Error
+	}))
+
+	report, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.False(t, report.Ready)
+	require.Equal(t, int64(1), report.UnresolvedCount)
+}
+
 func TestIdentityCleanupPreflightUsesLiveBridgeCounts(t *testing.T) {
 	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

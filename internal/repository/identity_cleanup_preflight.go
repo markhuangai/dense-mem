@@ -48,6 +48,66 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 			result.Blockers = append(result.Blockers, identityCleanupBlocker("identity_bridge_missing", "the additive identity bridge is not installed"))
 			return nil
 		}
+		var bridgeTriggers bool
+		if err := tx.Raw(`
+			SELECT
+				EXISTS (
+					SELECT 1
+					FROM pg_proc p
+					JOIN pg_namespace n ON n.oid = p.pronamespace
+					WHERE n.nspname = 'public'
+					  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
+					  AND p.prokind = 'f'
+					  AND pg_get_function_identity_arguments(p.oid) = ''
+				)
+				AND EXISTS (
+					SELECT 1
+					FROM pg_trigger t
+					JOIN pg_class c ON c.oid = t.tgrelid
+					JOIN pg_namespace n ON n.oid = c.relnamespace
+					JOIN pg_proc p ON p.oid = t.tgfoid
+					JOIN pg_namespace pn ON pn.oid = p.pronamespace
+					WHERE n.nspname = 'public'
+					  AND c.relname = 'team_profiles'
+					  AND t.tgname = 'team_profiles_identity_bridge'
+					  AND NOT t.tgisinternal
+					  AND t.tgenabled IN ('O', 'A')
+					  AND pn.nspname = 'public'
+					  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
+					  AND pg_get_function_identity_arguments(p.oid) = ''
+				)
+				AND EXISTS (
+					SELECT 1
+					FROM pg_proc p
+					JOIN pg_namespace n ON n.oid = p.pronamespace
+					WHERE n.nspname = 'public'
+					  AND p.proname = 'dense_mem_sync_sso_identity'
+					  AND p.prokind = 'f'
+					  AND pg_get_function_identity_arguments(p.oid) = ''
+				)
+				AND EXISTS (
+					SELECT 1
+					FROM pg_trigger t
+					JOIN pg_class c ON c.oid = t.tgrelid
+					JOIN pg_namespace n ON n.oid = c.relnamespace
+					JOIN pg_proc p ON p.oid = t.tgfoid
+					JOIN pg_namespace pn ON pn.oid = p.pronamespace
+					WHERE n.nspname = 'public'
+					  AND c.relname = 'sso_identities'
+					  AND t.tgname = 'sso_identities_identity_bridge'
+					  AND NOT t.tgisinternal
+					  AND t.tgenabled IN ('O', 'A')
+					  AND pn.nspname = 'public'
+					  AND p.proname = 'dense_mem_sync_sso_identity'
+					  AND pg_get_function_identity_arguments(p.oid) = ''
+				)
+		`).Scan(&bridgeTriggers).Error; err != nil {
+			return err
+		}
+		if !bridgeTriggers {
+			result.Blockers = append(result.Blockers, identityCleanupBlocker("identity_bridge_missing", "the additive identity bridge is not installed"))
+			return nil
+		}
 
 		var backupCheckpoint, deploymentFingerprint string
 		err := tx.Raw(`
@@ -86,27 +146,42 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 					LEFT JOIN credentials c
 					  ON c.team_id = p.team_id
 					 AND c.legacy_profile_id = p.id
-					WHERE NOT EXISTS (
-						 SELECT 1
-						 FROM ownership_aliases a
-						 WHERE a.team_id = p.team_id
-						   AND a.legacy_owner_id = p.id
-					)
-					OR ai.id IS NULL
-					OR ai.active IS DISTINCT FROM (p.revoked_at IS NULL)
-					OR m.id IS NULL
-					OR m.status IS DISTINCT FROM (CASE WHEN p.revoked_at IS NULL THEN 'active' ELSE 'revoked' END)
+						 WHERE NOT EXISTS (
+							 SELECT 1
+							 FROM ownership_aliases a
+							 WHERE a.team_id = p.team_id
+							   AND a.legacy_owner_id = p.id
+							   AND a.canonical_identity_id = p.id
+							   AND a.credential_id IS NOT DISTINCT FROM (
+								   CASE WHEN p.key_hash IS NOT NULL AND p.key_prefix IS NOT NULL THEN p.id ELSE NULL::uuid END
+							   )
+						 )
+						OR ai.id IS NULL
+						OR ai.active IS DISTINCT FROM (p.revoked_at IS NULL)
+						OR m.id IS NULL
+						OR m.actor_identity_id IS DISTINCT FROM p.id
+						OR m.status IS DISTINCT FROM (CASE WHEN p.revoked_at IS NULL THEN 'active' ELSE 'revoked' END)
 					OR m.team_admin IS DISTINCT FROM (p.role = 'manager')
 					OR NOT (
-						 COALESCE(m.maximum_grants, ARRAY[]::text[]) @> COALESCE(p.scopes, ARRAY[]::text[])
-						 AND COALESCE(p.scopes, ARRAY[]::text[]) @> COALESCE(m.maximum_grants, ARRAY[]::text[])
-					)
-					OR (
+							 COALESCE(m.maximum_grants, ARRAY[]::text[]) @> COALESCE(p.scopes, ARRAY[]::text[])
+							 AND COALESCE(p.scopes, ARRAY[]::text[]) @> COALESCE(m.maximum_grants, ARRAY[]::text[])
+						 )
+						 OR COALESCE((
+							 SELECT array_agg(g.grant_name ORDER BY g.grant_name)
+							 FROM membership_grants g
+							 WHERE g.membership_id = m.id
+						 ), ARRAY[]::text[]) IS DISTINCT FROM COALESCE((
+							 SELECT array_agg(requested.grant_name ORDER BY requested.grant_name)
+							 FROM unnest(COALESCE(p.scopes, ARRAY[]::text[])) AS requested(grant_name)
+						 ), ARRAY[]::text[])
+						OR (
 						 p.key_hash IS NOT NULL
 						 AND p.key_prefix IS NOT NULL
-						 AND (
-							 c.id IS NULL
-							 OR c.key_hash IS DISTINCT FROM p.key_hash
+							 AND (
+								 c.id IS NULL
+								 OR c.actor_identity_id IS DISTINCT FROM p.id
+								 OR c.owner_identity_id IS DISTINCT FROM p.sso_owner_identity_id
+								 OR c.key_hash IS DISTINCT FROM p.key_hash
 							 OR c.key_prefix IS DISTINCT FROM p.key_prefix
 							 OR c.key_suffix IS DISTINCT FROM p.key_suffix
 							 OR c.name IS DISTINCT FROM p.name
