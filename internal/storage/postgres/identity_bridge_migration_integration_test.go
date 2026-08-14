@@ -318,6 +318,35 @@ $$`
 	}
 }
 
+func TestMigrationStartupRejectsChangedBridgeFunctionExecutionAttributes(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		alter string
+	}{
+		{name: "legacy security invoker", alter: "ALTER FUNCTION dense_mem_sync_legacy_profile_identity() SECURITY INVOKER"},
+		{name: "legacy search path", alter: "ALTER FUNCTION dense_mem_sync_legacy_profile_identity() RESET search_path"},
+		{name: "sso security invoker", alter: "ALTER FUNCTION dense_mem_sync_sso_identity() SECURITY INVOKER"},
+		{name: "sso search path", alter: "ALTER FUNCTION dense_mem_sync_sso_identity() RESET search_path"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+			defer cleanup()
+			runGooseUpTo(t, ctx, sqlDB, 2026081001)
+
+			require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, tt.alter)
+				return err
+			}))
+
+			state, err := ClassifyMigrationState(ctx, sqlDB, getMigrationsDir())
+			require.NoError(t, err)
+			require.Equal(t, MigrationStateInvalid, state.Kind)
+			require.Equal(t, "identity bridge is only partially installed", state.Reason)
+		})
+	}
+}
+
 func TestIdentityBridgeReconcilesLegacyWritesAndRLS(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)

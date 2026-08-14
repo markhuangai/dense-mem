@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lib/pq"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"gorm.io/gorm"
@@ -140,6 +142,8 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 			return nil
 		}
 		var legacyBridgeFunctionSource, ssoBridgeFunctionSource string
+		var legacyBridgeFunctionSecurityDefiner, ssoBridgeFunctionSecurityDefiner bool
+		var legacyBridgeFunctionConfig, ssoBridgeFunctionConfig []string
 		if err := tx.Raw(`
 			SELECT
 				COALESCE((
@@ -153,6 +157,26 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 					LIMIT 1
 				), ''),
 				COALESCE((
+					SELECT p.prosecdef
+					FROM pg_proc p
+					JOIN pg_namespace n ON n.oid = p.pronamespace
+					WHERE n.nspname = 'public'
+					  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
+					  AND p.prokind = 'f'
+					  AND pg_get_function_identity_arguments(p.oid) = ''
+					LIMIT 1
+				), false),
+				COALESCE((
+					SELECT p.proconfig
+					FROM pg_proc p
+					JOIN pg_namespace n ON n.oid = p.pronamespace
+					WHERE n.nspname = 'public'
+					  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
+					  AND p.prokind = 'f'
+					  AND pg_get_function_identity_arguments(p.oid) = ''
+					LIMIT 1
+				), ARRAY[]::text[]),
+				COALESCE((
 					SELECT p.prosrc
 					FROM pg_proc p
 					JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -161,11 +185,39 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 					  AND p.prokind = 'f'
 					  AND pg_get_function_identity_arguments(p.oid) = ''
 					LIMIT 1
-				), '')
-			`).Row().Scan(&legacyBridgeFunctionSource, &ssoBridgeFunctionSource); err != nil {
+				), ''),
+				COALESCE((
+					SELECT p.prosecdef
+					FROM pg_proc p
+					JOIN pg_namespace n ON n.oid = p.pronamespace
+					WHERE n.nspname = 'public'
+					  AND p.proname = 'dense_mem_sync_sso_identity'
+					  AND p.prokind = 'f'
+					  AND pg_get_function_identity_arguments(p.oid) = ''
+					LIMIT 1
+				), false),
+				COALESCE((
+					SELECT p.proconfig
+					FROM pg_proc p
+					JOIN pg_namespace n ON n.oid = p.pronamespace
+					WHERE n.nspname = 'public'
+					  AND p.proname = 'dense_mem_sync_sso_identity'
+					  AND p.prokind = 'f'
+					  AND pg_get_function_identity_arguments(p.oid) = ''
+					LIMIT 1
+				), ARRAY[]::text[])
+		`).Row().Scan(
+			&legacyBridgeFunctionSource,
+			&legacyBridgeFunctionSecurityDefiner,
+			pq.Array(&legacyBridgeFunctionConfig),
+			&ssoBridgeFunctionSource,
+			&ssoBridgeFunctionSecurityDefiner,
+			pq.Array(&ssoBridgeFunctionConfig),
+		); err != nil {
 			return err
 		}
-		if !postgres.IdentityBridgeFunctionBodiesMatch(legacyBridgeFunctionSource, ssoBridgeFunctionSource) {
+		if !postgres.IdentityBridgeFunctionBodiesMatch(legacyBridgeFunctionSource, ssoBridgeFunctionSource) ||
+			!postgres.IdentityBridgeFunctionExecutionAttributesMatch(legacyBridgeFunctionSecurityDefiner, legacyBridgeFunctionConfig, ssoBridgeFunctionSecurityDefiner, ssoBridgeFunctionConfig) {
 			result.Blockers = append(result.Blockers, identityCleanupBlocker("identity_bridge_integrity_invalid", "the identity bridge function definitions do not match the running release"))
 			return nil
 		}

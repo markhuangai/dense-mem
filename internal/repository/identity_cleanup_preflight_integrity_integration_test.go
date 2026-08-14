@@ -42,6 +42,32 @@ $$`
 	}
 }
 
+func TestIdentityCleanupPreflightRejectsChangedBridgeFunctionExecutionAttributes(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		alter string
+	}{
+		{name: "legacy security invoker", alter: "ALTER FUNCTION dense_mem_sync_legacy_profile_identity() SECURITY INVOKER"},
+		{name: "legacy search path", alter: "ALTER FUNCTION dense_mem_sync_legacy_profile_identity() RESET search_path"},
+		{name: "sso security invoker", alter: "ALTER FUNCTION dense_mem_sync_sso_identity() SECURITY INVOKER"},
+		{name: "sso search path", alter: "ALTER FUNCTION dense_mem_sync_sso_identity() RESET search_path"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+			defer cleanup()
+			require.NoError(t, rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
+				return tx.Exec(tt.alter).Error
+			}))
+
+			report, err := NewIdentityCleanupPreflightRepository(adminDB, rls).ReadIdentityCleanupPreflight(context.Background())
+			require.NoError(t, err)
+			require.False(t, report.Ready)
+			require.NotEmpty(t, report.Blockers)
+			require.Equal(t, "identity_bridge_integrity_invalid", report.Blockers[0].Code)
+		})
+	}
+}
+
 func TestIdentityCleanupPreflightRejectsConditionalBridgeTriggers(t *testing.T) {
 	for _, tt := range []struct {
 		name    string

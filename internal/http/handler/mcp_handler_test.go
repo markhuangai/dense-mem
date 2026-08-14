@@ -362,6 +362,40 @@ func TestMCPHandlerSDKUsesConfiguredRequestBodyLimit(t *testing.T) {
 	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
 }
 
+func TestMCPHandlerSDKBodyLimitPrecedesNotificationValidation(t *testing.T) {
+	h := NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransportAndBodyLimit(registry.New(), testMCPLogger(), nil, nil, "sdk", 128)
+	e := echo.New()
+	profileID := uuid.New()
+	base := `{"jsonrpc":"2.0","method":"tools/list","params":{}}`
+	body := base + strings.Repeat(" ", 129-len(base))
+
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+	}{
+		{name: "content type", headers: map[string]string{echo.HeaderContentType: echo.MIMETextPlain}},
+		{name: "protocol version", headers: map[string]string{"MCP-Protocol-Version": "2099-01-01"}},
+		{name: "accept", headers: map[string]string{echo.HeaderAccept: "text/plain"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			req.Header.Set(echo.HeaderAccept, echo.MIMEApplicationJSON)
+			req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+			for header, value := range tc.headers {
+				req.Header.Set(header, value)
+			}
+			req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
+			rec := httptest.NewRecorder()
+			c := e.NewContext(req, rec)
+
+			require.NoError(t, h.HandlePost(c))
+			require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+			require.Empty(t, rec.Body.String())
+		})
+	}
+}
+
 func TestMCPHandlerSDKWildcardDefaultsToJSON(t *testing.T) {
 	h := NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(registry.New(), testMCPLogger(), nil, nil, "sdk")
 	e := echo.New()

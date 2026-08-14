@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+
+	"github.com/lib/pq"
 )
 
 type MigrationStateKind string
@@ -34,6 +36,7 @@ var ErrInvalidMigrationState = errors.New("postgres migration state is invalid")
 const (
 	legacyProfileIdentityBridgeFunctionSHA256 = "6d3b719dfaf5cdd7d905c2d6f553d061b5c0f445e65939e5af70fdaaa7a0005f"
 	ssoIdentityBridgeFunctionSHA256           = "fef326cd83370c48e93998d62aff5a74906ae3a5edbf38350d78aca4110ea7b5"
+	identityBridgeFunctionSearchPathConfig    = "search_path=public"
 )
 
 func migrationFunctionBodyMatches(source, expectedSHA256 string) bool {
@@ -49,6 +52,17 @@ func migrationFunctionBodyMatches(source, expectedSHA256 string) bool {
 func IdentityBridgeFunctionBodiesMatch(legacySource, ssoSource string) bool {
 	return migrationFunctionBodyMatches(legacySource, legacyProfileIdentityBridgeFunctionSHA256) &&
 		migrationFunctionBodyMatches(ssoSource, ssoIdentityBridgeFunctionSHA256)
+}
+
+func migrationFunctionExecutionAttributesMatch(securityDefiner bool, config []string) bool {
+	return securityDefiner && len(config) == 1 && config[0] == identityBridgeFunctionSearchPathConfig
+}
+
+// IdentityBridgeFunctionExecutionAttributesMatch applies the release-bound
+// SECURITY DEFINER and search_path contract to both bridge functions.
+func IdentityBridgeFunctionExecutionAttributesMatch(legacySecurityDefiner bool, legacyConfig []string, ssoSecurityDefiner bool, ssoConfig []string) bool {
+	return migrationFunctionExecutionAttributesMatch(legacySecurityDefiner, legacyConfig) &&
+		migrationFunctionExecutionAttributesMatch(ssoSecurityDefiner, ssoConfig)
 }
 
 // ClassifyMigrationState distinguishes an empty database, a pre-bridge
@@ -76,8 +90,12 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 	}
 	var teams, goose, bridge, identities, memberships, credentials, grants, externalLinks, aliases bool
 	var legacyBridgeFunctionSource string
+	var legacyBridgeFunctionSecurityDefiner bool
+	var legacyBridgeFunctionConfig []string
 	var legacyBridgeTrigger bool
 	var ssoBridgeFunctionSource string
+	var ssoBridgeFunctionSecurityDefiner bool
+	var ssoBridgeFunctionConfig []string
 	var ssoBridgeTrigger bool
 	row := tx.QueryRowContext(ctx, `
 		SELECT
@@ -100,6 +118,26 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 				  AND pg_get_function_identity_arguments(p.oid) = ''
 			  LIMIT 1
 			), ''),
+			COALESCE((
+				SELECT p.prosecdef
+				FROM pg_proc p
+				JOIN pg_namespace n ON n.oid = p.pronamespace
+				WHERE n.nspname = 'public'
+				  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
+				  AND p.prokind = 'f'
+				  AND pg_get_function_identity_arguments(p.oid) = ''
+			  LIMIT 1
+			), false),
+			COALESCE((
+				SELECT p.proconfig
+				FROM pg_proc p
+				JOIN pg_namespace n ON n.oid = p.pronamespace
+				WHERE n.nspname = 'public'
+				  AND p.proname = 'dense_mem_sync_legacy_profile_identity'
+				  AND p.prokind = 'f'
+				  AND pg_get_function_identity_arguments(p.oid) = ''
+			  LIMIT 1
+			), ARRAY[]::text[]),
 			EXISTS (
 				SELECT 1
 				FROM pg_trigger t
@@ -144,6 +182,26 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 				  AND pg_get_function_identity_arguments(p.oid) = ''
 			  LIMIT 1
 			), ''),
+			COALESCE((
+				SELECT p.prosecdef
+				FROM pg_proc p
+				JOIN pg_namespace n ON n.oid = p.pronamespace
+				WHERE n.nspname = 'public'
+				  AND p.proname = 'dense_mem_sync_sso_identity'
+				  AND p.prokind = 'f'
+				  AND pg_get_function_identity_arguments(p.oid) = ''
+			  LIMIT 1
+			), false),
+			COALESCE((
+				SELECT p.proconfig
+				FROM pg_proc p
+				JOIN pg_namespace n ON n.oid = p.pronamespace
+				WHERE n.nspname = 'public'
+				  AND p.proname = 'dense_mem_sync_sso_identity'
+				  AND p.prokind = 'f'
+				  AND pg_get_function_identity_arguments(p.oid) = ''
+			  LIMIT 1
+			), ARRAY[]::text[]),
 			EXISTS (
 				SELECT 1
 				FROM pg_trigger t
@@ -174,11 +232,12 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 				  AND pg_get_function_identity_arguments(p.oid) = ''
 			)
 	`)
-	if err := row.Scan(&teams, &goose, &bridge, &identities, &memberships, &credentials, &grants, &externalLinks, &aliases, &legacyBridgeFunctionSource, &legacyBridgeTrigger, &ssoBridgeFunctionSource, &ssoBridgeTrigger); err != nil {
+	if err := row.Scan(&teams, &goose, &bridge, &identities, &memberships, &credentials, &grants, &externalLinks, &aliases, &legacyBridgeFunctionSource, &legacyBridgeFunctionSecurityDefiner, pq.Array(&legacyBridgeFunctionConfig), &legacyBridgeTrigger, &ssoBridgeFunctionSource, &ssoBridgeFunctionSecurityDefiner, pq.Array(&ssoBridgeFunctionConfig), &ssoBridgeTrigger); err != nil {
 		return MigrationState{}, fmt.Errorf("migration state: inspect schema: %w", err)
 	}
 	legacyBridgeFunction := migrationFunctionBodyMatches(legacyBridgeFunctionSource, legacyProfileIdentityBridgeFunctionSHA256)
 	ssoBridgeFunction := migrationFunctionBodyMatches(ssoBridgeFunctionSource, ssoIdentityBridgeFunctionSHA256)
+	bridgeFunctionExecutionAttributes := IdentityBridgeFunctionExecutionAttributesMatch(legacyBridgeFunctionSecurityDefiner, legacyBridgeFunctionConfig, ssoBridgeFunctionSecurityDefiner, ssoBridgeFunctionConfig)
 	state := MigrationState{RepositoryLatest: repositoryLatest}
 	if !teams && !goose {
 		state.Kind = MigrationStateFresh
@@ -204,11 +263,11 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 	if len(files) >= 2 && state.DatabaseLatest == files[len(files)-2].Version {
 		state.ExactLegacy = true
 	}
-	if !bridge && !identities && !memberships && !credentials && !grants && !externalLinks && !aliases && !legacyBridgeFunction && !legacyBridgeTrigger && !ssoBridgeFunction && !ssoBridgeTrigger {
+	if !bridge && !identities && !memberships && !credentials && !grants && !externalLinks && !aliases && !legacyBridgeFunction && !legacyBridgeTrigger && !ssoBridgeFunction && !ssoBridgeTrigger && !bridgeFunctionExecutionAttributes {
 		state.Kind = MigrationStateLegacy
 		return state, nil
 	}
-	if !(bridge && identities && memberships && credentials && grants && externalLinks && aliases && legacyBridgeFunction && legacyBridgeTrigger && ssoBridgeFunction && ssoBridgeTrigger) {
+	if !(bridge && identities && memberships && credentials && grants && externalLinks && aliases && legacyBridgeFunction && legacyBridgeTrigger && ssoBridgeFunction && ssoBridgeTrigger && bridgeFunctionExecutionAttributes) {
 		state.Kind = MigrationStateInvalid
 		state.Reason = "identity bridge is only partially installed"
 		return state, nil
