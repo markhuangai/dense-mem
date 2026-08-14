@@ -79,8 +79,10 @@ func bytesContainGooseSections(contents []byte) bool {
 }
 
 // ValidateMigrationHistory validates the current executable history and, when
-// a base directory is supplied, rejects edits, deletions, renames, or versions
-// that do not advance beyond the base history.
+// a base directory is supplied, rejects edits, deletions, basename renames, or
+// versions that do not advance beyond the base history. Release-directory
+// relocation is allowed so histories can be organized without changing Goose
+// version identity.
 func ValidateMigrationHistory(dir, baseDir string) error {
 	current, err := ListMigrationFiles(dir)
 	if err != nil {
@@ -107,8 +109,13 @@ func ValidateMigrationHistory(dir, baseDir string) error {
 	currentByVersion := make(map[int64]MigrationFile, len(current))
 	for _, migration := range current {
 		currentByVersion[migration.Version] = migration
-		if previous, ok := baseByVersion[migration.Version]; ok && previous.SHA256 != migration.SHA256 {
-			return fmt.Errorf("migration history: deployed migration version %d was modified", migration.Version)
+		if previous, ok := baseByVersion[migration.Version]; ok {
+			if previous.SHA256 != migration.SHA256 {
+				return fmt.Errorf("migration history: deployed migration version %d was modified", migration.Version)
+			}
+			if filepath.Base(previous.Filename) != filepath.Base(migration.Filename) {
+				return fmt.Errorf("migration history: deployed migration version %d was renamed", migration.Version)
+			}
 		}
 		if _, ok := baseByVersion[migration.Version]; !ok && migration.Version <= baseMax {
 			return fmt.Errorf("migration history: new migration %q does not advance beyond base version %d", migration.Filename, baseMax)

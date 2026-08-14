@@ -211,6 +211,58 @@ func TestIdentityCleanupPreflightBlocksStaleCanonicalAuthorization(t *testing.T)
 	require.Equal(t, int64(1), report.UnresolvedCount)
 }
 
+func TestIdentityCleanupPreflightBlocksStaleSSOExternalLink(t *testing.T) {
+	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	providerID := uuid.NewString()
+	identityID := uuid.NewString()
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO sso_providers (id, name, kind, issuer_url, client_id)
+			VALUES (?::uuid, 'stale-link-provider', 'generic_oidc', 'https://stale-link.example', 'stale-link-client')
+		`, providerID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO sso_identities (id, provider_id, subject, external_id, email, display_name, active)
+			VALUES (?::uuid, ?::uuid, 'stale-link-subject', 'stale-link-external', 'stale-link@example.com', 'Stale Link', true)
+		`, identityID, providerID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			UPDATE identity_compatibility_state
+			SET state = 'reconciled', backup_checkpoint = 'checkpoint-stale-link', deployment_fingerprint = 'release-stale-link'
+			WHERE singleton = true
+		`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO v2_compatibility_markers (marker_kind, version, status)
+			VALUES ('identity_cutover', 'identity-bridge-stale-link', 'compatible')
+		`).Error
+	}))
+
+	preflight := NewIdentityCleanupPreflightRepository(adminDB, rls)
+	initial, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.True(t, initial.Ready)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE identity_external_links
+			SET external_id = 'stale-link-external-value'
+			WHERE identity_id = ?::uuid
+		`, identityID).Error
+	}))
+
+	report, err := preflight.ReadIdentityCleanupPreflight(ctx)
+	require.NoError(t, err)
+	require.False(t, report.Ready)
+	require.Equal(t, int64(1), report.UnresolvedCount)
+}
+
 func TestIdentityCleanupPreflightBlocksMissingMembershipsAndCredentials(t *testing.T) {
 	adminDB, _, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

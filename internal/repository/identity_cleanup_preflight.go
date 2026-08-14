@@ -134,6 +134,8 @@ func (r *IdentityCleanupPreflightRepositoryImpl) ReadIdentityCleanupPreflight(ct
 						 SELECT 1
 						 FROM identity_external_links l
 						 WHERE l.identity_id = i.id
+						   AND l.provider = i.provider_id::text
+						   AND l.external_id = COALESCE(NULLIF(i.external_id, ''), NULLIF(i.subject, ''), '')
 					   )
 				 ) AS unresolved)
 		`).Row().Scan(

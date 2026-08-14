@@ -328,7 +328,7 @@ func (h *MCPHandler) HandleGet(c echo.Context) error {
 func acceptsEventStream(accept string) bool {
 	for _, part := range strings.Split(accept, ",") {
 		mediaType, accepted := acceptedMediaType(part)
-		if accepted && mediaTypeMatches(mediaType, "text/event-stream") {
+		if accepted && mediaType != "*/*" && mediaTypeMatches(mediaType, "text/event-stream") {
 			return true
 		}
 	}

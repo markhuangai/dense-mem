@@ -51,6 +51,20 @@ func TestMigrationHistoryAllowsRelocatingAnImmutableVersion(t *testing.T) {
 	require.NoError(t, ValidateMigrationHistory(current, base))
 }
 
+func TestMigrationHistoryRejectsRenamingAnImmutableVersion(t *testing.T) {
+	base := t.TempDir()
+	current := t.TempDir()
+	baseSQL := "-- +goose Up\nSELECT 1;\n-- +goose Down\nSELECT 1;\n"
+	require.NoError(t, os.Mkdir(filepath.Join(base, "v2_4"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(current, "v2_4"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(base, "v2_4", "2026080905_base.sql"), []byte(baseSQL), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(current, "v2_4", "2026080905_renamed.sql"), []byte(baseSQL), 0o644))
+
+	err := ValidateMigrationHistory(current, base)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "renamed")
+}
+
 func TestMigrationFilesystemCombinesReleaseDirectories(t *testing.T) {
 	root := t.TempDir()
 	for _, release := range []string{"v2_4", "v2_5"} {

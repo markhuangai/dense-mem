@@ -13,7 +13,9 @@ git rev-parse --verify "${BASE_REF}^{commit}" >/dev/null 2>&1 || {
 
 merge_base="$(git merge-base HEAD "${BASE_REF}")"
 declare -A base_sha_by_version=()
+declare -A base_filename_by_version=()
 declare -A current_sha_by_version=()
+declare -A current_filename_by_version=()
 declare -A current_path_by_version=()
 base_max=0
 
@@ -41,6 +43,7 @@ for path in "${base_paths[@]}"; do
     exit 1
   fi
   base_sha_by_version["${version}"]="$(git show "${merge_base}:${path}" | sha256sum | awk '{print $1}')"
+  base_filename_by_version["${version}"]="${path##*/}"
   if (( version > base_max )); then
     base_max="${version}"
   fi
@@ -65,6 +68,7 @@ for path in "${current_paths[@]}"; do
   fi
   previous="${version}"
   current_sha_by_version["${version}"]="$(sha256sum "${path}" | awk '{print $1}')"
+  current_filename_by_version["${version}"]="${path##*/}"
   current_path_by_version["${version}"]="${path}"
   grep -q -- '-- +goose Up' "${path}" || { echo "${path#"${ROOT_DIR}/"} is missing Goose Up" >&2; exit 1; }
   grep -q -- '-- +goose Down' "${path}" || { echo "${path#"${ROOT_DIR}/"} is missing Goose Down" >&2; exit 1; }
@@ -78,6 +82,10 @@ for version in "${!base_sha_by_version[@]}"; do
   fi
   if [[ "${base_sha_by_version[${version}]}" != "${current_sha_by_version[${version}]}" ]]; then
     echo "deployed migration version ${version} was modified" >&2
+    exit 1
+  fi
+  if [[ "${base_filename_by_version[${version}]}" != "${current_filename_by_version[${version}]}" ]]; then
+    echo "deployed migration version ${version} was renamed" >&2
     exit 1
   fi
 done

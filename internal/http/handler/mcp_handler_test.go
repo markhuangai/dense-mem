@@ -271,6 +271,26 @@ func TestMCPHandlerSDKPostValidationBranches(t *testing.T) {
 	})
 }
 
+func TestMCPHandlerSDKWildcardDefaultsToJSON(t *testing.T) {
+	h := NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(registry.New(), testMCPLogger(), nil, nil, "sdk")
+	e := echo.New()
+	profileID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set(echo.HeaderAccept, "*/*")
+	req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	require.NoError(t, h.HandlePost(c))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, echo.MIMEApplicationJSON, rec.Header().Get(echo.HeaderContentType))
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	require.NotNil(t, response["result"])
+}
+
 func TestMCPHandlerSDKHeaderHelpers(t *testing.T) {
 	require.True(t, sdkSupportedProtocolVersion(" 2025-11-25 "))
 	require.False(t, sdkSupportedProtocolVersion("2099-01-01"))
@@ -285,6 +305,7 @@ func TestMCPHandlerSDKHeaderHelpers(t *testing.T) {
 	require.False(t, acceptsSDKResponse("application/*;q=0, text/*;q=0"))
 	require.False(t, acceptsSDKResponse("application/json;q=0, text/event-stream;q=0"))
 	require.False(t, acceptsEventStream("text/event-stream;q=0"))
+	require.False(t, acceptsEventStream("*/*"))
 	require.True(t, acceptsEventStream("text/*"))
 	require.True(t, acceptsEventStream("application/json, text/event-stream;q=0.5"))
 	require.False(t, acceptsSDKResponse("text/plain"))
