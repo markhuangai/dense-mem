@@ -206,9 +206,9 @@ func TestIdentityBridgePreservesGovernanceAliasesAndSSOExternalLinks(t *testing.
 		WHERE legacy_profile_id = $1
 	`, ssoProfileID).Scan(&canonicalIdentity))
 	require.Equal(t, identityID, canonicalIdentity)
-	var actorTeamID uuid.UUID
+	var actorTeamID sql.NullString
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT team_id FROM actor_identities WHERE id = $1`, identityID).Scan(&actorTeamID))
-	require.Equal(t, teamID, actorTeamID)
+	require.False(t, actorTeamID.Valid, "SSO actor identity must remain team-neutral")
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "team", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_team_id', $1, true), set_config('app.current_profile_id', $2, true)`, teamID, ssoProfileID); err != nil {
 			return err
@@ -273,4 +273,93 @@ func TestIdentityBridgePreservesGovernanceAliasesAndSSOExternalLinks(t *testing.
 		WHERE actor_identity_id = $1 AND team_id = $2
 	`, identityID, teamID).Scan(&ssoMembershipStatus))
 	require.Equal(t, "revoked", ssoMembershipStatus)
+}
+
+func TestIdentityBridgeKeepsSSOActorTeamNeutralAcrossMemberships(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, sqlDB, 2026080905)
+
+	teamA, teamB := uuid.New(), uuid.New()
+	providerID, identityID := uuid.New(), uuid.New()
+	apiProfileA, apiProfileB := uuid.New(), uuid.New()
+	ssoProfileA, ssoProfileB := uuid.New(), uuid.New()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "migration", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO teams (id, name) VALUES ($1, 'bridge-multi-team-a'), ($2, 'bridge-multi-team-b')
+		`, teamA, teamB); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO sso_providers (id, name, kind, issuer_url, client_id)
+			VALUES ($1, 'bridge-multi-provider', 'generic_oidc', 'https://issuer.multi.invalid', 'bridge-multi-client')
+		`, providerID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO sso_identities (id, provider_id, subject, external_id, email, display_name)
+			VALUES ($1, $2, 'bridge-multi-subject', 'bridge-multi-external', 'multi@example.invalid', 'Bridge Multi User')
+		`, identityID, providerID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO team_profiles (
+				id, team_id, key_hash, key_prefix, name, scopes, sso_owner_identity_id
+			) VALUES
+				($1, $3, 'hash-a', 'dm_multi_key_a', 'multi-key-a', ARRAY['read'], $5),
+				($2, $4, 'hash-b', 'dm_multi_key_b', 'multi-key-b', ARRAY['read'], $5)
+		`, apiProfileA, apiProfileB, teamA, teamB, identityID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO team_profiles (
+				id, team_id, key_hash, key_prefix, name, scopes, role,
+				auth_source, sso_identity_id, sso_provider_id, sso_subject,
+				sso_entitlement_status
+			) VALUES
+				($1, $3, NULL, NULL, 'multi-sso-a', ARRAY['read'], 'member',
+				 'sso', $5, $6, 'bridge-multi-subject', 'active'),
+				($2, $4, NULL, NULL, 'multi-sso-b', ARRAY['read'], 'member',
+				 'sso', $5, $6, 'bridge-multi-subject', 'active')
+		`, ssoProfileA, ssoProfileB, teamA, teamB, identityID, providerID)
+		return err
+	}))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026081001))
+
+	var actorTeam sql.NullString
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT team_id::text FROM actor_identities WHERE id = $1
+	`, identityID).Scan(&actorTeam))
+	require.False(t, actorTeam.Valid, "SSO actor identity must not be assigned to one team")
+
+	var membershipCount int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*) FROM team_memberships WHERE actor_identity_id = $1
+	`, identityID).Scan(&membershipCount))
+	require.Equal(t, 2, membershipCount)
+
+	updateProfile := func(profileID, teamID uuid.UUID, scopes string) {
+		require.NoError(t, execPostgresTxMode(ctx, sqlDB, "team", func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, `
+				SELECT set_config('app.current_team_id', $1, true), set_config('app.current_profile_id', $2, true)
+			`, teamID, profileID); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `UPDATE team_profiles SET scopes = $1 WHERE id = $2`, scopes, profileID)
+			return err
+		}))
+	}
+	updateProfile(ssoProfileB, teamB, "{read,write}")
+	updateProfile(apiProfileA, teamA, "{read,write}")
+	updateProfile(apiProfileB, teamB, "{read,write}")
+
+	for _, profileID := range []uuid.UUID{apiProfileA, apiProfileB} {
+		var ownerIdentity sql.NullString
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT owner_identity_id::text FROM credentials WHERE legacy_profile_id = $1
+		`, profileID).Scan(&ownerIdentity))
+		require.True(t, ownerIdentity.Valid)
+		require.Equal(t, identityID.String(), ownerIdentity.String)
+	}
 }

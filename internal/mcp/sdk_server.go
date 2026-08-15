@@ -70,6 +70,9 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 	if len(envelope.ID) == 0 {
 		return false
 	}
+	if !sdkRPCIDValid(envelope.ID) {
+		return false
+	}
 	tool, ok := s.registry.Get(envelope.Params.Name)
 	policy := registry.ResolveRuntimeToolPolicy(req.Context(), s.runtimeToolPolicy, tool)
 	visible := ok && registry.ToolVisible(req.Context(), tool, policy)
@@ -96,6 +99,19 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 		_, _ = w.Write(encoded)
 	}
 	return true
+}
+
+func sdkRPCIDValid(raw json.RawMessage) bool {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	switch value.(type) {
+	case nil, string, float64:
+		return true
+	default:
+		return false
+	}
 }
 
 func sdkAcceptsStreamableHTTP(value string) bool {
@@ -144,8 +160,9 @@ func (s *Server) newSDKServer(ctx context.Context) *sdkmcp.Server {
 		Logger:       slog.Default(),
 	})
 
-	for _, tool := range s.registry.List() {
-		policy := registry.ResolveRuntimeToolPolicy(ctx, s.runtimeToolPolicy, tool)
+	tools := s.registry.List()
+	policy := registry.ResolveRuntimeToolPolicy(ctx, s.runtimeToolPolicy, tools...)
+	for _, tool := range tools {
 		if !registry.ToolVisible(ctx, tool, policy) || !s.canUseTool(tool) {
 			continue
 		}

@@ -191,6 +191,41 @@ func TestSDKHTTPHandlerValidatesBeforeToolLookup(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	require.Equal(t, http.StatusBadRequest, response.Code)
 	require.Contains(t, response.Body.String(), `"code":-32020`)
+
+	request = httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":{},"method":"tools/call","params":{"name":"missing_tool","arguments":{}}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	require.NotContains(t, response.Body.String(), "tool not found")
+}
+
+func TestSDKServerResolvesRuntimeToolPolicyOnce(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	for _, name := range []string{
+		registry.ToolSubmitRecallSessionFeedback,
+		registry.ToolRecallMemory,
+		registry.ToolListDreams,
+	} {
+		require.NoError(t, reg.Register(registry.Tool{Name: name, InputSchema: map[string]any{"type": "object"}}))
+	}
+	var recallCalls, dreamCalls int
+	server := NewServerWithScopesTeamContextAndRuntimeConfig(
+		reg,
+		"profile-a",
+		[]string{"read"},
+		TeamContext{},
+		logger,
+		recallFeedbackConfigStub{enabled: true, calls: &recallCalls},
+		dreamingConfigStub{enabled: true, calls: &dreamCalls},
+	)
+
+	server.newSDKServer(context.Background())
+	require.Equal(t, 1, recallCalls)
+	require.Equal(t, 1, dreamCalls)
 }
 
 func TestSDKHTTPHandlerDoesNotAnswerInitializedNotification(t *testing.T) {
