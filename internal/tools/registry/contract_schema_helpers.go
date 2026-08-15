@@ -1,6 +1,9 @@
 package registry
 
-import "github.com/markhuangai/dense-mem/internal/domain"
+import (
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+)
 
 const (
 	memoryPackArtifactMaxLength = 4 * 1024 * 1024
@@ -126,7 +129,7 @@ func submissionStatusErrorArraySchema() map[string]any {
 	return array(closedObject(
 		[]string{"code", "message"},
 		map[string]any{
-			"code":    schemaString("Typed submission error code.", 128),
+			"code":    schemaEnum(memoryservice.SubmissionErrorCodes()),
 			"message": schemaString("Bounded safe submission error.", 512),
 		},
 	), 0, 50)

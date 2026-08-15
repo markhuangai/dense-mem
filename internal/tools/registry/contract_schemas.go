@@ -1,6 +1,8 @@
 package registry
 
-import "github.com/markhuangai/dense-mem/internal/domain"
+import (
+	"github.com/markhuangai/dense-mem/internal/domain"
+)
 
 func contractInput(required []string, properties map[string]any) map[string]any {
 	requireNonEmptyStrings(required, properties)
