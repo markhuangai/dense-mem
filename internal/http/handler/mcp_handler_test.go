@@ -196,6 +196,165 @@ func TestMCPHandlerPostValidationBranches(t *testing.T) {
 	})
 }
 
+func TestMCPHandlerSDKPostInitialize(t *testing.T) {
+	h := NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(registry.New(), testMCPLogger(), nil, nil, "sdk")
+	e := echo.New()
+	profileID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set(echo.HeaderAccept, echo.MIMEApplicationJSON)
+	req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	require.NoError(t, h.HandlePost(c))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"protocolVersion":"2025-11-25"`)
+}
+
+func TestMCPHandlerSDKPostValidationBranches(t *testing.T) {
+	h := NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(registry.New(), testMCPLogger(), nil, nil, "sdk")
+	e := echo.New()
+	profileID := uuid.New()
+	newContext := func(body string) (echo.Context, *httptest.ResponseRecorder) {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
+		rec := httptest.NewRecorder()
+		return e.NewContext(req, rec), rec
+	}
+
+	t.Run("unsupported header", func(t *testing.T) {
+		c, rec := newContext(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+		c.Request().Header.Set(echo.HeaderAccept, echo.MIMEApplicationJSON)
+		c.Request().Header.Set("MCP-Protocol-Version", "2099-01-01")
+		require.NoError(t, h.HandlePost(c))
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Contains(t, rec.Body.String(), "unsupported MCP protocol version")
+	})
+
+	t.Run("unsupported accept", func(t *testing.T) {
+		c, rec := newContext(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+		c.Request().Header.Set(echo.HeaderAccept, "text/plain")
+		c.Request().Header.Set("MCP-Protocol-Version", "2025-11-25")
+		require.NoError(t, h.HandlePost(c))
+		require.Equal(t, http.StatusNotAcceptable, rec.Code)
+		require.Contains(t, rec.Body.String(), "unsupported Accept header")
+	})
+
+	t.Run("unsupported initialize payload preserves id", func(t *testing.T) {
+		c, rec := newContext(`{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{"protocolVersion":"2099-01-01"}}`)
+		c.Request().Header.Set(echo.HeaderAccept, echo.MIMEApplicationJSON)
+		c.Request().Header.Set("MCP-Protocol-Version", "2025-11-25")
+		require.NoError(t, h.HandlePost(c))
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Contains(t, rec.Body.String(), `"id":"init-1"`)
+	})
+
+	t.Run("request body limit", func(t *testing.T) {
+		c, rec := newContext(strings.Repeat("x", 4<<20+1))
+		c.Request().Header.Set(echo.HeaderAccept, echo.MIMEApplicationJSON)
+		c.Request().Header.Set("MCP-Protocol-Version", "2025-11-25")
+		require.NoError(t, h.HandlePost(c))
+		require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	})
+}
+
+func TestMCPHandlerSDKHeaderHelpers(t *testing.T) {
+	require.True(t, sdkSupportedProtocolVersion(" 2025-11-25 "))
+	require.False(t, sdkSupportedProtocolVersion("2099-01-01"))
+	require.NoError(t, validateSDKProtocolHeader(""))
+	require.Error(t, validateSDKProtocolHeader("2099-01-01"))
+	require.Equal(t, "2026-07-28", sdkHeaderProtocolVersion(" 2026-07-28 "))
+
+	for _, value := range []string{"", "application/json", "text/event-stream", "application/json; charset=utf-8, text/plain"} {
+		require.True(t, acceptsSDKResponse(value), "Accept %q", value)
+	}
+	require.False(t, acceptsSDKResponse("text/plain"))
+
+	tests := []struct {
+		name       string
+		payload    string
+		method     string
+		nameHeader string
+		wantErr    string
+		wantMethod string
+		wantName   string
+	}{
+		{name: "malformed payload", payload: "{", wantMethod: ""},
+		{name: "invalid envelope", payload: `{"jsonrpc":"1.0","method":"tools/list"}`, wantMethod: ""},
+		{name: "method only", payload: `{"jsonrpc":"2.0","method":"tools/list","params":{}}`, wantMethod: "tools/list"},
+		{name: "tool call", payload: `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"remember"}}`, wantMethod: "tools/call", wantName: "remember"},
+		{name: "resource read", payload: `{"jsonrpc":"2.0","method":"resources/read","params":{"uri":"memory://one"}}`, wantMethod: "resources/read", wantName: "memory://one"},
+		{name: "bad params", payload: `{"jsonrpc":"2.0","method":"tools/call","params":42}`, wantErr: "invalid MCP request params"},
+		{name: "missing name", payload: `{"jsonrpc":"2.0","method":"tools/call","params":{}}`, wantErr: "Mcp-Name is required"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			if tt.method != "" {
+				req.Header.Set("Mcp-Method", tt.method)
+			}
+			req.Header.Set("Mcp-Name", "")
+			err := populateSDKStandardHeaders(req, []byte(tt.payload))
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.wantMethod, req.Header.Get("Mcp-Method"))
+			require.Equal(t, tt.wantName, req.Header.Get("Mcp-Name"))
+		})
+	}
+
+	t.Run("method mismatch", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		req.Header.Set("Mcp-Method", "tools/list")
+		err := populateSDKStandardHeaders(req, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"remember"}}`))
+		require.EqualError(t, err, "Mcp-Method header does not match request method")
+	})
+	t.Run("name mismatch", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		req.Header.Set("Mcp-Name", "other")
+		err := populateSDKStandardHeaders(req, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"remember"}}`))
+		require.EqualError(t, err, "Mcp-Name header does not match request name")
+	})
+}
+
+func TestMCPHandlerSDKInitializePayloadAndProtocolError(t *testing.T) {
+	id, version, ok := sdkInitializePayload([]byte(`{"jsonrpc":"2.0","id":7,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`))
+	require.True(t, ok)
+	require.Equal(t, "7", string(id))
+	require.Equal(t, "2025-11-25", version)
+	for _, payload := range []string{
+		"{",
+		`{"jsonrpc":"2.0","method":"tools/list","params":{}}`,
+		`{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":""}}`,
+	} {
+		_, _, ok = sdkInitializePayload([]byte(payload))
+		require.False(t, ok)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	require.NoError(t, writeSDKProtocolError(c, http.StatusBadRequest, json.RawMessage(`"request-1"`), " bad request "))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), `"id":"request-1"`)
+	require.Contains(t, rec.Body.String(), `"message":"bad request"`)
+}
+
+func TestMCPHandlerTransportConstructors(t *testing.T) {
+	legacy := NewMCPHandlerWithLifecycleAndRuntimeConfig(registry.New(), testMCPLogger(), nil, nil)
+	require.Equal(t, "legacy", legacy.transport)
+	sdk := NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(registry.New(), testMCPLogger(), nil, nil, "sdk")
+	require.Equal(t, "sdk", sdk.transport)
+	fallback := NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(registry.New(), testMCPLogger(), nil, nil, "unknown")
+	require.Equal(t, "legacy", fallback.transport)
+}
+
 func TestMCPHandlerGetBranches(t *testing.T) {
 	e := echo.New()
 	profileID := uuid.New()

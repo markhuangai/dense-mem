@@ -417,13 +417,23 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	if params.Name == "" {
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: "missing tool name"}
 	}
-	tool, ok := s.registry.Get(params.Name)
+	return s.invokeTool(ctx, params.Name, params.Arguments)
+}
+
+// invokeTool is the registry-only execution seam shared by the legacy JSON-RPC
+// server and the official SDK transport. Keeping validation and authorization
+// here prevents the two transports from drifting.
+func (s *Server) invokeTool(ctx context.Context, name string, args map[string]any) (map[string]any, *rpcError) {
+	if name == "" {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "missing tool name"}
+	}
+	tool, ok := s.registry.Get(name)
 	if !ok {
-		return nil, &rpcError{Code: errCodeMethodNotFound, Message: "tool not found: " + boundedRPCText(params.Name)}
+		return nil, &rpcError{Code: errCodeMethodNotFound, Message: "tool not found: " + boundedRPCText(name)}
 	}
 	policy := registry.ResolveRuntimeToolPolicy(ctx, s.runtimeToolPolicy, tool)
 	if !registry.ToolVisible(ctx, tool, policy) {
-		return nil, &rpcError{Code: errCodeMethodNotFound, Message: "tool not found: " + boundedRPCText(params.Name)}
+		return nil, &rpcError{Code: errCodeMethodNotFound, Message: "tool not found: " + boundedRPCText(name)}
 	}
 	if !s.canUseTool(tool) {
 		return nil, &rpcError{Code: errCodeToolFailure, Message: "insufficient scope for tool"}
@@ -432,7 +442,6 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 		return nil, &rpcError{Code: errCodeToolFailure, Message: "tool not executable"}
 	}
 
-	args := params.Arguments
 	if args == nil {
 		args = map[string]any{}
 	}
@@ -456,10 +465,10 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 	result, err := tool.Invoke(ctx, s.profileID, args)
 	if err != nil {
 		if errors.Is(err, registry.ErrToolDisabled) {
-			return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", params.Name)}
+			return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", name)}
 		}
 		s.logger.Error("mcp: tool invocation failed", err,
-			observability.String("tool", params.Name),
+			observability.String("tool", name),
 			observability.ProfileID(s.profileID),
 		)
 		return nil, &rpcError{Code: errCodeToolFailure, Message: boundedRPCText(tools.SanitizeError(err))}
@@ -467,7 +476,7 @@ func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[
 
 	payload, err := json.Marshal(result)
 	if err != nil {
-		s.logger.Error("mcp: tool result marshal failed", err, observability.String("tool", params.Name))
+		s.logger.Error("mcp: tool result marshal failed", err, observability.String("tool", name))
 		return nil, &rpcError{Code: errCodeToolFailure, Message: "tool result serialization failed"}
 	}
 	return map[string]any{
