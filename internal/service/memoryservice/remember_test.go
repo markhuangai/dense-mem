@@ -66,9 +66,13 @@ func TestSubmissionItemFailureErrorDoesNotInventReviewFailures(t *testing.T) {
 	require.NotNil(t, errorValue)
 	require.Equal(t, string(SubmissionErrorProcessingFailed), errorValue.Code)
 
-	errorValue = submissionItemFailureError(repository.PlacementItem{Status: "rejected", Result: map[string]any{"failure_stage": "policy_review"}}, "rejected")
-	require.NotNil(t, errorValue)
-	require.Equal(t, string(SubmissionErrorPolicyRejected), errorValue.Code)
+	for _, stage := range []string{"policy_review", "commit_review", "conflict_context_stale"} {
+		t.Run(stage, func(t *testing.T) {
+			errorValue := submissionItemFailureError(repository.PlacementItem{Status: "rejected", Result: map[string]any{"failure_stage": stage}}, "rejected")
+			require.NotNil(t, errorValue)
+			require.Equal(t, string(SubmissionErrorPolicyRejected), errorValue.Code)
+		})
+	}
 }
 
 func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T) {

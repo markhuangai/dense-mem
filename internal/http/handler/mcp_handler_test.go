@@ -258,6 +258,8 @@ func TestMCPHandlerSDKPostValidationBranches(t *testing.T) {
 		c.Request().Header.Set("MCP-Protocol-Version", "2025-11-25")
 		require.NoError(t, h.HandlePost(c))
 		require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+		require.Contains(t, rec.Body.String(), `"code":-32600`)
+		require.Contains(t, rec.Body.String(), `"message":"request body exceeds limit"`)
 	})
 }
 

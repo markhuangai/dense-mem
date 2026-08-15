@@ -58,14 +58,42 @@ function assertTerminalErrors(status) {
     "no_change", "confirmation_expired", "relationship_changed", "support_set_changed",
     "persistent_ambiguity", "inactive_relationship_collision",
   ]);
+  const allowedMessages = new Set([
+    "submission was rejected by semantic hold policy",
+    "submission was rejected by semantic placement policy",
+    "submission assessment returned an invalid response",
+    "submission assessment was unavailable after bounded retries",
+    "submission replacement conflicted with current state",
+    "submission processing failed",
+    "search indexing is delayed",
+    "relationship version is stale",
+    "relationship must be active, supported, and canonical",
+    "a Value object cannot be replaced with an Entity",
+    "supports must exactly match the relationship's effective evidence spans",
+    "corrected Entity is not active and available to the team",
+    "corrected Entity name has too many exact candidates",
+    "predicate is not registered and active for the team",
+    "predicate does not allow the corrected subject kind",
+    "predicate does not allow the corrected object kind",
+    "correction does not change the Relationship",
+    "relationship correction confirmation expired",
+    "relationship changed while confirmation was pending",
+    "relationship supports changed while confirmation was pending",
+    "selected Entity candidate is no longer available",
+    "corrected Relationship collides with inactive or unsupported history",
+    "Semantic search indexing is delayed.",
+    "Semantic search indexing is delayed; check the control portal for recovery guidance.",
+  ]);
   const seen = new Set();
   for (const item of status.errors) {
-    const code = String(item.code ?? "");
-    const message = String(item.message ?? "");
-    if (!allowedCodes.has(code) || message.length === 0 || message.length > 512) {
+    if (item === null || typeof item !== "object" || Array.isArray(item) || typeof item.code !== "string" || typeof item.message !== "string") {
+      throw new Error("terminal error fields were not strings");
+    }
+    const { code, message } = item;
+    if (!allowedCodes.has(code) || !allowedMessages.has(message) || message.length === 0 || message.length > 512) {
       throw new Error("terminal error was not bounded and typed");
     }
-    if (/[\r\n]|api[_-]?key|password|token|stack|provider/i.test(message)) {
+    if (/[\r\n]|api[_-]?key|password|token|stack|provider|cookie|prompt|embedding|database|cross[- ]?team/i.test(message)) {
       throw new Error("terminal error leaked prohibited data");
     }
     if (seen.has(`${code}\0${message}`)) throw new Error("terminal errors were not deduplicated");

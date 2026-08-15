@@ -131,7 +131,7 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 			return httperr.New(httperr.VALIDATION_ERROR, "failed to read request body")
 		}
 		if len(payload) > 4<<20 {
-			return c.NoContent(http.StatusRequestEntityTooLarge)
+			return writeSDKProtocolError(c, http.StatusRequestEntityTooLarge, nil, "request body exceeds limit")
 		}
 		request.Body = io.NopCloser(bytes.NewReader(payload))
 		if id, version, ok := sdkInitializePayload(payload); ok && !sdkSupportedProtocolVersion(version) {

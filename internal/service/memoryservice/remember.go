@@ -261,7 +261,8 @@ func submissionFailureCode(stage, class string) SubmissionErrorCode {
 	case class == "timeout", class == "rate_limited", class == "http_4xx", class == "http_5xx",
 		class == "http_unexpected", class == "transport", class == "provider_unavailable":
 		return SubmissionErrorAssessorUnavailable
-	case stage == "policy_review", stage == "confidence_policy", stage == "security_signal":
+	case stage == "policy_review", stage == "confidence_policy", stage == "security_signal",
+		stage == "commit_review", stage == "conflict_context_stale":
 		return SubmissionErrorPolicyRejected
 	default:
 		return SubmissionErrorProcessingFailed
