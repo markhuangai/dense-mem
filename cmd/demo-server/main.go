@@ -60,9 +60,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to access postgres sql client: %v", err)
 	}
-	if err := postgres.ValidateStartupMigrationState(context.Background(), sqlDB, postgres.MigrationsDir()); err != nil {
+	migrationStateCtx, migrationStateCancel := context.WithTimeout(context.Background(), startupTimeout)
+	if err := postgres.ValidateStartupMigrationState(migrationStateCtx, sqlDB, postgres.MigrationsDir()); err != nil {
+		migrationStateCancel()
 		log.Fatalf("postgres migration state validation failed: %v", err)
 	}
+	migrationStateCancel()
 
 	postMigrationCtx, postMigrationCancel := context.WithTimeout(context.Background(), startupTimeout)
 	defer postMigrationCancel()

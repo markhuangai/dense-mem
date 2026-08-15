@@ -150,7 +150,9 @@ func TestSDKHTTPHandlerMapsUnknownAndUnauthorizedTools(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"`+tc.tool+`","arguments":{}}}`))
-			request.Header.Set("Accept", tc.accept)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Accept", "application/json, text/event-stream")
+			request.Header.Set("MCP-Protocol-Version", "2025-11-25")
 			response := httptest.NewRecorder()
 			server.NewSDKHTTPHandler(tc.accept != "text/event-stream").ServeHTTP(response, request)
 			require.Equal(t, http.StatusOK, response.Code)
@@ -163,6 +165,32 @@ func TestSDKHTTPHandlerMapsUnknownAndUnauthorizedTools(t *testing.T) {
 	}
 
 	require.False(t, server.writeSDKToolLookupError(httptest.NewRecorder(), &http.Request{Method: http.MethodGet}, true))
+}
+
+func TestSDKHTTPHandlerValidatesBeforeToolLookup(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	require.NoError(t, reg.Register(registry.Tool{Name: "write_tool", RequiredScopes: []string{"write"}}))
+	server := NewServerWithScopes(reg, "profile-a", []string{"read"}, logger)
+	handler := server.NewSDKHTTPHandler(true)
+
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"missing_tool","arguments":{}}}`))
+	request.Header.Set("Content-Type", "text/plain")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusUnsupportedMediaType, response.Code)
+	require.NotContains(t, response.Body.String(), "tool not found")
+
+	request = httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"missing_tool","arguments":{},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("MCP-Protocol-Version", "2026-07-28")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	require.Contains(t, response.Body.String(), `"code":-32020`)
 }
 
 func TestSDKHTTPHandlerDoesNotAnswerInitializedNotification(t *testing.T) {

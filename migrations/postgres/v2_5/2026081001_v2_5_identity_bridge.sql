@@ -155,15 +155,27 @@ ALTER TABLE identity_compatibility_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_compatibility_state FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS actor_identities_context_access ON actor_identities;
-CREATE POLICY actor_identities_context_access ON actor_identities
+	CREATE POLICY actor_identities_context_access ON actor_identities
     FOR ALL TO PUBLIC
     USING (
-        current_setting('app.tx_mode', true) IN ('system', 'migration')
-        OR team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
-    )
-    WITH CHECK (
-        current_setting('app.tx_mode', true) IN ('system', 'migration')
-        OR team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+		current_setting('app.tx_mode', true) IN ('system', 'migration')
+		OR team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+		OR EXISTS (
+			SELECT 1
+			FROM team_profiles p
+			WHERE p.team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+			  AND p.sso_identity_id = actor_identities.id
+		)
+	)
+	WITH CHECK (
+		current_setting('app.tx_mode', true) IN ('system', 'migration')
+		OR team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+		OR EXISTS (
+			SELECT 1
+			FROM team_profiles p
+			WHERE p.team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+			  AND p.sso_identity_id = actor_identities.id
+		)
     );
 
 DROP POLICY IF EXISTS team_memberships_context_access ON team_memberships;
@@ -218,9 +230,25 @@ CREATE POLICY membership_grants_context_access ON membership_grants
 
 DROP POLICY IF EXISTS identity_external_links_context_access ON identity_external_links;
 CREATE POLICY identity_external_links_context_access ON identity_external_links
-    FOR ALL TO PUBLIC
-    USING (current_setting('app.tx_mode', true) IN ('system', 'migration'))
-    WITH CHECK (current_setting('app.tx_mode', true) IN ('system', 'migration'));
+	FOR ALL TO PUBLIC
+	USING (
+		current_setting('app.tx_mode', true) IN ('system', 'migration')
+		OR EXISTS (
+			SELECT 1
+			FROM actor_identities a
+			WHERE a.id = identity_id
+			  AND a.team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+		)
+	)
+	WITH CHECK (
+		current_setting('app.tx_mode', true) IN ('system', 'migration')
+		OR EXISTS (
+			SELECT 1
+			FROM actor_identities a
+			WHERE a.id = identity_id
+			  AND a.team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+		)
+	);
 
 DROP POLICY IF EXISTS ownership_aliases_context_access ON ownership_aliases;
 CREATE POLICY ownership_aliases_context_access ON ownership_aliases
@@ -307,13 +335,21 @@ ON CONFLICT (team_id, legacy_owner_id) DO UPDATE SET
 
 -- SSO identities have stable external links. Existing profile IDs remain the
 -- ownership aliases; the SSO actor is added only when it is not already linked.
-INSERT INTO actor_identities (id, kind, provider, subject, display_name, active, created_at, updated_at)
-SELECT i.id, 'human', p.id::text, i.subject, COALESCE(i.display_name, ''), i.active, i.created_at, i.updated_at
+INSERT INTO actor_identities (id, kind, team_id, provider, subject, display_name, active, created_at, updated_at)
+SELECT i.id, 'human', owner.team_id, p.id::text, i.subject, COALESCE(i.display_name, ''), i.active, i.created_at, i.updated_at
 FROM sso_identities i
 JOIN sso_providers p ON p.id = i.provider_id
+LEFT JOIN LATERAL (
+	SELECT tp.team_id
+	FROM team_profiles tp
+	WHERE tp.sso_identity_id = i.id
+	ORDER BY tp.created_at ASC, tp.id ASC
+	LIMIT 1
+) owner ON true
 ON CONFLICT (id) DO UPDATE SET
-    kind = CASE WHEN actor_identities.kind = 'api_client' THEN actor_identities.kind ELSE EXCLUDED.kind END,
-    provider = EXCLUDED.provider,
+	kind = CASE WHEN actor_identities.kind = 'api_client' THEN actor_identities.kind ELSE EXCLUDED.kind END,
+	team_id = COALESCE(EXCLUDED.team_id, actor_identities.team_id),
+	provider = EXCLUDED.provider,
     subject = EXCLUDED.subject,
     display_name = EXCLUDED.display_name,
     active = EXCLUDED.active,
@@ -382,14 +418,21 @@ DECLARE
     new_membership_id UUID;
     canonical_actor_id UUID;
 BEGIN
-    IF TG_OP = 'DELETE' THEN
+	IF TG_OP = 'DELETE' THEN
         UPDATE credentials
            SET status = 'revoked', revoked_at = COALESCE(revoked_at, now()), updated_at = now()
          WHERE id = OLD.id;
-        UPDATE team_memberships
-           SET status = 'revoked', updated_at = now()
-         WHERE legacy_profile_id = OLD.id
-            OR (actor_identity_id = OLD.id AND team_id = OLD.team_id);
+		UPDATE team_memberships
+		   SET status = 'revoked', updated_at = now()
+		 WHERE legacy_profile_id = OLD.id
+		    OR (actor_identity_id = OLD.id AND team_id = OLD.team_id)
+		    OR EXISTS (
+				SELECT 1
+				FROM ownership_aliases a
+				WHERE a.team_id = OLD.team_id
+				  AND a.legacy_owner_id = OLD.id
+				  AND a.canonical_identity_id = team_memberships.actor_identity_id
+			);
 		UPDATE actor_identities
 		   SET active = false, updated_at = now()
 		 WHERE id = OLD.id;
@@ -437,13 +480,20 @@ BEGIN
             NEW.team_id, COALESCE(NEW.name, ''), NEW.revoked_at IS NULL, COALESCE(NEW.created_at, now()), now())
     ON CONFLICT (id) DO UPDATE SET team_id = EXCLUDED.team_id, display_name = EXCLUDED.display_name, active = EXCLUDED.active, updated_at = now();
 
-    canonical_actor_id := NEW.id;
-    IF NEW.auth_source = 'sso'
-       AND NEW.sso_identity_id IS NOT NULL
-       AND EXISTS (SELECT 1 FROM actor_identities a WHERE a.id = NEW.sso_identity_id)
-    THEN
-        canonical_actor_id := NEW.sso_identity_id;
-    END IF;
+	canonical_actor_id := NEW.id;
+	IF NEW.auth_source = 'sso' AND NEW.sso_identity_id IS NOT NULL THEN
+		UPDATE actor_identities
+		   SET team_id = NEW.team_id, updated_at = now()
+		 WHERE id = NEW.sso_identity_id;
+		SELECT a.id
+		  INTO canonical_actor_id
+		  FROM actor_identities a
+		 WHERE a.id = NEW.sso_identity_id
+		   AND a.team_id = NEW.team_id;
+		IF NOT FOUND THEN
+			RAISE EXCEPTION 'SSO actor identity % is not available for team %', NEW.sso_identity_id, NEW.team_id;
+		END IF;
+	END IF;
 
     UPDATE team_memberships
        SET actor_identity_id = canonical_actor_id,
@@ -464,7 +514,7 @@ BEGIN
 
     IF NEW.key_hash IS NOT NULL AND NEW.key_prefix IS NOT NULL THEN
         INSERT INTO credentials (id, actor_identity_id, owner_identity_id, team_id, kind, key_hash, key_prefix, key_suffix, name, scopes, rate_limit, status, expires_at, revoked_at, legacy_profile_id, created_at, updated_at, last_used_at)
-        VALUES (NEW.id, NEW.id, CASE WHEN EXISTS (SELECT 1 FROM actor_identities a WHERE a.id = NEW.sso_owner_identity_id) THEN NEW.sso_owner_identity_id ELSE NULL END, NEW.team_id, 'api_key', NEW.key_hash, NEW.key_prefix, NEW.key_suffix, NEW.name, NEW.scopes, NEW.rate_limit,
+		VALUES (NEW.id, NEW.id, CASE WHEN EXISTS (SELECT 1 FROM actor_identities a WHERE a.id = NEW.sso_owner_identity_id AND a.team_id = NEW.team_id) THEN NEW.sso_owner_identity_id ELSE NULL END, NEW.team_id, 'api_key', NEW.key_hash, NEW.key_prefix, NEW.key_suffix, NEW.name, NEW.scopes, NEW.rate_limit,
                 CASE WHEN NEW.revoked_at IS NOT NULL THEN 'revoked' WHEN NEW.expires_at IS NOT NULL AND NEW.expires_at <= now() THEN 'expired' ELSE 'active' END,
                 NEW.expires_at, NEW.revoked_at, NEW.id, COALESCE(NEW.created_at, now()), now(), NEW.last_used_at)
         ON CONFLICT (id) DO UPDATE SET key_hash = EXCLUDED.key_hash, key_prefix = EXCLUDED.key_prefix, key_suffix = EXCLUDED.key_suffix, name = EXCLUDED.name, scopes = EXCLUDED.scopes, rate_limit = EXCLUDED.rate_limit, status = EXCLUDED.status, expires_at = EXCLUDED.expires_at, revoked_at = EXCLUDED.revoked_at, owner_identity_id = EXCLUDED.owner_identity_id, updated_at = now(), last_used_at = EXCLUDED.last_used_at;
@@ -516,10 +566,11 @@ BEGIN
     provider_key := NEW.provider_id::text;
     external_key := COALESCE(NULLIF(NEW.external_id, ''), NULLIF(NEW.subject, ''), '');
 
-    INSERT INTO actor_identities (id, kind, provider, subject, display_name, active, created_at, updated_at)
-    VALUES (NEW.id, 'human', provider_key, NEW.subject, COALESCE(NEW.display_name, ''), NEW.active, COALESCE(NEW.created_at, now()), now())
-    ON CONFLICT (id) DO UPDATE SET
-        kind = CASE WHEN actor_identities.kind = 'api_client' THEN actor_identities.kind ELSE EXCLUDED.kind END,
+	INSERT INTO actor_identities (id, kind, team_id, provider, subject, display_name, active, created_at, updated_at)
+	VALUES (NEW.id, 'human', (SELECT tp.team_id FROM team_profiles tp WHERE tp.sso_identity_id = NEW.id ORDER BY tp.created_at ASC, tp.id ASC LIMIT 1), provider_key, NEW.subject, COALESCE(NEW.display_name, ''), NEW.active, COALESCE(NEW.created_at, now()), now())
+	ON CONFLICT (id) DO UPDATE SET
+		kind = CASE WHEN actor_identities.kind = 'api_client' THEN actor_identities.kind ELSE EXCLUDED.kind END,
+		team_id = COALESCE(EXCLUDED.team_id, actor_identities.team_id),
         provider = EXCLUDED.provider,
         subject = EXCLUDED.subject,
         display_name = EXCLUDED.display_name,

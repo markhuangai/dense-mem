@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -28,6 +29,27 @@ func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, key)
 	require.Equal(t, []string{"read", "write"}, key.Scopes)
+
+	// SSO-backed profiles keep the legacy profile as the credential actor while
+	// the membership points at the stable SSO identity. Authentication must
+	// continue to resolve the credential through its legacy ownership alias.
+	ssoIdentityID := uuid.NewString()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO actor_identities (id, kind, team_id, display_name)
+			VALUES (?::uuid, 'human', ?::uuid, 'SSO owner')
+		`, ssoIdentityID, teamID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE team_memberships
+			SET actor_identity_id = ?::uuid
+			WHERE legacy_profile_id = ?::uuid
+		`, ssoIdentityID, profileID).Error
+	}))
+	key, err = repo.GetActiveByPrefix(ctx, prefix)
+	require.NoError(t, err)
+	require.NotNil(t, key)
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`

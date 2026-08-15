@@ -50,8 +50,11 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		JOIN actor_identities a
 		  ON a.id = c.actor_identity_id
 		JOIN team_memberships m
-		  ON m.actor_identity_id = c.actor_identity_id
-		 AND m.team_id = c.team_id
+		  ON m.team_id = c.team_id
+		 AND (
+			m.actor_identity_id = c.actor_identity_id
+			OR (c.legacy_profile_id IS NOT NULL AND m.legacy_profile_id = c.legacy_profile_id)
+		 )
 		JOIN teams t ON t.id = c.team_id
 		WHERE `+predicate+`
 		  AND c.kind = 'api_key'

@@ -137,11 +137,6 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 		if id, version, ok := sdkInitializePayload(payload); ok && !sdkSupportedProtocolVersion(version) {
 			return writeSDKProtocolError(c, http.StatusBadRequest, id, "unsupported protocolVersion")
 		}
-		if sdkHeaderProtocolVersion(request.Header.Get("MCP-Protocol-Version")) == "2026-07-28" {
-			if err := populateSDKStandardHeaders(request, payload); err != nil {
-				return writeSDKProtocolError(c, http.StatusBadRequest, nil, err.Error())
-			}
-		}
 	}
 
 	team := mcp.TeamContext{}
@@ -151,7 +146,23 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 	}
 	server := mcp.NewServerWithScopesTeamContextAndRuntimeConfig(h.reg, profileID.String(), principal.Scopes, team, h.logger, h.recallFeedbackConfig, h.dreams)
 	serverHandler := server.NewSDKHTTPHandler(!acceptsEventStream(accept))
-	serverHandler.ServeHTTP(c.Response(), request)
+	work := func(workCtx context.Context) error {
+		serverHandler.ServeHTTP(c.Response(), request.WithContext(workCtx))
+		return nil
+	}
+	if h.lifecycle == nil || !acceptsEventStream(accept) {
+		return work(request.Context())
+	}
+	err := h.lifecycle.Start(request.Context(), profileID.String(), discardSSEWriter{}, work)
+	if errors.Is(err, sse.ErrTooManyStreams) {
+		return httperr.New(httperr.RATE_LIMITED, "too many concurrent streams")
+	}
+	if errors.Is(err, sse.ErrStreamTerminated) || errors.Is(err, context.Canceled) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -175,52 +186,6 @@ func validateSDKProtocolHeader(value string) error {
 	return errors.New("unsupported MCP protocol version")
 }
 
-func sdkHeaderProtocolVersion(value string) string {
-	return strings.TrimSpace(value)
-}
-
-// populateSDKStandardHeaders supplies the required 2026 protocol routing
-// headers when a client has sent a valid JSON-RPC request but omitted them.
-// Existing values are validated rather than overwritten so a mismatched
-// header cannot be used to route a different method or tool.
-func populateSDKStandardHeaders(request *http.Request, payload []byte) error {
-	var envelope struct {
-		JSONRPC string          `json:"jsonrpc"`
-		Method  string          `json:"method"`
-		Params  json.RawMessage `json:"params"`
-	}
-	if err := json.Unmarshal(payload, &envelope); err != nil || envelope.JSONRPC != "2.0" || strings.TrimSpace(envelope.Method) == "" {
-		return nil
-	}
-	method := strings.TrimSpace(envelope.Method)
-	if current := strings.TrimSpace(request.Header.Get("Mcp-Method")); current != "" && current != method {
-		return errors.New("Mcp-Method header does not match request method")
-	}
-	request.Header.Set("Mcp-Method", method)
-	if method != "tools/call" && method != "prompts/get" && method != "resources/read" {
-		return nil
-	}
-	var params struct {
-		Name string `json:"name"`
-		URI  string `json:"uri"`
-	}
-	if err := json.Unmarshal(envelope.Params, &params); err != nil {
-		return errors.New("invalid MCP request params")
-	}
-	name := params.Name
-	if method == "resources/read" {
-		name = params.URI
-	}
-	if strings.TrimSpace(name) == "" {
-		return errors.New("Mcp-Name is required for named MCP methods")
-	}
-	if current := strings.TrimSpace(request.Header.Get("Mcp-Name")); current != "" && current != name {
-		return errors.New("Mcp-Name header does not match request name")
-	}
-	request.Header.Set("Mcp-Name", name)
-	return nil
-}
-
 func sdkInitializePayload(payload []byte) (json.RawMessage, string, bool) {
 	var envelope struct {
 		JSONRPC string          `json:"jsonrpc"`
@@ -235,6 +200,12 @@ func sdkInitializePayload(payload []byte) (json.RawMessage, string, bool) {
 	}
 	return envelope.ID, envelope.Params.ProtocolVersion, strings.TrimSpace(envelope.Params.ProtocolVersion) != ""
 }
+
+type discardSSEWriter struct{}
+
+func (discardSSEWriter) WriteEvent(string, any) error { return nil }
+func (discardSSEWriter) WriteComment(string) error    { return nil }
+func (discardSSEWriter) Close() error                 { return nil }
 
 func acceptsSDKResponse(value string) bool {
 	if strings.TrimSpace(value) == "" {

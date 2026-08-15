@@ -55,6 +55,22 @@ func TestSubmissionStatusSearchStateHelpers(t *testing.T) {
 	}
 }
 
+func TestSubmissionItemFailureErrorDoesNotInventReviewFailures(t *testing.T) {
+	for _, status := range []string{"rejected", "awaiting_review"} {
+		t.Run(status, func(t *testing.T) {
+			require.Nil(t, submissionItemFailureError(repository.PlacementItem{Status: status, Result: map[string]any{}}, status))
+		})
+	}
+
+	errorValue := submissionItemFailureError(repository.PlacementItem{Status: "failed", Result: map[string]any{}}, "failed")
+	require.NotNil(t, errorValue)
+	require.Equal(t, string(SubmissionErrorProcessingFailed), errorValue.Code)
+
+	errorValue = submissionItemFailureError(repository.PlacementItem{Status: "rejected", Result: map[string]any{"failure_stage": "policy_review"}}, "rejected")
+	require.NotNil(t, errorValue)
+	require.Equal(t, string(SubmissionErrorPolicyRejected), errorValue.Code)
+}
+
 func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T) {
 	const exactContent = `  C:\notes\[draft]\report.txt includes "\u0041", '\x42', [%20], and {&amp;}.  `
 	teamID := uuid.New()

@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -95,10 +96,35 @@ func TestIdentityBridgeReconcilesLegacyWritesAndRLS(t *testing.T) {
 	defer func() { _, _ = sqlDB.ExecContext(ctx, "DROP ROLE IF EXISTS "+quotedRole) }()
 	for _, grant := range []string{
 		"GRANT USAGE ON SCHEMA public TO " + quotedRole,
-		"GRANT SELECT ON credentials TO " + quotedRole,
+		"GRANT SELECT, UPDATE ON team_profiles TO " + quotedRole,
+		"GRANT SELECT ON credentials, team_memberships, membership_grants TO " + quotedRole,
 	} {
 		require.NoError(t, func() error { _, err := sqlDB.ExecContext(ctx, grant); return err }())
 	}
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "team", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SET LOCAL ROLE "+quotedRole); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_team_id', $1, true), set_config('app.current_profile_id', $2, true)`, teamA, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE team_profiles SET scopes = ARRAY['read','write'] WHERE id = $1`, profileID); err != nil {
+			return err
+		}
+		var credentialScopes, membershipMaximum string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT c.scopes::text, m.maximum_grants::text
+			FROM credentials c
+			JOIN team_memberships m ON m.legacy_profile_id = c.legacy_profile_id
+			WHERE c.legacy_profile_id = $1 AND m.team_id = $2
+		`, profileID, teamA).Scan(&credentialScopes, &membershipMaximum); err != nil {
+			return err
+		}
+		if credentialScopes != "{read,write}" || membershipMaximum != "{read,write}" {
+			return fmt.Errorf("legacy team-mode write was not reconciled: credentials=%s membership=%s", credentialScopes, membershipMaximum)
+		}
+		return nil
+	}))
 
 	var count int
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "team", func(tx *sql.Tx) error {
@@ -180,6 +206,19 @@ func TestIdentityBridgePreservesGovernanceAliasesAndSSOExternalLinks(t *testing.
 		WHERE legacy_profile_id = $1
 	`, ssoProfileID).Scan(&canonicalIdentity))
 	require.Equal(t, identityID, canonicalIdentity)
+	var actorTeamID uuid.UUID
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT team_id FROM actor_identities WHERE id = $1`, identityID).Scan(&actorTeamID))
+	require.Equal(t, teamID, actorTeamID)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "team", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_team_id', $1, true), set_config('app.current_profile_id', $2, true)`, teamID, ssoProfileID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE team_profiles SET scopes = ARRAY['read','write'] WHERE id = $1`, ssoProfileID)
+		return err
+	}))
+	var ssoMaximumGrants string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT maximum_grants::text FROM team_memberships WHERE actor_identity_id = $1 AND team_id = $2`, identityID, teamID).Scan(&ssoMaximumGrants))
+	require.Equal(t, "{read,write}", ssoMaximumGrants)
 
 	var aliasIdentity uuid.UUID
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
@@ -222,4 +261,16 @@ func TestIdentityBridgePreservesGovernanceAliasesAndSSOExternalLinks(t *testing.
 		SELECT count(*) FROM ownership_aliases WHERE team_id = $1 AND legacy_owner_id = $2
 	`, teamID, profileID).Scan(&aliasCount))
 	require.Equal(t, 1, aliasCount)
+
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM team_profiles WHERE id = $1`, ssoProfileID)
+		return err
+	}))
+	var ssoMembershipStatus string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status
+		FROM team_memberships
+		WHERE actor_identity_id = $1 AND team_id = $2
+	`, identityID, teamID).Scan(&ssoMembershipStatus))
+	require.Equal(t, "revoked", ssoMembershipStatus)
 }

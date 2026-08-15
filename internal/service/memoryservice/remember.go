@@ -274,6 +274,9 @@ func submissionItemFailureError(item repository.PlacementItem, processing string
 	}
 	stage, _ := item.Result["failure_stage"].(string)
 	class, _ := item.Result["failure_class"].(string)
+	if (item.Status == "rejected" || item.Status == "awaiting_review") && strings.TrimSpace(stage) == "" && strings.TrimSpace(class) == "" {
+		return nil
+	}
 	errorValue := submissionStatusError(submissionFailureCode(stage, class))
 	return &errorValue
 }

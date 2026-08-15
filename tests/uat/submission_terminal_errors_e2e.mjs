@@ -46,14 +46,23 @@ async function waitForTerminal(id) {
 }
 
 function assertTerminalErrors(status) {
-  if (status.processing_state !== "failed" || !Array.isArray(status.errors) || status.errors.length === 0) {
+  if (!["rejected", "failed"].includes(status.processing_state) || !Array.isArray(status.errors) || status.errors.length === 0) {
     throw new Error("terminal failure returned an empty errors array");
   }
+  const allowedCodes = new Set([
+    "submission_semantic_hold", "submission_policy_rejected", "assessor_response_invalid", "assessor_unavailable",
+    "submission_replacement_conflict", "submission_processing_failed", "search_indexing_delayed",
+    "relationship_version_stale", "relationship_not_active", "object_kind_change_forbidden",
+    "support_set_mismatch", "entity_not_found", "too_many_entity_candidates",
+    "predicate_not_found", "predicate_subject_kind_mismatch", "predicate_object_kind_mismatch",
+    "no_change", "confirmation_expired", "relationship_changed", "support_set_changed",
+    "persistent_ambiguity", "inactive_relationship_collision",
+  ]);
   const seen = new Set();
   for (const item of status.errors) {
     const code = String(item.code ?? "");
     const message = String(item.message ?? "");
-    if (!/^[a-z0-9_]+$/.test(code) || message.length === 0 || message.length > 512) {
+    if (!allowedCodes.has(code) || message.length === 0 || message.length > 512) {
       throw new Error("terminal error was not bounded and typed");
     }
     if (/[\r\n]|api[_-]?key|password|token|stack|provider/i.test(message)) {
@@ -142,5 +151,5 @@ function sqlLiteral(value) { return `'${String(value).replaceAll("'", "''")}'`; 
 function predicateKey(index) { return `${predicatePrefix}_predicate_${index}`; }
 function requiredString(value, field) { if (typeof value !== "string" || !value.trim()) throw new Error(`${field} missing`); return value; }
 function requiredEnv(name) { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }
-function stableJSON(value) { if (Array.isArray(value)) return `[${value.map(stableJSON).sort().join(",")}]`; if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJSON(value[key])}`).join(",")}}`; return JSON.stringify(value); }
+function stableJSON(value) { if (Array.isArray(value)) return `[${value.map(stableJSON).join(",")}]`; if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJSON(value[key])}`).join(",")}}`; return JSON.stringify(value); }
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }

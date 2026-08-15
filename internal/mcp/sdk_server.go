@@ -39,6 +39,12 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 	if req == nil || req.Body == nil || req.Method != http.MethodPost {
 		return false
 	}
+	if strings.ToLower(strings.TrimSpace(strings.SplitN(req.Header.Get("Content-Type"), ";", 2)[0])) != "application/json" {
+		return false
+	}
+	if !sdkAcceptsStreamableHTTP(req.Header.Get("Accept")) {
+		return false
+	}
 	payload, err := io.ReadAll(io.LimitReader(req.Body, 4<<20+1))
 	if err != nil || len(payload) > 4<<20 {
 		return false
@@ -53,6 +59,9 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 		} `json:"params"`
 	}
 	if json.Unmarshal(payload, &envelope) != nil || envelope.JSONRPC != "2.0" || envelope.Method != "tools/call" || strings.TrimSpace(envelope.Params.Name) == "" {
+		return false
+	}
+	if !sdkStandardHeadersMatch(req, envelope.Method, envelope.Params.Name) {
 		return false
 	}
 	// JSON-RPC notifications never receive a response, including when the
@@ -87,6 +96,30 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 		_, _ = w.Write(encoded)
 	}
 	return true
+}
+
+func sdkAcceptsStreamableHTTP(value string) bool {
+	jsonOK, streamOK := false, false
+	for _, part := range strings.Split(value, ",") {
+		switch strings.TrimSpace(strings.SplitN(part, ";", 2)[0]) {
+		case "application/json":
+			jsonOK = true
+		case "text/event-stream":
+			streamOK = true
+		}
+	}
+	return jsonOK && streamOK
+}
+
+func sdkStandardHeadersMatch(req *http.Request, method, name string) bool {
+	version := strings.TrimSpace(req.Header.Get("Mcp-Protocol-Version"))
+	if version < "2026-07-28" {
+		return true
+	}
+	if req.Header.Get("Mcp-Method") != method {
+		return false
+	}
+	return req.Header.Get("Mcp-Name") == name
 }
 
 func (s *Server) newSDKServer(ctx context.Context) *sdkmcp.Server {

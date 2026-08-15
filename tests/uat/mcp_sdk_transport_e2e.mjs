@@ -34,11 +34,14 @@ const pending = fetch(`${userURL}/mcp`, {
   body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/list", params: {} }),
 });
 controller.abort();
+let cancellationObserved = false;
 try {
   await pending;
 } catch (error) {
   if (error.name !== "AbortError") throw error;
+  cancellationObserved = true;
 }
+if (!cancellationObserved) throw new Error("client cancellation was not observed");
 console.log(JSON.stringify({
   status: "ok",
   scenario: "mcp_sdk_transport",
@@ -48,7 +51,7 @@ console.log(JSON.stringify({
   unknown_version_rejected: true,
   malformed_content_rejected: true,
   notification_response_suppressed: true,
-  cancellation_observed: true,
+  cancellation_observed: cancellationObserved,
 }, null, 2));
 
 async function rpc(method, params, headers) {
