@@ -551,15 +551,16 @@ func isConflictResolutionDeletionOnlyFragment(
 		SELECT COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') = 'true'
 		   AND COALESCE(ingest.metadata->>'conflict_resolution_deletion_only', '') = 'true'
 		   AND ingest.source_summary = ?
-		   AND profile.auth_source = 'system'
-		   AND profile.is_system
+		   AND identity.kind = 'system'
 		FROM evidence_fragments AS fragment
 		JOIN knowledge_ingests AS ingest
 		  ON ingest.team_id = fragment.team_id
 		 AND ingest.ingest_id = fragment.ingest_id
-		JOIN team_profiles AS profile
-		  ON profile.team_id = fragment.team_id
-		 AND profile.id = fragment.owner_profile_id
+		JOIN ownership_aliases AS alias
+		  ON alias.team_id = fragment.team_id
+		 AND alias.legacy_owner_id = fragment.owner_profile_id
+		JOIN actor_identities AS identity
+		  ON identity.id = alias.canonical_identity_id
 		WHERE fragment.team_id = ?::uuid
 		  AND fragment.fragment_id = ?::uuid
 	`, conflictResolutionDeletionOnlySourceSummary, teamID, fragmentID).Row().Scan(&deletionOnly)

@@ -250,7 +250,7 @@ const relationshipConflictSupporterRowsSQL = `
 		SELECT representative.conflict_id,
 		       representative.position_id,
 		       representative.owner_profile_id,
-		       profile.name,
+		       identity.display_name,
 		       representative.authority,
 		       representative.fragment_id,
 		       representative.accepted_at,
@@ -270,15 +270,17 @@ const relationshipConflictSupporterRowsSQL = `
 		                    representative.owner_profile_id
 		       ) AS supporter_rank
 		FROM profile_representatives AS representative
-		JOIN team_profiles AS profile
-		  ON profile.team_id = ?::uuid
-		 AND profile.id = representative.owner_profile_id
+		JOIN ownership_aliases AS alias
+		  ON alias.team_id = ?::uuid
+		 AND alias.legacy_owner_id = representative.owner_profile_id
+		JOIN actor_identities AS identity
+		  ON identity.id = alias.canonical_identity_id
 	)
 	SELECT conflict_id::text,
 	       position_id::text,
 	       supporter_count,
 	       owner_profile_id::text,
-	       name,
+	       display_name,
 	       authority,
 	       fragment_id::text,
 	       accepted_at

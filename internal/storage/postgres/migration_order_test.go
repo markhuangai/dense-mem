@@ -131,5 +131,13 @@ func TestMigrationOrder_NoConnectorTables(t *testing.T) {
 			WHERE table_schema='public' AND table_name='team_profiles'
 		)`).Scan(&exists)
 	require.NoError(t, err)
+	assert.False(t, exists)
+
+	err = sqlDB.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema='public' AND table_name='credentials'
+		)`).Scan(&exists)
+	require.NoError(t, err)
 	assert.True(t, exists)
 }

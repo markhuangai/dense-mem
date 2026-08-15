@@ -205,7 +205,7 @@ func queryKeyUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter any
 			COALESCE(MAX(b.max_latency_ms), 0)
 		FROM usage_metric_buckets b
 		LEFT JOIN teams t ON t.id = b.team_id
-		LEFT JOIN team_profiles k ON k.id = b.key_id
+			LEFT JOIN credentials k ON k.id = b.key_id
 		WHERE b.bucket_start >= $1
 			AND b.bucket_start < $2
 			AND ($3::uuid IS NULL OR b.team_id = $3::uuid)

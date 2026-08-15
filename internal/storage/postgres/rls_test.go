@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestRLSPoliciesTeamProfileIsolation(t *testing.T) {
+func TestRLSPoliciesCredentialIsolation(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := setupRLSTestDB(t)
 	defer cleanup()
@@ -21,43 +21,43 @@ func TestRLSPoliciesTeamProfileIsolation(t *testing.T) {
 	rls := NewRLS()
 	teamA := createTestTeam(t, db, "Team A")
 	teamB := createTestTeam(t, db, "Team B")
-	profileA := createTestTeamProfile(t, db, teamA, "Profile A")
-	profileB := createTestTeamProfile(t, db, teamB, "Profile B")
+	credentialA := createTestCredential(t, db, teamA, "Profile A")
+	credentialB := createTestCredential(t, db, teamB, "Profile B")
 
 	var count int64
 	err := rls.WithTeamTx(ctx, db, teamA.String(), func(tx *gorm.DB) error {
-		return tx.Model(&TeamProfile{}).Count(&count).Error
+		return tx.Model(&Credential{}).Count(&count).Error
 	})
 	if err != nil {
 		t.Fatalf("failed to query as team A: %v", err)
 	}
 	if count != 1 {
-		t.Fatalf("team A should see exactly 1 team_profile, got %d", count)
+		t.Fatalf("team A should see exactly 1 credential, got %d", count)
 	}
 
-	var found TeamProfile
+	var found Credential
 	err = rls.WithTeamTx(ctx, db, teamA.String(), func(tx *gorm.DB) error {
-		return tx.First(&found, "id = ?", profileB).Error
+		return tx.First(&found, "id = ?", credentialB).Error
 	})
 	if err == nil {
-		t.Fatal("team A should not read team B's team_profile")
+		t.Fatal("team A should not read team B's credential")
 	}
 
 	err = rls.WithTeamTx(ctx, db, teamB.String(), func(tx *gorm.DB) error {
-		return tx.Model(&TeamProfile{}).Count(&count).Error
+		return tx.Model(&Credential{}).Count(&count).Error
 	})
 	if err != nil {
 		t.Fatalf("failed to query as team B: %v", err)
 	}
 	if count != 1 {
-		t.Fatalf("team B should see exactly 1 team_profile, got %d", count)
+		t.Fatalf("team B should see exactly 1 credential, got %d", count)
 	}
 
 	err = rls.WithTeamTx(ctx, db, teamB.String(), func(tx *gorm.DB) error {
-		return tx.First(&found, "id = ?", profileA).Error
+		return tx.First(&found, "id = ?", credentialA).Error
 	})
 	if err == nil {
-		t.Fatal("team B should not read team A's team_profile")
+		t.Fatal("team B should not read team A's credential")
 	}
 }
 
@@ -69,18 +69,18 @@ func TestRLSPoliciesSystemSeesAll(t *testing.T) {
 	rls := NewRLS()
 	teamA := createTestTeam(t, db, "Team A")
 	teamB := createTestTeam(t, db, "Team B")
-	createTestTeamProfile(t, db, teamA, "Profile A")
-	createTestTeamProfile(t, db, teamB, "Profile B")
+	createTestCredential(t, db, teamA, "Profile A")
+	createTestCredential(t, db, teamB, "Profile B")
 
 	var count int64
 	err := rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
-		return tx.Model(&TeamProfile{}).Count(&count).Error
+		return tx.Model(&Credential{}).Count(&count).Error
 	})
 	if err != nil {
-		t.Fatalf("failed to query team_profiles as system transaction: %v", err)
+		t.Fatalf("failed to query credentials as system transaction: %v", err)
 	}
 	if count != 2 {
-		t.Fatalf("system transaction should see exactly 2 team_profiles, got %d", count)
+		t.Fatalf("system transaction should see exactly 2 credentials, got %d", count)
 	}
 
 	err = rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
@@ -101,7 +101,7 @@ func TestRLSPoliciesAuditLogAppendable(t *testing.T) {
 
 	rls := NewRLS()
 	teamID := createTestTeam(t, db, "Audit Team")
-	profileID := createTestTeamProfile(t, db, teamID, "Audit Profile")
+	profileID := createTestCredential(t, db, teamID, "Audit Profile")
 
 	err := rls.WithTeamTx(ctx, db, teamID.String(), func(tx *gorm.DB) error {
 		return tx.Create(&AuditLog{
@@ -231,8 +231,8 @@ func TestReadOnlyRepeatableReadTransactionOptions(t *testing.T) {
 	rls := NewRLS()
 	teamID := createTestTeam(t, db, "Read-only team")
 	otherTeamID := createTestTeam(t, db, "Other read-only team")
-	createTestTeamProfile(t, db, teamID, "Authorized profile")
-	createTestTeamProfile(t, db, otherTeamID, "Foreign profile")
+	createTestCredential(t, db, teamID, "Authorized profile")
+	createTestCredential(t, db, otherTeamID, "Foreign profile")
 	var isolation, readOnly string
 	var visibleProfiles int64
 	err := rls.WithTeamReadOnlyRepeatableTx(ctx, db, teamID.String(), func(tx *gorm.DB) error {
@@ -242,7 +242,7 @@ func TestReadOnlyRepeatableReadTransactionOptions(t *testing.T) {
 		if err := tx.Raw("SHOW transaction_read_only").Scan(&readOnly).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&TeamProfile{}).Count(&visibleProfiles).Error; err != nil {
+		if err := tx.Model(&Credential{}).Count(&visibleProfiles).Error; err != nil {
 			return err
 		}
 		return tx.Exec("UPDATE teams SET updated_at = updated_at WHERE id = ?", teamID).Error
@@ -286,14 +286,14 @@ func setupRLSTestDB(t *testing.T) (*gorm.DB, func()) {
 
 	rls := NewRLS()
 	if err := rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
-		return tx.Exec("TRUNCATE team_profiles, teams, audit_log CASCADE").Error
+		return tx.Exec("TRUNCATE ownership_aliases, membership_grants, credentials, team_memberships, identity_external_links, actor_identities, teams, audit_log CASCADE").Error
 	}); err != nil {
 		t.Fatalf("failed to truncate fixture tables before test: %v", err)
 	}
 
 	cleanup := func() {
 		if err := rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
-			return tx.Exec("TRUNCATE team_profiles, teams, audit_log CASCADE").Error
+			return tx.Exec("TRUNCATE ownership_aliases, membership_grants, credentials, team_memberships, identity_external_links, actor_identities, teams, audit_log CASCADE").Error
 		}); err != nil {
 			t.Logf("warning: cleanup truncate failed: %v", err)
 		}
@@ -321,25 +321,13 @@ func (Team) TableName() string {
 	return "teams"
 }
 
-type TeamProfile struct {
-	ID         uuid.UUID  `gorm:"type:uuid;primary_key"`
-	TeamID     uuid.UUID  `gorm:"type:uuid;not null"`
-	KeyHash    string     `gorm:"type:text;not null"`
-	KeyPrefix  string     `gorm:"type:varchar(24);not null"`
-	KeySuffix  string     `gorm:"type:varchar(6)"`
-	Name       string     `gorm:"type:varchar(100);not null;default:''"`
-	Scopes     string     `gorm:"type:text[];not null;default:ARRAY['read']"`
-	Role       string     `gorm:"type:varchar(20);not null;default:'member'"`
-	RateLimit  int        `gorm:"type:integer;not null;default:0"`
-	ExpiresAt  *time.Time `gorm:"type:timestamptz"`
-	RevokedAt  *time.Time `gorm:"type:timestamptz"`
-	LastUsedAt *time.Time `gorm:"type:timestamptz"`
-	CreatedAt  time.Time  `gorm:"type:timestamptz;not null;default:now()"`
-	UpdatedAt  time.Time  `gorm:"type:timestamptz;not null;default:now()"`
+type Credential struct {
+	ID     uuid.UUID `gorm:"type:uuid;primary_key"`
+	TeamID uuid.UUID `gorm:"type:uuid;not null"`
 }
 
-func (TeamProfile) TableName() string {
-	return "team_profiles"
+func (Credential) TableName() string {
+	return "credentials"
 }
 
 type AuditLog struct {
@@ -384,26 +372,44 @@ func createTestTeam(t *testing.T, db *gorm.DB, name string) uuid.UUID {
 	return id
 }
 
-func createTestTeamProfile(t *testing.T, db *gorm.DB, teamID uuid.UUID, name string) uuid.UUID {
+func createTestCredential(t *testing.T, db *gorm.DB, teamID uuid.UUID, name string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	key := TeamProfile{
-		ID:        id,
-		TeamID:    teamID,
-		KeyHash:   "test_hash_" + id.String(),
-		KeyPrefix: id.String()[:24],
-		KeySuffix: id.String()[:6],
-		Name:      name,
-		Scopes:    "{read}",
-		Role:      "member",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
 	err := NewRLS().WithTeamTx(context.Background(), db, teamID.String(), func(tx *gorm.DB) error {
-		return tx.Create(&key).Error
+		if err := tx.Exec(`
+			INSERT INTO actor_identities (id, kind, team_id, display_name)
+			VALUES (?, 'api_client', ?, ?)
+		`, id, teamID, name).Error; err != nil {
+			return err
+		}
+		var membershipID uuid.UUID
+		if err := tx.Raw(`
+			INSERT INTO team_memberships (actor_identity_id, team_id, maximum_grants)
+			VALUES (?, ?, ARRAY['read']::text[])
+			RETURNING id
+		`, id, teamID).Row().Scan(&membershipID); err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO membership_grants (membership_id, grant_name)
+			VALUES (?, 'read')
+		`, membershipID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO credentials (
+				id, actor_identity_id, team_id, key_hash, key_prefix, key_suffix, name, scopes
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ARRAY['read']::text[])
+		`, id, id, teamID, "test_hash_"+id.String(), id.String()[:24], id.String()[:6], name).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id, credential_id)
+			VALUES (?, ?, ?, ?)
+		`, teamID, id, id, id).Error
 	})
 	if err != nil {
-		t.Fatalf("failed to create test team_profile: %v", err)
+		t.Fatalf("failed to create test credential: %v", err)
 	}
 	return id
 }

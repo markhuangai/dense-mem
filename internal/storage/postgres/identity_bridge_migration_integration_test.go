@@ -44,7 +44,7 @@ func TestIdentityBridgeBackfillsStableIDsAndLegacyGovernance(t *testing.T) {
 	require.True(t, admin)
 }
 
-func TestMigrationStartupClassifierCoversFreshLegacyAndCompatibleStates(t *testing.T) {
+func TestMigrationStartupClassifierCoversFreshLegacyBridgeAndCleanStates(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
@@ -54,17 +54,21 @@ func TestMigrationStartupClassifierCoversFreshLegacyAndCompatibleStates(t *testi
 
 	files, err := listMigrationSources(getMigrationsDir())
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(files), 2)
-	runGooseUpTo(t, ctx, sqlDB, files[len(files)-2].version)
+	require.GreaterOrEqual(t, len(files), 3)
+	runGooseUpTo(t, ctx, sqlDB, files[len(files)-3].version)
 	state, err = ClassifyMigrationState(ctx, sqlDB, getMigrationsDir())
 	require.NoError(t, err)
 	require.Equal(t, MigrationStateLegacy, state.Kind)
-	require.True(t, state.ExactLegacy)
+
+	runGooseUpTo(t, ctx, sqlDB, files[len(files)-2].version)
+	state, err = ClassifyMigrationState(ctx, sqlDB, getMigrationsDir())
+	require.NoError(t, err)
+	require.Equal(t, MigrationStateBridge, state.Kind)
 
 	runGooseUpTo(t, ctx, sqlDB, files[len(files)-1].version)
 	state, err = ClassifyMigrationState(ctx, sqlDB, getMigrationsDir())
 	require.NoError(t, err)
-	require.Equal(t, MigrationStateCompatible, state.Kind)
+	require.Equal(t, MigrationStateClean, state.Kind)
 	require.NoError(t, ValidateStartupMigrationState(ctx, sqlDB, getMigrationsDir()))
 }
 

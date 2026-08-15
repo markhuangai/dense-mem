@@ -703,18 +703,18 @@ func TestAPIKeyServiceScopeNameAndConstructorHelpers(t *testing.T) {
 	_, err = normalizeTeamProfileName(strings.Repeat("x", 101))
 	require.Error(t, err)
 	assert.Nil(t, teamProfileNameConflict(errors.New("not unique"), "name"))
-	assert.Equal(t, "idx_team_profiles_sso_owner_team_active_unique", uniqueViolationName(&pgconn.PgError{
+	assert.Equal(t, "idx_credentials_owner_team_active_unique", uniqueViolationName(&pgconn.PgError{
 		Code:           "23505",
-		ConstraintName: "idx_team_profiles_sso_owner_team_active_unique",
+		ConstraintName: "idx_credentials_owner_team_active_unique",
 	}))
-	assert.Equal(t, "idx_team_profiles_sso_owner_team_active_unique", uniqueViolationName(&pq.Error{
+	assert.Equal(t, "idx_credentials_owner_team_active_unique", uniqueViolationName(&pq.Error{
 		Code:       "23505",
-		Constraint: "idx_team_profiles_sso_owner_team_active_unique",
+		Constraint: "idx_credentials_owner_team_active_unique",
 	}))
 	assert.Empty(t, uniqueViolationName(&pq.Error{Code: "23503"}))
 	require.ErrorContains(t, apiKeyCreateConflict(&pgconn.PgError{
 		Code:           "23505",
-		ConstraintName: "idx_team_profiles_sso_owner_team_active_unique",
+		ConstraintName: "idx_credentials_owner_team_active_unique",
 	}, "name"), "sso-owned api key already exists for this team")
 
 	svc := NewAPIKeyServiceWithLogger(nil, nil, nil, nil, nil, nil)

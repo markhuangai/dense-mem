@@ -103,9 +103,10 @@ func TestDirectoryReconcileCreatesAndArchivesOnlyDirectoryManagedTeam(t *testing
 			return err
 		}
 		if err := tx.Raw(`
-			SELECT revoked_at IS NULL
-			FROM team_profiles
-			WHERE team_id = $1 AND sso_identity_id = $2
+			SELECT membership.status = 'active' AND actor.active
+			FROM team_memberships AS membership
+			JOIN actor_identities AS actor ON actor.id = membership.actor_identity_id
+			WHERE membership.team_id = $1 AND membership.actor_identity_id = $2
 		`, teamID, user.IdentityID).Row().Scan(&profileActive); err != nil {
 			return err
 		}
@@ -130,9 +131,9 @@ func TestDirectoryReconcileCreatesAndArchivesOnlyDirectoryManagedTeam(t *testing
 			return err
 		}
 		if err := tx.Raw(`
-			SELECT revoked_at IS NOT NULL
-			FROM team_profiles
-			WHERE team_id = $1 AND sso_identity_id = $2
+			SELECT status = 'revoked'
+			FROM team_memberships
+			WHERE team_id = $1 AND actor_identity_id = $2
 		`, teamID, user.IdentityID).Row().Scan(&profileRevoked); err != nil {
 			return err
 		}
@@ -607,9 +608,9 @@ func TestDirectoryReconcileFenceAndDisableRetireOnlyDirectoryGrants(t *testing.T
 			return err
 		}
 		if err := tx.Raw(`
-			SELECT revoked_at IS NOT NULL
-			FROM team_profiles
-			WHERE team_id = $1 AND sso_identity_id = $2
+			SELECT status = 'revoked'
+			FROM team_memberships
+			WHERE team_id = $1 AND actor_identity_id = $2
 		`, directoryTeamID, user.IdentityID).Row().Scan(&profileRevoked); err != nil {
 			return err
 		}

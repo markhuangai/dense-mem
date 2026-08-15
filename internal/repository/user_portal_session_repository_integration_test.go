@@ -147,7 +147,7 @@ func TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle(t *testing.T) {
 	require.NotNil(t, remainingB)
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`DELETE FROM team_profiles WHERE id = ?::uuid`, profileB).Error
+		return tx.Exec(`DELETE FROM credentials WHERE id = ?::uuid`, profileB).Error
 	}))
 	cascadedB, err := repo.GetSession(ctx, sessionB.SessionHash)
 	require.NoError(t, err)

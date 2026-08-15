@@ -70,8 +70,8 @@ func TestRelationshipConflictSupporterProjectionIsBoundedCurrentAndTeamScoped(t 
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
-			UPDATE team_profiles
-			SET name = 'Profile A Renamed', updated_at = now()
+			UPDATE actor_identities
+			SET display_name = 'Profile A Renamed', updated_at = now()
 			WHERE team_id = ?::uuid
 			  AND id = ?::uuid
 		`, teamID, ownerA).Error

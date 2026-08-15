@@ -78,9 +78,7 @@ func upsertDirectoryIdentityTx(tx *gorm.DB, providerID uuid.UUID, externalID, su
 		`, id, providerID, subject, externalID, email, displayName, active && synchronizeActive, now).Error; err != nil {
 			return uuid.Nil, err
 		}
-		return id, nil
-	}
-	if err := tx.Exec(`
+	} else if err := tx.Exec(`
 		UPDATE sso_identities
 		SET subject = $1,
 		    external_id = CASE WHEN $2 = '' THEN external_id ELSE $2 END,
@@ -90,6 +88,9 @@ func upsertDirectoryIdentityTx(tx *gorm.DB, providerID uuid.UUID, externalID, su
 		    updated_at = $7
 		WHERE id = $8 AND provider_id = $9
 	`, subject, externalID, email, displayName, synchronizeActive, active, now, id, providerID).Error; err != nil {
+		return uuid.Nil, err
+	}
+	if err := syncCanonicalSSOIdentityByIDTx(tx, id); err != nil {
 		return uuid.Nil, err
 	}
 	return id, nil

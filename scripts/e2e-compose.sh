@@ -25,7 +25,7 @@ E2E_SERVER_IMAGE=""
 E2E_PLAYWRIGHT_CONTAINER=""
 
 source "${ROOT_DIR}/scripts/e2e-compose-json.sh"; source "${ROOT_DIR}/scripts/e2e-compose-conflict.sh"; source "${ROOT_DIR}/scripts/e2e-compose-embedding-reconciliation.sh"; source "${ROOT_DIR}/scripts/e2e-compose-submission-status.sh"; source "${ROOT_DIR}/scripts/e2e-compose-security.sh"
-
+source "${ROOT_DIR}/scripts/e2e-compose-identity-cleanup.sh"
 sanitize_project_name() {
   local raw="$1"
   local sanitized
@@ -656,7 +656,7 @@ run_compose_playwright_tests() {
 
 cleanup() {
   local status=$?
-  set +e
+  set +e; cleanup_identity_cleanup_lock
   remove_e2e_playwright_container
   if [[ "$E2E_FILES_PREPARED" == "1" && "${DENSE_MEM_E2E_KEEP_COMPOSE:-0}" != "1" ]]; then
     if ! compose down -v --remove-orphans >/dev/null; then
@@ -698,8 +698,8 @@ if [[ "$E2E_MODE" != "standard" && "$E2E_MODE" != "entra_scim" ]]; then
   echo "DENSE_MEM_E2E_MODE must be standard or entra_scim." >&2
   exit 1
 fi
-if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "mcp_sdk_parity" && "$E2E_SCENARIO" != "mcp_sdk_transport" && "$E2E_SCENARIO" != "security_runtime" && "$E2E_SCENARIO" != "infrastructure_credentials" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "submission_terminal_errors" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "identity_cutover" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" && "$E2E_SCENARIO" != "all" ]]; then
-  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, mcp_sdk_parity, mcp_sdk_transport, security_runtime, infrastructure_credentials, submission_status, submission_terminal_errors, security_intake, submission_assessment, semantic_holds, identity_cutover, community, conflict, conflict_queue, embedding_reconciliation, embedding_resilience, or all." >&2
+if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "mcp_sdk_parity" && "$E2E_SCENARIO" != "mcp_sdk_transport" && "$E2E_SCENARIO" != "security_runtime" && "$E2E_SCENARIO" != "infrastructure_credentials" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "submission_terminal_errors" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "identity_cleanup" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" && "$E2E_SCENARIO" != "all" ]]; then
+  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, mcp_sdk_parity, mcp_sdk_transport, security_runtime, infrastructure_credentials, submission_status, submission_terminal_errors, security_intake, submission_assessment, semantic_holds, identity_cleanup, community, conflict, conflict_queue, embedding_reconciliation, embedding_resilience, or all." >&2
   exit 1
 fi
 
@@ -713,7 +713,7 @@ if [[ "$E2E_SCENARIO" == "all" ]]; then
     echo "DENSE_MEM_E2E_SCENARIO=all requires DENSE_MEM_E2E_MODE=standard." >&2
     exit 1
   fi
-  for scenario in mcp_boundaries mcp_sdk_parity mcp_sdk_transport security_runtime infrastructure_credentials submission_status submission_terminal_errors security_intake submission_assessment semantic_holds identity_cutover community conflict conflict_queue embedding_reconciliation embedding_resilience full; do
+  for scenario in mcp_boundaries mcp_sdk_parity mcp_sdk_transport security_runtime infrastructure_credentials submission_status submission_terminal_errors security_intake submission_assessment semantic_holds identity_cleanup community conflict conflict_queue embedding_reconciliation embedding_resilience full; do
     echo "Running compose e2e scenario ${scenario} as part of all."
     DENSE_MEM_E2E_SCENARIO="$scenario" \
     DENSE_MEM_E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-all}-$(printf '%s' "$scenario" | tr '[:upper:]' '[:lower:]')" \
@@ -849,7 +849,7 @@ echo "Starting e2e compose stack on ${USER_URL}, ${CONTROL_URL}, and ${PROMETHEU
 compose up -d postgres
 wait_for_postgres_service
 provision_postgres_runtime_role
-compose up -d --build
+start_compose_stack_for_scenario
 
 wait_for_url "main API readiness" "${USER_URL}/ready"
 wait_for_url "control portal API" "${CONTROL_URL}/control/api/session" "Authorization: Bearer ${CONTROL_TOKEN}"
@@ -958,7 +958,7 @@ if [[ "$E2E_SCENARIO" == "semantic_holds" ]]; then
   node "$ROOT_DIR/tests/uat/semantic_holds_mcp_e2e.mjs"
   exit 0
 fi
-if [[ "$E2E_SCENARIO" == "identity_cutover" ]]; then echo "Running compose-backed identity bridge and A/B/C isolation e2e."; DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_CONTROL_URL="$CONTROL_URL" DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_PROFILE_ID="$CREATED_PROFILE_ID" DENSE_MEM_E2E_API_KEY="$api_key" DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" node "$ROOT_DIR/tests/uat/identity_cutover_e2e.mjs"; exit 0; fi
+if [[ "$E2E_SCENARIO" == "identity_cleanup" ]]; then run_identity_cleanup_consumer_e2e "$team_id" "$CREATED_PROFILE_ID" "$api_key"; exit 0; fi
 if [[ "$E2E_SCENARIO" == "community" ]]; then
   echo "Running compose-backed community recall e2e with the configured live verifier."; export DENSE_MEM_CONTROL_URL="$CONTROL_URL" DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_API_KEY="$api_key" DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE"; node "$ROOT_DIR/tests/uat/community_recall_mcp_e2e.mjs"
   if [[ "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" == "1" ]]; then echo "Skipping compose-backed community Playwright tests by DENSE_MEM_E2E_SKIP_PLAYWRIGHT."; else echo "Running compose-backed community Playwright tests."; export DENSE_MEM_E2E_TEAM_NAME="E2E Team"; run_compose_playwright_tests community; fi; exit 0

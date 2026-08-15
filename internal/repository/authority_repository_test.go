@@ -70,7 +70,8 @@ func TestFreshAuthorityApplicationTablesExcludeRetiredCleanupTables(t *testing.T
 		}
 	}
 	require.Contains(t, freshAuthorityApplicationTables, "teams")
-	require.Contains(t, freshAuthorityApplicationTables, "team_profiles")
+	require.NotContains(t, freshAuthorityApplicationTables, "team_profiles")
+	require.Contains(t, freshAuthorityApplicationTables, "credentials")
 	require.Contains(t, freshAuthorityApplicationTables, "v2_migration_runs")
 }
 

@@ -293,7 +293,7 @@ async function userProfileID() {
 }
 async function mcpSuccess(name, args) { return mcpSuccessWithKey(apiKey, name, args); }
 async function mcpSuccessWithKey(key, name, args) {
-  const response = await httpJSON(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/call", params: { name, arguments: args } }) });
+  const response = await httpJSON(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/call", params: { name, arguments: args } }) });
   if (response.error || response.result === undefined) throw new Error(`MCP ${name} returned a bounded error`);
   const text = response.result?.content?.[0]?.text;
   if (typeof text !== "string") throw new Error(`MCP ${name} did not return JSON content`);

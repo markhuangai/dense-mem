@@ -3,10 +3,13 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
@@ -21,7 +24,7 @@ func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 	require.NoError(t, adminDB.Raw(`
 		SELECT key_prefix
 		FROM credentials
-		WHERE legacy_profile_id = ?::uuid
+		WHERE id = ?::uuid
 	`, profileID).Row().Scan(&prefix))
 
 	repo := NewAPIKeyRepository(appDB, rls)
@@ -30,33 +33,14 @@ func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 	require.NotNil(t, key)
 	require.Equal(t, []string{"read", "write"}, key.Scopes)
 
-	// SSO-backed profiles keep the legacy profile as the credential actor while
-	// the membership points at the stable SSO identity. Authentication must
-	// continue to resolve the credential through its legacy ownership alias.
-	ssoIdentityID := uuid.NewString()
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		if err := tx.Exec(`
-			INSERT INTO actor_identities (id, kind, team_id, display_name)
-			VALUES (?::uuid, 'human', ?::uuid, 'SSO owner')
-		`, ssoIdentityID, teamID).Error; err != nil {
-			return err
-		}
-		return tx.Exec(`
-			UPDATE team_memberships
-			SET actor_identity_id = ?::uuid
-			WHERE legacy_profile_id = ?::uuid
-		`, ssoIdentityID, profileID).Error
-	}))
-	key, err = repo.GetActiveByPrefix(ctx, prefix)
-	require.NoError(t, err)
-	require.NotNil(t, key)
-
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			DELETE FROM membership_grants
-			WHERE membership_id = (SELECT id FROM team_memberships WHERE legacy_profile_id = ?::uuid)
+			WHERE membership_id = (
+				SELECT id FROM team_memberships WHERE actor_identity_id = ?::uuid AND team_id = ?::uuid
+			)
 			  AND grant_name = 'write'
-		`, profileID).Error
+		`, profileID, teamID).Error
 	}))
 
 	key, err = repo.GetActiveByPrefix(ctx, prefix)
@@ -74,4 +58,78 @@ func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 	key, err = repo.GetActiveByPrefix(ctx, prefix)
 	require.NoError(t, err)
 	require.Nil(t, key)
+}
+
+func TestCanonicalAPIKeyLifecycleRetainsDisabledIdentity(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "canonical-key-lifecycle"))
+	keyID := uuid.New()
+	prefix := "dm_lifecycle_" + keyID.String()[:11]
+	repo := NewAPIKeyRepository(appDB, rls)
+	require.NoError(t, repo.CreateStandardKey(ctx, &domain.APIKey{
+		ID: keyID, TeamID: teamID, Name: "lifecycle-key", KeyHash: "lifecycle-hash",
+		KeyPrefix: prefix, KeySuffix: "suffix", Scopes: []string{"read", "write"},
+	}))
+
+	active, err := repo.GetActiveByPrefix(ctx, prefix)
+	require.NoError(t, err)
+	require.NotNil(t, active)
+	require.Equal(t, []string{"read", "write"}, active.Scopes)
+
+	rows, err := repo.UpdateNameForProfile(ctx, teamID, keyID, "renamed-key")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+	rows, err = repo.UpdateRoleForProfile(ctx, teamID, keyID, "manager", []string{"read", "feedback:read"})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+	loaded, err := repo.GetByIDForProfile(ctx, teamID, keyID)
+	require.NoError(t, err)
+	require.Equal(t, "renamed-key", loaded.Name)
+	require.Equal(t, "manager", loaded.Role)
+	require.Equal(t, []string{"read", "feedback:read"}, loaded.Scopes)
+
+	rotatedPrefix := "dm_rotated_" + keyID.String()[:13]
+	rows, err = repo.RotateForProfile(ctx, teamID, keyID, "rotated-hash", rotatedPrefix, "rotate", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+	require.NoError(t, repo.TouchLastUsedBatch(ctx, []LastUsedUpdate{{ID: keyID, At: time.Now().UTC()}}))
+	active, err = repo.GetActiveByPrefix(ctx, rotatedPrefix)
+	require.NoError(t, err)
+	require.NotNil(t, active)
+	require.Equal(t, "rotated-hash", active.KeyHash)
+	require.NotNil(t, active.LastUsedAt)
+
+	rows, err = repo.RevokeForProfile(ctx, teamID, keyID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+	active, err = repo.GetActiveByPrefix(ctx, rotatedPrefix)
+	require.NoError(t, err)
+	require.Nil(t, active)
+	rows, err = repo.RotateForProfile(ctx, teamID, keyID, "restored-hash", rotatedPrefix, "stored", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+
+	rows, err = repo.DeleteForProfile(ctx, teamID, keyID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+	count, err := repo.CountByProfile(ctx, teamID)
+	require.NoError(t, err)
+	require.Zero(t, count)
+
+	var status string
+	var aliasCount int
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT status FROM credentials WHERE id = ?`, keyID).Scan(&status).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT count(*) FROM ownership_aliases
+			WHERE team_id = ? AND legacy_owner_id = ? AND credential_id = ?
+		`, teamID, keyID, keyID).Scan(&aliasCount).Error
+	}))
+	require.Equal(t, "disabled", status)
+	require.Equal(t, 1, aliasCount)
 }

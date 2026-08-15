@@ -254,22 +254,21 @@ func disableDirectoryProvisioningForProviderTx(tx *gorm.DB, providerID uuid.UUID
 		return err
 	}
 	if err := tx.Exec(`
-		UPDATE team_profiles p
-		SET revoked_at = $1,
-		    sso_entitlement_status = 'denied',
-		    sso_last_entitlement_checked_at = $1,
-		    updated_at = $1
-		WHERE p.auth_source = 'sso'
-		  AND p.sso_provider_id = $2
-		  AND p.revoked_at IS NULL
-		  AND EXISTS (
-			SELECT 1
-			FROM sso_group_mappings m
-			WHERE m.provider_id = p.sso_provider_id
-			  AND m.team_id = p.team_id
-			  AND m.group_id = p.sso_group_id
-			  AND m.origin = 'directory'
-		  )
+			UPDATE team_memberships membership
+			SET status = 'revoked',
+			    sso_entitlement_status = 'denied',
+			    sso_last_entitlement_checked_at = $1,
+			    updated_at = $1
+			WHERE membership.sso_provider_id = $2
+			  AND membership.status = 'active'
+			  AND EXISTS (
+				SELECT 1
+				FROM sso_group_mappings m
+				WHERE m.provider_id = membership.sso_provider_id
+				  AND m.team_id = membership.team_id
+				  AND m.group_id = membership.sso_group_id
+				  AND m.origin = 'directory'
+			  )
 	`, now, providerID).Error; err != nil {
 		return err
 	}
@@ -552,54 +551,92 @@ func (r *SSORepositoryImpl) UpsertTeamProfileForMapping(ctx context.Context, ide
 		if err := setActiveSSOTeamMutationScope(ctx, tx, mapping.TeamID.String()); err != nil {
 			return err
 		}
-		rows, err := tx.Raw(`
-			INSERT INTO team_profiles (
-				id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit,
-				expires_at, revoked_at, last_used_at, created_at, updated_at, auth_source,
-				sso_identity_id, sso_provider_id, sso_subject, sso_email, sso_group_id,
-				sso_entitlement_status, sso_last_entitlement_checked_at, sso_last_login_at
-			)
-			VALUES (
-				gen_random_uuid(), $1, NULL, NULL, NULL, $2, $3, $4, 0,
-				NULL, NULL, NULL, $5, $5, 'sso',
-				$6, $7, $8, $9, $10,
-				'active', $5, $5
-			)
-			ON CONFLICT (sso_identity_id, team_id) WHERE sso_identity_id IS NOT NULL DO UPDATE
-			SET name = EXCLUDED.name,
-			    scopes = EXCLUDED.scopes,
-			    role = EXCLUDED.role,
-			    sso_email = EXCLUDED.sso_email,
-			    sso_group_id = EXCLUDED.sso_group_id,
-			    sso_entitlement_status = 'active',
-			    sso_last_entitlement_checked_at = EXCLUDED.sso_last_entitlement_checked_at,
-			    sso_last_login_at = EXCLUDED.sso_last_login_at,
-			    revoked_at = NULL,
-			    updated_at = EXCLUDED.updated_at
-			RETURNING
-				id, team_id, COALESCE(name, ''), scopes, role, rate_limit, last_used_at, expires_at,
-				created_at, revoked_at, auth_source, sso_identity_id, sso_provider_id, sso_subject,
-				sso_email, sso_group_id, sso_entitlement_status, sso_last_entitlement_checked_at, sso_last_login_at
-		`, mapping.TeamID, name, pq.Array(mapping.Scopes), mapping.Role, now, identity.ID, identity.ProviderID, identity.Subject, identity.Email, mapping.GroupID).Rows()
+		aliasID, createdAt, err := upsertCanonicalSSOMembershipTx(tx, canonicalSSOMembershipInput{
+			IdentityID: identity.ID, ProviderID: identity.ProviderID, TeamID: mapping.TeamID,
+			Scopes: mapping.Scopes, Role: mapping.Role, GroupID: mapping.GroupID,
+			LastEntitlementCheckedAt: &now, LastLoginAt: identity.LastLoginAt, Now: now,
+		})
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		if !rows.Next() {
-			return rows.Err()
+		key = &domain.APIKey{
+			ID: aliasID, ProfileID: mapping.TeamID, TeamID: mapping.TeamID,
+			Label: name, Name: name, Scopes: append([]string(nil), mapping.Scopes...),
+			Role: mapping.Role, AuthSource: "sso", CreatedAt: createdAt,
+			SSOIdentityID: &identity.ID, SSOProviderID: &identity.ProviderID,
+			SSOSubject: identity.Subject, SSOEmail: identity.Email, SSOGroupID: mapping.GroupID,
+			SSOEntitlementStatus: "active", SSOLastEntitlementCheckedAt: &now,
+			SSOLastLoginAt: identity.LastLoginAt,
 		}
-		scanned, err := scanSSOAPIKey(rows)
-		if err != nil {
-			return err
-		}
-		scanned.TeamName = mapping.TeamName
-		key = scanned
-		return rows.Err()
+		key.TeamName = mapping.TeamName
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to upsert sso team profile: %w", err)
 	}
 	return key, nil
+}
+
+type canonicalSSOMembershipInput struct {
+	IdentityID               uuid.UUID
+	ProviderID               uuid.UUID
+	TeamID                   uuid.UUID
+	Scopes                   []string
+	Role                     string
+	GroupID                  string
+	LastEntitlementCheckedAt *time.Time
+	LastLoginAt              *time.Time
+	Now                      time.Time
+}
+
+func upsertCanonicalSSOMembershipTx(tx *gorm.DB, input canonicalSSOMembershipInput) (uuid.UUID, time.Time, error) {
+	var membershipID uuid.UUID
+	var createdAt time.Time
+	if err := tx.Raw(`
+		INSERT INTO team_memberships (
+			actor_identity_id, team_id, status, team_admin, maximum_grants,
+			sso_provider_id, sso_group_id, sso_entitlement_status,
+			sso_last_entitlement_checked_at, sso_last_login_at, created_at, updated_at
+		) VALUES ($1, $2, 'active', $3, $4, $5, $6, 'active', $7, $8, $9, $9)
+		ON CONFLICT (actor_identity_id, team_id) DO UPDATE SET
+			status = 'active',
+			team_admin = EXCLUDED.team_admin,
+			maximum_grants = EXCLUDED.maximum_grants,
+			sso_provider_id = EXCLUDED.sso_provider_id,
+			sso_group_id = EXCLUDED.sso_group_id,
+			sso_entitlement_status = 'active',
+			sso_last_entitlement_checked_at = EXCLUDED.sso_last_entitlement_checked_at,
+			sso_last_login_at = COALESCE(EXCLUDED.sso_last_login_at, team_memberships.sso_last_login_at),
+			updated_at = EXCLUDED.updated_at
+		RETURNING id, created_at
+	`, input.IdentityID, input.TeamID, input.Role == "manager", pq.Array(input.Scopes),
+		input.ProviderID, input.GroupID, input.LastEntitlementCheckedAt, input.LastLoginAt, input.Now).Row().Scan(&membershipID, &createdAt); err != nil {
+		return uuid.Nil, time.Time{}, err
+	}
+	if err := replaceLegacyMembershipGrants(tx, membershipID, input.Scopes); err != nil {
+		return uuid.Nil, time.Time{}, err
+	}
+	aliasID := uuid.Nil
+	if err := tx.Raw(`
+		SELECT legacy_owner_id
+		FROM ownership_aliases
+		WHERE team_id = $1 AND canonical_identity_id = $2 AND credential_id IS NULL
+		ORDER BY created_at, legacy_owner_id
+		LIMIT 1
+	`, input.TeamID, input.IdentityID).Row().Scan(&aliasID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return uuid.Nil, time.Time{}, err
+	}
+	if aliasID == uuid.Nil {
+		aliasID = membershipID
+		if err := tx.Exec(`
+			INSERT INTO ownership_aliases (
+				team_id, legacy_owner_id, canonical_identity_id, credential_id, reason
+			) VALUES ($1, $2, $3, NULL, 'membership')
+		`, input.TeamID, aliasID, input.IdentityID).Error; err != nil {
+			return uuid.Nil, time.Time{}, err
+		}
+	}
+	return aliasID, createdAt, nil
 }
 
 func setActiveSSOTeamMutationScope(ctx context.Context, tx *gorm.DB, teamID string) error {
@@ -616,18 +653,26 @@ func (r *SSORepositoryImpl) ListTeamProfilesForIdentity(ctx context.Context, ide
 		rows, err := tx.Raw(`
 			SELECT
 				t.id, t.name, t.description, t.created_at, t.updated_at,
-				k.id, k.team_id, COALESCE(k.name, ''), k.scopes, k.role, k.rate_limit, k.last_used_at,
-				k.expires_at, k.created_at, k.revoked_at, k.auth_source, k.sso_identity_id,
-				k.sso_provider_id, k.sso_subject, k.sso_email, k.sso_group_id,
-				k.sso_entitlement_status, k.sso_last_entitlement_checked_at, k.sso_last_login_at
-			FROM team_profiles k
-			JOIN teams t ON t.id = k.team_id
-			WHERE k.sso_identity_id = $1
-				AND k.auth_source = 'sso'
-				AND k.revoked_at IS NULL
+				alias.legacy_owner_id, membership.team_id, COALESCE(actor.display_name, ''),
+				membership.maximum_grants, CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END,
+				0, NULL, NULL, membership.created_at, NULL, 'sso', actor.id,
+				membership.sso_provider_id, actor.subject, COALESCE(identity.email, ''), membership.sso_group_id,
+				membership.sso_entitlement_status, membership.sso_last_entitlement_checked_at, membership.sso_last_login_at
+			FROM team_memberships membership
+			JOIN actor_identities actor ON actor.id = membership.actor_identity_id
+			JOIN ownership_aliases alias
+			  ON alias.team_id = membership.team_id
+			 AND alias.canonical_identity_id = membership.actor_identity_id
+			 AND alias.credential_id IS NULL
+			JOIN sso_identities identity ON identity.id = membership.actor_identity_id
+			JOIN teams t ON t.id = membership.team_id
+			WHERE membership.actor_identity_id = $1
+				AND membership.status = 'active'
+				AND membership.sso_entitlement_status = 'active'
+				AND actor.active = true
 				AND t.status = 'active'
 				AND t.deleted_at IS NULL
-			ORDER BY t.name ASC, k.id ASC
+			ORDER BY t.name ASC, alias.legacy_owner_id ASC
 		`, identityID).Rows()
 		if err != nil {
 			return err
@@ -653,15 +698,23 @@ func (r *SSORepositoryImpl) GetSSOProfileByID(ctx context.Context, id uuid.UUID)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
 			SELECT
-				k.id, k.team_id, COALESCE(t.name, ''), COALESCE(k.name, ''), k.scopes, k.role, k.rate_limit,
-				k.last_used_at, k.expires_at, k.created_at, k.revoked_at, k.auth_source, k.sso_identity_id,
-				k.sso_provider_id, k.sso_subject, k.sso_email, k.sso_group_id,
-				k.sso_entitlement_status, k.sso_last_entitlement_checked_at, k.sso_last_login_at
-			FROM team_profiles k
-			JOIN teams t ON t.id = k.team_id
-			WHERE k.id = $1
-				AND k.revoked_at IS NULL
-				AND k.auth_source = 'sso'
+				alias.legacy_owner_id, membership.team_id, COALESCE(t.name, ''), COALESCE(actor.display_name, ''),
+				membership.maximum_grants, CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END,
+				0, NULL, NULL, membership.created_at, NULL, 'sso', actor.id,
+				membership.sso_provider_id, actor.subject, COALESCE(identity.email, ''), membership.sso_group_id,
+				membership.sso_entitlement_status, membership.sso_last_entitlement_checked_at, membership.sso_last_login_at
+			FROM ownership_aliases alias
+			JOIN team_memberships membership
+			  ON membership.team_id = alias.team_id
+			 AND membership.actor_identity_id = alias.canonical_identity_id
+			JOIN actor_identities actor ON actor.id = membership.actor_identity_id
+			JOIN sso_identities identity ON identity.id = membership.actor_identity_id
+			JOIN teams t ON t.id = membership.team_id
+			WHERE alias.legacy_owner_id = $1
+				AND alias.credential_id IS NULL
+				AND membership.status = 'active'
+				AND membership.sso_entitlement_status = 'active'
+				AND actor.active = true
 				AND t.status = 'active'
 				AND t.deleted_at IS NULL
 		`, id).Rows()
@@ -785,10 +838,22 @@ func (r *SSORepositoryImpl) DeleteExpiredOAuthStates(ctx context.Context, now ti
 
 func (r *SSORepositoryImpl) CreateSession(ctx context.Context, session domain.SSOSession) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO sso_sessions (session_hash, identity_id, provider_id, team_profile_id, team_id, csrf_hash, expires_at, created_at, last_seen_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-		`, session.SessionHash, session.IdentityID, session.ProviderID, session.TeamProfileID, session.TeamID, session.CSRFHash, session.ExpiresAt, session.CreatedAt).Error
+		result := tx.Exec(`
+			INSERT INTO sso_sessions (session_hash, identity_id, provider_id, membership_id, team_id, csrf_hash, expires_at, created_at, last_seen_at)
+			SELECT $1, $2, $3, membership.id, $5, $6, $7, $8, $8
+			FROM ownership_aliases alias
+			JOIN team_memberships membership
+			  ON membership.team_id = alias.team_id
+			 AND membership.actor_identity_id = alias.canonical_identity_id
+			WHERE alias.team_id = $5 AND alias.legacy_owner_id = $4
+		`, session.SessionHash, session.IdentityID, session.ProviderID, session.TeamProfileID, session.TeamID, session.CSRFHash, session.ExpiresAt, session.CreatedAt)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create sso session: %w", err)
@@ -800,9 +865,16 @@ func (r *SSORepositoryImpl) GetSession(ctx context.Context, sessionHash string) 
 	var session *domain.SSOSession
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
-			SELECT session_hash, identity_id, provider_id, team_profile_id, team_id, csrf_hash, expires_at, created_at, last_seen_at
-			FROM sso_sessions
-			WHERE session_hash = $1 AND expires_at > NOW()
+			SELECT session.session_hash, session.identity_id, session.provider_id,
+			       alias.legacy_owner_id, session.team_id, session.csrf_hash,
+			       session.expires_at, session.created_at, session.last_seen_at
+			FROM sso_sessions session
+			JOIN team_memberships membership ON membership.id = session.membership_id
+			JOIN ownership_aliases alias
+			  ON alias.team_id = membership.team_id
+			 AND alias.canonical_identity_id = membership.actor_identity_id
+			 AND alias.credential_id IS NULL
+			WHERE session.session_hash = $1 AND session.expires_at > NOW()
 		`, sessionHash).Rows()
 		if err != nil {
 			return err
@@ -828,11 +900,18 @@ func (r *SSORepositoryImpl) UpdateSessionTeam(ctx context.Context, sessionHash s
 	now := time.Now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		res := tx.Exec(`
-			UPDATE sso_sessions
-			SET team_profile_id = $1,
+			UPDATE sso_sessions session
+			SET membership_id = membership.id,
 			    team_id = $2,
 			    last_seen_at = $3
-			WHERE session_hash = $4 AND expires_at > $3
+			FROM ownership_aliases alias
+			JOIN team_memberships membership
+			  ON membership.team_id = alias.team_id
+			 AND membership.actor_identity_id = alias.canonical_identity_id
+			WHERE alias.team_id = $2
+			  AND alias.legacy_owner_id = $1
+			  AND session.session_hash = $4
+			  AND session.expires_at > $3
 		`, teamProfileID, teamID, now, sessionHash)
 		if res.Error != nil {
 			return res.Error

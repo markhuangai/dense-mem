@@ -102,7 +102,7 @@ async function assertToolNotFound(name, args) {
 async function rpc(method, params) {
   return httpJSON(`${userURL}/mcp`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method, params }),
   });
 }

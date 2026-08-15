@@ -24,20 +24,7 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner-delete-tombstone")
 	otherTeamID := createLedgerTeam(t, adminDB, rls, "team-delete-transfer-target")
 	insertSearchTestContract(t, adminDB, rls, "team-delete-search-read", 3, "exact", "")
-	ssoProfileID := uuid.NewString()
-	err := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO team_profiles (
-			    id, team_id, key_hash, key_prefix, name, scopes, role,
-			    auth_source, sso_subject, sso_entitlement_status
-			)
-			VALUES (
-			    ?::uuid, ?::uuid, NULL, NULL, 'sso-delete-tombstone', ARRAY['read']::text[], 'member',
-			    'sso', 'sso-delete-subject', 'active'
-			)
-		`, ssoProfileID, teamID).Error
-	})
-	require.NoError(t, err)
+	secondaryProfileID := createLedgerProfile(t, adminDB, rls, teamID, "secondary-delete-tombstone")
 	ledger := NewLedgerRepository(appDB, rls)
 
 	created, err := ledger.CreateIngest(ctx, CreateIngestInput{
@@ -115,11 +102,12 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 		var revokedCount int64
 		if err := tx.Raw(`
 			SELECT COUNT(*)
-			FROM team_profiles
+			FROM credentials
 			WHERE team_id = ?::uuid
 			  AND id = ANY(?::uuid[])
+			  AND status = 'revoked'
 			  AND revoked_at IS NOT NULL
-		`, teamID, pq.Array([]string{ownerID, ssoProfileID})).Scan(&revokedCount).Error; err != nil {
+		`, teamID, pq.Array([]string{ownerID, secondaryProfileID})).Scan(&revokedCount).Error; err != nil {
 			return err
 		}
 		assert.Equal(t, int64(2), revokedCount)
