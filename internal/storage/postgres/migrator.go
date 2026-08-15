@@ -4,8 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io/fs"
+	"log"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"testing/fstest"
+	"time"
 
 	"github.com/pressly/goose/v3"
 	gooselock "github.com/pressly/goose/v3/lock"
@@ -28,6 +37,105 @@ type MigratorClient interface {
 
 // Ensure Migrator implements MigratorClient
 var _ MigratorClient = (*Migrator)(nil)
+
+var (
+	migrationFilenamePattern = regexp.MustCompile(`^((?:\d{10}|\d{14}))_[a-z0-9][a-z0-9_-]*\.sql$`)
+	migrationReleasePattern  = regexp.MustCompile(`^v\d+_\d+$`)
+	migrationUpDirective     = regexp.MustCompile(`(?im)^--[ \t]+\+goose[ \t]+up[ \t]*\r?$`)
+	migrationDownDirective   = regexp.MustCompile(`(?im)^--[ \t]+\+goose[ \t]+down[ \t]*\r?$`)
+)
+
+type migrationSource struct {
+	version  int64
+	filename string
+	contents []byte
+}
+
+func listMigrationSources(dir string) ([]migrationSource, error) {
+	sources := make([]migrationSource, 0)
+	err := filepath.WalkDir(dir, func(filename string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("migration history: %q is not a regular file", filename)
+		}
+		relative, err := filepath.Rel(dir, filename)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		parts := strings.Split(relative, "/")
+		if len(parts) != 2 || !migrationReleasePattern.MatchString(parts[0]) {
+			return fmt.Errorf("migration history: %q is not inside one versioned release directory", relative)
+		}
+		match := migrationFilenamePattern.FindStringSubmatch(parts[1])
+		if match == nil {
+			return fmt.Errorf("migration history: malformed filename %q", relative)
+		}
+		version, err := strconv.ParseInt(match[1], 10, 64)
+		if err != nil || version <= 0 {
+			return fmt.Errorf("migration history: invalid version in %q", relative)
+		}
+		contents, err := os.ReadFile(filename)
+		if err != nil {
+			return fmt.Errorf("migration history: read %q: %w", relative, err)
+		}
+		text := string(contents)
+		if !migrationUpDirective.MatchString(text) || !migrationDownDirective.MatchString(text) {
+			return fmt.Errorf("migration history: %q must contain Goose Up and Down sections", relative)
+		}
+		sources = append(sources, migrationSource{version: version, filename: relative, contents: contents})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("migration history: read directory: %w", err)
+	}
+	if len(sources) == 0 {
+		return nil, fmt.Errorf("migration history: no migrations found")
+	}
+	sort.Slice(sources, func(i, j int) bool { return sources[i].version < sources[j].version })
+	for i := 1; i < len(sources); i++ {
+		if sources[i-1].version == sources[i].version {
+			return nil, fmt.Errorf(
+				"migration history: duplicate version %d (%s and %s)",
+				sources[i].version,
+				sources[i-1].filename,
+				sources[i].filename,
+			)
+		}
+	}
+	return sources, nil
+}
+
+func migrationFilesystem(dir string) (fstest.MapFS, error) {
+	sources, err := listMigrationSources(dir)
+	if err != nil {
+		return nil, err
+	}
+	filesystem := make(fstest.MapFS, len(sources))
+	for _, source := range sources {
+		name := path.Base(source.filename)
+		filesystem[name] = &fstest.MapFile{Data: source.contents, Mode: 0o644}
+	}
+	return filesystem, nil
+}
+
+func migrationPath(dir string, version int64) (string, error) {
+	sources, err := listMigrationSources(dir)
+	if err != nil {
+		return "", err
+	}
+	for _, source := range sources {
+		if source.version == version {
+			return filepath.Join(dir, filepath.FromSlash(source.filename)), nil
+		}
+	}
+	return "", fmt.Errorf("migration history: version %d not found", version)
+}
 
 // getMigrationsDir returns the absolute path to the migrations directory.
 // It checks multiple strategies to find the migrations:
@@ -62,7 +170,7 @@ func getMigrationsDir() string {
 }
 
 // NewMigrator creates a new migrator instance for the given GORM database.
-// Migrations are loaded from the migrations/postgres directory.
+// Migrations are loaded as one history across the release directories.
 func NewMigrator(db *gorm.DB) (*Migrator, error) {
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -83,21 +191,61 @@ func NewMigratorWithDB(sqlDB *sql.DB) *Migrator {
 	}
 }
 
+func newMigrationProvider(dir string, db *sql.DB, withLock bool) (*goose.Provider, error) {
+	if db == nil {
+		return nil, fmt.Errorf("migration provider: database is required")
+	}
+	filesystem, err := migrationFilesystem(dir)
+	if err != nil {
+		return nil, err
+	}
+	options := make([]goose.ProviderOption, 0, 1)
+	if withLock {
+		locker, err := gooselock.NewPostgresSessionLocker()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create postgres migration lock: %w", err)
+		}
+		options = append(options, goose.WithSessionLocker(locker))
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, filesystem, options...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create migration provider: %w", err)
+	}
+	return provider, nil
+}
+
+func migrationUpTo(ctx context.Context, db *sql.DB, version int64) error {
+	provider, err := newMigrationProvider(getMigrationsDir(), db, false)
+	if err != nil {
+		return err
+	}
+	_, err = provider.UpTo(ctx, version)
+	return err
+}
+
+func migrationDownTo(ctx context.Context, db *sql.DB, version int64) error {
+	provider, err := newMigrationProvider(getMigrationsDir(), db, false)
+	if err != nil {
+		return err
+	}
+	_, err = provider.DownTo(ctx, version)
+	return err
+}
+
+func migrationDown(ctx context.Context, db *sql.DB) error {
+	provider, err := newMigrationProvider(getMigrationsDir(), db, false)
+	if err != nil {
+		return err
+	}
+	_, err = provider.Down(ctx)
+	return err
+}
+
 // RunUp runs all pending up migrations.
 func (m *Migrator) RunUp(ctx context.Context) error {
-	locker, err := gooselock.NewPostgresSessionLocker()
+	provider, err := newMigrationProvider(m.dir, m.db, true)
 	if err != nil {
-		return fmt.Errorf("failed to create postgres migration lock: %w", err)
-	}
-
-	provider, err := goose.NewProvider(
-		goose.DialectPostgres,
-		m.db,
-		os.DirFS(m.dir),
-		goose.WithSessionLocker(locker),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create migration provider: %w", err)
+		return err
 	}
 
 	if _, err := provider.Up(ctx); err != nil {
@@ -109,27 +257,40 @@ func (m *Migrator) RunUp(ctx context.Context) error {
 
 // RunDown runs all down migrations (rollback).
 func (m *Migrator) RunDown(ctx context.Context) error {
-	if err := goose.SetDialect("postgres"); err != nil {
-		return fmt.Errorf("failed to set goose dialect: %w", err)
+	provider, err := newMigrationProvider(m.dir, m.db, false)
+	if err != nil {
+		return err
 	}
-
-	if err := goose.DownContext(ctx, m.db, m.dir); err != nil {
+	if _, err := provider.Down(ctx); err != nil {
 		return fmt.Errorf("failed to run down migrations: %w", err)
 	}
 
 	return nil
 }
 
+func logMigrationStatuses(statuses []*goose.MigrationStatus) {
+	log.Printf("    Applied At                  Migration")
+	log.Printf("    =======================================")
+	for _, status := range statuses {
+		appliedAt := "Pending"
+		if status.State == goose.StateApplied {
+			appliedAt = status.AppliedAt.Format(time.ANSIC)
+		}
+		log.Printf("    %-24s -- %s", appliedAt, filepath.Base(status.Source.Path))
+	}
+}
+
 // Status displays the current migration status.
 func (m *Migrator) Status(ctx context.Context) error {
-	if err := goose.SetDialect("postgres"); err != nil {
-		return fmt.Errorf("failed to set goose dialect: %w", err)
+	provider, err := newMigrationProvider(m.dir, m.db, false)
+	if err != nil {
+		return err
 	}
-
-	// goose.Status doesn't have a context variant, use the standard version
-	if err := goose.Status(m.db, m.dir); err != nil {
+	statuses, err := provider.Status(ctx)
+	if err != nil {
 		return fmt.Errorf("failed to get migration status: %w", err)
 	}
+	logMigrationStatuses(statuses)
 
 	return nil
 }

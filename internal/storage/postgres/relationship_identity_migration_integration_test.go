@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -137,8 +136,7 @@ func TestRelationshipIdentityMigrationPreservesValidToCollisionsForReview(t *tes
 	require.ErrorAs(t, err, &pgErr)
 	assert.Equal(t, "23505", pgErr.Code)
 
-	require.NoError(t, goose.SetDialect("postgres"))
-	err = goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026072402)
+	err = migrationDownTo(ctx, sqlDB, 2026072402)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "relationship identity aliases require review-preserving forward migration")
 }
@@ -149,8 +147,7 @@ func TestRelationshipIdentityMigrationRollsBackBeforeAliasesExist(t *testing.T) 
 	defer cleanup()
 
 	runGooseUpTo(t, ctx, sqlDB, 2026072500)
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026072402))
+	require.NoError(t, migrationDownTo(ctx, sqlDB, 2026072402))
 	assert.False(t, columnExists(t, ctx, sqlDB, "relationship_records", "identity_alias_of_relationship_id"))
 }
 

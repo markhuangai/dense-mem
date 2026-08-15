@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -164,8 +163,7 @@ func TestSubmissionAssessmentMigrationReconcilesLegacyRuns(t *testing.T) {
 		return err
 	}))
 
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026080502))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026080502))
 
 	var runStatus, workerID, runError string
 	var attempts int
@@ -254,12 +252,12 @@ func TestSubmissionAssessmentMigrationReconcilesLegacyRuns(t *testing.T) {
 	assert.Equal(t, 1, firstDispositionCount)
 	assert.Equal(t, "awaiting_review", firstDispositionStatus)
 
-	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026080601))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026080601))
 	var holdCount int
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM submission_holds`).Scan(&holdCount))
 	assert.Zero(t, holdCount)
 
-	err := goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026080501)
+	err := migrationDownTo(ctx, sqlDB, 2026080501)
 	require.ErrorContains(t, err, "legacy reconciliation outcomes")
 }
 

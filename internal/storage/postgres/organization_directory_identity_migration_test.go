@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,8 +31,7 @@ func TestOrganizationDirectoryIdentityMigrationSeedsConfigAndBackfillsLegacyAzur
 		return err
 	}))
 
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026073103))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026073103))
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		var identityClaim string
 		var tenantID string
