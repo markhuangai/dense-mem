@@ -32,25 +32,39 @@ func TestSDKHTTPHandlerUsesTheSharedRegistryAndSupportsLegacyAndCurrentFlows(t *
 	server := NewServerWithScopes(reg, "profile-a", []string{"read"}, logger)
 	handler := server.NewSDKHTTPHandler(true)
 
-	for _, version := range []string{"2025-11-25"} {
+	for _, version := range []string{"2025-11-25", "2026-07-28"} {
 		t.Run(version, func(t *testing.T) {
-			body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` + version + `"}}`
+			method := "initialize"
+			params := `{"protocolVersion":"` + version + `"}`
+			if version == "2026-07-28" {
+				method = "server/discover"
+				params = `{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}`
+			}
+			body := `{"jsonrpc":"2.0","id":1,"method":"` + method + `","params":` + params + `}`
 			request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("Accept", "application/json, text/event-stream")
 			request.Header.Set("MCP-Protocol-Version", version)
+			if version == "2026-07-28" {
+				request.Header.Set("Mcp-Method", "server/discover")
+			}
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
 			require.Equal(t, http.StatusOK, response.Code)
 			var envelope struct {
 				Result struct {
-					ProtocolVersion string `json:"protocolVersion"`
+					ProtocolVersion   string   `json:"protocolVersion"`
+					SupportedVersions []string `json:"supportedVersions"`
 				} `json:"result"`
 				Error any `json:"error"`
 			}
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
 			require.Nil(t, envelope.Error)
-			require.Equal(t, version, envelope.Result.ProtocolVersion)
+			if version == "2026-07-28" {
+				require.Contains(t, envelope.Result.SupportedVersions, version)
+			} else {
+				require.Equal(t, version, envelope.Result.ProtocolVersion)
+			}
 		})
 	}
 
@@ -149,6 +163,20 @@ func TestSDKHTTPHandlerMapsUnknownAndUnauthorizedTools(t *testing.T) {
 	}
 
 	require.False(t, server.writeSDKToolLookupError(httptest.NewRecorder(), &http.Request{Method: http.MethodGet}, true))
+}
+
+func TestSDKHTTPHandlerDoesNotAnswerInitializedNotification(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	server := NewServerWithScopes(reg, "profile-a", []string{"read"}, logger)
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	response := httptest.NewRecorder()
+	server.NewSDKHTTPHandler(true).ServeHTTP(response, request)
+	require.Equal(t, http.StatusAccepted, response.Code)
+	require.Empty(t, response.Body.String())
 }
 
 func TestSDKToolHandlerRejectsInvalidAndUnserializableResults(t *testing.T) {

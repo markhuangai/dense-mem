@@ -17,6 +17,7 @@ func TestConformanceHarnessComparesLegacyAndSDKRegistryFlows(t *testing.T) {
 		Name:           "conformance_read",
 		Description:    "read",
 		InputSchema:    map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}},
+		OutputSchema:   map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}},
 		RequiredScopes: []string{"read"},
 		Invoke: func(_ context.Context, _ string, input map[string]any) (map[string]any, error) {
 			return map[string]any{"value": input["value"]}, nil

@@ -169,6 +169,11 @@ func getMigrationsDir() string {
 	return "/app/dense-mem/migrations/postgres"
 }
 
+// MigrationsDir returns the repository migration root used by runtime startup.
+func MigrationsDir() string {
+	return getMigrationsDir()
+}
+
 // NewMigrator creates a new migrator instance for the given GORM database.
 // Migrations are loaded as one history across the release directories.
 func NewMigrator(db *gorm.DB) (*Migrator, error) {

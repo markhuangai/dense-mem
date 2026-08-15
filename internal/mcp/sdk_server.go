@@ -55,6 +55,12 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 	if json.Unmarshal(payload, &envelope) != nil || envelope.JSONRPC != "2.0" || envelope.Method != "tools/call" || strings.TrimSpace(envelope.Params.Name) == "" {
 		return false
 	}
+	// JSON-RPC notifications never receive a response, including when the
+	// requested tool is hidden or unknown. Leave them to the SDK transport so
+	// it can preserve the notification status code and empty body.
+	if len(envelope.ID) == 0 {
+		return false
+	}
 	tool, ok := s.registry.Get(envelope.Params.Name)
 	policy := registry.ResolveRuntimeToolPolicy(req.Context(), s.runtimeToolPolicy, tool)
 	visible := ok && registry.ToolVisible(req.Context(), tool, policy)
@@ -115,10 +121,12 @@ func (s *Server) newSDKServer(ctx context.Context) *sdkmcp.Server {
 			inputSchema = map[string]any{"type": "object"}
 		}
 		server.AddTool(&sdkmcp.Tool{
-			Name:         tool.Name,
-			Description:  s.toolDescription(tool.Description),
-			InputSchema:  inputSchema,
-			OutputSchema: tool.OutputSchema,
+			Name:        tool.Name,
+			Description: s.toolDescription(tool.Description),
+			InputSchema: inputSchema,
+			// The legacy transport does not advertise outputSchema. Keep the
+			// public catalog compatible while the SDK remains a transport detail.
+			OutputSchema: nil,
 		}, s.sdkToolHandler(tool.Name))
 	}
 
