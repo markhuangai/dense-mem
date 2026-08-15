@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -308,6 +309,10 @@ func TestEnsureConflictSystemProfileAvoidsLegacyUserNameCollision(t *testing.T) 
 		`, unscopedTeamID, newConflictSystemProfileName()).Error
 	})
 	require.Error(t, err)
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	assert.Equal(t, "42501", pgErr.Code)
+	assert.Contains(t, pgErr.Message, "row-level security policy")
 }
 
 func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDerivation(t *testing.T) {

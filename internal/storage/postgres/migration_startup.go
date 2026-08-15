@@ -99,10 +99,14 @@ func ClassifyMigrationState(ctx context.Context, db *sql.DB, migrationsDir strin
 	}
 	if teamProfiles && bridgeReceipt {
 		var bridgeState string
-		if err := tx.QueryRowContext(ctx, `SELECT state FROM identity_compatibility_state WHERE singleton = true`).Scan(&bridgeState); err != nil {
+		err := tx.QueryRowContext(ctx, `SELECT state FROM identity_compatibility_state WHERE singleton = true`).Scan(&bridgeState)
+		if errors.Is(err, sql.ErrNoRows) {
 			state.Kind = MigrationStateInvalid
-			state.Reason = "identity bridge state row is missing or unreadable"
+			state.Reason = "identity bridge state row is missing"
 			return state, nil
+		}
+		if err != nil {
+			return MigrationState{}, fmt.Errorf("migration state: inspect identity bridge state: %w", err)
 		}
 		switch bridgeState {
 		case "bridge_active", "reconciled", "cutover_ready", "cleanup_complete":

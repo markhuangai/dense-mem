@@ -171,7 +171,7 @@ start_identity_cleanup_server_expect_failure() {
 
 hold_identity_cleanup_lock() {
   identity_postgres_scalar \
-    "BEGIN; LOCK TABLE team_profiles IN ACCESS SHARE MODE; SELECT pg_sleep(45); COMMIT;" \
+    "BEGIN; LOCK TABLE team_profiles IN ACCESS SHARE MODE; SELECT pg_sleep(3600); COMMIT;" \
     >/dev/null 2>&1 &
   E2E_IDENTITY_LOCK_PID=$!
   for _ in $(seq 1 30); do
@@ -241,7 +241,7 @@ run_identity_cleanup_startup_matrix() {
 
   hold_identity_cleanup_lock
   start_identity_cleanup_server_expect_failure "lock timeout"
-  wait "$E2E_IDENTITY_LOCK_PID"
+  cleanup_identity_cleanup_lock
   E2E_IDENTITY_LOCK_PID=""
 
   compose up -d --no-build --force-recreate redis prometheus server
@@ -265,6 +265,9 @@ cleanup_identity_cleanup_lock() {
   if [[ -z "$E2E_IDENTITY_LOCK_PID" ]]; then
     return
   fi
+  identity_postgres_scalar \
+    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE '%pg_sleep(3600)%' AND pid <> pg_backend_pid();" \
+    >/dev/null 2>&1 || true
   kill "$E2E_IDENTITY_LOCK_PID" >/dev/null 2>&1 || true
   wait "$E2E_IDENTITY_LOCK_PID" >/dev/null 2>&1 || true
 }

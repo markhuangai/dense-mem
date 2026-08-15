@@ -75,11 +75,28 @@ UPDATE credentials AS credential
 SET status = 'disabled',
     revoked_at = COALESCE(credential.revoked_at, now()),
     updated_at = now()
-WHERE credential.legacy_profile_id IS NOT NULL
-  AND NOT EXISTS (
-      SELECT 1 FROM team_profiles AS profile
-      WHERE profile.id = credential.legacy_profile_id
-  );
+WHERE (
+    (
+        credential.legacy_profile_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1
+            FROM team_profiles AS profile
+            WHERE profile.id = credential.legacy_profile_id
+        )
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM ownership_aliases AS alias
+        WHERE alias.team_id = credential.team_id
+          AND alias.credential_id = credential.id
+          AND NOT EXISTS (
+              SELECT 1
+              FROM team_profiles AS profile
+              WHERE profile.team_id = alias.team_id
+                AND profile.id = alias.legacy_owner_id
+          )
+    )
+);
 
 UPDATE team_memberships AS membership
 SET status = 'revoked',

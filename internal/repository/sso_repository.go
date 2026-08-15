@@ -660,10 +660,15 @@ func (r *SSORepositoryImpl) ListTeamProfilesForIdentity(ctx context.Context, ide
 				membership.sso_entitlement_status, membership.sso_last_entitlement_checked_at, membership.sso_last_login_at
 			FROM team_memberships membership
 			JOIN actor_identities actor ON actor.id = membership.actor_identity_id
-			JOIN ownership_aliases alias
-			  ON alias.team_id = membership.team_id
-			 AND alias.canonical_identity_id = membership.actor_identity_id
-			 AND alias.credential_id IS NULL
+			JOIN LATERAL (
+				SELECT legacy_owner_id
+				FROM ownership_aliases
+				WHERE team_id = membership.team_id
+				  AND canonical_identity_id = membership.actor_identity_id
+				  AND credential_id IS NULL
+				ORDER BY created_at, legacy_owner_id
+				LIMIT 1
+			) alias ON true
 			JOIN sso_identities identity ON identity.id = membership.actor_identity_id
 			JOIN teams t ON t.id = membership.team_id
 			WHERE membership.actor_identity_id = $1
@@ -846,6 +851,7 @@ func (r *SSORepositoryImpl) CreateSession(ctx context.Context, session domain.SS
 			  ON membership.team_id = alias.team_id
 			 AND membership.actor_identity_id = alias.canonical_identity_id
 			WHERE alias.team_id = $5 AND alias.legacy_owner_id = $4
+			  AND alias.credential_id IS NULL
 		`, session.SessionHash, session.IdentityID, session.ProviderID, session.TeamProfileID, session.TeamID, session.CSRFHash, session.ExpiresAt, session.CreatedAt)
 		if result.Error != nil {
 			return result.Error
@@ -910,6 +916,7 @@ func (r *SSORepositoryImpl) UpdateSessionTeam(ctx context.Context, sessionHash s
 			 AND membership.actor_identity_id = alias.canonical_identity_id
 			WHERE alias.team_id = $2
 			  AND alias.legacy_owner_id = $1
+			  AND alias.credential_id IS NULL
 			  AND session.session_hash = $4
 			  AND session.expires_at > $3
 		`, teamProfileID, teamID, now, sessionHash)

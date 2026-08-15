@@ -38,6 +38,7 @@ func (r *SSORepositoryImpl) DirectoryTeamProfileEntitled(ctx context.Context, pr
 				JOIN ownership_aliases alias
 					ON alias.team_id = membership.team_id
 					AND alias.canonical_identity_id = membership.actor_identity_id
+					AND alias.credential_id IS NULL
 				JOIN actor_identities actor ON actor.id = membership.actor_identity_id
 				JOIN teams t ON t.id = membership.team_id
 				JOIN sso_directory_connectors c

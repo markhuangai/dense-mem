@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	densecrypto "github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/stretchr/testify/require"
 )
@@ -286,6 +287,37 @@ func TestIdentityCleanupReconcilesBridgeWriteBeforeDrop(t *testing.T) {
 	require.Equal(t, 1, aliasCount)
 }
 
+func TestIdentityCleanupDisablesCredentialDeletedDuringBridgeWindow(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, sqlDB, 2026081001)
+
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM team_profiles WHERE id = $1::uuid`, profileID)
+		return err
+	}))
+
+	var status string
+	var legacyProfileID sql.NullString
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status, legacy_profile_id::text
+		FROM credentials
+		WHERE id = $1::uuid
+	`, profileID).Scan(&status, &legacyProfileID))
+	require.Equal(t, "revoked", status)
+	require.False(t, legacyProfileID.Valid)
+
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026081501))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status
+		FROM credentials
+		WHERE id = $1::uuid AND team_id = $2::uuid
+	`, profileID, teamID).Scan(&status))
+	require.Equal(t, "disabled", status)
+}
+
 func TestIdentityCleanupMismatchRollsBackAndLeavesBridge(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
@@ -331,10 +363,13 @@ func TestIdentityCleanupLockContentionRollsBackAndCanRetry(t *testing.T) {
 		return lockErr
 	}())
 
-	blockedCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	blockedCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	err = migrationUpTo(blockedCtx, sqlDB, 2026081501)
 	cancel()
-	require.Error(t, err)
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	require.Equal(t, "55P03", pgErr.Code)
+	require.Contains(t, pgErr.Message, "lock timeout")
 	require.NoError(t, lockTx.Rollback())
 	require.False(t, identityCleanupMigrationApplied(t, ctx, sqlDB))
 	require.True(t, tableExists(t, ctx, sqlDB, "team_profiles"))

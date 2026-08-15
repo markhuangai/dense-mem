@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -215,6 +216,46 @@ func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 	require.NoError(t, err)
 	archivedProfile, err := repo.UpsertTeamProfileForMapping(ctx, identity, archivedMapping, "archived-profile")
 	require.NoError(t, err)
+	duplicateAliasID := uuid.New()
+	validSession := domain.SSOSession{
+		SessionHash:   "sso-session-alias-filter-" + uuid.NewString(),
+		IdentityID:    identity.ID,
+		ProviderID:    provider.ID,
+		TeamProfileID: activeProfile.ID,
+		TeamID:        activeMapping.TeamID,
+		CSRFHash:      "sso-session-alias-filter-csrf",
+		ExpiresAt:     time.Now().UTC().Add(time.Hour),
+		CreatedAt:     time.Now().UTC(),
+	}
+	require.NoError(t, repo.CreateSession(ctx, validSession))
+	credentialAliasPrefix := strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO credentials (
+				id, actor_identity_id, team_id, kind, key_hash, key_prefix, key_suffix, name, scopes
+			) VALUES (?, ?, ?, 'api_key', 'sso-alias-filter-hash', ?, 'suffix', 'sso-alias-filter', ARRAY['read']::text[])
+		`, duplicateAliasID, identity.ID, activeMapping.TeamID, credentialAliasPrefix).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO ownership_aliases (
+				team_id, legacy_owner_id, canonical_identity_id, credential_id, reason, created_at
+			) VALUES (?, ?, ?, ?, 'credential', now() + interval '1 second')
+		`, activeMapping.TeamID, duplicateAliasID, identity.ID, duplicateAliasID).Error
+	}))
+	err = repo.CreateSession(ctx, domain.SSOSession{
+		SessionHash:   "sso-session-credential-alias-" + uuid.NewString(),
+		IdentityID:    identity.ID,
+		ProviderID:    provider.ID,
+		TeamProfileID: duplicateAliasID,
+		TeamID:        activeMapping.TeamID,
+		CSRFHash:      "sso-session-credential-alias-csrf",
+		ExpiresAt:     time.Now().UTC().Add(time.Hour),
+		CreatedAt:     time.Now().UTC(),
+	})
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	err = repo.UpdateSessionTeam(ctx, validSession.SessionHash, duplicateAliasID, activeMapping.TeamID)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE teams
@@ -236,6 +277,7 @@ func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 	teams, err := repo.ListTeamProfilesForIdentity(ctx, identity.ID)
 	require.NoError(t, err)
 	require.Len(t, teams, 1)
+	require.Equal(t, activeProfile.ID, teams[0].Profile.ID)
 	assert.Equal(t, activeMapping.TeamID, teams[0].Team.ID)
 
 	loadedActive, err := repo.GetSSOProfileByID(ctx, activeProfile.ID)

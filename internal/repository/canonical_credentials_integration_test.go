@@ -133,3 +133,87 @@ func TestCanonicalAPIKeyLifecycleRetainsDisabledIdentity(t *testing.T) {
 	require.Equal(t, "disabled", status)
 	require.Equal(t, 1, aliasCount)
 }
+
+func TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamA := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "canonical-shared-actor-a"))
+	teamB := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "canonical-shared-actor-b"))
+	keyA := uuid.MustParse(createLedgerProfile(t, adminDB, rls, teamA.String(), "shared-actor-key-a"))
+	keyB := uuid.New()
+	prefixB := "dm_shared_" + keyB.String()[:12]
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE actor_identities
+			SET team_id = NULL
+			WHERE id = ?::uuid
+		`, keyA).Error; err != nil {
+			return err
+		}
+		var membershipID uuid.UUID
+		if err := tx.Raw(`
+			INSERT INTO team_memberships (
+				actor_identity_id, team_id, status, team_admin, maximum_grants
+			) VALUES (?, ?, 'active', false, ARRAY['read']::text[])
+			RETURNING id
+		`, keyA, teamB).Row().Scan(&membershipID); err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO membership_grants (membership_id, grant_name, source)
+			VALUES (?, 'read', 'legacy_scope')
+		`, membershipID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO credentials (
+				id, actor_identity_id, team_id, kind, key_hash, key_prefix, key_suffix,
+				name, scopes, status
+			) VALUES (?, ?, ?, 'api_key', 'shared-actor-hash-b', ?, 'suffix',
+				'shared-actor-key-b', ARRAY['read']::text[], 'active')
+		`, keyB, keyA, teamB, prefixB).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO ownership_aliases (
+				team_id, legacy_owner_id, canonical_identity_id, credential_id, reason
+			) VALUES (?, ?, ?, ?, 'credential')
+		`, teamB, keyB, keyA, keyB).Error
+	}))
+
+	repo := NewAPIKeyRepository(appDB, rls)
+	rows, err := repo.RevokeForProfile(ctx, teamA, keyA)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+
+	var actorActive bool
+	var teamBMembershipStatus string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT active FROM actor_identities WHERE id = ?`, keyA).Row().Scan(&actorActive); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT status
+			FROM team_memberships
+			WHERE actor_identity_id = ? AND team_id = ?
+		`, keyA, teamB).Row().Scan(&teamBMembershipStatus)
+	}))
+	require.True(t, actorActive)
+	require.Equal(t, "active", teamBMembershipStatus)
+	activeB, err := repo.GetActiveByPrefix(ctx, prefixB)
+	require.NoError(t, err)
+	require.NotNil(t, activeB)
+
+	rows, err = repo.RotateForProfile(ctx, teamA, keyA, "shared-actor-hash-a-restored", "dm_"+keyA.String()[:20], "restor", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+	rows, err = repo.DeleteForProfile(ctx, teamA, keyA)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT active FROM actor_identities WHERE id = ?`, keyA).Row().Scan(&actorActive)
+	}))
+	require.True(t, actorActive)
+}
