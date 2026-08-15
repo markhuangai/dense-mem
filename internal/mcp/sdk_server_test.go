@@ -167,6 +167,18 @@ func TestSDKHTTPHandlerMapsUnknownAndUnauthorizedTools(t *testing.T) {
 	require.False(t, server.writeSDKToolLookupError(httptest.NewRecorder(), &http.Request{Method: http.MethodGet}, true))
 }
 
+func TestSDKHTTPHandlerPreservesOversizedBodyForSDKValidation(t *testing.T) {
+	logger, _ := testLogger(t)
+	server := NewServer(registry.New(), "profile-a", logger)
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(strings.Repeat("x", 4<<20+1)))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	response := httptest.NewRecorder()
+	server.NewSDKHTTPHandler(true).ServeHTTP(response, request)
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code)
+}
+
 func TestSDKHTTPHandlerValidatesBeforeToolLookup(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()

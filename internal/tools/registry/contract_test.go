@@ -529,6 +529,25 @@ func TestOutputSchemasAreClosed(t *testing.T) {
 	}
 }
 
+func TestSubmissionStatusEvidenceErrorsUseTheClosedCodeEnum(t *testing.T) {
+	schema := submissionStatusOutputSchema()
+	evidence := schemaProperties(schema)["evidence"]
+	evidenceItem := evidence["items"].(map[string]any)
+	errorSchema := schemaProperties(evidenceItem)["error"]
+	variants := errorSchema["oneOf"].([]any)
+	errorObject := variants[1].(map[string]any)
+	codeSchema := schemaProperties(errorObject)["code"]
+	enumValues, ok := codeSchema["enum"].([]string)
+	if !ok {
+		t.Fatalf("evidence error code enum = %#v", codeSchema["enum"])
+	}
+	for _, code := range memoryservice.SubmissionErrorCodes() {
+		if !slices.Contains(enumValues, code) {
+			t.Fatalf("evidence error enum missing %s: %#v", code, enumValues)
+		}
+	}
+}
+
 func TestProviderAndEmbeddingContracts(t *testing.T) {
 	if err := assertProviderProposalSchema(verifier.ProviderProposalSchema()); err != nil {
 		t.Fatal(err)

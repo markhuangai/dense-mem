@@ -126,11 +126,15 @@ func publicErrorCodes() []string {
 }
 
 func submissionStatusErrorArraySchema() map[string]any {
-	return array(closedObject(
+	return array(submissionStatusErrorSchema(), 0, 50)
+}
+
+func submissionStatusErrorSchema() map[string]any {
+	return closedObject(
 		[]string{"code", "message"},
 		map[string]any{
 			"code":    schemaEnum(memoryservice.SubmissionErrorCodes()),
 			"message": schemaString("Bounded safe submission error.", 512),
 		},
-	), 0, 50)
+	)
 }

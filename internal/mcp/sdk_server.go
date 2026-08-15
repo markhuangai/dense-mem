@@ -46,10 +46,13 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 		return false
 	}
 	payload, err := io.ReadAll(io.LimitReader(req.Body, 4<<20+1))
-	if err != nil || len(payload) > 4<<20 {
+	if err != nil {
 		return false
 	}
 	req.Body = io.NopCloser(bytes.NewReader(payload))
+	if len(payload) > 4<<20 {
+		return false
+	}
 	var envelope struct {
 		JSONRPC string          `json:"jsonrpc"`
 		ID      json.RawMessage `json:"id"`
