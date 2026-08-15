@@ -2,6 +2,12 @@ name: CI Shared
 
 on:
   workflow_call:
+    inputs:
+      migration-base-ref:
+        description: "Revision to compare against for immutable migration checks."
+        required: false
+        type: string
+        default: origin/main
 
 permissions:
   contents: read
@@ -21,7 +27,7 @@ jobs:
           fetch-depth: 0
 
       - name: Validate PostgreSQL migration history
-        run: scripts/check-postgres-migrations.sh origin/main
+        run: scripts/check-postgres-migrations.sh "${{ inputs.migration-base-ref }}"
 
       - name: Set up Go
         uses: actions/setup-go@v7
