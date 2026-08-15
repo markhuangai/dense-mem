@@ -15,7 +15,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -176,8 +175,7 @@ func TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrgan
 	defer cleanup()
 
 	m := NewMigratorWithDB(sqlDB)
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026073106), "telemetry migration setup should succeed")
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026073106), "telemetry migration setup should succeed")
 
 	var pricingCount int
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
@@ -193,8 +191,7 @@ func TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrgan
 
 	// Rewind post-telemetry migrations first; the test's assertions start at
 	// the known reversible telemetry boundary rather than the repository head.
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026073105), "telemetry marker index migration should be reversible")
+	require.NoError(t, migrationDownTo(ctx, sqlDB, 2026073105), "telemetry marker index migration should be reversible")
 	assert.False(t, indexExists(t, ctx, sqlDB, "placement_outcomes_telemetry_first_disposition_unique"))
 	assert.False(t, indexExists(t, ctx, sqlDB, "knowledge_ingests_telemetry_remember_backfill_idx"))
 	assert.False(t, tableExists(t, ctx, sqlDB, "telemetry_first_disposition_backfill_state"))
@@ -575,8 +572,7 @@ func TestPostCutoverCleanupMigrationBlocksNonemptyDatabaseWithoutMarker(t *testi
 	runGooseUpTo(t, ctx, sqlDB, 2026072302)
 	insertMigrationTeamProfile(t, ctx, sqlDB)
 
-	require.NoError(t, goose.SetDialect("postgres"))
-	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072402)
+	err := migrationUpTo(ctx, sqlDB, 2026072402)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "compatible cutover marker missing")
 	assert.Contains(t, err.Error(), "teams")
@@ -606,8 +602,7 @@ func TestPostCutoverCleanupMigrationBlocksLegacyProfileWithoutCanonicalTeam(t *t
 		return err
 	}))
 
-	require.NoError(t, goose.SetDialect("postgres"))
-	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072402)
+	err := migrationUpTo(ctx, sqlDB, 2026072402)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "legacy profiles missing canonical teams")
 	assert.True(t, tableExists(t, ctx, sqlDB, "profiles"), "cleanup DDL must not run after guard failure")
@@ -636,8 +631,7 @@ func TestPostCutoverCleanupMigrationBlocksLegacyAPIKeyWithoutCanonicalTeamProfil
 		return err
 	}))
 
-	require.NoError(t, goose.SetDialect("postgres"))
-	err := goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026072402)
+	err := migrationUpTo(ctx, sqlDB, 2026072402)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "legacy api_keys missing canonical team_profiles")
 	assert.True(t, tableExists(t, ctx, sqlDB, "api_keys"), "cleanup DDL must not run after guard failure")
@@ -858,8 +852,7 @@ func TestPostgresInsufficientPrivilegeDetection(t *testing.T) {
 
 func runGooseUpTo(t *testing.T, ctx context.Context, db *sql.DB, version int64) {
 	t.Helper()
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.UpToContext(ctx, db, getMigrationsDir(), version))
+	require.NoError(t, migrationUpTo(ctx, db, version))
 }
 
 func execPostgresTxMode(ctx context.Context, db *sql.DB, txMode string, fn func(tx *sql.Tx) error) error {

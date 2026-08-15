@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,8 +22,7 @@ func TestRelationshipTelemetryMigrationRecoversInvalidIndexesAndRollsBack(t *tes
 	runGooseUpTo(t, ctx, db, 2026080903)
 	markRelationshipTelemetryIndexesInvalid(t, ctx, db)
 
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.UpContext(ctx, db, getMigrationsDir()))
+	require.NoError(t, migrationUpTo(ctx, db, 2026080904))
 
 	for _, indexName := range relationshipTelemetryIndexNames {
 		assert.True(t, indexIsValid(t, ctx, db, indexName), "rebuilt index %s should be valid", indexName)
@@ -32,7 +30,7 @@ func TestRelationshipTelemetryMigrationRecoversInvalidIndexesAndRollsBack(t *tes
 		assert.False(t, indexExists(t, ctx, db, invalidName), "temporary index %s should be removed", invalidName)
 	}
 
-	require.NoError(t, goose.DownContext(ctx, db, getMigrationsDir()))
+	require.NoError(t, migrationDown(ctx, db))
 	for _, indexName := range relationshipTelemetryIndexNames {
 		assert.False(t, indexExists(t, ctx, db, indexName), "down migration should remove %s", indexName)
 	}

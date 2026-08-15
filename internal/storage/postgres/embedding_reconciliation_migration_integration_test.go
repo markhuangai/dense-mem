@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +26,9 @@ type legacyEmbeddingFailureFixture struct {
 }
 
 func TestEmbeddingReconciliationMigrationHasOneRestartGatedBackfill(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join(getMigrationsDir(), "2026080905_embedding_reconciliation.sql"))
+	migrationFile, err := migrationPath(getMigrationsDir(), 2026080905)
+	require.NoError(t, err)
+	body, err := os.ReadFile(migrationFile)
 	require.NoError(t, err)
 	migration := string(body)
 

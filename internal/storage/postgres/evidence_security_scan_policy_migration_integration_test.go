@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,8 +108,7 @@ func TestEvidenceSecurityScanPolicyMigrationPreservesEventHistory(t *testing.T) 
 		return nil
 	}))
 
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026080603))
+	require.NoError(t, migrationDownTo(ctx, sqlDB, 2026080603))
 	require.True(t, columnExists(t, ctx, sqlDB, "evidence_security_events", "scan_policy_hash"))
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		var restoredHash string

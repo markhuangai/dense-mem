@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,12 +29,11 @@ func TestHypothesisTeamPredicateMigrationScopesForeignKeyByTeam(t *testing.T) {
 	assertPostgresConstraintViolation(t, err, "hypotheses_predicate_fk")
 
 	require.NoError(t, insertHypothesisMigrationRow(ctx, sqlDB, teamB, "uses", 1))
-	require.NoError(t, goose.SetDialect("postgres"))
-	err = goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026080501)
+	err = migrationUpTo(ctx, sqlDB, 2026080501)
 	require.ErrorContains(t, err, "1 hypothesis rows lack a matching team predicate definition")
 
 	insertHypothesisMigrationTeamPredicate(t, ctx, sqlDB, teamB, "uses", 1)
-	require.NoError(t, goose.UpToContext(ctx, sqlDB, getMigrationsDir(), 2026080501))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026080501))
 
 	definition := postgresConstraintDefinition(t, ctx, sqlDB, "hypotheses_team_predicate_fk")
 	assert.Contains(t, definition, "FOREIGN KEY (team_id, predicate_key, predicate_version)")
@@ -47,7 +45,7 @@ func TestHypothesisTeamPredicateMigrationScopesForeignKeyByTeam(t *testing.T) {
 	require.Error(t, err, "a predicate registered for one team must not authorize another team")
 	assertPostgresConstraintViolation(t, err, "hypotheses_team_predicate_fk")
 
-	err = goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026080305)
+	err = migrationDownTo(ctx, sqlDB, 2026080305)
 	require.ErrorContains(t, err, "1 hypothesis rows use team-only predicates")
 	assert.True(t, postgresConstraintExists(t, ctx, sqlDB, "hypotheses_team_predicate_fk"))
 }
@@ -58,8 +56,7 @@ func TestHypothesisTeamPredicateMigrationRollsBackBeforeTeamOnlyHypothesesExist(
 	defer cleanup()
 
 	runGooseUpTo(t, ctx, sqlDB, 2026080501)
-	require.NoError(t, goose.SetDialect("postgres"))
-	require.NoError(t, goose.DownToContext(ctx, sqlDB, getMigrationsDir(), 2026080305))
+	require.NoError(t, migrationDownTo(ctx, sqlDB, 2026080305))
 
 	definition := postgresConstraintDefinition(t, ctx, sqlDB, "hypotheses_predicate_fk")
 	assert.Contains(t, definition, "FOREIGN KEY (predicate_key, predicate_version)")
