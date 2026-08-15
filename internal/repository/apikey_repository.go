@@ -228,8 +228,19 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 	var teamID *uuid.UUID
 	var ssoIdentityID, ssoProviderID, ssoOwnerIdentityID string
 	found := false
+	var canonicalKey *domain.APIKey
+	var canonicalTable bool
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		var err error
+		canonicalTable, err = canonicalCredentialTableExists(tx)
+		if err != nil {
+			return err
+		}
+		if canonicalTable {
+			canonicalKey, err = lookupCanonicalCredential(tx, prefix)
+			return err
+		}
 		rows, rerr := tx.Raw(`
 			SELECT
 				k.id,
@@ -304,6 +315,9 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 	if err != nil {
 		return nil, fmt.Errorf("failed to get api key by prefix: %w", err)
 	}
+	if canonicalTable {
+		return canonicalKey, nil
+	}
 	if !found {
 		return nil, nil
 	}
@@ -327,8 +341,19 @@ func (r *APIKeyRepositoryImpl) GetActiveByID(ctx context.Context, id uuid.UUID) 
 	var teamID *uuid.UUID
 	var ssoIdentityID, ssoProviderID, ssoOwnerIdentityID string
 	found := false
+	var canonicalKey *domain.APIKey
+	var canonicalTable bool
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		var err error
+		canonicalTable, err = canonicalCredentialTableExists(tx)
+		if err != nil {
+			return err
+		}
+		if canonicalTable {
+			canonicalKey, err = lookupCanonicalCredentialByID(tx, id)
+			return err
+		}
 		rows, rerr := tx.Raw(`
 			SELECT
 				k.id,
@@ -398,6 +423,9 @@ func (r *APIKeyRepositoryImpl) GetActiveByID(ctx context.Context, id uuid.UUID) 
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active api key by id: %w", err)
+	}
+	if canonicalTable {
+		return canonicalKey, nil
 	}
 	if !found {
 		return nil, nil

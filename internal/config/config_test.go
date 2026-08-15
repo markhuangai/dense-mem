@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,7 @@ func clearEnv() {
 		"PROMOTE_TX_TIMEOUT_SECONDS",
 		"CONTROL_HTTP_ADDR",
 		"CONTROL_PORTAL_TOKEN",
+		"MCP_TRANSPORT",
 		"TELEMETRY_ENABLED",
 		"TELEMETRY_PROMETHEUS_URL",
 		"TELEMETRY_PROMETHEUS_JOB",
@@ -116,6 +118,9 @@ func TestLoadDefaults(t *testing.T) {
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+	if got := cfg.GetMCPTransport(); got != DefaultMCPTransport {
+		t.Fatalf("MCP transport = %q, want %q", got, DefaultMCPTransport)
 	}
 
 	// Test listener defaults
@@ -215,6 +220,35 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.TelemetryPrometheusJob != "" {
 		t.Errorf("TelemetryPrometheusJob default = %q, want empty", cfg.TelemetryPrometheusJob)
+	}
+}
+
+func TestLoadMCPTransportOverrideAndValidation(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	t.Setenv("MCP_TRANSPORT", "legacy")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() with legacy MCP transport: %v", err)
+	}
+	if got := cfg.GetMCPTransport(); got != "legacy" {
+		t.Fatalf("MCP transport = %q, want legacy", got)
+	}
+	t.Setenv("MCP_TRANSPORT", "unsupported")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MCP_TRANSPORT") {
+		t.Fatalf("Load() error = %v, want MCP_TRANSPORT validation", err)
+	}
+}
+
+func TestMCPTransportForSupportsLegacyProvidersAndDefaults(t *testing.T) {
+	if got := MCPTransportFor(nil); got != DefaultMCPTransport {
+		t.Fatalf("nil MCP transport = %q, want %q", got, DefaultMCPTransport)
+	}
+	if got := MCPTransportFor(&Config{}); got != DefaultMCPTransport {
+		t.Fatalf("empty MCP transport = %q, want %q", got, DefaultMCPTransport)
+	}
+	if got := MCPTransportFor(&Config{MCPTransport: " legacy "}); got != "legacy" {
+		t.Fatalf("configured MCP transport = %q, want trimmed provider value", got)
 	}
 }
 

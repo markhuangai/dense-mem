@@ -325,7 +325,7 @@ func RunActiveServer(
 		time.Duration(cfg.GetSSEMaxDurationSeconds())*time.Second,
 		backend.streamCleanupRepo,
 	)
-	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(toolRegistry, logger, streamLifecycle, appConfigService, dreamSvc)
+	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(toolRegistry, logger, streamLifecycle, appConfigService, config.MCPTransportFor(&cfg), dreamSvc)
 
 	checks := []http.HealthCheck{
 		{Name: "postgres", Check: func(ctx context.Context) error {

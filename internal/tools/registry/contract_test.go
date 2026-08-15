@@ -529,6 +529,32 @@ func TestOutputSchemasAreClosed(t *testing.T) {
 	}
 }
 
+func TestSubmissionStatusEvidenceErrorsUseTheClosedCodeEnum(t *testing.T) {
+	schema := submissionStatusOutputSchema()
+	expectedCodes := append([]string(nil), memoryservice.SubmissionErrorCodes()...)
+	slices.Sort(expectedCodes)
+	assertExactCodeEnum := func(label string, codeSchema map[string]any) {
+		t.Helper()
+		actualCodes, ok := codeSchema["enum"].([]string)
+		if !ok {
+			t.Fatalf("%s code enum = %#v", label, codeSchema["enum"])
+		}
+		actualCodes = append([]string(nil), actualCodes...)
+		slices.Sort(actualCodes)
+		if !slices.Equal(actualCodes, expectedCodes) {
+			t.Fatalf("%s code enum = %#v, want exactly %#v", label, actualCodes, expectedCodes)
+		}
+	}
+	evidence := schemaProperties(schema)["evidence"]
+	evidenceItem := evidence["items"].(map[string]any)
+	errorSchema := schemaProperties(evidenceItem)["error"]
+	variants := errorSchema["oneOf"].([]any)
+	errorObject := variants[1].(map[string]any)
+	assertExactCodeEnum("evidence", schemaProperties(errorObject)["code"])
+	topLevelErrors := schemaProperties(schema)["errors"]["items"].(map[string]any)
+	assertExactCodeEnum("top-level", schemaProperties(topLevelErrors)["code"])
+}
+
 func TestProviderAndEmbeddingContracts(t *testing.T) {
 	if err := assertProviderProposalSchema(verifier.ProviderProposalSchema()); err != nil {
 		t.Fatal(err)

@@ -56,6 +56,16 @@ func main() {
 	if err := migrationapp.RunUp(context.Background(), pgDB.GetDB(), migrationTimeout, logger.Slog()); err != nil {
 		log.Fatalf("failed to run postgres migrations: %v", err)
 	}
+	sqlDB, err := pgDB.GetDB().DB()
+	if err != nil {
+		log.Fatalf("failed to access postgres sql client: %v", err)
+	}
+	migrationStateCtx, migrationStateCancel := context.WithTimeout(context.Background(), startupTimeout)
+	if err := postgres.ValidateStartupMigrationState(migrationStateCtx, sqlDB, postgres.MigrationsDir()); err != nil {
+		migrationStateCancel()
+		log.Fatalf("postgres migration state validation failed: %v", err)
+	}
+	migrationStateCancel()
 
 	postMigrationCtx, postMigrationCancel := context.WithTimeout(context.Background(), startupTimeout)
 	defer postMigrationCancel()

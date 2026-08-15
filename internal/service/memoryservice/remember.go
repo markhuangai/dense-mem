@@ -132,9 +132,154 @@ type SubmissionEvidenceStatus struct {
 	Error                 *SubmissionStatusError `json:"error,omitempty"`
 }
 
+// SubmissionErrorCode is the closed public vocabulary for terminal submission
+// failures. Internal/provider/database reasons must be translated into this
+// set before they cross the status projection boundary.
+type SubmissionErrorCode string
+
+const (
+	SubmissionErrorSemanticHold          SubmissionErrorCode = "submission_semantic_hold"
+	SubmissionErrorPolicyRejected        SubmissionErrorCode = "submission_policy_rejected"
+	SubmissionErrorAssessorInvalid       SubmissionErrorCode = "assessor_response_invalid"
+	SubmissionErrorAssessorUnavailable   SubmissionErrorCode = "assessor_unavailable"
+	SubmissionErrorReplacementConflict   SubmissionErrorCode = "submission_replacement_conflict"
+	SubmissionErrorProcessingFailed      SubmissionErrorCode = "submission_processing_failed"
+	SubmissionErrorSearchIndexingDelayed SubmissionErrorCode = "search_indexing_delayed"
+
+	SubmissionErrorRelationshipVersionStale      SubmissionErrorCode = "relationship_version_stale"
+	SubmissionErrorRelationshipNotActive         SubmissionErrorCode = "relationship_not_active"
+	SubmissionErrorObjectKindChangeForbidden     SubmissionErrorCode = "object_kind_change_forbidden"
+	SubmissionErrorSupportSetMismatch            SubmissionErrorCode = "support_set_mismatch"
+	SubmissionErrorEntityNotFound                SubmissionErrorCode = "entity_not_found"
+	SubmissionErrorTooManyEntityCandidates       SubmissionErrorCode = "too_many_entity_candidates"
+	SubmissionErrorPredicateNotFound             SubmissionErrorCode = "predicate_not_found"
+	SubmissionErrorPredicateSubjectKindMismatch  SubmissionErrorCode = "predicate_subject_kind_mismatch"
+	SubmissionErrorPredicateObjectKindMismatch   SubmissionErrorCode = "predicate_object_kind_mismatch"
+	SubmissionErrorNoChange                      SubmissionErrorCode = "no_change"
+	SubmissionErrorConfirmationExpired           SubmissionErrorCode = "confirmation_expired"
+	SubmissionErrorRelationshipChanged           SubmissionErrorCode = "relationship_changed"
+	SubmissionErrorSupportSetChanged             SubmissionErrorCode = "support_set_changed"
+	SubmissionErrorPersistentAmbiguity           SubmissionErrorCode = "persistent_ambiguity"
+	SubmissionErrorInactiveRelationshipCollision SubmissionErrorCode = "inactive_relationship_collision"
+)
+
+var submissionErrorCodes = []SubmissionErrorCode{
+	SubmissionErrorSemanticHold,
+	SubmissionErrorPolicyRejected,
+	SubmissionErrorAssessorInvalid,
+	SubmissionErrorAssessorUnavailable,
+	SubmissionErrorReplacementConflict,
+	SubmissionErrorProcessingFailed,
+	SubmissionErrorSearchIndexingDelayed,
+	SubmissionErrorRelationshipVersionStale,
+	SubmissionErrorRelationshipNotActive,
+	SubmissionErrorObjectKindChangeForbidden,
+	SubmissionErrorSupportSetMismatch,
+	SubmissionErrorEntityNotFound,
+	SubmissionErrorTooManyEntityCandidates,
+	SubmissionErrorPredicateNotFound,
+	SubmissionErrorPredicateSubjectKindMismatch,
+	SubmissionErrorPredicateObjectKindMismatch,
+	SubmissionErrorNoChange,
+	SubmissionErrorConfirmationExpired,
+	SubmissionErrorRelationshipChanged,
+	SubmissionErrorSupportSetChanged,
+	SubmissionErrorPersistentAmbiguity,
+	SubmissionErrorInactiveRelationshipCollision,
+}
+
+// SubmissionErrorCodes returns the public enum in deterministic schema order.
+func SubmissionErrorCodes() []string {
+	result := make([]string, 0, len(submissionErrorCodes))
+	for _, code := range submissionErrorCodes {
+		result = append(result, string(code))
+	}
+	return result
+}
+
 type SubmissionStatusError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+var submissionErrorMessages = map[SubmissionErrorCode]string{
+	SubmissionErrorSemanticHold:          "submission was rejected by semantic hold policy",
+	SubmissionErrorPolicyRejected:        "submission was rejected by semantic placement policy",
+	SubmissionErrorAssessorInvalid:       "submission assessment returned an invalid response",
+	SubmissionErrorAssessorUnavailable:   "submission assessment was unavailable after bounded retries",
+	SubmissionErrorReplacementConflict:   "submission replacement conflicted with current state",
+	SubmissionErrorProcessingFailed:      "submission processing failed",
+	SubmissionErrorSearchIndexingDelayed: "search indexing is delayed",
+
+	SubmissionErrorRelationshipVersionStale:      "relationship version is stale",
+	SubmissionErrorRelationshipNotActive:         "relationship must be active, supported, and canonical",
+	SubmissionErrorObjectKindChangeForbidden:     "a Value object cannot be replaced with an Entity",
+	SubmissionErrorSupportSetMismatch:            "supports must exactly match the relationship's effective evidence spans",
+	SubmissionErrorEntityNotFound:                "corrected Entity is not active and available to the team",
+	SubmissionErrorTooManyEntityCandidates:       "corrected Entity name has too many exact candidates",
+	SubmissionErrorPredicateNotFound:             "predicate is not registered and active for the team",
+	SubmissionErrorPredicateSubjectKindMismatch:  "predicate does not allow the corrected subject kind",
+	SubmissionErrorPredicateObjectKindMismatch:   "predicate does not allow the corrected object kind",
+	SubmissionErrorNoChange:                      "correction does not change the Relationship",
+	SubmissionErrorConfirmationExpired:           "relationship correction confirmation expired",
+	SubmissionErrorRelationshipChanged:           "relationship changed while confirmation was pending",
+	SubmissionErrorSupportSetChanged:             "relationship supports changed while confirmation was pending",
+	SubmissionErrorPersistentAmbiguity:           "selected Entity candidate is no longer available",
+	SubmissionErrorInactiveRelationshipCollision: "corrected Relationship collides with inactive or unsupported history",
+}
+
+func submissionStatusError(code SubmissionErrorCode) SubmissionStatusError {
+	message := submissionErrorMessages[code]
+	if message == "" {
+		code = SubmissionErrorProcessingFailed
+		message = submissionErrorMessages[code]
+	}
+	return SubmissionStatusError{Code: string(code), Message: message}
+}
+
+func submissionStatusErrorForCode(rawCode string, fallbackState string) SubmissionStatusError {
+	code := SubmissionErrorCode(strings.TrimSpace(rawCode))
+	for _, known := range submissionErrorCodes {
+		if code == known {
+			return submissionStatusError(code)
+		}
+	}
+	if fallbackState == "rejected" {
+		return submissionStatusError(SubmissionErrorPolicyRejected)
+	}
+	return submissionStatusError(SubmissionErrorProcessingFailed)
+}
+
+func submissionFailureCode(stage, class string) SubmissionErrorCode {
+	stage = strings.TrimSpace(stage)
+	class = strings.TrimSpace(class)
+	switch {
+	case stage == "replacement_conflict":
+		return SubmissionErrorReplacementConflict
+	case class == "malformed_response", class == "validation_failed", class == "provider_protocol":
+		return SubmissionErrorAssessorInvalid
+	case class == "timeout", class == "rate_limited", class == "http_4xx", class == "http_5xx",
+		class == "http_unexpected", class == "transport", class == "provider_unavailable":
+		return SubmissionErrorAssessorUnavailable
+	case stage == "policy_review", stage == "confidence_policy", stage == "security_signal",
+		stage == "commit_review", stage == "conflict_context_stale":
+		return SubmissionErrorPolicyRejected
+	default:
+		return SubmissionErrorProcessingFailed
+	}
+}
+
+func submissionItemFailureError(item repository.PlacementItem, processing string) *SubmissionStatusError {
+	if item.Status != string(domain.PlacementRunFailed) && item.Status != "failed" && item.Status != "rejected" && item.Status != "awaiting_review" {
+		return nil
+	}
+	stage, _ := item.Result["failure_stage"].(string)
+	class, _ := item.Result["failure_class"].(string)
+	if (item.Status == "rejected" || item.Status == "awaiting_review") && strings.TrimSpace(stage) == "" && strings.TrimSpace(class) == "" {
+		return nil
+	}
+	errorValue := submissionStatusError(submissionFailureCode(stage, class))
+	return &errorValue
 }
 
 func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*RememberResult, error) {
@@ -351,6 +496,17 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 	}
 	searchState := string(domain.SearchProjectionNotRequired)
 	searchErrorAdded := false
+	processing := publicSubmissionProcessingState(placement.Status, placement.SemanticHoldState)
+	statusErrors := make([]SubmissionStatusError, 0, 2)
+	seenStatusErrors := make(map[string]struct{})
+	appendStatusError := func(value SubmissionStatusError) {
+		key := string(value.Code) + "\x00" + value.Message
+		if _, exists := seenStatusErrors[key]; exists {
+			return
+		}
+		seenStatusErrors[key] = struct{}{}
+		statusErrors = append(statusErrors, value)
+	}
 	for _, item := range placement.Items {
 		itemSearchState := placementItemSearchState(item)
 		searchState = placementCombinedSearchState(searchState, itemSearchState)
@@ -359,8 +515,12 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 			superseded = []string{}
 		}
 		var itemError *SubmissionStatusError
-		if itemSearchState == string(domain.SearchProjectionFailed) {
-			itemError = &SubmissionStatusError{Code: "search_indexing_delayed", Message: "Semantic search indexing is delayed."}
+		if semanticError := submissionItemFailureError(item, processing); semanticError != nil {
+			itemError = semanticError
+			appendStatusError(*semanticError)
+		} else if itemSearchState == string(domain.SearchProjectionFailed) {
+			searchError := SubmissionStatusError{Code: string(SubmissionErrorSearchIndexingDelayed), Message: "Semantic search indexing is delayed."}
+			itemError = &searchError
 			searchErrorAdded = true
 		}
 		items = append(items, SubmissionEvidenceStatus{
@@ -371,13 +531,15 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 			Error:                 itemError,
 		})
 	}
-	processing := publicSubmissionProcessingState(placement.Status, placement.SemanticHoldState)
-	statusErrors := []SubmissionStatusError{}
-	if processing == "failed" {
-		statusErrors = append(statusErrors, SubmissionStatusError{Code: "submission_processing_failed", Message: "submission processing failed"})
+	if processing == "rejected" && strings.TrimSpace(placement.SemanticHoldState) != "" {
+		appendStatusError(submissionStatusError(SubmissionErrorSemanticHold))
+	} else if processing == "rejected" {
+		appendStatusError(submissionStatusError(SubmissionErrorPolicyRejected))
+	} else if processing == "failed" && len(statusErrors) == 0 {
+		appendStatusError(submissionStatusError(SubmissionErrorProcessingFailed))
 	}
 	if searchErrorAdded {
-		statusErrors = append(statusErrors, SubmissionStatusError{Code: "search_indexing_delayed", Message: "Semantic search indexing is delayed; check the control portal for recovery guidance."})
+		appendStatusError(SubmissionStatusError{Code: string(SubmissionErrorSearchIndexingDelayed), Message: "Semantic search indexing is delayed; check the control portal for recovery guidance."})
 	}
 	return &SubmissionStatusResult{
 		SubmissionID:               placement.IngestID,

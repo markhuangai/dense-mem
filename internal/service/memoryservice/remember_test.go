@@ -55,6 +55,26 @@ func TestSubmissionStatusSearchStateHelpers(t *testing.T) {
 	}
 }
 
+func TestSubmissionItemFailureErrorDoesNotInventReviewFailures(t *testing.T) {
+	for _, status := range []string{"rejected", "awaiting_review"} {
+		t.Run(status, func(t *testing.T) {
+			require.Nil(t, submissionItemFailureError(repository.PlacementItem{Status: status, Result: map[string]any{}}, status))
+		})
+	}
+
+	errorValue := submissionItemFailureError(repository.PlacementItem{Status: "failed", Result: map[string]any{}}, "failed")
+	require.NotNil(t, errorValue)
+	require.Equal(t, string(SubmissionErrorProcessingFailed), errorValue.Code)
+
+	for _, stage := range []string{"policy_review", "commit_review", "conflict_context_stale"} {
+		t.Run(stage, func(t *testing.T) {
+			errorValue := submissionItemFailureError(repository.PlacementItem{Status: "rejected", Result: map[string]any{"failure_stage": stage}}, "rejected")
+			require.NotNil(t, errorValue)
+			require.Equal(t, string(SubmissionErrorPolicyRejected), errorValue.Code)
+		})
+	}
+}
+
 func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T) {
 	const exactContent = `  C:\notes\[draft]\report.txt includes "\u0041", '\x42', [%20], and {&amp;}.  `
 	teamID := uuid.New()
@@ -229,7 +249,7 @@ func TestSubmissionStatusProjectionMapsProcessingStatesAndErrors(t *testing.T) {
 		if result.ProcessingState != want || result.SearchState != string(domain.SearchProjectionCurrent) {
 			t.Fatalf("status %q projection = %#v, want processing %q/current", status, result, want)
 		}
-		if status == string(domain.PlacementRunFailed) || status == "unexpected" {
+		if status == string(domain.PlacementRunFailed) || status == "unexpected" || status == string(domain.PlacementRunAwaitingReview) {
 			require.Len(t, result.Errors, 1)
 		} else {
 			require.Empty(t, result.Errors)
@@ -248,9 +268,39 @@ func TestSubmissionStatusProjectionMapsProcessingStatesAndErrors(t *testing.T) {
 	require.Equal(t, "Semantic search indexing is delayed; check the control portal for recovery guidance.", failedSearch.Errors[0].Message)
 	hold := submissionStatusResultFromLedger(&repository.CreateIngestResult{IngestID: "submission-1", Status: string(domain.PlacementRunCompleted), SemanticHoldState: "awaiting_review"})
 	require.Equal(t, "rejected", hold.ProcessingState)
+	require.Equal(t, string(SubmissionErrorSemanticHold), hold.Errors[0].Code)
 	empty := submissionStatusResultFromLedger(nil)
 	require.Empty(t, empty.Evidence)
 	require.Empty(t, empty.Errors)
+}
+
+func TestTerminalSubmissionErrorsAreClosedAndDeduplicated(t *testing.T) {
+	failed := submissionStatusResultFromLedger(&repository.CreateIngestResult{
+		IngestID: "submission-1", Status: string(domain.PlacementRunFailed),
+		Items: []repository.PlacementItem{
+			{FragmentID: "e1", Status: string(domain.PlacementRunFailed), Result: map[string]any{"failure_class": "timeout"}},
+			{FragmentID: "e2", Status: string(domain.PlacementRunFailed), Result: map[string]any{"failure_class": "timeout"}},
+		},
+	})
+	require.Len(t, failed.Errors, 1)
+	require.Equal(t, string(SubmissionErrorAssessorUnavailable), failed.Errors[0].Code)
+	require.Equal(t, string(SubmissionErrorAssessorUnavailable), failed.Evidence[0].Error.Code)
+	require.Equal(t, string(SubmissionErrorAssessorUnavailable), failed.Evidence[1].Error.Code)
+	require.NotEmpty(t, failed.Errors[0].Message)
+
+	rejected := relationshipCorrectionSubmissionStatus(&repository.RelationshipCorrectionStatus{
+		SubmissionID: "submission-2", ProcessingState: "rejected",
+	})
+	require.Len(t, rejected.Errors, 1)
+	require.Equal(t, string(SubmissionErrorPolicyRejected), rejected.Errors[0].Code)
+
+	unknown := relationshipCorrectionSubmissionStatus(&repository.RelationshipCorrectionStatus{
+		SubmissionID: "submission-3", ProcessingState: "failed", ErrorCode: "provider-secret-details",
+		ErrorMessage: "raw provider output must not cross the status boundary",
+	})
+	require.Len(t, unknown.Errors, 1)
+	require.Equal(t, string(SubmissionErrorProcessingFailed), unknown.Errors[0].Code)
+	require.NotContains(t, unknown.Errors[0].Message, "provider-secret-details")
 }
 
 func TestGetSubmissionStatusRejectsInvalidRequestsAndBoundsErrors(t *testing.T) {

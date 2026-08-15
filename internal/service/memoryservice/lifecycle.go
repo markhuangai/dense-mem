@@ -342,7 +342,12 @@ func relationshipCorrectionSubmissionStatus(result *repository.RelationshipCorre
 	}
 	status.CorrectionResult = result.Correction
 	if result.ErrorCode != "" {
-		status.Errors = append(status.Errors, SubmissionStatusError{Code: result.ErrorCode, Message: result.ErrorMessage})
+		errorValue := submissionStatusErrorForCode(result.ErrorCode, result.ProcessingState)
+		status.Errors = append(status.Errors, errorValue)
+	}
+	if (status.ProcessingState == "rejected" || status.ProcessingState == "failed") && len(status.Errors) == 0 {
+		fallback := submissionStatusErrorForCode("", status.ProcessingState)
+		status.Errors = append(status.Errors, fallback)
 	}
 	return status
 }
