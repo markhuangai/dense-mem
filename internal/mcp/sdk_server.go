@@ -58,7 +58,8 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 		ID      json.RawMessage `json:"id"`
 		Method  string          `json:"method"`
 		Params  struct {
-			Name string `json:"name"`
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
 		} `json:"params"`
 	}
 	if json.Unmarshal(payload, &envelope) != nil || envelope.JSONRPC != "2.0" || envelope.Method != "tools/call" || strings.TrimSpace(envelope.Params.Name) == "" {
@@ -66,6 +67,12 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 	}
 	if !sdkStandardHeadersMatch(req, envelope.Method, envelope.Params.Name) {
 		return false
+	}
+	if len(envelope.Params.Arguments) > 0 {
+		var arguments map[string]any
+		if json.Unmarshal(envelope.Params.Arguments, &arguments) != nil || arguments == nil {
+			return false
+		}
 	}
 	// JSON-RPC notifications never receive a response, including when the
 	// requested tool is hidden or unknown. Leave them to the SDK transport so

@@ -212,6 +212,14 @@ func TestSDKHTTPHandlerValidatesBeforeToolLookup(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	require.Equal(t, http.StatusBadRequest, response.Code)
 	require.NotContains(t, response.Body.String(), "tool not found")
+
+	request = httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"missing_tool","arguments":"invalid"}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.NotContains(t, response.Body.String(), "tool not found")
 }
 
 func TestSDKServerResolvesRuntimeToolPolicyOnce(t *testing.T) {

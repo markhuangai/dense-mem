@@ -142,7 +142,7 @@ func ValidateStartupMigrationState(ctx context.Context, db *sql.DB, migrationsDi
 		return fmt.Errorf("%w: migration did not install the v2.5 bridge", ErrInvalidMigrationState)
 	}
 	if state.DatabaseLatest != state.RepositoryLatest {
-		return fmt.Errorf("%w: database version %d is behind repository version %d", ErrInvalidMigrationState, state.DatabaseLatest, state.RepositoryLatest)
+		return fmt.Errorf("%w: database version %d does not match repository version %d", ErrInvalidMigrationState, state.DatabaseLatest, state.RepositoryLatest)
 	}
 	return nil
 }
