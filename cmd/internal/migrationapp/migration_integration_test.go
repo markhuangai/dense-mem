@@ -136,9 +136,9 @@ func useBlockedMigrationDirectory(t *testing.T) {
 	originalDirectory, err := os.Getwd()
 	require.NoError(t, err)
 	temporaryDirectory := t.TempDir()
-	migrationsDirectory := filepath.Join(temporaryDirectory, "migrations", "postgres")
+	migrationsDirectory := filepath.Join(temporaryDirectory, "migrations", "postgres", "v2_5")
 	require.NoError(t, os.MkdirAll(migrationsDirectory, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(migrationsDirectory, "00001_timeout_probe.sql"), []byte(`-- +goose Up
+	require.NoError(t, os.WriteFile(filepath.Join(migrationsDirectory, "2026081501_timeout_probe.sql"), []byte(`-- +goose Up
 CREATE TABLE migration_timeout_probe (id integer PRIMARY KEY);
 LOCK TABLE migration_timeout_blocker IN ACCESS EXCLUSIVE MODE;
 INSERT INTO migration_timeout_probe (id) VALUES (1);
