@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing/fstest"
+	"time"
 
 	"github.com/pressly/goose/v3"
 	gooselock "github.com/pressly/goose/v3/lock"
@@ -39,6 +41,8 @@ var _ MigratorClient = (*Migrator)(nil)
 var (
 	migrationFilenamePattern = regexp.MustCompile(`^((?:\d{10}|\d{14}))_[a-z0-9][a-z0-9_-]*\.sql$`)
 	migrationReleasePattern  = regexp.MustCompile(`^v\d+_\d+$`)
+	migrationUpDirective     = regexp.MustCompile(`(?im)^--[ \t]+\+goose[ \t]+up[ \t]*\r?$`)
+	migrationDownDirective   = regexp.MustCompile(`(?im)^--[ \t]+\+goose[ \t]+down[ \t]*\r?$`)
 )
 
 type migrationSource struct {
@@ -81,7 +85,7 @@ func listMigrationSources(dir string) ([]migrationSource, error) {
 			return fmt.Errorf("migration history: read %q: %w", relative, err)
 		}
 		text := string(contents)
-		if !strings.Contains(text, "-- +goose Up") || !strings.Contains(text, "-- +goose Down") {
+		if !migrationUpDirective.MatchString(text) || !migrationDownDirective.MatchString(text) {
 			return fmt.Errorf("migration history: %q must contain Goose Up and Down sections", relative)
 		}
 		sources = append(sources, migrationSource{version: version, filename: relative, contents: contents})
@@ -264,15 +268,29 @@ func (m *Migrator) RunDown(ctx context.Context) error {
 	return nil
 }
 
+func logMigrationStatuses(statuses []*goose.MigrationStatus) {
+	log.Printf("    Applied At                  Migration")
+	log.Printf("    =======================================")
+	for _, status := range statuses {
+		appliedAt := "Pending"
+		if status.State == goose.StateApplied {
+			appliedAt = status.AppliedAt.Format(time.ANSIC)
+		}
+		log.Printf("    %-24s -- %s", appliedAt, filepath.Base(status.Source.Path))
+	}
+}
+
 // Status displays the current migration status.
 func (m *Migrator) Status(ctx context.Context) error {
 	provider, err := newMigrationProvider(m.dir, m.db, false)
 	if err != nil {
 		return err
 	}
-	if _, err := provider.Status(ctx); err != nil {
+	statuses, err := provider.Status(ctx)
+	if err != nil {
 		return fmt.Errorf("failed to get migration status: %w", err)
 	}
+	logMigrationStatuses(statuses)
 
 	return nil
 }

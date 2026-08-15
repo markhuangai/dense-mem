@@ -31,7 +31,13 @@ if [[ -e "${filename}" ]]; then
   exit 1
 fi
 
-cat >"${filename}" <<'EOF'
+set -o noclobber
+if ! exec {migration_fd}>"${filename}"; then
+  echo "migration already exists: ${filename}" >&2
+  exit 1
+fi
+
+cat >&"${migration_fd}" <<'EOF'
 -- +goose Up
 -- +goose StatementBegin
 
@@ -52,5 +58,6 @@ cat >"${filename}" <<'EOF'
 
 -- +goose StatementEnd
 EOF
+exec {migration_fd}>&-
 
 echo "created ${filename#"${ROOT_DIR}/"}"

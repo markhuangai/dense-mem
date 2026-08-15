@@ -31,6 +31,12 @@ validate_filename() {
   printf '%s\n' "${BASH_REMATCH[1]}"
 }
 
+has_goose_directive() {
+  local directive="$1"
+  local filename="$2"
+  grep -Eiq -- "^--[[:space:]]+\\+goose[[:space:]]+${directive}[[:space:]]*$" "${filename}"
+}
+
 mapfile -t base_paths < <(
   git ls-tree -r --name-only "${merge_base}" -- migrations/postgres |
     grep -E '\.sql$' |
@@ -81,8 +87,8 @@ for absolute_path in "${current_paths[@]}"; do
   current_filename_by_version["${version}"]="${absolute_path##*/}"
   current_path_by_version["${version}"]="${repository_path}"
   current_release_by_version["${version}"]="${release}"
-  grep -q -- '-- +goose Up' "${absolute_path}" || { echo "${repository_path} is missing Goose Up" >&2; exit 1; }
-  grep -q -- '-- +goose Down' "${absolute_path}" || { echo "${repository_path} is missing Goose Down" >&2; exit 1; }
+  has_goose_directive Up "${absolute_path}" || { echo "${repository_path} is missing Goose Up" >&2; exit 1; }
+  has_goose_directive Down "${absolute_path}" || { echo "${repository_path} is missing Goose Down" >&2; exit 1; }
 done
 (( ${#current_paths[@]} > 0 )) || { echo "migration history is empty" >&2; exit 1; }
 

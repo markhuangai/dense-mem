@@ -14,14 +14,16 @@ import (
 
 func TestMigrationFilesystemCombinesReleaseDirectories(t *testing.T) {
 	dir := t.TempDir()
-	writeMigrationFixture(t, dir, "v2_4/2026010101_first.sql")
-	writeMigrationFixture(t, dir, "v2_5/20260101020000_second.sql")
+	writeMigrationFixture(t, dir, "v2_4/20260101020000_second.sql")
+	writeMigrationFixture(t, dir, "v2_5/2026010101_first.sql")
 
 	sources, err := listMigrationSources(dir)
 	require.NoError(t, err)
 	require.Len(t, sources, 2)
 	assert.Equal(t, int64(2026010101), sources[0].version)
-	assert.Equal(t, "v2_5/20260101020000_second.sql", sources[1].filename)
+	assert.Equal(t, "v2_5/2026010101_first.sql", sources[0].filename)
+	assert.Equal(t, int64(20260101020000), sources[1].version)
+	assert.Equal(t, "v2_4/20260101020000_second.sql", sources[1].filename)
 
 	filesystem, err := migrationFilesystem(dir)
 	require.NoError(t, err)
@@ -30,7 +32,7 @@ func TestMigrationFilesystemCombinesReleaseDirectories(t *testing.T) {
 
 	filename, err := migrationPath(dir, 20260101020000)
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(dir, "v2_5", "20260101020000_second.sql"), filename)
+	assert.Equal(t, filepath.Join(dir, "v2_4", "20260101020000_second.sql"), filename)
 }
 
 func TestMigrationFilesystemRejectsInvalidHistory(t *testing.T) {
@@ -54,6 +56,15 @@ func TestMigrationFilesystemRejectsInvalidHistory(t *testing.T) {
 		filename := filepath.Join(dir, "v2_4", "2026010101_incomplete.sql")
 		require.NoError(t, os.MkdirAll(filepath.Dir(filename), 0o755))
 		require.NoError(t, os.WriteFile(filename, []byte("-- +goose Up\nSELECT 1;\n"), 0o644))
+		_, err := migrationFilesystem(dir)
+		require.ErrorContains(t, err, "Goose Up and Down")
+	})
+
+	t.Run("directive text in a comment", func(t *testing.T) {
+		dir := t.TempDir()
+		filename := filepath.Join(dir, "v2_4", "2026010101_comment.sql")
+		require.NoError(t, os.MkdirAll(filepath.Dir(filename), 0o755))
+		require.NoError(t, os.WriteFile(filename, []byte("-- +goose Up\nSELECT 1;\n-- Documentation mentions -- +goose Down.\n"), 0o644))
 		_, err := migrationFilesystem(dir)
 		require.ErrorContains(t, err, "Goose Up and Down")
 	})
