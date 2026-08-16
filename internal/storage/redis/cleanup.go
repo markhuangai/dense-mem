@@ -11,11 +11,11 @@ import (
 // CleanupRepositoryInterface is the companion interface for cleanup operations.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type CleanupRepositoryInterface interface {
-	PurgeProfileState(ctx context.Context, profileID string) error
-	InvalidateKeySessions(ctx context.Context, profileID, keyID string) error
+	PurgeTeamState(ctx context.Context, teamID string) error
+	InvalidateCredentialSessions(ctx context.Context, teamID, credentialID string) error
 }
 
-// CleanupRepository implements Redis cleanup operations for profile state.
+// CleanupRepository implements Redis cleanup operations for team state.
 type CleanupRepository struct {
 	client *redis.Client
 }
@@ -28,13 +28,13 @@ func NewCleanupRepository(client *redis.Client) *CleanupRepository {
 	return &CleanupRepository{client: client}
 }
 
-// PurgeProfileState deletes all cache, session, and stream keys for a profile.
+// PurgeTeamState deletes all cache, session, and stream keys for a team.
 // Uses SCAN with MATCH to iterate over keys, never KEYS which blocks.
-func (r *CleanupRepository) PurgeProfileState(ctx context.Context, profileID string) error {
+func (r *CleanupRepository) PurgeTeamState(ctx context.Context, teamID string) error {
 	patterns := []string{
-		fmt.Sprintf("profile:%s:cache:*", profileID),
-		fmt.Sprintf("profile:%s:session:*", profileID),
-		fmt.Sprintf("profile:%s:stream:*", profileID),
+		fmt.Sprintf("profile:%s:cache:*", teamID),
+		fmt.Sprintf("profile:%s:session:*", teamID),
+		fmt.Sprintf("profile:%s:stream:*", teamID),
 	}
 
 	for _, pattern := range patterns {
@@ -46,11 +46,11 @@ func (r *CleanupRepository) PurgeProfileState(ctx context.Context, profileID str
 	return nil
 }
 
-// InvalidateKeySessions deletes sessions that belong to a specific API key.
+// InvalidateCredentialSessions deletes sessions that belong to one credential.
 // Scans session keys, parses JSON payloads, and deletes those with matching key_id.
 // Malformed JSON payloads are logged and skipped without crashing the cleanup loop.
-func (r *CleanupRepository) InvalidateKeySessions(ctx context.Context, profileID, keyID string) error {
-	pattern := fmt.Sprintf("profile:%s:session:*", profileID)
+func (r *CleanupRepository) InvalidateCredentialSessions(ctx context.Context, teamID, credentialID string) error {
+	pattern := fmt.Sprintf("profile:%s:session:*", teamID)
 
 	var cursor uint64
 	for {
@@ -74,7 +74,7 @@ func (r *CleanupRepository) InvalidateKeySessions(ctx context.Context, profileID
 
 			// Parse JSON payload
 			var payload struct {
-				KeyID string `json:"key_id"`
+				CredentialID string `json:"key_id"`
 			}
 			if err := json.Unmarshal([]byte(val), &payload); err != nil {
 				// Malformed JSON - log and skip without crashing
@@ -83,7 +83,7 @@ func (r *CleanupRepository) InvalidateKeySessions(ctx context.Context, profileID
 			}
 
 			// Delete if key_id matches
-			if payload.KeyID == keyID {
+			if payload.CredentialID == credentialID {
 				r.client.Del(ctx, key)
 			}
 		}

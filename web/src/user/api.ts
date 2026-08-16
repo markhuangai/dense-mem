@@ -12,7 +12,7 @@ export type UserTeam = {
   updated_at: string;
 };
 
-export type UserKey = {
+export type UserCredential = {
   id: string;
   team_id: string;
   name: string;
@@ -27,22 +27,22 @@ export type UserKey = {
 
 export type UserSession = {
   team: UserTeam;
-  key: UserKey;
-  teams?: UserTeamOption[];
-  auth_method?: "api_key" | "api_key_session" | "sso";
-  can_rotate: boolean;
-  can_manage_team: boolean;
-  personal_key: UserKey | null;
-  can_create_personal_key: boolean;
-  can_rotate_personal_key: boolean;
-  personal_key_max_scopes?: string[];
+  membership: UserMembership;
+  credential: UserCredential | null;
+  teams: UserTeamOption[];
+  personal_credential: UserCredential | null;
 };
 
 export type UserTeamOption = {
   team: UserTeam;
-  key: UserKey;
-  can_rotate: boolean;
-  can_manage_team: boolean;
+  membership: UserMembership;
+};
+
+export type UserMembership = {
+  team_id: string;
+  name: string;
+  grants: string[];
+  role: "manager" | "member";
 };
 
 export type SSOProvider = {
@@ -53,10 +53,10 @@ export type SSOProvider = {
 
 export type RotateResponse = {
   api_key: string;
-  key: UserKey;
+  credential: UserCredential;
 };
 
-export type CreatedTeamProfile = RotateResponse;
+export type CreatedCredential = RotateResponse;
 
 export type Page<T> = {
   data: T[];
@@ -73,14 +73,14 @@ export type UpdateTeamInput = {
   config?: Record<string, unknown>;
 };
 
-export type CreateTeamProfileInput = {
+export type CreateCredentialInput = {
   name: string;
   scopes?: string[];
   rate_limit: number;
   expires_at?: string;
 };
 
-export type UpdateTeamProfileInput =
+export type UpdateCredentialInput =
   | { name: string; scopes?: never }
   | { name?: never; scopes: string[] };
 
@@ -336,8 +336,8 @@ export class UserApi {
     return `/ui/api/sso/start/${encodeURIComponent(providerId)}`;
   }
 
-  async switchSSOTeam(profileId: string): Promise<UserSession> {
-    const payload = await this.request<Envelope<UserSession>>("/ui/api/sso/team", { method: "POST", body: { profile_id: profileId } });
+  async switchSSOTeam(teamId: string): Promise<UserSession> {
+    const payload = await this.request<Envelope<UserSession>>("/ui/api/sso/team", { method: "POST", body: { team_id: teamId } });
     return payload.data;
   }
 
@@ -359,18 +359,18 @@ export class UserApi {
     return payload.data;
   }
 
-  async createSSOKey(input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
-    const payload = await this.request<Envelope<CreatedTeamProfile>>("/ui/api/sso/key", { method: "POST", body: input });
+  async createSSOCredential(input: CreateCredentialInput): Promise<CreatedCredential> {
+    const payload = await this.request<Envelope<CreatedCredential>>("/ui/api/sso/credential", { method: "POST", body: input });
     return payload.data;
   }
 
-  async rotateSSOKey(): Promise<RotateResponse> {
-    const payload = await this.request<Envelope<RotateResponse>>("/ui/api/sso/key/rotate", { method: "POST", body: {} });
+  async rotateSSOCredential(): Promise<RotateResponse> {
+    const payload = await this.request<Envelope<RotateResponse>>("/ui/api/sso/credential/rotate", { method: "POST", body: {} });
     return payload.data;
   }
 
-  async rotateKey(): Promise<RotateResponse> {
-    const payload = await this.request<Envelope<RotateResponse>>("/ui/api/key/rotate", { method: "POST", body: {} });
+  async rotateCredential(): Promise<RotateResponse> {
+    const payload = await this.request<Envelope<RotateResponse>>("/ui/api/credential/rotate", { method: "POST", body: {} });
     return payload.data;
   }
 
@@ -379,27 +379,27 @@ export class UserApi {
     return payload.data;
   }
 
-  listTeamProfiles(): Promise<Page<UserKey>> {
-    return this.request<Page<UserKey>>("/ui/api/team/profiles");
+  listTeamCredentials(): Promise<Page<UserCredential>> {
+    return this.request<Page<UserCredential>>("/ui/api/team/credentials");
   }
 
-  async createTeamProfile(input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
-    const payload = await this.request<Envelope<CreatedTeamProfile>>("/ui/api/team/profiles", { method: "POST", body: input });
+  async createTeamCredential(input: CreateCredentialInput): Promise<CreatedCredential> {
+    const payload = await this.request<Envelope<CreatedCredential>>("/ui/api/team/credentials", { method: "POST", body: input });
     return payload.data;
   }
 
-  async updateTeamProfile(profileId: string, input: UpdateTeamProfileInput): Promise<UserKey> {
-    const payload = await this.request<Envelope<UserKey>>(`/ui/api/team/profiles/${profileId}`, { method: "PATCH", body: input });
+  async updateTeamCredential(credentialId: string, input: UpdateCredentialInput): Promise<UserCredential> {
+    const payload = await this.request<Envelope<UserCredential>>(`/ui/api/team/credentials/${credentialId}`, { method: "PATCH", body: input });
     return payload.data;
   }
 
-  async rotateTeamProfile(profileId: string, input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
-    const payload = await this.request<Envelope<CreatedTeamProfile>>(`/ui/api/team/profiles/${profileId}/rotate`, { method: "POST", body: input });
+  async rotateTeamCredential(credentialId: string, input: CreateCredentialInput): Promise<CreatedCredential> {
+    const payload = await this.request<Envelope<CreatedCredential>>(`/ui/api/team/credentials/${credentialId}/rotate`, { method: "POST", body: input });
     return payload.data;
   }
 
-  async deleteTeamProfile(profileId: string): Promise<{ status: string }> {
-    const payload = await this.request<Envelope<{ status: string }>>(`/ui/api/team/profiles/${profileId}`, { method: "DELETE" });
+  async deleteTeamCredential(credentialId: string): Promise<{ status: string }> {
+    const payload = await this.request<Envelope<{ status: string }>>(`/ui/api/team/credentials/${credentialId}`, { method: "DELETE" });
     return payload.data;
   }
 
@@ -428,6 +428,7 @@ export class UserApi {
         final_score: community.rank ? 1 / community.rank : undefined,
       }));
       const relationshipHits = (data.related_relationships ?? []).map((relationship, index) => ({
+        tier: relationship.tier,
         relationship,
         relationships: [relationship],
         evidences: [],

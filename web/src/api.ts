@@ -27,20 +27,21 @@ export type Team = {
   updated_at: string;
 };
 
-export type TeamProfile = {
+export type Credential = {
   id: string;
   team_id: string;
   name: string;
   key_suffix: string | null;
   scopes: string[] | null;
-  role: ProfileRole;
+  role: CredentialRole;
   rate_limit: number;
   last_used_at: string | null;
   expires_at: string | null;
   created_at: string;
 };
 
-export type ProfileRole = "manager" | "member";
+export type CredentialRole = "manager" | "member";
+export type MembershipRole = "manager" | "member";
 
 export type Pagination = {
   limit: number;
@@ -61,22 +62,22 @@ export type CreateTeamInput = {
 
 export type UpdateTeamInput = CreateTeamInput;
 
-export type CreateTeamProfileInput = {
+export type CreateCredentialInput = {
   name: string;
   scopes?: string[];
-  role?: ProfileRole;
+  role?: CredentialRole;
   rate_limit: number;
   expires_at?: string;
 };
 
-export type UpdateTeamProfileInput =
+export type UpdateCredentialInput =
   | { name: string; role?: never; scopes?: never }
-  | { name?: never; role: ProfileRole; scopes?: never }
+  | { name?: never; role: CredentialRole; scopes?: never }
   | { name?: never; role?: never; scopes: string[] };
 
-export type CreatedTeamProfile = {
+export type CreatedCredential = {
   api_key: string;
-  key: TeamProfile;
+  credential: Credential;
 };
 
 export type SecuritySettings = {
@@ -185,7 +186,7 @@ export type SSOGroupMapping = {
   group_id: string;
   group_name: string;
   scopes: string[];
-  role: ProfileRole;
+  role: MembershipRole;
   enabled: boolean;
   origin: string;
   retired_at: string | null;
@@ -212,12 +213,12 @@ export type SSOGroupMappingInput = {
   team_id: string;
   group_id: string;
   scopes: string[];
-  role: ProfileRole;
+  role: MembershipRole;
   enabled: boolean;
 };
 
 export type DirectoryRoleEntitlement = {
-  role: ProfileRole;
+  role: MembershipRole;
   scopes: string[];
 };
 
@@ -654,24 +655,24 @@ export class ControlApi {
     return this.requestEnvelope<{ status: string }>(`/teams/${teamId}`, { method: "DELETE" });
   }
 
-  listTeamProfiles(teamId: string): Promise<Page<TeamProfile>> {
-    return this.request<Page<TeamProfile>>(`/teams/${teamId}/profiles`);
+  listTeamCredentials(teamId: string): Promise<Page<Credential>> {
+    return this.request<Page<Credential>>(`/teams/${teamId}/credentials`);
   }
 
-  createTeamProfile(teamId: string, input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
-    return this.requestEnvelope<CreatedTeamProfile>(`/teams/${teamId}/profiles`, { method: "POST", body: input });
+  createTeamCredential(teamId: string, input: CreateCredentialInput): Promise<CreatedCredential> {
+    return this.requestEnvelope<CreatedCredential>(`/teams/${teamId}/credentials`, { method: "POST", body: input });
   }
 
-  updateTeamProfile(teamId: string, profileId: string, input: UpdateTeamProfileInput): Promise<TeamProfile> {
-    return this.requestEnvelope<TeamProfile>(`/teams/${teamId}/profiles/${profileId}`, { method: "PATCH", body: input });
+  updateTeamCredential(teamId: string, credentialId: string, input: UpdateCredentialInput): Promise<Credential> {
+    return this.requestEnvelope<Credential>(`/teams/${teamId}/credentials/${credentialId}`, { method: "PATCH", body: input });
   }
 
-  regenerateTeamProfileKey(teamId: string, profileId: string, input: CreateTeamProfileInput): Promise<CreatedTeamProfile> {
-    return this.requestEnvelope<CreatedTeamProfile>(`/teams/${teamId}/profiles/${profileId}/rotate`, { method: "POST", body: input });
+  rotateTeamCredential(teamId: string, credentialId: string, input: CreateCredentialInput): Promise<CreatedCredential> {
+    return this.requestEnvelope<CreatedCredential>(`/teams/${teamId}/credentials/${credentialId}/rotate`, { method: "POST", body: input });
   }
 
-  deleteTeamProfile(teamId: string, profileId: string): Promise<{ status: string }> {
-    return this.requestEnvelope<{ status: string }>(`/teams/${teamId}/profiles/${profileId}`, { method: "DELETE" });
+  deleteTeamCredential(teamId: string, credentialId: string): Promise<{ status: string }> {
+    return this.requestEnvelope<{ status: string }>(`/teams/${teamId}/credentials/${credentialId}`, { method: "DELETE" });
   }
 
   getSecuritySettings(): Promise<SecuritySettings> {

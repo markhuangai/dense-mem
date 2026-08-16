@@ -35,7 +35,7 @@ func TestEvalKnowledgeToolsUseTeamScopeAndStripPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
 		TeamID: uuid.MustParse("00000000-0000-0000-0000-000000000101"),
 	})
 

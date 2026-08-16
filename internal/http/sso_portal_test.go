@@ -36,8 +36,8 @@ func TestControlPortalSSOProviderAndMappingFlows(t *testing.T) {
 			TeamName:   "Research",
 			GroupID:    "group-read",
 			GroupName:  "Read group",
-			Scopes:     []string{service.APIKeyScopeRead},
-			Role:       service.APIKeyRoleMember,
+			Scopes:     []string{service.CredentialScopeRead},
+			Role:       service.CredentialRoleMember,
 			Enabled:    true,
 			CreatedAt:  now,
 			UpdatedAt:  now,
@@ -94,8 +94,10 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 	identityID := uuid.New()
 	teamOneID := uuid.New()
 	teamTwoID := uuid.New()
-	profileOneID := uuid.New()
-	profileTwoID := uuid.New()
+	membershipOneID := uuid.New()
+	membershipTwoID := uuid.New()
+	ownerOneID := uuid.New()
+	ownerTwoID := uuid.New()
 	sessionToken := "session-token"
 	csrfToken := "csrf-token"
 	repo := &httpSSORepoStub{
@@ -119,30 +121,27 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 			},
 		},
 		mappings: []*domain.SSOGroupMapping{
-			httpSSOMapping(providerID, teamOneID, "Team One", "group-one", service.APIKeyRoleMember, now),
-			httpSSOMapping(providerID, teamTwoID, "Team Two", "group-two", service.APIKeyRoleManager, now),
+			httpSSOMapping(providerID, teamOneID, "Team One", "group-one", service.CredentialRoleMember, now),
+			httpSSOMapping(providerID, teamTwoID, "Team Two", "group-two", service.CredentialRoleManager, now),
 		},
 		sessions: map[string]*domain.SSOSession{
 			service.HashSSOToken(sessionToken): {
-				SessionHash:   service.HashSSOToken(sessionToken),
-				IdentityID:    identityID,
-				ProviderID:    providerID,
-				TeamProfileID: profileOneID,
-				TeamID:        teamOneID,
-				CSRFHash:      service.HashSSOToken(csrfToken),
-				ExpiresAt:     now.Add(time.Hour),
-				CreatedAt:     now,
+				SessionHash:  service.HashSSOToken(sessionToken),
+				IdentityID:   identityID,
+				ProviderID:   providerID,
+				MembershipID: membershipOneID,
+				OwnerID:      ownerOneID,
+				TeamID:       teamOneID,
+				CSRFHash:     service.HashSSOToken(csrfToken),
+				ExpiresAt:    now.Add(time.Hour),
+				CreatedAt:    now,
 			},
 		},
 		now: now,
 	}
-	repo.teamProfiles = []*domain.SSOTeamProfile{
-		httpSSOTeamProfile(identityID, providerID, profileOneID, teamOneID, "Team One", service.APIKeyRoleMember, now),
-		httpSSOTeamProfile(identityID, providerID, profileTwoID, teamTwoID, "Team Two", service.APIKeyRoleManager, now),
-	}
-	repo.ssoProfiles = map[uuid.UUID]*domain.APIKey{
-		profileOneID: &repo.teamProfiles[0].Profile,
-		profileTwoID: &repo.teamProfiles[1].Profile,
+	repo.teamProfiles = []*domain.SSOTeamMembership{
+		httpSSOTeamMembership(identityID, providerID, membershipOneID, ownerOneID, teamOneID, "Team One", service.CredentialRoleMember, now),
+		httpSSOTeamMembership(identityID, providerID, membershipTwoID, ownerTwoID, teamTwoID, "Team Two", service.CredentialRoleManager, now),
 	}
 	handler := &userPortalHandler{
 		sso: service.NewSSOService(repo, service.SSOConfig{
@@ -159,15 +158,15 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/session", "", sessionToken)
 	session, err := handler.currentSSOSession(c)
 	require.NoError(t, err)
-	require.Equal(t, "sso", session.AuthMethod)
-	require.False(t, session.CanRotate)
+	require.Nil(t, session.Credential)
 	require.Len(t, session.Teams, 2)
-	require.False(t, session.Teams[0].CanRotate)
-	require.False(t, session.Teams[1].CanRotate)
+	require.Equal(t, membershipOneID, repo.teamProfiles[0].Membership.ID)
+	require.Equal(t, ownerOneID, repo.teamProfiles[0].Membership.OwnerID)
 	require.Equal(t, "Team One", session.Team.Name)
+	require.Equal(t, "SSO Team One", session.Membership.Name)
 
-	c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/team", `{"profile_id":"`+profileTwoID.String()+`"}`, sessionToken)
-	setUserSSOPrincipal(c, profileOneID, teamOneID)
+	c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/team", `{"team_id":"`+teamTwoID.String()+`"}`, sessionToken)
+	setUserSSOPrincipal(c, ownerOneID, teamOneID)
 	require.NoError(t, handler.switchSSOTeam(c))
 	require.Equal(t, nethttp.StatusOK, rec.Code)
 	require.Equal(t, service.HashSSOToken(sessionToken), repo.updatedSessionHash)
@@ -210,7 +209,7 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 	require.ErrorContains(t, handler.switchSSOTeam(c), "authentication required")
 
 	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/team", `{}`, "session-token")
-	setUserAPIKeyPrincipal(c, uuid.New(), uuid.New())
+	setUserCredentialPrincipal(c, uuid.New(), uuid.New())
 	require.ErrorContains(t, handler.switchSSOTeam(c), "sso session required")
 
 	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/team", `{`, "session-token")
@@ -220,9 +219,9 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/sso/callback?error=access_denied", "", "")
 	require.ErrorContains(t, handler.completeSSO(c), "sso login failed")
 
-	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/team", `{"profile_id":"bad"}`, "session-token")
+	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/team", `{"team_id":"bad"}`, "session-token")
 	setUserSSOPrincipal(c, uuid.New(), uuid.New())
-	require.ErrorContains(t, handler.switchSSOTeam(c), "invalid SSO profile ID format")
+	require.ErrorContains(t, handler.switchSSOTeam(c), "invalid team ID format")
 
 	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/logout", "", "session-token")
 	require.ErrorContains(t, handler.logoutSSO(c), "invalid sso csrf token")
@@ -384,7 +383,8 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	providerID := uuid.New()
 	teamID := uuid.New()
-	profileID := uuid.New()
+	membershipID := uuid.New()
+	ownerID := uuid.New()
 	identityID := uuid.New()
 	sessionToken := "session-token"
 	repo := &httpSSORepoStub{
@@ -400,27 +400,27 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 			ExpiresAt:  now.Add(time.Hour),
 		},
 		mappings: []*domain.SSOGroupMapping{
-			httpSSOMapping(providerID, teamID, "Team One", "group-one", service.APIKeyRoleMember, now),
+			httpSSOMapping(providerID, teamID, "Team One", "group-one", service.CredentialRoleMember, now),
 		},
 		identities: map[uuid.UUID]*domain.SSOIdentity{
 			identityID: {ID: identityID, ProviderID: providerID, Subject: "subject-123"},
 		},
 		sessions: map[string]*domain.SSOSession{
 			service.HashSSOToken(sessionToken): {
-				SessionHash:   service.HashSSOToken(sessionToken),
-				IdentityID:    identityID,
-				ProviderID:    providerID,
-				TeamProfileID: profileID,
-				TeamID:        teamID,
-				ExpiresAt:     now.Add(time.Hour),
+				SessionHash:  service.HashSSOToken(sessionToken),
+				IdentityID:   identityID,
+				ProviderID:   providerID,
+				MembershipID: membershipID,
+				OwnerID:      ownerID,
+				TeamID:       teamID,
+				ExpiresAt:    now.Add(time.Hour),
 			},
 		},
 		now: now,
 	}
-	repo.teamProfiles = []*domain.SSOTeamProfile{
-		httpSSOTeamProfile(identityID, providerID, profileID, teamID, "Team One", service.APIKeyRoleMember, now),
+	repo.teamProfiles = []*domain.SSOTeamMembership{
+		httpSSOTeamMembership(identityID, providerID, membershipID, ownerID, teamID, "Team One", service.CredentialRoleMember, now),
 	}
-	repo.ssoProfiles = map[uuid.UUID]*domain.APIKey{profileID: &repo.teamProfiles[0].Profile}
 	ssoSvc := service.NewSSOService(repo, service.SSOConfig{
 		PublicBaseURL: "https://portal.example.com",
 		Now:           func() time.Time { return now },
@@ -431,10 +431,10 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 		RateLimitPerMinute: 100,
 	}, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{
-		APIKeyRepo:   &userPortalAuthRepo{},
-		RateLimitSvc: service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
-		SSOService:   ssoSvc,
-		Config:       &config.Config{RateLimitPerMinute: 100},
+		CredentialRepo: &userPortalAuthRepo{},
+		RateLimitSvc:   service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		SSOService:     ssoSvc,
+		Config:         &config.Config{RateLimitPerMinute: 100},
 	})
 
 	req := httptest.NewRequest(nethttp.MethodGet, "/ui/api/sso/providers", nil)
@@ -448,7 +448,8 @@ func TestUserPortalSSORoutesAndCookies(t *testing.T) {
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	require.Equal(t, nethttp.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"auth_method":"sso"`)
+	require.Contains(t, rec.Body.String(), `"credential":null`)
+	require.Contains(t, rec.Body.String(), `"membership"`)
 	require.Contains(t, rec.Body.String(), `"name":"Team One"`)
 
 	req = httptest.NewRequest(nethttp.MethodPost, "/ui/api/sso/logout", nil)
@@ -480,10 +481,10 @@ func TestUserPortalPublicSSOStartIsRateLimited(t *testing.T) {
 	}
 	e := NewServer(*cfg, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{
-		APIKeyRepo:   &userPortalAuthRepo{},
-		RateLimitSvc: service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
-		SSOService:   service.NewSSOService(&httpSSORepoStub{}, service.SSOConfig{PublicBaseURL: "https://portal.example.com"}),
-		Config:       cfg,
+		CredentialRepo: &userPortalAuthRepo{},
+		RateLimitSvc:   service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		SSOService:     service.NewSSOService(&httpSSORepoStub{}, service.SSOConfig{PublicBaseURL: "https://portal.example.com"}),
+		Config:         cfg,
 	})
 
 	target := "/ui/api/sso/start/" + uuid.NewString()
@@ -538,26 +539,29 @@ func userSSOContext(method, target, body, sessionToken string) (echo.Context, *h
 	return e.NewContext(req, rec), rec
 }
 
-func setUserSSOPrincipal(c echo.Context, profileID, teamID uuid.UUID) {
+func setUserSSOPrincipal(c echo.Context, ownerID, teamID uuid.UUID) {
 	ctx := httpmw.SetPrincipalForTest(c.Request().Context(), &httpmw.Principal{
-		KeyID:      profileID,
-		TeamID:     teamID,
-		ProfileID:  &profileID,
-		Scopes:     []string{service.APIKeyScopeRead},
-		Role:       service.APIKeyRoleMember,
-		AuthMethod: "sso_session",
+		IdentityID:   ownerID,
+		MembershipID: ownerID,
+		OwnerID:      ownerID,
+		TeamID:       teamID,
+		Grants:       []string{service.CredentialScopeRead},
+		Role:         service.CredentialRoleMember,
+		AuthMethod:   "sso_session",
 	})
 	c.SetRequest(c.Request().WithContext(ctx))
 }
 
-func setUserAPIKeyPrincipal(c echo.Context, profileID, teamID uuid.UUID) {
+func setUserCredentialPrincipal(c echo.Context, credentialID, teamID uuid.UUID) {
 	ctx := httpmw.SetPrincipalForTest(c.Request().Context(), &httpmw.Principal{
-		KeyID:      profileID,
-		TeamID:     teamID,
-		ProfileID:  &profileID,
-		Scopes:     []string{service.APIKeyScopeRead},
-		Role:       service.APIKeyRoleMember,
-		AuthMethod: "api_key",
+		IdentityID:   credentialID,
+		MembershipID: credentialID,
+		OwnerID:      credentialID,
+		CredentialID: &credentialID,
+		TeamID:       teamID,
+		Grants:       []string{service.CredentialScopeRead},
+		Role:         service.CredentialRoleMember,
+		AuthMethod:   "api_key",
 	})
 	c.SetRequest(c.Request().WithContext(ctx))
 }
@@ -579,8 +583,7 @@ type httpSSORepoStub struct {
 	mappings           []*domain.SSOGroupMapping
 	deletedMappingID   uuid.UUID
 	identities         map[uuid.UUID]*domain.SSOIdentity
-	teamProfiles       []*domain.SSOTeamProfile
-	ssoProfiles        map[uuid.UUID]*domain.APIKey
+	teamProfiles       []*domain.SSOTeamMembership
 	sessions           map[string]*domain.SSOSession
 	updatedSessionHash string
 	deletedSessionHash string
@@ -744,7 +747,7 @@ func (r *httpSSORepoStub) DirectoryAuthorityActive(context.Context, uuid.UUID) (
 	return false, nil
 }
 
-func (r *httpSSORepoStub) DirectoryTeamProfileEntitled(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string) (bool, error) {
+func (r *httpSSORepoStub) DirectoryMembershipEntitled(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string) (bool, error) {
 	return false, nil
 }
 
@@ -772,30 +775,33 @@ func (r *httpSSORepoStub) GetIdentityByProviderSubject(context.Context, uuid.UUI
 	return nil, nil
 }
 
-func (r *httpSSORepoStub) UpsertTeamProfileForMapping(context.Context, domain.SSOIdentity, domain.SSOGroupMapping, string) (*domain.APIKey, error) {
+func (r *httpSSORepoStub) UpsertTeamMembershipForMapping(context.Context, domain.SSOIdentity, domain.SSOGroupMapping, string) (*domain.Membership, error) {
 	return nil, nil
 }
 
-func (r *httpSSORepoStub) ListTeamProfilesForIdentity(_ context.Context, identityID uuid.UUID) ([]*domain.SSOTeamProfile, error) {
-	items := make([]*domain.SSOTeamProfile, 0, len(r.teamProfiles))
+func (r *httpSSORepoStub) ListTeamMembershipsForIdentity(_ context.Context, identityID uuid.UUID) ([]*domain.SSOTeamMembership, error) {
+	items := make([]*domain.SSOTeamMembership, 0, len(r.teamProfiles))
 	for _, item := range r.teamProfiles {
-		if item.Profile.SSOIdentityID == nil || *item.Profile.SSOIdentityID != identityID {
+		if item.Membership.ActorIdentityID != identityID {
 			continue
 		}
 		copy := *item
-		copy.Profile.Scopes = append([]string(nil), item.Profile.Scopes...)
+		copy.Membership.Grants = append([]string(nil), item.Membership.Grants...)
 		items = append(items, &copy)
 	}
 	return items, nil
 }
 
-func (r *httpSSORepoStub) GetSSOProfileByID(_ context.Context, id uuid.UUID) (*domain.APIKey, error) {
-	if r.ssoProfiles == nil || r.ssoProfiles[id] == nil {
-		return nil, nil
+func (r *httpSSORepoStub) GetTeamMembershipByOwnerID(_ context.Context, id uuid.UUID) (*domain.SSOTeamMembership, error) {
+	for _, item := range r.teamProfiles {
+		if item.Membership.OwnerID != id {
+			continue
+		}
+		copy := *item
+		copy.Membership.Grants = append([]string(nil), item.Membership.Grants...)
+		return &copy, nil
 	}
-	copy := *r.ssoProfiles[id]
-	copy.Scopes = append([]string(nil), r.ssoProfiles[id].Scopes...)
-	return &copy, nil
+	return nil, nil
 }
 
 func (r *httpSSORepoStub) GetEntitlementCache(_ context.Context, providerID uuid.UUID, subject string) (*domain.SSOEntitlementCache, error) {
@@ -832,11 +838,18 @@ func (r *httpSSORepoStub) GetSession(_ context.Context, sessionHash string) (*do
 	return &copy, nil
 }
 
-func (r *httpSSORepoStub) UpdateSessionTeam(_ context.Context, sessionHash string, teamProfileID, teamID uuid.UUID) error {
+func (r *httpSSORepoStub) UpdateSessionTeam(_ context.Context, sessionHash string, teamID uuid.UUID) error {
 	r.updatedSessionHash = sessionHash
 	if session := r.sessions[sessionHash]; session != nil {
-		session.TeamProfileID = teamProfileID
-		session.TeamID = teamID
+		for _, item := range r.teamProfiles {
+			if item.Team.ID != teamID || item.Membership.ActorIdentityID != session.IdentityID {
+				continue
+			}
+			session.MembershipID = item.Membership.ID
+			session.OwnerID = item.Membership.OwnerID
+			session.TeamID = teamID
+			break
+		}
 	}
 	return nil
 }
@@ -908,7 +921,7 @@ func httpSSOMapping(providerID, teamID uuid.UUID, teamName, groupID, role string
 		TeamName:   teamName,
 		GroupID:    groupID,
 		GroupName:  groupID,
-		Scopes:     []string{service.APIKeyScopeRead, service.APIKeyScopeWrite},
+		Scopes:     []string{service.CredentialScopeRead, service.CredentialScopeWrite},
 		Role:       role,
 		Enabled:    true,
 		CreatedAt:  now,
@@ -916,25 +929,24 @@ func httpSSOMapping(providerID, teamID uuid.UUID, teamName, groupID, role string
 	}
 }
 
-func httpSSOTeamProfile(identityID, providerID, profileID, teamID uuid.UUID, teamName, role string, now time.Time) *domain.SSOTeamProfile {
-	return &domain.SSOTeamProfile{
-		Team: domain.Profile{
+func httpSSOTeamMembership(identityID, providerID, membershipID, ownerID, teamID uuid.UUID, teamName, role string, now time.Time) *domain.SSOTeamMembership {
+	return &domain.SSOTeamMembership{
+		Team: domain.Team{
 			ID:        teamID,
 			Name:      teamName,
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
-		Profile: domain.APIKey{
-			ID:                   profileID,
-			ProfileID:            teamID,
+		Membership: domain.Membership{
+			ID:                   membershipID,
+			ActorIdentityID:      identityID,
 			TeamID:               teamID,
-			TeamName:             teamName,
+			OwnerID:              ownerID,
 			Name:                 "SSO " + teamName,
-			Scopes:               []string{service.APIKeyScopeRead, service.APIKeyScopeWrite},
+			Grants:               []string{service.CredentialScopeRead, service.CredentialScopeWrite},
 			Role:                 role,
+			Status:               "active",
 			CreatedAt:            now,
-			AuthSource:           "sso",
-			SSOIdentityID:        &identityID,
 			SSOProviderID:        &providerID,
 			SSOSubject:           "subject-123",
 			SSOEmail:             "user@example.com",

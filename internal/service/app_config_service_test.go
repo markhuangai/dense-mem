@@ -883,27 +883,27 @@ func (a *appConfigAuditStub) List(context.Context, string, int, int) ([]AuditLog
 	return nil, 0, nil
 }
 
-func (a *appConfigAuditStub) ProfileCreated(context.Context, string, map[string]interface{}, *string, string, string, string) error {
+func (a *appConfigAuditStub) TeamCreated(context.Context, string, map[string]interface{}, *string, string, string, string) error {
 	return nil
 }
 
-func (a *appConfigAuditStub) ProfileUpdated(context.Context, string, map[string]interface{}, map[string]interface{}, *string, string, string, string) error {
+func (a *appConfigAuditStub) TeamUpdated(context.Context, string, map[string]interface{}, map[string]interface{}, *string, string, string, string) error {
 	return nil
 }
 
-func (a *appConfigAuditStub) ProfileDeleteBlocked(context.Context, string, map[string]interface{}, *string, string, string, string, string) error {
+func (a *appConfigAuditStub) TeamDeleteBlocked(context.Context, string, map[string]interface{}, *string, string, string, string, string) error {
 	return nil
 }
 
-func (a *appConfigAuditStub) ProfileDeleted(context.Context, string, map[string]interface{}, *string, string, string, string) error {
+func (a *appConfigAuditStub) TeamDeleted(context.Context, string, map[string]interface{}, *string, string, string, string) error {
 	return nil
 }
 
-func (a *appConfigAuditStub) APIKeyCreated(context.Context, *string, string, map[string]interface{}, *string, string, string, string) error {
+func (a *appConfigAuditStub) CredentialCreated(context.Context, *string, string, map[string]interface{}, *string, string, string, string) error {
 	return nil
 }
 
-func (a *appConfigAuditStub) APIKeyRevoked(context.Context, *string, string, map[string]interface{}, *string, string, string, string) error {
+func (a *appConfigAuditStub) CredentialRevoked(context.Context, *string, string, map[string]interface{}, *string, string, string, string) error {
 	return nil
 }
 
@@ -911,7 +911,7 @@ func (a *appConfigAuditStub) AuthFailure(context.Context, *string, string, strin
 	return nil
 }
 
-func (a *appConfigAuditStub) CrossProfileDenied(context.Context, string, string, string, map[string]interface{}, string, string) error {
+func (a *appConfigAuditStub) CrossTeamDenied(context.Context, string, string, string, map[string]interface{}, string, string) error {
 	return nil
 }
 

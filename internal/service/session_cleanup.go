@@ -7,14 +7,14 @@ import (
 // CleanupServiceInterface is the companion interface for cleanup service operations.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type CleanupServiceInterface interface {
-	PurgeProfileState(ctx context.Context, profileID string) error
-	InvalidateKeySessions(ctx context.Context, profileID, keyID string) error
+	PurgeTeamState(ctx context.Context, teamID string) error
+	InvalidateCredentialSessions(ctx context.Context, teamID, credentialID string) error
 }
 
 // cleanupRepository is an internal interface for the cleanup repository.
 type cleanupRepository interface {
-	PurgeProfileState(ctx context.Context, profileID string) error
-	InvalidateKeySessions(ctx context.Context, profileID, keyID string) error
+	PurgeTeamState(ctx context.Context, teamID string) error
+	InvalidateCredentialSessions(ctx context.Context, teamID, credentialID string) error
 }
 
 // CleanupService implements the cleanup service that wraps the repository.
@@ -32,12 +32,12 @@ func NewCleanupService(repo cleanupRepository) *CleanupService {
 	}
 }
 
-// PurgeProfileState deletes all cache, session, and stream keys for a profile.
-func (s *CleanupService) PurgeProfileState(ctx context.Context, profileID string) error {
-	return s.repo.PurgeProfileState(ctx, profileID)
+// PurgeTeamState deletes all cache, session, and stream keys for a team.
+func (s *CleanupService) PurgeTeamState(ctx context.Context, teamID string) error {
+	return s.repo.PurgeTeamState(ctx, teamID)
 }
 
-// InvalidateKeySessions deletes sessions that belong to a specific API key.
-func (s *CleanupService) InvalidateKeySessions(ctx context.Context, profileID, keyID string) error {
-	return s.repo.InvalidateKeySessions(ctx, profileID, keyID)
+// InvalidateCredentialSessions deletes sessions that belong to one credential.
+func (s *CleanupService) InvalidateCredentialSessions(ctx context.Context, teamID, credentialID string) error {
+	return s.repo.InvalidateCredentialSessions(ctx, teamID, credentialID)
 }

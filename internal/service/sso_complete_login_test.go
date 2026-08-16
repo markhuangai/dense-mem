@@ -100,8 +100,8 @@ func TestSSOCompleteLoginCreatesSession(t *testing.T) {
 				TeamID:     archivedTeamID,
 				TeamName:   "Archived Team",
 				GroupID:    "group-a",
-				Scopes:     []string{APIKeyScopeRead},
-				Role:       APIKeyRoleMember,
+				Scopes:     []string{CredentialScopeRead},
+				Role:       CredentialRoleMember,
 				Enabled:    true,
 			},
 			{
@@ -109,8 +109,8 @@ func TestSSOCompleteLoginCreatesSession(t *testing.T) {
 				TeamID:     teamID,
 				TeamName:   "Enterprise Team",
 				GroupID:    "group-a",
-				Scopes:     []string{APIKeyScopeRead, APIKeyScopeWrite},
-				Role:       APIKeyRoleManager,
+				Scopes:     []string{CredentialScopeRead, CredentialScopeWrite},
+				Role:       CredentialRoleManager,
 				Enabled:    true,
 			},
 		},
@@ -132,7 +132,7 @@ func TestSSOCompleteLoginCreatesSession(t *testing.T) {
 	assert.Equal(t, "ada@example.com", result.Session.Identity.Email)
 	assert.Equal(t, "Ada Lovelace", result.Session.Identity.DisplayName)
 	assert.Equal(t, teamID, result.Session.Selected.Team.ID)
-	assert.Equal(t, APIKeyRoleManager, result.Session.Selected.Profile.Role)
+	assert.Equal(t, CredentialRoleManager, result.Session.Selected.Membership.Role)
 	require.NotNil(t, repo.savedCache)
 	assert.Equal(t, []string{"group-a"}, repo.savedCache.Groups)
 	assert.Equal(t, now.Add(time.Hour), repo.savedCache.ExpiresAt)
@@ -225,25 +225,26 @@ func TestSSOCompleteLoginUsesDurableDirectoryProfilesWhenDirectoryAuthorityIsAct
 			TeamID:     claimOnlyTeamID,
 			TeamName:   "Claim Only",
 			GroupID:    "entra-claim-only-manager",
-			Scopes:     []string{APIKeyScopeRead, APIKeyScopeWrite},
-			Role:       APIKeyRoleManager,
+			Scopes:     []string{CredentialScopeRead, CredentialScopeWrite},
+			Role:       CredentialRoleManager,
 			Enabled:    true,
 		}},
-		teamProfiles: []*domain.SSOTeamProfile{{
-			Team: domain.Profile{ID: directoryTeamID, Name: "Research"},
-			Profile: domain.APIKey{
-				ID:            directoryProfileID,
-				TeamID:        directoryTeamID,
-				AuthSource:    "sso",
-				SSOIdentityID: &identityID,
-				SSOProviderID: &providerID,
-				SSOSubject:    "entra-user-1",
-				SSOGroupID:    "entra-research-manager",
-				Scopes:        []string{APIKeyScopeRead, APIKeyScopeWrite},
-				Role:          APIKeyRoleManager,
+		teamProfiles: []*domain.SSOTeamMembership{{
+			Team: domain.Team{ID: directoryTeamID, Name: "Research"},
+			Membership: domain.Membership{
+				ID:              directoryProfileID,
+				ActorIdentityID: identityID,
+				TeamID:          directoryTeamID,
+				OwnerID:         directoryProfileID,
+				SSOProviderID:   &providerID,
+				SSOSubject:      "entra-user-1",
+				SSOGroupID:      "entra-research-manager",
+				Grants:          []string{CredentialScopeRead, CredentialScopeWrite},
+				Role:            CredentialRoleManager,
+				Status:          "active",
 			},
 		}},
-		directoryProfileEntitled: map[uuid.UUID]bool{directoryProfileID: true},
+		directoryProfileEntitled: map[uuid.UUID]bool{identityID: true},
 	}
 	resolver := &ssoGroupResolverStub{groups: []string{"entra-claim-only-manager"}}
 	svc := NewSSOService(repo, SSOConfig{
@@ -263,7 +264,7 @@ func TestSSOCompleteLoginUsesDurableDirectoryProfilesWhenDirectoryAuthorityIsAct
 	assert.Zero(t, repo.mappingLookupCalls)
 	assert.Zero(t, repo.upsertProfileCalls)
 	assert.Nil(t, repo.savedCache)
-	assert.Equal(t, []uuid.UUID{directoryProfileID}, repo.directoryProfileEntitledCalls)
+	assert.Equal(t, []uuid.UUID{identityID}, repo.directoryProfileEntitledCalls)
 
 	repo.providers[providerID].TenantID = ""
 	repo.consumableState = &domain.SSOOAuthState{

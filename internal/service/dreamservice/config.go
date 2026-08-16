@@ -46,33 +46,33 @@ func EffectiveDreamingConfig(global domain.DreamingRuntimeConfig, teamConfig map
 }
 
 func (s *service) EffectiveConfig(ctx context.Context, teamID string) (EffectiveConfig, error) {
-	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok && actor.TeamID != uuid.Nil {
+	if actor, ok := requestctx.ActorFromContext(ctx); ok && actor.TeamID != uuid.Nil {
 		teamID = actor.TeamID.String()
 	}
 	return s.effectiveConfigForTeam(ctx, teamID)
 }
 
 func (s *service) effectiveConfigForTeam(ctx context.Context, teamID string) (EffectiveConfig, error) {
-	return resolveEffectiveConfig(ctx, teamID, s.deps.AppConfig, s.deps.Profiles)
+	return resolveEffectiveConfig(ctx, teamID, s.deps.AppConfig, s.deps.Teams)
 }
 
 func resolveEffectiveConfig(
 	ctx context.Context,
 	teamID string,
 	appConfig AppConfig,
-	profiles ProfileService,
+	teams TeamService,
 ) (EffectiveConfig, error) {
 	global, err := globalDreamingConfig(ctx, appConfig)
 	if err != nil {
 		return EffectiveConfig{}, err
 	}
 	var teamConfig map[string]any
-	if profiles != nil {
+	if teams != nil {
 		team, err := parseTeamID(teamID)
 		if err != nil {
 			return EffectiveConfig{}, err
 		}
-		p, err := profiles.GetByID(ctx, team)
+		p, err := teams.GetByID(ctx, team)
 		if err != nil {
 			return EffectiveConfig{}, err
 		}

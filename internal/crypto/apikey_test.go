@@ -74,19 +74,19 @@ func TestGetKeySuffixShortKey(t *testing.T) {
 	assert.Equal(t, "short", GetKeySuffix("short"))
 }
 
-func TestProfileKeySlugAndPrefixBranches(t *testing.T) {
+func TestCredentialKeySlugAndPrefixBranches(t *testing.T) {
 	assert.Equal(t, "my-team-name", KeySlug("  My_Team!!Name  "))
 	assert.Equal(t, "very-long-te", KeySlug("very-long-team-name-that-is-capped"))
 	assert.Equal(t, "", KeySlug("!!!"))
 	assert.Equal(t, "short", GetKeyPrefix("short"))
 
-	key, err := GenerateRawKeyForProfile("Research Team")
+	key, err := GenerateRawKeyForCredential("Research Team")
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(key, "dm_research-tea_"))
 
-	key, err = GenerateRawKeyForProfile("!!!")
+	key, err = GenerateRawKeyForCredential("!!!")
 	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(key, "dm_profile_"))
+	assert.True(t, strings.HasPrefix(key, "dm_credential_"))
 
 	assert.Empty(t, GetLookupPrefixes("short"))
 }

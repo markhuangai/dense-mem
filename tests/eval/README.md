@@ -43,7 +43,7 @@ tests/eval/
   suites/               # approved or generated local suites
   runtime/v1/
     dataset_identity.json
-    eval_profile.json
+    eval_credential.json
     postgres/
     redis/
     prometheus/
@@ -251,22 +251,22 @@ team_json="$(curl -fsS -X POST http://127.0.0.1:8090/control/api/teams \
   -d '{"name":"dense-mem-eval-v1"}')"
 team_id="$(jq -r '.data.id' <<<"${team_json}")"
 
-key_json="$(curl -fsS -X POST \
-  "http://127.0.0.1:8090/control/api/teams/${team_id}/profiles" \
+credential_json="$(curl -fsS -X POST \
+  "http://127.0.0.1:8090/control/api/teams/${team_id}/credentials" \
   -H "Authorization: Bearer ${control_token}" \
   -H "Content-Type: application/json" \
-  -d '{"name":"eval profile"}')"
-api_key="$(jq -r '.data.api_key' <<<"${key_json}")"
+  -d '{"name":"eval credential"}')"
+api_key="$(jq -r '.data.api_key' <<<"${credential_json}")"
 
 jq -n --arg team_id "${team_id}" --arg api_key "${api_key}" \
   '{team_id: $team_id, api_key: $api_key}' \
-  > tests/eval/runtime/v1/eval_profile.json
+  > tests/eval/runtime/v1/eval_credential.json
 
-chmod 600 tests/eval/runtime/v1/eval_profile.json
+chmod 600 tests/eval/runtime/v1/eval_credential.json
 ```
 
 The monitor also accepts `DENSE_MEM_API_KEY` and `EVAL_TEAM_ID` directly when
-`PROFILE_PATH` is not used. Never commit the profile file or print its API key
+`CREDENTIAL_PATH` is not used. Never commit the credential file or print its API key
 in logs.
 
 ## Validate without ingesting
@@ -362,7 +362,7 @@ Once ingestion is complete, reuse the persisted graph and mapping:
 set -a
 . ./.env
 set +a
-export DENSE_MEM_API_KEY="$(jq -r .api_key tests/eval/runtime/v1/eval_profile.json)"
+export DENSE_MEM_API_KEY="$(jq -r .api_key tests/eval/runtime/v1/eval_credential.json)"
 
 go run ./cmd/eval-runner \
   --mode baseline \

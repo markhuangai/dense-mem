@@ -206,7 +206,7 @@ function ConflictQueueRow({ item }: { item: ConflictQueueItem }) {
               <div className="conflict-supporter-list">
                 {position.supporters.map((supporter) => (
                   <span className="conflict-supporter" key={`${position.position_id}-${supporter.profile_id}`}>
-                    {supporter.profile_name || "Unnamed profile"} <small>{shortId(supporter.profile_id)}</small>
+					{supporter.profile_name || "Unnamed owner"} <small>{shortId(supporter.profile_id)}</small>
                   </span>
                 ))}
               </div>

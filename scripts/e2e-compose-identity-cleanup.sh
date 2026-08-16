@@ -55,11 +55,68 @@ start_identity_cleanup_server() {
   compose up -d --no-build redis prometheus server
   wait_for_url "identity cleanup API readiness" "${USER_URL}/ready"
   verify_postgres_runtime_migration_state
+  verify_v25_cleanup_catalog
+}
+
+verify_v25_cleanup_catalog() {
+  local state
+  state="$(identity_postgres_scalar "
+    SELECT concat(
+      EXISTS (
+        SELECT 1 FROM goose_db_version
+        WHERE version_id = 2026081602 AND is_applied
+      ), '|',
+      to_regclass('public.semantic_team_refs') IS NULL, '|',
+      to_regclass('public.semantic_profile_refs') IS NULL, '|',
+      to_regclass('public.embedding_config') IS NULL, '|',
+      (
+        SELECT count(*) = 37
+        FROM pg_constraint AS constraint_state
+        WHERE constraint_state.contype = 'f'
+          AND constraint_state.conrelid::regclass::text = ANY(ARRAY[
+            'dream_cycle_runs', 'embedding_jobs', 'entity_correction_events', 'entity_correction_plans',
+            'entity_names', 'entity_resolution_events', 'evidence_fragments', 'evidence_lifecycle_operations',
+            'evidence_quarantines', 'evidence_security_events', 'evidence_security_signals',
+            'evidence_source_revisions', 'evidence_sources', 'hypotheses', 'hypothesis_feedback_events',
+            'knowledge_ingests', 'placement_items', 'placement_outcomes', 'placement_runs',
+            'relationship_conflict_derived_evidence_tasks', 'relationship_conflict_events',
+            'relationship_conflict_evidence_derivations', 'relationship_correction_submissions',
+            'relationship_cross_references', 'relationship_evidence_supports', 'relationship_observations',
+            'relationship_records', 'relationship_support_decision_events', 'relationship_transition_events',
+            'review_tasks', 'search_documents', 'submission_holds', 'verification_events'
+          ]::text[])
+          AND constraint_state.confrelid = 'ownership_aliases'::regclass
+          AND constraint_state.convalidated
+          AND constraint_state.confdeltype = 'r'
+      ), '|',
+      (
+        SELECT count(*) = 5
+        FROM pg_constraint AS constraint_state
+        WHERE constraint_state.contype = 'f'
+          AND constraint_state.conrelid::regclass::text = ANY(ARRAY[
+            'community_snapshot_runs', 'entity_records', 'search_projection_generations',
+            'team_predicate_definitions', 'value_records'
+          ]::text[])
+          AND constraint_state.confrelid = 'teams'::regclass
+          AND constraint_state.convalidated
+          AND constraint_state.confdeltype = 'r'
+      ), '|',
+      NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname LIKE 'dense_mem_v25_%'
+      )
+    )
+  ")"
+  if [[ "$state" != "true|true|true|true|true|true|true" && "$state" != "t|t|t|t|t|t|t" ]]; then
+    echo "V2.5 cleanup catalog is incomplete: ${state}" >&2
+    return 1
+  fi
 }
 
 verify_identity_cleanup_seed_upgrade() {
   local variant="$1"
   local state
+  verify_v25_cleanup_catalog
   state="$(identity_postgres_scalar "
     SELECT concat(
       EXISTS (SELECT 1 FROM goose_db_version WHERE version_id = 2026081001 AND is_applied), '|',
@@ -84,7 +141,7 @@ verify_identity_cleanup_seed_upgrade() {
         WHERE credential.id = '${IDENTITY_UPGRADE_PROFILE_ID}'::uuid
           AND membership.team_admin
       ), '|',
-      (SELECT count(*) FROM semantic_profile_refs WHERE team_id = '${IDENTITY_UPGRADE_TEAM_ID}'::uuid) = 2, '|',
+      (SELECT count(*) FROM ownership_aliases WHERE team_id = '${IDENTITY_UPGRADE_TEAM_ID}'::uuid) = 2, '|',
       EXISTS (
         SELECT 1 FROM usage_metric_buckets
         WHERE key_id = '${IDENTITY_UPGRADE_PROFILE_ID}'::uuid AND route = '/identity-upgrade'
@@ -283,14 +340,14 @@ cleanup_identity_cleanup_lock() {
 
 run_identity_cleanup_consumer_e2e() {
   local team_id="$1"
-  local profile_id="$2"
+  local credential_id="$2"
   local api_key="$3"
   echo "Running compose-backed canonical identity cleanup and A/B/C isolation e2e."
   DENSE_MEM_USER_URL="$USER_URL" \
   DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
   DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
   DENSE_MEM_E2E_TEAM_ID="$team_id" \
-  DENSE_MEM_E2E_PROFILE_ID="$profile_id" \
+  DENSE_MEM_E2E_CREDENTIAL_ID="$credential_id" \
   DENSE_MEM_E2E_API_KEY="$api_key" \
   DENSE_MEM_E2E_UPGRADE_TEAM_ID="$IDENTITY_UPGRADE_TEAM_ID" \
   DENSE_MEM_E2E_UPGRADE_PROFILE_ID="$IDENTITY_UPGRADE_PROFILE_ID" \

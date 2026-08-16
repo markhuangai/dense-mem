@@ -71,7 +71,7 @@ func (r *LedgerRepositoryImpl) RetractEvidence(ctx context.Context, input Retrac
 	}
 	var result *EvidenceLifecycleResult
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		if err := lockEvidenceLifecycleIdempotencyKeys(ctx, tx, input.TeamID, input.OwnerProfileID, []string{input.IdempotencyKey}); err != nil {

@@ -47,7 +47,7 @@ type SecurityRejectionAuditSignal struct {
 func recordSubmissionSecurityRejection(
 	ctx context.Context,
 	auditor SecurityRejectionAuditor,
-	actor requestctx.ActorProfile,
+	actor requestctx.Actor,
 	surface string,
 	scan SubmissionSecurityBatchScan,
 	rejection error,
@@ -55,7 +55,6 @@ func recordSubmissionSecurityRejection(
 	if auditor == nil {
 		return ErrSecurityAuditPersistence
 	}
-	credential, _ := requestctx.ActorCredentialFromContext(ctx)
 	signals := make([]SecurityRejectionAuditSignal, 0, len(scan.Signals))
 	for _, signal := range scan.Signals {
 		signals = append(signals, SecurityRejectionAuditSignal{
@@ -76,8 +75,8 @@ func recordSubmissionSecurityRejection(
 	if err := auditor.RecordSecurityRejection(ctx, SecurityRejectionAuditInput{
 		EventID:          uuid.NewString(),
 		TeamID:           actor.TeamID.String(),
-		ActorProfileID:   actor.ProfileID.String(),
-		ActorRole:        strings.TrimSpace(credential.Role),
+		ActorProfileID:   actor.OwnerID.String(),
+		ActorRole:        strings.TrimSpace(actor.Role),
 		CorrelationID:    correlation.FromContext(ctx),
 		Surface:          strings.TrimSpace(surface),
 		ReasonCode:       reason,

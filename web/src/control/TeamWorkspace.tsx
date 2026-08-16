@@ -1,11 +1,11 @@
 import { CSSProperties, ReactNode, useEffect, useRef, useState } from "react";
 import { Activity, CheckCircle2, Moon, Network, Users } from "lucide-react";
-import { ControlApi, Team, TeamProfile } from "../api";
+import { ControlApi, Credential, Team } from "../api";
 import { useVisiblePolling } from "../telemetry/useVisiblePolling";
 import { SectionHeading, SummaryCard } from "../ui/components";
-import { formatDate, profilePermissionLabel, profileRoleLabel, shortId } from "./utils";
+import { credentialPermissionLabel, credentialRoleLabel, formatDate, shortId } from "./utils";
 
-export type TeamWorkspaceTab = "overview" | "profiles" | "dreams" | "conflicts" | "settings";
+export type TeamWorkspaceTab = "overview" | "credentials" | "dreams" | "conflicts" | "settings";
 
 export function TeamWorkspaceShell({
   team,
@@ -39,7 +39,7 @@ function TeamWorkspaceHeader({
 }) {
   const tabs: Array<{ id: TeamWorkspaceTab; label: string }> = [
     { id: "overview", label: "Overview" },
-    { id: "profiles", label: "Profiles" },
+    { id: "credentials", label: "Credentials" },
     { id: "dreams", label: "Dreams" },
     { id: "conflicts", label: "Conflicts" },
     { id: "settings", label: "Settings" },
@@ -86,7 +86,7 @@ export function TeamOverviewPanel({
   team: Team;
   onOpenMetrics: () => void;
 }) {
-  const [profiles, setProfiles] = useState<TeamProfile[]>([]);
+  const [credentials, setCredentials] = useState<Credential[]>([]);
   const [metrics, setMetrics] = useState<Awaited<ReturnType<ControlApi["getMetrics"]>> | null>(null);
   const [metricsUnavailable, setMetricsUnavailable] = useState(false);
   const [communityStatus, setCommunityStatus] = useState<Awaited<ReturnType<ControlApi["getTeamCommunityStatus"]>> | null>(null);
@@ -99,14 +99,14 @@ export function TeamOverviewPanel({
     setLoading(true);
     setMetricsUnavailable(false);
     Promise.all([
-      api.listTeamProfiles(team.id).then((page) => page.data).catch(() => [] as TeamProfile[]),
+      api.listTeamCredentials(team.id).then((page) => page.data).catch(() => [] as Credential[]),
       api.getTeamCommunityStatus(team.id).catch(() => null),
     ])
-      .then(([nextProfiles, nextCommunityStatus]) => {
+      .then(([nextCredentials, nextCommunityStatus]) => {
         if (!active) {
           return;
         }
-        setProfiles(nextProfiles);
+        setCredentials(nextCredentials);
         setCommunityStatus(nextCommunityStatus);
       })
       .finally(() => {
@@ -150,9 +150,9 @@ export function TeamOverviewPanel({
   const dependencyDetail = degradedDependencies.length > 0
     ? degradedDependencies.map((dependency) => `${dependency.name} · ${dependency.reason_code ?? dependency.status} · ${dependency.latency_ms === null || dependency.latency_ms === undefined ? "latency n/a" : `${Math.round(dependency.latency_ms)} ms`}`).join(", ")
     : metrics?.dependencies_checked_at ? `Observed ${formatDate(metrics.dependencies_checked_at)}` : "Operational";
-  const managerCount = profiles.filter((profile) => profile.role === "manager").length;
-  const readWriteCount = profiles.filter((profile) => profile.scopes?.includes("write")).length;
-  const recentProfiles = [...profiles].sort((left, right) => right.created_at.localeCompare(left.created_at)).slice(0, 5);
+  const managerCount = credentials.filter((credential) => credential.role === "manager").length;
+  const readWriteCount = credentials.filter((credential) => credential.scopes?.includes("write")).length;
+  const recentCredentials = [...credentials].sort((left, right) => right.created_at.localeCompare(left.created_at)).slice(0, 5);
   const requestValue = metricsReady ? compactNumber(requests) : loading || metricsLoading ? "..." : "n/a";
   const errorValue = metricsReady ? compactNumber(errors) : loading || metricsLoading ? "..." : "n/a";
   const healthValue = metricsReady ? `${health.toFixed(1)}%` : loading || metricsLoading ? "..." : "n/a";
@@ -163,7 +163,7 @@ export function TeamOverviewPanel({
   return (
     <div className="team-overview" aria-label="Team overview">
       <div className="summary-strip" aria-label="Summary">
-        <SummaryCard label="Profiles" value={profiles.length} detail={`${managerCount} managers`} />
+        <SummaryCard label="Credentials" value={credentials.length} detail={`${managerCount} managers`} />
         <SummaryCard label="Communities" value={communityStatus?.current_community_count ?? "n/a"} detail={loading ? "Loading" : communityUnavailable ? "Status unavailable" : communityEnabled ? "Nightly enabled" : "Nightly disabled"} tone={communityUnavailable || !communityEnabled ? "warning" : "neutral"} />
         <SummaryCard label="Requests" value={requestValue} detail="Last hour" tone={metricsFailed ? "warning" : "neutral"} />
         <SummaryCard label="Recall health" value={healthValue} detail={healthDetail} tone={metricsFailed ? "warning" : "neutral"} />
@@ -179,7 +179,7 @@ export function TeamOverviewPanel({
           <SectionHeading title="Team Activity (1h)" meta={loading || metricsLoading ? <span className="inline-loading">Loading</span> : metricsFailed ? "metrics unavailable" : undefined} />
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="HTTP requests" value={requestValue} trend={metricsReady ? requests > 0 ? "+ active" : "idle" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="Errors" value={errorValue} trend={metricsReady ? errors > 0 ? "review" : "clear" : "unavailable"} tone={errors > 0 ? "danger" : metricsFailed ? "warning" : "neutral"} />
-          <MetricRow icon={<Users size={15} aria-hidden="true" />} label="Writable profiles" value={readWriteCount} trend={`${profiles.length} total`} />
+          <MetricRow icon={<Users size={15} aria-hidden="true" />} label="Writable credentials" value={readWriteCount} trend={`${credentials.length} total`} />
           <MetricRow icon={<Moon size={15} aria-hidden="true" />} label="Dreaming" value={team.dreaming_effective?.enabled ? "Enabled" : "Inherited"} trend={team.dreaming_effective?.source ?? "global"} />
           <MetricRow icon={<Network size={15} aria-hidden="true" />} label="Community snapshot" value={communityStatus?.current_community_count ?? "n/a"} trend={communityStatus?.latest_run?.status ?? "not run"} tone={communityStatus?.latest_run?.status === "failed" ? "warning" : "neutral"} />
         </section>
@@ -189,7 +189,7 @@ export function TeamOverviewPanel({
           <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Average latency" value={latencyValue} trend={metricsReady ? "p95 proxy" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Max latency" value={maxLatencyValue} trend={metricsReady ? "last hour" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Dependency checks" value={metricsReady ? `${healthyDependencies.length}/${dependencies.length}` : "n/a"} trend={metricsReady ? degradedDependencies.length ? dependencyDetail : "healthy" : "unavailable"} tone={metricsFailed || degradedDependencies.length ? "warning" : "neutral"} />
-          <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Profile freshness" value={recentProfiles[0] ? formatDate(recentProfiles[0].created_at) : "No profiles"} trend="latest" />
+          <MetricRow icon={<CheckCircle2 size={15} aria-hidden="true" />} label="Credential freshness" value={recentCredentials[0] ? formatDate(recentCredentials[0].created_at) : "No credentials"} trend="latest" />
         </section>
       </div>
 
@@ -211,22 +211,22 @@ export function TeamOverviewPanel({
         </div>
       </section>
 
-      <section className="overview-panel" aria-label="Recent profile changes">
-        <SectionHeading title="Recent Profile Changes" meta={profiles.length} />
+      <section className="overview-panel" aria-label="Recent credential changes">
+        <SectionHeading title="Recent Credential Changes" meta={credentials.length} />
         <div className="mini-table">
-          <MiniTableRow columns={["Profile", "Permission", "Role", "Created"]} heading />
-          {recentProfiles.length > 0 ? recentProfiles.map((profile) => (
+          <MiniTableRow columns={["Credential", "Permission", "Role", "Created"]} heading />
+          {recentCredentials.length > 0 ? recentCredentials.map((credential) => (
             <MiniTableRow
-              key={profile.id}
+              key={credential.id}
               columns={[
-                profile.name,
-                profilePermissionLabel(profile.scopes),
-                profileRoleLabel(profile.role),
-                formatDate(profile.created_at),
+                credential.name,
+                credentialPermissionLabel(credential.scopes),
+                credentialRoleLabel(credential.role),
+                formatDate(credential.created_at),
               ]}
             />
           )) : (
-            <MiniTableRow columns={["No profiles", "-", "-", "-"]} />
+            <MiniTableRow columns={["No credentials", "-", "-", "-"]} />
           )}
         </div>
       </section>

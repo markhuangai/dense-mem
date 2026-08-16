@@ -14,7 +14,7 @@ func injectProfileMiddleware(profileID uuid.UUID) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			ctx := c.Request().Context()
-			ctx = middleware.SetResolvedProfileIDForTest(ctx, profileID)
+			ctx = middleware.SetResolvedTeamIDForTest(ctx, profileID)
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}

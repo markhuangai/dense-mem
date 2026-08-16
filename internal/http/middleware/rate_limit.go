@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/config"
@@ -24,10 +25,10 @@ func RateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.Confi
 				return next(c)
 			}
 
-			if principal.ProfileID == nil {
+			if principal.OwnerID == uuid.Nil {
 				return httperr.New(httperr.FORBIDDEN, "authentication required")
 			}
-			profileID := principal.ProfileID.String()
+			ownerID := principal.OwnerID.String()
 
 			// Get route path for stable bucket
 			routePath := c.Path()
@@ -39,7 +40,11 @@ func RateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.Confi
 
 			// Perform rate limit check
 			ctx := c.Request().Context()
-			rateLimitSubject := profileID + ":key:" + principal.KeyID.String()
+			subjectID := principal.OwnerID
+			if principal.CredentialID != nil {
+				subjectID = *principal.CredentialID
+			}
+			rateLimitSubject := ownerID + ":key:" + subjectID.String()
 			allowed, remaining, resetAt, err := svc.Check(ctx, rateLimitSubject, routePath, limit)
 			if err != nil {
 				c.Logger().Errorf("rate limit check failed: %v", err)
@@ -60,7 +65,7 @@ func RateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.Confi
 				c.Response().Header().Set("Retry-After", strconv.Itoa(retryAfter))
 
 				// Log and audit rate limit hit
-				logRateLimit(c, auditSvc, profileID, routePath, limit, remaining, resetAt)
+				logRateLimit(c, auditSvc, ownerID, routePath, limit, remaining, resetAt)
 
 				return httperr.New(httperr.RATE_LIMITED, "rate limit exceeded")
 			}

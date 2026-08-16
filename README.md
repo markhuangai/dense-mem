@@ -55,14 +55,21 @@ test disposable data before self-hosting.
 
 - Evidence is exact, durable, and append-only. A lifecycle action changes its
   effective state without deleting provenance or trace lineage.
-- Entity and typed Value are semantic nodes. Profile-owned Relationships become
-  active graph edges only when their evidence support is eligible.
+- Entity and typed Value are semantic nodes. Owner-alias-owned Relationships
+  become active graph edges only when their evidence support is eligible.
 - Provider output is a proposal. Closed-schema validation and deterministic
   server policy decide durable state.
 - Default recall excludes candidates and Hypotheses and returns evidence only
   when its active Relationship support path is eligible for the requested time.
-- Team visibility and profile mutation authority are distinct. An author can
+- Team visibility and owner mutation authority are distinct. An author can
   change only their own evidence or owned semantic records.
+
+Authentication resolves one immutable actor as `team + identity + membership +
+permanent owner alias + optional credential`. An SSO browser session uses the
+selected membership's permanent owner alias and has no direct credential. An
+API-key request carries a credential whose stable ID is also its permanent
+owner alias. Team, identity, membership, and credential fields never let a
+client choose or replace the semantic owner.
 
 ## 60-Second Quickstart
 
@@ -98,7 +105,8 @@ Control portal: http://127.0.0.1:8090/
 ```
 
 Open the control portal with `CONTROL_PORTAL_TOKEN`, then create a team and its
-first profile/API key. For control-plane automation, use the same private API:
+first credential/API key. For control-plane automation, use the same private
+API:
 
 ```bash
 control_token="<CONTROL_PORTAL_TOKEN from .env>"
@@ -108,10 +116,10 @@ curl -fsS -X POST http://127.0.0.1:8090/control/api/teams \
   -H "Content-Type: application/json" \
   -d '{"name":"primary-memory"}'
 
-curl -fsS -X POST http://127.0.0.1:8090/control/api/teams/<team-id>/profiles \
+curl -fsS -X POST http://127.0.0.1:8090/control/api/teams/<team-id>/credentials \
   -H "Authorization: Bearer ${control_token}" \
   -H "Content-Type: application/json" \
-  -d '{"name":"default profile"}'
+  -d '{"name":"default credential"}'
 ```
 
 The release image contains one project executable, `/app/server`. It applies
@@ -215,7 +223,8 @@ or trace lineage. Current recall excludes retired evidence, while a historical
 `known_at` view before the event can still show what the system knew then.
 
 `correct_relationship` replaces a specific active Relationship owned by the
-calling profile. It does not rewrite or delete the original record. The caller
+caller's permanent owner alias. It does not rewrite or delete the original
+record. The caller
 supplies the current Relationship version, its exact effective evidence spans,
 a bounded reason, and only the endpoints or predicate that need correction:
 
@@ -240,7 +249,7 @@ a bounded reason, and only the endpoints or predicate that need correction:
 On acceptance, Dense-Mem atomically supersedes the original Relationship,
 creates or reuses the active successor, copies the effective support lineage,
 and appends the correction event and `corrects` cross-reference. A different
-profile in the same team may read team-visible memory but cannot correct the
+owner in the same team may read team-visible memory but cannot correct the
 author's Relationship. Ambiguous Entity names require one owner confirmation;
 the original remains active until that confirmation succeeds.
 
@@ -374,7 +383,7 @@ semantics.
 | Semantic state | Validation, deterministic policy, support eligibility | Proposing optional Entity/Relationship hints |
 | Recall | Active evidence contexts and Relationship handles | Selecting what to cite or ask in the conversation |
 | Corrections | Authorized supersession, retraction, and append-only lineage | Deciding whether a correction is warranted |
-| Operations | Teams, profiles, API keys, audit, and portals | MCP client configuration |
+| Operations | Teams, memberships, credentials, API keys, audit, and portals | MCP client configuration |
 
 ## Data Egress and Consistency
 

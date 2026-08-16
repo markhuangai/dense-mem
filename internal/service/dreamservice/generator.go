@@ -24,9 +24,9 @@ func (g *HeuristicGenerator) Model() string {
 	return g.model
 }
 
-func (g *HeuristicGenerator) Generate(ctx context.Context, profileID string, req GenerateRequest) ([]GeneratedDream, error) {
+func (g *HeuristicGenerator) Generate(ctx context.Context, teamID string, req GenerateRequest) ([]GeneratedDream, error) {
 	_ = ctx
-	_ = profileID
+	_ = teamID
 	limit := req.MaxOutputs
 	if limit <= 0 {
 		limit = DefaultMaxOutputs

@@ -178,7 +178,7 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 			UpdatedAt:  now,
 		},
 	}
-	profiles := &controlProfileSvc{profiles: []*domain.Profile{{ID: teamID, Name: "Default"}}}
+	profiles := &controlProfileSvc{profiles: []*domain.Team{{ID: teamID, Name: "Default"}}}
 	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",

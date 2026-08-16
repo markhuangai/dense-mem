@@ -36,6 +36,14 @@ func TestRateLimitService_BuildsKeyWithoutKeyBuilder(t *testing.T) {
 	assert.Equal(t, int64(70), store.lastTTL)
 }
 
+func TestNewRateLimitServiceUsesProvidedStore(t *testing.T) {
+	store := &capturingStore{}
+	svc := NewRateLimitService(store)
+	require.NotNil(t, svc)
+	require.Same(t, store, svc.store)
+	require.NotNil(t, svc.now)
+}
+
 func TestRateLimitService_ExceedsLimit(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	store := &capturingStore{count: 4} // will return 5 on first call (limit=2 → denied)

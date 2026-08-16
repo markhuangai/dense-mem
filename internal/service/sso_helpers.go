@@ -317,7 +317,7 @@ func safeRedirectPath(raw string) string {
 	return trimmed
 }
 
-func ssoProfileName(email, displayName string, identityID uuid.UUID) string {
+func ssoMembershipName(email, displayName string, identityID uuid.UUID) string {
 	base := strings.TrimSpace(email)
 	if base == "" {
 		base = strings.TrimSpace(displayName)
@@ -445,7 +445,7 @@ type teamEntitlement struct {
 }
 
 func mergedEntitlementForTeam(mappings []*domain.SSOGroupMapping, teamID uuid.UUID) (teamEntitlement, bool) {
-	entitlement := teamEntitlement{Role: APIKeyRoleMember}
+	entitlement := teamEntitlement{Role: CredentialRoleMember}
 	found := false
 	for _, mapping := range mappings {
 		if mapping == nil || !mapping.Enabled || mapping.TeamID != teamID {
@@ -453,8 +453,8 @@ func mergedEntitlementForTeam(mappings []*domain.SSOGroupMapping, teamID uuid.UU
 		}
 		found = true
 		entitlement.Scopes = mergeScopes(entitlement.Scopes, mapping.Scopes)
-		if normalizeSSORole(mapping.Role) == APIKeyRoleManager {
-			entitlement.Role = APIKeyRoleManager
+		if normalizeSSORole(mapping.Role) == CredentialRoleManager {
+			entitlement.Role = CredentialRoleManager
 		}
 		if entitlement.GroupID == "" {
 			entitlement.GroupID = mapping.GroupID
@@ -466,29 +466,29 @@ func mergedEntitlementForTeam(mappings []*domain.SSOGroupMapping, teamID uuid.UU
 		return teamEntitlement{}, false
 	}
 	if len(entitlement.Scopes) == 0 {
-		entitlement.Scopes = []string{APIKeyScopeRead}
+		entitlement.Scopes = []string{CredentialScopeRead}
 	}
-	if entitlement.Role == APIKeyRoleManager {
-		entitlement.Scopes = managerAPIKeyScopes(entitlement.Scopes)
+	if entitlement.Role == CredentialRoleManager {
+		entitlement.Scopes = managerCredentialScopes(entitlement.Scopes)
 	}
 	return entitlement, true
 }
 
 func normalizeSSOScopes(scopes []string) []string {
 	if len(scopes) == 0 {
-		return []string{APIKeyScopeRead}
+		return []string{CredentialScopeRead}
 	}
-	normalized, err := NormalizeAPIKeyScopes(scopes)
+	normalized, err := NormalizeCredentialScopes(scopes)
 	if err != nil {
-		return []string{APIKeyScopeRead}
+		return []string{CredentialScopeRead}
 	}
 	return normalized
 }
 
 func normalizeSSORole(role string) string {
-	normalized, err := NormalizeAPIKeyRole(role)
+	normalized, err := NormalizeCredentialRole(role)
 	if err != nil || normalized == "" {
-		return APIKeyRoleMember
+		return CredentialRoleMember
 	}
 	return normalized
 }
@@ -502,14 +502,14 @@ func mergeScopes(left, right []string) []string {
 		set[scope] = struct{}{}
 	}
 	result := make([]string, 0, len(set))
-	if _, ok := set[APIKeyScopeRead]; ok {
-		result = append(result, APIKeyScopeRead)
+	if _, ok := set[CredentialScopeRead]; ok {
+		result = append(result, CredentialScopeRead)
 	}
-	if _, ok := set[APIKeyScopeWrite]; ok {
-		result = append(result, APIKeyScopeWrite)
+	if _, ok := set[CredentialScopeWrite]; ok {
+		result = append(result, CredentialScopeWrite)
 	}
-	if _, ok := set[APIKeyScopeFeedbackRead]; ok {
-		result = append(result, APIKeyScopeFeedbackRead)
+	if _, ok := set[CredentialScopeFeedbackRead]; ok {
+		result = append(result, CredentialScopeFeedbackRead)
 	}
 	return result
 }
@@ -581,20 +581,8 @@ func ssoEntitlementCacheMessage(source string) string {
 	return "source=" + source
 }
 
-func ssoKeyRequiresEntitlementValidation(key *domain.APIKey) bool {
-	if key == nil {
-		return false
-	}
-	switch strings.TrimSpace(key.AuthSource) {
-	case "sso":
-		return true
-	}
-	status := strings.TrimSpace(key.SSOEntitlementStatus)
-	return key.SSOIdentityID != nil ||
-		key.SSOProviderID != nil ||
-		strings.TrimSpace(key.SSOSubject) != "" ||
-		strings.TrimSpace(key.SSOGroupID) != "" ||
-		(status != "" && status != "unlinked")
+func ssoKeyRequiresEntitlementValidation(key *domain.Credential) bool {
+	return key != nil && key.OwnerIdentityID != nil
 }
 
 func ssoRuntimeReadyForPublicLogin(runtime SSORuntimeConfig) bool {
@@ -703,24 +691,24 @@ func normalizeSSOGroupMapping(mapping *domain.SSOGroupMapping) error {
 		return fmt.Errorf("sso group_id is required")
 	}
 	mapping.GroupName = strings.TrimSpace(mapping.GroupName)
-	scopes, err := NormalizeAPIKeyScopes(mapping.Scopes)
+	scopes, err := NormalizeCredentialScopes(mapping.Scopes)
 	if err != nil {
 		return err
 	}
 	if len(mapping.Scopes) == 0 {
-		scopes = []string{APIKeyScopeRead}
+		scopes = []string{CredentialScopeRead}
 	}
 	mapping.Scopes = scopes
-	role, err := NormalizeAPIKeyRole(mapping.Role)
+	role, err := NormalizeCredentialRole(mapping.Role)
 	if err != nil {
 		return err
 	}
 	if role == "" {
-		role = APIKeyRoleMember
+		role = CredentialRoleMember
 	}
 	mapping.Role = role
-	if mapping.Role == APIKeyRoleManager {
-		mapping.Scopes = managerAPIKeyScopes(mapping.Scopes)
+	if mapping.Role == CredentialRoleManager {
+		mapping.Scopes = managerCredentialScopes(mapping.Scopes)
 	}
 	return nil
 }

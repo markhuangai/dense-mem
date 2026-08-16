@@ -47,7 +47,7 @@ async function earlyQuorumScenario(teamID) {
     authorityB: "secondary",
   });
   for (let index = 2; index <= 5; index += 1) {
-    const profile = await createProfile(fixture.teamID, `${runID} early-quorum supporter ${index}`);
+    const profile = await createCredential(fixture.teamID, `${runID} early-quorum supporter ${index}`);
     await submitPositionSupport(fixture, profile, {
       label: `early-quorum-a-${index}`,
       sourceGroup: fixture.sourceGroupA,
@@ -78,7 +78,7 @@ async function dueUniqueAuthoritativeScenario() {
     validFromB: "2026-08-01T00:00:00Z",
   });
   for (let index = 2; index <= 3; index += 1) {
-    const profile = await createProfile(fixture.teamID, `${runID} majority supporter ${index}`);
+    const profile = await createCredential(fixture.teamID, `${runID} majority supporter ${index}`);
     await submitPositionSupport(fixture, profile, {
       label: `due-authoritative-b-${index}`,
       sourceGroup: fixture.sourceGroupB,
@@ -98,7 +98,7 @@ async function dueMajorityScenario() {
     authorityA: "primary",
     authorityB: "secondary",
   });
-  const secondSupporter = await createProfile(fixture.teamID, `${runID} due-majority supporter`);
+  const secondSupporter = await createCredential(fixture.teamID, `${runID} due-majority supporter`);
   await submitPositionSupport(fixture, secondSupporter, {
     label: "due-majority-a-2",
     sourceGroup: fixture.sourceGroupA,
@@ -176,14 +176,14 @@ async function provenanceAndIsolationScenario() {
     authorityA: "authoritative",
     authorityB: "secondary",
   });
-  const profileC = await createProfile(fixture.teamID, `${runID} provenance C`);
+  const profileC = await createCredential(fixture.teamID, `${runID} provenance C`);
   await submitPositionSupport(fixture, profileC, {
     label: "provenance-copied-c",
     sourceGroup: fixture.sourceGroupA,
     authority: "primary",
   });
   for (let index = 1; index <= 19; index += 1) {
-    const profile = await createProfile(fixture.teamID, `${runID} provenance copied ${index}`);
+    const profile = await createCredential(fixture.teamID, `${runID} provenance copied ${index}`);
     await submitPositionSupport(fixture, profile, {
       label: `provenance-copied-${index}`,
       sourceGroup: fixture.sourceGroupA,
@@ -221,7 +221,7 @@ async function provenanceAndIsolationScenario() {
   assert(stableJSON(semanticAfterStale) === stableJSON(semanticBeforeStale), `stale conflict submission changed semantic state: before=${JSON.stringify(semanticBeforeStale)} after=${JSON.stringify(semanticAfterStale)}`);
 
   const renamedA = `${runID} provenance A renamed`;
-  await renameProfile(fixture.teamID, fixture.profileA.profileID, renamedA);
+  await renameCredential(fixture.teamID, fixture.profileA.profileID, renamedA);
   const traceA = await mcpSuccess(profileC.apiKey, "trace_memory", {
     relationship_id: fixture.relationshipA,
     include_transitions: true,
@@ -249,7 +249,7 @@ async function provenanceAndIsolationScenario() {
   assert(nonOwnerRetraction.error && nonOwnerRetraction.result === undefined && !JSON.stringify(nonOwnerRetraction).includes(fixture.evidenceA), "same-team non-owner retraction was allowed or leaked the evidence ID");
 
   const foreignTeamID = await createTeam("foreign-isolation");
-  const foreign = await createProfile(foreignTeamID, `${runID} foreign reader`);
+  const foreign = await createCredential(foreignTeamID, `${runID} foreign reader`);
   const foreignRecall = await mcpSuccess(foreign.apiKey, "recall_memory", { query: fixture.subjectName, limit: 10 });
   assert(!(foreignRecall.conflicts ?? []).some((conflict) => conflict.conflict_id === fixture.conflictID), "separate-team recall disclosed the conflict");
   const foreignTrace = await mcpRaw(foreign.apiKey, "trace_memory", { relationship_id: fixture.relationshipA });
@@ -279,8 +279,8 @@ async function provenanceAndIsolationScenario() {
 
 async function createConflictFixture(label, options = {}) {
   const teamID = options.teamID ?? await createTeam(label);
-  const profileA = await createProfile(teamID, `${runID} ${label} A`);
-  const profileB = await createProfile(teamID, `${runID} ${label} B`);
+  const profileA = await createCredential(teamID, `${runID} ${label} A`);
+  const profileB = await createCredential(teamID, `${runID} ${label} B`);
   const subjectName = `${runID} ${label} project`;
   const objectAName = `${runID} ${label} PostgreSQL`;
   const objectBName = `${runID} ${label} GraphDB`;
@@ -636,23 +636,23 @@ async function createTeam(label) {
   return teamID;
 }
 
-async function createProfile(teamID, name) {
-  const response = await controlJSON(`/teams/${teamID}/profiles`, {
+async function createCredential(teamID, name) {
+  const response = await controlJSON(`/teams/${teamID}/credentials`, {
     method: "POST",
     body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }),
   });
   const apiKey = String(response.data?.api_key ?? "");
-  const profileID = String(response.data?.key?.id ?? "");
-  assert(apiKey && profileID, "control API profile response omitted credentials or profile ID");
+  const profileID = String(response.data?.credential?.id ?? "");
+  assert(apiKey && profileID, "control API credential response omitted key material or credential ID");
   return { apiKey, profileID, name };
 }
 
-async function renameProfile(teamID, profileID, name) {
-  const response = await controlJSON(`/teams/${teamID}/profiles/${profileID}`, {
+async function renameCredential(teamID, profileID, name) {
+  const response = await controlJSON(`/teams/${teamID}/credentials/${profileID}`, {
     method: "PATCH",
     body: JSON.stringify({ name }),
   });
-  assert(response.data?.id === profileID && response.data?.name === name, "control API did not rename the profile");
+  assert(response.data?.id === profileID && response.data?.name === name, "control API did not rename the credential");
 }
 
 async function mcpSuccess(apiKey, name, args) {

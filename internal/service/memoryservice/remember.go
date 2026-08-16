@@ -28,7 +28,6 @@ const (
 
 var (
 	ErrRememberAuthContext = errors.New("remember: authenticated actor context is required")
-	ErrRememberCredential  = errors.New("remember: authenticated credential context is required")
 	ErrRememberConflict    = errors.New("remember: conflict")
 	ErrRememberPersistence = errors.New("remember: persistence failed")
 )
@@ -286,14 +285,9 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 	if s.ledger == nil {
 		return nil, errors.New("remember: ledger repository is required")
 	}
-	actor, ok := requestctx.ActorProfileFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrRememberAuthContext
-	}
-	credential, ok := requestctx.ActorCredentialFromContext(ctx)
-	credentialOK := ok && credential.KeyID != uuid.Nil
-	if !credentialOK {
-		return nil, ErrRememberCredential
 	}
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("remember: evidence is required")
@@ -334,13 +328,13 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 	correlationID := correlation.FromContext(ctx)
 	actorMetadata := map[string]any{
 		"team_id":        actor.TeamID.String(),
-		"profile_id":     actor.ProfileID.String(),
+		"owner_id":       actor.OwnerID.String(),
 		"correlation_id": correlationID,
 	}
-	if credentialOK {
-		actorMetadata["role"] = credential.Role
-		actorMetadata["credential_id"] = credential.KeyID.String()
-		actorMetadata["auth_method"] = credential.AuthMethod
+	actorMetadata["role"] = actor.Role
+	actorMetadata["auth_method"] = actor.AuthMethod
+	if actor.CredentialID != nil {
+		actorMetadata["credential_id"] = actor.CredentialID.String()
 	}
 	metadata := map[string]any{
 		"contract_version": domain.ContractVersion,
@@ -348,7 +342,7 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 	}
 	created, err := s.ledger.CreateIngest(ctx, repository.CreateIngestInput{
 		TeamID:               actor.TeamID.String(),
-		OwnerProfileID:       actor.ProfileID.String(),
+		OwnerProfileID:       actor.OwnerID.String(),
 		IdempotencyKey:       strings.TrimSpace(req.IdempotencyKey),
 		RequestHash:          requestHash,
 		SourceSummary:        sourceSummary(req.Evidence),
@@ -460,8 +454,8 @@ func (s *rememberService) GetSubmissionStatus(
 	if s.ledger == nil {
 		return nil, errors.New("submission status: ledger repository is required")
 	}
-	actor, ok := requestctx.ActorProfileFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrRememberAuthContext
 	}
 	submissionID := strings.TrimSpace(req.SubmissionID)
@@ -473,7 +467,7 @@ func (s *rememberService) GetSubmissionStatus(
 	}
 	placement, err := s.ledger.GetPlacementRun(ctx, repository.GetPlacementRunInput{
 		TeamID:         actor.TeamID.String(),
-		OwnerProfileID: actor.ProfileID.String(),
+		OwnerProfileID: actor.OwnerID.String(),
 		IngestID:       submissionID,
 	})
 	if err != nil {

@@ -31,18 +31,18 @@ import (
 // NewControlPortalServer creates the token-protected management portal server.
 func NewControlPortalServer(
 	cfg config.ConfigProvider,
-	profileSvc handler.ProfileServiceInterface,
-	apiKeySvc handler.APIKeyServiceInterface,
+	teamSvc handler.TeamServiceInterface,
+	credentialSvc handler.CredentialServiceInterface,
 	logger observability.LogProvider,
 	securitySvcs ...service.SecurityService,
 ) (*echo.Echo, error) {
-	return NewControlPortalServerWithMetrics(cfg, profileSvc, apiKeySvc, nil, HealthConfig{}, logger, securitySvcs...)
+	return NewControlPortalServerWithMetrics(cfg, teamSvc, credentialSvc, nil, HealthConfig{}, logger, securitySvcs...)
 }
 
 func NewControlPortalServerWithMetrics(
 	cfg config.ConfigProvider,
-	profileSvc handler.ProfileServiceInterface,
-	apiKeySvc handler.APIKeyServiceInterface,
+	teamSvc handler.TeamServiceInterface,
+	credentialSvc handler.CredentialServiceInterface,
 	metricsSvc service.UsageMetricsReader,
 	health HealthConfig,
 	logger observability.LogProvider,
@@ -50,8 +50,8 @@ func NewControlPortalServerWithMetrics(
 ) (*echo.Echo, error) {
 	return NewControlPortalServerWithMetricsAndTelemetry(
 		cfg,
-		profileSvc,
-		apiKeySvc,
+		teamSvc,
+		credentialSvc,
 		metricsSvc,
 		ControlPortalTelemetry{},
 		health,
@@ -62,8 +62,8 @@ func NewControlPortalServerWithMetrics(
 
 func NewControlPortalServerWithMetricsAndTelemetry(
 	cfg config.ConfigProvider,
-	profileSvc handler.ProfileServiceInterface,
-	apiKeySvc handler.APIKeyServiceInterface,
+	teamSvc handler.TeamServiceInterface,
+	credentialSvc handler.CredentialServiceInterface,
 	metricsSvc service.UsageMetricsReader,
 	telemetry ControlPortalTelemetry,
 	health HealthConfig,
@@ -125,7 +125,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), httpmw.TelemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{profiles: profileSvc, keys: apiKeySvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, convergence: telemetry.Convergence, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
+	control := &controlPortalHandler{teams: teamSvc, credentials: credentialSvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, convergence: telemetry.Convergence, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
 	if telemetry.ControlIdentity != nil {
 		registerControlIdentityRoutes(e, control)
 	}
@@ -145,10 +145,10 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		api.GET("/recall-feedback-events", control.listRecallFeedbackEvents)
 		api.GET("/recall-feedback-events/:recallId", control.getRecallFeedbackEvent)
 	}
-	api.GET("/teams", control.listProfiles)
-	api.POST("/teams", control.createProfile)
-	api.PATCH("/teams/:teamId", control.updateProfile)
-	api.DELETE("/teams/:teamId", control.deleteProfile)
+	api.GET("/teams", control.listTeams)
+	api.POST("/teams", control.createTeam)
+	api.PATCH("/teams/:teamId", control.updateTeam)
+	api.DELETE("/teams/:teamId", control.deleteTeam)
 	if telemetry.Dreams != nil {
 		api.GET("/teams/:teamId/dreaming/status", control.getTeamDreamingStatus)
 		api.GET("/teams/:teamId/dreaming/runs", control.listTeamDreamingRuns)
@@ -161,11 +161,11 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	if telemetry.ConflictQueue != nil {
 		api.GET("/teams/:teamId/conflicts/queue", control.listConflictQueue)
 	}
-	api.GET("/teams/:teamId/profiles", control.listAPIKeys)
-	api.POST("/teams/:teamId/profiles", control.createAPIKey)
-	api.PATCH("/teams/:teamId/profiles/:profileId", control.updateAPIKey)
-	api.POST("/teams/:teamId/profiles/:profileId/rotate", control.rotateAPIKey)
-	api.DELETE("/teams/:teamId/profiles/:profileId", control.deleteAPIKey)
+	api.GET("/teams/:teamId/credentials", control.listCredentials)
+	api.POST("/teams/:teamId/credentials", control.createCredential)
+	api.PATCH("/teams/:teamId/credentials/:credentialId", control.updateCredential)
+	api.POST("/teams/:teamId/credentials/:credentialId/rotate", control.rotateCredential)
+	api.DELETE("/teams/:teamId/credentials/:credentialId", control.deleteCredential)
 	api.GET("/security/settings", control.getSecuritySettings)
 	api.PATCH("/security/settings", control.updateSecuritySettings)
 	api.GET("/security/bans", control.listSecurityBans)
@@ -260,19 +260,19 @@ func (h *controlPortalHandler) getTelemetry(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": snapshot})
 }
 
-func (h *controlPortalHandler) listProfiles(c echo.Context) error {
+func (h *controlPortalHandler) listTeams(c echo.Context) error {
 	limit, offset := controlPagination(c)
-	profiles, err := h.profiles.List(c.Request().Context(), limit, offset)
+	teams, err := h.teams.List(c.Request().Context(), limit, offset)
 	if err != nil {
 		return err
 	}
-	total, err := h.profiles.Count(c.Request().Context())
+	total, err := h.teams.Count(c.Request().Context())
 	if err != nil {
 		return err
 	}
-	items := make([]controlProfileResponse, 0, len(profiles))
-	for _, profile := range profiles {
-		item, err := h.toControlProfile(c.Request().Context(), profile)
+	items := make([]controlTeamResponse, 0, len(teams))
+	for _, team := range teams {
+		item, err := h.toControlTeam(c.Request().Context(), team)
 		if err != nil {
 			return err
 		}
@@ -284,15 +284,15 @@ func (h *controlPortalHandler) listProfiles(c echo.Context) error {
 	})
 }
 
-func (h *controlPortalHandler) createProfile(c echo.Context) error {
-	var body dto.CreateProfileRequest
+func (h *controlPortalHandler) createTeam(c echo.Context) error {
+	var body dto.CreateTeamRequest
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
 	if err := httpvalidation.ValidateStruct(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 	}
-	profile, err := h.profiles.Create(c.Request().Context(), service.CreateProfileRequest{
+	team, err := h.teams.Create(c.Request().Context(), service.CreateTeamRequest{
 		Name:        body.Name,
 		Description: body.Description,
 		Metadata:    body.Metadata,
@@ -301,19 +301,19 @@ func (h *controlPortalHandler) createProfile(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	item, err := h.toControlProfile(c.Request().Context(), profile)
+	item, err := h.toControlTeam(c.Request().Context(), team)
 	if err != nil {
 		return err
 	}
 	return c.JSON(nethttp.StatusCreated, map[string]any{"data": item})
 }
 
-func (h *controlPortalHandler) updateProfile(c echo.Context) error {
-	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+func (h *controlPortalHandler) updateTeam(c echo.Context) error {
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
 	}
-	var body dto.UpdateProfileRequest
+	var body dto.UpdateTeamRequest
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
@@ -327,7 +327,7 @@ func (h *controlPortalHandler) updateProfile(c echo.Context) error {
 	if body.Description != "" {
 		descPtr = &body.Description
 	}
-	profile, err := h.profiles.Update(c.Request().Context(), profileID, service.UpdateProfileRequest{
+	team, err := h.teams.Update(c.Request().Context(), teamID, service.UpdateTeamRequest{
 		Name:        namePtr,
 		Description: descPtr,
 		Metadata:    body.Metadata,
@@ -336,41 +336,41 @@ func (h *controlPortalHandler) updateProfile(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	item, err := h.toControlProfile(c.Request().Context(), profile)
+	item, err := h.toControlTeam(c.Request().Context(), team)
 	if err != nil {
 		return err
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": item})
 }
 
-func (h *controlPortalHandler) deleteProfile(c echo.Context) error {
-	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+func (h *controlPortalHandler) deleteTeam(c echo.Context) error {
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
 	}
-	if err := h.profiles.Delete(c.Request().Context(), profileID, nil, "control", c.RealIP(), ""); err != nil {
+	if err := h.teams.Delete(c.Request().Context(), teamID, nil, "control", c.RealIP(), ""); err != nil {
 		return err
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "deleted"}})
 }
 
-func (h *controlPortalHandler) listAPIKeys(c echo.Context) error {
-	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+func (h *controlPortalHandler) listCredentials(c echo.Context) error {
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
 	}
 	limit, offset := controlPagination(c)
-	keys, err := h.keys.ListByProfile(c.Request().Context(), profileID, limit, offset)
+	credentials, err := h.credentials.ListByTeam(c.Request().Context(), teamID, limit, offset)
 	if err != nil {
 		return err
 	}
-	total, err := h.keys.CountByProfile(c.Request().Context(), profileID)
+	total, err := h.credentials.CountByTeam(c.Request().Context(), teamID)
 	if err != nil {
 		return err
 	}
-	items := make([]controlAPIKeyResponse, 0, len(keys))
-	for _, key := range keys {
-		items = append(items, toControlAPIKey(key))
+	items := make([]controlCredentialResponse, 0, len(credentials))
+	for _, credential := range credentials {
+		items = append(items, toControlCredential(credential))
 	}
 	return c.JSON(nethttp.StatusOK, handler.PaginationEnvelope{
 		Data:       items,
@@ -378,23 +378,23 @@ func (h *controlPortalHandler) listAPIKeys(c echo.Context) error {
 	})
 }
 
-func (h *controlPortalHandler) createAPIKey(c echo.Context) error {
-	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+func (h *controlPortalHandler) createCredential(c echo.Context) error {
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
 	}
-	var body controlCreateAPIKeyRequest
+	var body controlCreateCredentialRequest
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
-	req := service.CreateAPIKeyRequest{
+	req := service.CreateCredentialRequest{
 		Name:      body.Name,
 		RateLimit: body.RateLimit,
 		Role:      body.Role,
 	}
 	if body.Scopes != nil {
 		if len(*body.Scopes) == 0 {
-			return httperr.New(httperr.VALIDATION_ERROR, service.APIKeyScopeValidationMessage())
+			return httperr.New(httperr.VALIDATION_ERROR, service.CredentialScopeValidationMessage())
 		}
 		req.Scopes = append([]string(nil), (*body.Scopes)...)
 	}
@@ -405,28 +405,28 @@ func (h *controlPortalHandler) createAPIKey(c echo.Context) error {
 		}
 		req.ExpiresAt = &expiresAt
 	}
-	key, rawKey, err := h.keys.CreateStandardKey(c.Request().Context(), profileID, req, nil, "control", c.RealIP(), "")
+	credential, rawKey, err := h.credentials.CreateCredential(c.Request().Context(), teamID, req, nil, "control", c.RealIP(), "")
 	if err != nil {
 		return err
 	}
 	return c.JSON(nethttp.StatusCreated, map[string]any{
 		"data": map[string]any{
-			"api_key": rawKey,
-			"key":     toControlAPIKey(key),
+			"api_key":    rawKey,
+			"credential": toControlCredential(credential),
 		},
 	})
 }
 
-func (h *controlPortalHandler) updateAPIKey(c echo.Context) error {
-	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+func (h *controlPortalHandler) updateCredential(c echo.Context) error {
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
 	}
-	keyID, err := parseControlUUID(controlTeamProfileIDParam(c), "profile ID")
+	credentialID, err := parseControlUUID(controlCredentialIDParam(c), "credential ID")
 	if err != nil {
 		return err
 	}
-	var body controlUpdateAPIKeyRequest
+	var body controlUpdateCredentialRequest
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
@@ -434,51 +434,51 @@ func (h *controlPortalHandler) updateAPIKey(c echo.Context) error {
 	rolePresent := strings.TrimSpace(body.Role) != ""
 	scopesPresent := body.Scopes != nil
 	if !namePresent && !rolePresent && !scopesPresent {
-		return httperr.New(httperr.VALIDATION_ERROR, "profile name, role, or scopes is required")
+		return httperr.New(httperr.VALIDATION_ERROR, "credential name, role, or scopes is required")
 	}
 	if boolCount(namePresent, rolePresent, scopesPresent) > 1 {
-		return httperr.New(httperr.VALIDATION_ERROR, "profile name, role, and scopes must be updated separately")
+		return httperr.New(httperr.VALIDATION_ERROR, "credential name, role, and scopes must be updated separately")
 	}
 	if rolePresent {
-		if _, err := service.NormalizeAPIKeyRole(body.Role); err != nil {
+		if _, err := service.NormalizeCredentialRole(body.Role); err != nil {
 			return err
 		}
 	}
 	if scopesPresent && len(*body.Scopes) == 0 {
-		return httperr.New(httperr.VALIDATION_ERROR, service.APIKeyScopeValidationMessage())
+		return httperr.New(httperr.VALIDATION_ERROR, service.CredentialScopeValidationMessage())
 	}
-	var key *domain.APIKey
+	var credential *domain.Credential
 	if namePresent {
-		key, err = h.keys.UpdateNameForProfile(c.Request().Context(), profileID, keyID, body.Name, nil, "control", c.RealIP(), "")
+		credential, err = h.credentials.UpdateNameForTeam(c.Request().Context(), teamID, credentialID, body.Name, nil, "control", c.RealIP(), "")
 		if err != nil {
 			return err
 		}
 	}
 	if rolePresent {
-		key, err = h.keys.UpdateRoleForProfile(c.Request().Context(), profileID, keyID, body.Role, nil, "control", c.RealIP(), "")
+		credential, err = h.credentials.UpdateRoleForTeam(c.Request().Context(), teamID, credentialID, body.Role, nil, "control", c.RealIP(), "")
 		if err != nil {
 			return err
 		}
 	}
 	if scopesPresent {
-		key, err = h.keys.UpdateScopesForProfile(c.Request().Context(), profileID, keyID, *body.Scopes, nil, "control", c.RealIP(), "")
+		credential, err = h.credentials.UpdateScopesForTeam(c.Request().Context(), teamID, credentialID, *body.Scopes, nil, "control", c.RealIP(), "")
 		if err != nil {
 			return err
 		}
 	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlAPIKey(key)})
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlCredential(credential)})
 }
 
-func (h *controlPortalHandler) rotateAPIKey(c echo.Context) error {
-	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+func (h *controlPortalHandler) rotateCredential(c echo.Context) error {
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
 	}
-	keyID, err := parseControlUUID(controlTeamProfileIDParam(c), "profile ID")
+	credentialID, err := parseControlUUID(controlCredentialIDParam(c), "credential ID")
 	if err != nil {
 		return err
 	}
-	var body controlCreateAPIKeyRequest
+	var body controlCreateCredentialRequest
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
@@ -488,7 +488,7 @@ func (h *controlPortalHandler) rotateAPIKey(c echo.Context) error {
 	if strings.TrimSpace(body.Role) != "" {
 		return httperr.New(httperr.VALIDATION_ERROR, "role cannot be changed by rotating a key")
 	}
-	req := service.CreateAPIKeyRequest{
+	req := service.CreateCredentialRequest{
 		Name:      body.Name,
 		RateLimit: body.RateLimit,
 	}
@@ -499,28 +499,28 @@ func (h *controlPortalHandler) rotateAPIKey(c echo.Context) error {
 		}
 		req.ExpiresAt = &expiresAt
 	}
-	key, rawKey, err := h.keys.RotateForProfile(c.Request().Context(), profileID, keyID, req, nil, "control", c.RealIP(), "")
+	credential, rawKey, err := h.credentials.RotateForTeam(c.Request().Context(), teamID, credentialID, req, nil, "control", c.RealIP(), "")
 	if err != nil {
 		return err
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{
 		"data": map[string]any{
-			"api_key": rawKey,
-			"key":     toControlAPIKey(key),
+			"api_key":    rawKey,
+			"credential": toControlCredential(credential),
 		},
 	})
 }
 
-func (h *controlPortalHandler) deleteAPIKey(c echo.Context) error {
-	profileID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+func (h *controlPortalHandler) deleteCredential(c echo.Context) error {
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
 	}
-	keyID, err := parseControlUUID(controlTeamProfileIDParam(c), "profile ID")
+	credentialID, err := parseControlUUID(controlCredentialIDParam(c), "credential ID")
 	if err != nil {
 		return err
 	}
-	if err := h.keys.DeleteForProfile(c.Request().Context(), profileID, keyID, nil, "control", c.RealIP(), ""); err != nil {
+	if err := h.credentials.DeleteForTeam(c.Request().Context(), teamID, credentialID, nil, "control", c.RealIP(), ""); err != nil {
 		return err
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "deleted"}})
@@ -632,7 +632,7 @@ func (h *controlPortalHandler) deleteSecurityBan(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "deleted"}})
 }
 
-type controlCreateAPIKeyRequest struct {
+type controlCreateCredentialRequest struct {
 	Name      string    `json:"name"`
 	Scopes    *[]string `json:"scopes"`
 	Role      string    `json:"role"`
@@ -640,7 +640,7 @@ type controlCreateAPIKeyRequest struct {
 	ExpiresAt *string   `json:"expires_at"`
 }
 
-type controlUpdateAPIKeyRequest struct {
+type controlUpdateCredentialRequest struct {
 	Name   string    `json:"name"`
 	Role   string    `json:"role"`
 	Scopes *[]string `json:"scopes"`
@@ -806,17 +806,11 @@ func boolCount(values ...bool) int {
 	return count
 }
 func controlTeamIDParam(c echo.Context) string {
-	if v := c.Param("teamId"); v != "" {
-		return v
-	}
-	return c.Param("profileId")
+	return c.Param("teamId")
 }
 
-func controlTeamProfileIDParam(c echo.Context) string {
-	if v := c.Param("keyId"); v != "" {
-		return v
-	}
-	return c.Param("profileId")
+func controlCredentialIDParam(c echo.Context) string {
+	return c.Param("credentialId")
 }
 
 func controlPagination(c echo.Context) (int, int) {
@@ -894,7 +888,7 @@ func toControlSecurityBan(ban domain.SecurityIPBan) controlSecurityBanResponse {
 	}
 }
 
-type controlProfileResponse struct {
+type controlTeamResponse struct {
 	ID                uuid.UUID                     `json:"id"`
 	Name              string                        `json:"name"`
 	Description       string                        `json:"description"`
@@ -905,24 +899,24 @@ type controlProfileResponse struct {
 	UpdatedAt         string                        `json:"updated_at"`
 }
 
-func (h *controlPortalHandler) toControlProfile(ctx context.Context, profile *domain.Profile) (controlProfileResponse, error) {
-	effective, err := effectiveDreamingConfig(ctx, h.appConfig, profile.Config)
+func (h *controlPortalHandler) toControlTeam(ctx context.Context, team *domain.Team) (controlTeamResponse, error) {
+	effective, err := effectiveDreamingConfig(ctx, h.appConfig, team.Config)
 	if err != nil {
-		return controlProfileResponse{}, err
+		return controlTeamResponse{}, err
 	}
-	return controlProfileResponse{
-		ID:                profile.ID,
-		Name:              profile.Name,
-		Description:       profile.Description,
-		Metadata:          profile.Metadata,
-		Config:            profile.Config,
+	return controlTeamResponse{
+		ID:                team.ID,
+		Name:              team.Name,
+		Description:       team.Description,
+		Metadata:          team.Metadata,
+		Config:            team.Config,
 		DreamingEffective: effective,
-		CreatedAt:         profile.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:         profile.UpdatedAt.Format(time.RFC3339),
+		CreatedAt:         team.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:         team.UpdatedAt.Format(time.RFC3339),
 	}, nil
 }
 
-type controlAPIKeyResponse struct {
+type controlCredentialResponse struct {
 	ID         uuid.UUID `json:"id"`
 	TeamID     uuid.UUID `json:"team_id"`
 	Name       string    `json:"name"`
@@ -935,18 +929,18 @@ type controlAPIKeyResponse struct {
 	CreatedAt  string    `json:"created_at"`
 }
 
-func toControlAPIKey(key *domain.APIKey) controlAPIKeyResponse {
-	return controlAPIKeyResponse{
-		ID:         key.ID,
-		TeamID:     key.GetTeamID(),
-		Name:       key.GetProfileName(),
-		KeySuffix:  key.KeySuffix,
-		Scopes:     append([]string{}, key.Scopes...),
-		Role:       key.GetRole(),
-		RateLimit:  key.RateLimit,
-		LastUsedAt: controlTimePtr(key.LastUsedAt),
-		ExpiresAt:  controlTimePtr(key.ExpiresAt),
-		CreatedAt:  key.CreatedAt.Format(time.RFC3339),
+func toControlCredential(credential *domain.Credential) controlCredentialResponse {
+	return controlCredentialResponse{
+		ID:         credential.ID,
+		TeamID:     credential.GetTeamID(),
+		Name:       credential.GetName(),
+		KeySuffix:  credential.KeySuffix,
+		Scopes:     append([]string{}, credential.Scopes...),
+		Role:       credential.GetRole(),
+		RateLimit:  credential.RateLimit,
+		LastUsedAt: controlTimePtr(credential.LastUsedAt),
+		ExpiresAt:  controlTimePtr(credential.ExpiresAt),
+		CreatedAt:  credential.CreatedAt.Format(time.RFC3339),
 	}
 }
 

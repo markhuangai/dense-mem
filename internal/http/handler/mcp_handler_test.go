@@ -53,7 +53,7 @@ func TestMCPHandlerPostInitializeUsesResolvedTeamContext(t *testing.T) {
 		Name:        "Dense-Mem Project",
 		Description: "Project memory only",
 	})
-	ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{TeamID: profileID, Scopes: []string{"read"}})
+	ctx = middleware.SetPrincipalForTest(ctx, &middleware.Principal{TeamID: profileID, Grants: []string{"read"}})
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -91,6 +91,7 @@ func TestMCPHandlerPostToolCallUsesAuthenticatedProfile(t *testing.T) {
 	e := echo.New()
 	body := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"probe","arguments":{"team_id":"attacker"}}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -107,6 +108,7 @@ func TestMCPHandlerPostSSE(t *testing.T) {
 	e := echo.New()
 	profileID := uuid.New()
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	req.Header.Set(echo.HeaderAccept, "text/event-stream")
 	req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
 	rec := httptest.NewRecorder()
@@ -125,6 +127,7 @@ func TestMCPHandlerPostNotificationAcceptedWithSSEAccept(t *testing.T) {
 	e := echo.New()
 	profileID := uuid.New()
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	req.Header.Set(echo.HeaderAccept, "text/event-stream, application/json")
 	req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
 	rec := httptest.NewRecorder()
@@ -145,6 +148,7 @@ func TestMCPHandlerToolsListFiltersByScope(t *testing.T) {
 	e := echo.New()
 	profileID := uuid.New()
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -161,7 +165,7 @@ func TestMCPHandlerPostValidationBranches(t *testing.T) {
 
 	t.Run("missing profile", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
-		req = req.WithContext(middleware.SetPrincipalForTest(req.Context(), &middleware.Principal{Scopes: []string{"read"}}))
+		req = req.WithContext(middleware.SetPrincipalForTest(req.Context(), &middleware.Principal{Grants: []string{"read"}}))
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 
@@ -173,7 +177,7 @@ func TestMCPHandlerPostValidationBranches(t *testing.T) {
 
 	t.Run("missing principal", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
-		req = req.WithContext(middleware.SetResolvedProfileIDForTest(req.Context(), uuid.New()))
+		req = req.WithContext(middleware.SetResolvedTeamIDForTest(req.Context(), uuid.New()))
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 
@@ -185,19 +189,19 @@ func TestMCPHandlerPostValidationBranches(t *testing.T) {
 
 	t.Run("empty body", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`   `))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 		req = req.WithContext(mcpTestContext(req.Context(), uuid.New(), []string{"read"}))
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 
-		err := h.HandlePost(c)
-
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "request body is required")
+		require.NoError(t, h.HandlePost(c))
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.NotEmpty(t, rec.Body.String())
 	})
 }
 
 func TestMCPHandlerSDKPostInitialize(t *testing.T) {
-	h := NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(registry.New(), testMCPLogger(), nil, nil, "sdk")
+	h := NewMCPHandlerWithLifecycleAndRuntimeConfig(registry.New(), testMCPLogger(), nil, nil)
 	e := echo.New()
 	profileID := uuid.New()
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`))
@@ -214,7 +218,7 @@ func TestMCPHandlerSDKPostInitialize(t *testing.T) {
 }
 
 func TestMCPHandlerSDKPostValidationBranches(t *testing.T) {
-	h := NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(registry.New(), testMCPLogger(), nil, nil, "sdk")
+	h := NewMCPHandlerWithLifecycleAndRuntimeConfig(registry.New(), testMCPLogger(), nil, nil)
 	e := echo.New()
 	profileID := uuid.New()
 	newContext := func(body string) (echo.Context, *httptest.ResponseRecorder) {
@@ -299,15 +303,6 @@ func TestMCPHandlerSDKInitializePayloadAndProtocolError(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"message":"bad request"`)
 }
 
-func TestMCPHandlerTransportConstructors(t *testing.T) {
-	legacy := NewMCPHandlerWithLifecycleAndRuntimeConfig(registry.New(), testMCPLogger(), nil, nil)
-	require.Equal(t, "legacy", legacy.transport)
-	sdk := NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(registry.New(), testMCPLogger(), nil, nil, "sdk")
-	require.Equal(t, "sdk", sdk.transport)
-	fallback := NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(registry.New(), testMCPLogger(), nil, nil, "unknown")
-	require.Equal(t, "legacy", fallback.transport)
-}
-
 func TestMCPHandlerSDKUsesStreamLifecycleForEventStreams(t *testing.T) {
 	e := echo.New()
 	profileID := uuid.New()
@@ -317,7 +312,7 @@ func TestMCPHandlerSDKUsesStreamLifecycleForEventStreams(t *testing.T) {
 		require.Equal(t, profileID.String(), gotProfileID)
 		return work(ctx)
 	}}
-	h := NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(registry.New(), testMCPLogger(), lifecycle, nil, "sdk")
+	h := NewMCPHandlerWithLifecycleAndRuntimeConfig(registry.New(), testMCPLogger(), lifecycle, nil)
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
@@ -350,7 +345,7 @@ func TestMCPHandlerGetBranches(t *testing.T) {
 		h := NewMCPHandler(registry.New(), testMCPLogger())
 		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
 		req.Header.Set(echo.HeaderAccept, "text/event-stream")
-		req = req.WithContext(middleware.SetResolvedProfileIDForTest(req.Context(), profileID))
+		req = req.WithContext(middleware.SetResolvedTeamIDForTest(req.Context(), profileID))
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 
@@ -381,7 +376,7 @@ func TestMCPHandlerGetBranches(t *testing.T) {
 		})
 		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
 		req.Header.Set(echo.HeaderAccept, "text/event-stream")
-		req = req.WithContext(middleware.SetResolvedProfileIDForTest(req.Context(), profileID))
+		req = req.WithContext(middleware.SetResolvedTeamIDForTest(req.Context(), profileID))
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 
@@ -399,7 +394,7 @@ func TestMCPHandlerGetBranches(t *testing.T) {
 		})
 		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
 		req.Header.Set(echo.HeaderAccept, "text/event-stream")
-		req = req.WithContext(middleware.SetResolvedProfileIDForTest(req.Context(), profileID))
+		req = req.WithContext(middleware.SetResolvedTeamIDForTest(req.Context(), profileID))
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 
@@ -416,7 +411,7 @@ func TestMCPHandlerGetBranches(t *testing.T) {
 		})
 		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
 		req.Header.Set(echo.HeaderAccept, "text/event-stream")
-		req = req.WithContext(middleware.SetResolvedProfileIDForTest(req.Context(), profileID))
+		req = req.WithContext(middleware.SetResolvedTeamIDForTest(req.Context(), profileID))
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 
@@ -436,8 +431,8 @@ func TestWriteSSEComment(t *testing.T) {
 }
 
 func mcpTestContext(ctx context.Context, profileID uuid.UUID, scopes []string) context.Context {
-	ctx = middleware.SetResolvedProfileIDForTest(ctx, profileID)
-	return middleware.SetPrincipalForTest(ctx, &middleware.Principal{ProfileID: &profileID, Scopes: scopes})
+	ctx = middleware.SetResolvedTeamIDForTest(ctx, profileID)
+	return middleware.SetPrincipalForTest(ctx, &middleware.Principal{TeamID: profileID, OwnerID: profileID, Grants: scopes})
 }
 
 func testMCPLogger() observability.LogProvider {

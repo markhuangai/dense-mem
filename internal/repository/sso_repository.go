@@ -35,15 +35,15 @@ type SSORepository interface {
 	DeleteMapping(ctx context.Context, providerID, id uuid.UUID) error
 	ListMappingsForGroups(ctx context.Context, providerID uuid.UUID, groups []string) ([]*domain.SSOGroupMapping, error)
 	DirectoryAuthorityActive(ctx context.Context, providerID uuid.UUID) (bool, error)
-	DirectoryTeamProfileEntitled(ctx context.Context, profileID, providerID, identityID, teamID uuid.UUID, groupID string) (bool, error)
+	DirectoryMembershipEntitled(ctx context.Context, providerID, identityID, teamID uuid.UUID, groupID string) (bool, error)
 
 	UpsertIdentity(ctx context.Context, identity *domain.SSOIdentity) error
 	GetIdentity(ctx context.Context, id uuid.UUID) (*domain.SSOIdentity, error)
 	GetIdentityByProviderSubject(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOIdentity, error)
 
-	UpsertTeamProfileForMapping(ctx context.Context, identity domain.SSOIdentity, mapping domain.SSOGroupMapping, name string) (*domain.APIKey, error)
-	ListTeamProfilesForIdentity(ctx context.Context, identityID uuid.UUID) ([]*domain.SSOTeamProfile, error)
-	GetSSOProfileByID(ctx context.Context, id uuid.UUID) (*domain.APIKey, error)
+	UpsertTeamMembershipForMapping(ctx context.Context, identity domain.SSOIdentity, mapping domain.SSOGroupMapping, name string) (*domain.Membership, error)
+	ListTeamMembershipsForIdentity(ctx context.Context, identityID uuid.UUID) ([]*domain.SSOTeamMembership, error)
+	GetTeamMembershipByOwnerID(ctx context.Context, id uuid.UUID) (*domain.SSOTeamMembership, error)
 
 	GetEntitlementCache(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOEntitlementCache, error)
 	SetEntitlementCache(ctx context.Context, cache domain.SSOEntitlementCache) error
@@ -54,7 +54,7 @@ type SSORepository interface {
 
 	CreateSession(ctx context.Context, session domain.SSOSession) error
 	GetSession(ctx context.Context, sessionHash string) (*domain.SSOSession, error)
-	UpdateSessionTeam(ctx context.Context, sessionHash string, teamProfileID, teamID uuid.UUID) error
+	UpdateSessionTeam(ctx context.Context, sessionHash string, teamID uuid.UUID) error
 	DeleteSession(ctx context.Context, sessionHash string) error
 	DeleteExpiredSessions(ctx context.Context, now time.Time) error
 }
@@ -544,37 +544,36 @@ func (r *SSORepositoryImpl) ListMappingsForGroups(ctx context.Context, providerI
 	return mappings, nil
 }
 
-func (r *SSORepositoryImpl) UpsertTeamProfileForMapping(ctx context.Context, identity domain.SSOIdentity, mapping domain.SSOGroupMapping, name string) (*domain.APIKey, error) {
+func (r *SSORepositoryImpl) UpsertTeamMembershipForMapping(ctx context.Context, identity domain.SSOIdentity, mapping domain.SSOGroupMapping, name string) (*domain.Membership, error) {
 	now := time.Now().UTC()
-	var key *domain.APIKey
+	var result *domain.Membership
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		if err := setActiveSSOTeamMutationScope(ctx, tx, mapping.TeamID.String()); err != nil {
 			return err
 		}
-		aliasID, createdAt, err := upsertCanonicalSSOMembershipTx(tx, canonicalSSOMembershipInput{
+		membershipID, ownerID, createdAt, err := upsertCanonicalSSOMembershipTx(tx, canonicalSSOMembershipInput{
 			IdentityID: identity.ID, ProviderID: identity.ProviderID, TeamID: mapping.TeamID,
-			Scopes: mapping.Scopes, Role: mapping.Role, GroupID: mapping.GroupID, ProfileName: name,
+			Scopes: mapping.Scopes, Role: mapping.Role, GroupID: mapping.GroupID, MembershipName: name,
 			LastEntitlementCheckedAt: &now, LastLoginAt: identity.LastLoginAt, Now: now,
 		})
 		if err != nil {
 			return err
 		}
-		key = &domain.APIKey{
-			ID: aliasID, ProfileID: mapping.TeamID, TeamID: mapping.TeamID,
-			Label: name, Name: name, Scopes: append([]string(nil), mapping.Scopes...),
-			Role: mapping.Role, AuthSource: "sso", CreatedAt: createdAt,
-			SSOIdentityID: &identity.ID, SSOProviderID: &identity.ProviderID,
+		providerID := identity.ProviderID
+		result = &domain.Membership{
+			ID: membershipID, ActorIdentityID: identity.ID, TeamID: mapping.TeamID, OwnerID: ownerID,
+			Name: name, Grants: append([]string(nil), mapping.Scopes...), Role: mapping.Role,
+			Status: "active", CreatedAt: createdAt, SSOProviderID: &providerID,
 			SSOSubject: identity.Subject, SSOEmail: identity.Email, SSOGroupID: mapping.GroupID,
 			SSOEntitlementStatus: "active", SSOLastEntitlementCheckedAt: &now,
 			SSOLastLoginAt: identity.LastLoginAt,
 		}
-		key.TeamName = mapping.TeamName
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to upsert sso team profile: %w", err)
+		return nil, fmt.Errorf("failed to upsert sso team membership: %w", err)
 	}
-	return key, nil
+	return result, nil
 }
 
 type canonicalSSOMembershipInput struct {
@@ -584,13 +583,13 @@ type canonicalSSOMembershipInput struct {
 	Scopes                   []string
 	Role                     string
 	GroupID                  string
-	ProfileName              string
+	MembershipName           string
 	LastEntitlementCheckedAt *time.Time
 	LastLoginAt              *time.Time
 	Now                      time.Time
 }
 
-func upsertCanonicalSSOMembershipTx(tx *gorm.DB, input canonicalSSOMembershipInput) (uuid.UUID, time.Time, error) {
+func upsertCanonicalSSOMembershipTx(tx *gorm.DB, input canonicalSSOMembershipInput) (uuid.UUID, uuid.UUID, time.Time, error) {
 	var membershipID uuid.UUID
 	var createdAt time.Time
 	if err := tx.Raw(`
@@ -612,11 +611,11 @@ func upsertCanonicalSSOMembershipTx(tx *gorm.DB, input canonicalSSOMembershipInp
 			updated_at = EXCLUDED.updated_at
 		RETURNING id, created_at
 	`, input.IdentityID, input.TeamID, input.Role == "manager", pq.Array(input.Scopes),
-		input.ProviderID, input.GroupID, input.ProfileName, input.LastEntitlementCheckedAt, input.LastLoginAt, input.Now).Row().Scan(&membershipID, &createdAt); err != nil {
-		return uuid.Nil, time.Time{}, err
+		input.ProviderID, input.GroupID, input.MembershipName, input.LastEntitlementCheckedAt, input.LastLoginAt, input.Now).Row().Scan(&membershipID, &createdAt); err != nil {
+		return uuid.Nil, uuid.Nil, time.Time{}, err
 	}
 	if err := replaceLegacyMembershipGrants(tx, membershipID, input.Scopes); err != nil {
-		return uuid.Nil, time.Time{}, err
+		return uuid.Nil, uuid.Nil, time.Time{}, err
 	}
 	aliasID := uuid.Nil
 	if err := tx.Raw(`
@@ -626,7 +625,7 @@ func upsertCanonicalSSOMembershipTx(tx *gorm.DB, input canonicalSSOMembershipInp
 		ORDER BY created_at, legacy_owner_id
 		LIMIT 1
 	`, input.TeamID, input.IdentityID).Row().Scan(&aliasID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return uuid.Nil, time.Time{}, err
+		return uuid.Nil, uuid.Nil, time.Time{}, err
 	}
 	if aliasID == uuid.Nil {
 		aliasID = membershipID
@@ -635,10 +634,10 @@ func upsertCanonicalSSOMembershipTx(tx *gorm.DB, input canonicalSSOMembershipInp
 				team_id, legacy_owner_id, canonical_identity_id, credential_id, reason
 			) VALUES ($1, $2, $3, NULL, 'membership')
 		`, input.TeamID, aliasID, input.IdentityID).Error; err != nil {
-			return uuid.Nil, time.Time{}, err
+			return uuid.Nil, uuid.Nil, time.Time{}, err
 		}
 	}
-	return aliasID, createdAt, nil
+	return membershipID, aliasID, createdAt, nil
 }
 
 func setActiveSSOTeamMutationScope(ctx context.Context, tx *gorm.DB, teamID string) error {
@@ -649,16 +648,17 @@ func setActiveSSOTeamMutationScope(ctx context.Context, tx *gorm.DB, teamID stri
 	return ensureActiveTeamForMutation(ctx, tx, teamID)
 }
 
-func (r *SSORepositoryImpl) ListTeamProfilesForIdentity(ctx context.Context, identityID uuid.UUID) ([]*domain.SSOTeamProfile, error) {
-	profiles := make([]*domain.SSOTeamProfile, 0)
+func (r *SSORepositoryImpl) ListTeamMembershipsForIdentity(ctx context.Context, identityID uuid.UUID) ([]*domain.SSOTeamMembership, error) {
+	memberships := make([]*domain.SSOTeamMembership, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
 			SELECT
 				t.id, t.name, t.description, t.created_at, t.updated_at,
-				alias.legacy_owner_id, membership.team_id, COALESCE(NULLIF(membership.sso_profile_name, ''), actor.display_name, ''),
+				membership.id, membership.actor_identity_id, membership.team_id,
+				alias.legacy_owner_id, COALESCE(NULLIF(membership.sso_profile_name, ''), actor.display_name, ''),
 				membership.maximum_grants, CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END,
-				0, NULL, NULL, membership.created_at, NULL, 'sso', actor.id,
-				membership.sso_provider_id, actor.subject, COALESCE(identity.email, ''), membership.sso_group_id,
+				membership.status, membership.created_at, membership.sso_provider_id,
+				actor.subject, COALESCE(identity.email, ''), membership.sso_group_id,
 				membership.sso_entitlement_status, membership.sso_last_entitlement_checked_at, membership.sso_last_login_at
 			FROM team_memberships membership
 			JOIN actor_identities actor ON actor.id = membership.actor_identity_id
@@ -686,29 +686,31 @@ func (r *SSORepositoryImpl) ListTeamProfilesForIdentity(ctx context.Context, ide
 		}
 		defer rows.Close()
 		for rows.Next() {
-			item, err := scanSSOTeamProfile(rows)
+			item, err := scanSSOTeamMembership(rows)
 			if err != nil {
 				return err
 			}
-			profiles = append(profiles, item)
+			memberships = append(memberships, item)
 		}
 		return rows.Err()
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list sso team profiles: %w", err)
+		return nil, fmt.Errorf("failed to list sso team memberships: %w", err)
 	}
-	return profiles, nil
+	return memberships, nil
 }
 
-func (r *SSORepositoryImpl) GetSSOProfileByID(ctx context.Context, id uuid.UUID) (*domain.APIKey, error) {
-	var key *domain.APIKey
+func (r *SSORepositoryImpl) GetTeamMembershipByOwnerID(ctx context.Context, id uuid.UUID) (*domain.SSOTeamMembership, error) {
+	var result *domain.SSOTeamMembership
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
 			SELECT
-				alias.legacy_owner_id, membership.team_id, COALESCE(t.name, ''), COALESCE(NULLIF(membership.sso_profile_name, ''), actor.display_name, ''),
+				t.id, t.name, t.description, t.created_at, t.updated_at,
+				membership.id, membership.actor_identity_id, membership.team_id,
+				alias.legacy_owner_id, COALESCE(NULLIF(membership.sso_profile_name, ''), actor.display_name, ''),
 				membership.maximum_grants, CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END,
-				0, NULL, NULL, membership.created_at, NULL, 'sso', actor.id,
-				membership.sso_provider_id, actor.subject, COALESCE(identity.email, ''), membership.sso_group_id,
+				membership.status, membership.created_at, membership.sso_provider_id,
+				actor.subject, COALESCE(identity.email, ''), membership.sso_group_id,
 				membership.sso_entitlement_status, membership.sso_last_entitlement_checked_at, membership.sso_last_login_at
 			FROM ownership_aliases alias
 			JOIN team_memberships membership
@@ -732,17 +734,17 @@ func (r *SSORepositoryImpl) GetSSOProfileByID(ctx context.Context, id uuid.UUID)
 		if !rows.Next() {
 			return rows.Err()
 		}
-		scanned, err := scanSSOAPIKeyWithTeamName(rows)
+		scanned, err := scanSSOTeamMembership(rows)
 		if err != nil {
 			return err
 		}
-		key = scanned
+		result = scanned
 		return rows.Err()
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get sso profile: %w", err)
+		return nil, fmt.Errorf("failed to get sso team membership: %w", err)
 	}
-	return key, nil
+	return result, nil
 }
 
 func (r *SSORepositoryImpl) GetEntitlementCache(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOEntitlementCache, error) {
@@ -854,7 +856,7 @@ func (r *SSORepositoryImpl) CreateSession(ctx context.Context, session domain.SS
 			 AND membership.actor_identity_id = alias.canonical_identity_id
 			WHERE alias.team_id = $5 AND alias.legacy_owner_id = $4
 			  AND alias.credential_id IS NULL
-		`, session.SessionHash, session.IdentityID, session.ProviderID, session.TeamProfileID, session.TeamID, session.CSRFHash, session.ExpiresAt, session.CreatedAt)
+		`, session.SessionHash, session.IdentityID, session.ProviderID, session.OwnerID, session.TeamID, session.CSRFHash, session.ExpiresAt, session.CreatedAt)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -874,7 +876,7 @@ func (r *SSORepositoryImpl) GetSession(ctx context.Context, sessionHash string) 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
 			SELECT session.session_hash, session.identity_id, session.provider_id,
-			       alias.legacy_owner_id, session.team_id, session.csrf_hash,
+			       session.membership_id, alias.legacy_owner_id, session.team_id, session.csrf_hash,
 			       session.expires_at, session.created_at, session.last_seen_at
 			FROM sso_sessions session
 			JOIN team_memberships membership ON membership.id = session.membership_id
@@ -904,24 +906,22 @@ func (r *SSORepositoryImpl) GetSession(ctx context.Context, sessionHash string) 
 	return session, nil
 }
 
-func (r *SSORepositoryImpl) UpdateSessionTeam(ctx context.Context, sessionHash string, teamProfileID, teamID uuid.UUID) error {
+func (r *SSORepositoryImpl) UpdateSessionTeam(ctx context.Context, sessionHash string, teamID uuid.UUID) error {
 	now := time.Now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		res := tx.Exec(`
 			UPDATE sso_sessions session
 			SET membership_id = membership.id,
-			    team_id = $2,
-			    last_seen_at = $3
-			FROM ownership_aliases alias
-			JOIN team_memberships membership
-			  ON membership.team_id = alias.team_id
-			 AND membership.actor_identity_id = alias.canonical_identity_id
-			WHERE alias.team_id = $2
-			  AND alias.legacy_owner_id = $1
-			  AND alias.credential_id IS NULL
-			  AND session.session_hash = $4
-			  AND session.expires_at > $3
-		`, teamProfileID, teamID, now, sessionHash)
+			    team_id = $1,
+			    last_seen_at = $2
+			FROM team_memberships membership
+			WHERE membership.team_id = $1
+			  AND membership.actor_identity_id = session.identity_id
+			  AND membership.status = 'active'
+			  AND membership.sso_entitlement_status = 'active'
+			  AND session.session_hash = $3
+			  AND session.expires_at > $2
+		`, teamID, now, sessionHash)
 		if res.Error != nil {
 			return res.Error
 		}

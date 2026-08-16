@@ -15,23 +15,23 @@ import (
 const schedulerPageSize = 100
 
 type Scheduler struct {
-	service  Service
-	profiles ProfileService
-	config   AppConfig
-	logger   *slog.Logger
-	now      func() time.Time
-	runMu    sync.Mutex
+	service Service
+	teams   TeamService
+	config  AppConfig
+	logger  *slog.Logger
+	now     func() time.Time
+	runMu   sync.Mutex
 }
 
-func NewScheduler(service Service, profiles ProfileService, config AppConfig, logger *slog.Logger) *Scheduler {
+func NewScheduler(service Service, teams TeamService, config AppConfig, logger *slog.Logger) *Scheduler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Scheduler{service: service, profiles: profiles, config: config, logger: logger, now: func() time.Time { return time.Now().UTC() }}
+	return &Scheduler{service: service, teams: teams, config: config, logger: logger, now: func() time.Time { return time.Now().UTC() }}
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
-	if s == nil || s.service == nil || s.profiles == nil {
+	if s == nil || s.service == nil || s.teams == nil {
 		return
 	}
 	timer := time.NewTimer(nextMinuteDelay(s.now()))
@@ -84,16 +84,16 @@ func (s *Scheduler) runDue(ctx context.Context) {
 	}
 	semaphore := make(chan struct{}, concurrency)
 	for offset := 0; ; offset += schedulerPageSize {
-		profiles, err := s.profiles.List(ctx, schedulerPageSize, offset)
+		teams, err := s.teams.List(ctx, schedulerPageSize, offset)
 		if err != nil {
-			s.logger.Warn("community scheduler: profile listing failed", slog.String("error_kind", "profile_list_failed"))
+			s.logger.Warn("community scheduler: team listing failed", slog.String("error_kind", "team_list_failed"))
 			return
 		}
-		for _, profile := range profiles {
-			if profile == nil || profile.ID == uuid.Nil {
+		for _, team := range teams {
+			if team == nil || team.ID == uuid.Nil {
 				continue
 			}
-			teamID := profile.ID.String()
+			teamID := team.ID.String()
 			runs.Add(1)
 			go func(teamID string) {
 				defer runs.Done()
@@ -116,7 +116,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 				}
 			}(teamID)
 		}
-		if len(profiles) < schedulerPageSize {
+		if len(teams) < schedulerPageSize {
 			return
 		}
 	}

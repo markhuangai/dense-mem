@@ -275,7 +275,7 @@ func TestEnsureConflictSystemProfileAvoidsLegacyUserNameCollision(t *testing.T) 
 
 	var systemName, authSource string
 	var isSystem bool
-	var semanticRefCount int
+	var ownershipAliasCount int
 	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
 		if err := setConflictSystemTeamContext(ctx, tx, teamID); err != nil {
 			return err
@@ -290,16 +290,16 @@ func TestEnsureConflictSystemProfileAvoidsLegacyUserNameCollision(t *testing.T) 
 		}
 		return tx.Raw(`
 			SELECT COUNT(*)
-			FROM semantic_profile_refs
+			FROM ownership_aliases
 			WHERE team_id = ?::uuid
-			  AND profile_id = ?::uuid
-		`, teamID, systemProfileID).Row().Scan(&semanticRefCount)
+			  AND legacy_owner_id = ?::uuid
+		`, teamID, systemProfileID).Row().Scan(&ownershipAliasCount)
 	}))
 	assert.NotEqual(t, legacyName, systemName)
 	assert.True(t, strings.HasPrefix(systemName, conflictSystemProfileNamePrefix))
 	assert.Equal(t, "system", authSource)
 	assert.True(t, isSystem)
-	assert.Equal(t, 1, semanticRefCount)
+	assert.Equal(t, 1, ownershipAliasCount)
 
 	unscopedTeamID := createLedgerTeam(t, adminDB, rls, "conflict-system-profile-unscoped-team")
 	err := rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {

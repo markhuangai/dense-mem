@@ -24,13 +24,6 @@ import (
 // ProtocolVersion is the MCP protocol revision this server speaks.
 const ProtocolVersion = "2025-11-25"
 
-var supportedProtocolVersions = map[string]struct{}{
-	"2024-11-05":    {},
-	"2025-03-26":    {},
-	"2025-06-18":    {},
-	ProtocolVersion: {},
-}
-
 // ServerName and ServerVersion are surfaced in the initialize response.
 const (
 	ServerName    = "dense-mem"
@@ -49,7 +42,7 @@ const (
 // Server is an MCP server bound to a shared tool registry.
 type Server struct {
 	registry          registry.Registry
-	profileID         string
+	teamID            string
 	scopes            []string
 	team              TeamContext
 	logger            observability.LogProvider
@@ -64,35 +57,35 @@ type TeamContext struct {
 	Description string
 }
 
-// NewServer constructs a Server bound to a registry and a fixed profile ID.
-func NewServer(reg registry.Registry, profileID string, logger observability.LogProvider) *Server {
-	return NewServerWithScopesAndTeamContext(reg, profileID, nil, TeamContext{}, logger)
+// NewServer constructs a Server bound to a registry and a fixed team ID.
+func NewServer(reg registry.Registry, teamID string, logger observability.LogProvider) *Server {
+	return NewServerWithScopesAndTeamContext(reg, teamID, nil, TeamContext{}, logger)
 }
 
 // NewServerWithScopes constructs a Server that filters visible/callable tools by scope.
-func NewServerWithScopes(reg registry.Registry, profileID string, scopes []string, logger observability.LogProvider) *Server {
-	return NewServerWithScopesAndTeamContext(reg, profileID, scopes, TeamContext{}, logger)
+func NewServerWithScopes(reg registry.Registry, teamID string, scopes []string, logger observability.LogProvider) *Server {
+	return NewServerWithScopesAndTeamContext(reg, teamID, scopes, TeamContext{}, logger)
 }
 
 // NewServerWithScopesAndTeamContext constructs a Server with request-scoped team
 // metadata for MCP discovery surfaces.
-func NewServerWithScopesAndTeamContext(reg registry.Registry, profileID string, scopes []string, team TeamContext, logger observability.LogProvider) *Server {
-	return NewServerWithScopesTeamContextAndRuntimeConfig(reg, profileID, scopes, team, logger, nil)
+func NewServerWithScopesAndTeamContext(reg registry.Registry, teamID string, scopes []string, team TeamContext, logger observability.LogProvider) *Server {
+	return NewServerWithScopesTeamContextAndRuntimeConfig(reg, teamID, scopes, team, logger, nil)
 }
 
 // NewServerWithScopesTeamContextAndRuntimeConfig constructs a Server with
 // request-scoped team metadata and runtime feature visibility.
-func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, profileID string, scopes []string, team TeamContext, logger observability.LogProvider, recallFeedbackConfig registry.RecallFeedbackConfigProvider, dreams ...registry.DreamingConfigProvider) *Server {
+func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, teamID string, scopes []string, team TeamContext, logger observability.LogProvider, recallFeedbackConfig registry.RecallFeedbackConfigProvider, dreams ...registry.DreamingConfigProvider) *Server {
 	var dreamConfig registry.DreamingConfigProvider
 	if len(dreams) > 0 {
 		dreamConfig = dreams[0]
 	}
 	return &Server{
-		registry:  reg,
-		profileID: profileID,
-		scopes:    append([]string(nil), scopes...),
-		team:      normalizeTeamContext(team),
-		logger:    logger,
+		registry: reg,
+		teamID:   teamID,
+		scopes:   append([]string(nil), scopes...),
+		team:     normalizeTeamContext(team),
+		logger:   logger,
 		runtimeToolPolicy: registry.RuntimeToolPolicy{
 			RecallFeedback: recallFeedbackConfig,
 			Dreams:         dreamConfig,
@@ -101,328 +94,13 @@ func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, profi
 	}
 }
 
-// rpcRequest mirrors the incoming JSON-RPC 2.0 envelope.
-type rpcRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
-
-// rpcResponse mirrors the outgoing JSON-RPC 2.0 envelope.
-type rpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Result  any             `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
-}
-
-var (
-	errRPCParse          = errors.New("mcp json parse error")
-	errRPCInvalidRequest = errors.New("mcp invalid request")
-)
-
-func decodeRPCRequest(payload []byte, req *rpcRequest) error {
-	if !json.Valid(payload) {
-		return errRPCParse
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &fields); err != nil || fields == nil {
-		return errRPCInvalidRequest
-	}
-	for key := range fields {
-		switch key {
-		case "jsonrpc", "id", "method", "params":
-		default:
-			return errRPCInvalidRequest
-		}
-	}
-	jsonrpc, ok := fields["jsonrpc"]
-	if !ok || json.Unmarshal(jsonrpc, &req.JSONRPC) != nil || req.JSONRPC != "2.0" {
-		return errRPCInvalidRequest
-	}
-	method, ok := fields["method"]
-	if !ok || json.Unmarshal(method, &req.Method) != nil || strings.TrimSpace(req.Method) == "" {
-		return errRPCInvalidRequest
-	}
-	if id, ok := fields["id"]; ok {
-		if !validRPCID(id) {
-			return errRPCInvalidRequest
-		}
-		req.ID = append(req.ID[:0], id...)
-	}
-	if params, ok := fields["params"]; ok {
-		req.Params = append(req.Params[:0], params...)
-	}
-	return nil
-}
-
-func validRPCID(raw json.RawMessage) bool {
-	var value any
-	if json.Unmarshal(raw, &value) != nil {
-		return false
-	}
-	switch value.(type) {
-	case nil, string, float64:
-		return true
-	default:
-		return false
-	}
-}
-
-func unmarshalObject(raw json.RawMessage, target any) error {
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" || trimmed[0] != '{' {
-		return errRPCInvalidRequest
-	}
-	return json.Unmarshal(raw, target)
-}
-
 type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    any    `json:"data,omitempty"`
 }
 
-// PayloadResult describes whether a JSON-RPC payload produced a response.
-type PayloadResult struct {
-	Payload []byte
-	Respond bool
-}
-
-// HandlePayload handles one JSON-RPC request payload and returns one JSON-RPC response payload.
-func (s *Server) HandlePayload(ctx context.Context, payload []byte) []byte {
-	result := s.HandlePayloadResult(ctx, payload)
-	return result.Payload
-}
-
-// HandlePayloadResult handles one JSON-RPC payload and reports whether the
-// transport should write a response. Valid JSON-RPC notifications have no id and
-// must not receive a JSON-RPC response.
-func (s *Server) HandlePayloadResult(ctx context.Context, payload []byte) PayloadResult {
-	var req rpcRequest
-	if err := decodeRPCRequest(payload, &req); err != nil {
-		if errors.Is(err, errRPCParse) {
-			s.logger.Warn("mcp: parse error")
-			return PayloadResult{Payload: mustMarshalResponse(errorResponse(nil, errCodeParseError, "parse error")), Respond: true}
-		}
-		return PayloadResult{Payload: mustMarshalResponse(errorResponse(nil, errCodeInvalidRequest, "invalid request")), Respond: true}
-	}
-	if req.isNotification() {
-		if req.Method != "notifications/initialized" {
-			_ = s.dispatch(ctx, req)
-		}
-		return PayloadResult{Respond: false}
-	}
-	return PayloadResult{Payload: mustMarshalResponse(s.dispatch(ctx, req)), Respond: true}
-}
-
-// dispatch routes a single request to the right handler.
-func (s *Server) dispatch(ctx context.Context, req rpcRequest) rpcResponse {
-	switch req.Method {
-	case "initialize":
-		result, rpcErr := s.handleInitialize(req.Params)
-		if rpcErr != nil {
-			return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: rpcErr}
-		}
-		return okResponse(req.ID, result)
-	case "tools/list":
-		return okResponse(req.ID, s.handleToolsList(ctx))
-	case "tools/call":
-		result, rpcErr := s.handleToolsCall(ctx, req.Params)
-		if rpcErr != nil {
-			return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: rpcErr}
-		}
-		return okResponse(req.ID, result)
-	case "prompts/list":
-		return okResponse(req.ID, s.handlePromptsList())
-	case "prompts/get":
-		result, rpcErr := s.handlePromptsGet(req.Params)
-		if rpcErr != nil {
-			return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: rpcErr}
-		}
-		return okResponse(req.ID, result)
-	default:
-		s.logger.Warn("mcp: method not found", observability.String("method", req.Method))
-		return errorResponse(req.ID, errCodeMethodNotFound, "method not found: "+boundedRPCText(req.Method))
-	}
-}
-
-func (r rpcRequest) isNotification() bool {
-	return len(r.ID) == 0 && r.JSONRPC == "2.0" && r.Method != ""
-}
-
-// handleInitialize returns the server's capability block.
-type initializeParams struct {
-	ProtocolVersion string `json:"protocolVersion"`
-}
-
-func (s *Server) handleInitialize(raw json.RawMessage) (map[string]any, *rpcError) {
-	if len(raw) == 0 {
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: "initialize protocolVersion is required"}
-	}
-	var params initializeParams
-	if err := unmarshalObject(raw, &params); err != nil || strings.TrimSpace(params.ProtocolVersion) == "" {
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: "unsupported protocolVersion"}
-	}
-	negotiatedVersion := ProtocolVersion
-	if _, ok := supportedProtocolVersions[params.ProtocolVersion]; ok {
-		negotiatedVersion = params.ProtocolVersion
-	}
-	serverInfo := map[string]any{
-		"name":    s.serverName(),
-		"version": ServerVersion,
-	}
-	if s.team.Name != "" {
-		serverInfo["title"] = fmt.Sprintf("Dense-Mem: %s", s.team.Name)
-	}
-	if description := s.serverDescription(); description != "" {
-		serverInfo["description"] = description
-	}
-
-	capabilities := map[string]any{
-		"tools": map[string]any{},
-	}
-	if len(s.prompts.List()) > 0 {
-		capabilities["prompts"] = map[string]any{}
-	}
-
-	out := map[string]any{
-		"protocolVersion": negotiatedVersion,
-		"capabilities":    capabilities,
-		"serverInfo":      serverInfo,
-	}
-	if instructions := s.instructions(); instructions != "" {
-		out["instructions"] = instructions
-	}
-	return out, nil
-}
-
-func (s *Server) handlePromptsList() map[string]any {
-	listed := s.prompts.List()
-	out := make([]map[string]any, 0, len(listed))
-	for _, prompt := range listed {
-		args := make([]map[string]any, 0, len(prompt.Arguments))
-		for _, arg := range prompt.Arguments {
-			args = append(args, map[string]any{
-				"name":        arg.Name,
-				"description": arg.Description,
-				"required":    arg.Required,
-			})
-		}
-		item := map[string]any{
-			"name":        prompt.Name,
-			"description": prompt.Description,
-			"arguments":   args,
-		}
-		if prompt.Title != "" {
-			item["title"] = prompt.Title
-		}
-		out = append(out, item)
-	}
-	return map[string]any{"prompts": out}
-}
-
-type promptsGetParams struct {
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments"`
-}
-
-func (s *Server) handlePromptsGet(raw json.RawMessage) (map[string]any, *rpcError) {
-	if len(raw) == 0 {
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: "missing params"}
-	}
-	var params promptsGetParams
-	if err := json.Unmarshal(raw, &params); err != nil {
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: "invalid params"}
-	}
-	if params.Name == "" {
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: "missing prompt name"}
-	}
-	args := map[string]string{}
-	for key, value := range params.Arguments {
-		text, ok := value.(string)
-		if !ok {
-			return nil, &rpcError{
-				Code:    errCodeInvalidParams,
-				Message: fmt.Sprintf("argument %q must be a string", boundedRPCText(key)),
-			}
-		}
-		args[key] = text
-	}
-	prompt, text, err := s.prompts.Render(params.Name, args)
-	if err != nil {
-		if errors.Is(err, promptcatalog.ErrPromptNotFound) {
-			return nil, &rpcError{Code: errCodeMethodNotFound, Message: boundedRPCText(err.Error())}
-		}
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: boundedRPCText(err.Error())}
-	}
-	return map[string]any{
-		"description": prompt.Description,
-		"messages": []map[string]any{
-			{
-				"role": "user",
-				"content": map[string]any{
-					"type": "text",
-					"text": text,
-				},
-			},
-		},
-	}, nil
-}
-
-// handleToolsList returns registered tools mapped to MCP tool descriptors.
-// The registry is already the source of truth so this is a pure transform.
-func (s *Server) handleToolsList(ctx context.Context) map[string]any {
-	listed := s.registry.List()
-	policy := registry.ResolveRuntimeToolPolicy(ctx, s.runtimeToolPolicy, listed...)
-	out := make([]map[string]any, 0, len(listed))
-	for _, t := range listed {
-		if !registry.ToolVisible(ctx, t, policy) {
-			continue
-		}
-		if !s.canUseTool(t) {
-			continue
-		}
-		schema := t.InputSchema
-		if schema == nil {
-			schema = map[string]any{"type": "object"}
-		}
-		out = append(out, map[string]any{
-			"name":        t.Name,
-			"description": s.toolDescription(t.Description),
-			"inputSchema": schema,
-		})
-	}
-	return map[string]any{"tools": out}
-}
-
-// toolsCallParams is the MCP tools/call payload.
-type toolsCallParams struct {
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments"`
-}
-
-// handleToolsCall delegates to registry.Get(name).Invoke — no business logic
-// lives in this package. Errors are sanitized so provider credentials or raw
-// internal messages do not leak to the MCP client.
-func (s *Server) handleToolsCall(ctx context.Context, raw json.RawMessage) (map[string]any, *rpcError) {
-	if len(raw) == 0 {
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: "missing params"}
-	}
-	var params toolsCallParams
-	if err := json.Unmarshal(raw, &params); err != nil {
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: "invalid params"}
-	}
-	if params.Name == "" {
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: "missing tool name"}
-	}
-	return s.invokeTool(ctx, params.Name, params.Arguments)
-}
-
-// invokeTool is the registry-only execution seam shared by the legacy JSON-RPC
-// server and the official SDK transport. Keeping validation and authorization
-// here prevents the two transports from drifting.
+// invokeTool is the registry-only execution seam used by the official SDK.
 func (s *Server) invokeTool(ctx context.Context, name string, args map[string]any) (map[string]any, *rpcError) {
 	if name == "" {
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: "missing tool name"}
@@ -462,14 +140,14 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 		}
 	}
 	ctx = registry.WithRuntimeToolPolicy(ctx, policy)
-	result, err := tool.Invoke(ctx, s.profileID, args)
+	result, err := tool.Invoke(ctx, s.teamID, args)
 	if err != nil {
 		if errors.Is(err, registry.ErrToolDisabled) {
 			return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", name)}
 		}
 		s.logger.Error("mcp: tool invocation failed", err,
 			observability.String("tool", name),
-			observability.ProfileID(s.profileID),
+			observability.String("team_id", s.teamID),
 		)
 		return nil, &rpcError{Code: errCodeToolFailure, Message: boundedRPCText(tools.SanitizeError(err))}
 	}
@@ -619,23 +297,6 @@ func promptCatalogOrEmpty(logger observability.LogProvider, load func() (promptc
 		return promptcatalog.Catalog{}
 	}
 	return catalog
-}
-
-func okResponse(id json.RawMessage, result any) rpcResponse {
-	return rpcResponse{JSONRPC: "2.0", ID: id, Result: result}
-}
-
-func errorResponse(id json.RawMessage, code int, message string) rpcResponse {
-	return rpcResponse{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: code, Message: message}}
-}
-
-func mustMarshalResponse(resp rpcResponse) []byte {
-	payload, err := json.Marshal(resp)
-	if err != nil {
-		fallback := errorResponse(resp.ID, errCodeToolFailure, "response serialization failed")
-		payload, _ = json.Marshal(fallback)
-	}
-	return payload
 }
 
 func boundedRPCText(value string) string {

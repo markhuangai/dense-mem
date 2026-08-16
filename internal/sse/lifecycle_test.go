@@ -137,7 +137,7 @@ func newMockCleanupRepository() *mockCleanupRepository {
 	return &mockCleanupRepository{}
 }
 
-func (m *mockCleanupRepository) PurgeProfileStreamState(ctx context.Context, profileID string) error {
+func (m *mockCleanupRepository) PurgeTeamStreamState(ctx context.Context, profileID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cleanedUp = true
@@ -700,11 +700,11 @@ func TestRedisConcurrencyLimiterAcquireBranches(t *testing.T) {
 	})
 }
 
-func TestStreamCleanupRepositoryPurgeProfileStreamState(t *testing.T) {
+func TestStreamCleanupRepositoryPurgeTeamStreamState(t *testing.T) {
 	client := &fakeLifecycleRedis{scanKeys: []string{"profile:p1:stream:a", "profile:p1:stream:b"}}
 	repo := NewStreamCleanupRepository(client)
 
-	err := repo.PurgeProfileStreamState(context.Background(), "p1")
+	err := repo.PurgeTeamStreamState(context.Background(), "p1")
 
 	require.NoError(t, err)
 	assert.Equal(t, "profile:p1:stream:*", client.scanPattern)
@@ -712,12 +712,12 @@ func TestStreamCleanupRepositoryPurgeProfileStreamState(t *testing.T) {
 
 	client = &fakeLifecycleRedis{scanErr: errors.New("scan failed")}
 	repo = NewStreamCleanupRepository(client)
-	err = repo.PurgeProfileStreamState(context.Background(), "p1")
+	err = repo.PurgeTeamStreamState(context.Background(), "p1")
 	require.ErrorContains(t, err, "failed to scan")
 
 	client = &fakeLifecycleRedis{scanKeys: []string{"profile:p1:stream:a"}, delErr: errors.New("delete failed")}
 	repo = NewStreamCleanupRepository(client)
-	err = repo.PurgeProfileStreamState(context.Background(), "p1")
+	err = repo.PurgeTeamStreamState(context.Background(), "p1")
 	require.NoError(t, err, "delete errors are intentionally best effort")
 	assert.Equal(t, 1, client.delCalls)
 }

@@ -599,7 +599,7 @@ button:disabled {
   width: 38%;
 }
 
-.profile-name-cell,
+.credential-name-cell,
 .table-actions {
   display: flex;
   align-items: center;
@@ -607,13 +607,13 @@ button:disabled {
   gap: 8px;
 }
 
-.profile-name-cell input {
+.credential-name-cell input {
   min-width: 0;
   min-height: 34px;
   padding: 7px 9px;
 }
 
-.profile-name-cell .icon-button,
+.credential-name-cell .icon-button,
 .table-actions .icon-button {
   flex: 0 0 auto;
 }

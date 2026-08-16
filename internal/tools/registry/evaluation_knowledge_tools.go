@@ -13,11 +13,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-func evalListKnowledgeRefs(ctx context.Context, deps Dependencies, profileID string, input map[string]any, limit int, metadataOnly bool) (map[string]any, error) {
+func evalListKnowledgeRefs(ctx context.Context, deps Dependencies, fallbackTeamID string, input map[string]any, limit int, metadataOnly bool) (map[string]any, error) {
 	if err := requireEvaluationKnowledgeTypesVisible(deps); err != nil {
 		return nil, err
 	}
-	teamID, err := evalActorTeamID(ctx, profileID)
+	teamID, err := evalActorTeamID(ctx, fallbackTeamID)
 	if err != nil {
 		return nil, err
 	}
@@ -47,11 +47,11 @@ func evalListKnowledgeRefs(ctx context.Context, deps Dependencies, profileID str
 	}, nil
 }
 
-func evalActorTeamID(ctx context.Context, profileID string) (string, error) {
-	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok && actor.TeamID != uuid.Nil {
+func evalActorTeamID(ctx context.Context, fallbackTeamID string) (string, error) {
+	if actor, ok := requestctx.ActorFromContext(ctx); ok && actor.TeamID != uuid.Nil {
 		return actor.TeamID.String(), nil
 	}
-	parsed, err := uuid.Parse(profileID)
+	parsed, err := uuid.Parse(fallbackTeamID)
 	if err != nil {
 		return "", errors.New("evaluation tool requires authenticated team context")
 	}

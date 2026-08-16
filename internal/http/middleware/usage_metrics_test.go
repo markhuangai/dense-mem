@@ -23,7 +23,7 @@ func TestUsageMetricsMiddleware_RecordsAuthenticatedRouteTemplate(t *testing.T) 
 	e := echo.New()
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			principal := &Principal{TeamID: teamID, KeyID: keyID}
+			principal := &Principal{TeamID: teamID, OwnerID: keyID, CredentialID: testUUIDPtr(keyID)}
 			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
@@ -52,7 +52,7 @@ func TestUsageMetricsMiddleware_RecordsTypedErrors(t *testing.T) {
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			principal := &Principal{TeamID: uuid.New(), KeyID: uuid.New()}
+			principal := &Principal{TeamID: uuid.New(), CredentialID: testUUIDPtr(uuid.New())}
 			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
@@ -145,7 +145,7 @@ func TestUsageMetricsRecordsUnknownRouteWhenTemplateMissing(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/raw-path", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	principal := &Principal{TeamID: uuid.New(), KeyID: uuid.New()}
+	principal := &Principal{TeamID: uuid.New(), CredentialID: testUUIDPtr(uuid.New())}
 	ctx := context.WithValue(req.Context(), principalContextKey{}, principal)
 	c.SetRequest(req.WithContext(ctx))
 

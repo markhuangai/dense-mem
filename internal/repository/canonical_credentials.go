@@ -8,21 +8,25 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func lookupCanonicalCredential(tx *gorm.DB, prefix string) (*domain.APIKey, error) {
+func lookupCanonicalCredential(tx *gorm.DB, prefix string) (*domain.Credential, error) {
 	return lookupCanonicalCredentialWhere(tx, "c.key_prefix = $1", prefix)
 }
 
-func lookupCanonicalCredentialByID(tx *gorm.DB, id uuid.UUID) (*domain.APIKey, error) {
+func lookupCanonicalCredentialByID(tx *gorm.DB, id uuid.UUID) (*domain.Credential, error) {
 	return lookupCanonicalCredentialWhere(tx, "c.id = $1", id)
 }
 
-func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*domain.APIKey, error) {
+func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*domain.Credential, error) {
 	rows, err := tx.Raw(`
 		SELECT
 			c.id,
+			c.actor_identity_id,
+			m.id,
+			alias.legacy_owner_id,
 			c.team_id,
 			COALESCE(t.name, ''),
 			c.key_hash,
+			c.key_prefix,
 			COALESCE(c.key_suffix, ''),
 			c.name,
 			ARRAY(
@@ -43,14 +47,30 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 			c.expires_at,
 			c.created_at,
 			c.revoked_at,
-			COALESCE(c.owner_identity_id::text, '')
+			COALESCE(c.owner_identity_id::text, ''),
+			COALESCE(owner_membership.sso_provider_id::text, ''),
+			COALESCE(owner_actor.subject, ''),
+			COALESCE(owner_sso.email, ''),
+			COALESCE(owner_membership.sso_group_id, ''),
+			COALESCE(owner_membership.sso_entitlement_status, ''),
+			owner_membership.sso_last_entitlement_checked_at,
+			owner_membership.sso_last_login_at
 		FROM credentials c
 		JOIN actor_identities a
 		  ON a.id = c.actor_identity_id
 		JOIN team_memberships m
 		  ON m.team_id = c.team_id
-		 AND m.actor_identity_id = c.actor_identity_id
+			 AND m.actor_identity_id = c.actor_identity_id
+		JOIN ownership_aliases alias
+		  ON alias.team_id = c.team_id
+		 AND alias.canonical_identity_id = c.actor_identity_id
+		 AND alias.credential_id = c.id
 		JOIN teams t ON t.id = c.team_id
+		LEFT JOIN actor_identities owner_actor ON owner_actor.id = c.owner_identity_id
+		LEFT JOIN team_memberships owner_membership
+		  ON owner_membership.actor_identity_id = c.owner_identity_id
+		 AND owner_membership.team_id = c.team_id
+		LEFT JOIN sso_identities owner_sso ON owner_sso.id = c.owner_identity_id
 		WHERE `+predicate+`
 		  AND c.kind = 'api_key'
 		  AND c.status = 'active'
@@ -70,16 +90,19 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 	if !rows.Next() {
 		return nil, rows.Err()
 	}
-	var key domain.APIKey
-	var teamID uuid.UUID
-	var ownerIdentityID string
+	var key domain.Credential
+	var ownerIdentityID, ssoProviderID string
 	if err := rows.Scan(
 		&key.ID,
-		&teamID,
+		&key.ActorIdentityID,
+		&key.MembershipID,
+		&key.OwnerID,
+		&key.TeamID,
 		&key.TeamName,
 		&key.KeyHash,
+		&key.KeyPrefix,
 		&key.KeySuffix,
-		&key.Label,
+		&key.Name,
 		pq.Array(&key.Scopes),
 		&key.RateLimit,
 		&key.Role,
@@ -88,13 +111,17 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		&key.CreatedAt,
 		&key.RevokedAt,
 		&ownerIdentityID,
+		&ssoProviderID,
+		&key.SSOSubject,
+		&key.SSOEmail,
+		&key.SSOGroupID,
+		&key.SSOEntitlementStatus,
+		&key.SSOLastEntitlementCheckedAt,
+		&key.SSOLastLoginAt,
 	); err != nil {
 		return nil, err
 	}
-	key.TeamID = teamID
-	key.ProfileID = teamID
-	key.Name = key.Label
-	key.AuthSource = "api_key"
-	key.SSOOwnerIdentityID = parseOptionalUUID(ownerIdentityID)
+	key.OwnerIdentityID = parseOptionalUUID(ownerIdentityID)
+	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
 	return &key, nil
 }

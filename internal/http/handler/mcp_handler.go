@@ -28,7 +28,6 @@ type MCPHandler struct {
 	lifecycle            sse.StreamLifecycle
 	recallFeedbackConfig registry.RecallFeedbackConfigProvider
 	dreams               registry.DreamingConfigProvider
-	transport            string
 }
 
 // MCPHandlerInterface is the companion interface for MCPHandler.
@@ -41,31 +40,21 @@ var _ MCPHandlerInterface = (*MCPHandler)(nil)
 
 // NewMCPHandler constructs a Streamable HTTP MCP handler.
 func NewMCPHandler(reg registry.Registry, logger observability.LogProvider) *MCPHandler {
-	return &MCPHandler{reg: reg, logger: logger, transport: "legacy"}
+	return &MCPHandler{reg: reg, logger: logger}
 }
 
 func NewMCPHandlerWithLifecycle(reg registry.Registry, logger observability.LogProvider, lifecycle sse.StreamLifecycle) *MCPHandler {
-	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle, transport: "legacy"}
+	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle}
 }
 
 // NewMCPHandlerWithLifecycleAndRuntimeConfig constructs a Streamable HTTP MCP
 // handler with runtime feature visibility.
 func NewMCPHandlerWithLifecycleAndRuntimeConfig(reg registry.Registry, logger observability.LogProvider, lifecycle sse.StreamLifecycle, recallFeedbackConfig registry.RecallFeedbackConfigProvider, dreams ...registry.DreamingConfigProvider) *MCPHandler {
-	return NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(reg, logger, lifecycle, recallFeedbackConfig, "legacy", dreams...)
-}
-
-// NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport constructs the MCP
-// handler with a boot-only transport selector. The legacy constructor remains
-// available for focused compatibility tests and rollback.
-func NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(reg registry.Registry, logger observability.LogProvider, lifecycle sse.StreamLifecycle, recallFeedbackConfig registry.RecallFeedbackConfigProvider, transport string, dreams ...registry.DreamingConfigProvider) *MCPHandler {
 	var dreamConfig registry.DreamingConfigProvider
 	if len(dreams) > 0 {
 		dreamConfig = dreams[0]
 	}
-	if transport != "sdk" {
-		transport = "legacy"
-	}
-	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle, recallFeedbackConfig: recallFeedbackConfig, dreams: dreamConfig, transport: transport}
+	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle, recallFeedbackConfig: recallFeedbackConfig, dreams: dreamConfig}
 }
 
 // HandlePost serves POST /mcp. It accepts a single JSON-RPC payload and returns
@@ -73,46 +62,19 @@ func NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(reg registry.Registr
 // response, depending on the payload and Accept.
 func (h *MCPHandler) HandlePost(c echo.Context) error {
 	ctx := c.Request().Context()
-	profileID, ok := middleware.GetResolvedProfileID(ctx)
+	teamID, ok := middleware.GetResolvedTeamID(ctx)
 	if !ok {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 
 	principal := middleware.GetPrincipal(ctx)
 	if principal == nil {
 		return httperr.New(httperr.AUTH_MISSING, "authentication required")
 	}
-	if h.transport == "sdk" {
-		return h.handleSDKPost(c, profileID, principal)
-	}
-
-	payload, err := io.ReadAll(c.Request().Body)
-	if err != nil {
-		return httperr.New(httperr.VALIDATION_ERROR, "failed to read request body")
-	}
-	if len(strings.TrimSpace(string(payload))) == 0 {
-		return httperr.New(httperr.VALIDATION_ERROR, "request body is required")
-	}
-
-	team := mcp.TeamContext{}
-	if resolvedTeam, ok := middleware.GetResolvedTeamContext(ctx); ok {
-		team.Name = resolvedTeam.Name
-		team.Description = resolvedTeam.Description
-	}
-	server := mcp.NewServerWithScopesTeamContextAndRuntimeConfig(h.reg, profileID.String(), principal.Scopes, team, h.logger, h.recallFeedbackConfig, h.dreams)
-	response := server.HandlePayloadResult(ctx, payload)
-	if !response.Respond {
-		return c.NoContent(http.StatusAccepted)
-	}
-
-	if acceptsEventStream(c.Request().Header.Get("Accept")) {
-		return writeMCPSSE(c, response.Payload)
-	}
-
-	return c.Blob(http.StatusOK, "application/json", response.Payload)
+	return h.handleSDKPost(c, teamID, principal)
 }
 
-func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principal *middleware.Principal) error {
+func (h *MCPHandler) handleSDKPost(c echo.Context, teamID uuid.UUID, principal *middleware.Principal) error {
 	request := c.Request()
 	if err := validateSDKProtocolHeader(request.Header.Get("MCP-Protocol-Version")); err != nil {
 		return writeSDKProtocolError(c, http.StatusBadRequest, nil, err.Error())
@@ -144,7 +106,7 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 		team.Name = resolvedTeam.Name
 		team.Description = resolvedTeam.Description
 	}
-	server := mcp.NewServerWithScopesTeamContextAndRuntimeConfig(h.reg, profileID.String(), principal.Scopes, team, h.logger, h.recallFeedbackConfig, h.dreams)
+	server := mcp.NewServerWithScopesTeamContextAndRuntimeConfig(h.reg, teamID.String(), principal.Grants, team, h.logger, h.recallFeedbackConfig, h.dreams)
 	serverHandler := server.NewSDKHTTPHandler(!acceptsEventStream(accept))
 	work := func(workCtx context.Context) error {
 		serverHandler.ServeHTTP(c.Response(), request.WithContext(workCtx))
@@ -153,7 +115,7 @@ func (h *MCPHandler) handleSDKPost(c echo.Context, profileID uuid.UUID, principa
 	if h.lifecycle == nil || !acceptsEventStream(accept) {
 		return work(request.Context())
 	}
-	err := h.lifecycle.Start(request.Context(), profileID.String(), discardSSEWriter{}, work)
+	err := h.lifecycle.Start(request.Context(), teamID.String(), discardSSEWriter{}, work)
 	if errors.Is(err, sse.ErrTooManyStreams) {
 		return httperr.New(httperr.RATE_LIMITED, "too many concurrent streams")
 	}
@@ -247,9 +209,9 @@ func (h *MCPHandler) HandleGet(c echo.Context) error {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "stream lifecycle unavailable")
 	}
 
-	profileID, ok := middleware.GetResolvedProfileID(c.Request().Context())
+	teamID, ok := middleware.GetResolvedTeamID(c.Request().Context())
 	if !ok {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 
 	writer, err := sse.NewSSEWriter(c.Response())
@@ -257,7 +219,7 @@ func (h *MCPHandler) HandleGet(c echo.Context) error {
 		return err
 	}
 
-	err = h.lifecycle.Start(c.Request().Context(), profileID.String(), writer, func(ctx context.Context) error {
+	err = h.lifecycle.Start(c.Request().Context(), teamID.String(), writer, func(ctx context.Context) error {
 		if err := writer.WriteComment("dense-mem MCP stream ready"); err != nil {
 			return err
 		}

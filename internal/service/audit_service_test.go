@@ -526,48 +526,48 @@ func TestAuditServiceHelperMethods(t *testing.T) {
 	correlationID := "corr-helper-001"
 	clientIP := "10.0.0.1"
 
-	// Test ProfileCreated
-	err = auditService.ProfileCreated(ctx, profileID,
+	// Test TeamCreated
+	err = auditService.TeamCreated(ctx, profileID,
 		map[string]interface{}{"name": "New Profile", "status": "active"},
 		&keyID, "standard", clientIP, correlationID)
-	require.NoError(t, err, "ProfileCreated should succeed")
+	require.NoError(t, err, "TeamCreated should succeed")
 	verifyAuditEntry(t, sqlDB, ctx, profileID, "CREATE")
 
-	// Test ProfileUpdated
-	err = auditService.ProfileUpdated(ctx, profileID,
+	// Test TeamUpdated
+	err = auditService.TeamUpdated(ctx, profileID,
 		map[string]interface{}{"name": "Old Name"},
 		map[string]interface{}{"name": "New Name"},
 		&keyID, "standard", clientIP, correlationID)
-	require.NoError(t, err, "ProfileUpdated should succeed")
+	require.NoError(t, err, "TeamUpdated should succeed")
 	verifyAuditEntry(t, sqlDB, ctx, profileID, "UPDATE")
 
-	// Test ProfileDeleteBlocked
-	err = auditService.ProfileDeleteBlocked(ctx, profileID,
+	// Test TeamDeleteBlocked
+	err = auditService.TeamDeleteBlocked(ctx, profileID,
 		map[string]interface{}{"name": "Profile to Delete", "status": "active"},
 		&keyID, "standard", clientIP, correlationID, "profile has active resources")
-	require.NoError(t, err, "ProfileDeleteBlocked should succeed")
+	require.NoError(t, err, "TeamDeleteBlocked should succeed")
 	verifyAuditEntry(t, sqlDB, ctx, profileID, "DELETE_BLOCKED")
 
-	// Test ProfileDeleted
-	err = auditService.ProfileDeleted(ctx, profileID,
+	// Test TeamDeleted
+	err = auditService.TeamDeleted(ctx, profileID,
 		map[string]interface{}{"name": "Deleted Profile", "status": "deleted"},
 		&keyID, "standard", clientIP, correlationID)
-	require.NoError(t, err, "ProfileDeleted should succeed")
+	require.NoError(t, err, "TeamDeleted should succeed")
 	verifyAuditEntry(t, sqlDB, ctx, profileID, "DELETE")
 
-	// Test APIKeyCreated
+	// Test CredentialCreated
 	keyID2 := "test-key-id-002"
-	err = auditService.APIKeyCreated(ctx, &profileID, keyID2,
+	err = auditService.CredentialCreated(ctx, &profileID, keyID2,
 		map[string]interface{}{"label": "New API Key", "role": "standard"},
 		&keyID, "standard", clientIP, correlationID)
-	require.NoError(t, err, "APIKeyCreated should succeed")
+	require.NoError(t, err, "CredentialCreated should succeed")
 	verifyAuditEntry(t, sqlDB, ctx, keyID2, "CREATE")
 
-	// Test APIKeyRevoked
-	err = auditService.APIKeyRevoked(ctx, &profileID, keyID2,
+	// Test CredentialRevoked
+	err = auditService.CredentialRevoked(ctx, &profileID, keyID2,
 		map[string]interface{}{"label": "API Key", "role": "standard", "revoked_at": "2024-01-01"},
 		&keyID, "standard", clientIP, correlationID)
-	require.NoError(t, err, "APIKeyRevoked should succeed")
+	require.NoError(t, err, "CredentialRevoked should succeed")
 	verifyAuditEntry(t, sqlDB, ctx, keyID2, "REVOKE")
 
 	// Test AuthFailure
@@ -577,12 +577,12 @@ func TestAuditServiceHelperMethods(t *testing.T) {
 	require.NoError(t, err, "AuthFailure should succeed")
 	verifyAuditEntry(t, sqlDB, ctx, "invalid-key-id", "AUTH_FAILURE")
 
-	// Test CrossProfileDenied
+	// Test CrossTeamDenied
 	targetProfileID := "target-profile-uuid"
-	err = auditService.CrossProfileDenied(ctx, profileID, targetProfileID, "read_profile",
+	err = auditService.CrossTeamDenied(ctx, profileID, targetProfileID, "read_profile",
 		map[string]interface{}{"requested_resource": "sensitive_data"},
 		clientIP, correlationID)
-	require.NoError(t, err, "CrossProfileDenied should succeed")
+	require.NoError(t, err, "CrossTeamDenied should succeed")
 	verifyAuditEntry(t, sqlDB, ctx, targetProfileID, "CROSS_PROFILE_DENIED")
 
 	// Test RateLimited

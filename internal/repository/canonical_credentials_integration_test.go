@@ -27,7 +27,7 @@ func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 		WHERE id = ?::uuid
 	`, profileID).Row().Scan(&prefix))
 
-	repo := NewAPIKeyRepository(appDB, rls)
+	repo := NewCredentialRepository(appDB, rls)
 	key, err := repo.GetActiveByPrefix(ctx, prefix)
 	require.NoError(t, err)
 	require.NotNil(t, key)
@@ -60,7 +60,7 @@ func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 	require.Nil(t, key)
 }
 
-func TestCanonicalAPIKeyLifecycleRetainsDisabledIdentity(t *testing.T) {
+func TestCanonicalCredentialLifecycleRetainsDisabledIdentity(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
@@ -68,8 +68,8 @@ func TestCanonicalAPIKeyLifecycleRetainsDisabledIdentity(t *testing.T) {
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "canonical-key-lifecycle"))
 	keyID := uuid.New()
 	prefix := "dm_lifecycle_" + keyID.String()[:11]
-	repo := NewAPIKeyRepository(appDB, rls)
-	require.NoError(t, repo.CreateStandardKey(ctx, &domain.APIKey{
+	repo := NewCredentialRepository(appDB, rls)
+	require.NoError(t, repo.CreateCredential(ctx, &domain.Credential{
 		ID: keyID, TeamID: teamID, Name: "lifecycle-key", KeyHash: "lifecycle-hash",
 		KeyPrefix: prefix, KeySuffix: "suffix", Scopes: []string{"read", "write"},
 	}))
@@ -79,20 +79,20 @@ func TestCanonicalAPIKeyLifecycleRetainsDisabledIdentity(t *testing.T) {
 	require.NotNil(t, active)
 	require.Equal(t, []string{"read", "write"}, active.Scopes)
 
-	rows, err := repo.UpdateNameForProfile(ctx, teamID, keyID, "renamed-key")
+	rows, err := repo.UpdateNameForTeam(ctx, teamID, keyID, "renamed-key")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
-	rows, err = repo.UpdateRoleForProfile(ctx, teamID, keyID, "manager", []string{"read", "feedback:read"})
+	rows, err = repo.UpdateRoleForTeam(ctx, teamID, keyID, "manager", []string{"read", "feedback:read"})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
-	loaded, err := repo.GetByIDForProfile(ctx, teamID, keyID)
+	loaded, err := repo.GetByIDForTeam(ctx, teamID, keyID)
 	require.NoError(t, err)
 	require.Equal(t, "renamed-key", loaded.Name)
 	require.Equal(t, "manager", loaded.Role)
 	require.Equal(t, []string{"read", "feedback:read"}, loaded.Scopes)
 
 	rotatedPrefix := "dm_rotated_" + keyID.String()[:13]
-	rows, err = repo.RotateForProfile(ctx, teamID, keyID, "rotated-hash", rotatedPrefix, "rotate", nil)
+	rows, err = repo.RotateForTeam(ctx, teamID, keyID, "rotated-hash", rotatedPrefix, "rotate", nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
 	require.NoError(t, repo.TouchLastUsedBatch(ctx, []LastUsedUpdate{{ID: keyID, At: time.Now().UTC()}}))
@@ -102,20 +102,20 @@ func TestCanonicalAPIKeyLifecycleRetainsDisabledIdentity(t *testing.T) {
 	require.Equal(t, "rotated-hash", active.KeyHash)
 	require.NotNil(t, active.LastUsedAt)
 
-	rows, err = repo.RevokeForProfile(ctx, teamID, keyID)
+	rows, err = repo.RevokeForTeam(ctx, teamID, keyID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
 	active, err = repo.GetActiveByPrefix(ctx, rotatedPrefix)
 	require.NoError(t, err)
 	require.Nil(t, active)
-	rows, err = repo.RotateForProfile(ctx, teamID, keyID, "restored-hash", rotatedPrefix, "stored", nil)
+	rows, err = repo.RotateForTeam(ctx, teamID, keyID, "restored-hash", rotatedPrefix, "stored", nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
 
-	rows, err = repo.DeleteForProfile(ctx, teamID, keyID)
+	rows, err = repo.DeleteForTeam(ctx, teamID, keyID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
-	count, err := repo.CountByProfile(ctx, teamID)
+	count, err := repo.CountByTeam(ctx, teamID)
 	require.NoError(t, err)
 	require.Zero(t, count)
 
@@ -188,8 +188,8 @@ func TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams(t *testing
 		`, teamB, keyB, keyA, keyB).Error
 	}))
 
-	repo := NewAPIKeyRepository(appDB, rls)
-	rows, err := repo.RevokeForProfile(ctx, teamA, keyA)
+	repo := NewCredentialRepository(appDB, rls)
+	rows, err := repo.RevokeForTeam(ctx, teamA, keyA)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
 
@@ -211,10 +211,10 @@ func TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, activeB)
 
-	rows, err = repo.RotateForProfile(ctx, teamA, keyA, "shared-actor-hash-a-restored", "dm_"+keyA.String()[:20], "restor", nil)
+	rows, err = repo.RotateForTeam(ctx, teamA, keyA, "shared-actor-hash-a-restored", "dm_"+keyA.String()[:20], "restor", nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
-	rows, err = repo.DeleteForProfile(ctx, teamA, keyA)
+	rows, err = repo.DeleteForTeam(ctx, teamA, keyA)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
 	var teamBCredentialStatus string

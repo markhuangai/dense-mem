@@ -75,20 +75,6 @@ func ensureConflictSystemProfile(ctx context.Context, tx *gorm.DB, teamID string
 			return "", fmt.Errorf("create conflict system profile after %d attempts", conflictSystemProfileCreateAttempts)
 		}
 	}
-	if err := tx.WithContext(ctx).Exec(`
-		INSERT INTO semantic_team_refs (team_id)
-		VALUES (?::uuid)
-		ON CONFLICT (team_id) DO NOTHING
-	`, teamID).Error; err != nil {
-		return "", err
-	}
-	if err := tx.WithContext(ctx).Exec(`
-		INSERT INTO semantic_profile_refs (team_id, profile_id)
-		VALUES (?::uuid, ?::uuid)
-		ON CONFLICT (team_id, profile_id) DO NOTHING
-	`, teamID, profileID).Error; err != nil {
-		return "", err
-	}
 	return profileID, nil
 }
 

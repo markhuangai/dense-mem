@@ -34,8 +34,8 @@ func TestSSOControlErrorBranches(t *testing.T) {
 		ProviderID: providerID,
 		TeamID:     teamID,
 		GroupID:    "dense-mem-admin",
-		Scopes:     []string{APIKeyScopeRead},
-		Role:       APIKeyRoleMember,
+		Scopes:     []string{CredentialScopeRead},
+		Role:       CredentialRoleMember,
 		Enabled:    true,
 	}
 	logger := &captureSSOLogger{}
@@ -217,13 +217,14 @@ func TestSSOSessionErrorBranches(t *testing.T) {
 	sessionToken := "session-token"
 	sessionHash := HashSSOToken(sessionToken)
 	session := &domain.SSOSession{
-		SessionHash:   sessionHash,
-		IdentityID:    identityID,
-		ProviderID:    providerID,
-		TeamProfileID: profileID,
-		TeamID:        teamID,
-		CSRFHash:      HashSSOToken("csrf"),
-		ExpiresAt:     now.Add(time.Hour),
+		SessionHash:  sessionHash,
+		IdentityID:   identityID,
+		ProviderID:   providerID,
+		MembershipID: profileID,
+		OwnerID:      profileID,
+		TeamID:       teamID,
+		CSRFHash:     HashSSOToken("csrf"),
+		ExpiresAt:    now.Add(time.Hour),
 	}
 	logger := &captureSSOLogger{}
 	validSessionConfig := SSOConfig{Logger: logger, Now: func() time.Time { return now }}
@@ -277,7 +278,7 @@ func TestSSOSessionErrorBranches(t *testing.T) {
 	_, err = svc.SwitchSessionTeam(ctx, sessionToken, profileID)
 	require.ErrorIs(t, err, ErrSSOAccessDenied)
 
-	teamProfile := ssoTeamProfile(identityID, providerID, "subject", teamID, profileID, "Team", []string{APIKeyScopeRead}, APIKeyRoleMember)
+	teamProfile := ssoTeamProfile(identityID, providerID, "subject", teamID, profileID, "Team", []string{CredentialScopeRead}, CredentialRoleMember)
 	switchRepo := &ssoRepositoryStub{
 		t:        t,
 		sessions: map[string]*domain.SSOSession{sessionHash: session},
@@ -292,12 +293,12 @@ func TestSSOSessionErrorBranches(t *testing.T) {
 			ExpiresAt:  now.Add(time.Hour),
 		},
 		mappings: []*domain.SSOGroupMapping{
-			{ProviderID: providerID, TeamID: teamID, GroupID: "group-a", Scopes: []string{APIKeyScopeRead}, Role: APIKeyRoleMember, Enabled: true},
+			{ProviderID: providerID, TeamID: teamID, GroupID: "group-a", Scopes: []string{CredentialScopeRead}, Role: CredentialRoleMember, Enabled: true},
 		},
-		teamProfiles:     []*domain.SSOTeamProfile{teamProfile},
+		teamProfiles:     []*domain.SSOTeamMembership{teamProfile},
 		updateSessionErr: backendErr,
 	}
-	_, err = NewSSOService(switchRepo, validSessionConfig).SwitchSessionTeam(ctx, sessionToken, profileID)
+	_, err = NewSSOService(switchRepo, validSessionConfig).SwitchSessionTeam(ctx, sessionToken, teamID)
 	require.ErrorIs(t, err, backendErr)
 
 	svc = NewSSOService(&ssoRepositoryStub{t: t, deleteSessionErr: backendErr}, SSOConfig{Logger: logger})
@@ -306,34 +307,35 @@ func TestSSOSessionErrorBranches(t *testing.T) {
 	assert.NotEmpty(t, logger.debugs)
 }
 
-func TestSSOValidateAPIKeyPrincipalErrorBranches(t *testing.T) {
+func TestSSOValidateCredentialErrorBranches(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
 	backendErr := errors.New("backend failed")
 	providerID := uuid.New()
+	identityID := uuid.New()
 	teamID := uuid.New()
-	key := &domain.APIKey{ID: uuid.New(), TeamID: teamID, SSOProviderID: &providerID, SSOSubject: "subject"}
+	key := &domain.Credential{ID: uuid.New(), TeamID: teamID, Scopes: []string{CredentialScopeRead}, OwnerIdentityID: &identityID, SSOProviderID: &providerID, SSOSubject: "subject"}
 	logger := &captureSSOLogger{}
 
-	_, err := NewSSOService(&ssoRepositoryStub{t: t}, SSOConfig{Logger: logger}).ValidateAPIKeyPrincipal(ctx, nil)
+	_, err := NewSSOService(&ssoRepositoryStub{t: t}, SSOConfig{Logger: logger}).ValidateCredential(ctx, nil)
 	require.ErrorIs(t, err, ErrSSOAccessDenied)
 
-	_, err = NewSSOService(&ssoRepositoryStub{t: t, getProviderErr: backendErr}, SSOConfig{Logger: logger}).ValidateAPIKeyPrincipal(ctx, key)
+	_, err = NewSSOService(&ssoRepositoryStub{t: t, getProviderErr: backendErr}, SSOConfig{Logger: logger}).ValidateCredential(ctx, key)
 	require.ErrorIs(t, err, backendErr)
 
-	_, err = NewSSOService(&ssoRepositoryStub{t: t}, SSOConfig{Logger: logger}).ValidateAPIKeyPrincipal(ctx, key)
+	_, err = NewSSOService(&ssoRepositoryStub{t: t}, SSOConfig{Logger: logger}).ValidateCredential(ctx, key)
 	require.ErrorIs(t, err, ErrSSOProviderDisabled)
 
 	providers := map[uuid.UUID]*domain.SSOProvider{
 		providerID: {ID: providerID, Name: "Enterprise", Enabled: true},
 	}
-	_, err = NewSSOService(&ssoRepositoryStub{t: t, providers: providers, cacheErr: backendErr}, SSOConfig{Logger: logger}).ValidateAPIKeyPrincipal(ctx, key)
+	_, err = NewSSOService(&ssoRepositoryStub{t: t, providers: providers, cacheErr: backendErr}, SSOConfig{Logger: logger}).ValidateCredential(ctx, key)
 	require.ErrorIs(t, err, backendErr)
 
 	_, err = NewSSOService(&ssoRepositoryStub{t: t, providers: providers}, SSOConfig{
 		RuntimeConfig: ssoRuntimeConfigStub{err: backendErr},
 		Logger:        logger,
-	}).ValidateAPIKeyPrincipal(ctx, key)
+	}).ValidateCredential(ctx, key)
 	require.ErrorIs(t, err, backendErr)
 
 	cache := &domain.SSOEntitlementCache{
@@ -346,7 +348,7 @@ func TestSSOValidateAPIKeyPrincipalErrorBranches(t *testing.T) {
 	_, err = NewSSOService(&ssoRepositoryStub{t: t, providers: providers, cache: cache, mappingsForGroupsErr: backendErr}, SSOConfig{
 		Logger: logger,
 		Now:    func() time.Time { return now },
-	}).ValidateAPIKeyPrincipal(ctx, key)
+	}).ValidateCredential(ctx, key)
 	require.ErrorIs(t, err, backendErr)
 
 	deniedCache := *cache
@@ -354,27 +356,27 @@ func TestSSOValidateAPIKeyPrincipalErrorBranches(t *testing.T) {
 	_, err = NewSSOService(&ssoRepositoryStub{t: t, providers: providers, cache: &deniedCache}, SSOConfig{
 		Logger: logger,
 		Now:    func() time.Time { return now },
-	}).ValidateAPIKeyPrincipal(ctx, key)
+	}).ValidateCredential(ctx, key)
 	require.ErrorIs(t, err, ErrSSOAccessDenied)
 
 	_, err = NewSSOService(&ssoRepositoryStub{t: t, providers: providers, cache: cache}, SSOConfig{
 		Logger: logger,
 		Now:    func() time.Time { return now },
-	}).ValidateAPIKeyPrincipal(ctx, key)
+	}).ValidateCredential(ctx, key)
 	require.ErrorIs(t, err, ErrSSOAccessDenied)
 
 	_, err = NewSSOService(&ssoRepositoryStub{t: t, providers: providers, mappingsForGroupsErr: backendErr}, SSOConfig{
 		GroupResolver: &ssoGroupResolverStub{groups: []string{"group-a"}},
 		Logger:        logger,
 		Now:           func() time.Time { return now },
-	}).ValidateAPIKeyPrincipal(ctx, key)
+	}).ValidateCredential(ctx, key)
 	require.ErrorIs(t, err, backendErr)
 
 	_, err = NewSSOService(&ssoRepositoryStub{t: t, providers: providers, setCacheErr: backendErr}, SSOConfig{
 		GroupResolver: &ssoGroupResolverStub{groups: []string{"group-a"}},
 		Logger:        logger,
 		Now:           func() time.Time { return now },
-	}).ValidateAPIKeyPrincipal(ctx, key)
+	}).ValidateCredential(ctx, key)
 	require.ErrorIs(t, err, backendErr)
 
 	assert.NotEmpty(t, logger.debugs)

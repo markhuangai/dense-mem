@@ -12,7 +12,7 @@ import (
 const relationshipConflictSupporterLimit = 20
 
 // The vote projection deliberately works across every position in a conflict.
-// A profile votes only when its newest effective accepted support identifies one
+// An owner votes only when its newest effective accepted support identifies one
 // position. Equal newest timestamps are an abstention, not a position tie-break.
 const relationshipConflictSupporterRowsSQL = `
 	WITH eligible_members AS (

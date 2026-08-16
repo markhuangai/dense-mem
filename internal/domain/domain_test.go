@@ -30,10 +30,10 @@ func TestDreamStatusIsValid(t *testing.T) {
 	}
 }
 
-// TestDTOValidationProfileCreate verifies CreateProfileRequest validation rules.
+// TestDTOValidationProfileCreate verifies CreateTeamRequest validation rules.
 func TestDTOValidationProfileCreate(t *testing.T) {
 	t.Run("valid profile passes validation", func(t *testing.T) {
-		req := dto.CreateProfileRequest{
+		req := dto.CreateTeamRequest{
 			Name:        "Test Profile",
 			Description: "A test profile",
 			Metadata:    map[string]any{"key": "value"},
@@ -45,7 +45,7 @@ func TestDTOValidationProfileCreate(t *testing.T) {
 	})
 
 	t.Run("name too short fails validation", func(t *testing.T) {
-		req := dto.CreateProfileRequest{
+		req := dto.CreateTeamRequest{
 			Name: "ab",
 		}
 
@@ -54,7 +54,7 @@ func TestDTOValidationProfileCreate(t *testing.T) {
 	})
 
 	t.Run("name too long fails validation", func(t *testing.T) {
-		req := dto.CreateProfileRequest{
+		req := dto.CreateTeamRequest{
 			Name: string(make([]byte, 101)),
 		}
 
@@ -63,7 +63,7 @@ func TestDTOValidationProfileCreate(t *testing.T) {
 	})
 
 	t.Run("blank name fails validation", func(t *testing.T) {
-		req := dto.CreateProfileRequest{
+		req := dto.CreateTeamRequest{
 			Name: "   ",
 		}
 
@@ -72,7 +72,7 @@ func TestDTOValidationProfileCreate(t *testing.T) {
 	})
 
 	t.Run("description too long fails validation", func(t *testing.T) {
-		req := dto.CreateProfileRequest{
+		req := dto.CreateTeamRequest{
 			Name:        "Test",
 			Description: string(make([]byte, 501)),
 		}
@@ -82,10 +82,10 @@ func TestDTOValidationProfileCreate(t *testing.T) {
 	})
 }
 
-// TestDTOValidationAPIKeyCreate verifies CreateAPIKeyRequest validation rules.
-func TestDTOValidationAPIKeyCreate(t *testing.T) {
+// TestDTOValidationCredentialCreate verifies CreateCredentialRequest validation rules.
+func TestDTOValidationCredentialCreate(t *testing.T) {
 	t.Run("valid API key request passes validation", func(t *testing.T) {
-		req := dto.CreateAPIKeyRequest{
+		req := dto.CreateCredentialRequest{
 			RateLimit: 100,
 		}
 
@@ -95,7 +95,7 @@ func TestDTOValidationAPIKeyCreate(t *testing.T) {
 
 	t.Run("feedback scope request passes validation", func(t *testing.T) {
 		scopes := []string{"read", "write", "feedback:read"}
-		req := dto.CreateAPIKeyRequest{
+		req := dto.CreateCredentialRequest{
 			Scopes:    &scopes,
 			RateLimit: 100,
 		}
@@ -125,7 +125,7 @@ func TestNotBlankValidator(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := dto.CreateProfileRequest{
+			req := dto.CreateTeamRequest{
 				Name: tc.input,
 			}
 
@@ -139,12 +139,12 @@ func TestNotBlankValidator(t *testing.T) {
 	}
 }
 
-// TestProfileInterface verifies Profile implements ProfileModel.
-func TestProfileInterface(t *testing.T) {
+// TestTeamInterface verifies Team implements TeamModel.
+func TestTeamInterface(t *testing.T) {
 	id := uuid.New()
 	now := time.Now()
 
-	profile := &Profile{
+	team := &Team{
 		ID:          id,
 		Name:        "Test",
 		Description: "Test Description",
@@ -154,7 +154,7 @@ func TestProfileInterface(t *testing.T) {
 		UpdatedAt:   now,
 	}
 
-	var model ProfileModel = profile
+	var model TeamModel = team
 
 	assert.Equal(t, id, model.GetID())
 	assert.Equal(t, "Test", model.GetName())
@@ -163,27 +163,27 @@ func TestProfileInterface(t *testing.T) {
 	assert.Equal(t, now, model.GetUpdatedAt())
 }
 
-// TestAPIKeyInterface verifies APIKey implements APIKeyModel.
-func TestAPIKeyInterface(t *testing.T) {
+// TestCredentialInterface verifies Credential implements CredentialModel.
+func TestCredentialInterface(t *testing.T) {
 	id := uuid.New()
-	profileID := uuid.New()
+	teamID := uuid.New()
 	now := time.Now()
 
-	apiKey := &APIKey{
+	credential := &Credential{
 		ID:        id,
-		ProfileID: profileID,
-		Label:     "Test Key",
+		TeamID:    teamID,
+		Name:      "Test Key",
 		KeyHash:   "hash123",
 		Scopes:    []string{"read"},
 		RateLimit: 100,
 		CreatedAt: now,
 	}
 
-	var model APIKeyModel = apiKey
+	var model CredentialModel = credential
 
 	assert.Equal(t, id, model.GetID())
-	assert.Equal(t, profileID, model.GetProfileID())
-	assert.Equal(t, "Test Key", model.GetLabel())
+	assert.Equal(t, teamID, model.GetTeamID())
+	assert.Equal(t, "Test Key", model.GetName())
 	assert.Equal(t, "hash123", model.GetKeyHash())
 	assert.Equal(t, []string{"read"}, model.GetScopes())
 	assert.Equal(t, 100, model.GetRateLimit())

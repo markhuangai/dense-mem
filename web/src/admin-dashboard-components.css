@@ -616,10 +616,13 @@
   }
 
   .team-workspace-tab {
-    flex: 1 1 calc(25% - 5px);
+    flex: 1 1 calc(20% - 5px);
     min-width: 0;
     padding-inline: 5px;
-    font-size: 12px;
+    overflow: hidden;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .summary-strip {

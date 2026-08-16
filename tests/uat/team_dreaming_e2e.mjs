@@ -16,7 +16,7 @@ const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 let rpcID = 0;
 const scheduledAt = nextScheduledUTCMinute();
 const runDate = formatDate(scheduledAt);
-const ownerProfileID = await userProfileID();
+const ownerProfileID = await apiCredentialOwnerID();
 const seeded = seedSchedulerInputs(ownerProfileID);
 
 await updateControlConfig("/config/general", [{ key: "APP_TIMEZONE", value: "UTC" }]);
@@ -44,7 +44,7 @@ const scheduledDream = findDream(controlDreams.data?.items, scheduledRun.run_id,
 assertEvidenceDerivedDream(scheduledDream, seeded, "control portal API");
 const hypothesisID = scheduledDream.dream_id;
 const statement = scheduledDream.hypothesis;
-const reviewer = await createTeamProfile("Team Dreaming E2E reviewer");
+const reviewer = await createTeamCredential("Team Dreaming E2E reviewer");
 const feedback = await mcpTool(reviewer.apiKey, "resolve_dream_feedback", {
   hypothesis_id: hypothesisID,
   decision: "reinforce",
@@ -52,7 +52,7 @@ const feedback = await mcpTool(reviewer.apiKey, "resolve_dream_feedback", {
 });
 assertEqual(feedback.hypothesis_id, hypothesisID, "feedback hypothesis");
 assertEqual(feedback.status, "reinforced", "feedback status");
-await assertFeedbackActor(hypothesisID, reviewer.profileID);
+await assertFeedbackActor(hypothesisID, reviewer.credentialID);
 
 assertContainsDream(controlDreams.data?.items, hypothesisID, statement, "control portal API");
 const userDreams = await userJSON("/ui/api/dreams?limit=10");
@@ -118,13 +118,13 @@ async function assertSystemRun(runID) {
   assertEqual(owner, "", "scheduled run initiator");
 }
 
-async function userProfileID() {
+async function apiCredentialOwnerID() {
   const session = await userJSON("/ui/api/session");
-  const profileID = session.data?.key?.id;
-  if (typeof profileID !== "string" || !profileID) {
-    throw new Error(`user session did not return a profile ID: ${JSON.stringify(session)}`);
+  const credentialID = session.data?.credential?.id;
+  if (typeof credentialID !== "string" || !credentialID) {
+    throw new Error(`user session did not return a credential ID: ${JSON.stringify(session)}`);
   }
-  return profileID;
+  return credentialID;
 }
 
 function seedSchedulerInputs(ownerProfileID) {
@@ -145,14 +145,6 @@ function seedSchedulerInputs(ownerProfileID) {
   const firstQuote = "Dense-Mem uses the Runtime service to process memory requests.";
   const secondQuote = "The Runtime service uses PostgreSQL to store durable memory records.";
   postgresQuery(`
-    INSERT INTO semantic_team_refs (team_id)
-    VALUES (${sqlLiteral(teamID)}::uuid)
-    ON CONFLICT (team_id) DO NOTHING;
-
-    INSERT INTO semantic_profile_refs (team_id, profile_id)
-    VALUES (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid)
-    ON CONFLICT (team_id, profile_id) DO NOTHING;
-
     INSERT INTO team_predicate_definitions (
       team_id, predicate_key, version, aliases, allowed_subject_kinds,
       allowed_object_kinds, relationship_kind, current_cardinality,
@@ -305,8 +297,8 @@ function seedSchedulerInputs(ownerProfileID) {
   };
 }
 
-async function createTeamProfile(name) {
-  const payload = await controlJSON(`/teams/${teamID}/profiles`, {
+async function createTeamCredential(name) {
+  const payload = await controlJSON(`/teams/${teamID}/credentials`, {
     method: "POST",
     body: JSON.stringify({
       name,
@@ -315,12 +307,12 @@ async function createTeamProfile(name) {
       rate_limit: 300,
     }),
   });
-  const createdAPIKey = payload.data?.api_key;
-  const profileID = payload.data?.key?.id;
-  if (typeof createdAPIKey !== "string" || !createdAPIKey || typeof profileID !== "string" || !profileID) {
-    throw new Error(`team reviewer creation did not return a key and profile ID: ${JSON.stringify(payload)}`);
+  const createdCredential = payload.data?.api_key;
+  const credentialID = payload.data?.credential?.id;
+  if (typeof createdCredential !== "string" || !createdCredential || typeof credentialID !== "string" || !credentialID) {
+    throw new Error(`team reviewer creation did not return a key and credential ID: ${JSON.stringify(payload)}`);
   }
-  return { apiKey: createdAPIKey, profileID };
+  return { apiKey: createdCredential, credentialID };
 }
 
 async function assertFeedbackActor(hypothesisID, profileID) {

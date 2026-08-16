@@ -40,23 +40,23 @@ type AuditLogEntry struct {
 type AuditService interface {
 	Append(ctx context.Context, entry AuditLogEntry) error
 
-	// List retrieves audit log entries for a specific profile with pagination.
+	// List retrieves audit log entries for a specific team with pagination.
 	// Returns entries, total count, and error.
-	List(ctx context.Context, profileID string, limit, offset int) ([]AuditLogEntry, int, error)
+	List(ctx context.Context, teamID string, limit, offset int) ([]AuditLogEntry, int, error)
 
-	// Profile lifecycle helpers
-	ProfileCreated(ctx context.Context, profileID string, afterPayload map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string) error
-	ProfileUpdated(ctx context.Context, profileID string, beforePayload, afterPayload map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string) error
-	ProfileDeleteBlocked(ctx context.Context, profileID string, beforePayload map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string, reason string) error
-	ProfileDeleted(ctx context.Context, profileID string, beforePayload map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string) error
+	// Team lifecycle helpers preserve historical audit entity values.
+	TeamCreated(ctx context.Context, teamID string, afterPayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error
+	TeamUpdated(ctx context.Context, teamID string, beforePayload, afterPayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error
+	TeamDeleteBlocked(ctx context.Context, teamID string, beforePayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string, reason string) error
+	TeamDeleted(ctx context.Context, teamID string, beforePayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error
 
-	// API key lifecycle helpers
-	APIKeyCreated(ctx context.Context, profileID *string, keyID string, afterPayload map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string) error
-	APIKeyRevoked(ctx context.Context, profileID *string, keyID string, beforePayload map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string) error
+	// Credential lifecycle helpers preserve historical audit field values.
+	CredentialCreated(ctx context.Context, teamID *string, credentialID string, afterPayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error
+	CredentialRevoked(ctx context.Context, teamID *string, credentialID string, beforePayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error
 
 	// Security event helpers
 	AuthFailure(ctx context.Context, profileID *string, entityType, entityID string, metadata map[string]interface{}, clientIP, correlationID string) error
-	CrossProfileDenied(ctx context.Context, actorProfileID, targetProfileID string, operation string, metadata map[string]interface{}, clientIP, correlationID string) error
+	CrossTeamDenied(ctx context.Context, actorTeamID, targetTeamID string, operation string, metadata map[string]interface{}, clientIP, correlationID string) error
 	RateLimited(ctx context.Context, profileID *string, operation string, metadata map[string]interface{}, clientIP, correlationID string) error
 
 	// System event helpers
@@ -279,11 +279,9 @@ func (s *AuditServiceImpl) Append(ctx context.Context, entry AuditLogEntry) erro
 	return nil
 }
 
-// List retrieves audit log entries for a specific profile with pagination.
+// List retrieves audit log entries for a specific team with pagination.
 // Entries are returned in descending order by timestamp (most recent first).
-// The profileID parameter ensures profile-scoped listing; callers can only see
-// the requested profile's log on this route.
-func (s *AuditServiceImpl) List(ctx context.Context, profileID string, limit, offset int) ([]AuditLogEntry, int, error) {
+func (s *AuditServiceImpl) List(ctx context.Context, teamID string, limit, offset int) ([]AuditLogEntry, int, error) {
 	var entries []AuditLogEntry
 	queryFn := func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -294,7 +292,7 @@ func (s *AuditServiceImpl) List(ctx context.Context, profileID string, limit, of
 			WHERE team_id = $1
 			ORDER BY timestamp DESC
 			LIMIT $2 OFFSET $3
-		`, profileID, limit, offset).Rows()
+		`, teamID, limit, offset).Rows()
 		if err != nil {
 			return err
 		}
@@ -362,13 +360,13 @@ func (s *AuditServiceImpl) List(ctx context.Context, profileID string, limit, of
 
 	var total int
 	if s.rls != nil {
-		if err := s.rls.WithProfileTx(ctx, s.db, profileID, queryFn); err != nil {
+		if err := s.rls.WithTeamTx(ctx, s.db, teamID, queryFn); err != nil {
 			return nil, 0, fmt.Errorf("failed to query audit log: %w", err)
 		}
-		if err := s.rls.WithProfileTx(ctx, s.db, profileID, func(tx *gorm.DB) error {
+		if err := s.rls.WithTeamTx(ctx, s.db, teamID, func(tx *gorm.DB) error {
 			return tx.Raw(`
 				SELECT COUNT(*) FROM audit_log WHERE team_id = $1
-			`, profileID).Scan(&total).Error
+			`, teamID).Scan(&total).Error
 		}); err != nil {
 			return nil, 0, fmt.Errorf("failed to count audit log entries: %w", err)
 		}
@@ -378,7 +376,7 @@ func (s *AuditServiceImpl) List(ctx context.Context, profileID string, limit, of
 		}
 		if err := s.db.WithContext(ctx).Raw(`
 			SELECT COUNT(*) FROM audit_log WHERE team_id = $1
-		`, profileID).Scan(&total).Error; err != nil {
+		`, teamID).Scan(&total).Error; err != nil {
 			return nil, 0, fmt.Errorf("failed to count audit log entries: %w", err)
 		}
 	}
@@ -386,15 +384,15 @@ func (s *AuditServiceImpl) List(ctx context.Context, profileID string, limit, of
 	return entries, total, nil
 }
 
-// ProfileCreated logs a profile creation event.
-func (s *AuditServiceImpl) ProfileCreated(ctx context.Context, profileID string, afterPayload map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string) error {
+// TeamCreated logs a team creation event using retained audit schema values.
+func (s *AuditServiceImpl) TeamCreated(ctx context.Context, teamID string, afterPayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error {
 	entry := AuditLogEntry{
-		ProfileID:     &profileID,
+		ProfileID:     &teamID,
 		Operation:     "CREATE",
 		EntityType:    "profile",
-		EntityID:      profileID,
+		EntityID:      teamID,
 		AfterPayload:  afterPayload,
-		ActorKeyID:    actorKeyID,
+		ActorKeyID:    actorCredentialID,
 		ActorRole:     actorRole,
 		ClientIP:      clientIP,
 		CorrelationID: correlationID,
@@ -402,16 +400,16 @@ func (s *AuditServiceImpl) ProfileCreated(ctx context.Context, profileID string,
 	return s.Append(ctx, entry)
 }
 
-// ProfileUpdated logs a profile update event.
-func (s *AuditServiceImpl) ProfileUpdated(ctx context.Context, profileID string, beforePayload, afterPayload map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string) error {
+// TeamUpdated logs a team update event using retained audit schema values.
+func (s *AuditServiceImpl) TeamUpdated(ctx context.Context, teamID string, beforePayload, afterPayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error {
 	entry := AuditLogEntry{
-		ProfileID:     &profileID,
+		ProfileID:     &teamID,
 		Operation:     "UPDATE",
 		EntityType:    "profile",
-		EntityID:      profileID,
+		EntityID:      teamID,
 		BeforePayload: beforePayload,
 		AfterPayload:  afterPayload,
-		ActorKeyID:    actorKeyID,
+		ActorKeyID:    actorCredentialID,
 		ActorRole:     actorRole,
 		ClientIP:      clientIP,
 		CorrelationID: correlationID,
@@ -419,15 +417,15 @@ func (s *AuditServiceImpl) ProfileUpdated(ctx context.Context, profileID string,
 	return s.Append(ctx, entry)
 }
 
-// ProfileDeleteBlocked logs when a profile deletion was blocked.
-func (s *AuditServiceImpl) ProfileDeleteBlocked(ctx context.Context, profileID string, beforePayload map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string, reason string) error {
+// TeamDeleteBlocked logs when a team deletion was blocked.
+func (s *AuditServiceImpl) TeamDeleteBlocked(ctx context.Context, teamID string, beforePayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string, reason string) error {
 	entry := AuditLogEntry{
-		ProfileID:     &profileID,
+		ProfileID:     &teamID,
 		Operation:     "DELETE_BLOCKED",
 		EntityType:    "profile",
-		EntityID:      profileID,
+		EntityID:      teamID,
 		BeforePayload: beforePayload,
-		ActorKeyID:    actorKeyID,
+		ActorKeyID:    actorCredentialID,
 		ActorRole:     actorRole,
 		ClientIP:      clientIP,
 		CorrelationID: correlationID,
@@ -438,15 +436,15 @@ func (s *AuditServiceImpl) ProfileDeleteBlocked(ctx context.Context, profileID s
 	return s.Append(ctx, entry)
 }
 
-// ProfileDeleted logs a profile deletion event.
-func (s *AuditServiceImpl) ProfileDeleted(ctx context.Context, profileID string, beforePayload map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string) error {
+// TeamDeleted logs a team deletion event using retained audit schema values.
+func (s *AuditServiceImpl) TeamDeleted(ctx context.Context, teamID string, beforePayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error {
 	entry := AuditLogEntry{
-		ProfileID:     &profileID,
+		ProfileID:     &teamID,
 		Operation:     "DELETE",
 		EntityType:    "profile",
-		EntityID:      profileID,
+		EntityID:      teamID,
 		BeforePayload: beforePayload,
-		ActorKeyID:    actorKeyID,
+		ActorKeyID:    actorCredentialID,
 		ActorRole:     actorRole,
 		ClientIP:      clientIP,
 		CorrelationID: correlationID,
@@ -454,15 +452,15 @@ func (s *AuditServiceImpl) ProfileDeleted(ctx context.Context, profileID string,
 	return s.Append(ctx, entry)
 }
 
-// APIKeyCreated logs an API key creation event.
-func (s *AuditServiceImpl) APIKeyCreated(ctx context.Context, profileID *string, keyID string, afterPayload map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string) error {
+// CredentialCreated logs credential creation using retained audit schema values.
+func (s *AuditServiceImpl) CredentialCreated(ctx context.Context, teamID *string, credentialID string, afterPayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error {
 	entry := AuditLogEntry{
-		ProfileID:     profileID,
+		ProfileID:     teamID,
 		Operation:     "CREATE",
 		EntityType:    "api_key",
-		EntityID:      keyID,
+		EntityID:      credentialID,
 		AfterPayload:  afterPayload,
-		ActorKeyID:    actorKeyID,
+		ActorKeyID:    actorCredentialID,
 		ActorRole:     actorRole,
 		ClientIP:      clientIP,
 		CorrelationID: correlationID,
@@ -470,15 +468,15 @@ func (s *AuditServiceImpl) APIKeyCreated(ctx context.Context, profileID *string,
 	return s.Append(ctx, entry)
 }
 
-// APIKeyRevoked logs an API key revocation event.
-func (s *AuditServiceImpl) APIKeyRevoked(ctx context.Context, profileID *string, keyID string, beforePayload map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string) error {
+// CredentialRevoked logs credential revocation using retained audit schema values.
+func (s *AuditServiceImpl) CredentialRevoked(ctx context.Context, teamID *string, credentialID string, beforePayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error {
 	entry := AuditLogEntry{
-		ProfileID:     profileID,
+		ProfileID:     teamID,
 		Operation:     "REVOKE",
 		EntityType:    "api_key",
-		EntityID:      keyID,
+		EntityID:      credentialID,
 		BeforePayload: beforePayload,
-		ActorKeyID:    actorKeyID,
+		ActorKeyID:    actorCredentialID,
 		ActorRole:     actorRole,
 		ClientIP:      clientIP,
 		CorrelationID: correlationID,
@@ -500,20 +498,20 @@ func (s *AuditServiceImpl) AuthFailure(ctx context.Context, profileID *string, e
 	return s.Append(ctx, entry)
 }
 
-// CrossProfileDenied logs a cross-profile access denial event.
-func (s *AuditServiceImpl) CrossProfileDenied(ctx context.Context, actorProfileID, targetProfileID string, operation string, metadata map[string]interface{}, clientIP, correlationID string) error {
+// CrossTeamDenied logs a cross-team access denial using retained audit values.
+func (s *AuditServiceImpl) CrossTeamDenied(ctx context.Context, actorTeamID, targetTeamID string, operation string, metadata map[string]interface{}, clientIP, correlationID string) error {
 	if metadata == nil {
 		metadata = make(map[string]interface{})
 	}
-	metadata["actor_profile_id"] = actorProfileID
-	metadata["target_team_id"] = targetProfileID
+	metadata["actor_profile_id"] = actorTeamID
+	metadata["target_team_id"] = targetTeamID
 	metadata["denied_operation"] = operation
 
 	entry := AuditLogEntry{
-		ProfileID:     &targetProfileID,
+		ProfileID:     &targetTeamID,
 		Operation:     "CROSS_PROFILE_DENIED",
 		EntityType:    "profile",
-		EntityID:      targetProfileID,
+		EntityID:      targetTeamID,
 		ClientIP:      clientIP,
 		CorrelationID: correlationID,
 		Metadata:      metadata,

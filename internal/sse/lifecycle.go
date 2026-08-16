@@ -16,7 +16,7 @@ const (
 	// MaxStreamDuration is the maximum duration a stream can run
 	MaxStreamDuration = 5 * time.Minute
 
-	// MaxConcurrentStreams is the maximum number of concurrent streams per profile
+	// MaxConcurrentStreams is the maximum number of concurrent streams per team.
 	MaxConcurrentStreams = 10
 
 	// StreamCounterKey is the Redis key suffix for stream concurrency counter
@@ -25,7 +25,7 @@ const (
 
 // Errors for lifecycle operations
 var (
-	ErrTooManyStreams   = errors.New("too many concurrent streams for profile")
+	ErrTooManyStreams   = errors.New("too many concurrent streams for team")
 	ErrStreamTerminated = errors.New("stream terminated due to max duration")
 )
 
@@ -41,18 +41,18 @@ type RedisClientForLifecycle interface {
 
 // RedisKeyBuilder is the interface for building Redis keys.
 type RedisKeyBuilder interface {
-	Stream(profileID, identifier string) (string, error)
+	Stream(teamID, identifier string) (string, error)
 }
 
 // StreamLifecycle manages the complete lifecycle of an SSE stream.
 // It handles heartbeat, max duration, disconnect detection, and cleanup.
 type StreamLifecycle interface {
-	Start(ctx context.Context, profileID string, writer SSEWriter, work func(context.Context) error) error
+	Start(ctx context.Context, teamID string, writer SSEWriter, work func(context.Context) error) error
 }
 
-// ConcurrencyLimiter manages concurrent stream limits per profile.
+// ConcurrencyLimiter manages concurrent stream limits per team.
 type ConcurrencyLimiter interface {
-	Acquire(ctx context.Context, profileID string) (release func(), err error)
+	Acquire(ctx context.Context, teamID string) (release func(), err error)
 }
 
 // HeartbeatSender sends periodic SSE keepalive comments.
@@ -91,7 +91,7 @@ var _ HeartbeatSender = (*heartbeatSender)(nil)
 
 // StreamCleanupRepository is the interface for cleaning up stream state.
 type StreamCleanupRepository interface {
-	PurgeProfileStreamState(ctx context.Context, profileID string) error
+	PurgeTeamStreamState(ctx context.Context, teamID string) error
 }
 
 // redisStreamCleanupRepository implements StreamCleanupRepository.
@@ -132,12 +132,12 @@ func NewStreamLifecycleWithConfig(
 // enforces max duration, and ensures cleanup on all exit paths.
 func (l *streamLifecycle) Start(
 	ctx context.Context,
-	profileID string,
+	teamID string,
 	writer SSEWriter,
 	work func(context.Context) error,
 ) error {
 	// Acquire concurrency slot
-	release, err := l.concurrencyLimiter.Acquire(ctx, profileID)
+	release, err := l.concurrencyLimiter.Acquire(ctx, teamID)
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ func (l *streamLifecycle) Start(
 		if l.cleanupRepo != nil {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cleanupCancel()
-			_ = l.cleanupRepo.PurgeProfileStreamState(cleanupCtx, profileID)
+			_ = l.cleanupRepo.PurgeTeamStreamState(cleanupCtx, teamID)
 		}
 		return ctx.Err()
 
@@ -224,15 +224,15 @@ func NewConcurrencyLimiterWithConfig(redisClient RedisClientForLifecycle, maxStr
 	}
 }
 
-// Acquire increments the stream counter for the profile.
+// Acquire increments the stream counter for the team.
 // Returns a release function that decrements the counter.
 // Returns ErrTooManyStreams if the limit is exceeded.
-func (l *redisConcurrencyLimiter) Acquire(ctx context.Context, profileID string) (func(), error) {
+func (l *redisConcurrencyLimiter) Acquire(ctx context.Context, teamID string) (func(), error) {
 	kb, ok := l.redisClient.KeyBuilder().(RedisKeyBuilder)
 	if !ok {
 		return nil, fmt.Errorf("keybuilder does not implement Stream method")
 	}
-	key, err := kb.Stream(profileID, StreamCounterKey)
+	key, err := kb.Stream(teamID, StreamCounterKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build stream counter key: %w", err)
 	}
@@ -309,9 +309,9 @@ func NewStreamCleanupRepository(client RedisClientForLifecycle) StreamCleanupRep
 	}
 }
 
-// PurgeProfileStreamState deletes all stream keys for a profile.
-func (r *redisStreamCleanupRepository) PurgeProfileStreamState(ctx context.Context, profileID string) error {
-	pattern := fmt.Sprintf("profile:%s:stream:*", profileID)
+// PurgeTeamStreamState deletes all stream keys for a team.
+func (r *redisStreamCleanupRepository) PurgeTeamStreamState(ctx context.Context, teamID string) error {
+	pattern := fmt.Sprintf("profile:%s:stream:*", teamID)
 
 	var cursor uint64
 	for {

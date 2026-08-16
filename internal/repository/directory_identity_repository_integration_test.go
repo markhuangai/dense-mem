@@ -86,34 +86,18 @@ func TestDirectoryReconcileCreatesAndArchivesOnlyDirectoryManagedTeam(t *testing
 	directoryAuthority, err := ssoRepo.DirectoryAuthorityActive(ctx, provider.ID)
 	require.NoError(t, err)
 	require.True(t, directoryAuthority)
-	profiles, err := ssoRepo.ListTeamProfilesForIdentity(ctx, user.IdentityID)
+	profiles, err := ssoRepo.ListTeamMembershipsForIdentity(ctx, user.IdentityID)
 	require.NoError(t, err)
 	require.Len(t, profiles, 1)
-	require.Equal(t, directoryProfileName(user.Email, user.DisplayName, user.IdentityID), profiles[0].Profile.Name)
-	entitled, err := ssoRepo.DirectoryTeamProfileEntitled(ctx, profiles[0].Profile.ID, provider.ID, user.IdentityID, teamID, group.ExternalID)
+	require.Equal(t, directoryMembershipName(user.Email, user.DisplayName, user.IdentityID), profiles[0].Membership.Name)
+	entitled, err := ssoRepo.DirectoryMembershipEntitled(ctx, provider.ID, user.IdentityID, teamID, group.ExternalID)
 	require.NoError(t, err)
 	require.True(t, entitled)
-	credentialAliasID := uuid.New()
-	credentialAliasPrefix := strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		if err := tx.Exec(`
-			INSERT INTO credentials (
-				id, actor_identity_id, team_id, kind, key_hash, key_prefix, key_suffix, name, scopes
-			) VALUES (?, ?, ?, 'api_key', 'directory-alias-filter-hash', ?, 'suffix', 'directory-alias-filter', ARRAY['read']::text[])
-		`, credentialAliasID, user.IdentityID, teamID, credentialAliasPrefix).Error; err != nil {
-			return err
-		}
-		return tx.Exec(`
-			INSERT INTO ownership_aliases (
-				team_id, legacy_owner_id, canonical_identity_id, credential_id, reason
-			) VALUES (?, ?, ?, ?, 'credential')
-		`, teamID, credentialAliasID, user.IdentityID, credentialAliasID).Error
-	}))
-	entitled, err = ssoRepo.DirectoryTeamProfileEntitled(ctx, credentialAliasID, provider.ID, user.IdentityID, teamID, group.ExternalID)
+	entitled, err = ssoRepo.DirectoryMembershipEntitled(ctx, provider.ID, uuid.New(), teamID, group.ExternalID)
 	require.NoError(t, err)
 	require.False(t, entitled)
 	require.NoError(t, directoryRepo.ReplaceDirectoryGroupMembers(ctx, connector.ID, group.ID, nil))
-	entitled, err = ssoRepo.DirectoryTeamProfileEntitled(ctx, profiles[0].Profile.ID, provider.ID, user.IdentityID, teamID, group.ExternalID)
+	entitled, err = ssoRepo.DirectoryMembershipEntitled(ctx, provider.ID, user.IdentityID, teamID, group.ExternalID)
 	require.NoError(t, err)
 	require.False(t, entitled)
 

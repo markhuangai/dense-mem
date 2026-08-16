@@ -77,7 +77,7 @@ func normalizeCommunityLogicalID(record CommunityPublishRecord) string {
 func (record CommunityRecord) DomainCommunity() *domain.Community {
 	return &domain.Community{
 		CommunityID:      record.CommunityID,
-		ProfileID:        record.TeamID,
+		TeamID:           record.TeamID,
 		Level:            0,
 		Summary:          record.Summary,
 		SummaryVersion:   record.SummaryVersion,

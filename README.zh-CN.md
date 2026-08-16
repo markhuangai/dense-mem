@@ -50,12 +50,17 @@ Knowledge Graphs](https://zenodo.org/records/21403316)。
 ## 为什么使用 Dense-Mem
 
 - 证据精确、可持久保存且只追加。生命周期动作只改变有效状态，不删除来源或追踪链路。
-- Entity 和带类型的 Value 是语义节点。只有证据支持仍有效时，profile 所有的
-  Relationship 才会成为活跃图边。
+- Entity 和带类型的 Value 是语义节点。只有证据支持仍有效时，永久 owner alias
+  所有的 Relationship 才会成为活跃图边。
 - Provider 输出只是提议。封闭 schema 校验和确定性的服务端策略决定持久状态。
 - 默认检索排除候选项和 Hypothesis；只有对请求时间仍有效的 Relationship 支持路径
   存在时，才返回证据上下文。
-- 团队可见性和 profile 修改权限不同。作者只能修改自己的证据和归属语义记录。
+- 团队可见性和 owner 修改权限不同。作者只能修改自己的证据和归属语义记录。
+
+认证会解析出不可变的调用者上下文：`team + identity + membership + 永久 owner alias +
+可选 credential`。SSO 浏览器 session 使用所选 membership 的永久 owner alias，且没有
+直接 credential。API key 请求会携带 credential；其稳定 ID 同时也是永久 owner alias。
+客户端不能用 team、identity、membership 或 credential 字段选择或替换语义 owner。
 
 ## 60 秒快速开始
 
@@ -87,7 +92,7 @@ MCP:            http://127.0.0.1:8080/mcp
 控制门户:       http://127.0.0.1:8090/
 ```
 
-使用 `CONTROL_PORTAL_TOKEN` 打开控制门户，然后创建团队及其第一个 profile/API key。
+使用 `CONTROL_PORTAL_TOKEN` 打开控制门户，然后创建团队及其第一个 credential/API key。
 控制面自动化使用同一个私有 API：
 
 ```bash
@@ -98,10 +103,10 @@ curl -fsS -X POST http://127.0.0.1:8090/control/api/teams \
   -H "Content-Type: application/json" \
   -d '{"name":"primary-memory"}'
 
-curl -fsS -X POST http://127.0.0.1:8090/control/api/teams/<team-id>/profiles \
+curl -fsS -X POST http://127.0.0.1:8090/control/api/teams/<team-id>/credentials \
   -H "Authorization: Bearer ${control_token}" \
   -H "Content-Type: application/json" \
-  -d '{"name":"default profile"}'
+  -d '{"name":"default credential"}'
 ```
 
 正式镜像只包含一个项目可执行文件 `/app/server`。它会在开始提供服务前，借助数据库
@@ -194,7 +199,7 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 这两种操作都会追加生命周期事件，绝不会物理删除证据或追踪链路。当前检索会排除
 已退役证据；事件发生前的历史 `known_at` 视图仍可以显示当时系统知道的内容。
 
-`correct_relationship` 用于替换调用 profile 自己拥有的一条活跃 Relationship，
+`correct_relationship` 用于替换调用者永久 owner alias 所拥有的一条活跃 Relationship，
 不会重写或删除原记录。调用者必须提供当前版本、精确的有效证据 span、有界原因，
 以及需要更正的端点或 predicate：
 
@@ -218,7 +223,7 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 
 接受后，Dense-Mem 会原子地 supersede 原 Relationship、创建或复用活跃后继、复制
 有效支持链路，并追加 correction event 与 `corrects` cross-reference。同团队的其他
-profile 可以读取团队可见记忆，但不能更正作者的 Relationship。若 Entity 名称存在
+owner 可以读取团队可见记忆，但不能更正作者的 Relationship。若 Entity 名称存在
 歧义，只允许作者确认一次；确认成功前原 Relationship 保持活跃。
 
 ## 检索与图状态
@@ -339,7 +344,7 @@ recall-feedback comment 保存在有界调查记录中；Prometheus 只接收有
 | 语义状态 | 校验、确定性策略和支持有效性 | 提出可选 Entity/Relationship 提议 |
 | 检索 | 活跃证据上下文和 Relationship 句柄 | 决定对话中引用或追问什么 |
 | 更正 | 已授权的 supersession、retraction 和只追加链路 | 判断是否应当更正 |
-| 运维 | teams、profiles、API keys、审计和门户 | MCP 客户端配置 |
+| 运维 | teams、memberships、credentials、API keys、审计和门户 | MCP 客户端配置 |
 
 ## 数据出站与一致性
 

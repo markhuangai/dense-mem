@@ -13,108 +13,108 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
-type routerAPIKeyService struct{}
+type routerCredentialService struct{}
 
-func (routerAPIKeyService) CreateStandardKey(context.Context, uuid.UUID, service.CreateAPIKeyRequest, *string, string, string, string) (*domain.APIKey, string, error) {
+func (routerCredentialService) CreateCredential(context.Context, uuid.UUID, service.CreateCredentialRequest, *string, string, string, string) (*domain.Credential, string, error) {
 	return nil, "", nil
 }
 
-func (routerAPIKeyService) UpdateNameForProfile(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.APIKey, error) {
+func (routerCredentialService) UpdateNameForTeam(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.Credential, error) {
 	return nil, nil
 }
 
-func (routerAPIKeyService) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.APIKey, error) {
+func (routerCredentialService) UpdateRoleForTeam(context.Context, uuid.UUID, uuid.UUID, string, *string, string, string, string) (*domain.Credential, error) {
 	return nil, nil
 }
 
-func (routerAPIKeyService) UpdateScopesForProfile(context.Context, uuid.UUID, uuid.UUID, []string, *string, string, string, string) (*domain.APIKey, error) {
+func (routerCredentialService) UpdateScopesForTeam(context.Context, uuid.UUID, uuid.UUID, []string, *string, string, string, string) (*domain.Credential, error) {
 	return nil, nil
 }
 
-func (routerAPIKeyService) RotateForProfile(context.Context, uuid.UUID, uuid.UUID, service.CreateAPIKeyRequest, *string, string, string, string) (*domain.APIKey, string, error) {
+func (routerCredentialService) RotateForTeam(context.Context, uuid.UUID, uuid.UUID, service.CreateCredentialRequest, *string, string, string, string) (*domain.Credential, string, error) {
 	return nil, "", nil
 }
 
-func (routerAPIKeyService) ListByProfile(context.Context, uuid.UUID, int, int) ([]*domain.APIKey, error) {
+func (routerCredentialService) ListByTeam(context.Context, uuid.UUID, int, int) ([]*domain.Credential, error) {
 	return nil, nil
 }
 
-func (routerAPIKeyService) CountByProfile(context.Context, uuid.UUID) (int64, error) {
+func (routerCredentialService) CountByTeam(context.Context, uuid.UUID) (int64, error) {
 	return 0, nil
 }
 
-func (routerAPIKeyService) GetByIDForProfile(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+func (routerCredentialService) GetByIDForTeam(context.Context, uuid.UUID, uuid.UUID) (*domain.Credential, error) {
 	return nil, nil
 }
 
-func (routerAPIKeyService) GetSSOOwnedKey(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+func (routerCredentialService) GetSSOOwnedCredential(context.Context, uuid.UUID, uuid.UUID) (*domain.Credential, error) {
 	return nil, nil
 }
 
-func (routerAPIKeyService) DeleteForProfile(context.Context, uuid.UUID, uuid.UUID, *string, string, string, string) error {
+func (routerCredentialService) DeleteForTeam(context.Context, uuid.UUID, uuid.UUID, *string, string, string, string) error {
 	return nil
 }
 
-type routerAPIKeyRepo struct {
-	key *domain.APIKey
+type routerCredentialRepo struct {
+	key *domain.Credential
 
 	mu           sync.Mutex
 	touchedID    uuid.UUID
 	touchedCount int
 }
 
-func (r *routerAPIKeyRepo) CreateStandardKey(context.Context, *domain.APIKey) error {
+func (r *routerCredentialRepo) CreateCredential(context.Context, *domain.Credential) error {
 	return nil
 }
 
-func (r *routerAPIKeyRepo) ListByProfile(context.Context, uuid.UUID, int, int) ([]*domain.APIKey, error) {
+func (r *routerCredentialRepo) ListByTeam(context.Context, uuid.UUID, int, int) ([]*domain.Credential, error) {
 	return nil, nil
 }
 
-func (r *routerAPIKeyRepo) CountByProfile(context.Context, uuid.UUID) (int64, error) {
+func (r *routerCredentialRepo) CountByTeam(context.Context, uuid.UUID) (int64, error) {
 	return 0, nil
 }
 
-func (r *routerAPIKeyRepo) GetByIDForProfile(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+func (r *routerCredentialRepo) GetByIDForTeam(context.Context, uuid.UUID, uuid.UUID) (*domain.Credential, error) {
 	return nil, nil
 }
 
-func (r *routerAPIKeyRepo) GetSSOOwnedKey(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+func (r *routerCredentialRepo) GetSSOOwnedCredential(context.Context, uuid.UUID, uuid.UUID) (*domain.Credential, error) {
 	return nil, nil
 }
 
-func (r *routerAPIKeyRepo) GetActiveByPrefix(_ context.Context, prefix string) (*domain.APIKey, error) {
+func (r *routerCredentialRepo) GetActiveByPrefix(_ context.Context, prefix string) (*domain.Credential, error) {
 	if r.key != nil && r.key.KeyPrefix == prefix {
 		return r.key, nil
 	}
 	return nil, nil
 }
 
-func (r *routerAPIKeyRepo) RevokeForProfile(context.Context, uuid.UUID, uuid.UUID) (int64, error) {
+func (r *routerCredentialRepo) RevokeForTeam(context.Context, uuid.UUID, uuid.UUID) (int64, error) {
 	return 0, nil
 }
 
-func (r *routerAPIKeyRepo) DeleteForProfile(context.Context, uuid.UUID, uuid.UUID) (int64, error) {
+func (r *routerCredentialRepo) DeleteForTeam(context.Context, uuid.UUID, uuid.UUID) (int64, error) {
 	return 0, nil
 }
 
-func (r *routerAPIKeyRepo) UpdateNameForProfile(context.Context, uuid.UUID, uuid.UUID, string) (int64, error) {
+func (r *routerCredentialRepo) UpdateNameForTeam(context.Context, uuid.UUID, uuid.UUID, string) (int64, error) {
 	return 0, nil
 }
 
-func (r *routerAPIKeyRepo) UpdateRoleForProfile(context.Context, uuid.UUID, uuid.UUID, string, []string) (int64, error) {
+func (r *routerCredentialRepo) UpdateRoleForTeam(context.Context, uuid.UUID, uuid.UUID, string, []string) (int64, error) {
 	return 0, nil
 }
 
-func (r *routerAPIKeyRepo) UpdateScopesForProfile(context.Context, uuid.UUID, uuid.UUID, []string) (int64, error) {
+func (r *routerCredentialRepo) UpdateScopesForTeam(context.Context, uuid.UUID, uuid.UUID, []string) (int64, error) {
 	return 0, nil
 }
 
-func (r *routerAPIKeyRepo) RotateForProfile(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (int64, error) {
+func (r *routerCredentialRepo) RotateForTeam(context.Context, uuid.UUID, uuid.UUID, string, string, string, *time.Time) (int64, error) {
 	return 0, nil
 }
 
-func (r *routerAPIKeyRepo) TouchLastUsed(_ context.Context, id uuid.UUID) error {
+func (r *routerCredentialRepo) TouchLastUsed(_ context.Context, id uuid.UUID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.touchedID = id
@@ -122,7 +122,7 @@ func (r *routerAPIKeyRepo) TouchLastUsed(_ context.Context, id uuid.UUID) error 
 	return nil
 }
 
-func (r *routerAPIKeyRepo) touched(id uuid.UUID) bool {
+func (r *routerCredentialRepo) touched(id uuid.UUID) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.touchedID == id && r.touchedCount > 0
@@ -130,9 +130,8 @@ func (r *routerAPIKeyRepo) touched(id uuid.UUID) bool {
 
 func TestProtectedDepsGettersReturnConfiguredDependencies(t *testing.T) {
 	deps := &ProtectedDeps{
-		APIKeyRepo:       nil,
-		ProfileService:   nil,
-		ProfileSvc:       nil,
+		CredentialRepo:   nil,
+		TeamSvc:          nil,
 		RateLimitService: nil,
 		UsageMetrics:     nil,
 		AuditService:     nil,
@@ -141,9 +140,8 @@ func TestProtectedDepsGettersReturnConfiguredDependencies(t *testing.T) {
 		Logger:           nil,
 	}
 
-	if deps.GetAPIKeyRepo() != nil ||
-		deps.GetProfileService() != nil ||
-		deps.GetProfileSvc() != nil ||
+	if deps.GetCredentialRepo() != nil ||
+		deps.GetTeamSvc() != nil ||
 		deps.GetRateLimitService() != nil ||
 		deps.GetUsageMetrics() != nil ||
 		deps.GetAuditService() != nil ||

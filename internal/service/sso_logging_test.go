@@ -75,8 +75,8 @@ func TestSSOLoggingFailureHelpers(t *testing.T) {
 		ProviderID: provider.ID,
 		TeamID:     uuid.New(),
 		GroupID:    "dense-mem-admin",
-		Scopes:     []string{APIKeyScopeRead, APIKeyScopeWrite},
-		Role:       APIKeyRoleManager,
+		Scopes:     []string{CredentialScopeRead, CredentialScopeWrite},
+		Role:       CredentialRoleManager,
 		Enabled:    true,
 	}
 
@@ -95,9 +95,9 @@ func TestSSOLoggingFailureHelpers(t *testing.T) {
 	assert.Equal(t, true, mappingAttrs["mapping_found"])
 	assert.Equal(t, ssoRedactedHash(mapping.ID.String()), mappingAttrs["mapping_id_hash"])
 	assert.Equal(t, ssoRedactedHash("dense-mem-admin"), mappingAttrs["group_id_hash"])
-	assert.Equal(t, APIKeyRoleManager, mappingAttrs["role"])
+	assert.Equal(t, CredentialRoleManager, mappingAttrs["role"])
 	assert.Equal(t, true, mappingAttrs["mapping_enabled"])
-	assert.Equal(t, []string{APIKeyScopeRead, APIKeyScopeWrite}, mappingAttrs["scopes"])
+	assert.Equal(t, []string{CredentialScopeRead, CredentialScopeWrite}, mappingAttrs["scopes"])
 	assert.Equal(t, false, logAttrsByKey(logger.debugs[4].attrs)["mapping_found"])
 
 	var nilSvc *SSOService
@@ -112,47 +112,49 @@ func TestSSOLogAttrHelpersDescribeOptionalObjects(t *testing.T) {
 	teamProfileID := uuid.New()
 	teamID := uuid.New()
 	session := &domain.SSOSession{
-		IdentityID:    identityID,
-		ProviderID:    providerID,
-		TeamProfileID: teamProfileID,
-		TeamID:        teamID,
-		ExpiresAt:     now,
+		IdentityID:   identityID,
+		ProviderID:   providerID,
+		MembershipID: teamProfileID,
+		OwnerID:      teamProfileID,
+		TeamID:       teamID,
+		ExpiresAt:    now,
 	}
 
 	sessionAttrs := logAttrsByKey(ssoSessionLogAttrs(session))
 	assert.Equal(t, true, sessionAttrs["session_found"])
 	assert.Equal(t, ssoRedactedHash(identityID.String()), sessionAttrs["identity_id_hash"])
 	assert.Equal(t, ssoRedactedHash(providerID.String()), sessionAttrs["provider_id_hash"])
-	assert.Equal(t, ssoRedactedHash(teamProfileID.String()), sessionAttrs["team_profile_id_hash"])
+	assert.Equal(t, ssoRedactedHash(teamProfileID.String()), sessionAttrs["membership_id_hash"])
+	assert.Equal(t, ssoRedactedHash(teamProfileID.String()), sessionAttrs["owner_id_hash"])
 	assert.Equal(t, ssoRedactedHash(teamID.String()), sessionAttrs["team_id_hash"])
 	assert.Equal(t, now.Format(time.RFC3339), sessionAttrs["expires_at"])
 	assert.Equal(t, false, logAttrsByKey(ssoSessionLogAttrs(nil))["session_found"])
 
-	key := &domain.APIKey{
+	key := &domain.Credential{
 		ID:                   teamProfileID,
 		TeamID:               teamID,
-		Role:                 APIKeyRoleManager,
-		Scopes:               []string{APIKeyScopeRead},
-		SSOIdentityID:        &identityID,
+		Role:                 CredentialRoleManager,
+		Scopes:               []string{CredentialScopeRead},
+		OwnerIdentityID:      &identityID,
 		SSOProviderID:        &providerID,
 		SSOSubject:           "subject-123",
 		SSOGroupID:           "dense-mem-admin",
 		SSOEntitlementStatus: "active",
 	}
-	keyAttrs := logAttrsByKey(ssoAPIKeyLogAttrs(key))
-	assert.Equal(t, true, keyAttrs["api_key_found"])
-	assert.Equal(t, ssoRedactedHash(teamProfileID.String()), keyAttrs["profile_id_hash"])
+	keyAttrs := logAttrsByKey(ssoCredentialLogAttrs(key))
+	assert.Equal(t, true, keyAttrs["credential_found"])
+	assert.Equal(t, ssoRedactedHash(teamProfileID.String()), keyAttrs["credential_id_hash"])
 	assert.Equal(t, ssoRedactedHash(teamID.String()), keyAttrs["team_id_hash"])
-	assert.Equal(t, APIKeyRoleManager, keyAttrs["role"])
-	assert.Equal(t, []string{APIKeyScopeRead}, keyAttrs["scopes"])
-	assert.Equal(t, ssoRedactedHash(identityID.String()), keyAttrs["identity_id_hash"])
+	assert.Equal(t, CredentialRoleManager, keyAttrs["role"])
+	assert.Equal(t, []string{CredentialScopeRead}, keyAttrs["scopes"])
+	assert.Equal(t, ssoRedactedHash(identityID.String()), keyAttrs["owner_identity_id_hash"])
 	assert.Equal(t, ssoRedactedHash(providerID.String()), keyAttrs["provider_id_hash"])
 	assert.Equal(t, ssoRedactedHash("subject-123"), keyAttrs["subject_hash"])
 	assert.Equal(t, ssoRedactedHash("dense-mem-admin"), keyAttrs["sso_group_id_hash"])
 	assert.Equal(t, "active", keyAttrs["entitlement_status"])
 	assert.NotContains(t, keyAttrs, "subject")
 	assert.NotContains(t, keyAttrs, "sso_group_id")
-	assert.Equal(t, false, logAttrsByKey(ssoAPIKeyLogAttrs(nil))["api_key_found"])
+	assert.Equal(t, false, logAttrsByKey(ssoCredentialLogAttrs(nil))["credential_found"])
 }
 
 type captureSSOLogger struct {

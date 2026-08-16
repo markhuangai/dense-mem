@@ -69,11 +69,11 @@ func TestDirectoryPolicyRejectsUnsafeConfigurationAndTransitions(t *testing.T) {
 	invalidCap.MaxAutoTeams = 1001
 	require.ErrorContains(t, normalizeDirectoryConnector(&invalidCap), "between 1 and 1000")
 
-	_, err := normalizeDirectoryRoleEntitlements(map[string]domain.DirectoryRoleEntitlement{"": {Role: APIKeyRoleMember, Scopes: []string{APIKeyScopeRead}}})
+	_, err := normalizeDirectoryRoleEntitlements(map[string]domain.DirectoryRoleEntitlement{"": {Role: CredentialRoleMember, Scopes: []string{CredentialScopeRead}}})
 	require.ErrorContains(t, err, "capture")
-	_, err = normalizeDirectoryRoleEntitlements(map[string]domain.DirectoryRoleEntitlement{"Member": {Role: "unknown", Scopes: []string{APIKeyScopeRead}}})
+	_, err = normalizeDirectoryRoleEntitlements(map[string]domain.DirectoryRoleEntitlement{"Member": {Role: "unknown", Scopes: []string{CredentialScopeRead}}})
 	require.Error(t, err)
-	_, err = normalizeDirectoryRoleEntitlements(map[string]domain.DirectoryRoleEntitlement{"Member": {Role: APIKeyRoleMember, Scopes: nil}})
+	_, err = normalizeDirectoryRoleEntitlements(map[string]domain.DirectoryRoleEntitlement{"Member": {Role: CredentialRoleMember, Scopes: nil}})
 	require.ErrorContains(t, err, "at least one")
 
 	connector := directoryConnectorForPolicyTest()

@@ -72,7 +72,7 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 		if err := requireRelationshipConflictContextsCurrent(ctx, tx, input.TeamID, conflictContexts); err != nil {
 			return err
 		}
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 

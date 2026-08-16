@@ -92,27 +92,27 @@ func normalizeDirectoryRoleEntitlements(values map[string]domain.DirectoryRoleEn
 			return nil, fmt.Errorf("directory role entitlement capture %q is duplicated", capture)
 		}
 		entitlement := values[key]
-		role, err := NormalizeAPIKeyRole(entitlement.Role)
+		role, err := NormalizeCredentialRole(entitlement.Role)
 		if err != nil {
 			return nil, err
 		}
 		if role == "" {
-			return nil, fmt.Errorf("directory role entitlement %q must set a profile role", capture)
+			return nil, fmt.Errorf("directory role entitlement %q must set a membership role", capture)
 		}
 		if len(entitlement.Scopes) == 0 {
 			return nil, fmt.Errorf("directory role entitlement %q must grant at least one scope", capture)
 		}
-		scopes, err := NormalizeAPIKeyScopes(entitlement.Scopes)
+		scopes, err := NormalizeCredentialScopes(entitlement.Scopes)
 		if err != nil {
 			return nil, err
 		}
-		if role == APIKeyRoleManager {
-			scopes = managerAPIKeyScopes(scopes)
+		if role == CredentialRoleManager {
+			scopes = managerCredentialScopes(scopes)
 		}
-		if strings.EqualFold(capture, "manager") && role != APIKeyRoleManager {
+		if strings.EqualFold(capture, "manager") && role != CredentialRoleManager {
 			return nil, fmt.Errorf("directory role entitlement %q must map to manager", capture)
 		}
-		if isReadOnlyDirectoryRole(capture) && containsString(scopes, APIKeyScopeWrite) {
+		if isReadOnlyDirectoryRole(capture) && containsString(scopes, CredentialScopeWrite) {
 			return nil, fmt.Errorf("directory role entitlement %q must not grant write", capture)
 		}
 		normalized[capture] = domain.DirectoryRoleEntitlement{Role: role, Scopes: scopes}

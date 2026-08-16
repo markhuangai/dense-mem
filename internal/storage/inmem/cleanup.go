@@ -5,7 +5,7 @@ import (
 )
 
 // NoopCleanupRepository is a non-nil no-op implementation of cleanup
-// operations for profile state and API key sessions. It returns nil
+// operations for team state and credential sessions. It returns nil
 // for all cleanup calls, making it safe to inject in no-Redis mode.
 type NoopCleanupRepository struct{}
 
@@ -14,13 +14,13 @@ func NewNoopCleanupRepository() *NoopCleanupRepository {
 	return &NoopCleanupRepository{}
 }
 
-// PurgeProfileState is a no-op implementation that returns nil.
-func (r *NoopCleanupRepository) PurgeProfileState(ctx context.Context, profileID string) error {
+// PurgeTeamState is a no-op implementation that returns nil.
+func (r *NoopCleanupRepository) PurgeTeamState(ctx context.Context, teamID string) error {
 	return nil
 }
 
-// InvalidateKeySessions is a no-op implementation that returns nil.
-func (r *NoopCleanupRepository) InvalidateKeySessions(ctx context.Context, profileID, keyID string) error {
+// InvalidateCredentialSessions is a no-op implementation that returns nil.
+func (r *NoopCleanupRepository) InvalidateCredentialSessions(ctx context.Context, teamID, credentialID string) error {
 	return nil
 }
 
@@ -33,7 +33,7 @@ func NewNoopStreamCleanupRepository() *NoopStreamCleanupRepository {
 	return &NoopStreamCleanupRepository{}
 }
 
-// PurgeProfileStreamState is a no-op implementation that returns nil.
-func (r *NoopStreamCleanupRepository) PurgeProfileStreamState(ctx context.Context, profileID string) error {
+// PurgeTeamStreamState is a no-op implementation that returns nil.
+func (r *NoopStreamCleanupRepository) PurgeTeamStreamState(ctx context.Context, teamID string) error {
 	return nil
 }

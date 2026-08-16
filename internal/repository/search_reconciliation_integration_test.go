@@ -550,7 +550,7 @@ func TestSearchConvergenceBoundsDerivedFailureGroups(t *testing.T) {
 	for index := range teams {
 		teams[index].ownerID = createLedgerProfile(t, adminDB, rls, teams[index].teamID, "convergence-failure-group-owner")
 		require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teams[index].teamID, teams[index].ownerID, func(tx *gorm.DB) error {
-			return ensureSemanticRefs(ctx, tx, teams[index].teamID, teams[index].ownerID)
+			return seedTeamPredicateDefinitions(ctx, tx, teams[index].teamID)
 		}))
 	}
 	failureContracts := []struct {
@@ -683,7 +683,7 @@ func TestSearchConvergenceExcludesDeletedTeams(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, claimed)
 
-	profileRepo := NewProfileRepository(appDB, rls)
+	profileRepo := NewTeamRepository(appDB, rls)
 	require.NoError(t, profileRepo.SoftDelete(ctx, uuid.MustParse(teamID)))
 	requeued, err := repo.RequeueEmbeddingReconciliationJobs(ctx, RequeueEmbeddingReconciliationJobsInput{
 		RunID: run.RunID, WorkerID: run.WorkerID, LeaseToken: run.LeaseToken,

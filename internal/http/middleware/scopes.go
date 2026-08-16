@@ -25,7 +25,7 @@ func RequireScopes(required ...string) echo.MiddlewareFunc {
 			}
 
 			// Check that principal has all required scopes
-			if hasAllScopes(principal.Scopes, required) {
+			if hasAllScopes(principal.Grants, required) {
 				return next(c)
 			}
 

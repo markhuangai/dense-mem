@@ -30,9 +30,9 @@ type AppConfig interface {
 	DreamingRuntimeConfig(ctx context.Context) (domain.DreamingRuntimeConfig, error)
 }
 
-type ProfileService interface {
-	GetByID(ctx context.Context, id uuid.UUID) (*domain.Profile, error)
-	List(ctx context.Context, limit, offset int) ([]*domain.Profile, error)
+type TeamService interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*domain.Team, error)
+	List(ctx context.Context, limit, offset int) ([]*domain.Team, error)
 }
 
 type TeamConfigService interface {
@@ -40,11 +40,11 @@ type TeamConfigService interface {
 }
 
 type CycleLocker interface {
-	WithCycleLock(ctx context.Context, db *gorm.DB, profileID, runDate string, timeout time.Duration, fn func(tx *gorm.DB) error) error
+	WithCycleLock(ctx context.Context, db *gorm.DB, teamID, runDate string, timeout time.Duration, fn func(tx *gorm.DB) error) error
 }
 
 type Generator interface {
-	Generate(ctx context.Context, profileID string, req GenerateRequest) ([]GeneratedDream, error)
+	Generate(ctx context.Context, teamID string, req GenerateRequest) ([]GeneratedDream, error)
 	Model() string
 }
 
@@ -53,7 +53,7 @@ type Dependencies struct {
 	Store              repository.DreamRepository
 	ScheduledStore     repository.ScheduledDreamRepository
 	AppConfig          AppConfig
-	Profiles           ProfileService
+	Teams              TeamService
 	Locker             CycleLocker
 	Postgres           *gorm.DB
 	Generator          Generator
@@ -63,15 +63,15 @@ type Dependencies struct {
 }
 
 type Service interface {
-	RunCycle(ctx context.Context, profileID string, req RunCycleRequest) (*RunCycleResult, error)
+	RunCycle(ctx context.Context, teamID string, req RunCycleRequest) (*RunCycleResult, error)
 	RunScheduledCycle(ctx context.Context, teamID string, windowAt time.Time) (*RunCycleResult, error)
 	RecordMissedScheduledCycle(ctx context.Context, teamID, runDate string) (*RunCycleResult, error)
-	List(ctx context.Context, profileID string, opts ListOptions) ([]*domain.Dream, string, error)
-	Get(ctx context.Context, profileID, dreamID string) (*domain.Dream, error)
-	ListRuns(ctx context.Context, profileID string, limit int) ([]*RunCycleResult, error)
-	Recall(ctx context.Context, profileID, query string, limit int) ([]*domain.Dream, error)
-	ResolveFeedback(ctx context.Context, profileID string, req ResolveFeedbackRequest) (*ResolveFeedbackResult, error)
-	Status(ctx context.Context, profileID string) (*StatusResult, error)
+	List(ctx context.Context, teamID string, opts ListOptions) ([]*domain.Dream, string, error)
+	Get(ctx context.Context, teamID, dreamID string) (*domain.Dream, error)
+	ListRuns(ctx context.Context, teamID string, limit int) ([]*RunCycleResult, error)
+	Recall(ctx context.Context, teamID, query string, limit int) ([]*domain.Dream, error)
+	ResolveFeedback(ctx context.Context, teamID string, req ResolveFeedbackRequest) (*ResolveFeedbackResult, error)
+	Status(ctx context.Context, teamID string) (*StatusResult, error)
 	EffectiveConfig(ctx context.Context, fallbackTeamID string) (EffectiveConfig, error)
 }
 
@@ -183,7 +183,7 @@ type GenerationDiagnostics struct {
 }
 
 type DiagnosticsGenerator interface {
-	GenerateWithDiagnostics(ctx context.Context, profileID string, req GenerateRequest) ([]GeneratedDream, GenerationDiagnostics, error)
+	GenerateWithDiagnostics(ctx context.Context, teamID string, req GenerateRequest) ([]GeneratedDream, GenerationDiagnostics, error)
 }
 
 // DreamPath is a server-derived, directed two-premise path. Database IDs stay

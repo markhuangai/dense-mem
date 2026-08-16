@@ -5,9 +5,9 @@
 // repeatedly calling Lattice.Max, which is associative and commutative — the
 // result of merging N label maps is independent of merge order.
 //
-// Profile isolation: this package is a pure in-memory computation. It receives
-// no profileID and accesses no storage. Callers are responsible for scoping the
-// label maps they pass in to the correct profile before invoking Max.
+// Owner isolation: this package is a pure in-memory computation. It receives no
+// owner ID and accesses no storage. Callers scope label maps to the authenticated
+// owner before invoking Max.
 package classification
 
 // LatticeVersion is the version identifier for this max-lattice schema.

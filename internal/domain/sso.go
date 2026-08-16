@@ -84,18 +84,52 @@ type SSOOAuthState struct {
 }
 
 type SSOSession struct {
-	SessionHash   string
-	IdentityID    uuid.UUID
-	ProviderID    uuid.UUID
-	TeamProfileID uuid.UUID
-	TeamID        uuid.UUID
-	CSRFHash      string
-	ExpiresAt     time.Time
-	CreatedAt     time.Time
-	LastSeenAt    time.Time
+	SessionHash  string
+	IdentityID   uuid.UUID
+	ProviderID   uuid.UUID
+	MembershipID uuid.UUID
+	OwnerID      uuid.UUID
+	TeamID       uuid.UUID
+	CSRFHash     string
+	ExpiresAt    time.Time
+	CreatedAt    time.Time
+	LastSeenAt   time.Time
 }
 
-type SSOTeamProfile struct {
-	Team    Profile
-	Profile APIKey
+type Membership struct {
+	ID                          uuid.UUID
+	ActorIdentityID             uuid.UUID
+	TeamID                      uuid.UUID
+	OwnerID                     uuid.UUID
+	Name                        string
+	Grants                      []string
+	Role                        string
+	Status                      string
+	CreatedAt                   time.Time
+	SSOProviderID               *uuid.UUID
+	SSOSubject                  string
+	SSOEmail                    string
+	SSOGroupID                  string
+	SSOEntitlementStatus        string
+	SSOLastEntitlementCheckedAt *time.Time
+	SSOLastLoginAt              *time.Time
+}
+
+type SSOTeamMembership struct {
+	Team       Team
+	Membership Membership
+}
+
+type ActorIdentity struct {
+	ID          uuid.UUID
+	Kind        string
+	DisplayName string
+}
+
+type AuthenticatedActor struct {
+	Team       Team
+	Identity   ActorIdentity
+	Membership Membership
+	OwnerID    uuid.UUID
+	Credential *Credential
 }

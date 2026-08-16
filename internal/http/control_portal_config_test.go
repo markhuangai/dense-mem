@@ -759,6 +759,21 @@ func TestControlPortalOperationLogConfigUnavailable(t *testing.T) {
 	require.ErrorContains(t, (&controlPortalHandler{}).updateOperationLogConfig(newControlConfigContext(http.MethodPatch, `{}`)), "app config service unavailable")
 }
 
+func TestControlPortalRemovedProfileRoutesReturnNotFound(t *testing.T) {
+	profiles, _, server := testControlServer(t)
+	teamID := profiles.profiles[0].ID
+	for _, path := range []string{
+		"/control/api/profiles",
+		"/control/api/teams/" + teamID.String() + "/profiles",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("X-Control-Portal-Token", "secret")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusNotFound, rec.Code, "removed path %q", path)
+	}
+}
+
 func newControlConfigContext(method, body string) echo.Context {
 	e := echo.New()
 	req := httptest.NewRequest(method, "/", strings.NewReader(body))

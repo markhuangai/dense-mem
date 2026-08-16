@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
 import { recallPayloadForHits } from "./App.test-helpers";
-import { GraphNode, GraphSnapshot, RecallHit, UserKey, UserSession } from "./api";
+import { GraphNode, GraphSnapshot, RecallHit, UserCredential, UserSession } from "./api";
 
 vi.mock("react-force-graph-2d", async () => {
   const React = await import("react");
@@ -39,7 +39,13 @@ const baseSession: UserSession = {
     created_at: "2026-05-01T12:00:00Z",
     updated_at: "2026-05-01T12:00:00Z",
   },
-  key: {
+  membership: {
+    team_id: "11111111-1111-4111-8111-111111111111",
+    name: "Mine",
+    grants: ["read"],
+    role: "member",
+  },
+  credential: {
     id: "22222222-2222-4222-8222-222222222222",
     team_id: "11111111-1111-4111-8111-111111111111",
     name: "Mine",
@@ -51,18 +57,14 @@ const baseSession: UserSession = {
     expires_at: null,
     created_at: "2026-05-01T12:00:00Z",
   },
-  can_rotate: false,
-  can_manage_team: false,
-  personal_key: null,
-  can_create_personal_key: false,
-  can_rotate_personal_key: false,
-  personal_key_max_scopes: [],
+  teams: [],
+  personal_credential: null,
 };
 
-const memberProfile: UserKey = {
+const memberCredential: UserCredential = {
   id: "33333333-3333-4333-8333-333333333333",
   team_id: baseSession.team.id,
-  name: "Reader",
+  name: "Reader credential",
   key_suffix: "def456",
   scopes: ["read"],
   role: "member",
@@ -185,7 +187,7 @@ beforeEach(() => {
 });
 
 describe("UserPortalApp", () => {
-  it("logs in with an API key and does not call team profile list APIs", async () => {
+  it("logs in with an API key and does not call team credential list APIs", async () => {
     const fetchMock = mockUserFetch(baseSession);
     render(<UserPortalApp />);
 
@@ -197,7 +199,7 @@ describe("UserPortalApp", () => {
     expect(screen.getByLabelText("Knowledge sections")).toHaveClass("top-nav-tabs");
     expect(screen.getByLabelText("Current workspace")).not.toHaveTextContent("Mine");
 	 expect(screen.queryByRole("button", { name: "Communities" })).not.toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/profiles"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/credentials"))).toBe(false);
   });
 
   it("disables self rotation for read-only keys", async () => {
@@ -206,7 +208,7 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
     await screen.findByText("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /my key/i }));
+    await userEvent.click(screen.getByRole("button", { name: /my credential/i }));
 
     expect(await screen.findByRole("button", { name: /regenerate key/i })).toBeDisabled();
   });
@@ -397,11 +399,11 @@ describe("UserPortalApp", () => {
     expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
   });
 
-  it("labels write-member telemetry as key usage", async () => {
-    const writeSession = {
+  it("labels write-member telemetry as credential usage", async () => {
+    const writeSession: UserSession = {
       ...baseSession,
-      key: { ...baseSession.key, scopes: ["read", "write"] },
-      can_rotate: true,
+      membership: { ...baseSession.membership, grants: ["read", "write"] },
+      credential: { ...baseSession.credential!, scopes: ["read", "write"] },
     };
     const fetchMock = mockUserFetch(writeSession);
     sessionStorage.setItem("denseMem.userApiKey", "dm_write");
@@ -410,7 +412,7 @@ describe("UserPortalApp", () => {
     await screen.findByText("Research Team");
     await userEvent.click(screen.getByRole("button", { name: /usage/i }));
 
-    expect(await screen.findByLabelText("My key usage totals")).toHaveTextContent("HTTP requests");
+    expect(await screen.findByLabelText("My credential usage totals")).toHaveTextContent("HTTP requests");
     expect(screen.queryByLabelText("Team usage totals")).not.toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/ui/api/telemetry?window=1h", expect.any(Object));
@@ -418,10 +420,10 @@ describe("UserPortalApp", () => {
   });
 
   it("rotates the current write-scoped key and stores the replacement", async () => {
-    const writeSession = {
+    const writeSession: UserSession = {
       ...baseSession,
-      key: { ...baseSession.key, scopes: ["read", "write"] },
-      can_rotate: true,
+      membership: { ...baseSession.membership, grants: ["read", "write"] },
+      credential: { ...baseSession.credential!, scopes: ["read", "write"] },
     };
     const fetchMock = mockUserFetch(writeSession);
     sessionStorage.setItem("denseMem.userApiKey", "dm_old");
@@ -429,7 +431,7 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
     await screen.findByText("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /my key/i }));
+    await userEvent.click(screen.getByRole("button", { name: /my credential/i }));
     await userEvent.click(await screen.findByRole("button", { name: /regenerate key/i }));
 
     expect(await screen.findByDisplayValue("dm_new_plaintext")).toHaveAccessibleName("Generated API key");
@@ -437,24 +439,28 @@ describe("UserPortalApp", () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("dm_new_plaintext");
     expect(sessionStorage.getItem("denseMem.userApiKey")).toBe("dm_new_plaintext");
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/ui/api/key/rotate", expect.objectContaining({ method: "POST" }));
+      expect(fetchMock).toHaveBeenCalledWith("/ui/api/credential/rotate", expect.objectContaining({ method: "POST" }));
     });
   });
 
-  it("lets a manager update the team and manage member profiles", async () => {
+  it("lets a manager update the team and manage member credentials", async () => {
     const managerSession: UserSession = {
       ...baseSession,
-      key: {
-        ...baseSession.key,
+      membership: {
+        ...baseSession.membership,
+        name: "Manager",
+        grants: ["read", "write"],
+        role: "manager",
+      },
+      credential: {
+        ...baseSession.credential!,
         name: "Manager",
         scopes: ["read", "write"],
         role: "manager",
       },
-      can_rotate: true,
-      can_manage_team: true,
     };
-    const managerProfile: UserKey = { ...managerSession.key };
-    const fetchMock = mockUserFetch(managerSession, [managerProfile, memberProfile]);
+    const managerCredential: UserCredential = { ...managerSession.credential! };
+    const fetchMock = mockUserFetch(managerSession, [managerCredential, memberCredential]);
     sessionStorage.setItem("denseMem.userApiKey", "dm_manager");
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
@@ -462,8 +468,8 @@ describe("UserPortalApp", () => {
     await screen.findByText("Research Team");
     await userEvent.click(screen.getByRole("button", { name: /^team$/i }));
 
-    expect(await screen.findByLabelText("Profile name Manager")).toBeDisabled();
-    expect(screen.getByRole("button", { name: /regenerate key for profile Manager/i })).toBeDisabled();
+    expect(await screen.findByLabelText("Credential name Manager")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /regenerate api key for credential Manager/i })).toBeDisabled();
 
     const teamName = screen.getByLabelText("Name", { selector: "#user-team-name" });
     await userEvent.clear(teamName);
@@ -471,27 +477,27 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /save team/i }));
     expect(await screen.findByText("Renamed Team")).toBeInTheDocument();
 
-    const newProfileName = screen.getByLabelText("Profile name", { selector: "#managed-profile-name" });
-    await userEvent.clear(newProfileName);
-    await userEvent.type(newProfileName, "Writer");
-    const createForm = screen.getByRole("button", { name: /create member profile/i }).closest("form");
+    const newCredentialName = screen.getByLabelText("Credential name", { selector: "#managed-credential-name" });
+    await userEvent.clear(newCredentialName);
+    await userEvent.type(newCredentialName, "Writer");
+    const createForm = screen.getByRole("button", { name: /create member credential/i }).closest("form");
     expect(createForm).not.toBeNull();
     await userEvent.click(within(createForm as HTMLElement).getByLabelText("Recall feedback"));
-    await userEvent.click(screen.getByRole("button", { name: /create member profile/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create member credential/i }));
     expect(await screen.findByDisplayValue("dm_member_plaintext")).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("/ui/api/team/profiles"),
+      expect.stringContaining("/ui/api/team/credentials"),
       expect.objectContaining({ method: "POST", body: expect.not.stringContaining("role") }),
     ));
     expect(fetchMock.mock.calls.map(([, init]) => String(init?.body ?? ""))).toContainEqual(expect.stringContaining(`"scopes":["read","write","feedback:read"]`));
 
-    const memberName = await screen.findByLabelText("Profile name Reader");
+    const memberName = await screen.findByLabelText("Credential name Reader credential");
     await userEvent.clear(memberName);
     await userEvent.type(memberName, "Reader Updated");
-    await userEvent.click(screen.getByRole("button", { name: /save profile Reader/i }));
+    await userEvent.click(screen.getByRole("button", { name: /save credential Reader credential/i }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining(`/ui/api/team/profiles/${memberProfile.id}`),
+        expect.stringContaining(`/ui/api/team/credentials/${memberCredential.id}`),
         expect.objectContaining({
           method: "PATCH",
           body: expect.stringContaining(`"name":"Reader Updated"`),
@@ -503,23 +509,23 @@ describe("UserPortalApp", () => {
     expect(memberRow).not.toBeNull();
     await userEvent.click(within(memberRow as HTMLElement).getByLabelText("Recall feedback"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining(`/ui/api/team/profiles/${memberProfile.id}`),
+      expect.stringContaining(`/ui/api/team/credentials/${memberCredential.id}`),
       expect.objectContaining({ method: "PATCH", body: expect.stringContaining(`"scopes":["read","feedback:read"]`) }),
     ));
 
-    await userEvent.click(screen.getByRole("button", { name: /regenerate key for profile Reader Updated/i }));
+    await userEvent.click(screen.getByRole("button", { name: /regenerate api key for credential Reader Updated/i }));
     expect(await screen.findByDisplayValue("dm_member_rotated")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining(`/ui/api/team/profiles/${memberProfile.id}/rotate`),
+        expect.stringContaining(`/ui/api/team/credentials/${memberCredential.id}/rotate`),
         expect.objectContaining({ method: "POST" }),
       );
     });
 
-    await userEvent.click(screen.getByRole("button", { name: /delete profile Reader Updated/i }));
+    await userEvent.click(screen.getByRole("button", { name: /delete credential Reader Updated/i }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining(`/ui/api/team/profiles/${memberProfile.id}`),
+        expect.stringContaining(`/ui/api/team/credentials/${memberCredential.id}`),
         expect.objectContaining({ method: "DELETE" }),
       );
     });
@@ -539,16 +545,20 @@ describe("UserPortalApp", () => {
           },
         },
       },
-      key: {
-        ...baseSession.key,
+      membership: {
+        ...baseSession.membership,
+        name: "Manager",
+        grants: ["read", "write"],
+        role: "manager",
+      },
+      credential: {
+        ...baseSession.credential!,
         name: "Manager",
         scopes: ["read", "write"],
         role: "manager",
       },
-      can_rotate: true,
-      can_manage_team: true,
     };
-    const fetchMock = mockUserFetch(managerSession, [{ ...managerSession.key }]);
+    const fetchMock = mockUserFetch(managerSession, [{ ...managerSession.credential! }]);
     sessionStorage.setItem("denseMem.userApiKey", "dm_manager");
 
     render(<UserPortalApp />);
@@ -580,16 +590,20 @@ describe("UserPortalApp", () => {
   it("labels manager telemetry as team usage", async () => {
     const managerSession: UserSession = {
       ...baseSession,
-      key: {
-        ...baseSession.key,
+      membership: {
+        ...baseSession.membership,
+        name: "Manager",
+        grants: ["read", "write"],
+        role: "manager",
+      },
+      credential: {
+        ...baseSession.credential!,
         name: "Manager",
         scopes: ["read", "write"],
         role: "manager",
       },
-      can_rotate: true,
-      can_manage_team: true,
     };
-    const fetchMock = mockUserFetch(managerSession, [{ ...managerSession.key }]);
+    const fetchMock = mockUserFetch(managerSession, [{ ...managerSession.credential! }]);
     sessionStorage.setItem("denseMem.userApiKey", "dm_manager");
 
     render(<UserPortalApp />);
@@ -597,28 +611,28 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /usage/i }));
 
     expect(await screen.findByLabelText("Team usage totals")).toHaveTextContent("HTTP requests");
-    expect(screen.queryByLabelText("My key usage totals")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("My credential usage totals")).not.toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/ui/api/telemetry?window=1h", expect.any(Object));
     });
   });
 
-  it("uses server auth method for SSO cookie sessions and switches teams", async () => {
-    const { initial, switched, secondKey } = ssoSessions();
+  it("derives SSO cookie auth from the credential-free session and switches teams", async () => {
+    const { initial, switched, secondTeam } = ssoSessions();
     const fetchMock = mockSSOUserFetch(initial, switched);
 
     render(<UserPortalApp />);
 
     await expectCurrentWorkspace("Research Team");
-    expect(screen.getByRole("button", { name: /my key/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /my credential/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^team$/i })).not.toBeInTheDocument();
     const teamSelect = await screen.findByLabelText("Active team");
-    expect(teamSelect).toHaveValue(initial.key.id);
+    expect(teamSelect).toHaveValue(initial.team.id);
 
-    await userEvent.selectOptions(teamSelect, secondKey.id);
+    await userEvent.selectOptions(teamSelect, secondTeam.id);
 
     await expectCurrentWorkspace("Analytics Team");
-    expect(screen.queryByRole("button", { name: /my key/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /my credential/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^team$/i })).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -626,7 +640,7 @@ describe("UserPortalApp", () => {
         expect.objectContaining({
           method: "POST",
           credentials: "include",
-          body: JSON.stringify({ profile_id: secondKey.id }),
+          body: JSON.stringify({ team_id: secondTeam.id }),
         }),
       );
     });
@@ -634,22 +648,18 @@ describe("UserPortalApp", () => {
   });
 
   it("reloads usage telemetry after switching SSO teams", async () => {
-    const { initial, switched, secondKey } = ssoSessions();
-    const firstKey = { ...initial.key, scopes: ["read", "write"] };
-    const nextKey = { ...secondKey, scopes: ["read", "write"] };
+    const { initial, switched, secondTeam } = ssoSessions();
+    const firstMembership = { ...initial.membership, grants: ["read", "write"] };
     const writeInitial: UserSession = {
       ...initial,
-      key: firstKey,
-      can_rotate: true,
+      membership: firstMembership,
       teams: [
-        { team: initial.team, key: firstKey, can_rotate: true, can_manage_team: false },
-        { team: switched.team, key: nextKey, can_rotate: true, can_manage_team: true },
+        { team: initial.team, membership: firstMembership },
+        { team: switched.team, membership: switched.membership },
       ],
     };
     const writeSwitched: UserSession = {
       ...switched,
-      key: nextKey,
-      can_rotate: true,
       teams: writeInitial.teams,
     };
     const fetchMock = mockSSOUserFetch(writeInitial, writeSwitched);
@@ -658,15 +668,15 @@ describe("UserPortalApp", () => {
 
     await expectCurrentWorkspace("Research Team");
     await userEvent.click(screen.getByRole("button", { name: /usage/i }));
-    expect(await screen.findByLabelText("My key usage totals")).toHaveTextContent("4");
+    expect(await screen.findByLabelText("My credential usage totals")).toHaveTextContent("4");
 
-    await userEvent.selectOptions(screen.getByLabelText("Active team"), nextKey.id);
+    await userEvent.selectOptions(screen.getByLabelText("Active team"), secondTeam.id);
 
     await expectCurrentWorkspace("Analytics Team");
     await waitFor(() => {
       expect(screen.getByLabelText("Team usage totals")).toHaveTextContent("9");
     });
-    expect(screen.queryByLabelText("My key usage totals")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("My credential usage totals")).not.toBeInTheDocument();
     await waitFor(() => {
       const telemetryCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/telemetry?window=1h"));
       expect(telemetryCalls.length).toBeGreaterThanOrEqual(2);
@@ -689,12 +699,11 @@ describe("UserPortalApp", () => {
 
   it("lets an SSO read/write member create and rotate their owned API key", async () => {
     const { initial, switched } = ssoSessions();
-    const ssoKey = { ...initial.key, scopes: ["read", "write"] };
+    const membership = { ...initial.membership, grants: ["read", "write"] };
     const readWriteSession: UserSession = {
       ...initial,
-      key: ssoKey,
-      teams: initial.teams?.map((item, index) => index === 0 ? { ...item, key: ssoKey } : item),
-      personal_key_max_scopes: ["read", "write"],
+      membership,
+      teams: initial.teams.map((item, index) => index === 0 ? { ...item, membership } : item),
     };
     const fetchMock = mockSSOUserFetch(readWriteSession, switched);
     vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -702,13 +711,13 @@ describe("UserPortalApp", () => {
     render(<UserPortalApp />);
 
     await expectCurrentWorkspace("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /my key/i }));
+    await userEvent.click(screen.getByRole("button", { name: /my credential/i }));
     await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
 
     expect(await screen.findByDisplayValue("dm_sso_personal_plaintext")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/sso/key",
+        "/ui/api/sso/credential",
         expect.objectContaining({
           method: "POST",
           credentials: "include",
@@ -721,7 +730,7 @@ describe("UserPortalApp", () => {
     expect(await screen.findByDisplayValue("dm_sso_personal_rotated")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/sso/key/rotate",
+        "/ui/api/sso/credential/rotate",
         expect.objectContaining({ method: "POST", credentials: "include" }),
       );
     });
@@ -734,7 +743,7 @@ describe("UserPortalApp", () => {
     render(<UserPortalApp />);
 
     await expectCurrentWorkspace("Research Team");
-    await userEvent.click(screen.getByRole("button", { name: /my key/i }));
+    await userEvent.click(screen.getByRole("button", { name: /my credential/i }));
     await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
 
     expect(await screen.findByDisplayValue("dm_sso_personal_plaintext")).toBeInTheDocument();
@@ -747,16 +756,16 @@ async function expectCurrentWorkspace(teamName: string) {
   expect(workspace).toHaveTextContent(teamName);
 }
 
-function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; graphSnapshot?: GraphSnapshot | GraphSnapshot[]; graphNodeDetails?: Record<string, GraphNode> | Record<string, GraphNode>[] } = {}) {
+function mockUserFetch(session: UserSession, credentials: UserCredential[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; graphSnapshot?: GraphSnapshot | GraphSnapshot[]; graphNodeDetails?: Record<string, GraphNode> | Record<string, GraphNode>[] } = {}) {
   let currentTeam = session.team;
-  let currentProfiles = profiles;
+  let currentCredentials = credentials;
   let recallCallCount = 0;
   let graphCallCount = 0;
   let graphNodeDetailCallCount = 0;
   let portalSessionCreated = false;
   const rotatedSession = {
     ...session,
-    key: { ...session.key, key_suffix: "new123", last_used_at: null },
+    credential: session.credential ? { ...session.credential, key_suffix: "new123", last_used_at: null } : null,
   };
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -769,7 +778,7 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
       const auth = authorizationHeader(init);
       if (!auth) {
         return portalSessionCreated
-          ? jsonResponse({ data: { ...session, auth_method: "api_key_session", team: currentTeam } })
+          ? jsonResponse({ data: { ...session, team: currentTeam } })
           : jsonResponse({ code: "AUTH_MISSING", message: "missing authorization header", details: null }, 401);
       }
       const selectedSession = auth.includes("dm_new_plaintext") ? rotatedSession : session;
@@ -779,11 +788,11 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
       portalSessionCreated = true;
       return jsonResponse({ data: { status: "signed_in" } });
     }
-    if (url === "/ui/api/key/rotate" && method === "POST") {
+    if (url === "/ui/api/credential/rotate" && method === "POST") {
       return jsonResponse({
         data: {
           api_key: "dm_new_plaintext",
-          key: rotatedSession.key,
+          credential: rotatedSession.credential,
         },
       });
     }
@@ -804,36 +813,36 @@ function mockUserFetch(session: UserSession, profiles: UserKey[] = [], options: 
       currentTeam = { ...currentTeam, name: body.name ?? currentTeam.name, description: body.description ?? currentTeam.description, config: body.config ?? currentTeam.config };
       return jsonResponse({ data: currentTeam });
     }
-    if (url === "/ui/api/team/profiles" && method === "GET") {
-      return jsonResponse({ data: currentProfiles, pagination: { limit: 20, offset: 0, total: currentProfiles.length } });
+    if (url === "/ui/api/team/credentials" && method === "GET") {
+      return jsonResponse({ data: currentCredentials, pagination: { limit: 20, offset: 0, total: currentCredentials.length } });
     }
-    if (url === "/ui/api/team/profiles" && method === "POST") {
+    if (url === "/ui/api/team/credentials" && method === "POST") {
       const body = JSON.parse(String(init?.body));
-      const created: UserKey = {
-        ...memberProfile,
+      const created: UserCredential = {
+        ...memberCredential,
         id: "44444444-4444-4444-8444-444444444444",
         name: body.name,
         scopes: body.scopes,
         role: "member",
         key_suffix: "new456",
       };
-      currentProfiles = [created, ...currentProfiles];
-      return jsonResponse({ data: { api_key: "dm_member_plaintext", key: created } }, 201);
+      currentCredentials = [created, ...currentCredentials];
+      return jsonResponse({ data: { api_key: "dm_member_plaintext", credential: created } }, 201);
     }
-    if (url.includes("/ui/api/team/profiles/") && url.endsWith("/rotate") && method === "POST") {
-      const rotated = { ...(currentProfiles.find((profile) => url.includes(profile.id)) ?? memberProfile), key_suffix: "rot789" };
-      currentProfiles = currentProfiles.map((profile) => (profile.id === rotated.id ? rotated : profile));
-      return jsonResponse({ data: { api_key: "dm_member_rotated", key: rotated } });
+    if (url.includes("/ui/api/team/credentials/") && url.endsWith("/rotate") && method === "POST") {
+      const rotated = { ...(currentCredentials.find((credential) => url.includes(credential.id)) ?? memberCredential), key_suffix: "rot789" };
+      currentCredentials = currentCredentials.map((credential) => (credential.id === rotated.id ? rotated : credential));
+      return jsonResponse({ data: { api_key: "dm_member_rotated", credential: rotated } });
     }
-    if (url.includes("/ui/api/team/profiles/") && method === "PATCH") {
+    if (url.includes("/ui/api/team/credentials/") && method === "PATCH") {
       const body = JSON.parse(String(init?.body));
-      const current = currentProfiles.find((profile) => url.endsWith(`/profiles/${profile.id}`)) ?? memberProfile;
+      const current = currentCredentials.find((credential) => url.endsWith(`/credentials/${credential.id}`)) ?? memberCredential;
       const updated = { ...current, name: body.name ?? current.name, scopes: body.scopes ?? current.scopes };
-      currentProfiles = currentProfiles.map((profile) => (profile.id === updated.id ? updated : profile));
+      currentCredentials = currentCredentials.map((credential) => (credential.id === updated.id ? updated : credential));
       return jsonResponse({ data: updated });
     }
-    if (url.includes("/ui/api/team/profiles/") && method === "DELETE") {
-      currentProfiles = currentProfiles.filter((profile) => !url.endsWith(`/profiles/${profile.id}`));
+    if (url.includes("/ui/api/team/credentials/") && method === "DELETE") {
+      currentCredentials = currentCredentials.filter((credential) => !url.endsWith(`/credentials/${credential.id}`));
       return jsonResponse({ data: { status: "deleted" } });
     }
     if (url.startsWith("/ui/api/recall")) {
@@ -859,7 +868,7 @@ function isRecallSequence(value: RecallHit[] | RecallHit[][]): value is RecallHi
 }
 
 function telemetryForSession(session: UserSession) {
-  const teamScope = session.can_manage_team;
+  const teamScope = session.membership.role === "manager";
   return {
     available: true,
     window: {
@@ -871,7 +880,7 @@ function telemetryForSession(session: UserSession) {
     },
     scope: teamScope
       ? { type: "team", team_id: session.team.id }
-      : { type: "self", team_id: session.team.id, profile_id: session.key.id },
+      : { type: "self", team_id: session.team.id, profile_id: session.credential?.id ?? "sso-owner" },
     cards: [{ id: "http_requests", label: "HTTP requests", unit: "requests", value: teamScope ? 9 : 4 }],
     series: [],
   };
@@ -883,32 +892,30 @@ function ssoSessions() {
     id: "55555555-5555-4555-8555-555555555555",
     name: "Analytics Team",
   };
-  const secondKey: UserKey = {
-    ...baseSession.key,
-    id: "66666666-6666-4666-8666-666666666666",
+  const firstMembership = { ...baseSession.membership };
+  const secondMembership = {
+    ...baseSession.membership,
     team_id: secondTeam.id,
     name: "Analytics SSO",
+    grants: ["read", "write"],
+    role: "manager" as const,
   };
   const initial: UserSession = {
     ...baseSession,
-    auth_method: "sso",
-    can_create_personal_key: true,
-    personal_key_max_scopes: ["read"],
+    credential: null,
+    membership: firstMembership,
+    personal_credential: null,
     teams: [
-      { team: baseSession.team, key: baseSession.key, can_rotate: false, can_manage_team: false },
-      { team: secondTeam, key: secondKey, can_rotate: false, can_manage_team: true },
+      { team: baseSession.team, membership: firstMembership },
+      { team: secondTeam, membership: secondMembership },
     ],
   };
   const switched: UserSession = {
     ...initial,
     team: secondTeam,
-    key: secondKey,
-    can_rotate: false,
-    can_manage_team: true,
-    can_create_personal_key: false,
-    personal_key_max_scopes: [],
+    membership: secondMembership,
   };
-  return { initial, switched, secondKey };
+  return { initial, switched, secondTeam, secondMembership };
 }
 
 function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: { logoutStatus?: number } = {}) {
@@ -930,10 +937,11 @@ function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: 
     if (url.startsWith("/ui/api/telemetry") && method === "GET") {
       return jsonResponse({ data: telemetryForSession(current) });
     }
-    if (url === "/ui/api/sso/key" && method === "POST") {
+    if (url === "/ui/api/sso/credential" && method === "POST") {
       const body = JSON.parse(String(init?.body));
-      const created: UserKey = {
-        ...current.key,
+      const created: UserCredential = {
+        ...memberCredential,
+        team_id: current.team.id,
         id: "77777777-7777-4777-8777-777777777777",
         name: body.name,
         key_suffix: "own123",
@@ -942,16 +950,14 @@ function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: 
       };
       current = {
         ...current,
-        personal_key: created,
-        can_create_personal_key: false,
-        can_rotate_personal_key: created.scopes.includes("write") && (current.personal_key_max_scopes ?? []).includes("write"),
+        personal_credential: created,
       };
-      return jsonResponse({ data: { api_key: "dm_sso_personal_plaintext", key: created } }, 201);
+      return jsonResponse({ data: { api_key: "dm_sso_personal_plaintext", credential: created } }, 201);
     }
-    if (url === "/ui/api/sso/key/rotate" && method === "POST") {
-      const rotated = { ...(current.personal_key ?? current.key), key_suffix: "rot321" };
-      current = { ...current, personal_key: rotated };
-      return jsonResponse({ data: { api_key: "dm_sso_personal_rotated", key: rotated } });
+    if (url === "/ui/api/sso/credential/rotate" && method === "POST") {
+      const rotated = { ...(current.personal_credential ?? memberCredential), team_id: current.team.id, key_suffix: "rot321" };
+      current = { ...current, personal_credential: rotated };
+      return jsonResponse({ data: { api_key: "dm_sso_personal_rotated", credential: rotated } });
     }
     if (url === "/ui/api/sso/logout" && method === "POST") {
       if (options.logoutStatus) {

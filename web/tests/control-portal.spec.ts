@@ -26,7 +26,7 @@ type TestKey = {
 const key: TestKey = {
   id: "22222222-2222-4222-8222-222222222222",
   team_id: team.id,
-  name: "default profile",
+  name: "default credential",
   key_suffix: "abc123",
   scopes: ["read", "write"],
   role: "manager",
@@ -85,7 +85,7 @@ const metrics = {
     { team_id: team.id, team_name: "Default", requests: 42, errors: 2, avg_latency_ms: 18.5, max_latency_ms: 90 },
   ],
   keys: [
-    { team_id: team.id, team_name: "Default", key_id: key.id, key_name: "default profile", key_suffix: "abc123", requests: 40, errors: 1, avg_latency_ms: 17, max_latency_ms: 80 },
+    { team_id: team.id, team_name: "Default", key_id: key.id, key_name: "default credential", key_suffix: "abc123", requests: 40, errors: 1, avg_latency_ms: 17, max_latency_ms: 80 },
   ],
   routes: [
     { route: "/ui/api/evidence/:id", method: "GET", status_class: "2xx", requests: 39, errors: 0, avg_latency_ms: 16, max_latency_ms: 70 },
@@ -309,17 +309,17 @@ test("API key creation shows plaintext once", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [] });
   await openPortal(page);
 
-  await page.getByRole("button", { name: /Team Profiles/ }).click();
+  await page.getByRole("button", { name: /Team Credentials/ }).click();
   await page.getByLabel("Role").selectOption("member");
   await page.getByLabel("Write").uncheck();
-  await page.getByRole("button", { name: "Create profile" }).click();
+  await page.getByRole("button", { name: "Create credential" }).click();
 
   await expect(page.getByLabel("Generated API key")).toHaveValue("dm_plain_once");
   await page.getByRole("button", { name: "Dismiss API key" }).click();
   await expect(page.getByLabel("Generated API key")).toBeHidden();
 });
 
-test("team and profile names update and profile key regenerates", async ({ page }) => {
+test("team and credential names update and credential key regenerates", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
@@ -328,30 +328,30 @@ test("team and profile names update and profile key regenerates", async ({ page 
   await page.getByRole("button", { name: /^Save$/ }).click();
   await expect(page.getByRole("heading", { name: "Renamed Team" })).toBeVisible();
 
-  await page.getByRole("button", { name: /Team Profiles/ }).click();
-  await page.getByLabel("Profile name default profile").fill("Research profile");
-  await page.getByRole("button", { name: /Save profile default profile/ }).click();
-  await expect(page.getByLabel("Profile name Research profile")).toHaveValue("Research profile");
+  await page.getByRole("button", { name: /Team Credentials/ }).click();
+  await page.getByLabel("Credential name default credential").fill("Research credential");
+  await page.getByRole("button", { name: /Save credential default credential/ }).click();
+  await expect(page.getByLabel("Credential name Research credential")).toHaveValue("Research credential");
 
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: /Regenerate key for profile Research profile/ }).click();
+  await page.getByRole("button", { name: /Regenerate API key for credential Research credential/ }).click();
   await expect(page.getByLabel("Generated API key")).toHaveValue("dm_rotated_once");
 });
 
-test("team profile list and delete flow", async ({ page }) => {
+test("team credential list and delete flow", async ({ page }) => {
   await mockApi(page, { teams: [team], keys: [key] });
   await openPortal(page);
 
-  await page.getByRole("button", { name: /Team Profiles/ }).click();
+  await page.getByRole("button", { name: /Team Credentials/ }).click();
   await expect(page.getByText("******abc123")).toBeVisible();
   const keyRow = page.getByRole("row", { name: /abc123/ });
   await expect(keyRow.getByLabel("Read")).toBeChecked();
   await expect(keyRow.getByLabel("Write")).toBeChecked();
   await expect(keyRow.getByText(/May/)).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: /Delete profile default profile/ }).click();
+  await page.getByRole("button", { name: /Delete credential default credential/ }).click();
 
-  await expect(page.getByRole("button", { name: /Delete profile default profile/ })).toBeHidden();
+  await expect(page.getByRole("button", { name: /Delete credential default credential/ })).toBeHidden();
   await expect(page.getByText("******abc123")).toBeHidden();
 });
 
@@ -397,7 +397,7 @@ test("metrics tab renders operational totals and filter queries", async ({ page 
   await expect(page.getByText("postgres")).toBeVisible();
   await expect(page.getByText("redis")).toBeVisible();
   await expect(page.getByRole("row", { name: /Default\s+42\s+2\s+19 ms\s+90 ms/ })).toBeVisible();
-  await expect(page.getByRole("row", { name: /default profile\s+\*\*\*\*\*\*abc123\s+Default\s+40\s+1\s+17 ms/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /default credential\s+\*\*\*\*\*\*abc123\s+Default\s+40\s+1\s+17 ms/ })).toBeVisible();
   await expect(page.getByRole("row", { name: /\/ui\/api\/evidence\/:id\s+GET\s+2xx\s+39\s+0/ })).toBeVisible();
 
   await page.getByLabel("Window").selectOption("360");
@@ -477,7 +477,7 @@ test("team workspace header stays compact across team tabs", async ({ page }) =>
 
   const heights: number[] = [];
   const workspaceTabs = page.locator(".team-workspace-tabs");
-  for (const tab of ["Overview", "Profiles", "Dreams", "Settings"]) {
+  for (const tab of ["Overview", "Credentials", "Dreams", "Settings"]) {
     await workspaceTabs.getByRole("button", { name: `Team ${tab}` }).click();
     const box = await page.locator(".team-workspace-header").boundingBox();
     expect(box, `${tab} header was not rendered`).not.toBeNull();
@@ -570,8 +570,8 @@ test("responsive portal layout", async ({ page }) => {
   await expect(page.locator(".primary-rail")).toHaveCSS("border-right-width", "1px");
   await expect(page.locator(".resource-rail")).toHaveCSS("border-right-width", "1px");
   await expect(page.locator(".surface").first()).toHaveCSS("border-radius", "8px");
-  await page.getByRole("button", { name: /Team Profiles/ }).click();
-  await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible();
+  await page.getByRole("button", { name: /Team Credentials/ }).click();
+  await expect(page.getByRole("heading", { name: "Credentials" })).toBeVisible();
   await expectNoShellOverlap(page);
 
   if ((page.viewportSize()?.width ?? 1000) < 700) {
@@ -850,32 +850,32 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
       teams = [...teams, created];
       return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ data: created }) });
     }
-    if (url.includes("/profiles") && method === "GET") {
+    if (url.includes("/credentials") && method === "GET") {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(pageOf(keys)) });
     }
-    if (url.includes("/profiles/") && url.endsWith("/rotate") && method === "POST") {
+    if (url.includes("/credentials/") && url.endsWith("/rotate") && method === "POST") {
       const body = route.request().postDataJSON() as { name: string };
       const rotated = { ...(keys.find((item) => url.includes(item.id)) ?? key), name: body.name, key_suffix: "rot8ed", last_used_at: null };
       keys = keys.map((item) => (item.id === rotated.id ? rotated : item));
-      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { api_key: "dm_rotated_once", key: rotated } }) });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { api_key: "dm_rotated_once", credential: rotated } }) });
     }
-    if (url.includes("/profiles/") && method === "PATCH") {
+    if (url.includes("/credentials/") && method === "PATCH") {
       const body = route.request().postDataJSON() as { name?: string; role?: TestKey["role"]; scopes?: string[] };
-      const current = keys.find((item) => url.endsWith(`/profiles/${item.id}`)) ?? key;
+      const current = keys.find((item) => url.endsWith(`/credentials/${item.id}`)) ?? key;
       const updated = { ...current, name: body.name ?? current.name, role: body.role ?? current.role, scopes: body.scopes ?? current.scopes };
       keys = keys.map((item) => (item.id === updated.id ? updated : item));
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: updated }) });
     }
-    if (url.endsWith("/profiles") && method === "POST") {
+    if (url.endsWith("/credentials") && method === "POST") {
       const body = route.request().postDataJSON() as { label?: string; name: string; role?: "manager" | "member"; scopes: string[] };
       expect(body.label).toBeUndefined();
       expect(body.scopes).toEqual(["read"]);
       const created = { ...key, name: body.name, role: body.role ?? "member", scopes: body.scopes };
       keys = [created, ...keys];
-      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ data: { api_key: "dm_plain_once", key: created } }) });
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ data: { api_key: "dm_plain_once", credential: created } }) });
     }
-    if (url.includes("/profiles/") && method === "DELETE") {
-      keys = keys.filter((item) => !url.endsWith(`/profiles/${item.id}`));
+    if (url.includes("/credentials/") && method === "DELETE") {
+      keys = keys.filter((item) => !url.endsWith(`/credentials/${item.id}`));
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { status: "deleted" } }) });
     }
     if (url.includes("/teams/") && method === "PATCH") {

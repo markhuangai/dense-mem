@@ -507,15 +507,15 @@ func replaceDirectoryIssuesTx(tx *gorm.DB, connectorID uuid.UUID, issues []domai
 
 func upsertDirectoryTeamProfileTx(ctx context.Context, tx *gorm.DB, providerID uuid.UUID, grant domain.DirectoryProfileGrant, now time.Time) error {
 	if grant.IdentityID == uuid.Nil || grant.TeamID == uuid.Nil || strings.TrimSpace(grant.Subject) == "" {
-		return fmt.Errorf("directory profile grant is incomplete")
+		return fmt.Errorf("directory membership grant is incomplete")
 	}
 	if err := setActiveSSOTeamMutationScope(ctx, tx, grant.TeamID.String()); err != nil {
 		return err
 	}
-	_, _, err := upsertCanonicalSSOMembershipTx(tx, canonicalSSOMembershipInput{
+	_, _, _, err := upsertCanonicalSSOMembershipTx(tx, canonicalSSOMembershipInput{
 		IdentityID: grant.IdentityID, ProviderID: providerID, TeamID: grant.TeamID,
 		Scopes: grant.Entitlement.Scopes, Role: grant.Entitlement.Role,
-		GroupID: grant.GroupExternalID, ProfileName: directoryProfileName(grant.Email, grant.DisplayName, grant.IdentityID),
+		GroupID: grant.GroupExternalID, MembershipName: directoryMembershipName(grant.Email, grant.DisplayName, grant.IdentityID),
 		LastEntitlementCheckedAt: &now, Now: now,
 	})
 	return err
@@ -583,7 +583,7 @@ func directoryProfileGrantKey(identityID, teamID uuid.UUID) string {
 	return identityID.String() + ":" + teamID.String()
 }
 
-func directoryProfileName(email, displayName string, identityID uuid.UUID) string {
+func directoryMembershipName(email, displayName string, identityID uuid.UUID) string {
 	name := strings.TrimSpace(displayName)
 	if name == "" {
 		name = strings.TrimSpace(email)

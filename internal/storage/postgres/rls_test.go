@@ -146,15 +146,15 @@ func TestRLSPoliciesAuditLogAppendable(t *testing.T) {
 	}
 }
 
-func TestWithProfileTx(t *testing.T) {
+func TestWithTeamTxSetsLegacyProfileSetting(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := setupRLSTestDB(t)
 	defer cleanup()
 
 	rls := NewRLS()
-	profileID := uuid.New().String()
+	teamID := uuid.New().String()
 
-	err := rls.WithProfileTx(ctx, db, profileID, func(tx *gorm.DB) error {
+	err := rls.WithTeamTx(ctx, db, teamID, func(tx *gorm.DB) error {
 		var currentProfileID string
 		var currentTxMode string
 
@@ -165,8 +165,8 @@ func TestWithProfileTx(t *testing.T) {
 			return err
 		}
 
-		if currentProfileID != profileID {
-			t.Fatalf("expected profile_id %s, got %s", profileID, currentProfileID)
+		if currentProfileID != teamID {
+			t.Fatalf("expected legacy profile setting %s, got %s", teamID, currentProfileID)
 		}
 		if currentTxMode != "team" {
 			t.Fatalf("expected tx_mode team, got %s", currentTxMode)

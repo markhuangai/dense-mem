@@ -33,15 +33,15 @@ func GenerateRawKey() (string, error) {
 	return generateRawKeyWithPrefix(keyPrefix)
 }
 
-// GenerateRawKeyForProfile generates a new raw API key whose visible prefix
-// carries the named team profile. The slug is capped so key_prefix still
+// GenerateRawKeyForCredential generates a new raw API key whose visible prefix
+// carries the credential name. The slug is capped so key_prefix still
 // includes random bytes and remains suitable for lookup.
 //
-// Format: dm_<profile-slug>_ + base64url(32 random bytes)
-func GenerateRawKeyForProfile(profileName string) (string, error) {
-	slug := KeySlug(profileName)
+// Format: dm_<credential-slug>_ + base64url(32 random bytes)
+func GenerateRawKeyForCredential(credentialName string) (string, error) {
+	slug := KeySlug(credentialName)
 	if slug == "" {
-		slug = "profile"
+		slug = "credential"
 	}
 	return generateRawKeyWithPrefix("dm_" + slug + "_")
 }
@@ -59,7 +59,7 @@ func generateRawKeyWithPrefix(prefix string) (string, error) {
 	return prefix + encoded, nil
 }
 
-// KeySlug normalizes a team profile name for use in generated API keys.
+// KeySlug normalizes a credential name for use in generated API keys.
 func KeySlug(name string) string {
 	slug := strings.ToLower(strings.TrimSpace(name))
 	slug = strings.ReplaceAll(slug, "_", "-")

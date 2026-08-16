@@ -25,18 +25,18 @@ func TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle(t *testing.T) {
 	repo := NewUserPortalSessionRepository(appDB, rls)
 	createdAt := time.Now().UTC()
 	sessionA := &domain.UserPortalSession{
-		SessionHash: "portal-session-hash-a-" + uuid.NewString(),
-		KeyID:       uuid.MustParse(profileA),
-		CSRFHash:    "portal-csrf-hash-a",
-		ExpiresAt:   createdAt.Add(time.Hour),
-		CreatedAt:   createdAt,
+		SessionHash:  "portal-session-hash-a-" + uuid.NewString(),
+		CredentialID: uuid.MustParse(profileA),
+		CSRFHash:     "portal-csrf-hash-a",
+		ExpiresAt:    createdAt.Add(time.Hour),
+		CreatedAt:    createdAt,
 	}
 	sessionB := &domain.UserPortalSession{
-		SessionHash: "portal-session-hash-b-" + uuid.NewString(),
-		KeyID:       uuid.MustParse(profileB),
-		CSRFHash:    "portal-csrf-hash-b",
-		ExpiresAt:   createdAt.Add(time.Hour),
-		CreatedAt:   createdAt,
+		SessionHash:  "portal-session-hash-b-" + uuid.NewString(),
+		CredentialID: uuid.MustParse(profileB),
+		CSRFHash:     "portal-csrf-hash-b",
+		ExpiresAt:    createdAt.Add(time.Hour),
+		CreatedAt:    createdAt,
 	}
 	require.NoError(t, repo.CreateSession(ctx, sessionA))
 	require.NoError(t, repo.CreateSession(ctx, sessionB))
@@ -44,12 +44,12 @@ func TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle(t *testing.T) {
 	loadedA, err := repo.GetSession(ctx, sessionA.SessionHash)
 	require.NoError(t, err)
 	require.NotNil(t, loadedA)
-	require.Equal(t, sessionA.KeyID, loadedA.KeyID)
+	require.Equal(t, sessionA.CredentialID, loadedA.CredentialID)
 
 	loadedB, err := repo.GetSession(ctx, sessionB.SessionHash)
 	require.NoError(t, err)
 	require.NotNil(t, loadedB)
-	require.Equal(t, sessionB.KeyID, loadedB.KeyID)
+	require.Equal(t, sessionB.CredentialID, loadedB.CredentialID)
 
 	for _, actor := range []struct {
 		teamID    string
@@ -98,18 +98,18 @@ func TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle(t *testing.T) {
 	require.Equal(t, int64(2), systemContextVisible, "system contexts must access portal sessions through RLS")
 
 	deniedSession := &domain.UserPortalSession{
-		SessionHash: "portal-session-hash-denied-" + uuid.NewString(),
-		KeyID:       uuid.MustParse(profileA),
-		CSRFHash:    "portal-csrf-hash-denied",
-		ExpiresAt:   createdAt.Add(2 * time.Hour),
-		CreatedAt:   createdAt,
+		SessionHash:  "portal-session-hash-denied-" + uuid.NewString(),
+		CredentialID: uuid.MustParse(profileA),
+		CSRFHash:     "portal-csrf-hash-denied",
+		ExpiresAt:    createdAt.Add(2 * time.Hour),
+		CreatedAt:    createdAt,
 	}
 	createErr := rls.WithTeamProfileTx(ctx, appDB, teamA, profileA, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO user_portal_sessions (
 				session_hash, key_id, csrf_hash, expires_at, created_at
 			) VALUES (?, ?, ?, ?, ?)
-		`, deniedSession.SessionHash, deniedSession.KeyID, deniedSession.CSRFHash, deniedSession.ExpiresAt, deniedSession.CreatedAt).Error
+		`, deniedSession.SessionHash, deniedSession.CredentialID, deniedSession.CSRFHash, deniedSession.ExpiresAt, deniedSession.CreatedAt).Error
 	})
 	require.Error(t, createErr, "non-system contexts must not create portal sessions")
 	deniedLoaded, err := repo.GetSession(ctx, deniedSession.SessionHash)
@@ -117,11 +117,11 @@ func TestUserPortalSessionsEnforceSystemRLSAndProfileLifecycle(t *testing.T) {
 	require.Nil(t, deniedLoaded)
 
 	expiredSession := &domain.UserPortalSession{
-		SessionHash: "portal-session-hash-expired-" + uuid.NewString(),
-		KeyID:       uuid.MustParse(profileA),
-		CSRFHash:    "portal-csrf-hash-expired",
-		ExpiresAt:   createdAt.Add(-time.Minute),
-		CreatedAt:   createdAt.Add(-time.Hour),
+		SessionHash:  "portal-session-hash-expired-" + uuid.NewString(),
+		CredentialID: uuid.MustParse(profileA),
+		CSRFHash:     "portal-csrf-hash-expired",
+		ExpiresAt:    createdAt.Add(-time.Minute),
+		CreatedAt:    createdAt.Add(-time.Hour),
 	}
 	require.NoError(t, repo.CreateSession(ctx, expiredSession))
 	expiredLoaded, err := repo.GetSession(ctx, expiredSession.SessionHash)

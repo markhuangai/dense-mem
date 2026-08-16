@@ -40,8 +40,8 @@ func TestDirectoryReconcilePlanPreservesManualBindingsAndTeamLifecycle(t *testin
 			Status:       domain.DirectoryConnectorActive,
 			GroupPattern: "^(?P<team>.+?)(?P<role>Member|Manager)$",
 			RoleEntitlements: map[string]domain.DirectoryRoleEntitlement{
-				"Member":  {Role: APIKeyRoleMember, Scopes: []string{APIKeyScopeRead}},
-				"Manager": {Role: APIKeyRoleManager, Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite}},
+				"Member":  {Role: CredentialRoleMember, Scopes: []string{CredentialScopeRead}},
+				"Manager": {Role: CredentialRoleManager, Scopes: []string{CredentialScopeRead, CredentialScopeWrite}},
 			},
 			MaxAutoTeams: 10,
 		},
@@ -55,10 +55,10 @@ func TestDirectoryReconcilePlanPreservesManualBindingsAndTeamLifecycle(t *testin
 			{ID: invalidEntitlementGroupID, ExternalID: "entra-invalid-entitlement", DisplayName: "UnknownRole", Active: true},
 		},
 		Bindings: []domain.DirectoryGroupBinding{
-			{ConnectorID: connectorID, GroupID: inactiveGroupID, TeamID: directoryTeamID, Origin: domain.DirectoryBindingCreated, Role: APIKeyRoleManager, Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite}},
-			{ConnectorID: connectorID, GroupID: existingGroupID, TeamID: exactTeamID, Origin: domain.DirectoryBindingAdopted, Role: APIKeyRoleMember, Scopes: []string{APIKeyScopeRead}},
+			{ConnectorID: connectorID, GroupID: inactiveGroupID, TeamID: directoryTeamID, Origin: domain.DirectoryBindingCreated, Role: CredentialRoleManager, Scopes: []string{CredentialScopeRead, CredentialScopeWrite}},
+			{ConnectorID: connectorID, GroupID: existingGroupID, TeamID: exactTeamID, Origin: domain.DirectoryBindingAdopted, Role: CredentialRoleMember, Scopes: []string{CredentialScopeRead}},
 		},
-		ManualMappings: []domain.SSOGroupMapping{{ProviderID: providerID, GroupID: "entra-manual", TeamID: manualTeamID, Role: APIKeyRoleManager, Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite}}},
+		ManualMappings: []domain.SSOGroupMapping{{ProviderID: providerID, GroupID: "entra-manual", TeamID: manualTeamID, Role: CredentialRoleManager, Scopes: []string{CredentialScopeRead, CredentialScopeWrite}}},
 		Teams: []domain.DirectoryTeam{
 			{ID: manualTeamID, Name: "Manual", Status: "active"},
 			{ID: exactTeamID, Name: "Exact", Status: "active"},
@@ -89,8 +89,8 @@ func TestDirectoryReconcilePlanPreservesManualBindingsAndTeamLifecycle(t *testin
 	for _, grant := range plan.ProfileGrants {
 		grants[grant.TeamID] = grant
 	}
-	require.Equal(t, APIKeyRoleManager, grants[manualTeamID].Entitlement.Role)
-	require.Equal(t, APIKeyRoleMember, grants[exactTeamID].Entitlement.Role)
+	require.Equal(t, CredentialRoleManager, grants[manualTeamID].Entitlement.Role)
+	require.Equal(t, CredentialRoleMember, grants[exactTeamID].Entitlement.Role)
 	require.Equal(t, "entra-user-1", grants[manualTeamID].Subject)
 
 	require.Len(t, preview.Candidates, len(plan.Bindings))
@@ -116,7 +116,7 @@ func TestDirectoryReconcilePlanUsesDirectoryFallbackSubjectAndRejectsInvalidConf
 			ProviderID:   uuid.New(),
 			GroupPattern: "^(?P<team>.+?)(?P<role>Member)$",
 			RoleEntitlements: map[string]domain.DirectoryRoleEntitlement{
-				"Member": {Role: APIKeyRoleMember, Scopes: []string{APIKeyScopeRead}},
+				"Member": {Role: CredentialRoleMember, Scopes: []string{CredentialScopeRead}},
 			},
 			MaxAutoTeams: 1,
 		},
@@ -161,8 +161,8 @@ func TestDirectoryReconcilePlanReusesTeamCapturesAndRestoresOnlyDirectoryTeams(t
 		Status:       domain.DirectoryConnectorActive,
 		GroupPattern: "^(?P<team>.+?)(?P<role>Member|Manager)$",
 		RoleEntitlements: map[string]domain.DirectoryRoleEntitlement{
-			"Member":  {Role: APIKeyRoleMember, Scopes: []string{APIKeyScopeRead}},
-			"Manager": {Role: APIKeyRoleManager, Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite}},
+			"Member":  {Role: CredentialRoleMember, Scopes: []string{CredentialScopeRead}},
+			"Manager": {Role: CredentialRoleManager, Scopes: []string{CredentialScopeRead, CredentialScopeWrite}},
 		},
 		MaxAutoTeams: 2,
 	}
@@ -182,7 +182,7 @@ func TestDirectoryReconcilePlanReusesTeamCapturesAndRestoresOnlyDirectoryTeams(t
 	require.False(t, plan.Bindings[1].CreateTeam)
 	require.Equal(t, plan.Bindings[0].TeamID, plan.Bindings[1].TeamID)
 	require.Len(t, plan.ProfileGrants, 1)
-	require.Equal(t, APIKeyRoleManager, plan.ProfileGrants[0].Entitlement.Role)
+	require.Equal(t, CredentialRoleManager, plan.ProfileGrants[0].Entitlement.Role)
 	require.Equal(t, "ResearchMember", preview.Candidates[0].DisplayName)
 	require.Equal(t, "ResearchManager", preview.Candidates[1].DisplayName)
 
@@ -194,8 +194,8 @@ func TestDirectoryReconcilePlanReusesTeamCapturesAndRestoresOnlyDirectoryTeams(t
 			{ID: managerGroupID, ExternalID: "research-manager", DisplayName: "ResearchManager", Active: true, Members: []domain.DirectoryUser{member}},
 		},
 		Bindings: []domain.DirectoryGroupBinding{
-			{ConnectorID: connectorID, GroupID: memberGroupID, TeamID: directoryTeamID, Origin: domain.DirectoryBindingCreated, Role: APIKeyRoleMember, Scopes: []string{APIKeyScopeRead}},
-			{ConnectorID: connectorID, GroupID: managerGroupID, TeamID: directoryTeamID, Origin: domain.DirectoryBindingCreated, Role: APIKeyRoleManager, Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite}},
+			{ConnectorID: connectorID, GroupID: memberGroupID, TeamID: directoryTeamID, Origin: domain.DirectoryBindingCreated, Role: CredentialRoleMember, Scopes: []string{CredentialScopeRead}},
+			{ConnectorID: connectorID, GroupID: managerGroupID, TeamID: directoryTeamID, Origin: domain.DirectoryBindingCreated, Role: CredentialRoleManager, Scopes: []string{CredentialScopeRead, CredentialScopeWrite}},
 		},
 		Teams: []domain.DirectoryTeam{{ID: directoryTeamID, Name: "Research", Status: "archived", DirectoryManaged: true}},
 	})

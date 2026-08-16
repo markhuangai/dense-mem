@@ -50,11 +50,11 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
 	var captured memoryservice.RecallRequest
-	var capturedActor requestctx.ActorProfile
+	var capturedActor requestctx.Actor
 	svc := &stubRecallService{
 		recallFunc: func(ctx context.Context, req memoryservice.RecallRequest) (*memoryservice.RecallResult, error) {
 			captured = req
-			actor, ok := requestctx.ActorProfileFromContext(ctx)
+			actor, ok := requestctx.ActorFromContext(ctx)
 			if !ok {
 				t.Fatal("actor context missing")
 			}
@@ -112,7 +112,7 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	if got := captured.ExpandFromEntityIDs; len(got) != 1 || got[0] != "33333333-3333-4333-8333-333333333333" {
 		t.Fatalf("expand_from_entity_ids = %#v", got)
 	}
-	if capturedActor.TeamID != teamID || capturedActor.ProfileID != profileID {
+	if capturedActor.TeamID != teamID || capturedActor.OwnerID != profileID {
 		t.Fatalf("actor = %#v; want team=%s profile=%s", capturedActor, teamID, profileID)
 	}
 
@@ -319,9 +319,9 @@ func TestRecallHandlerMapsGenericError(t *testing.T) {
 func injectActorMiddleware(teamID uuid.UUID, profileID uuid.UUID) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			ctx := requestctx.WithActorProfile(c.Request().Context(), requestctx.ActorProfile{
-				TeamID:    teamID,
-				ProfileID: profileID,
+			ctx := requestctx.WithActor(c.Request().Context(), requestctx.Actor{
+				TeamID:  teamID,
+				OwnerID: profileID,
 			})
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)

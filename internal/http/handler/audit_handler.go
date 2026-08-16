@@ -74,7 +74,7 @@ func (h *AuditHandler) Get(c echo.Context) error {
 	// Parse pagination params
 	limit, offset := parseAuditPaginationParams(c)
 
-	// Get audit log entries scoped to this profile
+	// Get audit log entries scoped to this team.
 	entries, total, err := h.svc.List(ctx, teamID.String(), limit, offset)
 	if err != nil {
 		return err

@@ -14,21 +14,21 @@ import (
 func TestNoopCleanupRepository_ReturnsNilForBothCleanupCalls(t *testing.T) {
 	repo := NewNoopCleanupRepository()
 
-	err := repo.PurgeProfileState(context.Background(), "profile-1")
+	err := repo.PurgeTeamState(context.Background(), "profile-1")
 	assert.NoError(t, err)
 
-	err = repo.InvalidateKeySessions(context.Background(), "profile-1", "key-1")
+	err = repo.InvalidateCredentialSessions(context.Background(), "profile-1", "key-1")
 	assert.NoError(t, err)
 
 	streamRepo := NewNoopStreamCleanupRepository()
-	err = streamRepo.PurgeProfileStreamState(context.Background(), "profile-1")
+	err = streamRepo.PurgeTeamStreamState(context.Background(), "profile-1")
 	assert.NoError(t, err)
 }
 
 func TestNoopCleanupImplementations_SatisfyRequiredInterfaces(t *testing.T) {
 	var _ redis.CleanupRepositoryInterface = (*NoopCleanupRepository)(nil)
-	var _ service.KeySessionInvalidator = (*NoopCleanupRepository)(nil)
-	var _ service.ProfileStatePurger = (*NoopCleanupRepository)(nil)
+	var _ service.CredentialSessionInvalidator = (*NoopCleanupRepository)(nil)
+	var _ service.TeamStatePurger = (*NoopCleanupRepository)(nil)
 	var _ sse.StreamCleanupRepository = (*NoopStreamCleanupRepository)(nil)
 
 	assert.True(t, true)

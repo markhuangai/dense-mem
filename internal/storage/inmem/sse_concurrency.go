@@ -9,22 +9,22 @@ import (
 )
 
 // InMemoryConcurrencyLimiter implements sse.ConcurrencyLimiter using an
-// in-memory mutex-protected map keyed by profileID.
+// in-memory mutex-protected map keyed by team ID.
 type InMemoryConcurrencyLimiter struct {
 	mu         sync.Mutex
-	entries    map[string]*profileCounterEntry
+	entries    map[string]*teamCounterEntry
 	maxStreams int
 	ttl        time.Duration
 	now        func() time.Time
 }
 
-type profileCounterEntry struct {
+type teamCounterEntry struct {
 	count     int64
 	expiresAt time.Time
 }
 
 // NewInMemoryConcurrencyLimiter creates a limiter with the given max concurrent
-// streams per profile and TTL for counter entries, using the system clock.
+// streams per team and TTL for counter entries, using the system clock.
 func NewInMemoryConcurrencyLimiter(maxStreams int, ttl time.Duration) *InMemoryConcurrencyLimiter {
 	return NewInMemoryConcurrencyLimiterWithClock(maxStreams, ttl, time.Now)
 }
@@ -33,32 +33,32 @@ func NewInMemoryConcurrencyLimiter(maxStreams int, ttl time.Duration) *InMemoryC
 // supplied clock function for TTL expiry checks. Useful for deterministic testing.
 func NewInMemoryConcurrencyLimiterWithClock(maxStreams int, ttl time.Duration, now func() time.Time) *InMemoryConcurrencyLimiter {
 	return &InMemoryConcurrencyLimiter{
-		entries:    make(map[string]*profileCounterEntry),
+		entries:    make(map[string]*teamCounterEntry),
 		maxStreams: maxStreams,
 		ttl:        ttl,
 		now:        now,
 	}
 }
 
-// Acquire increments the concurrent-stream counter for the given profileID.
+// Acquire increments the concurrent-stream counter for the given team ID.
 // If the counter (after incrementing) exceeds maxStreams, the acquire is
 // rejected with sse.ErrTooManyStreams and no release function is returned.
 // Expired entries are treated as absent before attempting the increment.
-func (l *InMemoryConcurrencyLimiter) Acquire(_ context.Context, profileID string) (release func(), err error) {
+func (l *InMemoryConcurrencyLimiter) Acquire(_ context.Context, teamID string) (release func(), err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	entry, exists := l.entries[profileID]
+	entry, exists := l.entries[teamID]
 
 	// Treat expired entries as absent.
 	if exists && l.now().After(entry.expiresAt) {
-		delete(l.entries, profileID)
+		delete(l.entries, teamID)
 		exists = false
 	}
 
 	if !exists {
-		entry = &profileCounterEntry{}
-		l.entries[profileID] = entry
+		entry = &teamCounterEntry{}
+		l.entries[teamID] = entry
 	}
 
 	entry.count++
@@ -66,7 +66,7 @@ func (l *InMemoryConcurrencyLimiter) Acquire(_ context.Context, profileID string
 		// Roll back the increment.
 		entry.count--
 		if entry.count == 0 {
-			delete(l.entries, profileID)
+			delete(l.entries, teamID)
 		}
 		return nil, sse.ErrTooManyStreams
 	}
@@ -84,7 +84,7 @@ func (l *InMemoryConcurrencyLimiter) Acquire(_ context.Context, profileID string
 		}
 		released = true
 
-		e, ok := l.entries[profileID]
+		e, ok := l.entries[teamID]
 		if !ok {
 			return
 		}
@@ -93,7 +93,7 @@ func (l *InMemoryConcurrencyLimiter) Acquire(_ context.Context, profileID string
 			e.count = 0
 		}
 		if e.count == 0 {
-			delete(l.entries, profileID)
+			delete(l.entries, teamID)
 		}
 	}, nil
 }

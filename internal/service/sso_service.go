@@ -96,8 +96,8 @@ type SSOLoginResult struct {
 
 type SSOSessionInfo struct {
 	Identity  domain.SSOIdentity
-	Selected  domain.SSOTeamProfile
-	Teams     []domain.SSOTeamProfile
+	Selected  domain.SSOTeamMembership
+	Teams     []domain.SSOTeamMembership
 	ExpiresAt time.Time
 	CSRFToken string
 }
@@ -528,7 +528,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		s.debugSSOLoginFailure("sso login identity upsert failed", err, *provider, claims)
 		return nil, err
 	}
-	var teams []domain.SSOTeamProfile
+	var teams []domain.SSOTeamMembership
 	if directoryAuthority {
 		teams, err = s.directoryEntitledTeams(ctx, provider.ID, identity.ID)
 		if err != nil {
@@ -536,20 +536,20 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 			return nil, err
 		}
 	} else {
-		activeByProfileID := make(map[uuid.UUID]struct{}, len(entitlements))
+		activeByOwnerID := make(map[uuid.UUID]struct{}, len(entitlements))
 		for _, entitlement := range entitlements {
-			name := ssoProfileName(claims.Email, claims.DisplayName, identity.ID)
-			profile, err := s.repo.UpsertTeamProfileForMapping(ctx, *identity, entitlement, name)
+			name := ssoMembershipName(claims.Email, claims.DisplayName, identity.ID)
+			membership, err := s.repo.UpsertTeamMembershipForMapping(ctx, *identity, entitlement, name)
 			if err != nil {
-				s.debugSSOLoginFailure("sso login team profile upsert failed", err, *provider, claims, ssoUUIDLogAttr("team_id", entitlement.TeamID), ssoHashLogAttr("group_id", entitlement.GroupID), observability.String("role", entitlement.Role))
+				s.debugSSOLoginFailure("sso login team membership upsert failed", err, *provider, claims, ssoUUIDLogAttr("team_id", entitlement.TeamID), ssoHashLogAttr("group_id", entitlement.GroupID), observability.String("role", entitlement.Role))
 				if errors.Is(err, repository.ErrTeamInactive) {
 					continue
 				}
 				return nil, err
 			}
-			activeByProfileID[profile.ID] = struct{}{}
+			activeByOwnerID[membership.OwnerID] = struct{}{}
 		}
-		if len(activeByProfileID) == 0 {
+		if len(activeByOwnerID) == 0 {
 			if cacheErr := s.storeEntitlementCacheWithTTL(ctx, runtime.EntitlementCacheTTL, provider.ID, claims.Subject, claims.Groups, "denied", ""); cacheErr != nil {
 				s.debugSSOLoginFailure("sso login denied entitlement cache store failed", cacheErr, *provider, claims, observability.Int("entitlement_count", len(entitlements)))
 			}
@@ -561,14 +561,14 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 			s.debugSSOLoginFailure("sso login entitlement cache store failed", err, *provider, claims)
 			return nil, err
 		}
-		teams, err = s.currentEntitledTeams(ctx, identity.ID, activeByProfileID)
+		teams, err = s.currentEntitledTeams(ctx, identity.ID, activeByOwnerID)
 		if err != nil {
 			s.debugSSOLoginFailure("sso login current entitled teams failed", err, *provider, claims, ssoUUIDLogAttr("identity_id", identity.ID))
 			return nil, err
 		}
 	}
 	if len(teams) == 0 {
-		s.debugSSOLoginFailure("sso login entitled teams empty", ErrSSOAccessDenied, *provider, claims, observability.Int("active_profile_count", len(teams)))
+		s.debugSSOLoginFailure("sso login entitled teams empty", ErrSSOAccessDenied, *provider, claims, observability.Int("active_membership_count", len(teams)))
 		return nil, NewSSOSetupError(SSOSetupEntitlementEmpty, ErrSSOAccessDenied)
 	}
 	selected := teams[0]
@@ -583,18 +583,19 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 		return nil, err
 	}
 	session := domain.SSOSession{
-		SessionHash:   HashSSOToken(sessionToken),
-		IdentityID:    identity.ID,
-		ProviderID:    provider.ID,
-		TeamProfileID: selected.Profile.ID,
-		TeamID:        selected.Team.ID,
-		CSRFHash:      HashSSOToken(csrfToken),
-		ExpiresAt:     now.Add(runtime.SessionTTL),
-		CreatedAt:     now,
-		LastSeenAt:    now,
+		SessionHash:  HashSSOToken(sessionToken),
+		IdentityID:   identity.ID,
+		ProviderID:   provider.ID,
+		MembershipID: selected.Membership.ID,
+		OwnerID:      selected.Membership.OwnerID,
+		TeamID:       selected.Team.ID,
+		CSRFHash:     HashSSOToken(csrfToken),
+		ExpiresAt:    now.Add(runtime.SessionTTL),
+		CreatedAt:    now,
+		LastSeenAt:   now,
 	}
 	if err := s.repo.CreateSession(ctx, session); err != nil {
-		s.debugSSOLoginFailure("sso login session persist failed", err, *provider, claims, append(ssoSessionLogAttrs(&session), ssoUUIDLogAttr("selected_profile_id", selected.Profile.ID))...)
+		s.debugSSOLoginFailure("sso login session persist failed", err, *provider, claims, append(ssoSessionLogAttrs(&session), ssoUUIDLogAttr("selected_membership_id", selected.Membership.ID))...)
 		return nil, err
 	}
 
@@ -613,7 +614,7 @@ func (s *SSOService) CompleteLogin(ctx context.Context, stateToken, code, callba
 	}, nil
 }
 
-func (s *SSOService) AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error) {
+func (s *SSOService) AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.AuthenticatedActor, error) {
 	session, err := s.sessionFromToken(ctx, sessionToken)
 	if err != nil {
 		return nil, err
@@ -622,21 +623,37 @@ func (s *SSOService) AuthenticateSession(ctx context.Context, sessionToken, csrf
 		s.debugSSOFailure("sso authenticate session csrf invalid", ErrSSOCSRFInvalid, append(ssoSessionLogAttrs(session), observability.Bool("csrf_present", strings.TrimSpace(csrfToken) != ""))...)
 		return nil, ErrSSOCSRFInvalid
 	}
-	key, err := s.repo.GetSSOProfileByID(ctx, session.TeamProfileID)
+	teamMembership, err := s.repo.GetTeamMembershipByOwnerID(ctx, session.OwnerID)
 	if err != nil {
-		s.debugSSOFailure("sso authenticate session profile lookup failed", err, ssoSessionLogAttrs(session)...)
+		s.debugSSOFailure("sso authenticate session membership lookup failed", err, ssoSessionLogAttrs(session)...)
 		return nil, err
 	}
-	if key == nil {
-		s.debugSSOFailure("sso authenticate session profile missing", ErrSSOSessionInvalid, ssoSessionLogAttrs(session)...)
+	if teamMembership == nil {
+		s.debugSSOFailure("sso authenticate session membership missing", ErrSSOSessionInvalid, ssoSessionLogAttrs(session)...)
 		return nil, ErrSSOSessionInvalid
 	}
-	validated, err := s.ValidateAPIKeyPrincipal(ctx, key)
+	if teamMembership.Team.ID != session.TeamID ||
+		teamMembership.Membership.ID != session.MembershipID ||
+		teamMembership.Membership.ActorIdentityID != session.IdentityID ||
+		teamMembership.Membership.OwnerID != session.OwnerID {
+		return nil, ErrSSOSessionInvalid
+	}
+	validated, err := s.ValidateMembership(ctx, &teamMembership.Membership)
 	if err != nil {
-		s.debugSSOFailure("sso authenticate session entitlement validation failed", err, append(ssoSessionLogAttrs(session), ssoAPIKeyLogAttrs(key)...)...)
+		s.debugSSOFailure("sso authenticate session entitlement validation failed", err, append(ssoSessionLogAttrs(session), ssoMembershipLogAttrs(&teamMembership.Membership)...)...)
 		return nil, err
 	}
-	return validated, nil
+	return &domain.AuthenticatedActor{
+		Team: teamMembership.Team,
+		Identity: domain.ActorIdentity{
+			ID:          validated.ActorIdentityID,
+			Kind:        "human",
+			DisplayName: validated.Name,
+		},
+		Membership: *validated,
+		OwnerID:    validated.OwnerID,
+		Credential: nil,
+	}, nil
 }
 
 func (s *SSOService) CurrentSession(ctx context.Context, sessionToken string) (*SSOSessionInfo, error) {
@@ -653,16 +670,16 @@ func (s *SSOService) CurrentSession(ctx context.Context, sessionToken string) (*
 		s.debugSSOFailure("sso current session identity missing", ErrSSOSessionInvalid, ssoSessionLogAttrs(session)...)
 		return nil, ErrSSOSessionInvalid
 	}
-	allTeams, err := s.repo.ListTeamProfilesForIdentity(ctx, identity.ID)
+	allTeams, err := s.repo.ListTeamMembershipsForIdentity(ctx, identity.ID)
 	if err != nil {
 		s.debugSSOFailure("sso current session team list failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("identity_id", identity.ID))...)
 		return nil, err
 	}
-	if changed, err := s.reconcileCurrentSessionTeamProfiles(ctx, *identity, allTeams); err != nil {
+	if changed, err := s.reconcileCurrentSessionMemberships(ctx, *identity, allTeams); err != nil {
 		s.debugSSOFailure("sso current session team reconciliation failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("identity_id", identity.ID))...)
 		return nil, err
 	} else if changed {
-		allTeams, err = s.repo.ListTeamProfilesForIdentity(ctx, identity.ID)
+		allTeams, err = s.repo.ListTeamMembershipsForIdentity(ctx, identity.ID)
 		if err != nil {
 			s.debugSSOFailure("sso current session reconciled team list failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("identity_id", identity.ID))...)
 			return nil, err
@@ -672,11 +689,11 @@ func (s *SSOService) CurrentSession(ctx context.Context, sessionToken string) (*
 	if err != nil {
 		return nil, err
 	}
-	if changed, err := s.reconcileCurrentSessionTeamProfiles(ctx, *identity, allTeams); err != nil {
+	if changed, err := s.reconcileCurrentSessionMemberships(ctx, *identity, allTeams); err != nil {
 		s.debugSSOFailure("sso current session post-validation team reconciliation failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("identity_id", identity.ID))...)
 		return nil, err
 	} else if changed {
-		allTeams, err = s.repo.ListTeamProfilesForIdentity(ctx, identity.ID)
+		allTeams, err = s.repo.ListTeamMembershipsForIdentity(ctx, identity.ID)
 		if err != nil {
 			s.debugSSOFailure("sso current session post-validation team list failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("identity_id", identity.ID))...)
 			return nil, err
@@ -687,7 +704,7 @@ func (s *SSOService) CurrentSession(ctx context.Context, sessionToken string) (*
 		}
 	}
 	if selected == nil {
-		s.debugSSOFailure("sso current session selected profile denied", ErrSSOAccessDenied, append(ssoSessionLogAttrs(session), observability.Int("team_count", len(teams)), observability.Int("profile_count", len(allTeams)))...)
+		s.debugSSOFailure("sso current session selected membership denied", ErrSSOAccessDenied, append(ssoSessionLogAttrs(session), observability.Int("team_count", len(teams)), observability.Int("membership_count", len(allTeams)))...)
 		return nil, ErrSSOAccessDenied
 	}
 	return &SSOSessionInfo{
@@ -698,31 +715,31 @@ func (s *SSOService) CurrentSession(ctx context.Context, sessionToken string) (*
 	}, nil
 }
 
-func (s *SSOService) SwitchSessionTeam(ctx context.Context, sessionToken string, teamProfileID uuid.UUID) (*SSOSessionInfo, error) {
+func (s *SSOService) SwitchSessionTeam(ctx context.Context, sessionToken string, teamID uuid.UUID) (*SSOSessionInfo, error) {
 	session, err := s.sessionFromToken(ctx, sessionToken)
 	if err != nil {
 		return nil, err
 	}
-	teams, err := s.repo.ListTeamProfilesForIdentity(ctx, session.IdentityID)
+	teams, err := s.repo.ListTeamMembershipsForIdentity(ctx, session.IdentityID)
 	if err != nil {
-		s.debugSSOFailure("sso switch session team list failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("requested_team_profile_id", teamProfileID))...)
+		s.debugSSOFailure("sso switch session team list failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("requested_team_id", teamID))...)
 		return nil, err
 	}
 	for _, team := range teams {
-		if team.Profile.ID != teamProfileID {
+		if team.Team.ID != teamID {
 			continue
 		}
-		if _, err := s.ValidateAPIKeyPrincipal(ctx, &team.Profile); err != nil {
-			s.debugSSOFailure("sso switch session team validation failed", err, append(ssoSessionLogAttrs(session), ssoAPIKeyLogAttrs(&team.Profile)...)...)
+		if _, err := s.ValidateMembership(ctx, &team.Membership); err != nil {
+			s.debugSSOFailure("sso switch session team validation failed", err, append(ssoSessionLogAttrs(session), ssoMembershipLogAttrs(&team.Membership)...)...)
 			return nil, err
 		}
-		if err := s.repo.UpdateSessionTeam(ctx, session.SessionHash, team.Profile.ID, team.Team.ID); err != nil {
-			s.debugSSOFailure("sso switch session team update failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("requested_team_profile_id", teamProfileID), ssoUUIDLogAttr("team_id", team.Team.ID))...)
+		if err := s.repo.UpdateSessionTeam(ctx, session.SessionHash, team.Team.ID); err != nil {
+			s.debugSSOFailure("sso switch session team update failed", err, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("requested_team_id", teamID))...)
 			return nil, err
 		}
 		return s.CurrentSession(ctx, sessionToken)
 	}
-	s.debugSSOFailure("sso switch session team denied", ErrSSOAccessDenied, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("requested_team_profile_id", teamProfileID), observability.Int("profile_count", len(teams)))...)
+	s.debugSSOFailure("sso switch session team denied", ErrSSOAccessDenied, append(ssoSessionLogAttrs(session), ssoUUIDLogAttr("requested_team_id", teamID), observability.Int("membership_count", len(teams)))...)
 	return nil, ErrSSOAccessDenied
 }
 
@@ -833,8 +850,8 @@ func (s *SSOService) entitlementsFromMappings(providerID uuid.UUID, subject stri
 			continue
 		}
 		current.Scopes = mergeScopes(current.Scopes, mapping.Scopes)
-		if normalizeSSORole(mapping.Role) == APIKeyRoleManager {
-			current.Role = APIKeyRoleManager
+		if normalizeSSORole(mapping.Role) == CredentialRoleManager {
+			current.Role = CredentialRoleManager
 		}
 		if !strings.Contains(","+current.GroupID+",", ","+mapping.GroupID+",") {
 			current.GroupID += "," + mapping.GroupID
@@ -846,8 +863,8 @@ func (s *SSOService) entitlementsFromMappings(providerID uuid.UUID, subject stri
 	}
 	result := make([]domain.SSOGroupMapping, 0, len(byTeam))
 	for _, mapping := range byTeam {
-		if mapping.Role == APIKeyRoleManager {
-			mapping.Scopes = managerAPIKeyScopes(mapping.Scopes)
+		if mapping.Role == CredentialRoleManager {
+			mapping.Scopes = managerCredentialScopes(mapping.Scopes)
 		}
 		result = append(result, *mapping)
 	}
@@ -861,37 +878,37 @@ func (s *SSOService) entitlementsFromMappings(providerID uuid.UUID, subject stri
 	return result, nil
 }
 
-func (s *SSOService) currentEntitledTeams(ctx context.Context, identityID uuid.UUID, allowed map[uuid.UUID]struct{}) ([]domain.SSOTeamProfile, error) {
-	allTeams, err := s.repo.ListTeamProfilesForIdentity(ctx, identityID)
+func (s *SSOService) currentEntitledTeams(ctx context.Context, identityID uuid.UUID, allowed map[uuid.UUID]struct{}) ([]domain.SSOTeamMembership, error) {
+	allTeams, err := s.repo.ListTeamMembershipsForIdentity(ctx, identityID)
 	if err != nil {
-		s.debugSSOFailure("sso current entitled teams list failed", err, ssoUUIDLogAttr("identity_id", identityID), observability.Int("allowed_profile_count", len(allowed)))
+		s.debugSSOFailure("sso current entitled teams list failed", err, ssoUUIDLogAttr("identity_id", identityID), observability.Int("allowed_owner_count", len(allowed)))
 		return nil, err
 	}
-	teams := make([]domain.SSOTeamProfile, 0, len(allTeams))
+	teams := make([]domain.SSOTeamMembership, 0, len(allTeams))
 	for _, team := range allTeams {
-		if _, ok := allowed[team.Profile.ID]; ok {
+		if _, ok := allowed[team.Membership.OwnerID]; ok {
 			teams = append(teams, *team)
 		}
 	}
 	return teams, nil
 }
 
-func (s *SSOService) directoryEntitledTeams(ctx context.Context, providerID, identityID uuid.UUID) ([]domain.SSOTeamProfile, error) {
-	profiles, err := s.repo.ListTeamProfilesForIdentity(ctx, identityID)
+func (s *SSOService) directoryEntitledTeams(ctx context.Context, providerID, identityID uuid.UUID) ([]domain.SSOTeamMembership, error) {
+	memberships, err := s.repo.ListTeamMembershipsForIdentity(ctx, identityID)
 	if err != nil {
 		return nil, err
 	}
-	teams := make([]domain.SSOTeamProfile, 0, len(profiles))
-	for _, profile := range profiles {
-		if profile == nil {
+	teams := make([]domain.SSOTeamMembership, 0, len(memberships))
+	for _, membership := range memberships {
+		if membership == nil {
 			continue
 		}
-		entitled, err := s.repo.DirectoryTeamProfileEntitled(ctx, profile.Profile.ID, providerID, identityID, profile.Profile.GetTeamID(), profile.Profile.SSOGroupID)
+		entitled, err := s.repo.DirectoryMembershipEntitled(ctx, providerID, identityID, membership.Membership.TeamID, membership.Membership.SSOGroupID)
 		if err != nil {
 			return nil, err
 		}
 		if entitled {
-			teams = append(teams, *profile)
+			teams = append(teams, *membership)
 		}
 	}
 	return teams, nil

@@ -20,16 +20,17 @@ import (
 
 // Principal represents the authenticated principal stored in context.
 type Principal struct {
-	KeyID         uuid.UUID
 	TeamID        uuid.UUID
-	ProfileID     *uuid.UUID
-	ProfileName   string
+	IdentityID    uuid.UUID
+	MembershipID  uuid.UUID
+	OwnerID       uuid.UUID
+	OwnerName     string
+	CredentialID  *uuid.UUID
 	Role          string
-	Scopes        []string
+	Grants        []string
 	KeyPrefix     string
 	RateLimit     int
 	AuthMethod    string
-	SSOIdentityID *uuid.UUID
 	SSOProviderID *uuid.UUID
 	SSOSubject    string
 }
@@ -37,12 +38,14 @@ type Principal struct {
 // PrincipalInterface is the companion interface for Principal.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type PrincipalInterface interface {
-	GetKeyID() uuid.UUID
 	GetTeamID() uuid.UUID
-	GetProfileID() *uuid.UUID
-	GetProfileName() string
+	GetIdentityID() uuid.UUID
+	GetMembershipID() uuid.UUID
+	GetOwnerID() uuid.UUID
+	GetOwnerName() string
+	GetCredentialID() *uuid.UUID
 	GetRole() string
-	GetScopes() []string
+	GetGrants() []string
 	GetKeyPrefix() string
 	GetRateLimit() int
 }
@@ -51,22 +54,16 @@ type PrincipalInterface interface {
 var _ PrincipalInterface = (*Principal)(nil)
 
 // Getters for PrincipalInterface
-func (p *Principal) GetKeyID() uuid.UUID { return p.KeyID }
-func (p *Principal) GetTeamID() uuid.UUID {
-	if p.TeamID != uuid.Nil {
-		return p.TeamID
-	}
-	if p.ProfileID != nil {
-		return *p.ProfileID
-	}
-	return uuid.Nil
-}
-func (p *Principal) GetProfileID() *uuid.UUID { return p.ProfileID }
-func (p *Principal) GetProfileName() string   { return p.ProfileName }
-func (p *Principal) GetRole() string          { return p.Role }
-func (p *Principal) GetScopes() []string      { return p.Scopes }
-func (p *Principal) GetKeyPrefix() string     { return p.KeyPrefix }
-func (p *Principal) GetRateLimit() int        { return p.RateLimit }
+func (p *Principal) GetTeamID() uuid.UUID        { return p.TeamID }
+func (p *Principal) GetIdentityID() uuid.UUID    { return p.IdentityID }
+func (p *Principal) GetMembershipID() uuid.UUID  { return p.MembershipID }
+func (p *Principal) GetOwnerID() uuid.UUID       { return p.OwnerID }
+func (p *Principal) GetOwnerName() string        { return p.OwnerName }
+func (p *Principal) GetCredentialID() *uuid.UUID { return p.CredentialID }
+func (p *Principal) GetRole() string             { return p.Role }
+func (p *Principal) GetGrants() []string         { return p.Grants }
+func (p *Principal) GetKeyPrefix() string        { return p.KeyPrefix }
+func (p *Principal) GetRateLimit() int           { return p.RateLimit }
 
 // principalContextKey is the unexported context key type for storing principals.
 // Using an unexported type prevents downstream code from constructing fake principals.
@@ -74,24 +71,24 @@ type principalContextKey struct{}
 
 // AuthMiddleware creates an authentication middleware that validates API keys.
 // It requires the Authorization header in the format "Bearer <rawKey>".
-func AuthMiddleware(repo repository.APIKeyRepository, auditSvc service.AuditService) echo.MiddlewareFunc {
+func AuthMiddleware(repo repository.CredentialRepository, auditSvc service.AuditService) echo.MiddlewareFunc {
 	return AuthMiddlewareWithSecurity(repo, auditSvc, nil)
 }
 
-func AuthMiddlewareWithSecurity(repo repository.APIKeyRepository, auditSvc service.AuditService, securitySvc SecurityBanService) echo.MiddlewareFunc {
+func AuthMiddlewareWithSecurity(repo repository.CredentialRepository, auditSvc service.AuditService, securitySvc SecurityBanService) echo.MiddlewareFunc {
 	return AuthMiddlewareWithOptions(repo, auditSvc, securitySvc, AuthOptions{})
 }
 
 type SSOEntitlementValidator interface {
-	ValidateAPIKeyPrincipal(ctx context.Context, key *domain.APIKey) (*domain.APIKey, error)
+	ValidateCredential(ctx context.Context, credential *domain.Credential) (*domain.Credential, error)
 }
 
 type SSOSessionAuthenticator interface {
-	AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error)
+	AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.AuthenticatedActor, error)
 }
 
 type UserPortalSessionAuthenticator interface {
-	AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error)
+	AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.AuthenticatedActor, error)
 }
 
 type AuthOptions struct {
@@ -102,7 +99,7 @@ type AuthOptions struct {
 	AllowMissingCredentials        bool
 }
 
-func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc service.AuditService, securitySvc SecurityBanService, opts AuthOptions) echo.MiddlewareFunc {
+func AuthMiddlewareWithOptions(repo repository.CredentialRepository, auditSvc service.AuditService, securitySvc SecurityBanService, opts AuthOptions) echo.MiddlewareFunc {
 	verifier := opts.CredentialVerifier
 	if verifier == nil {
 		verifier = crypto.NewArgon2Verifier(0)
@@ -167,7 +164,7 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 			// Look up active key by prefix
 			ctx := c.Request().Context()
 			var (
-				key    *domain.APIKey
+				key    *domain.Credential
 				prefix string
 			)
 			for _, candidate := range prefixes {
@@ -217,11 +214,11 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 			// rejected so the server only accepts the multi-tenant bearer model.
 			teamID := key.GetTeamID()
 			if teamID == uuid.Nil {
-				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "api key is not profile bound")
+				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "api credential is not team bound")
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
 			if opts.SSOEntitlementValidator != nil {
-				validated, err := opts.SSOEntitlementValidator.ValidateAPIKeyPrincipal(ctx, key)
+				validated, err := opts.SSOEntitlementValidator.ValidateCredential(ctx, key)
 				if err != nil {
 					teamIDStr := teamID.String()
 					logAuthFailure(c, auditSvc, securitySvc, &teamIDStr, "SSO_ENTITLEMENT_DENIED", "sso entitlement denied")
@@ -235,42 +232,18 @@ func AuthMiddlewareWithOptions(repo repository.APIKeyRepository, auditSvc servic
 				key = validated
 			}
 			teamID = key.GetTeamID()
-			profileID := key.ID
-			profileName := key.GetProfileName()
 			if teamID == uuid.Nil {
-				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "api key is not profile bound")
+				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "api credential is not team bound")
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
 
-			principal := &Principal{
-				KeyID:         key.ID,
-				TeamID:        teamID,
-				ProfileID:     &profileID,
-				ProfileName:   profileName,
-				Role:          key.GetRole(),
-				Scopes:        key.Scopes,
-				KeyPrefix:     prefix,
-				RateLimit:     key.RateLimit,
-				AuthMethod:    "api_key",
-				SSOIdentityID: key.SSOOwnerIdentityID,
-				SSOProviderID: key.SSOProviderID,
-				SSOSubject:    key.SSOSubject,
+			actor := authenticatedActorFromCredential(key)
+			principal, actorContext, err := principalAndActorContext(actor, "api_key", prefix)
+			if err != nil {
+				return err
 			}
-
-			// Store principal in context
 			ctx = context.WithValue(ctx, principalContextKey{}, principal)
-			ctx = requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
-				TeamID:      teamID,
-				TeamName:    key.TeamName,
-				ProfileID:   profileID,
-				ProfileName: profileName,
-			})
-			ctx = requestctx.WithActorCredential(ctx, requestctx.ActorCredential{
-				KeyID:      principal.KeyID,
-				AuthMethod: principal.AuthMethod,
-				Role:       principal.Role,
-				Scopes:     principal.Scopes,
-			})
+			ctx = requestctx.WithActor(ctx, actorContext)
 
 			// Remove the Authorization header to prevent downstream access to raw key
 			req := c.Request().Clone(ctx)
@@ -297,11 +270,11 @@ func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticato
 			csrfToken = csrfCookie.Value
 		}
 	}
-	key, err := authenticator.AuthenticateSession(c.Request().Context(), cookie.Value, csrfToken, requireCSRF)
+	actor, err := authenticator.AuthenticateSession(c.Request().Context(), cookie.Value, csrfToken, requireCSRF)
 	if err != nil {
 		return ssoAuthError(err)
 	}
-	return setSessionPrincipal(c, key, "sso_session")
+	return setSessionPrincipal(c, actor, "sso_session")
 }
 
 func authenticateUserPortalSession(c echo.Context, authenticator UserPortalSessionAuthenticator, entitlementValidator SSOEntitlementValidator) error {
@@ -311,63 +284,131 @@ func authenticateUserPortalSession(c echo.Context, authenticator UserPortalSessi
 	}
 	requireCSRF := requestRequiresCSRF(c.Request().Method)
 	csrfToken := c.Request().Header.Get(service.SSOCSRFHeaderName)
-	key, err := authenticator.AuthenticateSession(c.Request().Context(), cookie.Value, csrfToken, requireCSRF)
+	actor, err := authenticator.AuthenticateSession(c.Request().Context(), cookie.Value, csrfToken, requireCSRF)
 	if err != nil {
 		return userPortalSessionAuthError(err)
 	}
-	if key == nil {
+	if actor == nil || actor.Credential == nil {
 		return httperr.New(httperr.AUTH_INVALID, "invalid user portal session")
 	}
 	if entitlementValidator != nil {
-		validated, err := entitlementValidator.ValidateAPIKeyPrincipal(c.Request().Context(), key)
+		validated, err := entitlementValidator.ValidateCredential(c.Request().Context(), actor.Credential)
 		if err != nil {
 			return ssoAuthError(err)
 		}
 		if validated == nil {
 			return httperr.New(httperr.FORBIDDEN, "sso access denied")
 		}
-		key = validated
+		actor = authenticatedActorFromCredential(validated)
 	}
-	return setSessionPrincipal(c, key, "api_key_session")
+	return setSessionPrincipal(c, actor, "credential_session")
 }
 
-func setSessionPrincipal(c echo.Context, key *domain.APIKey, authMethod string) error {
-	if key == nil {
-		return httperr.New(httperr.AUTH_INVALID, "invalid session")
-	}
-	teamID := key.GetTeamID()
-	if teamID == uuid.Nil {
-		return httperr.New(httperr.AUTH_INVALID, "invalid session")
-	}
-	profileID := key.ID
-	principal := &Principal{
-		KeyID:         key.ID,
-		TeamID:        teamID,
-		ProfileID:     &profileID,
-		ProfileName:   key.GetProfileName(),
-		Role:          key.GetRole(),
-		Scopes:        key.Scopes,
-		RateLimit:     key.RateLimit,
-		AuthMethod:    authMethod,
-		SSOIdentityID: key.SSOIdentityID,
-		SSOProviderID: key.SSOProviderID,
-		SSOSubject:    key.SSOSubject,
+func setSessionPrincipal(c echo.Context, actor *domain.AuthenticatedActor, authMethod string) error {
+	principal, actorContext, err := principalAndActorContext(actor, authMethod, "")
+	if err != nil {
+		return err
 	}
 	ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
-	ctx = requestctx.WithActorProfile(ctx, requestctx.ActorProfile{
-		TeamID:      teamID,
-		TeamName:    key.TeamName,
-		ProfileID:   profileID,
-		ProfileName: key.GetProfileName(),
-	})
-	ctx = requestctx.WithActorCredential(ctx, requestctx.ActorCredential{
-		KeyID:      principal.KeyID,
-		AuthMethod: principal.AuthMethod,
-		Role:       principal.Role,
-		Scopes:     principal.Scopes,
-	})
+	ctx = requestctx.WithActor(ctx, actorContext)
 	c.SetRequest(c.Request().WithContext(ctx))
 	return nil
+}
+
+func authenticatedActorFromCredential(credential *domain.Credential) *domain.AuthenticatedActor {
+	if credential == nil {
+		return nil
+	}
+	return &domain.AuthenticatedActor{
+		Team: domain.Team{ID: credential.TeamID, Name: credential.TeamName},
+		Identity: domain.ActorIdentity{
+			ID:          credential.ActorIdentityID,
+			Kind:        "api_client",
+			DisplayName: credential.Name,
+		},
+		Membership: domain.Membership{
+			ID:              credential.MembershipID,
+			ActorIdentityID: credential.ActorIdentityID,
+			TeamID:          credential.TeamID,
+			OwnerID:         credential.OwnerID,
+			Name:            credential.Name,
+			Grants:          append([]string(nil), credential.Scopes...),
+			Role:            credential.GetRole(),
+			Status:          "active",
+		},
+		OwnerID:    credential.OwnerID,
+		Credential: credential,
+	}
+}
+
+func principalAndActorContext(actor *domain.AuthenticatedActor, authMethod, keyPrefix string) (*Principal, requestctx.Actor, error) {
+	if actor == nil ||
+		actor.Team.ID == uuid.Nil ||
+		actor.Identity.ID == uuid.Nil ||
+		actor.Membership.ID == uuid.Nil ||
+		actor.OwnerID == uuid.Nil ||
+		actor.Membership.TeamID != actor.Team.ID ||
+		actor.Membership.ActorIdentityID != actor.Identity.ID ||
+		actor.Membership.OwnerID != actor.OwnerID {
+		return nil, requestctx.Actor{}, httperr.New(httperr.AUTH_INVALID, "invalid authenticated actor")
+	}
+
+	var credentialID *uuid.UUID
+	rateLimit := 0
+	var ssoProviderID *uuid.UUID
+	ssoSubject := actor.Membership.SSOSubject
+	if actor.Membership.SSOProviderID != nil {
+		providerID := *actor.Membership.SSOProviderID
+		ssoProviderID = &providerID
+	}
+	if actor.Credential != nil {
+		if actor.Credential.ID == uuid.Nil ||
+			actor.Credential.ActorIdentityID != actor.Identity.ID ||
+			actor.Credential.MembershipID != actor.Membership.ID ||
+			actor.Credential.OwnerID != actor.OwnerID ||
+			actor.Credential.TeamID != actor.Team.ID {
+			return nil, requestctx.Actor{}, httperr.New(httperr.AUTH_INVALID, "invalid authenticated credential")
+		}
+		id := actor.Credential.ID
+		credentialID = &id
+		rateLimit = actor.Credential.RateLimit
+		if actor.Credential.SSOProviderID != nil {
+			providerID := *actor.Credential.SSOProviderID
+			ssoProviderID = &providerID
+		}
+		if actor.Credential.SSOSubject != "" {
+			ssoSubject = actor.Credential.SSOSubject
+		}
+	}
+
+	principal := &Principal{
+		TeamID:        actor.Team.ID,
+		IdentityID:    actor.Identity.ID,
+		MembershipID:  actor.Membership.ID,
+		OwnerID:       actor.OwnerID,
+		OwnerName:     actor.Membership.Name,
+		CredentialID:  credentialID,
+		Role:          actor.Membership.Role,
+		Grants:        append([]string(nil), actor.Membership.Grants...),
+		KeyPrefix:     keyPrefix,
+		RateLimit:     rateLimit,
+		AuthMethod:    authMethod,
+		SSOProviderID: ssoProviderID,
+		SSOSubject:    ssoSubject,
+	}
+	actorContext := requestctx.Actor{
+		TeamID:       actor.Team.ID,
+		TeamName:     actor.Team.Name,
+		IdentityID:   actor.Identity.ID,
+		MembershipID: actor.Membership.ID,
+		OwnerID:      actor.OwnerID,
+		OwnerName:    actor.Membership.Name,
+		CredentialID: credentialID,
+		AuthMethod:   authMethod,
+		Role:         actor.Membership.Role,
+		Grants:       append([]string(nil), actor.Membership.Grants...),
+	}
+	return principal, actorContext, nil
 }
 
 func requestRequiresCSRF(method string) bool {
@@ -403,22 +444,22 @@ func userPortalSessionAuthError(err error) error {
 	}
 }
 
-// LastUsedRecorder receives an admitted API-key activity event. Implementations
+// LastUsedRecorder receives an admitted API-credential activity event. Implementations
 // own batching and lifecycle; the request path only enqueues an identifier.
 type LastUsedRecorder interface {
 	RecordLastUsed(id uuid.UUID, at time.Time)
 }
 
-// LastUsedMiddleware updates API key last_used_at after earlier middleware has
+// LastUsedMiddleware updates credential last_used_at after earlier middleware has
 // admitted the request. Place it after rate limiting to avoid activity writes
 // for over-quota valid keys.
 func LastUsedMiddleware(recorder LastUsedRecorder) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			principal := GetPrincipal(c.Request().Context())
-			if principal != nil && principal.AuthMethod != "sso_session" && principal.AuthMethod != "api_key_session" && principal.KeyID != uuid.Nil {
+			if principal != nil && principal.AuthMethod == "api_key" && principal.CredentialID != nil {
 				if recorder != nil {
-					recorder.RecordLastUsed(principal.KeyID, time.Now().UTC())
+					recorder.RecordLastUsed(*principal.CredentialID, time.Now().UTC())
 				}
 			}
 			return next(c)
@@ -509,5 +550,5 @@ func RequireAuth() echo.MiddlewareFunc {
 }
 
 // Ensure the imports are used
-var _ = domain.APIKey{}
+var _ = domain.Credential{}
 var _ = http.StatusOK

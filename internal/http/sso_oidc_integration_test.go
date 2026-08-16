@@ -73,16 +73,16 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 			ProviderID: provider.ID,
 			TeamID:     archivedTeamID,
 			GroupID:    "engineering",
-			Scopes:     []string{service.APIKeyScopeRead},
-			Role:       service.APIKeyRoleMember,
+			Scopes:     []string{service.CredentialScopeRead},
+			Role:       service.CredentialRoleMember,
 			Enabled:    true,
 		},
 		{
 			ProviderID: provider.ID,
 			TeamID:     activeTeamID,
 			GroupID:    "engineering",
-			Scopes:     []string{service.APIKeyScopeRead, service.APIKeyScopeWrite},
-			Role:       service.APIKeyRoleManager,
+			Scopes:     []string{service.CredentialScopeRead, service.CredentialScopeWrite},
+			Role:       service.CredentialRoleManager,
 			Enabled:    true,
 		},
 	} {
@@ -103,11 +103,11 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 	}
 	e := NewServer(*cfg, nil, HealthConfig{})
 	RegisterUserPortal(e, UserPortalDeps{
-		APIKeyRepo:    repository.NewAPIKeyRepository(db, rls),
-		RateLimitSvc:  service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
-		SSOService:    ssoSvc,
-		Config:        cfg,
-		UserStaticDir: t.TempDir(),
+		CredentialRepo: repository.NewCredentialRepository(db, rls),
+		RateLimitSvc:   service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
+		SSOService:     ssoSvc,
+		Config:         cfg,
+		UserStaticDir:  t.TempDir(),
 	})
 	app := httptest.NewServer(e)
 	t.Cleanup(app.Close)
@@ -167,13 +167,13 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 	assert.Equal(t, "sso", session.Data.AuthMethod)
 	assert.Equal(t, activeTeamID, session.Data.Team.ID)
 	assert.Equal(t, activeTeamID, session.Data.Key.TeamID)
-	assert.Equal(t, service.APIKeyRoleManager, session.Data.Key.Role)
+	assert.Equal(t, service.CredentialRoleManager, session.Data.Key.Role)
 	assert.Len(t, session.Data.Teams, 1)
 
 	identity, err := ssoRepo.GetIdentityByProviderSubject(ctx, provider.ID, "integration-subject")
 	require.NoError(t, err)
 	require.NotNil(t, identity)
-	profiles, err := ssoRepo.ListTeamProfilesForIdentity(ctx, identity.ID)
+	profiles, err := ssoRepo.ListTeamMembershipsForIdentity(ctx, identity.ID)
 	require.NoError(t, err)
 	require.Len(t, profiles, 1)
 	assert.Equal(t, activeTeamID, profiles[0].Team.ID)

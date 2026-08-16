@@ -278,8 +278,8 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 	if s.search == nil {
 		return nil, errors.New("recall: search repository is required")
 	}
-	actor, ok := requestctx.ActorProfileFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrRecallAuthContext
 	}
 	started := time.Now()
@@ -384,7 +384,7 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 	observability.RecordCommunityRecall(ctx, s.metrics, communityOutcome, len(result.RelatedCommunities), communityRelationships)
 	result.RelatedHypotheses = []RelatedHypothesisSummary{}
 	if req.IncludeHypotheses {
-		related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.ProfileID.String(), req.Query)
+		related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.OwnerID.String(), req.Query)
 		result.RelatedHypotheses = related
 		if relatedDegradation != nil {
 			result.Degradations = append(result.Degradations, *relatedDegradation)

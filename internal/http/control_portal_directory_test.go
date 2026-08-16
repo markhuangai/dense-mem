@@ -225,7 +225,7 @@ func TestControlDirectoryHandlersValidateIdentifiersBodiesAndServiceFailures(t *
 	connector, _, err := directory.CreateConnector(ctx, domain.DirectoryConnector{
 		ProviderID:       uuid.New(),
 		GroupPattern:     "^(?P<team>.+?)(?P<role>Readonly|Member|Manager)$",
-		RoleEntitlements: map[string]domain.DirectoryRoleEntitlement{"Readonly": {Role: service.APIKeyRoleMember, Scopes: []string{service.APIKeyScopeRead}}, "Member": {Role: service.APIKeyRoleMember, Scopes: []string{service.APIKeyScopeRead, service.APIKeyScopeWrite}}, "Manager": {Role: service.APIKeyRoleManager, Scopes: []string{service.APIKeyScopeRead, service.APIKeyScopeWrite}}},
+		RoleEntitlements: map[string]domain.DirectoryRoleEntitlement{"Readonly": {Role: service.CredentialRoleMember, Scopes: []string{service.CredentialScopeRead}}, "Member": {Role: service.CredentialRoleMember, Scopes: []string{service.CredentialScopeRead, service.CredentialScopeWrite}}, "Manager": {Role: service.CredentialRoleManager, Scopes: []string{service.CredentialScopeRead, service.CredentialScopeWrite}}},
 		MaxAutoTeams:     1,
 	})
 	require.NoError(t, err)

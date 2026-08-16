@@ -411,7 +411,7 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 		input.Now = time.Now().UTC()
 	}
 	var affected int64
-	// Expiry is a server-controlled transition across profile-owned tasks.
+	// Expiry is a server-controlled transition across owner-scoped tasks.
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		if err := tx.Exec("SELECT set_config('app.current_team_id', ?, true)", input.TeamID).Error; err != nil {
 			return fmt.Errorf("set expiry team context: %w", err)

@@ -37,28 +37,28 @@ func TestSSOCurrentSessionMaterializesNewMappedTeamFromCachedGroups(t *testing.T
 			ExpiresAt:  now.Add(time.Minute),
 		},
 		mappings: []*domain.SSOGroupMapping{
-			{ProviderID: providerID, TeamID: teamAID, TeamName: "Team A", GroupID: "group-a", Scopes: []string{APIKeyScopeRead}, Role: APIKeyRoleMember, Enabled: true},
-			{ProviderID: providerID, TeamID: teamBID, TeamName: "Team B", GroupID: "group-b", Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite}, Role: APIKeyRoleManager, Enabled: true},
+			{ProviderID: providerID, TeamID: teamAID, TeamName: "Team A", GroupID: "group-a", Scopes: []string{CredentialScopeRead}, Role: CredentialRoleMember, Enabled: true},
+			{ProviderID: providerID, TeamID: teamBID, TeamName: "Team B", GroupID: "group-b", Scopes: []string{CredentialScopeRead, CredentialScopeWrite}, Role: CredentialRoleManager, Enabled: true},
 		},
 		identities: map[uuid.UUID]*domain.SSOIdentity{
 			identityID: {ID: identityID, ProviderID: providerID, Subject: "subject-123", Email: "ada@example.com", DisplayName: "Ada Lovelace"},
 		},
 		sessions: map[string]*domain.SSOSession{
 			sessionHash: {
-				SessionHash:   sessionHash,
-				IdentityID:    identityID,
-				ProviderID:    providerID,
-				TeamProfileID: profileAID,
-				TeamID:        teamAID,
-				ExpiresAt:     now.Add(time.Hour),
+				SessionHash: sessionHash,
+				IdentityID:  identityID,
+				ProviderID:  providerID,
+				OwnerID:     profileAID,
+				TeamID:      teamAID,
+				ExpiresAt:   now.Add(time.Hour),
 			},
 		},
 	}
-	repo.teamProfiles = []*domain.SSOTeamProfile{
-		ssoTeamProfile(identityID, providerID, "subject-123", teamAID, profileAID, "Team A", []string{APIKeyScopeRead}, APIKeyRoleMember),
+	repo.teamProfiles = []*domain.SSOTeamMembership{
+		ssoTeamProfile(identityID, providerID, "subject-123", teamAID, profileAID, "Team A", []string{CredentialScopeRead}, CredentialRoleMember),
 	}
-	repo.ssoProfiles = map[uuid.UUID]*domain.APIKey{
-		profileAID: &repo.teamProfiles[0].Profile,
+	repo.ssoProfiles = map[uuid.UUID]*domain.SSOTeamMembership{
+		profileAID: repo.teamProfiles[0],
 	}
 	svc := NewSSOService(repo, SSOConfig{
 		GroupResolver: &ssoGroupResolverStub{t: t, unexpected: true},
@@ -68,14 +68,14 @@ func TestSSOCurrentSessionMaterializesNewMappedTeamFromCachedGroups(t *testing.T
 	info, err := svc.CurrentSession(ctx, sessionToken)
 
 	require.NoError(t, err)
-	assert.Equal(t, profileAID, info.Selected.Profile.ID)
+	assert.Equal(t, profileAID, info.Selected.Membership.OwnerID)
 	require.Len(t, info.Teams, 2)
 	assert.ElementsMatch(t, []uuid.UUID{teamAID, teamBID}, []uuid.UUID{info.Teams[0].Team.ID, info.Teams[1].Team.ID})
 	require.Len(t, repo.teamProfiles, 2)
 	assert.Equal(t, teamBID, repo.teamProfiles[1].Team.ID)
 	assert.Equal(t, "Team B", repo.teamProfiles[1].Team.Name)
-	assert.Equal(t, []string{APIKeyScopeRead, APIKeyScopeWrite}, repo.teamProfiles[1].Profile.Scopes)
-	assert.Equal(t, APIKeyRoleManager, repo.teamProfiles[1].Profile.Role)
+	assert.Equal(t, []string{CredentialScopeRead, CredentialScopeWrite}, repo.teamProfiles[1].Membership.Grants)
+	assert.Equal(t, CredentialRoleManager, repo.teamProfiles[1].Membership.Role)
 
 	_, err = svc.CurrentSession(ctx, sessionToken)
 	require.NoError(t, err)

@@ -41,11 +41,10 @@ func readContractFixtures(t *testing.T) []contractFixture {
 }
 
 func contractInvokeContext(scopes ...string) context.Context {
-	return requestctx.WithActorCredential(context.Background(), requestctx.ActorCredential{
-		KeyID:      uuid.New(),
-		AuthMethod: "api_key",
-		Role:       "member",
-		Scopes:     scopes,
+	credentialID := uuid.New()
+	return requestctx.WithActor(context.Background(), requestctx.Actor{
+		IdentityID: credentialID, CredentialID: &credentialID,
+		AuthMethod: "api_key", Role: "member", Grants: scopes,
 	})
 }
 

@@ -36,7 +36,7 @@ func TestMCP_InitializeNegotiatesCompatibleProtocolVersions(t *testing.T) {
 	}
 }
 
-func TestMCP_InitializeFallsBackToLatestProtocolVersion(t *testing.T) {
+func TestSDKInitializeFallsBackToLatestProtocolVersion(t *testing.T) {
 	logger, _ := testLogger(t)
 	server := NewServer(registry.New(), "pA", logger)
 

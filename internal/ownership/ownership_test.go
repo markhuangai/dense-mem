@@ -15,9 +15,9 @@ func TestActorOwnerID(t *testing.T) {
 	}
 
 	actorID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
-		ProfileID:   actorID,
-		ProfileName: "native",
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		OwnerID:   actorID,
+		OwnerName: "native",
 	})
 	if got := ActorOwnerID(ctx); got != actorID.String() {
 		t.Fatalf("ActorOwnerID = %q; want %q", got, actorID.String())
@@ -35,8 +35,8 @@ func TestRequireOwner(t *testing.T) {
 		t.Fatalf("RequireOwner system context with owner returned %v; want nil", err)
 	}
 
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
-		ProfileID: uuid.MustParse(ownerID),
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		OwnerID: uuid.MustParse(ownerID),
 	})
 	if err := RequireOwner(ctx, ownerID); err != nil {
 		t.Fatalf("RequireOwner matching owner returned %v; want nil", err)

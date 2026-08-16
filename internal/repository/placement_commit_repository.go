@@ -78,7 +78,7 @@ func (r *LedgerRepositoryImpl) CommitPlacementSemanticResult(
 				return err
 			}
 		}
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		if placementEvidenceSearchableStatus(input.Status) && !deletionOnly {

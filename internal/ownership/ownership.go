@@ -7,11 +7,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-// ErrOwnerMismatch is returned when an authenticated team profile attempts to
-// mutate knowledge owned by another team profile.
+// ErrOwnerMismatch is returned when an authenticated semantic owner attempts to
+// mutate knowledge owned by another semantic owner.
 var ErrOwnerMismatch = errors.New("knowledge owner mismatch")
 
-// ActorOwnerID returns the authenticated team profile id used for owner-scoped
+// ActorOwnerID returns the authenticated permanent owner alias used for owner-scoped
 // write authorization. Empty means the context has no public actor and should
 // be treated as a system/operator context by services.
 func ActorOwnerID(ctx context.Context) string {

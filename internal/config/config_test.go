@@ -119,10 +119,6 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() returned unexpected error: %v", err)
 	}
-	if got := cfg.GetMCPTransport(); got != DefaultMCPTransport {
-		t.Fatalf("MCP transport = %q, want %q", got, DefaultMCPTransport)
-	}
-
 	// Test listener defaults
 	if DefaultHTTPPort != "8080" {
 		t.Errorf("DefaultHTTPPort = %q, want %q", DefaultHTTPPort, "8080")
@@ -223,32 +219,20 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadMCPTransportOverrideAndValidation(t *testing.T) {
+func TestLoadRejectsRemovedMCPTransportsAndAcceptsSDKNoop(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
-	t.Setenv("MCP_TRANSPORT", "legacy")
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() with legacy MCP transport: %v", err)
+	t.Setenv("MCP_TRANSPORT", "sdk")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load() with sdk MCP compatibility value: %v", err)
 	}
-	if got := cfg.GetMCPTransport(); got != "legacy" {
-		t.Fatalf("MCP transport = %q, want legacy", got)
+	t.Setenv("MCP_TRANSPORT", "legacy")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "only supported MCP transport") {
+		t.Fatalf("Load() legacy error = %v, want removed transport guidance", err)
 	}
 	t.Setenv("MCP_TRANSPORT", "unsupported")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MCP_TRANSPORT") {
 		t.Fatalf("Load() error = %v, want MCP_TRANSPORT validation", err)
-	}
-}
-
-func TestMCPTransportForSupportsLegacyProvidersAndDefaults(t *testing.T) {
-	if got := MCPTransportFor(nil); got != DefaultMCPTransport {
-		t.Fatalf("nil MCP transport = %q, want %q", got, DefaultMCPTransport)
-	}
-	if got := MCPTransportFor(&Config{}); got != DefaultMCPTransport {
-		t.Fatalf("empty MCP transport = %q, want %q", got, DefaultMCPTransport)
-	}
-	if got := MCPTransportFor(&Config{MCPTransport: " legacy "}); got != "legacy" {
-		t.Fatalf("configured MCP transport = %q, want trimmed provider value", got)
 	}
 }
 
