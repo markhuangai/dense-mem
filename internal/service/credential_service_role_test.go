@@ -79,7 +79,7 @@ func TestCredentialServiceUpdateRoleBranches(t *testing.T) {
 		mockRepo.On("UpdateRoleForTeam", ctx, profileID, keyID, CredentialRoleManager, wantScopes).Return(int64(1), nil)
 		mockAuditService.On("Append", ctx, mock.MatchedBy(func(entry AuditLogEntry) bool {
 			return entry.Operation == "UPDATE" &&
-				entry.EntityType == "team_profile" &&
+				entry.EntityType == "api_key" &&
 				entry.EntityID == keyID.String() &&
 				entry.AfterPayload["role"] == CredentialRoleManager &&
 				reflect.DeepEqual(entry.AfterPayload["scopes"], wantScopes)

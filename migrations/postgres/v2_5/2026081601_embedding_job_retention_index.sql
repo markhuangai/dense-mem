@@ -1,9 +1,11 @@
 -- +goose NO TRANSACTION
 
 -- +goose Up
--- Lock/rewrite: the partial index is built concurrently; embedding_jobs is not rewritten.
+-- Lock/rewrite impact: the partial index is built concurrently; embedding_jobs is not rewritten.
 -- WAL/disk: the build writes one bounded index entry per terminal job with completed_at.
--- RLS: the index does not change visibility; the retention worker still uses system context.
+-- RLS impact: the index does not change visibility; the retention worker still uses system context.
+-- Backfill: none; existing terminal jobs enter the partial index during the concurrent build.
+-- Backward compatibility: existing workers continue to use embedding_jobs without query changes.
 -- Recovery: an invalid interrupted build is renamed, rebuilt, and removed after success.
 -- Rollback: the index is derived state and can be dropped without changing job history.
 

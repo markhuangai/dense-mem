@@ -35,7 +35,7 @@ func TestCredentialServiceUpdateScopesForTeam(t *testing.T) {
 		mockAuditService.On("Append", ctx, mock.MatchedBy(func(entry AuditLogEntry) bool {
 			scopes, ok := entry.AfterPayload["scopes"].([]string)
 			return entry.Operation == "UPDATE" &&
-				entry.EntityType == "team_profile" &&
+				entry.EntityType == "api_key" &&
 				entry.EntityID == keyID.String() &&
 				ok &&
 				assert.ObjectsAreEqual(wantScopes, scopes)

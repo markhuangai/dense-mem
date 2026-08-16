@@ -482,7 +482,7 @@ func TestCredentialServiceUpdateNameForTeam(t *testing.T) {
 	mockRepo.On("UpdateNameForTeam", ctx, profileID, keyID, "research profile").Return(int64(1), nil)
 	mockAuditService.On("Append", ctx, mock.MatchedBy(func(entry AuditLogEntry) bool {
 		return entry.Operation == "UPDATE" &&
-			entry.EntityType == "team_profile" &&
+			entry.EntityType == "api_key" &&
 			entry.EntityID == keyID.String() &&
 			entry.ProfileID != nil &&
 			*entry.ProfileID == profileID.String()
@@ -536,6 +536,7 @@ func TestCredentialServiceUpdateNameForTeamDuplicate(t *testing.T) {
 			var apiErr *httperr.APIError
 			require.ErrorAs(t, err, &apiErr)
 			assert.Equal(t, httperr.CONFLICT, apiErr.Code)
+			assert.Contains(t, apiErr.Message, "credential with name 'existing profile'")
 			mockRepo.AssertExpectations(t)
 		})
 	}
@@ -677,9 +678,9 @@ func TestCredentialServiceScopeNameAndConstructorHelpers(t *testing.T) {
 	assert.Equal(t, "research", name)
 
 	_, err = normalizeCredentialName(" ")
-	require.Error(t, err)
+	require.ErrorContains(t, err, "credential name is required")
 	_, err = normalizeCredentialName(strings.Repeat("x", 101))
-	require.Error(t, err)
+	require.ErrorContains(t, err, "credential name must be at most 100 characters")
 	assert.Nil(t, credentialNameConflict(errors.New("not unique"), "name"))
 	assert.Equal(t, "idx_credentials_owner_team_active_unique", uniqueViolationName(&pgconn.PgError{
 		Code:           "23505",
@@ -878,7 +879,9 @@ func TestCredentialServiceRotateRevokeDeleteBranches(t *testing.T) {
 		mockRepo.On("GetByIDForTeam", ctx, profileID, keyID).Return(key, nil)
 		mockRepo.On("RotateForTeam", ctx, profileID, keyID, mock.AnythingOfType("string"), mock.AnythingOfType("string"), mock.AnythingOfType("string"), (*time.Time)(nil)).Return(int64(1), nil)
 		mockSessionInvalidator.On("InvalidateCredentialSessions", ctx, profileID.String(), keyID.String()).Return(errors.New("redis failed"))
-		mockAuditService.On("Append", ctx, mock.AnythingOfType("service.AuditLogEntry")).Return(errors.New("audit failed"))
+		mockAuditService.On("Append", ctx, mock.MatchedBy(func(entry AuditLogEntry) bool {
+			return entry.Operation == "ROTATE_KEY" && entry.EntityType == "api_key"
+		})).Return(errors.New("audit failed"))
 
 		updated, raw, err := svc.RotateForTeam(ctx, profileID, keyID, CreateCredentialRequest{}, nil, "system", "127.0.0.1", "corr")
 

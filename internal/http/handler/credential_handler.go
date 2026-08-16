@@ -102,9 +102,10 @@ func (h *CredentialHandler) Create(c echo.Context) error {
 	}
 	if body.ExpiresAt != nil {
 		t, err := time.Parse(time.RFC3339, *body.ExpiresAt)
-		if err == nil {
-			req.ExpiresAt = &t
+		if err != nil {
+			return httperr.New(httperr.VALIDATION_ERROR, "expires_at must be in RFC3339 format")
 		}
+		req.ExpiresAt = &t
 	}
 
 	// Get actor metadata from principal
@@ -312,9 +313,10 @@ func (h *CredentialHandler) Rotate(c echo.Context) error {
 	}
 	if body.ExpiresAt != nil {
 		t, err := time.Parse(time.RFC3339, *body.ExpiresAt)
-		if err == nil {
-			req.ExpiresAt = &t
+		if err != nil {
+			return httperr.New(httperr.VALIDATION_ERROR, "expires_at must be in RFC3339 format")
 		}
+		req.ExpiresAt = &t
 	}
 
 	actorCredentialID := principalCredentialID(principal)

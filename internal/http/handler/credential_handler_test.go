@@ -451,18 +451,29 @@ func TestCredentialHandlerAdditionalBranches(t *testing.T) {
 		}
 	})
 
-	t.Run("create ignores invalid expires_at parse", func(t *testing.T) {
+	t.Run("create rejects invalid expires_at", func(t *testing.T) {
 		svc := &apiKeyHandlerService{key: key, raw: "raw"}
 		h := NewCredentialHandler(svc)
-		rec, err := runCredentialHandlerWithBody(t, http.MethodPost, "/ui/api/team/credentials", "/ui/api/team/credentials", []string{"teamId"}, []string{profileID.String()}, `{"name":"ops","expires_at":"not-rfc3339"}`, h.Create)
-		if err != nil {
-			t.Fatalf("Create error: %v", err)
+		_, err := runCredentialHandlerWithBody(t, http.MethodPost, "/ui/api/team/credentials", "/ui/api/team/credentials", []string{"teamId"}, []string{profileID.String()}, `{"name":"ops","expires_at":"not-rfc3339"}`, h.Create)
+		assertCredentialHandlerErrorCode(t, err, httperr.VALIDATION_ERROR)
+		if !strings.Contains(err.Error(), "expires_at must be in RFC3339 format") {
+			t.Fatalf("Create error = %v; want RFC3339 validation", err)
 		}
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("status = %d; want 201", rec.Code)
+		if svc.createReq.Name != "" {
+			t.Fatalf("create request = %+v; want no delegated create", svc.createReq)
 		}
-		if svc.createReq.ExpiresAt != nil {
-			t.Fatalf("ExpiresAt = %v; want nil for invalid timestamp", svc.createReq.ExpiresAt)
+	})
+
+	t.Run("rotate rejects invalid expires_at", func(t *testing.T) {
+		svc := &apiKeyHandlerService{key: key, raw: "raw"}
+		h := NewCredentialHandler(svc)
+		_, err := runCredentialHandlerWithBody(t, http.MethodPost, "/ui/api/team/credentials/"+keyID.String()+"/rotate", "/ui/api/team/credentials/:credentialId/rotate", []string{"teamId", "credentialId"}, []string{profileID.String(), keyID.String()}, `{"name":"ops","expires_at":"not-rfc3339"}`, h.Rotate)
+		assertCredentialHandlerErrorCode(t, err, httperr.VALIDATION_ERROR)
+		if !strings.Contains(err.Error(), "expires_at must be in RFC3339 format") {
+			t.Fatalf("Rotate error = %v; want RFC3339 validation", err)
+		}
+		if svc.rotateReq.Name != "" {
+			t.Fatalf("rotate request = %+v; want no delegated rotate", svc.rotateReq)
 		}
 	})
 

@@ -2,14 +2,16 @@
 -- +goose StatementBegin
 
 -- This is the irreversible v2.5 transitional-schema cleanup.
--- Lock/rewrite: each direct FK is added NOT VALID, validated with a table scan,
+-- Lock/rewrite impact: each direct FK is added NOT VALID, validated with a table scan,
 -- then replaces its mirror FK. ALTER TABLE locks are held until commit; no heap
 -- rewrite occurs. The largest expected validation scan is search_documents.
 -- WAL/recovery: constraint catalog changes and obsolete-table drops are small;
 -- validation reads the source tables. Any failure rolls back the whole cleanup.
--- RLS: migration mode is explicit. Direct FKs preserve ON DELETE RESTRICT;
+-- RLS impact: migration mode is explicit. Direct FKs preserve ON DELETE RESTRICT;
 -- a temporary teams SELECT policy permits the preflight through FORCE RLS;
 -- terminal-job deletion is granted only to system/migration transaction modes.
+-- Backfill: none; preflight validation requires canonical team and owner rows to exist.
+-- Backward compatibility: deploy only after runtime dependencies on the removed tables are gone.
 -- Rollback: restore from the pre-migration backup; the down migration is blocked.
 SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);

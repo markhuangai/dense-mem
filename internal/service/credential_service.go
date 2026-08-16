@@ -122,10 +122,10 @@ func NormalizeCredentialRole(role string) (string, error) {
 func normalizeCredentialName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return "", httperr.New(httperr.VALIDATION_ERROR, "team name is required")
+		return "", httperr.New(httperr.VALIDATION_ERROR, "credential name is required")
 	}
 	if len([]rune(trimmed)) > 100 {
-		return "", httperr.New(httperr.VALIDATION_ERROR, "team name must be at most 100 characters")
+		return "", httperr.New(httperr.VALIDATION_ERROR, "credential name must be at most 100 characters")
 	}
 	return trimmed, nil
 }
@@ -133,12 +133,12 @@ func normalizeCredentialName(name string) (string, error) {
 func credentialNameConflict(err error, name string) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return httperr.New(httperr.CONFLICT, fmt.Sprintf("team with name '%s' already exists for this team", name))
+		return httperr.New(httperr.CONFLICT, fmt.Sprintf("credential with name '%s' already exists for this team", name))
 	}
 
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-		return httperr.New(httperr.CONFLICT, fmt.Sprintf("team with name '%s' already exists for this team", name))
+		return httperr.New(httperr.CONFLICT, fmt.Sprintf("credential with name '%s' already exists for this team", name))
 	}
 	return nil
 }
@@ -402,7 +402,7 @@ func (s *CredentialServiceImpl) UpdateRoleForTeam(ctx context.Context, teamID, i
 	if err := s.auditService.Append(ctx, AuditLogEntry{
 		ProfileID:     &teamIDStr,
 		Operation:     "UPDATE",
-		EntityType:    "team_profile",
+		EntityType:    "api_key",
 		EntityID:      credential.ID.String(),
 		BeforePayload: beforePayload,
 		AfterPayload: map[string]interface{}{
@@ -470,7 +470,7 @@ func (s *CredentialServiceImpl) UpdateScopesForTeam(ctx context.Context, teamID,
 	if err := s.auditService.Append(ctx, AuditLogEntry{
 		ProfileID:     &teamIDStr,
 		Operation:     "UPDATE",
-		EntityType:    "team_profile",
+		EntityType:    "api_key",
 		EntityID:      credential.ID.String(),
 		BeforePayload: beforePayload,
 		AfterPayload: map[string]interface{}{
@@ -535,7 +535,7 @@ func (s *CredentialServiceImpl) UpdateNameForTeam(ctx context.Context, teamID, i
 	if err := s.auditService.Append(ctx, AuditLogEntry{
 		ProfileID:     &teamIDStr,
 		Operation:     "UPDATE",
-		EntityType:    "team_profile",
+		EntityType:    "api_key",
 		EntityID:      credential.ID.String(),
 		BeforePayload: beforePayload,
 		AfterPayload: map[string]interface{}{
@@ -598,7 +598,7 @@ func (s *CredentialServiceImpl) RotateForTeam(ctx context.Context, teamID, id uu
 	if err := s.auditService.Append(ctx, AuditLogEntry{
 		ProfileID:  &teamIDStr,
 		Operation:  "ROTATE_KEY",
-		EntityType: "team_profile",
+		EntityType: "api_key",
 		EntityID:   credential.ID.String(),
 		AfterPayload: map[string]interface{}{
 			"team_id":         teamID.String(),
