@@ -1,5 +1,3 @@
-//go:build integration
-
 package repository
 
 import (
@@ -49,7 +47,7 @@ func TestUsageMetricsSnapshotLabelsSSOOwnershipAlias(t *testing.T) {
 		if err := tx.Exec(`
 			INSERT INTO usage_metric_buckets (
 				bucket_start, team_id, key_id, route, method, status_class, request_count
-			) VALUES (?, ?, ?, '/api', 'GET', 2, 2)
+			) VALUES (?, ?, ?, '/api', 'GET', 2, 3)
 		`, bucketStart, teamID, apiKeyID).Error; err != nil {
 			return err
 		}
@@ -67,6 +65,9 @@ func TestUsageMetricsSnapshotLabelsSSOOwnershipAlias(t *testing.T) {
 		TeamID: &teamID,
 	})
 	require.NoError(t, err)
+	require.Len(t, snapshot.Keys, 2)
+	require.Equal(t, apiKeyID, snapshot.Keys[0].KeyID)
+	require.Equal(t, ssoProfileID, snapshot.Keys[1].KeyID)
 	var apiFound, ssoFound *domain.UsageKeyMetric
 	for index := range snapshot.Keys {
 		switch snapshot.Keys[index].KeyID {

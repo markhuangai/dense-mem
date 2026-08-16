@@ -217,7 +217,7 @@ func queryKeyUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter any
 			AND b.bucket_start < $2
 			AND ($3::uuid IS NULL OR b.team_id = $3::uuid)
 		GROUP BY b.team_id, t.name, b.key_id, k.name, k.key_suffix, owner_membership.sso_profile_name, owner_actor.display_name
-		ORDER BY COALESCE(SUM(b.request_count), 0) DESC, COALESCE(k.name, owner_membership.sso_profile_name, owner_actor.display_name, '') ASC
+		ORDER BY COALESCE(SUM(b.request_count), 0) DESC, COALESCE(NULLIF(k.name, ''), NULLIF(owner_membership.sso_profile_name, ''), owner_actor.display_name, '') ASC
 		LIMIT 200
 	`, filter.From, filter.To, teamFilter).Rows()
 	if err != nil {
