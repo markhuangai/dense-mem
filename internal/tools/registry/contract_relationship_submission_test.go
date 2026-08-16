@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestRememberRequiresFlatSpanGroundedRelationships(t *testing.T) {
+func TestRememberRequiresSpanlessRelationships(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +45,7 @@ func TestRememberRequiresRelationshipCoverageForEverySubmittedEvidenceItem(t *te
 	}
 }
 
-func TestRememberRejectsInexactOrUnsupportedFlatRelationshipFields(t *testing.T) {
+func TestRememberRejectsFormerPublicGroundingFields(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	if err != nil {
 		t.Fatal(err)
@@ -53,51 +53,50 @@ func TestRememberRejectsInexactOrUnsupportedFlatRelationshipFields(t *testing.T)
 
 	tests := []struct {
 		name   string
+		field  string
 		mutate func(map[string]any)
-		want   string
 	}{
-		{
-			name: "subject surface differs from span",
-			mutate: func(input map[string]any) {
-				relationship(input)["subject"].(map[string]any)["name"] = "Dense Mem"
-			},
-			want: "subject.name must equal its exact evidence span",
-		},
-		{
-			name: "predicate surface differs from span",
-			mutate: func(input map[string]any) {
-				relationship(input)["predicate"].(map[string]any)["surface"] = "uses PostgreSQL"
-			},
-			want: "predicate.surface must equal its exact evidence span",
-		},
-		{
-			name: "component outside support",
-			mutate: func(input map[string]any) {
-				relationship(input)["supports"] = []any{map[string]any{"evidence_index": 0, "start": 10, "end": 14}}
-			},
-			want: "subject.span is not covered by a support span",
-		},
-		{
-			name: "object has both forms",
-			mutate: func(input map[string]any) {
-				relationship(input)["object"].(map[string]any)["value"] = map[string]any{
-					"type": "string", "value": "PostgreSQL", "surface": "PostgreSQL",
-					"span": map[string]any{"evidence_index": 0, "start": 15, "end": 25},
-				}
-			},
-			want: "object requires exactly one entity or value",
-		},
+		{name: "subject span", field: "span", mutate: func(item map[string]any) {
+			item["subject"].(map[string]any)["span"] = map[string]any{"evidence_index": 0, "start": 0, "end": 9}
+		}},
+		{name: "predicate surface", field: "surface", mutate: func(item map[string]any) {
+			item["predicate"].(map[string]any)["surface"] = "uses"
+		}},
+		{name: "predicate span", field: "span", mutate: func(item map[string]any) {
+			item["predicate"].(map[string]any)["span"] = map[string]any{"evidence_index": 0, "start": 10, "end": 14}
+		}},
+		{name: "object span", field: "span", mutate: func(item map[string]any) {
+			item["object"].(map[string]any)["entity"].(map[string]any)["span"] = map[string]any{"evidence_index": 0, "start": 15, "end": 25}
+		}},
+		{name: "supports", field: "supports", mutate: func(item map[string]any) {
+			item["supports"] = []any{map[string]any{"evidence_index": 0, "start": 0, "end": 26}}
+		}},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			input := validFlatRelationshipSubmission()
-			test.mutate(input)
+			test.mutate(relationship(input))
 			err := ValidateContractInput(remember, input, []string{"write"})
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("error = %v, want %q", err, test.want)
+			if err == nil || !strings.Contains(err.Error(), test.field) {
+				t.Fatalf("error = %v, want rejected field %q", err, test.field)
 			}
 		})
+	}
+}
+
+func TestRememberAllowsAssessorToGroundLogicalEndpoints(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := validFlatRelationshipSubmission()
+	item := relationship(input)
+	item["subject"].(map[string]any)["name"] = "It"
+	item["predicate"].(map[string]any)["proposed_key"] = "depends_on"
+	item["object"].(map[string]any)["entity"].(map[string]any)["name"] = "the primary database"
+	if err := ValidateContractInput(remember, input, []string{"write"}); err != nil {
+		t.Fatalf("logical endpoint proposal rejected: %v", err)
 	}
 }
 
@@ -105,21 +104,13 @@ func validFlatRelationshipSubmission() map[string]any {
 	return map[string]any{
 		"evidence": []any{map[string]any{"content": "Dense-Mem uses PostgreSQL."}},
 		"relationships": []any{map[string]any{
-			"ref": "uses-postgresql",
-			"subject": map[string]any{
-				"name": "Dense-Mem", "entity_kind": "project",
-				"span": map[string]any{"evidence_index": 0, "start": 0, "end": 9},
-			},
-			"predicate": map[string]any{
-				"proposed_key": "uses", "surface": "uses",
-				"span": map[string]any{"evidence_index": 0, "start": 10, "end": 14},
-			},
-			"object": map[string]any{"entity": map[string]any{
-				"name": "PostgreSQL", "entity_kind": "product",
-				"span": map[string]any{"evidence_index": 0, "start": 15, "end": 25},
-			}},
-			"polarity": "+", "modality": "statement",
-			"supports": []any{map[string]any{"evidence_index": 0, "start": 0, "end": 26}},
+			"ref":              "uses-postgresql",
+			"subject":          map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
+			"predicate":        map[string]any{"proposed_key": "uses"},
+			"object":           map[string]any{"entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}},
+			"polarity":         "+",
+			"modality":         "statement",
+			"evidence_indices": []any{0},
 		}},
 	}
 }
@@ -141,15 +132,5 @@ func withRequiredFlatRelationship(input map[string]any) map[string]any {
 }
 
 func setRelationshipEvidenceIndex(relationship map[string]any, evidenceIndex int) {
-	setSpanEvidenceIndex(relationship["subject"].(map[string]any)["span"].(map[string]any), evidenceIndex)
-	setSpanEvidenceIndex(relationship["predicate"].(map[string]any)["span"].(map[string]any), evidenceIndex)
-	object := relationship["object"].(map[string]any)
-	setSpanEvidenceIndex(object["entity"].(map[string]any)["span"].(map[string]any), evidenceIndex)
-	for _, support := range relationship["supports"].([]any) {
-		setSpanEvidenceIndex(support.(map[string]any), evidenceIndex)
-	}
-}
-
-func setSpanEvidenceIndex(span map[string]any, evidenceIndex int) {
-	span["evidence_index"] = evidenceIndex
+	relationship["evidence_indices"] = []any{evidenceIndex}
 }

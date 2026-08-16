@@ -63,6 +63,7 @@ type SemanticReviewEntityCandidate struct {
 	EntityID        string
 	EntityKind      string
 	CanonicalName   string
+	ActiveNames     []string
 	IdentityContext map[string]any
 	Status          string
 }

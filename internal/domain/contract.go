@@ -1,7 +1,7 @@
 package domain
 
 const (
-	ContractVersion              = "dense-mem.v2.4"
+	ContractVersion              = "dense-mem.v2.5"
 	PredicatePolicyVersion       = "open_vocabulary_v1"
 	ConflictPolicyVersion        = "cross_profile_supporter_majority_after_ttl"
 	ConflictOverduePolicyVersion = "overdue_conflict_ai_supporter_voting"

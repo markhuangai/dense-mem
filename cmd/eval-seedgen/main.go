@@ -251,40 +251,23 @@ func localEval100Relationship(content string) (map[string]any, error) {
 	default:
 		return nil, fmt.Errorf("unsupported smoke content shape")
 	}
-	span := func(surface string) (map[string]any, error) {
-		byteStart := strings.Index(content, surface)
-		if byteStart < 0 {
-			return nil, fmt.Errorf("surface %q is not present", surface)
-		}
-		start := len([]rune(content[:byteStart]))
-		return map[string]any{"evidence_index": 0, "start": start, "end": start + len([]rune(surface))}, nil
-	}
-	subjectSpan, err := span(subject)
-	if err != nil {
-		return nil, err
-	}
-	predicateSpan, err := span(predicateSurface)
-	if err != nil {
-		return nil, err
-	}
-	objectSpan, err := span(object)
-	if err != nil {
-		return nil, err
+	if !strings.Contains(content, predicateSurface) {
+		return nil, fmt.Errorf("predicate %q is not present", predicateSurface)
 	}
 	return map[string]any{
 		"ref": "relationship_1",
 		"subject": map[string]any{
-			"name": subject, "entity_kind": "other", "span": subjectSpan,
+			"name": subject, "entity_kind": "other",
 		},
 		"predicate": map[string]any{
-			"proposed_key": predicateKey, "surface": predicateSurface, "span": predicateSpan,
+			"proposed_key": predicateKey,
 		},
 		"object": map[string]any{"entity": map[string]any{
-			"name": object, "entity_kind": "other", "span": objectSpan,
+			"name": object, "entity_kind": "other",
 		}},
-		"polarity": "+",
-		"modality": modality,
-		"supports": []any{map[string]any{"evidence_index": 0, "start": 0, "end": len([]rune(content))}},
+		"polarity":         "+",
+		"modality":         modality,
+		"evidence_indices": []any{0},
 	}, nil
 }
 

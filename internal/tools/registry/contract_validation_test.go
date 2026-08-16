@@ -5,26 +5,15 @@ import (
 	"testing"
 )
 
-func TestValidateSubmittedRelationshipsUsesExactSupportedSpans(t *testing.T) {
+func TestValidateSubmittedRelationshipsUsesEvidenceIndices(t *testing.T) {
 	evidence := []any{map[string]any{"content": "Dense-Mem uses PostgreSQL"}}
 	valid := func() map[string]any {
 		return map[string]any{
-			"ref":      "relationship-1",
-			"supports": []any{map[string]any{"evidence_index": float64(0), "start": float64(0), "end": float64(25)}},
-			"subject": map[string]any{
-				"name": "Dense-Mem",
-				"span": map[string]any{"evidence_index": float64(0), "start": float64(0), "end": float64(9)},
-			},
-			"predicate": map[string]any{
-				"surface": "uses",
-				"span":    map[string]any{"evidence_index": float64(0), "start": float64(10), "end": float64(14)},
-			},
-			"object": map[string]any{
-				"entity": map[string]any{
-					"name": "PostgreSQL",
-					"span": map[string]any{"evidence_index": float64(0), "start": float64(15), "end": float64(25)},
-				},
-			},
+			"ref":              "relationship-1",
+			"evidence_indices": []any{float64(0)},
+			"subject":          map[string]any{"name": "Dense-Mem"},
+			"predicate":        map[string]any{"proposed_key": "uses"},
+			"object":           map[string]any{"entity": map[string]any{"name": "PostgreSQL"}},
 		}
 	}
 	if err := validateSubmittedRelationships([]any{valid()}, evidence, "relationships"); err != nil {
@@ -39,19 +28,13 @@ func TestValidateSubmittedRelationshipsUsesExactSupportedSpans(t *testing.T) {
 		want   string
 	}{
 		{"blank ref", func(item map[string]any) { item["ref"] = " " }, "must not be blank"},
-		{"missing support", func(item map[string]any) { item["supports"] = nil }, "not covered by a support span"},
-		{"duplicate support", func(item map[string]any) {
-			item["supports"] = []any{map[string]any{"evidence_index": float64(0), "start": float64(0), "end": float64(25)}, map[string]any{"evidence_index": float64(0), "start": float64(0), "end": float64(25)}}
-		}, "duplicates a support span"},
+		{"duplicate evidence index", func(item map[string]any) { item["evidence_indices"] = []any{float64(0), float64(0)} }, "duplicates evidence index"},
+		{"outside evidence", func(item map[string]any) { item["evidence_indices"] = []any{float64(1)} }, "outside submitted evidence"},
+		{"non-integer evidence", func(item map[string]any) { item["evidence_indices"] = []any{0.5} }, "must be an integer"},
 		{"subject object", func(item map[string]any) { item["subject"] = "invalid" }, "subject must be an object"},
-		{"subject surface", func(item map[string]any) { item["subject"].(map[string]any)["name"] = "wrong" }, "must equal its exact evidence span"},
-		{"predicate surface", func(item map[string]any) { item["predicate"].(map[string]any)["surface"] = "wrong" }, "must equal its exact evidence span"},
 		{"object choice", func(item map[string]any) {
-			item["object"].(map[string]any)["value"] = map[string]any{"type": "string", "value": "x", "surface": "x", "span": map[string]any{"evidence_index": float64(0), "start": float64(0), "end": float64(1)}}
+			item["object"].(map[string]any)["value"] = map[string]any{"type": "string", "value": "x"}
 		}, "exactly one entity or value"},
-		{"invalid span", func(item map[string]any) {
-			item["predicate"].(map[string]any)["span"] = map[string]any{"evidence_index": float64(0), "start": float64(14), "end": float64(10)}
-		}, "invalid code-point span"},
 		{"invalid correction", func(item map[string]any) { item["correction_target"] = map[string]any{"relationship_id": ""} }, "correction_target.relationship_id"},
 		{"invalid conflict", func(item map[string]any) {
 			item["conflict_context"] = map[string]any{"conflict_id": "", "expected_version": float64(1)}
@@ -72,7 +55,6 @@ func TestValidateSubmittedRelationshipsUsesExactSupportedSpans(t *testing.T) {
 		})
 	}
 }
-
 func TestContractValidationPrimitives(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

@@ -21,18 +21,14 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 		"ref": "relationship_1",
 		"subject": map[string]any{
 			"name": "Alpha", "entity_kind": "other",
-			"span": map[string]any{"evidence_index": 0, "start": 0, "end": 5},
 		},
 		"predicate": map[string]any{
-			"proposed_key": "uses", "surface": "uses",
-			"span": map[string]any{"evidence_index": 0, "start": 6, "end": 10},
+			"proposed_key": "uses",
 		},
 		"object": map[string]any{"entity": map[string]any{
 			"name": "Beta", "entity_kind": "other",
-			"span": map[string]any{"evidence_index": 0, "start": 11, "end": 15},
 		}},
-		"polarity": "+", "modality": "statement",
-		"supports": []any{map[string]any{"evidence_index": 0, "start": 0, "end": 15}},
+		"polarity": "+", "modality": "statement", "evidence_indices": []any{0},
 	}}
 
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

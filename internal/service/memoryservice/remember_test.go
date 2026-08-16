@@ -73,6 +73,12 @@ func TestSubmissionItemFailureErrorDoesNotInventReviewFailures(t *testing.T) {
 			require.Equal(t, string(SubmissionErrorPolicyRejected), errorValue.Code)
 		})
 	}
+	contractError := submissionItemFailureError(repository.PlacementItem{
+		Status: "failed",
+		Result: map[string]any{"failure_stage": "contract_superseded"},
+	}, "failed")
+	require.NotNil(t, contractError)
+	require.Equal(t, string(SubmissionErrorContractSuperseded), contractError.Code)
 }
 
 func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T) {
@@ -158,7 +164,7 @@ func TestRememberReplayMapsInternalStatesToPublicProcessingStates(t *testing.T) 
 		string(domain.PlacementRunGuarded):        "queued",
 		string(domain.PlacementRunProcessing):     "processing",
 		string(domain.PlacementRunCompleted):      "completed",
-		string(domain.PlacementRunAwaitingReview): "rejected",
+		string(domain.PlacementRunAwaitingReview): "awaiting_review",
 		string(domain.PlacementRunQuarantined):    "quarantined",
 		string(domain.PlacementRunFailed):         "failed",
 		"unexpected":                              "failed",
@@ -235,7 +241,7 @@ func TestSubmissionStatusProjectionMapsProcessingStatesAndErrors(t *testing.T) {
 		string(domain.PlacementRunGuarded):        "queued",
 		string(domain.PlacementRunProcessing):     "processing",
 		string(domain.PlacementRunCompleted):      "completed",
-		string(domain.PlacementRunAwaitingReview): "rejected",
+		string(domain.PlacementRunAwaitingReview): "awaiting_review",
 		string(domain.PlacementRunQuarantined):    "quarantined",
 		string(domain.PlacementRunFailed):         "failed",
 		"unexpected":                              "failed",
@@ -249,7 +255,7 @@ func TestSubmissionStatusProjectionMapsProcessingStatesAndErrors(t *testing.T) {
 		if result.ProcessingState != want || result.SearchState != string(domain.SearchProjectionCurrent) {
 			t.Fatalf("status %q projection = %#v, want processing %q/current", status, result, want)
 		}
-		if status == string(domain.PlacementRunFailed) || status == "unexpected" || status == string(domain.PlacementRunAwaitingReview) {
+		if status == string(domain.PlacementRunFailed) || status == "unexpected" {
 			require.Len(t, result.Errors, 1)
 		} else {
 			require.Empty(t, result.Errors)
@@ -266,12 +272,77 @@ func TestSubmissionStatusProjectionMapsProcessingStatesAndErrors(t *testing.T) {
 	require.Equal(t, "search_indexing_delayed", failedSearch.Evidence[0].Error.Code)
 	require.Equal(t, "Semantic search indexing is delayed.", failedSearch.Evidence[0].Error.Message)
 	require.Equal(t, "Semantic search indexing is delayed; check the control portal for recovery guidance.", failedSearch.Errors[0].Message)
-	hold := submissionStatusResultFromLedger(&repository.CreateIngestResult{IngestID: "submission-1", Status: string(domain.PlacementRunCompleted), SemanticHoldState: "awaiting_review"})
-	require.Equal(t, "rejected", hold.ProcessingState)
-	require.Equal(t, string(SubmissionErrorSemanticHold), hold.Errors[0].Code)
+	hold := submissionStatusResultFromLedger(&repository.CreateIngestResult{IngestID: "submission-1", Status: string(domain.PlacementRunCompleted), SemanticHoldState: "active"})
+	require.Equal(t, "awaiting_review", hold.ProcessingState)
+	require.Empty(t, hold.Errors)
+	require.NotNil(t, hold.SemanticHold)
 	empty := submissionStatusResultFromLedger(nil)
 	require.Empty(t, empty.Evidence)
 	require.Empty(t, empty.Errors)
+}
+
+func TestSubmissionStatusProjectsSemanticHoldReplacementGuidance(t *testing.T) {
+	expiresAt := time.Date(2026, time.August, 17, 12, 0, 0, 0, time.UTC)
+	result := submissionStatusResultFromLedger(&repository.CreateIngestResult{
+		IngestID:                   "submission-1",
+		Status:                     string(domain.PlacementRunAwaitingReview),
+		SemanticHoldState:          "active",
+		ReplacementWindowExpiresAt: &expiresAt,
+		Items: []repository.PlacementItem{{Result: map[string]any{
+			"hold_issues": []any{map[string]any{
+				"code": "grounding_low_confidence", "relationship_ref": "relationship-1", "component": "support", "message": "support grounding confidence is below the effective write threshold",
+			}},
+		}}},
+	})
+
+	require.Equal(t, "awaiting_review", result.ProcessingState)
+	require.Empty(t, result.Errors)
+	require.NotNil(t, result.SemanticHold)
+	require.Equal(t, "active", result.SemanticHold.State)
+	require.Len(t, result.SemanticHold.Issues, 1)
+	require.Equal(t, "grounding_low_confidence", result.SemanticHold.Issues[0].Code)
+	require.Equal(t, "relationship-1", result.SemanticHold.Issues[0].RelationshipRef)
+	require.Equal(t, "remember", result.SemanticHold.Replacement.Tool)
+	require.Equal(t, "submission-1", result.SemanticHold.Replacement.ReplacesSubmissionID)
+	require.Equal(t, &expiresAt, result.SemanticHold.Replacement.ExpiresAt)
+	require.Contains(t, result.SemanticHold.Replacement.Instruction, "complete corrected replacement batch")
+}
+
+func TestSubmissionSemanticHoldProjectionBoundsLedgerPayload(t *testing.T) {
+	require.Nil(t, submissionSemanticHoldFromLedger(nil))
+	require.Nil(t, submissionSemanticHoldFromLedger(&repository.CreateIngestResult{SemanticHoldState: "superseded"}))
+
+	rawIssues := []any{
+		"not-an-object",
+		map[string]any{"code": "", "component": "support", "message": "missing code"},
+	}
+	for index := 0; index <= 50; index++ {
+		rawIssues = append(rawIssues, map[string]any{
+			"code":             "grounding_low_confidence",
+			"relationship_ref": fmt.Sprintf("relationship-%d", index),
+			"component":        "support",
+			"message":          "support grounding confidence is below the effective write threshold",
+		})
+	}
+	hold := submissionSemanticHoldFromLedger(&repository.CreateIngestResult{
+		IngestID:          "submission-1",
+		SemanticHoldState: "expired",
+		Items: []repository.PlacementItem{{Result: map[string]any{
+			"hold_issues":           rawIssues,
+			"hold_issues_truncated": true,
+		}}},
+	})
+	require.NotNil(t, hold)
+	require.Equal(t, "expired", hold.State)
+	require.True(t, hold.IssuesTruncated)
+	require.Len(t, hold.Issues, 50)
+	require.Equal(t, "awaiting_review", publicSubmissionProcessingState("completed", "expired"))
+	require.Equal(t, "rejected", publicSubmissionProcessingState("completed", "superseded"))
+
+	codes := SubmissionHoldIssueCodes()
+	require.Contains(t, codes, "grounding_low_confidence")
+	codes[0] = "mutated"
+	require.NotEqual(t, "mutated", SubmissionHoldIssueCodes()[0])
 }
 
 func TestTerminalSubmissionErrorsAreClosedAndDeduplicated(t *testing.T) {
@@ -456,7 +527,7 @@ func TestRememberRelationshipCoverageRejectsEmptyHints(t *testing.T) {
 
 func TestRememberRelationshipCoverageReportsAllMissingEvidenceIndexes(t *testing.T) {
 	relationships := []map[string]any{{
-		"supports": []map[string]any{{"evidence_index": 0}},
+		"evidence_indices": []any{0},
 	}}
 	err := validateRememberRelationshipCoverage(3, relationships)
 	require.ErrorContains(t, err, "missing evidence indexes: [1 2]")
@@ -464,8 +535,8 @@ func TestRememberRelationshipCoverageReportsAllMissingEvidenceIndexes(t *testing
 
 func TestRememberRelationshipCoverageAcceptsCompleteHints(t *testing.T) {
 	relationships := []map[string]any{
-		{"supports": []any{"not an object", map[string]any{"evidence_index": -1}, map[string]any{"evidence_index": "0"}}},
-		{"supports": []map[string]any{{"evidence_index": 1}}},
+		{"evidence_indices": []any{"not an index", -1, "0"}},
+		{"evidence_indices": []any{1}},
 	}
 	require.NoError(t, validateRememberRelationshipCoverage(2, relationships))
 }
@@ -605,11 +676,11 @@ func authenticatedRememberContext(teamID, profileID, keyID uuid.UUID) context.Co
 }
 
 func completeRememberRelationshipHints(evidenceCount int) []map[string]any {
-	supports := make([]map[string]any, evidenceCount)
-	for index := range supports {
-		supports[index] = map[string]any{"evidence_index": index}
+	evidenceIndices := make([]any, evidenceCount)
+	for index := range evidenceIndices {
+		evidenceIndices[index] = index
 	}
-	return []map[string]any{{"supports": supports}}
+	return []map[string]any{{"evidence_indices": evidenceIndices}}
 }
 
 type rememberLedgerStub struct {

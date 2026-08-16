@@ -2,6 +2,7 @@ package registry
 
 import (
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
 func contractInput(required []string, properties map[string]any) map[string]any {
@@ -60,7 +61,7 @@ func relationshipSubmissionArraySchema() map[string]any {
 		"type":        "array",
 		"minItems":    1,
 		"maxItems":    200,
-		"description": "Relationship support entries across the submission must collectively cover every submitted evidence item. Spans use Unicode code-point offsets.",
+		"description": "Relationship evidence_indices across the submission must collectively cover every submitted evidence item. The server and assessor own exact grounding.",
 		"items":       relationshipSubmissionSchema(),
 	}
 }
@@ -68,10 +69,10 @@ func relationshipSubmissionArraySchema() map[string]any {
 func relationshipSubmissionSchema() map[string]any {
 	return map[string]any{
 		"type":     "object",
-		"required": []string{"ref", "subject", "predicate", "object", "polarity", "modality", "supports"},
+		"required": []string{"ref", "subject", "predicate", "object", "polarity", "modality", "evidence_indices"},
 		"properties": map[string]any{
 			"ref":               nonEmptyStringSchema("Client-local Relationship proposal ref.", 128),
-			"subject":           inlineRelationshipEntitySchema("Evidence-supported subject Entity."),
+			"subject":           inlineRelationshipEntitySchema("Proposed subject Entity."),
 			"predicate":         relationshipPredicateSchema(),
 			"object":            relationshipObjectSchema(),
 			"polarity":          schemaEnum([]string{"+", "-"}),
@@ -81,7 +82,7 @@ func relationshipSubmissionSchema() map[string]any {
 			"correction_target": relationshipCorrectionTargetSchema(),
 			"conflict_context":  relationshipConflictContextSchema(),
 			"client_comment":    nullableString("Non-authoritative extraction note.", 1000),
-			"supports":          relationshipSupportArraySchema(),
+			"evidence_indices":  relationshipEvidenceIndexArraySchema(),
 		},
 		"additionalProperties": false,
 	}
@@ -90,12 +91,11 @@ func relationshipSubmissionSchema() map[string]any {
 func inlineRelationshipEntitySchema(description string) map[string]any {
 	return map[string]any{
 		"type":     "object",
-		"required": []string{"name", "entity_kind", "span"},
+		"required": []string{"name", "entity_kind"},
 		"properties": map[string]any{
 			"name":            nonEmptyStringSchema(description, 256),
 			"entity_kind":     schemaEnum(domain.EntityKinds()),
 			"known_entity_id": nullableString("Server-issued Entity candidate hint.", 128),
-			"span":            relationshipSpanSchema(),
 		},
 		"additionalProperties": false,
 	}
@@ -104,11 +104,9 @@ func inlineRelationshipEntitySchema(description string) map[string]any {
 func relationshipPredicateSchema() map[string]any {
 	return map[string]any{
 		"type":     "object",
-		"required": []string{"proposed_key", "surface", "span"},
+		"required": []string{"proposed_key"},
 		"properties": map[string]any{
 			"proposed_key": nonEmptyStringSchema("Best-effort team predicate key proposal.", 128),
-			"surface":      nonEmptyStringSchema("Exact predicate surface from submitted evidence.", 256),
-			"span":         relationshipSpanSchema(),
 		},
 		"additionalProperties": false,
 	}
@@ -128,7 +126,7 @@ func relationshipObjectSchema() map[string]any {
 			},
 		},
 		"properties": map[string]any{
-			"entity": inlineRelationshipEntitySchema("Evidence-supported object Entity."),
+			"entity": inlineRelationshipEntitySchema("Proposed object Entity."),
 			"value":  relationshipValueSchema(),
 		},
 		"additionalProperties": false,
@@ -138,12 +136,10 @@ func relationshipObjectSchema() map[string]any {
 func relationshipValueSchema() map[string]any {
 	return map[string]any{
 		"type":     "object",
-		"required": []string{"type", "value", "surface", "span"},
+		"required": []string{"type", "value"},
 		"properties": map[string]any{
 			"type":    schemaEnum(domain.ValueTypes()),
 			"value":   map[string]any{"type": []any{"string", "number", "boolean"}},
-			"surface": nonEmptyStringSchema("Exact typed Value surface from submitted evidence.", 1024),
-			"span":    relationshipSpanSchema(),
 			"display": schemaString("Optional display form from submitted evidence.", 1024),
 			"unit":    schemaString("Optional unit from submitted evidence.", 128),
 		},
@@ -151,24 +147,15 @@ func relationshipValueSchema() map[string]any {
 	}
 }
 
-func relationshipSupportArraySchema() map[string]any {
+func relationshipEvidenceIndexArraySchema() map[string]any {
 	return map[string]any{
 		"type":     "array",
 		"minItems": 1,
 		"maxItems": 20,
-		"items":    relationshipSpanSchema(),
-	}
-}
-
-func relationshipSpanSchema() map[string]any {
-	return map[string]any{
-		"type":                 "object",
-		"required":             []string{"evidence_index", "start", "end"},
-		"additionalProperties": false,
-		"properties": map[string]any{
-			"evidence_index": map[string]any{"type": "integer", "minimum": 0},
-			"start":          map[string]any{"type": "integer", "minimum": 0},
-			"end":            map[string]any{"type": "integer", "minimum": 0},
+		"items": map[string]any{
+			"type":    "integer",
+			"minimum": 0,
+			"maximum": 19,
 		},
 	}
 }
@@ -391,7 +378,7 @@ func rememberOutputSchema() map[string]any {
 		map[string]any{
 			"submission_id":       schemaString("Submission ID.", 128),
 			"submission_kind":     schemaEnum([]string{"remember"}),
-			"processing_state":    schemaEnum([]string{"queued", "processing", "completed", "rejected", "quarantined", "failed"}),
+			"processing_state":    schemaEnum([]string{"queued", "processing", "awaiting_review", "completed", "rejected", "quarantined", "failed"}),
 			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
 			"status_tool":         schemaEnum([]string{ToolGetSubmissionStatus}),
 			"correlation_id":      schemaString("Request correlation ID.", 128),
@@ -405,7 +392,7 @@ func submissionStatusOutputSchema() map[string]any {
 		map[string]any{
 			"submission_id":       schemaString("Submission ID.", 128),
 			"submission_kind":     schemaEnum([]string{"remember", "relationship_correction"}),
-			"processing_state":    schemaEnum([]string{"queued", "processing", "awaiting_confirmation", "completed", "rejected", "quarantined", "failed"}),
+			"processing_state":    schemaEnum([]string{"queued", "processing", "awaiting_review", "awaiting_confirmation", "completed", "rejected", "quarantined", "failed"}),
 			"search_state":        schemaEnum(domain.SearchProjectionStates()),
 			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
 			"evidence": array(closedObject(
@@ -423,6 +410,35 @@ func submissionStatusOutputSchema() map[string]any {
 			"replacement_window_expires_at": nullableString("Replacement window expiry.", 64),
 			"awaiting_confirmation":         relationshipCorrectionConfirmationSchema(),
 			"correction_result":             relationshipCorrectionResultSchema(),
+			"semantic_hold":                 submissionSemanticHoldSchema(),
+		},
+	)
+}
+
+func submissionSemanticHoldSchema() map[string]any {
+	return closedObject(
+		[]string{"state", "issues", "issues_truncated", "replacement"},
+		map[string]any{
+			"state": schemaEnum([]string{"active", "expired"}),
+			"issues": array(closedObject(
+				[]string{"code", "component", "message"},
+				map[string]any{
+					"code":             schemaEnum(memoryservice.SubmissionHoldIssueCodes()),
+					"relationship_ref": schemaString("Client Relationship proposal ref.", 128),
+					"component":        schemaEnum([]string{"subject", "predicate", "object", "support", "relationship", "conflict"}),
+					"message":          schemaString("Bounded semantic hold guidance.", 512),
+				},
+			), 1, 50),
+			"issues_truncated": map[string]any{"type": "boolean"},
+			"replacement": closedObject(
+				[]string{"tool", "replaces_submission_id", "expires_at", "instruction"},
+				map[string]any{
+					"tool":                   schemaEnum([]string{ToolRemember}),
+					"replaces_submission_id": schemaString("Held submission to replace.", 128),
+					"expires_at":             nullableString("Replacement window expiry.", 64),
+					"instruction":            schemaString("Bounded replacement instruction.", 512),
+				},
+			),
 		},
 	)
 }

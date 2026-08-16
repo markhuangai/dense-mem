@@ -39,9 +39,6 @@ await controlJSON("/config/telemetry-pricing", {
 });
 
 const telemetryContent = `Telemetry E2E ${runID}: Dense-Mem uses exact evidence before semantic processing.`;
-const subjectStart = telemetryContent.indexOf("Dense-Mem");
-const predicateStart = telemetryContent.indexOf("uses", subjectStart);
-const objectStart = telemetryContent.indexOf("exact evidence", predicateStart);
 const remember = await mcpTool("remember", {
   evidence: [{
     content: telemetryContent,
@@ -55,23 +52,19 @@ const remember = await mcpTool("remember", {
     subject: {
       name: "Dense-Mem",
       entity_kind: "project",
-      span: { evidence_index: 0, start: subjectStart, end: subjectStart + "Dense-Mem".length },
     },
     predicate: {
       proposed_key: "uses",
-      surface: "uses",
-      span: { evidence_index: 0, start: predicateStart, end: predicateStart + "uses".length },
     },
     object: {
       entity: {
         name: "exact evidence",
         entity_kind: "concept",
-        span: { evidence_index: 0, start: objectStart, end: objectStart + "exact evidence".length },
       },
     },
     polarity: "+",
     modality: "statement",
-    supports: [{ evidence_index: 0, start: 0, end: Array.from(telemetryContent).length }],
+    evidence_indices: [0],
   }],
 });
 const submissionID = String(remember.submission_id ?? "");

@@ -32,7 +32,7 @@ func TestSubmissionAssessmentPlanPreservesValidatedReviewContext(t *testing.T) {
 	assert.Equal(t, 4, plan.relationshipsByRef["r:depends"].ConflictContext.ExpectedVersion)
 }
 
-func TestSubmissionAssessmentPlanPrefersKnownEntityIDForDuplicateMention(t *testing.T) {
+func TestSubmissionAssessmentPlanPreservesKnownEntityIDForLogicalEndpoint(t *testing.T) {
 	ledger, _, _, _, _ := submissionAssessmentWorkerFixture(t)
 	relationships := ledger.placement.Proposal["relationship_hints"].([]any)
 	original := relationships[0].(map[string]any)
@@ -53,8 +53,14 @@ func TestSubmissionAssessmentPlanPrefersKnownEntityIDForDuplicateMention(t *test
 	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
 
 	require.NoError(t, err)
-	entity := plan.entityTargetsByRef["entity:evidence:0:0:5:concept"]
-	assert.Equal(t, knownID, entity.KnownEntityID)
+	found := false
+	for _, entity := range plan.EntityTargets {
+		if entity.Target.Name == "Alpha" && entity.KnownEntityID == knownID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found)
 }
 
 func TestSubmissionAssessmentPlanRejectsInvalidReviewContext(t *testing.T) {
@@ -77,9 +83,9 @@ func TestSubmissionAssessmentPlanRejectsUnsupportedEndpointContext(t *testing.T)
 		mutate func(map[string]any)
 	}{
 		{
-			name: "subject outside support",
+			name: "evidence outside submission",
 			mutate: func(relationship map[string]any) {
-				relationship["supports"] = []any{map[string]any{"evidence_index": 0, "start": 0, "end": 4}}
+				relationship["evidence_indices"] = []any{99}
 			},
 		},
 		{
@@ -101,16 +107,9 @@ func TestSubmissionAssessmentPlanRejectsUnsupportedEndpointContext(t *testing.T)
 }
 
 func TestSubmissionAssessmentValueProposalRejectsUnsafeFields(t *testing.T) {
-	ledger, _, _, _, _ := submissionAssessmentWorkerFixture(t)
-	plan, err := buildSubmissionAssessmentPlan(submissionAssessmentValueFixturePlacement(t, ledger.run))
-	require.NoError(t, err)
-	items := plan.itemsByEvidenceID
-
 	base := map[string]any{
-		"surface": "42 ms",
-		"type":    "number",
-		"value":   42,
-		"span":    map[string]any{"evidence_index": 0, "start": 11, "end": 16},
+		"type":  "number",
+		"value": 42,
 	}
 	tests := []struct {
 		name   string
@@ -128,26 +127,25 @@ func TestSubmissionAssessmentValueProposalRejectsUnsafeFields(t *testing.T) {
 				value[key] = item
 			}
 			test.mutate(value)
-			_, _, _, _, err := submissionAssessmentValueFromProposal(value, items)
+			_, err := submissionAssessmentValueFromProposal(value)
 			require.Error(t, err)
 		})
 	}
 }
 
-func TestSubmissionAssessmentSupportsFromProposalRejectsUnsafeSpans(t *testing.T) {
+func TestSubmissionAssessmentEvidenceIndicesRejectUnsafeValues(t *testing.T) {
 	ledger, _, _, _, _ := submissionAssessmentWorkerFixture(t)
 	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
 	require.NoError(t, err)
 
-	valid := map[string]any{"evidence_index": 0, "start": 0, "end": 16}
 	tests := []map[string]any{
-		{"supports": []map[string]any{valid, valid}},
-		{"supports": []map[string]any{{"evidence_index": 99, "start": 0, "end": 1}}},
-		{"supports": []map[string]any{{"evidence_index": 0, "start": 0, "end": 999}}},
-		{"supports": []any{map[string]any{"evidence_index": "invalid", "start": 0, "end": 1}}},
+		{"evidence_indices": []any{0, 0}},
+		{"evidence_indices": []any{99}},
+		{"evidence_indices": []any{"invalid"}},
+		{"evidence_indices": []any{}},
 	}
 	for _, raw := range tests {
-		_, err := submissionAssessmentSupportsFromProposal(raw, plan.itemsByEvidenceID)
+		_, err := submissionAssessmentEvidenceIDsFromProposal(raw, plan.itemsByEvidenceID)
 		require.Error(t, err)
 	}
 }

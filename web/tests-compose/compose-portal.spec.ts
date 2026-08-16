@@ -755,33 +755,24 @@ function requiredString(value: Record<string, unknown>, field: string) {
 }
 
 function securityRelationship(content: string, ref: string) {
-  const supportText = content;
-  const supportStart = content.indexOf(supportText);
-  const subjectStart = content.indexOf("deployment", supportStart);
-  const predicateStart = content.indexOf("protects", subjectStart);
-  const objectStart = content.indexOf("prompt", predicateStart);
   return {
     ref,
     subject: {
       name: "deployment",
       entity_kind: "concept",
-      span: { evidence_index: 0, start: subjectStart, end: subjectStart + "deployment".length },
     },
     predicate: {
       proposed_key: "protects",
-      surface: "protects",
-      span: { evidence_index: 0, start: predicateStart, end: predicateStart + "protects".length },
     },
     object: {
       entity: {
         name: "prompt",
         entity_kind: "concept",
-        span: { evidence_index: 0, start: objectStart, end: objectStart + "prompt".length },
       },
     },
     polarity: "+",
     modality: "statement",
-    supports: [{ evidence_index: 0, start: supportStart, end: supportStart + Array.from(supportText).length }],
+    evidence_indices: [0],
   };
 }
 

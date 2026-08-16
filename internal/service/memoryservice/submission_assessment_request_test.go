@@ -1,0 +1,74 @@
+package memoryservice
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/verifier"
+)
+
+func TestSubmissionAssessmentGroundsActiveAliasWithFlexibleWhitespace(t *testing.T) {
+	evidence := verifier.PrepareSemanticAssessmentEvidence(verifier.SemanticReviewEvidence{
+		EvidenceID: "evidence:0",
+		Content:    "DENSE \t Memory protects PostgreSQL.",
+	})
+	plan := submissionAssessmentGroundingTestPlan("Dense-Mem", "project")
+	candidate := repository.SemanticReviewEntityCandidate{
+		TeamID: "team-a", EntityID: "entity-dense-mem", EntityKind: "project", CanonicalName: "Dense-Mem",
+		ActiveNames: []string{"Dense-Mem", "Dense Memory"}, Status: "active", IdentityContext: map[string]any{},
+	}
+
+	entities, groups, err := submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{
+		Complete: true,
+		Groups: []repository.SubmissionAssessmentEntityCatalogGroup{{
+			Ref: "entity:subject", Candidates: []repository.SemanticReviewEntityCandidate{candidate}, Complete: true,
+		}},
+	}, []verifier.SemanticReviewEvidence{evidence})
+
+	require.NoError(t, err)
+	require.Len(t, entities, 1)
+	require.Len(t, entities[0].Groundings, 1)
+	assert.Equal(t, "DENSE \t Memory", entities[0].Groundings[0].Surface)
+	require.Len(t, groups, 1)
+	require.Len(t, groups[0].Candidates, 1)
+	assert.Equal(t, candidate.EntityID, groups[0].Candidates[0].EntityID)
+}
+
+func TestSubmissionAssessmentRejectsPronounAndPartialWordGrounding(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		content string
+		entity  string
+	}{
+		{name: "pronoun", content: "It uses Redis.", entity: "It"},
+		{name: "partial word", content: "Alphabet uses Redis.", entity: "Alpha"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			evidence := verifier.PrepareSemanticAssessmentEvidence(verifier.SemanticReviewEvidence{
+				EvidenceID: "evidence:0",
+				Content:    test.content,
+			})
+			plan := submissionAssessmentGroundingTestPlan(test.entity, "concept")
+
+			entities, groups, err := submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{
+				Complete: true,
+				Groups:   []repository.SubmissionAssessmentEntityCatalogGroup{{Ref: "entity:subject", Complete: true}},
+			}, []verifier.SemanticReviewEvidence{evidence})
+
+			require.NoError(t, err)
+			require.Len(t, entities, 1)
+			assert.Empty(t, entities[0].Groundings)
+			assert.Empty(t, groups)
+		})
+	}
+}
+
+func submissionAssessmentGroundingTestPlan(name, kind string) submissionAssessmentPlan {
+	target := submissionAssessmentEntityTarget{Target: verifier.SemanticAssessmentRequiredEntityRef{
+		Ref: "entity:subject", Name: name, Kind: kind, EvidenceIDs: []string{"evidence:0"},
+	}}
+	return submissionAssessmentPlan{EntityTargets: []submissionAssessmentEntityTarget{target}}
+}

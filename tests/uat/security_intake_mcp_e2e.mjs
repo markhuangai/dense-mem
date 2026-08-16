@@ -189,31 +189,24 @@ function relationshipRememberInput(payload, idempotencyKey, source, clientCommen
   const predicate = "uses";
   const object = "Store";
   const content = `${subject} ${predicate} ${object}. ${payload}`;
-  const subjectStart = 0;
-  const predicateStart = subject.length + 1;
-  const objectStart = predicateStart + predicate.length + 1;
   const relationship = {
     ref: "security-e2e-uses",
     subject: {
       name: subject,
       entity_kind: "project",
-      span: { evidence_index: 0, start: subjectStart, end: subjectStart + subject.length },
     },
     predicate: {
       proposed_key: predicate,
-      surface: predicate,
-      span: { evidence_index: 0, start: predicateStart, end: predicateStart + predicate.length },
     },
     object: {
       entity: {
         name: object,
         entity_kind: "product",
-        span: { evidence_index: 0, start: objectStart, end: objectStart + object.length },
       },
     },
     polarity: "+",
     modality: "statement",
-    supports: [{ evidence_index: 0, start: 0, end: Array.from(content).length }],
+    evidence_indices: [0],
   };
   if (clientComment) {
     relationship.client_comment = clientComment;

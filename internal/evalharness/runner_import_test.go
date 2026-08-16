@@ -291,19 +291,15 @@ func evalImportRelationship(t *testing.T, content, ref string) map[string]any {
 		"ref": ref,
 		"subject": map[string]any{
 			"name": string(runes[:subjectEnd]), "entity_kind": "other",
-			"span": map[string]any{"evidence_index": 0, "start": 0, "end": subjectEnd},
 		},
 		"predicate": map[string]any{
 			"proposed_key": strings.ToLower(string(runes[predicateStart:predicateEnd])),
-			"surface":      string(runes[predicateStart:predicateEnd]),
-			"span":         map[string]any{"evidence_index": 0, "start": predicateStart, "end": predicateEnd},
 		},
 		"object": map[string]any{"entity": map[string]any{
 			"name": string(runes[objectStart:objectEnd]), "entity_kind": "other",
-			"span": map[string]any{"evidence_index": 0, "start": objectStart, "end": objectEnd},
 		}},
-		"polarity": "+",
-		"modality": "statement",
-		"supports": []any{map[string]any{"evidence_index": 0, "start": 0, "end": len(runes)}},
+		"polarity":         "+",
+		"modality":         "statement",
+		"evidence_indices": []any{0},
 	}
 }

@@ -176,7 +176,7 @@ func TestSemanticAssessmentWorkerTerminalizesInvalidProviderResponse(t *testing.
 	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
 		return verifier.SemanticAssessmentResponse{
 			RequestID:           req.RequestID,
-			SecuritySignals:     []verifier.SemanticSecuritySignal{},
+			SecuritySignals:     []verifier.SemanticAssessmentSecuritySignal{},
 			RelationshipResults: []verifier.SemanticAssessmentRelationshipResult{},
 		}, nil
 	}
@@ -762,17 +762,19 @@ func semanticAssessmentConfidenceFixture(t *testing.T) (repository.PlacementRun,
 	}
 	prepared, validationErrors := verifier.PrepareSemanticAssessmentRequest(request, verifier.DefaultSemanticAssessmentLimits())
 	require.Empty(t, validationErrors)
+	markGrounding := prepared.EntityCandidateGroups[0].GroundingRef
+	denseMemGrounding := prepared.EntityCandidateGroups[1].GroundingRef
 	response := verifier.SemanticAssessmentResponse{
 		RequestID:       prepared.RequestID,
-		SecuritySignals: []verifier.SemanticSecuritySignal{},
+		SecuritySignals: []verifier.SemanticAssessmentSecuritySignal{},
 		EntityResults: []verifier.SemanticAssessmentEntityResult{
-			{Ref: "mark", Surface: "Mark", Kind: "person", EvidenceID: "evidence:0", Start: 0, End: 4, Action: "reuse", CandidateEntityID: testStringPointer(markID), Confidence: 1, Rationale: "Exact candidate."},
-			{Ref: "dense-mem", Surface: "Dense-Mem", Kind: "product", EvidenceID: "evidence:0", Start: 14, End: 23, Action: "reuse", CandidateEntityID: testStringPointer(denseMemID), Confidence: 1, Rationale: "Exact candidate."},
+			{Ref: "mark", GroundingRef: &markGrounding, Action: "reuse", CandidateEntityID: testStringPointer(markID), Confidence: 1, Rationale: "Exact candidate."},
+			{Ref: "dense-mem", GroundingRef: &denseMemGrounding, Action: "reuse", CandidateEntityID: testStringPointer(denseMemID), Confidence: 1, Rationale: "Exact candidate."},
 		},
 		RelationshipResults: []verifier.SemanticAssessmentRelationshipResult{{
-			Ref: "works-on", SubjectRef: "mark", OriginalPredicate: "works on", PredicateStatus: "resolved",
+			Ref: "works-on", SubjectRef: "mark", PredicateRange: submissionAssessmentTestRange(prepared.Evidence[0], 5, 13), PredicateStatus: "resolved",
 			PredicateKey: testStringPointer(predicateKey), PredicateVersion: testIntPointer(predicateVersion), ObjectRef: testStringPointer("dense-mem"),
-			Polarity: "+", Modality: "statement", Evidence: []verifier.SemanticAssessmentEvidenceSpan{{EvidenceID: "evidence:0", Start: 0, End: len([]rune(content))}},
+			Polarity: "+", Modality: "statement", SupportRanges: []verifier.SemanticAssessmentGroundedRange{submissionAssessmentTestRange(prepared.Evidence[0], 0, len([]rune(content)))},
 			ScopeStatus: "absent", EvidenceVerdict: "entailed", TemporalVerdict: "absent", Confidence: 0.7, Rationale: "The evidence states the relationship.",
 		}},
 	}
@@ -968,7 +970,7 @@ func (s *semanticAssessmentWorkerProviderStub) AssessSemantic(_ context.Context,
 	}
 	return verifier.SemanticAssessmentResponse{
 		RequestID:           req.RequestID,
-		SecuritySignals:     []verifier.SemanticSecuritySignal{},
+		SecuritySignals:     []verifier.SemanticAssessmentSecuritySignal{},
 		EntityResults:       []verifier.SemanticAssessmentEntityResult{},
 		RelationshipResults: []verifier.SemanticAssessmentRelationshipResult{},
 	}, nil

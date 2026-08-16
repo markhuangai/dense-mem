@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -38,6 +39,15 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 				    SELECT DISTINCT ON (rec.entity_id)
 				           rec.team_id::text, rec.entity_id::text, rec.entity_kind,
 			           COALESCE(canonical.display_name, name.display_name, '') AS canonical_name,
+				           ARRAY(
+				               SELECT active_name.display_name
+				               FROM entity_names AS active_name
+				               WHERE active_name.team_id = rec.team_id
+				                 AND active_name.entity_id = rec.entity_id
+				                 AND active_name.valid_to IS NULL
+				                 AND active_name.name_kind IN ('canonical', 'alias')
+				               ORDER BY active_name.name_kind, active_name.created_at, active_name.entity_name_id
+				           ) AS active_names,
 				           rec.identity_context, rec.status,
 				           CASE WHEN rec.entity_id = NULLIF(?, '')::uuid THEN 0 ELSE 1 END AS known_rank,
 			           CASE WHEN name.normalized_name = ? THEN 0 ELSE 1 END AS name_rank
@@ -61,7 +71,7 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 				      )
 				    ORDER BY rec.entity_id, known_rank, name_rank, name.created_at DESC
 				)
-				SELECT team_id, entity_id, entity_kind, canonical_name, identity_context, status
+				SELECT team_id, entity_id, entity_kind, canonical_name, active_names, identity_context, status
 				FROM candidates
 				ORDER BY known_rank, name_rank, entity_id
 				LIMIT ?
@@ -73,11 +83,13 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 			for rows.Next() {
 				candidate := SemanticReviewEntityCandidate{}
 				var identityRaw []byte
+				var activeNames pq.StringArray
 				if err := rows.Scan(
 					&candidate.TeamID,
 					&candidate.EntityID,
 					&candidate.EntityKind,
 					&candidate.CanonicalName,
+					&activeNames,
 					&identityRaw,
 					&candidate.Status,
 				); err != nil {
@@ -93,6 +105,7 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 					_ = rows.Close()
 					return fmt.Errorf("decode entity identity_context")
 				}
+				candidate.ActiveNames = append([]string(nil), activeNames...)
 				group.Candidates = append(group.Candidates, candidate)
 			}
 			if err := rows.Err(); err != nil {

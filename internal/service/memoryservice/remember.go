@@ -115,6 +115,45 @@ type SubmissionStatusResult struct {
 	ReplacementWindowExpiresAt *time.Time                               `json:"replacement_window_expires_at,omitempty"`
 	AwaitingConfirmation       *SubmissionAwaitingConfirmation          `json:"awaiting_confirmation,omitempty"`
 	CorrectionResult           *repository.RelationshipCorrectionResult `json:"correction_result,omitempty"`
+	SemanticHold               *SubmissionSemanticHold                  `json:"semantic_hold,omitempty"`
+}
+
+type SubmissionSemanticHold struct {
+	State           string                        `json:"state"`
+	Issues          []SubmissionHoldIssue         `json:"issues"`
+	IssuesTruncated bool                          `json:"issues_truncated"`
+	Replacement     SubmissionReplacementGuidance `json:"replacement"`
+}
+
+type SubmissionHoldIssue struct {
+	Code            string `json:"code"`
+	RelationshipRef string `json:"relationship_ref,omitempty"`
+	Component       string `json:"component"`
+	Message         string `json:"message"`
+}
+
+type SubmissionReplacementGuidance struct {
+	Tool                 string     `json:"tool"`
+	ReplacesSubmissionID string     `json:"replaces_submission_id"`
+	ExpiresAt            *time.Time `json:"expires_at"`
+	Instruction          string     `json:"instruction"`
+}
+
+var submissionHoldIssueCodes = []string{
+	"entity_grounding_missing",
+	"entity_resolution_ambiguous",
+	"grounding_low_confidence",
+	"predicate_needs_review",
+	"scope_needs_review",
+	"temporal_uncertain",
+	"evidence_not_entailed",
+	"unsupported_modality",
+	"commit_review_required",
+	"conflict_context_stale",
+}
+
+func SubmissionHoldIssueCodes() []string {
+	return append([]string(nil), submissionHoldIssueCodes...)
 }
 
 type SubmissionAwaitingConfirmation struct {
@@ -143,6 +182,7 @@ const (
 	SubmissionErrorAssessorUnavailable   SubmissionErrorCode = "assessor_unavailable"
 	SubmissionErrorReplacementConflict   SubmissionErrorCode = "submission_replacement_conflict"
 	SubmissionErrorProcessingFailed      SubmissionErrorCode = "submission_processing_failed"
+	SubmissionErrorContractSuperseded    SubmissionErrorCode = "contract_superseded"
 	SubmissionErrorSearchIndexingDelayed SubmissionErrorCode = "search_indexing_delayed"
 
 	SubmissionErrorRelationshipVersionStale      SubmissionErrorCode = "relationship_version_stale"
@@ -169,6 +209,7 @@ var submissionErrorCodes = []SubmissionErrorCode{
 	SubmissionErrorAssessorUnavailable,
 	SubmissionErrorReplacementConflict,
 	SubmissionErrorProcessingFailed,
+	SubmissionErrorContractSuperseded,
 	SubmissionErrorSearchIndexingDelayed,
 	SubmissionErrorRelationshipVersionStale,
 	SubmissionErrorRelationshipNotActive,
@@ -208,6 +249,7 @@ var submissionErrorMessages = map[SubmissionErrorCode]string{
 	SubmissionErrorAssessorUnavailable:   "submission assessment was unavailable after bounded retries",
 	SubmissionErrorReplacementConflict:   "submission replacement conflicted with current state",
 	SubmissionErrorProcessingFailed:      "submission processing failed",
+	SubmissionErrorContractSuperseded:    "submission uses a superseded remember contract; resubmit the complete batch using the current contract",
 	SubmissionErrorSearchIndexingDelayed: "search indexing is delayed",
 
 	SubmissionErrorRelationshipVersionStale:      "relationship version is stale",
@@ -253,6 +295,8 @@ func submissionFailureCode(stage, class string) SubmissionErrorCode {
 	stage = strings.TrimSpace(stage)
 	class = strings.TrimSpace(class)
 	switch {
+	case stage == "contract_superseded":
+		return SubmissionErrorContractSuperseded
 	case stage == "replacement_conflict":
 		return SubmissionErrorReplacementConflict
 	case class == "malformed_response", class == "validation_failed", class == "provider_protocol":
@@ -269,6 +313,9 @@ func submissionFailureCode(stage, class string) SubmissionErrorCode {
 }
 
 func submissionItemFailureError(item repository.PlacementItem, processing string) *SubmissionStatusError {
+	if processing == "awaiting_review" {
+		return nil
+	}
 	if item.Status != string(domain.PlacementRunFailed) && item.Status != "failed" && item.Status != "rejected" && item.Status != "awaiting_review" {
 		return nil
 	}
@@ -367,12 +414,8 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 func validateRememberRelationshipCoverage(evidenceCount int, relationships []map[string]any) error {
 	covered := make([]bool, evidenceCount)
 	for _, relationship := range relationships {
-		for _, rawSupport := range rememberArrayValues(relationship["supports"]) {
-			support, ok := rawSupport.(map[string]any)
-			if !ok {
-				continue
-			}
-			index, ok := rememberEvidenceIndex(support["evidence_index"])
+		for _, rawIndex := range rememberArrayValues(relationship["evidence_indices"]) {
+			index, ok := rememberEvidenceIndex(rawIndex)
 			if ok && index >= 0 && index < len(covered) {
 				covered[index] = true
 			}
@@ -385,7 +428,7 @@ func validateRememberRelationshipCoverage(evidenceCount int, relationships []map
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("remember: relationship hints must cover every evidence item; missing evidence indexes: %v", missing)
+		return fmt.Errorf("remember: relationship evidence_indices must cover every evidence item; missing evidence indexes: %v", missing)
 	}
 	return nil
 }
@@ -545,11 +588,15 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 		Errors:                     statusErrors,
 		QuarantineExpiresAt:        placement.QuarantineExpiresAt,
 		ReplacementWindowExpiresAt: placement.ReplacementWindowExpiresAt,
+		SemanticHold:               submissionSemanticHoldFromLedger(placement),
 	}
 }
 
 func publicSubmissionProcessingState(status, holdState string) string {
-	if strings.TrimSpace(holdState) != "" {
+	switch strings.TrimSpace(holdState) {
+	case "active", "expired":
+		return "awaiting_review"
+	case "superseded":
 		return "rejected"
 	}
 	switch strings.TrimSpace(status) {
@@ -560,7 +607,7 @@ func publicSubmissionProcessingState(status, holdState string) string {
 	case string(domain.PlacementRunCompleted):
 		return "completed"
 	case string(domain.PlacementRunAwaitingReview):
-		return "rejected"
+		return "awaiting_review"
 	case string(domain.PlacementRunQuarantined):
 		return "quarantined"
 	case string(domain.PlacementRunFailed):
@@ -568,6 +615,69 @@ func publicSubmissionProcessingState(status, holdState string) string {
 	default:
 		return "failed"
 	}
+}
+
+func submissionSemanticHoldFromLedger(placement *repository.CreateIngestResult) *SubmissionSemanticHold {
+	if placement == nil {
+		return nil
+	}
+	state := strings.TrimSpace(placement.SemanticHoldState)
+	if state != "active" && state != "expired" {
+		return nil
+	}
+	issues := []SubmissionHoldIssue{}
+	truncated := false
+	for _, item := range placement.Items {
+		if value, ok := item.Result["hold_issues_truncated"].(bool); ok && value {
+			truncated = true
+		}
+		for _, raw := range rememberArrayValues(item.Result["hold_issues"]) {
+			fields, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			issue := SubmissionHoldIssue{
+				Code:            submissionHoldIssueString(fields, "code"),
+				RelationshipRef: submissionHoldIssueString(fields, "relationship_ref"),
+				Component:       submissionHoldIssueString(fields, "component"),
+				Message:         submissionHoldIssueString(fields, "message"),
+			}
+			if issue.Code == "" || issue.Component == "" || issue.Message == "" {
+				continue
+			}
+			issues = append(issues, issue)
+			if len(issues) == 50 {
+				truncated = true
+				break
+			}
+		}
+		if len(issues) > 0 || truncated {
+			break
+		}
+	}
+	if len(issues) == 0 {
+		issues = append(issues, SubmissionHoldIssue{
+			Code:      "commit_review_required",
+			Component: "relationship",
+			Message:   "submission requires a corrected complete replacement before semantic commit",
+		})
+	}
+	return &SubmissionSemanticHold{
+		State:           state,
+		Issues:          issues,
+		IssuesTruncated: truncated,
+		Replacement: SubmissionReplacementGuidance{
+			Tool:                 "remember",
+			ReplacesSubmissionID: placement.IngestID,
+			ExpiresAt:            placement.ReplacementWindowExpiresAt,
+			Instruction:          "Submit one complete corrected replacement batch; partial replacement is not supported.",
+		},
+	}
+}
+
+func submissionHoldIssueString(fields map[string]any, key string) string {
+	value, _ := fields[key].(string)
+	return strings.TrimSpace(value)
 }
 
 func sourceRevisionContentHashes(evidence []RememberEvidenceInput) map[string]string {

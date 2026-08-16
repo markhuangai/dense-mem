@@ -81,21 +81,13 @@ func flatRelationshipForContent(content string) map[string]any {
 			map[string]any{"content": content},
 		},
 		"relationships": []any{map[string]any{
-			"ref": "a-relationship",
-			"subject": map[string]any{
-				"name": "a", "entity_kind": "project",
-				"span": map[string]any{"evidence_index": 0, "start": 0, "end": 1},
-			},
-			"predicate": map[string]any{
-				"proposed_key": "uses", "surface": "a",
-				"span": map[string]any{"evidence_index": 0, "start": 1, "end": 2},
-			},
-			"object": map[string]any{"entity": map[string]any{
-				"name": "a", "entity_kind": "product",
-				"span": map[string]any{"evidence_index": 0, "start": 2, "end": 3},
-			}},
-			"polarity": "+", "modality": "statement",
-			"supports": []any{map[string]any{"evidence_index": 0, "start": 0, "end": len([]rune(content))}},
+			"ref":              "a-relationship",
+			"subject":          map[string]any{"name": "a", "entity_kind": "project"},
+			"predicate":        map[string]any{"proposed_key": "uses"},
+			"object":           map[string]any{"entity": map[string]any{"name": "a", "entity_kind": "product"}},
+			"polarity":         "+",
+			"modality":         "statement",
+			"evidence_indices": []any{0},
 		}},
 	}
 }
@@ -216,8 +208,7 @@ func TestFlatRelationshipsRequireExactlyOneObject(t *testing.T) {
 			name: "both object forms",
 			mutate: func(input map[string]any) {
 				relationship(input)["object"].(map[string]any)["value"] = map[string]any{
-					"type": "string", "value": "PostgreSQL", "surface": "PostgreSQL",
-					"span": map[string]any{"evidence_index": 0, "start": 15, "end": 25},
+					"type": "string", "value": "PostgreSQL",
 				}
 			},
 		},

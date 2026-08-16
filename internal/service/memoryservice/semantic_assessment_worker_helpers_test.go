@@ -535,9 +535,11 @@ func TestSemanticAssessmentWorkerFailureAndStoredAssessmentBoundaries(t *testing
 	}
 
 	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+		startRef, _ := verifier.SemanticAssessmentBoundaryRef(req.Evidence[0], 0)
+		endRef, _ := verifier.SemanticAssessmentBoundaryRef(req.Evidence[0], 8)
 		return verifier.SemanticAssessmentResponse{
 			RequestID:       req.RequestID,
-			SecuritySignals: []verifier.SemanticSecuritySignal{{EvidenceID: "evidence:0", Kind: "instruction_override", Start: 0, End: 8}},
+			SecuritySignals: []verifier.SemanticAssessmentSecuritySignal{{EvidenceID: "evidence:0", Kind: "instruction_override", StartRef: startRef, EndRef: endRef}},
 			EntityResults:   []verifier.SemanticAssessmentEntityResult{}, RelationshipResults: []verifier.SemanticAssessmentRelationshipResult{},
 		}, nil
 	}

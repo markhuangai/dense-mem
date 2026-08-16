@@ -77,24 +77,17 @@ function semanticAssessmentResponse(input) {
   const submittedRelationships = Array.isArray(input.submitted_relationships) ? input.submitted_relationships : [];
 
   const entityResults = submittedEntities.map((entity) => {
-    const group = candidateGroups.find((candidate) => (
-      candidate?.evidence_id === entity.evidence_id
-      && candidate?.start === entity.start
-      && candidate?.end === entity.end
-    ));
+	const grounding = Array.isArray(entity.groundings) ? entity.groundings[0] : undefined;
+	const group = candidateGroups.find((candidate) => candidate?.grounding_ref === grounding?.grounding_ref);
     const compatible = (group?.candidates ?? []).filter((candidate) => candidate?.kind === entity.kind);
     const reusable = compatible.length === 1 && !group?.candidate_context_truncated;
     return {
       ref: entity.ref,
-      surface: entity.surface,
-      kind: entity.kind,
-      evidence_id: entity.evidence_id,
-      start: entity.start,
-      end: entity.end,
-      action: reusable ? "reuse" : compatible.length === 0 ? "create" : "ambiguous",
+	  grounding_ref: grounding?.grounding_ref ?? null,
+	  action: grounding ? (reusable ? "reuse" : compatible.length === 0 ? "create" : "ambiguous") : "ambiguous",
       candidate_entity_id: reusable ? compatible[0].entity_id : null,
       confidence: 0.99,
-      rationale: reusable ? "The submitted candidate is an exact compatible match." : "The submitted span is evidence grounded.",
+	  rationale: reusable ? "The submitted candidate is an exact compatible match." : "The submitted Entity is assessed from the supplied grounding options.",
     };
   });
 
@@ -108,18 +101,32 @@ function semanticAssessmentResponse(input) {
     }
     const validFrom = nullableString(hint?.valid_from);
     const validTo = nullableString(hint?.valid_to);
+	const evidenceID = relationship.evidence_ids?.[0];
+	const evidence = (input.evidence ?? []).find((item) => item?.evidence_id === evidenceID);
+	if (!evidence) {
+	  throw new Error(`no evidence for submitted relationship ${relationship.ref}`);
+	}
+	const predicateSurface = proposedKey.replaceAll("_", " ");
+	const predicateRange = groundedTextRange(evidence, predicateSurface);
+	const supportRange = groundedOffsetRange(evidence, 0, Array.from(String(evidence.content ?? "")).length);
+	let valueRange = null;
+	if (relationship.object_value) {
+	  const valueText = String(relationship.object_value.display ?? relationship.object_value.canonical_value ?? "");
+	  valueRange = groundedTextRange(evidence, valueText);
+	}
     return {
       ref: relationship.ref,
       subject_ref: relationship.subject_ref,
-      original_predicate: relationship.original_predicate,
+	  predicate_range: predicateRange,
       predicate_status: "resolved",
       predicate_key: predicate.predicate_key,
       predicate_version: predicate.version,
       object_ref: relationship.object_ref ?? null,
       object_value: relationship.object_value ?? null,
+	  value_range: valueRange,
       polarity: relationship.polarity,
       modality: relationship.modality,
-      evidence: relationship.evidence,
+	  support_ranges: [supportRange],
       valid_from: validFrom,
       valid_to: validTo,
       scope_status: "absent",
@@ -137,6 +144,27 @@ function semanticAssessmentResponse(input) {
     entity_results: entityResults,
     relationship_results: relationshipResults,
   };
+}
+
+function groundedTextRange(evidence, text) {
+  const contentRunes = Array.from(String(evidence?.content ?? ""));
+  const textRunes = Array.from(String(text));
+  const lowerContent = contentRunes.map((value) => value.toLocaleLowerCase());
+  const lowerText = textRunes.map((value) => value.toLocaleLowerCase());
+  for (let start = 0; start <= lowerContent.length - lowerText.length; start += 1) {
+    if (lowerText.every((value, index) => lowerContent[start + index] === value)) {
+      return groundedOffsetRange(evidence, start, start + lowerText.length);
+    }
+  }
+  throw new Error(`grounding text ${JSON.stringify(text)} is absent`);
+}
+
+function groundedOffsetRange(evidence, start, end) {
+  const refs = [...String(evidence?.boundary_text ?? "").matchAll(/⟦([^⟧]+)⟧/gu)].map((match) => match[1]);
+  if (!refs[start] || !refs[end] || end <= start) {
+    throw new Error("evidence boundary references are incomplete");
+  }
+  return { evidence_id: evidence.evidence_id, start_ref: refs[start], end_ref: refs[end], confidence: 0.99 };
 }
 
 function conflictAssessmentResponse(input) {

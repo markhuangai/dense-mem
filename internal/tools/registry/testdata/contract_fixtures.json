@@ -22,27 +22,20 @@
           "subject": {
             "name": "Dense-Mem",
             "entity_kind": "project",
-            "known_entity_id": null,
-            "span": {"evidence_index": 0, "start": 0, "end": 9}
+            "known_entity_id": null
           },
           "predicate": {
-            "proposed_key": "uses_durable_authority",
-            "surface": "durable authority",
-            "span": {"evidence_index": 0, "start": 10, "end": 27}
+            "proposed_key": "uses_durable_authority"
           },
           "object": {
             "value": {
               "type": "string",
-              "value": "PostgreSQL with pgvector",
-              "surface": "PostgreSQL with pgvector",
-              "span": {"evidence_index": 0, "start": 31, "end": 55}
+              "value": "PostgreSQL with pgvector"
             }
           },
           "polarity": "+",
           "modality": "statement",
-          "supports": [
-            {"evidence_index": 0, "start": 0, "end": 56}
-          ]
+          "evidence_indices": [0]
         }
       ]
     },
@@ -298,10 +291,10 @@
       "evidence": [{"content": "Dense-Mem uses PostgreSQL."}],
       "relationships": [{
         "ref": "rel:uses",
-        "subject": {"name": "Dense-Mem", "entity_kind": "project", "span": {"evidence_index": 0, "start": 0, "end": 9}},
-        "predicate": {"proposed_key": "uses", "surface": "uses", "span": {"evidence_index": 0, "start": 10, "end": 14}},
-        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product", "span": {"evidence_index": 0, "start": 15, "end": 25}}},
-        "polarity": "+", "modality": "statement", "supports": [{"evidence_index": 0, "start": 0, "end": 26}]
+        "subject": {"name": "Dense-Mem", "entity_kind": "project"},
+        "predicate": {"proposed_key": "uses"},
+        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product"}},
+        "polarity": "+", "modality": "statement", "evidence_indices": [0]
       }]
     }
   },
@@ -316,10 +309,10 @@
       "entity_hints": [],
       "relationships": [{
         "ref": "rel:uses",
-        "subject": {"name": "Dense-Mem", "entity_kind": "project", "span": {"evidence_index": 0, "start": 0, "end": 9}},
-        "predicate": {"proposed_key": "uses", "surface": "uses", "span": {"evidence_index": 0, "start": 10, "end": 14}},
-        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product", "span": {"evidence_index": 0, "start": 15, "end": 25}}},
-        "polarity": "+", "modality": "statement", "supports": [{"evidence_index": 0, "start": 0, "end": 26}]
+        "subject": {"name": "Dense-Mem", "entity_kind": "project"},
+        "predicate": {"proposed_key": "uses"},
+        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product"}},
+        "polarity": "+", "modality": "statement", "evidence_indices": [0]
       }]
     }
   },
@@ -342,17 +335,17 @@
       "relationships": [
         {
           "ref": "r1",
-          "subject": {"name": "A", "entity_kind": "other", "span": {"evidence_index": 0, "start": 0, "end": 1}},
-          "predicate": {"proposed_key": "uses", "surface": "uses", "span": {"evidence_index": 0, "start": 2, "end": 6}},
-          "object": {"entity": {"name": "B", "entity_kind": "other", "span": {"evidence_index": 0, "start": 7, "end": 8}}},
-          "polarity": "+", "modality": "statement", "supports": [{"evidence_index": 0, "start": 0, "end": 9}]
+          "subject": {"name": "A", "entity_kind": "other"},
+          "predicate": {"proposed_key": "uses"},
+          "object": {"entity": {"name": "B", "entity_kind": "other"}},
+          "polarity": "+", "modality": "statement", "evidence_indices": [0]
         },
         {
           "ref": "r1",
-          "subject": {"name": "A", "entity_kind": "other", "span": {"evidence_index": 0, "start": 0, "end": 1}},
-          "predicate": {"proposed_key": "uses", "surface": "uses", "span": {"evidence_index": 0, "start": 2, "end": 6}},
-          "object": {"entity": {"name": "B", "entity_kind": "other", "span": {"evidence_index": 0, "start": 7, "end": 8}}},
-          "polarity": "+", "modality": "statement", "supports": [{"evidence_index": 0, "start": 0, "end": 9}]
+          "subject": {"name": "A", "entity_kind": "other"},
+          "predicate": {"proposed_key": "uses"},
+          "object": {"entity": {"name": "B", "entity_kind": "other"}},
+          "polarity": "+", "modality": "statement", "evidence_indices": [0]
         }
       ]
     }
@@ -418,10 +411,10 @@
       ],
       "relationships": [{
         "ref": "rel:uses",
-        "subject": {"name": "Dense-Mem", "entity_kind": "project", "span": {"evidence_index": 1, "start": 0, "end": 9}},
-        "predicate": {"proposed_key": "uses", "surface": "uses", "span": {"evidence_index": 1, "start": 10, "end": 14}},
-        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product", "span": {"evidence_index": 1, "start": 15, "end": 25}}},
-        "polarity": "+", "modality": "statement", "supports": [{"evidence_index": 1, "start": 0, "end": 26}]
+        "subject": {"name": "Dense-Mem", "entity_kind": "project"},
+        "predicate": {"proposed_key": "uses"},
+        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product"}},
+        "polarity": "+", "modality": "statement", "evidence_indices": [0, 1]
       }]
     }
   },

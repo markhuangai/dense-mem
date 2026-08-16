@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
@@ -17,21 +19,13 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 	proposal map[string]any,
 ) (verifier.SemanticAssessmentRequest, error) {
 	entityInputs := make([]repository.SubmissionAssessmentEntityCatalogTarget, 0, len(plan.EntityTargets))
-	contract := verifier.SemanticAssessmentSubmissionContract{
-		Entities:      make([]verifier.SemanticAssessmentRequiredEntityRef, 0, len(plan.EntityTargets)),
-		Relationships: make([]verifier.SemanticAssessmentRequiredRelationshipRef, 0, len(plan.RelationshipTargets)),
-	}
 	for _, entity := range plan.EntityTargets {
-		contract.Entities = append(contract.Entities, entity.Target)
 		entityInputs = append(entityInputs, repository.SubmissionAssessmentEntityCatalogTarget{
 			Ref:           entity.Target.Ref,
-			Surface:       entity.Target.Surface,
+			Surface:       entity.Target.Name,
 			EntityKind:    entity.Target.Kind,
 			KnownEntityID: entity.KnownEntityID,
 		})
-	}
-	for _, relationship := range plan.RelationshipTargets {
-		contract.Relationships = append(contract.Relationships, relationship.Target)
 	}
 	entityCatalog, err := s.catalog.ListSubmissionAssessmentEntityCatalog(ctx, repository.SubmissionAssessmentEntityCatalogInput{
 		TeamID:         run.TeamID,
@@ -45,17 +39,25 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 	if !entityCatalog.Complete {
 		return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("catalog_context_overflow", "submission entity catalog exceeds its configured complete bound")
 	}
-	entityGroups, err := submissionAssessmentEntityCandidateGroups(plan, entityCatalog)
+	evidence := make([]verifier.SemanticReviewEvidence, 0, len(plan.Items))
+	for _, item := range plan.Items {
+		preparedEvidence := verifier.PrepareSemanticAssessmentEvidence(semanticReviewEvidence(item.Fragment, item.EvidenceID))
+		evidence = append(evidence, preparedEvidence)
+	}
+	contractEntities, entityGroups, err := submissionAssessmentGroundedEntities(plan, entityCatalog, evidence)
 	if err != nil {
 		return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("catalog_context_validation", "submission entity catalog is invalid")
+	}
+	contract := verifier.SemanticAssessmentSubmissionContract{
+		Entities:      contractEntities,
+		Relationships: make([]verifier.SemanticAssessmentRequiredRelationshipRef, 0, len(plan.RelationshipTargets)),
+	}
+	for _, relationship := range plan.RelationshipTargets {
+		contract.Relationships = append(contract.Relationships, relationship.Target)
 	}
 	predicateOptions, err := s.submissionAssessmentPredicateOptions(ctx, run, plan)
 	if err != nil {
 		return verifier.SemanticAssessmentRequest{}, err
-	}
-	evidence := make([]verifier.SemanticReviewEvidence, 0, len(plan.Items))
-	for _, item := range plan.Items {
-		evidence = append(evidence, semanticReviewEvidence(item.Fragment, item.EvidenceID))
 	}
 	req := verifier.SemanticAssessmentRequest{
 		RequestID:                "submission-assessment:" + run.PlacementRunID,
@@ -177,49 +179,225 @@ func (s *submissionAssessmentPlacementWorkerService) submissionAssessmentPredica
 	return options, nil
 }
 
-func submissionAssessmentEntityCandidateGroups(
+func submissionAssessmentGroundedEntities(
 	plan submissionAssessmentPlan,
 	catalog repository.SubmissionAssessmentEntityCatalogResult,
-) ([]verifier.SemanticAssessmentEntityCandidateGroup, error) {
+	evidence []verifier.SemanticReviewEvidence,
+) ([]verifier.SemanticAssessmentRequiredEntityRef, []verifier.SemanticAssessmentEntityCandidateGroup, error) {
 	groupsByRef := make(map[string]repository.SubmissionAssessmentEntityCatalogGroup, len(catalog.Groups))
 	for _, group := range catalog.Groups {
 		if _, exists := groupsByRef[group.Ref]; exists || !group.Complete {
-			return nil, errors.New("entity catalog group is duplicated or incomplete")
+			return nil, nil, errors.New("entity catalog group is duplicated or incomplete")
 		}
 		groupsByRef[group.Ref] = group
 	}
+	evidenceByID := make(map[string]verifier.SemanticReviewEvidence, len(evidence))
+	for _, item := range evidence {
+		evidenceByID[item.EvidenceID] = item
+	}
+	contractEntities := make([]verifier.SemanticAssessmentRequiredEntityRef, 0, len(plan.EntityTargets))
 	groups := make([]verifier.SemanticAssessmentEntityCandidateGroup, 0, len(plan.EntityTargets))
-	for _, entity := range plan.EntityTargets {
+	for entityIndex, entity := range plan.EntityTargets {
 		catalogGroup, ok := groupsByRef[entity.Target.Ref]
 		if !ok {
-			return nil, errors.New("entity catalog target is missing")
+			return nil, nil, errors.New("entity catalog target is missing")
 		}
 		if len(catalogGroup.Candidates) > verifier.SemanticAssessmentMaxEntityCandidatesPerSurface {
-			return nil, errors.New("entity catalog candidate bound is exceeded")
+			return nil, nil, errors.New("entity catalog candidate bound is exceeded")
 		}
-		group := verifier.SemanticAssessmentEntityCandidateGroup{
-			Surface:    entity.Target.Surface,
-			EvidenceID: entity.Target.EvidenceID,
-			Start:      entity.Target.Start,
-			End:        entity.Target.End,
-			Candidates: make([]verifier.SemanticAssessmentEntityCandidate, 0, len(catalogGroup.Candidates)),
-		}
-		for _, candidate := range catalogGroup.Candidates {
-			identityContext := map[string]any{}
-			for key, value := range candidate.IdentityContext {
-				identityContext[key] = value
+		allowedNames := map[string]submissionAssessmentGroundingName{}
+		addName := func(name string, candidates []repository.SemanticReviewEntityCandidate) {
+			if !submissionAssessmentGroundingNameAllowed(name) {
+				return
 			}
-			group.Candidates = append(group.Candidates, verifier.SemanticAssessmentEntityCandidate{
-				EntityID:        candidate.EntityID,
-				CanonicalName:   candidate.CanonicalName,
-				Kind:            candidate.EntityKind,
-				IdentityContext: identityContext,
-			})
+			normalized := submissionAssessmentNormalizedEntityName(name)
+			if normalized == "" {
+				return
+			}
+			entry := allowedNames[normalized]
+			if entry.Name == "" {
+				entry.Name = strings.TrimSpace(name)
+			}
+			if entry.Candidates == nil {
+				entry.Candidates = map[string]repository.SemanticReviewEntityCandidate{}
+			}
+			for _, candidate := range candidates {
+				entry.Candidates[candidate.EntityID] = candidate
+			}
+			allowedNames[normalized] = entry
 		}
-		groups = append(groups, group)
+		addName(entity.Target.Name, catalogGroup.Candidates)
+		for _, candidate := range catalogGroup.Candidates {
+			for _, activeName := range candidate.ActiveNames {
+				addName(activeName, []repository.SemanticReviewEntityCandidate{candidate})
+			}
+		}
+		target := entity.Target
+		target.Groundings = []verifier.SemanticAssessmentEntityGrounding{}
+		groundingIndex := 0
+		for _, evidenceID := range target.EvidenceIDs {
+			evidenceItem, ok := evidenceByID[evidenceID]
+			if !ok {
+				return nil, nil, errors.New("entity target evidence is missing")
+			}
+			occurrences := map[string]submissionAssessmentGroundingOccurrence{}
+			for _, allowed := range allowedNames {
+				for _, span := range submissionAssessmentEntityNameOccurrences(evidenceItem.Content, allowed.Name) {
+					key := fmt.Sprintf("%d:%d", span[0], span[1])
+					occurrence := occurrences[key]
+					occurrence.Start = span[0]
+					occurrence.End = span[1]
+					occurrence.Surface = string([]rune(evidenceItem.Content)[span[0]:span[1]])
+					if occurrence.Candidates == nil {
+						occurrence.Candidates = map[string]repository.SemanticReviewEntityCandidate{}
+					}
+					for candidateID, candidate := range allowed.Candidates {
+						occurrence.Candidates[candidateID] = candidate
+					}
+					occurrences[key] = occurrence
+				}
+			}
+			keys := make([]string, 0, len(occurrences))
+			for key := range occurrences {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				occurrence := occurrences[key]
+				startRef, startOK := verifier.SemanticAssessmentBoundaryRef(evidenceItem, occurrence.Start)
+				endRef, endOK := verifier.SemanticAssessmentBoundaryRef(evidenceItem, occurrence.End)
+				if !startOK || !endOK {
+					return nil, nil, errors.New("entity grounding boundary is missing")
+				}
+				groundingRef := fmt.Sprintf("g%d_%d", entityIndex, groundingIndex)
+				groundingIndex++
+				target.Groundings = append(target.Groundings, verifier.SemanticAssessmentEntityGrounding{
+					GroundingRef: groundingRef,
+					EvidenceID:   evidenceID,
+					Surface:      occurrence.Surface,
+					StartRef:     startRef,
+					EndRef:       endRef,
+					Start:        occurrence.Start,
+					End:          occurrence.End,
+				})
+				candidateIDs := make([]string, 0, len(occurrence.Candidates))
+				for candidateID := range occurrence.Candidates {
+					candidateIDs = append(candidateIDs, candidateID)
+				}
+				sort.Strings(candidateIDs)
+				group := verifier.SemanticAssessmentEntityCandidateGroup{
+					Surface:      occurrence.Surface,
+					EvidenceID:   evidenceID,
+					GroundingRef: groundingRef,
+					Start:        occurrence.Start,
+					End:          occurrence.End,
+					Candidates:   make([]verifier.SemanticAssessmentEntityCandidate, 0, len(candidateIDs)),
+				}
+				for _, candidateID := range candidateIDs {
+					candidate := occurrence.Candidates[candidateID]
+					identityContext := map[string]any{}
+					for field, value := range candidate.IdentityContext {
+						identityContext[field] = value
+					}
+					group.Candidates = append(group.Candidates, verifier.SemanticAssessmentEntityCandidate{
+						EntityID:        candidate.EntityID,
+						CanonicalName:   candidate.CanonicalName,
+						Kind:            candidate.EntityKind,
+						IdentityContext: identityContext,
+					})
+				}
+				groups = append(groups, group)
+			}
+		}
+		contractEntities = append(contractEntities, target)
 	}
-	if len(groupsByRef) != len(groups) {
-		return nil, errors.New("entity catalog includes an unknown target")
+	if len(groupsByRef) != len(contractEntities) {
+		return nil, nil, errors.New("entity catalog includes an unknown target")
 	}
-	return groups, nil
+	return contractEntities, groups, nil
+}
+
+type submissionAssessmentGroundingName struct {
+	Name       string
+	Candidates map[string]repository.SemanticReviewEntityCandidate
+}
+
+type submissionAssessmentGroundingOccurrence struct {
+	Start      int
+	End        int
+	Surface    string
+	Candidates map[string]repository.SemanticReviewEntityCandidate
+}
+
+func submissionAssessmentNormalizedEntityName(value string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
+}
+
+func submissionAssessmentGroundingNameAllowed(value string) bool {
+	switch submissionAssessmentNormalizedEntityName(value) {
+	case "i", "me", "my", "mine", "myself",
+		"you", "your", "yours", "yourself", "yourselves",
+		"he", "him", "his", "himself", "she", "her", "hers", "herself",
+		"it", "its", "itself", "we", "us", "our", "ours", "ourselves",
+		"they", "them", "their", "theirs", "themselves",
+		"this", "that", "these", "those":
+		return false
+	default:
+		return true
+	}
+}
+
+func submissionAssessmentEntityNameOccurrences(content, name string) [][2]int {
+	contentRunes := []rune(content)
+	nameRunes := []rune(strings.TrimSpace(name))
+	if len(contentRunes) == 0 || len(nameRunes) == 0 {
+		return nil
+	}
+	result := make([][2]int, 0)
+	for start := 0; start < len(contentRunes); start++ {
+		end, ok := submissionAssessmentEntityNameMatchAt(contentRunes, nameRunes, start)
+		if !ok || !submissionAssessmentEntityBoundaries(contentRunes, start, end) {
+			continue
+		}
+		result = append(result, [2]int{start, end})
+	}
+	return result
+}
+
+func submissionAssessmentEntityNameMatchAt(content, name []rune, start int) (int, bool) {
+	contentIndex, nameIndex := start, 0
+	for nameIndex < len(name) {
+		if unicode.IsSpace(name[nameIndex]) {
+			for nameIndex < len(name) && unicode.IsSpace(name[nameIndex]) {
+				nameIndex++
+			}
+			if contentIndex >= len(content) || !unicode.IsSpace(content[contentIndex]) {
+				return 0, false
+			}
+			for contentIndex < len(content) && unicode.IsSpace(content[contentIndex]) {
+				contentIndex++
+			}
+			continue
+		}
+		if contentIndex >= len(content) || !strings.EqualFold(string(content[contentIndex]), string(name[nameIndex])) {
+			return 0, false
+		}
+		contentIndex++
+		nameIndex++
+	}
+	return contentIndex, true
+}
+
+func submissionAssessmentEntityBoundaries(content []rune, start, end int) bool {
+	if start > 0 && submissionAssessmentEntityWordRune(content[start-1]) && submissionAssessmentEntityWordRune(content[start]) {
+		return false
+	}
+	if end < len(content) && submissionAssessmentEntityWordRune(content[end-1]) && submissionAssessmentEntityWordRune(content[end]) {
+		return false
+	}
+	return true
+}
+
+func submissionAssessmentEntityWordRune(value rune) bool {
+	return unicode.IsLetter(value) || unicode.IsNumber(value) || value == '_'
 }

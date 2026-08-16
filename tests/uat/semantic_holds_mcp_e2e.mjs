@@ -25,7 +25,8 @@ const target = await mcpSuccess(apiKey, "remember", rememberInput(
   "Project Nova uses Store.",
 ));
 const targetID = requiredString(target.submission_id, "target submission_id");
-await waitForState(apiKey, targetID, "rejected");
+const targetStatus = await waitForState(apiKey, targetID, "awaiting_review");
+assertSemanticHoldStatus(targetStatus, targetID);
 const targetBeforeReplacement = holdSummary(targetID);
 if (targetBeforeReplacement.holdState !== "active") {
   throw new Error("target did not become an active semantic hold");
@@ -64,7 +65,8 @@ const heldSuccessor = await mcpSuccess(apiKey, "remember", rememberInput(
   targetID,
 ));
 const heldSuccessorID = requiredString(heldSuccessor.submission_id, "held successor submission_id");
-await waitForState(apiKey, heldSuccessorID, "rejected");
+const heldSuccessorStatus = await waitForState(apiKey, heldSuccessorID, "awaiting_review");
+assertSemanticHoldStatus(heldSuccessorStatus, heldSuccessorID);
 const afterHeldSuccessor = holdSummary(targetID, heldSuccessorID);
 if (afterHeldSuccessor.holdState !== targetBeforeReplacement.holdState || afterHeldSuccessor.supersededBy) {
   throw new Error("held successor changed the target hold");
@@ -122,9 +124,6 @@ function rememberInput(modality, idempotencyKey, content, replacementID = "") {
   const subject = "Project Nova";
   const predicate = "uses";
   const object = "Store";
-  const subjectStart = content.indexOf(subject);
-  const predicateStart = content.indexOf(predicate);
-  const objectStart = content.indexOf(object);
   const input = {
     evidence: [{
       content,
@@ -138,23 +137,19 @@ function rememberInput(modality, idempotencyKey, content, replacementID = "") {
       subject: {
         name: subject,
         entity_kind: "project",
-        span: { evidence_index: 0, start: subjectStart, end: subjectStart + subject.length },
       },
       predicate: {
         proposed_key: predicate,
-        surface: predicate,
-        span: { evidence_index: 0, start: predicateStart, end: predicateStart + predicate.length },
       },
       object: {
         entity: {
           name: object,
           entity_kind: "product",
-          span: { evidence_index: 0, start: objectStart, end: objectStart + object.length },
         },
       },
       polarity: "+",
       modality,
-      supports: [{ evidence_index: 0, start: 0, end: Array.from(content).length }],
+      evidence_indices: [0],
     }],
     idempotency_key: idempotencyKey,
   };
@@ -165,7 +160,7 @@ function rememberInput(modality, idempotencyKey, content, replacementID = "") {
 }
 
 async function waitForState(key, submissionID, expected) {
-  const terminalStates = new Set(["completed", "rejected", "failed", "quarantined"]);
+  const terminalStates = new Set(["completed", "awaiting_review", "rejected", "failed", "quarantined"]);
   for (let attempt = 0; attempt < 240; attempt += 1) {
     const status = await mcpSuccess(key, "get_submission_status", { submission_id: submissionID });
     const state = stringValue(status.processing_state);
@@ -178,6 +173,19 @@ async function waitForState(key, submissionID, expected) {
     await delay(2_000);
   }
   throw new Error(`timed out waiting for ${submissionID} to reach ${expected}`);
+}
+
+function assertSemanticHoldStatus(status, submissionID) {
+  const hold = status.semantic_hold;
+  if (hold?.state !== "active" || !Array.isArray(hold.issues) || hold.issues.length === 0) {
+    throw new Error("awaiting_review status did not expose bounded semantic hold issues");
+  }
+  if (hold.replacement?.tool !== "remember" || hold.replacement?.replaces_submission_id !== submissionID) {
+    throw new Error("semantic hold did not expose complete replacement guidance");
+  }
+  if (typeof hold.replacement?.instruction !== "string" || !hold.replacement.instruction.includes("complete corrected replacement batch")) {
+    throw new Error("semantic hold replacement instruction is missing or unbounded");
+  }
 }
 
 function holdSummary(targetID, heldSuccessorID = "", successfulSuccessorID = "") {

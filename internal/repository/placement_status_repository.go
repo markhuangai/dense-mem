@@ -66,6 +66,7 @@ func loadPlacementRunStatus(
 	var quarantineExpiresAt, replacementWindowExpiresAt sql.NullTime
 	err := tx.WithContext(ctx).Raw(`
 		SELECT run.placement_run_id::text, run.status, COALESCE(ingest.proposal, '{}'::jsonb),
+		       COALESCE(ingest.metadata ->> 'contract_version', ''),
 		       run.semantic_hold_state, run.quarantine_expires_at, hold.expires_at
 		FROM placement_runs AS run
 		JOIN knowledge_ingests AS ingest
@@ -81,6 +82,7 @@ func loadPlacementRunStatus(
 		&result.PlacementRunID,
 		&result.Status,
 		&proposalRaw,
+		&result.ContractVersion,
 		&semanticHoldState,
 		&quarantineExpiresAt,
 		&replacementWindowExpiresAt,
