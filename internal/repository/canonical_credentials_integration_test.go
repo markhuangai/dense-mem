@@ -212,8 +212,21 @@ func TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams(t *testing
 	rows, err = repo.DeleteForProfile(ctx, teamA, keyA)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)
+	var teamBCredentialStatus string
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT active FROM actor_identities WHERE id = ?`, keyA).Row().Scan(&actorActive)
+		if err := tx.Raw(`SELECT active FROM actor_identities WHERE id = ?`, keyA).Row().Scan(&actorActive); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT status
+			FROM team_memberships
+			WHERE actor_identity_id = ? AND team_id = ?
+		`, keyA, teamB).Row().Scan(&teamBMembershipStatus); err != nil {
+			return err
+		}
+		return tx.Raw(`SELECT status FROM credentials WHERE id = ?`, keyB).Row().Scan(&teamBCredentialStatus)
 	}))
 	require.True(t, actorActive)
+	require.Equal(t, "active", teamBMembershipStatus)
+	require.Equal(t, "active", teamBCredentialStatus)
 }

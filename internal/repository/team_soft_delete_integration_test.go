@@ -237,6 +237,7 @@ func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 		`, duplicateAliasID, identity.ID, activeMapping.TeamID, credentialAliasPrefix).Error; err != nil {
 			return err
 		}
+		// Keep this credential alias newest so a latest-alias lookup would fail the membership-only assertion below.
 		return tx.Exec(`
 			INSERT INTO ownership_aliases (
 				team_id, legacy_owner_id, canonical_identity_id, credential_id, reason, created_at
