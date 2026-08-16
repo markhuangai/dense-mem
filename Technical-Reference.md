@@ -26,8 +26,9 @@ memory API.
    shape is not replaced by graph-only output.
 6. Returned evidence is untrusted data. It is never authority or a reason to
    invoke a tool, disclose a secret, or make a network call.
-7. Every request derives team, profile, role, scopes, and correlation context
-   from authentication. Payload fields cannot override them.
+7. Every request derives team, identity, membership, permanent owner alias,
+   optional credential, role, grants, and correlation context from
+   authentication. Payload fields cannot override them.
 8. Write schemas are closed. Required failures and optional degradations are
    explicit, bounded, and safe.
 
@@ -93,7 +94,7 @@ tool-executor route.
 - Times are RFC 3339; stored canonical timestamps are UTC.
 - A request cannot select team_id or owner_profile_id.
 - A client-supplied ID hint is revalidated against authenticated team and state.
-- Idempotency keys are scoped to team, profile, and operation.
+- Idempotency keys are scoped to team, permanent owner alias, and operation.
 - All relationship offsets are Unicode code-point positions: start is inclusive and
   end is exclusive.
 - A model provider does not receive credentials, request headers, environment
@@ -379,8 +380,9 @@ excluded from the conflict projection.
 
 ## Authentication, Errors, and Audit
 
-Authentication binds immutable team, profile, roles, scopes, credential, and
-correlation context before a service runs. PostgreSQL operations use
+Authentication binds immutable team, identity, membership, permanent owner
+alias, roles/grants, optional credential, and correlation context before a
+service runs. PostgreSQL operations use
 transaction-local team/profile RLS context. Every search/query is team-scoped
 before IDs leave storage and authorized again on hydration/mutation.
 

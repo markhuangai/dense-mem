@@ -51,7 +51,7 @@ contract.
 The API-key portal session is fixed at seven days on the server. The checked
 browser cookies are persistent for seven days; an unchecked exchange creates
 browser-session cookies while retaining the same seven-day server expiry. The
-session stores the stable API-key profile ID, so in-place key rotation does not
+session stores the stable credential ID, so in-place key rotation does not
 sign the user out, while revocation, expiration, team deletion, role, scopes,
 and SSO-owned-key entitlement are revalidated on every request. The session
 cookie is HttpOnly, host-only, SameSite=Lax, and scoped to `/ui`; the separate
@@ -62,15 +62,15 @@ CSRF cookie is readable by the first-party UI and is sent as
 
 The target user portal provides:
 
-- authenticated team/profile/session display
+- authenticated team/membership/credential/session display
 - ranked Evidence recall with separate compact Relationship and Community frontiers
 - Entity/Value graph exploration
 - Relationship trace with evidence/history panels
 - placement review and correction workflow
 - separate Hypothesis/community views
 - self/team-scoped telemetry according to role
-- current-key rotation
-- same-team member management for managers
+- current-credential key rotation
+- same-team credential management for managers
 - SSO login/team switching when configured
 
 It does not expose raw Cypher, embeddings, provider prompts, or cross-team
@@ -112,7 +112,7 @@ continues to cover owner-scoped identity/predicate/Relationship decisions.
 The portal shows:
 
 - exact item and `relationship_id` when available
-- immutable owner/author profile and same-team conflict references
+- immutable owner alias and same-team conflict references
 - current versus proposed Relationship
 - Entity candidates and discriminator context
 - evidence/source handles
@@ -131,9 +131,9 @@ OIDC setup, entitlement mapping, SSO-owned keys, and session behavior are in
 
 The control portal manages:
 
-- teams and profiles
-- roles and key scopes
-- key creation, rotation, expiry, and revocation
+- teams and credentials
+- membership roles and credential scopes
+- credential creation, rotation, expiry, and revocation
 - SSO providers and mappings
 - global/team runtime configuration
 - versioned RRF enable/disable, branch, and deterministic-rerank contracts with
@@ -187,14 +187,16 @@ the active contract summary, bounded queue/failure data, current failure groups
 derived from `embedding_jobs`, team names, guidance, and durable run state. It
 does not expose or mutate a separate incident lifecycle.
 
-## API Keys
+## Credentials And API Keys
 
-A key belongs to one profile and one team. It has a role-derived actor plus
-explicit scopes.
+A credential belongs to one actor identity, membership, and team. Its API key
+is bearer material for that credential; role and grants come from the resolved
+membership, and effective scopes are bounded by both the membership and the
+credential.
 
 | Role | Purpose |
 | --- | --- |
-| `manager` | same-team profile/key/config administration where permitted |
+| `manager` | same-team credential/config administration where permitted |
 | `member` | normal same-team memory use |
 
 | Scope | Purpose |
@@ -216,7 +218,7 @@ Use cases:
 
 ## Create And Rotate
 
-Deployment operators create teams and profiles through the private control
+Deployment operators create teams and credentials through the private control
 portal or its authenticated API. For example:
 
 ```bash
@@ -228,14 +230,15 @@ curl -fsS -X POST http://127.0.0.1:8090/control/api/teams \
   -d '{"name":"primary-memory"}'
 ```
 
-Create the first profile from the returned team ID at
-`POST /control/api/teams/{team_id}/profiles`. The raw key is returned once;
-store it in a secret manager. Release images do not contain standalone
+Create the first credential from the returned team ID at
+`POST /control/api/teams/{team_id}/credentials`. The response contains
+`data.credential` and the one-time `data.api_key`; store the raw key once.
+Release images do not contain standalone
 provisioning, listing, deletion, rotation, migration, or conflict-review
 commands.
 
-Team managers create and rotate profile keys through the Team tab. SSO members
-use the My key tab subject to their current entitlement. Deployment operators
+Team managers create and rotate credentials through the Team tab. SSO members
+use the My credential tab subject to their current entitlement. Deployment operators
 use the control portal/API on the private listener.
 
 Do not place raw keys in command history on shared machines; prefer a protected
@@ -259,12 +262,12 @@ immediate revocation.
 ## Deletion And Revocation
 
 Revocation stops future authentication but preserves audit and actor references.
-Profile deletion must fail or become deactivation when durable records still
-reference the actor. Do not cascade-delete knowledge/audit because a credential
-is removed.
+Credential deletion deactivates authentication while retaining its tombstone
+when durable records still reference the actor/owner. Do not cascade-delete
+knowledge or audit because a credential is removed.
 
 Team deletion is a soft tombstone: the team row is marked deleted, active
-team-profile credentials are revoked, and future writes/jobs for that team are
+team credentials are revoked, and future writes/jobs for that team are
 rejected. Existing knowledge, support history, source lineage, conflicts, and
 audit rows remain durable. There is no active restore/re-enable workflow in the
 current contract; a future restore policy would need explicit authorization and
@@ -325,6 +328,24 @@ imply private-memory access to another owner. Effective scopes are the
 intersection of membership maximum grants and the credential's scopes.
 Permanent ownership aliases keep correction, forget, audit, portal-session,
 and usage history addressable by old owner IDs after `team_profiles` removal.
+
+Every authenticated request carries immutable `team_id`, actor identity,
+membership, permanent owner alias, role/grants, and an optional credential ID.
+SSO sessions use the selected membership's owner alias and set `credential` to
+`null`. Direct API-key and API-key portal sessions carry a credential; for a
+standard API credential, its stable ID is also its permanent owner alias.
+Neither route bodies nor clients can select the owner alias.
+
+The current first-party credential routes are:
+
+```text
+/control/api/teams/{team_id}/credentials[/{credential_id}[/rotate]]
+/ui/api/team/credentials[/{credential_id}[/rotate]]
+/ui/api/credential/rotate
+/ui/api/sso/credential[/rotate]
+```
+
+Private `/profiles` and `/ui/api/key` aliases are not registered.
 
 Rotation changes bearer material in place. Deletion disables the credential
 and revokes its membership and actor while retaining the credential and alias

@@ -65,7 +65,7 @@ PostgreSQL logical schema
 │   ├── predicate and model/search definitions
 │   └── immutable active-version metadata
 └── tenant-owned by team_id
-    ├── non-secret team/profile integrity projections
+    ├── direct team and permanent-owner integrity references
     ├── semantic state and append-only history
     ├── placement/review/import/Conflict queues
     ├── search documents and embedding jobs
@@ -125,7 +125,7 @@ to product-specific placement.
 
 | Class | Responsibility | Single primary | Future distributed adapter |
 | --- | --- | --- | --- |
-| tenant-owned | non-secret integrity projection, semantic, workflow, derived search, tenant feedback/audit | ordinary PostgreSQL table | distributed by and colocated on `team_id` |
+| tenant-owned | semantic, workflow, derived search, tenant feedback/audit | ordinary PostgreSQL table | distributed by and colocated on `team_id` |
 | shared reference | small immutable/versioned definitions used by tenant-local queries | ordinary PostgreSQL table | replicated reference table or equivalent |
 | coordinator control | authentication discovery, secrets metadata, global config, migration/cluster control | ordinary PostgreSQL table | coordinator/local control table |
 | derived cluster observation | shard/index/profile health summaries | ordinary derived rows | coordinator summaries; never durable knowledge authority |
@@ -134,8 +134,8 @@ to product-specific placement.
 
 The following logical families carry non-null `team_id` from creation:
 
-- `semantic_team_refs` and `semantic_profile_refs`, which project only stable
-  control-plane ownership IDs for tenant-local integrity
+- semantic and workflow rows with direct foreign keys to canonical teams and
+  permanent ownership aliases
 - ingests, evidence fragments, placement runs/items, and review tasks
 - Entity records, Entity names, Entity resolution/correction events
 - typed Value records
@@ -186,38 +186,31 @@ plane:
   records
 - global scheduler leadership and redacted system audit
 
-Authentication resolves key/session to team, profile, role, and scopes before
+Authentication resolves key/session to team, identity, membership, permanent
+owner alias, role, grants, and optional credential before
 opening a tenant semantic transaction. The hot semantic query does not join a
 distributed memory table to the global key or SSO tables.
 
 The canonical identity tables are the only identity, authorization, and
-credential authority. The semantic schema adds only these non-secret integrity
-projections:
+credential authority. On the supported single PostgreSQL primary, semantic
+tables reference that authority directly:
 
 ```sql
-CREATE TABLE semantic_team_refs (
-  team_id uuid PRIMARY KEY
-);
+FOREIGN KEY (team_id)
+  REFERENCES teams (id)
+  ON DELETE RESTRICT;
 
-CREATE TABLE semantic_profile_refs (
-  team_id uuid NOT NULL,
-  profile_id uuid NOT NULL,
-  PRIMARY KEY (team_id, profile_id),
-  FOREIGN KEY (team_id)
-    REFERENCES semantic_team_refs (team_id)
-);
+FOREIGN KEY (team_id, owner_profile_id)
+  REFERENCES ownership_aliases (team_id, legacy_owner_id)
+  ON DELETE RESTRICT;
 ```
 
-On one primary, team/profile creation writes the authority and its integrity
-projection in the same transaction. A future distributed adapter routes the
-projection to the team-owning shard and must record it ready before enabling
-semantic writes for that team/profile. Projection rows carry no hashes,
-prefixes, scopes, roles, SSO claims, or mutable entitlement decisions. They are
-retained while semantic history can reference them; runtime authorization
-always reads the control authority. Readiness reconciliation rejects an orphan
-projection, a missing projection, or a `(team_id, profile_id)` pair that does
-not match the control authority; the semantic adapter never repairs one by
-inference.
+Team and credential/membership creation writes canonical authority before
+semantic work can reference it. `semantic_team_refs` and
+`semantic_profile_refs` are removed; no request performs a mirror upsert. A
+future distributed adapter must prove equivalent direct referential integrity
+or an explicitly designed cross-node constraint mechanism before it is
+supported. It cannot silently recreate these mirrors as a second authority.
 
 ## Tenant-Owned Key Contract
 
@@ -289,19 +282,19 @@ This makes a cross-team reference structurally impossible, not merely hidden by
 RLS. Cross-profile references are allowed only when both Relationships share
 the same composite team key.
 
-Profile ownership uses a composite reference to the non-secret integrity
-projection:
+Permanent semantic ownership uses a composite reference to the canonical alias
+table:
 
 ```sql
 FOREIGN KEY (team_id, owner_profile_id)
-  REFERENCES semantic_profile_refs (team_id, profile_id)
+  REFERENCES ownership_aliases (team_id, legacy_owner_id)
+  ON DELETE RESTRICT
 ```
 
-The projection preserves existing team/profile IDs and references permanent
-`ownership_aliases`; it does not replicate secret-bearing credentials. A future
-distributed adapter colocates it with the semantic rows by `team_id` and must
-prove its distributed foreign-key behavior. It cannot silently drop ownership
-or same-team integrity or promote this projection into a second identity
+The alias preserves existing semantic owner IDs without replicating
+secret-bearing credential material. A future distributed adapter must prove
+the same owner/team foreign-key behavior. It cannot silently drop ownership or
+same-team integrity or promote derived routing data into a second identity
 authority.
 
 ## Representative Semantic Shape
@@ -589,7 +582,7 @@ or retry a write against another placement.
 | ID exists under another team | return not found/forbidden by public policy; never retry unscoped |
 | composite FK detects another-team endpoint | reject the transaction and alert integrity telemetry |
 | worker lacks team context | claim/run fails before provider or semantic work |
-| ownership projection disagrees with control authority | block that team/profile's semantic writes and surface reconciliation failure |
+| direct team/owner FK has no canonical authority row | reject the semantic write and surface an integrity failure |
 | shared definition or search-index generation missing on a shard | keep the old version active; shard/topology not ready |
 | team route/placement epoch is stale | reject the write and refresh routing; never write an alternate shard speculatively |
 | distributed adapter cannot enforce RLS/FK contract | adapter unsupported; continue single/HA only |
@@ -606,8 +599,8 @@ or retry a write against another placement.
 | cross-team FK survives RLS | row in team A references Entity from team B that RLS merely hides | composite tenant foreign keys on both sides |
 | nullable tenant mixes system data | `team_id=NULL` rows cannot route and bypass tenant assumptions | separate coordinator system/control tables; tenant rows require non-null |
 | auth lookup scatters | API key is searched on every semantic shard before team is known | coordinator auth directory resolves team before semantic routing |
-| credential hashes replicate to every worker | a profile/key table is made reference data without separating secret-bearing columns | keep auth/control coordinator-local; distribute only the non-secret ownership projection by team |
-| ownership projection lags control state | a new profile authenticates but its semantic insert fails on the owning-shard FK | create atomically on one primary; require projection readiness before distributed semantic writes |
+| credential hashes replicate to every worker | a credential table is made reference data without separating secret-bearing columns | keep auth/control coordinator-local; require a future adapter to prove canonical owner integrity without copying key material |
+| distributed owner constraint is weaker than the primary | a credential authenticates but the owning shard cannot validate its permanent alias | keep the adapter unsupported until its cross-placement FK or equivalent constraint is proven |
 | RLS stops at coordinator | distributed worker executes without the expected transaction-local setting | adapter-specific worker RLS tests and capability gate |
 | global queue ordering becomes bottleneck | coordinator locks/scans every shard for oldest work | per-shard/team claims, bounded fairness scheduler, durable local age metrics |
 | Conflict scheduler crosses tenants | a nightly worker claims the globally oldest case without a routed team and writes another shard | reserve/select a bounded team first, then require `team_id` on case/run/lease/version predicates |
@@ -623,7 +616,7 @@ or retry a write against another placement.
 2. Every tenant-owned primary key, unique constraint, foreign key, hot join, and
    normal lookup contains `team_id`.
 3. Composite foreign keys make cross-team semantic references impossible.
-4. Authentication resolves team/profile before a semantic repository call.
+4. Authentication resolves team, identity, membership, and owner before a semantic repository call.
 5. API key/SSO/control lookup never requires semantic-shard fan-out.
 6. Normal semantic transactions read/write exactly one team.
 7. One placement epoch routes that team transaction to one authoritative
@@ -636,10 +629,10 @@ or retry a write against another placement.
 12. A distributed adapter is supported only after named product/version gates
     prove key/FK, RLS, pgvector, queue, migration, backup, rebalance, and failover
     behavior.
-13. Existing teams, profiles, keys, SSO, and control records remain stable
+13. Existing teams, memberships, credentials, keys, SSO, and control records remain stable
     through schema changes.
-14. Non-secret integrity projections validate team/profile ownership but never
-    authorize a request or duplicate credential/entitlement authority.
+14. Direct canonical foreign keys validate team/owner integrity but never
+    authorize a request; immutable request context and RLS still enforce policy.
 15. Future distribution by `team_id` requires placement DDL and data movement,
     but not semantic ID changes, AI re-verification, or tenant backfill.
 16. Conflict cases, positions, events, and nightly run rows use composite
@@ -689,3 +682,12 @@ reconciliation, validates every retained reference, replaces retained foreign
 keys and RLS policies, and physically removes the bridge tables and functions.
 Failure rolls back only the contraction and leaves the bridge operable; success
 requires roll-forward or ordinary PostgreSQL restore rather than Goose Down.
+
+Migration `2026081601` adds the partial terminal-job retention index without a
+heap rewrite. Migration `2026081602` is a second irreversible contraction. It
+preflights every semantic team/owner reference and embedding contract, adds
+direct foreign keys as `NOT VALID`, validates each table scan, replaces the old
+constraints, and drops `semantic_team_refs`, `semantic_profile_refs`, and
+`embedding_config` in one transaction. Its `ALTER TABLE` locks last until
+commit; rehearse it against a disposable production-data copy and recover from
+backup if roll-forward cannot preserve the contract.

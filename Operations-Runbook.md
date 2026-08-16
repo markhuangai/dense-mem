@@ -212,6 +212,15 @@ the bridge, `identity_compatibility_state`, and `team_profiles`. There is no
 manual cleanup command, feature flag, backup-confirmation gate, or required
 intermediate release.
 
+Migration `2026081601` adds the partial terminal embedding-job retention index.
+Migration `2026081602` then validates the active embedding contract and every
+semantic team/owner reference, installs and validates direct foreign keys to
+`teams` and `ownership_aliases`, and drops `semantic_team_refs`,
+`semantic_profile_refs`, and `embedding_config`. The foreign-key validation
+scans and `ALTER TABLE` locks occur inside one transaction with a 30-second lock
+timeout. Rehearse this migration on a disposable production-data copy, take a
+restorable backup, and use roll-forward or that backup rather than Goose Down.
+
 Credentials deleted while the bridge is active can have their legacy foreign
 key nulled by PostgreSQL. Cleanup therefore resolves the retained ownership
 alias before marking those credentials `disabled`, preserving the tombstone and
@@ -491,6 +500,13 @@ Only active teams contribute to this operational projection. Soft-deleted-team
 jobs remain as history but cannot keep active convergence in
 `attention_required`. A projection query failure returns a bounded internal
 error and safe event code rather than PostgreSQL details.
+
+The server also runs terminal-job retention at startup and hourly. Each
+system-context transaction claims at most 1,000 `completed`, `stale`, or
+`cancelled` jobs with `completed_at` strictly older than 14 days, ordered by
+completion time, team, and job ID with `SKIP LOCKED`. It never deletes
+`queued`, `processing`, or `failed` jobs. Logs expose only bounded deleted-count,
+duration, and error-class fields; they never include job content.
 
 Recovery is automatic and daily during the strict General-configured
 `EMBEDDING_RECONCILIATION_START_TIME_LOCAL` in `APP_TIMEZONE` (default

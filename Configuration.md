@@ -60,6 +60,11 @@ connecting to a second durable store.
 Keep control and metrics private. Public routing belongs in
 [Public HTTPS And Redis](Public-HTTPS-And-Redis).
 
+MCP Streamable HTTP always uses the official SDK transport. The old selector is
+removed: `MCP_TRANSPORT=legacy` (or any value other than `sdk`) fails startup;
+leave `MCP_TRANSPORT` unset. `sdk` is accepted only as a no-op for deployments
+removing the former setting.
+
 ## PostgreSQL And `pgvector`
 
 PostgreSQL is authoritative for knowledge, workflow, search, and control state.

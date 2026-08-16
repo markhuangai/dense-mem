@@ -15,7 +15,7 @@ demo UI/runtime response owns its current limits.
 - use only disposable test data
 - never store secrets, credentials, personal data, production notes, or critical
   memory
-- demo teams/keys expire and may be cleaned without recovery
+- demo teams/credentials expire and may be cleaned without recovery
 - SSO/control-plane access is not part of the public demo
 - a generated key grants access to that temporary team; protect it for its
   lifetime
@@ -27,7 +27,7 @@ Several clients using one key share one isolated team memory.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Browser["Demo page"] --> Provision["Temporary team/profile/key"]
+  Browser["Demo page"] --> Provision["Temporary team/credential/key"]
   Provision --> Key["One bearer key"]
   Key --> Claude["Claude Code"]
   Key --> Codex["Codex"]

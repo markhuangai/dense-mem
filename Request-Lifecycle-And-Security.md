@@ -2,7 +2,8 @@
 
 Dense-Mem exposes an MCP memory interface, a first-party user portal, and a
 private control portal. Protected requests share one identity model:
-authentication fixes the team/profile; later layers may only restrict access.
+authentication fixes the team, actor identity, membership, permanent owner
+alias, and optional credential; later layers may only restrict access.
 
 This page defines the target request/security contract for the full refactor.
 Key provisioning is in [Portals And API Keys](Portals-And-API-Keys).
@@ -53,11 +54,13 @@ A handler never receives the raw bearer credential and never accepts a payload
 ## Principal
 
 ```text
-principal_id/profile_id
 team_id
+identity_id
+membership_id
+owner_id
 role
-scopes
-credential_id
+grants
+credential_id (optional)
 authentication_method
 SSO entitlement version when applicable
 correlation_id
@@ -82,7 +85,7 @@ sequenceDiagram
   C->>A: Authorization Bearer dm_...
   A->>A: Parse prefix and enforce format/size
   A->>P: Load active credential by prefix
-  P-->>A: Hash, team/profile, role, scopes, state
+  P-->>A: Hash, team, identity, membership, owner, role, grants, state
   A->>A: Reject expired/revoked and verify hash under concurrency limit
   opt SSO-owned credential
     A->>E: Revalidate entitlement when due
@@ -167,16 +170,16 @@ returns raw cross-team candidates. Every ID supplied by a provider/client is
 revalidated against the principal before hydration or mutation.
 
 Team scope grants read visibility to eligible knowledge authored by any active
-same-team profile. It does not grant mutation authority. Ordinary updates to a
+same-team owner. It does not grant mutation authority. Ordinary updates to a
 Relationship, support decision, supersession, forget, merge, split, or Entity
-resolution additionally require the durable owner profile to equal the
-authenticated profile. Cross-profile correction creates caller-owned knowledge
+resolution additionally require the durable owner alias to equal the
+authenticated actor's owner alias. Cross-owner correction creates caller-owned knowledge
 and an append-only same-team cross-reference.
 
 Stable Evidence sources have separate immutable ownership. A source revision
 may be advanced only by that source owner with `write` scope and an exact prior
 revision token. The resulting support and status recomputation may affect every
-same-team profile that adopted that source, but the caller cannot name arbitrary
+same-team owner that adopted that source, but the caller cannot name arbitrary
 Relationships or rewrite their history. System policy follows source/support
 dependencies and appends the resulting events.
 
@@ -207,12 +210,12 @@ flowchart TD
 | remember, retraction, and owned correction | `write` | submits caller-owned evidence/proposals or applies authorized owned lifecycle work; authoritative evidence additionally follows authority policy |
 | advance owned source revision | `write` | exact source ownership and prior-revision compare-and-set; effects follow indexed support dependencies |
 | merge/split/supersede/forget | `write` | caller-owned observations and Relationships only |
-| confirm/challenge another profile | `write` | submit caller-owned evidence through normal remember; target remains immutable |
+| confirm/challenge another owner | `write` | submit caller-owned evidence through normal remember; target remains immutable |
 | replace quarantined submission | `write` | submit a fresh complete evidence/proposal package; no release action exists |
 | recall-feedback submission | `write` | feature enabled |
 | stored feedback inspection | `read + feedback:read` | feature enabled; same-team/control restrictions |
 | evaluation tools | `read + write` | compiled into the evaluation image only; disposable teams only |
-| team/profile/key administration | route-specific | manager for same-team operations |
+| team/credential administration | route-specific | manager for same-team operations |
 | cross-team administration | control-plane auth | never a normal user-key capability |
 
 Role never implies scope.
@@ -523,15 +526,20 @@ audit ledger.
 
 ## Canonical Identity Context
 
-Authentication resolves a credential to an immutable actor, team membership,
-role/governance state, and credential scopes before MCP or portal application
-services run. `credentials` and `team_memberships` are the current runtime
-authority; `ownership_aliases` resolve historical owner IDs without rewriting
-append-only semantic history.
-Effective grants are `membership.maximum_grants ∩ credential.scopes`.
-`team_admin` never grants another profile's private-memory mutation authority.
-For SSO-backed profiles, the membership actor is the stable SSO identity rather
-than the legacy profile row; system profiles preserve the `system` actor kind.
+Authentication resolves every supported credential or session to an immutable actor, team membership,
+permanent owner alias, role/governance state, and optional credential before MCP
+or portal application services run. `credentials` and `team_memberships` are
+the current runtime authority; `ownership_aliases` preserve semantic owner IDs
+without rewriting append-only history. Effective grants for credential auth
+are bounded by both membership grants and credential scopes.
+
+For SSO, the stable external actor and selected membership supply the owner
+alias; `credential_id` is absent. For direct API-key and portal-session auth,
+the credential is present and a standard API credential's stable ID is also its
+permanent owner alias. Team, identity, membership, and credential IDs are never
+substituted for `owner_id` by request payloads or provider output. `team_admin`
+never grants another owner's mutation authority. System actors preserve the
+`system` actor kind.
 
 The ordered Goose cleanup is boot-only and transactional. No public request can
 select migration mode or trigger cleanup. The removed legacy tables cannot

@@ -146,6 +146,13 @@ flowchart LR
 | `placement_runs` / `placement_items` | observable processing workflow, stable claim identity, retry, failure state, semantic-hold projection, and successor links |
 | `submission_holds` | append-only immutable hold facts: assessment, reason, owner, terminal timestamp, and exact 24-hour expiry |
 
+Terminal embedding jobs are coordination history, not canonical memory. A
+system-context retention pass deletes only `completed`, `stale`, and
+`cancelled` rows whose `completed_at` is older than 14 days. It claims at most
+1,000 rows at a time in deterministic completion/team/job order with
+`FOR UPDATE SKIP LOCKED`. `queued`, `processing`, and `failed` jobs are never
+removed by this retention path.
+
 Quarantined payloads are isolated from normal profile reads. Only system or
 migration transactions may purge the raw JSON after its database-enforced
 expiry; the purge appends a bounded `submission_quarantine_purged` outcome and
@@ -804,9 +811,10 @@ canonical contract and unknown-predicate behavior are defined in
 
 ## Tenant And Actor Isolation
 
-The team is the durable visibility boundary. A team profile is an authenticated
-actor with roles and scopes inside that team. Same-team reads may see every
-profile's eligible knowledge; ordinary lifecycle/support mutations require
+The team is the durable visibility boundary. Authentication resolves an actor
+identity, membership, permanent owner alias, role/grants, and optional
+credential inside that team. Same-team reads may see every owner's eligible
+knowledge; ordinary lifecycle/support mutations require
 `owner_profile_id = app.current_profile_id`. The system Conflict reviewer uses a
 separate transaction-local actor and may update only losing member Relationship
 `status`/`valid_to` fields selected by a locked resolved case.
@@ -814,8 +822,8 @@ separate transaction-local actor and may update only losing member Relationship
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Key["Bearer API key"] --> Profile["Team profile"]
-  Profile --> Team["team_id"]
+  Auth["Bearer credential or SSO session"] --> Actor["Identity + membership + owner alias"]
+  Actor --> Team["team_id"]
   Team --> Tx["PostgreSQL transaction"]
   Tx --> RLS["row-level security"]
   RLS --> Ledger["ledger and current state"]
@@ -828,7 +836,7 @@ such as:
 
 ```text
 app.current_team_id = <authenticated team UUID>
-app.current_profile_id = <authenticated profile UUID>
+app.current_profile_id = <authenticated permanent owner alias UUID>
 app.tx_mode = team
 ```
 
@@ -983,22 +991,26 @@ owner IDs remain unchanged. A legacy `manager` role backfills to
 `team_admin=true`; legacy scopes populate both membership maximums and
 credential scopes. An alias is permanent and authorizes historical owner
 references without rewriting accepted evidence, relationship history, or audit
-lineage. `semantic_profile_refs`
-references `(team_id, legacy_owner_id)` in `ownership_aliases`; it does not
-restore the removed identity authority. `usage_metric_buckets` uses the same
+lineage. Semantic tables now reference `teams(id)` and
+`ownership_aliases(team_id, legacy_owner_id)` directly. The removed
+`semantic_team_refs` and `semantic_profile_refs` mirrors are not runtime
+authorities or compatibility views. `usage_metric_buckets` uses the same
 composite ownership-alias key, so API-key and SSO usage history remains valid
 after cleanup while cross-team owner pairs are rejected.
 
-SSO-backed profiles retain their legacy profile ID only as the alias key. Their
-stable SSO actor owns the canonical team membership and `membership_grants`, so
+SSO memberships retain their legacy profile ID only as the permanent alias key.
+Their stable SSO actor owns the canonical team membership and
+`membership_grants`, so
 an external identity remains connected to team authorization after legacy
 cleanup. `team_memberships.sso_profile_name` retains the generated per-team
 SSO label and is backfilled from `team_profiles.name` before the legacy table is
 dropped; profile reads and usage labels prefer it over the actor's IdP display
 name. System profiles retain the `system` actor kind.
 
-`team_profiles` and `identity_compatibility_state` are absent from the current
+`team_profiles`, `identity_compatibility_state`, `semantic_team_refs`,
+`semantic_profile_refs`, and `embedding_config` are absent from the current
 catalog. Credentials authenticate, memberships plus grants authorize, actor
-identities anchor SSO and system actors, and ownership aliases preserve old IDs.
+identities anchor SSO and system actors, ownership aliases preserve old IDs,
+and `embedding_contracts` is the sole embedding authority.
 Revoking or deleting a credential only deactivates its actor when no active
 membership remains, so a shared actor stays usable for another team.

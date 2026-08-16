@@ -87,7 +87,7 @@ database version, and feature flags before deciding what shipped.
 | observational recall feedback | [Recall Feedback](Recall-Feedback) |
 | evaluation manifests, quality metrics, and release gates | [Evaluation](Evaluation) |
 | browser SSO and entitlement mapping | [User Portal SSO](User-Portal-SSO) |
-| portals, roles, profiles, and key administration | [Portals And API Keys](Portals-And-API-Keys) |
+| portals, memberships, credentials, roles, and key administration | [Portals And API Keys](Portals-And-API-Keys) |
 | environment and database runtime settings | [Configuration](Configuration) |
 | deployment, backup, restore, and incidents | [Operations Runbook](Operations-Runbook) |
 | telemetry names and operational interpretation | [Telemetry](Telemetry) |

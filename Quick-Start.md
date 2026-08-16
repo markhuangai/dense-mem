@@ -119,10 +119,10 @@ User portal:    http://127.0.0.1:8080/ui
 Control portal: http://127.0.0.1:8090/
 ```
 
-## 4. Create A Team And Key
+## 4. Create A Team And Credential
 
 Open the private control portal with `CONTROL_PORTAL_TOKEN`, create a team, then
-create its first profile/API key. Automation may call the same private control
+create its first credential/API key. Automation may call the same private control
 API:
 
 ```bash
@@ -135,10 +135,10 @@ team_json="$(curl -fsS -X POST http://127.0.0.1:8090/control/api/teams \
 team_id="$(printf '%s' "$team_json" | jq -r '.data.id')"
 
 curl -fsS -X POST \
-  "http://127.0.0.1:8090/control/api/teams/${team_id}/profiles" \
+  "http://127.0.0.1:8090/control/api/teams/${team_id}/credentials" \
   -H "Authorization: Bearer ${control_token}" \
   -H "Content-Type: application/json" \
-  -d '{"name":"default profile"}'
+  -d '{"name":"default credential"}'
 ```
 
 The release image does not include standalone administration commands. Store
@@ -242,7 +242,7 @@ Do not use an ambiguous first name for this initial smoke.
 ## 9. Test Forget
 
 Use the traced caller-owned `relationship_id` and ask to forget that one
-Relationship. To correct another profile, remember new evidence under the
+Relationship. To correct another owner, remember new evidence under the
 caller, include the recall-supplied Conflict ID/version on the relevant proposal
 when present, and let Dense-Mem create the cross-reference/case update. Nightly
 Conflict review owns any automatic cross-profile stale-state closure.

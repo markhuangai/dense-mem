@@ -1,7 +1,7 @@
 # User Portal SSO
 
 This page is the source of truth for Dense-Mem browser SSO, OIDC provider
-configuration, team entitlements, SSO-owned API keys, and troubleshooting.
+configuration, team entitlements, SSO-owned credentials, and troubleshooting.
 For the surrounding portal surfaces, see
 [Portals And API Keys](Portals-And-API-Keys).
 For request authentication and tenant enforcement, see
@@ -45,8 +45,8 @@ Dense-Mem exposes these user-portal SSO endpoints:
 | `GET` | `/ui/api/sso/start/:providerId` | Starts OIDC login and redirects to the provider. |
 | `GET` | `/ui/api/sso/callback` | Receives the OIDC authorization code callback. |
 | `POST` | `/ui/api/sso/team` | Switches the current SSO browser session to another entitled team. |
-| `POST` | `/ui/api/sso/key` | Creates the current SSO member's owned API key for the selected team. |
-| `POST` | `/ui/api/sso/key/rotate` | Rotates the current SSO member's owned API key for the selected team. |
+| `POST` | `/ui/api/sso/credential` | Creates the current SSO member's owned credential and one-time API key for the selected team. |
+| `POST` | `/ui/api/sso/credential/rotate` | Rotates the current SSO member's owned credential key for the selected team. |
 | `POST` | `/ui/api/sso/logout` | Clears the local Dense-Mem SSO session cookies. |
 
 ## API-Key Portal Session
@@ -60,6 +60,31 @@ After the direct bearer key is validated, the UI calls:
 | `GET` | `/ui/api/session` | Reads the current portal session, direct bearer session, or SSO session. |
 | `POST` | `/ui/api/session/logout` | Deletes the presented portal session and clears its cookies. |
 
+All three authenticated modes use one session response shape:
+
+```json
+{
+  "data": {
+    "team": {},
+    "membership": {
+      "team_id": "...",
+      "name": "...",
+      "grants": ["read"],
+      "role": "member"
+    },
+    "credential": null,
+    "teams": [{ "team": {}, "membership": {} }],
+    "personal_credential": null
+  }
+}
+```
+
+`credential: null` identifies an SSO browser session. A non-null credential
+with a locally held bearer identifies direct API-key auth; a non-null
+credential without a locally held bearer identifies an API-key portal-cookie
+session. The response does not expose `auth_method`, capability flags, or the
+permanent owner alias.
+
 The server stores only SHA-256 fingerprints of the session and CSRF tokens.
 The browser receives a host-only `dense_mem_ui_session` cookie (`HttpOnly`,
 `SameSite=Lax`, `Path=/ui`) and a readable `dense_mem_ui_csrf` cookie on the
@@ -68,7 +93,7 @@ same path. State-changing requests send the CSRF value in
 creation; the checkbox controls only whether the browser cookies persist past
 the current browser session. Expiry is absolute, not sliding.
 
-The session points to the stable API-key profile ID. Rotation replaces key
+The API-key portal session points to the stable credential ID. Rotation replaces key
 material in place, so an active portal session survives rotation. Revocation,
 expiration, inactive/deleted teams, role/scopes, and SSO-owned-key entitlement
 are checked again on each request. The API-key exchange clears SSO browser
@@ -96,7 +121,7 @@ sequenceDiagram
   IdP-->>DM: Authorization-code callback
   DM->>IdP: Validate tokens and load claims/groups
   DM->>PG: Match enabled mappings and team entitlements
-  PG-->>DM: Teams, selected team, role, permission
+  PG-->>DM: Teams, selected membership, role, grants, owner alias
   DM-->>Browser: Secure session + CSRF cookies
   Browser->>DM: State-changing /ui request + CSRF header
   opt Switch entitled team
@@ -112,21 +137,21 @@ version explicitly adds it.
 
 SSO sessions and API keys are separate authentication sources. One SSO identity
 can be entitled to multiple teams, and the same provider group or role can map
-to many Dense-Mem teams. Dense-Mem creates one SSO team profile per entitled
-team for browser-session access, and `/ui` shows a team selector for those
-teams.
+to many Dense-Mem teams. Dense-Mem creates one membership with a permanent
+owner alias per entitled team, and `/ui` shows a team selector for those teams.
 
-The SSO team profile has no API key material and is not rotated into an API
-key. It only represents the browser SSO session for the selected team.
+The SSO membership has no API key material. Authentication resolves its actor
+identity, membership, and permanent owner alias before application services
+run; the team ID and membership ID are not substituted for the owner alias.
 
-SSO manager sessions see the Team tab and can manage same-team member profiles
-like a manager API-key login. Keys created from the Team tab are ordinary API
+SSO manager sessions see the Team tab and can manage same-team credentials like
+a manager API-key login. Credentials created from the Team tab use ordinary API
 keys.
 
-SSO member sessions see the My key tab. Each SSO identity can own at most one
-active personal API key per team. That key is stored as a normal
-`auth_source=api_key` key with SSO ownership metadata so `/ui` can find the
-owner's key. Future bearer-token login with that key uses the standard API-key
+SSO member sessions see the My credential tab. Each SSO identity can own at
+most one active personal credential per team. That credential is stored with
+SSO ownership metadata so `/ui` can find it. Future bearer-token login with its
+key uses the standard API-key
 format rather than the browser session. When SSO authentication is configured,
 the auth middleware revalidates the SSO-owned key's current entitlement, so a
 revoked external entitlement can deny a still-present local key. It is not a
@@ -135,9 +160,9 @@ hybrid cookie-and-bearer login.
 The current SSO entitlement limits what the member can create or rotate from
 `/ui`:
 
-| SSO entitlement on selected team | My key behavior |
+| SSO entitlement on selected team | My credential behavior |
 | --- | --- |
-| Manager | Use the Team tab instead of My key. |
+| Manager | Use the Team tab instead of My credential. |
 | Member with read/write permission | Can create a read/write or read-only personal API key. Can rotate only if the existing personal key also has write scope. |
 | Member with read-only permission | Can create a read-only personal API key. Cannot rotate it from `/ui`. |
 
@@ -185,7 +210,7 @@ Group mappings connect provider group values to Dense-Mem teams:
 | Team | Dense-Mem team to grant access to. |
 | Group | Exact group or role value from the provider claim. |
 | Permission | Dense-Mem API scopes for member mappings, such as read-only or read/write. Manager mappings always grant read/write. |
-| Role | Dense-Mem profile role, either member or manager. Manager role grants the `/ui` Team tab for that team. |
+| Role | Dense-Mem membership role, either member or manager. Manager role grants the `/ui` Team tab for that team. |
 | Status | Disable a mapping without deleting it. |
 
 ### Microsoft Entra ID / Azure AD SCIM Directory Automation
@@ -253,7 +278,7 @@ The lifecycle is deliberate:
 While a connector is active, the OIDC login proves the user identity only.
 Dense-Mem does not grant user-portal teams from OIDC group claims, UserInfo, or
 a configured Graph/groups endpoint. It requires an active SCIM user and a
-current durable SCIM membership that matches the team profile. Existing user
+current durable SCIM membership that matches the selected team membership. Existing user
 sessions and SSO-owned API keys perform that same durable check, so removing a
 membership or deactivating a SCIM user denies access on the next request.
 

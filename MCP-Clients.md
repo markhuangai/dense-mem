@@ -138,7 +138,7 @@ Authentication and transport security are in
 
 ## Tested Protocol Matrix
 
-The production `/mcp` endpoint uses the official SDK transport by default.
+The production `/mcp` endpoint uses the official SDK transport unconditionally.
 Clients may negotiate `2025-11-25` with `initialize`, or the current
 `2026-07-28` sessionless contract with `server/discover`:
 
@@ -149,6 +149,6 @@ Clients may negotiate `2025-11-25` with `initialize`, or the current
 
 Both paths expose the same authenticated registry and bounded errors. An
 unknown revision, malformed JSON, unsupported content type, missing scope, or
-cancelled request must fail closed. The legacy implementation is only a
-boot-time rollback (`MCP_TRANSPORT=legacy`) for the compatibility window; it is
-not request-selectable or listed as a second public server.
+cancelled request must fail closed. The legacy implementation and differential
+transport are removed. `MCP_TRANSPORT=legacy` now fails startup with guidance;
+leave the selector unset (`sdk` is accepted only as a no-op during cleanup).

@@ -75,8 +75,9 @@ flowchart LR
   Admin --> PG
 ```
 
-The authenticated principal fixes team, profile, role, and scopes before any
-application service runs. A request never chooses its tenant.
+The authenticated principal fixes team, identity, membership, permanent owner
+alias, optional credential, role, and grants before any application service
+runs. A request never chooses its tenant or semantic owner.
 
 Remember submissions are assessed by one canonical submission-wide worker. The
 retired standalone semantic-placement and retry-verifier implementations are
@@ -353,7 +354,7 @@ projection, outbox, or graph-reconciliation loop in the target.
 | Recall | bounded retrieval, ranking, graph frontier, freshness, and trace handles | deciding which returned context to use, cite, or question |
 | Ambiguity | exact candidates, impact, review state, and safe decision application | presenting the ambiguity and collecting the user's evidence-backed choice |
 | Cross-profile conflict | durable case/version, deterministic nightly disposition, deadline audit, current/historical recall, and trace | presenting open positions and submitting new evidence through `remember` |
-| Operations | isolation, profiles, roles, keys, portals, telemetry, backup, and recovery | client configuration and safe use of returned context |
+| Operations | isolation, memberships, credentials, roles, keys, portals, telemetry, backup, and recovery | client configuration and safe use of returned context |
 
 Dense-Mem is not an autonomous truth oracle. Models propose structured
 judgments; deterministic server rules control durable state.
@@ -423,15 +424,15 @@ change relies on it.
 
 MCP Streamable HTTP is composed through the official Go SDK v1.7.0 at the
 transport edge. The existing registry, authenticated context, schemas, and
-`invokeTool` seam remain the only catalog and execution authority. The boot-only
-`MCP_TRANSPORT=legacy` setting is a one-release rollback gate; requests cannot
-select it and the SDK is absent from domain/provider/repository packages.
+`invokeTool` seam remain the only catalog and execution authority. The legacy
+transport and differential implementation are removed; `MCP_TRANSPORT=legacy`
+fails startup. The SDK is absent from domain/provider/repository packages.
 
 ```text
 HTTP auth middleware
-        │ immutable team/profile/credential context
+        │ immutable team/identity/membership/owner/credential context
         ▼
-MCP edge (SDK default; legacy boot rollback)
+MCP edge (official SDK only)
         │ shared registry + invokeTool
         ▼
 application services → domain policy → PostgreSQL/Redis/provider ports
@@ -445,9 +446,14 @@ exclusive legacy-table lock, reruns reconciliation, validates every retained
 reference, and removes the bridge plus its two legacy tables. Skipped releases
 run both migrations in numeric Goose order. `team_admin` is governance;
 effective memory access remains the intersection of membership maximum grants
-and credential scopes.
+and credential scopes. Migration `2026081602` then validates direct semantic
+foreign keys to `teams` and `ownership_aliases`, replaces the mirror-backed
+constraints, and removes `semantic_team_refs`, `semantic_profile_refs`, and
+`embedding_config`.
 
-For an SSO-backed profile, the legacy profile ID remains the alias while the
-stable SSO actor owns the canonical team membership and grants. System profiles
-retain `actor_identities.kind = system`. Canonical identity tables are now the
-only runtime authority.
+For SSO, the selected membership supplies the permanent owner alias while the
+stable SSO actor owns the canonical team membership and grants; there is no
+credential unless a personal one is used. For direct API-key auth, the stable
+credential ID is also the permanent owner alias. System actors retain
+`actor_identities.kind = system`. Canonical identity tables are now the only
+runtime authority.
