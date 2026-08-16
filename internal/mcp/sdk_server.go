@@ -15,6 +15,40 @@ import (
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
+// The SDK treats every stateless POST as a session, so its routine lifecycle belongs at debug level.
+type sdkLifecycleLogHandler struct {
+	delegate slog.Handler
+}
+
+func (h sdkLifecycleLogHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.delegate.Enabled(ctx, level)
+}
+
+func (h sdkLifecycleLogHandler) Handle(ctx context.Context, record slog.Record) error {
+	if record.Level == slog.LevelInfo {
+		switch record.Message {
+		case "server connecting", "server session connected", "session initialized", "server session disconnected":
+			record.Level = slog.LevelDebug
+		}
+	}
+	if !h.delegate.Enabled(ctx, record.Level) {
+		return nil
+	}
+	return h.delegate.Handle(ctx, record)
+}
+
+func (h sdkLifecycleLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return sdkLifecycleLogHandler{delegate: h.delegate.WithAttrs(attrs)}
+}
+
+func (h sdkLifecycleLogHandler) WithGroup(name string) slog.Handler {
+	return sdkLifecycleLogHandler{delegate: h.delegate.WithGroup(name)}
+}
+
+func newSDKLogger(delegate *slog.Logger) *slog.Logger {
+	return slog.New(sdkLifecycleLogHandler{delegate: delegate.Handler()})
+}
+
 // NewSDKHTTPHandler creates a stateless official-SDK transport backed by the
 // request-scoped registry, authorization, and prompt catalog.
 func (s *Server) NewSDKHTTPHandler(jsonResponse bool) http.Handler {
@@ -166,7 +200,7 @@ func (s *Server) newSDKServer(ctx context.Context) *sdkmcp.Server {
 		Instructions: s.instructions(),
 		Capabilities: capabilities,
 		SchemaCache:  sdkmcp.NewSchemaCache(),
-		Logger:       slog.Default(),
+		Logger:       newSDKLogger(slog.Default()),
 	})
 
 	tools := s.registry.List()
