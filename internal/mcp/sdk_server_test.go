@@ -1,9 +1,11 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -96,6 +98,102 @@ func TestSDKHTTPHandlerUsesTheSharedRegistryAndSupportsFrozenAndCurrentFlows(t *
 	handler.ServeHTTP(callResponse, callRequest)
 	require.Equal(t, http.StatusOK, callResponse.Code)
 	require.Contains(t, callResponse.Body.String(), `\"value\":\"ok\"`)
+}
+
+func TestSDKHTTPHandlerLogsRoutineSessionLifecycleAtDebug(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		level     slog.Level
+		wantLevel string
+	}{
+		{name: "info", level: slog.LevelInfo},
+		{name: "debug", level: slog.LevelDebug, wantLevel: "DEBUG"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previous := slog.Default()
+			t.Cleanup(func() { slog.SetDefault(previous) })
+
+			var logBuffer bytes.Buffer
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logBuffer, &slog.HandlerOptions{Level: tc.level})))
+			logger, _ := testLogger(t)
+			server := NewServer(registry.New(), "profile-a", logger)
+			request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Accept", "application/json, text/event-stream")
+			request.Header.Set("MCP-Protocol-Version", "2025-11-25")
+			response := httptest.NewRecorder()
+			server.NewSDKHTTPHandler(true).ServeHTTP(response, request)
+			require.Equal(t, http.StatusOK, response.Code)
+
+			records := decodeSDKLogRecords(t, logBuffer.Bytes())
+			if tc.wantLevel == "" {
+				require.Empty(t, records)
+				return
+			}
+			lifecycle := map[string]int{
+				"server connecting":           0,
+				"server session connected":    0,
+				"server session disconnected": 0,
+			}
+			for _, record := range records {
+				message, ok := record["msg"].(string)
+				if !ok {
+					continue
+				}
+				if _, ok := lifecycle[message]; !ok {
+					continue
+				}
+				lifecycle[message]++
+				require.Equal(t, tc.wantLevel, record["level"])
+				if message != "server connecting" {
+					require.Contains(t, record, "session_id")
+					require.Empty(t, record["session_id"])
+				}
+			}
+			for message, count := range lifecycle {
+				require.Equal(t, 1, count, message)
+			}
+		})
+	}
+}
+
+func TestSDKLoggerDemotesOnlyRoutineSessionLifecycle(t *testing.T) {
+	var logBuffer bytes.Buffer
+	delegate := slog.New(slog.NewJSONHandler(&logBuffer, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := newSDKLogger(delegate).With("component", "mcp_sdk").WithGroup("transport")
+
+	for _, message := range []string{
+		"server connecting",
+		"server session connected",
+		"session initialized",
+		"server session disconnected",
+	} {
+		logger.Info(message, "session_id", "session-a")
+	}
+	logger.Info("resource subscribed", "uri", "memory://resource")
+	logger.Warn("calling tools/list: warning", "method", "tools/list")
+	logger.Error("server connect error", "error", errors.New("connect failed"))
+
+	records := decodeSDKLogRecords(t, logBuffer.Bytes())
+	require.Len(t, records, 7)
+	byMessage := make(map[string]map[string]any, len(records))
+	for _, record := range records {
+		message, ok := record["msg"].(string)
+		require.True(t, ok)
+		byMessage[message] = record
+		require.Equal(t, "mcp_sdk", record["component"])
+	}
+	for _, message := range []string{
+		"server connecting",
+		"server session connected",
+		"session initialized",
+		"server session disconnected",
+	} {
+		require.Equal(t, "DEBUG", byMessage[message]["level"])
+	}
+	require.Equal(t, "INFO", byMessage["resource subscribed"]["level"])
+	require.Equal(t, "WARN", byMessage["calling tools/list: warning"]["level"])
+	require.Equal(t, "ERROR", byMessage["server connect error"]["level"])
 }
 
 func TestSDKHTTPHandlerRejectsUnknownProtocolHeader(t *testing.T) {
@@ -293,4 +391,19 @@ func requireSDKError(t *testing.T, err error, code int, message string) {
 	require.ErrorAs(t, err, &sdkErr)
 	require.Equal(t, int64(code), sdkErr.Code)
 	require.Contains(t, sdkErr.Message, message)
+}
+
+func decodeSDKLogRecords(t *testing.T, data []byte) []map[string]any {
+	t.Helper()
+	lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+	if len(lines) == 1 && len(lines[0]) == 0 {
+		return nil
+	}
+	records := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		var record map[string]any
+		require.NoError(t, json.Unmarshal(line, &record))
+		records = append(records, record)
+	}
+	return records
 }
