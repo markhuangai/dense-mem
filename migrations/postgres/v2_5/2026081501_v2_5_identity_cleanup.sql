@@ -5,7 +5,7 @@
 -- Lock/rewrite impact: team_profiles is locked for at most 30 seconds; retained
 -- tables receive metadata-only columns and constraint/index updates.
 -- RLS impact: canonical identity policies no longer depend on the legacy table.
--- Backfill: SSO membership metadata and session membership IDs are translated
+-- Backfill: SSO membership metadata, profile names, and session membership IDs are translated
 -- while the legacy table is locked, then every retained reference is checked.
 -- Backward compatibility: existing IDs and keys survive; old binaries are not
 -- supported after the destructive transaction commits.
@@ -47,6 +47,7 @@ UPDATE team_profiles SET last_used_at = last_used_at;
 ALTER TABLE team_memberships
     ADD COLUMN IF NOT EXISTS sso_provider_id UUID NULL REFERENCES sso_providers(id) ON DELETE SET NULL,
     ADD COLUMN IF NOT EXISTS sso_group_id TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS sso_profile_name TEXT NOT NULL DEFAULT '',
     ADD COLUMN IF NOT EXISTS sso_entitlement_status TEXT NOT NULL DEFAULT '',
     ADD COLUMN IF NOT EXISTS sso_last_entitlement_checked_at TIMESTAMPTZ NULL,
     ADD COLUMN IF NOT EXISTS sso_last_login_at TIMESTAMPTZ NULL;
@@ -62,6 +63,7 @@ ALTER TABLE team_memberships
 UPDATE team_memberships AS membership
 SET sso_provider_id = profile.sso_provider_id,
     sso_group_id = COALESCE(profile.sso_group_id, ''),
+    sso_profile_name = COALESCE(profile.name, ''),
     sso_entitlement_status = profile.sso_entitlement_status,
     sso_last_entitlement_checked_at = profile.sso_last_entitlement_checked_at,
     sso_last_login_at = profile.sso_last_login_at

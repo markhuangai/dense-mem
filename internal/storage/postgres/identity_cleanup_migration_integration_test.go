@@ -244,7 +244,7 @@ func TestIdentityCleanupUpgradesPopulatedPreBridgeDatabase(t *testing.T) {
 	require.Equal(t, "hash-"+profileID, keyHash)
 	require.Equal(t, "active", credentialStatus)
 
-	var aliasIdentity, sessionIdentity string
+	var aliasIdentity, sessionIdentity, ssoProfileName string
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
 		SELECT canonical_identity_id::text
 		FROM ownership_aliases
@@ -258,6 +258,12 @@ func TestIdentityCleanupUpgradesPopulatedPreBridgeDatabase(t *testing.T) {
 		WHERE session.session_hash = $1
 	`, sessionHash).Scan(&sessionIdentity))
 	require.Equal(t, identityID, sessionIdentity)
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT sso_profile_name
+		FROM team_memberships
+		WHERE team_id = $1::uuid AND actor_identity_id = $2::uuid
+	`, teamID, identityID).Scan(&ssoProfileName))
+	require.Equal(t, "Cleanup SSO", ssoProfileName)
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO usage_metric_buckets (

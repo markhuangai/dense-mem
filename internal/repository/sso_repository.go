@@ -553,7 +553,7 @@ func (r *SSORepositoryImpl) UpsertTeamProfileForMapping(ctx context.Context, ide
 		}
 		aliasID, createdAt, err := upsertCanonicalSSOMembershipTx(tx, canonicalSSOMembershipInput{
 			IdentityID: identity.ID, ProviderID: identity.ProviderID, TeamID: mapping.TeamID,
-			Scopes: mapping.Scopes, Role: mapping.Role, GroupID: mapping.GroupID,
+			Scopes: mapping.Scopes, Role: mapping.Role, GroupID: mapping.GroupID, ProfileName: name,
 			LastEntitlementCheckedAt: &now, LastLoginAt: identity.LastLoginAt, Now: now,
 		})
 		if err != nil {
@@ -584,6 +584,7 @@ type canonicalSSOMembershipInput struct {
 	Scopes                   []string
 	Role                     string
 	GroupID                  string
+	ProfileName              string
 	LastEntitlementCheckedAt *time.Time
 	LastLoginAt              *time.Time
 	Now                      time.Time
@@ -596,8 +597,8 @@ func upsertCanonicalSSOMembershipTx(tx *gorm.DB, input canonicalSSOMembershipInp
 		INSERT INTO team_memberships (
 			actor_identity_id, team_id, status, team_admin, maximum_grants,
 			sso_provider_id, sso_group_id, sso_entitlement_status,
-			sso_last_entitlement_checked_at, sso_last_login_at, created_at, updated_at
-		) VALUES ($1, $2, 'active', $3, $4, $5, $6, 'active', $7, $8, $9, $9)
+			sso_profile_name, sso_last_entitlement_checked_at, sso_last_login_at, created_at, updated_at
+		) VALUES ($1, $2, 'active', $3, $4, $5, $6, 'active', $7, $8, $9, $10, $10)
 		ON CONFLICT (actor_identity_id, team_id) DO UPDATE SET
 			status = 'active',
 			team_admin = EXCLUDED.team_admin,
@@ -605,12 +606,13 @@ func upsertCanonicalSSOMembershipTx(tx *gorm.DB, input canonicalSSOMembershipInp
 			sso_provider_id = EXCLUDED.sso_provider_id,
 			sso_group_id = EXCLUDED.sso_group_id,
 			sso_entitlement_status = 'active',
+			sso_profile_name = CASE WHEN EXCLUDED.sso_profile_name <> '' THEN EXCLUDED.sso_profile_name ELSE team_memberships.sso_profile_name END,
 			sso_last_entitlement_checked_at = EXCLUDED.sso_last_entitlement_checked_at,
 			sso_last_login_at = COALESCE(EXCLUDED.sso_last_login_at, team_memberships.sso_last_login_at),
 			updated_at = EXCLUDED.updated_at
 		RETURNING id, created_at
 	`, input.IdentityID, input.TeamID, input.Role == "manager", pq.Array(input.Scopes),
-		input.ProviderID, input.GroupID, input.LastEntitlementCheckedAt, input.LastLoginAt, input.Now).Row().Scan(&membershipID, &createdAt); err != nil {
+		input.ProviderID, input.GroupID, input.ProfileName, input.LastEntitlementCheckedAt, input.LastLoginAt, input.Now).Row().Scan(&membershipID, &createdAt); err != nil {
 		return uuid.Nil, time.Time{}, err
 	}
 	if err := replaceLegacyMembershipGrants(tx, membershipID, input.Scopes); err != nil {
@@ -653,7 +655,7 @@ func (r *SSORepositoryImpl) ListTeamProfilesForIdentity(ctx context.Context, ide
 		rows, err := tx.Raw(`
 			SELECT
 				t.id, t.name, t.description, t.created_at, t.updated_at,
-				alias.legacy_owner_id, membership.team_id, COALESCE(actor.display_name, ''),
+				alias.legacy_owner_id, membership.team_id, COALESCE(NULLIF(membership.sso_profile_name, ''), actor.display_name, ''),
 				membership.maximum_grants, CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END,
 				0, NULL, NULL, membership.created_at, NULL, 'sso', actor.id,
 				membership.sso_provider_id, actor.subject, COALESCE(identity.email, ''), membership.sso_group_id,
@@ -703,7 +705,7 @@ func (r *SSORepositoryImpl) GetSSOProfileByID(ctx context.Context, id uuid.UUID)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
 			SELECT
-				alias.legacy_owner_id, membership.team_id, COALESCE(t.name, ''), COALESCE(actor.display_name, ''),
+				alias.legacy_owner_id, membership.team_id, COALESCE(t.name, ''), COALESCE(NULLIF(membership.sso_profile_name, ''), actor.display_name, ''),
 				membership.maximum_grants, CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END,
 				0, NULL, NULL, membership.created_at, NULL, 'sso', actor.id,
 				membership.sso_provider_id, actor.subject, COALESCE(identity.email, ''), membership.sso_group_id,

@@ -197,7 +197,7 @@ func queryKeyUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter any
 			b.team_id::text,
 			COALESCE(t.name, ''),
 			b.key_id::text,
-			COALESCE(NULLIF(k.name, ''), owner_actor.display_name, ''),
+			COALESCE(NULLIF(k.name, ''), NULLIF(owner_membership.sso_profile_name, ''), owner_actor.display_name, ''),
 			COALESCE(k.key_suffix, ''),
 			COALESCE(SUM(b.request_count), 0),
 			COALESCE(SUM(b.error_count), 0),
@@ -209,12 +209,15 @@ func queryKeyUsage(tx *gorm.DB, filter domain.UsageMetricsFilter, teamFilter any
 			ON k.id = b.key_id AND k.team_id = b.team_id
 		LEFT JOIN ownership_aliases owner_alias
 			ON owner_alias.team_id = b.team_id AND owner_alias.legacy_owner_id = b.key_id
+		LEFT JOIN team_memberships owner_membership
+			ON owner_membership.team_id = owner_alias.team_id
+			AND owner_membership.actor_identity_id = owner_alias.canonical_identity_id
 		LEFT JOIN actor_identities owner_actor ON owner_actor.id = owner_alias.canonical_identity_id
 		WHERE b.bucket_start >= $1
 			AND b.bucket_start < $2
 			AND ($3::uuid IS NULL OR b.team_id = $3::uuid)
-		GROUP BY b.team_id, t.name, b.key_id, k.name, k.key_suffix, owner_actor.display_name
-		ORDER BY COALESCE(SUM(b.request_count), 0) DESC, COALESCE(k.name, owner_actor.display_name, '') ASC
+		GROUP BY b.team_id, t.name, b.key_id, k.name, k.key_suffix, owner_membership.sso_profile_name, owner_actor.display_name
+		ORDER BY COALESCE(SUM(b.request_count), 0) DESC, COALESCE(k.name, owner_membership.sso_profile_name, owner_actor.display_name, '') ASC
 		LIMIT 200
 	`, filter.From, filter.To, teamFilter).Rows()
 	if err != nil {

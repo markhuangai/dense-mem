@@ -280,10 +280,12 @@ func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 	require.Len(t, teams, 1)
 	require.Equal(t, activeProfile.ID, teams[0].Profile.ID)
 	assert.Equal(t, activeMapping.TeamID, teams[0].Team.ID)
+	assert.Equal(t, "active-profile", teams[0].Profile.Name)
 
 	loadedActive, err := repo.GetSSOProfileByID(ctx, activeProfile.ID)
 	require.NoError(t, err)
 	require.NotNil(t, loadedActive)
+	assert.Equal(t, "active-profile", loadedActive.Name)
 	loadedArchived, err := repo.GetSSOProfileByID(ctx, archivedProfile.ID)
 	require.NoError(t, err)
 	assert.Nil(t, loadedArchived)

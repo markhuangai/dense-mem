@@ -89,6 +89,7 @@ func TestDirectoryReconcileCreatesAndArchivesOnlyDirectoryManagedTeam(t *testing
 	profiles, err := ssoRepo.ListTeamProfilesForIdentity(ctx, user.IdentityID)
 	require.NoError(t, err)
 	require.Len(t, profiles, 1)
+	require.Equal(t, directoryProfileName(user.Email, user.DisplayName, user.IdentityID), profiles[0].Profile.Name)
 	entitled, err := ssoRepo.DirectoryTeamProfileEntitled(ctx, profiles[0].Profile.ID, provider.ID, user.IdentityID, teamID, group.ExternalID)
 	require.NoError(t, err)
 	require.True(t, entitled)

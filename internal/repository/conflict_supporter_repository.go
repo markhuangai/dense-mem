@@ -250,7 +250,7 @@ const relationshipConflictSupporterRowsSQL = `
 		SELECT representative.conflict_id,
 		       representative.position_id,
 		       representative.owner_profile_id,
-		       identity.display_name,
+		       COALESCE(NULLIF(membership.sso_profile_name, ''), identity.display_name, '') AS display_name,
 		       representative.authority,
 		       representative.fragment_id,
 		       representative.accepted_at,
@@ -275,6 +275,9 @@ const relationshipConflictSupporterRowsSQL = `
 		 AND alias.legacy_owner_id = representative.owner_profile_id
 		JOIN actor_identities AS identity
 		  ON identity.id = alias.canonical_identity_id
+		LEFT JOIN team_memberships AS membership
+		  ON membership.team_id = alias.team_id
+		 AND membership.actor_identity_id = alias.canonical_identity_id
 	)
 	SELECT conflict_id::text,
 	       position_id::text,

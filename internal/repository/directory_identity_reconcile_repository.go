@@ -515,7 +515,8 @@ func upsertDirectoryTeamProfileTx(ctx context.Context, tx *gorm.DB, providerID u
 	_, _, err := upsertCanonicalSSOMembershipTx(tx, canonicalSSOMembershipInput{
 		IdentityID: grant.IdentityID, ProviderID: providerID, TeamID: grant.TeamID,
 		Scopes: grant.Entitlement.Scopes, Role: grant.Entitlement.Role,
-		GroupID: grant.GroupExternalID, LastEntitlementCheckedAt: &now, Now: now,
+		GroupID: grant.GroupExternalID, ProfileName: directoryProfileName(grant.Email, grant.DisplayName, grant.IdentityID),
+		LastEntitlementCheckedAt: &now, Now: now,
 	})
 	return err
 }
@@ -580,6 +581,23 @@ func revokeMissingDirectoryProfilesTx(ctx context.Context, tx *gorm.DB, provider
 
 func directoryProfileGrantKey(identityID, teamID uuid.UUID) string {
 	return identityID.String() + ":" + teamID.String()
+}
+
+func directoryProfileName(email, displayName string, identityID uuid.UUID) string {
+	name := strings.TrimSpace(displayName)
+	if name == "" {
+		name = strings.TrimSpace(email)
+	}
+	if name == "" {
+		name = "directory"
+	}
+	suffix := " (" + identityID.String() + ")"
+	limit := 100 - len([]rune(suffix))
+	characters := []rune(name)
+	if len(characters) > limit {
+		name = string(characters[:limit])
+	}
+	return name + suffix
 }
 
 func directoryUUIDStrings(values []uuid.UUID) []string {

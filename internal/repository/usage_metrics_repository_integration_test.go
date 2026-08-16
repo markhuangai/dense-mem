@@ -28,8 +28,15 @@ func TestUsageMetricsSnapshotLabelsSSOOwnershipAlias(t *testing.T) {
 		if err := tx.Exec(`
 			INSERT INTO actor_identities (
 				id, kind, team_id, provider, subject, display_name, active
-			) VALUES (?, 'human', NULL, 'usage-metrics-provider', ?, 'SSO Usage User', true)
+			) VALUES (?, 'human', NULL, 'usage-metrics-provider', ?, 'Current IdP Name', true)
 		`, identityID, "usage-metrics-subject-"+identityID.String()).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO team_memberships (
+				actor_identity_id, team_id, status, maximum_grants, sso_profile_name
+			) VALUES (?, ?, 'active', ARRAY['read']::text[], 'SSO Usage User')
+		`, identityID, teamID).Error; err != nil {
 			return err
 		}
 		if err := tx.Exec(`
