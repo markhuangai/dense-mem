@@ -256,10 +256,11 @@ BEGIN
 
     SELECT count(*) INTO missing_count
     FROM usage_metric_buckets AS bucket
-    LEFT JOIN credentials AS credential ON credential.id = bucket.key_id
-    WHERE credential.id IS NULL;
+    LEFT JOIN ownership_aliases AS alias
+      ON alias.team_id = bucket.team_id AND alias.legacy_owner_id = bucket.key_id
+    WHERE alias.legacy_owner_id IS NULL;
     IF missing_count > 0 THEN
-        RAISE EXCEPTION 'identity cleanup blocked: usage history missing credentials (% rows)', missing_count;
+        RAISE EXCEPTION 'identity cleanup blocked: usage history missing ownership aliases (% rows)', missing_count;
     END IF;
 
     SELECT count(*) INTO missing_count
@@ -290,7 +291,8 @@ ALTER TABLE semantic_profile_refs
 ALTER TABLE usage_metric_buckets
     DROP CONSTRAINT usage_metric_buckets_key_id_fkey,
     ADD CONSTRAINT usage_metric_buckets_key_id_fkey
-        FOREIGN KEY (key_id) REFERENCES credentials(id) ON DELETE CASCADE;
+        FOREIGN KEY (team_id, key_id)
+        REFERENCES ownership_aliases(team_id, legacy_owner_id) ON DELETE CASCADE;
 
 ALTER TABLE user_portal_sessions
     DROP CONSTRAINT user_portal_sessions_key_id_fkey,

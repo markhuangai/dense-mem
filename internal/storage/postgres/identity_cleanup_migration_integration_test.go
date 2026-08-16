@@ -145,6 +145,12 @@ func seedIdentityUpgradeState(
 	`, now, teamID, profileID)
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, `
+		INSERT INTO usage_metric_buckets (
+			bucket_start, team_id, key_id, route, method, status_class, request_count
+		) VALUES (date_trunc('hour', $1::timestamptz), $2, $3, '/identity-upgrade-sso', 'GET', 2, 1)
+	`, now, teamID, ssoProfileID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO user_portal_sessions (session_hash, key_id, csrf_hash, expires_at)
 		VALUES ($1, $2, 'identity-upgrade-csrf', $3::timestamptz + interval '1 hour')
 	`, portalHash, profileID, now)
@@ -157,13 +163,16 @@ func seedIdentityUpgradeState(
 	require.NoError(t, err)
 
 	if variant == "bridge" {
+		mismatchTeamID := uuid.New()
+		_, err = tx.ExecContext(ctx, `INSERT INTO teams (id, name) VALUES ($1, $2)`, mismatchTeamID, "identity-upgrade-mismatch-"+mismatchTeamID.String())
+		require.NoError(t, err)
 		_, err = tx.ExecContext(ctx, `UPDATE team_profiles SET scopes = ARRAY['read']::text[] WHERE id = $1`, profileID)
 		require.NoError(t, err)
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO usage_metric_buckets (
 				bucket_start, team_id, key_id, route, method, status_class, request_count
 			) VALUES (date_trunc('hour', $1::timestamptz), $2, $3, '/identity-cleanup-mismatch', 'POST', 2, 1)
-		`, now, teamID, ssoProfileID)
+		`, now, mismatchTeamID, ssoProfileID)
 		require.NoError(t, err)
 	}
 	require.NoError(t, tx.Commit())
@@ -197,6 +206,13 @@ func TestIdentityCleanupUpgradesPopulatedPreBridgeDatabase(t *testing.T) {
 				bucket_start, team_id, key_id, route, method, status_class, request_count
 			) VALUES (date_trunc('hour', now()), $1::uuid, $2::uuid, '/mcp', 'POST', 2, 3)
 		`, teamID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO usage_metric_buckets (
+				bucket_start, team_id, key_id, route, method, status_class, request_count
+			) VALUES (date_trunc('hour', now()), $1::uuid, $2::uuid, '/sso', 'GET', 2, 1)
+		`, teamID, ssoProfileID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -242,12 +258,21 @@ func TestIdentityCleanupUpgradesPopulatedPreBridgeDatabase(t *testing.T) {
 		WHERE session.session_hash = $1
 	`, sessionHash).Scan(&sessionIdentity))
 	require.Equal(t, identityID, sessionIdentity)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO usage_metric_buckets (
+				bucket_start, team_id, key_id, route, method, status_class, request_count
+			) VALUES (date_trunc('hour', now()), $1::uuid, $2::uuid, '/sso-post-cleanup', 'GET', 1, 1)
+		`, teamID, ssoProfileID)
+		return err
+	}))
 
 	for query, argument := range map[string]string{
-		`SELECT count(*) FROM semantic_profile_refs WHERE team_id = $1::uuid`:         teamID,
-		`SELECT count(*) FROM usage_metric_buckets WHERE key_id = $1::uuid`:           profileID,
-		`SELECT count(*) FROM user_portal_sessions WHERE session_hash = $1`:           portalHash,
-		`SELECT count(*) FROM membership_grants WHERE grant_name IN ('read','write')`: "",
+		`SELECT count(*) FROM semantic_profile_refs WHERE team_id = $1::uuid`:                      teamID,
+		`SELECT count(*) FROM usage_metric_buckets WHERE key_id = $1::uuid AND route = '/mcp'`:     profileID,
+		`SELECT count(*) FROM usage_metric_buckets WHERE key_id = $1::uuid AND route LIKE '/sso%'`: ssoProfileID,
+		`SELECT count(*) FROM user_portal_sessions WHERE session_hash = $1`:                        portalHash,
+		`SELECT count(*) FROM membership_grants WHERE grant_name IN ('read','write')`:              "",
 	} {
 		var count int
 		if argument == "" {
@@ -324,23 +349,27 @@ func TestIdentityCleanupMismatchRollsBackAndLeavesBridge(t *testing.T) {
 	defer cleanup()
 	runGooseUpTo(t, ctx, sqlDB, 2026081001)
 
-	teamID := uuid.NewString()
+	profileTeamID := uuid.NewString()
+	usageTeamID := uuid.NewString()
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO teams (id, name) VALUES ($1::uuid, 'cleanup-mismatch')`, teamID)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO teams (id, name) VALUES ($1::uuid, 'cleanup-mismatch-profile')`, profileTeamID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO teams (id, name) VALUES ($1::uuid, 'cleanup-mismatch-usage')`, usageTeamID)
 		return err
 	}))
-	_, _, ssoProfileID := insertIdentityCleanupSSOProfile(t, ctx, sqlDB, teamID)
+	_, _, ssoProfileID := insertIdentityCleanupSSOProfile(t, ctx, sqlDB, profileTeamID)
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO usage_metric_buckets (
 				bucket_start, team_id, key_id, route, method, status_class, request_count
 			) VALUES (date_trunc('hour', now()), $1::uuid, $2::uuid, '/mcp', 'POST', 2, 1)
-		`, teamID, ssoProfileID)
+		`, usageTeamID, ssoProfileID)
 		return err
 	}))
 
 	err := migrationUpTo(ctx, sqlDB, 2026081501)
-	require.ErrorContains(t, err, "usage history missing credentials")
+	require.ErrorContains(t, err, "usage history missing ownership aliases")
 	require.True(t, tableExists(t, ctx, sqlDB, "team_profiles"))
 	require.True(t, tableExists(t, ctx, sqlDB, "identity_compatibility_state"))
 	require.True(t, columnExists(t, ctx, sqlDB, "credentials", "legacy_profile_id"))

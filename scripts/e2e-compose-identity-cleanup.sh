@@ -90,6 +90,15 @@ verify_identity_cleanup_seed_upgrade() {
         WHERE key_id = '${IDENTITY_UPGRADE_PROFILE_ID}'::uuid AND route = '/identity-upgrade'
       ), '|',
       EXISTS (
+        SELECT 1 FROM usage_metric_buckets
+        WHERE key_id IN (
+          SELECT legacy_owner_id
+          FROM ownership_aliases
+          WHERE team_id = '${IDENTITY_UPGRADE_TEAM_ID}'::uuid
+            AND legacy_owner_id <> '${IDENTITY_UPGRADE_PROFILE_ID}'::uuid
+        ) AND route = '/identity-upgrade-sso'
+      ), '|',
+      EXISTS (
         SELECT 1 FROM user_portal_sessions
         WHERE key_id = '${IDENTITY_UPGRADE_PROFILE_ID}'::uuid
       ), '|',
@@ -102,7 +111,7 @@ verify_identity_cleanup_seed_upgrade() {
       )
     )
   ")"
-  if [[ "$state" != "true|true|true|true|true|true|true|true|true|true|true" && "$state" != "t|t|t|t|t|t|t|t|t|t|t" ]]; then
+  if [[ "$state" != "true|true|true|true|true|true|true|true|true|true|true|true" && "$state" != "t|t|t|t|t|t|t|t|t|t|t|t" ]]; then
     echo "Identity cleanup ${variant} upgrade did not retain the expected canonical state: ${state}" >&2
     return 1
   fi
@@ -234,7 +243,7 @@ run_identity_cleanup_startup_matrix() {
     echo "Unexpected populated bridge identity state: ${initial_state}" >&2
     return 1
   fi
-  start_identity_cleanup_server_expect_failure "usage history missing credentials"
+  start_identity_cleanup_server_expect_failure "usage history missing ownership aliases"
   identity_postgres_scalar \
     "DELETE FROM usage_metric_buckets WHERE route = '/identity-cleanup-mismatch'" \
     >/dev/null
