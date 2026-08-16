@@ -140,7 +140,7 @@ func authenticatedActorFromCredential(credential *domain.Credential) *domain.Aut
 			OwnerID:         credential.OwnerID,
 			Name:            credential.Name,
 			Grants:          append([]string(nil), credential.Scopes...),
-			Role:            credential.Role,
+			Role:            credential.GetRole(),
 			Status:          "active",
 		},
 		OwnerID:    credential.OwnerID,

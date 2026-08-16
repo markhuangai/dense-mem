@@ -109,6 +109,12 @@ func TestUserPortalSessionServiceUsesFixedOpaqueSevenDaySessions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, keyID, authenticated.Credential.ID)
 	require.Equal(t, ownerID, authenticated.OwnerID)
+	require.Equal(t, CredentialRoleMember, authenticated.Membership.Role)
+
+	keys.keys[keyID].Role = CredentialRoleManager
+	manager, err := service.AuthenticateSession(context.Background(), created.SessionToken, "", false)
+	require.NoError(t, err)
+	require.Equal(t, CredentialRoleManager, manager.Membership.Role)
 
 	_, err = service.AuthenticateSession(context.Background(), created.SessionToken, "wrong", true)
 	require.ErrorIs(t, err, ErrUserPortalCSRFInvalid)
