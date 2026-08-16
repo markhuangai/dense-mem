@@ -307,11 +307,16 @@ func (r *APIKeyRepositoryImpl) RevokeForProfile(ctx context.Context, profileID, 
 		`, now, teamID, id).Error; err != nil {
 			return err
 		}
-		return deactivateActorIfUnused(tx, now, id)
+		return nil
 	})
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to revoke api key for profile: %w", err)
+	}
+	if rowsAffected > 0 {
+		if err := r.deactivateActorIfUnused(ctx, now, id); err != nil {
+			return 0, fmt.Errorf("failed to reconcile revoked api key actor: %w", err)
+		}
 	}
 
 	return rowsAffected, nil
@@ -346,39 +351,36 @@ func (r *APIKeyRepositoryImpl) DeleteForProfile(ctx context.Context, profileID, 
 		`, now, teamID, id).Error; err != nil {
 			return err
 		}
-		return deactivateActorIfUnused(tx, now, id)
+		return nil
 	})
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to delete api key for profile: %w", err)
 	}
+	if rowsAffected > 0 {
+		if err := r.deactivateActorIfUnused(ctx, now, id); err != nil {
+			return 0, fmt.Errorf("failed to reconcile deleted api key actor: %w", err)
+		}
+	}
 
 	return rowsAffected, nil
 }
 
-func deactivateActorIfUnused(tx *gorm.DB, now time.Time, credentialID uuid.UUID) error {
-	// Team-scoped RLS intentionally hides memberships in other teams. Use the
-	// explicit system mode only for this derived liveness update, then restore
-	// the caller's team mode before the transaction returns.
-	if err := tx.Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
-		return err
-	}
-	updateErr := tx.Exec(`
-		UPDATE actor_identities AS actor
-		SET active = false, updated_at = $1
-		WHERE actor.id = (SELECT actor_identity_id FROM credentials WHERE id = $2)
-		  AND NOT EXISTS (
-			  SELECT 1
-			  FROM team_memberships AS membership
-			  WHERE membership.actor_identity_id = actor.id
-			    AND membership.status = 'active'
-		  )
-	`, now, credentialID).Error
-	restoreErr := tx.Exec("SELECT set_config('app.tx_mode', 'team', true)").Error
-	if updateErr != nil {
-		return updateErr
-	}
-	return restoreErr
+func (r *APIKeyRepositoryImpl) deactivateActorIfUnused(ctx context.Context, now time.Time, credentialID uuid.UUID) error {
+	// Actor liveness spans teams, so reconcile it in a separate system transaction.
+	return r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE actor_identities AS actor
+			SET active = false, updated_at = $1
+			WHERE actor.id = (SELECT actor_identity_id FROM credentials WHERE id = $2)
+			  AND NOT EXISTS (
+				  SELECT 1
+				  FROM team_memberships AS membership
+				  WHERE membership.actor_identity_id = actor.id
+				    AND membership.status = 'active'
+			  )
+		`, now, credentialID).Error
+	})
 }
 
 // UpdateNameForProfile renames a team profile without changing its API key.

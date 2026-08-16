@@ -132,6 +132,11 @@ func TestCanonicalAPIKeyLifecycleRetainsDisabledIdentity(t *testing.T) {
 	}))
 	require.Equal(t, "disabled", status)
 	require.Equal(t, 1, aliasCount)
+	var actorActive bool
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT active FROM actor_identities WHERE id = ?`, keyID).Scan(&actorActive).Error
+	}))
+	require.False(t, actorActive)
 }
 
 func TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams(t *testing.T) {
