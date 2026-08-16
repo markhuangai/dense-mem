@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import policy from "../../.github/scripts/image-release-policy.cjs";
 
@@ -18,6 +19,16 @@ const baseEvent = {
   triggerHeadMatches: true,
   actorPermission: "write",
 };
+
+test("low-trust preview builds do not export an Actions cache", async () => {
+  const workflow = await readFile(
+    new URL("../../.github/workflows/pr-test-image.yml", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(workflow, /^\s+pull_request_target:/m);
+  assert.doesNotMatch(workflow, /^\s+cache-to:/m);
+});
 
 test("same-repository pushes rebuild while the preview label remains", () => {
   assert.deepEqual(decidePreviewEvent(baseEvent), {
