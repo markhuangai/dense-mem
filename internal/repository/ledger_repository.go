@@ -214,7 +214,7 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 	}
 	var result *CreateIngestResult
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		if replay, err := loadDirectSupersessionReplay(ctx, tx, input); err != nil {
@@ -605,24 +605,6 @@ func validateExistingIngestHash(ctx context.Context, tx *gorm.DB, input CreateIn
 		return fmt.Errorf("%w: idempotency key %q already recorded with a different request", ErrIdempotencyConflict, input.IdempotencyKey)
 	}
 	return nil
-}
-
-func ensureSemanticRefs(ctx context.Context, tx *gorm.DB, teamID, profileID string) error {
-	if err := tx.WithContext(ctx).Exec(`
-		INSERT INTO semantic_team_refs (team_id)
-		VALUES (?::uuid)
-		ON CONFLICT (team_id) DO NOTHING
-	`, teamID).Error; err != nil {
-		return err
-	}
-	if err := tx.WithContext(ctx).Exec(`
-		INSERT INTO semantic_profile_refs (team_id, profile_id)
-		VALUES (?::uuid, ?::uuid)
-		ON CONFLICT (team_id, profile_id) DO NOTHING
-	`, teamID, profileID).Error; err != nil {
-		return err
-	}
-	return seedTeamPredicateDefinitions(ctx, tx, teamID)
 }
 
 func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestInput) (string, bool, error) {

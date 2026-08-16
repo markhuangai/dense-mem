@@ -135,8 +135,8 @@ func (s *lifecycleService) ResolveMemoryPlacement(
 	ctx context.Context,
 	req ResolveMemoryPlacementRequest,
 ) (*ResolveMemoryPlacementResult, error) {
-	actor, ok := requestctx.ActorProfileFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrLifecycleAuthContext
 	}
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
@@ -161,14 +161,13 @@ func (s *lifecycleService) ResolveMemoryPlacement(
 
 func (s *lifecycleService) resolvePlacementReview(
 	ctx context.Context,
-	actor requestctx.ActorProfile,
+	actor requestctx.Actor,
 	req ResolveMemoryPlacementRequest,
 ) (*ResolveMemoryPlacementResult, error) {
 	if s.placement == nil {
 		return nil, errors.New("memory lifecycle: placement repository is required")
 	}
-	credential, _ := requestctx.ActorCredentialFromContext(ctx)
-	if req.Action == domain.ResolveReleaseQuarantine && !lifecycleCanReleaseQuarantine(credential.Role) {
+	if req.Action == domain.ResolveReleaseQuarantine && !lifecycleCanReleaseQuarantine(actor.Role) {
 		return nil, errors.New("memory lifecycle: manager role is required to release quarantine")
 	}
 	if err := s.rejectUnsafeLifecycleEvidence(ctx, actor, "resolve_memory_placement", req.Evidence); err != nil {
@@ -176,8 +175,8 @@ func (s *lifecycleService) resolvePlacementReview(
 	}
 	resolved, err := s.placement.ResolvePlacementReview(ctx, repository.ResolvePlacementReviewInput{
 		TeamID:               actor.TeamID.String(),
-		OwnerProfileID:       actor.ProfileID.String(),
-		ActorRole:            credential.Role,
+		OwnerProfileID:       actor.OwnerID.String(),
+		ActorRole:            actor.Role,
 		Action:               string(req.Action),
 		IngestID:             req.IngestID,
 		PlacementItemID:      req.PlacementItemID,
@@ -208,7 +207,7 @@ func (s *lifecycleService) resolvePlacementReview(
 
 func (s *lifecycleService) forgetRelationship(
 	ctx context.Context,
-	actor requestctx.ActorProfile,
+	actor requestctx.Actor,
 	req ResolveMemoryPlacementRequest,
 ) (*ResolveMemoryPlacementResult, error) {
 	if s.semantic == nil {
@@ -227,7 +226,7 @@ func (s *lifecycleService) forgetRelationship(
 	}
 	transition, err := s.semantic.RetractRelationship(ctx, repository.RetractRelationshipInput{
 		TeamID:         actor.TeamID.String(),
-		OwnerProfileID: actor.ProfileID.String(),
+		OwnerProfileID: actor.OwnerID.String(),
 		RelationshipID: relationshipID,
 		Reason:         reason,
 		IdempotencyKey: strings.TrimSpace(req.IdempotencyKey),
@@ -249,8 +248,8 @@ func (s *lifecycleService) CorrectRelationship(
 	if s.semantic == nil {
 		return nil, errors.New("memory lifecycle: semantic repository is required")
 	}
-	actor, ok := requestctx.ActorProfileFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrLifecycleAuthContext
 	}
 	if req.Action != "submit" && req.Action != "confirm" {
@@ -258,7 +257,7 @@ func (s *lifecycleService) CorrectRelationship(
 	}
 	result, err := s.semantic.CorrectRelationship(ctx, repository.CorrectRelationshipInput{
 		TeamID:            actor.TeamID.String(),
-		OwnerProfileID:    actor.ProfileID.String(),
+		OwnerProfileID:    actor.OwnerID.String(),
 		Action:            req.Action,
 		RelationshipID:    req.RelationshipID,
 		ExpectedVersion:   req.ExpectedVersion,
@@ -290,8 +289,8 @@ func (s *lifecycleService) GetRelationshipCorrectionStatus(
 	if s.semantic == nil {
 		return nil, errors.New("submission status: semantic repository is required")
 	}
-	actor, ok := requestctx.ActorProfileFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrLifecycleAuthContext
 	}
 	submissionID := strings.TrimSpace(req.SubmissionID)
@@ -299,7 +298,7 @@ func (s *lifecycleService) GetRelationshipCorrectionStatus(
 		return nil, httperr.New(httperr.NOT_FOUND, "submission not found")
 	}
 	result, err := s.semantic.GetRelationshipCorrection(ctx, repository.GetRelationshipCorrectionInput{
-		TeamID: actor.TeamID.String(), OwnerProfileID: actor.ProfileID.String(), SubmissionID: submissionID,
+		TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SubmissionID: submissionID,
 	})
 	if err != nil {
 		return nil, translateRelationshipCorrectionError(err)
@@ -359,8 +358,8 @@ func (s *lifecycleService) RetractEvidence(
 	if s.evidence == nil {
 		return nil, errors.New("memory lifecycle: evidence repository is required")
 	}
-	actor, ok := requestctx.ActorProfileFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrLifecycleAuthContext
 	}
 	requestHash, err := retractEvidenceRequestHash(req)
@@ -369,7 +368,7 @@ func (s *lifecycleService) RetractEvidence(
 	}
 	result, err := s.evidence.RetractEvidence(ctx, repository.RetractEvidenceInput{
 		TeamID:         actor.TeamID.String(),
-		OwnerProfileID: actor.ProfileID.String(),
+		OwnerProfileID: actor.OwnerID.String(),
 		EvidenceIDs:    append([]string(nil), req.EvidenceIDs...),
 		Reason:         req.Reason,
 		IdempotencyKey: req.IdempotencyKey,
@@ -420,7 +419,7 @@ func translateEvidenceLifecycleError(err error) error {
 
 func (s *lifecycleService) rejectUnsafeLifecycleEvidence(
 	ctx context.Context,
-	actor requestctx.ActorProfile,
+	actor requestctx.Actor,
 	surface string,
 	evidence []RememberEvidenceInput,
 ) error {

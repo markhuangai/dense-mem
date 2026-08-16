@@ -425,7 +425,10 @@ func TestLifecycleReleaseQuarantineRequiresManagerRole(t *testing.T) {
 	_, err := svc.ResolveMemoryPlacement(ctx, req)
 	require.ErrorContains(t, err, "manager role is required")
 
-	ctx = requestctx.WithActorCredential(ctx, requestctx.ActorCredential{KeyID: uuid.New(), Role: "manager"})
+	actor, ok := requestctx.ActorFromContext(ctx)
+	require.True(t, ok)
+	actor.Role = "manager"
+	ctx = requestctx.WithActor(ctx, actor)
 	_, err = svc.ResolveMemoryPlacement(ctx, req)
 	require.NoError(t, err)
 }

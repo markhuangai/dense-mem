@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { ControlApi, ControlMetrics, Team, TeamProfile } from "../api";
+import { ControlApi, ControlMetrics, Credential, Team } from "../api";
 import { TelemetryDashboard } from "../telemetry/TelemetryDashboard";
 import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
 import { useVisiblePolling } from "../telemetry/useVisiblePolling";
@@ -18,7 +18,7 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
   const [teamId, setTeamId] = useState("");
   const [telemetryTeamId, setTelemetryTeamId] = useState("");
   const [telemetryProfileId, setTelemetryProfileId] = useState("");
-  const [teamProfiles, setTeamProfiles] = useState<TeamProfile[]>([]);
+  const [teamCredentials, setTeamCredentials] = useState<Credential[]>([]);
   const [error, setError] = useState("");
   const [telemetryError, setTelemetryError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -51,19 +51,19 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
     [api, windowMinutes, teamId],
   );
 
-  async function loadTeamProfiles(nextTeamId = telemetryTeamId) {
+  async function loadTeamCredentials(nextTeamId = telemetryTeamId) {
     if (!nextTeamId) {
-      setTeamProfiles([]);
+      setTeamCredentials([]);
       setTelemetryProfileId("");
       return;
     }
     try {
-      const page = await api.listTeamProfiles(nextTeamId);
-      setTeamProfiles(page.data);
-      setTelemetryProfileId((current) => (current && page.data.some((profile) => profile.id === current) ? current : page.data[0]?.id ?? ""));
+      const page = await api.listTeamCredentials(nextTeamId);
+      setTeamCredentials(page.data);
+      setTelemetryProfileId((current) => (current && page.data.some((credential) => credential.id === current) ? current : page.data[0]?.id ?? ""));
     } catch (err) {
       setTelemetryError(readError(err));
-      setTeamProfiles([]);
+      setTeamCredentials([]);
     }
   }
 
@@ -81,7 +81,7 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
       return;
     }
     if (nextScope === "profile" && !nextProfileId) {
-      setTelemetryError("Select a profile.");
+      setTelemetryError("Select a credential.");
       setTelemetryLoading(false);
       return;
     }
@@ -112,9 +112,9 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
 
   useEffect(() => {
     if (telemetryScope === "profile") {
-      void loadTeamProfiles();
+      void loadTeamCredentials();
     } else {
-      setTeamProfiles([]);
+      setTeamCredentials([]);
       setTelemetryProfileId("");
     }
   }, [telemetryScope, telemetryTeamId]);
@@ -145,7 +145,7 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
             <select id="telemetry-scope" value={telemetryScope} onChange={(event) => changeTelemetryScope(event.target.value as TelemetryControlScope)}>
               <option value="system">All teams</option>
               <option value="team">Team</option>
-              <option value="profile">Profile</option>
+              <option value="profile">Credential</option>
             </select>
             {telemetryScope !== "system" && (
               <>
@@ -160,11 +160,11 @@ export function MetricsPanel({ api, teams }: { api: ControlApi; teams: Team[] })
             )}
             {telemetryScope === "profile" && (
               <>
-                <label htmlFor="telemetry-profile">Profile</label>
+                <label htmlFor="telemetry-profile">Credential</label>
                 <select id="telemetry-profile" value={telemetryProfileId} onChange={(event) => setTelemetryProfileId(event.target.value)} disabled={!telemetryTeamId}>
-                  <option value="">Select profile</option>
-                  {teamProfiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>{profile.name || shortId(profile.id)}</option>
+                  <option value="">Select credential</option>
+                  {teamCredentials.map((credential) => (
+                    <option key={credential.id} value={credential.id}>{credential.name || shortId(credential.id)}</option>
                   ))}
                 </select>
               </>
@@ -314,16 +314,16 @@ function MetricsKeyTable({ keys }: { keys: ControlMetrics["keys"] }) {
     <div className="metrics-block">
       <div className="list-toolbar">
         <div>
-          <h3>Key usage</h3>
+          <h3>Credential usage</h3>
           <span>{keys.length}</span>
         </div>
       </div>
-      {keys.length === 0 ? <div className="table-placeholder compact">No key usage</div> : (
+      {keys.length === 0 ? <div className="table-placeholder compact">No credential usage</div> : (
         <div className="table-wrap">
           <table className="data-table metrics-table">
             <thead>
               <tr>
-                <th>Profile</th>
+                <th>Credential</th>
                 <th>Key</th>
                 <th>Team</th>
                 <th>Requests</th>

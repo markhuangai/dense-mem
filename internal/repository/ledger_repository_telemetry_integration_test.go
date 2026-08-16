@@ -225,7 +225,6 @@ func TestLedgerFirstDispositionRecognizesLegacyRememberMetadata(t *testing.T) {
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "team-first-disposition-legacy-origin")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner-first-disposition-legacy-origin")
-	prepareTelemetryBackfillRefs(t, ctx, appDB, rls, teamID, ownerID)
 	_, legacyRunID := insertTelemetryBackfillRunWithMetadata(
 		t, ctx, appDB, rls, teamID, ownerID, string(domain.PlacementRunQueued), false,
 		legacyRememberTelemetryMetadata(teamID, ownerID),
@@ -262,7 +261,6 @@ func TestLedgerBackfillFirstDispositionMarkersUsesTerminalRememberRunsAndPersist
 	teamID := createLedgerTeam(t, adminDB, rls, "team-first-disposition-backfill")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner-first-disposition-backfill")
 	repo := NewLedgerRepository(appDB, rls)
-	prepareTelemetryBackfillRefs(t, ctx, appDB, rls, teamID, ownerID)
 	_, firstRunID := insertTelemetryBackfillRun(t, ctx, appDB, rls, teamID, ownerID, string(domain.PlacementRunCompleted), true, true)
 	_, secondRunID := insertTelemetryBackfillRunWithMetadata(
 		t, ctx, appDB, rls, teamID, ownerID, string(domain.PlacementRunAwaitingReview), true,
@@ -338,7 +336,6 @@ func TestLedgerBackfillFirstDispositionMarkersSuppressesRequeuedLegacyRun(t *tes
 	teamID := createLedgerTeam(t, adminDB, rls, "team-first-disposition-backfill-requeued")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner-first-disposition-backfill-requeued")
 	repo := NewLedgerRepository(appDB, rls)
-	prepareTelemetryBackfillRefs(t, ctx, appDB, rls, teamID, ownerID)
 	_, runID := insertTelemetryBackfillRunWithMetadata(
 		t, ctx, appDB, rls, teamID, ownerID, string(domain.PlacementRunGuarded), false,
 		legacyRememberTelemetryMetadata(teamID, ownerID),
@@ -389,7 +386,6 @@ func TestLedgerBackfillFirstDispositionMarkersKeepsPartialActiveRunsPending(t *t
 	teamID := createLedgerTeam(t, adminDB, rls, "team-first-disposition-backfill-active-partial")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner-first-disposition-backfill-active-partial")
 	repo := NewLedgerRepository(appDB, rls)
-	prepareTelemetryBackfillRefs(t, ctx, appDB, rls, teamID, ownerID)
 	_, semanticCommitRunID := insertTelemetryBackfillRunWithMetadata(
 		t, ctx, appDB, rls, teamID, ownerID, string(domain.PlacementRunGuarded), false,
 		legacyRememberTelemetryMetadata(teamID, ownerID),
@@ -428,7 +424,6 @@ func TestLedgerBackfillFirstDispositionMarkersWaitsForRunTerminalState(t *testin
 	teamID := createLedgerTeam(t, adminDB, rls, "team-first-disposition-backfill-terminal")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner-first-disposition-backfill-terminal")
 	repo := NewLedgerRepository(appDB, rls)
-	prepareTelemetryBackfillRefs(t, ctx, appDB, rls, teamID, ownerID)
 	ingestID, runID := insertTelemetryBackfillRun(t, ctx, appDB, rls, teamID, ownerID, string(domain.PlacementRunGuarded), false, true)
 
 	beforeTerminal, err := repo.BackfillPlacementFirstDispositionMarkers(ctx, 1)
@@ -467,7 +462,6 @@ func TestLedgerBackfillFirstDispositionMarkersRescansLockedRun(t *testing.T) {
 	teamID := createLedgerTeam(t, adminDB, rls, "team-first-disposition-backfill-locked")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner-first-disposition-backfill-locked")
 	repo := NewLedgerRepository(appDB, rls)
-	prepareTelemetryBackfillRefs(t, ctx, appDB, rls, teamID, ownerID)
 	_, runID := insertTelemetryBackfillRun(t, ctx, appDB, rls, teamID, ownerID, string(domain.PlacementRunCompleted), true, true)
 
 	lockTx := adminDB.WithContext(ctx).Begin()
@@ -496,26 +490,6 @@ func TestLedgerBackfillFirstDispositionMarkersRescansLockedRun(t *testing.T) {
 	assert.Equal(t, int64(1), retried.Inserted)
 	assert.False(t, retried.SweepComplete)
 	assertTelemetryFirstDispositionMarkerCount(t, ctx, appDB, rls, teamID, runID, 1)
-}
-
-func prepareTelemetryBackfillRefs(t *testing.T, ctx context.Context, db *gorm.DB, rls interface {
-	WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
-}, teamID, ownerID string) {
-	t.Helper()
-	require.NoError(t, rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
-		if err := tx.Exec(`
-			INSERT INTO semantic_team_refs (team_id)
-			VALUES (?::uuid)
-			ON CONFLICT (team_id) DO NOTHING
-		`, teamID).Error; err != nil {
-			return err
-		}
-		return tx.Exec(`
-			INSERT INTO semantic_profile_refs (team_id, profile_id)
-			VALUES (?::uuid, ?::uuid)
-			ON CONFLICT (team_id, profile_id) DO NOTHING
-		`, teamID, ownerID).Error
-	}))
 }
 
 func insertTelemetryBackfillRun(

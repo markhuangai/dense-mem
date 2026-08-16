@@ -21,8 +21,10 @@ func TestRecallFeedbackEventServiceRecordsSnapshotWithActorContext(t *testing.T)
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
-	ctx = requestctx.WithActorProfile(ctx, requestctx.ActorProfile{TeamID: teamID, ProfileID: profileID})
-	ctx = requestctx.WithActorCredential(ctx, requestctx.ActorCredential{KeyID: keyID, AuthMethod: "api_key", Role: "manager"})
+	ctx = requestctx.WithActor(ctx, requestctx.Actor{
+		TeamID: teamID, OwnerID: profileID, CredentialID: &keyID,
+		AuthMethod: "api_key", Role: "manager",
+	})
 
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	repo := &recallFeedbackEventRepoStub{}
@@ -188,7 +190,7 @@ func TestRecallFeedbackEventServiceRejectsUnsnapshottedOrUnreturnedFeedbackRefs(
 			Rank: 1,
 		}},
 	}
-	teamCtx := requestctx.WithActorProfile(ctx, requestctx.ActorProfile{TeamID: teamID})
+	teamCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: teamID})
 	err = svc.RecordRecallFeedback(teamCtx, domain.RecallFeedbackSubmission{
 		RecallID:        "rec_cross_team",
 		Used:            true,

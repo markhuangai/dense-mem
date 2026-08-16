@@ -14,7 +14,7 @@ import (
 )
 
 // TestCleanupProfileState_DeletesAllPrefixes verifies that all three prefix patterns
-// (cache, session, stream) are purged when PurgeProfileState is called.
+// (cache, session, stream) are purged when PurgeTeamState is called.
 func TestCleanupProfileState_DeletesAllPrefixes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -55,7 +55,7 @@ func TestCleanupProfileState_DeletesAllPrefixes(t *testing.T) {
 	require.True(t, redisClient.Exists(ctx, streamKey).Val() > 0)
 
 	// Purge
-	err = cleanup.PurgeProfileState(ctx, profileID)
+	err = cleanup.PurgeTeamState(ctx, profileID)
 	require.NoError(t, err)
 
 	// Verify keys are deleted
@@ -100,7 +100,7 @@ func TestCleanupProfileState_LeavesOtherProfiles(t *testing.T) {
 	require.NoError(t, redisClient.Set(ctx, key2, "value2", 5*time.Minute).Err())
 
 	// Purge profile1
-	err = cleanup.PurgeProfileState(ctx, profileID1)
+	err = cleanup.PurgeTeamState(ctx, profileID1)
 	require.NoError(t, err)
 
 	// Verify profile1 key is deleted but profile2 key remains
@@ -152,7 +152,7 @@ func TestCleanupProfileState_IteratesFullScan(t *testing.T) {
 	}
 
 	// Purge
-	err = cleanup.PurgeProfileState(ctx, profileID)
+	err = cleanup.PurgeTeamState(ctx, profileID)
 	require.NoError(t, err)
 
 	// Verify all keys are deleted by checking a sample
@@ -162,9 +162,9 @@ func TestCleanupProfileState_IteratesFullScan(t *testing.T) {
 	}
 }
 
-// TestInvalidateKeySessions_MatchingKeyID verifies that only sessions with
+// TestInvalidateCredentialSessions_MatchingKeyID verifies that only sessions with
 // matching key_id are deleted.
-func TestInvalidateKeySessions_MatchingKeyID(t *testing.T) {
+func TestInvalidateCredentialSessions_MatchingKeyID(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -205,7 +205,7 @@ func TestInvalidateKeySessions_MatchingKeyID(t *testing.T) {
 	require.NoError(t, redisClient.Set(ctx, session3, string(payload3), 5*time.Minute).Err())
 
 	// Invalidate sessions for keyIDToInvalidate
-	err = cleanup.InvalidateKeySessions(ctx, profileID, keyIDToInvalidate)
+	err = cleanup.InvalidateCredentialSessions(ctx, profileID, keyIDToInvalidate)
 	require.NoError(t, err)
 
 	// Verify sessions with matching key_id are deleted
@@ -218,9 +218,9 @@ func TestInvalidateKeySessions_MatchingKeyID(t *testing.T) {
 	redisClient.Del(ctx, session2)
 }
 
-// TestInvalidateKeySessions_MalformedJSON_NocrashContinues verifies that
+// TestInvalidateCredentialSessions_MalformedJSON_NocrashContinues verifies that
 // malformed JSON in session payloads is logged and skipped without crashing.
-func TestInvalidateKeySessions_MalformedJSON_NocrashContinues(t *testing.T) {
+func TestInvalidateCredentialSessions_MalformedJSON_NocrashContinues(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -260,8 +260,8 @@ func TestInvalidateKeySessions_MalformedJSON_NocrashContinues(t *testing.T) {
 	require.NoError(t, redisClient.Set(ctx, sessionInvalidJSON, invalidJSONPayload, 5*time.Minute).Err())
 
 	// Invalidate should not crash on malformed JSON
-	err = cleanup.InvalidateKeySessions(ctx, profileID, keyID)
-	require.NoError(t, err, "InvalidateKeySessions should not return error on malformed JSON")
+	err = cleanup.InvalidateCredentialSessions(ctx, profileID, keyID)
+	require.NoError(t, err, "InvalidateCredentialSessions should not return error on malformed JSON")
 
 	// Valid session with matching key_id should be deleted
 	assert.Equal(t, int64(0), redisClient.Exists(ctx, sessionValid).Val(), "valid session should be deleted")
@@ -269,9 +269,9 @@ func TestInvalidateKeySessions_MalformedJSON_NocrashContinues(t *testing.T) {
 	// The key point is: no crash and the valid matching key was deleted
 }
 
-// TestInvalidateKeySessions_LeavesOtherKeys verifies that invalidating sessions
+// TestInvalidateCredentialSessions_LeavesOtherKeys verifies that invalidating sessions
 // for one key does not affect sessions from other profiles.
-func TestInvalidateKeySessions_LeavesOtherKeys(t *testing.T) {
+func TestInvalidateCredentialSessions_LeavesOtherKeys(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -308,7 +308,7 @@ func TestInvalidateKeySessions_LeavesOtherKeys(t *testing.T) {
 	require.NoError(t, redisClient.Set(ctx, session2, string(payload), 5*time.Minute).Err())
 
 	// Invalidate sessions for profileID1 only
-	err = cleanup.InvalidateKeySessions(ctx, profileID1, keyID)
+	err = cleanup.InvalidateCredentialSessions(ctx, profileID1, keyID)
 	require.NoError(t, err)
 
 	// Verify profileID1 session is deleted

@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { Check, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import {
   ControlApi,
-  ProfileRole,
+  MembershipRole,
   SSOGroupMapping,
   SSOGroupMappingInput,
   SSOProvider,
@@ -11,7 +11,7 @@ import {
 } from "../api";
 import { SectionHeading } from "../ui/components";
 import { DirectoryAutomationPanel } from "./DirectoryAutomationPanel";
-import { profilePermissionLabel, profileRoleLabel, readError, shortId } from "./utils";
+import { membershipGrantLabel, membershipRoleLabel, readError, shortId } from "./utils";
 
 export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
   const [providers, setProviders] = useState<SSOProvider[]>([]);
@@ -314,7 +314,7 @@ function SSOMappingForm({
   onChange: (draft: SSOGroupMappingInput) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  function updateRole(role: ProfileRole) {
+  function updateRole(role: MembershipRole) {
     onChange({ ...draft, role, scopes: role === "manager" ? ["read", "write", ...(draft.scopes.includes("feedback:read") ? ["feedback:read"] : [])] : draft.scopes });
   }
   const feedbackAccess = draft.scopes.includes("feedback:read");
@@ -328,7 +328,7 @@ function SSOMappingForm({
       <label htmlFor="sso-map-group-id">Group ID</label>
       <input id="sso-map-group-id" value={draft.group_id} onChange={(event) => onChange({ ...draft, group_id: event.target.value })} />
       <label htmlFor="sso-map-role">Role</label>
-      <select id="sso-map-role" value={draft.role} onChange={(event) => updateRole(event.target.value as ProfileRole)}>
+      <select id="sso-map-role" value={draft.role} onChange={(event) => updateRole(event.target.value as MembershipRole)}>
         <option value="member">Member</option>
         <option value="manager">Manager</option>
       </select>
@@ -383,8 +383,8 @@ function SSOMappingTable({ mappings, onDelete }: { mappings: SSOGroupMapping[]; 
             <tr key={mapping.id}>
               <td>{mapping.team_name || shortId(mapping.team_id)}</td>
               <td><code>{mapping.group_id}</code></td>
-              <td>{profilePermissionLabel(mapping.scopes)}</td>
-              <td>{profileRoleLabel(mapping.role)}</td>
+              <td>{membershipGrantLabel(mapping.scopes)}</td>
+              <td>{membershipRoleLabel(mapping.role)}</td>
               <td><span className={mapping.enabled ? "status-pill neutral" : "status-pill warning"}>{mapping.enabled ? "enabled" : "disabled"}</span></td>
               <td className="actions-cell">
                 <button className="icon-button danger-icon" type="button" aria-label="Delete group mapping" onClick={() => onDelete(mapping.id)}>

@@ -51,7 +51,7 @@ func TestMemoryPackExportOnlyProducesCanonicalV24Artifact(t *testing.T) {
 			Version:          1,
 		}},
 	})
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{TeamID: teamID, ProfileID: profileID})
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: teamID, OwnerID: profileID})
 	includeSupport := false
 	result, err := svc.Export(ctx, ExportRequest{Name: "database choices", RelationshipIDs: []string{relationshipID}, IncludeSupport: &includeSupport})
 	if err != nil {
@@ -93,7 +93,7 @@ func TestMemoryPackArtifactRejectsNonFiniteValue(t *testing.T) {
 
 func TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships(t *testing.T) {
 	teamID, profileID := uuid.New(), uuid.New()
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{TeamID: teamID, ProfileID: profileID})
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: teamID, OwnerID: profileID})
 	active := &repository.RelationshipTraceRecord{RelationshipID: "rel-1", Status: string(domain.RelationshipStatusActive)}
 	base := NewMemoryPackService(MemoryPackDependencies{Semantic: &exportSemanticStub{record: active}})
 	noActor := context.Background()
@@ -150,7 +150,7 @@ func TestMemoryPackExportIncludesSupportAndNormalizesIDs(t *testing.T) {
 	}
 	includeSupport := true
 	svc := NewMemoryPackService(MemoryPackDependencies{Semantic: &exportSemanticStub{result: trace}, Now: func() time.Time { return time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC) }})
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{TeamID: teamID, ProfileID: profileID})
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: teamID, OwnerID: profileID})
 	result, err := svc.Export(ctx, ExportRequest{Name: "  Numeric choices  ", RelationshipIDs: []string{relationshipID, relationshipID}, IncludeSupport: &includeSupport})
 	if err != nil {
 		t.Fatalf("Export: %v", err)

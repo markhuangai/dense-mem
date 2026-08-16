@@ -47,10 +47,10 @@ const managerKey: TestKey = {
   role: "manager",
 };
 
-const memberProfile: TestKey = {
+const memberCredential: TestKey = {
   ...writeKey,
   id: "44444444-4444-4444-8444-444444444444",
-  name: "Member profile",
+  name: "Member credential",
   key_suffix: "p6ZAc",
   role: "member",
 };
@@ -223,12 +223,12 @@ const telemetry = {
 };
 
 test("API key login, recall, and read-only navigation", async ({ page }) => {
-  const calls = await mockUserApi(page, { key: readKey, canRotate: false });
+  const calls = await mockUserApi(page, { key: readKey });
   await openUserPortal(page, "dm_read");
 
   await expect(page.getByText("Research Team")).toBeVisible();
   await expect(page.getByLabel("Current workspace")).not.toContainText("Mine");
-  await expect(page.getByText("Other profile")).toBeHidden();
+  await expect(page.getByText("Other credential")).toBeHidden();
 
   await page.getByLabel("Keyword").fill("project");
   await page.getByRole("button", { name: "Search" }).click();
@@ -251,12 +251,12 @@ test("API key login, recall, and read-only navigation", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Evidence" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Relationships" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Communities" })).toHaveCount(0);
-  expect(calls.disallowedProfileCalls).toEqual([]);
+  expect(calls.disallowedCredentialCalls).toEqual([]);
   expect(calls.telemetryRequests).toEqual([]);
 });
 
 test("graph tab renders a nonblank memory graph", async ({ page }) => {
-  const calls = await mockUserApi(page, { key: readKey, canRotate: false });
+  const calls = await mockUserApi(page, { key: readKey });
   await openUserPortal(page, "dm_read");
 
   await page.getByRole("button", { name: "Graph" }).click();
@@ -340,7 +340,6 @@ test("graph refresh replaces a corrected endpoint while the graph stays open", a
   };
   const harness = await mockUserApi(page, {
     key: readKey,
-    canRotate: false,
     graphSnapshots: [original, corrected],
   });
   await openUserPortal(page, "dm_read");
@@ -360,18 +359,18 @@ test("graph refresh replaces a corrected endpoint while the graph stays open", a
 });
 
 test("read-only key cannot regenerate itself", async ({ page }) => {
-  await mockUserApi(page, { key: readKey, canRotate: false });
+  await mockUserApi(page, { key: readKey });
   await openUserPortal(page, "dm_read");
 
-  await page.getByRole("button", { name: /My key/i }).click();
+  await page.getByRole("button", { name: /My credential/i }).click();
   await expect(page.getByRole("button", { name: /Regenerate key/i })).toBeDisabled();
 });
 
 test("write key regenerates only through the self-rotate endpoint", async ({ page }) => {
-  const calls = await mockUserApi(page, { key: writeKey, canRotate: true });
+  const calls = await mockUserApi(page, { key: writeKey });
   await openUserPortal(page, "dm_write");
 
-  await page.getByRole("button", { name: /My key/i }).click();
+  await page.getByRole("button", { name: /My credential/i }).click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /Regenerate key/i }).click();
 
@@ -380,27 +379,26 @@ test("write key regenerates only through the self-rotate endpoint", async ({ pag
   await expect(details.getByText("******new123")).toBeVisible();
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBeNull();
   expect(calls.rotateBodies).toEqual(["{}"]);
-  expect(calls.disallowedProfileCalls).toEqual([]);
+  expect(calls.disallowedCredentialCalls).toEqual([]);
 });
 
 test("write member key shows own usage telemetry", async ({ page }) => {
-  const calls = await mockUserApi(page, { key: writeKey, canRotate: true });
+  const calls = await mockUserApi(page, { key: writeKey });
   await openUserPortal(page, "dm_write");
 
   await page.getByRole("button", { name: "Usage" }).click();
-  await expectUsageDashboard(page, "My key usage", telemetry);
+  await expectUsageDashboard(page, "My credential usage", telemetry);
   expect(calls.telemetryRequests.length).toBeGreaterThan(0);
   expect(calls.telemetryRequests.every((url) => url.includes("/ui/api/telemetry?window=1h"))).toBe(true);
   expect(calls.telemetryRequests.every((url) => !url.includes("scope="))).toBe(true);
-  expect(calls.disallowedProfileCalls).toEqual([]);
+  expect(calls.disallowedCredentialCalls).toEqual([]);
 });
 
 test("manager key shows team usage telemetry", async ({ page }) => {
   const calls = await mockUserApi(page, {
     key: managerKey,
     canManageTeam: true,
-    canRotate: true,
-    profiles: [managerKey, memberProfile],
+    credentials: [managerKey, memberCredential],
   });
   await openUserPortal(page, "dm_manager");
 
@@ -428,7 +426,7 @@ test("invalid API key shows login error", async ({ page }) => {
 });
 
 test("responsive user portal layout", async ({ page }) => {
-  await mockUserApi(page, { key: readKey, canRotate: false });
+  await mockUserApi(page, { key: readKey });
   await openUserPortal(page, "dm_read");
 
   await expect(page.getByRole("heading", { name: "Knowledge" })).toBeVisible();
@@ -446,19 +444,18 @@ test("responsive user portal layout", async ({ page }) => {
   }
 });
 
-test("manager team page separates team editing from profile management", async ({ page }) => {
+test("manager team page separates team editing from credential management", async ({ page }) => {
   await mockUserApi(page, {
     key: managerKey,
     canManageTeam: true,
-    canRotate: true,
-    profiles: [managerKey, memberProfile],
+    credentials: [managerKey, memberCredential],
   });
   await openUserPortal(page, "dm_manager");
 
   await page.getByRole("button", { name: /^Team$/ }).click();
   const surface = page.locator(".team-management-surface");
   await expect(surface.getByRole("heading", { name: "Team" })).toBeVisible();
-  await expect(surface.getByRole("heading", { name: "Profiles" })).toBeVisible();
+  await expect(surface.getByRole("heading", { name: "Credentials" })).toBeVisible();
 
   const spacing = await surface.evaluate((element) => {
     const sections = Array.from(element.querySelectorAll(".surface-section"));
@@ -551,22 +548,20 @@ async function mockUserApi(
   page: Page,
   state: {
     key: TestKey;
-    canRotate: boolean;
     canManageTeam?: boolean;
-    profiles?: TestKey[];
+    credentials?: TestKey[];
     graphSnapshots?: Array<typeof graphSnapshot>;
   },
 ) {
   const calls = {
     rotateBodies: [] as string[],
-    disallowedProfileCalls: [] as string[],
+    disallowedCredentialCalls: [] as string[],
     telemetryRequests: [] as string[],
     graphRequests: [] as string[],
   };
   let currentTeam = { ...team };
   let currentKey = { ...state.key };
-  let currentCanRotate = state.canRotate;
-  let currentProfiles = (state.profiles ?? []).map((profile) => ({ ...profile }));
+  let currentCredentials = (state.credentials ?? []).map((credential) => ({ ...credential }));
   let portalSessionCreated = false;
   let graphSnapshotIndex = 0;
 
@@ -578,29 +573,29 @@ async function mockUserApi(
     });
   });
 
-  await page.route("**/ui/api/team/profiles**", async (route) => {
+  await page.route("**/ui/api/team/credentials**", async (route) => {
     if (state.canManageTeam) {
       const request = route.request();
       const url = new URL(request.url());
-      if (url.pathname === "/ui/api/team/profiles" && request.method() === "GET") {
+      if (url.pathname === "/ui/api/team/credentials" && request.method() === "GET") {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
           body: JSON.stringify({
-            data: currentProfiles,
-            pagination: { limit: 50, offset: 0, total: currentProfiles.length },
+            data: currentCredentials,
+            pagination: { limit: 50, offset: 0, total: currentCredentials.length },
           }),
         });
         return;
       }
     }
-    calls.disallowedProfileCalls.push(route.request().url());
-    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "profile list must not be called" }) });
+    calls.disallowedCredentialCalls.push(route.request().url());
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "credential list must not be called" }) });
   });
 
   await page.route("**/ui/api/team", async (route) => {
     if (!state.canManageTeam) {
-      calls.disallowedProfileCalls.push(route.request().url());
+      calls.disallowedCredentialCalls.push(route.request().url());
       await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "team management must not be called" }) });
       return;
     }
@@ -640,10 +635,10 @@ async function mockUserApi(
           body: JSON.stringify({
             data: {
               team: currentTeam,
-              key: currentKey,
-              auth_method: "api_key_session",
-              can_rotate: currentCanRotate,
-              can_manage_team: state.canManageTeam ?? false,
+              membership: { team_id: currentTeam.id, name: currentKey.name, grants: currentKey.scopes, role: currentKey.role },
+              credential: currentKey,
+              teams: [],
+              personal_credential: null,
             },
           }),
         });
@@ -663,22 +658,22 @@ async function mockUserApi(
       body: JSON.stringify({
         data: {
           team: currentTeam,
-          key: currentKey,
-          can_rotate: currentCanRotate,
-          can_manage_team: state.canManageTeam ?? false,
+          membership: { team_id: currentTeam.id, name: currentKey.name, grants: currentKey.scopes, role: currentKey.role },
+          credential: currentKey,
+          teams: [],
+          personal_credential: null,
         },
       }),
     });
   });
 
-  await page.route("**/ui/api/key/rotate", async (route) => {
+  await page.route("**/ui/api/credential/rotate", async (route) => {
     calls.rotateBodies.push(route.request().postData() ?? "");
     currentKey = { ...currentKey, key_suffix: "new123", last_used_at: null };
-    currentCanRotate = currentKey.scopes.includes("write");
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ data: { api_key: "dm_new_plaintext", key: currentKey } }),
+      body: JSON.stringify({ data: { api_key: "dm_new_plaintext", credential: currentKey } }),
     });
   });
 

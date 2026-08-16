@@ -10,9 +10,10 @@ describe("UserApi", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: {
         team: { id: "team-1", name: "Team", description: "", created_at: "2026-05-01T12:00:00Z", updated_at: "2026-05-01T12:00:00Z" },
-        key: { id: "key-1", team_id: "team-1", name: "Mine", key_suffix: "abc123", scopes: ["read"], role: "member", rate_limit: 120, last_used_at: null, expires_at: null, created_at: "2026-05-01T12:00:00Z" },
-        can_rotate: false,
-        can_manage_team: false,
+        membership: { team_id: "team-1", name: "Mine", grants: ["read"], role: "member" },
+        credential: { id: "key-1", team_id: "team-1", name: "Mine", key_suffix: "abc123", scopes: ["read"], role: "member", rate_limit: 120, last_used_at: null, expires_at: null, created_at: "2026-05-01T12:00:00Z" },
+        teams: [],
+        personal_credential: null,
       },
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -28,14 +29,14 @@ describe("UserApi", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: {
         api_key: "dm_new",
-        key: { id: "key-1", team_id: "team-1", name: "Mine", key_suffix: "new123", scopes: ["read", "write"], role: "member", rate_limit: 120, last_used_at: null, expires_at: null, created_at: "2026-05-01T12:00:00Z" },
+        credential: { id: "key-1", team_id: "team-1", name: "Mine", key_suffix: "new123", scopes: ["read", "write"], role: "member", rate_limit: 120, last_used_at: null, expires_at: null, created_at: "2026-05-01T12:00:00Z" },
       },
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await new UserApi("dm_key").rotateKey();
+    await new UserApi("dm_key").rotateCredential();
 
-    expect(fetchMock).toHaveBeenCalledWith("/ui/api/key/rotate", expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith("/ui/api/credential/rotate", expect.objectContaining({
       method: "POST",
       body: "{}",
     }));
@@ -272,6 +273,7 @@ describe("UserApi", () => {
         related_relationships: [
           {
             relationship_id: "33333333-3333-4333-8333-333333333333",
+            tier: "verified",
             subject: { entity_id: "44444444-4444-4444-8444-444444444444", name: "Dense-Mem" },
             predicate: "uses",
             object: { name: "PostgreSQL" },
@@ -291,6 +293,7 @@ describe("UserApi", () => {
     const result = await new UserApi("dm_key").recall("postgres", 3);
 
     expect(result).toHaveLength(1);
+    expect(result[0].tier).toBe("verified");
     expect(result[0].relationship?.relationship_id).toBe("33333333-3333-4333-8333-333333333333");
     expect(result[0].relationships?.[0].evidence_ids).toEqual(["11111111-1111-4111-8111-111111111111"]);
     expect(result[0].semantic_rank).toBe(1);

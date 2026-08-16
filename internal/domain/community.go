@@ -2,10 +2,10 @@ package domain
 
 import "time"
 
-// Community is a persisted, profile-scoped summary of a detected graph community.
+// Community is a persisted, team-scoped summary of a detected graph community.
 type Community struct {
 	CommunityID      string    `json:"community_id"`
-	ProfileID        string    `json:"team_id"`
+	TeamID           string    `json:"team_id"`
 	Level            int       `json:"level"`
 	Summary          string    `json:"summary"`
 	SummaryVersion   string    `json:"summary_version"`

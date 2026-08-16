@@ -67,11 +67,11 @@ func (r *portalSessionRepositoryStub) DeleteExpiredSessions(_ context.Context, n
 }
 
 type activePortalKeyRepositoryStub struct {
-	keys map[uuid.UUID]*domain.APIKey
+	keys map[uuid.UUID]*domain.Credential
 	err  error
 }
 
-func (r *activePortalKeyRepositoryStub) GetActiveByID(_ context.Context, id uuid.UUID) (*domain.APIKey, error) {
+func (r *activePortalKeyRepositoryStub) GetActiveByID(_ context.Context, id uuid.UUID) (*domain.Credential, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -87,9 +87,12 @@ func (r *activePortalKeyRepositoryStub) GetActiveByID(_ context.Context, id uuid
 func TestUserPortalSessionServiceUsesFixedOpaqueSevenDaySessions(t *testing.T) {
 	now := time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC)
 	keyID := uuid.New()
+	actorID := uuid.New()
+	membershipID := uuid.New()
+	ownerID := uuid.New()
 	repo := &portalSessionRepositoryStub{sessions: make(map[string]*domain.UserPortalSession)}
-	keys := &activePortalKeyRepositoryStub{keys: map[uuid.UUID]*domain.APIKey{
-		keyID: {ID: keyID, TeamID: uuid.New(), AuthSource: "api_key", Scopes: []string{"read"}},
+	keys := &activePortalKeyRepositoryStub{keys: map[uuid.UUID]*domain.Credential{
+		keyID: {ID: keyID, ActorIdentityID: actorID, MembershipID: membershipID, OwnerID: ownerID, TeamID: uuid.New(), Scopes: []string{"read"}},
 	}}
 	service := NewUserPortalSessionService(repo, keys, func() time.Time { return now })
 
@@ -104,7 +107,14 @@ func TestUserPortalSessionServiceUsesFixedOpaqueSevenDaySessions(t *testing.T) {
 
 	authenticated, err := service.AuthenticateSession(context.Background(), created.SessionToken, "", false)
 	require.NoError(t, err)
-	require.Equal(t, keyID, authenticated.ID)
+	require.Equal(t, keyID, authenticated.Credential.ID)
+	require.Equal(t, ownerID, authenticated.OwnerID)
+	require.Equal(t, CredentialRoleMember, authenticated.Membership.Role)
+
+	keys.keys[keyID].Role = CredentialRoleManager
+	manager, err := service.AuthenticateSession(context.Background(), created.SessionToken, "", false)
+	require.NoError(t, err)
+	require.Equal(t, CredentialRoleManager, manager.Membership.Role)
 
 	_, err = service.AuthenticateSession(context.Background(), created.SessionToken, "wrong", true)
 	require.ErrorIs(t, err, ErrUserPortalCSRFInvalid)
@@ -117,7 +127,7 @@ func TestUserPortalSessionServiceUsesFixedOpaqueSevenDaySessions(t *testing.T) {
 	keys.keys[keyID].Scopes = []string{"read", "write"}
 	rotated, err := service.AuthenticateSession(context.Background(), created.SessionToken, "", false)
 	require.NoError(t, err)
-	require.Equal(t, []string{"read", "write"}, rotated.Scopes)
+	require.Equal(t, []string{"read", "write"}, rotated.Membership.Grants)
 }
 
 func TestUserPortalSessionServiceRejectsMissingOrExpiredCredentials(t *testing.T) {
@@ -125,26 +135,26 @@ func TestUserPortalSessionServiceRejectsMissingOrExpiredCredentials(t *testing.T
 	keyID := uuid.New()
 	repo := &portalSessionRepositoryStub{sessions: map[string]*domain.UserPortalSession{
 		HashSSOToken("expired"): {
-			SessionHash: HashSSOToken("expired"),
-			KeyID:       keyID,
-			CSRFHash:    HashSSOToken("csrf"),
-			ExpiresAt:   now.Add(-time.Second),
+			SessionHash:  HashSSOToken("expired"),
+			CredentialID: keyID,
+			CSRFHash:     HashSSOToken("csrf"),
+			ExpiresAt:    now.Add(-time.Second),
 		},
 		HashSSOToken("active"): {
-			SessionHash: HashSSOToken("active"),
-			KeyID:       keyID,
-			CSRFHash:    HashSSOToken("csrf"),
-			ExpiresAt:   now.Add(time.Hour),
+			SessionHash:  HashSSOToken("active"),
+			CredentialID: keyID,
+			CSRFHash:     HashSSOToken("csrf"),
+			ExpiresAt:    now.Add(time.Hour),
 		},
 		HashSSOToken("boundary"): {
-			SessionHash: HashSSOToken("boundary"),
-			KeyID:       keyID,
-			CSRFHash:    HashSSOToken("csrf"),
-			ExpiresAt:   now,
+			SessionHash:  HashSSOToken("boundary"),
+			CredentialID: keyID,
+			CSRFHash:     HashSSOToken("csrf"),
+			ExpiresAt:    now,
 		},
 	}}
-	keys := &activePortalKeyRepositoryStub{keys: map[uuid.UUID]*domain.APIKey{
-		keyID: {ID: keyID, TeamID: uuid.New(), AuthSource: "api_key"},
+	keys := &activePortalKeyRepositoryStub{keys: map[uuid.UUID]*domain.Credential{
+		keyID: {ID: keyID, TeamID: uuid.New()},
 	}}
 	service := NewUserPortalSessionService(repo, keys, func() time.Time { return now })
 
@@ -168,8 +178,8 @@ func TestUserPortalSessionServicePropagatesDependencyErrors(t *testing.T) {
 	keyID := uuid.New()
 	dependencyErr := errors.New("dependency failed")
 	repo := &portalSessionRepositoryStub{sessions: make(map[string]*domain.UserPortalSession)}
-	keys := &activePortalKeyRepositoryStub{keys: map[uuid.UUID]*domain.APIKey{
-		keyID: {ID: keyID, TeamID: uuid.New(), AuthSource: "api_key"},
+	keys := &activePortalKeyRepositoryStub{keys: map[uuid.UUID]*domain.Credential{
+		keyID: {ID: keyID, TeamID: uuid.New()},
 	}}
 	portal := NewUserPortalSessionService(repo, keys, nil)
 
@@ -185,7 +195,7 @@ func TestUserPortalSessionServicePropagatesDependencyErrors(t *testing.T) {
 	keys.keys[keyID] = nil
 	_, err = portal.CreateSession(ctx, keyID)
 	require.ErrorIs(t, err, ErrUserPortalSessionInvalid)
-	keys.keys[keyID] = &domain.APIKey{ID: keyID, TeamID: uuid.New(), AuthSource: "api_key"}
+	keys.keys[keyID] = &domain.Credential{ID: keyID, TeamID: uuid.New()}
 
 	repo.deleteExpiredErr = dependencyErr
 	_, err = portal.CreateSession(ctx, keyID)
@@ -196,10 +206,10 @@ func TestUserPortalSessionServicePropagatesDependencyErrors(t *testing.T) {
 	require.ErrorIs(t, err, dependencyErr)
 	repo.createErr = nil
 	repo.sessions[HashSSOToken("session")] = &domain.UserPortalSession{
-		SessionHash: HashSSOToken("session"),
-		KeyID:       keyID,
-		CSRFHash:    HashSSOToken("csrf"),
-		ExpiresAt:   time.Now().UTC().Add(time.Hour),
+		SessionHash:  HashSSOToken("session"),
+		CredentialID: keyID,
+		CSRFHash:     HashSSOToken("csrf"),
+		ExpiresAt:    time.Now().UTC().Add(time.Hour),
 	}
 
 	repo.getErr = dependencyErr
@@ -215,4 +225,5 @@ func TestUserPortalSessionServicePropagatesDependencyErrors(t *testing.T) {
 	require.ErrorIs(t, err, ErrUserPortalSessionInvalid)
 	require.NoError(t, nilPortal.Logout(ctx, "session"))
 	require.NoError(t, portal.Logout(ctx, ""))
+	require.Nil(t, authenticatedActorFromCredential(nil))
 }

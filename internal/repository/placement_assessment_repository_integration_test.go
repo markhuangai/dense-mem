@@ -550,7 +550,7 @@ func TestPlacementAssessmentPolicyReloadsTeamThresholdAndConfigVersion(t *testin
 	assert.Equal(t, "global", initial.Source)
 	assert.Equal(t, int64(1), initial.ConfigVersion)
 
-	profileRepo := NewProfileRepository(appDB, rls)
+	profileRepo := NewTeamRepository(appDB, rls)
 	team, err := profileRepo.GetByID(ctx, uuid.MustParse(teamID))
 	require.NoError(t, err)
 	team.Config = map[string]any{

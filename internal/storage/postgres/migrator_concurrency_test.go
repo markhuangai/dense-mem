@@ -185,6 +185,22 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 		failureClass: "provider_action_required", failureCode: "provider_quota_exhausted", failedTimestamps: true,
 	})
 
+	var cleanupApplied, temporaryCleanupPolicyExists bool
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT
+			EXISTS (
+				SELECT 1 FROM goose_db_version
+				WHERE version_id = 2026081602 AND is_applied
+			),
+			EXISTS (
+				SELECT 1 FROM pg_policy
+				WHERE polrelid = 'teams'::regclass
+				  AND polname = 'teams_v25_cleanup_migration_read'
+			)
+	`).Scan(&cleanupApplied, &temporaryCleanupPolicyExists))
+	require.True(t, cleanupApplied)
+	require.False(t, temporaryCleanupPolicyExists)
+
 	var migrationApplied bool
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
 		SELECT EXISTS (

@@ -37,7 +37,7 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 		},
 		OutputSchema:   map[string]any{"type": "object"},
 		RequiredScopes: []string{"read", "write"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+		Invoke: func(ctx context.Context, teamID string, input map[string]any) (map[string]any, error) {
 			kind := strings.ToLower(stringInput(input["type"]))
 			limit := evalLimit(input)
 			metadataOnly, _ := input["metadata_only"].(bool)
@@ -46,9 +46,9 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 			}
 			switch kind {
 			case "dream":
-				return evalListDreams(ctx, deps, profileID, input, limit, metadataOnly)
+				return evalListDreams(ctx, deps, teamID, input, limit, metadataOnly)
 			case "evidence", "relationship", "entity", "value", "hypothesis":
-				return evalListKnowledgeRefs(ctx, deps, profileID, input, limit, metadataOnly)
+				return evalListKnowledgeRefs(ctx, deps, teamID, input, limit, metadataOnly)
 			default:
 				return nil, fmt.Errorf("eval_list_knowledge_refs: unsupported type %q", kind)
 			}
@@ -61,19 +61,19 @@ func auditEvaluationTool(ctx context.Context, deps Dependencies, tool string, pa
 		return ErrToolUnavailable
 	}
 	var profileID *string
-	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok && actor.TeamID != uuid.Nil {
+	if actor, ok := requestctx.ActorFromContext(ctx); ok && actor.TeamID != uuid.Nil {
 		teamID := actor.TeamID.String()
 		profileID = &teamID
 	}
 	var keyID *string
 	actorRole := "system"
-	if credential, ok := requestctx.ActorCredentialFromContext(ctx); ok {
-		if credential.KeyID != uuid.Nil {
-			id := credential.KeyID.String()
+	if actor, ok := requestctx.ActorFromContext(ctx); ok {
+		if actor.CredentialID != nil {
+			id := actor.CredentialID.String()
 			keyID = &id
 		}
-		if credential.Role != "" {
-			actorRole = credential.Role
+		if actor.Role != "" {
+			actorRole = actor.Role
 		}
 	}
 	return deps.EvaluationAudit.Append(ctx, appservice.AuditLogEntry{

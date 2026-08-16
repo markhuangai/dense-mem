@@ -50,7 +50,7 @@ export V1_COMPOSE_DATA_DIR="$(realpath -m "${V1_COMPOSE_DATA_DIR:-${V1_DATA_DIR}
 IMPORT_DIR="${IMPORT_DIR:-${V1_DATA_DIR}/runs/import}"
 BASELINE_DIR="${BASELINE_DIR:-${V1_DATA_DIR}/runs/baseline}"
 MONITOR_DIR="${MONITOR_DIR:-${V1_DATA_DIR}/monitor}"
-PROFILE_PATH="${PROFILE_PATH:-${V1_DATA_DIR}/eval_profile.json}"
+CREDENTIAL_PATH="${CREDENTIAL_PATH:-${V1_DATA_DIR}/eval_credential.json}"
 RUNNER="${RUNNER:-${V1_DATA_DIR}/tools/eval-runner}"
 IMPORT_CONCURRENCY="${IMPORT_CONCURRENCY:-10}"
 PLACEMENT_TIMEOUT="${PLACEMENT_TIMEOUT:-10m}"
@@ -156,18 +156,18 @@ load_env() {
   export DENSE_MEM_BASE_URL="${DENSE_MEM_BASE_URL:-http://127.0.0.1:${DENSE_MEM_PORT}}"
   export DENSE_MEM_CONTROL_URL="${DENSE_MEM_CONTROL_URL:-http://127.0.0.1:${CONTROL_PORTAL_PORT}}"
   export DENSE_MEM_CONTROL_TOKEN="${DENSE_MEM_CONTROL_TOKEN:-${CONTROL_PORTAL_TOKEN:-}}"
-  if [[ -z "${DENSE_MEM_API_KEY:-}" && -f "${PROFILE_PATH}" ]]; then
-    DENSE_MEM_API_KEY="$(jq -r '.api_key // empty' "${PROFILE_PATH}")"
+  if [[ -z "${DENSE_MEM_API_KEY:-}" && -f "${CREDENTIAL_PATH}" ]]; then
+    DENSE_MEM_API_KEY="$(jq -r '.api_key // empty' "${CREDENTIAL_PATH}")"
     export DENSE_MEM_API_KEY
   fi
-  if [[ -z "${EVAL_TEAM_ID:-}" && -f "${PROFILE_PATH}" ]]; then
-    EVAL_TEAM_ID="$(jq -r '.team_id // empty' "${PROFILE_PATH}")"
+  if [[ -z "${EVAL_TEAM_ID:-}" && -f "${CREDENTIAL_PATH}" ]]; then
+    EVAL_TEAM_ID="$(jq -r '.team_id // empty' "${CREDENTIAL_PATH}")"
     export EVAL_TEAM_ID
   fi
 
-  : "${DENSE_MEM_API_KEY:?Set DENSE_MEM_API_KEY or provide PROFILE_PATH with api_key}"
+  : "${DENSE_MEM_API_KEY:?Set DENSE_MEM_API_KEY or provide CREDENTIAL_PATH with api_key}"
   : "${DENSE_MEM_CONTROL_TOKEN:?Set DENSE_MEM_CONTROL_TOKEN or CONTROL_PORTAL_TOKEN}"
-  : "${EVAL_TEAM_ID:?Set EVAL_TEAM_ID or provide PROFILE_PATH with team_id}"
+  : "${EVAL_TEAM_ID:?Set EVAL_TEAM_ID or provide CREDENTIAL_PATH with team_id}"
   if ! [[ "${EVAL_TEAM_ID}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
     echo "invalid eval team UUID: ${EVAL_TEAM_ID}" >&2
     return 1

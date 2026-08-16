@@ -104,19 +104,23 @@ func ssoSessionLogAttrs(session *domain.SSOSession) []observability.LogAttr {
 		observability.Bool("session_found", true),
 		ssoUUIDLogAttr("identity_id", session.IdentityID),
 		ssoUUIDLogAttr("provider_id", session.ProviderID),
-		ssoUUIDLogAttr("team_profile_id", session.TeamProfileID),
+		ssoUUIDLogAttr("membership_id", session.MembershipID),
+		ssoUUIDLogAttr("owner_id", session.OwnerID),
 		ssoUUIDLogAttr("team_id", session.TeamID),
 		observability.String("expires_at", session.ExpiresAt.Format(time.RFC3339)),
 	}
 }
 
-func ssoAPIKeyLogAttrs(key *domain.APIKey) []observability.LogAttr {
+func ssoCredentialLogAttrs(key *domain.Credential) []observability.LogAttr {
 	if key == nil {
-		return []observability.LogAttr{observability.Bool("api_key_found", false)}
+		return []observability.LogAttr{observability.Bool("credential_found", false)}
 	}
 	attrs := []observability.LogAttr{
-		observability.Bool("api_key_found", true),
-		ssoUUIDLogAttr("profile_id", key.ID),
+		observability.Bool("credential_found", true),
+		ssoUUIDLogAttr("credential_id", key.ID),
+		ssoUUIDLogAttr("actor_identity_id", key.ActorIdentityID),
+		ssoUUIDLogAttr("membership_id", key.MembershipID),
+		ssoUUIDLogAttr("owner_id", key.OwnerID),
 		ssoUUIDLogAttr("team_id", key.GetTeamID()),
 		observability.String("role", key.Role),
 		{Key: "scopes", Value: key.Scopes},
@@ -124,8 +128,8 @@ func ssoAPIKeyLogAttrs(key *domain.APIKey) []observability.LogAttr {
 	if key.SSOProviderID != nil {
 		attrs = append(attrs, ssoUUIDLogAttr("provider_id", *key.SSOProviderID))
 	}
-	if key.SSOIdentityID != nil {
-		attrs = append(attrs, ssoUUIDLogAttr("identity_id", *key.SSOIdentityID))
+	if key.OwnerIdentityID != nil {
+		attrs = append(attrs, ssoUUIDLogAttr("owner_identity_id", *key.OwnerIdentityID))
 	}
 	if key.SSOSubject != "" {
 		attrs = append(attrs, ssoHashLogAttr("subject", key.SSOSubject))
@@ -135,6 +139,31 @@ func ssoAPIKeyLogAttrs(key *domain.APIKey) []observability.LogAttr {
 	}
 	if key.SSOEntitlementStatus != "" {
 		attrs = append(attrs, observability.String("entitlement_status", key.SSOEntitlementStatus))
+	}
+	return attrs
+}
+
+func ssoMembershipLogAttrs(membership *domain.Membership) []observability.LogAttr {
+	if membership == nil {
+		return []observability.LogAttr{observability.Bool("membership_found", false)}
+	}
+	attrs := []observability.LogAttr{
+		observability.Bool("membership_found", true),
+		ssoUUIDLogAttr("membership_id", membership.ID),
+		ssoUUIDLogAttr("actor_identity_id", membership.ActorIdentityID),
+		ssoUUIDLogAttr("owner_id", membership.OwnerID),
+		ssoUUIDLogAttr("team_id", membership.TeamID),
+		observability.String("role", membership.Role),
+		{Key: "grants", Value: membership.Grants},
+	}
+	if membership.SSOProviderID != nil {
+		attrs = append(attrs, ssoUUIDLogAttr("provider_id", *membership.SSOProviderID))
+	}
+	if membership.SSOSubject != "" {
+		attrs = append(attrs, ssoHashLogAttr("subject", membership.SSOSubject))
+	}
+	if membership.SSOGroupID != "" {
+		attrs = append(attrs, ssoHashLogAttr("sso_group_id", membership.SSOGroupID))
 	}
 	return attrs
 }

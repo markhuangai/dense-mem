@@ -14,14 +14,12 @@ import (
 
 // ProtectedDeps holds all dependencies needed for protected route registration.
 // This struct collects all the middleware and service dependencies required
-// for the protected route groups (profile and tool/data routes).
+// for the protected MCP routes.
 type ProtectedDeps struct {
-	// APIKeyRepo is the API key repository for authentication.
-	APIKeyRepo repository.APIKeyRepository
-	// ProfileService is the service for profile resolution and authorization.
-	ProfileService middleware.ProfileResolutionServiceInterface
-	// ProfileSvc is the service for profile CRUD operations (used by handlers).
-	ProfileSvc handler.ProfileServiceInterface
+	// CredentialRepo is the API key repository for authentication.
+	CredentialRepo repository.CredentialRepository
+	// TeamSvc resolves the authenticated team.
+	TeamSvc handler.TeamServiceInterface
 	// RateLimitService is the service for rate limiting.
 	RateLimitService service.RateLimitServiceInterface
 	// UsageMetrics records authenticated request usage for the control-panel metrics tab.
@@ -41,7 +39,7 @@ type ProtectedDeps struct {
 	Logger             observability.LogProvider
 	CredentialVerifier crypto.CredentialVerifier
 	LastUsedRecorder   middleware.LastUsedRecorder
-	// PostAuthMiddleware runs after authentication, profile resolution, and
+	// PostAuthMiddleware runs after authentication, team resolution, and
 	// authorization, and before usage metrics/rate limiting.
 	PostAuthMiddleware []echo.MiddlewareFunc
 }
@@ -49,9 +47,8 @@ type ProtectedDeps struct {
 // ProtectedDepsInterface is the companion interface for ProtectedDeps.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type ProtectedDepsInterface interface {
-	GetAPIKeyRepo() repository.APIKeyRepository
-	GetProfileService() middleware.ProfileResolutionServiceInterface
-	GetProfileSvc() handler.ProfileServiceInterface
+	GetCredentialRepo() repository.CredentialRepository
+	GetTeamSvc() handler.TeamServiceInterface
 	GetRateLimitService() service.RateLimitServiceInterface
 	GetUsageMetrics() service.UsageMetricsRecorder
 	GetAuditService() service.AuditService
@@ -65,16 +62,12 @@ type ProtectedDepsInterface interface {
 var _ ProtectedDepsInterface = (*ProtectedDeps)(nil)
 
 // Getters for ProtectedDepsInterface
-func (d *ProtectedDeps) GetAPIKeyRepo() repository.APIKeyRepository {
-	return d.APIKeyRepo
+func (d *ProtectedDeps) GetCredentialRepo() repository.CredentialRepository {
+	return d.CredentialRepo
 }
 
-func (d *ProtectedDeps) GetProfileService() middleware.ProfileResolutionServiceInterface {
-	return d.ProfileService
-}
-
-func (d *ProtectedDeps) GetProfileSvc() handler.ProfileServiceInterface {
-	return d.ProfileSvc
+func (d *ProtectedDeps) GetTeamSvc() handler.TeamServiceInterface {
+	return d.TeamSvc
 }
 
 func (d *ProtectedDeps) GetRateLimitService() service.RateLimitServiceInterface {
@@ -106,12 +99,12 @@ func (d *ProtectedDeps) GetPostAuthMiddleware() []echo.MiddlewareFunc {
 }
 
 // RegisterProtectedRoutesWithHandlers registers protected API routes with the
-// middleware chain required for authentication, profile authorization, rate
+// middleware chain required for authentication, team authorization, rate
 // limiting, route-specific validation, and handler execution.
 func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handlers ProtectedHandlers) {
-	// Create profile authorization service from audit service
-	profileAuthzSvc := middleware.NewProfileAuthorizationService(deps.AuditService)
-	apiKeyAuthMW := middleware.AuthMiddlewareWithOptions(deps.APIKeyRepo, deps.AuditService, deps.SecurityService, middleware.AuthOptions{
+	// Create team authorization service from audit service.
+	teamAuthzSvc := middleware.NewTeamAuthorizationService(deps.AuditService)
+	credentialAuthMW := middleware.AuthMiddlewareWithOptions(deps.CredentialRepo, deps.AuditService, deps.SecurityService, middleware.AuthOptions{
 		CredentialVerifier:      deps.CredentialVerifier,
 		SSOEntitlementValidator: deps.SSOAuthenticator,
 	})
@@ -120,9 +113,9 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	lastUsedMW := middleware.LastUsedMiddleware(deps.LastUsedRecorder)
 	protectedGroup := func(prefix string) *echo.Group {
 		group := e.Group(prefix)
-		group.Use(apiKeyAuthMW)
-		group.Use(middleware.ProfileResolutionMiddleware(deps.ProfileService))
-		group.Use(middleware.AuthorizeProfile(profileAuthzSvc))
+		group.Use(credentialAuthMW)
+		group.Use(middleware.TeamResolutionMiddleware(deps.TeamSvc))
+		group.Use(middleware.AuthorizeTeam(teamAuthzSvc))
 		group.Use(deps.PostAuthMiddleware...)
 		group.Use(usageMW)
 		group.Use(rateLimitMW)

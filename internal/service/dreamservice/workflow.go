@@ -645,11 +645,11 @@ func (s *service) status(ctx context.Context) (*StatusResult, error) {
 }
 
 func dreamActor(ctx context.Context) (string, string, error) {
-	actor, ok := requestctx.ActorProfileFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return "", "", ErrDreamAuthContext
 	}
-	return actor.TeamID.String(), actor.ProfileID.String(), nil
+	return actor.TeamID.String(), actor.OwnerID.String(), nil
 }
 
 func dreamInputSnapshot(inputs []repository.DreamInput) []map[string]any {

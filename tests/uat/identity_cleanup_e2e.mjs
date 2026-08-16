@@ -7,11 +7,11 @@ const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
-const profileID = requiredEnv("DENSE_MEM_E2E_PROFILE_ID");
+const credentialID = requiredEnv("DENSE_MEM_E2E_CREDENTIAL_ID");
 const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 const upgradeTeamID = requiredEnv("DENSE_MEM_E2E_UPGRADE_TEAM_ID");
 const upgradeProfileID = requiredEnv("DENSE_MEM_E2E_UPGRADE_PROFILE_ID");
-const upgradeAPIKey = requiredEnv("DENSE_MEM_E2E_UPGRADE_API_KEY");
+const upgradeCredential = requiredEnv("DENSE_MEM_E2E_UPGRADE_API_KEY");
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const runID = `identity-cleanup-${Date.now()}`;
@@ -30,16 +30,55 @@ const catalog = postgresRow(`
     NOT EXISTS (
       SELECT 1 FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'team_memberships' AND column_name = 'legacy_profile_id'
+    ), '|',
+    (to_regclass('public.semantic_team_refs') IS NULL)::text, '|',
+    (to_regclass('public.semantic_profile_refs') IS NULL)::text, '|',
+    (to_regclass('public.embedding_config') IS NULL)::text, '|',
+    EXISTS (
+      SELECT 1 FROM goose_db_version
+      WHERE version_id = 2026081602 AND is_applied
+    ), '|',
+    (
+      SELECT count(*) = 37
+      FROM pg_constraint AS constraint_state
+      WHERE constraint_state.contype = 'f'
+        AND constraint_state.conrelid::regclass::text = ANY(ARRAY[
+          'dream_cycle_runs', 'embedding_jobs', 'entity_correction_events', 'entity_correction_plans',
+          'entity_names', 'entity_resolution_events', 'evidence_fragments', 'evidence_lifecycle_operations',
+          'evidence_quarantines', 'evidence_security_events', 'evidence_security_signals',
+          'evidence_source_revisions', 'evidence_sources', 'hypotheses', 'hypothesis_feedback_events',
+          'knowledge_ingests', 'placement_items', 'placement_outcomes', 'placement_runs',
+          'relationship_conflict_derived_evidence_tasks', 'relationship_conflict_events',
+          'relationship_conflict_evidence_derivations', 'relationship_correction_submissions',
+          'relationship_cross_references', 'relationship_evidence_supports', 'relationship_observations',
+          'relationship_records', 'relationship_support_decision_events', 'relationship_transition_events',
+          'review_tasks', 'search_documents', 'submission_holds', 'verification_events'
+        ]::text[])
+        AND constraint_state.confrelid = 'ownership_aliases'::regclass
+        AND constraint_state.convalidated
+        AND constraint_state.confdeltype = 'r'
+    ), '|',
+    (
+      SELECT count(*) = 5
+      FROM pg_constraint AS constraint_state
+      WHERE constraint_state.contype = 'f'
+        AND constraint_state.conrelid::regclass::text = ANY(ARRAY[
+          'community_snapshot_runs', 'entity_records', 'search_projection_generations',
+          'team_predicate_definitions', 'value_records'
+        ]::text[])
+        AND constraint_state.confrelid = 'teams'::regclass
+        AND constraint_state.convalidated
+        AND constraint_state.confdeltype = 'r'
     )
   );
 `);
 if (catalog.some((value) => value !== "true" && value !== "t")) throw new Error(`identity cleanup catalog is incomplete: ${catalog}`);
 
-await mcpList(upgradeAPIKey);
+await mcpList(upgradeCredential);
 const upgradeState = postgresRow(`
   SELECT concat(
     c.id::text, '|', alias.legacy_owner_id::text, '|', c.scopes::text, '|',
-    (SELECT count(*) FROM semantic_profile_refs WHERE team_id = c.team_id), '|',
+    (SELECT count(*) FROM ownership_aliases WHERE team_id = c.team_id), '|',
     (SELECT count(*) FROM usage_metric_buckets WHERE key_id = c.id), '|',
     (SELECT count(*) FROM user_portal_sessions WHERE key_id = c.id), '|',
     (
@@ -78,20 +117,20 @@ const baseline = postgresRow(`
   JOIN team_memberships m
     ON m.actor_identity_id = c.actor_identity_id AND m.team_id = c.team_id
   JOIN actor_identities actor ON actor.id = c.actor_identity_id
-  WHERE c.id = ${sqlLiteral(profileID)}::uuid
+  WHERE c.id = ${sqlLiteral(credentialID)}::uuid
   LIMIT 1;
 `);
-const [credentialID, aliasOwnerID, membershipID, teamAdmin, credentialStatus, actorActive] = baseline;
-if (credentialID !== profileID || aliasOwnerID !== profileID || !membershipID || teamAdmin !== "true" || credentialStatus !== "active" || actorActive !== "true") {
+const [baselineCredentialID, aliasOwnerID, membershipID, teamAdmin, credentialStatus, actorActive] = baseline;
+if (baselineCredentialID !== credentialID || aliasOwnerID !== credentialID || !membershipID || teamAdmin !== "true" || credentialStatus !== "active" || actorActive !== "true") {
   throw new Error("seed key did not retain a stable active credential, alias, and membership");
 }
 
 await mcpList(apiKey);
 const portalCookies = await createPortalSession(apiKey);
 
-const sameTeam = await createProfile(teamID, `${runID}-same-team`);
+const sameTeam = await createCredential(teamID, `${runID}-same-team`);
 const otherTeam = await createTeam(`${runID}-other-team`);
-const crossTeam = await createProfile(otherTeam.id, `${runID}-cross-team`);
+const crossTeam = await createCredential(otherTeam.id, `${runID}-cross-team`);
 
 const receipt = await mcpSuccess(apiKey, "remember", rememberInput());
 const submissionID = requiredString(receipt.submission_id, "submission_id");
@@ -104,16 +143,16 @@ for (const [label, key] of [["same-team other owner", sameTeam.apiKey], ["cross-
   }
 }
 
-const rotated = await controlJSON(`/control/api/teams/${teamID}/profiles/${sameTeam.id}/rotate`, {
+const rotated = await controlJSON(`/control/api/teams/${teamID}/credentials/${sameTeam.id}/rotate`, {
   method: "POST",
   body: { name: `${runID}-rotated`, rate_limit: 300 },
 });
 const rotatedKey = requiredString(rotated.data?.api_key, "rotated api key");
-if (rotated.data?.key?.id !== sameTeam.id || rotatedKey === sameTeam.apiKey) throw new Error("rotation changed the stable credential ID or reused bearer material");
+if (rotated.data?.credential?.id !== sameTeam.id || rotatedKey === sameTeam.apiKey) throw new Error("rotation changed the stable credential ID or reused bearer material");
 if (await mcpListStatus(sameTeam.apiKey) !== 401) throw new Error("old bearer remained active after rotation");
 await mcpList(rotatedKey);
 
-await controlJSON(`/control/api/teams/${teamID}/profiles/${sameTeam.id}`, { method: "DELETE" });
+await controlJSON(`/control/api/teams/${teamID}/credentials/${sameTeam.id}`, { method: "DELETE" });
 if (await mcpListStatus(rotatedKey) !== 401) throw new Error("deleted credential remained active");
 const tombstone = postgresRow(`
   SELECT concat(c.status, '|', (c.revoked_at IS NOT NULL)::text, '|', count(a.legacy_owner_id)::text)
@@ -125,23 +164,30 @@ const tombstone = postgresRow(`
 `);
 if (tombstone.join("|") !== "disabled|true|1") throw new Error(`deleted credential did not retain its canonical tombstone: ${tombstone}`);
 
-if (postgresSucceeds(`INSERT INTO team_profiles (id) VALUES (gen_random_uuid());`)) {
-  throw new Error("post-cleanup legacy replica write unexpectedly succeeded");
+for (const [objectName, statement] of [
+  ["team_profiles", "INSERT INTO team_profiles (id) VALUES (gen_random_uuid())"],
+  ["semantic_team_refs", `INSERT INTO semantic_team_refs (team_id) VALUES (${sqlLiteral(teamID)}::uuid)`],
+  ["semantic_profile_refs", `INSERT INTO semantic_profile_refs (team_id, profile_id) VALUES (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(credentialID)}::uuid)`],
+  ["embedding_config", "SELECT * FROM embedding_config LIMIT 1"],
+]) {
+  if (postgresSucceeds(statement)) {
+    throw new Error(`post-cleanup ${objectName} access unexpectedly succeeded`);
+  }
 }
 
 restartServer();
 await waitForReady();
 await mcpList(apiKey);
 const session = await userJSON("/ui/api/session", { headers: { Cookie: portalCookies } });
-if (session.data?.auth_method !== "api_key_session" || session.data?.key?.id !== profileID) {
+if (session.data?.credential?.id !== credentialID || session.data?.membership?.team_id !== teamID) {
   throw new Error("portal session did not survive cleanup restart");
 }
 
-await waitForUsage(profileID);
+await waitForUsage(credentialID);
 const retainedHistory = postgresRow(`
   SELECT concat(
-    (SELECT count(*) FROM user_portal_sessions WHERE key_id = ${sqlLiteral(profileID)}::uuid), '|',
-    (SELECT count(*) FROM usage_metric_buckets WHERE key_id = ${sqlLiteral(profileID)}::uuid)
+    (SELECT count(*) FROM user_portal_sessions WHERE key_id = ${sqlLiteral(credentialID)}::uuid), '|',
+    (SELECT count(*) FROM usage_metric_buckets WHERE key_id = ${sqlLiteral(credentialID)}::uuid)
   );
 `);
 if (Number(retainedHistory[0]) < 1 || Number(retainedHistory[1]) < 1) throw new Error(`credential history was not retained: ${retainedHistory}`);
@@ -151,6 +197,8 @@ console.log(JSON.stringify({
   scenario: "identity_cleanup",
   tested_commit: requiredEnv("DENSE_MEM_E2E_COMMIT_SHA"),
   clean_catalog: true,
+  direct_foreign_keys: true,
+  transitional_objects_removed: true,
   bridge_seed_authentication: true,
   bridge_seed_history: true,
   stable_ids: true,
@@ -204,9 +252,9 @@ async function createTeam(name) {
   return { id: requiredString(response.data?.id, "team id") };
 }
 
-async function createProfile(targetTeamID, name) {
-  const response = await controlJSON(`/control/api/teams/${targetTeamID}/profiles`, { method: "POST", body: { name, scopes: ["read", "write"], rate_limit: 300 } });
-  return { apiKey: requiredString(response.data?.api_key, "api key"), id: requiredString(response.data?.key?.id, "profile id") };
+async function createCredential(targetTeamID, name) {
+  const response = await controlJSON(`/control/api/teams/${targetTeamID}/credentials`, { method: "POST", body: { name, scopes: ["read", "write"], rate_limit: 300 } });
+  return { apiKey: requiredString(response.data?.api_key, "api key"), id: requiredString(response.data?.credential?.id, "credential id") };
 }
 
 async function mcpSuccess(key, name, args) {

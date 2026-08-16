@@ -50,8 +50,8 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, searchDoc.SearchDocumentID)
-	apiKeyRepo := NewAPIKeyRepository(appDB, rls)
-	apiRows, err := apiKeyRepo.UpdateNameForProfile(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID), "owner-before-delete")
+	apiKeyRepo := NewCredentialRepository(appDB, rls)
+	apiRows, err := apiKeyRepo.UpdateNameForTeam(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID), "owner-before-delete")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, apiRows)
 	ssoRepo := NewSSORepository(appDB, rls)
@@ -84,7 +84,7 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 		`, mapping.ID, mapping.ProviderID, mapping.TeamID, mapping.GroupID, mapping.GroupName, pq.Array(mapping.Scopes), mapping.Role).Error
 	}))
 
-	profileRepo := NewProfileRepository(appDB, rls)
+	profileRepo := NewTeamRepository(appDB, rls)
 	require.NoError(t, profileRepo.SoftDelete(ctx, uuid.MustParse(teamID)))
 
 	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
@@ -149,7 +149,7 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	require.ErrorIs(t, err, ErrTeamInactive)
 	require.Nil(t, claimed)
 
-	apiRows, err = apiKeyRepo.UpdateScopesForProfile(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID), []string{"read"})
+	apiRows, err = apiKeyRepo.UpdateScopesForTeam(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID), []string{"read"})
 	require.ErrorIs(t, err, ErrTeamInactive)
 	require.Zero(t, apiRows)
 
@@ -212,20 +212,21 @@ func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 		DisplayName: "SSO User",
 	}
 	require.NoError(t, repo.UpsertIdentity(ctx, &identity))
-	activeProfile, err := repo.UpsertTeamProfileForMapping(ctx, identity, activeMapping, "active-profile")
+	activeProfile, err := repo.UpsertTeamMembershipForMapping(ctx, identity, activeMapping, "active-profile")
 	require.NoError(t, err)
-	archivedProfile, err := repo.UpsertTeamProfileForMapping(ctx, identity, archivedMapping, "archived-profile")
+	archivedProfile, err := repo.UpsertTeamMembershipForMapping(ctx, identity, archivedMapping, "archived-profile")
 	require.NoError(t, err)
 	duplicateAliasID := uuid.New()
 	validSession := domain.SSOSession{
-		SessionHash:   "sso-session-alias-filter-" + uuid.NewString(),
-		IdentityID:    identity.ID,
-		ProviderID:    provider.ID,
-		TeamProfileID: activeProfile.ID,
-		TeamID:        activeMapping.TeamID,
-		CSRFHash:      "sso-session-alias-filter-csrf",
-		ExpiresAt:     time.Now().UTC().Add(time.Hour),
-		CreatedAt:     time.Now().UTC(),
+		SessionHash:  "sso-session-alias-filter-" + uuid.NewString(),
+		IdentityID:   identity.ID,
+		ProviderID:   provider.ID,
+		MembershipID: activeProfile.ID,
+		OwnerID:      activeProfile.OwnerID,
+		TeamID:       activeMapping.TeamID,
+		CSRFHash:     "sso-session-alias-filter-csrf",
+		ExpiresAt:    time.Now().UTC().Add(time.Hour),
+		CreatedAt:    time.Now().UTC(),
 	}
 	require.NoError(t, repo.CreateSession(ctx, validSession))
 	credentialAliasPrefix := strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
@@ -245,18 +246,17 @@ func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 		`, activeMapping.TeamID, duplicateAliasID, identity.ID, duplicateAliasID).Error
 	}))
 	err = repo.CreateSession(ctx, domain.SSOSession{
-		SessionHash:   "sso-session-credential-alias-" + uuid.NewString(),
-		IdentityID:    identity.ID,
-		ProviderID:    provider.ID,
-		TeamProfileID: duplicateAliasID,
-		TeamID:        activeMapping.TeamID,
-		CSRFHash:      "sso-session-credential-alias-csrf",
-		ExpiresAt:     time.Now().UTC().Add(time.Hour),
-		CreatedAt:     time.Now().UTC(),
+		SessionHash: "sso-session-credential-alias-" + uuid.NewString(),
+		IdentityID:  identity.ID,
+		ProviderID:  provider.ID,
+		OwnerID:     duplicateAliasID,
+		TeamID:      activeMapping.TeamID,
+		CSRFHash:    "sso-session-credential-alias-csrf",
+		ExpiresAt:   time.Now().UTC().Add(time.Hour),
+		CreatedAt:   time.Now().UTC(),
 	})
 	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
-	err = repo.UpdateSessionTeam(ctx, validSession.SessionHash, duplicateAliasID, activeMapping.TeamID)
-	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	require.NoError(t, repo.UpdateSessionTeam(ctx, validSession.SessionHash, activeMapping.TeamID))
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE teams
@@ -266,7 +266,7 @@ func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 		`, archivedTeamID).Error
 	}))
 
-	_, err = repo.UpsertTeamProfileForMapping(ctx, identity, archivedMapping, "archived-profile")
+	_, err = repo.UpsertTeamMembershipForMapping(ctx, identity, archivedMapping, "archived-profile")
 	require.ErrorIs(t, err, ErrTeamInactive)
 
 	mappings, err := repo.ListMappingsForGroups(ctx, provider.ID, []string{"shared-group"})
@@ -275,18 +275,18 @@ func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 	assert.Equal(t, activeMapping.TeamID, mappings[0].TeamID)
 	assert.Equal(t, activeMapping.GroupName, mappings[0].GroupName)
 
-	teams, err := repo.ListTeamProfilesForIdentity(ctx, identity.ID)
+	teams, err := repo.ListTeamMembershipsForIdentity(ctx, identity.ID)
 	require.NoError(t, err)
 	require.Len(t, teams, 1)
-	require.Equal(t, activeProfile.ID, teams[0].Profile.ID)
+	require.Equal(t, activeProfile.ID, teams[0].Membership.ID)
 	assert.Equal(t, activeMapping.TeamID, teams[0].Team.ID)
-	assert.Equal(t, "active-profile", teams[0].Profile.Name)
+	assert.Equal(t, "active-profile", teams[0].Membership.Name)
 
-	loadedActive, err := repo.GetSSOProfileByID(ctx, activeProfile.ID)
+	loadedActive, err := repo.GetTeamMembershipByOwnerID(ctx, activeProfile.OwnerID)
 	require.NoError(t, err)
 	require.NotNil(t, loadedActive)
-	assert.Equal(t, "active-profile", loadedActive.Name)
-	loadedArchived, err := repo.GetSSOProfileByID(ctx, archivedProfile.ID)
+	assert.Equal(t, "active-profile", loadedActive.Membership.Name)
+	loadedArchived, err := repo.GetTeamMembershipByOwnerID(ctx, archivedProfile.OwnerID)
 	require.NoError(t, err)
 	assert.Nil(t, loadedArchived)
 }
@@ -420,7 +420,7 @@ func TestTombstonedTeamTerminalizesEmbeddingJobsWithoutUpdatingDocuments(t *test
 	require.NoError(t, err)
 	require.Len(t, jobs, 2)
 
-	profileRepo := NewProfileRepository(appDB, rls)
+	profileRepo := NewTeamRepository(appDB, rls)
 	require.NoError(t, profileRepo.SoftDelete(ctx, uuid.MustParse(teamID)))
 
 	err = searchRepo.CompleteEmbeddingJob(ctx, CompleteEmbeddingJobInput{

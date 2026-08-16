@@ -36,7 +36,7 @@ func (r *SemanticRepositoryImpl) CreateEntity(ctx context.Context, input CreateE
 	}
 	var record *EntityRecord
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		identityContext, err := marshalJSON(input.IdentityContext)
@@ -96,7 +96,7 @@ func (r *SemanticRepositoryImpl) AddEntityName(ctx context.Context, input AddEnt
 	}
 	var nameID string
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		var err error
@@ -116,7 +116,7 @@ func (r *SemanticRepositoryImpl) UpsertValue(ctx context.Context, input UpsertVa
 	}
 	var record *ValueRecord
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		metadata, err := marshalJSON(input.Metadata)
@@ -225,7 +225,7 @@ func (r *SemanticRepositoryImpl) ApplyRelationshipDecision(
 	}
 	var result *RelationshipDecisionResult
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		if err := validateSupportOwnership(ctx, tx, input); err != nil {
@@ -672,7 +672,7 @@ func (r *SemanticRepositoryImpl) CreateHypothesis(ctx context.Context, input Cre
 	}
 	var hypothesisID string
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		payload, err := marshalJSON(input.Payload)

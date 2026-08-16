@@ -298,7 +298,7 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 	}
 	var result *SearchDocumentResult
 	err = r.withActiveTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		metadata, err := marshalSearchJSON(input.Metadata)

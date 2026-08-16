@@ -158,7 +158,7 @@ func TestProcessConflictReviewTickLogsBoundedErrors(t *testing.T) {
 		0,
 		1,
 	)
-	if len(profileLogger.errs) != 1 || !errors.Is(profileLogger.errs[0], errConflictReviewProfileListFailed) {
+	if len(profileLogger.errs) != 1 || !errors.Is(profileLogger.errs[0], errConflictReviewTeamListFailed) {
 		t.Fatalf("profile list logged errors = %#v", profileLogger.errs)
 	}
 	if errors.Is(profileLogger.errs[0], rawErr) {
@@ -369,15 +369,15 @@ type conflictReviewProfileListStub struct {
 	err       error
 }
 
-func (s *conflictReviewProfileListStub) List(_ context.Context, _ int, offset int) ([]*domain.Profile, error) {
+func (s *conflictReviewProfileListStub) List(_ context.Context, _ int, offset int) ([]*domain.Team, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
 	s.offsets = append(s.offsets, offset)
 	count := s.pageSizes[offset]
-	out := make([]*domain.Profile, 0, count)
+	out := make([]*domain.Team, 0, count)
 	for i := 0; i < count; i++ {
-		out = append(out, &domain.Profile{ID: uuid.New()})
+		out = append(out, &domain.Team{ID: uuid.New()})
 	}
 	return out, nil
 }

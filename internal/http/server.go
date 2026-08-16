@@ -85,7 +85,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // NewServer creates a new Echo server with the given configuration and health checks.
 // It sets up the correlation ID middleware, error handler, and public routes.
-// The health and ready endpoints are not behind auth, profile, or rate-limit middleware.
+// The health and ready endpoints are not behind auth, team, or rate-limit middleware.
 func NewServer(cfg config.Config, logger observability.LogProvider, health HealthConfig) *echo.Echo {
 	e := echo.New()
 	if health.dependencyFlights == nil {
@@ -144,7 +144,7 @@ func NewServer(cfg config.Config, logger observability.LogProvider, health Healt
 		},
 	}))
 
-	// Register public routes (no auth/profile/rate-limit middleware)
+	// Register public routes (no auth/team/rate-limit middleware).
 	registerPublicRoutes(e, health)
 
 	return e

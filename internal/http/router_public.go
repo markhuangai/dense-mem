@@ -7,7 +7,7 @@ import (
 )
 
 // registerPublicRoutes registers public routes that do not require authentication,
-// profile resolution, or rate limiting. These routes are used for health checks
+// team resolution, or rate limiting. These routes are used for health checks
 // and readiness probes in container orchestration environments.
 func registerPublicRoutes(e *echo.Echo, healthConfig HealthConfig) {
 	// Health endpoint - simple liveness check with optional degraded status

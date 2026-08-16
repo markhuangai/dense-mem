@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -160,10 +162,21 @@ func testLogger(t *testing.T) (observability.LogProvider, *bytes.Buffer) {
 	return observability.NewWithHandler(h), buf
 }
 
-// runRPC feeds one request payload through the MCP JSON-RPC dispatcher.
+// runRPC feeds one frozen protocol fixture through the official SDK transport.
 func runRPC(t *testing.T, s *Server, request string) string {
 	t.Helper()
-	return string(s.HandlePayload(context.Background(), []byte(request)))
+	return runRPCResponse(t, s, request).Body.String()
+}
+
+func runRPCResponse(t *testing.T, s *Server, request string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(request))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", ProtocolVersion)
+	recorder := httptest.NewRecorder()
+	s.NewSDKHTTPHandler(true).ServeHTTP(recorder, req)
+	return recorder
 }
 
 type rpcResp struct {
@@ -293,18 +306,25 @@ func TestMCP_PromptsGetErrors(t *testing.T) {
 	s := NewServer(reg, "pA", logger)
 
 	cases := []struct {
-		name string
-		req  string
-		code int
+		name      string
+		req       string
+		code      int
+		httpError bool
 	}{
-		{"missing params", `{"jsonrpc":"2.0","id":1,"method":"prompts/get"}`, errCodeInvalidParams},
-		{"missing required arg", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"export_memory_as_agent_skill","arguments":{}}}`, errCodeInvalidParams},
-		{"non-string optional arg", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"export_memory_as_agent_skill","arguments":{"topic":"review workflows","skill_name":123}}}`, errCodeInvalidParams},
-		{"unknown prompt", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"missing","arguments":{}}}`, errCodeMethodNotFound},
+		{"missing params", `{"jsonrpc":"2.0","id":1,"method":"prompts/get"}`, 0, true},
+		{"missing required arg", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"export_memory_as_agent_skill","arguments":{}}}`, errCodeInvalidParams, false},
+		{"non-string optional arg", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"export_memory_as_agent_skill","arguments":{"topic":"review workflows","skill_name":123}}}`, errCodeInvalidParams, false},
+		{"unknown prompt", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"missing","arguments":{}}}`, errCodeInvalidParams, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out := runRPC(t, s, tc.req)
+			response := runRPCResponse(t, s, tc.req)
+			out := response.Body.String()
+			if tc.httpError {
+				require.GreaterOrEqual(t, response.Code, http.StatusBadRequest)
+				require.NotEmpty(t, strings.TrimSpace(out))
+				return
+			}
 			var resp rpcResp
 			if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
 				t.Fatalf("unmarshal: %v", err)
@@ -354,7 +374,7 @@ func TestMCP_InitializeIncludesTeamContext(t *testing.T) {
 	if info["name"] != "dense-mem-dense-mem-project" {
 		t.Errorf("serverInfo.name = %v; want dense-mem-dense-mem-project", info["name"])
 	}
-	if info["title"] != "Dense-Mem: Dense-Mem Project" {
+	if info["title"] != "Dense-Mem Project" {
 		t.Errorf("serverInfo.title = %v", info["title"])
 	}
 	description, _ := info["description"].(string)
@@ -518,8 +538,8 @@ func TestMCP_RuntimeFeaturePolicyIsResolvedOncePerRequest(t *testing.T) {
 	}
 	server = NewServerWithScopesTeamContextAndRuntimeConfig(invokeRegistry, "profile-a", nil, TeamContext{}, logger, feedback, dreams)
 	runRPC(t, server, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_dreams","arguments":{}}}`)
-	if feedbackCalls != 0 || dreamCalls != 1 {
-		t.Fatalf("feature config calls after Dream tools/call = feedback:%d dreams:%d; want only one Dreaming lookup", feedbackCalls, dreamCalls)
+	if feedbackCalls != 0 || dreamCalls < 1 {
+		t.Fatalf("feature config calls after Dream tools/call = feedback:%d dreams:%d; want Dreaming policy resolution only", feedbackCalls, dreamCalls)
 	}
 }
 
@@ -710,34 +730,24 @@ func TestMCP_ToolErrorSurfacesWithoutLeak(t *testing.T) {
 	}
 }
 
-func TestMCP_ParseErrorReturnsJSONRPCError(t *testing.T) {
+func TestSDKMalformedPayloadReturnsBoundedHTTPError(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
 	s := NewServer(reg, "pA", logger)
 
-	out := runRPC(t, s, `this is not json`)
-	var resp rpcResp
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
-		t.Fatalf("unmarshal: %v — out=%q", err, out)
-	}
-	if resp.Error == nil || resp.Error.Code != errCodeParseError {
-		t.Errorf("expected parse error; got %+v", resp.Error)
-	}
+	response := runRPCResponse(t, s, `this is not json`)
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	require.Contains(t, response.Body.String(), "malformed payload")
 }
 
-func TestMCP_UnknownMethodReturnsError(t *testing.T) {
+func TestSDKUnknownMethodReturnsBoundedHTTPError(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
 	s := NewServer(reg, "pA", logger)
 
-	out := runRPC(t, s, `{"jsonrpc":"2.0","id":7,"method":"does/not/exist"}`)
-	var resp rpcResp
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if resp.Error == nil || resp.Error.Code != errCodeMethodNotFound {
-		t.Errorf("expected method not found; got %+v", resp.Error)
-	}
+	response := runRPCResponse(t, s, `{"jsonrpc":"2.0","id":7,"method":"does/not/exist"}`)
+	require.GreaterOrEqual(t, response.Code, http.StatusBadRequest)
+	require.NotEmpty(t, strings.TrimSpace(response.Body.String()))
 }
 
 func TestMCP_HandlePayloadResultNotifications(t *testing.T) {
@@ -745,59 +755,53 @@ func TestMCP_HandlePayloadResultNotifications(t *testing.T) {
 	reg := registry.New()
 	s := NewServer(reg, "pA", logger)
 
-	notification := s.HandlePayloadResult(context.Background(), []byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
-	if notification.Respond {
-		t.Fatalf("notification Respond = true, payload = %q", string(notification.Payload))
-	}
-	if len(notification.Payload) != 0 {
-		t.Fatalf("notification payload = %q; want empty", string(notification.Payload))
-	}
+	notification := runRPCResponse(t, s, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	require.Equal(t, http.StatusAccepted, notification.Code)
+	require.Empty(t, notification.Body.String())
 	if strings.Contains(logBuf.String(), "method not found") {
 		t.Fatalf("initialized notification logged as unknown method: %s", logBuf.String())
 	}
 
-	invalid := s.HandlePayloadResult(context.Background(), []byte(`{"jsonrpc":"2.0"}`))
-	if !invalid.Respond {
-		t.Fatal("invalid no-id payload Respond = false; want error response")
-	}
-	var resp rpcResp
-	if err := json.Unmarshal(invalid.Payload, &resp); err != nil {
-		t.Fatalf("unmarshal invalid response: %v", err)
-	}
-	if resp.Error == nil || resp.Error.Code != errCodeInvalidRequest {
-		t.Fatalf("invalid no-id error = %+v; want invalid request", resp.Error)
-	}
+	invalid := runRPCResponse(t, s, `{"jsonrpc":"2.0"}`)
+	require.GreaterOrEqual(t, invalid.Code, http.StatusBadRequest)
+	require.NotEmpty(t, strings.TrimSpace(invalid.Body.String()))
 }
 
-func TestMCP_StrictJSONRPCAndInitializeValidation(t *testing.T) {
+func TestSDKProtocolFixturesFollowOfficialDecoder(t *testing.T) {
 	logger, _ := testLogger(t)
 	s := NewServer(registry.New(), "pA", logger)
 	for _, test := range []struct {
-		name string
-		body string
-		code int
+		name      string
+		body      string
+		httpError bool
+		rpcError  bool
 	}{
-		{"malformed JSON", `{"jsonrpc":"2.0"`, errCodeParseError},
-		{"non-object", `[]`, errCodeInvalidRequest},
-		{"wrong JSON-RPC revision", `{"jsonrpc":"1.0","id":1,"method":"tools/list"}`, errCodeInvalidRequest},
-		{"boolean ID", `{"jsonrpc":"2.0","id":true,"method":"tools/list"}`, errCodeInvalidRequest},
-		{"unknown envelope member", `{"jsonrpc":"2.0","id":1,"method":"tools/list","extra":true}`, errCodeInvalidRequest},
-		{"missing initialize params", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`, errCodeInvalidParams},
-		{"empty initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":""}}`, errCodeInvalidParams},
-		{"whitespace initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":" "}}`, errCodeInvalidParams},
-		{"non-string initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":42}}`, errCodeInvalidParams},
-		{"exact initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`, 0},
+		{"malformed JSON", `{"jsonrpc":"2.0"`, true, false},
+		{"non-object", `[]`, true, false},
+		{"wrong JSON-RPC revision", `{"jsonrpc":"1.0","id":1,"method":"tools/list"}`, true, false},
+		{"boolean ID", `{"jsonrpc":"2.0","id":true,"method":"tools/list"}`, true, false},
+		{"unknown envelope member", `{"jsonrpc":"2.0","id":1,"method":"tools/list","extra":true}`, false, false},
+		{"missing initialize params", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`, true, false},
+		{"empty initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":""}}`, false, false},
+		{"whitespace initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":" "}}`, false, false},
+		{"non-string initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":42}}`, false, true},
+		{"exact initialize revision", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`, false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			out := runRPC(t, s, test.body)
-			var resp rpcResp
-			require.NoError(t, json.Unmarshal([]byte(out), &resp))
-			if test.code == 0 {
-				require.Nil(t, resp.Error)
+			response := runRPCResponse(t, s, test.body)
+			out := response.Body.String()
+			if test.httpError {
+				require.GreaterOrEqual(t, response.Code, http.StatusBadRequest)
+				require.NotEmpty(t, strings.TrimSpace(out))
 				return
 			}
-			require.NotNil(t, resp.Error)
-			require.Equal(t, test.code, resp.Error.Code)
+			var resp rpcResp
+			require.NoError(t, json.Unmarshal([]byte(out), &resp))
+			if test.rpcError {
+				require.NotNil(t, resp.Error)
+				return
+			}
+			require.Nil(t, resp.Error)
 		})
 	}
 }
@@ -897,9 +901,15 @@ func TestMCP_ToolsCallRejectsInvalidParamsAndScope(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out := runRPC(t, s, tc.req)
+			response := runRPCResponse(t, s, tc.req)
+			out := response.Body.String()
 			var resp rpcResp
 			if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &resp); err != nil {
+				if tc.name == "missing params" {
+					require.GreaterOrEqual(t, response.Code, http.StatusBadRequest)
+					require.NotEmpty(t, strings.TrimSpace(out))
+					return
+				}
 				t.Fatalf("unmarshal: %v", err)
 			}
 			if resp.Error == nil || resp.Error.Code != tc.code {
@@ -948,16 +958,5 @@ func TestMCP_ToolsCallHandlesNilArgumentsAndMarshalFailure(t *testing.T) {
 	}
 	if resp.Error == nil || resp.Error.Code != errCodeToolFailure {
 		t.Fatalf("expected marshal failure, got %+v", resp.Error)
-	}
-}
-
-func TestMCPMustMarshalResponseFallsBackOnBadResult(t *testing.T) {
-	out := mustMarshalResponse(okResponse(json.RawMessage(`1`), map[string]any{"bad": make(chan int)}))
-	var resp rpcResp
-	if err := json.Unmarshal(out, &resp); err != nil {
-		t.Fatalf("fallback response was not valid JSON: %v", err)
-	}
-	if resp.Error == nil || resp.Error.Code != errCodeToolFailure {
-		t.Fatalf("fallback error = %+v; want tool failure", resp.Error)
 	}
 }

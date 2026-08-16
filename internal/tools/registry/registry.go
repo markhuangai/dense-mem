@@ -20,7 +20,7 @@ var toolNamePattern = regexp.MustCompile(toolNamePatternText)
 // ToolInvoker is the uniform execution contract for every registered tool.
 // The caller provides the profile scope explicitly so nothing inside the tool
 // has to parse headers or context keys — the registry stays transport-agnostic.
-type ToolInvoker func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error)
+type ToolInvoker func(ctx context.Context, teamID string, input map[string]any) (map[string]any, error)
 
 // Tool is the metadata + executor bundle for a single registered tool.
 type Tool struct {

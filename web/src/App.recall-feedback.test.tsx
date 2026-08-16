@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { GeneralConfig, RecallFeedbackConfig, RecallFeedbackEvent, Team, TeamProfile } from "./api";
+import { Credential, GeneralConfig, RecallFeedbackConfig, RecallFeedbackEvent, Team } from "./api";
 
 const team: Team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -14,10 +14,10 @@ const team: Team = {
   updated_at: "2026-05-01T12:00:00Z",
 };
 
-const profile: TeamProfile = {
+const credential: Credential = {
   id: "22222222-2222-4222-8222-222222222222",
   team_id: team.id,
-  name: "default profile",
+  name: "default credential",
   key_suffix: "abc123",
   scopes: ["read", "write"],
   role: "manager",
@@ -56,8 +56,8 @@ const recallFeedbackEvents: RecallFeedbackEvent[] = [
     updated_at: "2026-06-23T10:01:00Z",
     feedback_at: "2026-06-23T10:01:00Z",
     team_id: team.id,
-    profile_id: profile.id,
-    key_id: profile.id,
+    profile_id: credential.id,
+    key_id: credential.id,
     auth_method: "api_key",
     tool_name: "recall_memory",
     query: "Why was recall bad?",
@@ -108,8 +108,8 @@ const recallFeedbackEvents: RecallFeedbackEvent[] = [
     updated_at: "2026-06-23T10:02:00Z",
     feedback_at: null,
     team_id: team.id,
-    profile_id: profile.id,
-    key_id: profile.id,
+    profile_id: credential.id,
+    key_id: credential.id,
     auth_method: "api_key",
     tool_name: "recall_memory",
     query: "Pending recall waiting",
@@ -244,8 +244,8 @@ function mockPortalFetch() {
     if (url.endsWith("/teams") && method === "GET") {
       return jsonResponse(page([team]));
     }
-    if (url.includes("/profiles") && method === "GET") {
-      return jsonResponse(page([profile]));
+    if (url.includes("/credentials") && method === "GET") {
+      return jsonResponse(page([credential]));
     }
     return jsonResponse({ message: `unhandled ${method} ${url}` }, 500);
   });

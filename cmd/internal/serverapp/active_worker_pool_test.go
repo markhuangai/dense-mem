@@ -174,7 +174,7 @@ func TestActiveTeamWorkerPoolListsTeamsOnceBeforeIdlePoll(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	profiles := &activeWorkerProfileListStub{
-		team: &domain.Profile{ID: uuid.MustParse("47e94a49-f8b5-493e-ae0a-4e1ff52e5b28")},
+		team: &domain.Team{ID: uuid.MustParse("47e94a49-f8b5-493e-ae0a-4e1ff52e5b28")},
 	}
 	workCalls := make(chan struct{}, 30)
 	go runActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
@@ -182,7 +182,7 @@ func TestActiveTeamWorkerPoolListsTeamsOnceBeforeIdlePoll(t *testing.T) {
 		baseWorkerID: "worker",
 		count:        30,
 		pollInterval: 200 * time.Millisecond,
-		profiles:     profiles,
+		teams:        profiles,
 		logger:       observability.New(slog.LevelError),
 		workerError:  errors.New("test worker failed"),
 		work: func(context.Context, string, string) (bool, error) {
@@ -209,7 +209,7 @@ func TestActiveTeamWorkerPoolKeepsClaimedTeamHotAfterWorkerError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	profiles := &activeWorkerProfileListStub{
-		team: &domain.Profile{ID: uuid.MustParse("47e94a49-f8b5-493e-ae0a-4e1ff52e5b28")},
+		team: &domain.Team{ID: uuid.MustParse("47e94a49-f8b5-493e-ae0a-4e1ff52e5b28")},
 	}
 	workCalls := make(chan int, 2)
 	var calls atomic.Int32
@@ -218,7 +218,7 @@ func TestActiveTeamWorkerPoolKeepsClaimedTeamHotAfterWorkerError(t *testing.T) {
 		baseWorkerID: "worker",
 		count:        1,
 		pollInterval: 5 * time.Second,
-		profiles:     profiles,
+		teams:        profiles,
 		logger:       observability.New(slog.LevelError),
 		workerError:  errors.New("test worker failed"),
 		work: func(context.Context, string, string) (bool, error) {
@@ -244,14 +244,14 @@ func TestActiveTeamWorkerPoolKeepsClaimedTeamHotAfterWorkerError(t *testing.T) {
 }
 
 type activeWorkerProfileListStub struct {
-	team  *domain.Profile
+	team  *domain.Team
 	calls atomic.Int64
 }
 
-func (s *activeWorkerProfileListStub) List(_ context.Context, _, offset int) ([]*domain.Profile, error) {
+func (s *activeWorkerProfileListStub) List(_ context.Context, _, offset int) ([]*domain.Team, error) {
 	s.calls.Add(1)
 	if offset > 0 {
 		return nil, nil
 	}
-	return []*domain.Profile{s.team}, nil
+	return []*domain.Team{s.team}, nil
 }

@@ -307,7 +307,7 @@ function RecallFeedbackDetail({ event }: { event: RecallFeedbackEvent }) {
       <div className="log-detail-list" aria-label="Recall feedback details">
         <span className="log-detail-chip">recall_id={event.recall_id}</span>
         <span className="log-detail-chip">auth={event.auth_method || "unknown"}</span>
-        <span className="log-detail-chip">profile={event.profile_id ? shortId(event.profile_id) : "unknown"}</span>
+		<span className="log-detail-chip">owner={event.profile_id ? shortId(event.profile_id) : "unknown"}</span>
         <span className="log-detail-chip">key={event.key_id ? shortId(event.key_id) : "unknown"}</span>
       </div>
       <FeedbackCommentDetails event={event} />

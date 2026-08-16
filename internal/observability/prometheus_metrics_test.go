@@ -18,11 +18,11 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 	metrics := NewPrometheusMetrics()
 	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	profileID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
-		TeamID:      teamID,
-		TeamName:    "Research",
-		ProfileID:   profileID,
-		ProfileName: "Profile A",
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID:    teamID,
+		TeamName:  "Research",
+		OwnerID:   profileID,
+		OwnerName: "Profile A",
 	})
 
 	metrics.ObserveHTTPRequest(ctx, "/ui/api/evidence/:id", "get", http.StatusTeapot, 15*time.Millisecond)
@@ -161,7 +161,7 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 	}))
 	teamID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	profileID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{TeamID: teamID, ProfileID: profileID})
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: teamID, OwnerID: profileID})
 
 	RecordRememberAcknowledgement(ctx, metrics, 120*time.Millisecond, "ok")
 	RecordRememberFirstDisposition(ctx, metrics, 3*time.Second, "completed")

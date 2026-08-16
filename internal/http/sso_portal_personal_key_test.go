@@ -22,36 +22,35 @@ type ssoPersonalKeyFixture struct {
 }
 
 func TestUserPortalSSOPersonalKeyLifecycle(t *testing.T) {
-	fixture := newSSOPersonalKeyFixture(service.APIKeyRoleMember, service.StandardAPIKeyScopes())
+	fixture := newSSOPersonalKeyFixture(service.CredentialRoleMember, service.StandardCredentialScopes())
 
 	c, _ := userSSOContext(nethttp.MethodGet, "/ui/api/session", "", fixture.sessionToken)
 	session, err := fixture.handler.currentSSOSession(c)
 	require.NoError(t, err)
-	require.True(t, session.CanCreatePersonalKey)
-	require.Nil(t, session.PersonalKey)
-	require.Equal(t, []string{service.APIKeyScopeRead, service.APIKeyScopeWrite}, session.PersonalKeyMaxScopes)
+	require.Nil(t, session.Credential)
+	require.Nil(t, session.PersonalCredential)
+	require.Equal(t, []string{service.CredentialScopeRead, service.CredentialScopeWrite}, session.Membership.Grants)
 
-	c, rec := userSSOContext(nethttp.MethodPost, "/ui/api/sso/key", `{"name":"Owned","scopes":["read","write"],"rate_limit":90}`, fixture.sessionToken)
+	c, rec := userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential", `{"name":"Owned","scopes":["read","write"],"rate_limit":90}`, fixture.sessionToken)
 	setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
-	require.NoError(t, fixture.handler.createSSOKey(c))
+	require.NoError(t, fixture.handler.createSSOCredential(c))
 	require.Equal(t, nethttp.StatusCreated, rec.Code)
 	require.Contains(t, rec.Body.String(), `"api_key":"dm_created_plaintext"`)
 	require.Equal(t, "Owned", fixture.keySvc.lastCreateReq.Name)
-	require.Equal(t, []string{service.APIKeyScopeRead, service.APIKeyScopeWrite}, fixture.keySvc.lastCreateReq.Scopes)
-	require.NotNil(t, fixture.keySvc.lastCreateReq.SSOOwnerIdentityID)
-	require.Equal(t, fixture.identityID, *fixture.keySvc.lastCreateReq.SSOOwnerIdentityID)
+	require.Equal(t, []string{service.CredentialScopeRead, service.CredentialScopeWrite}, fixture.keySvc.lastCreateReq.Scopes)
+	require.NotNil(t, fixture.keySvc.lastCreateReq.OwnerIdentityID)
+	require.Equal(t, fixture.identityID, *fixture.keySvc.lastCreateReq.OwnerIdentityID)
 	require.Len(t, fixture.keySvc.keys, 1)
 
 	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/session", "", fixture.sessionToken)
 	session, err = fixture.handler.currentSSOSession(c)
 	require.NoError(t, err)
-	require.NotNil(t, session.PersonalKey)
-	require.False(t, session.CanCreatePersonalKey)
-	require.True(t, session.CanRotatePersonalKey)
+	require.NotNil(t, session.PersonalCredential)
+	require.Contains(t, session.PersonalCredential.Scopes, service.CredentialScopeWrite)
 
-	c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/key/rotate", `{}`, fixture.sessionToken)
+	c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential/rotate", `{}`, fixture.sessionToken)
 	setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
-	require.NoError(t, fixture.handler.rotateSSOKey(c))
+	require.NoError(t, fixture.handler.rotateSSOCredential(c))
 	require.Equal(t, nethttp.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"api_key":"dm_rotated_plaintext"`)
 	require.Equal(t, fixture.teamID, fixture.keySvc.rotateProfileID)
@@ -63,55 +62,55 @@ func TestUserPortalSSOCreateKeyRequestValidation(t *testing.T) {
 	identity := domain.SSOIdentity{Email: "user@example.com"}
 
 	t.Run("defaults empty name and write entitlement to read write", func(t *testing.T) {
-		req, err := userPortalSSOCreateKeyRequest(userPortalCreateSSOKeyRequest{
+		req, err := userPortalSSOCreateCredentialRequest(userPortalCreateSSOCredentialRequest{
 			RateLimit: 30,
 			ExpiresAt: &expiresAt,
-		}, identity, service.StandardAPIKeyScopes())
+		}, identity, service.StandardCredentialScopes())
 		require.NoError(t, err)
 		require.Equal(t, "SSO user@example.com", req.Name)
-		require.Equal(t, service.StandardAPIKeyScopes(), req.Scopes)
+		require.Equal(t, service.StandardCredentialScopes(), req.Scopes)
 		require.Equal(t, 30, req.RateLimit)
 		require.NotNil(t, req.ExpiresAt)
-		require.Equal(t, service.APIKeyRoleMember, req.Role)
+		require.Equal(t, service.CredentialRoleMember, req.Role)
 	})
 
 	t.Run("rejects missing read entitlement", func(t *testing.T) {
-		_, err := userPortalSSOCreateKeyRequest(userPortalCreateSSOKeyRequest{RateLimit: 30}, identity, []string{service.APIKeyScopeWrite})
+		_, err := userPortalSSOCreateCredentialRequest(userPortalCreateSSOCredentialRequest{RateLimit: 30}, identity, []string{service.CredentialScopeWrite})
 		require.ErrorContains(t, err, "sso access denied")
 	})
 
 	t.Run("rejects write above entitlement", func(t *testing.T) {
-		_, err := userPortalSSOCreateKeyRequest(userPortalCreateSSOKeyRequest{
-			Scopes:    service.StandardAPIKeyScopes(),
+		_, err := userPortalSSOCreateCredentialRequest(userPortalCreateSSOCredentialRequest{
+			Scopes:    service.StandardCredentialScopes(),
 			RateLimit: 30,
-		}, identity, []string{service.APIKeyScopeRead})
-		require.ErrorContains(t, err, "cannot create api key above sso entitlement")
+		}, identity, []string{service.CredentialScopeRead})
+		require.ErrorContains(t, err, "cannot create credential above sso entitlement")
 	})
 
 	t.Run("caps feedback scope to entitlement", func(t *testing.T) {
-		req, err := userPortalSSOCreateKeyRequest(userPortalCreateSSOKeyRequest{
-			Scopes:    []string{service.APIKeyScopeRead, service.APIKeyScopeFeedbackRead},
+		req, err := userPortalSSOCreateCredentialRequest(userPortalCreateSSOCredentialRequest{
+			Scopes:    []string{service.CredentialScopeRead, service.CredentialScopeFeedbackRead},
 			RateLimit: 30,
-		}, identity, []string{service.APIKeyScopeRead, service.APIKeyScopeFeedbackRead})
+		}, identity, []string{service.CredentialScopeRead, service.CredentialScopeFeedbackRead})
 		require.NoError(t, err)
-		require.Equal(t, []string{service.APIKeyScopeRead, service.APIKeyScopeFeedbackRead}, req.Scopes)
+		require.Equal(t, []string{service.CredentialScopeRead, service.CredentialScopeFeedbackRead}, req.Scopes)
 
-		_, err = userPortalSSOCreateKeyRequest(userPortalCreateSSOKeyRequest{
-			Scopes:    []string{service.APIKeyScopeRead, service.APIKeyScopeFeedbackRead},
+		_, err = userPortalSSOCreateCredentialRequest(userPortalCreateSSOCredentialRequest{
+			Scopes:    []string{service.CredentialScopeRead, service.CredentialScopeFeedbackRead},
 			RateLimit: 30,
-		}, identity, []string{service.APIKeyScopeRead})
-		require.ErrorContains(t, err, "cannot create api key above sso entitlement")
+		}, identity, []string{service.CredentialScopeRead})
+		require.ErrorContains(t, err, "cannot create credential above sso entitlement")
 	})
 
 	t.Run("rejects bad rate limit and expiry", func(t *testing.T) {
-		_, err := userPortalSSOCreateKeyRequest(userPortalCreateSSOKeyRequest{RateLimit: 0}, identity, []string{service.APIKeyScopeRead})
+		_, err := userPortalSSOCreateCredentialRequest(userPortalCreateSSOCredentialRequest{RateLimit: 0}, identity, []string{service.CredentialScopeRead})
 		require.ErrorContains(t, err, "rate_limit must be greater than zero")
 
 		badExpiresAt := "not-a-date"
-		_, err = userPortalSSOCreateKeyRequest(userPortalCreateSSOKeyRequest{
+		_, err = userPortalSSOCreateCredentialRequest(userPortalCreateSSOCredentialRequest{
 			RateLimit: 30,
 			ExpiresAt: &badExpiresAt,
-		}, identity, []string{service.APIKeyScopeRead})
+		}, identity, []string{service.CredentialScopeRead})
 		require.ErrorContains(t, err, "expires_at must be an RFC3339 timestamp")
 	})
 }
@@ -125,66 +124,66 @@ func TestSSOOwnedKeyDefaultName(t *testing.T) {
 
 func TestUserPortalSSOPersonalKeyDeniedBranches(t *testing.T) {
 	t.Run("manager uses team section", func(t *testing.T) {
-		fixture := newSSOPersonalKeyFixture(service.APIKeyRoleManager, service.StandardAPIKeyScopes())
-		c, _ := userSSOContext(nethttp.MethodPost, "/ui/api/sso/key", `{"rate_limit":30}`, fixture.sessionToken)
+		fixture := newSSOPersonalKeyFixture(service.CredentialRoleManager, service.StandardCredentialScopes())
+		c, _ := userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential", `{"rate_limit":30}`, fixture.sessionToken)
 		setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
-		require.ErrorContains(t, fixture.handler.createSSOKey(c), "sso managers should create api keys from the team section")
+		require.ErrorContains(t, fixture.handler.createSSOCredential(c), "sso managers should create credentials from the team section")
 
-		c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/key/rotate", `{}`, fixture.sessionToken)
+		c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential/rotate", `{}`, fixture.sessionToken)
 		setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
-		require.ErrorContains(t, fixture.handler.rotateSSOKey(c), "sso managers should rotate api keys from the team section")
+		require.ErrorContains(t, fixture.handler.rotateSSOCredential(c), "sso managers should rotate credentials from the team section")
 	})
 
 	t.Run("create requires key service and no existing owned key", func(t *testing.T) {
-		fixture := newSSOPersonalKeyFixture(service.APIKeyRoleMember, service.StandardAPIKeyScopes())
-		fixture.handler.keys = nil
-		c, _ := userSSOContext(nethttp.MethodPost, "/ui/api/sso/key", `{"rate_limit":30}`, fixture.sessionToken)
+		fixture := newSSOPersonalKeyFixture(service.CredentialRoleMember, service.StandardCredentialScopes())
+		fixture.handler.credentials = nil
+		c, _ := userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential", `{"rate_limit":30}`, fixture.sessionToken)
 		setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
-		require.ErrorContains(t, fixture.handler.createSSOKey(c), "api key service unavailable")
+		require.ErrorContains(t, fixture.handler.createSSOCredential(c), "credential service unavailable")
 
-		fixture = newSSOPersonalKeyFixture(service.APIKeyRoleMember, service.StandardAPIKeyScopes())
-		fixture.keySvc.keys = append(fixture.keySvc.keys, ssoOwnedAPIKey(fixture.teamID, fixture.identityID, service.StandardAPIKeyScopes()))
-		c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/key", `{"rate_limit":30}`, fixture.sessionToken)
+		fixture = newSSOPersonalKeyFixture(service.CredentialRoleMember, service.StandardCredentialScopes())
+		fixture.keySvc.keys = append(fixture.keySvc.keys, ssoOwnedCredential(fixture.teamID, fixture.identityID, service.StandardCredentialScopes()))
+		c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential", `{"rate_limit":30}`, fixture.sessionToken)
 		setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
-		require.ErrorContains(t, fixture.handler.createSSOKey(c), "sso-owned api key already exists for this team")
+		require.ErrorContains(t, fixture.handler.createSSOCredential(c), "sso-owned credential already exists for this team")
 	})
 
 	t.Run("rotate requires owned writable key and writable entitlement", func(t *testing.T) {
-		fixture := newSSOPersonalKeyFixture(service.APIKeyRoleMember, service.StandardAPIKeyScopes())
-		c, _ := userSSOContext(nethttp.MethodPost, "/ui/api/sso/key/rotate", `{}`, fixture.sessionToken)
+		fixture := newSSOPersonalKeyFixture(service.CredentialRoleMember, service.StandardCredentialScopes())
+		c, _ := userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential/rotate", `{}`, fixture.sessionToken)
 		setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
-		require.ErrorContains(t, fixture.handler.rotateSSOKey(c), "sso-owned api key not found")
+		require.ErrorContains(t, fixture.handler.rotateSSOCredential(c), "sso-owned credential not found")
 
-		fixture.keySvc.keys = append(fixture.keySvc.keys, ssoOwnedAPIKey(fixture.teamID, fixture.identityID, []string{service.APIKeyScopeRead}))
-		c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/key/rotate", `{}`, fixture.sessionToken)
+		fixture.keySvc.keys = append(fixture.keySvc.keys, ssoOwnedCredential(fixture.teamID, fixture.identityID, []string{service.CredentialScopeRead}))
+		c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential/rotate", `{}`, fixture.sessionToken)
 		setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
-		require.ErrorContains(t, fixture.handler.rotateSSOKey(c), "sso-owned api key cannot be rotated")
+		require.ErrorContains(t, fixture.handler.rotateSSOCredential(c), "sso-owned credential cannot be rotated")
 
-		readOnlyFixture := newSSOPersonalKeyFixture(service.APIKeyRoleMember, []string{service.APIKeyScopeRead})
-		readOnlyFixture.keySvc.keys = append(readOnlyFixture.keySvc.keys, ssoOwnedAPIKey(readOnlyFixture.teamID, readOnlyFixture.identityID, service.StandardAPIKeyScopes()))
-		c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/key/rotate", `{}`, readOnlyFixture.sessionToken)
+		readOnlyFixture := newSSOPersonalKeyFixture(service.CredentialRoleMember, []string{service.CredentialScopeRead})
+		readOnlyFixture.keySvc.keys = append(readOnlyFixture.keySvc.keys, ssoOwnedCredential(readOnlyFixture.teamID, readOnlyFixture.identityID, service.StandardCredentialScopes()))
+		c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential/rotate", `{}`, readOnlyFixture.sessionToken)
 		setUserSSOPrincipal(c, readOnlyFixture.profileID, readOnlyFixture.teamID)
-		require.ErrorContains(t, readOnlyFixture.handler.rotateSSOKey(c), "sso-owned api key cannot be rotated")
+		require.ErrorContains(t, readOnlyFixture.handler.rotateSSOCredential(c), "sso-owned credential cannot be rotated")
 	})
 }
 
 func TestUserPortalSSORequestSessionGuards(t *testing.T) {
 	handler := &userPortalHandler{}
-	c, _ := userSSOContext(nethttp.MethodPost, "/ui/api/sso/key", `{}`, "")
+	c, _ := userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential", `{}`, "")
 	_, _, err := handler.ssoRequestSession(c)
 	require.ErrorContains(t, err, "sso is not configured")
 
-	fixture := newSSOPersonalKeyFixture(service.APIKeyRoleMember, service.StandardAPIKeyScopes())
-	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/key", `{}`, fixture.sessionToken)
+	fixture := newSSOPersonalKeyFixture(service.CredentialRoleMember, service.StandardCredentialScopes())
+	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential", `{}`, fixture.sessionToken)
 	_, _, err = fixture.handler.ssoRequestSession(c)
 	require.ErrorContains(t, err, "authentication required")
 
-	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/key", `{}`, fixture.sessionToken)
-	setUserAPIKeyPrincipal(c, fixture.profileID, fixture.teamID)
+	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential", `{}`, fixture.sessionToken)
+	setUserCredentialPrincipal(c, fixture.profileID, fixture.teamID)
 	_, _, err = fixture.handler.ssoRequestSession(c)
 	require.ErrorContains(t, err, "sso session required")
 
-	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/key", `{}`, "")
+	c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential", `{}`, "")
 	setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
 	_, _, err = fixture.handler.ssoRequestSession(c)
 	require.ErrorContains(t, err, "authentication required")
@@ -195,12 +194,13 @@ func newSSOPersonalKeyFixture(role string, scopes []string) ssoPersonalKeyFixtur
 	providerID := uuid.New()
 	identityID := uuid.New()
 	teamID := uuid.New()
+	membershipID := uuid.New()
 	profileID := uuid.New()
 	sessionToken := "session-token"
 	mapping := httpSSOMapping(providerID, teamID, "Team One", "group-one", role, now)
 	mapping.Scopes = append([]string{}, scopes...)
-	profile := httpSSOTeamProfile(identityID, providerID, profileID, teamID, "Team One", role, now)
-	profile.Profile.Scopes = append([]string{}, scopes...)
+	profile := httpSSOTeamMembership(identityID, providerID, membershipID, profileID, teamID, "Team One", role, now)
+	profile.Membership.Grants = append([]string{}, scopes...)
 	repo := &httpSSORepoStub{
 		providers: map[uuid.UUID]*domain.SSOProvider{
 			providerID: httpSSOProvider(providerID, "Enterprise IdP", now),
@@ -225,23 +225,23 @@ func newSSOPersonalKeyFixture(role string, scopes []string) ssoPersonalKeyFixtur
 		mappings: []*domain.SSOGroupMapping{mapping},
 		sessions: map[string]*domain.SSOSession{
 			service.HashSSOToken(sessionToken): {
-				SessionHash:   service.HashSSOToken(sessionToken),
-				IdentityID:    identityID,
-				ProviderID:    providerID,
-				TeamProfileID: profileID,
-				TeamID:        teamID,
-				ExpiresAt:     now.Add(time.Hour),
-				CreatedAt:     now,
+				SessionHash:  service.HashSSOToken(sessionToken),
+				IdentityID:   identityID,
+				ProviderID:   providerID,
+				MembershipID: membershipID,
+				OwnerID:      profileID,
+				TeamID:       teamID,
+				ExpiresAt:    now.Add(time.Hour),
+				CreatedAt:    now,
 			},
 		},
-		teamProfiles: []*domain.SSOTeamProfile{profile},
+		teamProfiles: []*domain.SSOTeamMembership{profile},
 		now:          now,
 	}
-	repo.ssoProfiles = map[uuid.UUID]*domain.APIKey{profileID: &repo.teamProfiles[0].Profile}
 	keySvc := &userPortalKeySvc{}
 	return ssoPersonalKeyFixture{
 		handler: &userPortalHandler{
-			keys: keySvc,
+			credentials: keySvc,
 			sso: service.NewSSOService(repo, service.SSOConfig{
 				PublicBaseURL: "https://portal.example.com",
 				Now:           func() time.Time { return now },
@@ -255,18 +255,16 @@ func newSSOPersonalKeyFixture(role string, scopes []string) ssoPersonalKeyFixtur
 	}
 }
 
-func ssoOwnedAPIKey(teamID, identityID uuid.UUID, scopes []string) *domain.APIKey {
-	return &domain.APIKey{
-		ID:                 uuid.New(),
-		TeamID:             teamID,
-		ProfileID:          teamID,
-		Name:               "Owned",
-		Label:              "Owned",
-		KeySuffix:          "owned1",
-		Scopes:             append([]string{}, scopes...),
-		Role:               service.APIKeyRoleMember,
-		RateLimit:          30,
-		CreatedAt:          time.Now().UTC().Truncate(time.Second),
-		SSOOwnerIdentityID: &identityID,
+func ssoOwnedCredential(teamID, identityID uuid.UUID, scopes []string) *domain.Credential {
+	return &domain.Credential{
+		ID:              uuid.New(),
+		TeamID:          teamID,
+		Name:            "Owned",
+		KeySuffix:       "owned1",
+		Scopes:          append([]string{}, scopes...),
+		Role:            service.CredentialRoleMember,
+		RateLimit:       30,
+		CreatedAt:       time.Now().UTC().Truncate(time.Second),
+		OwnerIdentityID: &identityID,
 	}
 }

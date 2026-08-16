@@ -30,9 +30,9 @@ func TestSemanticTraceRejectsMismatchedConflictTeam(t *testing.T) {
 		}},
 	}}
 	service := NewSemantic(store)
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
-		TeamID:    teamID,
-		ProfileID: uuid.New(),
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID:  teamID,
+		OwnerID: uuid.New(),
 	})
 
 	_, err := service.Trace(ctx, "", TraceRequest{RelationshipID: uuid.NewString()})
@@ -50,9 +50,9 @@ func TestSemanticTraceAllowsMatchingConflictTeam(t *testing.T) {
 		}},
 	}}
 	service := NewSemantic(store)
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
-		TeamID:    teamID,
-		ProfileID: uuid.New(),
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID:  teamID,
+		OwnerID: uuid.New(),
 	})
 
 	result, err := service.Trace(ctx, "", TraceRequest{RelationshipID: uuid.NewString()})

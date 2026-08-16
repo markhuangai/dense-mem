@@ -86,7 +86,7 @@ func TestSchedulerNextMinuteDelayAlignsToUTCMinute(t *testing.T) {
 
 func TestSchedulerRunsDueAtFirstMinuteBoundary(t *testing.T) {
 	teamID := uuid.New()
-	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
+	profiles := &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}
 	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig()}
 	scheduler := NewScheduler(dreams, profiles, discardSchedulerLogger())
 	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC) }
@@ -104,9 +104,9 @@ func TestSchedulerBoundaryWaitHonorsCancellation(t *testing.T) {
 }
 
 func TestSchedulerPagesThroughTeamsAndUsesScheduledPath(t *testing.T) {
-	teams := make([]*domain.Profile, 101)
+	teams := make([]*domain.Team, 101)
 	for i := range teams {
-		teams[i] = &domain.Profile{ID: uuid.New()}
+		teams[i] = &domain.Team{ID: uuid.New()}
 	}
 	profiles := &schedulerProfileStub{profiles: teams}
 	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig()}
@@ -115,14 +115,14 @@ func TestSchedulerPagesThroughTeamsAndUsesScheduledPath(t *testing.T) {
 
 	scheduler.runDue(context.Background())
 
-	require.Equal(t, []int{0, schedulerProfilePageSize}, profiles.offsets)
+	require.Equal(t, []int{0, schedulerTeamPageSize}, profiles.offsets)
 	require.Len(t, dreams.scheduledTeams, 101)
 	require.Empty(t, dreams.missedTeams)
 }
 
 func TestSchedulerDoesNotRecordMissedWindowWhenFirstObservedLate(t *testing.T) {
 	teamID := uuid.New()
-	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
+	profiles := &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}
 	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig()}
 	scheduler := NewScheduler(dreams, profiles, discardSchedulerLogger())
 	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 3, 1, 0, 0, time.UTC) }
@@ -137,7 +137,7 @@ func TestSchedulerDoesNotRecordMissedWindowWhenFirstObservedLate(t *testing.T) {
 
 func TestSchedulerDoesNotRecordPreviousLocalWindowWhenFirstObservedOvernight(t *testing.T) {
 	teamID := uuid.New()
-	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
+	profiles := &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}
 	dreams := &schedulerDreamStub{cfg: EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{
 		Enabled:        true,
 		StartTimeLocal: "23:00",
@@ -157,7 +157,7 @@ func TestSchedulerDoesNotRecordPreviousLocalWindowWhenFirstObservedOvernight(t *
 
 func TestSchedulerRecordsMissedWindowAfterArmingBeforeWindow(t *testing.T) {
 	teamID := uuid.New()
-	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
+	profiles := &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}
 	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig()}
 	scheduler := NewScheduler(dreams, profiles, discardSchedulerLogger())
 	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 2, 59, 0, 0, time.UTC) }
@@ -182,7 +182,7 @@ func TestSchedulerRecordsMissedWindowAfterArmingBeforeWindow(t *testing.T) {
 
 func TestSchedulerDoesNotObserveSkippedMissedWindow(t *testing.T) {
 	teamID := uuid.New()
-	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
+	profiles := &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}
 	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig(), missedStatus: "skipped"}
 	scheduler := NewScheduler(dreams, profiles, discardSchedulerLogger())
 	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 2, 59, 0, 0, time.UTC) }
@@ -203,7 +203,7 @@ func TestSchedulerDoesNotObserveSkippedMissedWindow(t *testing.T) {
 
 func TestSchedulerRecordsMissedWindowAfterDueCycleSkips(t *testing.T) {
 	teamID := uuid.New()
-	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
+	profiles := &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}
 	dreams := &schedulerDreamStub{cfg: dueSchedulerConfig(), scheduledStatus: "skipped"}
 	scheduler := NewScheduler(dreams, profiles, discardSchedulerLogger())
 	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC) }
@@ -222,7 +222,7 @@ func TestSchedulerRecordsMissedWindowAfterDueCycleSkips(t *testing.T) {
 
 func TestSchedulerRecordsNonexistentDSTWindowWithoutRunningEarly(t *testing.T) {
 	teamID := uuid.New()
-	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
+	profiles := &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}
 	dreams := &schedulerDreamStub{cfg: EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{
 		Enabled:        true,
 		StartTimeLocal: "02:30",
@@ -253,7 +253,7 @@ func TestSchedulerRecordsNonexistentDSTWindowWithoutRunningEarly(t *testing.T) {
 
 func TestSchedulerRunsOnlyOnceAcrossFallBackDuplicateMinute(t *testing.T) {
 	teamID := uuid.New()
-	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}
+	profiles := &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}
 	dreams := &schedulerDreamStub{cfg: EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{
 		Enabled:        true,
 		StartTimeLocal: "01:30",
@@ -277,7 +277,7 @@ func TestSchedulerRunsOnlyOnceAcrossFallBackDuplicateMinute(t *testing.T) {
 func TestSchedulerContinuesAfterPerTeamErrorAndStopsOnListError(t *testing.T) {
 	failedID := uuid.New()
 	successID := uuid.New()
-	profiles := &schedulerProfileStub{profiles: []*domain.Profile{{ID: failedID}, {ID: successID}}}
+	profiles := &schedulerProfileStub{profiles: []*domain.Team{{ID: failedID}, {ID: successID}}}
 	dreams := &schedulerDreamStub{
 		cfg:           dueSchedulerConfig(),
 		scheduledErrs: map[string]error{failedID.String(): errors.New("scheduled failure")},
@@ -313,13 +313,13 @@ func TestSchedulerLogsBoundedErrorsAndSkipsUnavailableSchedules(t *testing.T) {
 		},
 		{
 			name:     "config resolve",
-			profiles: &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}},
+			profiles: &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}},
 			dreams:   &schedulerDreamStub{cfgErrs: map[string]error{teamID.String(): errors.New(rawError)}},
 			wantKind: "config_resolve_failed",
 		},
 		{
 			name:     "cycle",
-			profiles: &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}},
+			profiles: &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}},
 			dreams: &schedulerDreamStub{
 				cfg:           dueSchedulerConfig(),
 				scheduledErrs: map[string]error{teamID.String(): errors.New(rawError)},
@@ -345,7 +345,7 @@ func TestSchedulerLogsBoundedErrorsAndSkipsUnavailableSchedules(t *testing.T) {
 		Timezone:       "not-a-timezone",
 		MaxOutputs:     5,
 	}}}
-	scheduler := NewScheduler(dreams, &schedulerProfileStub{profiles: []*domain.Profile{{ID: teamID}}}, slog.New(slog.NewTextHandler(&logs, nil)))
+	scheduler := NewScheduler(dreams, &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}, slog.New(slog.NewTextHandler(&logs, nil)))
 	scheduler.now = func() time.Time { return time.Date(2026, 6, 11, 3, 0, 0, 0, time.UTC) }
 	scheduler.runDue(context.Background())
 
@@ -386,7 +386,7 @@ func dueSchedulerConfig() EffectiveConfig {
 }
 
 type schedulerProfileStub struct {
-	profiles []*domain.Profile
+	profiles []*domain.Team
 	offsets  []int
 	err      error
 }
@@ -395,11 +395,11 @@ func discardSchedulerLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func (s *schedulerProfileStub) GetByID(context.Context, uuid.UUID) (*domain.Profile, error) {
+func (s *schedulerProfileStub) GetByID(context.Context, uuid.UUID) (*domain.Team, error) {
 	return nil, nil
 }
 
-func (s *schedulerProfileStub) List(_ context.Context, limit, offset int) ([]*domain.Profile, error) {
+func (s *schedulerProfileStub) List(_ context.Context, limit, offset int) ([]*domain.Team, error) {
 	s.offsets = append(s.offsets, offset)
 	if s.err != nil {
 		return nil, s.err
@@ -503,4 +503,4 @@ func (s *schedulerDreamStub) EffectiveConfig(_ context.Context, teamID string) (
 }
 
 var _ Service = (*schedulerDreamStub)(nil)
-var _ ProfileService = (*schedulerProfileStub)(nil)
+var _ TeamService = (*schedulerProfileStub)(nil)

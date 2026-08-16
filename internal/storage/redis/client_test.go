@@ -31,10 +31,10 @@ func TestKeyBuilder_EmptyProfileID_Rejects(t *testing.T) {
 	kb := NewKeyBuilder()
 
 	_, err := kb.RateLimit("", "identifier")
-	assert.ErrorIs(t, err, ErrEmptyProfileID)
+	assert.ErrorIs(t, err, ErrEmptyNamespaceID)
 
 	_, err = kb.Stream("", "identifier")
-	assert.ErrorIs(t, err, ErrEmptyProfileID)
+	assert.ErrorIs(t, err, ErrEmptyNamespaceID)
 }
 
 // TestKeyBuilder_InvalidCategory_Rejects tests that invalid categories are rejected.

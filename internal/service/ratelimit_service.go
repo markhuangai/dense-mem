@@ -9,7 +9,7 @@ import (
 // RateLimitServiceInterface is the companion interface for RateLimitService.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type RateLimitServiceInterface interface {
-	Check(ctx context.Context, profileID, routePath string, limit int) (allowed bool, remaining int, resetAt time.Time, err error)
+	Check(ctx context.Context, subjectID, routePath string, limit int) (allowed bool, remaining int, resetAt time.Time, err error)
 }
 
 // RateLimitStore is the minimal store interface for rate-limit counters.
@@ -39,12 +39,12 @@ func newRateLimitServiceWithClock(store RateLimitStore, now func() time.Time) *R
 	}
 }
 
-// Check performs a rate limit check for the given profile and route.
+// Check performs a rate limit check for the given authenticated subject and route.
 // It returns whether the request is allowed, remaining count, reset time, and any error.
 // The key format is: profile:{id}:ratelimit:{routePath}:{windowStartUnix}
 // This uses a fixed-window algorithm where the window start is computed from wall clock
 // to ensure all concurrent requests within the same time window share the same bucket.
-func (s *RateLimitService) Check(ctx context.Context, profileID, routePath string, limit int) (allowed bool, remaining int, resetAt time.Time, err error) {
+func (s *RateLimitService) Check(ctx context.Context, subjectID, routePath string, limit int) (allowed bool, remaining int, resetAt time.Time, err error) {
 	// Compute window start from wall clock (Unix timestamp truncated to minute boundary)
 	// This ensures all requests within the same minute share the same bucket
 	now := s.now().UTC()
@@ -53,7 +53,7 @@ func (s *RateLimitService) Check(ctx context.Context, profileID, routePath strin
 	resetAt = windowStart.Add(60 * time.Second)
 
 	// Build the rate limit key directly
-	key := fmt.Sprintf("profile:%s:ratelimit:%s:%d", profileID, routePath, windowStartUnix)
+	key := fmt.Sprintf("profile:%s:ratelimit:%s:%d", subjectID, routePath, windowStartUnix)
 
 	// Increment and set expire atomically (70s expiry for 60s window to handle clock skew)
 	count, err := s.store.IncrWithExpire(ctx, key, 70)

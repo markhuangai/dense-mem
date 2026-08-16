@@ -8,92 +8,67 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestActorProfileContext(t *testing.T) {
+func TestActorContextPreservesCanonicalIdentityAndCopiesMutableFields(t *testing.T) {
 	teamID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
-	profileID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
-	actor := ActorProfile{
-		TeamID:      teamID,
-		ProfileID:   profileID,
-		ProfileName: "native",
+	ownerID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+	credentialID := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
+	actor := Actor{
+		TeamID:       teamID,
+		IdentityID:   credentialID,
+		MembershipID: uuid.MustParse("00000000-0000-0000-0000-0000000000cc"),
+		OwnerID:      ownerID,
+		OwnerName:    "native",
+		CredentialID: &credentialID,
+		AuthMethod:   "api_key",
+		Role:         "manager",
+		Grants:       []string{"read", "write"},
 	}
-	ctx := WithActorProfile(context.Background(), actor)
+	want := actor
+	want.Grants = append([]string(nil), actor.Grants...)
+	wantCredentialID := credentialID
+	want.CredentialID = &wantCredentialID
+	ctx := WithActor(context.Background(), actor)
+	actor.Grants[0] = "mutated"
+	*actor.CredentialID = uuid.New()
 
-	got, ok := ActorProfileFromContext(ctx)
-	if !ok {
-		t.Fatal("ActorProfileFromContext ok = false; want true")
+	got, ok := ActorFromContext(ctx)
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("ActorFromContext = %#v, %v; want %#v,true", got, ok, want)
 	}
-	if got != actor {
-		t.Fatalf("ActorProfileFromContext = %#v; want %#v", got, actor)
+	got.Grants[0] = "mutated"
+	*got.CredentialID = uuid.New()
+	gotAgain, ok := ActorFromContext(ctx)
+	if !ok || !reflect.DeepEqual(gotAgain, want) {
+		t.Fatalf("ActorFromContext returned mutable fields: %#v, %v", gotAgain, ok)
 	}
 
-	ownerID, ownerName, ok := ActorOwner(ctx)
-	if !ok {
-		t.Fatal("ActorOwner ok = false; want true")
-	}
-	if ownerID != profileID.String() {
-		t.Fatalf("ActorOwner profileID = %q; want %q", ownerID, profileID.String())
-	}
-	if ownerName != "native" {
-		t.Fatalf("ActorOwner profileName = %q; want native", ownerName)
+	resolvedOwnerID, ownerName, ok := ActorOwner(ctx)
+	if !ok || resolvedOwnerID != ownerID.String() || ownerName != "native" {
+		t.Fatalf("ActorOwner = %q,%q,%v; want %q,native,true", resolvedOwnerID, ownerName, ok, ownerID)
 	}
 }
 
-func TestActorProfileFromContext_EmptyWhenUnsetOrWrongType(t *testing.T) {
-	if got, ok := ActorProfileFromContext(context.Background()); ok || got != (ActorProfile{}) {
-		t.Fatalf("ActorProfileFromContext unset = %#v, %v; want zero,false", got, ok)
+func TestActorFromContextEmptyWhenUnsetOrWrongType(t *testing.T) {
+	if got, ok := ActorFromContext(context.Background()); ok || !reflect.DeepEqual(got, Actor{}) {
+		t.Fatalf("ActorFromContext unset = %#v, %v; want zero,false", got, ok)
 	}
 
 	type otherKey struct{}
-	ctx := context.WithValue(context.Background(), otherKey{}, ActorProfile{ProfileName: "wrong"})
-	if got, ok := ActorProfileFromContext(ctx); ok || got != (ActorProfile{}) {
-		t.Fatalf("ActorProfileFromContext wrong key = %#v, %v; want zero,false", got, ok)
+	ctx := context.WithValue(context.Background(), otherKey{}, Actor{OwnerName: "wrong"})
+	if got, ok := ActorFromContext(ctx); ok || !reflect.DeepEqual(got, Actor{}) {
+		t.Fatalf("ActorFromContext wrong key = %#v, %v; want zero,false", got, ok)
 	}
 }
 
-func TestActorCredentialContext(t *testing.T) {
-	keyID := uuid.MustParse("00000000-0000-0000-0000-0000000000bb")
-	credential := ActorCredential{
-		KeyID:      keyID,
-		AuthMethod: "api_key",
-		Role:       "manager",
-		Scopes:     []string{"read", "write"},
-	}
-	ctx := WithActorCredential(context.Background(), credential)
-	credential.Scopes[0] = "mutated"
-
-	got, ok := ActorCredentialFromContext(ctx)
-	if !ok {
-		t.Fatal("ActorCredentialFromContext ok = false; want true")
-	}
-	want := ActorCredential{
-		KeyID:      keyID,
-		AuthMethod: "api_key",
-		Role:       "manager",
-		Scopes:     []string{"read", "write"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("ActorCredentialFromContext = %#v; want %#v", got, want)
-	}
-	got.Scopes[0] = "mutated"
-	got, ok = ActorCredentialFromContext(ctx)
-	if !ok || !reflect.DeepEqual(got.Scopes, []string{"read", "write"}) {
-		t.Fatalf("ActorCredentialFromContext returned mutable scopes: %#v, %v", got, ok)
+func TestActorOwnerEmptyWithoutPermanentOwner(t *testing.T) {
+	ownerID, ownerName, ok := ActorOwner(context.Background())
+	if ok || ownerID != "" || ownerName != "" {
+		t.Fatalf("ActorOwner unset = %q,%q,%v; want empty,false", ownerID, ownerName, ok)
 	}
 
-	if got, ok := ActorCredentialFromContext(context.Background()); ok || !reflect.DeepEqual(got, ActorCredential{}) {
-		t.Fatalf("ActorCredentialFromContext unset = %#v, %v; want zero,false", got, ok)
-	}
-}
-
-func TestActorOwner_EmptyForMissingOrNilProfile(t *testing.T) {
-	profileID, profileName, ok := ActorOwner(context.Background())
-	if ok || profileID != "" || profileName != "" {
-		t.Fatalf("ActorOwner unset = %q,%q,%v; want empty,false", profileID, profileName, ok)
-	}
-
-	ctx := WithActorProfile(context.Background(), ActorProfile{ProfileName: "anonymous"})
-	profileID, profileName, ok = ActorOwner(ctx)
-	if ok || profileID != "" || profileName != "" {
-		t.Fatalf("ActorOwner nil profile = %q,%q,%v; want empty,false", profileID, profileName, ok)
+	ctx := WithActor(context.Background(), Actor{OwnerName: "anonymous"})
+	ownerID, ownerName, ok = ActorOwner(ctx)
+	if ok || ownerID != "" || ownerName != "" {
+		t.Fatalf("ActorOwner nil owner = %q,%q,%v; want empty,false", ownerID, ownerName, ok)
 	}
 }

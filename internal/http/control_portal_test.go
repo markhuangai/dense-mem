@@ -19,7 +19,7 @@ import (
 )
 
 type controlProfileSvc struct {
-	profiles  []*domain.Profile
+	profiles  []*domain.Team
 	deleted   uuid.UUID
 	listErr   error
 	countErr  error
@@ -28,11 +28,11 @@ type controlProfileSvc struct {
 	deleteErr error
 }
 
-func (s *controlProfileSvc) Create(_ context.Context, req service.CreateProfileRequest, _ *string, _ string, _ string, _ string) (*domain.Profile, error) {
+func (s *controlProfileSvc) Create(_ context.Context, req service.CreateTeamRequest, _ *string, _ string, _ string, _ string) (*domain.Team, error) {
 	if s.createErr != nil {
 		return nil, s.createErr
 	}
-	profile := &domain.Profile{
+	profile := &domain.Team{
 		ID:          uuid.New(),
 		Name:        req.Name,
 		Description: req.Description,
@@ -45,7 +45,7 @@ func (s *controlProfileSvc) Create(_ context.Context, req service.CreateProfileR
 	return profile, nil
 }
 
-func (s *controlProfileSvc) Get(_ context.Context, id uuid.UUID) (*domain.Profile, error) {
+func (s *controlProfileSvc) Get(_ context.Context, id uuid.UUID) (*domain.Team, error) {
 	for _, profile := range s.profiles {
 		if profile.ID == id {
 			return profile, nil
@@ -54,11 +54,11 @@ func (s *controlProfileSvc) Get(_ context.Context, id uuid.UUID) (*domain.Profil
 	return nil, nil
 }
 
-func (s *controlProfileSvc) GetByID(ctx context.Context, id uuid.UUID) (*domain.Profile, error) {
+func (s *controlProfileSvc) GetByID(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
 	return s.Get(ctx, id)
 }
 
-func (s *controlProfileSvc) List(context.Context, int, int) ([]*domain.Profile, error) {
+func (s *controlProfileSvc) List(context.Context, int, int) ([]*domain.Team, error) {
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
@@ -72,7 +72,7 @@ func (s *controlProfileSvc) Count(context.Context) (int64, error) {
 	return int64(len(s.profiles)), nil
 }
 
-func (s *controlProfileSvc) Update(_ context.Context, id uuid.UUID, req service.UpdateProfileRequest, _ *string, _ string, _ string, _ string) (*domain.Profile, error) {
+func (s *controlProfileSvc) Update(_ context.Context, id uuid.UUID, req service.UpdateTeamRequest, _ *string, _ string, _ string, _ string) (*domain.Team, error) {
 	if s.updateErr != nil {
 		return nil, s.updateErr
 	}
@@ -102,10 +102,10 @@ func (s *controlProfileSvc) Delete(_ context.Context, id uuid.UUID, _ *string, _
 }
 
 type controlKeySvc struct {
-	keys          []*domain.APIKey
+	keys          []*domain.Credential
 	rawKey        string
 	deletedKey    uuid.UUID
-	lastCreateReq service.CreateAPIKeyRequest
+	lastCreateReq service.CreateCredentialRequest
 	listErr       error
 	countErr      error
 	createErr     error
@@ -114,20 +114,18 @@ type controlKeySvc struct {
 	deleteErr     error
 }
 
-func (s *controlKeySvc) CreateStandardKey(_ context.Context, profileID uuid.UUID, req service.CreateAPIKeyRequest, _ *string, _ string, _ string, _ string) (*domain.APIKey, string, error) {
+func (s *controlKeySvc) CreateCredential(_ context.Context, profileID uuid.UUID, req service.CreateCredentialRequest, _ *string, _ string, _ string, _ string) (*domain.Credential, string, error) {
 	if s.createErr != nil {
 		return nil, "", s.createErr
 	}
-	scopes, err := service.NormalizeAPIKeyScopes(req.Scopes)
+	scopes, err := service.NormalizeCredentialScopes(req.Scopes)
 	if err != nil {
 		return nil, "", err
 	}
 	s.lastCreateReq = req
-	key := &domain.APIKey{
+	key := &domain.Credential{
 		ID:        uuid.New(),
-		ProfileID: profileID,
 		TeamID:    profileID,
-		Label:     req.Name,
 		Name:      req.Name,
 		KeyPrefix: "dm_test",
 		KeySuffix: "intext",
@@ -141,14 +139,13 @@ func (s *controlKeySvc) CreateStandardKey(_ context.Context, profileID uuid.UUID
 	return key, s.rawKey, nil
 }
 
-func (s *controlKeySvc) RotateForProfile(_ context.Context, profileID, id uuid.UUID, req service.CreateAPIKeyRequest, _ *string, _ string, _ string, _ string) (*domain.APIKey, string, error) {
+func (s *controlKeySvc) RotateForTeam(_ context.Context, profileID, id uuid.UUID, req service.CreateCredentialRequest, _ *string, _ string, _ string, _ string) (*domain.Credential, string, error) {
 	if s.rotateErr != nil {
 		return nil, "", s.rotateErr
 	}
 	for _, key := range s.keys {
-		if key.ProfileID == profileID && key.ID == id {
+		if key.TeamID == profileID && key.ID == id {
 			key.Name = req.Name
-			key.Label = req.Name
 			key.KeySuffix = "rot8ed"
 			key.ExpiresAt = req.ExpiresAt
 			return key, "dm_rotated_plaintext", nil
@@ -157,32 +154,31 @@ func (s *controlKeySvc) RotateForProfile(_ context.Context, profileID, id uuid.U
 	return nil, "", nil
 }
 
-func (s *controlKeySvc) UpdateNameForProfile(_ context.Context, profileID, id uuid.UUID, name string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+func (s *controlKeySvc) UpdateNameForTeam(_ context.Context, profileID, id uuid.UUID, name string, _ *string, _ string, _ string, _ string) (*domain.Credential, error) {
 	if s.updateErr != nil {
 		return nil, s.updateErr
 	}
 	for _, key := range s.keys {
-		if key.ProfileID == profileID && key.ID == id {
+		if key.TeamID == profileID && key.ID == id {
 			key.Name = name
-			key.Label = name
 			return key, nil
 		}
 	}
 	return nil, nil
 }
 
-func (s *controlKeySvc) UpdateRoleForProfile(_ context.Context, profileID, id uuid.UUID, role string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+func (s *controlKeySvc) UpdateRoleForTeam(_ context.Context, profileID, id uuid.UUID, role string, _ *string, _ string, _ string, _ string) (*domain.Credential, error) {
 	if s.updateErr != nil {
 		return nil, s.updateErr
 	}
 	for _, key := range s.keys {
-		if key.ProfileID == profileID && key.ID == id {
+		if key.TeamID == profileID && key.ID == id {
 			key.Role = role
-			if role == service.APIKeyRoleManager {
-				hasFeedback := slices.Contains(key.Scopes, service.APIKeyScopeFeedbackRead)
-				key.Scopes = []string{service.APIKeyScopeRead, service.APIKeyScopeWrite}
+			if role == service.CredentialRoleManager {
+				hasFeedback := slices.Contains(key.Scopes, service.CredentialScopeFeedbackRead)
+				key.Scopes = []string{service.CredentialScopeRead, service.CredentialScopeWrite}
 				if hasFeedback {
-					key.Scopes = append(key.Scopes, service.APIKeyScopeFeedbackRead)
+					key.Scopes = append(key.Scopes, service.CredentialScopeFeedbackRead)
 				}
 			}
 			return key, nil
@@ -191,21 +187,21 @@ func (s *controlKeySvc) UpdateRoleForProfile(_ context.Context, profileID, id uu
 	return nil, nil
 }
 
-func (s *controlKeySvc) UpdateScopesForProfile(_ context.Context, profileID, id uuid.UUID, scopes []string, _ *string, _ string, _ string, _ string) (*domain.APIKey, error) {
+func (s *controlKeySvc) UpdateScopesForTeam(_ context.Context, profileID, id uuid.UUID, scopes []string, _ *string, _ string, _ string, _ string) (*domain.Credential, error) {
 	if s.updateErr != nil {
 		return nil, s.updateErr
 	}
-	normalized, err := service.NormalizeAPIKeyScopes(scopes)
+	normalized, err := service.NormalizeCredentialScopes(scopes)
 	if err != nil {
 		return nil, err
 	}
 	for _, key := range s.keys {
-		if key.ProfileID == profileID && key.ID == id {
-			if key.GetRole() == service.APIKeyRoleManager {
-				hasFeedback := slices.Contains(normalized, service.APIKeyScopeFeedbackRead)
-				normalized = []string{service.APIKeyScopeRead, service.APIKeyScopeWrite}
+		if key.TeamID == profileID && key.ID == id {
+			if key.GetRole() == service.CredentialRoleManager {
+				hasFeedback := slices.Contains(normalized, service.CredentialScopeFeedbackRead)
+				normalized = []string{service.CredentialScopeRead, service.CredentialScopeWrite}
 				if hasFeedback {
-					normalized = append(normalized, service.APIKeyScopeFeedbackRead)
+					normalized = append(normalized, service.CredentialScopeFeedbackRead)
 				}
 			}
 			key.Scopes = normalized
@@ -215,52 +211,52 @@ func (s *controlKeySvc) UpdateScopesForProfile(_ context.Context, profileID, id 
 	return nil, nil
 }
 
-func (s *controlKeySvc) ListByProfile(_ context.Context, profileID uuid.UUID, _ int, _ int) ([]*domain.APIKey, error) {
+func (s *controlKeySvc) ListByTeam(_ context.Context, profileID uuid.UUID, _ int, _ int) ([]*domain.Credential, error) {
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
-	out := make([]*domain.APIKey, 0, len(s.keys))
+	out := make([]*domain.Credential, 0, len(s.keys))
 	for _, key := range s.keys {
-		if key.ProfileID == profileID {
+		if key.TeamID == profileID {
 			out = append(out, key)
 		}
 	}
 	return out, nil
 }
 
-func (s *controlKeySvc) CountByProfile(ctx context.Context, profileID uuid.UUID) (int64, error) {
+func (s *controlKeySvc) CountByTeam(ctx context.Context, profileID uuid.UUID) (int64, error) {
 	if s.countErr != nil {
 		return 0, s.countErr
 	}
-	keys, err := s.ListByProfile(ctx, profileID, 0, 0)
+	keys, err := s.ListByTeam(ctx, profileID, 0, 0)
 	return int64(len(keys)), err
 }
 
-func (s *controlKeySvc) GetByIDForProfile(_ context.Context, profileID, id uuid.UUID) (*domain.APIKey, error) {
+func (s *controlKeySvc) GetByIDForTeam(_ context.Context, profileID, id uuid.UUID) (*domain.Credential, error) {
 	for _, key := range s.keys {
-		if key.ProfileID == profileID && key.ID == id {
+		if key.TeamID == profileID && key.ID == id {
 			return key, nil
 		}
 	}
 	return nil, nil
 }
 
-func (s *controlKeySvc) GetSSOOwnedKey(context.Context, uuid.UUID, uuid.UUID) (*domain.APIKey, error) {
+func (s *controlKeySvc) GetSSOOwnedCredential(context.Context, uuid.UUID, uuid.UUID) (*domain.Credential, error) {
 	return nil, nil
 }
 
-func (s *controlKeySvc) RevokeForProfile(_ context.Context, _ uuid.UUID, id uuid.UUID, _ *string, _ string, _ string, _ string) error {
+func (s *controlKeySvc) RevokeForTeam(_ context.Context, _ uuid.UUID, id uuid.UUID, _ *string, _ string, _ string, _ string) error {
 	return nil
 }
 
-func (s *controlKeySvc) DeleteForProfile(_ context.Context, profileID uuid.UUID, id uuid.UUID, _ *string, _ string, _ string, _ string) error {
+func (s *controlKeySvc) DeleteForTeam(_ context.Context, profileID uuid.UUID, id uuid.UUID, _ *string, _ string, _ string, _ string) error {
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}
 	s.deletedKey = id
-	next := make([]*domain.APIKey, 0, len(s.keys))
+	next := make([]*domain.Credential, 0, len(s.keys))
 	for _, key := range s.keys {
-		if key.ProfileID == profileID && key.ID == id {
+		if key.TeamID == profileID && key.ID == id {
 			continue
 		}
 		next = append(next, key)
@@ -271,7 +267,7 @@ func (s *controlKeySvc) DeleteForProfile(_ context.Context, profileID uuid.UUID,
 
 func testControlServer(t *testing.T) (*controlProfileSvc, *controlKeySvc, http.Handler) {
 	t.Helper()
-	profiles := &controlProfileSvc{profiles: []*domain.Profile{{
+	profiles := &controlProfileSvc{profiles: []*domain.Team{{
 		ID:        uuid.New(),
 		Name:      "Default",
 		CreatedAt: time.Now().UTC(),
@@ -517,7 +513,7 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 
 	profileID := profiles.profiles[1].ID
 	keyBody := `{"rate_limit":120,"scopes":["read"]}`
-	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles", strings.NewReader(keyBody))
+	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/credentials", strings.NewReader(keyBody))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -530,11 +526,11 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"scopes":["read"]`)
 	require.NotContains(t, rec.Body.String(), `"revoked_at"`)
 	require.Equal(t, []string{"read"}, keys.lastCreateReq.Scopes)
-	require.Empty(t, keys.keys[len(keys.keys)-1].Label)
+	require.Empty(t, keys.keys[len(keys.keys)-1].Name)
 
 	keyID := keys.keys[len(keys.keys)-1].ID
 	renameBody := `{"name":"Research Profile"}`
-	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), strings.NewReader(renameBody))
+	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String(), strings.NewReader(renameBody))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -544,18 +540,18 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Equal(t, "Research Profile", keys.keys[len(keys.keys)-1].Name)
 
 	mixedUpdate := `{"name":"Should Not Persist","role":"member"}`
-	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), strings.NewReader(mixedUpdate))
+	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String(), strings.NewReader(mixedUpdate))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	require.Contains(t, rec.Body.String(), "profile name, role, and scopes must be updated separately")
+	require.Contains(t, rec.Body.String(), "credential name, role, and scopes must be updated separately")
 	require.Equal(t, "Research Profile", keys.keys[len(keys.keys)-1].Name)
 	require.Empty(t, keys.keys[len(keys.keys)-1].Role)
 
 	roleBody := `{"role":"member"}`
-	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), strings.NewReader(roleBody))
+	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String(), strings.NewReader(roleBody))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -565,7 +561,7 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Equal(t, "member", keys.keys[len(keys.keys)-1].Role)
 
 	scopesBody := `{"scopes":["read","feedback:read"]}`
-	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), strings.NewReader(scopesBody))
+	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String(), strings.NewReader(scopesBody))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -575,7 +571,7 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Equal(t, []string{"read", "feedback:read"}, keys.keys[len(keys.keys)-1].Scopes)
 
 	rotateBody := `{"name":"Research Profile","rate_limit":120}`
-	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", strings.NewReader(rotateBody))
+	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String()+"/rotate", strings.NewReader(rotateBody))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -584,7 +580,7 @@ func TestControlPortalProfileAndKeyFlows(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"api_key":"dm_rotated_plaintext"`)
 	require.Contains(t, rec.Body.String(), `"key_suffix":"rot8ed"`)
 
-	req = httptest.NewRequest(http.MethodDelete, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), nil)
+	req = httptest.NewRequest(http.MethodDelete, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String(), nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -612,7 +608,7 @@ func TestControlPortalAdditionalRouteBranches(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "Renamed", profiles.profiles[0].Name)
 
-	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles", strings.NewReader(`{"name":"Reader","rate_limit":25}`))
+	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/credentials", strings.NewReader(`{"name":"Reader","rate_limit":25}`))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -620,27 +616,27 @@ func TestControlPortalAdditionalRouteBranches(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code)
 	require.Len(t, keys.keys, 1)
 
-	req = httptest.NewRequest(http.MethodGet, "/control/api/teams/"+profileID.String()+"/profiles?limit=1000&offset=0", nil)
+	req = httptest.NewRequest(http.MethodGet, "/control/api/teams/"+profileID.String()+"/credentials?limit=1000&offset=0", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"name":"Reader"`)
 
-	req = httptest.NewRequest(http.MethodGet, "/control/api/teams/not-a-uuid/profiles", nil)
+	req = httptest.NewRequest(http.MethodGet, "/control/api/teams/not-a-uuid/credentials", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles", strings.NewReader(`{"scopes":[]}`))
+	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/credentials", strings.NewReader(`{"scopes":[]}`))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles", strings.NewReader(`{"expires_at":"bad-date"}`))
+	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/credentials", strings.NewReader(`{"expires_at":"bad-date"}`))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -648,14 +644,14 @@ func TestControlPortalAdditionalRouteBranches(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
 	keyID := keys.keys[0].ID
-	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), strings.NewReader(`{"scopes":[]}`))
+	req = httptest.NewRequest(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String(), strings.NewReader(`{"scopes":[]}`))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", strings.NewReader(`{"scopes":["read"]}`))
+	req = httptest.NewRequest(http.MethodPost, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String()+"/rotate", strings.NewReader(`{"scopes":["read"]}`))
 	req.Header.Set("Authorization", "Bearer secret")
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
@@ -844,15 +840,14 @@ func TestControlPortalServiceAndValidationErrorBranches(t *testing.T) {
 
 	profileID := uuid.New()
 	keyID := uuid.New()
-	profiles := &controlProfileSvc{profiles: []*domain.Profile{{
+	profiles := &controlProfileSvc{profiles: []*domain.Team{{
 		ID:        profileID,
 		Name:      "Default",
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}}}
-	keys := &controlKeySvc{keys: []*domain.APIKey{{
+	keys := &controlKeySvc{keys: []*domain.Credential{{
 		ID:        keyID,
-		ProfileID: profileID,
 		TeamID:    profileID,
 		Name:      "Key",
 		KeySuffix: "suffix",
@@ -913,31 +908,31 @@ func TestControlPortalServiceAndValidationErrorBranches(t *testing.T) {
 	profiles.deleteErr = nil
 
 	keys.listErr = errors.New("key list failed")
-	require.Equal(t, http.StatusInternalServerError, do(http.MethodGet, "/control/api/teams/"+profileID.String()+"/profiles", "").Code)
+	require.Equal(t, http.StatusInternalServerError, do(http.MethodGet, "/control/api/teams/"+profileID.String()+"/credentials", "").Code)
 	keys.listErr = nil
 	keys.countErr = errors.New("key count failed")
-	require.Equal(t, http.StatusInternalServerError, do(http.MethodGet, "/control/api/teams/"+profileID.String()+"/profiles", "").Code)
+	require.Equal(t, http.StatusInternalServerError, do(http.MethodGet, "/control/api/teams/"+profileID.String()+"/credentials", "").Code)
 	keys.countErr = nil
 
-	require.Equal(t, http.StatusUnprocessableEntity, do(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles", "{").Code)
+	require.Equal(t, http.StatusUnprocessableEntity, do(http.MethodPost, "/control/api/teams/"+profileID.String()+"/credentials", "{").Code)
 	keys.createErr = errors.New("key create failed")
-	require.Equal(t, http.StatusInternalServerError, do(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles", `{"name":"Key"}`).Code)
+	require.Equal(t, http.StatusInternalServerError, do(http.MethodPost, "/control/api/teams/"+profileID.String()+"/credentials", `{"name":"Key"}`).Code)
 	keys.createErr = nil
 
-	require.Equal(t, http.StatusBadRequest, do(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/not-a-uuid", `{"name":"Key"}`).Code)
-	require.Equal(t, http.StatusUnprocessableEntity, do(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), "{").Code)
+	require.Equal(t, http.StatusBadRequest, do(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/credentials/not-a-uuid", `{"name":"Key"}`).Code)
+	require.Equal(t, http.StatusUnprocessableEntity, do(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String(), "{").Code)
 	keys.updateErr = errors.New("key update failed")
-	require.Equal(t, http.StatusInternalServerError, do(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), `{"name":"Key"}`).Code)
+	require.Equal(t, http.StatusInternalServerError, do(http.MethodPatch, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String(), `{"name":"Key"}`).Code)
 	keys.updateErr = nil
 
-	require.Equal(t, http.StatusUnprocessableEntity, do(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", `{"expires_at":"bad"}`).Code)
+	require.Equal(t, http.StatusUnprocessableEntity, do(http.MethodPost, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String()+"/rotate", `{"expires_at":"bad"}`).Code)
 	keys.rotateErr = errors.New("key rotate failed")
-	require.Equal(t, http.StatusInternalServerError, do(http.MethodPost, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String()+"/rotate", `{"name":"Key"}`).Code)
+	require.Equal(t, http.StatusInternalServerError, do(http.MethodPost, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String()+"/rotate", `{"name":"Key"}`).Code)
 	keys.rotateErr = nil
 
-	require.Equal(t, http.StatusBadRequest, do(http.MethodDelete, "/control/api/teams/"+profileID.String()+"/profiles/not-a-uuid", "").Code)
+	require.Equal(t, http.StatusBadRequest, do(http.MethodDelete, "/control/api/teams/"+profileID.String()+"/credentials/not-a-uuid", "").Code)
 	keys.deleteErr = errors.New("key delete failed")
-	require.Equal(t, http.StatusInternalServerError, do(http.MethodDelete, "/control/api/teams/"+profileID.String()+"/profiles/"+keyID.String(), "").Code)
+	require.Equal(t, http.StatusInternalServerError, do(http.MethodDelete, "/control/api/teams/"+profileID.String()+"/credentials/"+keyID.String(), "").Code)
 	keys.deleteErr = nil
 
 	securitySvc.settingsErr = errors.New("settings failed")
@@ -968,7 +963,7 @@ func TestControlPortalServiceAndValidationErrorBranches(t *testing.T) {
 
 func TestControlPortalProfileDreamingConfigErrors(t *testing.T) {
 	profileID := uuid.New()
-	profiles := &controlProfileSvc{profiles: []*domain.Profile{{
+	profiles := &controlProfileSvc{profiles: []*domain.Team{{
 		ID:        profileID,
 		Name:      "Default",
 		Config:    map[string]any{"dreaming": map[string]any{"enabled": true}},

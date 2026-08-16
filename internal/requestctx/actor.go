@@ -7,60 +7,46 @@ import (
 )
 
 type actorContextKey struct{}
-type credentialContextKey struct{}
 
-// ActorProfile identifies the authenticated team profile that initiated a
-// request. TeamID is the knowledge scope; ProfileID is the named member/client
-// identity inside that team.
-type ActorProfile struct {
-	TeamID      uuid.UUID
-	TeamName    string
-	ProfileID   uuid.UUID
-	ProfileName string
+// Actor is the immutable authenticated identity projected into application code.
+// OwnerID is the permanent semantic ownership alias; it is distinct from the
+// team, identity, membership, and optional credential identifiers.
+type Actor struct {
+	TeamID       uuid.UUID
+	TeamName     string
+	IdentityID   uuid.UUID
+	MembershipID uuid.UUID
+	OwnerID      uuid.UUID
+	OwnerName    string
+	CredentialID *uuid.UUID
+	AuthMethod   string
+	Role         string
+	Grants       []string
 }
 
-// ActorCredential identifies the authenticated credential that initiated a
-// request. It is stored separately from ActorProfile because service and tool
-// packages should not import HTTP middleware internals.
-type ActorCredential struct {
-	KeyID      uuid.UUID
-	AuthMethod string
-	Role       string
-	Scopes     []string
-}
-
-// WithActorProfile stores authenticated actor metadata in context.
-func WithActorProfile(ctx context.Context, actor ActorProfile) context.Context {
+func WithActor(ctx context.Context, actor Actor) context.Context {
+	actor.Grants = append([]string(nil), actor.Grants...)
+	if actor.CredentialID != nil {
+		credentialID := *actor.CredentialID
+		actor.CredentialID = &credentialID
+	}
 	return context.WithValue(ctx, actorContextKey{}, actor)
 }
 
-// ActorProfileFromContext returns authenticated actor metadata when available.
-func ActorProfileFromContext(ctx context.Context) (ActorProfile, bool) {
-	actor, ok := ctx.Value(actorContextKey{}).(ActorProfile)
+func ActorFromContext(ctx context.Context) (Actor, bool) {
+	actor, ok := ctx.Value(actorContextKey{}).(Actor)
+	actor.Grants = append([]string(nil), actor.Grants...)
+	if actor.CredentialID != nil {
+		credentialID := *actor.CredentialID
+		actor.CredentialID = &credentialID
+	}
 	return actor, ok
 }
 
-// WithActorCredential stores authenticated credential metadata in context.
-func WithActorCredential(ctx context.Context, credential ActorCredential) context.Context {
-	credential.Scopes = append([]string(nil), credential.Scopes...)
-	return context.WithValue(ctx, credentialContextKey{}, credential)
-}
-
-// ActorCredentialFromContext returns authenticated credential metadata when available.
-func ActorCredentialFromContext(ctx context.Context) (ActorCredential, bool) {
-	credential, ok := ctx.Value(credentialContextKey{}).(ActorCredential)
-	credential.Scopes = append([]string(nil), credential.Scopes...)
-	return credential, ok
-}
-
-// ActorOwner returns the profile identity used as the ownership boundary for
-// team-scoped knowledge entities. Empty values mean the caller did not carry an
-// authenticated profile actor, which is treated by service code as a system
-// context rather than a public user mutation.
-func ActorOwner(ctx context.Context) (profileID, profileName string, ok bool) {
-	actor, ok := ActorProfileFromContext(ctx)
-	if !ok || actor.ProfileID == uuid.Nil {
+func ActorOwner(ctx context.Context) (ownerID, ownerName string, ok bool) {
+	actor, ok := ActorFromContext(ctx)
+	if !ok || actor.OwnerID == uuid.Nil {
 		return "", "", false
 	}
-	return actor.ProfileID.String(), actor.ProfileName, true
+	return actor.OwnerID.String(), actor.OwnerName, true
 }

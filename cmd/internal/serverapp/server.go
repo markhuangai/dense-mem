@@ -51,14 +51,14 @@ type CounterStore interface {
 }
 
 type RuntimeContext struct {
-	Echo           *echo.Echo
-	Config         *config.Config
-	ProfileService service.ProfileService
-	APIKeyService  service.APIKeyService
-	CounterStore   CounterStore
-	PostgresDB     *gorm.DB
-	RLS            postgres.RLSHelper
-	Logger         observability.LogProvider
+	Echo              *echo.Echo
+	Config            *config.Config
+	TeamService       service.TeamService
+	CredentialService service.CredentialService
+	CounterStore      CounterStore
+	PostgresDB        *gorm.DB
+	RLS               postgres.RLSHelper
+	Logger            observability.LogProvider
 }
 
 type RuntimeOptions struct {
@@ -98,10 +98,10 @@ func RunActiveServer(
 	logInMemoryModeWarning(logger, backend.degraded, backend.reason)
 
 	rlsHelper := postgres.NewRLS()
-	profileRepo := repository.NewProfileRepository(pgDB.GetDB(), rlsHelper)
-	apiKeyRepo := repository.NewAPIKeyRepository(pgDB.GetDB(), rlsHelper)
+	teamRepo := repository.NewTeamRepository(pgDB.GetDB(), rlsHelper)
+	credentialRepo := repository.NewCredentialRepository(pgDB.GetDB(), rlsHelper)
 	credentialVerifier := crypto.NewArgon2Verifier(cfg.AuthVerifyMaxConcurrency)
-	activityWriter := service.NewAPIKeyActivityWriter(apiKeyRepo, logger)
+	activityWriter := service.NewCredentialActivityWriter(credentialRepo, logger)
 	activityWriter.Start(context.Background())
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -165,24 +165,24 @@ func RunActiveServer(
 	securityService := service.NewSecurityService(securityRepo, auditService)
 	usageMetricsService := service.NewUsageMetricsService(usageMetricsRepo, logger)
 	usageMetricsService.Start(context.Background())
-	profileService := service.NewProfileService(profileRepo, auditService, backend.cleanupRepo)
-	apiKeyService := service.NewAPIKeyService(apiKeyRepo, profileService, auditService, backend.cleanupRepo, backend.cleanupRepo)
+	teamService := service.NewTeamService(teamRepo, auditService, backend.cleanupRepo)
+	credentialService := service.NewCredentialService(credentialRepo, teamService, auditService, backend.cleanupRepo)
 	ssoService := service.NewSSOService(ssoRepo, service.SSOConfig{
 		RuntimeConfig: appConfigService,
 		Logger:        logger,
 	})
-	portalSessionService := service.NewUserPortalSessionService(portalSessionRepo, apiKeyRepo, nil)
+	portalSessionService := service.NewUserPortalSessionService(portalSessionRepo, credentialRepo, nil)
 	directoryIdentityService := service.NewDirectoryIdentityService(directoryIdentityRepo, service.DirectoryIdentityConfig{CredentialVerifier: credentialVerifier})
 	controlIdentityService := service.NewControlIdentityService(controlIdentityRepo, ssoRepo, service.ControlIdentityConfig{RuntimeConfig: appConfigService})
 	rateLimitService := backend.rateLimitService
 	runtimeCtx := RuntimeContext{
-		Config:         &cfg,
-		ProfileService: profileService,
-		APIKeyService:  apiKeyService,
-		CounterStore:   backend.counterStore,
-		PostgresDB:     pgDB.GetDB(),
-		RLS:            rlsHelper,
-		Logger:         logger,
+		Config:            &cfg,
+		TeamService:       teamService,
+		CredentialService: credentialService,
+		CounterStore:      backend.counterStore,
+		PostgresDB:        pgDB.GetDB(),
+		RLS:               rlsHelper,
+		Logger:            logger,
 	}
 	discoverabilityMetrics := observability.NoopDiscoverabilityMetrics()
 	var (
@@ -257,7 +257,6 @@ func RunActiveServer(
 	communitySvc := communityservice.New(communityservice.Dependencies{
 		Store:     semanticRepo,
 		AppConfig: appConfigService,
-		Profiles:  profileService,
 		Summary:   verifierProvider,
 		Metrics:   discoverabilityMetrics,
 	})
@@ -274,7 +273,7 @@ func RunActiveServer(
 		Store:          semanticRepo,
 		ScheduledStore: semanticRepo,
 		AppConfig:      appConfigService,
-		Profiles:       profileService,
+		Teams:          teamService,
 		Locker:         dreamservice.NewPostgresCycleLocker(),
 		Postgres:       pgDB.GetDB(),
 		Generator:      dreamservice.NewProviderGenerator(verifierProvider),
@@ -286,7 +285,7 @@ func RunActiveServer(
 	controlDreamSvc := dreamservice.NewControl(dreamservice.ControlDependencies{
 		Store:     semanticRepo,
 		AppConfig: appConfigService,
-		Teams:     profileService,
+		Teams:     teamService,
 	})
 	graphViewSvc := graphview.NewSemantic(semanticRepo)
 	memoryPackSvc := skillpackservice.NewMemoryPackService(skillpackservice.MemoryPackDependencies{
@@ -325,7 +324,7 @@ func RunActiveServer(
 		time.Duration(cfg.GetSSEMaxDurationSeconds())*time.Second,
 		backend.streamCleanupRepo,
 	)
-	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfigAndTransport(toolRegistry, logger, streamLifecycle, appConfigService, config.MCPTransportFor(&cfg), dreamSvc)
+	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(toolRegistry, logger, streamLifecycle, appConfigService, dreamSvc)
 
 	checks := []http.HealthCheck{
 		{Name: "postgres", Check: func(ctx context.Context) error {
@@ -373,9 +372,8 @@ func RunActiveServer(
 		}
 	}
 	protectedDeps := http.ProtectedDeps{
-		APIKeyRepo:         apiKeyRepo,
-		ProfileService:     profileService,
-		ProfileSvc:         profileService,
+		CredentialRepo:     credentialRepo,
+		TeamSvc:            teamService,
 		RateLimitService:   rateLimitService,
 		UsageMetrics:       usageMetricsService,
 		AuditService:       auditService,
@@ -395,9 +393,9 @@ func RunActiveServer(
 		MCPGet:  mcpHandler.HandleGet,
 	})
 	userPortalDeps := http.UserPortalDeps{
-		APIKeyRepo:         apiKeyRepo,
-		ProfileSvc:         profileService,
-		APIKeySvc:          apiKeyService,
+		CredentialRepo:     credentialRepo,
+		TeamSvc:            teamService,
+		CredentialSvc:      credentialService,
 		RateLimitSvc:       rateLimitService,
 		UsageMetrics:       usageMetricsService,
 		Telemetry:          telemetryReader,
@@ -424,8 +422,8 @@ func RunActiveServer(
 	if !options.DisableControlPortal {
 		controlServer, err = http.NewControlPortalServerWithMetricsAndTelemetry(
 			&cfg,
-			profileService,
-			apiKeyService,
+			teamService,
+			credentialService,
 			usageMetricsService,
 			http.ControlPortalTelemetry{
 				Reader:          telemetryReader,
@@ -494,10 +492,11 @@ func RunActiveServer(
 		quarantinePurgeMetrics = metrics
 	}
 	ledgerRepo.StartSubmissionQuarantinePurger(workerCtx, time.Minute, slog.Default(), quarantinePurgeMetrics)
+	searchRepo.StartTerminalEmbeddingJobRetention(workerCtx, time.Hour, slog.Default())
 	startActiveWorkers(
 		workerCtx,
 		logger,
-		profileService,
+		teamService,
 		ledgerRepo,
 		searchRepo,
 		semanticRepo,
@@ -516,13 +515,13 @@ func RunActiveServer(
 	)
 	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
 	defer dreamSchedulerCancel()
-	go dreamservice.NewScheduler(dreamSvc, profileService, slog.Default()).Start(dreamSchedulerCtx)
+	go dreamservice.NewScheduler(dreamSvc, teamService, slog.Default()).Start(dreamSchedulerCtx)
 	communitySchedulerCtx, communitySchedulerCancel := context.WithCancel(context.Background())
 	defer communitySchedulerCancel()
-	go communityservice.NewScheduler(communitySvc, profileService, appConfigService, slog.Default()).Start(communitySchedulerCtx)
+	go communityservice.NewScheduler(communitySvc, teamService, appConfigService, slog.Default()).Start(communitySchedulerCtx)
 	conflictReviewCtx, conflictReviewCancel := context.WithCancel(context.Background())
 	defer conflictReviewCancel()
-	startConflictReviewWorkers(conflictReviewCtx, logger, profileService, conflictReviewRunner, &cfg, discoverabilityMetrics)
+	startConflictReviewWorkers(conflictReviewCtx, logger, teamService, conflictReviewRunner, &cfg, discoverabilityMetrics)
 
 	httpAddr := os.Getenv("HTTP_ADDR")
 	if httpAddr == "" {
@@ -617,7 +616,7 @@ func refreshTelemetryPricingCacheUntilCanceled(ctx context.Context, appConfigSer
 func startConflictReviewWorkers(
 	ctx context.Context,
 	logger observability.LogProvider,
-	profiles service.ProfileService,
+	teams service.TeamService,
 	ledger conflictReviewLedger,
 	cfg *config.Config,
 	metrics observability.DiscoverabilityMetrics,
@@ -640,7 +639,7 @@ func startConflictReviewWorkers(
 			ticker := time.NewTicker(time.Minute)
 			defer ticker.Stop()
 			for {
-				processConflictReviewTick(ctx, logger, profiles, ledger, cfg, metrics, workerID, workerIndex, count)
+				processConflictReviewTick(ctx, logger, teams, ledger, cfg, metrics, workerID, workerIndex, count)
 				select {
 				case <-ctx.Done():
 					return
@@ -651,14 +650,14 @@ func startConflictReviewWorkers(
 	}
 }
 
-type conflictReviewProfileLister interface {
-	List(ctx context.Context, limit, offset int) ([]*domain.Profile, error)
+type conflictReviewTeamLister interface {
+	List(ctx context.Context, limit, offset int) ([]*domain.Team, error)
 }
 
 func processConflictReviewTick(
 	ctx context.Context,
 	logger observability.LogProvider,
-	profiles conflictReviewProfileLister,
+	teams conflictReviewTeamLister,
 	ledger conflictReviewLedger,
 	cfg *config.Config,
 	metrics observability.DiscoverabilityMetrics,
@@ -675,15 +674,15 @@ func processConflictReviewTick(
 	}
 	now := time.Now()
 	for offset := workerIndex * pageSize; ; offset += pageSize * workerCount {
-		teams, err := profiles.List(ctx, pageSize, offset)
+		page, err := teams.List(ctx, pageSize, offset)
 		if err != nil {
-			logger.Error("conflict review profile list failed", errConflictReviewProfileListFailed)
+			logger.Error("conflict review team list failed", errConflictReviewTeamListFailed)
 			return
 		}
-		if len(teams) == 0 {
+		if len(page) == 0 {
 			return
 		}
-		for _, team := range teams {
+		for _, team := range page {
 			if team == nil || !conflictReviewDueForTeam(now, cfg, team.ID.String()) {
 				continue
 			}
@@ -691,7 +690,7 @@ func processConflictReviewTick(
 				logger.Error("conflict review run failed", errConflictReviewRunFailed, observability.String("team_id", team.ID.String()))
 			}
 		}
-		if len(teams) < pageSize {
+		if len(page) < pageSize {
 			return
 		}
 	}
@@ -820,9 +819,9 @@ func processTeamConflictReview(
 }
 
 var (
-	errConflictReviewProfileListFailed = errors.New("conflict review profile list failed")
-	errConflictReviewRunFailed         = errors.New("conflict review run failed")
-	errConflictReviewCaseFailed        = errors.New("conflict review case failed")
+	errConflictReviewTeamListFailed = errors.New("conflict review team list failed")
+	errConflictReviewRunFailed      = errors.New("conflict review run failed")
+	errConflictReviewCaseFailed     = errors.New("conflict review case failed")
 )
 
 func safeConflictReviewError(err error) string {
@@ -919,7 +918,7 @@ func checkSearchReadiness(ctx context.Context, search interface {
 func startActiveWorkers(
 	ctx context.Context,
 	logger observability.LogProvider,
-	profiles service.ProfileService,
+	teams service.TeamService,
 	ledger *repository.LedgerRepositoryImpl,
 	search repository.SearchRepository,
 	semantic *repository.SemanticRepositoryImpl,
@@ -943,7 +942,7 @@ func startActiveWorkers(
 		baseWorkerID: baseWorkerID,
 		count:        placementWorkerCount,
 		pollInterval: placementPollInterval,
-		profiles:     profiles,
+		teams:        teams,
 		logger:       logger,
 		workerError:  errSemanticPlacementWorkerFailed,
 		work: func(ctx context.Context, teamID string, workerID string) (bool, error) {
@@ -968,7 +967,7 @@ func startActiveWorkers(
 		baseWorkerID: baseWorkerID,
 		count:        embeddingWorkerCount,
 		pollInterval: embeddingPollInterval,
-		profiles:     profiles,
+		teams:        teams,
 		logger:       logger,
 		workerError:  errEmbeddingWorkerFailed,
 		work: func(ctx context.Context, teamID string, workerID string) (bool, error) {

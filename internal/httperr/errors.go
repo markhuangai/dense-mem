@@ -28,7 +28,6 @@ const (
 	PROFILE_ID_REQUIRED                 ErrorCode = "PROFILE_ID_REQUIRED"
 	INVALID_UUID                        ErrorCode = "INVALID_UUID"
 	CONFLICT                            ErrorCode = "CONFLICT"
-	PROFILE_HAS_ACTIVE_KEYS             ErrorCode = "PROFILE_HAS_ACTIVE_KEYS"
 	RATE_LIMITED                        ErrorCode = "RATE_LIMITED"
 	SERVICE_UNAVAILABLE                 ErrorCode = "SERVICE_UNAVAILABLE"
 	INTERNAL_ERROR                      ErrorCode = "INTERNAL_ERROR"

@@ -71,19 +71,19 @@ func (r *Repository) ExpiredTeamIDs(ctx context.Context, now time.Time, limit in
 
 type Cleaner struct {
 	repo     ExpiredTeamRepository
-	profiles service.ProfileService
+	teams    service.TeamService
 	interval time.Duration
 	batch    int
 	now      func() time.Time
 }
 
-func NewCleaner(repo ExpiredTeamRepository, profiles service.ProfileService, interval time.Duration) *Cleaner {
+func NewCleaner(repo ExpiredTeamRepository, teams service.TeamService, interval time.Duration) *Cleaner {
 	if interval <= 0 {
 		interval = 10 * time.Minute
 	}
 	return &Cleaner{
 		repo:     repo,
-		profiles: profiles,
+		teams:    teams,
 		interval: interval,
 		batch:    defaultCleanupBatchSize,
 		now:      func() time.Time { return time.Now().UTC() },
@@ -91,7 +91,7 @@ func NewCleaner(repo ExpiredTeamRepository, profiles service.ProfileService, int
 }
 
 func (c *Cleaner) PurgeExpired(ctx context.Context) error {
-	if c == nil || c.repo == nil || c.profiles == nil {
+	if c == nil || c.repo == nil || c.teams == nil {
 		return fmt.Errorf("demo cleaner unavailable")
 	}
 	ids, err := c.repo.ExpiredTeamIDs(ctx, c.now().UTC(), c.batch)
@@ -101,7 +101,7 @@ func (c *Cleaner) PurgeExpired(ctx context.Context) error {
 
 	var joined error
 	for _, id := range ids {
-		if err := c.profiles.Delete(ctx, id, nil, "demo_cleanup", "", "demo-cleanup"); err != nil {
+		if err := c.teams.Delete(ctx, id, nil, "demo_cleanup", "", "demo-cleanup"); err != nil {
 			if apiErr, ok := err.(*httperr.APIError); ok && apiErr.Code == httperr.NOT_FOUND {
 				continue
 			}

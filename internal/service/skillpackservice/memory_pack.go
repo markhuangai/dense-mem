@@ -46,7 +46,7 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 		CreatedAt:   now.Format(time.RFC3339Nano),
 		Source: MemoryPackSource{
 			TeamID:     actor.TeamID.String(),
-			ExportedBy: actor.ProfileID.String(),
+			ExportedBy: actor.OwnerID.String(),
 		},
 		Relationships: []MemoryPackRelationship{},
 	}

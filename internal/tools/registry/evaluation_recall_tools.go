@@ -34,7 +34,7 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 		},
 		OutputSchema:   map[string]any{"type": "object"},
 		RequiredScopes: []string{"read", "write"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+		Invoke: func(ctx context.Context, teamID string, input map[string]any) (map[string]any, error) {
 			if deps.Recall == nil {
 				return nil, ErrToolUnavailable
 			}

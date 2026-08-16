@@ -19,7 +19,7 @@ let rpcID = 0;
 const runID = `community-recall-e2e-${Date.now()}`;
 const scheduledAt = nextScheduledUTCMinute(Date.now(), 4);
 const runDate = scheduledAt.toISOString().slice(0, 10);
-const ownerProfileID = await userProfileID();
+const ownerProfileID = await apiCredentialOwnerID();
 const seeded = seedCommunityGraph(ownerProfileID);
 
 await updateControlConfig("/config/general", [{ key: "APP_TIMEZONE", value: "UTC" }]);
@@ -201,8 +201,6 @@ function seedCommunityGraph(ownerProfileID) {
        ${sqlLiteral(ownerProfileID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 'grant', 'compose community support', '{}'::jsonb)`
   ).join(",\n");
   postgresQuery(`
-    INSERT INTO semantic_team_refs (team_id) VALUES (${sqlLiteral(teamID)}::uuid) ON CONFLICT DO NOTHING;
-    INSERT INTO semantic_profile_refs (team_id, profile_id) VALUES (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid) ON CONFLICT DO NOTHING;
     INSERT INTO team_predicate_definitions (
       team_id, predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,
       relationship_kind, current_cardinality, lifecycle_state, origin, metadata, created_at
@@ -246,10 +244,10 @@ async function createIsolatedTeam() {
   const team = await controlJSON("/teams", { method: "POST", body: JSON.stringify({ name: `${runID} isolated`, description: "community isolation check" }) });
   const id = team.data?.id;
   if (typeof id !== "string" || !id) throw new Error("isolated team creation did not return an id");
-  const profile = await controlJSON(`/teams/${id}/profiles`, { method: "POST", body: JSON.stringify({ name: `${runID} isolated key`, scopes: ["read", "write"], rate_limit: 300 }) });
-  const isolatedAPIKey = profile.data?.api_key;
-  if (typeof isolatedAPIKey !== "string" || !isolatedAPIKey) throw new Error("isolated team profile did not return an API key");
-  return { teamID: id, apiKey: isolatedAPIKey };
+  const credential = await controlJSON(`/teams/${id}/credentials`, { method: "POST", body: JSON.stringify({ name: `${runID} isolated key`, scopes: ["read", "write"], rate_limit: 300 }) });
+  const isolatedCredential = credential.data?.api_key;
+  if (typeof isolatedCredential !== "string" || !isolatedCredential) throw new Error("isolated team credential did not return an API key");
+  return { teamID: id, apiKey: isolatedCredential };
 }
 
 function assertCommunityContract(payload) {
@@ -285,10 +283,10 @@ function assertKnownEvidenceSuppressed(payload, knownEvidenceIDs) {
 }
 
 async function updateControlConfig(path, items) { await controlJSON(path, { method: "PATCH", body: JSON.stringify({ items }) }); }
-async function userProfileID() {
+async function apiCredentialOwnerID() {
   const response = await httpJSON(`${userURL}/ui/api/session`, { headers: { Authorization: `Bearer ${apiKey}` } });
-  const id = response.data?.key?.id;
-  if (typeof id !== "string" || !id) throw new Error("user session did not return a profile id");
+  const id = response.data?.credential?.id;
+  if (typeof id !== "string" || !id) throw new Error("user session did not return a credential id");
   return id;
 }
 async function mcpSuccess(name, args) { return mcpSuccessWithKey(apiKey, name, args); }

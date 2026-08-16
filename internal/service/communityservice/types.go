@@ -17,8 +17,8 @@ type AppConfig interface {
 	CommunityDetectionRuntimeConfig(ctx context.Context) (domain.CommunityDetectionRuntimeConfig, error)
 }
 
-type ProfileService interface {
-	List(ctx context.Context, limit, offset int) ([]*domain.Profile, error)
+type TeamService interface {
+	List(ctx context.Context, limit, offset int) ([]*domain.Team, error)
 }
 
 // SummaryProvider is deliberately narrower than the semantic verifier
@@ -32,7 +32,6 @@ type SummaryProvider interface {
 type Dependencies struct {
 	Store     repository.CommunityRepository
 	AppConfig AppConfig
-	Profiles  ProfileService
 	Summary   SummaryProvider
 	Metrics   observability.DiscoverabilityMetrics
 	Now       func() time.Time

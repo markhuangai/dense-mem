@@ -155,7 +155,6 @@ function seedOverflowPredicates() {
   const team = sqlLiteral(teamID);
   const prefix = sqlLiteral(`${predicatePrefix}_predicate_`);
   postgresQuery(`
-    INSERT INTO semantic_team_refs (team_id) VALUES (${team}::uuid) ON CONFLICT (team_id) DO NOTHING;
     INSERT INTO team_predicate_definitions (
       team_id, predicate_key, version, aliases, allowed_subject_kinds,
       allowed_object_kinds, relationship_kind, current_cardinality,

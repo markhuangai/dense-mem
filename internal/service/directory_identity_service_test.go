@@ -214,8 +214,8 @@ func TestDirectoryReconcilePlanReportsInvalidCapacityAndStrongestGrant(t *testin
 			Status:       domain.DirectoryConnectorObserve,
 			GroupPattern: "^(?P<team>.+?)(?P<role>Member|Manager)$",
 			RoleEntitlements: map[string]domain.DirectoryRoleEntitlement{
-				"Member":  {Role: APIKeyRoleMember, Scopes: []string{APIKeyScopeRead}},
-				"Manager": {Role: APIKeyRoleManager, Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite}},
+				"Member":  {Role: CredentialRoleMember, Scopes: []string{CredentialScopeRead}},
+				"Manager": {Role: CredentialRoleManager, Scopes: []string{CredentialScopeRead, CredentialScopeWrite}},
 			},
 			MaxAutoTeams: 1,
 		},
@@ -245,14 +245,14 @@ func TestDirectoryReconcilePlanReportsInvalidCapacityAndStrongestGrant(t *testin
 	require.Len(t, preview.Candidates, 1)
 	require.Equal(t, firstGroupID, preview.Candidates[0].GroupID)
 
-	member := domain.DirectoryProfileGrant{Entitlement: domain.DirectoryRoleEntitlement{Role: APIKeyRoleMember, Scopes: []string{APIKeyScopeRead}}}
-	manager := domain.DirectoryProfileGrant{Entitlement: domain.DirectoryRoleEntitlement{Role: APIKeyRoleManager, Scopes: []string{APIKeyScopeWrite}}}
+	member := domain.DirectoryProfileGrant{Entitlement: domain.DirectoryRoleEntitlement{Role: CredentialRoleMember, Scopes: []string{CredentialScopeRead}}}
+	manager := domain.DirectoryProfileGrant{Entitlement: domain.DirectoryRoleEntitlement{Role: CredentialRoleManager, Scopes: []string{CredentialScopeWrite}}}
 	winner := strongestDirectoryGrant(member, manager)
-	require.Equal(t, APIKeyRoleManager, winner.Entitlement.Role)
-	require.Equal(t, []string{APIKeyScopeRead, APIKeyScopeWrite}, winner.Entitlement.Scopes)
+	require.Equal(t, CredentialRoleManager, winner.Entitlement.Role)
+	require.Equal(t, []string{CredentialScopeRead, CredentialScopeWrite}, winner.Entitlement.Scopes)
 	winner = strongestDirectoryGrant(manager, member)
-	require.Equal(t, APIKeyRoleManager, winner.Entitlement.Role)
-	require.Equal(t, []string{APIKeyScopeRead, APIKeyScopeWrite}, winner.Entitlement.Scopes)
+	require.Equal(t, CredentialRoleManager, winner.Entitlement.Role)
+	require.Equal(t, []string{CredentialScopeRead, CredentialScopeWrite}, winner.Entitlement.Scopes)
 }
 
 func TestDirectoryIdentityServiceProvisioningGuardsAndDeterministicHelpers(t *testing.T) {
@@ -274,7 +274,7 @@ func TestDirectoryIdentityServiceProvisioningGuardsAndDeterministicHelpers(t *te
 	updated := current
 	require.False(t, directoryConnectorPolicyChanged(current, updated))
 	updated.RoleEntitlements = map[string]domain.DirectoryRoleEntitlement{
-		"Manager": {Role: APIKeyRoleManager, Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite}},
+		"Manager": {Role: CredentialRoleManager, Scopes: []string{CredentialScopeRead, CredentialScopeWrite}},
 	}
 	require.True(t, directoryConnectorPolicyChanged(current, updated))
 	require.Equal(t, "", normalizeDirectoryTeamName(strings.Repeat("a", 101)))

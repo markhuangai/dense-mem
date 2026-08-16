@@ -14,9 +14,9 @@ const graphCorrectedObjectEntityId = process.env.DENSE_MEM_E2E_GRAPH_CORRECTED_O
 const graphOriginalRelationshipId = process.env.DENSE_MEM_E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID ?? "";
 const graphSuccessorRelationshipId = process.env.DENSE_MEM_E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID ?? "";
 
-type CreatedProfile = {
+type CreatedCredential = {
   api_key: string;
-  key: {
+  credential: {
     id: string;
     team_id: string;
     name: string;
@@ -54,9 +54,13 @@ type TelemetryResponse = {
 
 type UserSessionResponse = {
   data?: {
-    auth_method?: string;
-    can_manage_team?: boolean;
-    key?: {
+    membership?: {
+      team_id?: string;
+      name?: string;
+      grants?: string[];
+      role?: string;
+    };
+    credential?: {
       id?: string;
       name?: string;
       scopes?: string[];
@@ -162,9 +166,9 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   const sessionResponse = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(seedApiKey) });
   expect(sessionResponse.status()).toBe(200);
   const sessionBody = await sessionResponse.json() as UserSessionResponse;
-  expect(sessionBody.data?.key?.scopes).toEqual(expect.arrayContaining(["write"]));
-  const expectedScope = sessionBody.data?.can_manage_team ? "team" : "self";
-  const expectedUsageTitle = sessionBody.data?.can_manage_team ? "Team usage" : "My key usage";
+  expect(sessionBody.data?.membership?.grants).toEqual(expect.arrayContaining(["write"]));
+  const expectedScope = sessionBody.data?.membership?.role === "manager" ? "team" : "self";
+  const expectedUsageTitle = sessionBody.data?.membership?.role === "manager" ? "Team usage" : "My credential usage";
 
   await expect.poll(
     () => prometheusResultCount(request, `densemem_http_requests_total{route="/ui/api/session"}`),
@@ -181,7 +185,7 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   expect(telemetryBody.data?.scope?.type).toBe(expectedScope);
   expect(telemetryBody.data?.scope?.team_id).toBe(sessionBody.data?.team?.id);
   if (expectedScope === "self") {
-    expect(telemetryBody.data?.scope?.profile_id).toBe(sessionBody.data?.key?.id);
+    expect(telemetryBody.data?.scope?.profile_id).toBe(sessionBody.data?.credential?.id);
   }
   expect(Array.isArray(telemetryBody.data?.cards)).toBe(true);
   expect(Array.isArray(telemetryBody.data?.windowed_cards)).toBe(true);
@@ -386,23 +390,23 @@ test("MCP recall feedback is submitted and surfaced through compose telemetry", 
   }
 });
 
-test("user portal logs in with a real API key and shows only that profile", async ({ page, request }, testInfo) => {
-  const otherProfile = await createTeamProfile(request, uniqueName("Other profile", testInfo), ["read"]);
+test("user portal logs in with a real API key and shows only that credential", async ({ page, request }, testInfo) => {
+  const otherCredential = await createTeamCredential(request, uniqueName("Other credential", testInfo), ["read"]);
   const sessionResponse = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(seedApiKey) });
   expect(sessionResponse.status()).toBe(200);
   const sessionBody = await sessionResponse.json() as UserSessionResponse;
-  const seedProfileName = sessionBody.data?.key?.name;
-  if (!seedProfileName) {
-    throw new Error("seed API key session did not return a profile name");
+  const seedCredentialName = sessionBody.data?.credential?.name;
+  if (!seedCredentialName) {
+    throw new Error("seed API key session did not return a credential name");
   }
 
   await openUserPortal(page, seedApiKey);
 
   await expect(page.getByText(seedTeamName)).toBeVisible();
-  await expect(page.getByLabel("Current workspace")).not.toContainText(seedProfileName);
-  await page.getByRole("button", { name: /My key/i }).click();
-  await expect(page.getByText(seedProfileName, { exact: true })).toBeVisible();
-  await expect(page.getByText(otherProfile.key.name)).toBeHidden();
+  await expect(page.getByLabel("Current workspace")).not.toContainText(seedCredentialName);
+  await page.getByRole("button", { name: /My credential/i }).click();
+  await expect(page.getByText(seedCredentialName, { exact: true })).toBeVisible();
+  await expect(page.getByText(otherCredential.credential.name)).toBeHidden();
 
   await page.getByRole("button", { name: "Recall" }).click();
   await expect(page.getByLabel("Knowledge explorer")).toBeVisible();
@@ -464,11 +468,11 @@ test("user portal renders the corrected live graph with depth five and an uncapp
 });
 
 test("read-only user key cannot regenerate itself", async ({ page, request }, testInfo) => {
-  const readOnly = await createTeamProfile(request, uniqueName("Read only", testInfo), ["read"]);
+  const readOnly = await createTeamCredential(request, uniqueName("Read only", testInfo), ["read"]);
 
   await openUserPortal(page, readOnly.api_key);
   await expect(page.getByRole("button", { name: "Usage" })).toHaveCount(0);
-  await page.getByRole("button", { name: /My key/i }).click();
+  await page.getByRole("button", { name: /My credential/i }).click();
 
   await expect(page.getByRole("button", { name: /Regenerate key/i })).toBeDisabled();
 
@@ -477,10 +481,10 @@ test("read-only user key cannot regenerate itself", async ({ page, request }, te
 });
 
 test("write user key regenerates itself and invalidates the old key", async ({ page, request }, testInfo) => {
-  const writable = await createTeamProfile(request, uniqueName("Writable", testInfo), ["read", "write"]);
+  const writable = await createTeamCredential(request, uniqueName("Writable", testInfo), ["read", "write"]);
 
   await openUserPortal(page, writable.api_key);
-  await page.getByRole("button", { name: /My key/i }).click();
+  await page.getByRole("button", { name: /My credential/i }).click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /Regenerate key/i }).click();
 
@@ -501,7 +505,7 @@ test("write user key regenerates itself and invalidates the old key", async ({ p
 
 test("remembered API-key login uses a seven-day server session", async ({ page, request, browser }, testInfo) => {
   await setSSOCookieSecure(request, false);
-  const writable = await createTeamProfile(request, uniqueName("Cookie session", testInfo), ["read", "write"]);
+  const writable = await createTeamCredential(request, uniqueName("Cookie session", testInfo), ["read", "write"]);
 
   await page.goto(`${userUrl}/ui/`);
   await page.getByLabel("API key").fill(writable.api_key);
@@ -534,7 +538,7 @@ test("remembered API-key login uses a seven-day server session", async ({ page, 
   }
 
   const missingCsrfStatus = await page.evaluate(async () => {
-    const response = await fetch("/ui/api/key/rotate", {
+    const response = await fetch("/ui/api/credential/rotate", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -544,7 +548,7 @@ test("remembered API-key login uses a seven-day server session", async ({ page, 
   });
   expect(missingCsrfStatus).toBe(403);
 
-  await page.getByRole("button", { name: /My key/i }).click();
+  await page.getByRole("button", { name: /My credential/i }).click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /Regenerate key/i }).click();
   const rotatedKey = page.getByLabel("Generated API key");
@@ -559,7 +563,7 @@ test("remembered API-key login uses a seven-day server session", async ({ page, 
     return { status: response.status, body: await response.json() as UserSessionResponse };
   });
   expect(cookieSession.status).toBe(200);
-  expect(cookieSession.body.data?.auth_method).toBe("api_key_session");
+  expect(cookieSession.body.data?.credential?.id).toBe(writable.credential.id);
 
   await page.getByRole("button", { name: /sign out/i }).click();
   await expect(page.getByLabel("API key", { exact: true })).toBeVisible();
@@ -568,10 +572,10 @@ test("remembered API-key login uses a seven-day server session", async ({ page, 
   expect(remainingCookies.some((cookie) => cookie.name === "dense_mem_ui_csrf")).toBe(false);
 });
 
-test("user self-rotate endpoint rejects profile edits", async ({ request }, testInfo) => {
-  const writable = await createTeamProfile(request, uniqueName("No edit", testInfo), ["read", "write"]);
+test("user self-rotate endpoint rejects credential edits", async ({ request }, testInfo) => {
+  const writable = await createTeamCredential(request, uniqueName("No edit", testInfo), ["read", "write"]);
 
-  const response = await request.post(`${userUrl}/ui/api/key/rotate`, {
+  const response = await request.post(`${userUrl}/ui/api/credential/rotate`, {
     headers: bearer(writable.api_key),
     data: { name: "Renamed from user portal" },
   });
@@ -607,15 +611,15 @@ async function openUserPortal(page: Page, apiKey: string) {
   await expect(page.getByRole("heading", { name: "Dense-Mem Knowledge" })).toBeVisible();
 }
 
-async function createTeamProfile(request: APIRequestContext, name: string, scopes: string[]): Promise<CreatedProfile> {
-  const response = await request.post(`${controlUrl}/control/api/teams/${seedTeamId}/profiles`, {
+async function createTeamCredential(request: APIRequestContext, name: string, scopes: string[]): Promise<CreatedCredential> {
+  const response = await request.post(`${controlUrl}/control/api/teams/${seedTeamId}/credentials`, {
     headers: bearer(controlToken),
     data: { name, scopes, rate_limit: 300 },
   });
   if (response.status() !== 201) {
-    throw new Error(`create profile failed: ${response.status()} ${await response.text()}`);
+    throw new Error(`create credential failed: ${response.status()} ${await response.text()}`);
   }
-  const payload = await response.json() as { data: CreatedProfile };
+  const payload = await response.json() as { data: CreatedCredential };
   return payload.data;
 }
 
@@ -829,7 +833,7 @@ async function userUsageTitle(request: APIRequestContext, apiKey: string) {
     throw new Error(`user session failed: ${response.status()} ${await response.text()}`);
   }
   const body = await response.json() as UserSessionResponse;
-  return body.data?.can_manage_team ? "Team usage" : "My key usage";
+  return body.data?.membership?.role === "manager" ? "Team usage" : "My credential usage";
 }
 
 async function telemetryCardValue(request: APIRequestContext, id: string) {

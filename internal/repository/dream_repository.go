@@ -620,7 +620,7 @@ func (r *SemanticRepositoryImpl) UpdateHypothesisStatus(
 	}
 	var record *HypothesisRecord
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.ActorProfileID, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.ActorProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		rows, err := tx.WithContext(ctx).Raw(hypothesisUpdateReturningSQL(`
@@ -676,7 +676,7 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 	}
 	var record *HypothesisRecord
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.ActorProfileID, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.ActorProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		rows, err := tx.WithContext(ctx).Raw(hypothesisUpdateReturningSQL(`

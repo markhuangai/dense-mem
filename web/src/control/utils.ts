@@ -1,4 +1,4 @@
-import { ApiError, TeamProfile } from "../api";
+import { ApiError, Credential } from "../api";
 
 export function readError(error: unknown): string {
   if (error instanceof ApiError || error instanceof Error) {
@@ -14,17 +14,26 @@ export function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
-export function displayKeySuffix(key: TeamProfile): string {
-  const suffix = key.key_suffix?.trim();
+export function displayKeySuffix(credential: Credential): string {
+  const suffix = credential.key_suffix?.trim();
   return suffix ? `******${suffix}` : "Unavailable";
 }
 
-export function profilePermissionLabel(scopes: string[] | null | undefined): string {
+export function credentialPermissionLabel(scopes: string[] | null | undefined): string {
   const label = scopes?.includes("write") ? "Read/write" : "Read only";
   return scopes?.includes("feedback:read") ? `${label} + feedback` : label;
 }
 
-export function profileRoleLabel(role: TeamProfile["role"] | null | undefined): string {
+export function membershipGrantLabel(grants: string[] | null | undefined): string {
+  const label = grants?.includes("write") ? "Read/write" : "Read only";
+  return grants?.includes("feedback:read") ? `${label} + feedback` : label;
+}
+
+export function credentialRoleLabel(role: Credential["role"] | null | undefined): string {
+  return role === "manager" ? "Manager" : "Member";
+}
+
+export function membershipRoleLabel(role: "manager" | "member" | null | undefined): string {
   return role === "manager" ? "Manager" : "Member";
 }
 

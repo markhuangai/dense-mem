@@ -161,12 +161,10 @@ func formatValidationMessage(tag, errMsg string) string {
 
 // Context key constants for common validated bodies.
 const (
-	// CreateProfileBodyKey is the context key for create profile request body.
-	CreateProfileBodyKey = "create_profile_body"
-	// UpdateProfileBodyKey is the context key for update profile request body.
-	UpdateProfileBodyKey = "update_profile_body"
-	// CreateAPIKeyBodyKey is the context key for create API key request body.
-	CreateAPIKeyBodyKey = "create_apikey_body"
-	// UpdateAPIKeyBodyKey is the context key for update API key request body.
-	UpdateAPIKeyBodyKey = "update_apikey_body"
+	// UpdateTeamBodyKey is the context key for update team request bodies.
+	UpdateTeamBodyKey = "update_team_body"
+	// CreateCredentialBodyKey is the context key for create credential request bodies.
+	CreateCredentialBodyKey = "create_credential_body"
+	// UpdateCredentialBodyKey is the context key for update credential request bodies.
+	UpdateCredentialBodyKey = "update_credential_body"
 )

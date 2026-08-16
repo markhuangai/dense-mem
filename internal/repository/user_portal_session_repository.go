@@ -13,7 +13,7 @@ import (
 
 // UserPortalSessionRepository stores opaque browser sessions in PostgreSQL.
 // The repository is intentionally system-scoped because the session token is
-// the credential used before a team/profile context exists.
+// the credential used before an authenticated team and owner context exists.
 type UserPortalSessionRepository interface {
 	CreateSession(ctx context.Context, session *domain.UserPortalSession) error
 	GetSession(ctx context.Context, sessionHash string) (*domain.UserPortalSession, error)
@@ -38,7 +38,7 @@ func (r *UserPortalSessionRepositoryImpl) CreateSession(ctx context.Context, ses
 			INSERT INTO public.user_portal_sessions (
 				session_hash, key_id, csrf_hash, expires_at, created_at
 			) VALUES ($1, $2, $3, $4, $5)
-		`, session.SessionHash, session.KeyID, session.CSRFHash, session.ExpiresAt, session.CreatedAt).Error
+		`, session.SessionHash, session.CredentialID, session.CSRFHash, session.ExpiresAt, session.CreatedAt).Error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create user portal session: %w", err)
@@ -64,7 +64,7 @@ func (r *UserPortalSessionRepositoryImpl) GetSession(ctx context.Context, sessio
 		}
 
 		var scanned domain.UserPortalSession
-		if err := rows.Scan(&scanned.SessionHash, &scanned.KeyID, &scanned.CSRFHash, &scanned.ExpiresAt, &scanned.CreatedAt); err != nil {
+		if err := rows.Scan(&scanned.SessionHash, &scanned.CredentialID, &scanned.CSRFHash, &scanned.ExpiresAt, &scanned.CreatedAt); err != nil {
 			return err
 		}
 		session = &scanned

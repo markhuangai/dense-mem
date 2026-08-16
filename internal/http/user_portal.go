@@ -29,11 +29,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-// UserPortalDeps holds the dependencies for the API-key user portal.
+// UserPortalDeps holds the dependencies for the user portal.
 type UserPortalDeps struct {
-	APIKeyRepo         repository.APIKeyRepository
-	ProfileSvc         handler.ProfileServiceInterface
-	APIKeySvc          handler.APIKeyServiceInterface
+	CredentialRepo     repository.CredentialRepository
+	TeamSvc            handler.TeamServiceInterface
+	CredentialSvc      handler.CredentialServiceInterface
 	RateLimitSvc       service.RateLimitServiceInterface
 	UsageMetrics       service.UsageMetricsRecorder
 	Telemetry          service.TelemetryReader
@@ -53,36 +53,29 @@ type UserPortalDeps struct {
 }
 
 type userPortalHandler struct {
-	profiles  handler.ProfileServiceInterface
-	keys      handler.APIKeyServiceInterface
-	telemetry service.TelemetryReader
-	graph     graphview.Service
-	recall    *handler.RecallHandler
-	dreams    *handler.DreamHandler
-	audit     *handler.AuditHandler
-	sso       *service.SSOService
-	portal    service.UserPortalSessionManager
-	appConfig service.AppConfigService
+	teams       handler.TeamServiceInterface
+	credentials handler.CredentialServiceInterface
+	telemetry   service.TelemetryReader
+	graph       graphview.Service
+	recall      *handler.RecallHandler
+	dreams      *handler.DreamHandler
+	audit       *handler.AuditHandler
+	sso         *service.SSOService
+	portal      service.UserPortalSessionManager
+	appConfig   service.AppConfigService
 }
 
 type userPortalSessionResponse struct {
-	Team                 userPortalTeamResponse         `json:"team"`
-	Key                  userPortalKeyResponse          `json:"key"`
-	Teams                []userPortalTeamOptionResponse `json:"teams,omitempty"`
-	AuthMethod           string                         `json:"auth_method"`
-	CanRotate            bool                           `json:"can_rotate"`
-	CanManageTeam        bool                           `json:"can_manage_team"`
-	PersonalKey          *userPortalKeyResponse         `json:"personal_key"`
-	CanCreatePersonalKey bool                           `json:"can_create_personal_key"`
-	CanRotatePersonalKey bool                           `json:"can_rotate_personal_key"`
-	PersonalKeyMaxScopes []string                       `json:"personal_key_max_scopes,omitempty"`
+	Team               userPortalTeamResponse         `json:"team"`
+	Membership         userPortalMembershipResponse   `json:"membership"`
+	Credential         *userPortalCredentialResponse  `json:"credential"`
+	Teams              []userPortalTeamOptionResponse `json:"teams"`
+	PersonalCredential *userPortalCredentialResponse  `json:"personal_credential"`
 }
 
 type userPortalTeamOptionResponse struct {
-	Team          userPortalTeamResponse `json:"team"`
-	Key           userPortalKeyResponse  `json:"key"`
-	CanRotate     bool                   `json:"can_rotate"`
-	CanManageTeam bool                   `json:"can_manage_team"`
+	Team       userPortalTeamResponse       `json:"team"`
+	Membership userPortalMembershipResponse `json:"membership"`
 }
 
 type userPortalTeamResponse struct {
@@ -95,7 +88,14 @@ type userPortalTeamResponse struct {
 	UpdatedAt         string                        `json:"updated_at"`
 }
 
-type userPortalKeyResponse struct {
+type userPortalMembershipResponse struct {
+	TeamID uuid.UUID `json:"team_id"`
+	Name   string    `json:"name"`
+	Grants []string  `json:"grants"`
+	Role   string    `json:"role"`
+}
+
+type userPortalCredentialResponse struct {
 	ID         uuid.UUID `json:"id"`
 	TeamID     uuid.UUID `json:"team_id"`
 	Name       string    `json:"name"`
@@ -109,8 +109,8 @@ type userPortalKeyResponse struct {
 }
 
 type userPortalRotateResponse struct {
-	APIKey string                `json:"api_key"`
-	Key    userPortalKeyResponse `json:"key"`
+	APIKey     string                       `json:"api_key"`
+	Credential userPortalCredentialResponse `json:"credential"`
 }
 
 type userPortalSSOProviderResponse struct {
@@ -120,10 +120,10 @@ type userPortalSSOProviderResponse struct {
 }
 
 type userPortalSwitchSSOTeamRequest struct {
-	ProfileID string `json:"profile_id"`
+	TeamID string `json:"team_id"`
 }
 
-type userPortalCreateSSOKeyRequest struct {
+type userPortalCreateSSOCredentialRequest struct {
 	Name      string   `json:"name"`
 	Scopes    []string `json:"scopes"`
 	RateLimit int      `json:"rate_limit"`
@@ -256,15 +256,15 @@ func userPortalTelemetryFilter(principal *httpmw.Principal, window, requestedSco
 	}
 
 	scope := "self"
-	var profileID *uuid.UUID
-	if principal.GetRole() == service.APIKeyRoleManager {
+	var ownerID *uuid.UUID
+	if principal.GetRole() == service.CredentialRoleManager {
 		scope = "team"
 	} else {
-		keyID := principal.GetKeyID()
-		if keyID == uuid.Nil {
-			return service.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "authenticated key is not profile bound")
+		resolvedOwnerID := principal.GetOwnerID()
+		if resolvedOwnerID == uuid.Nil {
+			return service.TelemetryFilter{}, httperr.New(httperr.FORBIDDEN, "authenticated actor has no owner")
 		}
-		profileID = &keyID
+		ownerID = &resolvedOwnerID
 	}
 
 	if requested := strings.TrimSpace(requestedScope); requested != "" && requested != scope {
@@ -275,12 +275,12 @@ func userPortalTelemetryFilter(principal *httpmw.Principal, window, requestedSco
 		Window:    strings.TrimSpace(window),
 		Scope:     scope,
 		TeamID:    &teamID,
-		ProfileID: profileID,
+		ProfileID: ownerID,
 		Audience:  service.TelemetryAudienceUser,
 	}, nil
 }
 
-func (h *userPortalHandler) rotateCurrentKey(c echo.Context) error {
+func (h *userPortalHandler) rotateCurrentCredential(c echo.Context) error {
 	if err := rejectEditableRotateBody(c); err != nil {
 		return err
 	}
@@ -295,28 +295,31 @@ func (h *userPortalHandler) rotateCurrentKey(c echo.Context) error {
 	}
 
 	teamID := principal.GetTeamID()
-	keyID := principal.GetKeyID()
-	current, err := h.keys.GetByIDForProfile(ctx, teamID, keyID)
+	credentialID := principal.GetCredentialID()
+	if credentialID == nil || *credentialID == uuid.Nil {
+		return httperr.New(httperr.FORBIDDEN, "api credential required")
+	}
+	current, err := h.credentials.GetByIDForTeam(ctx, teamID, *credentialID)
 	if err != nil {
 		return err
 	}
 	if current == nil {
-		return httperr.New(httperr.NOT_FOUND, "key not found")
+		return httperr.New(httperr.NOT_FOUND, "credential not found")
 	}
 
-	actorKeyID := keyID.String()
-	rotated, rawKey, err := h.keys.RotateForProfile(ctx, teamID, keyID, service.CreateAPIKeyRequest{
-		Name:      current.GetProfileName(),
+	actorCredentialID := credentialID.String()
+	rotated, rawKey, err := h.credentials.RotateForTeam(ctx, teamID, *credentialID, service.CreateCredentialRequest{
+		Name:      current.GetName(),
 		RateLimit: current.RateLimit,
 		ExpiresAt: current.ExpiresAt,
-	}, &actorKeyID, principal.Role, c.RealIP(), httpmw.GetCorrelationID(ctx))
+	}, &actorCredentialID, principal.Role, c.RealIP(), httpmw.GetCorrelationID(ctx))
 	if err != nil {
 		return err
 	}
 
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": userPortalRotateResponse{
-		APIKey: rawKey,
-		Key:    toUserPortalKey(rotated),
+		APIKey:     rawKey,
+		Credential: toUserPortalCredential(rotated),
 	}})
 }
 
@@ -330,44 +333,43 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 		return h.currentSSOSession(c)
 	}
 
-	if h.profiles == nil {
-		return userPortalSessionResponse{}, httperr.New(httperr.SERVICE_UNAVAILABLE, "profile service unavailable")
+	if h.teams == nil {
+		return userPortalSessionResponse{}, httperr.New(httperr.SERVICE_UNAVAILABLE, "team service unavailable")
 	}
-	if h.keys == nil {
-		return userPortalSessionResponse{}, httperr.New(httperr.SERVICE_UNAVAILABLE, "api key service unavailable")
+	if h.credentials == nil {
+		return userPortalSessionResponse{}, httperr.New(httperr.SERVICE_UNAVAILABLE, "credential service unavailable")
 	}
 
 	teamID := principal.GetTeamID()
-	keyID := principal.GetKeyID()
-	team, err := h.profiles.Get(ctx, teamID)
+	credentialID := principal.GetCredentialID()
+	if credentialID == nil || *credentialID == uuid.Nil {
+		return userPortalSessionResponse{}, httperr.New(httperr.AUTH_INVALID, "api credential required")
+	}
+	team, err := h.teams.Get(ctx, teamID)
 	if err != nil {
 		return userPortalSessionResponse{}, err
 	}
 	if team == nil {
 		return userPortalSessionResponse{}, httperr.New(httperr.NOT_FOUND, "team not found")
 	}
-	key, err := h.keys.GetByIDForProfile(ctx, teamID, keyID)
+	credential, err := h.credentials.GetByIDForTeam(ctx, teamID, *credentialID)
 	if err != nil {
 		return userPortalSessionResponse{}, err
 	}
-	if key == nil {
-		return userPortalSessionResponse{}, httperr.New(httperr.NOT_FOUND, "key not found")
+	if credential == nil {
+		return userPortalSessionResponse{}, httperr.New(httperr.NOT_FOUND, "credential not found")
 	}
 
 	teamResponse, err := h.toUserPortalTeam(ctx, team)
 	if err != nil {
 		return userPortalSessionResponse{}, err
 	}
-	authMethod := principal.AuthMethod
-	if authMethod == "" {
-		authMethod = "api_key"
-	}
+	credentialResponse := toUserPortalCredential(credential)
 	return userPortalSessionResponse{
-		Team:          teamResponse,
-		Key:           toUserPortalKey(key),
-		AuthMethod:    authMethod,
-		CanRotate:     userPortalHasScope(principal.Scopes, service.APIKeyScopeWrite),
-		CanManageTeam: principal.Role == service.APIKeyRoleManager,
+		Team:       teamResponse,
+		Membership: userPortalMembershipFromPrincipal(principal),
+		Credential: &credentialResponse,
+		Teams:      []userPortalTeamOptionResponse{},
 	}, nil
 }
 
@@ -397,25 +399,19 @@ func (h *userPortalHandler) currentSSOSession(c echo.Context) (userPortalSession
 		return userPortalSessionResponse{}, err
 	}
 	response := userPortalSessionResponse{
-		Team:          selected.Team,
-		Key:           selected.Key,
-		Teams:         teams,
-		AuthMethod:    "sso",
-		CanRotate:     false,
-		CanManageTeam: selected.CanManageTeam,
+		Team:       selected.Team,
+		Membership: selected.Membership,
+		Credential: nil,
+		Teams:      teams,
 	}
-	if !selected.CanManageTeam && h.keys != nil {
-		personalKey, err := h.ssoOwnedKey(ctx, info.Selected.Team.ID, info.Identity.ID)
+	if selected.Membership.Role != service.CredentialRoleManager && h.credentials != nil {
+		personalCredential, err := h.ssoOwnedCredential(ctx, info.Selected.Team.ID, info.Identity.ID)
 		if err != nil {
 			return userPortalSessionResponse{}, err
 		}
-		response.CanCreatePersonalKey = personalKey == nil
-		response.PersonalKeyMaxScopes = append([]string{}, info.Selected.Profile.Scopes...)
-		if personalKey != nil {
-			keyResponse := toUserPortalKey(personalKey)
-			response.PersonalKey = &keyResponse
-			response.CanRotatePersonalKey = userPortalHasScope(personalKey.Scopes, service.APIKeyScopeWrite) &&
-				userPortalHasScope(info.Selected.Profile.Scopes, service.APIKeyScopeWrite)
+		if personalCredential != nil {
+			credentialResponse := toUserPortalCredential(personalCredential)
+			response.PersonalCredential = &credentialResponse
 		}
 	}
 	return response, nil
@@ -515,11 +511,11 @@ func (h *userPortalHandler) switchSSOTeam(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
-	profileID, err := uuid.Parse(strings.TrimSpace(body.ProfileID))
+	teamID, err := uuid.Parse(strings.TrimSpace(body.TeamID))
 	if err != nil {
-		return httperr.New(httperr.INVALID_UUID, "invalid SSO profile ID format")
+		return httperr.New(httperr.INVALID_UUID, "invalid team ID format")
 	}
-	if _, err := h.sso.SwitchSessionTeam(c.Request().Context(), token, profileID); err != nil {
+	if _, err := h.sso.SwitchSessionTeam(c.Request().Context(), token, teamID); err != nil {
 		return userPortalSSOError(err)
 	}
 	session, err := h.currentSSOSession(c)
@@ -529,41 +525,40 @@ func (h *userPortalHandler) switchSSOTeam(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": session})
 }
 
-func (h *userPortalHandler) createSSOKey(c echo.Context) error {
+func (h *userPortalHandler) createSSOCredential(c echo.Context) error {
 	info, principal, err := h.ssoRequestSession(c)
 	if err != nil {
 		return err
 	}
-	if info.Selected.Profile.GetRole() == service.APIKeyRoleManager {
-		return httperr.New(httperr.FORBIDDEN, "sso managers should create api keys from the team section")
+	if info.Selected.Membership.Role == service.CredentialRoleManager {
+		return httperr.New(httperr.FORBIDDEN, "sso managers should create credentials from the team section")
 	}
-	if h.keys == nil {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "api key service unavailable")
+	if h.credentials == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "credential service unavailable")
 	}
-	existing, err := h.keys.GetSSOOwnedKey(c.Request().Context(), info.Selected.Team.ID, info.Identity.ID)
+	existing, err := h.credentials.GetSSOOwnedCredential(c.Request().Context(), info.Selected.Team.ID, info.Identity.ID)
 	if err != nil {
 		return err
 	}
 	if existing != nil {
-		return httperr.New(httperr.CONFLICT, "sso-owned api key already exists for this team")
+		return httperr.New(httperr.CONFLICT, "sso-owned credential already exists for this team")
 	}
 
-	var body userPortalCreateSSOKeyRequest
+	var body userPortalCreateSSOCredentialRequest
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
-	req, err := userPortalSSOCreateKeyRequest(body, info.Identity, info.Selected.Profile.Scopes)
+	req, err := userPortalSSOCreateCredentialRequest(body, info.Identity, info.Selected.Membership.Grants)
 	if err != nil {
 		return err
 	}
-	req.SSOOwnerIdentityID = &info.Identity.ID
+	req.OwnerIdentityID = &info.Identity.ID
 
-	actorKeyID := principal.KeyID.String()
-	key, rawKey, err := h.keys.CreateStandardKey(
+	credential, rawKey, err := h.credentials.CreateCredential(
 		c.Request().Context(),
 		info.Selected.Team.ID,
 		req,
-		&actorKeyID,
+		userPortalPrincipalCredentialID(principal),
 		principal.Role,
 		c.RealIP(),
 		httpmw.GetCorrelationID(c.Request().Context()),
@@ -572,12 +567,12 @@ func (h *userPortalHandler) createSSOKey(c echo.Context) error {
 		return err
 	}
 	return c.JSON(nethttp.StatusCreated, map[string]any{"data": userPortalRotateResponse{
-		APIKey: rawKey,
-		Key:    toUserPortalKey(key),
+		APIKey:     rawKey,
+		Credential: toUserPortalCredential(credential),
 	}})
 }
 
-func (h *userPortalHandler) rotateSSOKey(c echo.Context) error {
+func (h *userPortalHandler) rotateSSOCredential(c echo.Context) error {
 	if err := rejectEditableRotateBody(c); err != nil {
 		return err
 	}
@@ -585,36 +580,35 @@ func (h *userPortalHandler) rotateSSOKey(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if info.Selected.Profile.GetRole() == service.APIKeyRoleManager {
-		return httperr.New(httperr.FORBIDDEN, "sso managers should rotate api keys from the team section")
+	if info.Selected.Membership.Role == service.CredentialRoleManager {
+		return httperr.New(httperr.FORBIDDEN, "sso managers should rotate credentials from the team section")
 	}
-	if h.keys == nil {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "api key service unavailable")
+	if h.credentials == nil {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "credential service unavailable")
 	}
-	personalKey, err := h.keys.GetSSOOwnedKey(c.Request().Context(), info.Selected.Team.ID, info.Identity.ID)
+	personalCredential, err := h.credentials.GetSSOOwnedCredential(c.Request().Context(), info.Selected.Team.ID, info.Identity.ID)
 	if err != nil {
 		return err
 	}
-	if personalKey == nil {
-		return httperr.New(httperr.NOT_FOUND, "sso-owned api key not found")
+	if personalCredential == nil {
+		return httperr.New(httperr.NOT_FOUND, "sso-owned credential not found")
 	}
-	if !userPortalHasScope(personalKey.Scopes, service.APIKeyScopeWrite) ||
-		!userPortalHasScope(info.Selected.Profile.Scopes, service.APIKeyScopeWrite) {
-		return httperr.New(httperr.FORBIDDEN, "sso-owned api key cannot be rotated")
+	if !userPortalHasGrant(personalCredential.Scopes, service.CredentialScopeWrite) ||
+		!userPortalHasGrant(info.Selected.Membership.Grants, service.CredentialScopeWrite) {
+		return httperr.New(httperr.FORBIDDEN, "sso-owned credential cannot be rotated")
 	}
 
-	actorKeyID := principal.KeyID.String()
-	rotated, rawKey, err := h.keys.RotateForProfile(c.Request().Context(), info.Selected.Team.ID, personalKey.ID, service.CreateAPIKeyRequest{
-		Name:      personalKey.GetProfileName(),
-		RateLimit: personalKey.RateLimit,
-		ExpiresAt: personalKey.ExpiresAt,
-	}, &actorKeyID, principal.Role, c.RealIP(), httpmw.GetCorrelationID(c.Request().Context()))
+	rotated, rawKey, err := h.credentials.RotateForTeam(c.Request().Context(), info.Selected.Team.ID, personalCredential.ID, service.CreateCredentialRequest{
+		Name:      personalCredential.GetName(),
+		RateLimit: personalCredential.RateLimit,
+		ExpiresAt: personalCredential.ExpiresAt,
+	}, userPortalPrincipalCredentialID(principal), principal.Role, c.RealIP(), httpmw.GetCorrelationID(c.Request().Context()))
 	if err != nil {
 		return err
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": userPortalRotateResponse{
-		APIKey: rawKey,
-		Key:    toUserPortalKey(rotated),
+		APIKey:     rawKey,
+		Credential: toUserPortalCredential(rotated),
 	}})
 }
 
@@ -640,41 +634,41 @@ func (h *userPortalHandler) ssoRequestSession(c echo.Context) (*service.SSOSessi
 	return info, principal, nil
 }
 
-func (h *userPortalHandler) ssoOwnedKey(ctx context.Context, teamID, identityID uuid.UUID) (*domain.APIKey, error) {
-	if h.keys == nil {
+func (h *userPortalHandler) ssoOwnedCredential(ctx context.Context, teamID, identityID uuid.UUID) (*domain.Credential, error) {
+	if h.credentials == nil {
 		return nil, nil
 	}
-	return h.keys.GetSSOOwnedKey(ctx, teamID, identityID)
+	return h.credentials.GetSSOOwnedCredential(ctx, teamID, identityID)
 }
 
-func userPortalSSOCreateKeyRequest(body userPortalCreateSSOKeyRequest, identity domain.SSOIdentity, maxScopes []string) (service.CreateAPIKeyRequest, error) {
-	if !userPortalHasScope(maxScopes, service.APIKeyScopeRead) {
-		return service.CreateAPIKeyRequest{}, httperr.New(httperr.FORBIDDEN, "sso access denied")
+func userPortalSSOCreateCredentialRequest(body userPortalCreateSSOCredentialRequest, identity domain.SSOIdentity, maxGrants []string) (service.CreateCredentialRequest, error) {
+	if !userPortalHasGrant(maxGrants, service.CredentialScopeRead) {
+		return service.CreateCredentialRequest{}, httperr.New(httperr.FORBIDDEN, "sso access denied")
 	}
 	scopes := append([]string{}, body.Scopes...)
 	if len(scopes) == 0 {
-		scopes = []string{service.APIKeyScopeRead}
-		if userPortalHasScope(maxScopes, service.APIKeyScopeWrite) {
-			scopes = service.StandardAPIKeyScopes()
+		scopes = []string{service.CredentialScopeRead}
+		if userPortalHasGrant(maxGrants, service.CredentialScopeWrite) {
+			scopes = service.StandardCredentialScopes()
 		}
 	}
-	normalizedScopes, err := service.NormalizeAPIKeyScopes(scopes)
+	normalizedScopes, err := service.NormalizeCredentialScopes(scopes)
 	if err != nil {
-		return service.CreateAPIKeyRequest{}, err
+		return service.CreateCredentialRequest{}, err
 	}
 	for _, scope := range normalizedScopes {
-		if !userPortalHasScope(maxScopes, scope) {
-			return service.CreateAPIKeyRequest{}, httperr.New(httperr.FORBIDDEN, "cannot create api key above sso entitlement")
+		if !userPortalHasGrant(maxGrants, scope) {
+			return service.CreateCredentialRequest{}, httperr.New(httperr.FORBIDDEN, "cannot create credential above sso entitlement")
 		}
 	}
 	if body.RateLimit <= 0 {
-		return service.CreateAPIKeyRequest{}, httperr.New(httperr.VALIDATION_ERROR, "rate_limit must be greater than zero")
+		return service.CreateCredentialRequest{}, httperr.New(httperr.VALIDATION_ERROR, "rate_limit must be greater than zero")
 	}
 	var expiresAt *time.Time
 	if body.ExpiresAt != nil && strings.TrimSpace(*body.ExpiresAt) != "" {
 		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*body.ExpiresAt))
 		if err != nil {
-			return service.CreateAPIKeyRequest{}, httperr.New(httperr.VALIDATION_ERROR, "expires_at must be an RFC3339 timestamp")
+			return service.CreateCredentialRequest{}, httperr.New(httperr.VALIDATION_ERROR, "expires_at must be an RFC3339 timestamp")
 		}
 		expiresAt = &parsed
 	}
@@ -682,12 +676,12 @@ func userPortalSSOCreateKeyRequest(body userPortalCreateSSOKeyRequest, identity 
 	if name == "" {
 		name = ssoOwnedKeyDefaultName(identity)
 	}
-	return service.CreateAPIKeyRequest{
+	return service.CreateCredentialRequest{
 		Name:      name,
 		RateLimit: body.RateLimit,
 		ExpiresAt: expiresAt,
 		Scopes:    normalizedScopes,
-		Role:      service.APIKeyRoleMember,
+		Role:      service.CredentialRoleMember,
 	}, nil
 }
 
@@ -742,7 +736,7 @@ func rejectEditableRotateBody(c echo.Context) error {
 	return nil
 }
 
-func (h *userPortalHandler) toUserPortalTeam(ctx context.Context, team *domain.Profile) (userPortalTeamResponse, error) {
+func (h *userPortalHandler) toUserPortalTeam(ctx context.Context, team *domain.Team) (userPortalTeamResponse, error) {
 	effective, err := effectiveDreamingConfig(ctx, h.appConfig, team.Config)
 	if err != nil {
 		return userPortalTeamResponse{}, err
@@ -758,41 +752,73 @@ func (h *userPortalHandler) toUserPortalTeam(ctx context.Context, team *domain.P
 	}, nil
 }
 
-func toUserPortalKey(key *domain.APIKey) userPortalKeyResponse {
-	return userPortalKeyResponse{
-		ID:         key.ID,
-		TeamID:     key.GetTeamID(),
-		Name:       key.GetProfileName(),
-		KeySuffix:  key.KeySuffix,
-		Scopes:     append([]string{}, key.Scopes...),
-		Role:       key.GetRole(),
-		RateLimit:  key.RateLimit,
-		LastUsedAt: controlTimePtr(key.LastUsedAt),
-		ExpiresAt:  controlTimePtr(key.ExpiresAt),
-		CreatedAt:  key.CreatedAt.Format(time.RFC3339),
+func toUserPortalCredential(credential *domain.Credential) userPortalCredentialResponse {
+	return userPortalCredentialResponse{
+		ID:         credential.ID,
+		TeamID:     credential.GetTeamID(),
+		Name:       credential.GetName(),
+		KeySuffix:  credential.KeySuffix,
+		Scopes:     append([]string{}, credential.Scopes...),
+		Role:       credential.GetRole(),
+		RateLimit:  credential.RateLimit,
+		LastUsedAt: controlTimePtr(credential.LastUsedAt),
+		ExpiresAt:  controlTimePtr(credential.ExpiresAt),
+		CreatedAt:  credential.CreatedAt.Format(time.RFC3339),
 	}
 }
 
-func (h *userPortalHandler) toUserPortalTeamOption(ctx context.Context, item domain.SSOTeamProfile) (userPortalTeamOptionResponse, error) {
+func userPortalMembershipFromPrincipal(principal *httpmw.Principal) userPortalMembershipResponse {
+	role := principal.GetRole()
+	if role == "" {
+		role = service.CredentialRoleMember
+	}
+	return userPortalMembershipResponse{
+		TeamID: principal.GetTeamID(),
+		Name:   principal.GetOwnerName(),
+		Grants: append([]string{}, principal.GetGrants()...),
+		Role:   role,
+	}
+}
+
+func toUserPortalMembership(membership domain.Membership) userPortalMembershipResponse {
+	role := membership.Role
+	if role == "" {
+		role = service.CredentialRoleMember
+	}
+	return userPortalMembershipResponse{
+		TeamID: membership.TeamID,
+		Name:   membership.Name,
+		Grants: append([]string{}, membership.Grants...),
+		Role:   role,
+	}
+}
+
+func (h *userPortalHandler) toUserPortalTeamOption(ctx context.Context, item domain.SSOTeamMembership) (userPortalTeamOptionResponse, error) {
 	team, err := h.toUserPortalTeam(ctx, &item.Team)
 	if err != nil {
 		return userPortalTeamOptionResponse{}, err
 	}
 	return userPortalTeamOptionResponse{
-		Team:          team,
-		Key:           toUserPortalKey(&item.Profile),
-		CanRotate:     false,
-		CanManageTeam: item.Profile.GetRole() == service.APIKeyRoleManager,
+		Team:       team,
+		Membership: toUserPortalMembership(item.Membership),
 	}, nil
 }
 
-func userPortalHasScope(scopes []string, required string) bool {
-	for _, scope := range scopes {
-		if scope == required {
+func userPortalHasGrant(grants []string, required string) bool {
+	for _, grant := range grants {
+		if grant == required {
 			return true
 		}
 	}
 	return false
+}
+
+func userPortalPrincipalCredentialID(principal *httpmw.Principal) *string {
+	if principal == nil || principal.CredentialID == nil {
+		return nil
+	}
+	credentialID := principal.CredentialID.String()
+	return &credentialID
 }
 
 func (h *userPortalHandler) ssoCallbackURL(ctx context.Context) (string, error) {

@@ -30,7 +30,11 @@ func (h *userPortalHandler) createPortalSession(c echo.Context) error {
 
 	body := httpmw.MustGetValidatedBody[dto.CreateUserPortalSessionRequest](c.Request().Context(), userPortalCreateSessionBodyKey)
 
-	result, err := h.portal.CreateSession(c.Request().Context(), principal.KeyID)
+	credentialID := principal.GetCredentialID()
+	if credentialID == nil {
+		return httperr.New(httperr.FORBIDDEN, "direct API credential authentication required")
+	}
+	result, err := h.portal.CreateSession(c.Request().Context(), *credentialID)
 	if err != nil {
 		return userPortalSessionError(err)
 	}

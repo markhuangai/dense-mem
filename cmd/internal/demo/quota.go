@@ -190,11 +190,11 @@ func RequestQuotaMiddleware(manager *QuotaManager) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			teamID := ""
-			if actor, ok := requestctx.ActorProfileFromContext(c.Request().Context()); ok && actor.TeamID != uuid.Nil {
+			if actor, ok := requestctx.ActorFromContext(c.Request().Context()); ok && actor.TeamID != uuid.Nil {
 				teamID = actor.TeamID.String()
 			}
 			if teamID == "" {
-				if resolved, ok := httpmw.GetResolvedProfileID(c.Request().Context()); ok && resolved != uuid.Nil {
+				if resolved, ok := httpmw.GetResolvedTeamID(c.Request().Context()); ok && resolved != uuid.Nil {
 					teamID = resolved.String()
 				}
 			}
@@ -219,12 +219,12 @@ func WrapRegistry(reg registry.Registry, manager *QuotaManager) (registry.Regist
 		invoke := tool.Invoke
 		name := tool.Name
 		if invoke != nil {
-			tool.Invoke = func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
-				teamID := toolTeamID(ctx, profileID)
+			tool.Invoke = func(ctx context.Context, teamID string, input map[string]any) (map[string]any, error) {
+				teamID = toolTeamID(ctx, teamID)
 				if err := manager.ConsumeTool(ctx, teamID, name, input); err != nil {
 					return nil, err
 				}
-				return invoke(ctx, profileID, input)
+				return invoke(ctx, teamID, input)
 			}
 		}
 		if err := wrapped.Register(tool); err != nil {
@@ -256,11 +256,11 @@ func (m *QuotaManager) ConsumeTool(ctx context.Context, teamID, toolName string,
 	}
 }
 
-func toolTeamID(ctx context.Context, profileID string) string {
-	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok && actor.TeamID != uuid.Nil {
+func toolTeamID(ctx context.Context, teamID string) string {
+	if actor, ok := requestctx.ActorFromContext(ctx); ok && actor.TeamID != uuid.Nil {
 		return actor.TeamID.String()
 	}
-	return strings.TrimSpace(profileID)
+	return strings.TrimSpace(teamID)
 }
 
 func rememberEvidenceUsage(input map[string]any) (int64, int64) {

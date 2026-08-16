@@ -250,8 +250,8 @@ func TestSSOCompleteLoginUsesUserInfoAndGroupResolver(t *testing.T) {
 				TeamID:     teamID,
 				TeamName:   "Enterprise Team",
 				GroupID:    "group-a",
-				Scopes:     []string{APIKeyScopeRead},
-				Role:       APIKeyRoleMember,
+				Scopes:     []string{CredentialScopeRead},
+				Role:       CredentialRoleMember,
 				Enabled:    true,
 			},
 		},
@@ -343,12 +343,12 @@ func TestSSOProviderAndMappingManagement(t *testing.T) {
 		ProviderID: created.ID,
 		TeamID:     teamID,
 		GroupID:    "group-a",
-		Scopes:     []string{APIKeyScopeRead, APIKeyScopeWrite},
-		Role:       APIKeyRoleManager,
+		Scopes:     []string{CredentialScopeRead, CredentialScopeWrite},
+		Role:       CredentialRoleManager,
 	})
 	require.NoError(t, err)
 	assert.NotEqual(t, uuid.Nil, mapping.ID)
-	assert.Equal(t, APIKeyRoleManager, mapping.Role)
+	assert.Equal(t, CredentialRoleManager, mapping.Role)
 
 	mapping.GroupName = "Writers"
 	updatedMapping, err := svc.UpdateMapping(ctx, *mapping)
@@ -386,8 +386,8 @@ func TestSSOServiceErrorBranches(t *testing.T) {
 		ProviderID: providerID,
 		TeamID:     teamID,
 		GroupID:    "group-a",
-		Scopes:     []string{APIKeyScopeRead},
-		Role:       APIKeyRoleMember,
+		Scopes:     []string{CredentialScopeRead},
+		Role:       CredentialRoleMember,
 		Enabled:    true,
 	}
 
@@ -536,7 +536,7 @@ func TestSSOServiceErrorBranches(t *testing.T) {
 	repo = &ssoRepositoryStub{
 		t: t,
 		sessions: map[string]*domain.SSOSession{
-			sessionHash: {SessionHash: sessionHash, TeamProfileID: profileID, ExpiresAt: now.Add(time.Hour)},
+			sessionHash: {SessionHash: sessionHash, OwnerID: profileID, ExpiresAt: now.Add(time.Hour)},
 		},
 	}
 	svc = NewSSOService(repo, SSOConfig{Now: func() time.Time { return now }})
@@ -546,7 +546,7 @@ func TestSSOServiceErrorBranches(t *testing.T) {
 	repo = &ssoRepositoryStub{
 		t: t,
 		sessions: map[string]*domain.SSOSession{
-			sessionHash: {SessionHash: sessionHash, IdentityID: uuid.New(), TeamProfileID: profileID, ExpiresAt: now.Add(-time.Minute)},
+			sessionHash: {SessionHash: sessionHash, IdentityID: uuid.New(), OwnerID: profileID, ExpiresAt: now.Add(-time.Minute)},
 		},
 	}
 	svc = NewSSOService(repo, SSOConfig{Now: func() time.Time { return now }})
@@ -557,7 +557,7 @@ func TestSSOServiceErrorBranches(t *testing.T) {
 	repo = &ssoRepositoryStub{
 		t: t,
 		sessions: map[string]*domain.SSOSession{
-			sessionHash: {SessionHash: sessionHash, IdentityID: identityID, TeamProfileID: profileID, ExpiresAt: now.Add(time.Hour)},
+			sessionHash: {SessionHash: sessionHash, IdentityID: identityID, OwnerID: profileID, ExpiresAt: now.Add(time.Hour)},
 		},
 	}
 	svc = NewSSOService(repo, SSOConfig{Now: func() time.Time { return now }})
@@ -570,7 +570,7 @@ func TestSSOServiceErrorBranches(t *testing.T) {
 			identityID: {ID: identityID, ProviderID: providerID, Subject: "subject"},
 		},
 		sessions: map[string]*domain.SSOSession{
-			sessionHash: {SessionHash: sessionHash, IdentityID: identityID, TeamProfileID: profileID, ExpiresAt: now.Add(time.Hour)},
+			sessionHash: {SessionHash: sessionHash, IdentityID: identityID, OwnerID: profileID, ExpiresAt: now.Add(time.Hour)},
 		},
 	}
 	svc = NewSSOService(repo, SSOConfig{Now: func() time.Time { return now }})
@@ -579,21 +579,21 @@ func TestSSOServiceErrorBranches(t *testing.T) {
 	_, err = svc.SwitchSessionTeam(ctx, sessionToken, profileID)
 	require.ErrorIs(t, err, ErrSSOAccessDenied)
 
-	_, err = svc.ValidateAPIKeyPrincipal(ctx, nil)
+	_, err = svc.ValidateCredential(ctx, nil)
 	require.ErrorIs(t, err, ErrSSOAccessDenied)
-	keyWithoutSSO := &domain.APIKey{ID: uuid.New(), TeamID: teamID}
-	validated, err := svc.ValidateAPIKeyPrincipal(ctx, keyWithoutSSO)
+	keyWithoutSSO := &domain.Credential{ID: uuid.New(), TeamID: teamID}
+	validated, err := svc.ValidateCredential(ctx, keyWithoutSSO)
 	require.NoError(t, err)
 	assert.Same(t, keyWithoutSSO, validated)
 
 	repo = &ssoRepositoryStub{t: t, getProviderErr: backendErr}
 	svc = NewSSOService(repo, SSOConfig{})
-	_, err = svc.ValidateAPIKeyPrincipal(ctx, &domain.APIKey{ID: uuid.New(), TeamID: teamID, SSOProviderID: &providerID, SSOSubject: "subject"})
+	_, err = svc.ValidateCredential(ctx, &domain.Credential{ID: uuid.New(), TeamID: teamID, OwnerIdentityID: &identityID, SSOProviderID: &providerID, SSOSubject: "subject"})
 	require.ErrorIs(t, err, backendErr)
 
 	repo = &ssoRepositoryStub{t: t, providers: map[uuid.UUID]*domain.SSOProvider{providerID: {ID: providerID, Enabled: false}}}
 	svc = NewSSOService(repo, SSOConfig{})
-	_, err = svc.ValidateAPIKeyPrincipal(ctx, &domain.APIKey{ID: uuid.New(), TeamID: teamID, SSOProviderID: &providerID, SSOSubject: "subject"})
+	_, err = svc.ValidateCredential(ctx, &domain.Credential{ID: uuid.New(), TeamID: teamID, OwnerIdentityID: &identityID, SSOProviderID: &providerID, SSOSubject: "subject"})
 	require.ErrorIs(t, err, ErrSSOProviderDisabled)
 
 	repo = &ssoRepositoryStub{
@@ -602,7 +602,7 @@ func TestSSOServiceErrorBranches(t *testing.T) {
 		cacheErr:  backendErr,
 	}
 	svc = NewSSOService(repo, SSOConfig{})
-	_, err = svc.ValidateAPIKeyPrincipal(ctx, &domain.APIKey{ID: uuid.New(), TeamID: teamID, SSOProviderID: &providerID, SSOSubject: "subject"})
+	_, err = svc.ValidateCredential(ctx, &domain.Credential{ID: uuid.New(), TeamID: teamID, OwnerIdentityID: &identityID, SSOProviderID: &providerID, SSOSubject: "subject"})
 	require.ErrorIs(t, err, backendErr)
 
 	repo = &ssoRepositoryStub{
@@ -616,7 +616,7 @@ func TestSSOServiceErrorBranches(t *testing.T) {
 		},
 	}
 	svc = NewSSOService(repo, SSOConfig{Now: func() time.Time { return now }})
-	_, err = svc.ValidateAPIKeyPrincipal(ctx, &domain.APIKey{ID: uuid.New(), TeamID: teamID, SSOProviderID: &providerID, SSOSubject: "subject"})
+	_, err = svc.ValidateCredential(ctx, &domain.Credential{ID: uuid.New(), TeamID: teamID, OwnerIdentityID: &identityID, SSOProviderID: &providerID, SSOSubject: "subject"})
 	require.ErrorIs(t, err, ErrSSOAccessDenied)
 
 	repo = &ssoRepositoryStub{
@@ -632,7 +632,7 @@ func TestSSOServiceErrorBranches(t *testing.T) {
 		},
 	}
 	svc = NewSSOService(repo, SSOConfig{Now: func() time.Time { return now }})
-	_, err = svc.ValidateAPIKeyPrincipal(ctx, &domain.APIKey{ID: uuid.New(), TeamID: teamID, SSOProviderID: &providerID, SSOSubject: "subject"})
+	_, err = svc.ValidateCredential(ctx, &domain.Credential{ID: uuid.New(), TeamID: teamID, OwnerIdentityID: &identityID, SSOProviderID: &providerID, SSOSubject: "subject"})
 	require.ErrorIs(t, err, backendErr)
 }
 
@@ -708,55 +708,57 @@ func TestSSOSessionLifecycle(t *testing.T) {
 			ExpiresAt:  now.Add(time.Minute),
 		},
 		mappings: []*domain.SSOGroupMapping{
-			{ProviderID: providerID, TeamID: teamAID, GroupID: "group-a", Scopes: []string{APIKeyScopeRead}, Role: APIKeyRoleMember, Enabled: true},
-			{ProviderID: providerID, TeamID: teamBID, GroupID: "group-b", Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite}, Role: APIKeyRoleManager, Enabled: true},
+			{ProviderID: providerID, TeamID: teamAID, GroupID: "group-a", Scopes: []string{CredentialScopeRead}, Role: CredentialRoleMember, Enabled: true},
+			{ProviderID: providerID, TeamID: teamBID, GroupID: "group-b", Scopes: []string{CredentialScopeRead, CredentialScopeWrite}, Role: CredentialRoleManager, Enabled: true},
 		},
 		identities: map[uuid.UUID]*domain.SSOIdentity{
 			identityID: {ID: identityID, ProviderID: providerID, Subject: "subject-123", Email: "ada@example.com"},
 		},
 		sessions: map[string]*domain.SSOSession{
 			sessionHash: {
-				SessionHash:   sessionHash,
-				IdentityID:    identityID,
-				ProviderID:    providerID,
-				TeamProfileID: profileAID,
-				TeamID:        teamAID,
-				CSRFHash:      HashSSOToken(csrfToken),
-				ExpiresAt:     now.Add(time.Hour),
+				SessionHash:  sessionHash,
+				IdentityID:   identityID,
+				ProviderID:   providerID,
+				MembershipID: profileAID,
+				OwnerID:      profileAID,
+				TeamID:       teamAID,
+				CSRFHash:     HashSSOToken(csrfToken),
+				ExpiresAt:    now.Add(time.Hour),
 			},
 		},
 	}
-	repo.teamProfiles = []*domain.SSOTeamProfile{
-		ssoTeamProfile(identityID, providerID, "subject-123", teamAID, profileAID, "Team A", []string{APIKeyScopeRead}, APIKeyRoleMember),
-		ssoTeamProfile(identityID, providerID, "subject-123", teamBID, profileBID, "Team B", []string{APIKeyScopeRead, APIKeyScopeWrite}, APIKeyRoleManager),
+	repo.teamProfiles = []*domain.SSOTeamMembership{
+		ssoTeamProfile(identityID, providerID, "subject-123", teamAID, profileAID, "Team A", []string{CredentialScopeRead}, CredentialRoleMember),
+		ssoTeamProfile(identityID, providerID, "subject-123", teamBID, profileBID, "Team B", []string{CredentialScopeRead, CredentialScopeWrite}, CredentialRoleManager),
 	}
-	repo.ssoProfiles = map[uuid.UUID]*domain.APIKey{
-		profileAID: &repo.teamProfiles[0].Profile,
-		profileBID: &repo.teamProfiles[1].Profile,
+	repo.ssoProfiles = map[uuid.UUID]*domain.SSOTeamMembership{
+		profileAID: repo.teamProfiles[0],
+		profileBID: repo.teamProfiles[1],
 	}
 	svc := NewSSOService(repo, SSOConfig{
 		GroupResolver: &ssoGroupResolverStub{t: t, unexpected: true},
 		Now:           func() time.Time { return now },
 	})
 
-	key, err := svc.AuthenticateSession(ctx, sessionToken, csrfToken, true)
+	actor, err := svc.AuthenticateSession(ctx, sessionToken, csrfToken, true)
 	require.NoError(t, err)
-	assert.Equal(t, profileAID, key.ID)
-	assert.Equal(t, []string{APIKeyScopeRead}, key.Scopes)
+	assert.Equal(t, profileAID, actor.OwnerID)
+	assert.Equal(t, []string{CredentialScopeRead}, actor.Membership.Grants)
+	assert.Nil(t, actor.Credential)
 
 	_, err = svc.AuthenticateSession(ctx, sessionToken, "wrong", true)
 	require.ErrorIs(t, err, ErrSSOCSRFInvalid)
 
 	info, err := svc.CurrentSession(ctx, sessionToken)
 	require.NoError(t, err)
-	assert.Equal(t, profileAID, info.Selected.Profile.ID)
+	assert.Equal(t, profileAID, info.Selected.Membership.OwnerID)
 	assert.Len(t, info.Teams, 2)
 
-	switched, err := svc.SwitchSessionTeam(ctx, sessionToken, profileBID)
+	switched, err := svc.SwitchSessionTeam(ctx, sessionToken, teamBID)
 	require.NoError(t, err)
-	assert.Equal(t, profileBID, switched.Selected.Profile.ID)
+	assert.Equal(t, profileBID, switched.Selected.Membership.OwnerID)
 	assert.Equal(t, sessionHash, repo.updatedSessionHash)
-	assert.Equal(t, profileBID, repo.sessions[sessionHash].TeamProfileID)
+	assert.Equal(t, profileBID, repo.sessions[sessionHash].OwnerID)
 
 	err = svc.Logout(ctx, sessionToken)
 	require.NoError(t, err)
@@ -771,18 +773,18 @@ func TestSSOEntitlementsFromMappings(t *testing.T) {
 	svc := NewSSOService(&ssoRepositoryStub{t: t}, SSOConfig{})
 
 	entitlements, err := svc.entitlementsFromMappings(providerID, "subject", []*domain.SSOGroupMapping{
-		{ProviderID: providerID, TeamID: teamAID, TeamName: "Beta", GroupID: "g1", Scopes: []string{APIKeyScopeRead}, Role: APIKeyRoleMember, Enabled: true},
-		{ProviderID: providerID, TeamID: teamAID, TeamName: "Beta", GroupID: "g2", Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite}, Role: APIKeyRoleManager, Enabled: true},
-		{ProviderID: providerID, TeamID: teamBID, TeamName: "Alpha", GroupID: "g3", Role: APIKeyRoleMember, Enabled: true},
+		{ProviderID: providerID, TeamID: teamAID, TeamName: "Beta", GroupID: "g1", Scopes: []string{CredentialScopeRead}, Role: CredentialRoleMember, Enabled: true},
+		{ProviderID: providerID, TeamID: teamAID, TeamName: "Beta", GroupID: "g2", Scopes: []string{CredentialScopeRead, CredentialScopeWrite}, Role: CredentialRoleManager, Enabled: true},
+		{ProviderID: providerID, TeamID: teamBID, TeamName: "Alpha", GroupID: "g3", Role: CredentialRoleMember, Enabled: true},
 		{ProviderID: uuid.New(), TeamID: uuid.New(), GroupID: "ignored", Enabled: true},
 	})
 
 	require.NoError(t, err)
 	require.Len(t, entitlements, 2)
 	assert.Equal(t, "Alpha", entitlements[0].TeamName)
-	assert.Equal(t, []string{APIKeyScopeRead}, entitlements[0].Scopes)
+	assert.Equal(t, []string{CredentialScopeRead}, entitlements[0].Scopes)
 	assert.Equal(t, "g1,g2", entitlements[1].GroupID)
-	assert.Equal(t, APIKeyRoleManager, entitlements[1].Role)
+	assert.Equal(t, CredentialRoleManager, entitlements[1].Role)
 
 	_, err = svc.entitlementsFromMappings(providerID, "subject", nil)
 	require.ErrorIs(t, err, ErrSSOAccessDenied)
@@ -796,9 +798,9 @@ func TestSSOCurrentEntitledTeamsFiltersAllowedProfiles(t *testing.T) {
 	profileAID := uuid.New()
 	profileBID := uuid.New()
 	repo := &ssoRepositoryStub{t: t}
-	repo.teamProfiles = []*domain.SSOTeamProfile{
-		ssoTeamProfile(identityID, providerID, "subject", teamAID, profileAID, "Team A", []string{APIKeyScopeRead}, APIKeyRoleMember),
-		ssoTeamProfile(identityID, providerID, "subject", teamBID, profileBID, "Team B", []string{APIKeyScopeRead}, APIKeyRoleMember),
+	repo.teamProfiles = []*domain.SSOTeamMembership{
+		ssoTeamProfile(identityID, providerID, "subject", teamAID, profileAID, "Team A", []string{CredentialScopeRead}, CredentialRoleMember),
+		ssoTeamProfile(identityID, providerID, "subject", teamBID, profileBID, "Team B", []string{CredentialScopeRead}, CredentialRoleMember),
 	}
 	svc := NewSSOService(repo, SSOConfig{})
 
@@ -806,20 +808,21 @@ func TestSSOCurrentEntitledTeamsFiltersAllowedProfiles(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, teams, 1)
-	assert.Equal(t, profileBID, teams[0].Profile.ID)
+	assert.Equal(t, profileBID, teams[0].Membership.ID)
 }
 
-func TestSSOValidateAPIKeyPrincipalRefreshesCache(t *testing.T) {
+func TestSSOValidateCredentialRefreshesCache(t *testing.T) {
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	providerID := uuid.New()
 	teamID := uuid.New()
+	identityID := uuid.New()
 	repo := &ssoRepositoryStub{
 		t: t,
 		providers: map[uuid.UUID]*domain.SSOProvider{
 			providerID: {ID: providerID, Name: "Enterprise", Enabled: true},
 		},
 		mappings: []*domain.SSOGroupMapping{
-			{ProviderID: providerID, TeamID: teamID, GroupID: "group-a", Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite}, Role: APIKeyRoleManager, Enabled: true},
+			{ProviderID: providerID, TeamID: teamID, GroupID: "group-a", Scopes: []string{CredentialScopeRead, CredentialScopeWrite}, Role: CredentialRoleManager, Enabled: true},
 		},
 	}
 	resolver := &ssoGroupResolverStub{groups: []string{"group-a"}}
@@ -828,22 +831,23 @@ func TestSSOValidateAPIKeyPrincipalRefreshesCache(t *testing.T) {
 		EntitlementCacheTTL: time.Minute,
 		Now:                 func() time.Time { return now },
 	})
-	key := &domain.APIKey{ID: uuid.New(), ProfileID: teamID, TeamID: teamID, SSOProviderID: &providerID, SSOSubject: "subject"}
+	key := &domain.Credential{ID: uuid.New(), TeamID: teamID, Scopes: []string{CredentialScopeRead, CredentialScopeWrite}, Role: CredentialRoleManager, OwnerIdentityID: &identityID, SSOProviderID: &providerID, SSOSubject: "subject"}
 
-	validated, err := svc.ValidateAPIKeyPrincipal(context.Background(), key)
+	validated, err := svc.ValidateCredential(context.Background(), key)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{APIKeyScopeRead, APIKeyScopeWrite}, validated.Scopes)
-	assert.Equal(t, APIKeyRoleManager, validated.Role)
+	assert.Equal(t, []string{CredentialScopeRead, CredentialScopeWrite}, validated.Scopes)
+	assert.Equal(t, CredentialRoleManager, validated.Role)
 	require.NotNil(t, repo.savedCache)
 	assert.Equal(t, "active", repo.savedCache.Status)
 	assert.Equal(t, 1, resolver.calls)
 }
 
-func TestSSOValidateAPIKeyPrincipalRefreshDeniesWhenNoTeamMapping(t *testing.T) {
+func TestSSOValidateCredentialRefreshDeniesWhenNoTeamMapping(t *testing.T) {
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	providerID := uuid.New()
 	teamID := uuid.New()
+	identityID := uuid.New()
 	repo := &ssoRepositoryStub{
 		t: t,
 		providers: map[uuid.UUID]*domain.SSOProvider{
@@ -855,9 +859,9 @@ func TestSSOValidateAPIKeyPrincipalRefreshDeniesWhenNoTeamMapping(t *testing.T) 
 		EntitlementCacheTTL: time.Minute,
 		Now:                 func() time.Time { return now },
 	})
-	key := &domain.APIKey{ID: uuid.New(), ProfileID: teamID, TeamID: teamID, SSOProviderID: &providerID, SSOSubject: "subject"}
+	key := &domain.Credential{ID: uuid.New(), TeamID: teamID, Scopes: []string{CredentialScopeRead}, OwnerIdentityID: &identityID, SSOProviderID: &providerID, SSOSubject: "subject"}
 
-	validated, err := svc.ValidateAPIKeyPrincipal(context.Background(), key)
+	validated, err := svc.ValidateCredential(context.Background(), key)
 
 	require.ErrorIs(t, err, ErrSSOAccessDenied)
 	assert.Nil(t, validated)
@@ -865,24 +869,23 @@ func TestSSOValidateAPIKeyPrincipalRefreshDeniesWhenNoTeamMapping(t *testing.T) 
 	assert.Equal(t, "denied", repo.savedCache.Status)
 }
 
-func ssoTeamProfile(identityID, providerID uuid.UUID, subject string, teamID, profileID uuid.UUID, teamName string, scopes []string, role string) *domain.SSOTeamProfile {
-	return &domain.SSOTeamProfile{
-		Team: domain.Profile{
+func ssoTeamProfile(identityID, providerID uuid.UUID, subject string, teamID, profileID uuid.UUID, teamName string, scopes []string, role string) *domain.SSOTeamMembership {
+	return &domain.SSOTeamMembership{
+		Team: domain.Team{
 			ID:   teamID,
 			Name: teamName,
 		},
-		Profile: domain.APIKey{
-			ID:            profileID,
-			ProfileID:     teamID,
-			TeamID:        teamID,
-			TeamName:      teamName,
-			Name:          "SSO profile",
-			Scopes:        scopes,
-			Role:          role,
-			RateLimit:     120,
-			SSOIdentityID: &identityID,
-			SSOProviderID: &providerID,
-			SSOSubject:    subject,
+		Membership: domain.Membership{
+			ID:              profileID,
+			ActorIdentityID: identityID,
+			TeamID:          teamID,
+			OwnerID:         profileID,
+			Name:            "SSO membership",
+			Grants:          scopes,
+			Role:            role,
+			Status:          "active",
+			SSOProviderID:   &providerID,
+			SSOSubject:      subject,
 		},
 	}
 }

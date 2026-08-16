@@ -12,10 +12,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-func memoryPackActor(ctx context.Context) (requestctx.ActorProfile, error) {
-	actor, ok := requestctx.ActorProfileFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil || actor.ProfileID == uuid.Nil {
-		return requestctx.ActorProfile{}, ErrMemoryPackAuthContext
+func memoryPackActor(ctx context.Context) (requestctx.Actor, error) {
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
+		return requestctx.Actor{}, ErrMemoryPackAuthContext
 	}
 	return actor, nil
 }

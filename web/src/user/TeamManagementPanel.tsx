@@ -1,9 +1,9 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { CreatedTeamProfile, UserApi, UserKey, UserSession, UserTeam } from "./api";
+import { CreatedCredential, UserApi, UserCredential, UserSession, UserTeam } from "./api";
 import { LoadingState, SecretBox, SectionHeading } from "../ui/components";
 import { TeamDreamingConfigForm } from "../teamDreamingConfig";
-import { normalizeProfileScopes, ProfilePermissionCheckboxes } from "../profilePermissions";
+import { CredentialPermissionCheckboxes, normalizeCredentialScopes } from "../credentialPermissions";
 
 export function TeamManagementPanel({
   api,
@@ -16,22 +16,22 @@ export function TeamManagementPanel({
 }) {
   const [teamName, setTeamName] = useState(session.team.name);
   const [teamDescription, setTeamDescription] = useState(session.team.description ?? "");
-  const [profiles, setProfiles] = useState<UserKey[]>([]);
-  const [createdKey, setCreatedKey] = useState<CreatedTeamProfile | null>(null);
+  const [credentials, setCredentials] = useState<UserCredential[]>([]);
+  const [createdCredential, setCreatedCredential] = useState<CreatedCredential | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [teamBusy, setTeamBusy] = useState(false);
-  const [savingProfileId, setSavingProfileId] = useState("");
-  const [savingScopesProfileId, setSavingScopesProfileId] = useState("");
-  const [rotatingProfileId, setRotatingProfileId] = useState("");
-  const [deletingProfileId, setDeletingProfileId] = useState("");
+  const [savingCredentialId, setSavingCredentialId] = useState("");
+  const [savingScopesCredentialId, setSavingScopesCredentialId] = useState("");
+  const [rotatingCredentialId, setRotatingCredentialId] = useState("");
+  const [deletingCredentialId, setDeletingCredentialId] = useState("");
 
-  async function loadProfiles() {
+  async function loadCredentials() {
     setLoading(true);
     setError("");
     try {
-      const page = await api.listTeamProfiles();
-      setProfiles(page.data);
+      const page = await api.listTeamCredentials();
+      setCredentials(page.data);
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -45,8 +45,8 @@ export function TeamManagementPanel({
   }, [session.team.id, session.team.name, session.team.description]);
 
   useEffect(() => {
-    setCreatedKey(null);
-    void loadProfiles();
+    setCreatedCredential(null);
+    void loadCredentials();
   }, [api, session.team.id]);
 
   async function saveTeam(event: FormEvent<HTMLFormElement>) {
@@ -67,95 +67,95 @@ export function TeamManagementPanel({
     }
   }
 
-  async function updateProfileName(profileId: string, name: string) {
-    const profile = profiles.find((item) => item.id === profileId);
-    if (profile?.role !== "member") {
+  async function updateCredentialName(credentialId: string, name: string) {
+    const credential = credentials.find((item) => item.id === credentialId);
+    if (credential?.role !== "member") {
       return;
     }
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError("Profile name is required.");
+      setError("Credential name is required.");
       return;
     }
-    setSavingProfileId(profileId);
+    setSavingCredentialId(credentialId);
     setError("");
     try {
-      const updated = await api.updateTeamProfile(profileId, { name: trimmedName });
-      setProfiles((current) => current.map((item) => (item.id === profileId ? updated : item)));
+      const updated = await api.updateTeamCredential(credentialId, { name: trimmedName });
+      setCredentials((current) => current.map((item) => (item.id === credentialId ? updated : item)));
     } catch (err) {
       setError(readError(err));
     } finally {
-      setSavingProfileId("");
+      setSavingCredentialId("");
     }
   }
 
-  async function updateProfileScopes(profileId: string, scopes: string[]) {
-    const profile = profiles.find((item) => item.id === profileId);
-    if (profile?.role !== "member") {
+  async function updateCredentialScopes(credentialId: string, scopes: string[]) {
+    const credential = credentials.find((item) => item.id === credentialId);
+    if (credential?.role !== "member") {
       return;
     }
-    setSavingScopesProfileId(profileId);
+    setSavingScopesCredentialId(credentialId);
     setError("");
     try {
-      const updated = await api.updateTeamProfile(profileId, { scopes });
-      setProfiles((current) => current.map((item) => (item.id === profileId ? updated : item)));
+      const updated = await api.updateTeamCredential(credentialId, { scopes });
+      setCredentials((current) => current.map((item) => (item.id === credentialId ? updated : item)));
     } catch (err) {
       setError(readError(err));
     } finally {
-      setSavingScopesProfileId("");
+      setSavingScopesCredentialId("");
     }
   }
 
-  async function rotateProfile(profileId: string) {
-    const profile = profiles.find((item) => item.id === profileId);
-    if (!profile || profile.role !== "member") {
+  async function rotateCredential(credentialId: string) {
+    const credential = credentials.find((item) => item.id === credentialId);
+    if (!credential || credential.role !== "member") {
       return;
     }
-    if (!window.confirm(`Regenerate key for profile "${profile.name}"? The current key will stop working.`)) {
+    if (!window.confirm(`Regenerate the API key for credential "${credential.name}"? The current key will stop working.`)) {
       return;
     }
-    setRotatingProfileId(profileId);
+    setRotatingCredentialId(credentialId);
     setError("");
     try {
-      const rotated = await api.rotateTeamProfile(profileId, {
-        name: profile.name,
-        rate_limit: profile.rate_limit,
-        expires_at: profile.expires_at ?? undefined,
+      const rotated = await api.rotateTeamCredential(credentialId, {
+        name: credential.name,
+        rate_limit: credential.rate_limit,
+        expires_at: credential.expires_at ?? undefined,
       });
-      setCreatedKey(rotated);
-      await loadProfiles();
+      setCreatedCredential(rotated);
+      await loadCredentials();
     } catch (err) {
       setError(readError(err));
     } finally {
-      setRotatingProfileId("");
+      setRotatingCredentialId("");
     }
   }
 
-  async function deleteProfile(profileId: string) {
-    const profile = profiles.find((item) => item.id === profileId);
-    if (!profile || profile.role !== "member") {
+  async function deleteCredential(credentialId: string) {
+    const credential = credentials.find((item) => item.id === credentialId);
+    if (!credential || credential.role !== "member") {
       return;
     }
-    if (!window.confirm(`Delete profile "${profile.name}"?`)) {
+    if (!window.confirm(`Delete credential "${credential.name}"?`)) {
       return;
     }
-    setDeletingProfileId(profileId);
+    setDeletingCredentialId(credentialId);
     setError("");
     try {
-      await api.deleteTeamProfile(profileId);
-      await loadProfiles();
+      await api.deleteTeamCredential(credentialId);
+      await loadCredentials();
     } catch (err) {
       setError(readError(err));
     } finally {
-      setDeletingProfileId("");
+      setDeletingCredentialId("");
     }
   }
 
   return (
     <section className="surface team-management-surface">
       <div className="surface-section">
-        <SectionHeading title="Team" meta={profileRoleLabel(session.key.role)} />
-        {createdKey && <CreatedKeyNotice apiKey={createdKey.api_key} onDismiss={() => setCreatedKey(null)} />}
+        <SectionHeading title="Team" meta={credentialRoleLabel(session.membership.role)} />
+        {createdCredential && <CreatedCredentialNotice apiKey={createdCredential.api_key} onDismiss={() => setCreatedCredential(null)} />}
         {error && <div className="banner error" role="alert">{error}</div>}
         <form className="edit-grid" onSubmit={saveTeam}>
           <label htmlFor="user-team-name">Name</label>
@@ -185,36 +185,36 @@ export function TeamManagementPanel({
 
       <div className="surface-section">
         <SectionHeading
-          title="Profiles"
+          title="Credentials"
           actions={(
             <div className="button-row">
-              <span>{profiles.length}</span>
-              <button className="icon-button" type="button" aria-label="Refresh profiles" onClick={() => void loadProfiles()}>
+              <span>{credentials.length}</span>
+              <button className="icon-button" type="button" aria-label="Refresh credentials" onClick={() => void loadCredentials()}>
                 <RefreshCw size={16} aria-hidden="true" />
               </button>
             </div>
           )}
         />
-        <ManagedProfileCreateForm
+        <ManagedCredentialCreateForm
           disabled={loading}
           onCreate={async (input) => {
-            const created = await api.createTeamProfile(input);
-            setCreatedKey(created);
-            await loadProfiles();
+            const created = await api.createTeamCredential(input);
+            setCreatedCredential(created);
+            await loadCredentials();
           }}
         />
-        {loading && <LoadingState label="Loading profiles" />}
+        {loading && <LoadingState label="Loading credentials" />}
         {!loading && (
-          <ManagedProfileTable
-            profiles={profiles}
-            savingProfileId={savingProfileId}
-            savingScopesProfileId={savingScopesProfileId}
-            rotatingProfileId={rotatingProfileId}
-            deletingProfileId={deletingProfileId}
-            onRename={(profileId, name) => void updateProfileName(profileId, name)}
-            onScopesChange={(profileId, scopes) => void updateProfileScopes(profileId, scopes)}
-            onRotate={(profileId) => void rotateProfile(profileId)}
-            onDelete={(profileId) => void deleteProfile(profileId)}
+          <ManagedCredentialTable
+            credentials={credentials}
+            savingCredentialId={savingCredentialId}
+            savingScopesCredentialId={savingScopesCredentialId}
+            rotatingCredentialId={rotatingCredentialId}
+            deletingCredentialId={deletingCredentialId}
+            onRename={(credentialId, name) => void updateCredentialName(credentialId, name)}
+            onScopesChange={(credentialId, scopes) => void updateCredentialScopes(credentialId, scopes)}
+            onRotate={(credentialId) => void rotateCredential(credentialId)}
+            onDelete={(credentialId) => void deleteCredential(credentialId)}
           />
         )}
       </div>
@@ -222,14 +222,14 @@ export function TeamManagementPanel({
   );
 }
 
-function ManagedProfileCreateForm({
+function ManagedCredentialCreateForm({
   disabled,
   onCreate,
 }: {
   disabled: boolean;
   onCreate: (input: { name: string; scopes: string[]; rate_limit: number }) => Promise<void>;
 }) {
-  const [name, setName] = useState("member profile");
+  const [name, setName] = useState("member credential");
   const [scopes, setScopes] = useState<string[]>(["read", "write"]);
   const [rateLimit, setRateLimit] = useState("120");
   const [error, setError] = useState("");
@@ -239,7 +239,7 @@ function ManagedProfileCreateForm({
     event.preventDefault();
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError("Profile name is required.");
+      setError("Credential name is required.");
       return;
     }
     const parsedRateLimit = Number.parseInt(rateLimit, 10);
@@ -252,10 +252,10 @@ function ManagedProfileCreateForm({
     try {
       await onCreate({
         name: trimmedName,
-        scopes: normalizeProfileScopes(scopes),
+        scopes: normalizeCredentialScopes(scopes),
         rate_limit: parsedRateLimit,
       });
-      setName("member profile");
+      setName("member credential");
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -265,49 +265,49 @@ function ManagedProfileCreateForm({
 
   return (
     <form className="key-form" onSubmit={submit}>
-      <label htmlFor="managed-profile-name">Profile name</label>
-      <input id="managed-profile-name" value={name} onChange={(event) => setName(event.target.value)} />
+      <label htmlFor="managed-credential-name">Credential name</label>
+      <input id="managed-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
       <label>Permission</label>
-      <ProfilePermissionCheckboxes
+      <CredentialPermissionCheckboxes
         scopes={scopes}
         disabled={busy || disabled}
-        ariaLabel="New member profile permissions"
-        onChange={(nextScopes) => setScopes(normalizeProfileScopes(nextScopes))}
+        ariaLabel="New member credential permissions"
+        onChange={(nextScopes) => setScopes(normalizeCredentialScopes(nextScopes))}
       />
-      <label htmlFor="managed-profile-rate-limit">Rate limit</label>
-      <input id="managed-profile-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
+      <label htmlFor="managed-credential-rate-limit">Rate limit</label>
+      <input id="managed-credential-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
       {error && <p className="field-error span" role="alert">{error}</p>}
       <button className="primary-button span" type="submit" disabled={busy || disabled}>
         <Plus size={16} aria-hidden="true" />
-        Create member profile
+        Create member credential
       </button>
     </form>
   );
 }
 
-function ManagedProfileTable({
-  profiles,
-  savingProfileId,
-  savingScopesProfileId,
-  rotatingProfileId,
-  deletingProfileId,
+function ManagedCredentialTable({
+  credentials,
+  savingCredentialId,
+  savingScopesCredentialId,
+  rotatingCredentialId,
+  deletingCredentialId,
   onRename,
   onScopesChange,
   onRotate,
   onDelete,
 }: {
-  profiles: UserKey[];
-  savingProfileId: string;
-  savingScopesProfileId: string;
-  rotatingProfileId: string;
-  deletingProfileId: string;
-  onRename: (profileId: string, name: string) => void;
-  onScopesChange: (profileId: string, scopes: string[]) => void;
-  onRotate: (profileId: string) => void;
-  onDelete: (profileId: string) => void;
+  credentials: UserCredential[];
+  savingCredentialId: string;
+  savingScopesCredentialId: string;
+  rotatingCredentialId: string;
+  deletingCredentialId: string;
+  onRename: (credentialId: string, name: string) => void;
+  onScopesChange: (credentialId: string, scopes: string[]) => void;
+  onRotate: (credentialId: string) => void;
+  onDelete: (credentialId: string) => void;
 }) {
-  if (profiles.length === 0) {
-    return <div className="table-placeholder">No profiles</div>;
+  if (credentials.length === 0) {
+    return <div className="table-placeholder">No credentials</div>;
   }
 
   return (
@@ -324,14 +324,14 @@ function ManagedProfileTable({
           </tr>
         </thead>
         <tbody>
-          {profiles.map((profile) => (
-            <ManagedProfileRow
-              key={profile.id}
-              profile={profile}
-              saving={savingProfileId === profile.id}
-              savingScopes={savingScopesProfileId === profile.id}
-              rotating={rotatingProfileId === profile.id}
-              deleting={deletingProfileId === profile.id}
+          {credentials.map((credential) => (
+            <ManagedCredentialRow
+              key={credential.id}
+              credential={credential}
+              saving={savingCredentialId === credential.id}
+              savingScopes={savingScopesCredentialId === credential.id}
+              rotating={rotatingCredentialId === credential.id}
+              deleting={deletingCredentialId === credential.id}
               onRename={onRename}
               onScopesChange={onScopesChange}
               onRotate={onRotate}
@@ -344,8 +344,8 @@ function ManagedProfileTable({
   );
 }
 
-function ManagedProfileRow({
-  profile,
+function ManagedCredentialRow({
+  credential,
   saving,
   savingScopes,
   rotating,
@@ -355,32 +355,32 @@ function ManagedProfileRow({
   onRotate,
   onDelete,
 }: {
-  profile: UserKey;
+  credential: UserCredential;
   saving: boolean;
   savingScopes: boolean;
   rotating: boolean;
   deleting: boolean;
-  onRename: (profileId: string, name: string) => void;
-  onScopesChange: (profileId: string, scopes: string[]) => void;
-  onRotate: (profileId: string) => void;
-  onDelete: (profileId: string) => void;
+  onRename: (credentialId: string, name: string) => void;
+  onScopesChange: (credentialId: string, scopes: string[]) => void;
+  onRotate: (credentialId: string) => void;
+  onDelete: (credentialId: string) => void;
 }) {
-  const [draftName, setDraftName] = useState(profile.name);
+  const [draftName, setDraftName] = useState(credential.name);
   const trimmedDraft = draftName.trim();
-  const isMember = profile.role === "member";
+  const isMember = credential.role === "member";
   const busy = saving || savingScopes || rotating || deleting;
-  const unchanged = trimmedDraft === profile.name;
+  const unchanged = trimmedDraft === credential.name;
 
   useEffect(() => {
-    setDraftName(profile.name);
-  }, [profile.id, profile.name]);
+    setDraftName(credential.name);
+  }, [credential.id, credential.name]);
 
   return (
     <tr>
       <td>
-        <div className="profile-name-cell">
+        <div className="credential-name-cell">
           <input
-            aria-label={`Profile name ${profile.name}`}
+            aria-label={`Credential name ${credential.name}`}
             value={draftName}
             disabled={!isMember}
             onChange={(event) => setDraftName(event.target.value)}
@@ -388,47 +388,47 @@ function ManagedProfileRow({
           <button
             className="icon-button"
             type="button"
-            aria-label={`Save profile ${profile.name}`}
-            title={isMember ? "Save profile" : "Managed from control portal"}
+            aria-label={`Save credential ${credential.name}`}
+            title={isMember ? "Save credential" : "Managed from control portal"}
             disabled={!isMember || busy || unchanged || trimmedDraft.length === 0}
-            onClick={() => onRename(profile.id, draftName)}
+            onClick={() => onRename(credential.id, draftName)}
           >
             <Pencil size={16} aria-hidden="true" />
           </button>
         </div>
       </td>
-      <td><code>{displayKeySuffix(profile.key_suffix)}</code></td>
+      <td><code>{displayKeySuffix(credential.key_suffix)}</code></td>
       <td>
-        <ProfilePermissionCheckboxes
-          scopes={profile.scopes}
-          forceWrite={profile.role === "manager"}
+        <CredentialPermissionCheckboxes
+          scopes={credential.scopes}
+          forceWrite={credential.role === "manager"}
           disabled={!isMember || busy}
-          ariaLabel={`Permissions for ${profile.name}`}
+          ariaLabel={`Permissions for ${credential.name}`}
           className="compact"
-          onChange={(scopes) => onScopesChange(profile.id, normalizeProfileScopes(scopes))}
+          onChange={(scopes) => onScopesChange(credential.id, normalizeCredentialScopes(scopes))}
         />
       </td>
-      <td>{profileRoleLabel(profile.role)}</td>
-      <td>{profile.last_used_at ? formatDate(profile.last_used_at) : "Never"}</td>
+      <td>{credentialRoleLabel(credential.role)}</td>
+      <td>{credential.last_used_at ? formatDate(credential.last_used_at) : "Never"}</td>
       <td className="actions-cell">
         <div className="table-actions">
           <button
             className="icon-button"
             type="button"
-            aria-label={`Regenerate key for profile ${profile.name}`}
+            aria-label={`Regenerate API key for credential ${credential.name}`}
             title={isMember ? "Regenerate key" : "Managed from control portal"}
             disabled={!isMember || busy}
-            onClick={() => onRotate(profile.id)}
+            onClick={() => onRotate(credential.id)}
           >
             <RefreshCw size={16} aria-hidden="true" />
           </button>
           <button
             className="icon-button danger"
             type="button"
-            aria-label={`Delete profile ${profile.name}`}
-            title={isMember ? "Delete profile" : "Managed from control portal"}
+            aria-label={`Delete credential ${credential.name}`}
+            title={isMember ? "Delete credential" : "Managed from control portal"}
             disabled={!isMember || busy}
-            onClick={() => onDelete(profile.id)}
+            onClick={() => onDelete(credential.id)}
           >
             <Trash2 size={16} aria-hidden="true" />
           </button>
@@ -438,7 +438,7 @@ function ManagedProfileRow({
   );
 }
 
-function CreatedKeyNotice({ apiKey, onDismiss }: { apiKey: string; onDismiss: () => void }) {
+function CreatedCredentialNotice({ apiKey, onDismiss }: { apiKey: string; onDismiss: () => void }) {
   return (
     <SecretBox
       value={apiKey}
@@ -458,7 +458,7 @@ function displayKeySuffix(suffix: string | null): string {
   return suffix ? `******${suffix}` : "Unavailable";
 }
 
-function profileRoleLabel(role: UserKey["role"] | null | undefined): string {
+function credentialRoleLabel(role: UserCredential["role"] | null | undefined): string {
   return role === "manager" ? "Manager" : "Member";
 }
 

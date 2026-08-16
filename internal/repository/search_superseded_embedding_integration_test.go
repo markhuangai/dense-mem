@@ -104,7 +104,7 @@ func TestUpsertSearchDocumentRetiresSupersededJobWhenProjectionGenerationChanges
 	insertSearchTestContract(t, adminDB, rls, "superseded-generation", 3, "exact", "")
 	repo := NewSearchRepository(appDB, rls)
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
-		return ensureSemanticRefs(ctx, tx, teamID, ownerID)
+		return seedTeamPredicateDefinitions(ctx, tx, teamID)
 	}))
 
 	firstGenerationID := uuid.NewString()

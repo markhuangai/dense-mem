@@ -653,10 +653,10 @@ func identityValues(ctx context.Context) []string {
 	if identity, ok := metricIdentityFromContext(ctx); ok {
 		return []string{identity.teamID, identity.profileID}
 	}
-	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok {
+	if actor, ok := requestctx.ActorFromContext(ctx); ok {
 		return []string{
 			uuidLabel(actor.TeamID),
-			uuidLabel(actor.ProfileID),
+			uuidLabel(actor.OwnerID),
 		}
 	}
 	return []string{unknownMetricLabel, unknownMetricLabel}

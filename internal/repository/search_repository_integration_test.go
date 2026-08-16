@@ -645,7 +645,7 @@ func TestSearchDocumentStateRejectsStaleProjection(t *testing.T) {
 	contractID := insertSearchTestContract(t, adminDB, rls, "search-state", 3, "exact", "")
 
 	err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, teamID, ownerID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, teamID); err != nil {
 			return err
 		}
 		return tx.Exec(`

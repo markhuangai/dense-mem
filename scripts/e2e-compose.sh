@@ -274,8 +274,7 @@ prepare_e2e_environment() {
   fi
   printf '%s\n' \
     "CONFLICT_REVIEW_START_TIME_LOCAL=00:00" \
-    "CONFLICT_REVIEW_JITTER_SECONDS=0" \
-    "MCP_TRANSPORT=${DENSE_MEM_E2E_MCP_TRANSPORT:-sdk}" >> "$E2E_ENV_FILE"
+    "CONFLICT_REVIEW_JITTER_SECONDS=0" >> "$E2E_ENV_FILE"
   append_conflict_e2e_environment && append_embedding_reconciliation_environment && prepare_embedding_proxy_files && ROOT_ENV_FILE="$E2E_ENV_FILE"
 }
 
@@ -579,7 +578,7 @@ create_control_team() {
   CREATED_TEAM_ID="$(printf '%s' "$response" | json_field data.id)"
 }
 
-create_control_profile() {
+create_control_credential() {
   local team_id="$1"
   local name="$2"
   local payload
@@ -589,9 +588,9 @@ create_control_profile() {
     -H "Authorization: Bearer ${CONTROL_TOKEN}" \
     -H "Content-Type: application/json" \
     --data "$payload" \
-    "${CONTROL_URL}/control/api/teams/${team_id}/profiles")"
+    "${CONTROL_URL}/control/api/teams/${team_id}/credentials")"
   CREATED_API_KEY="$(printf '%s' "$response" | json_field data.api_key)"
-  CREATED_PROFILE_ID="$(printf '%s' "$response" | json_field data.key.id)"
+  CREATED_CREDENTIAL_ID="$(printf '%s' "$response" | json_field data.credential.id)"
 }
 
 remove_e2e_playwright_container() {
@@ -878,7 +877,7 @@ fi
 echo "Seeding e2e team through the private control API."
 create_control_team "E2E Team" "compose e2e seed"
 team_id="$CREATED_TEAM_ID"
-create_control_profile "$team_id" "E2E Profile"
+create_control_credential "$team_id" "E2E Credential"
 api_key="$CREATED_API_KEY"
 
 if [[ "$E2E_SCENARIO" == "portal" ]]; then
@@ -958,7 +957,7 @@ if [[ "$E2E_SCENARIO" == "semantic_holds" ]]; then
   node "$ROOT_DIR/tests/uat/semantic_holds_mcp_e2e.mjs"
   exit 0
 fi
-if [[ "$E2E_SCENARIO" == "identity_cleanup" ]]; then run_identity_cleanup_consumer_e2e "$team_id" "$CREATED_PROFILE_ID" "$api_key"; exit 0; fi
+if [[ "$E2E_SCENARIO" == "identity_cleanup" ]]; then run_identity_cleanup_consumer_e2e "$team_id" "$CREATED_CREDENTIAL_ID" "$api_key"; exit 0; fi
 if [[ "$E2E_SCENARIO" == "community" ]]; then
   echo "Running compose-backed community recall e2e with the configured live verifier."; export DENSE_MEM_CONTROL_URL="$CONTROL_URL" DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_API_KEY="$api_key" DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE"; node "$ROOT_DIR/tests/uat/community_recall_mcp_e2e.mjs"
   if [[ "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" == "1" ]]; then echo "Skipping compose-backed community Playwright tests by DENSE_MEM_E2E_SKIP_PLAYWRIGHT."; else echo "Running compose-backed community Playwright tests."; export DENSE_MEM_E2E_TEAM_NAME="E2E Team"; run_compose_playwright_tests community; fi; exit 0

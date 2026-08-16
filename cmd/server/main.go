@@ -12,7 +12,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -65,12 +64,6 @@ func main() {
 	defer postMigrationCancel()
 	if err := postgres.CheckPGVectorExtension(postMigrationCtx, pgDB.GetDB()); err != nil {
 		log.Fatalf("pgvector extension check failed: %v", err)
-	}
-
-	embeddingConfigRepo := postgres.NewEmbeddingConfigRepository(pgDB.GetDB())
-	embeddingConsistencySvc := service.NewEmbeddingConsistencyService(embeddingConfigRepo, &cfg)
-	if err := embeddingConsistencySvc.CheckAtStartup(postMigrationCtx); err != nil {
-		log.Fatalf("embedding consistency check failed: %v", err)
 	}
 
 	rlsHelper := postgres.NewRLS()

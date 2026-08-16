@@ -17,7 +17,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
-func TestSDKHTTPHandlerUsesTheSharedRegistryAndSupportsLegacyAndCurrentFlows(t *testing.T) {
+func TestSDKHTTPHandlerUsesTheSharedRegistryAndSupportsFrozenAndCurrentFlows(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
 	require.NoError(t, reg.Register(registry.Tool{

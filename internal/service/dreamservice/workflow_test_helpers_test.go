@@ -14,17 +14,12 @@ import (
 )
 
 func dreamTestContext(teamID uuid.UUID, ownerID uuid.UUID) context.Context {
-	return requestctx.WithActorCredential(
-		requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{
-			TeamID:    teamID,
-			ProfileID: ownerID,
-		}),
-		requestctx.ActorCredential{
-			KeyID:      uuid.New(),
-			AuthMethod: "api_key",
-			Role:       "member",
-		},
-	)
+	credentialID := uuid.New()
+	return requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID: teamID, IdentityID: credentialID, MembershipID: credentialID,
+		OwnerID: ownerID, CredentialID: &credentialID,
+		AuthMethod: "api_key", Role: "member", Grants: []string{"read", "write"},
+	})
 }
 
 type dreamRepositoryStub struct {

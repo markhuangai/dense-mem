@@ -83,7 +83,7 @@ func runRateLimitMiddlewareContract(t *testing.T, name string, svc service.RateL
 	e.Use(RateLimitMiddleware(svc, cfg, nil))
 
 	principalProfileID := uuid.New()
-	principal := &Principal{KeyID: uuid.New(), ProfileID: &principalProfileID, Role: "standard"}
+	principal := &Principal{CredentialID: testUUIDPtr(uuid.New()), OwnerID: principalProfileID, Role: "standard"}
 
 	e.GET("/ui/api/team/profiles/:id", func(c echo.Context) error {
 		return c.NoContent(http.StatusOK)
@@ -206,7 +206,7 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		})
 
 		req := httptest.NewRequest(http.MethodGet, "/ui/api/other", nil)
-		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{KeyID: uuid.New()}))
+		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{CredentialID: testUUIDPtr(uuid.New())}))
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
 
@@ -225,8 +225,8 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		profileID := uuid.New()
 		req := httptest.NewRequest(http.MethodGet, "/ui/api/other", nil)
 		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{
-			KeyID:     uuid.New(),
-			ProfileID: &profileID,
+			CredentialID: testUUIDPtr(uuid.New()),
+			OwnerID:      profileID,
 		}))
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
@@ -247,9 +247,9 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		keyID := uuid.New()
 		req := httptest.NewRequest(http.MethodGet, "/ui/api/other", nil)
 		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{
-			KeyID:     keyID,
-			ProfileID: &profileID,
-			RateLimit: 5,
+			CredentialID: testUUIDPtr(keyID),
+			OwnerID:      profileID,
+			RateLimit:    5,
 		}))
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
@@ -277,8 +277,8 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		profileID := uuid.New()
 		req := httptest.NewRequest(http.MethodDelete, "/ui/api/other", nil)
 		req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{
-			KeyID:     uuid.New(),
-			ProfileID: &profileID,
+			CredentialID: testUUIDPtr(uuid.New()),
+			OwnerID:      profileID,
 		}))
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)

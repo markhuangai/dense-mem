@@ -13,13 +13,13 @@ import (
 )
 
 var (
-	errActiveWorkerProfileListFailed = errors.New("active worker profile list failed")
+	errActiveWorkerTeamListFailed    = errors.New("active worker team list failed")
 	errSemanticPlacementWorkerFailed = errors.New("semantic placement worker failed")
 	errEmbeddingWorkerFailed         = errors.New("embedding worker failed")
 )
 
-type activeWorkerProfileLister interface {
-	List(context.Context, int, int) ([]*domain.Profile, error)
+type activeWorkerTeamLister interface {
+	List(context.Context, int, int) ([]*domain.Team, error)
 }
 
 type activeTeamWorkFunc func(context.Context, string, string) (bool, error)
@@ -29,7 +29,7 @@ type activeTeamWorkerPoolConfig struct {
 	baseWorkerID string
 	count        int
 	pollInterval time.Duration
-	profiles     activeWorkerProfileLister
+	teams        activeWorkerTeamLister
 	logger       observability.LogProvider
 	workerError  error
 	work         activeTeamWorkFunc
@@ -110,12 +110,12 @@ func runActiveTeamWorkerPool(ctx context.Context, cfg activeTeamWorkerPoolConfig
 
 	dispatcher := newActiveTeamDispatcher(pollInterval)
 	refresh := func(now time.Time) {
-		teamIDs, err := listActiveWorkerTeamIDs(ctx, cfg.profiles, pageSize)
+		teamIDs, err := listActiveWorkerTeamIDs(ctx, cfg.teams, pageSize)
 		if err != nil {
 			if ctx.Err() == nil {
 				cfg.logger.Error(
 					"active worker team list failed",
-					errActiveWorkerProfileListFailed,
+					errActiveWorkerTeamListFailed,
 					observability.String("worker_kind", cfg.name),
 				)
 			}
@@ -159,15 +159,15 @@ func runActiveTeamWorkerPool(ctx context.Context, cfg activeTeamWorkerPoolConfig
 	}
 }
 
-func listActiveWorkerTeamIDs(ctx context.Context, profiles activeWorkerProfileLister, pageSize int) ([]string, error) {
+func listActiveWorkerTeamIDs(ctx context.Context, teams activeWorkerTeamLister, pageSize int) ([]string, error) {
 	teamIDs := make([]string, 0, pageSize)
 	seen := make(map[string]struct{})
 	for offset := 0; ; offset += pageSize {
-		teams, err := profiles.List(ctx, pageSize, offset)
+		page, err := teams.List(ctx, pageSize, offset)
 		if err != nil {
 			return nil, err
 		}
-		for _, team := range teams {
+		for _, team := range page {
 			if team == nil {
 				continue
 			}
@@ -178,7 +178,7 @@ func listActiveWorkerTeamIDs(ctx context.Context, profiles activeWorkerProfileLi
 			seen[teamID] = struct{}{}
 			teamIDs = append(teamIDs, teamID)
 		}
-		if len(teams) < pageSize {
+		if len(page) < pageSize {
 			return teamIDs, nil
 		}
 	}

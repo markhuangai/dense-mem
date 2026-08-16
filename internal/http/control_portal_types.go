@@ -29,8 +29,8 @@ type ControlPortalTelemetry struct {
 }
 
 type controlPortalHandler struct {
-	profiles        handler.ProfileServiceInterface
-	keys            handler.APIKeyServiceInterface
+	teams           handler.TeamServiceInterface
+	credentials     handler.CredentialServiceInterface
 	security        service.SecurityService
 	metrics         service.UsageMetricsReader
 	telemetry       service.TelemetryReader

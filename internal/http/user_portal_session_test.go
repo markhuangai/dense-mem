@@ -36,13 +36,24 @@ func (s *portalSessionManagerStub) CreateSession(_ context.Context, keyID uuid.U
 	return s.result, nil
 }
 
-func (*portalSessionManagerStub) AuthenticateSession(context.Context, string, string, bool) (*domain.APIKey, error) {
+func (*portalSessionManagerStub) AuthenticateSession(context.Context, string, string, bool) (*domain.AuthenticatedActor, error) {
 	return nil, service.ErrUserPortalSessionInvalid
 }
 
 func (s *portalSessionManagerStub) Logout(_ context.Context, token string) error {
 	s.logoutToken = token
 	return nil
+}
+
+func portalSessionPrincipal(credentialID, teamID uuid.UUID, authMethod string) *httpmw.Principal {
+	return &httpmw.Principal{
+		TeamID:       teamID,
+		IdentityID:   credentialID,
+		MembershipID: credentialID,
+		OwnerID:      credentialID,
+		CredentialID: &credentialID,
+		AuthMethod:   authMethod,
+	}
 }
 
 func TestCreatePortalSessionSetsHostOnlyUiCookies(t *testing.T) {
@@ -54,11 +65,7 @@ func TestCreatePortalSessionSetsHostOnlyUiCookies(t *testing.T) {
 		ExpiresAt:    expires,
 	}}
 	h := &userPortalHandler{portal: manager}
-	c := userPortalEchoContext(t, http.MethodPost, "/ui/api/session", `{"remember":true}`, &httpmw.Principal{
-		KeyID:      keyID,
-		TeamID:     uuid.New(),
-		AuthMethod: "api_key",
-	})
+	c := userPortalEchoContext(t, http.MethodPost, "/ui/api/session", `{"remember":true}`, portalSessionPrincipal(keyID, uuid.New(), "api_key"))
 
 	err := invokeCreatePortalSession(t, h, c)
 	require.NoError(t, err)
@@ -95,11 +102,7 @@ func TestCreatePortalSessionUsesBrowserSessionCookiesWhenRememberDisabled(t *tes
 		ExpiresAt:    time.Now().UTC().Add(7 * 24 * time.Hour),
 	}}
 	h := &userPortalHandler{portal: manager}
-	c := userPortalEchoContext(t, http.MethodPost, "/ui/api/session", `{"remember":false}`, &httpmw.Principal{
-		KeyID:      uuid.New(),
-		TeamID:     uuid.New(),
-		AuthMethod: "api_key",
-	})
+	c := userPortalEchoContext(t, http.MethodPost, "/ui/api/session", `{"remember":false}`, portalSessionPrincipal(uuid.New(), uuid.New(), "api_key"))
 
 	require.NoError(t, invokeCreatePortalSession(t, h, c))
 	recorder, ok := c.Response().Writer.(*httptest.ResponseRecorder)
@@ -120,7 +123,7 @@ func TestCreatePortalSessionUsesBrowserSessionCookiesWhenRememberDisabled(t *tes
 func TestCreatePortalSessionRejectsUnknownOrMissingFields(t *testing.T) {
 	manager := &portalSessionManagerStub{result: &service.UserPortalSessionResult{SessionToken: "s", CSRFToken: "c", ExpiresAt: time.Now().Add(time.Hour)}}
 	h := &userPortalHandler{portal: manager}
-	principal := &httpmw.Principal{KeyID: uuid.New(), TeamID: uuid.New(), AuthMethod: "api_key"}
+	principal := portalSessionPrincipal(uuid.New(), uuid.New(), "api_key")
 
 	for _, body := range []string{`{}`, `{"remember":true,"unexpected":true}`, `{"remember":true} {}`} {
 		c := userPortalEchoContext(t, http.MethodPost, "/ui/api/session", body, principal)
@@ -131,11 +134,11 @@ func TestCreatePortalSessionRejectsUnknownOrMissingFields(t *testing.T) {
 	}
 }
 
-func TestCreatePortalSessionRequiresDirectAPIKeyAndService(t *testing.T) {
+func TestCreatePortalSessionRequiresDirectCredentialAndService(t *testing.T) {
 	manager := &portalSessionManagerStub{result: &service.UserPortalSessionResult{SessionToken: "s", CSRFToken: "c", ExpiresAt: time.Now().Add(time.Hour)}}
 	for _, principal := range []*httpmw.Principal{
 		nil,
-		{KeyID: uuid.New(), TeamID: uuid.New(), AuthMethod: "api_key_session"},
+		portalSessionPrincipal(uuid.New(), uuid.New(), "api_key_session"),
 	} {
 		h := &userPortalHandler{portal: manager}
 		err := invokeCreatePortalSession(t, h, userPortalEchoContext(t, http.MethodPost, "/ui/api/session", `{"remember":true}`, principal))
@@ -145,11 +148,7 @@ func TestCreatePortalSessionRequiresDirectAPIKeyAndService(t *testing.T) {
 	}
 
 	h := &userPortalHandler{}
-	err := invokeCreatePortalSession(t, h, userPortalEchoContext(t, http.MethodPost, "/ui/api/session", `{"remember":true}`, &httpmw.Principal{
-		KeyID:      uuid.New(),
-		TeamID:     uuid.New(),
-		AuthMethod: "api_key",
-	}))
+	err := invokeCreatePortalSession(t, h, userPortalEchoContext(t, http.MethodPost, "/ui/api/session", `{"remember":true}`, portalSessionPrincipal(uuid.New(), uuid.New(), "api_key")))
 	var apiErr *httperr.APIError
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, httperr.SERVICE_UNAVAILABLE, apiErr.Code)

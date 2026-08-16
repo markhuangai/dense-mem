@@ -17,7 +17,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
@@ -73,12 +72,6 @@ func main() {
 		log.Fatalf("pgvector extension check failed: %v", err)
 	}
 
-	embeddingConfigRepo := postgres.NewEmbeddingConfigRepository(pgDB.GetDB())
-	embeddingConsistencySvc := service.NewEmbeddingConsistencyService(embeddingConfigRepo, &cfg)
-	if err := embeddingConsistencySvc.CheckAtStartup(postMigrationCtx); err != nil {
-		log.Fatalf("embedding consistency check failed: %v", err)
-	}
-
 	rlsHelper := postgres.NewRLS()
 	authorityRepo := repository.NewAuthorityRepository(pgDB.GetDB(), rlsHelper)
 	authority, err := serverapp.EnsureAuthority(postMigrationCtx, authorityRepo)
@@ -126,13 +119,13 @@ func demoRuntimeOptions() serverapp.RuntimeOptions {
 			return demo.WrapRegistry(reg, manager)
 		},
 		RegisterRoutes: func(runtime serverapp.RuntimeContext) error {
-			provisioner := demo.NewProvisioner(runtime.ProfileService, runtime.APIKeyService, runtime.CounterStore, quotas)
+			provisioner := demo.NewProvisioner(runtime.TeamService, runtime.CredentialService, runtime.CounterStore, quotas)
 			demo.RegisterRoutes(runtime.Echo, provisioner, os.Getenv("DEMO_PUBLIC_BASE_URL"))
 			return nil
 		},
 		StartBackground: func(ctx context.Context, runtime serverapp.RuntimeContext) (func(context.Context) error, error) {
 			repo := demo.NewRepository(runtime.PostgresDB, runtime.RLS)
-			cleaner := demo.NewCleaner(repo, runtime.ProfileService, 10*time.Minute)
+			cleaner := demo.NewCleaner(repo, runtime.TeamService, 10*time.Minute)
 			return cleaner.Start(ctx), nil
 		},
 		PostAuthMiddleware:   []echo.MiddlewareFunc{deferredDemoQuotaMiddleware(&manager)},

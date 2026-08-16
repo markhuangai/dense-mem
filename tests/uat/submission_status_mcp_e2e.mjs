@@ -54,7 +54,7 @@ if (!missing.error || missing.result !== undefined || typeof missing.error.messa
   throw new Error("missing submission status did not fail with a bounded MCP error");
 }
 
-const otherProfile = await createProfile(teamID, `${runID}-other-profile`);
+const otherProfile = await createCredential(teamID, `${runID}-other-profile`);
 const crossProfile = await mcpRaw(otherProfile.apiKey, "get_submission_status", { submission_id: submissionID });
 if (!crossProfile.error || crossProfile.result !== undefined || crossProfile.error.message.includes(submissionID)) {
   throw new Error("submission status leaked across profile ownership boundary");
@@ -378,15 +378,15 @@ async function mcpRaw(key, name, args) {
   });
 }
 
-async function createProfile(targetTeamID, name) {
-  const response = await httpJSON(`${controlURL}/control/api/teams/${targetTeamID}/profiles`, {
+async function createCredential(targetTeamID, name) {
+  const response = await httpJSON(`${controlURL}/control/api/teams/${targetTeamID}/credentials`, {
     method: "POST",
     headers: { Authorization: `Bearer ${controlToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }),
   });
   const key = stringValue(response.data?.api_key);
   if (!key) {
-    throw new Error("control API did not return a second profile key");
+    throw new Error("control API did not return a second credential key");
   }
   return { apiKey: key };
 }

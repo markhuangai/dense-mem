@@ -12,7 +12,7 @@ import (
 
 func TestSchedulerWaitsForProfileRunsOnCancellation(t *testing.T) {
 	service := &schedulerServiceStub{started: make(chan struct{})}
-	profiles := &schedulerProfilesStub{profiles: []*domain.Profile{{ID: uuid.New()}}}
+	profiles := &schedulerProfilesStub{profiles: []*domain.Team{{ID: uuid.New()}}}
 	scheduler := NewScheduler(service, profiles, schedulerConfigStub{}, nil)
 	scheduler.now = func() time.Time { return time.Date(2026, 8, 8, 3, 0, 0, 0, time.UTC) }
 
@@ -72,11 +72,11 @@ func (s schedulerConfigStub) CommunityDetectionRuntimeConfig(context.Context) (d
 }
 
 type schedulerProfilesStub struct {
-	profiles []*domain.Profile
+	profiles []*domain.Team
 	err      error
 }
 
-func (s schedulerProfilesStub) List(_ context.Context, limit, offset int) ([]*domain.Profile, error) {
+func (s schedulerProfilesStub) List(_ context.Context, limit, offset int) ([]*domain.Team, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -105,5 +105,5 @@ func (*schedulerServiceStub) Status(context.Context, string) (*StatusResult, err
 }
 
 var _ AppConfig = schedulerConfigStub{}
-var _ ProfileService = schedulerProfilesStub{}
+var _ TeamService = schedulerProfilesStub{}
 var _ Service = (*schedulerServiceStub)(nil)

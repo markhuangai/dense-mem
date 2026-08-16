@@ -29,43 +29,43 @@ type UserPortalSessionResult struct {
 	ExpiresAt    time.Time
 }
 
-// ActiveAPIKeyRepository is deliberately narrower than the general API-key
+// ActiveCredentialRepository is deliberately narrower than the general credential
 // repository. Portal sessions need only the stable key identity and current
 // authorization metadata on each request.
-type ActiveAPIKeyRepository interface {
-	GetActiveByID(ctx context.Context, id uuid.UUID) (*domain.APIKey, error)
+type ActiveCredentialRepository interface {
+	GetActiveByID(ctx context.Context, id uuid.UUID) (*domain.Credential, error)
 }
 
 type UserPortalSessionManager interface {
-	CreateSession(ctx context.Context, keyID uuid.UUID) (*UserPortalSessionResult, error)
-	AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error)
+	CreateSession(ctx context.Context, credentialID uuid.UUID) (*UserPortalSessionResult, error)
+	AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.AuthenticatedActor, error)
 	Logout(ctx context.Context, sessionToken string) error
 }
 
 type UserPortalSessionService struct {
-	repo repository.UserPortalSessionRepository
-	keys ActiveAPIKeyRepository
-	now  func() time.Time
+	repo        repository.UserPortalSessionRepository
+	credentials ActiveCredentialRepository
+	now         func() time.Time
 }
 
 var _ UserPortalSessionManager = (*UserPortalSessionService)(nil)
 
-func NewUserPortalSessionService(repo repository.UserPortalSessionRepository, keys ActiveAPIKeyRepository, now func() time.Time) *UserPortalSessionService {
+func NewUserPortalSessionService(repo repository.UserPortalSessionRepository, credentials ActiveCredentialRepository, now func() time.Time) *UserPortalSessionService {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &UserPortalSessionService{repo: repo, keys: keys, now: now}
+	return &UserPortalSessionService{repo: repo, credentials: credentials, now: now}
 }
 
-func (s *UserPortalSessionService) CreateSession(ctx context.Context, keyID uuid.UUID) (*UserPortalSessionResult, error) {
-	if s == nil || s.repo == nil || s.keys == nil || keyID == uuid.Nil {
+func (s *UserPortalSessionService) CreateSession(ctx context.Context, credentialID uuid.UUID) (*UserPortalSessionResult, error) {
+	if s == nil || s.repo == nil || s.credentials == nil || credentialID == uuid.Nil {
 		return nil, ErrUserPortalSessionInvalid
 	}
-	key, err := s.keys.GetActiveByID(ctx, keyID)
+	credential, err := s.credentials.GetActiveByID(ctx, credentialID)
 	if err != nil {
 		return nil, err
 	}
-	if key == nil {
+	if credential == nil {
 		return nil, ErrUserPortalSessionInvalid
 	}
 
@@ -83,11 +83,11 @@ func (s *UserPortalSessionService) CreateSession(ctx context.Context, keyID uuid
 	}
 	expiresAt := now.Add(UserPortalSessionTTL)
 	if err := s.repo.CreateSession(ctx, &domain.UserPortalSession{
-		SessionHash: HashSSOToken(sessionToken),
-		KeyID:       key.ID,
-		CSRFHash:    HashSSOToken(csrfToken),
-		ExpiresAt:   expiresAt,
-		CreatedAt:   now,
+		SessionHash:  HashSSOToken(sessionToken),
+		CredentialID: credential.ID,
+		CSRFHash:     HashSSOToken(csrfToken),
+		ExpiresAt:    expiresAt,
+		CreatedAt:    now,
 	}); err != nil {
 		return nil, err
 	}
@@ -98,8 +98,8 @@ func (s *UserPortalSessionService) CreateSession(ctx context.Context, keyID uuid
 	}, nil
 }
 
-func (s *UserPortalSessionService) AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.APIKey, error) {
-	if s == nil || s.repo == nil || s.keys == nil || strings.TrimSpace(sessionToken) == "" {
+func (s *UserPortalSessionService) AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.AuthenticatedActor, error) {
+	if s == nil || s.repo == nil || s.credentials == nil || strings.TrimSpace(sessionToken) == "" {
 		return nil, ErrUserPortalSessionInvalid
 	}
 	session, err := s.repo.GetSession(ctx, HashSSOToken(sessionToken))
@@ -112,14 +112,40 @@ func (s *UserPortalSessionService) AuthenticateSession(ctx context.Context, sess
 	if requireCSRF && !hashMatches(csrfToken, session.CSRFHash) {
 		return nil, ErrUserPortalCSRFInvalid
 	}
-	key, err := s.keys.GetActiveByID(ctx, session.KeyID)
+	credential, err := s.credentials.GetActiveByID(ctx, session.CredentialID)
 	if err != nil {
 		return nil, err
 	}
-	if key == nil {
+	if credential == nil {
 		return nil, ErrUserPortalSessionInvalid
 	}
-	return key, nil
+	return authenticatedActorFromCredential(credential), nil
+}
+
+func authenticatedActorFromCredential(credential *domain.Credential) *domain.AuthenticatedActor {
+	if credential == nil {
+		return nil
+	}
+	return &domain.AuthenticatedActor{
+		Team: domain.Team{ID: credential.TeamID, Name: credential.TeamName},
+		Identity: domain.ActorIdentity{
+			ID:          credential.ActorIdentityID,
+			Kind:        "api_client",
+			DisplayName: credential.Name,
+		},
+		Membership: domain.Membership{
+			ID:              credential.MembershipID,
+			ActorIdentityID: credential.ActorIdentityID,
+			TeamID:          credential.TeamID,
+			OwnerID:         credential.OwnerID,
+			Name:            credential.Name,
+			Grants:          append([]string(nil), credential.Scopes...),
+			Role:            credential.GetRole(),
+			Status:          "active",
+		},
+		OwnerID:    credential.OwnerID,
+		Credential: credential,
+	}
 }
 
 func (s *UserPortalSessionService) Logout(ctx context.Context, sessionToken string) error {

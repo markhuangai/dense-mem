@@ -18,6 +18,7 @@ import {
   RotateResponse,
   SSOProvider,
   UserApi,
+  UserCredential,
   UserSession,
 } from "./api";
 import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading } from "../ui/components";
@@ -33,37 +34,41 @@ const THEME_STORAGE_KEY = "denseMem.userTheme";
 
 type Theme = "light" | "dark";
 type AuthMode = "none" | "api_key" | "api_key_session" | "sso";
-type UserTab = "search" | "graph" | "dreams" | "usage" | "team" | "key";
-type ProfilePermission = "read" | "read_write";
+type UserTab = "search" | "graph" | "dreams" | "usage" | "team" | "credential";
+type CredentialPermission = "read" | "read_write";
 
-function sessionAuthMode(session: UserSession): AuthMode {
-  if (session.auth_method === "sso") {
+function sessionAuthMode(session: UserSession, token: string): AuthMode {
+  if (!session.credential) {
     return "sso";
   }
-  return session.auth_method === "api_key_session" ? "api_key_session" : "api_key";
+  return token ? "api_key" : "api_key_session";
 }
 
-function canShowMyKey(session: UserSession | null): boolean {
+function canManageTeam(session: UserSession | null): boolean {
+  return session?.membership.role === "manager";
+}
+
+function canShowMyCredential(session: UserSession | null): boolean {
   if (!session) {
     return false;
   }
-  if (session.auth_method !== "sso") {
+  if (session.credential) {
     return true;
   }
-  return !session.can_manage_team && (session.can_create_personal_key || Boolean(session.personal_key));
+  return !canManageTeam(session) && session.membership.grants.includes("read");
 }
 
 function canShowUsage(session: UserSession | null): boolean {
-  return Boolean(session?.key.scopes.includes("write"));
+  return Boolean(session?.membership.grants.includes("write"));
 }
 
 function userTelemetryTitle(session: UserSession): string {
-  return session.can_manage_team ? "Team usage" : "My key usage";
+  return canManageTeam(session) ? "Team usage" : "My credential usage";
 }
 
 function userTelemetryIdentity(session: UserSession): string {
-  const scope = session.can_manage_team ? "team" : "self";
-  return `${scope}:${session.team.id}:${session.key.id}`;
+  const scope = canManageTeam(session) ? "team" : "self";
+  return `${scope}:${session.team.id}:${session.credential?.id ?? "sso"}`;
 }
 
 export function UserPortalApp() {
@@ -84,7 +89,7 @@ export function UserPortalApp() {
       new UserApi("", "api_key_session").session()
         .then((session) => {
           if (active) {
-            setAuthMode(sessionAuthMode(session));
+            setAuthMode(sessionAuthMode(session, ""));
             setAuthError("");
           }
         })
@@ -112,7 +117,7 @@ export function UserPortalApp() {
     api.session()
       .then((session) => {
         if (active) {
-          setAuthMode(sessionAuthMode(session));
+          setAuthMode(sessionAuthMode(session, ""));
           setAuthError("");
         }
       })
@@ -150,7 +155,7 @@ export function UserPortalApp() {
       sessionStorage.removeItem(TOKEN_STORAGE_KEY);
       setToken("");
       setDraftToken("");
-      setAuthMode(sessionAuthMode(cookieSession));
+      setAuthMode(sessionAuthMode(cookieSession, ""));
       setAuthError("");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Authentication failed.");
@@ -284,7 +289,7 @@ function UserPortal({
     try {
       const next = await api.session();
       setSession(next);
-      onAuthModeChange(sessionAuthMode(next));
+      onAuthModeChange(sessionAuthMode(next, token));
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -292,16 +297,16 @@ function UserPortal({
     }
   }
 
-  async function switchSSOTeam(profileId: string) {
+  async function switchSSOTeam(teamId: string) {
     const requestId = switchRequestId.current + 1;
     switchRequestId.current = requestId;
     setSwitchingTeam(true);
     setError("");
     try {
-      const next = await api.switchSSOTeam(profileId);
+      const next = await api.switchSSOTeam(teamId);
       if (switchRequestId.current === requestId) {
         setSession(next);
-        onAuthModeChange(sessionAuthMode(next));
+        onAuthModeChange(sessionAuthMode(next, token));
       }
     } catch (err) {
       if (switchRequestId.current === requestId) {
@@ -319,13 +324,13 @@ function UserPortal({
   }, [api]);
 
   useEffect(() => {
-    if (session && !session.can_manage_team && activeTab === "team") {
+    if (session && !canManageTeam(session) && activeTab === "team") {
       setActiveTab("search");
     }
   }, [activeTab, session]);
 
   useEffect(() => {
-    if (!canShowMyKey(session) && activeTab === "key") {
+    if (!canShowMyCredential(session) && activeTab === "credential") {
       setActiveTab("search");
     }
   }, [activeTab, session]);
@@ -343,11 +348,11 @@ function UserPortal({
     ...(canShowUsage(session) ? [
       { id: "usage", label: "Usage", icon: <BarChart3 size={17} aria-hidden="true" />, active: activeTab === "usage", onClick: () => setActiveTab("usage") },
     ] : []),
-    ...(session?.can_manage_team ? [
+    ...(canManageTeam(session) ? [
       { id: "team", label: "Team", icon: <Users size={17} aria-hidden="true" />, active: activeTab === "team", onClick: () => setActiveTab("team") },
     ] : []),
-    ...(canShowMyKey(session) ? [
-      { id: "key", label: "My key", icon: <KeyRound size={17} aria-hidden="true" />, active: activeTab === "key", onClick: () => setActiveTab("key") },
+    ...(canShowMyCredential(session) ? [
+      { id: "credential", label: "My credential", icon: <KeyRound size={17} aria-hidden="true" />, active: activeTab === "credential", onClick: () => setActiveTab("credential") },
     ] : []),
   ];
   const ssoTeamOptions = session?.teams ?? [];
@@ -405,15 +410,15 @@ function UserPortal({
           {activeTab === "usage" && session && canShowUsage(session) && (
             <UserTelemetryPanel key={userTelemetryIdentity(session)} api={api} session={session} />
           )}
-          {activeTab === "team" && session?.can_manage_team && (
+          {activeTab === "team" && session && canManageTeam(session) && (
             <TeamManagementPanel
               api={api}
               session={session}
               onTeamUpdated={(team) => setSession((current) => current ? { ...current, team } : current)}
             />
           )}
-          {activeTab === "key" && session && (
-            <KeyPanel
+          {activeTab === "credential" && session && (
+            <CredentialPanel
               api={api}
               session={session}
               onRotated={(rotated) => {
@@ -423,17 +428,13 @@ function UserPortal({
                 }
                 setSession((current) => current ? {
                   ...current,
-                  key: rotated.key,
-                  can_rotate: rotated.key.scopes.includes("write"),
-                  can_manage_team: rotated.key.role === "manager",
+                  credential: rotated.credential,
                 } : current);
               }}
-              onSSOKeyChanged={(key) => {
+              onSSOCredentialChanged={(credential) => {
                 setSession((current) => current ? {
                   ...current,
-                  personal_key: key,
-                  can_create_personal_key: false,
-                  can_rotate_personal_key: key.scopes.includes("write") && (current.personal_key_max_scopes ?? []).includes("write"),
+                  personal_credential: credential,
                 } : current);
               }}
             />
@@ -455,7 +456,7 @@ function UserContextBar({
   authMode: AuthMode;
   switchingTeam: boolean;
   ssoTeamOptions: UserSession["teams"];
-  onSwitchTeam: (profileId: string) => Promise<void>;
+  onSwitchTeam: (teamId: string) => Promise<void>;
 }) {
   return (
     <div className="session-context compact" aria-label="Current workspace">
@@ -463,12 +464,12 @@ function UserContextBar({
       {authMode === "sso" ? (
         <select
           aria-label="Active team"
-          value={session.key.id}
+          value={session.team.id}
           disabled={switchingTeam || (ssoTeamOptions?.length ?? 0) <= 1}
           onChange={(event) => void onSwitchTeam(event.target.value)}
         >
           {(ssoTeamOptions ?? []).map((item) => (
-            <option value={item.key.id} key={item.key.id}>{item.team.name}</option>
+            <option value={item.team.id} key={item.team.id}>{item.team.name}</option>
           ))}
         </select>
       ) : (
@@ -562,28 +563,28 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function KeyPanel({
+function CredentialPanel({
   api,
   session,
   onRotated,
-  onSSOKeyChanged,
+  onSSOCredentialChanged,
 }: {
   api: UserApi;
   session: UserSession;
   onRotated: (rotated: RotateResponse) => void;
-  onSSOKeyChanged: (key: UserSession["key"]) => void;
+  onSSOCredentialChanged: (credential: UserCredential) => void;
 }) {
-  const [createdKey, setCreatedKey] = useState("");
+  const [createdAPIKey, setCreatedAPIKey] = useState("");
   const [name, setName] = useState("");
-  const [permission, setPermission] = useState<ProfilePermission>(() => (session.personal_key_max_scopes?.includes("write") ? "read_write" : "read"));
+  const [permission, setPermission] = useState<CredentialPermission>(() => (session.membership.grants.includes("write") ? "read_write" : "read"));
   const [rateLimit, setRateLimit] = useState("120");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const isSSO = session.auth_method === "sso";
-  const personalKey = isSSO ? session.personal_key : session.key;
-  const maxScopes = session.personal_key_max_scopes ?? ["read"];
+  const isSSO = session.credential === null;
+  const personalCredential = isSSO ? session.personal_credential : session.credential;
+  const maxScopes = session.membership.grants;
   const canCreateWrite = maxScopes.includes("write");
-  const canRotate = isSSO ? session.can_rotate_personal_key : session.can_rotate;
+  const canRotate = Boolean(personalCredential?.scopes.includes("write") && maxScopes.includes("write"));
 
   useEffect(() => {
     if (!canCreateWrite) {
@@ -591,7 +592,7 @@ function KeyPanel({
     }
   }, [canCreateWrite]);
 
-  async function createSSOKey(event: FormEvent<HTMLFormElement>) {
+  async function createSSOCredential(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedName = name.trim();
     const parsedRateLimit = Number.parseInt(rateLimit, 10);
@@ -602,13 +603,13 @@ function KeyPanel({
     setBusy(true);
     setError("");
     try {
-      const created = await api.createSSOKey({
+      const created = await api.createSSOCredential({
         name: trimmedName,
         scopes: permission === "read_write" && canCreateWrite ? ["read", "write"] : ["read"],
         rate_limit: parsedRateLimit,
       });
-      setCreatedKey(created.api_key);
-      onSSOKeyChanged(created.key);
+      setCreatedAPIKey(created.api_key);
+      onSSOCredentialChanged(created.credential);
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -623,10 +624,10 @@ function KeyPanel({
     setBusy(true);
     setError("");
     try {
-      const rotated = isSSO ? await api.rotateSSOKey() : await api.rotateKey();
-      setCreatedKey(rotated.api_key);
+      const rotated = isSSO ? await api.rotateSSOCredential() : await api.rotateCredential();
+      setCreatedAPIKey(rotated.api_key);
       if (isSSO) {
-        onSSOKeyChanged(rotated.key);
+        onSSOCredentialChanged(rotated.credential);
       } else {
         onRotated(rotated);
       }
@@ -639,20 +640,20 @@ function KeyPanel({
 
   return (
     <section className="surface">
-      <SectionHeading title="My key" meta={personalKey?.scopes.includes("write") || permission === "read_write" ? "write" : "read"} />
-      {createdKey && <CreatedKeyNotice apiKey={createdKey} onDismiss={() => setCreatedKey("")} />}
+      <SectionHeading title="My credential" meta={personalCredential?.scopes.includes("write") || permission === "read_write" ? "write" : "read"} />
+      {createdAPIKey && <CreatedCredentialNotice apiKey={createdAPIKey} onDismiss={() => setCreatedAPIKey("")} />}
       {error && <div className="banner error" role="alert">{error}</div>}
-      {personalKey ? (
+      {personalCredential ? (
         <>
           <dl className="key-detail-grid">
-            <div><dt>Profile</dt><dd>{personalKey.name}</dd></div>
-            <div><dt>Key</dt><dd><code>{displayKeySuffix(personalKey.key_suffix)}</code></dd></div>
-            <div><dt>Role</dt><dd>{profileRoleLabel(personalKey.role)}</dd></div>
-            <div><dt>Scopes</dt><dd>{personalKey.scopes.join(", ") || "none"}</dd></div>
-            <div><dt>Rate limit</dt><dd>{personalKey.rate_limit}</dd></div>
-            <div><dt>Created</dt><dd>{formatDate(personalKey.created_at)}</dd></div>
-            <div><dt>Last used</dt><dd>{personalKey.last_used_at ? formatDate(personalKey.last_used_at) : "Never"}</dd></div>
-            <div><dt>Expires</dt><dd>{personalKey.expires_at ? formatDate(personalKey.expires_at) : "Never"}</dd></div>
+            <div><dt>Credential</dt><dd>{personalCredential.name}</dd></div>
+            <div><dt>Key</dt><dd><code>{displayKeySuffix(personalCredential.key_suffix)}</code></dd></div>
+            <div><dt>Role</dt><dd>{credentialRoleLabel(personalCredential.role)}</dd></div>
+            <div><dt>Scopes</dt><dd>{personalCredential.scopes.join(", ") || "none"}</dd></div>
+            <div><dt>Rate limit</dt><dd>{personalCredential.rate_limit}</dd></div>
+            <div><dt>Created</dt><dd>{formatDate(personalCredential.created_at)}</dd></div>
+            <div><dt>Last used</dt><dd>{personalCredential.last_used_at ? formatDate(personalCredential.last_used_at) : "Never"}</dd></div>
+            <div><dt>Expires</dt><dd>{personalCredential.expires_at ? formatDate(personalCredential.expires_at) : "Never"}</dd></div>
           </dl>
           <div className="button-row">
             <button className="primary-button" type="button" disabled={!canRotate || busy} onClick={() => void rotate()}>
@@ -662,22 +663,22 @@ function KeyPanel({
           </div>
         </>
       ) : (
-        <form className="key-form" onSubmit={createSSOKey}>
-          <label htmlFor="sso-personal-key-name">Profile name</label>
-          <input id="sso-personal-key-name" value={name} onChange={(event) => setName(event.target.value)} />
-          <label htmlFor="sso-personal-key-permission">Permission</label>
+        <form className="key-form" onSubmit={createSSOCredential}>
+          <label htmlFor="sso-personal-credential-name">Credential name</label>
+          <input id="sso-personal-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
+          <label htmlFor="sso-personal-credential-permission">Permission</label>
           <select
-            id="sso-personal-key-permission"
+            id="sso-personal-credential-permission"
             value={permission}
             disabled={!canCreateWrite}
-            onChange={(event) => setPermission(event.target.value as ProfilePermission)}
+            onChange={(event) => setPermission(event.target.value as CredentialPermission)}
           >
             {canCreateWrite && <option value="read_write">Read/write</option>}
             <option value="read">Read only</option>
           </select>
-          <label htmlFor="sso-personal-key-rate-limit">Rate limit</label>
-          <input id="sso-personal-key-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
-          <button className="primary-button span" type="submit" disabled={busy || !session.can_create_personal_key}>
+          <label htmlFor="sso-personal-credential-rate-limit">Rate limit</label>
+          <input id="sso-personal-credential-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
+          <button className="primary-button span" type="submit" disabled={busy || !session.membership.grants.includes("read")}>
             <KeyRound size={16} aria-hidden="true" />
             Create API key
           </button>
@@ -687,7 +688,7 @@ function KeyPanel({
   );
 }
 
-function CreatedKeyNotice({ apiKey, onDismiss }: { apiKey: string; onDismiss: () => void }) {
+function CreatedCredentialNotice({ apiKey, onDismiss }: { apiKey: string; onDismiss: () => void }) {
   return (
     <SecretBox
       value={apiKey}
@@ -711,7 +712,7 @@ function displayKeySuffix(suffix: string | null): string {
   return suffix ? `******${suffix}` : "Unavailable";
 }
 
-function profileRoleLabel(role: UserSession["key"]["role"] | null | undefined): string {
+function credentialRoleLabel(role: UserCredential["role"] | null | undefined): string {
   return role === "manager" ? "Manager" : "Member";
 }
 

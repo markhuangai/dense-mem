@@ -54,7 +54,7 @@ func recordUsageMetric(c echo.Context, recorder service.UsageMetricsRecorder, st
 	recorder.RecordRequest(context.Background(), domain.UsageMetricEvent{
 		Timestamp: time.Now().UTC(),
 		TeamID:    principal.GetTeamID(),
-		KeyID:     principal.GetKeyID(),
+		KeyID:     principal.GetOwnerID(),
 		Method:    c.Request().Method,
 		Route:     route,
 		Status:    usageStatus(c, err),

@@ -37,7 +37,6 @@ const (
 	DefaultMemoryPlacementPollSeconds          = 5
 	DefaultConflictReviewTTLDays               = 7
 	DefaultConflictReviewStartTime             = "04:00"
-	DefaultMCPTransport                        = "sdk"
 )
 
 var legacyNeo4jEnvVars = []string{
@@ -80,21 +79,6 @@ type ConfigProvider interface {
 	GetPromoteTxTimeoutSeconds() int
 	GetControlHTTPAddr() string
 	GetControlPortalToken() string
-}
-
-type mcpTransportConfig interface {
-	GetMCPTransport() string
-}
-
-// MCPTransportFor returns the boot-only MCP transport selector. Providers that
-// predate this setting retain the official SDK default.
-func MCPTransportFor(cfg ConfigProvider) string {
-	if provider, ok := cfg.(mcpTransportConfig); ok {
-		if value := strings.TrimSpace(provider.GetMCPTransport()); value != "" {
-			return value
-		}
-	}
-	return DefaultMCPTransport
 }
 
 type aiVerifierTemperatureConfig interface {
@@ -184,7 +168,6 @@ type Config struct {
 	PromoteTxTimeoutSeconds               int
 	ControlHTTPAddr                       string
 	ControlPortalToken                    string `json:"-"`
-	MCPTransport                          string
 	TelemetryEnabled                      bool
 	TelemetryPrometheusURL                string
 	TelemetryPrometheusJob                string
@@ -293,15 +276,9 @@ func (c *Config) GetMemoryPlacementPollSeconds() int {
 	}
 	return c.MemoryPlacementPollSeconds
 }
-func (c *Config) GetPromoteTxTimeoutSeconds() int { return c.PromoteTxTimeoutSeconds }
-func (c *Config) GetControlHTTPAddr() string      { return c.ControlHTTPAddr }
-func (c *Config) GetControlPortalToken() string   { return c.ControlPortalToken }
-func (c *Config) GetMCPTransport() string {
-	if strings.TrimSpace(c.MCPTransport) == "" {
-		return DefaultMCPTransport
-	}
-	return c.MCPTransport
-}
+func (c *Config) GetPromoteTxTimeoutSeconds() int   { return c.PromoteTxTimeoutSeconds }
+func (c *Config) GetControlHTTPAddr() string        { return c.ControlHTTPAddr }
+func (c *Config) GetControlPortalToken() string     { return c.ControlPortalToken }
 func (c *Config) GetTelemetryEnabled() bool         { return c.TelemetryEnabled }
 func (c *Config) GetTelemetryPrometheusURL() string { return c.TelemetryPrometheusURL }
 func (c *Config) GetTelemetryPrometheusJob() string { return c.TelemetryPrometheusJob }
@@ -617,9 +594,8 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	}
 	cfg.ControlHTTPAddr = getEnvOrDefault("CONTROL_HTTP_ADDR", ":8090")
 	cfg.ControlPortalToken = os.Getenv("CONTROL_PORTAL_TOKEN")
-	cfg.MCPTransport = strings.ToLower(strings.TrimSpace(getEnvOrDefault("MCP_TRANSPORT", DefaultMCPTransport)))
-	if cfg.MCPTransport != "sdk" && cfg.MCPTransport != "legacy" {
-		return cfg, &ValidationError{Field: "MCP_TRANSPORT", Message: "must be sdk or legacy"}
+	if transport := strings.ToLower(strings.TrimSpace(os.Getenv("MCP_TRANSPORT"))); transport != "" && transport != "sdk" {
+		return cfg, &ValidationError{Field: "MCP_TRANSPORT", Message: "must be unset or sdk; the official SDK is the only supported MCP transport"}
 	}
 	cfg.TelemetryEnabled, err = parseBoolOrDefault("TELEMETRY_ENABLED", false)
 	if err != nil {

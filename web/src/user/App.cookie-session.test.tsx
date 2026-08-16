@@ -12,7 +12,13 @@ const baseSession: UserSession = {
     created_at: "2026-05-01T12:00:00Z",
     updated_at: "2026-05-01T12:00:00Z",
   },
-  key: {
+  membership: {
+    team_id: "11111111-1111-4111-8111-111111111111",
+    name: "Mine",
+    grants: ["read"],
+    role: "member",
+  },
+  credential: {
     id: "22222222-2222-4222-8222-222222222222",
     team_id: "11111111-1111-4111-8111-111111111111",
     name: "Mine",
@@ -24,12 +30,8 @@ const baseSession: UserSession = {
     expires_at: null,
     created_at: "2026-05-01T12:00:00Z",
   },
-  can_rotate: false,
-  can_manage_team: false,
-  personal_key: null,
-  can_create_personal_key: false,
-  can_rotate_personal_key: false,
-  personal_key_max_scopes: [],
+  teams: [],
+  personal_credential: null,
 };
 
 beforeEach(() => {
@@ -40,7 +42,7 @@ beforeEach(() => {
 describe("UserPortalApp cookie sessions", () => {
   it("exchanges a remembered API-key login without storing the raw key", async () => {
     let portalSessionCreated = false;
-    const cookieSession: UserSession = { ...baseSession, auth_method: "api_key_session" };
+    const cookieSession: UserSession = { ...baseSession };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";

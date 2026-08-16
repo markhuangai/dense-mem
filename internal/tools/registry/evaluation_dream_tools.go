@@ -56,7 +56,7 @@ func evalRunDreamCycleTool(deps Dependencies) Tool {
 		},
 		OutputSchema:   map[string]any{"type": "object"},
 		RequiredScopes: []string{"read", "write"},
-		Invoke: func(ctx context.Context, profileID string, input map[string]any) (map[string]any, error) {
+		Invoke: func(ctx context.Context, teamID string, input map[string]any) (map[string]any, error) {
 			if deps.Dreams == nil {
 				return nil, ErrToolUnavailable
 			}
@@ -69,7 +69,7 @@ func evalRunDreamCycleTool(deps Dependencies) Tool {
 				MaxOutputs: maxOutputs,
 				SeedDreams: seedDreamsInput(input["seed_dreams"]),
 			}
-			result, err := deps.Dreams.RunCycle(ctx, profileID, req)
+			result, err := deps.Dreams.RunCycle(ctx, teamID, req)
 			if err != nil {
 				return nil, err
 			}
@@ -82,7 +82,7 @@ func evalRunDreamCycleTool(deps Dependencies) Tool {
 	}
 }
 
-func evalListDreams(ctx context.Context, deps Dependencies, profileID string, input map[string]any, limit int, metadataOnly bool) (map[string]any, error) {
+func evalListDreams(ctx context.Context, deps Dependencies, teamID string, input map[string]any, limit int, metadataOnly bool) (map[string]any, error) {
 	if deps.Dreams == nil {
 		return nil, ErrToolUnavailable
 	}
@@ -93,7 +93,7 @@ func evalListDreams(ctx context.Context, deps Dependencies, profileID string, in
 	if status, ok := input["status"].(string); ok {
 		opts.Status = status
 	}
-	dreams, nextCursor, err := deps.Dreams.List(ctx, profileID, opts)
+	dreams, nextCursor, err := deps.Dreams.List(ctx, teamID, opts)
 	if err != nil {
 		return nil, err
 	}

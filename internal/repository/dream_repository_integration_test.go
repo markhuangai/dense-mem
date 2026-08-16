@@ -511,7 +511,7 @@ func TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited(t *testing.T) {
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	semanticRepo := NewSemanticRepository(appDB, rls)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return ensureSemanticRefs(ctx, tx, teamID, actorID)
+		return seedTeamPredicateDefinitions(ctx, tx, teamID)
 	}))
 
 	denseMem := createSemanticEntity(t, ctx, semanticRepo, teamID, creatorID, "project", "Dense-Mem")

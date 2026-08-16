@@ -130,7 +130,7 @@ func TestSearchEmbeddingClaimPlanStaysBoundedAtElevenThousandJobs(t *testing.T) 
 	contractID := insertSearchTestContract(t, adminDB, rls, "search-claim-plan", 3, "exact", "")
 
 	err := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, teamID, ownerID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, teamID); err != nil {
 			return err
 		}
 		if err := tx.Exec(`

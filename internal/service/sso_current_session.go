@@ -11,22 +11,22 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-func (s *SSOService) validCurrentSessionTeams(ctx context.Context, session *domain.SSOSession, allTeams []*domain.SSOTeamProfile) ([]domain.SSOTeamProfile, *domain.SSOTeamProfile, error) {
-	teams := make([]domain.SSOTeamProfile, 0, len(allTeams))
-	var selected *domain.SSOTeamProfile
+func (s *SSOService) validCurrentSessionTeams(ctx context.Context, session *domain.SSOSession, allTeams []*domain.SSOTeamMembership) ([]domain.SSOTeamMembership, *domain.SSOTeamMembership, error) {
+	teams := make([]domain.SSOTeamMembership, 0, len(allTeams))
+	var selected *domain.SSOTeamMembership
 	for _, team := range allTeams {
 		if team == nil {
 			continue
 		}
-		if _, err := s.ValidateAPIKeyPrincipal(ctx, &team.Profile); err != nil {
+		if _, err := s.ValidateMembership(ctx, &team.Membership); err != nil {
 			if errors.Is(err, ErrSSOAccessDenied) || errors.Is(err, ErrSSOEntitlementRefreshStale) {
 				continue
 			}
-			s.debugSSOFailure("sso current session team validation failed", err, append(ssoSessionLogAttrs(session), ssoAPIKeyLogAttrs(&team.Profile)...)...)
+			s.debugSSOFailure("sso current session team validation failed", err, append(ssoSessionLogAttrs(session), ssoMembershipLogAttrs(&team.Membership)...)...)
 			return nil, nil, err
 		}
 		teams = append(teams, *team)
-		if team.Profile.ID == session.TeamProfileID {
+		if team.Membership.OwnerID == session.OwnerID {
 			copy := *team
 			selected = &copy
 		}
@@ -34,7 +34,7 @@ func (s *SSOService) validCurrentSessionTeams(ctx context.Context, session *doma
 	return teams, selected, nil
 }
 
-func (s *SSOService) reconcileCurrentSessionTeamProfiles(ctx context.Context, identity domain.SSOIdentity, existing []*domain.SSOTeamProfile) (bool, error) {
+func (s *SSOService) reconcileCurrentSessionMemberships(ctx context.Context, identity domain.SSOIdentity, existing []*domain.SSOTeamMembership) (bool, error) {
 	provider, err := s.repo.GetProvider(ctx, identity.ProviderID)
 	if err != nil {
 		s.debugSSOFailure("sso current session provider lookup failed", err, ssoUUIDLogAttr("provider_id", identity.ProviderID), ssoHashLogAttr("subject", identity.Subject))
@@ -76,12 +76,12 @@ func (s *SSOService) reconcileCurrentSessionTeamProfiles(ctx context.Context, id
 		if team == nil {
 			continue
 		}
-		if teamID := team.Profile.GetTeamID(); teamID != uuid.Nil {
+		if teamID := team.Membership.TeamID; teamID != uuid.Nil {
 			existingTeamIDs[teamID] = struct{}{}
 		}
 	}
 	changed := false
-	name := ssoProfileName(identity.Email, identity.DisplayName, identity.ID)
+	name := ssoMembershipName(identity.Email, identity.DisplayName, identity.ID)
 	for _, entitlement := range entitlements {
 		if entitlement.TeamID == uuid.Nil {
 			continue
@@ -89,8 +89,8 @@ func (s *SSOService) reconcileCurrentSessionTeamProfiles(ctx context.Context, id
 		if _, ok := existingTeamIDs[entitlement.TeamID]; ok {
 			continue
 		}
-		if _, err := s.repo.UpsertTeamProfileForMapping(ctx, identity, entitlement, name); err != nil {
-			s.debugSSOFailure("sso current session team profile upsert failed", err, ssoUUIDLogAttr("provider_id", identity.ProviderID), ssoHashLogAttr("subject", identity.Subject), ssoUUIDLogAttr("team_id", entitlement.TeamID), ssoHashLogAttr("group_id", entitlement.GroupID), observability.String("role", entitlement.Role))
+		if _, err := s.repo.UpsertTeamMembershipForMapping(ctx, identity, entitlement, name); err != nil {
+			s.debugSSOFailure("sso current session team membership upsert failed", err, ssoUUIDLogAttr("provider_id", identity.ProviderID), ssoHashLogAttr("subject", identity.Subject), ssoUUIDLogAttr("team_id", entitlement.TeamID), ssoHashLogAttr("group_id", entitlement.GroupID), observability.String("role", entitlement.Role))
 			if errors.Is(err, repository.ErrTeamInactive) {
 				continue
 			}

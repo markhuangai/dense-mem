@@ -24,7 +24,7 @@ import {
   Team,
   listControlIdentityProviders,
 } from "./api";
-import { TeamProfilesPanel } from "./control/TeamProfilesPanel";
+import { TeamCredentialsPanel } from "./control/TeamCredentialsPanel";
 import { TeamOverviewPanel, TeamWorkspaceShell } from "./control/TeamWorkspace";
 import type { TeamWorkspaceTab } from "./control/TeamWorkspace";
 import { TeamDreamingConfigForm } from "./teamDreamingConfig";
@@ -319,12 +319,12 @@ function Portal({
           onClick: () => setActiveTab("logs"),
         },
         {
-          id: "profiles",
-          label: "Profiles",
+          id: "credentials",
+          label: "Credentials",
           icon: <KeyRound size={17} aria-hidden="true" />,
-          active: activeTab === "teams" && teamWorkspaceTab === "profiles",
+          active: activeTab === "teams" && teamWorkspaceTab === "credentials",
           disabled: !selectedTeam,
-          onClick: () => openTeamWorkspace("profiles"),
+          onClick: () => openTeamWorkspace("credentials"),
         },
         {
           id: "security",
@@ -568,7 +568,7 @@ function TeamWorkspace({
   return (
     <TeamWorkspaceShell team={team} activeTab={activeTab} onSelectTab={onSelectTab}>
       {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} onOpenMetrics={onOpenMetrics} />}
-      {activeTab === "profiles" && <TeamProfilesPanel api={api} team={team} embedded />}
+      {activeTab === "credentials" && <TeamCredentialsPanel api={api} team={team} embedded />}
       {activeTab === "conflicts" && (
         <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading conflict queue" /></div>}>
           <ConflictQueuePanel api={api} team={team} />

@@ -115,7 +115,8 @@ func scanSSOSession(rows *sql.Rows) (*domain.SSOSession, error) {
 		&session.SessionHash,
 		&session.IdentityID,
 		&session.ProviderID,
-		&session.TeamProfileID,
+		&session.MembershipID,
+		&session.OwnerID,
 		&session.TeamID,
 		&session.CSRFHash,
 		&session.ExpiresAt,
@@ -127,99 +128,32 @@ func scanSSOSession(rows *sql.Rows) (*domain.SSOSession, error) {
 	return &session, nil
 }
 
-func scanSSOAPIKey(rows *sql.Rows) (*domain.APIKey, error) {
-	var key domain.APIKey
-	if err := rows.Scan(
-		&key.ID,
-		&key.TeamID,
-		&key.Label,
-		pq.Array(&key.Scopes),
-		&key.Role,
-		&key.RateLimit,
-		&key.LastUsedAt,
-		&key.ExpiresAt,
-		&key.CreatedAt,
-		&key.RevokedAt,
-		&key.AuthSource,
-		&key.SSOIdentityID,
-		&key.SSOProviderID,
-		&key.SSOSubject,
-		&key.SSOEmail,
-		&key.SSOGroupID,
-		&key.SSOEntitlementStatus,
-		&key.SSOLastEntitlementCheckedAt,
-		&key.SSOLastLoginAt,
-	); err != nil {
-		return nil, err
-	}
-	key.ProfileID = key.TeamID
-	key.Name = key.Label
-	return &key, nil
-}
-
-func scanSSOAPIKeyWithTeamName(rows *sql.Rows) (*domain.APIKey, error) {
-	var key domain.APIKey
-	if err := rows.Scan(
-		&key.ID,
-		&key.TeamID,
-		&key.TeamName,
-		&key.Label,
-		pq.Array(&key.Scopes),
-		&key.Role,
-		&key.RateLimit,
-		&key.LastUsedAt,
-		&key.ExpiresAt,
-		&key.CreatedAt,
-		&key.RevokedAt,
-		&key.AuthSource,
-		&key.SSOIdentityID,
-		&key.SSOProviderID,
-		&key.SSOSubject,
-		&key.SSOEmail,
-		&key.SSOGroupID,
-		&key.SSOEntitlementStatus,
-		&key.SSOLastEntitlementCheckedAt,
-		&key.SSOLastLoginAt,
-	); err != nil {
-		return nil, err
-	}
-	key.ProfileID = key.TeamID
-	key.Name = key.Label
-	return &key, nil
-}
-
-func scanSSOTeamProfile(rows *sql.Rows) (*domain.SSOTeamProfile, error) {
-	var item domain.SSOTeamProfile
+func scanSSOTeamMembership(rows *sql.Rows) (*domain.SSOTeamMembership, error) {
+	var item domain.SSOTeamMembership
 	if err := rows.Scan(
 		&item.Team.ID,
 		&item.Team.Name,
 		&item.Team.Description,
 		&item.Team.CreatedAt,
 		&item.Team.UpdatedAt,
-		&item.Profile.ID,
-		&item.Profile.TeamID,
-		&item.Profile.Label,
-		pq.Array(&item.Profile.Scopes),
-		&item.Profile.Role,
-		&item.Profile.RateLimit,
-		&item.Profile.LastUsedAt,
-		&item.Profile.ExpiresAt,
-		&item.Profile.CreatedAt,
-		&item.Profile.RevokedAt,
-		&item.Profile.AuthSource,
-		&item.Profile.SSOIdentityID,
-		&item.Profile.SSOProviderID,
-		&item.Profile.SSOSubject,
-		&item.Profile.SSOEmail,
-		&item.Profile.SSOGroupID,
-		&item.Profile.SSOEntitlementStatus,
-		&item.Profile.SSOLastEntitlementCheckedAt,
-		&item.Profile.SSOLastLoginAt,
+		&item.Membership.ID,
+		&item.Membership.ActorIdentityID,
+		&item.Membership.TeamID,
+		&item.Membership.OwnerID,
+		&item.Membership.Name,
+		pq.Array(&item.Membership.Grants),
+		&item.Membership.Role,
+		&item.Membership.Status,
+		&item.Membership.CreatedAt,
+		&item.Membership.SSOProviderID,
+		&item.Membership.SSOSubject,
+		&item.Membership.SSOEmail,
+		&item.Membership.SSOGroupID,
+		&item.Membership.SSOEntitlementStatus,
+		&item.Membership.SSOLastEntitlementCheckedAt,
+		&item.Membership.SSOLastLoginAt,
 	); err != nil {
 		return nil, err
 	}
-	item.Profile.ProfileID = item.Profile.TeamID
-	item.Profile.TeamName = item.Team.Name
-	item.Profile.Name = item.Profile.Label
 	return &item, nil
 }

@@ -137,7 +137,7 @@ func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T)
 	actor, ok := input.Metadata["actor"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, teamID.String(), actor["team_id"])
-	require.Equal(t, profileID.String(), actor["profile_id"])
+	require.Equal(t, profileID.String(), actor["owner_id"])
 	require.Equal(t, keyID.String(), actor["credential_id"])
 	require.Equal(t, "corr-canonical", actor["correlation_id"])
 }
@@ -367,7 +367,7 @@ func TestRememberRejectsMalformedReplacementBeforeStaging(t *testing.T) {
 
 func TestSubmissionSecurityAuditPreservesWrappedRejectionCode(t *testing.T) {
 	auditor := &securityRejectionAuditorStub{}
-	actor := requestctx.ActorProfile{TeamID: uuid.New(), ProfileID: uuid.New()}
+	actor := requestctx.Actor{TeamID: uuid.New(), OwnerID: uuid.New()}
 	scan := SubmissionSecurityBatchScan{
 		EvidenceCount: 1,
 		Signals: []SubmissionSecurityBatchSignal{{
@@ -546,14 +546,23 @@ func TestRememberUsesOneSourceRevisionHashForBatch(t *testing.T) {
 	require.Equal(t, "fragment-a", ledger.input.Evidence[0].Metadata["evidence_idempotency_key"])
 }
 
-func TestRememberRequiresAuthenticatedActorAndCredential(t *testing.T) {
-	svc := NewRememberService(RememberDependencies{Ledger: &rememberLedgerStub{}})
-	req := RememberRequest{Evidence: []RememberEvidenceInput{{Content: "evidence"}}}
+func TestRememberRequiresAuthenticatedOwnerAndAllowsSSOSessionWithoutCredential(t *testing.T) {
+	svc := NewRememberService(RememberDependencies{Ledger: &rememberLedgerStub{result: &repository.CreateIngestResult{
+		IngestID: uuid.NewString(),
+		Status:   string(domain.PlacementRunQueued),
+	}}})
+	req := RememberRequest{
+		Evidence:          []RememberEvidenceInput{{Content: "evidence"}},
+		RelationshipHints: completeRememberRelationshipHints(1),
+	}
 	_, err := svc.Remember(context.Background(), req)
 	require.ErrorIs(t, err, ErrRememberAuthContext)
-	ctx := requestctx.WithActorProfile(context.Background(), requestctx.ActorProfile{TeamID: uuid.New(), ProfileID: uuid.New()})
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID: uuid.New(), IdentityID: uuid.New(), MembershipID: uuid.New(), OwnerID: uuid.New(),
+		AuthMethod: "sso_session", Role: "member", Grants: []string{"read", "write"},
+	})
 	_, err = svc.Remember(ctx, req)
-	require.ErrorIs(t, err, ErrRememberCredential)
+	require.NoError(t, err)
 }
 
 func TestRememberTranslatesLedgerErrors(t *testing.T) {
@@ -588,8 +597,11 @@ func TestRememberTranslatesLedgerErrors(t *testing.T) {
 
 func authenticatedRememberContext(teamID, profileID, keyID uuid.UUID) context.Context {
 	ctx := correlation.WithID(context.Background(), "corr-canonical")
-	ctx = requestctx.WithActorProfile(ctx, requestctx.ActorProfile{TeamID: teamID, TeamName: "team", ProfileID: profileID, ProfileName: "profile"})
-	return requestctx.WithActorCredential(ctx, requestctx.ActorCredential{KeyID: keyID, AuthMethod: "api_key", Role: "member"})
+	return requestctx.WithActor(ctx, requestctx.Actor{
+		TeamID: teamID, TeamName: "team", IdentityID: keyID, MembershipID: keyID,
+		OwnerID: profileID, OwnerName: "owner", CredentialID: &keyID,
+		AuthMethod: "api_key", Role: "member", Grants: []string{"read", "write"},
+	})
 }
 
 func completeRememberRelationshipHints(evidenceCount int) []map[string]any {

@@ -34,11 +34,11 @@ func NewDreamHandler(svc dreamservice.Service) *DreamHandler {
 }
 
 func (h *DreamHandler) Status(c echo.Context) error {
-	profileID, ok := middleware.GetResolvedProfileID(c.Request().Context())
+	teamID, ok := middleware.GetResolvedTeamID(c.Request().Context())
 	if !ok {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
-	status, err := h.svc.Status(c.Request().Context(), profileID.String())
+	status, err := h.svc.Status(c.Request().Context(), teamID.String())
 	if err != nil {
 		return err
 	}
@@ -46,15 +46,15 @@ func (h *DreamHandler) Status(c echo.Context) error {
 }
 
 func (h *DreamHandler) Runs(c echo.Context) error {
-	profileID, ok := middleware.GetResolvedProfileID(c.Request().Context())
+	teamID, ok := middleware.GetResolvedTeamID(c.Request().Context())
 	if !ok {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 	limit, err := dreamLimit(c.QueryParam("limit"))
 	if err != nil {
 		return err
 	}
-	runs, err := h.svc.ListRuns(c.Request().Context(), profileID.String(), limit)
+	runs, err := h.svc.ListRuns(c.Request().Context(), teamID.String(), limit)
 	if err != nil {
 		return err
 	}
@@ -65,15 +65,15 @@ func (h *DreamHandler) Runs(c echo.Context) error {
 }
 
 func (h *DreamHandler) List(c echo.Context) error {
-	profileID, ok := middleware.GetResolvedProfileID(c.Request().Context())
+	teamID, ok := middleware.GetResolvedTeamID(c.Request().Context())
 	if !ok {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 	opts, err := dreamListOptions(c)
 	if err != nil {
 		return err
 	}
-	dreams, nextCursor, err := h.svc.List(c.Request().Context(), profileID.String(), opts)
+	dreams, nextCursor, err := h.svc.List(c.Request().Context(), teamID.String(), opts)
 	if err != nil {
 		if errors.Is(err, dreamservice.ErrInvalidDreamCursor) {
 			return httperr.New(httperr.VALIDATION_ERROR, "invalid cursor")
@@ -84,15 +84,15 @@ func (h *DreamHandler) List(c echo.Context) error {
 }
 
 func (h *DreamHandler) Get(c echo.Context) error {
-	profileID, ok := middleware.GetResolvedProfileID(c.Request().Context())
+	teamID, ok := middleware.GetResolvedTeamID(c.Request().Context())
 	if !ok {
-		return httperr.New(httperr.PROFILE_ID_REQUIRED, "profile ID is required")
+		return httperr.New(httperr.PROFILE_ID_REQUIRED, "team ID is required")
 	}
 	dreamID := strings.TrimSpace(c.Param("dreamId"))
 	if dreamID == "" {
 		return httperr.New(httperr.VALIDATION_ERROR, "dream ID is required")
 	}
-	dream, err := h.svc.Get(c.Request().Context(), profileID.String(), dreamID)
+	dream, err := h.svc.Get(c.Request().Context(), teamID.String(), dreamID)
 	if err != nil {
 		if errors.Is(err, dreamservice.ErrDreamNotFound) {
 			return httperr.New(httperr.NOT_FOUND, "dream not found")

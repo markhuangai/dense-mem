@@ -314,28 +314,28 @@ func TestAuditEventHelpersAppendExpectedOperations(t *testing.T) {
 	keyID := "key-1"
 	calls := []func() error{
 		func() error {
-			return svc.ProfileCreated(context.Background(), profileID, map[string]interface{}{"name": "new"}, &keyID, "admin", "203.0.113.10", "corr-create")
+			return svc.TeamCreated(context.Background(), profileID, map[string]interface{}{"name": "new"}, &keyID, "admin", "203.0.113.10", "corr-create")
 		},
 		func() error {
-			return svc.ProfileUpdated(context.Background(), profileID, map[string]interface{}{"name": "old"}, map[string]interface{}{"name": "new"}, &keyID, "admin", "203.0.113.10", "corr-update")
+			return svc.TeamUpdated(context.Background(), profileID, map[string]interface{}{"name": "old"}, map[string]interface{}{"name": "new"}, &keyID, "admin", "203.0.113.10", "corr-update")
 		},
 		func() error {
-			return svc.ProfileDeleteBlocked(context.Background(), profileID, map[string]interface{}{"name": "old"}, &keyID, "admin", "203.0.113.10", "corr-block", "active keys")
+			return svc.TeamDeleteBlocked(context.Background(), profileID, map[string]interface{}{"name": "old"}, &keyID, "admin", "203.0.113.10", "corr-block", "active keys")
 		},
 		func() error {
-			return svc.ProfileDeleted(context.Background(), profileID, map[string]interface{}{"name": "old"}, &keyID, "admin", "203.0.113.10", "corr-delete")
+			return svc.TeamDeleted(context.Background(), profileID, map[string]interface{}{"name": "old"}, &keyID, "admin", "203.0.113.10", "corr-delete")
 		},
 		func() error {
-			return svc.APIKeyCreated(context.Background(), &profileID, keyID, map[string]interface{}{"name": "key"}, &keyID, "admin", "203.0.113.10", "corr-key-create")
+			return svc.CredentialCreated(context.Background(), &profileID, keyID, map[string]interface{}{"name": "key"}, &keyID, "admin", "203.0.113.10", "corr-key-create")
 		},
 		func() error {
-			return svc.APIKeyRevoked(context.Background(), &profileID, keyID, map[string]interface{}{"name": "key"}, &keyID, "admin", "203.0.113.10", "corr-key-revoke")
+			return svc.CredentialRevoked(context.Background(), &profileID, keyID, map[string]interface{}{"name": "key"}, &keyID, "admin", "203.0.113.10", "corr-key-revoke")
 		},
 		func() error {
 			return svc.AuthFailure(context.Background(), &profileID, "api_key", keyID, map[string]interface{}{"reason": "AUTH_INVALID"}, "203.0.113.10", "corr-auth")
 		},
 		func() error {
-			return svc.CrossProfileDenied(context.Background(), "actor-profile", profileID, "read", nil, "203.0.113.10", "corr-cross")
+			return svc.CrossTeamDenied(context.Background(), "actor-profile", profileID, "read", nil, "203.0.113.10", "corr-cross")
 		},
 		func() error {
 			return svc.RateLimited(context.Background(), &profileID, "POST /v1/fragments", nil, "203.0.113.10", "corr-rate")

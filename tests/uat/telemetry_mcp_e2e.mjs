@@ -86,10 +86,10 @@ await mcpTool("recall_memory", {
 });
 
 const signals = await waitForTelemetrySignals();
-const profiles = await controlJSON(`/teams/${teamID}/profiles`, { method: "GET" });
-const profileID = String(profiles.data?.[0]?.id ?? "");
+const credentials = await controlJSON(`/teams/${teamID}/credentials`, { method: "GET" });
+const profileID = String(credentials.data?.[0]?.id ?? "");
 if (!profileID) {
-  throw new Error("telemetry e2e could not resolve the seeded profile id");
+  throw new Error("telemetry e2e could not resolve the seeded credential id");
 }
 
 const telemetryMatrix = await validateTelemetryMatrix(profileID);

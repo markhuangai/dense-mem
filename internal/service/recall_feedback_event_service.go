@@ -224,20 +224,21 @@ func (s *RecallFeedbackEventServiceImpl) enrich(ctx context.Context, event domai
 	if event.UpdatedAt.IsZero() {
 		event.UpdatedAt = now
 	}
-	if actor, ok := requestctx.ActorProfileFromContext(ctx); ok {
+	if actor, ok := requestctx.ActorFromContext(ctx); ok {
 		if event.TeamID == nil && actor.TeamID != uuid.Nil {
 			event.TeamID = &actor.TeamID
 		}
-		if event.ProfileID == nil && actor.ProfileID != uuid.Nil {
-			event.ProfileID = &actor.ProfileID
+		if event.ProfileID == nil && actor.OwnerID != uuid.Nil {
+			event.ProfileID = &actor.OwnerID
 		}
 	}
-	if credential, ok := requestctx.ActorCredentialFromContext(ctx); ok {
-		if event.KeyID == nil && credential.KeyID != uuid.Nil {
-			event.KeyID = &credential.KeyID
+	if actor, ok := requestctx.ActorFromContext(ctx); ok {
+		if event.KeyID == nil && actor.CredentialID != nil {
+			credentialID := *actor.CredentialID
+			event.KeyID = &credentialID
 		}
 		if event.AuthMethod == "" {
-			event.AuthMethod = credential.AuthMethod
+			event.AuthMethod = actor.AuthMethod
 		}
 	}
 	if event.ToolName == "" {
@@ -250,15 +251,15 @@ func recallFeedbackEventAuthorizedForSubmission(ctx context.Context, event *doma
 	if event == nil {
 		return false
 	}
-	actor, ok := requestctx.ActorProfileFromContext(ctx)
+	actor, ok := requestctx.ActorFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil {
 		return true
 	}
 	if event.TeamID != nil {
 		return *event.TeamID == actor.TeamID
 	}
-	if event.ProfileID != nil && actor.ProfileID != uuid.Nil {
-		return *event.ProfileID == actor.ProfileID
+	if event.ProfileID != nil && actor.OwnerID != uuid.Nil {
+		return *event.ProfileID == actor.OwnerID
 	}
 	return false
 }

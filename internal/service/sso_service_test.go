@@ -17,11 +17,12 @@ func TestSSOServiceDeleteMappingRequiresProviderID(t *testing.T) {
 	require.ErrorContains(t, svc.DeleteMapping(context.Background(), uuid.Nil, uuid.New()), "sso provider ID is required")
 }
 
-func TestSSOValidateAPIKeyPrincipalUsesFreshCacheMappings(t *testing.T) {
+func TestSSOValidateCredentialUsesFreshCacheMappings(t *testing.T) {
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	providerID := uuid.New()
 	teamID := uuid.New()
 	keyID := uuid.New()
+	identityID := uuid.New()
 	repo := &ssoRepositoryStub{
 		t: t,
 		providers: map[uuid.UUID]*domain.SSOProvider{
@@ -44,16 +45,16 @@ func TestSSOValidateAPIKeyPrincipalUsesFreshCacheMappings(t *testing.T) {
 				ProviderID: providerID,
 				TeamID:     teamID,
 				GroupID:    "group-read",
-				Scopes:     []string{APIKeyScopeRead},
-				Role:       APIKeyRoleMember,
+				Scopes:     []string{CredentialScopeRead},
+				Role:       CredentialRoleMember,
 				Enabled:    true,
 			},
 			{
 				ProviderID: providerID,
 				TeamID:     teamID,
 				GroupID:    "group-write",
-				Scopes:     []string{APIKeyScopeRead, APIKeyScopeWrite},
-				Role:       APIKeyRoleManager,
+				Scopes:     []string{CredentialScopeRead, CredentialScopeWrite},
+				Role:       CredentialRoleManager,
 				Enabled:    true,
 			},
 		},
@@ -63,29 +64,30 @@ func TestSSOValidateAPIKeyPrincipalUsesFreshCacheMappings(t *testing.T) {
 		GroupResolver: resolver,
 		Now:           func() time.Time { return now },
 	})
-	key := &domain.APIKey{
-		ID:            keyID,
-		ProfileID:     teamID,
-		TeamID:        teamID,
-		Scopes:        []string{APIKeyScopeRead},
-		Role:          APIKeyRoleMember,
-		SSOProviderID: &providerID,
-		SSOSubject:    "subject-123",
+	key := &domain.Credential{
+		ID:              keyID,
+		TeamID:          teamID,
+		Scopes:          []string{CredentialScopeRead},
+		Role:            CredentialRoleMember,
+		OwnerIdentityID: &identityID,
+		SSOProviderID:   &providerID,
+		SSOSubject:      "subject-123",
 	}
 
-	validated, err := svc.ValidateAPIKeyPrincipal(context.Background(), key)
+	validated, err := svc.ValidateCredential(context.Background(), key)
 
 	require.NoError(t, err)
 	require.Same(t, key, validated)
-	assert.Equal(t, []string{APIKeyScopeRead, APIKeyScopeWrite}, validated.Scopes)
-	assert.Equal(t, APIKeyRoleManager, validated.Role)
+	assert.Equal(t, []string{CredentialScopeRead}, validated.Scopes)
+	assert.Equal(t, CredentialRoleMember, validated.Role)
 	assert.Equal(t, "group-read,group-write", validated.SSOGroupID)
 	assert.Equal(t, "active", validated.SSOEntitlementStatus)
 }
 
-func TestSSOValidateAPIKeyPrincipalFailsClosedWhenRefreshUnavailable(t *testing.T) {
+func TestSSOValidateCredentialFailsClosedWhenRefreshUnavailable(t *testing.T) {
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	providerID := uuid.New()
+	identityID := uuid.New()
 	teamID := uuid.New()
 	repo := &ssoRepositoryStub{
 		t: t,
@@ -103,15 +105,15 @@ func TestSSOValidateAPIKeyPrincipalFailsClosedWhenRefreshUnavailable(t *testing.
 		EntitlementCacheTTL: time.Minute,
 		Now:                 func() time.Time { return now },
 	})
-	key := &domain.APIKey{
-		ID:            uuid.New(),
-		ProfileID:     teamID,
-		TeamID:        teamID,
-		SSOProviderID: &providerID,
-		SSOSubject:    "subject-123",
+	key := &domain.Credential{
+		ID:              uuid.New(),
+		TeamID:          teamID,
+		OwnerIdentityID: &identityID,
+		SSOProviderID:   &providerID,
+		SSOSubject:      "subject-123",
 	}
 
-	validated, err := svc.ValidateAPIKeyPrincipal(context.Background(), key)
+	validated, err := svc.ValidateCredential(context.Background(), key)
 
 	require.ErrorIs(t, err, ErrSSOEntitlementRefreshStale)
 	assert.Nil(t, validated)
@@ -123,31 +125,30 @@ func TestSSOValidateAPIKeyPrincipalFailsClosedWhenRefreshUnavailable(t *testing.
 	assert.Equal(t, 1, resolver.calls)
 }
 
-func TestSSOValidateAPIKeyPrincipalDeniesIncompleteSSOLinks(t *testing.T) {
+func TestSSOValidateCredentialDeniesIncompleteSSOLinks(t *testing.T) {
 	providerID := uuid.New()
 	identityID := uuid.New()
 	teamID := uuid.New()
 	svc := NewSSOService(&ssoRepositoryStub{t: t}, SSOConfig{})
 
-	for name, ordinary := range map[string]*domain.APIKey{
-		"empty sso fields": {ID: uuid.New(), TeamID: teamID},
-		"db unlinked":      {ID: uuid.New(), TeamID: teamID, AuthSource: "api_key", SSOEntitlementStatus: "unlinked"},
+	for name, ordinary := range map[string]*domain.Credential{
+		"empty sso fields":       {ID: uuid.New(), TeamID: teamID},
+		"metadata without owner": {ID: uuid.New(), TeamID: teamID, SSOProviderID: &providerID, SSOSubject: "subject-123"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			validated, err := svc.ValidateAPIKeyPrincipal(context.Background(), ordinary)
+			validated, err := svc.ValidateCredential(context.Background(), ordinary)
 			require.NoError(t, err)
 			assert.Same(t, ordinary, validated)
 		})
 	}
 
-	for name, key := range map[string]*domain.APIKey{
-		"sso auth source only": {ID: uuid.New(), TeamID: teamID, AuthSource: "sso"},
-		"sso identity only":    {ID: uuid.New(), TeamID: teamID, SSOIdentityID: &identityID},
-		"provider no subject":  {ID: uuid.New(), TeamID: teamID, AuthSource: "sso", SSOProviderID: &providerID},
-		"subject no provider":  {ID: uuid.New(), TeamID: teamID, AuthSource: "sso", SSOSubject: "subject-123"},
+	for name, key := range map[string]*domain.Credential{
+		"owner identity only": {ID: uuid.New(), TeamID: teamID, OwnerIdentityID: &identityID},
+		"provider no subject": {ID: uuid.New(), TeamID: teamID, OwnerIdentityID: &identityID, SSOProviderID: &providerID},
+		"subject no provider": {ID: uuid.New(), TeamID: teamID, OwnerIdentityID: &identityID, SSOSubject: "subject-123"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			validated, err := svc.ValidateAPIKeyPrincipal(context.Background(), key)
+			validated, err := svc.ValidateCredential(context.Background(), key)
 			require.ErrorIs(t, err, ErrSSOAccessDenied)
 			assert.Nil(t, validated)
 		})
@@ -277,8 +278,8 @@ type ssoRepositoryStub struct {
 	upsertProfileErrors           map[uuid.UUID]error
 	upsertProfileCalls            int
 	listTeamProfilesErr           error
-	teamProfiles                  []*domain.SSOTeamProfile
-	ssoProfiles                   map[uuid.UUID]*domain.APIKey
+	teamProfiles                  []*domain.SSOTeamMembership
+	ssoProfiles                   map[uuid.UUID]*domain.SSOTeamMembership
 	getSSOProfileErr              error
 	directoryAuthorityActive      bool
 	directoryAuthorityErr         error
@@ -507,38 +508,41 @@ func (r *ssoRepositoryStub) GetIdentityByProviderSubject(ctx context.Context, pr
 	return nil, nil
 }
 
-func (r *ssoRepositoryStub) UpsertTeamProfileForMapping(ctx context.Context, identity domain.SSOIdentity, mapping domain.SSOGroupMapping, name string) (*domain.APIKey, error) {
+func (r *ssoRepositoryStub) UpsertTeamMembershipForMapping(ctx context.Context, identity domain.SSOIdentity, mapping domain.SSOGroupMapping, name string) (*domain.Membership, error) {
 	r.upsertProfileCalls++
 	if err := r.upsertProfileErrors[mapping.TeamID]; err != nil {
 		return nil, err
 	}
-	key := &domain.APIKey{
-		ID:            uuid.New(),
-		ProfileID:     mapping.TeamID,
-		TeamID:        mapping.TeamID,
-		TeamName:      mapping.TeamName,
-		Name:          name,
-		Scopes:        append([]string(nil), mapping.Scopes...),
-		Role:          mapping.Role,
-		RateLimit:     0,
-		SSOIdentityID: &identity.ID,
-		SSOProviderID: &identity.ProviderID,
-		SSOSubject:    identity.Subject,
-		SSOEmail:      identity.Email,
-		SSOGroupID:    mapping.GroupID,
+	membershipID := uuid.New()
+	ownerID := membershipID
+	providerID := identity.ProviderID
+	membership := &domain.Membership{
+		ID:              membershipID,
+		ActorIdentityID: identity.ID,
+		TeamID:          mapping.TeamID,
+		OwnerID:         ownerID,
+		Name:            name,
+		Grants:          append([]string(nil), mapping.Scopes...),
+		Role:            mapping.Role,
+		Status:          "active",
+		SSOProviderID:   &providerID,
+		SSOSubject:      identity.Subject,
+		SSOEmail:        identity.Email,
+		SSOGroupID:      mapping.GroupID,
 	}
 	if r.ssoProfiles == nil {
-		r.ssoProfiles = make(map[uuid.UUID]*domain.APIKey)
+		r.ssoProfiles = make(map[uuid.UUID]*domain.SSOTeamMembership)
 	}
-	r.ssoProfiles[key.ID] = key
-	r.teamProfiles = append(r.teamProfiles, &domain.SSOTeamProfile{
-		Team: domain.Profile{
+	item := &domain.SSOTeamMembership{
+		Team: domain.Team{
 			ID:   mapping.TeamID,
 			Name: mapping.TeamName,
 		},
-		Profile: *key,
-	})
-	return key, nil
+		Membership: *membership,
+	}
+	r.ssoProfiles[ownerID] = item
+	r.teamProfiles = append(r.teamProfiles, item)
+	return membership, nil
 }
 
 func (r *ssoRepositoryStub) DirectoryAuthorityActive(ctx context.Context, providerID uuid.UUID) (bool, error) {
@@ -548,40 +552,40 @@ func (r *ssoRepositoryStub) DirectoryAuthorityActive(ctx context.Context, provid
 	return r.directoryAuthorityActive, nil
 }
 
-func (r *ssoRepositoryStub) DirectoryTeamProfileEntitled(ctx context.Context, profileID, providerID, identityID, teamID uuid.UUID, groupID string) (bool, error) {
-	r.directoryProfileEntitledCalls = append(r.directoryProfileEntitledCalls, profileID)
+func (r *ssoRepositoryStub) DirectoryMembershipEntitled(ctx context.Context, providerID, identityID, teamID uuid.UUID, groupID string) (bool, error) {
+	r.directoryProfileEntitledCalls = append(r.directoryProfileEntitledCalls, identityID)
 	if r.directoryProfileEntitledErr != nil {
 		return false, r.directoryProfileEntitledErr
 	}
-	return r.directoryProfileEntitled[profileID], nil
+	return r.directoryProfileEntitled[identityID], nil
 }
 
-func (r *ssoRepositoryStub) ListTeamProfilesForIdentity(ctx context.Context, identityID uuid.UUID) ([]*domain.SSOTeamProfile, error) {
+func (r *ssoRepositoryStub) ListTeamMembershipsForIdentity(ctx context.Context, identityID uuid.UUID) ([]*domain.SSOTeamMembership, error) {
 	if r.listTeamProfilesErr != nil {
 		return nil, r.listTeamProfilesErr
 	}
-	items := make([]*domain.SSOTeamProfile, 0, len(r.teamProfiles))
+	items := make([]*domain.SSOTeamMembership, 0, len(r.teamProfiles))
 	for _, item := range r.teamProfiles {
-		if item.Profile.SSOIdentityID == nil || *item.Profile.SSOIdentityID != identityID {
+		if item.Membership.ActorIdentityID != identityID {
 			continue
 		}
 		copy := *item
-		copy.Profile.Scopes = append([]string(nil), item.Profile.Scopes...)
+		copy.Membership.Grants = append([]string(nil), item.Membership.Grants...)
 		items = append(items, &copy)
 	}
 	return items, nil
 }
 
-func (r *ssoRepositoryStub) GetSSOProfileByID(ctx context.Context, id uuid.UUID) (*domain.APIKey, error) {
+func (r *ssoRepositoryStub) GetTeamMembershipByOwnerID(ctx context.Context, id uuid.UUID) (*domain.SSOTeamMembership, error) {
 	if r.getSSOProfileErr != nil {
 		return nil, r.getSSOProfileErr
 	}
-	key := r.ssoProfiles[id]
-	if key == nil {
+	item := r.ssoProfiles[id]
+	if item == nil {
 		return nil, nil
 	}
-	copy := *key
-	copy.Scopes = append([]string(nil), key.Scopes...)
+	copy := *item
+	copy.Membership.Grants = append([]string(nil), item.Membership.Grants...)
 	return &copy, nil
 }
 
@@ -658,14 +662,20 @@ func (r *ssoRepositoryStub) GetSession(ctx context.Context, sessionHash string) 
 	return &copy, nil
 }
 
-func (r *ssoRepositoryStub) UpdateSessionTeam(ctx context.Context, sessionHash string, teamProfileID, teamID uuid.UUID) error {
+func (r *ssoRepositoryStub) UpdateSessionTeam(ctx context.Context, sessionHash string, teamID uuid.UUID) error {
 	if r.updateSessionErr != nil {
 		return r.updateSessionErr
 	}
 	r.updatedSessionHash = sessionHash
 	if session := r.sessions[sessionHash]; session != nil {
-		session.TeamProfileID = teamProfileID
-		session.TeamID = teamID
+		for _, item := range r.teamProfiles {
+			if item.Team.ID == teamID && item.Membership.ActorIdentityID == session.IdentityID {
+				session.MembershipID = item.Membership.ID
+				session.OwnerID = item.Membership.OwnerID
+				session.TeamID = teamID
+				break
+			}
+		}
 	}
 	return nil
 }

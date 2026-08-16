@@ -77,8 +77,8 @@ console.log(JSON.stringify({
 }, null, 2));
 
 async function createConflictFixture(label, teamID) {
-  const profileA = await createProfile(teamID, `${runID} ${label} A`);
-  const profileB = await createProfile(teamID, `${runID} ${label} B`);
+  const profileA = await createCredential(teamID, `${runID} ${label} A`);
+  const profileB = await createCredential(teamID, `${runID} ${label} B`);
   const subjectName = `${runID} ${label} project`;
   const objectAName = `${runID} ${label} PostgreSQL`;
   const objectBName = `${runID} ${label} GraphDB`;
@@ -258,11 +258,11 @@ async function createTeam(label) {
   return teamID;
 }
 
-async function createProfile(teamID, name) {
-  const response = await controlJSON(`/teams/${teamID}/profiles`, { method: "POST", body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }) });
+async function createCredential(teamID, name) {
+  const response = await controlJSON(`/teams/${teamID}/credentials`, { method: "POST", body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }) });
   const apiKey = String(response.data?.api_key ?? "");
-  const profileID = String(response.data?.key?.id ?? "");
-  assert(apiKey && profileID, `profile ${name} omitted credentials or ID`);
+  const profileID = String(response.data?.credential?.id ?? "");
+  assert(apiKey && profileID, `credential ${name} omitted key material or ID`);
   return { apiKey, profileID };
 }
 

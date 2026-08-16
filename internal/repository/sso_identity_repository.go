@@ -25,8 +25,8 @@ func (r *SSORepositoryImpl) DirectoryAuthorityActive(ctx context.Context, provid
 	return active, nil
 }
 
-func (r *SSORepositoryImpl) DirectoryTeamProfileEntitled(ctx context.Context, profileID, providerID, identityID, teamID uuid.UUID, groupID string) (bool, error) {
-	if profileID == uuid.Nil || providerID == uuid.Nil || identityID == uuid.Nil || teamID == uuid.Nil || strings.TrimSpace(groupID) == "" {
+func (r *SSORepositoryImpl) DirectoryMembershipEntitled(ctx context.Context, providerID, identityID, teamID uuid.UUID, groupID string) (bool, error) {
+	if providerID == uuid.Nil || identityID == uuid.Nil || teamID == uuid.Nil || strings.TrimSpace(groupID) == "" {
 		return false, nil
 	}
 	var entitled bool
@@ -35,10 +35,6 @@ func (r *SSORepositoryImpl) DirectoryTeamProfileEntitled(ctx context.Context, pr
 			SELECT EXISTS (
 				SELECT 1
 				FROM team_memberships membership
-				JOIN ownership_aliases alias
-					ON alias.team_id = membership.team_id
-					AND alias.canonical_identity_id = membership.actor_identity_id
-					AND alias.credential_id IS NULL
 				JOIN actor_identities actor ON actor.id = membership.actor_identity_id
 				JOIN teams t ON t.id = membership.team_id
 				JOIN sso_directory_connectors c
@@ -62,21 +58,20 @@ func (r *SSORepositoryImpl) DirectoryTeamProfileEntitled(ctx context.Context, pr
 					AND m.group_id = (CASE WHEN g.external_id <> '' THEN g.external_id ELSE g.id::text END)
 					AND m.enabled = true
 					AND m.retired_at IS NULL
-				WHERE alias.legacy_owner_id = $1
-					AND membership.sso_provider_id = $2
-					AND membership.actor_identity_id = $3
-					AND membership.team_id = $4
-					AND membership.sso_group_id = $5
+				WHERE membership.sso_provider_id = $1
+					AND membership.actor_identity_id = $2
+					AND membership.team_id = $3
+					AND membership.sso_group_id = $4
 					AND membership.sso_entitlement_status = 'active'
 					AND membership.status = 'active'
 					AND actor.active = true
 					AND t.status = 'active'
 					AND t.deleted_at IS NULL
 			)
-		`, profileID, providerID, identityID, teamID, strings.TrimSpace(groupID)).Row().Scan(&entitled)
+		`, providerID, identityID, teamID, strings.TrimSpace(groupID)).Row().Scan(&entitled)
 	})
 	if err != nil {
-		return false, fmt.Errorf("failed to check directory team profile entitlement: %w", err)
+		return false, fmt.Errorf("failed to check directory team membership entitlement: %w", err)
 	}
 	return entitled, nil
 }

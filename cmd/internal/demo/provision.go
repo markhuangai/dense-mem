@@ -14,11 +14,11 @@ import (
 )
 
 type Provisioner struct {
-	profiles service.ProfileService
-	keys     service.APIKeyService
-	store    CounterStore
-	quotas   Quotas
-	now      func() time.Time
+	teams       service.TeamService
+	credentials service.CredentialService
+	store       CounterStore
+	quotas      Quotas
+	now         func() time.Time
 }
 
 type ProvisionOptions struct {
@@ -27,30 +27,30 @@ type ProvisionOptions struct {
 }
 
 type ProvisionResponse struct {
-	APIKey      string      `json:"api_key"`
-	TeamID      string      `json:"team_id"`
-	ProfileID   string      `json:"profile_id"`
-	TeamName    string      `json:"team_name"`
-	ProfileName string      `json:"profile_name"`
-	ExpiresAt   time.Time   `json:"expires_at"`
-	MCPURL      string      `json:"mcp_url"`
-	UIURL       string      `json:"ui_url"`
-	Quotas      QuotaLimits `json:"quotas"`
-	Notice      string      `json:"notice"`
+	APIKey         string      `json:"api_key"`
+	TeamID         string      `json:"team_id"`
+	CredentialID   string      `json:"credential_id"`
+	TeamName       string      `json:"team_name"`
+	CredentialName string      `json:"credential_name"`
+	ExpiresAt      time.Time   `json:"expires_at"`
+	MCPURL         string      `json:"mcp_url"`
+	UIURL          string      `json:"ui_url"`
+	Quotas         QuotaLimits `json:"quotas"`
+	Notice         string      `json:"notice"`
 }
 
-func NewProvisioner(profiles service.ProfileService, keys service.APIKeyService, store CounterStore, quotas Quotas) *Provisioner {
+func NewProvisioner(teams service.TeamService, credentials service.CredentialService, store CounterStore, quotas Quotas) *Provisioner {
 	return &Provisioner{
-		profiles: profiles,
-		keys:     keys,
-		store:    store,
-		quotas:   quotas.normalized(),
-		now:      func() time.Time { return time.Now().UTC() },
+		teams:       teams,
+		credentials: credentials,
+		store:       store,
+		quotas:      quotas.normalized(),
+		now:         func() time.Time { return time.Now().UTC() },
 	}
 }
 
 func (p *Provisioner) Provision(ctx context.Context, opts ProvisionOptions) (*ProvisionResponse, error) {
-	if p == nil || p.profiles == nil || p.keys == nil || p.store == nil {
+	if p == nil || p.teams == nil || p.credentials == nil || p.store == nil {
 		return nil, httperr.New(httperr.SERVICE_UNAVAILABLE, "demo provisioner unavailable")
 	}
 	now := p.now().UTC()
@@ -66,9 +66,9 @@ func (p *Provisioner) Provision(ctx context.Context, opts ProvisionOptions) (*Pr
 
 	expiresAt := now.Add(quotas.SessionTTL).UTC()
 	teamName := fmt.Sprintf("demo-%s-%s", now.Format("20060102-150405"), suffix)
-	profileName := "demo-profile-" + suffix
+	credentialName := "demo-credential-" + suffix
 
-	profile, err := p.profiles.Create(ctx, service.CreateProfileRequest{
+	team, err := p.teams.Create(ctx, service.CreateTeamRequest{
 		Name:        teamName,
 		Description: "Temporary dense-mem public demo team. Data expires automatically.",
 		Metadata: map[string]any{
@@ -83,30 +83,30 @@ func (p *Provisioner) Provision(ctx context.Context, opts ProvisionOptions) (*Pr
 		return nil, err
 	}
 
-	key, rawKey, err := p.keys.CreateStandardKey(ctx, profile.ID, service.CreateAPIKeyRequest{
-		Name:      profileName,
+	credential, rawKey, err := p.credentials.CreateCredential(ctx, team.ID, service.CreateCredentialRequest{
+		Name:      credentialName,
 		RateLimit: quotas.PerMinuteRequests,
 		ExpiresAt: &expiresAt,
-		Scopes:    service.StandardAPIKeyScopes(),
-		Role:      service.APIKeyRoleMember,
+		Scopes:    service.StandardCredentialScopes(),
+		Role:      service.CredentialRoleMember,
 	}, nil, "demo", opts.ClientIP, "demo-provision")
 	if err != nil {
-		_ = p.profiles.Delete(ctx, profile.ID, nil, "demo", opts.ClientIP, "demo-provision-rollback")
+		_ = p.teams.Delete(ctx, team.ID, nil, "demo", opts.ClientIP, "demo-provision-rollback")
 		return nil, err
 	}
 
 	baseURL := strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/")
 	return &ProvisionResponse{
-		APIKey:      rawKey,
-		TeamID:      profile.ID.String(),
-		ProfileID:   key.ID.String(),
-		TeamName:    profile.Name,
-		ProfileName: key.GetProfileName(),
-		ExpiresAt:   expiresAt,
-		MCPURL:      baseURL + "/mcp",
-		UIURL:       baseURL + "/ui",
-		Quotas:      quotas.Limits(),
-		Notice:      "Use this demo only for disposable test data. Do not store secrets, personal data, or critical information.",
+		APIKey:         rawKey,
+		TeamID:         team.ID.String(),
+		CredentialID:   credential.ID.String(),
+		TeamName:       team.Name,
+		CredentialName: credential.GetName(),
+		ExpiresAt:      expiresAt,
+		MCPURL:         baseURL + "/mcp",
+		UIURL:          baseURL + "/ui",
+		Quotas:         quotas.Limits(),
+		Notice:         "Use this demo only for disposable test data. Do not store secrets, personal data, or critical information.",
 	}, nil
 }
 

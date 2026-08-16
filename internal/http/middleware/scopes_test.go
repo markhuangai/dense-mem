@@ -27,8 +27,8 @@ func TestRequireRole(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
 			if tc.role != "" {
 				req = req.WithContext(SetPrincipalForTest(req.Context(), &Principal{
-					KeyID: uuid.New(),
-					Role:  tc.role,
+					CredentialID: testUUIDPtr(uuid.New()),
+					Role:         tc.role,
 				}))
 			}
 			rec := httptest.NewRecorder()

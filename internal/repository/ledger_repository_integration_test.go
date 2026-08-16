@@ -180,8 +180,6 @@ func truncateLedgerFixtures(tx *gorm.DB) error {
 			evidence_source_revisions,
 			evidence_sources,
 			knowledge_ingests,
-			semantic_profile_refs,
-			semantic_team_refs,
 			ownership_aliases, membership_grants, credentials, team_memberships,
 			identity_external_links, actor_identities,
 			teams
@@ -230,7 +228,7 @@ func createLedgerProfile(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, te
 
 	profileID := uuid.NewString()
 	keyPrefix := strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
-	err := NewAPIKeyRepository(db, rls).CreateStandardKey(context.Background(), &domain.APIKey{
+	err := NewCredentialRepository(db, rls).CreateCredential(context.Background(), &domain.Credential{
 		ID: uuid.MustParse(profileID), TeamID: uuid.MustParse(teamID), Name: profileName,
 		KeyHash: "hash-" + profileID, KeyPrefix: keyPrefix, KeySuffix: keyPrefix[:6],
 		Scopes: []string{"read", "write"},

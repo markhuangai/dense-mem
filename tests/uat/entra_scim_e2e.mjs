@@ -219,10 +219,13 @@ async function assertLogoutCSRF(userSession, controlSession) {
 
 async function verifyUserSession(sessionCookie) {
   const session = await envelope(`${userURL}/ui/api/session`, { headers: { Cookie: sessionCookie } });
-  assert(session.auth_method === "sso", "user session did not authenticate through SSO");
+  assert(session.credential === null, "user SSO session unexpectedly exposed a direct credential");
   assert(session.team?.name === "Research", "user SSO session did not receive the directory-created Research team");
+  assert(session.membership?.team_id === session.team?.id, "user SSO session membership did not match the selected team");
+  assert(session.membership?.grants?.includes("read"), "user SSO session did not expose its read grant");
   assert(session.teams?.length === 1, "OIDC-only group claims granted a team that SCIM did not provision");
   assert(session.teams[0]?.team?.name === "Research", "SCIM membership was not the sole active directory entitlement source");
+  assert(session.teams[0]?.membership?.team_id === session.team?.id, "SCIM team option omitted its membership");
 }
 
 async function verifyControlSession(sessionCookie) {

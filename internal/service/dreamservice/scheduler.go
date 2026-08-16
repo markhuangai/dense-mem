@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	schedulerProfilePageSize  = 100
+	schedulerTeamPageSize     = 100
 	schedulerLastRunRetention = 7 * 24 * time.Hour
 	schedulerRunDateLayout    = "2006-01-02"
 )
@@ -37,10 +37,10 @@ type scheduledWindowArm struct {
 }
 
 type Scheduler struct {
-	service  Service
-	profiles ProfileService
-	now      func() time.Time
-	logger   *slog.Logger
+	service Service
+	teams   TeamService
+	now     func() time.Time
+	logger  *slog.Logger
 
 	mu       sync.Mutex
 	observed map[string]string
@@ -51,13 +51,13 @@ type scheduledRecoveryService interface {
 	RecoverScheduledCycle(ctx context.Context, teamID string) (*RunCycleResult, error)
 }
 
-func NewScheduler(service Service, profiles ProfileService, logger *slog.Logger) *Scheduler {
+func NewScheduler(service Service, teams TeamService, logger *slog.Logger) *Scheduler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Scheduler{
 		service:  service,
-		profiles: profiles,
+		teams:    teams,
 		now:      func() time.Time { return time.Now().UTC() },
 		logger:   logger,
 		observed: map[string]string{},
@@ -66,7 +66,7 @@ func NewScheduler(service Service, profiles ProfileService, logger *slog.Logger)
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
-	if s == nil || s.service == nil || s.profiles == nil {
+	if s == nil || s.service == nil || s.teams == nil {
 		return
 	}
 	s.runDue(ctx)
@@ -105,8 +105,8 @@ func schedulerNextMinuteDelay(now time.Time) time.Duration {
 func (s *Scheduler) runDue(ctx context.Context) {
 	now := s.now()
 	s.pruneObserved(now)
-	for offset := 0; ; offset += schedulerProfilePageSize {
-		teams, err := s.profiles.List(ctx, schedulerProfilePageSize, offset)
+	for offset := 0; ; offset += schedulerTeamPageSize {
+		teams, err := s.teams.List(ctx, schedulerTeamPageSize, offset)
 		if err != nil {
 			s.logger.Warn("dreaming scheduler: list teams failed", slog.Int("offset", offset), slog.String("error_kind", "team_list_failed"))
 			return
@@ -184,7 +184,7 @@ func (s *Scheduler) runDue(ctx context.Context) {
 				slog.String("status", result.Status),
 			)
 		}
-		if len(teams) < schedulerProfilePageSize {
+		if len(teams) < schedulerTeamPageSize {
 			return
 		}
 	}

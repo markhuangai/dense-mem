@@ -105,7 +105,7 @@ func (r *SemanticRepositoryImpl) CorrectRelationship(
 	var result *CorrectRelationshipResult
 	var committedErr error
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := ensureSemanticRefs(ctx, tx, input.TeamID, input.OwnerProfileID); err != nil {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		var err error

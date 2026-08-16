@@ -115,7 +115,7 @@ for (const testCase of acceptedCases) {
 }
 
 const isolatedTeam = await createTeam(`Security Intake Isolated ${runID}`);
-const isolatedProfile = await createProfile(isolatedTeam.id, "Security Intake Isolated Profile");
+const isolatedProfile = await createCredential(isolatedTeam.id, "Security Intake Isolated Profile");
 const isolatedAudit = await userJSON("/ui/api/team/audit-log?limit=100", isolatedProfile.apiKey);
 if ((isolatedAudit.data ?? []).some((entry) => rejectedCases.some((testCase) => entry.correlation_id === testCase.correlationID))) {
   throw new Error("security rejection audit entry leaked across teams");
@@ -381,16 +381,16 @@ async function createTeam(name) {
   return { id };
 }
 
-async function createProfile(targetTeamID, name) {
-  const response = await controlJSON(`/control/api/teams/${targetTeamID}/profiles`, {
+async function createCredential(targetTeamID, name) {
+  const response = await controlJSON(`/control/api/teams/${targetTeamID}/credentials`, {
     method: "POST",
     body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }),
   });
-  const newAPIKey = stringValue(response.data?.api_key);
-  if (!newAPIKey) {
-    throw new Error("control API did not return an isolated profile key");
+  const newCredential = stringValue(response.data?.api_key);
+  if (!newCredential) {
+    throw new Error("control API did not return an isolated credential key");
   }
-  return { apiKey: newAPIKey };
+  return { apiKey: newCredential };
 }
 
 async function prometheusValue(metric, targetTeamID) {

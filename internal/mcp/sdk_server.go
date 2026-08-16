@@ -16,8 +16,7 @@ import (
 )
 
 // NewSDKHTTPHandler creates a stateless official-SDK transport backed by the
-// same request-scoped registry, authorization, and prompt catalog as the
-// legacy transport.
+// request-scoped registry, authorization, and prompt catalog.
 func (s *Server) NewSDKHTTPHandler(jsonResponse bool) http.Handler {
 	transport := sdkmcp.NewStreamableHTTPHandler(func(req *http.Request) *sdkmcp.Server {
 		return s.newSDKServer(req.Context())
@@ -184,8 +183,7 @@ func (s *Server) newSDKServer(ctx context.Context) *sdkmcp.Server {
 			Name:        tool.Name,
 			Description: s.toolDescription(tool.Description),
 			InputSchema: inputSchema,
-			// The legacy transport does not advertise outputSchema. Keep the
-			// public catalog compatible while the SDK remains a transport detail.
+			// Keep the established public catalog without an output schema.
 			OutputSchema: nil,
 		}, s.sdkToolHandler(tool.Name))
 	}

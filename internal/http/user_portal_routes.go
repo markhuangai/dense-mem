@@ -15,16 +15,16 @@ import (
 // RegisterUserPortal registers the API-key user portal under /ui on the main API server.
 func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	portal := &userPortalHandler{
-		profiles:  deps.ProfileSvc,
-		keys:      deps.APIKeySvc,
-		telemetry: deps.Telemetry,
-		graph:     deps.GraphView,
-		recall:    handler.NewRecallHandler(deps.RecallSvc, deps.DreamSvc),
-		dreams:    handler.NewDreamHandler(deps.DreamSvc),
-		audit:     handler.NewAuditHandler(deps.AuditSvc),
-		sso:       deps.SSOService,
-		portal:    deps.PortalSession,
-		appConfig: deps.AppConfig,
+		teams:       deps.TeamSvc,
+		credentials: deps.CredentialSvc,
+		telemetry:   deps.Telemetry,
+		graph:       deps.GraphView,
+		recall:      handler.NewRecallHandler(deps.RecallSvc, deps.DreamSvc),
+		dreams:      handler.NewDreamHandler(deps.DreamSvc),
+		audit:       handler.NewAuditHandler(deps.AuditSvc),
+		sso:         deps.SSOService,
+		portal:      deps.PortalSession,
+		appConfig:   deps.AppConfig,
 	}
 
 	if deps.SSOService != nil {
@@ -58,38 +58,38 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	useUserPortalMiddleware(api, deps, authOpts)
 	api.POST("/session", portal.createPortalSession, httpmw.BindAndValidateStrict[dto.CreateUserPortalSessionRequest](userPortalCreateSessionBodyKey))
 
-	profileHandler := handler.NewProfileHandler(deps.ProfileSvc)
-	apiKeyHandler := handler.NewAPIKeyHandler(deps.APIKeySvc)
-	profileAuthz := httpmw.NewProfileAuthorizationService(deps.AuditSvc)
-	profileResolutionMW := httpmw.ProfileResolutionMiddleware(deps.ProfileSvc)
-	authorizeProfileMW := httpmw.AuthorizeProfile(profileAuthz)
-	profileSvcMW := userPortalServiceAvailable(deps.ProfileSvc != nil, "profile service unavailable")
-	apiKeySvcMW := userPortalServiceAvailable(deps.APIKeySvc != nil, "api key service unavailable")
+	teamHandler := handler.NewTeamHandler(deps.TeamSvc)
+	credentialHandler := handler.NewCredentialHandler(deps.CredentialSvc)
+	teamAuthz := httpmw.NewTeamAuthorizationService(deps.AuditSvc)
+	teamResolutionMW := httpmw.TeamResolutionMiddleware(deps.TeamSvc)
+	authorizeTeamMW := httpmw.AuthorizeTeam(teamAuthz)
+	teamSvcMW := userPortalServiceAvailable(deps.TeamSvc != nil, "team service unavailable")
+	credentialSvcMW := userPortalServiceAvailable(deps.CredentialSvc != nil, "credential service unavailable")
 	dreamSvcMW := userPortalServiceAvailable(deps.DreamSvc != nil, "dream service unavailable")
 
 	api.GET("/telemetry", portal.telemetrySnapshot, httpmw.RequireScopes("write"))
 	api.GET("/graph", portal.graphSnapshot, httpmw.RequireScopes("read"))
 	api.GET("/node-detail", portal.graphNodeDetail, httpmw.RequireScopes("read"))
 	api.GET("/team/audit-log", portal.audit.Get, httpmw.RequireScopes("read"))
-	api.POST("/key/rotate", portal.rotateCurrentKey, httpmw.RequireScopes("write"), apiKeySvcMW)
-	api.GET("/team", profileHandler.Get, httpmw.RequireRole(service.APIKeyRoleManager), profileSvcMW)
-	api.PATCH("/team", profileHandler.Patch, httpmw.RequireRole(service.APIKeyRoleManager), profileSvcMW, httpmw.BindAndValidate[dto.UpdateProfileRequest](httpmw.UpdateProfileBodyKey))
-	api.DELETE("/team", profileHandler.Delete, httpmw.RequireRole(service.APIKeyRoleManager), profileSvcMW)
-	api.GET("/team/profiles", apiKeyHandler.List, httpmw.RequireRole(service.APIKeyRoleManager), apiKeySvcMW)
-	api.POST("/team/profiles", apiKeyHandler.Create, httpmw.RequireRole(service.APIKeyRoleManager), apiKeySvcMW, httpmw.BindAndValidate[dto.CreateAPIKeyRequest](httpmw.CreateAPIKeyBodyKey))
-	api.GET("/team/profiles/:keyId", apiKeyHandler.Get, httpmw.RequireRole(service.APIKeyRoleManager), apiKeySvcMW)
-	api.PATCH("/team/profiles/:keyId", apiKeyHandler.Update, httpmw.RequireRole(service.APIKeyRoleManager), apiKeySvcMW, httpmw.BindAndValidate[dto.UpdateAPIKeyRequest](httpmw.UpdateAPIKeyBodyKey))
-	api.POST("/team/profiles/:keyId/rotate", apiKeyHandler.Rotate, httpmw.RequireRole(service.APIKeyRoleManager), apiKeySvcMW, httpmw.BindAndValidate[dto.CreateAPIKeyRequest](httpmw.CreateAPIKeyBodyKey))
-	api.DELETE("/team/profiles/:keyId", apiKeyHandler.Delete, httpmw.RequireRole(service.APIKeyRoleManager), apiKeySvcMW)
-	api.GET("/recall", portal.recall.Handle, profileSvcMW, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
-	api.GET("/dreaming/status", portal.dreams.Status, dreamSvcMW, profileSvcMW, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
-	api.GET("/dreaming/runs", portal.dreams.Runs, dreamSvcMW, profileSvcMW, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
-	api.GET("/dreams", portal.dreams.List, dreamSvcMW, profileSvcMW, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
-	api.GET("/dreams/:dreamId", portal.dreams.Get, dreamSvcMW, profileSvcMW, profileResolutionMW, authorizeProfileMW, httpmw.RequireScopes("read"))
+	api.POST("/credential/rotate", portal.rotateCurrentCredential, httpmw.RequireScopes("write"), credentialSvcMW)
+	api.GET("/team", teamHandler.Get, httpmw.RequireRole(service.CredentialRoleManager), teamSvcMW)
+	api.PATCH("/team", teamHandler.Patch, httpmw.RequireRole(service.CredentialRoleManager), teamSvcMW, httpmw.BindAndValidate[dto.UpdateTeamRequest](httpmw.UpdateTeamBodyKey))
+	api.DELETE("/team", teamHandler.Delete, httpmw.RequireRole(service.CredentialRoleManager), teamSvcMW)
+	api.GET("/team/credentials", credentialHandler.List, httpmw.RequireRole(service.CredentialRoleManager), credentialSvcMW)
+	api.POST("/team/credentials", credentialHandler.Create, httpmw.RequireRole(service.CredentialRoleManager), credentialSvcMW, httpmw.BindAndValidate[dto.CreateCredentialRequest](httpmw.CreateCredentialBodyKey))
+	api.GET("/team/credentials/:credentialId", credentialHandler.Get, httpmw.RequireRole(service.CredentialRoleManager), credentialSvcMW)
+	api.PATCH("/team/credentials/:credentialId", credentialHandler.Update, httpmw.RequireRole(service.CredentialRoleManager), credentialSvcMW, httpmw.BindAndValidate[dto.UpdateCredentialRequest](httpmw.UpdateCredentialBodyKey))
+	api.POST("/team/credentials/:credentialId/rotate", credentialHandler.Rotate, httpmw.RequireRole(service.CredentialRoleManager), credentialSvcMW, httpmw.BindAndValidate[dto.CreateCredentialRequest](httpmw.CreateCredentialBodyKey))
+	api.DELETE("/team/credentials/:credentialId", credentialHandler.Delete, httpmw.RequireRole(service.CredentialRoleManager), credentialSvcMW)
+	api.GET("/recall", portal.recall.Handle, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
+	api.GET("/dreaming/status", portal.dreams.Status, dreamSvcMW, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
+	api.GET("/dreaming/runs", portal.dreams.Runs, dreamSvcMW, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
+	api.GET("/dreams", portal.dreams.List, dreamSvcMW, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
+	api.GET("/dreams/:dreamId", portal.dreams.Get, dreamSvcMW, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
 	if deps.SSOService != nil {
 		api.POST("/sso/team", portal.switchSSOTeam, httpmw.RequireScopes("read"))
-		api.POST("/sso/key", portal.createSSOKey, httpmw.RequireScopes("read"))
-		api.POST("/sso/key/rotate", portal.rotateSSOKey, httpmw.RequireScopes("read"))
+		api.POST("/sso/credential", portal.createSSOCredential, httpmw.RequireScopes("read"))
+		api.POST("/sso/credential/rotate", portal.rotateSSOCredential, httpmw.RequireScopes("read"))
 	}
 
 	staticDir := strings.TrimSpace(deps.UserStaticDir)
@@ -100,7 +100,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 }
 
 func useUserPortalMiddleware(api *echo.Group, deps UserPortalDeps, authOpts httpmw.AuthOptions) {
-	api.Use(httpmw.AuthMiddlewareWithOptions(deps.APIKeyRepo, deps.AuditSvc, deps.SecuritySvc, authOpts))
+	api.Use(httpmw.AuthMiddlewareWithOptions(deps.CredentialRepo, deps.AuditSvc, deps.SecuritySvc, authOpts))
 	api.Use(deps.ExtraMiddleware...)
 	api.Use(httpmw.UsageMetricsMiddleware(deps.UsageMetrics))
 	api.Use(httpmw.RateLimitMiddleware(deps.RateLimitSvc, deps.Config, deps.AuditSvc))

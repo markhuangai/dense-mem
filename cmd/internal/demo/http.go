@@ -120,7 +120,7 @@ const landingHTML = `<!doctype html>
           <div class="meta">
             <div class="metric"><strong id="expires">--</strong><span>expires</span></div>
             <div class="metric"><strong id="team">--</strong><span>team</span></div>
-            <div class="metric"><strong id="profile">--</strong><span>credential</span></div>
+            <div class="metric"><strong id="credential">--</strong><span>credential</span></div>
           </div>
           <p class="status" id="status"></p>
         </section>
@@ -160,7 +160,7 @@ const landingHTML = `<!doctype html>
       openUI: document.getElementById('openUI'),
       expires: document.getElementById('expires'),
       team: document.getElementById('team'),
-      profile: document.getElementById('profile'),
+      credential: document.getElementById('credential'),
       status: document.getElementById('status'),
       mcpJson: document.getElementById('mcpJson'),
       mcpRemote: document.getElementById('mcpRemote'),
@@ -220,7 +220,7 @@ const landingHTML = `<!doctype html>
       els.apiKey.value = session.api_key;
       els.expires.textContent = new Date(session.expires_at).toLocaleString();
       els.team.textContent = shorten(session.team_id);
-      els.profile.textContent = shorten(session.profile_id);
+      els.credential.textContent = shorten(session.credential_id);
       els.openUI.href = uiURL;
       els.status.textContent = message || '';
       setText('qRequests', quotas.total_requests);

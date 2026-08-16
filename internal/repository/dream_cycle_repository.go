@@ -420,7 +420,7 @@ func (r *SemanticRepositoryImpl) withDreamWriteTx(
 ) error {
 	if !system {
 		return r.withTeamProfileTx(ctx, teamID, actorProfileID, func(tx *gorm.DB) error {
-			if err := ensureSemanticRefs(ctx, tx, teamID, actorProfileID); err != nil {
+			if err := seedTeamPredicateDefinitions(ctx, tx, teamID); err != nil {
 				return err
 			}
 			return fn(tx)

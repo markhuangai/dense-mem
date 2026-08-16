@@ -11,7 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func TestSSOValidateAPIKeyPrincipalRequiresDurableDirectoryEntitlement(t *testing.T) {
+func TestSSOValidateCredentialRequiresDurableDirectoryEntitlement(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -20,14 +20,15 @@ func TestSSOValidateAPIKeyPrincipalRequiresDurableDirectoryEntitlement(t *testin
 	teamID := uuid.New()
 	profileID := uuid.New()
 	provider := &domain.SSOProvider{ID: providerID, Enabled: true}
-	key := func(identity *uuid.UUID) *domain.APIKey {
-		return &domain.APIKey{
-			ID:            profileID,
-			TeamID:        teamID,
-			SSOProviderID: &providerID,
-			SSOIdentityID: identity,
-			SSOSubject:    "entra-user-1",
-			SSOGroupID:    "entra-research-manager",
+	key := func(identity *uuid.UUID) *domain.Credential {
+		return &domain.Credential{
+			ID:              profileID,
+			TeamID:          teamID,
+			Scopes:          []string{CredentialScopeRead},
+			SSOProviderID:   &providerID,
+			OwnerIdentityID: identity,
+			SSOSubject:      "entra-user-1",
+			SSOGroupID:      "entra-research-manager",
 		}
 	}
 
@@ -37,26 +38,27 @@ func TestSSOValidateAPIKeyPrincipalRequiresDurableDirectoryEntitlement(t *testin
 		providers:                map[uuid.UUID]*domain.SSOProvider{providerID: provider},
 	}
 	svc := NewSSOService(repo, SSOConfig{})
-	_, err := svc.ValidateAPIKeyPrincipal(ctx, key(nil))
+	validated, err := svc.ValidateCredential(ctx, key(nil))
+	require.NoError(t, err)
+	require.NotNil(t, validated)
+
+	repo.directoryProfileEntitled = map[uuid.UUID]bool{identityID: false}
+	_, err = svc.ValidateCredential(ctx, key(&identityID))
 	require.ErrorIs(t, err, ErrSSOAccessDenied)
 
-	repo.directoryProfileEntitled = map[uuid.UUID]bool{profileID: false}
-	_, err = svc.ValidateAPIKeyPrincipal(ctx, key(&identityID))
-	require.ErrorIs(t, err, ErrSSOAccessDenied)
-
-	repo.directoryProfileEntitled[profileID] = true
-	validated, err := svc.ValidateAPIKeyPrincipal(ctx, key(&identityID))
+	repo.directoryProfileEntitled[identityID] = true
+	validated, err = svc.ValidateCredential(ctx, key(&identityID))
 	require.NoError(t, err)
 	require.Equal(t, "active", validated.SSOEntitlementStatus)
-	require.Equal(t, []uuid.UUID{profileID, profileID}, repo.directoryProfileEntitledCalls)
+	require.Equal(t, []uuid.UUID{identityID, identityID}, repo.directoryProfileEntitledCalls)
 
 	backendErr := errors.New("directory membership lookup failed")
 	repo.directoryProfileEntitledErr = backendErr
-	_, err = svc.ValidateAPIKeyPrincipal(ctx, key(&identityID))
+	_, err = svc.ValidateCredential(ctx, key(&identityID))
 	require.ErrorIs(t, err, backendErr)
 
 	repo.directoryProfileEntitledErr = nil
 	repo.directoryAuthorityErr = backendErr
-	_, err = svc.ValidateAPIKeyPrincipal(ctx, key(&identityID))
+	_, err = svc.ValidateCredential(ctx, key(&identityID))
 	require.ErrorIs(t, err, backendErr)
 }

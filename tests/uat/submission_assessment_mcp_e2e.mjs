@@ -166,10 +166,6 @@ function relationshipForContent(content, ref, evidenceIndex, subject, predicateS
 
 function seedPredicates(prefix, count, keyPrefix = `${runID}:${prefix}`) {
   postgresRow(`
-    INSERT INTO semantic_team_refs (team_id)
-    VALUES (${sqlLiteral(teamID)}::uuid)
-    ON CONFLICT (team_id) DO NOTHING;
-
     INSERT INTO team_predicate_definitions (
       team_id, predicate_key, version, aliases, allowed_subject_kinds,
       allowed_object_kinds, relationship_kind, current_cardinality,

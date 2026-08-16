@@ -616,16 +616,16 @@ func TestSemanticCreateHypothesisBootstrapsRefsAndDefaultsProposed(t *testing.T)
 		}
 		assert.Equal(t, "proposed", status)
 
-		var refCount int64
+		var aliasCount int64
 		if err := tx.Raw(`
 			SELECT COUNT(*)
-			FROM semantic_profile_refs
+			FROM ownership_aliases
 			WHERE team_id = ?::uuid
-			  AND profile_id = ?::uuid
-		`, teamID, ownerID).Scan(&refCount).Error; err != nil {
+			  AND legacy_owner_id = ?::uuid
+		`, teamID, ownerID).Scan(&aliasCount).Error; err != nil {
 			return err
 		}
-		assert.Equal(t, int64(1), refCount)
+		assert.Equal(t, int64(1), aliasCount)
 		return nil
 	})
 	require.NoError(t, err)

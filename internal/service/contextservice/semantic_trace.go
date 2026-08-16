@@ -57,7 +57,7 @@ func (s *semanticTraceService) Trace(ctx context.Context, _ string, req TraceReq
 	if s == nil || s.store == nil {
 		return nil, errors.New("trace: semantic store is required")
 	}
-	actor, ok := requestctx.ActorProfileFromContext(ctx)
+	actor, ok := requestctx.ActorFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil {
 		return nil, ErrTraceAuthContext
 	}

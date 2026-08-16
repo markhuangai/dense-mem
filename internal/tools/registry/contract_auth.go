@@ -7,9 +7,9 @@ import (
 )
 
 func authenticatedScopes(ctx context.Context) []string {
-	credential, ok := requestctx.ActorCredentialFromContext(ctx)
+	actor, ok := requestctx.ActorFromContext(ctx)
 	if !ok {
 		return nil
 	}
-	return credential.Scopes
+	return actor.Grants
 }

@@ -789,7 +789,7 @@ func addDirectoryGroupGrants(grants map[string]domain.DirectoryProfileGrant, gro
 
 func strongestDirectoryGrant(existing, candidate domain.DirectoryProfileGrant) domain.DirectoryProfileGrant {
 	merged := append(append([]string(nil), existing.Entitlement.Scopes...), candidate.Entitlement.Scopes...)
-	scopes, err := NormalizeAPIKeyScopes(merged)
+	scopes, err := NormalizeCredentialScopes(merged)
 	winner := existing
 	if directoryEntitlementRank(candidate.Entitlement) > directoryEntitlementRank(existing.Entitlement) {
 		winner = candidate
@@ -802,7 +802,7 @@ func strongestDirectoryGrant(existing, candidate domain.DirectoryProfileGrant) d
 
 func directoryEntitlementRank(entitlement domain.DirectoryRoleEntitlement) int {
 	rank := len(entitlement.Scopes)
-	if entitlement.Role == APIKeyRoleManager {
+	if entitlement.Role == CredentialRoleManager {
 		rank += 100
 	}
 	return rank

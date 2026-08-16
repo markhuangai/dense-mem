@@ -66,32 +66,32 @@ func TestSSOClaimAndGroupHelpers(t *testing.T) {
 
 func TestSSOProfileAndEntitlementHelpers(t *testing.T) {
 	identityID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	assert.Equal(t, "SSO ada@example.com 11111111", ssoProfileName("ada@example.com", "Ada", identityID))
-	assert.Equal(t, "SSO Ada 11111111", ssoProfileName("", "Ada", identityID))
-	assert.Equal(t, "SSO 11111111-1111-4111-8111-111111111111 11111111", ssoProfileName("", "", identityID))
-	longName := ssoProfileName("averyveryveryveryveryveryveryveryveryveryveryveryveryveryveryveryveryveryverylong@example.com", "", identityID)
+	assert.Equal(t, "SSO ada@example.com 11111111", ssoMembershipName("ada@example.com", "Ada", identityID))
+	assert.Equal(t, "SSO Ada 11111111", ssoMembershipName("", "Ada", identityID))
+	assert.Equal(t, "SSO 11111111-1111-4111-8111-111111111111 11111111", ssoMembershipName("", "", identityID))
+	longName := ssoMembershipName("averyveryveryveryveryveryveryveryveryveryveryveryveryveryveryveryveryveryverylong@example.com", "", identityID)
 	assert.LessOrEqual(t, len([]rune(longName)), 100)
 
 	teamID := uuid.New()
 	otherTeamID := uuid.New()
 	mappings := []*domain.SSOGroupMapping{
-		{TeamID: teamID, GroupID: "g1", Scopes: []string{APIKeyScopeRead}, Role: APIKeyRoleMember, Enabled: true},
-		{TeamID: teamID, GroupID: "g2", Scopes: []string{APIKeyScopeRead, APIKeyScopeWrite, APIKeyScopeFeedbackRead}, Role: APIKeyRoleManager, Enabled: true},
-		{TeamID: otherTeamID, GroupID: "g3", Scopes: []string{APIKeyScopeRead}, Role: APIKeyRoleMember, Enabled: true},
+		{TeamID: teamID, GroupID: "g1", Scopes: []string{CredentialScopeRead}, Role: CredentialRoleMember, Enabled: true},
+		{TeamID: teamID, GroupID: "g2", Scopes: []string{CredentialScopeRead, CredentialScopeWrite, CredentialScopeFeedbackRead}, Role: CredentialRoleManager, Enabled: true},
+		{TeamID: otherTeamID, GroupID: "g3", Scopes: []string{CredentialScopeRead}, Role: CredentialRoleMember, Enabled: true},
 	}
 
 	assert.True(t, hasMappingForTeam(mappings, teamID))
 	entitlement, ok := mergedEntitlementForTeam(mappings, teamID)
 	require.True(t, ok)
-	assert.Equal(t, []string{APIKeyScopeRead, APIKeyScopeWrite, APIKeyScopeFeedbackRead}, entitlement.Scopes)
-	assert.Equal(t, APIKeyRoleManager, entitlement.Role)
+	assert.Equal(t, []string{CredentialScopeRead, CredentialScopeWrite, CredentialScopeFeedbackRead}, entitlement.Scopes)
+	assert.Equal(t, CredentialRoleManager, entitlement.Role)
 	assert.Equal(t, "g1,g2", entitlement.GroupID)
 	_, ok = mergedEntitlementForTeam(mappings, uuid.New())
 	assert.False(t, ok)
 
 	entitlement, ok = mergedEntitlementForTeam([]*domain.SSOGroupMapping{{TeamID: teamID, GroupID: "g4", Enabled: true}}, teamID)
 	require.True(t, ok)
-	assert.Equal(t, []string{APIKeyScopeRead}, entitlement.Scopes)
+	assert.Equal(t, []string{CredentialScopeRead}, entitlement.Scopes)
 }
 
 func TestNormalizeSSOProviderAndMapping(t *testing.T) {
@@ -148,19 +148,19 @@ func TestNormalizeSSOProviderAndMapping(t *testing.T) {
 	}
 	require.NoError(t, normalizeSSOGroupMapping(&mapping))
 	assert.Equal(t, "group-1", mapping.GroupID)
-	assert.Equal(t, []string{APIKeyScopeRead}, mapping.Scopes)
-	assert.Equal(t, APIKeyRoleMember, mapping.Role)
+	assert.Equal(t, []string{CredentialScopeRead}, mapping.Scopes)
+	assert.Equal(t, CredentialRoleMember, mapping.Role)
 
 	managerMapping := domain.SSOGroupMapping{
 		ProviderID: uuid.New(),
 		TeamID:     uuid.New(),
 		GroupID:    "group-manager",
-		Scopes:     []string{APIKeyScopeRead, APIKeyScopeFeedbackRead},
-		Role:       APIKeyRoleManager,
+		Scopes:     []string{CredentialScopeRead, CredentialScopeFeedbackRead},
+		Role:       CredentialRoleManager,
 	}
 	require.NoError(t, normalizeSSOGroupMapping(&managerMapping))
-	assert.Equal(t, []string{APIKeyScopeRead, APIKeyScopeWrite, APIKeyScopeFeedbackRead}, managerMapping.Scopes)
-	assert.Equal(t, APIKeyRoleManager, managerMapping.Role)
+	assert.Equal(t, []string{CredentialScopeRead, CredentialScopeWrite, CredentialScopeFeedbackRead}, managerMapping.Scopes)
+	assert.Equal(t, CredentialRoleManager, managerMapping.Role)
 
 	invalidMapping := domain.SSOGroupMapping{ProviderID: uuid.New(), TeamID: uuid.New()}
 	require.Error(t, normalizeSSOGroupMapping(&invalidMapping))
@@ -373,18 +373,13 @@ func TestSSOKeyRequiresEntitlementValidation(t *testing.T) {
 
 	for _, tt := range []struct {
 		name string
-		key  *domain.APIKey
+		key  *domain.Credential
 		want bool
 	}{
 		{name: "nil", key: nil, want: false},
-		{name: "ordinary", key: &domain.APIKey{}, want: false},
-		{name: "unlinked api key", key: &domain.APIKey{AuthSource: "api_key", SSOEntitlementStatus: "unlinked"}, want: false},
-		{name: "sso auth source", key: &domain.APIKey{AuthSource: "sso"}, want: true},
-		{name: "identity", key: &domain.APIKey{SSOIdentityID: &identityID}, want: true},
-		{name: "provider", key: &domain.APIKey{SSOProviderID: &providerID}, want: true},
-		{name: "subject", key: &domain.APIKey{SSOSubject: "subject"}, want: true},
-		{name: "group", key: &domain.APIKey{SSOGroupID: "group"}, want: true},
-		{name: "status", key: &domain.APIKey{SSOEntitlementStatus: "active"}, want: true},
+		{name: "ordinary", key: &domain.Credential{}, want: false},
+		{name: "identity", key: &domain.Credential{OwnerIdentityID: &identityID}, want: true},
+		{name: "provider without owner", key: &domain.Credential{SSOProviderID: &providerID}, want: false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, ssoKeyRequiresEntitlementValidation(tt.key))

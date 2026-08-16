@@ -32,7 +32,7 @@ func TestKeyBuilder_ValidationStillWorksAfterPrune(t *testing.T) {
 	kb := NewKeyBuilder()
 
 	_, err := kb.RateLimit("", "abc")
-	assert.ErrorIs(t, err, ErrEmptyProfileID)
+	assert.ErrorIs(t, err, ErrEmptyNamespaceID)
 
 	_, err = kb.Stream("profile123", "")
 	assert.ErrorIs(t, err, ErrEmptyIdentifier)

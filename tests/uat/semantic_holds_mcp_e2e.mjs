@@ -14,9 +14,9 @@ const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 let rpcID = 0;
 const runID = `semantic-holds-e2e-${Date.now()}`;
 
-const sameTeamOtherProfile = await createProfile(teamID, `Semantic Holds Other ${runID}`);
+const sameTeamOtherProfile = await createCredential(teamID, `Semantic Holds Other ${runID}`);
 const otherTeam = await createTeam(`Semantic Holds Other Team ${runID}`);
-const otherTeamProfile = await createProfile(otherTeam.id, `Semantic Holds Cross Team ${runID}`);
+const otherTeamProfile = await createCredential(otherTeam.id, `Semantic Holds Cross Team ${runID}`);
 
 const verifierBeforeTarget = await prometheusValue("densemem_verifier_requests_total", teamID);
 const target = await mcpSuccess(apiKey, "remember", rememberInput(
@@ -282,16 +282,16 @@ async function createTeam(name) {
   return { id };
 }
 
-async function createProfile(targetTeamID, name) {
-  const response = await controlJSON(`/control/api/teams/${targetTeamID}/profiles`, {
+async function createCredential(targetTeamID, name) {
+  const response = await controlJSON(`/control/api/teams/${targetTeamID}/credentials`, {
     method: "POST",
     body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }),
   });
-  const newAPIKey = stringValue(response.data?.api_key);
-  if (!newAPIKey) {
-    throw new Error("control API did not return a profile key");
+  const newCredential = stringValue(response.data?.api_key);
+  if (!newCredential) {
+    throw new Error("control API did not return a credential key");
   }
-  return { apiKey: newAPIKey };
+  return { apiKey: newCredential };
 }
 
 async function controlJSON(path, options) {
