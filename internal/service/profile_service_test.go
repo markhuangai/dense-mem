@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -370,7 +371,7 @@ func TestProfileServiceDelete(t *testing.T) {
 }
 
 // TestProfileServiceDeleteRevokesActiveKeys verifies team deletion revokes
-// profile-bound API keys without deleting team profile rows.
+// profile-bound credentials without deleting their audit tombstones.
 func TestProfileServiceDeleteRevokesActiveKeys(t *testing.T) {
 	ctx := context.Background()
 
@@ -408,12 +409,12 @@ func TestProfileServiceDeleteRevokesActiveKeys(t *testing.T) {
 	profile, err := service.Create(ctx, req, &actorKeyID, "system", "127.0.0.1", "test-correlation-id")
 	require.NoError(t, err, "Create should succeed")
 
-	// Create an active API key for this profile
-	_, err = sqlDB.ExecContext(ctx, `
-		INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, name, scopes, expires_at, revoked_at, created_at, updated_at, auth_source)
-		VALUES (gen_random_uuid(), $1, 'testhash', 'testprofiledeletekey', 'Test Key', ARRAY['read'], NULL, NULL, NOW(), NOW(), 'api_key')
-	`, profile.ID)
-	require.NoError(t, err, "Should create API key")
+	keyID := uuid.New()
+	keyRepo := repository.NewAPIKeyRepository(db, postgres.NewRLS())
+	require.NoError(t, keyRepo.CreateStandardKey(ctx, &domain.APIKey{
+		ID: keyID, TeamID: profile.ID, Name: "Test Key", KeyHash: "testhash",
+		KeyPrefix: keyID.String()[:24], Scopes: []string{"read"},
+	}))
 
 	err = service.Delete(ctx, profile.ID, &actorKeyID, "system", "127.0.0.1", "test-correlation-id")
 	require.NoError(t, err, "Delete should remove active keys and profile")
@@ -421,17 +422,17 @@ func TestProfileServiceDeleteRevokesActiveKeys(t *testing.T) {
 	var keyCount int
 	err = sqlDB.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM team_profiles
+		FROM credentials
 		WHERE team_id = $1
 	`, profile.ID).Scan(&keyCount)
 	require.NoError(t, err, "Should query API keys")
-	assert.Equal(t, 1, keyCount, "team profile rows should be preserved")
+	assert.Equal(t, 1, keyCount, "credential tombstones should be preserved")
 
 	var revokedCount int
 	err = sqlDB.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM team_profiles
-		WHERE team_id = $1 AND revoked_at IS NOT NULL
+		FROM credentials
+		WHERE team_id = $1 AND status = 'revoked' AND revoked_at IS NOT NULL
 	`, profile.ID).Scan(&revokedCount)
 	require.NoError(t, err, "Should query revoked API keys")
 	assert.Equal(t, 1, revokedCount, "profile API keys should be revoked")
@@ -445,7 +446,10 @@ func TestProfileServiceDeleteRevokesActiveKeys(t *testing.T) {
 	require.NoError(t, err, "Should query profiles")
 	assert.Equal(t, 1, profileCount, "team row should be preserved")
 
-	sqlDB.Exec("DELETE FROM team_profiles WHERE team_id = $1", profile.ID)
+	sqlDB.Exec("DELETE FROM ownership_aliases WHERE team_id = $1", profile.ID)
+	sqlDB.Exec("DELETE FROM credentials WHERE team_id = $1", profile.ID)
+	sqlDB.Exec("DELETE FROM team_memberships WHERE team_id = $1", profile.ID)
+	sqlDB.Exec("DELETE FROM actor_identities WHERE team_id = $1", profile.ID)
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id = $1", profile.ID.String())
 	sqlDB.Exec("DELETE FROM teams WHERE id = $1", profile.ID.String())
 }

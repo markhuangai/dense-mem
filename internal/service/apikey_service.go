@@ -144,7 +144,7 @@ func teamProfileNameConflict(err error, name string) error {
 }
 
 func apiKeyCreateConflict(err error, name string) error {
-	if uniqueViolationName(err) == "idx_team_profiles_sso_owner_team_active_unique" {
+	if uniqueViolationName(err) == "idx_credentials_owner_team_active_unique" {
 		return httperr.New(httperr.CONFLICT, "sso-owned api key already exists for this team")
 	}
 	return teamProfileNameConflict(err, name)

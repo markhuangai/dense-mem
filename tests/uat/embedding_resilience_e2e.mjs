@@ -105,7 +105,7 @@ async function waitForEvidenceJobs() {
 async function mcpTool(name, args) {
   const response = await httpJSON(`${userURL}/mcp`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/call", params: { name, arguments: args } }),
   });
   if (response.error || response.result === undefined) throw new Error(`MCP ${name} returned a bounded error`);

@@ -71,7 +71,7 @@ func NewAPIKeyRepository(db *gorm.DB, rls postgres.RLSHelper) *APIKeyRepositoryI
 	return &APIKeyRepositoryImpl{db: db, rls: rls}
 }
 
-// CreateStandardKey creates a new standard API key associated with a team profile.
+// CreateStandardKey creates one API-client identity, membership, credential, and ownership alias.
 func (r *APIKeyRepositoryImpl) CreateStandardKey(ctx context.Context, key *domain.APIKey) error {
 	if key.ID == uuid.Nil {
 		key.ID = uuid.New()
@@ -82,36 +82,54 @@ func (r *APIKeyRepositoryImpl) CreateStandardKey(ctx context.Context, key *domai
 	now := time.Now().UTC()
 	key.CreatedAt = now
 
-	// Standard keys must have a team_id.
-	// Use the KeyPrefix field from the domain object (derived from raw key)
 	keyPrefix := key.KeyPrefix
 	if keyPrefix == "" {
-		// Fallback: derive from hash (incorrect but legacy support)
 		keyPrefix = GetKeyPrefixFromHash(key.KeyHash)
 	}
 	keySuffix := key.KeySuffix
 
-	// INSERT must satisfy team_profiles_self_access (team_id = app.current_team_id);
-	// set the session to the owning team so the RLS WITH CHECK passes.
-	// Scopes must be wrapped in pq.Array — the pgx driver (via gorm.io/driver/postgres)
-	// does not encode a naked []string as Postgres text[]; it writes NULL and the
-	// authorization layer later sees an empty scope set.
 	err := r.rls.WithProfileTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
 			return err
 		}
+		if err := tx.Exec(`
+			INSERT INTO actor_identities (id, kind, team_id, display_name, active, created_at, updated_at)
+			VALUES ($1, 'api_client', $2, $3, true, $4, $4)
+		`, key.ID, teamID, name, now).Error; err != nil {
+			return err
+		}
+		var membershipID uuid.UUID
+		if err := tx.Raw(`
+			INSERT INTO team_memberships (
+				actor_identity_id, team_id, status, team_admin, maximum_grants, created_at, updated_at
+			) VALUES ($1, $2, 'active', $3, $4, $5, $5)
+			RETURNING id
+		`, key.ID, teamID, key.GetRole() == "manager", pq.Array(key.Scopes), now).Row().Scan(&membershipID); err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO membership_grants (membership_id, grant_name, source)
+			SELECT $1, scope, 'legacy_scope' FROM unnest($2::text[]) AS scope
+		`, membershipID, pq.Array(key.Scopes)).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO credentials (
+				id, actor_identity_id, owner_identity_id, team_id, kind, key_hash, key_prefix,
+				key_suffix, name, scopes, rate_limit, status, expires_at, created_at, updated_at
+			) VALUES (
+				$1, $1, $2, $3, 'api_key', $4, $5, NULLIF($6, ''), $7, $8, $9,
+				'active', $10, $11, $11
+			)
+		`, key.ID, key.SSOOwnerIdentityID, teamID, key.KeyHash, keyPrefix, keySuffix, name,
+			pq.Array(key.Scopes), key.RateLimit, key.ExpiresAt, now).Error; err != nil {
+			return err
+		}
 		return tx.Exec(`
-				INSERT INTO team_profiles (
-					id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit,
-					expires_at, revoked_at, last_used_at, created_at, updated_at, auth_source,
-					sso_owner_identity_id
-				)
-				VALUES (
-					$1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9,
-					$10, NULL, NULL, $11, $11, 'api_key',
-					$12
-				)
-			`, key.ID, teamID, key.KeyHash, keyPrefix, keySuffix, name, pq.Array(key.Scopes), key.GetRole(), key.RateLimit, key.ExpiresAt, now, key.SSOOwnerIdentityID).Error
+			INSERT INTO ownership_aliases (
+				team_id, legacy_owner_id, canonical_identity_id, credential_id, reason
+			) VALUES ($1, $2, $2, $2, 'credential')
+		`, teamID, key.ID).Error
 	})
 
 	if err != nil {
@@ -150,21 +168,21 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		rows, rerr := tx.Raw(`
 				SELECT
-					k.id, k.team_id, COALESCE(k.key_suffix, ''), k.name, k.scopes, k.role, k.rate_limit,
-					k.last_used_at, k.expires_at, k.created_at, k.revoked_at, COALESCE(k.auth_source, ''),
-					COALESCE(k.sso_identity_id::text, ''), COALESCE(k.sso_provider_id::text, ''),
-					COALESCE(k.sso_owner_identity_id::text, ''),
-					COALESCE(k.sso_subject, ''), COALESCE(k.sso_email, ''), COALESCE(k.sso_group_id, ''),
-					COALESCE(k.sso_entitlement_status, ''),
-					k.sso_last_entitlement_checked_at, k.sso_last_login_at
-				FROM team_profiles k
-				JOIN teams t ON t.id = k.team_id
-				WHERE k.team_id = $1
-					AND k.auth_source = 'api_key'
+					c.id, c.team_id, COALESCE(c.key_suffix, ''), c.name, c.scopes,
+					CASE WHEN m.team_admin THEN 'manager' ELSE 'member' END, c.rate_limit,
+					c.last_used_at, c.expires_at, c.created_at, c.revoked_at, 'api_key',
+					'', '', COALESCE(c.owner_identity_id::text, ''), '', '', '', '', NULL, NULL
+				FROM credentials c
+				JOIN team_memberships m
+				  ON m.actor_identity_id = c.actor_identity_id AND m.team_id = c.team_id
+				JOIN teams t ON t.id = c.team_id
+				WHERE c.team_id = $1
+					AND c.kind = 'api_key'
+					AND c.status <> 'disabled'
 					AND t.status = 'active'
 					AND t.deleted_at IS NULL
-				ORDER BY k.created_at DESC, k.id ASC
-			LIMIT $2 OFFSET $3
+					ORDER BY c.created_at DESC, c.id ASC
+				LIMIT $2 OFFSET $3
 		`, profileID, limit, offset).Rows()
 		if rerr != nil {
 			return rerr
@@ -224,112 +242,18 @@ func (r *APIKeyRepositoryImpl) ListByProfile(ctx context.Context, profileID uuid
 // StringArray scanner when GORM copies columns by reflection; scopes come back
 // empty and authorization fails closed.
 func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix string) (*domain.APIKey, error) {
-	var key domain.APIKey
-	var teamID *uuid.UUID
-	var ssoIdentityID, ssoProviderID, ssoOwnerIdentityID string
-	found := false
 	var canonicalKey *domain.APIKey
-	var canonicalTable bool
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		var err error
-		canonicalTable, err = canonicalCredentialTableExists(tx)
-		if err != nil {
-			return err
-		}
-		if canonicalTable {
-			canonicalKey, err = lookupCanonicalCredential(tx, prefix)
-			return err
-		}
-		rows, rerr := tx.Raw(`
-			SELECT
-				k.id,
-				k.team_id,
-				COALESCE(t.name, ''),
-				k.key_hash,
-				COALESCE(k.key_suffix, ''),
-				k.name,
-				k.scopes,
-				k.role,
-				k.rate_limit,
-				k.last_used_at,
-				k.expires_at,
-				k.created_at,
-				k.revoked_at,
-				COALESCE(k.auth_source, ''),
-				COALESCE(k.sso_identity_id::text, ''),
-				COALESCE(k.sso_provider_id::text, ''),
-				COALESCE(k.sso_owner_identity_id::text, ''),
-				COALESCE(k.sso_subject, ''),
-				COALESCE(k.sso_email, ''),
-				COALESCE(k.sso_group_id, ''),
-					COALESCE(k.sso_entitlement_status, ''),
-					k.sso_last_entitlement_checked_at,
-					k.sso_last_login_at
-				FROM team_profiles k
-				JOIN teams t ON t.id = k.team_id
-				WHERE k.key_prefix = $1
-					AND k.auth_source = 'api_key'
-					AND k.key_hash IS NOT NULL
-					AND k.revoked_at IS NULL
-					AND (k.expires_at IS NULL OR k.expires_at > NOW())
-					AND t.status = 'active'
-					AND t.deleted_at IS NULL
-			`, prefix).Rows()
-		if rerr != nil {
-			return rerr
-		}
-		defer rows.Close()
-
-		if rows.Next() {
-			found = true
-			return rows.Scan(
-				&key.ID,
-				&teamID,
-				&key.TeamName,
-				&key.KeyHash,
-				&key.KeySuffix,
-				&key.Label,
-				pq.Array(&key.Scopes),
-				&key.Role,
-				&key.RateLimit,
-				&key.LastUsedAt,
-				&key.ExpiresAt,
-				&key.CreatedAt,
-				&key.RevokedAt,
-				&key.AuthSource,
-				&ssoIdentityID,
-				&ssoProviderID,
-				&ssoOwnerIdentityID,
-				&key.SSOSubject,
-				&key.SSOEmail,
-				&key.SSOGroupID,
-				&key.SSOEntitlementStatus,
-				&key.SSOLastEntitlementCheckedAt,
-				&key.SSOLastLoginAt,
-			)
-		}
-		return rows.Err()
+		canonicalKey, err = lookupCanonicalCredential(tx, prefix)
+		return err
 	})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get api key by prefix: %w", err)
 	}
-	if canonicalTable {
-		return canonicalKey, nil
-	}
-	if !found {
-		return nil, nil
-	}
-	if teamID != nil {
-		key.ProfileID = *teamID
-		key.TeamID = *teamID
-	}
-	key.Name = key.Label
-	key.SSOIdentityID = parseOptionalUUID(ssoIdentityID)
-	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
-	key.SSOOwnerIdentityID = parseOptionalUUID(ssoOwnerIdentityID)
-	return &key, nil
+	return canonicalKey, nil
 }
 
 // GetActiveByID retrieves the current authorization metadata for a standard
@@ -337,108 +261,17 @@ func (r *APIKeyRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix str
 // valid across in-place key rotation, while revocation and team state are
 // checked on every portal-cookie request.
 func (r *APIKeyRepositoryImpl) GetActiveByID(ctx context.Context, id uuid.UUID) (*domain.APIKey, error) {
-	var key domain.APIKey
-	var teamID *uuid.UUID
-	var ssoIdentityID, ssoProviderID, ssoOwnerIdentityID string
-	found := false
 	var canonicalKey *domain.APIKey
-	var canonicalTable bool
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		var err error
-		canonicalTable, err = canonicalCredentialTableExists(tx)
-		if err != nil {
-			return err
-		}
-		if canonicalTable {
-			canonicalKey, err = lookupCanonicalCredentialByID(tx, id)
-			return err
-		}
-		rows, rerr := tx.Raw(`
-			SELECT
-				k.id,
-				k.team_id,
-				COALESCE(t.name, ''),
-				COALESCE(k.key_suffix, ''),
-				k.name,
-				k.scopes,
-				k.role,
-				k.rate_limit,
-				k.last_used_at,
-				k.expires_at,
-				k.created_at,
-				k.revoked_at,
-				COALESCE(k.auth_source, ''),
-				COALESCE(k.sso_identity_id::text, ''),
-				COALESCE(k.sso_provider_id::text, ''),
-				COALESCE(k.sso_owner_identity_id::text, ''),
-				COALESCE(k.sso_subject, ''),
-				COALESCE(k.sso_email, ''),
-				COALESCE(k.sso_group_id, ''),
-				COALESCE(k.sso_entitlement_status, ''),
-				k.sso_last_entitlement_checked_at,
-				k.sso_last_login_at
-			FROM team_profiles k
-			JOIN teams t ON t.id = k.team_id
-			WHERE k.id = $1
-				AND k.auth_source = 'api_key'
-				AND k.key_hash IS NOT NULL
-				AND k.revoked_at IS NULL
-				AND (k.expires_at IS NULL OR k.expires_at > NOW())
-				AND t.status = 'active'
-				AND t.deleted_at IS NULL
-		`, id).Rows()
-		if rerr != nil {
-			return rerr
-		}
-		defer rows.Close()
-		if !rows.Next() {
-			return rows.Err()
-		}
-		found = true
-		return rows.Scan(
-			&key.ID,
-			&teamID,
-			&key.TeamName,
-			&key.KeySuffix,
-			&key.Label,
-			pq.Array(&key.Scopes),
-			&key.Role,
-			&key.RateLimit,
-			&key.LastUsedAt,
-			&key.ExpiresAt,
-			&key.CreatedAt,
-			&key.RevokedAt,
-			&key.AuthSource,
-			&ssoIdentityID,
-			&ssoProviderID,
-			&ssoOwnerIdentityID,
-			&key.SSOSubject,
-			&key.SSOEmail,
-			&key.SSOGroupID,
-			&key.SSOEntitlementStatus,
-			&key.SSOLastEntitlementCheckedAt,
-			&key.SSOLastLoginAt,
-		)
+		canonicalKey, err = lookupCanonicalCredentialByID(tx, id)
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active api key by id: %w", err)
 	}
-	if canonicalTable {
-		return canonicalKey, nil
-	}
-	if !found {
-		return nil, nil
-	}
-	if teamID != nil {
-		key.ProfileID = *teamID
-		key.TeamID = *teamID
-	}
-	key.Name = key.Label
-	key.SSOIdentityID = parseOptionalUUID(ssoIdentityID)
-	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
-	key.SSOOwnerIdentityID = parseOptionalUUID(ssoOwnerIdentityID)
-	return &key, nil
+	return canonicalKey, nil
 }
 
 // RevokeForProfile marks an API key as revoked only when it belongs to profileID.
@@ -454,48 +287,100 @@ func (r *APIKeyRepositoryImpl) RevokeForProfile(ctx context.Context, profileID, 
 			return err
 		}
 		res := tx.Exec(`
-			UPDATE team_profiles
-			SET revoked_at = $1, updated_at = $1
-			WHERE id = $2 AND team_id = $3 AND auth_source = 'api_key' AND revoked_at IS NULL
+			UPDATE credentials
+			SET status = 'revoked', revoked_at = $1, updated_at = $1
+			WHERE id = $2 AND team_id = $3 AND kind = 'api_key'
+			  AND status = 'active' AND revoked_at IS NULL
 		`, now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
 		rowsAffected = res.RowsAffected
+		if rowsAffected == 0 {
+			return nil
+		}
+		if err := tx.Exec(`
+			UPDATE team_memberships
+			SET status = 'revoked', updated_at = $1
+			WHERE team_id = $2
+			  AND actor_identity_id = (SELECT actor_identity_id FROM credentials WHERE id = $3)
+		`, now, teamID, id).Error; err != nil {
+			return err
+		}
 		return nil
 	})
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to revoke api key for profile: %w", err)
 	}
+	if rowsAffected > 0 {
+		if err := r.deactivateActorIfUnused(ctx, now, id); err != nil {
+			return 0, fmt.Errorf("failed to reconcile revoked api key actor: %w", err)
+		}
+	}
 
 	return rowsAffected, nil
 }
 
-// DeleteForProfile hard-deletes an API key only when it belongs to profileID.
+// DeleteForProfile removes an API key from supported reads while retaining its stable audit identity.
 func (r *APIKeyRepositoryImpl) DeleteForProfile(ctx context.Context, profileID, id uuid.UUID) (int64, error) {
 	teamID := profileID
+	now := time.Now().UTC()
 	var rowsAffected int64
 	err := r.rls.WithProfileTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
 			return err
 		}
 		res := tx.Exec(`
-			DELETE FROM team_profiles
-			WHERE id = $1 AND team_id = $2 AND auth_source = 'api_key'
-		`, id, teamID)
+			UPDATE credentials
+			SET status = 'disabled', revoked_at = COALESCE(revoked_at, $1), updated_at = $1
+			WHERE id = $2 AND team_id = $3 AND kind = 'api_key' AND status <> 'disabled'
+		`, now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
 		rowsAffected = res.RowsAffected
+		if rowsAffected == 0 {
+			return nil
+		}
+		if err := tx.Exec(`
+			UPDATE team_memberships
+			SET status = 'revoked', updated_at = $1
+			WHERE team_id = $2
+			  AND actor_identity_id = (SELECT actor_identity_id FROM credentials WHERE id = $3)
+		`, now, teamID, id).Error; err != nil {
+			return err
+		}
 		return nil
 	})
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to delete api key for profile: %w", err)
 	}
+	if rowsAffected > 0 {
+		if err := r.deactivateActorIfUnused(ctx, now, id); err != nil {
+			return 0, fmt.Errorf("failed to reconcile deleted api key actor: %w", err)
+		}
+	}
 
 	return rowsAffected, nil
+}
+
+func (r *APIKeyRepositoryImpl) deactivateActorIfUnused(ctx context.Context, now time.Time, credentialID uuid.UUID) error {
+	// Actor liveness spans teams, so reconcile it in a separate system transaction.
+	return r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE actor_identities AS actor
+			SET active = false, updated_at = $1
+			WHERE actor.id = (SELECT actor_identity_id FROM credentials WHERE id = $2)
+			  AND NOT EXISTS (
+				  SELECT 1
+				  FROM team_memberships AS membership
+				  WHERE membership.actor_identity_id = actor.id
+				    AND membership.status = 'active'
+			  )
+		`, now, credentialID).Error
+	})
 }
 
 // UpdateNameForProfile renames a team profile without changing its API key.
@@ -508,16 +393,23 @@ func (r *APIKeyRepositoryImpl) UpdateNameForProfile(ctx context.Context, profile
 			return err
 		}
 		res := tx.Exec(`
-			UPDATE team_profiles
+			UPDATE credentials
 			SET name = $1,
 			    updated_at = $2
-			WHERE id = $3 AND team_id = $4 AND auth_source = 'api_key'
+			WHERE id = $3 AND team_id = $4 AND kind = 'api_key' AND status <> 'disabled'
 		`, name, now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
 		rowsAffected = res.RowsAffected
-		return nil
+		if rowsAffected == 0 {
+			return nil
+		}
+		return tx.Exec(`
+			UPDATE actor_identities
+			SET display_name = $1, updated_at = $2
+			WHERE id = (SELECT actor_identity_id FROM credentials WHERE id = $3)
+		`, name, now, id).Error
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to update team profile name: %w", err)
@@ -535,17 +427,28 @@ func (r *APIKeyRepositoryImpl) UpdateRoleForProfile(ctx context.Context, profile
 			return err
 		}
 		res := tx.Exec(`
-			UPDATE team_profiles
-			SET role = $1,
-			    scopes = $2,
-			    updated_at = $3
-			WHERE id = $4 AND team_id = $5 AND auth_source = 'api_key'
-		`, role, pq.Array(scopes), now, id, teamID)
+			UPDATE credentials
+			SET scopes = $1, updated_at = $2
+			WHERE id = $3 AND team_id = $4 AND kind = 'api_key' AND status <> 'disabled'
+		`, pq.Array(scopes), now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
 		rowsAffected = res.RowsAffected
-		return nil
+		if rowsAffected == 0 {
+			return nil
+		}
+		var membershipID uuid.UUID
+		if err := tx.Raw(`
+			UPDATE team_memberships
+			SET team_admin = $1, maximum_grants = $2, updated_at = $3
+			WHERE team_id = $4
+			  AND actor_identity_id = (SELECT actor_identity_id FROM credentials WHERE id = $5)
+			RETURNING id
+		`, role == "manager", pq.Array(scopes), now, teamID, id).Row().Scan(&membershipID); err != nil {
+			return err
+		}
+		return replaceLegacyMembershipGrants(tx, membershipID, scopes)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to update team profile role: %w", err)
@@ -563,16 +466,28 @@ func (r *APIKeyRepositoryImpl) UpdateScopesForProfile(ctx context.Context, profi
 			return err
 		}
 		res := tx.Exec(`
-			UPDATE team_profiles
-			SET scopes = $1,
-			    updated_at = $2
-			WHERE id = $3 AND team_id = $4 AND auth_source = 'api_key'
+			UPDATE credentials
+			SET scopes = $1, updated_at = $2
+			WHERE id = $3 AND team_id = $4 AND kind = 'api_key' AND status <> 'disabled'
 		`, pq.Array(scopes), now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
 		rowsAffected = res.RowsAffected
-		return nil
+		if rowsAffected == 0 {
+			return nil
+		}
+		var membershipID uuid.UUID
+		if err := tx.Raw(`
+			UPDATE team_memberships
+			SET maximum_grants = $1, updated_at = $2
+			WHERE team_id = $3
+			  AND actor_identity_id = (SELECT actor_identity_id FROM credentials WHERE id = $4)
+			RETURNING id
+		`, pq.Array(scopes), now, teamID, id).Row().Scan(&membershipID); err != nil {
+			return err
+		}
+		return replaceLegacyMembershipGrants(tx, membershipID, scopes)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to update team profile scopes: %w", err)
@@ -591,21 +506,37 @@ func (r *APIKeyRepositoryImpl) RotateForProfile(ctx context.Context, profileID, 
 			return err
 		}
 		res := tx.Exec(`
-			UPDATE team_profiles
+			UPDATE credentials
 			SET key_hash = $1,
 			    key_prefix = $2,
 			    key_suffix = NULLIF($3, ''),
 			    expires_at = $4,
+			    status = 'active',
 			    revoked_at = NULL,
 			    last_used_at = NULL,
 			    updated_at = $5
-			WHERE id = $6 AND team_id = $7 AND auth_source = 'api_key'
+			WHERE id = $6 AND team_id = $7 AND kind = 'api_key' AND status <> 'disabled'
 		`, keyHash, keyPrefix, keySuffix, expiresAt, now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
 		rowsAffected = res.RowsAffected
-		return nil
+		if rowsAffected == 0 {
+			return nil
+		}
+		if err := tx.Exec(`
+			UPDATE team_memberships
+			SET status = 'active', updated_at = $1
+			WHERE team_id = $2
+			  AND actor_identity_id = (SELECT actor_identity_id FROM credentials WHERE id = $3)
+		`, now, teamID, id).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE actor_identities
+			SET active = true, updated_at = $1
+			WHERE id = (SELECT actor_identity_id FROM credentials WHERE id = $2)
+		`, now, id).Error
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to rotate key for team profile: %w", err)
@@ -613,13 +544,27 @@ func (r *APIKeyRepositoryImpl) RotateForProfile(ctx context.Context, profileID, 
 	return rowsAffected, nil
 }
 
+func replaceLegacyMembershipGrants(tx *gorm.DB, membershipID uuid.UUID, scopes []string) error {
+	if err := tx.Exec(`
+		DELETE FROM membership_grants
+		WHERE membership_id = $1
+		  AND source = 'legacy_scope'
+		  AND NOT (grant_name = ANY($2::text[]))
+	`, membershipID, pq.Array(scopes)).Error; err != nil {
+		return err
+	}
+	return tx.Exec(`
+		INSERT INTO membership_grants (membership_id, grant_name, source)
+		SELECT $1, scope, 'legacy_scope' FROM unnest($2::text[]) AS scope
+		ON CONFLICT (membership_id, grant_name) DO NOTHING
+	`, membershipID, pq.Array(scopes)).Error
+}
+
 const apiKeyHydrationSelect = `
-	k.id, k.team_id, COALESCE(k.key_suffix, ''), k.name, k.scopes, k.role, k.rate_limit,
-	k.last_used_at, k.expires_at, k.created_at, k.revoked_at, COALESCE(k.auth_source, ''),
-	COALESCE(k.sso_identity_id::text, ''), COALESCE(k.sso_provider_id::text, ''),
-	COALESCE(k.sso_owner_identity_id::text, ''),
-	COALESCE(k.sso_subject, ''), COALESCE(k.sso_email, ''), COALESCE(k.sso_group_id, ''),
-	COALESCE(k.sso_entitlement_status, ''), k.sso_last_entitlement_checked_at, k.sso_last_login_at
+		c.id, c.team_id, COALESCE(c.key_suffix, ''), c.name, c.scopes,
+		CASE WHEN m.team_admin THEN 'manager' ELSE 'member' END, c.rate_limit,
+		c.last_used_at, c.expires_at, c.created_at, c.revoked_at, 'api_key',
+		'', '', COALESCE(c.owner_identity_id::text, ''), '', '', '', '', NULL, NULL
 `
 
 type apiKeyHydrationState struct {
@@ -682,9 +627,11 @@ func (r *APIKeyRepositoryImpl) getOneHydratedAPIKey(ctx context.Context, profile
 func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID, id uuid.UUID) (*domain.APIKey, error) {
 	key, err := r.getOneHydratedAPIKey(ctx, profileID, `
 		SELECT `+apiKeyHydrationSelect+`
-		FROM team_profiles k
-		JOIN teams t ON t.id = k.team_id
-		WHERE k.id = $1 AND k.team_id = $2 AND k.auth_source = 'api_key'
+		FROM credentials c
+		JOIN team_memberships m
+		  ON m.actor_identity_id = c.actor_identity_id AND m.team_id = c.team_id
+		JOIN teams t ON t.id = c.team_id
+		WHERE c.id = $1 AND c.team_id = $2 AND c.kind = 'api_key' AND c.status <> 'disabled'
 		  AND t.status = 'active' AND t.deleted_at IS NULL
 	`, id, profileID)
 	if err != nil {
@@ -697,12 +644,14 @@ func (r *APIKeyRepositoryImpl) GetByIDForProfile(ctx context.Context, profileID,
 func (r *APIKeyRepositoryImpl) GetSSOOwnedKey(ctx context.Context, profileID, identityID uuid.UUID) (*domain.APIKey, error) {
 	key, err := r.getOneHydratedAPIKey(ctx, profileID, `
 		SELECT `+apiKeyHydrationSelect+`
-		FROM team_profiles k
-		JOIN teams t ON t.id = k.team_id
-		WHERE k.team_id = $1 AND k.sso_owner_identity_id = $2
-		  AND k.auth_source = 'api_key' AND k.revoked_at IS NULL
+		FROM credentials c
+		JOIN team_memberships m
+		  ON m.actor_identity_id = c.actor_identity_id AND m.team_id = c.team_id
+		JOIN teams t ON t.id = c.team_id
+		WHERE c.team_id = $1 AND c.owner_identity_id = $2
+		  AND c.kind = 'api_key' AND c.status = 'active' AND c.revoked_at IS NULL
 		  AND t.status = 'active' AND t.deleted_at IS NULL
-		ORDER BY k.created_at DESC, k.id ASC
+		ORDER BY c.created_at DESC, c.id ASC
 		LIMIT 1
 	`, profileID, identityID)
 	if err != nil {
@@ -729,10 +678,11 @@ func (r *APIKeyRepositoryImpl) CountByProfile(ctx context.Context, profileID uui
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		return tx.Raw(`
 			SELECT COUNT(*)
-			FROM team_profiles k
-			JOIN teams t ON t.id = k.team_id
-			WHERE k.team_id = $1
-			  AND k.auth_source = 'api_key'
+			FROM credentials c
+			JOIN teams t ON t.id = c.team_id
+			WHERE c.team_id = $1
+			  AND c.kind = 'api_key'
+			  AND c.status <> 'disabled'
 			  AND t.status = 'active'
 			  AND t.deleted_at IS NULL
 		`, profileID).Scan(&count).Error
@@ -773,12 +723,12 @@ func (r *APIKeyRepositoryImpl) TouchLastUsedBatch(ctx context.Context, updates [
 	// so this write runs without a profile-scoped transaction.
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		query := `
-			UPDATE team_profiles AS profile
+			UPDATE credentials AS credential
 			SET last_used_at = updates.last_used_at
 			FROM (VALUES ` + strings.Join(values, ",") + `) AS updates(id, last_used_at)
-			WHERE profile.id = updates.id
-			  AND profile.auth_source = 'api_key'
-			  AND (profile.last_used_at IS NULL OR profile.last_used_at < updates.last_used_at)
+			WHERE credential.id = updates.id
+			  AND credential.kind = 'api_key'
+			  AND (credential.last_used_at IS NULL OR credential.last_used_at < updates.last_used_at)
 		`
 		return tx.Exec(query, args...).Error
 	})

@@ -323,11 +323,24 @@ func (r *ProfileRepositoryImpl) SoftDelete(ctx context.Context, id uuid.UUID) er
 		`, now, id).Error; err != nil {
 			return err
 		}
+		if err := tx.Exec(`
+			UPDATE credentials
+			SET status = 'revoked', revoked_at = COALESCE(revoked_at, $1), updated_at = $1
+			WHERE team_id = $2 AND status = 'active'
+		`, now, id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			UPDATE team_memberships
+			SET status = 'revoked', updated_at = $1
+			WHERE team_id = $2 AND status = 'active'
+		`, now, id).Error; err != nil {
+			return err
+		}
 		return tx.Exec(`
-			UPDATE team_profiles
-			SET revoked_at = $1, updated_at = $1
-			WHERE team_id = $2
-			  AND revoked_at IS NULL
+			UPDATE actor_identities
+			SET active = false, updated_at = $1
+			WHERE team_id = $2 AND active = true
 		`, now, id).Error
 	})
 
@@ -344,9 +357,18 @@ func (r *ProfileRepositoryImpl) SoftDelete(ctx context.Context, id uuid.UUID) er
 func (r *ProfileRepositoryImpl) HardDelete(ctx context.Context, id uuid.UUID) error {
 	err := r.rls.WithProfileTx(ctx, r.db, id.String(), func(tx *gorm.DB) error {
 		if err := tx.Exec(`
-			DELETE FROM team_profiles
+			DELETE FROM ownership_aliases
 			WHERE team_id = $1
 		`, id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`DELETE FROM credentials WHERE team_id = $1`, id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`DELETE FROM team_memberships WHERE team_id = $1`, id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`DELETE FROM actor_identities WHERE team_id = $1`, id).Error; err != nil {
 			return err
 		}
 		return tx.Exec(`
@@ -366,12 +388,13 @@ func (r *ProfileRepositoryImpl) HardDelete(ctx context.Context, id uuid.UUID) er
 func (r *ProfileRepositoryImpl) CountActiveKeys(ctx context.Context, profileID uuid.UUID) (int64, error) {
 	var count int64
 
-	// SELECT is scoped to one profile; api_keys_self_access matches on profile_id.
 	err := r.rls.WithProfileTx(ctx, r.db, profileID.String(), func(tx *gorm.DB) error {
 		return tx.Raw(`
 			SELECT COUNT(*)
-			FROM team_profiles
+			FROM credentials
 			WHERE team_id = $1
+				AND kind = 'api_key'
+				AND status = 'active'
 				AND revoked_at IS NULL
 				AND (expires_at IS NULL OR expires_at > NOW())
 		`, profileID).Scan(&count).Error

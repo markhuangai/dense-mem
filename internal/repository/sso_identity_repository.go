@@ -34,37 +34,42 @@ func (r *SSORepositoryImpl) DirectoryTeamProfileEntitled(ctx context.Context, pr
 		return tx.Raw(`
 			SELECT EXISTS (
 				SELECT 1
-				FROM team_profiles p
-				JOIN teams t ON t.id = p.team_id
+				FROM team_memberships membership
+				JOIN ownership_aliases alias
+					ON alias.team_id = membership.team_id
+					AND alias.canonical_identity_id = membership.actor_identity_id
+					AND alias.credential_id IS NULL
+				JOIN actor_identities actor ON actor.id = membership.actor_identity_id
+				JOIN teams t ON t.id = membership.team_id
 				JOIN sso_directory_connectors c
-					ON c.provider_id = p.sso_provider_id
+					ON c.provider_id = membership.sso_provider_id
 					AND c.status = 'active'
 				JOIN sso_directory_users u
 					ON u.connector_id = c.id
-					AND u.identity_id = p.sso_identity_id
+					AND u.identity_id = membership.actor_identity_id
 					AND u.active = true
 				JOIN sso_directory_groups g
 					ON g.connector_id = c.id
 					AND g.active = true
-					AND (CASE WHEN g.external_id <> '' THEN g.external_id ELSE g.id::text END) = p.sso_group_id
+					AND (CASE WHEN g.external_id <> '' THEN g.external_id ELSE g.id::text END) = membership.sso_group_id
 				JOIN sso_directory_group_memberships gm
 					ON gm.connector_id = c.id
 					AND gm.group_id = g.id
 					AND gm.user_id = u.id
 				JOIN sso_group_mappings m
-					ON m.provider_id = p.sso_provider_id
-					AND m.team_id = p.team_id
+					ON m.provider_id = membership.sso_provider_id
+					AND m.team_id = membership.team_id
 					AND m.group_id = (CASE WHEN g.external_id <> '' THEN g.external_id ELSE g.id::text END)
 					AND m.enabled = true
 					AND m.retired_at IS NULL
-				WHERE p.id = $1
-					AND p.sso_provider_id = $2
-					AND p.sso_identity_id = $3
-					AND p.team_id = $4
-					AND p.sso_group_id = $5
-					AND p.auth_source = 'sso'
-					AND p.sso_entitlement_status = 'active'
-					AND p.revoked_at IS NULL
+				WHERE alias.legacy_owner_id = $1
+					AND membership.sso_provider_id = $2
+					AND membership.actor_identity_id = $3
+					AND membership.team_id = $4
+					AND membership.sso_group_id = $5
+					AND membership.sso_entitlement_status = 'active'
+					AND membership.status = 'active'
+					AND actor.active = true
 					AND t.status = 'active'
 					AND t.deleted_at IS NULL
 			)
@@ -122,15 +127,16 @@ func (r *SSORepositoryImpl) UpsertIdentity(ctx context.Context, identity *domain
 			if identity.ID == uuid.Nil {
 				identity.ID = uuid.New()
 			}
-			return tx.Raw(`
+			if err := tx.Raw(`
 				INSERT INTO sso_identities (
 					id, provider_id, subject, external_id, email, display_name, active,
 					last_login_at, last_entitlement_check_at, created_at, updated_at
 				) VALUES ($1, $2, $3, $4, $5, $6, true, $7, $8, $9, $9)
 				RETURNING id, active, created_at, updated_at
-			`, identity.ID, identity.ProviderID, identity.Subject, identity.ExternalID, identity.Email, identity.DisplayName, identity.LastLoginAt, identity.LastEntitlementCheckAt, now).Row().Scan(&identity.ID, &identity.Active, &identity.CreatedAt, &identity.UpdatedAt)
-		}
-		return tx.Raw(`
+			`, identity.ID, identity.ProviderID, identity.Subject, identity.ExternalID, identity.Email, identity.DisplayName, identity.LastLoginAt, identity.LastEntitlementCheckAt, now).Row().Scan(&identity.ID, &identity.Active, &identity.CreatedAt, &identity.UpdatedAt); err != nil {
+				return err
+			}
+		} else if err := tx.Raw(`
 			UPDATE sso_identities
 			SET subject = $1,
 			    external_id = $2,
@@ -142,12 +148,79 @@ func (r *SSORepositoryImpl) UpsertIdentity(ctx context.Context, identity *domain
 			    updated_at = $7
 			WHERE id = $8 AND provider_id = $9
 			RETURNING id, active, created_at, updated_at
-		`, identity.Subject, identity.ExternalID, identity.Email, identity.DisplayName, identity.LastLoginAt, identity.LastEntitlementCheckAt, now, identity.ID, identity.ProviderID, directoryAuthority).Row().Scan(&identity.ID, &identity.Active, &identity.CreatedAt, &identity.UpdatedAt)
+		`, identity.Subject, identity.ExternalID, identity.Email, identity.DisplayName, identity.LastLoginAt, identity.LastEntitlementCheckAt, now, identity.ID, identity.ProviderID, directoryAuthority).Row().Scan(&identity.ID, &identity.Active, &identity.CreatedAt, &identity.UpdatedAt); err != nil {
+			return err
+		}
+		return upsertCanonicalSSOIdentityTx(tx, *identity)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to upsert sso identity: %w", err)
 	}
 	return nil
+}
+
+func upsertCanonicalSSOIdentityTx(tx *gorm.DB, identity domain.SSOIdentity) error {
+	provider := identity.ProviderID.String()
+	externalID := strings.TrimSpace(identity.ExternalID)
+	if externalID == "" {
+		externalID = strings.TrimSpace(identity.Subject)
+	}
+	if err := tx.Exec(`
+		INSERT INTO actor_identities (
+			id, kind, team_id, provider, subject, display_name, active, created_at, updated_at
+		) VALUES ($1, 'human', NULL, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (id) DO UPDATE SET
+			kind = CASE WHEN actor_identities.kind = 'api_client' THEN actor_identities.kind ELSE 'human' END,
+			team_id = CASE WHEN actor_identities.kind = 'api_client' THEN actor_identities.team_id ELSE NULL END,
+			provider = EXCLUDED.provider,
+			subject = EXCLUDED.subject,
+			display_name = EXCLUDED.display_name,
+			active = EXCLUDED.active,
+			updated_at = EXCLUDED.updated_at
+	`, identity.ID, provider, identity.Subject, identity.DisplayName, identity.Active, identity.CreatedAt, identity.UpdatedAt).Error; err != nil {
+		return err
+	}
+	if err := tx.Exec(`
+		DELETE FROM identity_external_links
+		WHERE identity_id = $1 AND provider = $2 AND external_id <> $3
+	`, identity.ID, provider, externalID).Error; err != nil {
+		return err
+	}
+	if externalID == "" {
+		return nil
+	}
+	return tx.Exec(`
+		INSERT INTO identity_external_links (identity_id, provider, external_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (provider, external_id) DO UPDATE SET identity_id = EXCLUDED.identity_id
+	`, identity.ID, provider, externalID).Error
+}
+
+func syncCanonicalSSOIdentityByIDTx(tx *gorm.DB, identityID uuid.UUID) error {
+	rows, err := tx.Raw(`
+		SELECT id, provider_id, subject, external_id, email, display_name, active,
+		       last_login_at, last_entitlement_check_at, created_at, updated_at
+		FROM sso_identities
+		WHERE id = $1
+	`, identityID).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return rows.Err()
+	}
+	identity, err := scanSSOIdentity(rows)
+	if err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	return upsertCanonicalSSOIdentityTx(tx, *identity)
 }
 
 func directoryAuthorityActiveTx(tx *gorm.DB, providerID uuid.UUID) (bool, error) {

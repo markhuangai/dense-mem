@@ -152,6 +152,7 @@ async function mcpSuccess(key, name, args, correlationID = "") {
 async function mcpRaw(key, name, args, correlationID = "") {
   const headers = {
     Authorization: `Bearer ${key}`,
+    Accept: "application/json",
     "Content-Type": "application/json",
   };
   if (correlationID) {

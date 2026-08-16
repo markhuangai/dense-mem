@@ -30,21 +30,31 @@ func TestCoreSchemaTeamsTable(t *testing.T) {
 	assert.True(t, constraintExists(t, ctx, sqlDB, "teams_status_check"))
 }
 
-func TestCoreSchemaTeamProfilesTable(t *testing.T) {
+func TestCoreSchemaCanonicalIdentityTables(t *testing.T) {
 	ctx := context.Background()
 	sqlDB, cleanup := migratedSQLDB(t, ctx)
 	defer cleanup()
 
-	assert.True(t, tableExists(t, ctx, sqlDB, "team_profiles"))
+	assert.False(t, tableExists(t, ctx, sqlDB, "team_profiles"))
+	assert.False(t, tableExists(t, ctx, sqlDB, "identity_compatibility_state"))
 	assert.False(t, tableExists(t, ctx, sqlDB, "api_keys"))
 
-	for _, col := range []string{
-		"id", "team_id", "key_hash", "key_prefix", "key_suffix", "name",
-		"scopes", "role", "rate_limit", "expires_at", "revoked_at",
-		"last_used_at", "created_at", "updated_at", "auth_source",
+	for _, table := range []string{
+		"actor_identities", "team_memberships", "credentials", "membership_grants",
+		"identity_external_links", "ownership_aliases",
 	} {
-		assert.True(t, columnExists(t, ctx, sqlDB, "team_profiles", col), "team_profiles.%s should exist", col)
+		assert.True(t, tableExists(t, ctx, sqlDB, table), "%s should exist", table)
 	}
+	assert.False(t, columnExists(t, ctx, sqlDB, "credentials", "legacy_profile_id"))
+	assert.False(t, columnExists(t, ctx, sqlDB, "team_memberships", "legacy_profile_id"))
+	assert.True(t, columnExists(t, ctx, sqlDB, "sso_sessions", "membership_id"))
+	assert.False(t, columnExists(t, ctx, sqlDB, "sso_sessions", "team_profile_id"))
+	var cleanupPolicyCount int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*) FROM pg_policies
+		WHERE policyname LIKE '%identity_cleanup_migration_access'
+	`).Scan(&cleanupPolicyCount))
+	assert.Zero(t, cleanupPolicyCount)
 
 	var teamID string
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
@@ -55,20 +65,46 @@ func TestCoreSchemaTeamProfilesTable(t *testing.T) {
 		`).Scan(&teamID)
 	}))
 
-	var err error
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, key_suffix, name, scopes)
-			VALUES (gen_random_uuid(), $1::uuid, 'hash456', 'prefix2', 'refix2', 'writer', ARRAY['read'])
-		`, teamID)
-		return nil
+		var identityID string
+		if err := tx.QueryRowContext(ctx, `
+			INSERT INTO actor_identities (id, kind, team_id, display_name)
+			VALUES (gen_random_uuid(), 'api_client', $1::uuid, 'writer')
+			RETURNING id
+		`, teamID).Scan(&identityID); err != nil {
+			return err
+		}
+		var membershipID string
+		if err := tx.QueryRowContext(ctx, `
+			INSERT INTO team_memberships (actor_identity_id, team_id, maximum_grants)
+			VALUES ($1::uuid, $2::uuid, ARRAY['read'])
+			RETURNING id
+		`, identityID, teamID).Scan(&membershipID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO membership_grants (membership_id, grant_name)
+			VALUES ($1::uuid, 'read')
+		`, membershipID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO credentials (id, actor_identity_id, team_id, key_hash, key_prefix, name, scopes)
+			VALUES ($1::uuid, $1::uuid, $2::uuid, 'hash456', 'prefix2', 'writer', ARRAY['read'])
+		`, identityID, teamID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id, credential_id)
+			VALUES ($1::uuid, $2::uuid, $2::uuid, $2::uuid)
+		`, teamID, identityID)
+		return err
 	}))
-	assert.NoError(t, err)
 
-	err = execPostgresTxModeRollback(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+	err := execPostgresTxModeRollback(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		_, execErr := tx.ExecContext(ctx, `
-			INSERT INTO team_profiles (id, key_hash, key_prefix, scopes)
-			VALUES (gen_random_uuid(), 'hash789', 'prefix3', ARRAY['read'])
+			INSERT INTO credentials (id, actor_identity_id, key_hash, key_prefix, scopes)
+			VALUES (gen_random_uuid(), gen_random_uuid(), 'hash789', 'prefix3', ARRAY['read'])
 		`)
 		return execErr
 	})
@@ -76,8 +112,9 @@ func TestCoreSchemaTeamProfilesTable(t *testing.T) {
 
 	err = execPostgresTxModeRollback(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		_, execErr := tx.ExecContext(ctx, `
-			INSERT INTO team_profiles (id, team_id, key_hash, key_prefix, key_suffix, name, scopes)
-			VALUES (gen_random_uuid(), $1::uuid, 'hashabc', 'prefix2', 'refix2', 'reader', ARRAY['read'])
+			INSERT INTO credentials (id, actor_identity_id, team_id, key_hash, key_prefix, name, scopes)
+			SELECT gen_random_uuid(), id, $1::uuid, 'hashabc', 'prefix2', 'reader', ARRAY['read']
+			FROM actor_identities LIMIT 1
 		`, teamID)
 		return execErr
 	})
@@ -110,8 +147,8 @@ func TestCoreSchemaIndexes(t *testing.T) {
 
 	for _, idxName := range []string{
 		"idx_teams_name_unique_active",
-		"idx_team_profiles_team_id",
-		"idx_team_profiles_key_prefix_unique",
+		"idx_credentials_team_status",
+		"idx_credentials_key_prefix_unique",
 		"idx_audit_log_team_timestamp",
 		"idx_audit_log_timestamp",
 		"placement_runs_team_expired_claim_idx",

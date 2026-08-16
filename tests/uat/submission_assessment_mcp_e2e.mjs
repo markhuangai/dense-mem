@@ -361,6 +361,7 @@ async function mcpTool(name, args) {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
+      Accept: "application/json",
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -385,6 +386,7 @@ async function mcpToolExpectError(name, args) {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
+      Accept: "application/json",
       "Content-Type": "application/json",
     },
     body: JSON.stringify({

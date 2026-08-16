@@ -19,9 +19,9 @@ func ensureConflictSystemProfile(ctx context.Context, tx *gorm.DB, teamID string
 	var profileID string
 	err := tx.WithContext(ctx).Raw(`
 		SELECT id::text
-		FROM team_profiles
+		FROM actor_identities
 		WHERE team_id = ?::uuid
-		  AND is_system
+		  AND kind = 'system'
 		LIMIT 1
 	`, teamID).Row().Scan(&profileID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -29,27 +29,39 @@ func ensureConflictSystemProfile(ctx context.Context, tx *gorm.DB, teamID string
 	}
 	if profileID == "" {
 		for attempt := 0; attempt < conflictSystemProfileCreateAttempts && profileID == ""; attempt++ {
-			err = tx.WithContext(ctx).Raw(`
-				INSERT INTO team_profiles (
-				    team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit,
-				    revoked_at, auth_source, is_system
-				) VALUES (
-				    ?::uuid, NULL, NULL, NULL, ?, ARRAY[]::text[], 'member', 0, now(), 'system', true
-				)
+			candidateID := uuid.NewString()
+			result := tx.WithContext(ctx).Exec(`
+				INSERT INTO actor_identities (
+					id, kind, team_id, display_name, active, created_at, updated_at
+				) VALUES (?::uuid, 'system', ?::uuid, ?, false, now(), now())
 				ON CONFLICT DO NOTHING
-				RETURNING id::text
-			`, teamID, newConflictSystemProfileName()).Row().Scan(&profileID)
-			if err == nil {
-				break
+			`, candidateID, teamID, newConflictSystemProfileName())
+			if result.Error != nil {
+				return "", result.Error
 			}
-			if !errors.Is(err, sql.ErrNoRows) {
-				return "", err
+			if result.RowsAffected == 1 {
+				if err := tx.WithContext(ctx).Exec(`
+					INSERT INTO team_memberships (
+						actor_identity_id, team_id, status, team_admin, maximum_grants
+					) VALUES (?::uuid, ?::uuid, 'revoked', false, ARRAY[]::text[])
+				`, candidateID, teamID).Error; err != nil {
+					return "", err
+				}
+				if err := tx.WithContext(ctx).Exec(`
+					INSERT INTO ownership_aliases (
+						team_id, legacy_owner_id, canonical_identity_id, credential_id, reason
+					) VALUES (?::uuid, ?::uuid, ?::uuid, NULL, 'system')
+				`, teamID, candidateID, candidateID).Error; err != nil {
+					return "", err
+				}
+				profileID = candidateID
+				break
 			}
 			err = tx.WithContext(ctx).Raw(`
 				SELECT id::text
-				FROM team_profiles
+				FROM actor_identities
 				WHERE team_id = ?::uuid
-				  AND is_system
+				  AND kind = 'system'
 				LIMIT 1
 			`, teamID).Row().Scan(&profileID)
 			if err == nil {

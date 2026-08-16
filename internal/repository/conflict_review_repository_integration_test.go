@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -280,10 +281,10 @@ func TestEnsureConflictSystemProfileAvoidsLegacyUserNameCollision(t *testing.T) 
 			return err
 		}
 		if err := tx.Raw(`
-			SELECT name, auth_source, is_system
-			FROM team_profiles
-			WHERE team_id = ?::uuid
-			  AND id = ?::uuid
+				SELECT display_name, kind, kind = 'system'
+				FROM actor_identities
+				WHERE team_id = ?::uuid
+				  AND id = ?::uuid
 		`, teamID, systemProfileID).Row().Scan(&systemName, &authSource, &isSystem); err != nil {
 			return err
 		}
@@ -303,15 +304,15 @@ func TestEnsureConflictSystemProfileAvoidsLegacyUserNameCollision(t *testing.T) 
 	unscopedTeamID := createLedgerTeam(t, adminDB, rls, "conflict-system-profile-unscoped-team")
 	err := rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
-			INSERT INTO team_profiles (
-			    team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit,
-			    revoked_at, auth_source, is_system
-		) VALUES (
-			    ?::uuid, NULL, NULL, NULL, ?, ARRAY[]::text[], 'member', 0, now(), 'system', true
-		)
+			INSERT INTO actor_identities (id, kind, team_id, display_name, active)
+			VALUES (gen_random_uuid(), 'system', ?::uuid, ?, false)
 		`, unscopedTeamID, newConflictSystemProfileName()).Error
 	})
 	require.Error(t, err)
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	assert.Equal(t, "42501", pgErr.Code)
+	assert.Contains(t, pgErr.Message, "row-level security policy")
 }
 
 func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDerivation(t *testing.T) {
@@ -519,10 +520,10 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 			  AND source_id = ?::uuid
 		`, teamID, losingFragmentID).Row().Scan(&searchState))
 		require.NoError(t, tx.Raw(`
-			SELECT id::text, auth_source
-			FROM team_profiles
+			SELECT id::text, kind
+			FROM actor_identities
 			WHERE team_id = ?::uuid
-			  AND is_system
+			  AND kind = 'system'
 		`, teamID).Row().Scan(&systemProfileID, &authSource))
 		require.NoError(t, tx.Raw(`
 			SELECT fragment.authority

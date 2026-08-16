@@ -679,7 +679,11 @@ let mcpRequestID = 0;
 async function mcpCall(request: APIRequestContext, method: string, params: unknown) {
   mcpRequestID += 1;
   const response = await request.post(`${userUrl}/mcp`, {
-    headers: bearer(seedApiKey),
+    headers: {
+      ...bearer(seedApiKey),
+      Accept: "application/json",
+      "MCP-Protocol-Version": "2025-11-25",
+    },
     data: {
       jsonrpc: "2.0",
       id: mcpRequestID,

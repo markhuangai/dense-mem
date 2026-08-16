@@ -1,8 +1,6 @@
 package repository
 
 import (
-	"fmt"
-
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
@@ -51,10 +49,7 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		  ON a.id = c.actor_identity_id
 		JOIN team_memberships m
 		  ON m.team_id = c.team_id
-		 AND (
-			m.actor_identity_id = c.actor_identity_id
-			OR (c.legacy_profile_id IS NOT NULL AND m.legacy_profile_id = c.legacy_profile_id)
-		 )
+		 AND m.actor_identity_id = c.actor_identity_id
 		JOIN teams t ON t.id = c.team_id
 		WHERE `+predicate+`
 		  AND c.kind = 'api_key'
@@ -102,12 +97,4 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 	key.AuthSource = "api_key"
 	key.SSOOwnerIdentityID = parseOptionalUUID(ownerIdentityID)
 	return &key, nil
-}
-
-func canonicalCredentialTableExists(tx *gorm.DB) (bool, error) {
-	var exists bool
-	if err := tx.Raw(`SELECT to_regclass('public.credentials') IS NOT NULL`).Scan(&exists).Error; err != nil {
-		return false, fmt.Errorf("canonical credential table check: %w", err)
-	}
-	return exists, nil
 }

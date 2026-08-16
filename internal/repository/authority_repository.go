@@ -35,7 +35,12 @@ func NewAuthorityRepository(db *gorm.DB, rls postgres.RLSHelper) *AuthorityRepos
 
 var freshAuthorityApplicationTables = []string{
 	"teams",
-	"team_profiles",
+	"actor_identities",
+	"team_memberships",
+	"credentials",
+	"membership_grants",
+	"identity_external_links",
+	"ownership_aliases",
 	"audit_log",
 	"usage_metric_buckets",
 	"operation_logs",

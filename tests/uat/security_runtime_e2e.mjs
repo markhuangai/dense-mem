@@ -7,13 +7,16 @@ const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 let rpcID = 100;
 
 const malformed = await rawMCP("{");
-assert(malformed.status === 200, `malformed JSON-RPC returned HTTP ${malformed.status}`);
-assert(malformed.body.includes("parse error"), "malformed JSON-RPC did not return the bounded parse error");
+assert(malformed.status === 400, `malformed JSON-RPC returned HTTP ${malformed.status}`);
+assert(malformed.body.includes("malformed payload"), "malformed JSON-RPC did not return a bounded payload error");
+assert(malformed.body.length < 4096, "malformed JSON-RPC response exceeded the bounded error size");
 assert(!malformed.body.includes(apiKey), "malformed JSON-RPC response echoed the credential");
 
 const invalidEnvelope = await rawMCP(JSON.stringify({ jsonrpc: "1.0", id: { object: true }, method: "tools/list" }));
-assert(invalidEnvelope.status === 200, `invalid JSON-RPC envelope returned HTTP ${invalidEnvelope.status}`);
-assert(invalidEnvelope.body.includes("invalid request"), "invalid JSON-RPC envelope did not return the bounded invalid-request error");
+assert(invalidEnvelope.status === 400, `invalid JSON-RPC envelope returned HTTP ${invalidEnvelope.status}`);
+assert(invalidEnvelope.body.includes("malformed payload"), "invalid JSON-RPC envelope did not return a bounded payload error");
+assert(invalidEnvelope.body.length < 4096, "invalid JSON-RPC envelope response exceeded the bounded error size");
+assert(!invalidEnvelope.body.includes(apiKey), "invalid JSON-RPC envelope response echoed the credential");
 
 for (const protocolVersion of ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]) {
   const initialized = await mcpRPC("initialize", { protocolVersion });
@@ -28,12 +31,15 @@ for (const protocolVersion of ["2024-11-05", "2025-03-26", "2025-06-18", "2025-1
   assert(Array.isArray(listed.payload?.result?.tools) && listed.payload.result.tools.length > 0, `${protocolVersion} tools/list was empty`);
 }
 
-const future = await mcpRPC("initialize", { protocolVersion: "2099-01-01" });
-assert(future.payload?.result?.protocolVersion === "2025-11-25", "unknown protocol did not negotiate to the latest revision");
+const future = await rawMCP(
+  JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "initialize", params: { protocolVersion: "2099-01-01" } }),
+  { "MCP-Protocol-Version": "2099-01-01" },
+);
+assert(future.status === 400, `unknown protocol returned HTTP ${future.status}`);
 
 const unknownTool = await fetch(`${userURL}/mcp`, {
   method: "POST",
-  headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+  headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
   body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "x".repeat(10000), arguments: {} } }),
 });
 const unknownToolBody = await unknownTool.text();
@@ -56,10 +62,10 @@ console.log(JSON.stringify({
   telemetry_token_required: true,
 }, null, 2));
 
-async function rawMCP(body) {
+async function rawMCP(body, headers = {}) {
   const response = await fetch(`${userURL}/mcp`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", ...headers },
     body,
   });
   return { status: response.status, body: await response.text() };

@@ -182,7 +182,8 @@ func truncateLedgerFixtures(tx *gorm.DB) error {
 			knowledge_ingests,
 			semantic_profile_refs,
 			semantic_team_refs,
-			team_profiles,
+			ownership_aliases, membership_grants, credentials, team_memberships,
+			identity_external_links, actor_identities,
 			teams
 		CASCADE
 	`).Error
@@ -229,14 +230,10 @@ func createLedgerProfile(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, te
 
 	profileID := uuid.NewString()
 	keyPrefix := strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
-	err := rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO team_profiles (
-			    id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role
-			) VALUES (
-			    ?::uuid, ?::uuid, ?, ?, ?, ?, ARRAY['read','write']::text[], 'member'
-			)
-		`, profileID, teamID, "hash-"+profileID, keyPrefix, keyPrefix[:6], profileName).Error
+	err := NewAPIKeyRepository(db, rls).CreateStandardKey(context.Background(), &domain.APIKey{
+		ID: uuid.MustParse(profileID), TeamID: uuid.MustParse(teamID), Name: profileName,
+		KeyHash: "hash-" + profileID, KeyPrefix: keyPrefix, KeySuffix: keyPrefix[:6],
+		Scopes: []string{"read", "write"},
 	})
 	require.NoError(t, err)
 	return profileID

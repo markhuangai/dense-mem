@@ -53,14 +53,24 @@ func (r *DirectoryIdentityRepositoryImpl) applyDirectoryReconcilePlan(ctx contex
 				return err
 			}
 			if err := tx.Exec(`
-				UPDATE sso_identities i
+					UPDATE sso_identities i
 				SET active = u.active,
 				    updated_at = $1
 				FROM sso_directory_users u
 				WHERE u.connector_id = $2
 				  AND i.id = u.identity_id
 				  AND i.provider_id = $3
-			`, now, plan.ConnectorID, plan.ProviderID).Error; err != nil {
+				`, now, plan.ConnectorID, plan.ProviderID).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec(`
+					UPDATE actor_identities actor
+					SET active = identity.active,
+					    updated_at = $1
+					FROM sso_identities identity
+					WHERE identity.provider_id = $2
+					  AND actor.id = identity.id
+				`, now, plan.ProviderID).Error; err != nil {
 				return err
 			}
 			connector.Status = domain.DirectoryConnectorActive
@@ -502,33 +512,13 @@ func upsertDirectoryTeamProfileTx(ctx context.Context, tx *gorm.DB, providerID u
 	if err := setActiveSSOTeamMutationScope(ctx, tx, grant.TeamID.String()); err != nil {
 		return err
 	}
-	name := directoryProfileName(grant.Email, grant.DisplayName, grant.IdentityID)
-	return tx.Exec(`
-		INSERT INTO team_profiles (
-			id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role, rate_limit,
-			expires_at, revoked_at, last_used_at, created_at, updated_at, auth_source,
-			sso_identity_id, sso_provider_id, sso_subject, sso_email, sso_group_id,
-			sso_entitlement_status, sso_last_entitlement_checked_at, sso_last_login_at
-		) VALUES (
-			gen_random_uuid(), $1, NULL, NULL, NULL, $2, $3, $4, 0,
-			NULL, NULL, NULL, $5, $5, 'sso',
-			$6, $7, $8, $9, $10,
-			'active', $5, NULL
-		)
-		ON CONFLICT (sso_identity_id, team_id) WHERE sso_identity_id IS NOT NULL DO UPDATE
-		SET name = EXCLUDED.name,
-		    scopes = EXCLUDED.scopes,
-		    role = EXCLUDED.role,
-		    sso_provider_id = EXCLUDED.sso_provider_id,
-		    sso_subject = EXCLUDED.sso_subject,
-		    sso_email = EXCLUDED.sso_email,
-		    sso_group_id = EXCLUDED.sso_group_id,
-		    sso_entitlement_status = 'active',
-		    sso_last_entitlement_checked_at = EXCLUDED.sso_last_entitlement_checked_at,
-		    revoked_at = NULL,
-		    updated_at = EXCLUDED.updated_at
-	`, grant.TeamID, name, pq.Array(grant.Entitlement.Scopes), grant.Entitlement.Role, now,
-		grant.IdentityID, providerID, grant.Subject, grant.Email, grant.GroupExternalID).Error
+	_, _, err := upsertCanonicalSSOMembershipTx(tx, canonicalSSOMembershipInput{
+		IdentityID: grant.IdentityID, ProviderID: providerID, TeamID: grant.TeamID,
+		Scopes: grant.Entitlement.Scopes, Role: grant.Entitlement.Role,
+		GroupID: grant.GroupExternalID, ProfileName: directoryProfileName(grant.Email, grant.DisplayName, grant.IdentityID),
+		LastEntitlementCheckedAt: &now, Now: now,
+	})
+	return err
 }
 
 func revokeMissingDirectoryProfilesTx(ctx context.Context, tx *gorm.DB, providerID uuid.UUID, identityIDs []uuid.UUID, grants []domain.DirectoryProfileGrant, now time.Time) error {
@@ -541,12 +531,11 @@ func revokeMissingDirectoryProfilesTx(ctx context.Context, tx *gorm.DB, provider
 		desired[directoryProfileGrantKey(grant.IdentityID, grant.TeamID)] = struct{}{}
 	}
 	rows, err := tx.Raw(`
-		SELECT id, team_id, sso_identity_id
-		FROM team_profiles
-		WHERE auth_source = 'sso'
-		  AND sso_provider_id = $1
-		  AND sso_identity_id = ANY($2::uuid[])
-		  AND revoked_at IS NULL
+		SELECT id, team_id, actor_identity_id
+		FROM team_memberships
+		WHERE sso_provider_id = $1
+		  AND actor_identity_id = ANY($2::uuid[])
+		  AND status = 'active'
 	`, providerID, pq.Array(directoryUUIDStrings(identityIDs))).Rows()
 	if err != nil {
 		return err
@@ -577,13 +566,13 @@ func revokeMissingDirectoryProfilesTx(ctx context.Context, tx *gorm.DB, provider
 			return err
 		}
 		if err := tx.Exec(`
-			UPDATE team_profiles
-			SET revoked_at = $1,
-			    sso_entitlement_status = 'denied',
-			    sso_last_entitlement_checked_at = $1,
-			    updated_at = $1
-			WHERE id = $2 AND team_id = $3 AND revoked_at IS NULL
-		`, now, item.id, item.teamID).Error; err != nil {
+				UPDATE team_memberships
+				SET status = 'revoked',
+				    sso_entitlement_status = 'denied',
+				    sso_last_entitlement_checked_at = $1,
+				    updated_at = $1
+				WHERE id = $2 AND team_id = $3 AND status = 'active'
+			`, now, item.id, item.teamID).Error; err != nil {
 			return err
 		}
 	}

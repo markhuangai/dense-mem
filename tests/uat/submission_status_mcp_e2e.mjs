@@ -262,7 +262,7 @@ console.log(JSON.stringify({
 async function toolsList() {
   const response = await httpJSON(`${userURL}/mcp`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/list", params: {} }),
   });
   if (response.error || !response.result) {
@@ -373,7 +373,7 @@ async function mcpSuccess(name, args) {
 async function mcpRaw(key, name, args) {
   return httpJSON(`${userURL}/mcp`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/call", params: { name, arguments: args } }),
   });
 }
