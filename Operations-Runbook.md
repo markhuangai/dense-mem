@@ -197,9 +197,31 @@ application only when forward repair cannot preserve the required data or
 contract. Down migrations remain for local tests and controlled recovery
 analysis, including their documented irreversible boundaries.
 
-The generated schema catalog documents the result of the complete Goose
-history. It is never applied to production, used as a live desired-state diff,
-or treated as a substitute for migration and backup evidence.
+The release-organized Goose history under `migrations/postgres/v2_4/` and
+`migrations/postgres/v2_5/` is the only schema authority. Verify migration
+versions and checksums with `scripts/check-postgres-migrations.sh`; do not
+maintain a generated schema mirror or treat dumps as a substitute for
+migration and backup evidence.
+
+Identity migrations `2026081001` and `2026081501` run automatically in order.
+The first installs and backfills the canonical identity model; the second sets
+a 30-second `lock_timeout`, takes `ACCESS EXCLUSIVE` on `team_profiles`, reruns
+the bridge reconciliation, validates retained credentials, memberships,
+aliases, SSO sessions, portal sessions, usage, and semantic history, then drops
+the bridge, `identity_compatibility_state`, and `team_profiles`. There is no
+manual cleanup command, feature flag, backup-confirmation gate, or required
+intermediate release.
+
+Credentials deleted while the bridge is active can have their legacy foreign
+key nulled by PostgreSQL. Cleanup therefore resolves the retained ownership
+alias before marking those credentials `disabled`, preserving the tombstone and
+freeing the active-name slot without resurrecting the key.
+
+Any mismatch, lock timeout, or DDL failure rolls back `2026081501`, leaves the
+bridge migration applied, and prevents the new server from becoming ready.
+After cleanup commits, an old replica may fail and rollback to a binary that
+requires `team_profiles` is unsupported. Recover by rolling forward or by
+restoring PostgreSQL with the matching old application version.
 
 Migration `2026080701` is a coordinated-stop exception: it drops the unused
 `evidence_security_events.scan_policy_hash` column under an `ACCESS EXCLUSIVE`
@@ -226,12 +248,34 @@ static portal bundles. The demo runtime contains `/app/demo-server`, migrations,
 and only the user bundle. Administration uses the private control portal/API;
 dreaming and Conflict review remain background workers in the server process.
 
-Use immutable tags in deployment configuration:
+Use immutable tags in release deployment configuration:
 
 | Channel | Release image | Demo image |
 | --- | --- | --- |
+| pull request test | `test-<PR number>` | not built |
 | release candidate | `vX.Y.Z-rc.N` | `demo-vX.Y.Z-rc.N` |
 | stable | `vX.Y.Z` or `latest` | `demo-vX.Y.Z` |
+
+The `test-<PR number>` tag is mutable and must be used only for temporary test
+instances. A maintainer requests it with the `deploy-test-image` pull-request
+label. The branch must contain current `main`; automation does not update the
+branch. Each same-repository push rebuilds the tag while the label remains and
+posts a new result comment. Fork previews are disabled until an isolated,
+ephemeral build runner is configured; applying the label to a fork removes it
+and reports that requirement. Once fork builds are enabled, each fork push must
+still remove the label so a maintainer can review the new head and apply it
+again. Removing the label or closing the pull request does not delete an
+existing test tag.
+
+After a labeled pull request is squash-merged, prerelease automation reuses its
+production layers only when the final tested head and the squash commit have
+identical Git trees, the tested `main` revision is in the previous `main`, and
+the retained label, successful workflow receipt, image platforms, revision, and
+preview metadata all match. Promotion rewrites the OCI version, revision, and
+created metadata for the RC while requiring every production layer descriptor
+to remain identical. An ineligible or missing preview causes a production build
+from merged `main`; a failed eligible promotion fails the RC. The demo RC is
+always built after merge.
 
 There is no rolling `demo` tag. Stable tags promote the already-published RC
 manifests without rebuilding them.

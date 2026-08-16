@@ -315,3 +315,17 @@ valid. Manual rotation cannot sever that ownership silently.
    knowledge or audit rows
 9. external memory automation uses MCP; portal handlers remain first-party UI
    implementation details
+
+## Canonical Identity And Credentials
+
+`actor_identities`, `team_memberships`, and `credentials` are the only current
+identity authority. Existing API-key IDs and key material survive the ordered
+bridge and cleanup migrations. `team_admin` controls governance; it does not
+imply private-memory access to another owner. Effective scopes are the
+intersection of membership maximum grants and the credential's scopes.
+Permanent ownership aliases keep correction, forget, audit, portal-session,
+and usage history addressable by old owner IDs after `team_profiles` removal.
+
+Rotation changes bearer material in place. Deletion disables the credential
+and revokes its membership and actor while retaining the credential and alias
+as an audit tombstone. No portal or public API can invoke schema cleanup.

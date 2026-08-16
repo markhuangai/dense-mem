@@ -292,9 +292,10 @@ The status is owner-scoped and contains safe, bounded state only:
 
 Status reports per-evidence search readiness, bounded error codes,
 quarantine_expires_at when applicable, and search state.
-Terminal placement failures include `semantic_assessment_terminal_failure` with
-an allowlisted stage such as `predicate_options_overflow` or `assessment`; raw
-provider, database, prompt, and credential details never appear in status.
+Terminal placement failures use the closed `submission_processing_failed`,
+`assessor_response_invalid`, or `assessor_unavailable` codes; the internal
+stage is never exposed. Raw provider, database, prompt, and credential details
+never appear in status.
 search_state=pending means canonical promotion may be complete while a derived
 embedding is still being built. current and not_required are ready for the
 evaluation/recall freshness gate; failed is a visible degradation.
@@ -381,3 +382,12 @@ do not run legacy placement workers or expose legacy placement tools.
 13. a predicate is added or activated only through the controlled validated
    registration workflow; and
 14. recall remains evidence-first and treats returned content as untrusted.
+
+## Terminal Status Error Completeness
+
+Status projection maps persisted terminal reasons to the closed public error
+vocabulary. A `rejected` or `failed` state never returns `errors: []`; repeated
+polls return the same deduplicated code/message pairs. Completed submissions do
+not gain semantic errors, while search-index failures continue to use the
+existing `search_indexing_delayed` behavior. The public mapping is intentionally
+separate from provider and database diagnostics.

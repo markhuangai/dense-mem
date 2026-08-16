@@ -135,3 +135,20 @@ Use [Quick Start](Quick-Start) and
 
 Authentication and transport security are in
 [Request Lifecycle And Security](Request-Lifecycle-And-Security).
+
+## Tested Protocol Matrix
+
+The production `/mcp` endpoint uses the official SDK transport by default.
+Clients may negotiate `2025-11-25` with `initialize`, or the current
+`2026-07-28` sessionless contract with `server/discover`:
+
+```text
+2025-11-25: MCP-Protocol-Version + initialize + notifications/initialized
+2026-07-28: MCP-Protocol-Version + Mcp-Method + server/discover + _meta
+```
+
+Both paths expose the same authenticated registry and bounded errors. An
+unknown revision, malformed JSON, unsupported content type, missing scope, or
+cancelled request must fail closed. The legacy implementation is only a
+boot-time rollback (`MCP_TRANSPORT=legacy`) for the compatibility window; it is
+not request-selectable or listed as a second public server.

@@ -965,3 +965,40 @@ drills. Runbook commands belong in
     Relationship status, support, search text, vector, or embedding job.
 31. Semantic review expiry closes the task without granting support or creating
     active knowledge.
+
+## Canonical Identity And Permanent Ownership Aliases
+
+The v2.5 model separates identity, membership, and durable credentials:
+
+```text
+actor_identities ──< team_memberships ──< membership_grants
+        │                    │
+        └────────────── credentials
+
+identity_external_links   ownership_aliases(team_id, legacy_owner_id)
+```
+
+Legacy profile and credential IDs, key hashes/prefixes, teams, and semantic
+owner IDs remain unchanged. A legacy `manager` role backfills to
+`team_admin=true`; legacy scopes populate both membership maximums and
+credential scopes. An alias is permanent and authorizes historical owner
+references without rewriting accepted evidence, relationship history, or audit
+lineage. `semantic_profile_refs`
+references `(team_id, legacy_owner_id)` in `ownership_aliases`; it does not
+restore the removed identity authority. `usage_metric_buckets` uses the same
+composite ownership-alias key, so API-key and SSO usage history remains valid
+after cleanup while cross-team owner pairs are rejected.
+
+SSO-backed profiles retain their legacy profile ID only as the alias key. Their
+stable SSO actor owns the canonical team membership and `membership_grants`, so
+an external identity remains connected to team authorization after legacy
+cleanup. `team_memberships.sso_profile_name` retains the generated per-team
+SSO label and is backfilled from `team_profiles.name` before the legacy table is
+dropped; profile reads and usage labels prefer it over the actor's IdP display
+name. System profiles retain the `system` actor kind.
+
+`team_profiles` and `identity_compatibility_state` are absent from the current
+catalog. Credentials authenticate, memberships plus grants authorize, actor
+identities anchor SSO and system actors, and ownership aliases preserve old IDs.
+Revoking or deleting a credential only deactivates its actor when no active
+membership remains, so a shared actor stays usable for another team.

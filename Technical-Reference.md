@@ -420,3 +420,28 @@ not the audit ledger.
 9. provider output never overrides authentication, server policy, or durable
    ownership; and
 10. public errors and logs remain bounded and secret-safe.
+
+## Submission Errors And MCP Versions
+
+Every terminal `rejected` or `failed` submission exposes at least one
+`errors[]` item. Codes are closed and server-authored, including
+`submission_semantic_hold`, `submission_policy_rejected`,
+`assessor_response_invalid`, `assessor_unavailable`,
+`submission_replacement_conflict`, `submission_processing_failed`, and the
+existing `search_indexing_delayed`. Item errors and the aggregate list are
+deterministically deduplicated. Provider output, SQL, prompts, credentials,
+stack traces, and cross-owner existence are never returned.
+
+The remaining closed correction codes are `relationship_version_stale`,
+`relationship_not_active`, `object_kind_change_forbidden`,
+`support_set_mismatch`, `entity_not_found`, `too_many_entity_candidates`,
+`predicate_not_found`, `predicate_subject_kind_mismatch`,
+`predicate_object_kind_mismatch`, `no_change`, `confirmation_expired`,
+`relationship_changed`, `support_set_changed`, `persistent_ambiguity`, and
+`inactive_relationship_collision`. Unknown persisted reasons map to
+`submission_processing_failed` rather than crossing the public boundary.
+
+The SDK transport accepts `2024-11-05`, `2025-03-26`, `2025-06-18`,
+`2025-11-25`, and `2026-07-28`. The first four use the compatibility
+`initialize` exchange; `2026-07-28` uses `server/discover` and its `_meta`
+protocol metadata. Unsupported revisions fail with a bounded JSON-RPC error.

@@ -83,6 +83,8 @@ internal/
     http/
 
 migrations/postgres/
+  v2_4/                       # immutable v2.4 and earlier Goose history
+  v2_5/                       # ordered v2.5 bridge and cleanup migrations
 tests/
   integration/
   contract/
@@ -113,7 +115,9 @@ Forbidden dependencies:
 
 ## Implementation Boundaries
 
-- PostgreSQL migrations live under `migrations/postgres/` and use
+- PostgreSQL migrations live under the release directories
+  `migrations/postgres/v2_4/` and `migrations/postgres/v2_5/`. The runtime
+  validates and loads them as one ordered history through
   `internal/storage/postgres/migrator.go`.
 - MCP tool input/output schemas and provider JSON contracts are versioned
   fixtures.
@@ -188,7 +192,7 @@ Every PostgreSQL migration includes:
 - backfill that is resumable/idempotent where large
 - backup/restore and rollback checkpoint
 
-### Migration history and schema catalog
+### Migration history
 
 Goose migrations are the only executable schema authority. Treat every
 migration already present on the merge base as immutable and add one forward
@@ -201,31 +205,16 @@ helper so the version is a 14-digit UTC value greater than the current maximum:
 ```
 
 The checker derives the current merge base rather than using a stored cutoff
-for pull requests. Main-push CI compares the new tree directly with the prior
-tip so rewritten history cannot discard a deployed migration unnoticed. It
-rejects edits, mode changes, renames, or deletions of existing migrations;
-duplicate, malformed, or out-of-order additions; unresolved review markers;
-and Goose validation failures. A branch with a lower version must rebase and
+for pull requests. A relocation between release directories is allowed only
+when the numeric version and SHA-256 content are unchanged; edits, deletions,
+duplicate, malformed, or out-of-order additions are rejected. New migrations
+belong in the current release directory and must include lock/rewrite, RLS,
+backfill, and rollback metadata. A branch with a lower version must rebase and
 create a correctly ordered migration. Do not enable out-of-order execution.
 
-Regenerate the read-only schema catalog after any migration change:
-
-```bash
-./scripts/postgres-schema-catalog.sh write
-./scripts/postgres-schema-catalog.sh check
-```
-
-The generator uses the repository's PostgreSQL/pgvector image, records its
-immutable digest, migrates a disposable database, and proves `current.sql`
-through a restore and second dump. `global.sql` and the relation files are
-inspection views, not another migration source or an ordered restore set.
-Production never applies the catalog.
-
-CI does not provision PostgreSQL. It verifies migration history and Goose
-syntax plus catalog image/version/latest-migration metadata, a digest of the
-migration filenames and contents, and generated-file checksums. Before
-committing a migration or catalog change, run catalog generation and the full
-migration integration suites against disposable PostgreSQL locally.
+CI verifies the release-organized migration history and Goose syntax. Before
+committing a migration, run the checker and the full migration integration
+suites against disposable PostgreSQL locally.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -613,3 +602,33 @@ The implementation is release-ready only when:
 11. paired multi-round scripted and real-host evaluation reports placement
     quality, confidence reliability, call/token/latency savings, and review
     burden
+
+## v2.5 Foundation Release Gate
+
+Run the focused suites and real PostgreSQL identity migration tests before a
+release:
+
+```bash
+go test ./internal/service/memoryservice ./internal/tools/registry ./internal/mcp ./internal/http -count=1
+go test -tags=integration ./internal/storage/postgres -run 'TestIdentityBridge|TestIdentityCleanup|TestMigrationOrder' -count=1
+scripts/check-postgres-migrations.sh origin/main
+```
+
+Compose scenarios use the built artifact, local PostgreSQL/pgvector and Redis,
+and live credentials from `.env`:
+
+```bash
+DENSE_MEM_E2E_SCENARIO=submission_terminal_errors scripts/e2e-compose.sh
+DENSE_MEM_E2E_SCENARIO=mcp_sdk_parity scripts/e2e-compose.sh
+DENSE_MEM_E2E_SCENARIO=mcp_sdk_transport scripts/e2e-compose.sh
+DENSE_MEM_E2E_SCENARIO=identity_cleanup scripts/e2e-compose.sh
+```
+
+The identity scenario resets its isolated PostgreSQL volume to prove fresh
+startup, a populated v2.4.8 state applying the bridge and cleanup together, and
+a populated bridge state applying cleanup. It also proves mismatch and lock
+contention rollback before checking stable IDs, canonical authentication, key
+rotation and retained deletion tombstones, legacy-write rejection,
+portal-session restart, SSO and usage history, and same-team/cross-team owner
+isolation. Record the tested commit SHA in the E2E output without credentials
+or memory content.

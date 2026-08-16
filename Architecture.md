@@ -95,7 +95,9 @@ are static bundles served by that process, not separate services or binaries:
 ```text
 /app/
   server                 release executable
-  migrations/postgres/  startup migration inputs
+  migrations/postgres/
+    v2_4/                immutable historical startup inputs
+    v2_5/                ordered current-release startup inputs
   web/dist/              private control-portal bundle
   web/user-dist/         user-portal bundle
 ```
@@ -414,5 +416,38 @@ change relies on it.
 21. V2.4 changes no search projection or embedding input and therefore requires
     no re-embedding.
 22. MCP has one current closed schema per running server; clients do not select
-    a Dense-Mem schema/server contract version. The wire protocol revision is
-    fixed by the `initialize` exchange.
+    a Dense-Mem schema/server contract version. Older wire revisions negotiate
+    through `initialize`; the `2026-07-28` revision uses `server/discover`.
+
+## v2.5 Transport And Identity Foundations
+
+MCP Streamable HTTP is composed through the official Go SDK v1.7.0 at the
+transport edge. The existing registry, authenticated context, schemas, and
+`invokeTool` seam remain the only catalog and execution authority. The boot-only
+`MCP_TRANSPORT=legacy` setting is a one-release rollback gate; requests cannot
+select it and the SDK is absent from domain/provider/repository packages.
+
+```text
+HTTP auth middleware
+        │ immutable team/profile/credential context
+        ▼
+MCP edge (SDK default; legacy boot rollback)
+        │ shared registry + invokeTool
+        ▼
+application services → domain policy → PostgreSQL/Redis/provider ports
+```
+
+The ordered identity migrations first backfill `actor_identities`,
+`team_memberships`, `credentials`, `membership_grants`,
+`identity_external_links`, and `ownership_aliases` without changing key,
+profile, team, or semantic owner IDs. The next transactional migration takes an
+exclusive legacy-table lock, reruns reconciliation, validates every retained
+reference, and removes the bridge plus its two legacy tables. Skipped releases
+run both migrations in numeric Goose order. `team_admin` is governance;
+effective memory access remains the intersection of membership maximum grants
+and credential scopes.
+
+For an SSO-backed profile, the legacy profile ID remains the alias while the
+stable SSO actor owns the canonical team membership and grants. System profiles
+retain `actor_identities.kind = system`. Canonical identity tables are now the
+only runtime authority.

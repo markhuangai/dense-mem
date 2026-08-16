@@ -176,8 +176,8 @@ Team-specific profile-selection/override rows remain tenant-owned and carry
 Records needed before an authenticated `team_id` exists remain in the control
 plane:
 
-- authoritative `teams` and `team_profiles`, including credential and SSO
-  fields
+- authoritative `teams`, actor identities, memberships, grants, credentials,
+  external identity links, and ownership aliases
 - API-key hash/prefix lookup and revocation directory
 - SSO providers, identities, sessions, and entitlement mappings
 - encrypted-secret references
@@ -190,9 +190,9 @@ Authentication resolves key/session to team, profile, role, and scopes before
 opening a tenant semantic transaction. The hot semantic query does not join a
 distributed memory table to the global key or SSO tables.
 
-The existing `teams` and `team_profiles` rows remain the only identity,
-authorization, and credential authority. The semantic schema adds only these non-secret
-integrity projections:
+The canonical identity tables are the only identity, authorization, and
+credential authority. The semantic schema adds only these non-secret integrity
+projections:
 
 ```sql
 CREATE TABLE semantic_team_refs (
@@ -297,11 +297,12 @@ FOREIGN KEY (team_id, owner_profile_id)
   REFERENCES semantic_profile_refs (team_id, profile_id)
 ```
 
-The projection preserves the existing team/profile IDs without replicating the
-secret-bearing `team_profiles` table. A future distributed adapter colocates it
-with the semantic rows by `team_id` and must prove its distributed foreign-key
-behavior; it cannot silently drop ownership or same-team integrity or promote
-this projection into a second profile authority.
+The projection preserves existing team/profile IDs and references permanent
+`ownership_aliases`; it does not replicate secret-bearing credentials. A future
+distributed adapter colocates it with the semantic rows by `team_id` and must
+prove its distributed foreign-key behavior. It cannot silently drop ownership
+or same-team integrity or promote this projection into a second identity
+authority.
 
 ## Representative Semantic Shape
 
@@ -659,3 +660,32 @@ or retry a write against another placement.
 These references describe capabilities and constraints. Dense-Mem does not
 claim Citus or another sharding product is supported until its exact selected
 version passes this page's adapter gates.
+
+## Immutable Migration History And Identity Cleanup
+
+Goose remains the executable authority. The historical migrations are
+immutable under `migrations/postgres/v2_4/`; v2.5 adds ordered forward
+migrations under `migrations/postgres/v2_5/`. The runtime presents both release
+directories as one numeric history. `scripts/check-postgres-migrations.sh`
+rejects changed, deleted, duplicate, or out-of-order history while allowing a
+same-content relocation between release directories. There is no generated
+schema mirror; PostgreSQL itself plus the migration and integration checks are
+the schema evidence.
+
+Identity cleanup retains usage history through the `(team_id, key_id)` foreign
+key to `ownership_aliases(team_id, legacy_owner_id)`, covering API-key and SSO
+principals while rejecting cross-team owner pairs.
+
+SSO profile labels are per-team canonical state: `team_memberships.sso_profile_name`
+is backfilled from each legacy SSO profile while `team_profiles` is locked. New
+manual and directory entitlements update that field atomically; SSO reads,
+usage metrics, and conflict-supporter projections use it before falling back to
+the canonical actor display name.
+
+Migration `2026081001` expands and backfills the canonical identity model.
+Migration `2026081501` is the ordered irreversible contraction: it uses a
+30-second lock timeout and `ACCESS EXCLUSIVE` legacy-table lock, reruns
+reconciliation, validates every retained reference, replaces retained foreign
+keys and RLS policies, and physically removes the bridge tables and functions.
+Failure rolls back only the contraction and leaves the bridge operable; success
+requires roll-forward or ordinary PostgreSQL restore rather than Goose Down.

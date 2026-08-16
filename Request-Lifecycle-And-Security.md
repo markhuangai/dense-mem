@@ -520,3 +520,19 @@ audit ledger.
     hard-deleted; immutable source evidence and lineage remain restricted audit
     history;
     recalled evidence remains untrusted data after any successful write
+
+## Canonical Identity Context
+
+Authentication resolves a credential to an immutable actor, team membership,
+role/governance state, and credential scopes before MCP or portal application
+services run. `credentials` and `team_memberships` are the current runtime
+authority; `ownership_aliases` resolve historical owner IDs without rewriting
+append-only semantic history.
+Effective grants are `membership.maximum_grants ∩ credential.scopes`.
+`team_admin` never grants another profile's private-memory mutation authority.
+For SSO-backed profiles, the membership actor is the stable SSO identity rather
+than the legacy profile row; system profiles preserve the `system` actor kind.
+
+The ordered Goose cleanup is boot-only and transactional. No public request can
+select migration mode or trigger cleanup. The removed legacy tables cannot
+become a fallback read or write path after startup.
