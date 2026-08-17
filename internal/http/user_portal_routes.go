@@ -92,6 +92,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		api.POST("/sso/credentials", portal.createSSOCredential, httpmw.RequireScopes("read"))
 		api.GET("/sso/credentials/:credentialId", portal.getSSOCredential, httpmw.RequireScopes("read"))
 		api.POST("/sso/credentials/:credentialId/rotate", portal.rotateSSOCredential, httpmw.RequireScopes("read"))
+		// Self-service revocation invalidates one owned bearer credential and does not grant memory access.
 		api.DELETE("/sso/credentials/:credentialId", portal.revokeSSOCredential, httpmw.RequireScopes("read"))
 	}
 

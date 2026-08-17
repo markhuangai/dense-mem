@@ -43,7 +43,7 @@ func (s *userPortalKeySvc) GetSSOOwnedCredentialByID(_ context.Context, profileI
 			return key, nil
 		}
 	}
-	return nil, httperr.New(httperr.NOT_FOUND, "key not found")
+	return nil, nil
 }
 
 func (s *userPortalKeySvc) RevokeForTeam(_ context.Context, profileID, id uuid.UUID, _ *string, _ string, _ string, _ string) error {
