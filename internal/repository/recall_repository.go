@@ -105,9 +105,9 @@ func (r *SearchRepositoryImpl) RecallEvidence(ctx context.Context, input RecallE
 		}
 		hit.Score = candidate.Score
 		hit.SpaceKind = input.SpaceKind
-		hit.SearchState = recallCombinedSearchState(candidate.SearchState, hit.SearchState)
+		hit.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
 		if hit.SearchState == string(domain.SearchProjectionPending) || hit.SearchState == string(domain.SearchProjectionFailed) {
-			searchState = recallCombinedSearchState(searchState, hit.SearchState)
+			searchState = domain.CombineSearchProjectionStates(searchState, hit.SearchState)
 		}
 		hit.Rank = len(results) + 1
 		results = append(results, hit)
@@ -894,7 +894,7 @@ func addRecallBranch(acc map[string]*recallCandidate, hits []SearchHit, knownEvi
 			acc[hit.SourceID] = candidate
 		}
 		candidate.Score += weight / (recallRRFConstant + float64(i+1))
-		candidate.SearchState = recallCombinedSearchState(candidate.SearchState, hit.SearchState)
+		candidate.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
 	}
 }
 
@@ -918,19 +918,6 @@ func recallStringSet(values []string) map[string]struct{} {
 		out[value] = struct{}{}
 	}
 	return out
-}
-
-func recallCombinedSearchState(left, right string) string {
-	if left == string(domain.SearchProjectionFailed) || right == string(domain.SearchProjectionFailed) {
-		return string(domain.SearchProjectionFailed)
-	}
-	if left == string(domain.SearchProjectionPending) || right == string(domain.SearchProjectionPending) {
-		return string(domain.SearchProjectionPending)
-	}
-	if left == "" {
-		return right
-	}
-	return left
 }
 
 func truncateRecallContext(value string) string {

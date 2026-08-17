@@ -127,14 +127,17 @@ func TestRecallBoundsAndContextHelpers(t *testing.T) {
 	if got := recallOverfetchLimit(100); got != recallOverfetchCap {
 		t.Fatalf("overfetch cap = %d, want %d", got, recallOverfetchCap)
 	}
-	if got := recallCombinedSearchState("", string(domain.SearchProjectionCurrent)); got != string(domain.SearchProjectionCurrent) {
+	if got := domain.CombineSearchProjectionStates("", string(domain.SearchProjectionCurrent)); got != string(domain.SearchProjectionCurrent) {
 		t.Fatalf("combined state = %q", got)
 	}
-	if got := recallCombinedSearchState(string(domain.SearchProjectionCurrent), string(domain.SearchProjectionPending)); got != string(domain.SearchProjectionPending) {
+	if got := domain.CombineSearchProjectionStates(string(domain.SearchProjectionCurrent), string(domain.SearchProjectionPending)); got != string(domain.SearchProjectionPending) {
 		t.Fatalf("combined pending state = %q", got)
 	}
-	if got := recallCombinedSearchState(string(domain.SearchProjectionFailed), string(domain.SearchProjectionPending)); got != string(domain.SearchProjectionFailed) {
+	if got := domain.CombineSearchProjectionStates(string(domain.SearchProjectionFailed), string(domain.SearchProjectionPending)); got != string(domain.SearchProjectionFailed) {
 		t.Fatalf("failed state was downgraded = %q", got)
+	}
+	if got := domain.CombineSearchProjectionStates(string(domain.SearchProjectionNotRequired), string(domain.SearchProjectionCurrent)); got != string(domain.SearchProjectionCurrent) {
+		t.Fatalf("current state was downgraded = %q", got)
 	}
 	long := strings.Repeat("a", 2100)
 	if got := truncateRecallContext(long); len(got) != 2000 {

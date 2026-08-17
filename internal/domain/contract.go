@@ -191,6 +191,27 @@ const (
 	SearchProjectionFailed      SearchProjectionState = "failed"
 )
 
+// CombineSearchProjectionStates returns the most degraded state observed across
+// two search branches while preserving the canonical precedence order.
+func CombineSearchProjectionStates(left, right string) string {
+	if left == string(SearchProjectionFailed) || right == string(SearchProjectionFailed) {
+		return string(SearchProjectionFailed)
+	}
+	if left == string(SearchProjectionPending) || right == string(SearchProjectionPending) {
+		return string(SearchProjectionPending)
+	}
+	if left == string(SearchProjectionCurrent) || right == string(SearchProjectionCurrent) {
+		return string(SearchProjectionCurrent)
+	}
+	if left == string(SearchProjectionNotRequired) || right == string(SearchProjectionNotRequired) {
+		return string(SearchProjectionNotRequired)
+	}
+	if left == "" {
+		return right
+	}
+	return left
+}
+
 type SearchIndexGenerationState string
 
 const (

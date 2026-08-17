@@ -95,9 +95,9 @@ func (r *SearchRepositoryImpl) RecallRelationships(ctx context.Context, input Re
 		}
 		hit.Score = candidate.Score
 		hit.SpaceKind = input.SpaceKind
-		hit.SearchState = recallCombinedSearchState(candidate.SearchState, hit.SearchState)
+		hit.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
 		if hit.SearchState == string(domain.SearchProjectionPending) || hit.SearchState == string(domain.SearchProjectionFailed) {
-			searchState = recallCombinedSearchState(searchState, hit.SearchState)
+			searchState = domain.CombineSearchProjectionStates(searchState, hit.SearchState)
 		}
 		results = append(results, hit)
 		if len(results) == input.Limit {
@@ -972,7 +972,7 @@ func addRecallRelationshipBranch(acc map[string]*relationshipRecallCandidate, hi
 		if branchRank < candidate.BestBranchRank {
 			candidate.BestBranchRank = branchRank
 		}
-		candidate.SearchState = recallCombinedSearchState(candidate.SearchState, hit.SearchState)
+		candidate.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
 	}
 }
 

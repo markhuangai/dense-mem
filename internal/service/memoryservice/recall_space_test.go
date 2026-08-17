@@ -118,6 +118,36 @@ func TestFuseRecallResultsSumsRRFAndHonorsGlobalLimits(t *testing.T) {
 	require.Equal(t, string(domain.SearchProjectionFailed), fused.SearchState)
 }
 
+func TestFuseRecallResultsUsesBestRelationshipSummary(t *testing.T) {
+	fused := fuseRecallResults([]*RecallResult{
+		{RelatedRelationships: []RelatedRelationshipSummary{
+			{RelationshipID: "other", SpaceKind: string(domain.MemorySpaceTeamShared)},
+			{RelationshipID: "duplicate", SpaceKind: string(domain.MemorySpaceTeamShared), Object: SemanticObject{Name: "rank-two"}},
+		}},
+		{RelatedRelationships: []RelatedRelationshipSummary{
+			{RelationshipID: "duplicate", SpaceKind: string(domain.MemorySpaceTeamShared), Object: SemanticObject{Name: "rank-one"}},
+		}},
+	}, 0, 1)
+
+	require.Len(t, fused.RelatedRelationships, 1)
+	require.Equal(t, "duplicate", fused.RelatedRelationships[0].RelationshipID)
+	require.Equal(t, "rank-one", fused.RelatedRelationships[0].Object.Name)
+}
+
+func TestFuseRecallResultsOrdersEqualScoresWithStrictSpaceTieBreak(t *testing.T) {
+	fused := fuseRecallResults([]*RecallResult{
+		{Results: []RecallResultItem{{EvidenceID: "shared", Rank: 1, SpaceKind: string(domain.MemorySpaceTeamShared)}}},
+		{Results: []RecallResultItem{{EvidenceID: "profile", Rank: 1, SpaceKind: string(domain.MemorySpaceProfilePrivate)}}},
+		{Results: []RecallResultItem{{EvidenceID: "credential", Rank: 1, SpaceKind: string(domain.MemorySpaceCredentialPrivate)}}},
+	}, 3, 0)
+
+	require.Equal(t, []string{"credential", "profile", "shared"}, []string{
+		fused.Results[0].EvidenceID,
+		fused.Results[1].EvidenceID,
+		fused.Results[2].EvidenceID,
+	})
+}
+
 func TestFuseRecallResultsSkipsNilAndClampsLimits(t *testing.T) {
 	empty := fuseRecallResults([]*RecallResult{nil}, 1, 1)
 	require.Empty(t, empty.Results)
@@ -246,8 +276,9 @@ func TestApplyRecallSpaceKindLabelsNestedCommunityRelationships(t *testing.T) {
 }
 
 func TestFuseRecallSearchStateKeepsEmptyAndCurrentStates(t *testing.T) {
-	require.Equal(t, string(domain.SearchProjectionPending), fuseRecallSearchState("", string(domain.SearchProjectionPending)))
-	require.Equal(t, string(domain.SearchProjectionCurrent), fuseRecallSearchState(string(domain.SearchProjectionCurrent), ""))
+	require.Equal(t, string(domain.SearchProjectionPending), domain.CombineSearchProjectionStates("", string(domain.SearchProjectionPending)))
+	require.Equal(t, string(domain.SearchProjectionCurrent), domain.CombineSearchProjectionStates(string(domain.SearchProjectionCurrent), ""))
+	require.Equal(t, string(domain.SearchProjectionCurrent), domain.CombineSearchProjectionStates(string(domain.SearchProjectionNotRequired), string(domain.SearchProjectionCurrent)))
 }
 
 func TestFuseRecallResultsPreservesNotRequiredRelationshipState(t *testing.T) {

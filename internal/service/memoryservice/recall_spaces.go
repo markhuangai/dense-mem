@@ -153,8 +153,9 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 	}
 	evidence := map[string]evidenceScore{}
 	type relationshipScore struct {
-		item  RelatedRelationshipSummary
-		score float64
+		item     RelatedRelationshipSummary
+		score    float64
+		bestRank int
 	}
 	relationships := map[string]relationshipScore{}
 	degradationSeen := map[RecallDegradationResult]struct{}{}
@@ -170,8 +171,8 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 			}
 			seenBranch = true
 		} else {
-			fused.SearchStates.Evidence = fuseRecallSearchState(fused.SearchStates.Evidence, branch.SearchStates.Evidence)
-			fused.SearchStates.Relationships = fuseRecallSearchState(fused.SearchStates.Relationships, branch.SearchStates.Relationships)
+			fused.SearchStates.Evidence = domain.CombineSearchProjectionStates(fused.SearchStates.Evidence, branch.SearchStates.Evidence)
+			fused.SearchStates.Relationships = domain.CombineSearchProjectionStates(fused.SearchStates.Relationships, branch.SearchStates.Relationships)
 		}
 		fused.Conflicts = append(fused.Conflicts, branch.Conflicts...)
 		fused.RelatedCommunities = append(fused.RelatedCommunities, branch.RelatedCommunities...)
@@ -201,9 +202,13 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 			key := item.SpaceKind + ":" + item.RelationshipID
 			score := 1 / (recallFusionRRFConstant + float64(rank+1))
 			if current, ok := relationships[key]; !ok {
-				relationships[key] = relationshipScore{item: item, score: score}
+				relationships[key] = relationshipScore{item: item, score: score, bestRank: rank + 1}
 			} else {
 				current.score += score
+				if rank+1 < current.bestRank {
+					current.item = item
+					current.bestRank = rank + 1
+				}
 				relationships[key] = current
 			}
 		}
@@ -222,8 +227,8 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 		if evidenceItems[i].score != evidenceItems[j].score {
 			return evidenceItems[i].score > evidenceItems[j].score
 		}
-		if evidenceItems[i].item.SpaceKind != evidenceItems[j].item.SpaceKind {
-			return evidenceItems[i].item.SpaceKind != string(domain.MemorySpaceTeamShared)
+		if kindRank := compareRecallSpaceKinds(evidenceItems[i].item.SpaceKind, evidenceItems[j].item.SpaceKind); kindRank != 0 {
+			return kindRank < 0
 		}
 		return evidenceItems[i].item.EvidenceID < evidenceItems[j].item.EvidenceID
 	})
@@ -247,8 +252,8 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 		if relationshipItems[i].score != relationshipItems[j].score {
 			return relationshipItems[i].score > relationshipItems[j].score
 		}
-		if relationshipItems[i].item.SpaceKind != relationshipItems[j].item.SpaceKind {
-			return relationshipItems[i].item.SpaceKind != string(domain.MemorySpaceTeamShared)
+		if kindRank := compareRecallSpaceKinds(relationshipItems[i].item.SpaceKind, relationshipItems[j].item.SpaceKind); kindRank != 0 {
+			return kindRank < 0
 		}
 		return relationshipItems[i].item.RelationshipID < relationshipItems[j].item.RelationshipID
 	})
@@ -268,23 +273,28 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 	return fused
 }
 
-func fuseRecallSearchState(left, right string) string {
-	if left == string(domain.SearchProjectionFailed) || right == string(domain.SearchProjectionFailed) {
-		return string(domain.SearchProjectionFailed)
+func compareRecallSpaceKinds(left, right string) int {
+	if left == right {
+		return 0
 	}
-	if left == string(domain.SearchProjectionPending) || right == string(domain.SearchProjectionPending) {
-		return string(domain.SearchProjectionPending)
+	leftRank := 0
+	rightRank := 0
+	if left == string(domain.MemorySpaceTeamShared) {
+		leftRank = 1
 	}
-	if left == string(domain.SearchProjectionCurrent) || right == string(domain.SearchProjectionCurrent) {
-		return string(domain.SearchProjectionCurrent)
+	if right == string(domain.MemorySpaceTeamShared) {
+		rightRank = 1
 	}
-	if left == string(domain.SearchProjectionNotRequired) || right == string(domain.SearchProjectionNotRequired) {
-		return string(domain.SearchProjectionNotRequired)
+	if leftRank != rightRank {
+		if leftRank < rightRank {
+			return -1
+		}
+		return 1
 	}
-	if left == "" {
-		return right
+	if left < right {
+		return -1
 	}
-	return left
+	return 1
 }
 
 func maxInt(a, b int) int {
