@@ -255,7 +255,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 				_, failErr := s.search.FailEmbeddingJob(cleanupCtx, repository.FailEmbeddingJobInput{
 					TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: workerID,
 					ExpectedAttempts: 1, Error: "daily embedding canary rejected the input", FailureClass: failureClass,
-					FailureCode: failureCode, Terminal: true,
+					FailureCode: failureCode, Terminal: true, SpaceID: job.SpaceID,
 				})
 				if failErr != nil {
 					cleanupCancel()
@@ -299,7 +299,7 @@ func (s *embeddingReconciliationService) ProcessDue(ctx context.Context) (Embedd
 		staleCanary := false
 		if err := s.search.CompleteEmbeddingJob(cleanupCtx, repository.CompleteEmbeddingJobInput{
 			TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: workerID,
-			ExpectedAttempts: 1, Embedding: vector,
+			ExpectedAttempts: 1, Embedding: vector, SpaceID: job.SpaceID,
 		}); err != nil {
 			if !isExpectedStaleCanary(err) {
 				deferErr := s.deferRun(cleanupCtx, run, string(domain.EmbeddingReconciliationAmbiguous), "", "", "daily embedding canary completion was ambiguous", true, err)
@@ -398,7 +398,7 @@ func (s *embeddingReconciliationService) finishFailedCanary(ctx context.Context,
 	_, failErr := s.search.FailEmbeddingJob(cleanupCtx, repository.FailEmbeddingJobInput{
 		TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: workerID,
 		ExpectedAttempts: 1, Error: message,
-		FailureClass: failureClass, FailureCode: failureCode, Terminal: true,
+		FailureClass: failureClass, FailureCode: failureCode, Terminal: true, SpaceID: job.SpaceID,
 	})
 	if failErr != nil && !errors.Is(failErr, repository.ErrTeamInactive) {
 		return s.deferRun(cleanupCtx, run, string(domain.EmbeddingReconciliationAmbiguous), failureClass, failureCode, "daily embedding canary failure persistence was ambiguous", canaryAttempted, failErr)

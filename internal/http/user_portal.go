@@ -96,16 +96,18 @@ type userPortalMembershipResponse struct {
 }
 
 type userPortalCredentialResponse struct {
-	ID         uuid.UUID `json:"id"`
-	TeamID     uuid.UUID `json:"team_id"`
-	Name       string    `json:"name"`
-	KeySuffix  string    `json:"key_suffix"`
-	Scopes     []string  `json:"scopes"`
-	Role       string    `json:"role"`
-	RateLimit  int       `json:"rate_limit"`
-	LastUsedAt *string   `json:"last_used_at"`
-	ExpiresAt  *string   `json:"expires_at"`
-	CreatedAt  string    `json:"created_at"`
+	ID              uuid.UUID `json:"id"`
+	TeamID          uuid.UUID `json:"team_id"`
+	Name            string    `json:"name"`
+	KeySuffix       string    `json:"key_suffix"`
+	Scopes          []string  `json:"scopes"`
+	Role            string    `json:"role"`
+	RateLimit       int       `json:"rate_limit"`
+	LastUsedAt      *string   `json:"last_used_at"`
+	ExpiresAt       *string   `json:"expires_at"`
+	CreatedAt       string    `json:"created_at"`
+	MemoryBinding   string    `json:"memory_binding"`
+	MemorySpaceKind string    `json:"memory_space_kind"`
 }
 
 type userPortalRotateResponse struct {
@@ -124,10 +126,11 @@ type userPortalSwitchSSOTeamRequest struct {
 }
 
 type userPortalCreateSSOCredentialRequest struct {
-	Name      string   `json:"name"`
-	Scopes    []string `json:"scopes"`
-	RateLimit int      `json:"rate_limit"`
-	ExpiresAt *string  `json:"expires_at"`
+	Name          string   `json:"name"`
+	Scopes        []string `json:"scopes"`
+	RateLimit     int      `json:"rate_limit"`
+	ExpiresAt     *string  `json:"expires_at"`
+	MemoryBinding string   `json:"memory_binding"`
 }
 
 func (h *userPortalHandler) session(c echo.Context) error {
@@ -536,14 +539,6 @@ func (h *userPortalHandler) createSSOCredential(c echo.Context) error {
 	if h.credentials == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "credential service unavailable")
 	}
-	existing, err := h.credentials.GetSSOOwnedCredential(c.Request().Context(), info.Selected.Team.ID, info.Identity.ID)
-	if err != nil {
-		return err
-	}
-	if existing != nil {
-		return httperr.New(httperr.CONFLICT, "sso-owned credential already exists for this team")
-	}
-
 	var body userPortalCreateSSOCredentialRequest
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
@@ -553,6 +548,17 @@ func (h *userPortalHandler) createSSOCredential(c echo.Context) error {
 		return err
 	}
 	req.OwnerIdentityID = &info.Identity.ID
+	// Preserve the one-key compatibility response for callers that omit a
+	// binding, while explicit bindings allow multiple SSO credentials.
+	if strings.TrimSpace(body.MemoryBinding) == "" {
+		existing, lookupErr := h.credentials.GetSSOOwnedCredential(c.Request().Context(), info.Selected.Team.ID, info.Identity.ID)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		if existing != nil {
+			return httperr.New(httperr.CONFLICT, "sso-owned credential already exists for this team")
+		}
+	}
 
 	credential, rawKey, err := h.credentials.CreateCredential(
 		c.Request().Context(),
@@ -677,11 +683,12 @@ func userPortalSSOCreateCredentialRequest(body userPortalCreateSSOCredentialRequ
 		name = ssoOwnedKeyDefaultName(identity)
 	}
 	return service.CreateCredentialRequest{
-		Name:      name,
-		RateLimit: body.RateLimit,
-		ExpiresAt: expiresAt,
-		Scopes:    normalizedScopes,
-		Role:      service.CredentialRoleMember,
+		Name:          name,
+		RateLimit:     body.RateLimit,
+		ExpiresAt:     expiresAt,
+		Scopes:        normalizedScopes,
+		Role:          service.CredentialRoleMember,
+		MemoryBinding: strings.TrimSpace(body.MemoryBinding),
 	}, nil
 }
 
@@ -750,21 +757,6 @@ func (h *userPortalHandler) toUserPortalTeam(ctx context.Context, team *domain.T
 		CreatedAt:         team.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:         team.UpdatedAt.Format(time.RFC3339),
 	}, nil
-}
-
-func toUserPortalCredential(credential *domain.Credential) userPortalCredentialResponse {
-	return userPortalCredentialResponse{
-		ID:         credential.ID,
-		TeamID:     credential.GetTeamID(),
-		Name:       credential.GetName(),
-		KeySuffix:  credential.KeySuffix,
-		Scopes:     append([]string{}, credential.Scopes...),
-		Role:       credential.GetRole(),
-		RateLimit:  credential.RateLimit,
-		LastUsedAt: controlTimePtr(credential.LastUsedAt),
-		ExpiresAt:  controlTimePtr(credential.ExpiresAt),
-		CreatedAt:  credential.CreatedAt.Format(time.RFC3339),
-	}
 }
 
 func userPortalMembershipFromPrincipal(principal *httpmw.Principal) userPortalMembershipResponse {

@@ -26,7 +26,7 @@ func (r *SearchRepositoryImpl) RecallRelationships(ctx context.Context, input Re
 	vectorState := string(domain.SearchProjectionPending)
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
-		vectorState, err = relationshipProjectionSearchState(ctx, tx, input.TeamID, contract)
+		vectorState, err = relationshipProjectionSearchState(ctx, tx, input, contract)
 		if err != nil {
 			return err
 		}
@@ -94,6 +94,7 @@ func (r *SearchRepositoryImpl) RecallRelationships(ctx context.Context, input Re
 			seenGroups[hit.SemanticGroupKey] = struct{}{}
 		}
 		hit.Score = candidate.Score
+		hit.SpaceKind = input.SpaceKind
 		hit.SearchState = recallCombinedSearchState(candidate.SearchState, hit.SearchState)
 		if hit.SearchState == string(domain.SearchProjectionPending) || hit.SearchState == string(domain.SearchProjectionFailed) {
 			searchState = recallCombinedSearchState(searchState, hit.SearchState)
@@ -123,14 +124,10 @@ func (r *SearchRepositoryImpl) RecallRelationships(ctx context.Context, input Re
 	}, nil
 }
 
-type relationshipRecallCandidate struct {
-	RelationshipID string
-	Score          float64
-	BestBranchRank int
-	SearchState    string
-}
-
-func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID string, contract *ActiveSearchContract) (string, error) {
+func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, input RecallRelationshipsInput, contract *ActiveSearchContract) (string, error) {
+	teamID := input.TeamID
+	spaceClause := recallSpacePredicate("relationship.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
+	documentSpaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	var latestState string
 	var eligibleCount, currentCount, failedCount int64
 	err := tx.WithContext(ctx).Raw(`
@@ -146,6 +143,7 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 		    SELECT relationship.relationship_id
 		    FROM relationship_records AS relationship
 		    WHERE relationship.team_id = ?::uuid
+		      `+spaceClause+`
 		      AND relationship.identity_alias_of_relationship_id IS NULL
 		      AND relationship.status = 'active'
 		      AND relationship.support_count > 0
@@ -159,9 +157,10 @@ func relationshipProjectionSearchState(ctx context.Context, tx *gorm.DB, teamID 
 		  ON document.team_id = ?::uuid
 		 AND document.source_kind = 'relationship'
 		 AND document.source_id = eligible.relationship_id
-		 AND document.embedding_contract_id = ?::uuid
-		 AND document.embedding_dimensions = ?
-			 AND document.projection_format_version = 2
+			 AND document.embedding_contract_id = ?::uuid
+			 AND document.embedding_dimensions = ?
+			 `+documentSpaceClause+`
+				 AND document.projection_format_version = 2
 			 AND (
 	             document.projection_generation_id = (SELECT projection_generation_id FROM selected_generation)
 	             OR (
@@ -297,6 +296,7 @@ func searchRecallRelationshipExactVector(
 	if err != nil {
 		return nil, err
 	}
+	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH generation_count AS (
 		    SELECT count(*) AS value
@@ -333,6 +333,7 @@ func searchRecallRelationshipExactVector(
 		 AND document.source_kind = 'relationship'
 		 AND document.embedding_contract_id = ?::uuid
 			 AND document.embedding_dimensions = ?
+				 `+spaceClause+`
 			 AND document.projection_format_version = 2
 			 AND (
 			     document.projection_generation_id = current_generation.projection_generation_id
@@ -383,6 +384,7 @@ func searchRecallRelationshipANNVector(
 	if err := setRecallANNQueryEFSearch(ctx, tx, contract, candidateLimit); err != nil {
 		return nil, err
 	}
+	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	query := fmt.Sprintf(`
 		WITH generation_count AS (
 		    SELECT count(*) AS value
@@ -429,6 +431,7 @@ func searchRecallRelationshipANNVector(
 				 )
 			 AND document.search_state = 'current'
 			 AND document.embedding IS NOT NULL
+			 `+spaceClause+`
 			ORDER BY %s ASC, document.search_document_id ASC
 			LIMIT ?
 		)
@@ -475,6 +478,8 @@ func searchRecallRelationshipEntityExpansion(
 	limit int,
 ) ([]SearchHit, error) {
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
+	spaceClause := recallSpacePredicate("relationship.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
+	documentSpaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH `+recallRelationshipGenerationScopeSQL+`
 		SELECT document.team_id::text, document.search_document_id::text, document.source_kind,
@@ -491,7 +496,8 @@ func searchRecallRelationshipEntityExpansion(
 		 AND document.source_id = relationship.relationship_id
 		 AND document.embedding_contract_id = ?::uuid
 		 AND document.projection_format_version = 2
-		 AND `+recallRelationshipGenerationDocumentSQL+`
+			 AND `+recallRelationshipGenerationDocumentSQL+`
+			 `+documentSpaceClause+`
 			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 		LEFT JOIN LATERAL (
 		    SELECT transition.to_status AS status
@@ -504,6 +510,7 @@ func searchRecallRelationshipEntityExpansion(
 		    LIMIT 1
 		) AS known_status ON TRUE
 		WHERE relationship.identity_alias_of_relationship_id IS NULL
+		  `+spaceClause+`
 		  AND (
 		      COALESCE(known_status.status, relationship.status) = 'active'
 		      OR (
@@ -564,6 +571,8 @@ func hydrateRecallRelationships(
 	relationshipIDs []string,
 ) (map[string]RecallRelationshipHit, error) {
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
+	spaceClause := recallSpacePredicate("relationship.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
+	documentSpaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH requested AS (
 			SELECT unnest(?::uuid[]) AS relationship_id
@@ -598,9 +607,10 @@ func hydrateRecallRelationships(
 		    SELECT relationship.*,
 		           document.search_state
 		    FROM requested
-		    JOIN relationship_records AS relationship
+			JOIN relationship_records AS relationship
 		      ON relationship.team_id = ?::uuid
 		     AND relationship.relationship_id = requested.relationship_id
+		     `+spaceClause+`
 		    JOIN recall_relationship_generation AS generation
 		      ON TRUE
 		    JOIN search_documents AS document
@@ -610,6 +620,7 @@ func hydrateRecallRelationships(
 		     AND document.embedding_contract_id = ?::uuid
 		     AND document.projection_format_version = 2
 		     AND `+recallRelationshipGenerationDocumentSQL+`
+		     `+documentSpaceClause+`
 			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 		    LEFT JOIN LATERAL (
 		        SELECT transition.to_status AS status

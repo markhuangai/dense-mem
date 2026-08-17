@@ -4,8 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 // RLSHelper is the companion interface for the RLS helper struct.
@@ -40,6 +44,9 @@ func (r *RLS) WithTeamTx(ctx context.Context, db *gorm.DB, teamID string, fn fun
 		if err := tx.Exec("SELECT set_config('app.current_profile_id', ?, true)", teamID).Error; err != nil {
 			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
 		}
+		if err := setAllowedSpaceIDs(tx, ctx); err != nil {
+			return err
+		}
 		if err := tx.Exec("SELECT set_config('app.tx_mode', 'team', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.tx_mode: %w", err)
 		}
@@ -57,6 +64,9 @@ func (r *RLS) WithTeamProfileTx(ctx context.Context, db *gorm.DB, teamID string,
 		}
 		if err := tx.Exec("SELECT set_config('app.current_profile_id', ?, true)", profileID).Error; err != nil {
 			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
+		}
+		if err := setAllowedSpaceIDs(tx, ctx); err != nil {
+			return err
 		}
 		if err := tx.Exec("SELECT set_config('app.tx_mode', 'profile', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.tx_mode: %w", err)
@@ -76,6 +86,9 @@ func (r *RLS) WithSystemTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB
 		}
 		if err := tx.Exec("SELECT set_config('app.current_profile_id', '', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
+		}
+		if err := tx.Exec("SELECT set_config('app.allowed_space_ids', '', true)").Error; err != nil {
+			return fmt.Errorf("failed to set app.allowed_space_ids: %w", err)
 		}
 		if err := tx.Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.tx_mode: %w", err)
@@ -98,6 +111,9 @@ func (r *RLS) WithTeamReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, tea
 		if err := tx.Exec("SELECT set_config('app.current_profile_id', ?, true)", teamID).Error; err != nil {
 			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
 		}
+		if err := setAllowedSpaceIDs(tx, ctx); err != nil {
+			return err
+		}
 		if err := tx.Exec("SELECT set_config('app.tx_mode', 'team', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.tx_mode: %w", err)
 		}
@@ -114,6 +130,9 @@ func (r *RLS) WithTeamProfileReadOnlyRepeatableTx(ctx context.Context, db *gorm.
 		}
 		if err := tx.Exec("SELECT set_config('app.current_profile_id', ?, true)", profileID).Error; err != nil {
 			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
+		}
+		if err := setAllowedSpaceIDs(tx, ctx); err != nil {
+			return err
 		}
 		if err := tx.Exec("SELECT set_config('app.tx_mode', 'profile', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.tx_mode: %w", err)
@@ -132,6 +151,9 @@ func (r *RLS) WithSystemReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, f
 		if err := tx.Exec("SELECT set_config('app.current_profile_id', '', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.current_profile_id: %w", err)
 		}
+		if err := tx.Exec("SELECT set_config('app.allowed_space_ids', '', true)").Error; err != nil {
+			return fmt.Errorf("failed to set app.allowed_space_ids: %w", err)
+		}
 		if err := tx.Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.tx_mode: %w", err)
 		}
@@ -140,6 +162,20 @@ func (r *RLS) WithSystemReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, f
 		}
 		return fn(tx)
 	})
+}
+
+func setAllowedSpaceIDs(tx *gorm.DB, ctx context.Context) error {
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || len(actor.AllowedSpaces) == 0 {
+		return tx.Exec("SELECT set_config('app.allowed_space_ids', '', true)").Error
+	}
+	ids := make([]string, 0, len(actor.AllowedSpaces))
+	for _, space := range actor.AllowedSpaces {
+		if space.ID != uuid.Nil {
+			ids = append(ids, space.ID.String())
+		}
+	}
+	return tx.Exec("SELECT set_config('app.allowed_space_ids', ?, true)", strings.Join(ids, ",")).Error
 }
 
 func (r *RLS) withReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error {

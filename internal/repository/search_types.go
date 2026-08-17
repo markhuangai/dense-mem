@@ -108,6 +108,8 @@ type UpsertSearchDocumentInput struct {
 	DocumentHash           string
 	EmbeddingContractID    string
 	Metadata               map[string]any
+	SpaceID                string
+	SpaceKind              string
 }
 
 type SearchDocumentResult struct {
@@ -124,6 +126,7 @@ type SearchDocumentResult struct {
 	EmbeddingDimensions    int
 	SearchState            string
 	QueuedJobID            string
+	SpaceID                string
 }
 
 type ClaimEmbeddingJobsInput struct {
@@ -131,6 +134,7 @@ type ClaimEmbeddingJobsInput struct {
 	WorkerID string
 	Limit    int
 	Lease    time.Duration
+	SpaceID  string
 }
 
 type EmbeddingJob struct {
@@ -138,6 +142,7 @@ type EmbeddingJob struct {
 	EmbeddingJobID         string
 	SearchDocumentID       string
 	OwnerProfileID         string
+	SpaceID                string
 	SourceKind             string
 	SourceID               string
 	SourceVersion          int64
@@ -164,6 +169,7 @@ type CompleteEmbeddingJobInput struct {
 	WorkerID         string
 	ExpectedAttempts int
 	Embedding        []float32
+	SpaceID          string
 }
 
 type RenewEmbeddingJobLeaseInput struct {
@@ -172,6 +178,7 @@ type RenewEmbeddingJobLeaseInput struct {
 	WorkerID         string
 	ExpectedAttempts int
 	Lease            time.Duration
+	SpaceID          string
 }
 
 type FailEmbeddingJobInput struct {
@@ -184,6 +191,7 @@ type FailEmbeddingJobInput struct {
 	FailureCode      string
 	RetryAfter       time.Duration
 	Terminal         bool
+	SpaceID          string
 }
 
 type EmbeddingJobFailureResult struct {
@@ -399,6 +407,8 @@ type RecallEvidenceInput struct {
 	KnownEvidenceIDs     []string
 	KnownRelationshipIDs []string
 	ExpandFromEntityIDs  []string
+	SpaceID              string
+	SpaceKind            string
 }
 
 type RecallRelationshipsInput struct {
@@ -412,6 +422,8 @@ type RecallRelationshipsInput struct {
 	KnownRelationshipIDs []string
 	ExpandFromEntityIDs  []string
 	ExcludedGroupKeys    []string
+	SpaceID              string
+	SpaceKind            string
 }
 
 type RecallEvidenceResult struct {
@@ -439,6 +451,7 @@ type RecallEvidenceHit struct {
 	Rank            int
 	Score           float64
 	SearchState     string
+	SpaceKind       string
 }
 
 type RecallRelationshipHit struct {
@@ -464,4 +477,5 @@ type RecallRelationshipHit struct {
 	EvidenceIDs               []string
 	EquivalentRelationshipIDs []string
 	CreatedAt                 time.Time
+	SpaceKind                 string
 }

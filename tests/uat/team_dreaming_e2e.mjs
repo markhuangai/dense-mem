@@ -407,6 +407,15 @@ async function httpJSON(url, options, retryTransport = false) {
 }
 
 function postgresQuery(sql) {
+  const scopedSQL = [
+    "BEGIN",
+    "SET LOCAL app.tx_mode = 'system'",
+    "SET LOCAL app.current_team_id = ''",
+    "SET LOCAL app.current_profile_id = ''",
+    "SET LOCAL app.allowed_space_ids = ''",
+    sql,
+    "COMMIT",
+  ].join(";\n");
   const result = spawnSync("docker", [
     "compose",
     "-p",
@@ -418,9 +427,9 @@ function postgresQuery(sql) {
     "postgres",
     "sh",
     "-ec",
-    'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
+    'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
     "team-dreaming-e2e",
-    sql,
+    scopedSQL,
   ], {
     cwd: fileURLToPath(new URL("../..", import.meta.url)),
     encoding: "utf8",

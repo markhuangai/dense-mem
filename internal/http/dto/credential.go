@@ -11,10 +11,11 @@ import (
 //   - RateLimit: optional rate limit per minute
 //   - ExpiresAt: optional expiration time
 type CreateCredentialRequest struct {
-	Name      string    `json:"name" validate:"omitempty,min=1,max=100,notblank"`
-	Scopes    *[]string `json:"scopes,omitempty" validate:"omitempty,min=1,max=3,dive,notblank"`
-	RateLimit int       `json:"rate_limit"`
-	ExpiresAt *string   `json:"expires_at"`
+	Name          string    `json:"name" validate:"omitempty,min=1,max=100,notblank"`
+	Scopes        *[]string `json:"scopes,omitempty" validate:"omitempty,min=1,max=3,dive,notblank"`
+	RateLimit     int       `json:"rate_limit"`
+	ExpiresAt     *string   `json:"expires_at"`
+	MemoryBinding *string   `json:"memory_binding,omitempty" validate:"omitempty,oneof=shared_only profile_private credential_private"`
 }
 
 // UpdateCredentialRequest represents a protected API request to update a member
@@ -26,28 +27,32 @@ type UpdateCredentialRequest struct {
 
 // CredentialResponse represents a credential and its single active API credential in API responses.
 type CredentialResponse struct {
-	ID         uuid.UUID `json:"id"`
-	TeamID     uuid.UUID `json:"team_id"`
-	Name       string    `json:"name"`
-	KeySuffix  string    `json:"key_suffix"`
-	Scopes     []string  `json:"scopes"`
-	Role       string    `json:"role"`
-	RateLimit  int       `json:"rate_limit"`
-	LastUsedAt *string   `json:"last_used_at"`
-	ExpiresAt  *string   `json:"expires_at"`
-	CreatedAt  string    `json:"created_at"`
+	ID              uuid.UUID `json:"id"`
+	TeamID          uuid.UUID `json:"team_id"`
+	Name            string    `json:"name"`
+	KeySuffix       string    `json:"key_suffix"`
+	Scopes          []string  `json:"scopes"`
+	Role            string    `json:"role"`
+	RateLimit       int       `json:"rate_limit"`
+	LastUsedAt      *string   `json:"last_used_at"`
+	ExpiresAt       *string   `json:"expires_at"`
+	CreatedAt       string    `json:"created_at"`
+	MemoryBinding   string    `json:"memory_binding"`
+	MemorySpaceKind string    `json:"memory_space_kind"`
 }
 
 // CredentialListItem represents a single credential in a list response.
 type CredentialListItem struct {
-	ID         uuid.UUID `json:"id"`
-	TeamID     uuid.UUID `json:"team_id"`
-	Name       string    `json:"name"`
-	KeySuffix  string    `json:"key_suffix"`
-	Scopes     []string  `json:"scopes"`
-	Role       string    `json:"role"`
-	RateLimit  int       `json:"rate_limit"`
-	LastUsedAt *string   `json:"last_used_at"`
-	ExpiresAt  *string   `json:"expires_at"`
-	CreatedAt  string    `json:"created_at"`
+	ID              uuid.UUID `json:"id"`
+	TeamID          uuid.UUID `json:"team_id"`
+	Name            string    `json:"name"`
+	KeySuffix       string    `json:"key_suffix"`
+	Scopes          []string  `json:"scopes"`
+	Role            string    `json:"role"`
+	RateLimit       int       `json:"rate_limit"`
+	LastUsedAt      *string   `json:"last_used_at"`
+	ExpiresAt       *string   `json:"expires_at"`
+	CreatedAt       string    `json:"created_at"`
+	MemoryBinding   string    `json:"memory_binding"`
+	MemorySpaceKind string    `json:"memory_space_kind"`
 }

@@ -104,6 +104,7 @@ func (r *SearchRepositoryImpl) RecallEvidence(ctx context.Context, input RecallE
 			continue
 		}
 		hit.Score = candidate.Score
+		hit.SpaceKind = input.SpaceKind
 		hit.SearchState = recallCombinedSearchState(candidate.SearchState, hit.SearchState)
 		if hit.SearchState == string(domain.SearchProjectionPending) || hit.SearchState == string(domain.SearchProjectionFailed) {
 			searchState = recallCombinedSearchState(searchState, hit.SearchState)
@@ -138,6 +139,7 @@ func recallEvidenceSearchState(
 	contract *ActiveSearchContract,
 ) (string, error) {
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
+	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	var state string
 	err := tx.WithContext(ctx).Raw(`
 		WITH eligible AS NOT MATERIALIZED (
@@ -168,6 +170,7 @@ func recallEvidenceSearchState(
 			  )
 			  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
 			  AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
+			`+spaceClause+`
 		)
 		SELECT CASE
 		           WHEN EXISTS (SELECT 1 FROM eligible WHERE search_state = 'failed') THEN 'failed'
@@ -198,6 +201,7 @@ func searchRecallFullText(
 	limit int,
 ) ([]SearchHit, error) {
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
+	spaceClause := recallSpacePredicate("space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
 		       source_version, document_version, embedding_contract_id::text,
@@ -210,6 +214,7 @@ func searchRecallFullText(
 		  AND embedding_contract_id = ?::uuid
 		  AND (search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND search_state = 'not_required'))
 		  AND search_tsv @@ plainto_tsquery('simple', ?)
+	`+spaceClause+`
 		ORDER BY text_rank DESC, updated_at DESC, search_document_id ASC
 		LIMIT ?
 	`, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.Query, limit).Rows()
@@ -251,6 +256,7 @@ func searchRecallExactVector(
 	if err != nil {
 		return nil, err
 	}
+	spaceClause := recallSpacePredicate("space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
 		       source_version, document_version, embedding_contract_id::text,
@@ -264,6 +270,7 @@ func searchRecallExactVector(
 		  AND embedding_dimensions = ?
 		  AND search_state = 'current'
 		  AND embedding IS NOT NULL
+	`+spaceClause+`
 		ORDER BY embedding <=> ?::vector ASC, search_document_id ASC
 		LIMIT ?
 	`, vectorLiteral, input.TeamID, contract.EmbeddingContractID,
@@ -301,6 +308,7 @@ func searchRecallANNVector(
 	if err := setRecallANNQueryEFSearch(ctx, tx, contract, candidateLimit); err != nil {
 		return nil, err
 	}
+	spaceClause := recallSpacePredicate("space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	query := fmt.Sprintf(`
 		WITH ann_candidates AS MATERIALIZED (
 			SELECT team_id, search_document_id
@@ -311,6 +319,7 @@ func searchRecallANNVector(
 			  AND embedding_dimensions = %d
 			  AND search_state = 'current'
 			  AND embedding IS NOT NULL
+			%s
 			ORDER BY %s ASC, search_document_id ASC
 			LIMIT ?
 		)
@@ -330,7 +339,7 @@ func searchRecallANNVector(
 		 AND document.search_document_id = candidate.search_document_id
 		ORDER BY document.embedding <=> ?::vector ASC, document.search_document_id ASC
 		LIMIT ?
-	`, contractLiteral, contract.EmbeddingDimensions, annDistance)
+	`, contractLiteral, contract.EmbeddingDimensions, spaceClause, annDistance)
 	rows, err := tx.WithContext(ctx).Raw(
 		query,
 		input.TeamID,
@@ -432,6 +441,7 @@ func searchRecallEntityExpansion(
 	limit int,
 ) ([]SearchHit, error) {
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
+	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
 			WITH latest_support_decision AS (
 				SELECT DISTINCT ON (team_id, support_id)
@@ -516,6 +526,7 @@ func searchRecallEntityExpansion(
 		      cardinality(?::uuid[]) = 0
 		      OR relationship.relationship_id <> ALL(?::uuid[])
 		  )
+		  `+spaceClause+`
 		GROUP BY document.team_id, document.search_document_id, document.source_kind,
 		         document.source_id, document.source_version, document.document_version,
 		         document.embedding_contract_id, document.search_state
@@ -548,6 +559,7 @@ func hydrateRecallEvidence(
 	evidenceIDs []string,
 ) (map[string]RecallEvidenceHit, error) {
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
+	spaceClause := recallSpacePredicate("fragment.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH requested AS (
 			SELECT unnest(?::uuid[]) AS fragment_id
@@ -661,6 +673,7 @@ func hydrateRecallEvidence(
 			      OR fragment_source.current_revision_id = fragment.source_revision_id
 			  )
 			  AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
+			  `+spaceClause+`
 			)
 			SELECT evidence_id,
 			       max(context) AS context,
@@ -772,6 +785,8 @@ func normalizeRecallEvidenceInput(input RecallEvidenceInput) RecallEvidenceInput
 	input.KnownEvidenceIDs = normalizeRecallUUIDList(input.KnownEvidenceIDs)
 	input.KnownRelationshipIDs = normalizeRecallUUIDList(input.KnownRelationshipIDs)
 	input.ExpandFromEntityIDs = normalizeRecallUUIDList(input.ExpandFromEntityIDs)
+	input.SpaceID = strings.TrimSpace(input.SpaceID)
+	input.SpaceKind = strings.TrimSpace(input.SpaceKind)
 	if input.Limit <= 0 {
 		input.Limit = defaultRecallLimit
 	}
@@ -781,9 +796,41 @@ func normalizeRecallEvidenceInput(input RecallEvidenceInput) RecallEvidenceInput
 	return input
 }
 
+// recallSpacePredicate is assembled only from validated server-owned UUIDs and
+// fixed enum values. It deliberately does not accept request text so branch
+// scope cannot become SQL input or an authorization override.
+func recallSpacePredicate(column, teamID, spaceID, spaceKind string) string {
+	if strings.TrimSpace(spaceID) != "" {
+		parsed, err := uuid.Parse(strings.TrimSpace(spaceID))
+		if err == nil {
+			return fmt.Sprintf(" AND %s = %s::uuid", column, pq.QuoteLiteral(parsed.String()))
+		}
+		return " AND FALSE"
+	}
+	if strings.TrimSpace(spaceKind) == string(domain.MemorySpaceTeamShared) {
+		parsed, err := uuid.Parse(strings.TrimSpace(teamID))
+		if err == nil {
+			return fmt.Sprintf(" AND %s = dense_mem_team_shared_space(%s::uuid)", column, pq.QuoteLiteral(parsed.String()))
+		}
+		return " AND FALSE"
+	}
+	return ""
+}
+
 func validateRecallEvidenceInput(input RecallEvidenceInput) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if input.SpaceKind != "" && !domain.MemorySpaceKind(input.SpaceKind).Valid() {
+		return fmt.Errorf("space_kind is invalid: %s", input.SpaceKind)
+	}
+	if input.SpaceKind != "" && input.SpaceKind != string(domain.MemorySpaceTeamShared) && input.SpaceID == "" {
+		return fmt.Errorf("space_id is required for private space kind %s", input.SpaceKind)
+	}
+	if input.SpaceID != "" {
+		if _, err := uuid.Parse(input.SpaceID); err != nil {
+			return fmt.Errorf("space_id is invalid: %w", err)
+		}
 	}
 	if input.Query == "" && len(input.ExpandFromEntityIDs) == 0 {
 		return errors.New("query or expand_from_entity_ids is required")

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestActorContextPreservesCanonicalIdentityAndCopiesMutableFields(t *testing.T) {
@@ -57,6 +59,17 @@ func TestActorFromContextEmptyWhenUnsetOrWrongType(t *testing.T) {
 	ctx := context.WithValue(context.Background(), otherKey{}, Actor{OwnerName: "wrong"})
 	if got, ok := ActorFromContext(ctx); ok || !reflect.DeepEqual(got, Actor{}) {
 		t.Fatalf("ActorFromContext wrong key = %#v, %v; want zero,false", got, ok)
+	}
+}
+
+func TestActorContextCopiesAllowedMemorySpaces(t *testing.T) {
+	teamID := uuid.New()
+	actor := Actor{TeamID: teamID, AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.New(), Kind: domain.MemorySpaceCredentialPrivate}}}
+	ctx := WithActor(context.Background(), actor)
+	actor.AllowedSpaces[0].Kind = domain.MemorySpaceTeamShared
+	got, ok := ActorFromContext(ctx)
+	if !ok || got.AllowedSpaces[0].Kind != domain.MemorySpaceCredentialPrivate {
+		t.Fatalf("ActorFromContext allowed spaces = %#v, %v", got.AllowedSpaces, ok)
 	}
 }
 

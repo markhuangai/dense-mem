@@ -46,6 +46,12 @@ type Credential struct {
 	CreatedAt       time.Time
 	RevokedAt       *time.Time
 
+	// MemoryBinding and MemorySpaceID are immutable once the credential is
+	// created. Legacy credentials default to shared-only during migration.
+	MemoryBinding     CredentialMemoryBinding
+	MemorySpaceID     uuid.UUID
+	TeamSharedSpaceID uuid.UUID
+
 	OwnerIdentityID             *uuid.UUID
 	SSOProviderID               *uuid.UUID
 	SSOSubject                  string

@@ -308,12 +308,12 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH upserted AS (
 				INSERT INTO search_documents (
-				    team_id, owner_profile_id, source_kind, source_id, source_version,
+				    team_id, owner_profile_id, space_id, source_kind, source_id, source_version,
 				    projection_format_version, projection_generation_id,
 				    document_version, embedding_contract_id, embedding_dimensions,
 				    search_state, document_text, document_hash, metadata
 				) VALUES (
-				    ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, 1, ?::uuid, ?,
+				    ?::uuid, ?::uuid, COALESCE(NULLIF(?, '')::uuid, dense_mem_team_shared_space(?::uuid)), ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, 1, ?::uuid, ?,
 				    'pending', ?, ?, ?::jsonb
 				)
 				ON CONFLICT (team_id, source_kind, source_id, embedding_contract_id)
@@ -363,14 +363,16 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 				    metadata = EXCLUDED.metadata,
 				    updated_at = now()
 				WHERE EXCLUDED.source_version >= search_documents.source_version
+				  AND search_documents.space_id = EXCLUDED.space_id
 				RETURNING team_id::text, search_document_id::text, owner_profile_id::text,
+				          space_id::text,
 				          source_kind, source_id::text, source_version,
 				          projection_format_version, COALESCE(projection_generation_id::text, ''),
 				          document_version,
 				          embedding_contract_id::text, embedding_dimensions, search_state
 			)
 			SELECT * FROM upserted
-		`, input.TeamID, input.OwnerProfileID, input.SourceKind, input.SourceID, input.SourceVersion,
+		`, input.TeamID, input.OwnerProfileID, input.SpaceID, input.TeamID, input.SourceKind, input.SourceID, input.SourceVersion,
 			input.ProjectionFormat, input.ProjectionGenerationID,
 			contract.EmbeddingContractID, contract.EmbeddingDimensions, input.DocumentText,
 			input.DocumentHash, string(metadata)).Rows()
@@ -390,6 +392,7 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 			&loaded.TeamID,
 			&loaded.SearchDocumentID,
 			&loaded.OwnerProfileID,
+			&loaded.SpaceID,
 			&loaded.SourceKind,
 			&loaded.SourceID,
 			&loaded.SourceVersion,
@@ -673,12 +676,12 @@ func enqueueEmbeddingJob(
 	var jobID string
 	err := tx.WithContext(ctx).Raw(`
 			INSERT INTO embedding_jobs (
-			    team_id, search_document_id, owner_profile_id, source_kind, source_id,
+			    team_id, search_document_id, owner_profile_id, space_id, source_kind, source_id,
 			    source_version, projection_format_version, projection_generation_id,
 			    document_version, embedding_contract_id, embedding_dimensions,
 			    max_attempts
 			) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid,
+			    ?::uuid, ?::uuid, ?::uuid, COALESCE(NULLIF(?, '')::uuid, dense_mem_team_shared_space(?::uuid)), ?, ?::uuid,
 			    ?, ?, NULLIF(?, '')::uuid, ?, ?::uuid, ?, ?
 			)
 		ON CONFLICT (
@@ -686,7 +689,7 @@ func enqueueEmbeddingJob(
 		    document_version, embedding_contract_id
 		) DO NOTHING
 		RETURNING embedding_job_id::text
-			`, document.TeamID, document.SearchDocumentID, document.OwnerProfileID,
+			`, document.TeamID, document.SearchDocumentID, document.OwnerProfileID, document.SpaceID, document.TeamID,
 		document.SourceKind, document.SourceID, document.SourceVersion,
 		document.ProjectionFormat, document.ProjectionGenerationID, document.DocumentVersion, document.EmbeddingContractID,
 		document.EmbeddingDimensions, maxAttempts).Scan(&jobID).Error

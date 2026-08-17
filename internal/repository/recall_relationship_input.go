@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func normalizeRecallRelationshipsInput(input RecallRelationshipsInput) RecallRelationshipsInput {
@@ -16,6 +18,8 @@ func normalizeRecallRelationshipsInput(input RecallRelationshipsInput) RecallRel
 	input.KnownRelationshipIDs = normalizeRecallUUIDList(input.KnownRelationshipIDs)
 	input.ExpandFromEntityIDs = normalizeRecallUUIDList(input.ExpandFromEntityIDs)
 	input.ExcludedGroupKeys = normalizeRecallStringList(input.ExcludedGroupKeys)
+	input.SpaceID = strings.TrimSpace(input.SpaceID)
+	input.SpaceKind = strings.TrimSpace(input.SpaceKind)
 	if input.Limit <= 0 {
 		input.Limit = defaultRelationshipRecallLimit
 	}
@@ -28,6 +32,17 @@ func normalizeRecallRelationshipsInput(input RecallRelationshipsInput) RecallRel
 func validateRecallRelationshipsInput(input RecallRelationshipsInput) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if input.SpaceKind != "" && !domain.MemorySpaceKind(input.SpaceKind).Valid() {
+		return fmt.Errorf("space_kind is invalid: %s", input.SpaceKind)
+	}
+	if input.SpaceKind != "" && input.SpaceKind != string(domain.MemorySpaceTeamShared) && input.SpaceID == "" {
+		return fmt.Errorf("space_id is required for private space kind %s", input.SpaceKind)
+	}
+	if input.SpaceID != "" {
+		if _, err := uuid.Parse(input.SpaceID); err != nil {
+			return fmt.Errorf("space_id is invalid: %w", err)
+		}
 	}
 	if input.Query == "" && len(input.ExpandFromEntityIDs) == 0 {
 		return errors.New("query or expand_from_entity_ids is required")

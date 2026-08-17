@@ -110,7 +110,7 @@ func TestCanonicalCredentialLifecycleRetainsDisabledIdentity(t *testing.T) {
 	require.Nil(t, active)
 	rows, err = repo.RotateForTeam(ctx, teamID, keyID, "restored-hash", rotatedPrefix, "stored", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), rows)
+	require.Equal(t, int64(0), rows)
 
 	rows, err = repo.DeleteForTeam(ctx, teamID, keyID)
 	require.NoError(t, err)

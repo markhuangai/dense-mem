@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 type actorContextKey struct{}
@@ -12,20 +14,22 @@ type actorContextKey struct{}
 // OwnerID is the permanent semantic ownership alias; it is distinct from the
 // team, identity, membership, and optional credential identifiers.
 type Actor struct {
-	TeamID       uuid.UUID
-	TeamName     string
-	IdentityID   uuid.UUID
-	MembershipID uuid.UUID
-	OwnerID      uuid.UUID
-	OwnerName    string
-	CredentialID *uuid.UUID
-	AuthMethod   string
-	Role         string
-	Grants       []string
+	TeamID        uuid.UUID
+	TeamName      string
+	IdentityID    uuid.UUID
+	MembershipID  uuid.UUID
+	OwnerID       uuid.UUID
+	OwnerName     string
+	CredentialID  *uuid.UUID
+	AuthMethod    string
+	Role          string
+	Grants        []string
+	AllowedSpaces []domain.MemorySpaceAccess
 }
 
 func WithActor(ctx context.Context, actor Actor) context.Context {
 	actor.Grants = append([]string(nil), actor.Grants...)
+	actor.AllowedSpaces = append([]domain.MemorySpaceAccess(nil), actor.AllowedSpaces...)
 	if actor.CredentialID != nil {
 		credentialID := *actor.CredentialID
 		actor.CredentialID = &credentialID
@@ -36,6 +40,7 @@ func WithActor(ctx context.Context, actor Actor) context.Context {
 func ActorFromContext(ctx context.Context) (Actor, bool) {
 	actor, ok := ctx.Value(actorContextKey{}).(Actor)
 	actor.Grants = append([]string(nil), actor.Grants...)
+	actor.AllowedSpaces = append([]domain.MemorySpaceAccess(nil), actor.AllowedSpaces...)
 	if actor.CredentialID != nil {
 		credentialID := *actor.CredentialID
 		actor.CredentialID = &credentialID

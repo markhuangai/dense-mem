@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -41,4 +43,57 @@ func TestSearchRenewEmbeddingJobLeaseUsesWorkerAndAttemptFence(t *testing.T) {
 	}))
 	err = repo.RenewEmbeddingJobLease(ctx, RenewEmbeddingJobLeaseInput{TeamID: teamID, EmbeddingJobID: claimed[0].EmbeddingJobID, WorkerID: "renew-worker", ExpectedAttempts: claimed[0].Attempts, Lease: time.Minute})
 	require.ErrorIs(t, err, ErrEmbeddingLeaseLost)
+}
+
+func TestSearchEmbeddingJobFinalizationFencesSpaceID(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-space-fence-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-space-fence-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-space-fence", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	for _, text := range []string{"renew space fence", "complete space fence", "fail space fence"} {
+		_ = upsertSearchDocumentForTest(t, repo, teamID, ownerID, text, 1)
+	}
+	claimed, err := repo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{TeamID: teamID, WorkerID: "space-fence-worker", Limit: 3, Lease: time.Minute})
+	require.NoError(t, err)
+	require.Len(t, claimed, 3)
+	wrongSpace := uuid.NewString()
+
+	err = repo.RenewEmbeddingJobLease(ctx, RenewEmbeddingJobLeaseInput{
+		TeamID: teamID, EmbeddingJobID: claimed[0].EmbeddingJobID, WorkerID: "space-fence-worker",
+		ExpectedAttempts: claimed[0].Attempts, Lease: time.Minute, SpaceID: wrongSpace,
+	})
+	require.ErrorIs(t, err, ErrEmbeddingLeaseLost)
+	require.NoError(t, repo.RenewEmbeddingJobLease(ctx, RenewEmbeddingJobLeaseInput{
+		TeamID: teamID, EmbeddingJobID: claimed[0].EmbeddingJobID, WorkerID: "space-fence-worker",
+		ExpectedAttempts: claimed[0].Attempts, Lease: time.Minute, SpaceID: claimed[0].SpaceID,
+	}))
+
+	err = repo.CompleteEmbeddingJob(ctx, CompleteEmbeddingJobInput{
+		TeamID: teamID, EmbeddingJobID: claimed[1].EmbeddingJobID, WorkerID: "space-fence-worker",
+		ExpectedAttempts: claimed[1].Attempts, Embedding: []float32{1, 0, 0}, SpaceID: wrongSpace,
+	})
+	require.ErrorIs(t, err, ErrEmbeddingLeaseLost)
+	require.NoError(t, repo.CompleteEmbeddingJob(ctx, CompleteEmbeddingJobInput{
+		TeamID: teamID, EmbeddingJobID: claimed[1].EmbeddingJobID, WorkerID: "space-fence-worker",
+		ExpectedAttempts: claimed[1].Attempts, Embedding: []float32{1, 0, 0}, SpaceID: claimed[1].SpaceID,
+	}))
+
+	failed, err := repo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
+		TeamID: teamID, EmbeddingJobID: claimed[2].EmbeddingJobID, WorkerID: "space-fence-worker",
+		ExpectedAttempts: claimed[2].Attempts, FailureClass: string(domain.EmbeddingFailureTransient),
+		FailureCode: string(domain.EmbeddingFailureProviderTimeout), Terminal: true, SpaceID: wrongSpace,
+	})
+	require.ErrorIs(t, err, ErrEmbeddingLeaseLost)
+	assert.Nil(t, failed)
+	failed, err = repo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
+		TeamID: teamID, EmbeddingJobID: claimed[2].EmbeddingJobID, WorkerID: "space-fence-worker",
+		ExpectedAttempts: claimed[2].Attempts, FailureClass: string(domain.EmbeddingFailureTransient),
+		FailureCode: string(domain.EmbeddingFailureProviderTimeout), Terminal: true, SpaceID: claimed[2].SpaceID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, failed)
+	assert.True(t, failed.Terminal)
 }

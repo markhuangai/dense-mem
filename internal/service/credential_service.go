@@ -29,14 +29,20 @@ type CreateCredentialRequest struct {
 	Scopes          []string   `json:"scopes"`
 	Role            string     `json:"role"`
 	OwnerIdentityID *uuid.UUID `json:"-"`
+	// MemoryBinding is immutable credential placement. Empty uses the
+	// compatibility default derived from SSO ownership and write access.
+	MemoryBinding string `json:"memory_binding,omitempty"`
 }
 
 const (
-	CredentialScopeRead         = "read"
-	CredentialScopeWrite        = "write"
-	CredentialScopeFeedbackRead = "feedback:read"
-	CredentialRoleManager       = "manager"
-	CredentialRoleMember        = "member"
+	CredentialScopeRead                = "read"
+	CredentialScopeWrite               = "write"
+	CredentialScopeFeedbackRead        = "feedback:read"
+	CredentialRoleManager              = "manager"
+	CredentialRoleMember               = "member"
+	CredentialBindingSharedOnly        = string(domain.CredentialBindingSharedOnly)
+	CredentialBindingProfilePrivate    = string(domain.CredentialBindingProfilePrivate)
+	CredentialBindingCredentialPrivate = string(domain.CredentialBindingCredentialPrivate)
 )
 
 var standardCredentialScopes = []string{CredentialScopeRead, CredentialScopeWrite}
@@ -104,6 +110,26 @@ func hasCredentialScope(scopes []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func normalizeCredentialMemoryBinding(raw string, ownerIdentityID *uuid.UUID, scopes []string) (domain.CredentialMemoryBinding, error) {
+	if strings.TrimSpace(raw) == "" {
+		if ownerIdentityID != nil && *ownerIdentityID != uuid.Nil {
+			return domain.CredentialBindingProfilePrivate, nil
+		}
+		if hasCredentialScope(scopes, CredentialScopeWrite) {
+			return domain.CredentialBindingCredentialPrivate, nil
+		}
+		return domain.CredentialBindingSharedOnly, nil
+	}
+	binding, err := domain.NormalizeCredentialMemoryBinding(strings.ToLower(strings.TrimSpace(raw)))
+	if err != nil {
+		return "", httperr.New(httperr.VALIDATION_ERROR, "memory_binding must be shared_only, profile_private, or credential_private")
+	}
+	if binding == domain.CredentialBindingProfilePrivate && (ownerIdentityID == nil || *ownerIdentityID == uuid.Nil) {
+		return "", httperr.New(httperr.VALIDATION_ERROR, "profile_private memory binding requires an SSO identity")
+	}
+	return binding, nil
 }
 
 func NormalizeCredentialRole(role string) (string, error) {
@@ -283,6 +309,10 @@ func (s *CredentialServiceImpl) CreateCredential(ctx context.Context, teamID uui
 	if role == CredentialRoleManager {
 		scopes = managerCredentialScopes(scopes)
 	}
+	binding, err := normalizeCredentialMemoryBinding(req.MemoryBinding, req.OwnerIdentityID, scopes)
+	if err != nil {
+		return nil, "", err
+	}
 
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -313,6 +343,7 @@ func (s *CredentialServiceImpl) CreateCredential(ctx context.Context, teamID uui
 		RateLimit:       req.RateLimit,
 		ExpiresAt:       req.ExpiresAt,
 		OwnerIdentityID: req.OwnerIdentityID,
+		MemoryBinding:   binding,
 	}
 
 	if err := s.repo.CreateCredential(ctx, credential); err != nil {
@@ -333,6 +364,7 @@ func (s *CredentialServiceImpl) CreateCredential(ctx context.Context, teamID uui
 		"scopes":          credential.Scopes,
 		"rate_limit":      credential.RateLimit,
 		"role":            credential.GetRole(),
+		"memory_binding":  string(credential.MemoryBinding),
 	}
 	if credential.ExpiresAt != nil {
 		afterPayload["expires_at"] = credential.ExpiresAt.Format(time.RFC3339)
@@ -562,6 +594,9 @@ func (s *CredentialServiceImpl) RotateForTeam(ctx context.Context, teamID, id uu
 	}
 	if credential == nil {
 		return nil, "", httperr.New(httperr.NOT_FOUND, fmt.Sprintf("credential with id '%s' not found", id.String()))
+	}
+	if credential.RevokedAt != nil {
+		return nil, "", httperr.New(httperr.CONFLICT, "api credential is revoked and cannot rotate")
 	}
 
 	name := credential.Name

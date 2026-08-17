@@ -44,8 +44,10 @@ func TestSearchEmbeddingClaimLocksOnlyReturnedJobs(t *testing.T) {
 				if err := tx.Raw(
 					claimEmbeddingJobsSQL,
 					teamID,
+					"",
 					1,
 					teamID,
+					"",
 					1,
 					1,
 					"holding-claim-worker",
@@ -200,7 +202,7 @@ func TestSearchEmbeddingClaimPlanStaysBoundedAtElevenThousandJobs(t *testing.T) 
 			FROM candidates
 			ORDER BY available_at ASC, created_at ASC, embedding_job_id ASC
 			LIMIT 64
-		`, teamID, 64, teamID, 64).Rows()
+				`, teamID, "", 64, teamID, "", 64).Rows()
 		if err != nil {
 			return err
 		}

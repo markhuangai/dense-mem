@@ -14,6 +14,7 @@ func searchRecallRelationshipFullText(
 	limit int,
 ) ([]SearchHit, error) {
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
+	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH `+recallRelationshipGenerationScopeSQL+`
 		SELECT document.team_id::text, document.search_document_id::text, document.source_kind,
@@ -30,6 +31,7 @@ func searchRecallRelationshipFullText(
 		 AND `+recallRelationshipGenerationDocumentSQL+`
 		 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 		WHERE document.search_tsv @@ plainto_tsquery('simple', ?)
+		  `+spaceClause+`
 		ORDER BY text_rank DESC, document.updated_at DESC, document.search_document_id ASC
 		LIMIT ?
 	`, input.TeamID, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.Query, limit).Rows()

@@ -155,19 +155,17 @@ func TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration(t *testing.T) {
 			Team struct {
 				ID uuid.UUID `json:"id"`
 			} `json:"team"`
-			Key struct {
+			Membership struct {
 				TeamID uuid.UUID `json:"team_id"`
 				Role   string    `json:"role"`
-			} `json:"key"`
-			Teams      []json.RawMessage `json:"teams"`
-			AuthMethod string            `json:"auth_method"`
+			} `json:"membership"`
+			Teams []json.RawMessage `json:"teams"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.NewDecoder(sessionResponse.Body).Decode(&session))
-	assert.Equal(t, "sso", session.Data.AuthMethod)
 	assert.Equal(t, activeTeamID, session.Data.Team.ID)
-	assert.Equal(t, activeTeamID, session.Data.Key.TeamID)
-	assert.Equal(t, service.CredentialRoleManager, session.Data.Key.Role)
+	assert.Equal(t, activeTeamID, session.Data.Membership.TeamID)
+	assert.Equal(t, service.CredentialRoleManager, session.Data.Membership.Role)
 	assert.Len(t, session.Data.Teams, 1)
 
 	identity, err := ssoRepo.GetIdentityByProviderSubject(ctx, provider.ID, "integration-subject")

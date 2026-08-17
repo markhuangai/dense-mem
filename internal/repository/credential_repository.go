@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -40,6 +41,14 @@ type CredentialRepository interface {
 	TouchLastUsed(ctx context.Context, id uuid.UUID) error
 }
 
+// CredentialMemoryBindingRepository is an optional extension implemented by
+// the canonical repository. Keeping it separate preserves lightweight auth
+// fakes and the pre-space compatibility contract.
+type CredentialMemoryBindingRepository interface {
+	GetMemoryBinding(ctx context.Context, credentialID uuid.UUID) (domain.CredentialMemoryBinding, uuid.UUID, error)
+	GetTeamSharedSpaceID(ctx context.Context, teamID uuid.UUID) (uuid.UUID, error)
+}
+
 // LastUsedUpdate is one admitted credential activity timestamp.
 type LastUsedUpdate struct {
 	ID uuid.UUID
@@ -63,6 +72,7 @@ type CredentialRepositoryImpl struct {
 
 // Ensure CredentialRepositoryImpl implements CredentialRepository
 var _ CredentialRepository = (*CredentialRepositoryImpl)(nil)
+var _ CredentialMemoryBindingRepository = (*CredentialRepositoryImpl)(nil)
 
 // NewCredentialRepository creates a new API credential repository instance.
 // rls is required; nil causes a panic at first use. Callers should pass
@@ -88,6 +98,10 @@ func (r *CredentialRepositoryImpl) CreateCredential(ctx context.Context, credent
 	}
 	keySuffix := credential.KeySuffix
 	var membershipID uuid.UUID
+	binding := credential.MemoryBinding
+	if !binding.Valid() {
+		binding = domain.CredentialBindingSharedOnly
+	}
 
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
@@ -113,18 +127,43 @@ func (r *CredentialRepositoryImpl) CreateCredential(ctx context.Context, credent
 		`, membershipID, pq.Array(credential.Scopes)).Error; err != nil {
 			return err
 		}
+
+		var memorySpaceID uuid.UUID
+		switch binding {
+		case domain.CredentialBindingProfilePrivate:
+			if credential.OwnerIdentityID == nil || *credential.OwnerIdentityID == uuid.Nil {
+				return fmt.Errorf("profile-private credential requires an owner identity")
+			}
+			if err := tx.Raw(`
+				SELECT dense_mem_ensure_private_space($1, 'profile_private', $2)
+			`, teamID, *credential.OwnerIdentityID).Row().Scan(&memorySpaceID); err != nil {
+				return err
+			}
+		case domain.CredentialBindingCredentialPrivate:
+			if err := tx.Raw(`
+				SELECT dense_mem_ensure_private_space($1, 'credential_private', $2)
+			`, teamID, credential.ID).Row().Scan(&memorySpaceID); err != nil {
+				return err
+			}
+		default:
+			if err := tx.Raw(`SELECT id FROM memory_spaces WHERE team_id = $1 AND kind = 'team_shared' LIMIT 1`, teamID).Row().Scan(&memorySpaceID); err != nil {
+				return err
+			}
+		}
 		if err := tx.Exec(`
 			INSERT INTO credentials (
 				id, actor_identity_id, owner_identity_id, team_id, kind, key_hash, key_prefix,
-				key_suffix, name, scopes, rate_limit, status, expires_at, created_at, updated_at
+				key_suffix, name, scopes, rate_limit, status, expires_at, memory_binding, memory_space_id, created_at, updated_at
 			) VALUES (
 				$1, $1, $2, $3, 'api_key', $4, $5, NULLIF($6, ''), $7, $8, $9,
-				'active', $10, $11, $11
+				'active', $10, $11, $12, $13, $13
 			)
 		`, credential.ID, credential.OwnerIdentityID, teamID, credential.KeyHash, keyPrefix, keySuffix, name,
-			pq.Array(credential.Scopes), credential.RateLimit, credential.ExpiresAt, now).Error; err != nil {
+			pq.Array(credential.Scopes), credential.RateLimit, credential.ExpiresAt, string(binding), memorySpaceID, now).Error; err != nil {
 			return err
 		}
+		credential.MemoryBinding = binding
+		credential.MemorySpaceID = memorySpaceID
 		return tx.Exec(`
 			INSERT INTO ownership_aliases (
 				team_id, legacy_owner_id, canonical_identity_id, credential_id, reason
@@ -214,7 +253,11 @@ func (r *CredentialRepositoryImpl) ListByTeam(ctx context.Context, teamID uuid.U
 			if serr := state.scan(rows); serr != nil {
 				return serr
 			}
-			credentials = append(credentials, state.result())
+			credential := state.result()
+			if err := r.populateMemoryBinding(ctx, credential); err != nil {
+				return err
+			}
+			credentials = append(credentials, credential)
 		}
 		return rows.Err()
 	})
@@ -245,7 +288,45 @@ func (r *CredentialRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix
 	if err != nil {
 		return nil, fmt.Errorf("failed to get api credential by prefix: %w", err)
 	}
+	if canonicalKey != nil {
+		if err := r.populateMemoryBinding(ctx, canonicalKey); err != nil {
+			return nil, err
+		}
+	}
 	return canonicalKey, nil
+}
+
+func (r *CredentialRepositoryImpl) GetMemoryBinding(ctx context.Context, credentialID uuid.UUID) (domain.CredentialMemoryBinding, uuid.UUID, error) {
+	var binding string
+	var spaceID uuid.UUID
+	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT COALESCE(memory_binding, 'shared_only'), memory_space_id FROM credentials WHERE id = $1 AND kind = 'api_key'`, credentialID).Row().Scan(&binding, &spaceID)
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.CredentialBindingSharedOnly, uuid.Nil, nil
+		}
+		return domain.CredentialBindingSharedOnly, uuid.Nil, fmt.Errorf("failed to load credential memory binding: %w", err)
+	}
+	normalized, err := domain.NormalizeCredentialMemoryBinding(binding)
+	if err != nil {
+		return domain.CredentialBindingSharedOnly, uuid.Nil, err
+	}
+	return normalized, spaceID, nil
+}
+
+func (r *CredentialRepositoryImpl) GetTeamSharedSpaceID(ctx context.Context, teamID uuid.UUID) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT id FROM memory_spaces WHERE team_id = $1 AND kind = 'team_shared' LIMIT 1`, teamID).Row().Scan(&id)
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return uuid.Nil, nil
+		}
+		return uuid.Nil, fmt.Errorf("failed to load team shared memory space: %w", err)
+	}
+	return id, nil
 }
 
 // GetActiveByID retrieves the current authorization metadata for a standard
@@ -262,6 +343,11 @@ func (r *CredentialRepositoryImpl) GetActiveByID(ctx context.Context, id uuid.UU
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active api credential by id: %w", err)
+	}
+	if canonicalKey != nil {
+		if err := r.populateMemoryBinding(ctx, canonicalKey); err != nil {
+			return nil, err
+		}
 	}
 	return canonicalKey, nil
 }
@@ -495,11 +581,10 @@ func (r *CredentialRepositoryImpl) RotateForTeam(ctx context.Context, teamID, id
 			    key_prefix = $2,
 			    key_suffix = NULLIF($3, ''),
 			    expires_at = $4,
-			    status = 'active',
-			    revoked_at = NULL,
 			    last_used_at = NULL,
 			    updated_at = $5
-			WHERE id = $6 AND team_id = $7 AND kind = 'api_key' AND status <> 'disabled'
+			WHERE id = $6 AND team_id = $7 AND kind = 'api_key'
+			  AND status = 'active' AND revoked_at IS NULL
 		`, keyHash, keyPrefix, keySuffix, expiresAt, now, id, teamID)
 		if res.Error != nil {
 			return res.Error
@@ -508,19 +593,7 @@ func (r *CredentialRepositoryImpl) RotateForTeam(ctx context.Context, teamID, id
 		if rowsAffected == 0 {
 			return nil
 		}
-		if err := tx.Exec(`
-			UPDATE team_memberships
-			SET status = 'active', updated_at = $1
-			WHERE team_id = $2
-			  AND actor_identity_id = (SELECT actor_identity_id FROM credentials WHERE id = $3)
-		`, now, teamID, id).Error; err != nil {
-			return err
-		}
-		return tx.Exec(`
-			UPDATE actor_identities
-			SET active = true, updated_at = $1
-			WHERE id = (SELECT actor_identity_id FROM credentials WHERE id = $2)
-		`, now, id).Error
+		return nil
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to rotate credential for credential: %w", err)
@@ -646,6 +719,11 @@ func (r *CredentialRepositoryImpl) GetByIDForTeam(ctx context.Context, teamID, i
 	if err != nil {
 		return nil, fmt.Errorf("failed to get api credential for team: %w", err)
 	}
+	if credential != nil {
+		if err := r.populateMemoryBinding(ctx, credential); err != nil {
+			return nil, err
+		}
+	}
 	return credential, nil
 }
 
@@ -675,7 +753,30 @@ func (r *CredentialRepositoryImpl) GetSSOOwnedCredential(ctx context.Context, te
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sso-owned api credential for team: %w", err)
 	}
+	if credential != nil {
+		if err := r.populateMemoryBinding(ctx, credential); err != nil {
+			return nil, err
+		}
+	}
 	return credential, nil
+}
+
+func (r *CredentialRepositoryImpl) populateMemoryBinding(ctx context.Context, credential *domain.Credential) error {
+	if credential == nil {
+		return nil
+	}
+	binding, spaceID, err := r.GetMemoryBinding(ctx, credential.ID)
+	if err != nil {
+		return err
+	}
+	credential.MemoryBinding = binding
+	credential.MemorySpaceID = spaceID
+	sharedID, err := r.GetTeamSharedSpaceID(ctx, credential.TeamID)
+	if err != nil {
+		return err
+	}
+	credential.TeamSharedSpaceID = sharedID
+	return nil
 }
 
 func parseOptionalUUID(raw string) *uuid.UUID {
