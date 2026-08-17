@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -166,7 +167,8 @@ func TestRecallPrivateBranchFailureIsBounded(t *testing.T) {
 		contract:    &repository.ActiveSearchContract{EmbeddingDimensions: 3},
 		failSpaceID: privateID.String(),
 	}
-	svc := NewRecallService(RecallDependencies{Search: search})
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	svc := NewRecallService(RecallDependencies{Search: search, Metrics: metrics})
 	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
 		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
 		AllowedSpaces: []domain.MemorySpaceAccess{
@@ -181,6 +183,9 @@ func TestRecallPrivateBranchFailureIsBounded(t *testing.T) {
 	require.Contains(t, result.Degradations, RecallDegradationResult{
 		Frontier: "evidence", Optional: true, Code: "space_branch_unavailable", Message: "authorized memory-space branch was unavailable",
 	})
+	samples := metrics.RecallSamples()
+	require.Len(t, samples, 1)
+	require.Equal(t, "ok", samples[0].Outcome)
 }
 
 func TestRecallSharedBranchFailureRemainsRequired(t *testing.T) {

@@ -295,18 +295,20 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 	spaceKind := branchKind(branch)
 	// Private ingestion is not supported here, so graph and hypothesis expansion stays on shared data.
 	teamSharedBranch := spaceKind == string(domain.MemorySpaceTeamShared)
-	started := time.Now()
-	defer func() {
-		outcome := "ok"
-		resultCount := 0
-		if err != nil {
-			outcome = "error"
-		}
-		if result != nil {
-			resultCount = len(result.Results)
-		}
-		observability.RecordRecall(ctx, s.metrics, float64(time.Since(started).Microseconds())/1000, resultCount, outcome)
-	}()
+	if !recallBranchMetricsSuppressed(ctx) {
+		started := time.Now()
+		defer func() {
+			outcome := "ok"
+			resultCount := 0
+			if err != nil {
+				outcome = "error"
+			}
+			if result != nil {
+				resultCount = len(result.Results)
+			}
+			observability.RecordRecall(ctx, s.metrics, float64(time.Since(started).Microseconds())/1000, resultCount, outcome)
+		}()
+	}
 	req = normalizeRecallRequest(req)
 	contract := req.recallContract
 	if contract == nil {

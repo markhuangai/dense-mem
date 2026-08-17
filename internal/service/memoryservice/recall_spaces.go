@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -16,14 +17,21 @@ import (
 const recallFusionRRFConstant = 60
 
 type recallBranchContextKey struct{}
+type recallBranchMetricsSuppressedContextKey struct{}
 
 func withRecallBranch(ctx context.Context, branch domain.MemorySpaceAccess) context.Context {
-	return context.WithValue(ctx, recallBranchContextKey{}, branch)
+	ctx = context.WithValue(ctx, recallBranchContextKey{}, branch)
+	return context.WithValue(ctx, recallBranchMetricsSuppressedContextKey{}, true)
 }
 
 func recallBranchFromContext(ctx context.Context) (domain.MemorySpaceAccess, bool) {
 	branch, ok := ctx.Value(recallBranchContextKey{}).(domain.MemorySpaceAccess)
 	return branch, ok
+}
+
+func recallBranchMetricsSuppressed(ctx context.Context) bool {
+	suppressed, _ := ctx.Value(recallBranchMetricsSuppressedContextKey{}).(bool)
+	return suppressed
 }
 
 func branchID(branch domain.MemorySpaceAccess) string {
@@ -40,7 +48,19 @@ func branchKind(branch domain.MemorySpaceAccess) string {
 	return string(domain.MemorySpaceTeamShared)
 }
 
-func (s *recallService) recallAcrossSpaces(ctx context.Context, req RecallRequest, actor requestctx.Actor) (*RecallResult, error) {
+func (s *recallService) recallAcrossSpaces(ctx context.Context, req RecallRequest, actor requestctx.Actor) (fused *RecallResult, err error) {
+	started := time.Now()
+	defer func() {
+		outcome := "ok"
+		resultCount := 0
+		if err != nil {
+			outcome = "error"
+		}
+		if fused != nil {
+			resultCount = len(fused.Results)
+		}
+		observability.RecordRecall(ctx, s.metrics, float64(time.Since(started).Microseconds())/1000, resultCount, outcome)
+	}()
 	req = normalizeRecallRequest(req)
 	contract, err := s.search.GetActiveSearchContract(ctx)
 	if err != nil {
@@ -85,7 +105,7 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req RecallReques
 	if teamErr != nil {
 		return nil, teamErr
 	}
-	fused := fuseRecallResults(results, req.Limit, recallOptionalLimitValue(req.RelationshipLimit))
+	fused = fuseRecallResults(results, req.Limit, recallOptionalLimitValue(req.RelationshipLimit))
 	if embeddingDegradation != nil {
 		fused.Degradations = append([]RecallDegradationResult{*embeddingDegradation}, fused.Degradations...)
 		fused.Degradation = &fused.Degradations[0]
