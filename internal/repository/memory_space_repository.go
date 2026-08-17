@@ -45,7 +45,7 @@ func (r *MemorySpaceRepositoryImpl) GetByIDForTeam(ctx context.Context, teamID, 
 func (r *MemorySpaceRepositoryImpl) ListAllowed(ctx context.Context, teamID uuid.UUID, allowed []domain.MemorySpaceAccess) ([]*domain.MemorySpace, error) {
 	var out []*domain.MemorySpace
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
-		rows, err := tx.Raw(`SELECT id, team_id, kind, owner_profile_id, owner_credential_id FROM memory_spaces WHERE team_id = $1 AND (kind = 'team_shared' OR id = ANY(?::uuid[])) ORDER BY kind, id`, teamID, pq.Array(allowedSpaceIDs(allowed))).Rows()
+		rows, err := tx.Raw(`SELECT id, team_id, kind, owner_profile_id, owner_credential_id FROM memory_spaces WHERE team_id = $1 AND (kind = 'team_shared' OR id = ANY($2::uuid[])) ORDER BY kind, id`, teamID, pq.Array(allowedSpaceIDs(allowed))).Rows()
 		if err != nil {
 			return err
 		}

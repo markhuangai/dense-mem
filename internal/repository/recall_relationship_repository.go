@@ -225,6 +225,7 @@ func searchRecallRelationshipExactVector(
 	contract *ActiveSearchContract,
 	limit int,
 ) ([]SearchHit, error) {
+	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	if len(input.QueryEmbedding) != contract.EmbeddingDimensions {
 		return nil, fmt.Errorf("%w: contract dimensions %d, query dimensions %d", ErrSearchContractMismatch, contract.EmbeddingDimensions, len(input.QueryEmbedding))
 	}
@@ -283,6 +284,7 @@ func searchRecallRelationshipExactVector(
 				     )
 			     AND document.search_state = 'current'
 			     AND document.embedding IS NOT NULL
+			     `+spaceClause+`
 			    LIMIT ?
 			) AS exact_candidates
 		`, input.TeamID, input.TeamID, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions, contract.ExactMaxRows+1).Scan(&candidateCount).Error; err != nil {
@@ -296,7 +298,6 @@ func searchRecallRelationshipExactVector(
 	if err != nil {
 		return nil, err
 	}
-	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH generation_count AS (
 		    SELECT count(*) AS value

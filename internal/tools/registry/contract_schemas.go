@@ -583,10 +583,11 @@ func recallDegradationSchema() map[string]any {
 
 func recallResultSchema() map[string]any {
 	return closedObject(
-		[]string{"evidence_id", "context"},
+		[]string{"evidence_id", "context", "space_kind"},
 		map[string]any{
 			"evidence_id": schemaString("Evidence ID.", 128),
 			"context":     schemaString("Bounded evidence context.", 2000),
+			"space_kind":  schemaEnum([]string{"team_shared", "profile_private", "credential_private"}),
 		},
 	)
 }

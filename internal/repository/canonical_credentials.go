@@ -54,7 +54,16 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 			COALESCE(owner_membership.sso_group_id, ''),
 			COALESCE(owner_membership.sso_entitlement_status, ''),
 			owner_membership.sso_last_entitlement_checked_at,
-			owner_membership.sso_last_login_at
+			owner_membership.sso_last_login_at,
+			COALESCE(c.memory_binding, 'shared_only'),
+			COALESCE(c.memory_space_id::text, ''),
+			COALESCE((
+				SELECT shared_space.id::text
+				FROM memory_spaces AS shared_space
+				WHERE shared_space.team_id = c.team_id
+				  AND shared_space.kind = 'team_shared'
+				LIMIT 1
+			), '')
 		FROM credentials c
 		JOIN actor_identities a
 		  ON a.id = c.actor_identity_id
@@ -92,6 +101,7 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 	}
 	var key domain.Credential
 	var ownerIdentityID, ssoProviderID string
+	var memoryBinding, memorySpaceID, teamSharedSpaceID string
 	if err := rows.Scan(
 		&key.ID,
 		&key.ActorIdentityID,
@@ -118,10 +128,16 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		&key.SSOEntitlementStatus,
 		&key.SSOLastEntitlementCheckedAt,
 		&key.SSOLastLoginAt,
+		&memoryBinding,
+		&memorySpaceID,
+		&teamSharedSpaceID,
 	); err != nil {
 		return nil, err
 	}
 	key.OwnerIdentityID = parseOptionalUUID(ownerIdentityID)
 	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
+	if err := applyCredentialMemoryFields(&key, memoryBinding, memorySpaceID, teamSharedSpaceID); err != nil {
+		return nil, err
+	}
 	return &key, nil
 }

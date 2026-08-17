@@ -208,10 +208,6 @@ func (r *CredentialRepositoryImpl) ListByTeam(ctx context.Context, teamID uuid.U
 
 	credentials := make([]*domain.Credential, 0)
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
-		sharedID, err := r.GetTeamSharedSpaceID(ctx, teamID)
-		if err != nil {
-			return err
-		}
 		rows, rerr := tx.Raw(`
 				SELECT
 					c.id, c.actor_identity_id, membership.id, alias.legacy_owner_id,
@@ -224,7 +220,15 @@ func (r *CredentialRepositoryImpl) ListByTeam(ctx context.Context, teamID uuid.U
 					COALESCE(owner_membership.sso_group_id, ''),
 					COALESCE(owner_membership.sso_entitlement_status, ''),
 					owner_membership.sso_last_entitlement_checked_at,
-					owner_membership.sso_last_login_at
+					owner_membership.sso_last_login_at,
+					COALESCE(c.memory_binding, 'shared_only'), COALESCE(c.memory_space_id::text, ''),
+					COALESCE((
+						SELECT shared_space.id::text
+						FROM memory_spaces AS shared_space
+						WHERE shared_space.team_id = c.team_id
+						  AND shared_space.kind = 'team_shared'
+						LIMIT 1
+					), '')
 				FROM credentials c
 				JOIN team_memberships membership
 				  ON membership.actor_identity_id = c.actor_identity_id AND membership.team_id = c.team_id
@@ -257,8 +261,8 @@ func (r *CredentialRepositoryImpl) ListByTeam(ctx context.Context, teamID uuid.U
 			if serr := state.scan(rows); serr != nil {
 				return serr
 			}
-			credential := state.result()
-			if err := r.populateMemoryBinding(ctx, credential, sharedID); err != nil {
+			credential, err := state.result()
+			if err != nil {
 				return err
 			}
 			credentials = append(credentials, credential)
@@ -291,11 +295,6 @@ func (r *CredentialRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get api credential by prefix: %w", err)
-	}
-	if canonicalKey != nil {
-		if err := r.populateMemoryBinding(ctx, canonicalKey); err != nil {
-			return nil, err
-		}
 	}
 	return canonicalKey, nil
 }
@@ -347,11 +346,6 @@ func (r *CredentialRepositoryImpl) GetActiveByID(ctx context.Context, id uuid.UU
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active api credential by id: %w", err)
-	}
-	if canonicalKey != nil {
-		if err := r.populateMemoryBinding(ctx, canonicalKey); err != nil {
-			return nil, err
-		}
 	}
 	return canonicalKey, nil
 }
@@ -632,12 +626,22 @@ const credentialHydrationSelect = `
 		COALESCE(owner_membership.sso_group_id, ''),
 		COALESCE(owner_membership.sso_entitlement_status, ''),
 		owner_membership.sso_last_entitlement_checked_at,
-		owner_membership.sso_last_login_at
+		owner_membership.sso_last_login_at,
+		COALESCE(c.memory_binding, 'shared_only'),
+		COALESCE(c.memory_space_id::text, ''),
+		COALESCE((
+			SELECT shared_space.id::text
+			FROM memory_spaces AS shared_space
+			WHERE shared_space.team_id = c.team_id
+			  AND shared_space.kind = 'team_shared'
+			LIMIT 1
+		), '')
 `
 
 type credentialHydrationState struct {
-	credential                     domain.Credential
-	ownerIdentityID, ssoProviderID string
+	credential                                      domain.Credential
+	ownerIdentityID, ssoProviderID                  string
+	memoryBinding, memorySpaceID, teamSharedSpaceID string
 }
 
 func (s *credentialHydrationState) scan(rows *sql.Rows) error {
@@ -665,13 +669,19 @@ func (s *credentialHydrationState) scan(rows *sql.Rows) error {
 		&s.credential.SSOEntitlementStatus,
 		&s.credential.SSOLastEntitlementCheckedAt,
 		&s.credential.SSOLastLoginAt,
+		&s.memoryBinding,
+		&s.memorySpaceID,
+		&s.teamSharedSpaceID,
 	)
 }
 
-func (s *credentialHydrationState) result() *domain.Credential {
+func (s *credentialHydrationState) result() (*domain.Credential, error) {
 	s.credential.OwnerIdentityID = parseOptionalUUID(s.ownerIdentityID)
 	s.credential.SSOProviderID = parseOptionalUUID(s.ssoProviderID)
-	return &s.credential
+	if err := applyCredentialMemoryFields(&s.credential, s.memoryBinding, s.memorySpaceID, s.teamSharedSpaceID); err != nil {
+		return nil, err
+	}
+	return &s.credential, nil
 }
 
 func (r *CredentialRepositoryImpl) getOneHydratedCredential(ctx context.Context, teamID uuid.UUID, query string, args ...any) (*domain.Credential, error) {
@@ -697,7 +707,7 @@ func (r *CredentialRepositoryImpl) getOneHydratedCredential(ctx context.Context,
 	if !found {
 		return nil, nil
 	}
-	return state.result(), nil
+	return state.result()
 }
 
 // GetByIDForTeam retrieves an API credential by ID only when it belongs to teamID.
@@ -722,11 +732,6 @@ func (r *CredentialRepositoryImpl) GetByIDForTeam(ctx context.Context, teamID, i
 	`, id, teamID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get api credential for team: %w", err)
-	}
-	if credential != nil {
-		if err := r.populateMemoryBinding(ctx, credential); err != nil {
-			return nil, err
-		}
 	}
 	return credential, nil
 }
@@ -757,34 +762,33 @@ func (r *CredentialRepositoryImpl) GetSSOOwnedCredential(ctx context.Context, te
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sso-owned api credential for team: %w", err)
 	}
-	if credential != nil {
-		if err := r.populateMemoryBinding(ctx, credential); err != nil {
-			return nil, err
-		}
-	}
 	return credential, nil
 }
 
-func (r *CredentialRepositoryImpl) populateMemoryBinding(ctx context.Context, credential *domain.Credential, sharedSpaceIDs ...uuid.UUID) error {
-	if credential == nil {
-		return nil
+func applyCredentialMemoryFields(credential *domain.Credential, bindingRaw, memorySpaceRaw, teamSharedSpaceRaw string) error {
+	binding, err := domain.NormalizeCredentialMemoryBinding(bindingRaw)
+	if err != nil {
+		return err
 	}
-	binding, spaceID, err := r.GetMemoryBinding(ctx, credential.ID)
+	memorySpaceID, err := parseMemorySpaceUUID(memorySpaceRaw)
+	if err != nil {
+		return err
+	}
+	teamSharedSpaceID, err := parseMemorySpaceUUID(teamSharedSpaceRaw)
 	if err != nil {
 		return err
 	}
 	credential.MemoryBinding = binding
-	credential.MemorySpaceID = spaceID
-	if len(sharedSpaceIDs) > 0 {
-		credential.TeamSharedSpaceID = sharedSpaceIDs[0]
-		return nil
-	}
-	sharedID, err := r.GetTeamSharedSpaceID(ctx, credential.TeamID)
-	if err != nil {
-		return err
-	}
-	credential.TeamSharedSpaceID = sharedID
+	credential.MemorySpaceID = memorySpaceID
+	credential.TeamSharedSpaceID = teamSharedSpaceID
 	return nil
+}
+
+func parseMemorySpaceUUID(raw string) (uuid.UUID, error) {
+	if raw == "" {
+		return uuid.Nil, nil
+	}
+	return uuid.Parse(raw)
 }
 
 func parseOptionalUUID(raw string) *uuid.UUID {

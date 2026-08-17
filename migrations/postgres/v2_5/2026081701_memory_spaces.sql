@@ -365,5 +365,5 @@ DO $dense_mem_memory_spaces_down$
 BEGIN
     RAISE EXCEPTION 'memory-space boundary rollback is prohibited; restore the pre-migration backup';
 END;
-$$;
+$dense_mem_memory_spaces_down$;
 -- +goose StatementEnd

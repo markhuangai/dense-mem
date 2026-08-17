@@ -78,6 +78,9 @@ func TestCanonicalCredentialLifecycleRetainsDisabledIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, active)
 	require.Equal(t, []string{"read", "write"}, active.Scopes)
+	require.Equal(t, domain.CredentialBindingSharedOnly, active.MemoryBinding)
+	require.NotEqual(t, uuid.Nil, active.MemorySpaceID)
+	require.Equal(t, active.MemorySpaceID, active.TeamSharedSpaceID)
 
 	rows, err := repo.UpdateNameForTeam(ctx, teamID, keyID, "renamed-key")
 	require.NoError(t, err)
@@ -90,6 +93,16 @@ func TestCanonicalCredentialLifecycleRetainsDisabledIdentity(t *testing.T) {
 	require.Equal(t, "renamed-key", loaded.Name)
 	require.Equal(t, "manager", loaded.Role)
 	require.Equal(t, []string{"read", "feedback:read"}, loaded.Scopes)
+	require.Equal(t, domain.CredentialBindingSharedOnly, loaded.MemoryBinding)
+	require.Equal(t, active.MemorySpaceID, loaded.MemorySpaceID)
+	require.Equal(t, active.TeamSharedSpaceID, loaded.TeamSharedSpaceID)
+
+	listed, err := repo.ListByTeam(ctx, teamID, 100, 0)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	require.Equal(t, domain.CredentialBindingSharedOnly, listed[0].MemoryBinding)
+	require.Equal(t, active.MemorySpaceID, listed[0].MemorySpaceID)
+	require.Equal(t, active.TeamSharedSpaceID, listed[0].TeamSharedSpaceID)
 
 	rotatedPrefix := "dm_rotated_" + keyID.String()[:13]
 	rows, err = repo.RotateForTeam(ctx, teamID, keyID, "rotated-hash", rotatedPrefix, "rotate", nil)

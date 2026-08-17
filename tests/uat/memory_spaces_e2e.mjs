@@ -27,24 +27,30 @@ if (scenario === "credential_memory_binding") {
   await revokeCredential(teamID, privateWrite.credential.id);
   const denied = await fetch(`${userURL}/mcp`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${rotated.apiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${rotated.apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 99, method: "tools/list", params: {} }),
   });
   assert(denied.status >= 401 && denied.status < 500, "revoked credential remained usable");
 } else if (scenario === "space_aware_recall") {
-  const recall = await mcpSuccess("recall_memory", { query: "memory space e2e team shared query", limit: 20 }, apiKey);
-  for (const item of recall.results ?? []) assert(item.space_kind === "team_shared", "team-shared result lacked its space label");
-  const privateRecall = await mcpSuccess("recall_memory", { query: "memory space e2e private branch query", limit: 20 }, privateRead.apiKey);
+  const sharedNeedle = "memory space e2e mentions team shared evidence sentinel";
+  await mcpSuccess("remember", rememberInput(sharedNeedle, "memory space e2e", "mentions", "sentinel"), apiKey);
+  const recall = await waitForRecall(sharedNeedle, sharedNeedle, apiKey);
+  assert((recall.results ?? []).some((item) => item.context?.includes(sharedNeedle)), "team-shared recall positive control did not return the seeded evidence");
+  for (const item of recall.results ?? []) assert(item.space_kind === "team_shared", `team-shared result lacked its space label: ${JSON.stringify(item)}`);
+  const privateRecall = await waitForRecall(sharedNeedle, sharedNeedle, privateRead.apiKey);
+  assert((privateRecall.results ?? []).some((item) => item.context?.includes(sharedNeedle)), "credential-private recall did not retain the authorized team-shared branch");
   for (const item of privateRecall.results ?? []) assert(item.space_kind === "team_shared", "private-bound read-only recall exposed an unexpected private result");
-  const repeat = await mcpSuccess("recall_memory", { query: "memory space e2e private branch query", limit: 20 }, privateRead.apiKey);
+  const repeat = await mcpSuccess("recall_memory", { query: sharedNeedle, limit: 20 }, privateRead.apiKey);
   assert(JSON.stringify(privateRecall.results ?? []) === JSON.stringify(repeat.results ?? []), "space-aware recall was not deterministic");
 } else if (scenario === "memory_space_isolation") {
   const otherTeam = await createTeam("E2E isolated team");
   const other = await createCredential(otherTeam.id, "isolated key", { scopes: ["read", "write"], memory_binding: "credential_private" });
   created.push(other);
-  await mcpSuccess("remember", rememberInput("isolated team mentions sentinel", "isolated team", "mentions", "sentinel"), other.apiKey);
+  const isolatedNeedle = "isolated team mentions sentinel";
+  await mcpSuccess("remember", rememberInput(isolatedNeedle, "isolated team", "mentions", "sentinel"), other.apiKey);
+  await waitForRecall("isolated team sentinel", isolatedNeedle, other.apiKey);
   const recall = await mcpSuccess("recall_memory", { query: "isolated team sentinel", limit: 20 }, apiKey);
-  assert(!(recall.results ?? []).some((item) => item.context?.includes("isolated team mentions sentinel")), "cross-team evidence leaked into recall");
+  assert(!(recall.results ?? []).some((item) => item.context?.includes(isolatedNeedle)), "cross-team evidence leaked into recall");
 } else if (scenario === "memory_space_backfill") {
   const readiness = await fetch(`${userURL}/ready`);
   assert(readiness.ok, "memory-space migration did not leave the server ready");
@@ -57,7 +63,7 @@ if (scenario === "credential_memory_binding") {
 console.log(JSON.stringify({ status: "ok", scenario, immutable_bindings: true, labels_and_isolation: true }, null, 2));
 
 async function assertReadOnlyCannotWrite(key) {
-  const result = await mcpCall("remember", rememberInput("read-only must not write", "read-only", "mentions", "write"), key);
+  const result = await mcpCall("remember", rememberInput("read-only must not write", "read-only", "mentions", "write"), key, { allowStatus: true });
   assert(result.result?.isError === true || result.error, "read-only credential wrote memory");
 }
 
@@ -89,12 +95,12 @@ async function mcpSuccess(name, args, key) {
   return JSON.parse(text);
 }
 
-async function mcpCall(name, args, key = apiKey) {
+async function mcpCall(name, args, key = apiKey, httpOptions = {}) {
   return httpJSON(`${userURL}/mcp`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcID, method: "tools/call", params: { name, arguments: args } }),
-  });
+  }, httpOptions);
 }
 
 async function controlJSON(path, options = {}) {
@@ -104,13 +110,22 @@ async function controlJSON(path, options = {}) {
   });
 }
 
-async function httpJSON(url, options) {
+async function httpJSON(url, options, { allowStatus = false } = {}) {
   const response = await fetch(url, options);
   const text = await response.text();
   let body = {};
   try { body = text ? JSON.parse(text) : {}; } catch { body = { raw: text }; }
-  if (!response.ok && response.status >= 500) throw new Error(`HTTP ${response.status} ${url}`);
+  if (!response.ok && !allowStatus) throw new Error(`HTTP ${response.status} ${url}: ${text.slice(0, 400)}`);
   return body;
+}
+
+async function waitForRecall(query, needle, key, attempts = 30, delayMs = 1000) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const recall = await mcpSuccess("recall_memory", { query, limit: 20 }, key);
+    if ((recall.results ?? []).some((item) => item.context?.includes(needle))) return recall;
+    if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  throw new Error(`recall never returned seeded evidence: ${needle}`);
 }
 
 function requiredEnv(name) { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }

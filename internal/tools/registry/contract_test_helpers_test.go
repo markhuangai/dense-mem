@@ -104,6 +104,7 @@ func (s *stubRecallService) Recall(_ context.Context, req memoryservice.RecallRe
 			RelationshipIDs: []string{"relationship-canonical"},
 			Rank:            1,
 			Context:         "Dense-Mem uses PostgreSQL.",
+			SpaceKind:       string(domain.MemorySpaceTeamShared),
 		}},
 		SearchState: string(domain.SearchProjectionCurrent),
 	}, nil

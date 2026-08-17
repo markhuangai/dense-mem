@@ -78,6 +78,7 @@ func recallContractOutput(res *memoryservice.RecallResult) map[string]any {
 		results = append(results, map[string]any{
 			"evidence_id": item.EvidenceID,
 			"context":     item.Context,
+			"space_kind":  item.SpaceKind,
 		})
 	}
 	relatedRelationships := res.RelatedRelationships
