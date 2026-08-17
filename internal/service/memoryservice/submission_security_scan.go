@@ -170,7 +170,7 @@ func ScanSubmissionBatch(contents []string) (SubmissionSecurityBatchScan, error)
 }
 
 func scanSubmissionWithProviderProposal(contents []string, proposal map[string]any) (SubmissionSecurityBatchScan, error) {
-	inputs := make([]submissionSecurityInput, 0, len(contents)+1)
+	inputs := make([]submissionSecurityInput, 0)
 	for index, content := range contents {
 		inputs = append(inputs, submissionSecurityInput{
 			content:       content,

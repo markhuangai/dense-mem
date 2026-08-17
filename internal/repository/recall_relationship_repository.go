@@ -79,7 +79,7 @@ func (r *SearchRepositoryImpl) RecallRelationships(ctx context.Context, input Re
 	if err != nil {
 		return nil, fmt.Errorf("recall: hydrate relationships: %w", err)
 	}
-	results := make([]RecallRelationshipHit, 0, input.Limit)
+	results := make([]RecallRelationshipHit, 0)
 	seenGroups := map[string]struct{}{}
 	searchState := vectorState
 	for _, candidate := range candidates {

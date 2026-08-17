@@ -81,6 +81,10 @@ export function UserPortalApp() {
   const [theme, setTheme] = useState<Theme>(() => readTheme());
 
   useEffect(() => {
+    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+  }, []);
+
+  useEffect(() => {
     if (token) {
       return;
     }
@@ -423,7 +427,6 @@ function UserPortal({
               session={session}
               onRotated={(rotated) => {
                 if (authMode === "api_key") {
-                  sessionStorage.setItem(TOKEN_STORAGE_KEY, rotated.api_key);
                   onTokenChange(rotated.api_key);
                 }
                 setSession((current) => current ? {

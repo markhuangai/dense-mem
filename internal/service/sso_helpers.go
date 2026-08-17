@@ -311,7 +311,10 @@ func hashMatches(raw, expectedHash string) bool {
 
 func safeRedirectPath(raw string) string {
 	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" || !strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "//") {
+	if trimmed == "" ||
+		!strings.HasPrefix(trimmed, "/") ||
+		strings.HasPrefix(trimmed, "//") ||
+		strings.HasPrefix(trimmed, "/\\") {
 		return "/ui"
 	}
 	return trimmed

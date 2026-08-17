@@ -270,7 +270,7 @@ jobs:
           mcp-servers: |
             dense_mem_project_memory:
               type: http
-              url: ${{ toJSON(secrets.PROJECT_MEMORY_MCP_ENDPOINT) }}
+              url: ${{ toJSON(format('{0}', secrets.PROJECT_MEMORY_MCP_ENDPOINT)) }}
               headers:
                 Authorization: ${{ toJSON(format('Bearer {0}', secrets.PROJECT_MEMORY_MCP_TOKEN)) }}
               timeout: 30000

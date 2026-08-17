@@ -208,6 +208,7 @@ describe("UserPortalApp", () => {
 
     render(<UserPortalApp />);
     await screen.findByText("Research Team");
+    expect(sessionStorage.getItem("denseMem.userApiKey")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: /my credential/i }));
 
     expect(await screen.findByRole("button", { name: /regenerate key/i })).toBeDisabled();
@@ -419,7 +420,7 @@ describe("UserPortalApp", () => {
     });
   });
 
-  it("rotates the current write-scoped key and stores the replacement", async () => {
+  it("rotates the current write-scoped key without storing the replacement", async () => {
     const writeSession: UserSession = {
       ...baseSession,
       membership: { ...baseSession.membership, grants: ["read", "write"] },
@@ -437,7 +438,7 @@ describe("UserPortalApp", () => {
     expect(await screen.findByDisplayValue("dm_new_plaintext")).toHaveAccessibleName("Generated API key");
     await userEvent.click(screen.getByRole("button", { name: /copy api key/i }));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("dm_new_plaintext");
-    expect(sessionStorage.getItem("denseMem.userApiKey")).toBe("dm_new_plaintext");
+    expect(sessionStorage.getItem("denseMem.userApiKey")).toBeNull();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/ui/api/credential/rotate", expect.objectContaining({ method: "POST" }));
     });
