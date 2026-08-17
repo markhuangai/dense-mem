@@ -141,9 +141,11 @@ func TestRecallPrivateBranchDoesNotExpandTeamGraph(t *testing.T) {
 		}},
 	}
 	communityLimit := 1
+	metrics := &recallCommunityMetricsStub{InMemoryDiscoverabilityMetrics: observability.NewInMemoryDiscoverabilityMetrics()}
 	svc := NewRecallService(RecallDependencies{
 		Search: search, Communities: communities,
 		CommunityConfig: recallCommunityConfigStub{enabled: true},
+		Metrics:         metrics,
 	})
 	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
 		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
@@ -158,6 +160,27 @@ func TestRecallPrivateBranchDoesNotExpandTeamGraph(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, result.RelatedCommunities, 1, "private branch must not repeat team-wide community expansion")
+	require.Equal(t, 1, metrics.communityRecallCalls, "fused recall should record one community metric")
+}
+
+func TestRecallSingleSharedSpaceRecordsCommunityMetric(t *testing.T) {
+	teamID, ownerID := uuid.New(), uuid.New()
+	sharedID := uuid.New()
+	search := &spaceRecallStub{contract: &repository.ActiveSearchContract{EmbeddingDimensions: 3}}
+	communities := &recallCommunitySnapshotStub{records: []repository.CommunityRecallRecord{{CommunityID: uuid.NewString()}}}
+	metrics := &recallCommunityMetricsStub{InMemoryDiscoverabilityMetrics: observability.NewInMemoryDiscoverabilityMetrics()}
+	svc := NewRecallService(RecallDependencies{
+		Search: search, Communities: communities, Metrics: metrics,
+		CommunityConfig: recallCommunityConfigStub{enabled: true},
+	})
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
+		AllowedSpaces: []domain.MemorySpaceAccess{{ID: sharedID, Kind: domain.MemorySpaceTeamShared}},
+	})
+
+	_, err := svc.Recall(ctx, RecallRequest{Query: "space query", RelationshipLimit: intPtr(0)})
+	require.NoError(t, err)
+	require.Equal(t, 1, metrics.communityRecallCalls)
 }
 
 func TestRecallPrivateBranchFailureIsBounded(t *testing.T) {
@@ -247,6 +270,19 @@ type recallEmbeddingProviderStub struct {
 	calls int
 }
 
+type recallCommunityMetricsStub struct {
+	*observability.InMemoryDiscoverabilityMetrics
+	communityRecallCalls int
+}
+
+func (m *recallCommunityMetricsStub) ObserveCommunityRecall(context.Context, string, int, int) {
+	m.communityRecallCalls++
+}
+
+func (*recallCommunityMetricsStub) ObserveCommunityRun(context.Context, string, int, int, int) {}
+
+func (*recallCommunityMetricsStub) ObserveCommunitySummary(context.Context, string, int) {}
+
 func (p *recallEmbeddingProviderStub) Embed(context.Context, string) ([]float32, string, error) {
 	p.calls++
 	return []float32{1, 2, 3}, "recall-model", nil
@@ -268,7 +304,7 @@ func (s *spaceRecallStub) GetActiveSearchContract(context.Context) (*repository.
 
 func (s *spaceRecallStub) RecallEvidence(_ context.Context, input repository.RecallEvidenceInput) (*repository.RecallEvidenceResult, error) {
 	s.inputs = append(s.inputs, input)
-	if input.SpaceID == s.failSpaceID {
+	if s.failSpaceID != "" && input.SpaceID == s.failSpaceID {
 		return nil, errors.New("space branch unavailable")
 	}
 	id := uuid.NewString()

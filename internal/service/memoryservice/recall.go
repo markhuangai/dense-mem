@@ -404,15 +404,9 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 		}
 		result.RelatedRelationships = filterRelatedRelationshipsByGroups(result.RelatedRelationships, communityGroups)
 	}
-	communityOutcome := "ok"
-	if communityDegradation != nil {
-		communityOutcome = "degraded"
+	if !recallBranchMetricsSuppressed(ctx) {
+		recordRecallCommunityMetric(ctx, s.metrics, result)
 	}
-	communityRelationships := 0
-	for _, community := range result.RelatedCommunities {
-		communityRelationships += len(community.CommunityRelationships)
-	}
-	observability.RecordCommunityRecall(ctx, s.metrics, communityOutcome, len(result.RelatedCommunities), communityRelationships)
 	result.RelatedHypotheses = []RelatedHypothesisSummary{}
 	if teamSharedBranch && req.IncludeHypotheses {
 		related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.OwnerID.String(), req.Query)
@@ -426,6 +420,24 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 	}
 	applyRecallSpaceKind(result, spaceKind)
 	return result, nil
+}
+
+func recordRecallCommunityMetric(ctx context.Context, metrics observability.DiscoverabilityMetrics, result *RecallResult) {
+	if result == nil {
+		return
+	}
+	outcome := "ok"
+	for _, degradation := range result.Degradations {
+		if degradation.Frontier == "communities" {
+			outcome = "degraded"
+			break
+		}
+	}
+	communityRelationships := 0
+	for _, community := range result.RelatedCommunities {
+		communityRelationships += len(community.CommunityRelationships)
+	}
+	observability.RecordCommunityRecall(ctx, metrics, outcome, len(result.RelatedCommunities), communityRelationships)
 }
 
 func (s *recallService) resolveCommunityCoverage(

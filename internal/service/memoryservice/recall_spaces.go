@@ -58,6 +58,7 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req RecallReques
 		}
 		if fused != nil {
 			resultCount = len(fused.Results)
+			recordRecallCommunityMetric(ctx, s.metrics, fused)
 		}
 		observability.RecordRecall(ctx, s.metrics, float64(time.Since(started).Microseconds())/1000, resultCount, outcome)
 	}()
