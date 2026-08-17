@@ -195,13 +195,13 @@ replacement. `VerificationEvent` and Entity-resolution rows reference the
 persisted assessment so a restart, lease reclaim, or semantic transaction retry
 applies the same decision.
 
-#151 writes `assessment_scope = submission`: one persisted response covers every
+Current writes use `assessment_scope = submission`: one persisted response covers every
 evidence item and relationship ref in that run, including multiple
 relationships that cite the same evidence index. Commit verifies that the
 assessment belongs to the exact team/owner/ingest/run before it writes any
-semantic row. The cutover migration refuses to run while older queued, guarded,
-processing, or awaiting-review runs remain, so item-scoped and submission-scoped
-workers cannot interleave.
+semantic row. The V2.5 worker terminalizes unfinished placements with a
+different stored contract version as `contract_superseded`, so caller-grounded
+V2.4 proposals cannot be reinterpreted by the server-grounded worker.
 
 V2.4 adds nullable audit fields to `verification_events` for
 `assessment_id`, `assessment_policy_version`, `threshold_used`, and
@@ -218,8 +218,10 @@ meaning merely to rename it. An unresolved open/acknowledged semantic task
 closes at seven days.
 Security quarantine and durable cross-profile Conflict cases retain their own
 workflows and are not converted to expiring semantic review tasks.
+The V2.5 `remember` path does not create a review task for semantic uncertainty;
+it records the whole-submission hold below.
 
-### Immutable semantic holds and replacements (#152)
+### Immutable semantic holds and replacements
 
 `submission_holds` is an append-only fact ledger. Its `held_at` and `expires_at`
 are immutable, with `expires_at = held_at + 24 hours`; it has no mutable approval
@@ -360,7 +362,7 @@ dimensions, distance meaning, or the active HNSW index generation.
 
 A separate search-index generation references the embedding contract and owns
 the cosine operator class, indexed cast, HNSW construction parameters, physical
-index state, and active pointer. Issue #85 owns query-time ranking contracts for
+index state, and active pointer. The query-time ranking contract defines
 exact/ANN thresholds and scan budgets. This separation allows reindexing without
 provider calls and query tuning without reindexing. Field ownership and change
 impact belong in
@@ -572,14 +574,14 @@ restores the backup and the matching application release before traffic opens.
 
 ### V2.4 integrated-assessor placement migration
 
-V2.4 follows the Relationship/search cutover tracked by issue #129. It changes
+V2.4 follows the Relationship/search cutover. It changes
 write-time assessment and review workflow, not stored Relationship meaning,
 search projection text, or the numerical embedding contract.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Baseline["V2.3 data after #129"] --> Pause["Pause placement workers"]
+  Baseline["V2.3 data after the projection cutover"] --> Pause["Pause placement workers"]
   Pause --> Additive["Add assessment, audit,<br/>review-expiry, and team-config fields"]
   Additive --> TTL["Give open semantic reviews<br/>a fresh seven-day expiry"]
   TTL --> Deploy["Deploy V2.4 API and workers together"]
@@ -588,7 +590,7 @@ flowchart LR
 
 The release migration must:
 
-1. verify #129 is complete and record counts for ingests, placement items,
+1. verify the projection cutover is complete and record counts for ingests, placement items,
    VerificationEvents, Relationship statuses/supports, review tasks, search
    documents, vectors, and embedding jobs
 2. pause placement workers and prevent mixed V2.3/V2.4 placement execution
@@ -611,8 +613,8 @@ Relationship status or support, and does not reinterpret legacy
 VerificationEvents. It does not enqueue embedding jobs or re-embed
 Relationships, Evidence, or Entities. V2.4 leaves
 `projection_format_version`, rendered search text, and embedding inputs
-unchanged; therefore any re-embedding performed for #129 belongs to #129, not
-this migration.
+unchanged; therefore any re-embedding performed for the projection migration
+belongs to that migration, not this migration.
 
 Rollback is valid only before V2.4 writes are admitted. After traffic resumes,
 restore the pre-cutover database and matching application release together
@@ -788,22 +790,21 @@ canonical keys, aliases, allowed endpoint kinds, `relationship_kind`,
 `current_cardinality`, lifecycle state, and version.
 
 Global built-ins seed per-team `team_predicate_definitions`. The assessor
-receives the complete active team catalog only when it fits the configured
-`AI_VERIFIER_MAX_PREDICATE_OPTIONS` capacity (100 by default, at most 2,000).
-PostgreSQL normalization, RLS, append-only versioning, and the
-[strict assessor contract](Write-Pipeline#strict-assessor-contract) decide
+receives every exact active key/alias match plus bounded evidence-relevant
+options within `AI_VERIFIER_MAX_PREDICATE_OPTIONS` (100 by default, at most
+2,000). PostgreSQL normalization, RLS, append-only versioning, and the
+[server-owned assessor contract](Write-Pipeline#server-owned-assessment) decide
 whether a returned option can be referenced. Providers cannot create registry
 vocabulary or directly mutate Relationship lifecycle or active graph state.
 
-The registry may grow without a fixed vocabulary ceiling. If its complete active
-catalog cannot fit, assessment ends as `catalog_context_overflow` before a
-provider call; the request never substitutes relevance selection for a complete
-comparison set. Commit resolution checks the complete team registry under a
-team/key advisory transaction lock. A compatible existing definition is reused;
-an absent key may be created with only the submitted endpoint kinds and an
-append-only registration event. An inactive, ambiguous, colliding, or
-kind-incompatible key holds the whole run with zero semantic commit; #151 does
-not create a client review task for that hold.
+The registry may grow without a fixed vocabulary ceiling. If exact matches
+alone exceed the bound, assessment ends as `predicate_options_overflow` before
+a provider call; exact matches are never dropped in favor of relevance.
+Commit resolution checks the complete team registry under a team/key advisory
+transaction lock. A compatible existing definition is reused; an absent key may
+be created with only the submitted endpoint kinds and an append-only
+registration event. An inactive, ambiguous, colliding, or kind-incompatible key
+holds the whole run with zero semantic commit and no client review task.
 
 The registry does not contain `policy_family`. The
 canonical contract and unknown-predicate behavior are defined in
@@ -1014,3 +1015,20 @@ identities anchor SSO and system actors, ownership aliases preserve old IDs,
 and `embedding_contracts` is the sole embedding authority.
 Revoking or deleting a credential only deactivates its actor when no active
 membership remains, so a shared actor stays usable for another team.
+
+## Memory Spaces And Catalog Coverage
+
+`memory_spaces` is the durable catalog. It has one active `team_shared` row per
+team and optional `profile_private` or `credential_private` rows owned by the
+corresponding identity or credential. Every memory-owned canonical and derived
+row stores `space_id` with a team/space composite foreign key. Coverage includes
+source fragments, evidence, entities, values, relationships and supports,
+conflicts and lifecycle decisions, search documents, embedding jobs,
+communities, hypotheses, trace references, and deletion metadata. Existing rows
+and writes from an older binary are placed in the team-shared row by an
+idempotent compatible migration.
+
+Space ownership is not inferred from a profile or credential at query time.
+The authenticated context supplies an allowed-space set before a transaction
+starts, and adapters retain the space predicate through hydration. Cross-space
+deduplication and identity resolution are not valid operations.

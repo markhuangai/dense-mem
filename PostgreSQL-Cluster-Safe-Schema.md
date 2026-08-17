@@ -691,3 +691,20 @@ constraints, and drops `semantic_team_refs`, `semantic_profile_refs`, and
 `embedding_config` in one transaction. Its `ALTER TABLE` locks last until
 commit; rehearse it against a disposable production-data copy and recover from
 backup if roll-forward cannot preserve the contract.
+
+## Space Keys, Backfill, And RLS
+
+The space rollout is additive and remains compatible with the previous binary:
+create the team-shared catalog rows, add nullable `space_id` columns and
+database defaults/triggers for old writes, backfill idempotently, validate
+team/space composite keys, then tighten nullability only after the old writer
+barrier. Rerunning the migration leaves already-correct rows unchanged.
+
+Each application transaction sets bound `team_id`, profile identity, and the
+bounded allowed-space UUID set in transaction-local settings. RLS policies and
+adapter predicates require both team and an allowed space. Missing or invalid
+space context is a required error; it never falls back to team-wide access.
+Worker leases, claims, and completions carry the immutable space ID and reject
+stale or cross-space attempts. Old replicas are stopped before the terminal
+constraint migration, and an old binary rejects the newer schema rather than
+writing unscoped rows.

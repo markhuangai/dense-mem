@@ -1,10 +1,9 @@
 # Community Memory
 
-> **Implementation status:** issue #158 is implemented. PostgreSQL is the
-> authority for versioned Louvain snapshots, the nightly runner is opt-in, and
-> recall emits the normalized `related_communities[]` shape with semantic-group
-> coverage and explicit temporal/staleness degradation. [Technical
-> Reference](Technical-Reference) is the live public contract.
+PostgreSQL is the authority for versioned Louvain snapshots, the nightly
+runner is opt-in, and recall emits the normalized `related_communities[]` shape
+with semantic-group coverage and explicit temporal/staleness degradation.
+[Technical Reference](Technical-Reference) is the live public contract.
 
 Community detection groups related same-team Relationship semantic groups. A
 community is a derived analytical cluster for discovery—not an Entity,

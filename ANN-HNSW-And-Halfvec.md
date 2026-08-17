@@ -102,7 +102,7 @@ also costs database resources:
 - larger query breadth improves recall but increases CPU, buffers, and latency
 - dead tuples and index growth require vacuum/reindex planning
 
-Dense-Mem therefore does not use HNSW merely because an index exists. The #85
+Dense-Mem therefore does not use HNSW merely because an index exists. The
 ranking contract selects exact or ANN from the authorized-set shape and an
 evaluated workload boundary.
 
@@ -174,10 +174,10 @@ Use this table before initializing or replacing the embedding contract.
 | 1536-dimensional embedding contract | `vector_hnsw` generation when pgvector supports the dimension | HNSW keeps latency bounded while exact rerank preserves final candidate order | no, if contract unchanged | yes | Recall@K and load comparison against exact |
 | 3072-dimensional `text-embedding-3-large` contract | `halfvec_hnsw` generation plus exact float32 rerank | full-precision HNSW is outside pgvector's `vector` HNSW limit; `halfvec` is only the ANN expression | yes, when moving from another embedding contract | yes | candidate Recall@K must pass exact oracle |
 | High-quality debugging, audit, or release qualification | exact diagnostic mode | removes ANN approximation from the investigation | no | no | bounded authorized candidate set |
-| Latency/cost pressure after quality is acceptable | tune #85 ranking budgets before changing model | avoids provider calls and vector rewrite | no | maybe, if physical HNSW parameters change | saturation and quality comparison |
+| Latency/cost pressure after quality is acceptable | tune ranking budgets before changing model | avoids provider calls and vector rewrite | no | maybe, if physical HNSW parameters change | saturation and quality comparison |
 | Provider/model upgrade | new embedding contract plus derived index generation | vector meaning changes; old vectors cannot be compared as if they came from the new model | yes | yes | staged backfill, dual-read evaluation, then activation |
 | Relationship semantic renderer change | new Relationship projection generation under the same embedding/index contracts | only Relationship document text changes | Relationships only | no | complete text before serve; whole-team vector gate until current |
-| Ranking/fusion experiment only | #85 ranking contract change | changes branch fusion or rerank order without changing vector meaning | no | no | deterministic 1k comparison and regression slices |
+| Ranking/fusion experiment only | ranking contract change | changes branch fusion or rerank order without changing vector meaning | no | no | deterministic 1k comparison and regression slices |
 
 Decision sequence:
 
@@ -217,7 +217,7 @@ provider calls. Dense-Mem persists and reports separate linked records:
 flowchart LR
   Projection["Source-kind projection<br/>what text is embedded"] --> Embed["Embedding contract<br/>what vector space means"]
   Embed --> Index["Search-index generation<br/>how stored vectors are indexed"]
-  Index --> Rank["Ranking contract (#85)<br/>how a recall searches and fuses"]
+  Index --> Rank["Ranking contract<br/>how a recall searches and fuses"]
 ```
 
 ### Source-kind projection
@@ -267,7 +267,7 @@ embeddings when the embedding contract is unchanged.
 
 ### Ranking contract
 
-Issue #85 owns query-time ranking behavior:
+The query-time ranking contract defines:
 
 ```text
 exact-versus-ANN eligibility threshold
@@ -289,8 +289,8 @@ defaults remain in [Configuration](Configuration#postgresql-search-and-recall).
 | Relationship projection format | Relationships only | Relationships only | no | per-team projection-generation activation |
 | HNSW kind, cast, `m`, `ef_construction` | no | no | yes | generation activation |
 | distance metric | unsupported | unsupported | unsupported | new architecture decision |
-| `ef_search`, iterative scan, scan/candidate budget | no | no | no | #85 ranking-contract activation |
-| RRF or deterministic rerank weights | no | no | no | #85 ranking-contract activation |
+| `ef_search`, iterative scan, scan/candidate budget | no | no | no | ranking-contract activation |
+| RRF or deterministic rerank weights | no | no | no | ranking-contract activation |
 
 ## PostgreSQL Storage And Query Shape
 
@@ -644,7 +644,7 @@ predefined SQL templates.
 3. Canonical embeddings remain float32 for every supported dimension.
 4. The configured provider output length exactly matches the persisted
    embedding contract before vectors become current.
-5. Embedding contracts, search-index generations, and #85 ranking contracts have
+5. Embedding contracts, search-index generations, and ranking contracts have
    separate versions and rebuild lifecycles.
 6. A 3,072-dimensional contract uses exact search or halfvec HNSW candidates
    followed by exact float32 reranking; it never creates full-precision HNSW

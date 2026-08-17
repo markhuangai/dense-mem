@@ -266,11 +266,12 @@ real PostgreSQL/`pgvector` instance and actual service logic.
 - repeated same-owner evidence attaches to one Relationship
 - another profile's equivalent/correcting evidence creates its own Relationship
   and cross-reference
-- `insufficient` produces `pending_evidence` and no SemanticEdge
+- `insufficient` holds the complete V2.5 submission with no semantic write or
+  SemanticEdge
 - one accepted entailed support at or above the effective team threshold
   activates the Relationship
-- entailed support below the threshold remains pending with a seven-day
-  support-confidence review; confidence equal to the threshold passes
+- entailed support or grounding below the threshold holds the complete V2.5
+  submission without a review task; confidence equal to the threshold passes
 - a threshold change affects future/in-flight commits and never rescores a
   completed or held assessment
 - additional independent accepted sources improve provenance but do not change
@@ -282,8 +283,9 @@ real PostgreSQL/`pgvector` instance and actual service logic.
   semantic state
 - a quarantined or later failed replacement never reactivates the prior revision
 - existing predicate aliases resolve to one canonical team definition
-- an incomplete Entity or predicate catalog fails before a provider call and
-  creates no semantic state
+- an incomplete Entity candidate set, Entity grounding overflow, or exact
+  predicate-match overflow fails before a provider call and creates no semantic
+  state
 - unmatched predicate wording uses server-controlled registration; alias/key
   ambiguity, endpoint-kind mismatch, and Relationship-kind collision hold the
   complete submission with no semantic subset
@@ -337,14 +339,21 @@ workers from persisting different valid responses.
 
 ### Submission-wide assessment
 
+- the public contract accepts only logical Relationship fields plus unique,
+  in-range `evidence_indices`, rejects caller `span`, `surface`, and
+  Relationship `supports`, and requires collective evidence coverage
 - two or more evidence items and every distinct relationship ref are sent in
   one logical assessor conversation, including two relationships that cite the
   same evidence index
 - one invalid, low-confidence, unresolved, or incompatible result leaves every
-  sibling without semantic state; #151 records the existing `awaiting_review`
-  compatibility hold without a review task
-- complete entity/predicate catalogs are preflighted with a limit-plus-one
-  query; overflow and token-budget failures make zero provider call
+  sibling without semantic state and records one `awaiting_review` semantic
+  hold without a review task
+- repeated names, active aliases, Unicode boundaries, and overlapping
+  Relationships prove that the server issues bounded grounding choices and the
+  assessor cannot select a range outside each Relationship's cited evidence
+- complete Entity candidates and exact predicate matches are preflighted with a
+  limit-plus-one query; overflow and token-budget failures make zero provider
+  call
 - controlled predicate registration takes a team/key transaction lock, rechecks
   the latest definition, and records created/reused append-only provenance
 - real PostgreSQL A/B/C tests cover catalog isolation, run binding, all-or-zero
@@ -367,11 +376,13 @@ workers from persisting different valid responses.
   target unchanged, while the first successful successor atomically supersedes
   it and records both audit outcomes
 
-### Semantic review expiry
+### Legacy semantic review expiry
 
-Use an injected virtual clock; do not sleep for seven days. Cover every semantic
-kind (`support_confidence`, `identity`, `predicate`, `scope`, and `time`) at one
-instant before, exactly at, and one instant after `expires_at`.
+The V2.5 remember path uses 24-hour whole-submission holds; these seven-day
+cases cover retained legacy review tasks. Use an injected virtual clock; do not
+sleep for seven days. Cover every semantic kind (`support_confidence`,
+`identity`, `predicate`, `scope`, and `time`) at one instant before, exactly at,
+and one instant after `expires_at`.
 
 - only `open` or `acknowledged` tasks become `expired`
 - expiry is idempotent under two workers and lease recovery
@@ -548,7 +559,7 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 - first valid assessment is persisted and reused before semantic policy/commit
 - positive-support confidence gates only entailed Relationships; it cannot
   override identity, predicate, scope, time, security, or conflict holds
-- semantic review expiry never grants support or creates a Hypothesis directly
+- legacy semantic review expiry never grants support or creates a Hypothesis directly
 - scanner decisions and model signals can only restrict semantic processing
 - source currentness, support revocation, status transition, and search intent commit
   atomically
@@ -571,7 +582,7 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 | Assessor accommodation returns | adapter accepts old/alternate field names to keep tests green | one committed schema, negative fixtures, same-history complete regeneration, and no local coercion |
 | Restart breaks assessment reuse | a valid response is lost before semantic commit and the next worker starts another conversation | append-once assessment row, stable claim key, and crash/lease/transaction integration fixtures |
 | Seven-day tests become slow or flaky | tests use wall-clock sleeps or race the expiry scheduler | injected clock with exact boundary cases and two-worker idempotency checks |
-| V2.4 migration triggers unnecessary vectors | a broad version bump rewrites search documents and queues embeddings | populated #129 fixture, before/after search hashes/job counts, and a hard zero-provider-call assertion |
+| V2.4 migration triggers unnecessary vectors | a broad version bump rewrites search documents and queues embeddings | populated projection-migration fixture, before/after search hashes/job counts, and a hard zero-provider-call assertion |
 | ANN benchmark is misleading | global unfiltered test passes while small tenants lose results | tenant-filtered exact baseline under representative skew/concurrency |
 | Cross-profile tests collapse to one actor | ownership bugs pass because every fixture uses one profile | mandatory A/B/C read, correct, split, adopt, and forget integration cases |
 | Scanner fixtures test keywords only | ordinary security documentation is rejected while obfuscated control text passes | quoted/adversarial minimal pairs plus intake reject/pass and worker-quarantine bypass gates |
@@ -595,9 +606,9 @@ The implementation is release-ready only when:
 8. populated-database migration tests prove Relationship-only re-embedding,
    resumable text convergence, fair queue drain, whole-team vector activation,
    and unchanged Evidence/index contracts
-9. V2.4 migration tests start after #129 and prove zero model calls, rescoring,
+9. V2.4 migration tests start after the projection migration and prove zero model calls, rescoring,
    lifecycle/search mutation, embedding jobs, or re-embedding
-10. virtual-clock tests prove seven-day semantic review expiry and the
+10. virtual-clock tests prove legacy seven-day semantic review expiry and the
     pending-to-Dream boundary without promotion
 11. paired multi-round scripted and real-host evaluation reports placement
     quality, confidence reliability, call/token/latency savings, and review
@@ -632,3 +643,27 @@ rotation and retained deletion tombstones, legacy-write rejection,
 portal-session restart, SSO and usage history, and same-team/cross-team owner
 isolation. Record the tested commit SHA in the E2E output without credentials
 or memory content.
+
+## Memory-Space E2E Matrix
+
+The Compose harness registers four real-boundary scenarios:
+
+```bash
+DENSE_MEM_E2E_SCENARIO=memory_space_backfill scripts/e2e-compose.sh
+DENSE_MEM_E2E_SCENARIO=memory_space_isolation scripts/e2e-compose.sh
+DENSE_MEM_E2E_SCENARIO=space_aware_recall scripts/e2e-compose.sh
+DENSE_MEM_E2E_SCENARIO=credential_memory_binding scripts/e2e-compose.sh
+```
+
+The scenarios use A/B/C actors with real PostgreSQL/pgvector and Redis. They
+cover resumable backfill and mixed-version startup, RLS and worker fencing,
+independent search/fusion and labels, and credential defaults, rotation,
+revocation, linking, and token-session restrictions. After the scenarios and
+the existing Compose matrix pass, verified Dense-Mem E2E containers, volumes,
+and transient evaluation state are removed while the development stack,
+tracked files, environment file, and approved seed/suite remain intact.
+
+Memory-space authorization is orthogonal to ingestion and embedding
+mechanisms. The test matrix verifies space authorization, branch determinism,
+and isolation with focused real-logic tests and the space-aware Compose
+scenario.

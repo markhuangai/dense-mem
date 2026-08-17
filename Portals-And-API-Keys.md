@@ -238,7 +238,7 @@ provisioning, listing, deletion, rotation, migration, or conflict-review
 commands.
 
 Team managers create and rotate credentials through the Team tab. SSO members
-use the My credential tab subject to their current entitlement. Deployment operators
+use the My credentials tab subject to their current entitlement. Deployment operators
 use the control portal/API on the private listener.
 
 Do not place raw keys in command history on shared machines; prefer a protected
@@ -342,7 +342,9 @@ The current first-party credential routes are:
 /control/api/teams/{team_id}/credentials[/{credential_id}[/rotate]]
 /ui/api/team/credentials[/{credential_id}[/rotate]]
 /ui/api/credential/rotate
-/ui/api/sso/credential[/rotate]
+/ui/api/sso/credentials
+/ui/api/sso/credentials/{credential_id}
+/ui/api/sso/credentials/{credential_id}/rotate
 ```
 
 Private `/profiles` and `/ui/api/key` aliases are not registered.
@@ -350,3 +352,20 @@ Private `/profiles` and `/ui/api/key` aliases are not registered.
 Rotation changes bearer material in place. Deletion disables the credential
 and revokes its membership and actor while retaining the credential and alias
 as an audit tombstone. No portal or public API can invoke schema cleanup.
+
+## Immutable Memory Bindings
+
+Credential creation chooses exactly one immutable binding: `shared_only`,
+`profile_private`, or `credential_private` (the last two are team-scoped). A
+credential cannot be rebound, and rotation preserves its ID, binding, and
+private space. Revoked credentials cannot authenticate or rotate; expired
+credentials may rotate in place only while still active. SSO self-service
+creation requires the selected membership's existing grants. A token-derived
+portal session cannot create or link credentials. Linking requires SSO
+authentication plus proof of an existing same-team token and never unions token
+grants into membership grants. Existing token writes remain team-shared.
+
+The normal `remember` contract has no caller-selectable space parameter and
+writes to `team_shared`. Any private-ingestion path derives its destination
+from the authenticated binding; request payloads cannot select or broaden a
+memory space.

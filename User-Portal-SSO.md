@@ -45,8 +45,11 @@ Dense-Mem exposes these user-portal SSO endpoints:
 | `GET` | `/ui/api/sso/start/:providerId` | Starts OIDC login and redirects to the provider. |
 | `GET` | `/ui/api/sso/callback` | Receives the OIDC authorization code callback. |
 | `POST` | `/ui/api/sso/team` | Switches the current SSO browser session to another entitled team. |
-| `POST` | `/ui/api/sso/credential` | Creates the current SSO member's owned credential and one-time API key for the selected team. |
-| `POST` | `/ui/api/sso/credential/rotate` | Rotates the current SSO member's owned credential key for the selected team. |
+| `GET` | `/ui/api/sso/credentials` | Lists all active credentials owned by the current SSO identity in the selected team. |
+| `POST` | `/ui/api/sso/credentials` | Creates one SSO-owned credential and returns its plaintext API key once. |
+| `GET` | `/ui/api/sso/credentials/:credentialId` | Gets one owned credential by its stable ID. |
+| `POST` | `/ui/api/sso/credentials/:credentialId/rotate` | Rotates one writable owned credential in place, preserving its ID and binding. |
+| `DELETE` | `/ui/api/sso/credentials/:credentialId` | Revokes one owned credential by its stable ID. |
 | `POST` | `/ui/api/sso/logout` | Clears the local Dense-Mem SSO session cookies. |
 
 ## API-Key Portal Session
@@ -74,7 +77,7 @@ All three authenticated modes use one session response shape:
     },
     "credential": null,
     "teams": [{ "team": {}, "membership": {} }],
-    "personal_credential": null
+    "personal_credentials": []
   }
 }
 ```
@@ -148,23 +151,44 @@ SSO manager sessions see the Team tab and can manage same-team credentials like
 a manager API-key login. Credentials created from the Team tab use ordinary API
 keys.
 
-SSO member sessions see the My credential tab. Each SSO identity can own at
-most one active personal credential per team. That credential is stored with
-SSO ownership metadata so `/ui` can find it. Future bearer-token login with its
-key uses the standard API-key
-format rather than the browser session. When SSO authentication is configured,
-the auth middleware revalidates the SSO-owned key's current entitlement, so a
+SSO member sessions see the My credentials tab. One SSO identity may own any
+number of active credentials in the selected team. The session response lists
+them in `personal_credentials`, and every follow-up operation addresses a
+specific `credentialId`; the server never selects an arbitrary or newest key.
+Each credential has a stable ID and one immutable `memory_binding`:
+`profile_private` credentials share that identity's team-scoped profile-private
+space, `credential_private` credentials use an isolated credential space, and
+`shared_only` credentials use only the team-shared space. Rotation preserves
+the ID and binding; revocation affects only the selected credential. The
+plaintext key is returned only from create or rotate and is not stored by the
+browser after the one-time notice is dismissed.
+
+Bearer-token login with any of these keys uses the standard API-key format
+rather than the browser session. When SSO authentication is configured,
+the auth middleware revalidates an SSO-owned key's current entitlement, so a
 revoked external entitlement can deny a still-present local key. It is not a
 hybrid cookie-and-bearer login.
+
+Creation and rotation are constrained by the selected membership grants and
+the credential's own scopes. Self-service revocation is available to any
+authenticated member for an owned active credential and requires only the
+`read` portal scope because it invalidates bearer material without granting
+memory access.
 
 The current SSO entitlement limits what the member can create or rotate from
 `/ui`:
 
-| SSO entitlement on selected team | My credential behavior |
+| SSO entitlement on selected team | Self-service behavior |
 | --- | --- |
-| Manager | Use the Team tab instead of My credential. |
-| Member with read/write permission | Can create a read/write or read-only personal API key. Can rotate only if the existing personal key also has write scope. |
-| Member with read-only permission | Can create a read-only personal API key. Cannot rotate it from `/ui`. |
+| Manager | Use the Team tab instead of My credentials. |
+| Member with read/write permission | Can create multiple read/write or read-only personal API keys, choose the binding and expiry for each, rotate only a selected key when both membership and credential scopes include write, and revoke owned keys. |
+| Member with read-only permission | Can create multiple read-only personal API keys, revoke owned keys, but cannot rotate them from `/ui`. |
+
+SSO managers retain the established Team-tab contract: they can manage
+team-scoped credentials through `/ui/api/team/credentials`, but the
+SSO-owned collection is member self-service and does not expose another
+member's private space. API-key and token-derived portal sessions cannot call
+the SSO-owned collection or mint/link credentials.
 
 If the provider requires a post-logout redirect URI, use the portal URL:
 

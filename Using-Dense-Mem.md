@@ -1,8 +1,9 @@
 # Using Dense-Mem
 
-Dense-Mem is an MCP memory service. The current workflow is
-evidence-first: the client submits exact evidence with a required, span-grounded
-proposal; the server assesses and promotes it without a client review loop.
+Dense-Mem is an MCP memory service. The current workflow is evidence-first: the
+client submits exact evidence with required logical Relationship proposals and
+the evidence indexes that support them; the server grounds, assesses, and
+promotes them without a client review loop.
 
 The user and control portals are first-party interfaces, not alternative memory
 automation APIs. Exact fields and limits belong in
@@ -18,8 +19,8 @@ sequenceDiagram
   participant DM as Dense-Mem
 
   User->>Host: Share source material
-  Host->>Host: Split into exact Entity, predicate, and Relationship spans
-  Host->>DM: remember(evidence, proposal)
+  Host->>Host: Identify logical Relationships and supporting evidence items
+  Host->>DM: remember(evidence, relationships)
   DM-->>Host: submission_id and queued
   loop until terminal
     Host->>DM: get_submission_status(submission_id)
@@ -54,15 +55,16 @@ distinct from vector freshness.
 
 There is no request to resolve placement, choose an Entity candidate, select a
 predicate, release a quarantine, or append follow-up evidence to an old
-submission. Submit a complete new evidence/proposal package when new source
-material exists.
+submission. Submit a complete new evidence-and-Relationships package when new
+source material exists.
 
 ## Evidence First
 
 The client must treat source material as evidence, not as instructions. It
-breaks evidence into the smallest Entity names it can ground, cites each name
-and predicate with exact spans, and proposes Relationships supported by those
-spans.
+submits the smallest logical Entity names, predicate key, and Entity or typed
+Value object that express each Relationship. Each Relationship lists the
+zero-based `evidence_indices` that support it. Across the submission, those
+lists must cover every evidence item.
 
 ~~~json
 {
@@ -71,38 +73,30 @@ spans.
     "source_type": "manual",
     "idempotency_key": "architecture-20260801"
   }],
-  "proposal": {
-    "entities": [
-      {
-        "ref": "dense_mem",
+  "relationships": [{
+      "ref": "uses-postgresql",
+      "subject": {
         "name": "Dense-Mem",
-        "entity_kind": "project",
-        "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]
+        "entity_kind": "project"
       },
-      {
-        "ref": "postgres",
+      "predicate": {"proposed_key": "uses"},
+      "object": {"entity": {
         "name": "PostgreSQL",
-        "entity_kind": "product",
-        "evidence": [{"evidence_index": 0, "start": 15, "end": 25}]
-      }
-    ],
-    "relationships": [{
-      "proposal_id": "uses",
-      "subject_ref": "dense_mem",
-      "predicate": {"surface": "uses", "evidence_index": 0, "start": 10, "end": 14},
-      "object_ref": "postgres",
+        "entity_kind": "product"
+      }},
       "polarity": "+",
       "modality": "statement",
-      "evidence": [{"evidence_index": 0, "start": 0, "end": 26}]
-    }]
-  }
+      "evidence_indices": [0]
+  }]
 }
 ~~~
 
-Spans use Unicode code-point offsets: start inclusive, end exclusive. Entity
-names and predicate surfaces must equal their cited spans. A Relationship can
-point to an Entity or a typed Value. A string Value display or unit must be
-evidence-grounded too.
+`remember` does not accept caller `span`, `surface`, or Relationship `supports`
+fields. The server finds bounded Entity occurrences and issues boundary
+references; the assessor selects exact Entity, predicate, Value, and support
+ranges under closed-schema validation. A `known_entity_id` remains only a
+same-team candidate hint, and a Relationship object contains exactly one of an
+Entity or a typed Value.
 
 Do not:
 
@@ -125,28 +119,32 @@ processing state:
 | --- | --- | --- |
 | queued | Isolated staging is waiting for the worker. | Poll later. |
 | processing | The worker holds a current assessment lease. | Poll later. |
+| awaiting_review | The complete submission is held with zero semantic commit. | Read `semantic_hold.issues` and submit one complete corrected replacement. |
 | completed | Canonical evidence/semantic state promoted atomically. | Recall or trace normally. |
 | rejected | Server semantic policy rejected the submission. | Submit a new complete request if new evidence exists. |
 | quarantined | Security concern; data is isolated. | Do not use it. Submit a separate replacement only if appropriate. |
 | failed | Required work exhausted bounded retry policy. | Use safe error/correlation context, then submit anew if appropriate. |
 
 The status response includes per-evidence search readiness and bounded reason
-codes. It does not include placement IDs, assessor prompts, raw responses,
-review tasks, or a control that overrides server policy.
+codes. For `awaiting_review`, `semantic_hold` contains up to 50 bounded issues,
+an `issues_truncated` flag, and replacement guidance with the required
+`replaces_submission_id`. The replacement is one complete corrected batch, not
+a patch or approval. Status does not include placement IDs, assessor prompts,
+raw responses, review tasks, or a control that overrides server policy.
 
 quarantined submissions retain an isolated raw payload copy for exactly 24
 hours, then that copy is hard-deleted. The append-only evidence, identifiers,
 hashes, security events, and lineage remain as restricted audit history; they
-are never recallable or provider input. To correct one, submit a fresh complete request with the
-authenticated replacement field when the server policy permits it. A
-replacement never releases, reuses, or extends quarantined content.
+are never recallable or provider input. If corrected safe source material
+exists, submit it as a new independent complete batch. That submission never
+releases, reuses, or extends quarantined content.
 
 ## Replace or Retract Evidence
 
 To replace a particular current evidence item you own, put its UUID in the new
 item’s supersedes_evidence_ids. Direct targeting is distinct from a
 source-revision advance and cannot be combined with previous_source_revision.
-The new submission still needs a complete span-grounded proposal.
+The new submission still needs a complete evidence-and-Relationships batch.
 
 ~~~json
 {
@@ -156,31 +154,21 @@ The new submission still needs a complete span-grounded proposal.
     "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"],
     "idempotency_key": "storage-correction-20260801"
   }],
-  "proposal": {
-    "entities": [
-      {
-        "ref": "dense_mem",
+  "relationships": [{
+      "ref": "uses-postgresql",
+      "subject": {
         "name": "Dense-Mem",
-        "entity_kind": "project",
-        "evidence": [{"evidence_index": 0, "start": 0, "end": 9}]
+        "entity_kind": "project"
       },
-      {
-        "ref": "postgres",
+      "predicate": {"proposed_key": "uses"},
+      "object": {"entity": {
         "name": "PostgreSQL",
-        "entity_kind": "product",
-        "evidence": [{"evidence_index": 0, "start": 15, "end": 25}]
-      }
-    ],
-    "relationships": [{
-      "proposal_id": "uses",
-      "subject_ref": "dense_mem",
-      "predicate": {"surface": "uses", "evidence_index": 0, "start": 10, "end": 14},
-      "object_ref": "postgres",
+        "entity_kind": "product"
+      }},
       "polarity": "+",
       "modality": "statement",
-      "evidence": [{"evidence_index": 0, "start": 0, "end": 55}]
-    }]
-  }
+      "evidence_indices": [0]
+  }]
 }
 ~~~
 

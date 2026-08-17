@@ -13,22 +13,26 @@ get_submission_status.
 ~~~mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Client["Client"] --> Remember["remember: evidence + exact-span relationships"]
+  Client["Client"] --> Remember["remember: evidence + logical relationships<br/>with evidence_indices"]
   Remember --> Scan{"Deterministic scan"}
   Scan -- reject --> Reject["Safe write error; nothing staged"]
   Scan -- pass --> Stage["Isolated PostgreSQL submission"]
   Stage --> Status["submission_id"]
   Stage --> Worker["Server assessment worker"]
-  Worker --> Assessor["Capability-free assessor"]
+  Worker --> Ground["Server-owned grounding<br/>and bounded catalogs"]
+  Ground --> Assessor["Capability-free assessor"]
   Assessor --> Security{"Security concern?"}
   Security -- yes --> Quarantine["Quarantine for exactly 24 hours"]
   Security -- no --> Validate{"Closed-schema validation"}
-  Validate -- reject --> Rejected["Terminal rejected result"]
-  Validate -- pass --> Promote["Atomic canonical promotion"]
+  Validate -- invalid --> Failed["Bounded regeneration<br/>or terminal failure"]
+  Validate -- valid --> Policy{"Promotable?"}
+  Policy -- no --> Hold["awaiting_review;<br/>zero semantic commit"]
+  Policy -- yes --> Promote["Atomic canonical promotion"]
   Promote --> Search["Derived search/embedding jobs"]
   Status --> Poll["get_submission_status"]
   Quarantine --> Poll
-  Rejected --> Poll
+  Failed --> Poll
+  Hold --> Poll
   Search --> Poll
 ~~~
 
@@ -40,24 +44,24 @@ the evidence has become active memory or that an embedding is current.
 The client supplies a nonempty top-level `relationships` array; it is required,
 not an optional hint. An evidence item is currently bounded to 999 characters,
 and one item can support multiple distinct propositions, so there is no fixed
-single relationship object or separate cross-referenced `proposal.entities`
+single Relationship object or separate cross-referenced `proposal.entities`
 object.
 
-When more than one evidence item is submitted, every evidence index must appear
-in at least one relationship `supports` span. The server reports all missing
-indexes together and stages nothing.
+Every Relationship contains one to twenty unique zero-based
+`evidence_indices`. Across the submission, those lists must cover every
+evidence item. The server reports all missing indexes together and stages
+nothing.
 
-Each relationship is self-contained. Its inline subject and object Entity (or
-typed Value), predicate, and supports have exact evidence spans. Offsets are
-zero-based Unicode code-point positions, with an inclusive start and exclusive
-end. Every component span must be covered by a support span in the same evidence
-item.
+Each Relationship is self-contained. It contains an inline subject and object
+Entity (or typed Value), a predicate key proposal, polarity, modality, and its
+supporting evidence indexes. `remember` does not accept caller `span`,
+`surface`, or Relationship `supports` fields.
 
-`relationship.ref` is request-local and unique. Several distinct relationships
-may cite the same `evidence_index`; one long evidence item is not limited to one
-proposition. `predicate.proposed_key` is at most 128 Unicode code points and
-the exact predicate `surface` is at most 256. The server rejects an oversized
-value; it never truncates a key or surface before assessment.
+`relationship.ref` is request-local and unique. Several distinct Relationships
+may cite the same evidence index; one long evidence item is not limited to one
+proposition. `predicate.proposed_key` is at most 128 Unicode code points. The
+server rejects oversized input; it never truncates a key or name before
+assessment.
 
 ~~~json
 {
@@ -70,31 +74,28 @@ value; it never truncates a key or surface before assessment.
       "ref": "uses-postgresql",
       "subject": {
         "name": "Dense-Mem",
-        "entity_kind": "project",
-        "span": {"evidence_index": 0, "start": 0, "end": 9}
+        "entity_kind": "project"
       },
       "predicate": {
-        "proposed_key": "uses",
-        "surface": "uses",
-        "span": {"evidence_index": 0, "start": 10, "end": 14}
+        "proposed_key": "uses"
       },
       "object": {"entity": {
         "name": "PostgreSQL",
-        "entity_kind": "product",
-        "span": {"evidence_index": 0, "start": 15, "end": 25}
+        "entity_kind": "product"
       }},
       "polarity": "+",
       "modality": "statement",
-      "supports": [{"evidence_index": 0, "start": 0, "end": 26}]
+      "evidence_indices": [0]
   }]
 }
 ~~~
 
 The client makes its best effort to set `predicate.proposed_key` to a matching
-team predicate. It is a suggestion, not authority. The predicate `surface` and
-the typed Value `surface`, display, or unit must equal their exact submitted
-evidence spans. `object` contains exactly one of `entity` or `value`; a
-typed Value includes its type, canonical value, surface, and span.
+team predicate. It is a suggestion, not authority. `object` contains exactly
+one of `entity` or `value`; a typed Value includes its type and canonical value,
+with optional display and unit fields. The server and assessor ground the
+selected Entity, predicate, Value, and support ranges in cited evidence before
+commit.
 
 The client may offer a same-team `known_entity_id` inside an inline Entity as a
 candidate hint, but cannot choose canonical IDs, lifecycle state, support,
@@ -160,13 +161,13 @@ PostgreSQL RLS.
 
 ### Semantic hold lifecycle
 
-When the complete assessor response is valid but server policy cannot promote
-it, the run and every item become `awaiting_review`/`candidate` with zero
-semantic writes and no review task. #152 records an immutable
-`submission_holds` fact with the assessment, bounded reason, owner, terminal
-timestamp, and exact 24-hour expiry. The run projection is `active` until the
-server expiry job changes it to `expired`; neither state is recallable or an
-approval.
+When the complete assessor response is valid but grounding confidence or other
+server policy cannot promote it, the run and every item become
+`awaiting_review`/`candidate` with zero semantic writes and no review task. An
+immutable `submission_holds` fact records the assessment, bounded issues, owner,
+terminal timestamp, and exact 24-hour expiry. The run projection is `active`
+until the server expiry job changes it to `expired`; neither state is recallable
+or an approval.
 
 `replaces_submission_id` is optional public intake input. It names only an
 owned active or expired hold and creates a complete successor through the
@@ -180,18 +181,21 @@ absent, and already-superseded targets return the same bounded error classes.
 
 ## Server-Owned Assessment
 
-The worker assesses the complete staged submission as one run-scoped unit. It
-loads the complete same-team candidate set for each submitted Entity surface,
-resolves each proposed predicate key or alias exactly, and adds only bounded
-active predicate options ranked by the submitted keys and evidence wording.
-It sends that context in one capability-free assessor conversation. It never
-assesses or commits an evidence item independently.
+The worker assesses the complete staged submission as one run-scoped unit. For
+each submitted Entity name, it finds bounded whole-token occurrences of that
+name and active candidate aliases only within the Relationship's cited evidence.
+It assigns opaque grounding and boundary references, loads complete same-team
+candidate sets, resolves each proposed predicate key or alias exactly, and adds
+bounded active predicate options ranked by the submitted keys and evidence
+wording. It sends that context in one capability-free assessor conversation. It
+never assesses or commits an evidence item independently.
 
 The assessor receives:
 
-- the full exact staged evidence and the raw client relationship proposals,
-  including every client `predicate.proposed_key`
-- complete Entity candidate sets for submitted surfaces
+- the full exact staged evidence and the raw logical client Relationship
+  proposals, including every client `predicate.proposed_key`
+- server-issued Entity occurrence groundings and complete candidate sets for
+  the submitted names and active aliases
 - every exact active predicate key/alias match, plus relevant active options up
   to the request bound; unrelated team predicates are not loaded into context
 - no tools, credentials, environment variables, network capability, or request
@@ -200,7 +204,7 @@ The assessor receives:
   IDs outside its supplied options
 
 Entity preflight remains complete: at most 20 same-name candidates are loaded
-for each submitted surface. Predicate preflight is exact and bounded: exact
+for each submitted name. Predicate preflight is exact and bounded: exact
 key/alias matches are merged with evidence-relevant active options and the
 provider context is capped at `AI_VERIFIER_MAX_PREDICATE_OPTIONS` (default 100).
 If exact matches alone exceed that bound, the run ends as
@@ -219,10 +223,12 @@ retry reuse it and make no further provider call.
 
 The response is a closed schema. It must contain one security verdict, signals,
 and bounded justification for every evidence item plus normalized Entity and
-Relationship results. A predicate result can select only an allowlisted active
+Relationship results. Entity results select an allowlisted grounding reference;
+Relationship results select boundary-reference ranges for predicates, typed
+Values, and supports. A predicate result can select only an allowlisted active
 predicate or return a typed registration-required result. The provider cannot
-clear a deterministic security signal, decide durable status, create support
-outside the evidence, create or activate a predicate, or override authenticated
+clear a deterministic security signal, use a range outside the cited evidence,
+decide durable status, create or activate a predicate, or override authenticated
 ownership.
 
 A `hidden_control_markup` signal is valid only when its exact cited span contains
@@ -234,9 +240,9 @@ workflow. In the same semantic transaction, the server takes a team/key advisory
 lock, rechecks the latest definition, reuses a compatible active definition, or
 creates a restricted definition with append-only registration provenance. It
 does not make a raw client or assessor predicate durable by itself. If server
-policy cannot promote a valid complete result, every item enters the existing
-`awaiting_review` compatibility hold with zero semantic commit and no new review
-task. #152 owns that hold's formal expiry and replacement lifecycle.
+policy cannot promote a valid complete result, every item enters an
+`awaiting_review` semantic hold with zero semantic commit and no review task.
+Public status exposes bounded issues and whole-submission replacement guidance.
 
 Malformed, incomplete, duplicate, out-of-allowlist, or otherwise invalid
 responses do not produce a partial semantic commit. Malformed content uses the
@@ -273,8 +279,8 @@ quarantine completion timestamp. The isolated raw payload copy remains only for
 that interval, then the cleanup job hard-deletes it. Append-only evidence,
 identifiers, hashes, security events, and lineage remain restricted audit
 history and are never recallable or provider input. A replacement is a new
-complete remember call through the quarantine-specific workflow; it never
-releases or extends the quarantined data.
+independent complete remember call; it never releases or extends the
+quarantined data.
 
 ## Public Status Contract
 
@@ -285,6 +291,7 @@ The status is owner-scoped and contains safe, bounded state only:
 | --- | --- | --- |
 | queued | Staged and waiting for a worker. | Poll later. |
 | processing | A worker owns a live assessment lease. | Poll later. |
+| awaiting_review | Grounding confidence or another semantic policy held the complete submission with zero semantic commit. | Read `semantic_hold.issues` and submit one complete corrected replacement using its guidance. |
 | completed | Canonical promotion succeeded. | Recall or trace normally. |
 | rejected | The server rejected the submission. | Submit a new complete request if appropriate. |
 | quarantined | Security concern; the isolated raw payload copy expires after 24 hours while immutable source history remains restricted and non-recallable. | Do not use it; optionally submit a replacement. |
@@ -322,10 +329,9 @@ metrics.
 There is deliberately no client-facing placement/review tool, review task,
 client confidence value, or follow-up-evidence action in this contract.
 
-The `awaiting_review` compatibility hold used by the #151 worker is not a
-client review action and is not a partial promotion. #152 defines its immutable
-expiry/replacement lifecycle before the final public status contract removes
-placement-era compatibility states.
+`awaiting_review` is not a client approval action or partial promotion. Its
+public `semantic_hold` projection contains bounded issues, truncation state, and
+the exact `replaces_submission_id` needed for one complete corrected successor.
 
 ## Recall Safety Boundary
 
@@ -347,21 +353,23 @@ required even when the write-time scanner and assessor have passed.
   database errors never appear in public errors or logs.
 - Security decisions, terminal outcomes, promotions, lifecycle events, and
   quarantine cleanup are auditable.
-- A replacement links to a quarantined source without prematurely deleting that
-  source's required 24-hour retention window.
+- A later independent submission cannot prematurely delete or release a
+  quarantined source during its required 24-hour retention window.
 
 ## Migration Boundary
 
-The V2.4 migration is a hard switch from client-placement orchestration to
-server-owned submissions. It stages safe legacy queued/guarded/processing work
-without duplicating canonical semantic records, preserves already accepted
-semantics, and terminalizes unresolved legacy review work. Normal runtime paths
-do not run legacy placement workers or expose legacy placement tools.
+The V2.5 contract is a hard switch from caller-owned text ranges to server-owned
+grounding. Unfinished V2.4 queued, guarded, or processing submissions terminate
+with `contract_superseded` and zero semantic writes; callers resubmit one
+complete V2.5 evidence-and-Relationships batch. Already accepted semantic state
+and durable provenance ranges remain unchanged. Normal runtime paths do not
+accept the old remember fields or reinterpret old proposals.
 
 ## Acceptance Checks
 
-1. a missing or span-mismatched relationship is rejected before staging, and a
-   relationship-bearing request covers every submitted evidence index;
+1. a missing Relationship, caller span/surface/support field, duplicate or
+   out-of-range evidence index, or incomplete evidence-index coverage is
+   rejected before staging;
 2. Base64 and injection evidence are rejected before staging;
 3. staged content cannot enter recall or search before atomic promotion;
 4. every assessor response covers every evidence item with a security verdict;
@@ -372,8 +380,8 @@ do not run legacy placement workers or expose legacy placement tools.
    receives every distinct relationship ref in one run-scoped request;
 8. exact predicate, candidate-context, or input overflow makes zero provider
    call and zero semantic write;
-9. a valid but non-promotable run becomes an `awaiting_review` compatibility
-   hold with no review task or semantic subset, and expiry changes only its
+9. a valid but non-promotable run becomes an `awaiting_review` semantic hold
+   with no review task or semantic subset, and expiry changes only its
    projection;
 10. status never exposes a review task or raw assessor/prompt content;
 11. a same-owner complete replacement leaves its target unchanged until a

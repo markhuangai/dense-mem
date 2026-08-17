@@ -225,22 +225,25 @@ flowchart TD
 ## Candidate Prefetch And Integrated Assessment
 
 Candidate prefetch occurs before the only model call. The server revalidates
-client `known_entity_id` hints, generates bounded evidence phrases, and uses the
-current-name index to find canonical/alias names that are exact token-bounded
-evidence spans. It does not send all team Entities and does not use vector
+client `known_entity_id` hints and uses the current-name index to find exact
+canonical/alias candidates for each submitted Entity name. Within only the
+Relationship's cited evidence, it locates whole-token occurrences of the
+submitted name and active candidate aliases, then assigns opaque grounding and
+boundary references. It does not send all team Entities and does not use vector
 similarity in the automatic write allowlist.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  Evidence["Verbatim evidence and client hints"] --> Scope["Authenticated team only"]
+  Evidence["Verbatim evidence, logical Entity names,<br/>and evidence_indices"] --> Scope["Authenticated team only"]
   Scope --> Hint["Revalidate server-issued ID hints"]
-  Scope --> Phrases["Generate token-bounded phrases"]
-  Phrases --> Name["Exact current canonical/alias lookup"]
-  Hint --> Union["Deduplicate Entity IDs by exact span"]
-  Name --> Union
-  Union --> Context["Attach kind and bounded identity context"]
-  Context --> Limit["At most 20 per surface<br/>inside 50,000-token candidate budget"]
+  Scope --> Name["Exact current canonical/alias lookup"]
+  Name --> Ground["Locate submitted names and active aliases<br/>in cited evidence"]
+  Hint --> Context["Deduplicate candidate IDs;<br/>attach kind and identity context"]
+  Name --> Context
+  Ground --> Refs["Issue opaque grounding and boundary refs"]
+  Context --> Limit["At most 20 candidates and 20 groundings<br/>per Entity target"]
+  Refs --> Limit
   Limit --> Assess["One integrated assessor conversation"]
 ```
 
@@ -254,22 +257,24 @@ flowchart TD
 | vector similarity outside placement | surface possible duplicates for a separate review | enter the assessor allowlist or authorize reuse |
 
 One revalidated known ID or one unique compatible exact match may be reused.
-Multiple/conflicting matches remain `ambiguous`; if more than 20 exact matches
-exist, the group is marked truncated and cannot be auto-resolved. An empty
-candidate list does not automatically authorize `create`. A retrieval error is
-not an empty result and fails placement visibly.
+Multiple/conflicting matches remain `ambiguous`; more than 20 exact candidates
+or groundings fails preflight rather than silently truncating the allowlist. An
+empty candidate list does not automatically authorize `create`, and a submitted
+name with no eligible grounding produces a whole-submission semantic hold. A
+retrieval error is not an empty result and fails placement visibly.
 
 ## One Assessor Conversation
 
-One integrated assessor conversation extracts evidence-local
-mentions/Relationships and returns separate `entity_results` and
+One integrated assessor conversation grounds submitted Entity and Relationship
+targets and returns separate `entity_results` and
 `relationship_results`. The exact input, closed output schema, retry behavior,
 and no-coercion rule belong only in
-[Memory Write Pipeline](Write-Pipeline#strict-assessor-contract).
+[Memory Write Pipeline](Write-Pipeline#server-owned-assessment).
 
 For identity, the server enforces:
 
-- exactly one result for every mention ref
+- exactly one result for every submitted Entity ref
+- every non-ambiguous result selects one server-issued grounding ref
 - `reuse` names exactly one active candidate supplied for that ref
 - `create` contains no pre-existing `entity_id`
 - `ambiguous` contains no Entity ID
@@ -290,11 +295,11 @@ application code does not repair provider JSON.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  Refs["Evidence-local refs"] --> Results["One Entity result per ref"]
+  Refs["Submitted Entity refs and<br/>server-issued groundings"] --> Results["One Entity result per ref"]
   Results --> Map["Map refs to Entity IDs<br/>or typed Value IDs"]
   Map --> Ready{"All required endpoints resolved?"}
-  Ready -- No --> Hold["Preserve observation and review;<br/>no active Relationship"]
-  Ready -- Yes --> Predicate{"Registered predicate resolved?"}
+  Ready -- No --> Hold["Whole-submission semantic hold;<br/>zero semantic commit"]
+  Ready -- Yes --> Predicate{"Predicate resolved or<br/>safe to register?"}
   Predicate -- No --> Hold
   Predicate -- Yes --> Identity["Compute Relationship identity"]
   Identity --> Policy["Apply confidence gate and lifecycle policy"]
@@ -310,19 +315,22 @@ Conceptual service logic:
 resolved := make(map[string]EntityResolution)
 
 for _, result := range assessment.EntityResults {
-	group := exactSpanCandidateGroup(result.EvidenceID, result.Start, result.End)
-	resolved[result.Ref] = validateResolution(teamID, group, result)
+	grounding := allowedGrounding(result.GroundingRef)
+	resolved[result.Ref] = validateResolution(teamID, grounding, result)
+	if resolved[result.Ref].Ambiguous {
+		return wholeSubmissionSemanticHold(result.Ref)
+	}
 }
 
 for _, result := range assessment.RelationshipResults {
 	subject, object := resolveEndpoints(result, resolved)
-	if subject.Ambiguous || object.Ambiguous {
-		createIdentityReviewTask(result)
-		continue
+	if err := validateGroundedRanges(result); err != nil {
+		return wholeSubmissionSemanticHold(result.Ref)
 	}
-
-	upsertRelationshipObservation(subject.EntityID, result, object)
+	stageRelationshipObservation(subject.EntityID, result, object)
 }
+
+commitSubmissionAtomically()
 ```
 
 This is illustrative target logic, not a claim that these function names exist
@@ -336,7 +344,7 @@ globally safe name key.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  Idempotency["Ingest idempotency"] --> Candidates["Exact-span candidate prefetch"]
+  Idempotency["Ingest idempotency"] --> Candidates["Server-owned occurrence grounding<br/>and exact candidate prefetch"]
   Candidates --> Assess["One integrated assessment"]
   Assess --> Validate["Validate reuse / create / ambiguous<br/>against frozen allowlists"]
   Validate --> Lock["Ordered team-scoped<br/>name and identifier locks"]

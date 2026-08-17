@@ -410,8 +410,9 @@ Typed error schema is in
 
 ## Provider Isolation
 
-Raw staged evidence, exact-span client proposals, bounded same-team Entity
-candidates, and the predicate catalog are untrusted prompt data. The write path
+Raw staged evidence, logical client Relationship proposals, server-issued
+grounding choices, bounded same-team Entity candidates, and predicate options
+are untrusted prompt data. The write path
 first runs a deterministic Base64/encoding, hidden-control, instruction,
 role-spoofing, markup, secret-extraction, and exfiltration scan over every
 provider-bound user field, including the structured proposal, before it stages
@@ -544,3 +545,18 @@ never grants another owner's mutation authority. System actors preserve the
 The ordered Goose cleanup is boot-only and transactional. No public request can
 select migration mode or trigger cleanup. The removed legacy tables cannot
 become a fallback read or write path after startup.
+
+## Memory Space Authorization
+
+Authentication fixes the team, membership, credential, effective scopes, and
+allowed memory-space set before an application service runs. The set is derived
+from the immutable credential binding and membership policy; request payloads,
+headers, MCP arguments, and provider output cannot add or replace a space.
+
+An SSO profile context may authorize its profile-private space plus team-shared.
+A private-bound credential may authorize its credential-private space plus
+team-shared. A shared-only or read-only integration authorizes team-shared only
+unless policy explicitly grants a private binding; read-only still cannot
+mutate. Team-manager role does not grant access to another member's private
+space. PostgreSQL RLS and every repository query enforce this set, including
+hydration, trace, graph expansion, conflict handling, and background jobs.

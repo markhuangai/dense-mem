@@ -32,7 +32,7 @@ sequenceDiagram
   participant PG as PostgreSQL + pgvector
 
   User->>Host: Share evidence
-  Host->>DM: remember(evidence, exact-span proposal)
+  Host->>DM: remember(evidence, logical Relationships + evidence_indices)
   DM->>DM: Deterministic write-time security scan
   alt Intake rejection
     DM->>PG: Append safe rejection audit metadata
@@ -40,7 +40,7 @@ sequenceDiagram
   else Intake pass
     DM->>PG: Stage isolated submission
     DM-->>Host: submission_id
-    DM->>PG: Load exact Entity candidates and structured predicates
+    DM->>PG: Build bounded Entity groundings, candidates, and predicates
     DM->>DM: One capability-free assessor request
     DM->>PG: Persist first valid assessment
     alt Worker or assessor security concern
@@ -76,7 +76,7 @@ profiles disagree       -> preserve each author; use a team Conflict case
 new real identity       -> create one Entity
 new relationship        -> create one Relationship
 actual ambiguity        -> server assessment; no client resolution loop
-insufficient evidence   -> pending Relationship; no active edge/default recall
+uncertain grounding/evidence -> semantic hold; no semantic commit/default recall
 dream speculation       -> Hypothesis only; no new node
 ```
 

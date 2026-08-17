@@ -266,8 +266,8 @@ descriptive statement. The worker repeats the scan before it loads candidates
 or calls the assessor. A worker-time deterministic concern atomically appends
 the matching placement fragment's security event, quarantine, and terminal
 placement outcome; an assessor concern follows the same staged-data quarantine
-path. A clean worker prefetches
-exact-span current Entity candidates and a structured predicate catalog, starts
+path. A clean worker builds server-owned Entity occurrence groundings,
+prefetches complete matching candidates and structured predicate options, starts
 one strict assessor conversation containing bounded `security_signals`,
 `entity_results`, and `relationship_results`, validates and persists the first
 complete valid response, applies the positive-support confidence gate plus
@@ -283,7 +283,7 @@ flowchart LR
   Scan -- yes --> Intake["Commit evidence, pass event,<br/>and queue intent"]
   Intake --> WorkerScan{"Worker scan passes?"}
   WorkerScan -- no --> Quarantine["Atomically record security event,<br/>quarantine, and terminal state"]
-  WorkerScan -- yes --> Context["Exact Entity candidates and<br/>structured predicate catalog"]
+  WorkerScan -- yes --> Context["Server-owned Entity groundings,<br/>candidates, and predicate options"]
   Context --> Assess["One bounded assessor conversation"]
   Assess --> Validate["Closed-schema, security-signal,<br/>and allowlist validation"]
   Validate --> Signal{"Model security signal?"}
@@ -301,7 +301,7 @@ validation errors and full message history for at most five turns. The
 application does not coerce it or commit a valid subset. Provider failures end
 the conversation and consume a durable placement attempt with fresh history;
 restart and commit retries reuse the first valid result. Full details belong in
-[Memory Write Pipeline](Write-Pipeline#strict-assessor-contract).
+[Memory Write Pipeline](Write-Pipeline#server-owned-assessment).
 
 ## Read Boundary
 
@@ -349,7 +349,7 @@ projection, outbox, or graph-reconciliation loop in the target.
 
 | Area | Dense-Mem owns | Host LLM owns |
 | --- | --- | --- |
-| Remember | evidence persistence, exact candidate prefetch, strict integrated assessment, deterministic validation/lifecycle, and traceability | submitting evidence and the smallest supported hint |
+| Remember | evidence persistence, server-owned grounding, exact candidate prefetch, strict integrated assessment, deterministic validation/lifecycle, and traceability | submitting evidence, logical Relationship intent, and supporting evidence indexes |
 | Embeddings | evidence, Entity, Relationship, and query embeddings through configured providers | no normal-use vectors |
 | Recall | bounded retrieval, ranking, graph frontier, freshness, and trace handles | deciding which returned context to use, cite, or question |
 | Ambiguity | exact candidates, impact, review state, and safe decision application | presenting the ambiguity and collecting the user's evidence-backed choice |
@@ -457,3 +457,21 @@ credential unless a personal one is used. For direct API-key auth, the stable
 credential ID is also the permanent owner alias. System actors retain
 `actor_identities.kind = system`. Canonical identity tables are now the only
 runtime authority.
+
+## Memory-Space Ownership Boundary
+
+All memory is team-scoped and carries an explicit space boundary. The supported
+space kinds are:
+
+| Space kind | Owner | Visibility | Write authority |
+| --- | --- | --- | --- |
+| `team_shared` | team | authorized members of the team | existing `remember` flow |
+| `profile_private` | one authenticated identity in the team | that identity's authenticated profile context | reserved for private ingestion |
+| `credential_private` | one team-bound credential | that credential's authenticated context | reserved for private ingestion |
+
+There is no global private space. A credential has one immutable binding:
+`shared_only`, `profile_private`, or `credential_private`. Read-only
+credentials may be private-bound, but their effective grants cannot write. A
+private-bound recall executes the team-shared and the credential's own private
+branch independently; it never resolves entities, graph edges, or search hits
+across branches. Normal `remember` remains team-shared and has no space selector.

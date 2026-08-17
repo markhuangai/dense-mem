@@ -374,31 +374,34 @@ flowchart TD
 ```
 
 The team registry is open-ended; the assessor request is bounded. Before the
-call, Dense-Mem builds a structured catalog of active definitions, putting
-exact key/alias matches first and enforcing the 100-option request limit. Each
-option carries its key, version, aliases, allowed endpoint kinds,
-`relationship_kind`, and `current_cardinality`. The assessor may select only a
-supplied compatible option. Unmatched wording remains unresolved for review.
+call, Dense-Mem loads every exact active key/alias match, then fills the
+remaining 100-option default request capacity with evidence-relevant active
+definitions. Each option carries its key, version, aliases, allowed endpoint
+kinds, `relationship_kind`, and `current_cardinality`. The assessor may select
+only a supplied compatible option or return a typed `registration_required`
+result for the submitted key.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  Registry["Open-ended team registry"] --> Exact["Exact evidence key/alias matches first"]
-  Exact --> Catalog["Structured catalog<br/>up to 100 definitions"]
-  Catalog --> Assess["Assessor selects one supplied<br/>compatible definition"]
-  Assess --> Selected{"Resolved supplied option?"}
-  Selected -- Yes --> Recheck["Server rechecks current registry<br/>under transaction lock"]
+  Registry["Open-ended team registry"] --> Exact["All exact key/alias matches"]
+  Exact --> Catalog["Add evidence-relevant options<br/>within the request bound"]
+  Catalog --> Assess["Assessor resolves, requests registration,<br/>or needs review"]
+  Assess --> Selected{"Result?"}
+  Selected -- resolved --> Recheck["Server rechecks current registry<br/>under transaction lock"]
   Recheck --> Use["Use canonical definition and version"]
-  Selected -- No --> Review["predicate review;<br/>no Relationship"]
+  Selected -- registration --> Register["Server reuses or creates a restricted<br/>definition under the same lock"]
+  Selected -- needs review --> Review["Whole-submission semantic hold"]
 ```
 
-The assessor cannot propose a durable key, version, endpoint allowlist,
-Relationship behavior, lifecycle status, or truth. Exact keys and aliases are
-rechecked under a team/key transaction lock. An existing compatible definition
-wins. No call may register vocabulary. Unmatched wording, catalog truncation
-without a valid exact option, key/alias collisions, ambiguous aliases,
-incompatible endpoint kinds, and incompatible Relationship kinds preserve the
-observation as `predicate_needs_review` and create no Relationship.
+The assessor cannot define a durable version, endpoint allowlist, Relationship
+behavior, lifecycle status, or truth. Exact keys and aliases are rechecked under
+a team/key transaction lock. An existing compatible definition wins; otherwise
+server policy may register only a restricted definition with append-only
+provenance in the atomic semantic transaction. Exact-match overflow fails before
+the provider call. Key/alias collisions, ambiguous aliases, incompatible
+endpoint kinds, or incompatible Relationship kinds hold the complete submission
+with zero semantic commit.
 
 ## Observation And Evidence
 
@@ -454,13 +457,14 @@ atomically with the source or support decision.
 ## Assessment And Verification Events
 
 One bounded assessor conversation returns separate `entity_results` and
-`relationship_results`. Entity extraction/resolution, predicate selection,
-Relationship extraction, and evidence support judgment share that conversation.
+`relationship_results`. Entity grounding/resolution, predicate grounding and
+selection, Relationship normalization, and evidence support judgment share that
+conversation.
 A malformed HTTP 200 response may be replaced in the same history for at most
 five provider turns; provider failures instead use the durable placement retry
 budget with fresh history. The closed response schema, persisted-response rule,
 and no-coercion rule are defined in
-[Memory Write Pipeline](Write-Pipeline#strict-assessor-contract).
+[Memory Write Pipeline](Write-Pipeline#server-owned-assessment).
 
 For each observation, the assessor returns bounded semantic judgments:
 
@@ -474,11 +478,13 @@ A non-empty valid array quarantines the complete submission and creates no
 `VerificationEvent` or semantic subset.
 
 Stored Relationships are not assessor inputs. The request contains only the
-complete staged submission, complete same-team candidate sets for its exact
-Entity surfaces, and the complete active predicate catalog when each fits its
-hard configured bound. Catalog overflow is terminal before a provider call; it
-is never relevance-truncated. The assessor cannot invent a predicate or select
-a stored Relationship. After the first schema-valid response is persisted, the
+complete staged submission, server-generated Entity occurrence groundings,
+complete same-team candidate sets for the submitted names and active aliases,
+all exact active predicate key/alias matches, and bounded evidence-relevant
+predicate options. Exact candidate or predicate overflow is terminal before a
+provider call and is never silently truncated. The assessor cannot invent a
+range, predicate, or stored Relationship. After the first schema-valid response
+is persisted, the
 server recomputes canonical identity and loads bounded current state for
 deduplication, conflict, update, and cross-reference policy. A same-owner match
 attaches support to the existing record. A cross-owner conflict creates an
@@ -503,9 +509,9 @@ VerificationEvent
   verified_at
 ```
 
-Raw confidence, the exact threshold, and provider rationale are internal audit
-data. Public placement returns only the bounded `gate_result`, a bounded
-server-authored reason, and `assessment_policy_version`.
+Raw confidence, the exact threshold, provider rationale, and `gate_result` are
+internal audit data. Public submission status returns only bounded processing,
+search, error, and semantic-hold guidance fields.
 
 Transport, rate-limit, HTTP-status, and provider-protocol failures remain
 operational telemetry and consume durable placement attempts. A malformed HTTP
@@ -552,17 +558,14 @@ explicit user/system decisions.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  Observation["Assessed observation"] --> Structure{"Endpoints, predicate, and required<br/>scope/time resolved?"}
-  Structure -- No --> StructureReview["Preserve Evidence + Observation and review;<br/>create no Relationship"]
+  Observation["Valid whole-submission assessment"] --> Structure{"Endpoints, predicate, and required<br/>scope/time resolved?"}
+  Structure -- No --> Hold["Whole-submission semantic hold;<br/>zero semantic commit"]
   Structure -- Yes --> Verdict{"Evidence verdict"}
-  Verdict -- contradicted --> RejectObservation["Reject observation support;<br/>preserve existing supported state"]
-  Verdict -- insufficient --> Existing{"Existing effective support?"}
-  Existing -- Yes --> Preserve["Preserve active Relationship"]
-  Existing -- No --> Pending["pending_evidence<br/>no SemanticEdge"]
+  Verdict -- contradicted/insufficient --> Hold
   Verdict -- entailed --> Gate{"Confidence >= effective<br/>team threshold?"}
-  Gate -- No --> ConfidenceReview["pending_evidence + support_confidence review<br/>no SemanticEdge"]
+  Gate -- No --> Hold
   Gate -- Yes --> OwnerConflict{"Same-owner conflict unresolved?"}
-  OwnerConflict -- Yes --> Review["needs_review<br/>no SemanticEdge"]
+  OwnerConflict -- Yes --> Hold
   OwnerConflict -- No --> Cross{"Cross-profile conflict?"}
   Cross -- Yes --> Reference["Append challenge/correction<br/>cross-reference"]
   Cross -- No --> Support["Grant effective support"]
@@ -570,7 +573,7 @@ flowchart TD
   Support --> Active["active Relationship"]
   Active --> Lost{"Final effective support removed?"}
   Lost -- No --> Active
-  Lost -- Yes --> Pending
+  Lost -- Yes --> Pending["pending_evidence<br/>no SemanticEdge"]
 ```
 
 Adding or removing effective support updates the same authored Relationship
@@ -812,8 +815,9 @@ flowchart TD
 
 ## Pending Relationship And Dream Boundary
 
-An insufficient pending Relationship remains in PostgreSQL so its context is
-not lost. It is excluded from default recall and the SemanticEdge view.
+A legacy insufficient pending Relationship may remain in PostgreSQL so its
+context is not lost. It is excluded from default recall and the SemanticEdge
+view. A V2.5 semantic hold creates no Relationship and is never Dream input.
 
 Dreaming may use a bounded pending Relationship only when:
 
@@ -845,9 +849,10 @@ status, or SemanticEdge. If a Hypothesis mentions a new concept, that concept
 remains text until later evidence enters `remember` and normal Entity
 resolution.
 
-Review expiry closes the workflow; it is not evidence and never activates a
-Relationship or promotes it directly to a Hypothesis. A structurally complete
-Relationship remains `pending_evidence` and may become bounded Dream input.
+Legacy review expiry closes that retained workflow; it is not evidence and never
+activates a Relationship or promotes it directly to a Hypothesis. A structurally
+complete legacy Relationship remains `pending_evidence` and may become bounded
+Dream input.
 Unresolved identity, predicate, scope, or time remains Evidence plus Observation
 only and is not Dream input.
 
@@ -874,11 +879,11 @@ referential and audit integrity.
 | --- | --- |
 | Evidence transaction fails | Create no ingest or semantic state. |
 | Assessor response is unavailable or invalid | Preserve staged evidence; expose failure; create no support, VerificationEvent, or SemanticEdge. |
-| Entity endpoint is ambiguous | Preserve observation/review context; create no dependent Relationship or SemanticEdge. |
-| Predicate wording has no exact registered key or alias | Preserve observation; return predicate review; create no Relationship or SemanticEdge. |
-| Predicate key/alias is ambiguous, colliding, or kind-incompatible | Preserve observation; return predicate review; create no Relationship or SemanticEdge. |
-| Verdict is insufficient | Preserve a `pending_evidence` Relationship and evidence context; create no SemanticEdge. |
-| Entailed confidence is below the effective threshold | Preserve a `pending_evidence` Relationship and seven-day support-confidence review; grant no support or SemanticEdge. |
+| Entity endpoint is ambiguous | Preserve the staged evidence and whole-submission semantic hold; create no semantic subset or SemanticEdge. |
+| Predicate cannot be resolved or registered safely | Preserve the whole-submission semantic hold; create no Relationship or SemanticEdge. |
+| Predicate key/alias is ambiguous, colliding, or kind-incompatible | Preserve the whole-submission semantic hold; create no Relationship or SemanticEdge. |
+| Verdict is insufficient | Preserve the staged evidence and whole-submission semantic hold; create no semantic subset or SemanticEdge. |
+| Entity, predicate, Value, support, or Relationship grounding confidence is below the effective threshold | Preserve the whole-submission semantic hold with bounded replacement guidance; grant no support or SemanticEdge. |
 | Search embedding fails | Preserve authoritative Relationship; expose degraded search state and retry the derived embedding job. |
 | Same-owner knowledge conflicts with new evidence | Hold review or apply owner-authorized supersession; never use stored knowledge as self-supporting evidence. |
 | Another profile's knowledge conflicts with new evidence | Preserve both eligible authored records during placement, append a challenge/correction cross-reference, and create/update the team Conflict case in the same transaction. |
@@ -973,5 +978,5 @@ The refactor is incomplete until tests prove:
     team threshold may grant support; the gate cannot override any structural,
     temporal, security, or conflict hold
 32. changing the team threshold does not rescore completed or held assessments
-33. a semantic review expires after seven days without activating knowledge;
+33. a legacy semantic review expires after seven days without activating knowledge;
     only structurally complete pending Relationships may later enter Dream

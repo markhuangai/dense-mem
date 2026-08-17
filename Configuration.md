@@ -225,16 +225,19 @@ flowchart TD
 | `AI_VERIFIER_MAX_INPUT_TOKENS` | `200000` | complete message-history budget, including the server prompt and any correction history |
 | `AI_VERIFIER_MAX_OUTPUT_TOKENS` | `65536` | complete-response acceptance budget; it is not sent as a provider `max_tokens` parameter |
 | `AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS` | `50000` | Entity/predicate context budget inside the complete request budget |
-| `AI_VERIFIER_MAX_PREDICATE_OPTIONS` | `100` | complete active team-predicate catalog capacity; 1 through 2,000, and overflow is a preflight failure rather than truncation |
+| `AI_VERIFIER_MAX_PREDICATE_OPTIONS` | `100` | exact-match plus evidence-relevant active predicate option capacity; 1 through 2,000, and exact-match overflow is a preflight failure rather than truncation |
 | `AI_VERIFIER_TOKENIZER` | `o200k_base` | tokenizer for all assessor budget checks; supported overrides are validated at startup |
 | `MEMORY_AUTO_WRITE_CONFIDENCE_THRESHOLD` | `0.7` | global bootstrap gate for positive Relationship support |
 | `RELATIONSHIP_MATCH_MAX_CANDIDATES` | `100` | post-assessment server-side identity/conflict comparison cap |
 
-Entity candidates remain capped at 20 per exact evidence surface. The complete
-active predicate catalog uses `AI_VERIFIER_MAX_PREDICATE_OPTIONS` (100 by
-default and at most 2,000); it is never relevance-truncated. Extracted Entity
-results are capped at 400 and Relationship results at 200. An incomplete
-catalog or candidate-context token overflow fails before the provider is called.
+Entity candidates remain capped at 20 per submitted name, and each Entity target
+has at most 20 server-issued occurrence groundings. Exact predicate key/alias
+matches are combined with evidence-relevant active options within
+`AI_VERIFIER_MAX_PREDICATE_OPTIONS` (100 by default and at most 2,000); exact
+matches are never relevance-truncated. Entity results are capped at 400 and
+Relationship results at 200. An incomplete exact candidate set, exact predicate
+overflow, grounding overflow, or candidate-context token overflow fails before
+the provider is called.
 Those response limits are closed-contract limits, not environment knobs. The
 adapter also has a fixed 16 MiB response transport cap as a safety boundary; it
 does not replace token accounting.
@@ -260,7 +263,7 @@ does not start another conversation. If the accumulated history cannot fit the
 input-token budget, placement fails visibly without another provider turn.
 
 The closed contract and validation rules belong in
-[Memory Write Pipeline](Write-Pipeline#strict-assessor-contract).
+[Memory Write Pipeline](Write-Pipeline#server-owned-assessment).
 The server may fingerprint that local contract for deployment and telemetry,
 but no schema-version field is sent to or accepted from the model.
 

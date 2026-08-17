@@ -491,3 +491,16 @@ belongs in [Evaluation](Evaluation).
 17. Search hits, Community summaries, and graph context never become evidence.
 18. Every returned representative and equivalent ID remains authorized and
     traceable.
+
+## Independent Space Branches And Fusion
+
+When the authenticated context has more than one allowed space, recall runs
+full-text, vector, adjacency, eligibility, hydration, and graph expansion in
+one branch per space. Branches are never joined for entity resolution or graph
+expansion. The service fuses the authorized hydrated results with equal-weight
+reciprocal-rank fusion using constant 60. Stable ties prefer the authorized
+private branch, then team-shared, then the immutable result ID. Every result
+adds `space_kind`; the internal space UUID is not public. A team-only caller
+continues through the existing single branch and receives backward-compatible
+results. Branch failures remain bounded per kind and cannot reveal an
+unauthorized branch.

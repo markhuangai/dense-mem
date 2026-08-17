@@ -332,7 +332,7 @@ flowchart TD
   Lease -- Yes --> Stage{"Dominant stage?"}
   Stage -- assessor --> Provider["Inspect provider limits,<br/>schema failures and cooldown"]
   Stage -- commit --> DB["Inspect lock waits, constraints,<br/>deadlocks and pool saturation"]
-  Stage -- review --> Review["Compatibility hold;<br/>verify zero semantic commit"]
+  Stage -- review --> Review["Semantic hold;<br/>verify zero semantic commit"]
 ```
 
 Required checks:
@@ -358,9 +358,11 @@ HTTP 200 response does not release the placement item: the assessor receives
 the bounded validation errors in the same message history and may return a
 complete replacement, for at most five provider turns in that conversation.
 
-The public placement status projects only an allowlisted terminal stage such as
-`predicate_options_overflow` or `assessment`. Never use provider/database error
-text from logs or SQL as a client diagnostic. If the stage is `unknown`, inspect
+Public submission status projects only closed safe error codes such as
+`submission_processing_failed`, `assessor_response_invalid`, or
+`assessor_unavailable`; internal stages such as `predicate_options_overflow`
+remain operator-only. Never use provider/database error text from logs or SQL as
+a client diagnostic. If the operator stage is `unknown`, inspect
 the authenticated correlation window, worker lease/attempt row, and PostgreSQL
 transaction/constraint state without exporting raw payloads.
 
@@ -382,9 +384,10 @@ failures remain hard blockers that need operator investigation.
 For the submission-wide worker, a valid but non-promotable result is terminal
 for worker progress when every item and its run are `awaiting_review` with the
 same `candidate` category. It has zero semantic commit and deliberately creates
-no review task or client action. Treat it as a compatibility hold, not a missing
-review-task incident. #152 owns its formal immutable expiry and replacement
-lifecycle. Legacy item-scoped review rows remain a separate compatibility path:
+no review task or approval action. Public status exposes bounded issues and
+whole-submission replacement guidance. Treat it as a semantic hold, not a
+missing review-task incident. Legacy item-scoped review rows remain a separate
+compatibility path:
 those rows still require their historical task invariants.
 
 For semantic holds, inspect `submission_holds` and the run projection together.
@@ -623,8 +626,8 @@ old and new workers to overlap.
 
 ### V2.4 integrated-assessor placement upgrade
 
-Run this upgrade only after issue #129's Relationship projection migration is
-complete and healthy. V2.4 changes placement and semantic-review workflow. It
+Run this upgrade only after the Relationship projection migration is complete
+and healthy. V2.4 changes placement and semantic-review workflow. It
 must not start another projection generation or embedding drain.
 
 Before cutover:
@@ -677,8 +680,8 @@ After cutover:
 Any changed vector, search-text hash, projection generation, embedding job
 count, or embedding-provider call attributable to this migration is a blocker.
 Do not “repair” it by draining the queue; find and remove the unintended
-projection change before traffic. Re-embedding associated with #129 is complete
-before this procedure and is not part of V2.4.
+projection change before traffic. Re-embedding associated with the projection
+migration is complete before this procedure and is not part of V2.4.
 
 Rollback is supported only before V2.4 traffic writes. Restore the pre-cutover
 database and matching V2.3 application together. After V2.4 claims commit,
@@ -961,7 +964,7 @@ Before production:
 12. Relationship projection upgrade proves resumable text convergence,
     Relationship-only fair re-embedding, whole-team vector activation, and
     unchanged Evidence/embedding/index state
-13. V2.4 cutover after #129 proves bounded same-history correction, durable
+13. V2.4 cutover after the projection migration proves bounded same-history correction, durable
     provider retry, persisted-assessment reuse, and zero legacy rescoring or
     lifecycle mutation
 14. V2.4 migration makes zero embedding calls/jobs and leaves search hashes,

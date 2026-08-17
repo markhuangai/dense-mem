@@ -59,8 +59,8 @@ source before 2.1.1 -> run 2.1.1 migration -> current release
 fresh install 2.2.0+ -----------------------> current release
 ```
 
-The Relationship projection upgrade tracked by #129 is an exclusive restart:
-complete the blocking format-2 text projection before traffic, then allow
+The Relationship projection upgrade is an exclusive restart: complete the
+blocking format-2 text projection before traffic, then allow
 Relationship-only vectors to warm asynchronously behind the team-wide vector
 gate. Follow
 [Relationship projection upgrade](Operations-Runbook#relationship-projection-upgrade).
@@ -154,7 +154,8 @@ Follow [MCP Clients](MCP-Clients) and connect the LLM host. The host initializes
 the server and calls `tools/list`; verify:
 
 - one current closed schema discovered through `tools/list`; callers cannot select a contract version
-- `remember` requires evidence plus exact span-grounded proposals
+- `remember` requires evidence plus logical Relationships whose
+  `evidence_indices` cover every evidence item
 - `get_submission_status` returns owner-scoped processing and search state
 - legacy placement and review tools are absent
 - `retract_evidence` is visible to a write-scoped key
@@ -181,12 +182,13 @@ Remember that I prefer concise explanations with concrete examples.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Ask["remember with exact-span proposal"] --> Intake["submission_id + queued"]
+  Ask["remember with logical Relationships<br/>and evidence_indices"] --> Intake["submission_id + queued"]
   Intake --> Poll["get_submission_status"]
   Poll --> State{"processing_state"}
   State -- queued/processing --> Poll
-  State -- rejected --> New["Submit new complete evidence/proposal if appropriate"]
-  State -- quarantined --> Isolated["Do not use content; optional fresh replacement"]
+  State -- awaiting_review --> Replace["Read semantic_hold issues;<br/>submit one complete replacement"]
+  State -- rejected --> New["Submit new complete evidence-and-Relationships batch if appropriate"]
+  State -- quarantined --> Isolated["Do not use content; optional fresh independent batch"]
   State -- failed --> Diagnose["Use safe error and correlation ID"]
   State -- completed --> Search{"search_state"}
   Search -- pending --> Recall["Recall may use current<br/>full-text/adjacency state"]
@@ -198,9 +200,11 @@ flowchart LR
 Valid outcomes:
 
 - completed canonical promotion with active eligible support
+- an `awaiting_review` semantic hold with zero semantic commit and bounded
+  whole-submission replacement guidance
 - explicit rejected, quarantined, or failed terminal outcome
 - a separate search state: pending/current/not_required/failed
-- no client review task, placement selection, or quarantine-release action
+- no client approval task, placement selection, or quarantine-release action
 
 The authoritative submission contract is in
 [Technical Reference](Technical-Reference#get_submission_status).

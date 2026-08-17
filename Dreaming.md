@@ -36,11 +36,13 @@ one of the following:
 - an `active` Relationship with at least one currently granted/reinstated
   support whose fragment is not quarantined, retracted, or superseded and whose
   source revision is current;
-- a `pending_evidence` Relationship whose final schema-valid assessment is
+- a legacy `pending_evidence` Relationship whose final schema-valid assessment is
   `insufficient` or below the write threshold, with its required semantic
   review expired; or
 - neither is eligible when its endpoints are inactive, its Relationship has a
   challenge or open review, or it has no usable exact excerpt.
+
+A V2.5 whole-submission semantic hold is not a Relationship or Dream input.
 
 The server then constructs only direct, directed two-edge paths:
 
@@ -340,36 +342,25 @@ Confirming a Hypothesis requires evidence independent of the generated text:
       "source_group": "user-dream-review:hyp_01J..."
     }
   ],
-  "proposal": {
-    "entities": [
-      {
-        "ref": "dense_mem",
+  "relationships": [
+    {
+      "ref": "dense_mem_benefits_from_search_freshness",
+      "subject": {
         "name": "Dense-Mem",
+        "entity_kind": "project",
         "known_entity_id": "ent_dense_mem"
       },
-      {
-        "ref": "search_freshness",
+      "predicate": {"proposed_key": "benefits_from"},
+      "object": {"entity": {
         "name": "search freshness",
+        "entity_kind": "concept",
         "known_entity_id": "ent_search_freshness"
-      }
-    ],
-    "relationships": [
-      {
-        "proposal_id": "dense_mem_benefits_from_search_freshness",
-        "subject_ref": "dense_mem",
-        "predicate": "benefits_from",
-        "object_ref": "search_freshness",
-        "polarity": "+",
-        "evidence": [
-          {
-            "evidence_index": 0,
-            "start": 0,
-            "end": 73
-          }
-        ]
-      }
-    ]
-  }
+      }},
+      "polarity": "+",
+      "modality": "statement",
+      "evidence_indices": [0]
+    }
+  ]
 }
 ```
 
@@ -404,7 +395,7 @@ related Hypothesis retrieval.
 | Pending-state pollution | weak insufficient text becomes an active edge through dreaming | Hypothesis-only output; no lifecycle mutation; new evidence must enter `remember` |
 | Dream invents nodes | generator creates a new “search freshness” Entity to complete an idea | endpoint allowlists, existing-ID validation, and reject any unknown ID |
 | Dream invents predicates | plausible free-form verb becomes durable graph vocabulary | registry allowlist and rejection; only an authorized registry workflow can add predicates |
-| Provider failure becomes a seed | invalid assessor output is treated as an assessed pending Relationship | require a final schema-valid assessment plus an expired semantic review for pending-input eligibility |
+| Provider failure becomes a seed | invalid assessor output is treated as an assessed legacy pending Relationship | require a final schema-valid assessment plus an expired legacy semantic review for pending-input eligibility |
 | Expiry becomes promotion | an unanswered review directly creates a Hypothesis or active edge | expiry changes only review state; Dream may later read an already resolved pending Relationship and still emits Hypothesis only |
 | Circular evidence | generated statement is submitted as its own proof | require independent user/external evidence and reject Hypothesis/source text as support |
 | AI invents a premise | provider fabricates an entity, evidence, or relation to make a plausible link | server builds paths first; opaque refs, closed schema, exact two-premise citations, and current-state revalidation reject it |
@@ -424,8 +415,8 @@ related Hypothesis retrieval.
    change, or SemanticEdge
 2. every endpoint and source ID already exists in the same team
 3. every proposed predicate is registered for the endpoint kinds
-4. pending Relationships are eligible only after a schema-valid final
-   `insufficient` or below-threshold assessment and semantic review expiry
+4. legacy pending Relationships are eligible only after a schema-valid final
+   `insufficient` or below-threshold assessment and legacy semantic review expiry
 5. primary recall never contains Hypotheses
 6. confirmation without new evidence fails
 7. submitted evidence enters the normal strict `remember` pipeline

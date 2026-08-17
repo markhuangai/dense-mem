@@ -55,8 +55,8 @@ The release retrieval gate is the public six-axis 1k corpus:
 | qasper | QASPER | Paper QA evidence retrieval. |
 | longmem_oracle | LongMemEval-S cleaned | Long-memory chat recall. |
 
-The historical V1 seed cannot enter the new submission API because it lacks
-required exact-span relationship properties. The #149 V2 seed is a
+The historical V1 seed cannot enter the current submission API because it lacks
+the required Relationship properties. The V2 seed is a
 source-locked derivative of a declared V1 cohort: every retained evidence item
 is identical to V1, and V2 adds only the required `relationships` property.
 
@@ -64,7 +64,7 @@ is identical to V1, and V2 adds only the required `relationships` property.
 V1 source-locked cohort
   -> declared relationship-ineligible exclusions
   -> retain evidence and source metadata unchanged
-  -> add exact-span relationships array
+  -> add logical relationships array with evidence_indices
   -> real Go relationship validation
   -> retained-evidence identity comparison
   -> live write-time scanner, assessor, and retrieval evaluation
@@ -80,11 +80,11 @@ The comparison reports, without exposing raw restricted corpus content:
 | Check | Required result |
 | --- | --- |
 | Source lock | V1 manifest/hash matches the approved source. |
-| Cohort | A committed cohort lock binds the frozen source and filtered cohort hashes. For #149, it explicitly declares nine corpus rows with no directly supported Relationship and their two dependent QASPER cases before either run. |
+| Cohort | A committed cohort lock binds the frozen source and filtered cohort hashes. It explicitly declares corpus rows with no directly supported Relationship and their dependent QASPER cases before either run. |
 | Count and order | The retained V1 and V2 corpus rows have the same count and source_doc_id order. |
 | Evidence identity | Every retained V1/V2 evidence item has the same ID, content hash, and source metadata. Any evidence difference is a hard failure. |
 | Metadata projections | Retained suite, qrels, licenses, transforms, and non-content metadata are unchanged. |
-| Relationship-property audit | Every V2 row has a nonempty exact-span `relationships` array accepted by the real Go contract validator. |
+| Relationship-property audit | Every V2 row has a nonempty spanless `relationships` array with valid `evidence_indices`, accepted by the real Go contract validator. |
 | Deterministic security gate | The live V2 import passes every row through the same write-time scanner used by production before assessment. |
 | Relationship provenance | The manifest records its parent seed ID/hash, retained-evidence identity hash, relationship-ledger hash, and relationship count without recording raw restricted corpus content. The local derivation report records copied-artifact/suite hashes plus fallback source IDs and excluded-ledger count. |
 
@@ -103,24 +103,27 @@ derivation. It must not normalize, repair, truncate, or otherwise rewrite
 retained evidence, source metadata, answers, suite rows, qrels, licenses, or
 transforms.
 
-It adds one or more self-contained relationship proposals to each retained
+It adds one or more self-contained Relationship proposals to each retained
 corpus item. An evidence item is currently bounded to 999 characters, so a
 single fixed proposal is insufficient: `relationships` is an array and every
-entry supplies its own inline subject, predicate, object, and support spans.
-The generator does not decide canonical IDs, predicate registration, or
-accepted semantic state.
+entry supplies its own inline subject, predicate, object, and
+`evidence_indices`. The generator does not emit text ranges or decide canonical
+IDs, predicate registration, durable support, or accepted semantic state.
 
-If a historical ledger selection is no longer span-grounded in the frozen V1
-evidence, the generator records that source ID and uses a sentence-bounded
-best-effort client proposal instead. This changes only the non-authoritative
-proposal; it never changes the evidence and remains subject to normal assessor
-normalization or `needs_review`.
+If a historical ledger term is no longer present in its recorded support window
+in the frozen V1 evidence, the generator records that source ID and uses a
+sentence-bounded best-effort logical proposal instead. This changes only the
+non-authoritative proposal; it never changes the evidence, and the live server
+still owns exact grounding and any semantic hold.
 
 Before release use, every row is checked by the same Go code as production:
 
-1. the required relationships must satisfy exact Unicode code-point span rules;
-2. the source metadata and source revision rules must be valid; and
-3. the manifest and suite cross-checks must pass.
+1. required Relationships use only the current closed fields, cite unique
+   in-range `evidence_indices`, and collectively cover the evidence;
+2. derivation verifies the selected subject, predicate, and object terms against
+   the frozen evidence without serializing their offsets;
+3. the source metadata and source revision rules are valid; and
+4. the manifest and suite cross-checks pass.
 
 The normal live import then runs the deterministic evidence scanner before the
 assessor sees the client relationship proposals.
@@ -182,7 +185,7 @@ raw provider data remain outside artifacts.
 
 ## Baseline, Candidate, and Comparison
 
-For #149, run the pre-change baseline against the validated filtered V1 cohort,
+Run the pre-change baseline against the validated filtered V1 cohort,
 then run the post-change candidate against V2 with the same retained cohort and
 suite. The evidence-identity comparison is the apples-to-apples guard; the run
 comparison then measures the behavioral effect of adding relationships.
@@ -228,23 +231,6 @@ evaluation. A complete score artifact with `comparison_only` import status may
 be used only to diagnose a V1/V2 delta, and the PR must label it non-release-
 ready.
 
-## Issue #149 Recorded V1/V2 Outcome
-
-The 2026-08-04 run validated the retained 991-document, 204-case cohort and
-its 991 V2 relationship properties before import. The retained-evidence
-identity comparison passed.
-
-| Run | Terminal placement result | Scoring / gate interpretation |
-| --- | --- | --- |
-| V1 pre-change baseline | 413 completed, 577 awaiting review, 1 quarantined, 0 failed | All 204 cases scored and the retrieval-metric policy passed, but the import gate is `comparison_only`; V1 is not release-ready. |
-| V2 relationship-property run | 17 completed, 974 awaiting review, 0 quarantined, 0 failed | All 204 cases scored and the import gate passed. This run explicitly opted into ungated scoring for cohort comparison, so it is not a release-gate decision. |
-
-The lock-bound `compare-v2-cohort` result passed. Recall@k, MRR, and bad@k
-were unchanged; overall nDCG changed by -0.0001429747 and evidence-only nDCG
-by -0.0003070194. The comparison therefore establishes the measured effect of
-the relationship property without treating either the V1 comparison-only run or
-the V2 ungated run as a release approval.
-
 ## Local E2E Security Gate
 
 Before the 1k evaluation, use the real local Compose server and a live
@@ -252,7 +238,8 @@ ephemeral credential to prove the public integration path:
 
 1. tools/list exposes get_submission_status and omits retired placement/review
    tools;
-2. a safe span-grounded remember call completes and its search state converges;
+2. a safe spanless remember call with complete evidence-index coverage completes
+   and its search state converges;
 3. Base64 evidence is rejected before a submission is staged;
 4. role-control and prompt-injection evidence are rejected before a submission
    is staged;

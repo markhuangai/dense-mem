@@ -15,8 +15,9 @@ memory API.
 
 ## Contract Principles
 
-1. Remember requires exact evidence and a nonempty span-grounded
-   `relationships` array.
+1. Remember requires exact evidence and a nonempty logical `relationships`
+   array whose `evidence_indices` cover the submitted evidence. Exact grounding
+   belongs to the server and assessor.
 2. The server, not the client or assessor, owns canonical IDs, predicate
    registration, support, lifecycle state, status, and durable commits.
 3. A client polls a submission; it never resolves a placement review or supplies
@@ -40,7 +41,7 @@ role, and scope. Discovery and invocation apply the same checks.
 
 | Tool | Scope | Used by | Registration | Capability |
 | --- | --- | --- | --- | --- |
-| remember | write | Production and harness | Both images | Stage exact evidence plus span-grounded Relationship proposals. The harness imports corpus rows through this production path. |
+| remember | write | Production and harness | Both images | Stage exact evidence plus logical Relationship proposals and their supporting evidence indexes. The harness imports corpus rows through this production path. |
 | get_submission_status | read | Production and harness | Both images | Poll an owner-scoped remember or Relationship-correction submission. |
 | retract_evidence | write | Production | Both images | Retract caller-owned current evidence while preserving append-only provenance. |
 | correct_relationship | write | Production | Both images | Replace one caller-owned active supported Relationship, supersede the original, and retain support lineage. |
@@ -56,7 +57,7 @@ role, and scope. Discovery and invocation apply the same checks.
 | eval_run_recall_case | read/write | Evaluation harness | Evaluation image only | Run recall and return ranked/context refs for deterministic scoring. |
 
 Memory-pack candidate discovery, inspection, import, and rollback are not part
-of the v2.4 contract. A destination uses a normal authenticated `remember`
+of the v2.5 contract. A destination uses a normal authenticated `remember`
 submission for any evidence derived from an external artifact.
 
 The release binary is compiled without the `evaluation` build tag. It cannot
@@ -95,8 +96,8 @@ tool-executor route.
 - A request cannot select team_id or owner_profile_id.
 - A client-supplied ID hint is revalidated against authenticated team and state.
 - Idempotency keys are scoped to team, permanent owner alias, and operation.
-- All relationship offsets are Unicode code-point positions: start is inclusive and
-  end is exclusive.
+- Durable evidence/support offsets, including `correct_relationship` supports,
+  are Unicode code-point positions: start is inclusive and end is exclusive.
 - A model provider does not receive credentials, request headers, environment
   data, tool access, or cross-team data.
 
@@ -105,10 +106,10 @@ tool-executor route.
 ### Request
 
 remember requires evidence and a top-level nonempty `relationships` array. The
-client constructs the smallest inline Entity names, predicate surfaces, and
-Relationships it can ground in the exact evidence. An evidence item is currently
-bounded to 999 characters, so each array entry is self-contained rather than
-referencing a fixed proposal object.
+client constructs the smallest inline Entity names, predicate key, and Entity or
+typed Value object that express each logical Relationship. An evidence item is
+currently bounded to 999 characters, so each Relationship is self-contained
+rather than referencing a separate proposal object.
 
 ~~~json
 {
@@ -123,44 +124,64 @@ referencing a fixed proposal object.
       "subject": {
         "name": "Dense-Mem",
         "entity_kind": "project",
-        "known_entity_id": null,
-        "span": {"evidence_index": 0, "start": 0, "end": 9}
+        "known_entity_id": null
       },
       "predicate": {
-        "proposed_key": "uses",
-        "surface": "uses",
-        "span": {"evidence_index": 0, "start": 10, "end": 14}
+        "proposed_key": "uses"
       },
       "object": {"entity": {
         "name": "PostgreSQL",
         "entity_kind": "product",
-        "known_entity_id": null,
-        "span": {"evidence_index": 0, "start": 15, "end": 25}
+        "known_entity_id": null
       }},
       "polarity": "+",
       "modality": "statement",
-      "supports": [{"evidence_index": 0, "start": 0, "end": 26}]
+      "evidence_indices": [0]
   }],
-  "idempotency_key": "architecture-submission-20260801",
-  "replaces_submission_id": "sub_01J-held-target"
+  "idempotency_key": "architecture-submission-20260801"
 }
 ~~~
 
-Each inline Entity has exactly one span and its name must equal that span. A
-predicate surface must equal its stated span. A Relationship `object` has exactly
-one of `entity` or typed `value`, never both. Its `supports` spans cover the
-subject, predicate, and object spans within the same evidence item. A string
-Value surface, display, or unit also has to be exact submitted evidence.
+Each Relationship has a unique request-local `ref` and one to twenty unique,
+in-range `evidence_indices`. Across the array, those indexes must cover every
+submitted evidence item. A Relationship `object` has exactly one of `entity` or
+typed `value`, never both.
+
+`remember` rejects caller `span`, `surface`, and Relationship `supports` fields.
+The server finds bounded occurrences of submitted Entity names and active
+aliases in the cited evidence and issues opaque boundary references. The
+assessor selects exact Entity, predicate, Value, and support ranges; deterministic
+validation proves that every selected range is within the Relationship's cited
+evidence before any durable span is committed.
 
 The client makes its best effort to provide a matching
-`predicate.proposed_key`, at most 128 Unicode code points. Its exact predicate
-surface is at most 256 code points. The server rejects oversized values rather
-than truncating them. It forwards the raw proposal unchanged only with a
-complete active team predicate catalog that fits its configured bound; it does
-not make the suggestion authoritative. The client can provide a same-team
-`known_entity_id` candidate hint, but cannot create an Entity ID, register or
-activate a predicate, name a durable Relationship ID, set confidence, set
-status, or alter support.
+`predicate.proposed_key`, at most 128 Unicode code points. The server rejects
+oversized values rather than truncating them. It forwards the logical proposal
+with bounded same-team candidate and predicate options but does not make the
+suggestion authoritative. The client can provide a same-team `known_entity_id`
+candidate hint, but cannot create an Entity ID, register or activate a
+predicate, name a durable Relationship ID, set confidence, set status, or alter
+durable support.
+
+### Relationship fields
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| ref | yes | Unique client-local proposal reference, at most 128 code points. |
+| subject | yes | Inline Entity with `name`, `entity_kind`, and optional `known_entity_id` hint. |
+| predicate | yes | Object containing only the best-effort `proposed_key`. |
+| object | yes | Exactly one inline `entity` or typed `value`. |
+| polarity / modality | yes | `+` or `-`; modality is `statement`, `question`, `proposal`, `speculation`, or `quoted`. Only statements are eligible for automatic commit. |
+| evidence_indices | yes | One to twenty unique indexes into this request's `evidence` array. |
+| valid_from / valid_to | no | RFC 3339 evidence-supported validity hints. |
+| correction_target | no | Same-team Relationship ID and expected version supplied from authorized context. |
+| conflict_context | no | Same-team open Conflict ID and expected version supplied from authorized recall. |
+| client_comment | no | Bounded non-authoritative extraction note. |
+
+Entity kinds are `person`, `organization`, `project`, `product`, `place`,
+`document`, `concept`, or `other`. Typed Values use `string`, `number`,
+`boolean`, `date`, or `date_time`; their `display` and `unit` fields are
+optional hints and are grounded by the assessor.
 
 ### Evidence fields
 
@@ -181,14 +202,15 @@ Direct supersession and a source revision advance cannot be combined.
 
 To replace a held submission, make a new complete remember request and set
 `replaces_submission_id`. The target must be an owned semantic hold (active or
-expired); a quarantined submission uses its separate quarantine workflow. The
-replacement is staged and assessed as a complete submission, never as a patch.
+expired); it cannot target a quarantined submission. The replacement is staged
+and assessed as a complete submission, never as a patch.
 
 ### Response
 
 ~~~json
 {
   "submission_id": "sub_01J...",
+  "submission_kind": "remember",
   "processing_state": "queued",
   "check_after_seconds": 60,
   "status_tool": "get_submission_status",
@@ -225,29 +247,39 @@ visibility does not grant access to another profile's submission.
 ~~~json
 {
   "submission_id": "sub_01J...",
+  "submission_kind": "remember",
   "processing_state": "completed",
-	"search_state": "current",
-	"evidence": [{
-	  "evidence_id": "evidence_01J...",
-	  "evidence_index": 0,
-	  "superseded_evidence_ids": [],
-	  "search_state": "current"
-	}],
-	"errors": []
+  "search_state": "current",
+  "check_after_seconds": 60,
+  "evidence": [{
+    "evidence_id": "evidence_01J...",
+    "evidence_index": 0,
+    "superseded_evidence_ids": [],
+    "search_state": "current"
+  }],
+  "errors": []
 }
 ~~~
 
-The processing states are queued, processing, completed, rejected, quarantined,
-and failed.
+The remember processing states are queued, processing, awaiting_review,
+completed, rejected, quarantined, and failed. Relationship correction may also
+return awaiting_confirmation.
 
 | State | Meaning |
 | --- | --- |
 | queued | The submission is durably staged and awaiting a worker. |
 | processing | A worker holds a current assessment lease. |
+| awaiting_review | The complete submission is a semantic hold with zero semantic commit and bounded replacement guidance. |
 | completed | Atomic canonical promotion completed. |
 | rejected | Server semantic/contract policy rejected it with no client review path. |
 | quarantined | A worker-time deterministic or assessor security concern isolated already-staged data. |
 | failed | A required worker, provider, or persistence operation exhausted bounded retry policy. |
+
+An `awaiting_review` response includes `semantic_hold.state` (`active` or
+`expired`), one to fifty bounded `issues`, `issues_truncated`, and
+`replacement`. The replacement object names the `remember` tool, provides the
+held `replaces_submission_id` and expiry, and instructs the caller to submit one
+complete corrected batch. It is not an approval or partial patch.
 
 search_state is not the processing state:
 
@@ -285,18 +317,19 @@ tool/network examples remain eligible. Audit and security-event records retain
 bounded rules and spans without a scanner version or policy hash.
 
 A passed submission receives one logical capability-free assessor conversation
-for the whole run, containing the full staged evidence, raw client
-relationships, complete matching Entity candidate sets, and the complete active
-team predicate catalog. The client predicate proposal is forwarded unchanged.
-The catalog is not relevance-truncated: a limit-plus-one query must prove that
-every candidate set and the active predicate catalog fit their configured
-bounds. `catalog_context_overflow` or `assessment_input_overflow` ends the run
-before a provider call and creates no semantic state. The closed response
-contains:
+for the whole run. It contains the full staged evidence, raw logical client
+Relationships, server-generated Entity occurrence groundings and complete
+matching candidate sets, all exact active predicate key/alias matches, and
+bounded evidence-relevant predicate options. A limit-plus-one query proves that
+exact candidate and predicate matches fit their configured bounds; they are
+never silently truncated. `catalog_context_overflow`,
+`predicate_options_overflow`, or `assessment_input_overflow` ends the run before
+a provider call and creates no semantic state. The closed response contains:
 
 - one security verdict, signals, and bounded justification for each evidence
   item;
-- normalized Entity and Relationship results; and
+- normalized Entity and Relationship results with selected boundary-reference
+  ranges for Entity, predicate, Value, and support grounding; and
 - an allowlisted existing predicate choice or a typed registration-required
   result.
 
@@ -306,8 +339,9 @@ or commit a record. Predicate registration is a server-controlled, locked,
 auditable step inside the atomic semantic transaction. An assessor security
 concern quarantines a staged submission; an invalid assessor response cannot
 cause a partial semantic commit. A valid result that policy cannot promote
-becomes the existing `awaiting_review` compatibility hold with zero semantic
-state and no review task; #152 owns its formal lifecycle.
+becomes an `awaiting_review` semantic hold with zero semantic state and no
+review task. Public status exposes bounded issues and whole-submission
+replacement guidance.
 
 ## Evidence Lifecycle and Corrections
 
@@ -403,13 +437,15 @@ not the audit ledger.
 | Assessor coercion | Evidence tells the model to leak secrets or call an API. | Treat evidence as data, provide no tools/secrets/environment, require closed schema, and quarantine a security concern. |
 | Client follows recalled text | Recalled evidence asks the host to exfiltrate a key. | Mark all returned evidence untrusted and require client-side action/tool policy. |
 | Partial canonical commit | One malformed assessor item leaves another Relationship promoted. | Validate complete coverage, then promote all accepted state in one PostgreSQL transaction. |
-| Quarantine bypass | A replacement causes malicious staged data to be deleted early or released. | Database-enforced exact 24-hour expiry; replacement is a separate submission link with no release action. |
+| Quarantine bypass | A later submission causes malicious staged data to be deleted early or released. | Database-enforced exact 24-hour expiry; an independent submission has no release or early-delete authority. |
 | Cross-profile mutation | One profile polls or changes another profile's submission. | Owner-scoped status and mutation predicates under RLS. |
 
 ## Contract Acceptance
 
 1. tools/list and tools/call share registry, contract, feature, and scope checks;
-2. remember rejects missing or span-inexact relationships;
+2. remember rejects missing Relationships, unknown span/surface/support fields,
+   duplicate or out-of-range evidence indexes, and incomplete evidence-index
+   coverage;
 3. deterministic security rejection creates no canonical or staged submission;
 4. every assessor response covers every staged evidence item with security
    justification;
@@ -429,9 +465,10 @@ Every terminal `rejected` or `failed` submission exposes at least one
 `errors[]` item. Codes are closed and server-authored, including
 `submission_semantic_hold`, `submission_policy_rejected`,
 `assessor_response_invalid`, `assessor_unavailable`,
-`submission_replacement_conflict`, `submission_processing_failed`, and the
-existing `search_indexing_delayed`. Item errors and the aggregate list are
-deterministically deduplicated. Provider output, SQL, prompts, credentials,
+`submission_replacement_conflict`, `submission_processing_failed`,
+`contract_superseded`, and the existing `search_indexing_delayed`. Item errors
+and the aggregate list are deterministically deduplicated. Provider output,
+SQL, prompts, credentials,
 stack traces, and cross-owner existence are never returned.
 
 The remaining closed correction codes are `relationship_version_stale`,
