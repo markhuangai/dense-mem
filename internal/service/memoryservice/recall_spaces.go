@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -41,6 +42,16 @@ func branchKind(branch domain.MemorySpaceAccess) string {
 
 func (s *recallService) recallAcrossSpaces(ctx context.Context, req RecallRequest, actor requestctx.Actor) (*RecallResult, error) {
 	req = normalizeRecallRequest(req)
+	contract, err := s.search.GetActiveSearchContract(ctx)
+	if err != nil {
+		return nil, err
+	}
+	req.recallContract = contract
+	req.recallEmbeddingReady = true
+	if req.Query != "" {
+		embedCtx := observability.WithAIOperation(ctx, observability.AIOperationRecallEmbedding, 1)
+		req.recallEmbedding, req.recallEmbeddingDegradation = s.queryEmbedding(embedCtx, contract, req.Query)
+	}
 	branches := append([]domain.MemorySpaceAccess(nil), actor.AllowedSpaces...)
 	if len(branches) == 0 {
 		branches = []domain.MemorySpaceAccess{{Kind: domain.MemorySpaceTeamShared}}

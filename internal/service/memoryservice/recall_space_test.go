@@ -35,6 +35,28 @@ func TestRecallFusesAuthorizedSpacesWithLabelsAndStablePrivateTieBreak(t *testin
 	require.Equal(t, sharedID.String(), search.inputs[1].SpaceID)
 }
 
+func TestRecallAcrossSpacesEmbedsQueryOnceAndReusesVector(t *testing.T) {
+	teamID, ownerID := uuid.New(), uuid.New()
+	sharedID, privateID := uuid.New(), uuid.New()
+	search := &spaceRecallStub{contract: &repository.ActiveSearchContract{EmbeddingDimensions: 3, EmbeddingModel: "recall-model"}}
+	provider := &recallEmbeddingProviderStub{}
+	svc := NewRecallService(RecallDependencies{Search: search, Provider: provider})
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
+		AllowedSpaces: []domain.MemorySpaceAccess{
+			{ID: sharedID, Kind: domain.MemorySpaceTeamShared},
+			{ID: privateID, Kind: domain.MemorySpaceCredentialPrivate},
+		},
+	})
+
+	_, err := svc.Recall(ctx, RecallRequest{Query: "same vector", RelationshipLimit: intPtr(0)})
+	require.NoError(t, err)
+	require.Equal(t, 1, provider.calls)
+	require.Len(t, search.inputs, 2)
+	require.Equal(t, []float32{1, 2, 3}, search.inputs[0].QueryEmbedding)
+	require.Equal(t, search.inputs[0].QueryEmbedding, search.inputs[1].QueryEmbedding)
+}
+
 func TestFuseRecallResultsSumsRRFAndHonorsGlobalLimits(t *testing.T) {
 	shared := &RecallResult{
 		SearchStates: RecallSearchStates{Evidence: string(domain.SearchProjectionPending), Relationships: string(domain.SearchProjectionCurrent)},
@@ -179,6 +201,25 @@ type spaceRecallStub struct {
 	inputs      []repository.RecallEvidenceInput
 	failSpaceID string
 }
+
+type recallEmbeddingProviderStub struct {
+	calls int
+}
+
+func (p *recallEmbeddingProviderStub) Embed(context.Context, string) ([]float32, string, error) {
+	p.calls++
+	return []float32{1, 2, 3}, "recall-model", nil
+}
+
+func (*recallEmbeddingProviderStub) EmbedBatch(context.Context, []string) ([][]float32, string, error) {
+	return nil, "recall-model", nil
+}
+
+func (*recallEmbeddingProviderStub) ModelName() string { return "recall-model" }
+
+func (*recallEmbeddingProviderStub) Dimensions() int { return 3 }
+
+func (*recallEmbeddingProviderStub) IsAvailable() bool { return true }
 
 func (s *spaceRecallStub) GetActiveSearchContract(context.Context) (*repository.ActiveSearchContract, error) {
 	return s.contract, nil

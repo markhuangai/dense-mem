@@ -111,6 +111,10 @@ type RecallRequest struct {
 	KnownEvidenceIDs           []string   `json:"known_evidence_ids,omitempty"`
 	KnownRelationshipIDs       []string   `json:"known_relationship_ids,omitempty"`
 	ExpandFromEntityIDs        []string   `json:"expand_from_entity_ids,omitempty"`
+	recallContract             *repository.ActiveSearchContract
+	recallEmbedding            []float32
+	recallEmbeddingDegradation *RecallDegradationResult
+	recallEmbeddingReady       bool
 }
 
 type RecallResult struct {
@@ -304,13 +308,20 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 		observability.RecordRecall(ctx, s.metrics, float64(time.Since(started).Microseconds())/1000, resultCount, outcome)
 	}()
 	req = normalizeRecallRequest(req)
-	contract, err := s.search.GetActiveSearchContract(ctx)
-	if err != nil {
-		return nil, err
+	contract := req.recallContract
+	if contract == nil {
+		contract, err = s.search.GetActiveSearchContract(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	degradations := []RecallDegradationResult{}
-	queryEmbedding := []float32(nil)
-	if req.Query != "" {
+	queryEmbedding := append([]float32(nil), req.recallEmbedding...)
+	if req.recallEmbeddingReady {
+		if req.recallEmbeddingDegradation != nil {
+			degradations = append(degradations, *req.recallEmbeddingDegradation)
+		}
+	} else if req.Query != "" {
 		embedCtx := observability.WithAIOperation(ctx, observability.AIOperationRecallEmbedding, 1)
 		vector, vectorDegradation := s.queryEmbedding(embedCtx, contract, req.Query)
 		queryEmbedding = vector

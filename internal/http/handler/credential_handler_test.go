@@ -380,6 +380,30 @@ func TestCredentialHandlerCreateDerivesSSOOwnerForProfilePrivateBinding(t *testi
 	require.Equal(t, identityID, *svc.createReq.OwnerIdentityID)
 }
 
+func TestCredentialHandlerCreateDoesNotDeriveSSOOwnerForNonManager(t *testing.T) {
+	teamID, identityID := uuid.New(), uuid.New()
+	svc := &apiKeyHandlerService{key: &domain.Credential{ID: uuid.New(), TeamID: teamID}, raw: "dm_member_plaintext"}
+	h := NewCredentialHandler(svc)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/ui/api/team/credentials", strings.NewReader(`{"memory_binding":"profile_private"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req = req.WithContext(middleware.SetPrincipalForTest(req.Context(), &middleware.Principal{
+		TeamID:     teamID,
+		IdentityID: identityID,
+		AuthMethod: "sso_session",
+		Role:       service.CredentialRoleMember,
+	}))
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/ui/api/team/credentials")
+	c.SetParamNames("teamId")
+	c.SetParamValues(teamID.String())
+
+	wrapped := middleware.BindAndValidate[dto.CreateCredentialRequest](middleware.CreateCredentialBodyKey)(h.Create)
+	require.NoError(t, wrapped(c))
+	require.Nil(t, svc.createReq.OwnerIdentityID)
+}
+
 func TestCredentialHandlerValidationErrors(t *testing.T) {
 	h := NewCredentialHandler(&apiKeyHandlerService{})
 	profileID := uuid.New().String()
