@@ -258,6 +258,20 @@ func TestFuseRecallResultsPreservesNotRequiredRelationshipState(t *testing.T) {
 	require.Equal(t, string(domain.SearchProjectionNotRequired), fused.SearchStates.Relationships)
 }
 
+func TestFuseRecallResultsDeduplicatesIdenticalDegradations(t *testing.T) {
+	degradation := RecallDegradationResult{
+		Frontier: "relationships",
+		Optional: true,
+		Code:     "relationship_vector_warming",
+		Message:  "Relationship vector projection is warming; lexical discovery was used.",
+	}
+	fused := fuseRecallResults([]*RecallResult{
+		{Degradations: []RecallDegradationResult{degradation}},
+		{Degradations: []RecallDegradationResult{degradation}},
+	}, 1, 0)
+	require.Equal(t, []RecallDegradationResult{degradation}, fused.Degradations)
+}
+
 func intPtr(v int) *int { return &v }
 
 type spaceRecallStub struct {

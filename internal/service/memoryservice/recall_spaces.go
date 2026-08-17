@@ -157,6 +157,7 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 		score float64
 	}
 	relationships := map[string]relationshipScore{}
+	degradationSeen := map[RecallDegradationResult]struct{}{}
 	seenBranch := false
 	for _, branch := range branches {
 		if branch == nil {
@@ -176,7 +177,13 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 		fused.RelatedCommunities = append(fused.RelatedCommunities, branch.RelatedCommunities...)
 		fused.DiscoveryPaths = append(fused.DiscoveryPaths, branch.DiscoveryPaths...)
 		fused.RelatedHypotheses = append(fused.RelatedHypotheses, branch.RelatedHypotheses...)
-		fused.Degradations = append(fused.Degradations, branch.Degradations...)
+		for _, degradation := range branch.Degradations {
+			if _, seen := degradationSeen[degradation]; seen {
+				continue
+			}
+			degradationSeen[degradation] = struct{}{}
+			fused.Degradations = append(fused.Degradations, degradation)
+		}
 		for _, item := range branch.Results {
 			key := item.SpaceKind + ":" + item.EvidenceID
 			score := 1 / (recallFusionRRFConstant + float64(maxInt(item.Rank, 1)))
