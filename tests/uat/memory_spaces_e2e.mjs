@@ -132,17 +132,14 @@ function requiredEnv(name) { const value = process.env[name]; if (!value) throw 
 function assert(condition, message) { if (!condition) throw new Error(message); }
 
 function rememberInput(content, subject, predicate, object) {
-  const subjectStart = content.indexOf(subject);
-  const predicateStart = content.indexOf(predicate);
-  const objectStart = content.indexOf(object, predicateStart + predicate.length);
   return {
     evidence: [{ content, source_type: "document", source: "memory-space-e2e", source_group: "memory-space-e2e" }],
     relationships: [{
       ref: `memory-space-e2e:${Date.now()}:${Math.random()}`,
-      subject: { name: subject, entity_kind: "project", span: { evidence_index: 0, start: subjectStart, end: subjectStart + subject.length } },
-      predicate: { proposed_key: predicate, surface: predicate, span: { evidence_index: 0, start: predicateStart, end: predicateStart + predicate.length } },
-      object: { entity: { name: object, entity_kind: "concept", span: { evidence_index: 0, start: objectStart, end: objectStart + object.length } } },
-      polarity: "+", modality: "statement", supports: [{ evidence_index: 0, start: 0, end: Array.from(content).length }],
+      subject: { name: subject, entity_kind: "project" },
+      predicate: { proposed_key: predicate },
+      object: { entity: { name: object, entity_kind: "concept" } },
+      polarity: "+", modality: "statement", evidence_indices: [0],
     }],
   };
 }
