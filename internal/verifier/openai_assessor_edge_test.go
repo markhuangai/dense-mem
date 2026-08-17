@@ -323,6 +323,7 @@ func TestSemanticAssessmentInstructionsExposeRequestDependentRules(t *testing.T)
 		"start_ref is inclusive and end_ref is exclusive",
 		"return exactly one result for each submitted ref",
 		"Every Relationship requires exactly one of object_ref and object_value",
+		`otherwise use predicate_status "registration_required" when the evidence clearly supports a reusable relationship`,
 		"registration_required and needs_review require predicate_key and predicate_version both null",
 		"Pronouns and inferred coreference are not grounding options",
 		`temporal_verdict "absent"`,

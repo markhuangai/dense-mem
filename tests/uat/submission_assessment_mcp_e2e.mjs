@@ -225,6 +225,11 @@ async function waitForCompletedPlacement(submissionID) {
     if (state === "completed") {
       return;
     }
+    if (state === "awaiting_review") {
+      const issues = Array.isArray(placement.semantic_hold?.issues) ? placement.semantic_hold.issues : [];
+      const issueCodes = issues.map((issue) => stringValue(issue?.code)).filter(Boolean);
+      throw new Error(`submission reached unexpected terminal state awaiting_review (${issueCodes.join(", ") || "no issue codes"})`);
+    }
     if (["rejected", "failed", "quarantined"].includes(state)) {
       throw new Error(`submission reached unexpected terminal state ${state}`);
     }
