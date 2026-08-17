@@ -585,6 +585,7 @@ func hydrateRecallRelationships(
 			WHERE relationship.team_id = ?::uuid
 			  AND cardinality(?::uuid[]) > 0
 			  AND relationship.relationship_id = ANY(?::uuid[])
+			  `+spaceClause+`
 		)
 		SELECT relationship.team_id::text,
 		       relationship.relationship_id::text,
