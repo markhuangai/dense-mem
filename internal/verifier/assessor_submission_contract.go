@@ -8,6 +8,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
+const SemanticAssessmentMaxEntityGroundings = 20
+
 // SemanticAssessmentRequiredRelationshipRef binds trusted server-side context
 // to one caller proposal while exposing only bounded assessment inputs.
 type SemanticAssessmentRequiredRelationshipRef struct {

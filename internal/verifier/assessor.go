@@ -24,7 +24,6 @@ const (
 	SemanticAssessmentMaxCorrectionErrors = 100
 
 	SemanticAssessmentMaxEntityCandidatesPerSurface = 20
-	SemanticAssessmentMaxEntityGroundings           = 20
 	SemanticAssessmentMaxPredicateOptions           = 100
 	SemanticAssessmentMaxEntityResults              = 400
 	SemanticAssessmentMaxRelationshipResults        = 200
@@ -45,9 +44,7 @@ Never create IDs, predicates, statuses, lifecycle decisions, owners, or conflict
 	semanticAssessmentCorrectionInstruction = `Return one complete replacement JSON object matching the required schema. Correct every validation error exactly. Copy results not implicated by validation_errors unchanged at the same array index. Never return numeric offsets, a patch, or an explanation. Copy only grounding_ref, start_ref, and end_ref values present in the immutable request. Preserve every submitted ref, endpoint, typed value, polarity, and modality. For Entity action errors, use reuse only for one compatible candidate, create only with no compatible candidate, and ambiguous otherwise. For temporal errors, use absent with null bounds when no explicit time is supported. For predicate endpoint-kind errors, select a compatible supplied option or registration_required with predicate_key and predicate_version both null.`
 )
 
-// SemanticAssessmentLimits bounds one immutable assessor request and its
-// complete response. Token limits are semantic limits; transport byte limits
-// belong to the provider adapter.
+// SemanticAssessmentLimits bounds one immutable assessor request; token limits are semantic and transport byte limits belong to provider adapters.
 type SemanticAssessmentLimits struct {
 	Tokenizer                 string
 	MaxInputTokens            int
