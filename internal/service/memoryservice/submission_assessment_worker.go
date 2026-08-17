@@ -777,7 +777,9 @@ func submissionAssessmentCommitInput(
 		action        string
 		candidateID   string
 		knownEntityID string
+		mentionRef    string
 	}, len(response.EntityResults))
+	entityRefAliases := make(map[string]string, len(response.EntityResults))
 	for _, result := range response.EntityResults {
 		target, ok := plan.entityTargetsByRef[result.Ref]
 		if !ok {
@@ -835,13 +837,16 @@ func submissionAssessmentCommitInput(
 				(previous.knownEntityID != "" && target.KnownEntityID != "" && previous.knownEntityID != target.KnownEntityID) {
 				return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
 			}
+			entityRefAliases[result.Ref] = previous.mentionRef
 			continue
 		}
 		entityResolutionsByGrounding[groundingKey] = struct {
 			action        string
 			candidateID   string
 			knownEntityID string
-		}{action: resolution.Action, candidateID: candidateID, knownEntityID: target.KnownEntityID}
+			mentionRef    string
+		}{action: resolution.Action, candidateID: candidateID, knownEntityID: target.KnownEntityID, mentionRef: resolution.MentionRef}
+		entityRefAliases[result.Ref] = resolution.MentionRef
 		entityResolutions = append(entityResolutions, repository.SubmissionAssessmentEntityResolutionInput{
 			PlacementItemID: item.PlacementItem.PlacementItemID,
 			Resolution:      resolution,
@@ -890,10 +895,17 @@ func submissionAssessmentCommitInput(
 		if entityKinds[result.SubjectRef] == "" || (objectRef != "" && entityKinds[objectRef] == "") {
 			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
 		}
+		subjectRef := result.SubjectRef
+		if canonicalRef := entityRefAliases[subjectRef]; canonicalRef != "" {
+			subjectRef = canonicalRef
+		}
+		if canonicalRef := entityRefAliases[objectRef]; canonicalRef != "" {
+			objectRef = canonicalRef
+		}
 		confidence := result.Confidence
 		observation := repository.PlacementRelationshipDecisionInput{
 			Ref:               result.Ref,
-			SubjectRef:        result.SubjectRef,
+			SubjectRef:        subjectRef,
 			OriginalPredicate: result.OriginalPredicate,
 			ObjectRef:         objectRef,
 			ObjectValue:       objectValue,
