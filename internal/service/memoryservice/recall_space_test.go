@@ -31,6 +31,7 @@ func TestRecallFusesAuthorizedSpacesWithLabelsAndStablePrivateTieBreak(t *testin
 	require.Len(t, result.Results, 2)
 	require.Equal(t, string(domain.MemorySpaceCredentialPrivate), result.Results[0].SpaceKind)
 	require.Equal(t, string(domain.MemorySpaceTeamShared), result.Results[1].SpaceKind)
+	require.Equal(t, string(domain.SearchProjectionNotRequired), result.SearchStates.Relationships)
 	require.Equal(t, privateID.String(), search.inputs[0].SpaceID)
 	require.Equal(t, sharedID.String(), search.inputs[1].SpaceID)
 }
@@ -151,7 +152,7 @@ func TestRecallPrivateBranchFailureIsBounded(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Results, 1)
 	require.Contains(t, result.Degradations, RecallDegradationResult{
-		Frontier: "credential_private", Optional: true, Code: "space_branch_unavailable", Message: "authorized memory-space branch was unavailable",
+		Frontier: "evidence", Optional: true, Code: "space_branch_unavailable", Message: "authorized memory-space branch was unavailable",
 	})
 }
 
@@ -192,6 +193,14 @@ func TestApplyRecallSpaceKindLabelsNestedCommunityRelationships(t *testing.T) {
 func TestFuseRecallSearchStateKeepsEmptyAndCurrentStates(t *testing.T) {
 	require.Equal(t, string(domain.SearchProjectionPending), fuseRecallSearchState("", string(domain.SearchProjectionPending)))
 	require.Equal(t, string(domain.SearchProjectionCurrent), fuseRecallSearchState(string(domain.SearchProjectionCurrent), ""))
+}
+
+func TestFuseRecallResultsPreservesNotRequiredRelationshipState(t *testing.T) {
+	fused := fuseRecallResults([]*RecallResult{
+		{SearchStates: RecallSearchStates{Evidence: string(domain.SearchProjectionCurrent), Relationships: string(domain.SearchProjectionNotRequired)}},
+		{SearchStates: RecallSearchStates{Evidence: string(domain.SearchProjectionCurrent), Relationships: string(domain.SearchProjectionNotRequired)}},
+	}, 1, 0)
+	require.Equal(t, string(domain.SearchProjectionNotRequired), fused.SearchStates.Relationships)
 }
 
 func intPtr(v int) *int { return &v }

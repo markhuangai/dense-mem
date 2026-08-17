@@ -142,6 +142,7 @@
           "object": {"value_id": "value-1", "type": "string", "value": "PostgreSQL"},
           "polarity": "+",
           "evidence_ids": ["ev-2"],
+          "space_kind": "team_shared",
           "search_state": "current"
         }
       ],

@@ -74,7 +74,7 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req RecallReques
 			}
 			results = append(results, &RecallResult{
 				Results: []RecallResultItem{}, RelatedRelationships: []RelatedRelationshipSummary{},
-				Degradations: []RecallDegradationResult{{Frontier: branchKind(branch), Optional: true, Code: "space_branch_unavailable", Message: "authorized memory-space branch was unavailable"}},
+				Degradations: []RecallDegradationResult{{Frontier: "evidence", Optional: true, Code: "space_branch_unavailable", Message: "authorized memory-space branch was unavailable"}},
 			})
 			continue
 		}
@@ -114,7 +114,7 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 		RelatedRelationships: []RelatedRelationshipSummary{},
 		RelatedCommunities:   []RecallDiscoveryPath{},
 		RelatedHypotheses:    []RelatedHypothesisSummary{},
-		SearchStates:         RecallSearchStates{Evidence: string(domain.SearchProjectionCurrent), Relationships: string(domain.SearchProjectionCurrent)},
+		SearchStates:         RecallSearchStates{},
 		Degradations:         []RecallDegradationResult{},
 		DiscoveryPaths:       []RecallDiscoveryPath{},
 		DiscoveryGuidance:    "No additional discovery guidance.",
@@ -129,17 +129,26 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 		score float64
 	}
 	relationships := map[string]relationshipScore{}
+	seenBranch := false
 	for _, branch := range branches {
 		if branch == nil {
 			continue
+		}
+		if !seenBranch {
+			fused.SearchStates = branch.SearchStates
+			if strings.TrimSpace(fused.SearchStates.Evidence) == "" {
+				fused.SearchStates.Evidence = branch.SearchState
+			}
+			seenBranch = true
+		} else {
+			fused.SearchStates.Evidence = fuseRecallSearchState(fused.SearchStates.Evidence, branch.SearchStates.Evidence)
+			fused.SearchStates.Relationships = fuseRecallSearchState(fused.SearchStates.Relationships, branch.SearchStates.Relationships)
 		}
 		fused.Conflicts = append(fused.Conflicts, branch.Conflicts...)
 		fused.RelatedCommunities = append(fused.RelatedCommunities, branch.RelatedCommunities...)
 		fused.DiscoveryPaths = append(fused.DiscoveryPaths, branch.DiscoveryPaths...)
 		fused.RelatedHypotheses = append(fused.RelatedHypotheses, branch.RelatedHypotheses...)
 		fused.Degradations = append(fused.Degradations, branch.Degradations...)
-		fused.SearchStates.Evidence = fuseRecallSearchState(fused.SearchStates.Evidence, branch.SearchStates.Evidence)
-		fused.SearchStates.Relationships = fuseRecallSearchState(fused.SearchStates.Relationships, branch.SearchStates.Relationships)
 		for _, item := range branch.Results {
 			key := item.SpaceKind + ":" + item.EvidenceID
 			score := 1 / (recallFusionRRFConstant + float64(maxInt(item.Rank, 1)))
@@ -163,6 +172,12 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 				relationships[key] = current
 			}
 		}
+	}
+	if strings.TrimSpace(fused.SearchStates.Evidence) == "" {
+		fused.SearchStates.Evidence = string(domain.SearchProjectionCurrent)
+	}
+	if strings.TrimSpace(fused.SearchStates.Relationships) == "" {
+		fused.SearchStates.Relationships = string(domain.SearchProjectionCurrent)
 	}
 	evidenceItems := make([]evidenceScore, 0, len(evidence))
 	for _, item := range evidence {
@@ -224,6 +239,12 @@ func fuseRecallSearchState(left, right string) string {
 	}
 	if left == string(domain.SearchProjectionPending) || right == string(domain.SearchProjectionPending) {
 		return string(domain.SearchProjectionPending)
+	}
+	if left == string(domain.SearchProjectionCurrent) || right == string(domain.SearchProjectionCurrent) {
+		return string(domain.SearchProjectionCurrent)
+	}
+	if left == string(domain.SearchProjectionNotRequired) || right == string(domain.SearchProjectionNotRequired) {
+		return string(domain.SearchProjectionNotRequired)
 	}
 	if left == "" {
 		return right

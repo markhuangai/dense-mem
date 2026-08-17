@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,6 +27,7 @@ func TestRecallCommunityMarshalUsesExactPublicShape(t *testing.T) {
 				Object:         SemanticObject{EntityID: "entity-2", Name: "PostgreSQL"},
 				Polarity:       "+",
 				EvidenceIDs:    []string{"evidence-1"},
+				SpaceKind:      string(domain.MemorySpaceTeamShared),
 			}},
 			RelationshipsTruncated: false,
 		}},
