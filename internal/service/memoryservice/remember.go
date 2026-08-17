@@ -668,11 +668,11 @@ func submissionSemanticHoldFromLedger(placement *repository.CreateIngestResult) 
 			if len([]rune(issue.Message)) > submissionHoldIssueMessageMaxLength {
 				issue.Message = string([]rune(issue.Message)[:submissionHoldIssueMessageMaxLength])
 			}
-			issues = append(issues, issue)
-			if len(issues) == submissionAssessmentMaxHoldIssues {
+			if len(issues) >= submissionAssessmentMaxHoldIssues {
 				truncated = true
 				break
 			}
+			issues = append(issues, issue)
 		}
 		if len(issues) > 0 || truncated {
 			break

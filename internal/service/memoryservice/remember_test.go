@@ -312,6 +312,27 @@ func TestSubmissionSemanticHoldProjectionBoundsLedgerPayload(t *testing.T) {
 	require.Nil(t, submissionSemanticHoldFromLedger(nil))
 	require.Nil(t, submissionSemanticHoldFromLedger(&repository.CreateIngestResult{SemanticHoldState: "superseded"}))
 
+	exactIssues := make([]any, 0, submissionAssessmentMaxHoldIssues)
+	for index := 0; index < submissionAssessmentMaxHoldIssues; index++ {
+		exactIssues = append(exactIssues, map[string]any{
+			"code":             "grounding_low_confidence",
+			"relationship_ref": fmt.Sprintf("relationship-exact-%d", index),
+			"component":        "support",
+			"message":          "support grounding confidence is below the effective write threshold",
+		})
+	}
+	exactHold := submissionSemanticHoldFromLedger(&repository.CreateIngestResult{
+		IngestID:          "submission-exact-50",
+		SemanticHoldState: "active",
+		Items: []repository.PlacementItem{{Result: map[string]any{
+			"hold_issues":           exactIssues,
+			"hold_issues_truncated": false,
+		}}},
+	})
+	require.NotNil(t, exactHold)
+	require.Len(t, exactHold.Issues, submissionAssessmentMaxHoldIssues)
+	require.False(t, exactHold.IssuesTruncated)
+
 	rawIssues := []any{
 		"not-an-object",
 		map[string]any{"code": "", "component": "support", "message": "missing code"},
