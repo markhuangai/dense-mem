@@ -11,9 +11,9 @@ describe("UserApi", () => {
       data: {
         team: { id: "team-1", name: "Team", description: "", created_at: "2026-05-01T12:00:00Z", updated_at: "2026-05-01T12:00:00Z" },
         membership: { team_id: "team-1", name: "Mine", grants: ["read"], role: "member" },
-        credential: { id: "key-1", team_id: "team-1", name: "Mine", key_suffix: "abc123", scopes: ["read"], role: "member", rate_limit: 120, last_used_at: null, expires_at: null, created_at: "2026-05-01T12:00:00Z" },
+        credential: { id: "key-1", team_id: "team-1", name: "Mine", key_suffix: "abc123", scopes: ["read"], role: "member", rate_limit: 120, last_used_at: null, expires_at: null, created_at: "2026-05-01T12:00:00Z", memory_binding: "shared_only", memory_space_kind: "team_shared" },
         teams: [],
-        personal_credential: null,
+        personal_credentials: [],
       },
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -29,7 +29,7 @@ describe("UserApi", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: {
         api_key: "dm_new",
-        credential: { id: "key-1", team_id: "team-1", name: "Mine", key_suffix: "new123", scopes: ["read", "write"], role: "member", rate_limit: 120, last_used_at: null, expires_at: null, created_at: "2026-05-01T12:00:00Z" },
+        credential: { id: "key-1", team_id: "team-1", name: "Mine", key_suffix: "new123", scopes: ["read", "write"], role: "member", rate_limit: 120, last_used_at: null, expires_at: null, created_at: "2026-05-01T12:00:00Z", memory_binding: "shared_only", memory_space_kind: "team_shared" },
       },
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);

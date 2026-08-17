@@ -20,6 +20,9 @@ func normalizeRecallRelationshipsInput(input RecallRelationshipsInput) RecallRel
 	input.ExcludedGroupKeys = normalizeRecallStringList(input.ExcludedGroupKeys)
 	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	input.SpaceKind = strings.TrimSpace(input.SpaceKind)
+	if input.SpaceID == "" && input.SpaceKind == "" {
+		input.SpaceKind = string(domain.MemorySpaceTeamShared)
+	}
 	if input.Limit <= 0 {
 		input.Limit = defaultRelationshipRecallLimit
 	}

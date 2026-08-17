@@ -108,6 +108,7 @@ func (s *userPortalKeySvc) CreateCredential(_ context.Context, profileID uuid.UU
 		CreatedAt:       time.Now().UTC().Truncate(time.Second),
 		ExpiresAt:       req.ExpiresAt,
 		OwnerIdentityID: req.OwnerIdentityID,
+		MemoryBinding:   domain.CredentialMemoryBinding(req.MemoryBinding),
 	}
 	s.keys = append(s.keys, key)
 	return key, s.rawCreatedKey, nil

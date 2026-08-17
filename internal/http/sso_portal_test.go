@@ -536,7 +536,16 @@ func userSSOContext(method, target, body, sessionToken string) (echo.Context, *h
 		req.AddCookie(&nethttp.Cookie{Name: service.SSOSessionCookieName, Value: sessionToken})
 	}
 	rec := httptest.NewRecorder()
-	return e.NewContext(req, rec), rec
+	c := e.NewContext(req, rec)
+	segments := strings.Split(strings.Trim(target, "/"), "/")
+	for index, segment := range segments {
+		if segment == "credentials" && index+1 < len(segments) && segments[index+1] != "" {
+			c.SetParamNames("credentialId")
+			c.SetParamValues(segments[index+1])
+			break
+		}
+	}
+	return c, rec
 }
 
 func setUserSSOPrincipal(c echo.Context, ownerID, teamID uuid.UUID) {

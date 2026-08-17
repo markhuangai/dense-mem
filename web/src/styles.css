@@ -645,6 +645,51 @@ button:disabled {
   border-bottom: 1px solid var(--border);
 }
 
+.credential-list {
+  margin: 0 0 16px;
+}
+
+.credential-list h3,
+.credential-create-form h3 {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.credential-list-items {
+  display: grid;
+  gap: 8px;
+}
+
+.credential-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--text);
+  text-align: left;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.credential-list-item:hover,
+.credential-list-item.selected {
+  border-color: var(--accent);
+}
+
+.credential-list-item small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.credential-create-form {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
 .security-summary,
 .metrics-summary,
 .telemetry-card-grid {

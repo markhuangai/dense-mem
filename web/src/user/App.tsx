@@ -10,6 +10,7 @@ import {
   Search,
   ShieldCheck,
   Sun,
+  Trash2,
   Users,
 } from "lucide-react";
 import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
@@ -434,10 +435,10 @@ function UserPortal({
                   credential: rotated.credential,
                 } : current);
               }}
-              onSSOCredentialChanged={(credential) => {
+              onSSOCredentialsChanged={(credentials) => {
                 setSession((current) => current ? {
                   ...current,
-                  personal_credential: credential,
+                  personal_credentials: credentials,
                 } : current);
               }}
             />
@@ -570,24 +571,41 @@ function CredentialPanel({
   api,
   session,
   onRotated,
-  onSSOCredentialChanged,
+  onSSOCredentialsChanged,
 }: {
   api: UserApi;
   session: UserSession;
   onRotated: (rotated: RotateResponse) => void;
-  onSSOCredentialChanged: (credential: UserCredential) => void;
+  onSSOCredentialsChanged: (credentials: UserCredential[]) => void;
 }) {
   const [createdAPIKey, setCreatedAPIKey] = useState("");
   const [name, setName] = useState("");
   const [permission, setPermission] = useState<CredentialPermission>(() => (session.membership.grants.includes("write") ? "read_write" : "read"));
   const [rateLimit, setRateLimit] = useState("120");
+  const [expiresAt, setExpiresAt] = useState("");
+  const [memoryBinding, setMemoryBinding] = useState<"shared_only" | "profile_private" | "credential_private">("profile_private");
+  const [selectedCredentialID, setSelectedCredentialID] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const isSSO = session.credential === null;
-  const personalCredential = isSSO ? session.personal_credential : session.credential;
+  const personalCredentials = isSSO ? (session.personal_credentials ?? []) : [];
+  const selectedPersonalCredential = personalCredentials.find((credential) => credential.id === selectedCredentialID) ?? personalCredentials[0] ?? null;
+  const personalCredential = isSSO ? selectedPersonalCredential : session.credential;
   const maxScopes = session.membership.grants;
   const canCreateWrite = maxScopes.includes("write");
   const canRotate = Boolean(personalCredential?.scopes.includes("write") && maxScopes.includes("write"));
+  const canRevoke = Boolean(personalCredential);
+
+  useEffect(() => {
+    if (!isSSO) {
+      setSelectedCredentialID(null);
+      return;
+    }
+    if (selectedCredentialID && personalCredentials.some((credential) => credential.id === selectedCredentialID)) {
+      return;
+    }
+    setSelectedCredentialID(personalCredentials[0]?.id ?? null);
+  }, [isSSO, personalCredentials, selectedCredentialID]);
 
   useEffect(() => {
     if (!canCreateWrite) {
@@ -610,9 +628,15 @@ function CredentialPanel({
         name: trimmedName,
         scopes: permission === "read_write" && canCreateWrite ? ["read", "write"] : ["read"],
         rate_limit: parsedRateLimit,
+        expires_at: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+        memory_binding: memoryBinding,
       });
       setCreatedAPIKey(created.api_key);
-      onSSOCredentialChanged(created.credential);
+      const nextCredentials = [...personalCredentials, created.credential];
+      setSelectedCredentialID(created.credential.id);
+      onSSOCredentialsChanged(nextCredentials);
+      setName("");
+      setExpiresAt("");
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -627,10 +651,12 @@ function CredentialPanel({
     setBusy(true);
     setError("");
     try {
-      const rotated = isSSO ? await api.rotateSSOCredential() : await api.rotateCredential();
+      const rotated = isSSO && personalCredential
+        ? await api.rotateSSOCredential(personalCredential.id)
+        : await api.rotateCredential();
       setCreatedAPIKey(rotated.api_key);
       if (isSSO) {
-        onSSOCredentialChanged(rotated.credential);
+        onSSOCredentialsChanged(personalCredentials.map((credential) => credential.id === rotated.credential.id ? rotated.credential : credential));
       } else {
         onRotated(rotated);
       }
@@ -641,12 +667,50 @@ function CredentialPanel({
     }
   }
 
+  async function revoke() {
+    if (!personalCredential || !window.confirm(`Revoke ${personalCredential.name}? This key will stop working.`)) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await api.revokeSSOCredential(personalCredential.id);
+      const nextCredentials = personalCredentials.filter((credential) => credential.id !== personalCredential.id);
+      setSelectedCredentialID(nextCredentials[0]?.id ?? null);
+      onSSOCredentialsChanged(nextCredentials);
+      setCreatedAPIKey("");
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="surface">
-      <SectionHeading title="My credential" meta={personalCredential?.scopes.includes("write") || permission === "read_write" ? "write" : "read"} />
+      <SectionHeading title="My credentials" meta={personalCredential?.scopes.includes("write") || permission === "read_write" ? "write" : "read"} />
       {createdAPIKey && <CreatedCredentialNotice apiKey={createdAPIKey} onDismiss={() => setCreatedAPIKey("")} />}
       {error && <div className="banner error" role="alert">{error}</div>}
-      {personalCredential ? (
+      {isSSO && personalCredentials.length > 0 && (
+        <div className="credential-list" aria-label="Owned API credentials">
+          <h3>Owned API keys</h3>
+          <div className="credential-list-items">
+            {personalCredentials.map((credential) => (
+              <button
+                className={`credential-list-item${credential.id === personalCredential?.id ? " selected" : ""}`}
+                type="button"
+                key={credential.id}
+                aria-pressed={credential.id === personalCredential?.id}
+                onClick={() => setSelectedCredentialID(credential.id)}
+              >
+                <span>{credential.name}</span>
+                <small>{displayKeySuffix(credential.key_suffix)} · {credential.memory_binding}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {personalCredential && (
         <>
           <dl className="key-detail-grid">
             <div><dt>Credential</dt><dd>{personalCredential.name}</dd></div>
@@ -654,6 +718,8 @@ function CredentialPanel({
             <div><dt>Role</dt><dd>{credentialRoleLabel(personalCredential.role)}</dd></div>
             <div><dt>Scopes</dt><dd>{personalCredential.scopes.join(", ") || "none"}</dd></div>
             <div><dt>Rate limit</dt><dd>{personalCredential.rate_limit}</dd></div>
+            <div><dt>Memory binding</dt><dd>{personalCredential.memory_binding}</dd></div>
+            <div><dt>Memory space</dt><dd>{personalCredential.memory_space_kind}</dd></div>
             <div><dt>Created</dt><dd>{formatDate(personalCredential.created_at)}</dd></div>
             <div><dt>Last used</dt><dd>{personalCredential.last_used_at ? formatDate(personalCredential.last_used_at) : "Never"}</dd></div>
             <div><dt>Expires</dt><dd>{personalCredential.expires_at ? formatDate(personalCredential.expires_at) : "Never"}</dd></div>
@@ -663,10 +729,18 @@ function CredentialPanel({
               <RefreshCw size={16} aria-hidden="true" />
               Regenerate key
             </button>
+            {isSSO && (
+              <button className="ghost-button" type="button" disabled={!canRevoke || busy} onClick={() => void revoke()}>
+                <Trash2 size={16} aria-hidden="true" />
+                Revoke key
+              </button>
+            )}
           </div>
         </>
-      ) : (
-        <form className="key-form" onSubmit={createSSOCredential}>
+      )}
+      {isSSO && (
+        <form className={`key-form${personalCredential ? " credential-create-form" : ""}`} onSubmit={createSSOCredential}>
+          {personalCredential && <h3>Create another API key</h3>}
           <label htmlFor="sso-personal-credential-name">Credential name</label>
           <input id="sso-personal-credential-name" value={name} onChange={(event) => setName(event.target.value)} />
           <label htmlFor="sso-personal-credential-permission">Permission</label>
@@ -681,6 +755,14 @@ function CredentialPanel({
           </select>
           <label htmlFor="sso-personal-credential-rate-limit">Rate limit</label>
           <input id="sso-personal-credential-rate-limit" inputMode="numeric" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} />
+          <label htmlFor="sso-personal-credential-binding">Memory binding</label>
+          <select id="sso-personal-credential-binding" value={memoryBinding} onChange={(event) => setMemoryBinding(event.target.value as typeof memoryBinding)}>
+            <option value="profile_private">Profile-private (shared by your SSO identity)</option>
+            <option value="credential_private">Credential-private (isolated to this key)</option>
+            <option value="shared_only">Team-shared only</option>
+          </select>
+          <label htmlFor="sso-personal-credential-expires">Expires (optional)</label>
+          <input id="sso-personal-credential-expires" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
           <button className="primary-button span" type="submit" disabled={busy || !session.membership.grants.includes("read")}>
             <KeyRound size={16} aria-hidden="true" />
             Create API key

@@ -83,6 +83,23 @@ func (m *MockCredentialRepository) GetByIDForTeam(ctx context.Context, profileID
 	return args.Get(0).(*domain.Credential), args.Error(1)
 }
 
+func (m *MockCredentialRepository) ListSSOOwnedCredentials(ctx context.Context, profileID, identityID uuid.UUID) ([]*domain.Credential, error) {
+	args := m.Called(ctx, profileID, identityID)
+	var keys []*domain.Credential
+	if args.Get(0) != nil {
+		keys = args.Get(0).([]*domain.Credential)
+	}
+	return keys, args.Error(1)
+}
+
+func (m *MockCredentialRepository) GetSSOOwnedCredentialByID(ctx context.Context, profileID, identityID, credentialID uuid.UUID) (*domain.Credential, error) {
+	args := m.Called(ctx, profileID, identityID, credentialID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.Credential), args.Error(1)
+}
+
 func (m *MockCredentialRepository) GetSSOOwnedCredential(ctx context.Context, profileID, identityID uuid.UUID) (*domain.Credential, error) {
 	args := m.Called(ctx, profileID, identityID)
 	if args.Get(0) == nil {
@@ -694,7 +711,7 @@ func TestCredentialServiceScopeNameAndConstructorHelpers(t *testing.T) {
 	require.ErrorContains(t, credentialCreateConflict(&pgconn.PgError{
 		Code:           "23505",
 		ConstraintName: "idx_credentials_owner_team_active_unique",
-	}, "name"), "sso-owned api credential already exists for this team")
+	}, "name"), "api credential already exists")
 
 	svc := NewCredentialServiceWithLogger(nil, nil, nil, nil, nil)
 	require.Nil(t, svc.logger)

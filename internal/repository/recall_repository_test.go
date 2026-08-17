@@ -85,6 +85,9 @@ func TestRecallInputNormalizationAndValidation(t *testing.T) {
 	if input.TeamID != teamID || input.Query != "durable memory" || input.Limit != maxRecallLimit {
 		t.Fatalf("normalized input = %#v", input)
 	}
+	if input.SpaceKind != string(domain.MemorySpaceTeamShared) {
+		t.Fatalf("normalized omitted space = %q, want team_shared", input.SpaceKind)
+	}
 	if len(input.KnownEvidenceIDs) != 1 || input.KnownEvidenceIDs[0] != evidenceID {
 		t.Fatalf("known evidence = %#v", input.KnownEvidenceIDs)
 	}
@@ -106,6 +109,17 @@ func TestRecallInputNormalizationAndValidation(t *testing.T) {
 	badID.KnownRelationshipIDs = []string{"not-a-uuid"}
 	if err := validateRecallEvidenceInput(badID); err == nil || !strings.Contains(err.Error(), "known_relationship_ids") {
 		t.Fatalf("bad relationship id err = %v, want relationship id validation", err)
+	}
+}
+
+func TestRecallSpacePredicateFailsClosedForOmittedOrUnknownSpace(t *testing.T) {
+	teamID := uuid.NewString()
+	teamShared := recallSpacePredicate("fragment.space_id", teamID, "", "")
+	if !strings.Contains(teamShared, "dense_mem_team_shared_space") {
+		t.Fatalf("omitted space predicate = %q, want team_shared predicate", teamShared)
+	}
+	if got := recallSpacePredicate("fragment.space_id", teamID, "", "not-a-space-kind"); !strings.Contains(got, "FALSE") {
+		t.Fatalf("unknown space predicate = %q, want fail-closed FALSE", got)
 	}
 }
 

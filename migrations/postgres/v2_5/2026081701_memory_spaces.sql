@@ -18,6 +18,14 @@ SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 SELECT set_config('app.allowed_space_ids', '', true);
 
+-- The transitional cleanup migration removes its temporary teams migration
+-- policy. Reinstall the narrow read policy for this migration's team-space
+-- backfill, then drop it before returning to runtime policy state.
+DROP POLICY IF EXISTS memory_spaces_migration_teams_read ON teams;
+CREATE POLICY memory_spaces_migration_teams_read ON teams
+    FOR SELECT
+    USING (current_setting('app.tx_mode', true) IN ('system', 'migration'));
+
 CREATE TABLE IF NOT EXISTS memory_spaces (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id UUID NOT NULL REFERENCES teams(id) ON DELETE RESTRICT,
@@ -167,10 +175,11 @@ ALTER TABLE credentials ADD COLUMN IF NOT EXISTS memory_space_id UUID NULL;
 ALTER TABLE credentials DROP CONSTRAINT IF EXISTS credentials_memory_binding_check;
 ALTER TABLE credentials ADD CONSTRAINT credentials_memory_binding_check
     CHECK (memory_binding IN ('shared_only', 'profile_private', 'credential_private'));
--- Keep the established one-active-personal-key invariant for SSO identities.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_credentials_owner_team_active_unique
-    ON credentials(owner_identity_id, team_id)
-    WHERE owner_identity_id IS NOT NULL AND kind = 'api_key' AND status = 'active';
+
+-- SSO identities may own multiple active credentials in one team. The prior
+-- identity-cleanup migration created this singleton index, so the memory-space
+-- migration removes it before multi-credential writes are enabled.
+DROP INDEX IF EXISTS idx_credentials_owner_team_active_unique;
 
 UPDATE credentials AS credential
 SET memory_space_id = shared.id
@@ -390,6 +399,7 @@ USING (current_setting('app.tx_mode', true) IN ('system', 'migration'));
 SELECT set_config('app.allowed_space_ids', '', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
+DROP POLICY IF EXISTS memory_spaces_migration_teams_read ON teams;
 SELECT set_config('app.tx_mode', 'system', true);
 
 -- +goose StatementEnd

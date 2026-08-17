@@ -25,4 +25,11 @@ func TestNormalizeCredentialMemoryBindingDefaults(t *testing.T) {
 
 	_, err = normalizeCredentialMemoryBinding(string(domain.CredentialBindingProfilePrivate), nil, StandardCredentialScopes())
 	require.Error(t, err)
+
+	_, err = normalizeCredentialMemoryBinding("unknown", nil, StandardCredentialScopes())
+	require.Error(t, err)
+
+	binding, err = normalizeCredentialMemoryBinding(string(domain.CredentialBindingSharedOnly), nil, StandardCredentialScopes())
+	require.NoError(t, err)
+	require.Equal(t, domain.CredentialBindingSharedOnly, binding)
 }

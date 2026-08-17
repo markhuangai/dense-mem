@@ -44,9 +44,12 @@ func TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam(t *testing.T) {
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	searchRepo := NewSearchRepository(appDB, rls)
 	const query = "credential private isolation sentinel"
+	privateSpaces := make([]uuid.UUID, len(credentials))
+	fragmentIDs := make([]uuid.UUID, len(credentials))
 
 	for i, credential := range credentials {
 		privateSpace := credential.MemorySpaceID
+		privateSpaces[i] = privateSpace
 		actorCtx := requestctx.WithActor(ctx, requestctx.Actor{
 			TeamID:        teamID,
 			IdentityID:    credential.ActorIdentityID,
@@ -90,7 +93,20 @@ func TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Equal(t, privateSpace.String(), doc.SpaceID)
+		fragmentIDs[i] = fragmentID
+	}
 
+	for i, credential := range credentials {
+		privateSpace := privateSpaces[i]
+		actorCtx := requestctx.WithActor(ctx, requestctx.Actor{
+			TeamID:        teamID,
+			IdentityID:    credential.ActorIdentityID,
+			MembershipID:  credential.MembershipID,
+			OwnerID:       credential.OwnerID,
+			CredentialID:  &credential.ID,
+			AuthMethod:    "api_key",
+			AllowedSpaces: []domain.MemorySpaceAccess{{ID: shared.ID, Kind: domain.MemorySpaceTeamShared}, {ID: privateSpace, Kind: domain.MemorySpaceCredentialPrivate}},
+		})
 		recall, err := searchRepo.RecallEvidence(actorCtx, RecallEvidenceInput{
 			TeamID:    teamID.String(),
 			Query:     query,
@@ -100,7 +116,37 @@ func TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Len(t, recall.Results, 1)
-		require.Equal(t, fragmentID.String(), recall.Results[0].EvidenceID)
-		require.Contains(t, recall.Results[0].Context, content)
+		require.Equal(t, fragmentIDs[i].String(), recall.Results[0].EvidenceID)
 	}
+
+	firstCredential := credentials[0]
+	firstSpace := privateSpaces[0]
+	firstActorCtx := requestctx.WithActor(ctx, requestctx.Actor{
+		TeamID:        teamID,
+		IdentityID:    firstCredential.ActorIdentityID,
+		MembershipID:  firstCredential.MembershipID,
+		OwnerID:       firstCredential.OwnerID,
+		CredentialID:  &firstCredential.ID,
+		AuthMethod:    "api_key",
+		AllowedSpaces: []domain.MemorySpaceAccess{{ID: shared.ID, Kind: domain.MemorySpaceTeamShared}, {ID: firstSpace, Kind: domain.MemorySpaceCredentialPrivate}},
+	})
+	recall, err := searchRepo.RecallEvidence(firstActorCtx, RecallEvidenceInput{
+		TeamID:    teamID.String(),
+		Query:     query,
+		Limit:     10,
+		SpaceID:   firstSpace.String(),
+		SpaceKind: string(domain.MemorySpaceCredentialPrivate),
+	})
+	require.NoError(t, err)
+	require.Len(t, recall.Results, 1)
+	require.NotEqual(t, fragmentIDs[1].String(), recall.Results[0].EvidenceID)
+	require.NotContains(t, recall.Results[0].Context, "credential b")
+
+	unscoped, err := searchRepo.RecallEvidence(firstActorCtx, RecallEvidenceInput{
+		TeamID: teamID.String(),
+		Query:  query,
+		Limit:  10,
+	})
+	require.NoError(t, err)
+	require.Empty(t, unscoped.Results, "omitted recall scope must remain team-shared and exclude private rows")
 }

@@ -14,6 +14,13 @@ const sharedRead = await createCredential(teamID, "E2E shared read", { scopes: [
 const privateWrite = await createCredential(teamID, "E2E private write", { scopes: ["read", "write"], memory_binding: "credential_private" });
 created.push(privateRead, sharedRead, privateWrite);
 
+const listedBeforeLifecycle = await controlJSON(`/teams/${teamID}/credentials?limit=100&offset=0`);
+const listedIDs = new Set((listedBeforeLifecycle.data ?? []).map((item) => item.id));
+for (const item of [privateRead, sharedRead, privateWrite]) {
+  assert(listedIDs.has(item.credential.id), `created credential ${item.credential.id} was missing from the team collection`);
+}
+assert(new Set([privateRead.credential.id, sharedRead.credential.id, privateWrite.credential.id]).size === 3, "multiple credentials did not retain distinct IDs");
+
 assert(privateRead.credential.memory_binding === "credential_private", "credential-private binding was not persisted");
 assert(sharedRead.credential.memory_binding === "shared_only", "shared-only binding was not persisted");
 assert(privateWrite.credential.memory_binding === "credential_private", "writable credential did not retain private binding");
@@ -25,6 +32,10 @@ if (scenario === "credential_memory_binding") {
   assert(rotated.credential.id === privateWrite.credential.id, "rotation changed credential identity");
   assert(rotated.credential.memory_binding === "credential_private", "rotation changed immutable binding");
   await revokeCredential(teamID, privateWrite.credential.id);
+  const listedAfterRevoke = await controlJSON(`/teams/${teamID}/credentials?limit=100&offset=0`);
+  const afterRevokeIDs = new Set((listedAfterRevoke.data ?? []).map((item) => item.id));
+  assert(afterRevokeIDs.has(privateRead.credential.id), "revoking one credential removed another credential from the collection");
+  assert(afterRevokeIDs.has(sharedRead.credential.id), "revoking one credential removed the shared-only credential from the collection");
   const denied = await fetch(`${userURL}/mcp`, {
     method: "POST",
     headers: { Authorization: `Bearer ${rotated.apiKey}`, Accept: "application/json", "Content-Type": "application/json" },

@@ -24,6 +24,12 @@ type CredentialRepository interface {
 	CountByTeam(ctx context.Context, teamID uuid.UUID) (int64, error)
 	// GetByIDForTeam returns an API credential only when it belongs to teamID. Returns nil on mismatch.
 	GetByIDForTeam(ctx context.Context, teamID, id uuid.UUID) (*domain.Credential, error)
+	// ListSSOOwnedCredentials returns active credentials owned by one SSO identity in one team.
+	ListSSOOwnedCredentials(ctx context.Context, teamID, identityID uuid.UUID) ([]*domain.Credential, error)
+	// GetSSOOwnedCredentialByID returns one active credential only when both its team and SSO owner match.
+	GetSSOOwnedCredentialByID(ctx context.Context, teamID, identityID, credentialID uuid.UUID) (*domain.Credential, error)
+	// GetSSOOwnedCredential is retained for compatibility with older callers. It
+	// rejects ambiguous ownership instead of selecting an arbitrary credential.
 	GetSSOOwnedCredential(ctx context.Context, teamID, identityID uuid.UUID) (*domain.Credential, error)
 	GetActiveByPrefix(ctx context.Context, prefix string) (*domain.Credential, error)
 	// RevokeForTeam marks a credential revoked only when it belongs to teamID. Returns number of rows affected.
@@ -736,10 +742,8 @@ func (r *CredentialRepositoryImpl) GetByIDForTeam(ctx context.Context, teamID, i
 	return credential, nil
 }
 
-// GetSSOOwnedCredential returns the active normal API credential owned by an SSO identity for one team.
-func (r *CredentialRepositoryImpl) GetSSOOwnedCredential(ctx context.Context, teamID, identityID uuid.UUID) (*domain.Credential, error) {
-	credential, err := r.getOneHydratedCredential(ctx, teamID, `
-		SELECT `+credentialHydrationSelect+`
+const ssoOwnedCredentialQuery = `
+		SELECT ` + credentialHydrationSelect + `
 		FROM credentials c
 		JOIN team_memberships membership
 		  ON membership.actor_identity_id = c.actor_identity_id AND membership.team_id = c.team_id
@@ -756,13 +760,74 @@ func (r *CredentialRepositoryImpl) GetSSOOwnedCredential(ctx context.Context, te
 		WHERE c.team_id = $1 AND c.owner_identity_id = $2
 		  AND c.kind = 'api_key' AND c.status = 'active' AND c.revoked_at IS NULL
 		  AND t.status = 'active' AND t.deleted_at IS NULL
+`
+
+func (r *CredentialRepositoryImpl) listHydratedCredentials(ctx context.Context, teamID uuid.UUID, query string, args ...any) ([]*domain.Credential, error) {
+	credentials := make([]*domain.Credential, 0)
+	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
+		rows, err := tx.Raw(query, args...).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			state := credentialHydrationState{}
+			if err := state.scan(rows); err != nil {
+				return err
+			}
+			credential, err := state.result()
+			if err != nil {
+				return err
+			}
+			credentials = append(credentials, credential)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return credentials, nil
+}
+
+// ListSSOOwnedCredentials returns the active normal API credentials owned by an
+// SSO identity for one team. Ownership is part of the SQL predicate so another
+// owner's metadata never leaves the adapter.
+func (r *CredentialRepositoryImpl) ListSSOOwnedCredentials(ctx context.Context, teamID, identityID uuid.UUID) ([]*domain.Credential, error) {
+	credentials, err := r.listHydratedCredentials(ctx, teamID, ssoOwnedCredentialQuery+`
 		ORDER BY c.created_at DESC, c.id ASC
-		LIMIT 1
 	`, teamID, identityID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sso-owned api credentials for team: %w", err)
+	}
+	return credentials, nil
+}
+
+// GetSSOOwnedCredentialByID returns one active credential only when both its
+// team and SSO owner match. A wrong owner or team is indistinguishable from a
+// missing credential.
+func (r *CredentialRepositoryImpl) GetSSOOwnedCredentialByID(ctx context.Context, teamID, identityID, credentialID uuid.UUID) (*domain.Credential, error) {
+	credential, err := r.getOneHydratedCredential(ctx, teamID, ssoOwnedCredentialQuery+` AND c.id = $3`, teamID, identityID, credentialID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sso-owned api credential for team: %w", err)
 	}
 	return credential, nil
+}
+
+// GetSSOOwnedCredential returns the active normal API credential owned by an
+// SSO identity for one team. It is retained for compatibility but refuses to
+// choose an arbitrary credential when ownership is no longer singleton.
+func (r *CredentialRepositoryImpl) GetSSOOwnedCredential(ctx context.Context, teamID, identityID uuid.UUID) (*domain.Credential, error) {
+	credentials, err := r.ListSSOOwnedCredentials(ctx, teamID, identityID)
+	if err != nil {
+		return nil, err
+	}
+	if len(credentials) > 1 {
+		return nil, fmt.Errorf("multiple sso-owned api credentials exist for team %s and identity %s", teamID, identityID)
+	}
+	if len(credentials) == 0 {
+		return nil, nil
+	}
+	return credentials[0], nil
 }
 
 func applyCredentialMemoryFields(credential *domain.Credential, bindingRaw, memorySpaceRaw, teamSharedSpaceRaw string) error {

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,7 +11,154 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
+
+func TestCanonicalSSOOwnedCredentialCollectionAndSpaces(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "canonical-sso-multi-credential"))
+	otherTeamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "canonical-sso-other-team"))
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	otherOwnerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	otherTeamOwnerID := createLedgerSSOIdentity(t, adminDB, rls, otherTeamID)
+
+	repo := NewCredentialRepository(appDB, rls)
+	profileA := createOwnedCredential(t, repo, teamID, ownerID, "profile-a", domain.CredentialBindingProfilePrivate)
+	profileB := createOwnedCredential(t, repo, teamID, ownerID, "profile-b", domain.CredentialBindingProfilePrivate)
+	credentialA := createOwnedCredential(t, repo, teamID, ownerID, "credential-a", domain.CredentialBindingCredentialPrivate)
+	credentialB := createOwnedCredential(t, repo, teamID, ownerID, "credential-b", domain.CredentialBindingCredentialPrivate)
+	shared := createOwnedCredential(t, repo, teamID, ownerID, "shared", domain.CredentialBindingSharedOnly)
+
+	owned, err := repo.ListSSOOwnedCredentials(ctx, teamID, ownerID)
+	require.NoError(t, err)
+	require.Len(t, owned, 5)
+	_, err = repo.GetSSOOwnedCredential(ctx, teamID, ownerID)
+	require.ErrorContains(t, err, "multiple sso-owned api credentials")
+	require.Equal(t, profileA.MemorySpaceID, profileB.MemorySpaceID)
+	require.NotEqual(t, credentialA.MemorySpaceID, credentialB.MemorySpaceID)
+	sharedLoaded := findCredentialByID(owned, shared.ID)
+	require.NotNil(t, sharedLoaded)
+	require.Equal(t, sharedLoaded.TeamSharedSpaceID, sharedLoaded.MemorySpaceID)
+
+	var privateSharedCount int
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM memory_spaces
+			WHERE team_id = ? AND owner_credential_id = ?
+		`, teamID, shared.ID).Scan(&privateSharedCount).Error
+	}))
+	require.Zero(t, privateSharedCount)
+
+	rotatedPrefix := "dm_" + strings.ReplaceAll(credentialA.ID.String(), "-", "")[:20]
+	rows, err := repo.RotateForTeam(ctx, teamID, credentialA.ID, "rotated-hash", rotatedPrefix, "rot8ed", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+	rotated, err := repo.GetByIDForTeam(ctx, teamID, credentialA.ID)
+	require.NoError(t, err)
+	require.Equal(t, credentialA.ID, rotated.ID)
+	require.Equal(t, credentialA.MemoryBinding, rotated.MemoryBinding)
+	require.Equal(t, credentialA.MemorySpaceID, rotated.MemorySpaceID)
+
+	rows, err = repo.RevokeForTeam(ctx, teamID, profileB.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+	owned, err = repo.ListSSOOwnedCredentials(ctx, teamID, ownerID)
+	require.NoError(t, err)
+	require.Len(t, owned, 4)
+	otherOwned, err := repo.ListSSOOwnedCredentials(ctx, teamID, otherOwnerID)
+	require.NoError(t, err)
+	require.Empty(t, otherOwned)
+	missing, err := repo.GetSSOOwnedCredentialByID(ctx, teamID, otherOwnerID, credentialA.ID)
+	require.NoError(t, err)
+	require.Nil(t, missing)
+	missing, err = repo.GetSSOOwnedCredentialByID(ctx, otherTeamID, otherTeamOwnerID, credentialA.ID)
+	require.NoError(t, err)
+	require.Nil(t, missing)
+
+	var singletonIndexCount int
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM pg_indexes
+			WHERE schemaname = 'public' AND indexname = 'idx_credentials_owner_team_active_unique'
+		`).Scan(&singletonIndexCount).Error
+	}))
+	require.Zero(t, singletonIndexCount)
+}
+
+func createLedgerSSOIdentity(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, teamID uuid.UUID) uuid.UUID {
+	t.Helper()
+	providerID := uuid.New()
+	identityID := uuid.New()
+	membershipID := uuid.New()
+	now := time.Now().UTC()
+	require.NoError(t, rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO sso_providers (id, name, kind, issuer_url, client_id)
+			VALUES (?, ?, 'generic_oidc', 'https://issuer.example.test', ?)
+		`, providerID, "provider-"+providerID.String(), "client-"+providerID.String()).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO sso_identities (id, provider_id, subject, email, display_name)
+			VALUES (?, ?, ?, ?, ?)
+		`, identityID, providerID, "subject-"+identityID.String(), "user-"+identityID.String()+"@example.test", "SSO test user").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO actor_identities (id, kind, team_id, provider, subject, display_name, active, created_at, updated_at)
+			VALUES (?, 'human', NULL, ?, ?, 'SSO test user', true, ?, ?)
+		`, identityID, providerID.String(), "subject-"+identityID.String(), now, now).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO team_memberships (
+				id, actor_identity_id, team_id, status, team_admin, maximum_grants,
+				sso_provider_id, sso_group_id, sso_entitlement_status, created_at, updated_at
+			) VALUES (?, ?, ?, 'active', false, ARRAY['read','write']::text[], ?, 'test-group', 'active', ?, ?)
+		`, membershipID, identityID, teamID, providerID, now, now).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO membership_grants (membership_id, grant_name, source)
+			VALUES (?, 'read', 'explicit'), (?, 'write', 'explicit')
+		`, membershipID, membershipID).Error
+	}))
+	return identityID
+}
+
+func createOwnedCredential(t *testing.T, repo *CredentialRepositoryImpl, teamID, ownerID uuid.UUID, name string, binding domain.CredentialMemoryBinding) *domain.Credential {
+	t.Helper()
+	id := uuid.New()
+	prefix := "dm_" + strings.ReplaceAll(id.String(), "-", "")[:20]
+	credential := &domain.Credential{
+		ID:              id,
+		TeamID:          teamID,
+		Name:            name,
+		KeyHash:         "hash-" + id.String(),
+		KeyPrefix:       prefix,
+		KeySuffix:       "suffix",
+		Scopes:          []string{"read", "write"},
+		RateLimit:       60,
+		OwnerIdentityID: &ownerID,
+		MemoryBinding:   binding,
+	}
+	require.NoError(t, repo.CreateCredential(context.Background(), credential))
+	return credential
+}
+
+func findCredentialByID(credentials []*domain.Credential, id uuid.UUID) *domain.Credential {
+	for _, credential := range credentials {
+		if credential.ID == id {
+			return credential
+		}
+	}
+	return nil
+}
 
 func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)

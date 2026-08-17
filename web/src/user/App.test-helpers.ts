@@ -1,5 +1,34 @@
 import { RecallHit, RecallPayload } from "./api";
 
+export function optionValue<T>(value: T | T[], index: number): T {
+  return Array.isArray(value) ? value[Math.min(index, value.length - 1)] : value;
+}
+
+export function isRecallSequence(value: RecallHit[] | RecallHit[][]): value is RecallHit[][] {
+  return Array.isArray(value[0]);
+}
+
+export function authorizationHeader(init?: RequestInit): string {
+  const headers = init?.headers;
+  if (!headers) {
+    return "";
+  }
+  if (headers instanceof Headers) {
+    return headers.get("Authorization") ?? "";
+  }
+  if (Array.isArray(headers)) {
+    return headers.find(([name]) => name.toLowerCase() === "authorization")?.[1] ?? "";
+  }
+  return (headers as Record<string, string>).Authorization ?? (headers as Record<string, string>).authorization ?? "";
+}
+
+export function jsonResponse(payload: unknown, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 export function recallPayloadForHits(hits: RecallHit[]): RecallPayload {
   return {
     recall_id: "recall-test",

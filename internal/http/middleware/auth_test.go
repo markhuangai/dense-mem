@@ -72,6 +72,14 @@ func (m *mockCredentialRepository) GetByIDForTeam(ctx context.Context, profileID
 	return nil, nil
 }
 
+func (m *mockCredentialRepository) ListSSOOwnedCredentials(ctx context.Context, profileID, identityID uuid.UUID) ([]*domain.Credential, error) {
+	return nil, nil
+}
+
+func (m *mockCredentialRepository) GetSSOOwnedCredentialByID(ctx context.Context, profileID, identityID, credentialID uuid.UUID) (*domain.Credential, error) {
+	return nil, nil
+}
+
 func (m *mockCredentialRepository) GetSSOOwnedCredential(ctx context.Context, profileID, identityID uuid.UUID) (*domain.Credential, error) {
 	return nil, nil
 }

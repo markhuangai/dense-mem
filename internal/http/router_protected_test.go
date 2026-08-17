@@ -79,6 +79,14 @@ func (r *routerCredentialRepo) GetByIDForTeam(context.Context, uuid.UUID, uuid.U
 	return nil, nil
 }
 
+func (r *routerCredentialRepo) ListSSOOwnedCredentials(context.Context, uuid.UUID, uuid.UUID) ([]*domain.Credential, error) {
+	return nil, nil
+}
+
+func (r *routerCredentialRepo) GetSSOOwnedCredentialByID(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.Credential, error) {
+	return nil, nil
+}
+
 func (r *routerCredentialRepo) GetSSOOwnedCredential(context.Context, uuid.UUID, uuid.UUID) (*domain.Credential, error) {
 	return nil, nil
 }

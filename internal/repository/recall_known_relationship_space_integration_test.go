@@ -117,4 +117,17 @@ func TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace(t *testin
 	require.NoError(t, err)
 	require.Len(t, recalled.Results, 1)
 	assert.Equal(t, second.Relationship.RelationshipID, recalled.Results[0].RelationshipID)
+	assert.Equal(t, string(domain.MemorySpaceCredentialPrivate), recalled.Results[0].SpaceKind)
+
+	sharedRecalled, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID:               teamID.String(),
+		Query:                "unmatchedtoken",
+		QueryEmbedding:       []float32{1, 0, 0},
+		KnownRelationshipIDs: []string{first.Relationship.RelationshipID},
+		Limit:                5,
+		SpaceID:              "",
+		SpaceKind:            string(domain.MemorySpaceTeamShared),
+	})
+	require.NoError(t, err)
+	require.Empty(t, sharedRecalled.Results)
 }

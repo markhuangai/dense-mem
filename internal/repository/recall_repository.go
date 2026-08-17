@@ -787,6 +787,9 @@ func normalizeRecallEvidenceInput(input RecallEvidenceInput) RecallEvidenceInput
 	input.ExpandFromEntityIDs = normalizeRecallUUIDList(input.ExpandFromEntityIDs)
 	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	input.SpaceKind = strings.TrimSpace(input.SpaceKind)
+	if input.SpaceID == "" && input.SpaceKind == "" {
+		input.SpaceKind = string(domain.MemorySpaceTeamShared)
+	}
 	if input.Limit <= 0 {
 		input.Limit = defaultRecallLimit
 	}
@@ -807,14 +810,14 @@ func recallSpacePredicate(column, teamID, spaceID, spaceKind string) string {
 		}
 		return " AND FALSE"
 	}
-	if strings.TrimSpace(spaceKind) == string(domain.MemorySpaceTeamShared) {
+	if strings.TrimSpace(spaceKind) == "" || strings.TrimSpace(spaceKind) == string(domain.MemorySpaceTeamShared) {
 		parsed, err := uuid.Parse(strings.TrimSpace(teamID))
 		if err == nil {
 			return fmt.Sprintf(" AND %s = dense_mem_team_shared_space(%s::uuid)", column, pq.QuoteLiteral(parsed.String()))
 		}
 		return " AND FALSE"
 	}
-	return ""
+	return " AND FALSE"
 }
 
 func validateRecallEvidenceInput(input RecallEvidenceInput) error {
