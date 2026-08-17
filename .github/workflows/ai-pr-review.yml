@@ -64,7 +64,7 @@ jobs:
     steps:
       - name: Resolve and fence pull request head
         id: resolve
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ github.token }}
           script: |
@@ -200,7 +200,7 @@ jobs:
 
     steps:
       - name: Mark review pending
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
         with:
@@ -242,7 +242,7 @@ jobs:
       - name: Review pull request
         id: reviewer
         continue-on-error: true
-        uses: markhuangai/ai-pr-reviewer@v1-prerelease
+        uses: markhuangai/ai-pr-reviewer@v1.1.0
         with:
           pull-request-number: ${{ needs.resolve.outputs.pr_number }}
           expected-head-sha: ${{ needs.resolve.outputs.head_sha }}
@@ -282,7 +282,7 @@ jobs:
 
       - name: Publish final review status
         if: always()
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
           REVIEW_OUTCOME: ${{ steps.reviewer.outcome }}
