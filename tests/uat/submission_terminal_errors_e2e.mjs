@@ -51,7 +51,7 @@ function assertTerminalErrors(status) {
   }
   const allowedCodes = new Set([
     "submission_semantic_hold", "submission_policy_rejected", "assessor_response_invalid", "assessor_unavailable",
-    "submission_replacement_conflict", "submission_processing_failed", "search_indexing_delayed",
+    "submission_replacement_conflict", "submission_processing_failed", "contract_superseded", "search_indexing_delayed",
     "relationship_version_stale", "relationship_not_active", "object_kind_change_forbidden",
     "support_set_mismatch", "entity_not_found", "too_many_entity_candidates",
     "predicate_not_found", "predicate_subject_kind_mismatch", "predicate_object_kind_mismatch",
@@ -65,6 +65,7 @@ function assertTerminalErrors(status) {
     "submission assessment was unavailable after bounded retries",
     "submission replacement conflicted with current state",
     "submission processing failed",
+    "submission uses a superseded remember contract; resubmit the complete batch using the current contract",
     "search indexing is delayed",
     "relationship version is stale",
     "relationship must be active, supported, and canonical",
@@ -139,15 +140,12 @@ function overflowFixture() {
 }
 
 function relationship(content, evidenceIndex, ref, subject, predicate, object) {
-  const subjectStart = content.indexOf(subject);
-  const predicateStart = content.indexOf(predicate, subjectStart + subject.length);
-  const objectStart = content.indexOf(object, predicateStart + predicate.length);
   return {
     ref,
-    subject: { name: subject, entity_kind: "project", span: { evidence_index: evidenceIndex, start: subjectStart, end: subjectStart + subject.length } },
-    predicate: { proposed_key: predicate, surface: predicate, span: { evidence_index: evidenceIndex, start: predicateStart, end: predicateStart + predicate.length } },
-    object: { entity: { name: object, entity_kind: "product", span: { evidence_index: evidenceIndex, start: objectStart, end: objectStart + object.length } } },
-    polarity: "+", modality: "statement", supports: [{ evidence_index: evidenceIndex, start: 0, end: Array.from(content).length }],
+    subject: { name: subject, entity_kind: "project" },
+    predicate: { proposed_key: predicate },
+    object: { entity: { name: object, entity_kind: "product" } },
+    polarity: "+", modality: "statement", evidence_indices: [evidenceIndex],
   };
 }
 

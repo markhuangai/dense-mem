@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -37,6 +38,17 @@ func TestSemanticAssessmentRequestRejectsInvalidCandidateContext(t *testing.T) {
 				}
 			},
 			want: "must contain at most",
+		},
+		{
+			name: "duplicate candidate span with different context",
+			mutate: func(req *SemanticAssessmentRequest, _ SemanticAssessmentLimits) {
+				duplicate := req.EntityCandidateGroups[0]
+				duplicate.GroundingRef = "grounding-duplicate"
+				duplicate.Candidates = append([]SemanticAssessmentEntityCandidate(nil), duplicate.Candidates...)
+				duplicate.Candidates[0].EntityID = "entity-different"
+				req.EntityCandidateGroups = append(req.EntityCandidateGroups, duplicate)
+			},
+			want: "duplicates an entity evidence span with different candidate context",
 		},
 		{
 			name: "invalid candidate kind",
@@ -83,7 +95,7 @@ func TestSemanticAssessmentRequestRejectsMalformedTrustedRelationshipRefs(t *tes
 			refs: []SemanticAssessmentRequiredRelationshipRef{{}},
 			want: []string{
 				"required_relationship_refs[0].proposal_id: is required",
-				"required_relationship_refs[0].evidence: must contain between 1 and",
+				"required_relationship_refs[0].evidence_ids: must contain between 1 and",
 			},
 		},
 		{
@@ -132,18 +144,7 @@ func TestSemanticAssessmentRequestRejectsMalformedTrustedRelationshipRefs(t *tes
 }
 
 func TestSemanticAssessmentSubmissionContractRequiresExactCompleteResponse(t *testing.T) {
-	req, limits := semanticAssessmentTestRequest(t)
-	req.SubmissionContract = &SemanticAssessmentSubmissionContract{
-		Entities: []SemanticAssessmentRequiredEntityRef{
-			{Ref: "person-1", Surface: "Mark", Kind: "person", EvidenceID: "ev-1", Start: 0, End: 4},
-			{Ref: "product-1", Surface: "Dense-Mem", Kind: "product", EvidenceID: "ev-1", Start: 14, End: 23},
-		},
-		Relationships: []SemanticAssessmentRequiredRelationshipRef{{
-			ProposalID: "relationship-1", SubjectRef: "person-1", OriginalPredicate: "works on",
-			ObjectRef: stringPointer("product-1"), Polarity: "+", Modality: "statement",
-			Evidence: []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 0, End: 24}},
-		}},
-	}
+	req, limits := semanticAssessmentSubmissionContractTestRequest(t)
 	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
 	if len(errs) != 0 {
 		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
@@ -183,11 +184,11 @@ func TestSemanticAssessmentSubmissionContractRequiresExactCompleteResponse(t *te
 			want:   "does not preserve its submitted relationship target",
 		},
 		{
-			name: "adds unsupported support span",
+			name: "adds support outside evidence allowlist",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].Evidence = []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 5, End: 13}}
+				response.RelationshipResults[0].SupportRanges[0].EvidenceID = "ev-other"
 			},
-			want: "contains a span outside the submitted relationship target",
+			want: "is outside the submitted evidence allowlist",
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -200,6 +201,63 @@ func TestSemanticAssessmentSubmissionContractRequiresExactCompleteResponse(t *te
 	}
 }
 
+func TestSemanticAssessmentLegacyEvidenceIsBounded(t *testing.T) {
+	request, limits := semanticAssessmentTestRequest(t)
+	legacyEvidence := make([]SemanticAssessmentEvidenceSpan, SemanticAssessmentMaxEvidenceSpans+1)
+	for index := range legacyEvidence {
+		legacyEvidence[index] = SemanticAssessmentEvidenceSpan{EvidenceID: "ev-1", Start: 0, End: 1}
+	}
+	request.RequiredRelationshipRefs = []SemanticAssessmentRequiredRelationshipRef{{
+		ProposalID: "relationship-1",
+		Evidence:   legacyEvidence,
+	}}
+	_, errs := PrepareSemanticAssessmentRequest(request, limits)
+	if len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "must contain at most") {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v, want legacy evidence bound", errs)
+	}
+}
+
+func TestSemanticAssessmentEntityGroundingsAreBounded(t *testing.T) {
+	request, limits := semanticAssessmentSubmissionContractTestRequest(t)
+	groundings := request.SubmissionContract.Entities[0].Groundings
+	for index := 1; index < SemanticAssessmentMaxEntityGroundings+1; index++ {
+		grounding := groundings[0]
+		grounding.GroundingRef = "grounding-mark-" + fmt.Sprint(index)
+		groundings = append(groundings, grounding)
+	}
+	request.SubmissionContract.Entities[0].Groundings = groundings
+	_, errs := PrepareSemanticAssessmentRequest(request, limits)
+	if len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "groundings: must contain at most") {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v, want grounding bound", errs)
+	}
+}
+
+func TestSemanticAssessmentSubmissionRangeValidationIsDeterministic(t *testing.T) {
+	request, limits := semanticAssessmentSubmissionContractTestRequest(t)
+	prepared, errs := PrepareSemanticAssessmentRequest(request, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+	response := semanticAssessmentTestResponse()
+	response.RelationshipResults[0].PredicateRange.EvidenceID = "ev-other"
+	valueRange := response.RelationshipResults[0].PredicateRange
+	response.RelationshipResults[0].ValueRange = &valueRange
+
+	validationErrors := validateSemanticAssessmentSubmissionResponse(prepared.SubmissionContract, response)
+	fields := make([]string, 0, 2)
+	for _, validationError := range validationErrors {
+		if strings.Contains(validationError.Message, "outside the submitted evidence allowlist") {
+			fields = append(fields, validationError.Field)
+		}
+	}
+	if want := []string{
+		"relationship_results[0].predicate_range.evidence_id",
+		"relationship_results[0].value_range.evidence_id",
+	}; len(fields) != len(want) || fields[0] != want[0] || fields[1] != want[1] {
+		t.Fatalf("range validation fields = %#v, want %#v", fields, want)
+	}
+}
+
 func TestSemanticAssessmentResponseNormalizesSecurityTimeScopeAndValue(t *testing.T) {
 	req, limits := semanticAssessmentTestRequest(t)
 	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
@@ -208,8 +266,10 @@ func TestSemanticAssessmentResponseNormalizesSecurityTimeScopeAndValue(t *testin
 	}
 
 	response := semanticAssessmentTestResponse()
-	response.SecuritySignals = []SemanticSecuritySignal{{
-		EvidenceID: "ev-1", Kind: "instruction_override", Start: 0, End: 4,
+	securityStartRef, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 0)
+	securityEndRef, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 4)
+	response.SecuritySignals = []SemanticAssessmentSecuritySignal{{
+		EvidenceID: "ev-1", Kind: "instruction_override", StartRef: securityStartRef, EndRef: securityEndRef,
 	}}
 	relationship := &response.RelationshipResults[0]
 	relationship.PredicateStatus = "needs_review"
@@ -398,6 +458,8 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 	if len(errs) != 0 {
 		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
 	}
+	validStartRef, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 0)
+	validEndRef, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 4)
 
 	testCases := []struct {
 		name   string
@@ -417,20 +479,20 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 			name: "result arrays are bounded",
 			mutate: func(response *SemanticAssessmentResponse) {
 				response.RequestID = ""
-				response.SecuritySignals = make([]SemanticSecuritySignal, 65)
+				response.SecuritySignals = make([]SemanticAssessmentSecuritySignal, 65)
 				response.EntityResults = make([]SemanticAssessmentEntityResult, SemanticAssessmentMaxEntityResults+1)
 				response.RelationshipResults = make([]SemanticAssessmentRelationshipResult, SemanticAssessmentMaxRelationshipResults+1)
 			},
 			want: "security_signals: must contain at most 64 entries",
 		},
 		{
-			name: "security signals must be authorized exact spans",
+			name: "security signals must use authorized boundary references",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.SecuritySignals = []SemanticSecuritySignal{
-					{EvidenceID: "missing", Kind: "instruction_override", Start: 0, End: 4},
-					{EvidenceID: "ev-1", Kind: "unsupported", Start: -1, End: 0},
-					{EvidenceID: "ev-1", Kind: "instruction_override", Start: 0, End: 4},
-					{EvidenceID: "ev-1", Kind: "instruction_override", Start: 0, End: 4},
+				response.SecuritySignals = []SemanticAssessmentSecuritySignal{
+					{EvidenceID: "missing", Kind: "instruction_override", StartRef: validStartRef, EndRef: validEndRef},
+					{EvidenceID: "ev-1", Kind: "unsupported", StartRef: "invalid", EndRef: "invalid"},
+					{EvidenceID: "ev-1", Kind: "instruction_override", StartRef: validStartRef, EndRef: validEndRef},
+					{EvidenceID: "ev-1", Kind: "instruction_override", StartRef: validStartRef, EndRef: validEndRef},
 				}
 			},
 			want: "security_signals[1].kind: is unsupported",
@@ -438,12 +500,12 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 		{
 			name: "hidden control markup signal requires a matching span",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.SecuritySignals = []SemanticSecuritySignal{{EvidenceID: "ev-1", Kind: "hidden_control_markup", Start: 0, End: 4}}
+				response.SecuritySignals = []SemanticAssessmentSecuritySignal{{EvidenceID: "ev-1", Kind: "hidden_control_markup", StartRef: validStartRef, EndRef: validEndRef}}
 			},
 			want: "hidden_control_markup requires a hidden control or active markup",
 		},
 		{
-			name: "entity result fields and evidence spans",
+			name: "entity result fields and selection",
 			mutate: func(response *SemanticAssessmentResponse) {
 				result := &response.EntityResults[0]
 				result.Ref = ""
@@ -453,7 +515,7 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 				result.Rationale = ""
 				result.Action = "unsupported"
 			},
-			want: "entity_results[0].kind: is unsupported",
+			want: "entity_results[0].action: is unsupported",
 		},
 		{
 			name: "entity action candidate constraints",
@@ -552,16 +614,11 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 			want: "object: object_value.display must be bounded",
 		},
 		{
-			name: "relationship evidence must be unique exact spans",
+			name: "relationship support ranges require valid references",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].Evidence = []SemanticAssessmentEvidenceSpan{
-					{EvidenceID: "missing", Start: 0, End: 1},
-					{EvidenceID: "ev-1", Start: -1, End: 0},
-					{EvidenceID: "ev-1", Start: 0, End: 4},
-					{EvidenceID: "ev-1", Start: 0, End: 4},
-				}
+				response.RelationshipResults[0].SupportRanges[0].StartRef = "invalid"
 			},
-			want: "relationship_results[0].evidence[1]: span is invalid",
+			want: "relationship_results[0].support_ranges[0]: boundary references are invalid",
 		},
 		{
 			name: "temporal bounds are ordered and entailed",

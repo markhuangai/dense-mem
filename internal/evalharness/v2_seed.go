@@ -476,15 +476,15 @@ func flatRelationshipFromLedger(content string, row relationshipLedgerRow) (map[
 	if err != nil {
 		return nil, err
 	}
-	subjectStart, subjectEnd, err := resolveLedgerSurface(runes, row.Subject, row.SubjectOccurrence, supportStart, supportEnd, "subject")
+	_, _, err = resolveLedgerSurface(runes, row.Subject, row.SubjectOccurrence, supportStart, supportEnd, "subject")
 	if err != nil {
 		return nil, err
 	}
-	predicateStart, predicateEnd, err := resolveLedgerSurface(runes, row.Predicate, row.PredicateOccurrence, supportStart, supportEnd, "predicate")
+	_, _, err = resolveLedgerSurface(runes, row.Predicate, row.PredicateOccurrence, supportStart, supportEnd, "predicate")
 	if err != nil {
 		return nil, err
 	}
-	objectStart, objectEnd, err := resolveLedgerSurface(runes, row.Object, row.ObjectOccurrence, supportStart, supportEnd, "object")
+	_, _, err = resolveLedgerSurface(runes, row.Object, row.ObjectOccurrence, supportStart, supportEnd, "object")
 	if err != nil {
 		return nil, err
 	}
@@ -512,19 +512,16 @@ func flatRelationshipFromLedger(content string, row relationshipLedgerRow) (map[
 		"ref": "relationship_1",
 		"subject": map[string]any{
 			"name": row.Subject, "entity_kind": subjectKind,
-			"span": relationshipSpan(subjectStart, subjectEnd),
 		},
 		"predicate": map[string]any{
-			"proposed_key": predicateKey, "surface": row.Predicate,
-			"span": relationshipSpan(predicateStart, predicateEnd),
+			"proposed_key": predicateKey,
 		},
 		"object": map[string]any{"entity": map[string]any{
 			"name": row.Object, "entity_kind": objectKind,
-			"span": relationshipSpan(objectStart, objectEnd),
 		}},
-		"polarity": polarity,
-		"modality": modality,
-		"supports": []any{relationshipSpan(supportStart, supportEnd)},
+		"polarity":         polarity,
+		"modality":         modality,
+		"evidence_indices": []any{0},
 	}, nil
 }
 
@@ -572,19 +569,16 @@ func flatRelationshipFallback(content string, row relationshipLedgerRow) (map[st
 		"ref": "relationship_1",
 		"subject": map[string]any{
 			"name": string(runes[subjectStart:subjectEnd]), "entity_kind": "other",
-			"span": relationshipSpan(subjectStart, subjectEnd),
 		},
 		"predicate": map[string]any{
-			"proposed_key": predicateKey, "surface": predicateSurface,
-			"span": relationshipSpan(predicateStart, predicateEnd),
+			"proposed_key": predicateKey,
 		},
 		"object": map[string]any{"entity": map[string]any{
 			"name": string(runes[objectStart:objectEnd]), "entity_kind": "other",
-			"span": relationshipSpan(objectStart, objectEnd),
 		}},
-		"polarity": polarity,
-		"modality": modality,
-		"supports": []any{relationshipSpan(supportStart, supportEnd)},
+		"polarity":         polarity,
+		"modality":         modality,
+		"evidence_indices": []any{0},
 	}, nil
 }
 
@@ -734,10 +728,6 @@ func sameRunes(left, right []rune) bool {
 		}
 	}
 	return true
-}
-
-func relationshipSpan(start, end int) map[string]any {
-	return map[string]any{"evidence_index": 0, "start": start, "end": end}
 }
 
 func predicateProposalKey(surface string) (string, error) {

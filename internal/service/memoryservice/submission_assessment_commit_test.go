@@ -130,6 +130,47 @@ func TestSubmissionAssessmentCommitInputFailsClosedForUnsafeResults(t *testing.T
 	}
 }
 
+func TestSubmissionAssessmentCommitInputCanonicalizesRelationshipRefsAfterEntityGroundingDeduplication(t *testing.T) {
+	fixture := submissionAssessmentCommitInputFixture(t)
+	var canonical, duplicate *verifier.SemanticAssessmentEntityResult
+	for index := range fixture.response.EntityResults {
+		result := &fixture.response.EntityResults[index]
+		switch result.Ref {
+		case "entity:0:subject":
+			canonical = result
+		case "entity:1:subject":
+			duplicate = result
+		}
+	}
+	require.NotNil(t, canonical)
+	require.NotNil(t, duplicate)
+	duplicate.EvidenceID = canonical.EvidenceID
+	duplicate.Start = canonical.Start
+	duplicate.End = canonical.End
+
+	commit, err := submissionAssessmentCommitInput(
+		fixture.run,
+		fixture.scope,
+		fixture.plan,
+		fixture.request,
+		fixture.response,
+		fixture.assessment,
+		fixture.policy,
+		false,
+	)
+
+	require.NoError(t, err)
+	var dependsOn repository.PlacementRelationshipDecisionInput
+	for _, observation := range commit.RelationshipObservations {
+		if observation.Observation.Ref == "r:depends" {
+			dependsOn = observation.Observation
+			break
+		}
+	}
+	require.NotEmpty(t, dependsOn.Ref)
+	assert.Equal(t, "entity:0:subject", dependsOn.SubjectRef)
+}
+
 func TestSubmissionAssessmentSupportsFailClosedForInvalidProvenance(t *testing.T) {
 	fixture := submissionAssessmentCommitInputFixture(t)
 

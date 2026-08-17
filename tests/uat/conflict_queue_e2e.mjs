@@ -113,9 +113,6 @@ async function createConflictFixture(label, teamID) {
 
 async function submitRelationship(apiKey, teamID, input) {
   const evidence = `${input.subjectName} primary database is ${input.objectName}.`;
-  const subjectStart = evidence.indexOf(input.subjectName);
-  const predicateStart = evidence.indexOf("primary database", subjectStart);
-  const objectStart = evidence.indexOf(input.objectName, predicateStart);
   const receipt = await mcpSuccess(apiKey, "remember", {
     idempotency_key: `${runID}:${input.label}`,
     evidence: [{
@@ -132,21 +129,17 @@ async function submitRelationship(apiKey, teamID, input) {
         name: input.subjectName,
         entity_kind: "project",
         ...(input.subjectEntityID ? { known_entity_id: input.subjectEntityID } : {}),
-        span: { evidence_index: 0, start: runeOffset(evidence, subjectStart), end: runeOffset(evidence, subjectStart + input.subjectName.length) },
       },
       predicate: {
         proposed_key: "primary_database",
-        surface: "primary database",
-        span: { evidence_index: 0, start: runeOffset(evidence, predicateStart), end: runeOffset(evidence, predicateStart + "primary database".length) },
       },
       object: { entity: {
         name: input.objectName,
         entity_kind: "product",
-        span: { evidence_index: 0, start: runeOffset(evidence, objectStart), end: runeOffset(evidence, objectStart + input.objectName.length) },
       } },
       polarity: "+",
       modality: "statement",
-      supports: [{ evidence_index: 0, start: 0, end: Array.from(evidence).length }],
+      evidence_indices: [0],
     }],
   });
   const submissionID = String(receipt.submission_id ?? "");
@@ -324,10 +317,6 @@ function stringAt(value, path) {
   let current = value;
   for (const key of path) current = current?.[key];
   return typeof current === "string" ? current : "";
-}
-
-function runeOffset(value, byteOffset) {
-  return Array.from(value.slice(0, byteOffset)).length;
 }
 
 function positiveIntEnv(name, fallback, minimum, maximum) {

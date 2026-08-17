@@ -46,7 +46,7 @@ func TestOpenAIVerifierAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 		assert.Equal(t, "assessor-model", request.Model)
 		assert.Equal(t, "dense_mem_semantic_assessment_response", request.ResponseFormat.JSONSchema.Name)
 		assert.Contains(t, request.Messages[0].Content, "integrated structure and support assessor")
-		assert.Contains(t, request.Messages[0].Content, `predicate_status "needs_review" requires predicate_key and predicate_version both null`)
+		assert.Contains(t, request.Messages[0].Content, "registration_required and needs_review require predicate_key and predicate_version both null")
 		var payload map[string]any
 		if !assert.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &payload)) {
 			http.Error(w, "invalid assessor payload", http.StatusBadRequest)
@@ -194,15 +194,13 @@ func TestOpenAIVerifierAssessSemanticCorrectsMalformedContentInSameHistory(t *te
 	require.Len(t, correction.ValidationErrors, 1)
 	assert.Equal(t, "request_id", correction.ValidationErrors[0].Field)
 	assert.Contains(t, correction.ValidationErrors[0].Message, `expected "assess-1"`)
-	assert.Empty(t, correction.SpanHints)
-	assert.Empty(t, correction.EntitySelectionHints)
 	assert.Contains(t, correction.Instruction, "complete replacement JSON object")
-	assert.Contains(t, correction.Instruction, "predicate_key and predicate_version must both be null")
+	assert.Contains(t, correction.Instruction, "predicate_key and predicate_version both null")
 	assert.Equal(t, 1, metrics.AssessorValidationFailureCount("response_contract"))
 	assert.Equal(t, 1, metrics.AssessorValidationFieldFailureCount("response_contract", "request_id"))
 }
 
-func TestOpenAIVerifierAssessSemanticReturnsSpanHintsInSameHistory(t *testing.T) {
+func TestOpenAIVerifierAssessSemanticRegeneratesInvalidGroundingReference(t *testing.T) {
 	var requests []openAIVerifierRequest
 	var invalidContent string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -215,10 +213,8 @@ func TestOpenAIVerifierAssessSemanticReturnsSpanHintsInSameHistory(t *testing.T)
 
 		response := semanticAssessmentTestResponse()
 		if len(requests) == 1 {
-			response.EntityResults[0].Start = 1
-			response.EntityResults[0].End = 5
-			response.EntityResults[0].Action = "create"
-			response.EntityResults[0].CandidateEntityID = nil
+			invalidGrounding := "invented-grounding"
+			response.EntityResults[0].GroundingRef = &invalidGrounding
 		}
 		content, err := json.Marshal(response)
 		if !assert.NoError(t, err) {
@@ -235,7 +231,7 @@ func TestOpenAIVerifierAssessSemanticReturnsSpanHintsInSameHistory(t *testing.T)
 	defer srv.Close()
 
 	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
-	req, _ := semanticAssessmentTestRequest(t)
+	req, _ := semanticAssessmentSubmissionContractTestRequest(t)
 	response, err := v.AssessSemantic(context.Background(), req)
 	require.NoError(t, err)
 	require.Len(t, requests, 2)
@@ -244,31 +240,14 @@ func TestOpenAIVerifierAssessSemanticReturnsSpanHintsInSameHistory(t *testing.T)
 
 	var correction semanticAssessmentCorrection
 	require.NoError(t, json.Unmarshal([]byte(requests[1].Messages[3].Content), &correction))
-	require.Len(t, correction.SpanHints, 1)
-	assert.Equal(t, "entity_results[0].surface", correction.SpanHints[0].Field)
-	assert.Equal(t, "ev-1", correction.SpanHints[0].EvidenceID)
-	assert.Equal(t, "Mark", correction.SpanHints[0].Surface)
-	candidateID := "entity-mark"
-	expectedSpan := semanticAssessmentCorrectionSpan{
-		Start:             0,
-		End:               4,
-		Action:            "reuse",
-		CandidateEntityID: &candidateID,
-	}
-	assert.Equal(t, []semanticAssessmentCorrectionSpan{expectedSpan}, correction.SpanHints[0].ValidSpans)
-	assert.Equal(t, &expectedSpan, correction.SpanHints[0].RecommendedSpan)
-	assert.False(t, correction.SpanHints[0].RemoveResult)
-	assert.False(t, correction.SpanHints[0].Truncated)
-	assert.Contains(t, requests[1].Messages[3].Content, `"truncated":false`)
-	assert.Contains(t, requests[1].Messages[3].Content, `"candidate_entity_id":"entity-mark"`)
-	assert.Contains(t, requests[1].Messages[3].Content, `"recommended_span"`)
-	assert.Contains(t, requests[1].Messages[3].Content, `"surface":"Mark"`)
-	assert.Contains(t, correction.Instruction, "span_hints")
-	assert.Contains(t, correction.Instruction, "recommended_span")
-	assert.Contains(t, correction.Instruction, "hint's surface")
+	assert.True(t, semanticAssessmentTestHasValidationField(correction.ValidationErrors, "entity_results[0].grounding_ref"))
+	assert.NotContains(t, requests[1].Messages[3].Content, "span_hints")
+	assert.NotContains(t, requests[1].Messages[3].Content, "entity_selection_hints")
+	assert.Contains(t, correction.Instruction, "one complete replacement JSON object")
+	assert.Contains(t, correction.Instruction, "Copy only grounding_ref, start_ref, and end_ref")
 }
 
-func TestOpenAIVerifierAssessSemanticReturnsEntitySelectionHintsInSameHistory(t *testing.T) {
+func TestOpenAIVerifierAssessSemanticRegeneratesInvalidEntitySelection(t *testing.T) {
 	var requests []openAIVerifierRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request openAIVerifierRequest
@@ -295,7 +274,7 @@ func TestOpenAIVerifierAssessSemanticReturnsEntitySelectionHintsInSameHistory(t 
 	defer srv.Close()
 
 	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
-	req, _ := semanticAssessmentTestRequest(t)
+	req, _ := semanticAssessmentSubmissionContractTestRequest(t)
 	response, err := v.AssessSemantic(context.Background(), req)
 	require.NoError(t, err)
 	require.Len(t, requests, 2)
@@ -303,267 +282,18 @@ func TestOpenAIVerifierAssessSemanticReturnsEntitySelectionHintsInSameHistory(t 
 
 	var correction semanticAssessmentCorrection
 	require.NoError(t, json.Unmarshal([]byte(requests[1].Messages[3].Content), &correction))
-	require.Len(t, correction.EntitySelectionHints, 1)
-	candidateID := "entity-mark"
-	assert.Equal(t, semanticAssessmentCorrectionEntitySelectionHint{
-		Index:             0,
-		Action:            "reuse",
-		CandidateEntityID: &candidateID,
-	}, correction.EntitySelectionHints[0])
-	assert.Empty(t, correction.SpanHints)
-	assert.Contains(t, correction.Instruction, "entity_selection_hints")
-	assert.Contains(t, requests[1].Messages[3].Content, `"candidate_entity_id":"entity-mark"`)
+	assert.True(t, semanticAssessmentTestHasValidationField(correction.ValidationErrors, "entity_results[0].action"))
+	assert.NotContains(t, requests[1].Messages[3].Content, "entity_selection_hints")
 }
 
-func TestSemanticAssessmentCorrectionEntitySelectionHintsSkipUnsafeIndexes(t *testing.T) {
-	req, _ := semanticAssessmentTestRequest(t)
-	response := semanticAssessmentTestResponse()
-	response.EntityResults[0].Action = "create"
-	response.EntityResults[0].CandidateEntityID = nil
-	selectionError := SemanticValidationError{
-		Field:   "entity_results[0].action",
-		Message: "cannot create when candidate context is truncated or a compatible candidate is available",
+func semanticAssessmentTestHasValidationField(errs []SemanticValidationError, field string) bool {
+	for _, validationError := range errs {
+		if validationError.Field == field {
+			return true
+		}
 	}
-
-	candidateID := "entity-mark"
-	assert.Equal(t, []semanticAssessmentCorrectionEntitySelectionHint{{
-		Index:             0,
-		Action:            "reuse",
-		CandidateEntityID: &candidateID,
-	}}, semanticAssessmentCorrectionEntitySelectionHints(req, response, []SemanticValidationError{
-		selectionError,
-		{Field: "entity_results[0].confidence", Message: "must be between 0 and 1"},
-	}))
-
-	for _, unsafe := range []SemanticValidationError{
-		{Field: "entity_results[0].kind", Message: "is unsupported"},
-		{Field: "entity_results[0].evidence_id", Message: "is unknown"},
-		{Field: "entity_results[0].surface", Message: "quote does not match the original evidence span"},
-		{Field: "entity_results[0]", Message: "duplicates an entity evidence span"},
-	} {
-		t.Run(unsafe.Field, func(t *testing.T) {
-			assert.Empty(t, semanticAssessmentCorrectionEntitySelectionHints(
-				req,
-				response,
-				[]SemanticValidationError{selectionError, unsafe},
-			))
-		})
-	}
+	return false
 }
-
-func TestSemanticAssessmentCorrectionSpanHintsAreBoundedRuneOffsets(t *testing.T) {
-	req := SemanticAssessmentRequest{Evidence: []SemanticReviewEvidence{{
-		EvidenceID: "ev-1",
-		Content:    "é Mark and Mark",
-	}}}
-	response := SemanticAssessmentResponse{EntityResults: []SemanticAssessmentEntityResult{{
-		Surface:    "Mark",
-		EvidenceID: "ev-1",
-		Start:      3,
-		End:        7,
-	}}}
-	hints := semanticAssessmentCorrectionSpanHints(req, response, []SemanticValidationError{
-		{Field: "entity_results[0].surface", Message: "quote does not match the original evidence span"},
-		{Field: "entity_results[0].surface", Message: "duplicate error for the same field"},
-		{Field: "relationship_results[0].evidence[0]", Message: "span is invalid"},
-	})
-	require.Len(t, hints, 1)
-	assert.Equal(t, []semanticAssessmentCorrectionSpan{
-		{Start: 2, End: 6, Action: "create"},
-		{Start: 11, End: 15, Action: "create"},
-	}, hints[0].ValidSpans)
-	assert.Equal(t, &semanticAssessmentCorrectionSpan{
-		Start:  2,
-		End:    6,
-		Action: "create",
-	}, hints[0].RecommendedSpan)
-	assert.Equal(t, "Mark", hints[0].Surface)
-	assert.False(t, hints[0].Truncated)
-	assert.Contains(t, string(mustMarshalJSON(t, hints)), `"surface":"Mark"`)
-
-	req.Evidence[0].Content = strings.Repeat("x", semanticAssessmentMaxCorrectionSpanOptions+1)
-	response.EntityResults[0].Surface = "x"
-	hints = semanticAssessmentCorrectionSpanHints(req, response, []SemanticValidationError{{
-		Field:   "entity_results[0].surface",
-		Message: "quote does not match the original evidence span",
-	}})
-	require.Len(t, hints, 1)
-	assert.Len(t, hints[0].ValidSpans, semanticAssessmentMaxCorrectionSpanOptions)
-	assert.Equal(t, "x", hints[0].Surface)
-	assert.Nil(t, hints[0].RecommendedSpan)
-	assert.True(t, hints[0].Truncated)
-}
-
-func TestSemanticAssessmentCorrectionSpanHintsHandleOccupiedAndDuplicateSpans(t *testing.T) {
-	req := SemanticAssessmentRequest{Evidence: []SemanticReviewEvidence{{
-		EvidenceID: "ev-1",
-		Content:    "é Mark and Mark",
-	}}}
-	response := SemanticAssessmentResponse{EntityResults: []SemanticAssessmentEntityResult{
-		{
-			Surface:    "Mark",
-			EvidenceID: "ev-1",
-			Start:      2,
-			End:        6,
-		},
-		{
-			Surface:    "Mark",
-			EvidenceID: "ev-1",
-			Start:      10,
-			End:        14,
-		},
-	}}
-
-	hints := semanticAssessmentCorrectionSpanHints(req, response, []SemanticValidationError{{
-		Field:   "entity_results[1].surface",
-		Message: "quote does not match the original evidence span",
-	}})
-	require.Len(t, hints, 1)
-	assert.False(t, hints[0].RemoveResult)
-	assert.Equal(t, []semanticAssessmentCorrectionSpan{
-		{Start: 2, End: 6, Action: "create", OccupiedByOtherResult: true},
-		{Start: 11, End: 15, Action: "create"},
-	}, hints[0].ValidSpans)
-	assert.Equal(t, &semanticAssessmentCorrectionSpan{
-		Start:  11,
-		End:    15,
-		Action: "create",
-	}, hints[0].RecommendedSpan)
-
-	response.EntityResults[1].Start = 3
-	response.EntityResults[1].End = 7
-	hints = semanticAssessmentCorrectionSpanHints(req, response, []SemanticValidationError{{
-		Field:   "entity_results[1].surface",
-		Message: "quote does not match the original evidence span",
-	}})
-	require.Len(t, hints, 1)
-	assert.False(t, hints[0].RemoveResult)
-	assert.Nil(t, hints[0].RecommendedSpan)
-
-	response.EntityResults[1].Start = 2
-	response.EntityResults[1].End = 6
-	hints = semanticAssessmentCorrectionSpanHints(req, response, []SemanticValidationError{{
-		Field:   "entity_results[1]",
-		Message: "duplicates an entity evidence span",
-	}})
-	require.Len(t, hints, 1)
-	assert.True(t, hints[0].RemoveResult)
-	assert.Empty(t, hints[0].Surface)
-	assert.Nil(t, hints[0].RecommendedSpan)
-}
-
-func TestSemanticAssessmentCorrectionSpanHintsRemoveWhenAllOccurrencesAreOccupied(t *testing.T) {
-	req := SemanticAssessmentRequest{Evidence: []SemanticReviewEvidence{{
-		EvidenceID: "ev-1",
-		Content:    "Mark",
-	}}}
-	response := SemanticAssessmentResponse{EntityResults: []SemanticAssessmentEntityResult{
-		{
-			Surface:    "Mark",
-			EvidenceID: "ev-1",
-			Start:      0,
-			End:        4,
-		},
-		{
-			Surface:    "Mark",
-			EvidenceID: "ev-1",
-			Start:      1,
-			End:        5,
-		},
-	}}
-
-	hints := semanticAssessmentCorrectionSpanHints(req, response, []SemanticValidationError{{
-		Field:   "entity_results[1].surface",
-		Message: "quote does not match the original evidence span",
-	}})
-	require.Len(t, hints, 1)
-	assert.True(t, hints[0].RemoveResult)
-	assert.Nil(t, hints[0].RecommendedSpan)
-	assert.Equal(t, []semanticAssessmentCorrectionSpan{{
-		Start:                 0,
-		End:                   4,
-		Action:                "create",
-		OccupiedByOtherResult: true,
-	}}, hints[0].ValidSpans)
-}
-
-func TestSemanticAssessmentCorrectionSpanHintsRemoveWhenSurfaceDoesNotOccur(t *testing.T) {
-	req := SemanticAssessmentRequest{Evidence: []SemanticReviewEvidence{{
-		EvidenceID: "ev-1",
-		Content:    "Mark",
-	}}}
-	response := SemanticAssessmentResponse{EntityResults: []SemanticAssessmentEntityResult{{
-		Surface:    "invented",
-		EvidenceID: "ev-1",
-		Start:      0,
-		End:        8,
-	}}}
-
-	hints := semanticAssessmentCorrectionSpanHints(req, response, []SemanticValidationError{{
-		Field:   "entity_results[0].surface",
-		Message: "quote does not match the original evidence span",
-	}})
-	require.Len(t, hints, 1)
-	assert.True(t, hints[0].RemoveResult)
-	assert.Empty(t, hints[0].Surface)
-	assert.Empty(t, hints[0].ValidSpans)
-	assert.Nil(t, hints[0].RecommendedSpan)
-	assert.False(t, hints[0].Truncated)
-}
-
-func TestSemanticAssessmentCorrectionEntitySelectionMatchesCandidateRules(t *testing.T) {
-	person := SemanticAssessmentEntityCandidate{EntityID: "entity-person", Kind: "person"}
-	secondPerson := SemanticAssessmentEntityCandidate{EntityID: "entity-person-2", Kind: "person"}
-	testCases := []struct {
-		name       string
-		group      SemanticAssessmentEntityCandidateGroup
-		hasGroup   bool
-		wantAction string
-		wantID     *string
-	}{
-		{name: "no group", wantAction: "create"},
-		{
-			name:       "one compatible candidate",
-			group:      SemanticAssessmentEntityCandidateGroup{Candidates: []SemanticAssessmentEntityCandidate{person}},
-			hasGroup:   true,
-			wantAction: "reuse",
-			wantID:     stringPointer("entity-person"),
-		},
-		{
-			name:       "multiple compatible candidates",
-			group:      SemanticAssessmentEntityCandidateGroup{Candidates: []SemanticAssessmentEntityCandidate{person, secondPerson}},
-			hasGroup:   true,
-			wantAction: "ambiguous",
-		},
-		{
-			name: "truncated candidate context",
-			group: SemanticAssessmentEntityCandidateGroup{
-				CandidateContextTruncated: true,
-				Candidates:                []SemanticAssessmentEntityCandidate{person},
-			},
-			hasGroup:   true,
-			wantAction: "ambiguous",
-		},
-		{
-			name:       "no compatible candidate",
-			group:      SemanticAssessmentEntityCandidateGroup{Candidates: []SemanticAssessmentEntityCandidate{{EntityID: "entity-product", Kind: "product"}}},
-			hasGroup:   true,
-			wantAction: "create",
-		},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			action, candidateID := semanticAssessmentCorrectionEntitySelection(
-				testCase.group,
-				testCase.hasGroup,
-				"person",
-			)
-			assert.Equal(t, testCase.wantAction, action)
-			assert.Equal(t, testCase.wantID, candidateID)
-		})
-	}
-}
-
 func TestSemanticAssessmentValidationFieldFamilyIsBounded(t *testing.T) {
 	testCases := []struct {
 		field string
@@ -589,10 +319,13 @@ func TestSemanticAssessmentValidationFieldFamilyIsBounded(t *testing.T) {
 
 func TestSemanticAssessmentInstructionsExposeRequestDependentRules(t *testing.T) {
 	for _, expected := range []string{
-		"zero-based Unicode rune offsets",
-		"end is exclusive",
-		"at most one entity_result for each",
-		"exactly one of object_ref and object_value",
+		"Never return numeric text offsets",
+		"start_ref is inclusive and end_ref is exclusive",
+		"return exactly one result for each submitted ref",
+		"Every Relationship requires exactly one of object_ref and object_value",
+		`otherwise use predicate_status "registration_required" when the evidence clearly supports a reusable relationship`,
+		"registration_required and needs_review require predicate_key and predicate_version both null",
+		"Pronouns and inferred coreference are not grounding options",
 		`temporal_verdict "absent"`,
 		`temporal_verdict "entailed"`,
 		"RFC3339",
@@ -601,18 +334,12 @@ func TestSemanticAssessmentInstructionsExposeRequestDependentRules(t *testing.T)
 		assert.Contains(t, semanticAssessmentSystemPrompt, expected)
 	}
 	for _, expected := range []string{
-		"zero-based Unicode rune offsets",
-		"end is exclusive",
-		"Do not re-extract",
+		"Never return numeric offsets",
+		"Copy only grounding_ref, start_ref, and end_ref values present in the immutable request",
 		"same array index",
-		"start, end, action, and candidate_entity_id",
-		"remove the invalid Entity result",
-		"entity_selection_hints",
-		"candidate context is not truncated",
-		"submitted surface does not occur",
-		"allowed_subject_kinds and allowed_object_kinds",
-		`temporal_verdict "absent"`,
-		`temporal_verdict "entailed"`,
+		"Preserve every submitted ref, endpoint, typed value, polarity, and modality",
+		"predicate_key and predicate_version both null",
+		"one complete replacement JSON object",
 	} {
 		assert.Contains(t, semanticAssessmentCorrectionInstruction, expected)
 	}

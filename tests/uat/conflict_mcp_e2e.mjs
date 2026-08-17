@@ -404,36 +404,26 @@ function relationshipEvidence(input) {
 }
 
 function relationshipHint(input, evidence) {
-  const predicateSurface = "primary database";
-  const subjectStart = evidence.indexOf(input.subjectName);
-  const predicateStart = evidence.indexOf(predicateSurface, subjectStart);
-  const objectStart = evidence.indexOf(input.objectName, predicateStart);
-  assert(subjectStart >= 0 && predicateStart >= 0 && objectStart >= 0, `could not derive spans for ${input.label}`);
-  const runeOffset = (offset) => Array.from(evidence.slice(0, offset)).length;
   return {
     ref: `${input.label}:relationship`,
     subject: {
       name: input.subjectName,
       entity_kind: "project",
       ...(input.subjectEntityID ? { known_entity_id: input.subjectEntityID } : {}),
-      span: { evidence_index: 0, start: runeOffset(subjectStart), end: runeOffset(subjectStart + input.subjectName.length) },
     },
     predicate: {
       proposed_key: "primary_database",
-      surface: predicateSurface,
-      span: { evidence_index: 0, start: runeOffset(predicateStart), end: runeOffset(predicateStart + predicateSurface.length) },
     },
     object: { entity: {
       name: input.objectName,
       entity_kind: "product",
       ...(input.objectEntityID ? { known_entity_id: input.objectEntityID } : {}),
-      span: { evidence_index: 0, start: runeOffset(objectStart), end: runeOffset(objectStart + input.objectName.length) },
     } },
     polarity: "+",
     modality: "statement",
     ...(input.validFrom ? { valid_from: input.validFrom } : {}),
     ...(input.conflictContext ? { conflict_context: input.conflictContext } : {}),
-    supports: [{ evidence_index: 0, start: 0, end: Array.from(evidence).length }],
+    evidence_indices: [0],
   };
 }
 

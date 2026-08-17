@@ -12,8 +12,8 @@ func validateSemanticAssessmentResponseRaw(raw []byte) []SemanticValidationError
 	if len(errs) > 0 {
 		return errs
 	}
-	errs = append(errs, assessmentRawArrayObjects(top["security_signals"], "security_signals", []string{"evidence_id", "kind", "start", "end"}, nil)...)
-	errs = append(errs, assessmentRawArrayObjects(top["entity_results"], "entity_results", []string{"ref", "surface", "kind", "evidence_id", "start", "end", "action", "candidate_entity_id", "confidence", "rationale"}, map[string]bool{"candidate_entity_id": true})...)
+	errs = append(errs, assessmentRawArrayObjects(top["security_signals"], "security_signals", []string{"evidence_id", "kind", "start_ref", "end_ref"}, nil)...)
+	errs = append(errs, assessmentRawArrayObjects(top["entity_results"], "entity_results", []string{"ref", "grounding_ref", "action", "candidate_entity_id", "confidence", "rationale"}, map[string]bool{"grounding_ref": true, "candidate_entity_id": true})...)
 
 	var relationships []json.RawMessage
 	if err := json.Unmarshal(top["relationship_results"], &relationships); err != nil {
@@ -22,15 +22,21 @@ func validateSemanticAssessmentResponseRaw(raw []byte) []SemanticValidationError
 	for i, relationshipRaw := range relationships {
 		path := fmt.Sprintf("relationship_results[%d]", i)
 		relationship, relationErrs := assessmentRawObject(relationshipRaw, path, []string{
-			"ref", "subject_ref", "original_predicate", "predicate_status", "predicate_key", "predicate_version",
-			"object_ref", "object_value", "polarity", "modality", "evidence", "valid_from", "valid_to",
+			"ref", "subject_ref", "predicate_range", "predicate_status", "predicate_key", "predicate_version",
+			"object_ref", "object_value", "value_range", "polarity", "modality", "support_ranges", "valid_from", "valid_to",
 			"scope_status", "scope_key", "evidence_verdict", "temporal_verdict", "confidence", "rationale",
-		}, map[string]bool{"predicate_key": true, "predicate_version": true, "object_ref": true, "object_value": true, "valid_from": true, "valid_to": true, "scope_key": true})
+		}, map[string]bool{"predicate_key": true, "predicate_version": true, "object_ref": true, "object_value": true, "value_range": true, "valid_from": true, "valid_to": true, "scope_key": true})
 		errs = append(errs, relationErrs...)
 		if len(relationErrs) > 0 {
 			continue
 		}
-		errs = append(errs, assessmentRawArrayObjects(relationship["evidence"], path+".evidence", []string{"evidence_id", "start", "end"}, nil)...)
+		_, rangeErrs := assessmentRawObject(relationship["predicate_range"], path+".predicate_range", []string{"evidence_id", "start_ref", "end_ref", "confidence"}, nil)
+		errs = append(errs, rangeErrs...)
+		errs = append(errs, assessmentRawArrayObjects(relationship["support_ranges"], path+".support_ranges", []string{"evidence_id", "start_ref", "end_ref", "confidence"}, nil)...)
+		if !bytes.Equal(bytes.TrimSpace(relationship["value_range"]), []byte("null")) {
+			_, valueRangeErrs := assessmentRawObject(relationship["value_range"], path+".value_range", []string{"evidence_id", "start_ref", "end_ref", "confidence"}, nil)
+			errs = append(errs, valueRangeErrs...)
+		}
 		if !bytes.Equal(bytes.TrimSpace(relationship["object_value"]), []byte("null")) {
 			_, valueErrs := assessmentRawObject(relationship["object_value"], path+".object_value", []string{"value_type", "canonical_value", "display", "unit"}, map[string]bool{"display": true, "unit": true})
 			errs = append(errs, valueErrs...)

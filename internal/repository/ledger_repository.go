@@ -109,6 +109,7 @@ type CreateIngestResult struct {
 	Status           string
 	Existing         bool
 	Proposal         map[string]any
+	ContractVersion  string
 	Evidence         []EvidenceFragment
 	Items            []PlacementItem
 	FirstDisposition *PlacementFirstDisposition

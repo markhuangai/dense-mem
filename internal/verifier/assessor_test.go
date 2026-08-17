@@ -38,15 +38,16 @@ func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 	unit := " ms "
 	predicate := "has_latency"
 	version := 1
+	evidence := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "ev-1", FragmentID: "fragment-1", Content: "Latency is 42."})
+	latencyStart, _ := SemanticAssessmentBoundaryRef(evidence, 0)
+	latencyEnd, _ := SemanticAssessmentBoundaryRef(evidence, 7)
 	req := SemanticAssessmentRequest{
 		RequestID:      "submission-value-1",
 		TeamID:         "team-1",
 		OwnerProfileID: "owner-1",
-		Evidence: []SemanticReviewEvidence{{
-			EvidenceID: "ev-1", FragmentID: "fragment-1", Content: "Latency is 42.",
-		}},
+		Evidence:       []SemanticReviewEvidence{evidence},
 		EntityCandidateGroups: []SemanticAssessmentEntityCandidateGroup{{
-			Surface: "Latency", EvidenceID: "ev-1", Start: 0, End: 7, Candidates: []SemanticAssessmentEntityCandidate{},
+			Surface: "Latency", EvidenceID: "ev-1", GroundingRef: "grounding-latency", Start: 0, End: 7, Candidates: []SemanticAssessmentEntityCandidate{},
 		}},
 		PredicateOptions: []SemanticAssessmentPredicateOption{{
 			PredicateKey:        predicate,
@@ -59,18 +60,19 @@ func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 		}},
 		SubmissionContract: &SemanticAssessmentSubmissionContract{
 			Entities: []SemanticAssessmentRequiredEntityRef{{
-				Ref: "entity:latency", Surface: "Latency", Kind: "concept", EvidenceID: "ev-1", Start: 0, End: 7,
+				Ref: "entity:latency", Name: "Latency", Kind: "concept", EvidenceIDs: []string{"ev-1"},
+				Groundings: []SemanticAssessmentEntityGrounding{{GroundingRef: "grounding-latency", EvidenceID: "ev-1", Surface: "Latency", StartRef: latencyStart, EndRef: latencyEnd}},
 			}},
 			Relationships: []SemanticAssessmentRequiredRelationshipRef{{
-				ProposalID:        "relationship:latency",
-				SubjectRef:        "entity:latency",
-				OriginalPredicate: "is",
+				ProposalID:    "relationship:latency",
+				PredicateHint: "has_latency",
+				EvidenceIDs:   []string{"ev-1"},
+				SubjectRef:    "entity:latency",
 				ObjectValue: &SemanticAssessmentValue{
 					ValueType: " number ", CanonicalValue: " 42 ", Display: &display, Unit: &unit,
 				},
 				Polarity: "+",
 				Modality: "statement",
-				Evidence: []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 0, End: 13}},
 			}},
 		},
 	}
@@ -91,25 +93,29 @@ func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 
 	responseDisplay := "42 ms"
 	responseUnit := "ms"
+	groundingRef := "grounding-latency"
+	predicateRange := semanticAssessmentTestRange(evidence, 8, 10)
+	valueRange := semanticAssessmentTestRange(evidence, 11, 13)
+	supportRange := semanticAssessmentTestRange(evidence, 0, 13)
 	response := SemanticAssessmentResponse{
 		RequestID:       prepared.RequestID,
-		SecuritySignals: []SemanticSecuritySignal{},
+		SecuritySignals: []SemanticAssessmentSecuritySignal{},
 		EntityResults: []SemanticAssessmentEntityResult{{
-			Ref: "entity:latency", Surface: "Latency", Kind: "concept", EvidenceID: "ev-1", Start: 0, End: 7,
-			Action: "create", Confidence: 0.99, Rationale: "No candidate exists in the complete catalog.",
+			Ref: "entity:latency", GroundingRef: &groundingRef, Action: "create", Confidence: 0.99, Rationale: "No candidate exists in the complete catalog.",
 		}},
 		RelationshipResults: []SemanticAssessmentRelationshipResult{{
-			Ref:               "relationship:latency",
-			SubjectRef:        "entity:latency",
-			OriginalPredicate: "is",
-			PredicateStatus:   "resolved",
-			PredicateKey:      &predicate,
-			PredicateVersion:  &version,
+			Ref:              "relationship:latency",
+			SubjectRef:       "entity:latency",
+			PredicateRange:   predicateRange,
+			PredicateStatus:  "resolved",
+			PredicateKey:     &predicate,
+			PredicateVersion: &version,
 			ObjectValue: &SemanticAssessmentValue{
 				ValueType: "number", CanonicalValue: "42", Display: &responseDisplay, Unit: &responseUnit,
 			},
-			Polarity: "+", Modality: "statement",
-			Evidence:        []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 0, End: 13}},
+			ValueRange: &valueRange,
+			Polarity:   "+", Modality: "statement",
+			SupportRanges:   []SemanticAssessmentGroundedRange{supportRange},
 			ScopeStatus:     "absent",
 			EvidenceVerdict: "entailed",
 			TemporalVerdict: "absent",
@@ -158,9 +164,9 @@ func TestSemanticAssessmentSubmissionContractRejectsUntrustedTargets(t *testing.
 		{
 			name: "entity evidence outside request",
 			mutate: func(request *SemanticAssessmentRequest) {
-				request.SubmissionContract.Entities[0].EvidenceID = "unknown"
+				request.SubmissionContract.Entities[0].EvidenceIDs[0] = "unknown"
 			},
-			want: "is unknown",
+			want: "contains unknown evidence",
 		},
 		{
 			name: "relationship subject outside entities",
@@ -185,12 +191,11 @@ func TestSemanticAssessmentSubmissionContractRejectsUntrustedTargets(t *testing.
 			want: "object_value",
 		},
 		{
-			name: "relationship support is duplicated",
+			name: "relationship evidence is required",
 			mutate: func(request *SemanticAssessmentRequest) {
-				evidence := request.SubmissionContract.Relationships[0].Evidence[0]
-				request.SubmissionContract.Relationships[0].Evidence = append(request.SubmissionContract.Relationships[0].Evidence, evidence)
+				request.SubmissionContract.Relationships[0].EvidenceIDs = nil
 			},
-			want: "is duplicated",
+			want: "must be present and bounded",
 		},
 		{
 			name: "relationship modality is unsupported",
@@ -227,21 +232,26 @@ func TestSemanticAssessmentSubmissionContractRejectsResponseTargetDrift(t *testi
 		want   string
 	}{
 		{
-			name:   "entity target drift",
-			mutate: func(response *SemanticAssessmentResponse) { response.EntityResults[0].Surface = "Other" },
-			want:   "does not preserve its submitted entity target",
+			name: "entity grounding target drift",
+			mutate: func(response *SemanticAssessmentResponse) {
+				value := "grounding-other"
+				response.EntityResults[0].GroundingRef = &value
+			},
+			want: "is outside the submitted grounding allowlist",
 		},
 		{
 			name: "relationship target drift",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].OriginalPredicate = "changed"
+				response.RelationshipResults[0].Polarity = "-"
 			},
 			want: "does not preserve its submitted relationship target",
 		},
 		{
-			name:   "relationship evidence outside contract",
-			mutate: func(response *SemanticAssessmentResponse) { response.RelationshipResults[0].Evidence[0].End = 4 },
-			want:   "contains a span outside the submitted relationship target",
+			name: "relationship evidence outside contract",
+			mutate: func(response *SemanticAssessmentResponse) {
+				response.RelationshipResults[0].SupportRanges[0].EvidenceID = "ev-other"
+			},
+			want: "is outside the submitted evidence allowlist",
 		},
 	}
 	for _, test := range tests {
@@ -294,8 +304,8 @@ func TestSemanticAssessmentRequiresTrustedProposalCorrespondence(t *testing.T) {
 		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v", errs)
 	}
 
-	response.RelationshipResults[0].Evidence[0].End = 4
-	if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "does not retain a trusted proposal evidence span") {
+	response.RelationshipResults[0].SupportRanges[0] = semanticAssessmentTestRange(prepared.Evidence[0], 0, 4)
+	if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "does not use trusted proposal evidence") {
 		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want trusted span rejection", errs)
 	}
 }
@@ -382,8 +392,9 @@ func TestSemanticAssessmentRejectsUnknownDuplicateAndUnauthorizedCompleteRespons
 
 	t.Run("invalid evidence span", func(t *testing.T) {
 		response := semanticAssessmentTestResponse()
-		response.EntityResults[0].Start = 1
-		if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "does not match the original evidence span") {
+		invalidGrounding := "grounding-invalid"
+		response.EntityResults[0].GroundingRef = &invalidGrounding
+		if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "is outside the grounding allowlist") {
 			t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want span rejection", errs)
 		}
 	})
@@ -533,10 +544,11 @@ func semanticAssessmentTestRequest(t *testing.T) (SemanticAssessmentRequest, Sem
 		}},
 		EntityCandidateGroups: []SemanticAssessmentEntityCandidateGroup{
 			{
-				Surface:    "Mark",
-				EvidenceID: "ev-1",
-				Start:      0,
-				End:        4,
+				Surface:      "Mark",
+				EvidenceID:   "ev-1",
+				GroundingRef: "grounding-mark",
+				Start:        0,
+				End:          4,
 				Candidates: []SemanticAssessmentEntityCandidate{{
 					EntityID:      "entity-mark",
 					CanonicalName: "Mark Huang",
@@ -544,10 +556,11 @@ func semanticAssessmentTestRequest(t *testing.T) (SemanticAssessmentRequest, Sem
 				}},
 			},
 			{
-				Surface:    "Dense-Mem",
-				EvidenceID: "ev-1",
-				Start:      14,
-				End:        23,
+				Surface:      "Dense-Mem",
+				EvidenceID:   "ev-1",
+				GroundingRef: "grounding-dense-mem",
+				Start:        14,
+				End:          23,
 				Candidates: []SemanticAssessmentEntityCandidate{{
 					EntityID:      "entity-dense-mem",
 					CanonicalName: "Dense-Mem",
@@ -570,20 +583,31 @@ func semanticAssessmentTestRequest(t *testing.T) (SemanticAssessmentRequest, Sem
 func semanticAssessmentSubmissionContractTestRequest(t *testing.T) (SemanticAssessmentRequest, SemanticAssessmentLimits) {
 	t.Helper()
 	request, limits := semanticAssessmentTestRequest(t)
+	request.Evidence[0] = PrepareSemanticAssessmentEvidence(request.Evidence[0])
+	markStart, _ := SemanticAssessmentBoundaryRef(request.Evidence[0], 0)
+	markEnd, _ := SemanticAssessmentBoundaryRef(request.Evidence[0], 4)
+	denseMemStart, _ := SemanticAssessmentBoundaryRef(request.Evidence[0], 14)
+	denseMemEnd, _ := SemanticAssessmentBoundaryRef(request.Evidence[0], 23)
 	productRef := "product-1"
 	request.SubmissionContract = &SemanticAssessmentSubmissionContract{
 		Entities: []SemanticAssessmentRequiredEntityRef{
-			{Ref: "person-1", Surface: "Mark", Kind: "person", EvidenceID: "ev-1", Start: 0, End: 4},
-			{Ref: "product-1", Surface: "Dense-Mem", Kind: "product", EvidenceID: "ev-1", Start: 14, End: 23},
+			{
+				Ref: "person-1", Name: "Mark", Kind: "person", EvidenceIDs: []string{"ev-1"},
+				Groundings: []SemanticAssessmentEntityGrounding{{GroundingRef: "grounding-mark", EvidenceID: "ev-1", Surface: "Mark", StartRef: markStart, EndRef: markEnd}},
+			},
+			{
+				Ref: "product-1", Name: "Dense-Mem", Kind: "product", EvidenceIDs: []string{"ev-1"},
+				Groundings: []SemanticAssessmentEntityGrounding{{GroundingRef: "grounding-dense-mem", EvidenceID: "ev-1", Surface: "Dense-Mem", StartRef: denseMemStart, EndRef: denseMemEnd}},
+			},
 		},
 		Relationships: []SemanticAssessmentRequiredRelationshipRef{{
-			ProposalID:        "relationship-1",
-			SubjectRef:        "person-1",
-			OriginalPredicate: "works on",
-			ObjectRef:         &productRef,
-			Polarity:          "+",
-			Modality:          "statement",
-			Evidence:          []SemanticAssessmentEvidenceSpan{{EvidenceID: "ev-1", Start: 0, End: 24}},
+			ProposalID:    "relationship-1",
+			PredicateHint: "works_on",
+			EvidenceIDs:   []string{"ev-1"},
+			SubjectRef:    "person-1",
+			ObjectRef:     &productRef,
+			Polarity:      "+",
+			Modality:      "statement",
 		}},
 	}
 	return request, limits
@@ -594,12 +618,16 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 	denseMem := "entity-dense-mem"
 	predicate := "works_on"
 	version := 1
+	markGrounding := "grounding-mark"
+	denseMemGrounding := "grounding-dense-mem"
+	evidence := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "ev-1", Content: "Mark works on Dense-Mem."})
 	return SemanticAssessmentResponse{
 		RequestID:       "assess-1",
-		SecuritySignals: []SemanticSecuritySignal{},
+		SecuritySignals: []SemanticAssessmentSecuritySignal{},
 		EntityResults: []SemanticAssessmentEntityResult{
 			{
 				Ref:               "person-1",
+				GroundingRef:      &markGrounding,
 				Surface:           "Mark",
 				Kind:              "person",
 				EvidenceID:        "ev-1",
@@ -612,6 +640,7 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 			},
 			{
 				Ref:               "product-1",
+				GroundingRef:      &denseMemGrounding,
 				Surface:           "Dense-Mem",
 				Kind:              "product",
 				EvidenceID:        "ev-1",
@@ -627,6 +656,7 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 			Ref:               "relationship-1",
 			SubjectRef:        "person-1",
 			OriginalPredicate: "works on",
+			PredicateRange:    semanticAssessmentTestRange(evidence, 5, 13),
 			PredicateStatus:   "resolved",
 			PredicateKey:      &predicate,
 			PredicateVersion:  &version,
@@ -639,6 +669,7 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 				Start:      0,
 				End:        24,
 			}},
+			SupportRanges:   []SemanticAssessmentGroundedRange{semanticAssessmentTestRange(evidence, 0, 24)},
 			ValidFrom:       nil,
 			ValidTo:         nil,
 			ScopeStatus:     "absent",
@@ -648,6 +679,22 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 			Confidence:      0.96,
 			Rationale:       "The evidence directly states the relationship.",
 		}},
+	}
+}
+
+func semanticAssessmentTestRange(evidence SemanticReviewEvidence, start, end int) SemanticAssessmentGroundedRange {
+	startRef, startOK := SemanticAssessmentBoundaryRef(evidence, start)
+	endRef, endOK := SemanticAssessmentBoundaryRef(evidence, end)
+	if !startOK || !endOK {
+		panic("semantic assessment test boundary is missing")
+	}
+	return SemanticAssessmentGroundedRange{
+		EvidenceID: evidence.EvidenceID,
+		StartRef:   startRef,
+		EndRef:     endRef,
+		Confidence: 0.99,
+		Start:      start,
+		End:        end,
 	}
 }
 

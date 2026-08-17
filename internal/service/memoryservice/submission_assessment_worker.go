@@ -143,6 +143,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	if err != nil {
 		return true, errors.Join(err, s.retryOrFail(ctx, *run, scope, "placement_load", false, false))
 	}
+	if strings.TrimSpace(placement.ContractVersion) != domain.ContractVersion {
+		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "contract_superseded")
+	}
 	plan, err := buildSubmissionAssessmentPlan(placement)
 	if err != nil {
 		return true, terminalizeAfterError(err, func() error {
@@ -200,8 +203,12 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		return true, errors.Join(err, s.retryOrFail(ctx, *run, scope, "confidence_policy", false, false))
 	}
 	commitInput, err := submissionAssessmentCommitInput(*run, scope, plan, request, response, assessment, policy, reused)
+	var reviewRequired *submissionAssessmentReviewRequiredError
+	if errors.As(err, &reviewRequired) {
+		return true, s.completeReview(ctx, scope, "policy_review", reviewRequired.Issues, reviewRequired.Truncated)
+	}
 	if errors.Is(err, errSubmissionAssessmentRequiresReview) {
-		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewReviewRequired), "candidate", "policy_review")
+		return true, s.completeReview(ctx, scope, "policy_review", nil, false)
 	}
 	if err != nil {
 		return true, terminalizeAfterError(err, func() error {
@@ -211,7 +218,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	recordSubmissionAssessmentGateBands(s.metrics, commitInput)
 	committed, err := s.assessments.CommitSubmissionAssessment(ctx, commitInput)
 	if errors.Is(err, repository.ErrSubmissionAssessmentNonPromotable) || errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld) {
-		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewReviewRequired), "candidate", "commit_review")
+		return true, s.completeReview(ctx, scope, "commit_review", []SubmissionHoldIssue{{
+			Code: "commit_review_required", Component: "relationship", Message: "submission could not be promoted safely",
+		}}, false)
 	}
 	if errors.Is(err, repository.ErrSubmissionReplacementConflict) {
 		return true, terminalizeAfterError(err, func() error {
@@ -219,7 +228,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		})
 	}
 	if errors.Is(err, repository.ErrConflictContextStale) {
-		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewReviewRequired), "candidate", "conflict_context_stale")
+		return true, s.completeReview(ctx, scope, "conflict_context_stale", []SubmissionHoldIssue{{
+			Code: "conflict_context_stale", Component: "conflict", Message: "relationship conflict context changed before commit",
+		}}, false)
 	}
 	if errors.Is(err, repository.ErrSubmissionAssessmentScopeMismatch) {
 		return true, terminalizeAfterError(err, func() error {
@@ -749,6 +760,9 @@ func submissionAssessmentCommitInput(
 	}
 	policyVersion := assessmentPolicyVersion(policy)
 	threshold := policy.Threshold
+	if issues, truncated := submissionAssessmentReviewIssues(plan, response, threshold); len(issues) > 0 {
+		return repository.CommitSubmissionAssessmentInput{}, &submissionAssessmentReviewRequiredError{Issues: issues, Truncated: truncated}
+	}
 	items := make([]repository.SubmissionAssessmentItemInput, 0, len(plan.Items))
 	for _, item := range plan.Items {
 		items = append(items, repository.SubmissionAssessmentItemInput{
@@ -759,6 +773,13 @@ func submissionAssessmentCommitInput(
 	entityGroups := assessmentGroupsBySpan(request.EntityCandidateGroups)
 	entityResolutions := make([]repository.SubmissionAssessmentEntityResolutionInput, 0, len(response.EntityResults))
 	entityKinds := make(map[string]string, len(response.EntityResults))
+	entityResolutionsByGrounding := make(map[string]struct {
+		action        string
+		candidateID   string
+		knownEntityID string
+		mentionRef    string
+	}, len(response.EntityResults))
+	entityRefAliases := make(map[string]string, len(response.EntityResults))
 	for _, result := range response.EntityResults {
 		target, ok := plan.entityTargetsByRef[result.Ref]
 		if !ok {
@@ -767,12 +788,16 @@ func submissionAssessmentCommitInput(
 		if result.Action == string(domain.EntityResolutionAmbiguous) {
 			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
 		}
+		item, ok := plan.itemsByEvidenceID[result.EvidenceID]
+		if !ok {
+			return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor entity grounding is outside the run")
+		}
 		resolution := repository.PlacementEntityResolutionInput{
 			MentionRef:    result.Ref,
 			Action:        result.Action,
 			EntityKind:    result.Kind,
-			CanonicalName: result.Surface,
-			FragmentID:    target.FragmentID,
+			CanonicalName: target.Target.Name,
+			FragmentID:    item.Fragment.FragmentID,
 			VerifierResult: map[string]any{
 				"confidence": result.Confidence,
 				"rationale":  result.Rationale,
@@ -804,13 +829,30 @@ func submissionAssessmentCommitInput(
 		default:
 			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
 		}
+		entityKinds[result.Ref] = result.Kind
+		groundingKey := fmt.Sprintf("%s:%d:%d:%s", result.EvidenceID, result.Start, result.End, result.Kind)
+		candidateID := resolution.EntityID
+		if previous, exists := entityResolutionsByGrounding[groundingKey]; exists {
+			if previous.action != resolution.Action || previous.candidateID != candidateID ||
+				(previous.knownEntityID != "" && target.KnownEntityID != "" && previous.knownEntityID != target.KnownEntityID) {
+				return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
+			}
+			entityRefAliases[result.Ref] = previous.mentionRef
+			continue
+		}
+		entityResolutionsByGrounding[groundingKey] = struct {
+			action        string
+			candidateID   string
+			knownEntityID string
+			mentionRef    string
+		}{action: resolution.Action, candidateID: candidateID, knownEntityID: target.KnownEntityID, mentionRef: resolution.MentionRef}
+		entityRefAliases[result.Ref] = resolution.MentionRef
 		entityResolutions = append(entityResolutions, repository.SubmissionAssessmentEntityResolutionInput{
-			PlacementItemID: target.PlacementItemID,
+			PlacementItemID: item.PlacementItem.PlacementItemID,
 			Resolution:      resolution,
 		})
-		entityKinds[result.Ref] = result.Kind
 	}
-	if len(entityResolutions) != len(plan.EntityTargets) {
+	if len(entityKinds) != len(plan.EntityTargets) {
 		return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor omitted an entity result")
 	}
 
@@ -853,10 +895,17 @@ func submissionAssessmentCommitInput(
 		if entityKinds[result.SubjectRef] == "" || (objectRef != "" && entityKinds[objectRef] == "") {
 			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
 		}
+		subjectRef := result.SubjectRef
+		if canonicalRef := entityRefAliases[subjectRef]; canonicalRef != "" {
+			subjectRef = canonicalRef
+		}
+		if canonicalRef := entityRefAliases[objectRef]; canonicalRef != "" {
+			objectRef = canonicalRef
+		}
 		confidence := result.Confidence
 		observation := repository.PlacementRelationshipDecisionInput{
 			Ref:               result.Ref,
-			SubjectRef:        result.SubjectRef,
+			SubjectRef:        subjectRef,
 			OriginalPredicate: result.OriginalPredicate,
 			ObjectRef:         objectRef,
 			ObjectValue:       objectValue,
@@ -933,56 +982,6 @@ func submissionAssessmentCommitInput(
 			"assessment_reused": reused,
 		},
 	}, nil
-}
-
-func submissionAssessmentSupports(
-	plan submissionAssessmentPlan,
-	assessmentID string,
-	spans []verifier.SemanticAssessmentEvidenceSpan,
-) ([]repository.EvidenceSupportInput, error) {
-	if len(spans) == 0 {
-		return nil, errors.New("submission assessor relationship has no evidence span")
-	}
-	supports := make([]repository.EvidenceSupportInput, 0, len(spans))
-	for _, span := range spans {
-		item, ok := plan.itemsByEvidenceID[span.EvidenceID]
-		if !ok {
-			return nil, errors.New("submission assessor evidence span is outside the run")
-		}
-		quote, err := verifier.SemanticEvidenceSpan(item.Fragment.Content, span.Start, span.End)
-		if err != nil {
-			return nil, err
-		}
-		authority, err := semanticSupportAuthority(item.Fragment.Authority)
-		if err != nil {
-			return nil, err
-		}
-		supports = append(supports, repository.EvidenceSupportInput{
-			FragmentID:       item.Fragment.FragmentID,
-			SourceGroupKey:   fmt.Sprintf("semantic_assessment:%s:%s:%d:%d", assessmentID, span.EvidenceID, span.Start, span.End),
-			SourceID:         item.Fragment.SourceID,
-			SourceRevisionID: item.Fragment.SourceRevisionID,
-			SpanStart:        span.Start,
-			SpanEnd:          span.End,
-			Quote:            quote,
-			Authority:        authority,
-			Metadata: map[string]any{
-				"semantic_contract": domain.ContractVersion,
-				"assessment_id":     assessmentID,
-				"evidence_id":       span.EvidenceID,
-			},
-		})
-	}
-	return supports, nil
-}
-
-func submissionAssessmentItemForFragment(plan submissionAssessmentPlan, fragmentID string) (submissionAssessmentItem, bool) {
-	for _, item := range plan.Items {
-		if item.Fragment.FragmentID == fragmentID {
-			return item, true
-		}
-	}
-	return submissionAssessmentItem{}, false
 }
 
 func recordSubmissionAssessmentGateBands(metrics observability.DiscoverabilityMetrics, input repository.CommitSubmissionAssessmentInput) {

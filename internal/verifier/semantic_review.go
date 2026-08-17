@@ -32,14 +32,17 @@ type SemanticReviewRequest struct {
 }
 
 type SemanticReviewEvidence struct {
-	EvidenceID              string `json:"evidence_id"`
-	FragmentID              string `json:"-"`
-	EvidenceIndex           int    `json:"-"`
-	Content                 string `json:"content"`
-	Authority               string `json:"-"`
-	SourceID                string `json:"-"`
-	SourceRevisionID        string `json:"-"`
-	CurrentSourceRevisionID string `json:"-"`
+	EvidenceID              string         `json:"evidence_id"`
+	FragmentID              string         `json:"-"`
+	EvidenceIndex           int            `json:"-"`
+	Content                 string         `json:"content"`
+	BoundaryText            string         `json:"boundary_text,omitempty"`
+	BoundaryRefs            map[string]int `json:"-"`
+	BoundaryPrefix          string         `json:"-"`
+	Authority               string         `json:"-"`
+	SourceID                string         `json:"-"`
+	SourceRevisionID        string         `json:"-"`
+	CurrentSourceRevisionID string         `json:"-"`
 }
 
 type SemanticEntityMention struct {
@@ -635,6 +638,17 @@ func semanticSecurityKindAllowed(kind string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func semanticSecurityKinds() []string {
+	return []string{
+		"role_control_spoofing",
+		"instruction_override",
+		"prompt_secret_extraction",
+		"tool_exfiltration",
+		"obfuscated_instruction",
+		"hidden_control_markup",
 	}
 }
 

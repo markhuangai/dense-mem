@@ -30,18 +30,14 @@ const remember = await mcpTool("remember", {
     const subject = `Subject ${index}`;
     const predicate = "uses";
     const object = `Store ${index}`;
-    const text = value;
-    const subjectStart = 0;
-    const predicateStart = subject.length + 1;
-    const objectStart = predicateStart + predicate.length + 1;
     return {
       ref: `${runID}:relationship:${index}`,
-      subject: { name: subject, entity_kind: "concept", span: { evidence_index: index, start: subjectStart, end: subjectStart + subject.length } },
-      predicate: { proposed_key: predicate, surface: predicate, span: { evidence_index: index, start: predicateStart, end: predicateStart + predicate.length } },
-      object: { entity: { name: object, entity_kind: "concept", span: { evidence_index: index, start: objectStart, end: objectStart + object.length } } },
+      subject: { name: subject, entity_kind: "concept" },
+      predicate: { proposed_key: predicate },
+      object: { entity: { name: object, entity_kind: "concept" } },
       polarity: "+",
       modality: "statement",
-      supports: [{ evidence_index: index, start: 0, end: Array.from(text).length }],
+      evidence_indices: [index],
     };
   }),
 });

@@ -38,6 +38,16 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 			if !ok || len(relationships) != 1 {
 				t.Fatalf("remember relationships = %#v", input["relationships"])
 			}
+			relationship := relationships[0].(map[string]any)
+			evidenceIndices, ok := relationship["evidence_indices"].([]any)
+			if !ok || len(evidenceIndices) != 1 || evidenceIndices[0] != float64(0) {
+				t.Fatalf("remember relationship evidence_indices = %#v", relationship["evidence_indices"])
+			}
+			for _, legacyField := range []string{"span", "supports"} {
+				if _, exists := relationship[legacyField]; exists {
+					t.Fatalf("remember relationship contains legacy field %q: %#v", legacyField, relationship)
+				}
+			}
 			rememberCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"submission_id":    strings.TrimPrefix(idempotencyKey, "eval:"),
@@ -291,19 +301,15 @@ func evalImportRelationship(t *testing.T, content, ref string) map[string]any {
 		"ref": ref,
 		"subject": map[string]any{
 			"name": string(runes[:subjectEnd]), "entity_kind": "other",
-			"span": map[string]any{"evidence_index": 0, "start": 0, "end": subjectEnd},
 		},
 		"predicate": map[string]any{
 			"proposed_key": strings.ToLower(string(runes[predicateStart:predicateEnd])),
-			"surface":      string(runes[predicateStart:predicateEnd]),
-			"span":         map[string]any{"evidence_index": 0, "start": predicateStart, "end": predicateEnd},
 		},
 		"object": map[string]any{"entity": map[string]any{
 			"name": string(runes[objectStart:objectEnd]), "entity_kind": "other",
-			"span": map[string]any{"evidence_index": 0, "start": objectStart, "end": objectEnd},
 		}},
-		"polarity": "+",
-		"modality": "statement",
-		"supports": []any{map[string]any{"evidence_index": 0, "start": 0, "end": len(runes)}},
+		"polarity":         "+",
+		"modality":         "statement",
+		"evidence_indices": []any{0},
 	}
 }

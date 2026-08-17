@@ -216,16 +216,14 @@ function rememberInput() {
   const subject = "Identity cleanup";
   const predicate = "uses";
   const object = "canonical credentials";
-  const predicateStart = subject.length + 1;
-  const objectStart = predicateStart + predicate.length + 1;
   return {
     evidence: [{ content, source_type: "document", source: `${runID}:source`, source_group: runID, idempotency_key: `${runID}:evidence` }],
     relationships: [{
       ref: `${runID}:relationship`,
-      subject: { name: subject, entity_kind: "concept", span: { evidence_index: 0, start: 0, end: subject.length } },
-      predicate: { proposed_key: predicate, surface: predicate, span: { evidence_index: 0, start: predicateStart, end: predicateStart + predicate.length } },
-      object: { entity: { name: object, entity_kind: "concept", span: { evidence_index: 0, start: objectStart, end: objectStart + object.length } } },
-      polarity: "+", modality: "statement", supports: [{ evidence_index: 0, start: 0, end: Array.from(content).length }],
+      subject: { name: subject, entity_kind: "concept" },
+      predicate: { proposed_key: predicate },
+      object: { entity: { name: object, entity_kind: "concept" } },
+      polarity: "+", modality: "statement", evidence_indices: [0],
     }],
   };
 }

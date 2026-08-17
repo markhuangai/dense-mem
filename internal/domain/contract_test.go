@@ -6,7 +6,7 @@ import (
 )
 
 func TestContractEnums(t *testing.T) {
-	if ContractVersion != "dense-mem.v2.4" {
+	if ContractVersion != "dense-mem.v2.5" {
 		t.Fatalf("ContractVersion = %q", ContractVersion)
 	}
 	for _, action := range []string{

@@ -27,10 +27,10 @@ func TestSubmissionAssessmentWorkerAssessesWholeRunAndCommitsAtomically(t *testi
 	assert.Len(t, provider.request.Evidence, 2)
 	assert.Len(t, provider.request.SubmittedRelationships, 3)
 	assert.Len(t, provider.request.SubmittedEntities, 6)
-	assert.Equal(t, "evidence:0", provider.request.SubmittedRelationships[0].Evidence[0].EvidenceID)
+	assert.Equal(t, "evidence:0", provider.request.SubmittedRelationships[0].EvidenceIDs[0])
 	sharedEvidenceRelationships := 0
 	for _, relationship := range provider.request.SubmittedRelationships {
-		if relationship.Evidence[0].EvidenceID == "evidence:0" {
+		if relationship.EvidenceIDs[0] == "evidence:0" {
 			sharedEvidenceRelationships++
 		}
 	}
@@ -64,25 +64,6 @@ func TestSubmissionAssessmentWorkerTerminalizesPredicateOptionOverflowBeforeProv
 	require.Len(t, assessments.completions, 1)
 	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), assessments.completions[0].Status)
 	assert.Equal(t, "predicate_options_overflow", assessments.completions[0].Payload["failure_stage"])
-}
-
-func TestSubmissionAssessmentWorkerHoldsWholeRunWhenOneRelationshipIsNonPromotable(t *testing.T) {
-	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
-	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
-		response := submissionAssessmentValidResponse(req, false)
-		response.RelationshipResults[1].Confidence = 0.4
-		return response, nil
-	}
-
-	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
-	require.NoError(t, err)
-	require.True(t, processed)
-	assert.Equal(t, 1, provider.calls)
-	assert.Equal(t, 1, assessments.persistCalls)
-	assert.Empty(t, assessments.commits)
-	require.Len(t, assessments.completions, 1)
-	assert.Equal(t, string(domain.SemanticReviewReviewRequired), assessments.completions[0].Status)
-	assert.Equal(t, "policy_review", assessments.completions[0].Payload["failure_stage"])
 }
 
 func TestSubmissionAssessmentWorkerPassesControlledRegistrationToAtomicCommit(t *testing.T) {
@@ -220,7 +201,7 @@ func TestSubmissionAssessmentWorkerTerminalizesMalformedProviderResponse(t *test
 	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
 		return verifier.SemanticAssessmentResponse{
 			RequestID:       req.RequestID,
-			SecuritySignals: []verifier.SemanticSecuritySignal{},
+			SecuritySignals: []verifier.SemanticAssessmentSecuritySignal{},
 		}, nil
 	}
 
@@ -261,7 +242,7 @@ func TestSubmissionAssessmentWorkerCompletesProviderSecurityQuarantine(t *testin
 		context.Background(),
 		submissionAssessmentRunScope(*ledger.run, "submission-assessment-worker"),
 		plan,
-		verifier.SemanticAssessmentResponse{SecuritySignals: []verifier.SemanticSecuritySignal{{
+		verifier.SemanticAssessmentResponse{SecuritySignals: []verifier.SemanticAssessmentSecuritySignal{{
 			EvidenceID: "evidence:1", Kind: "instruction_override", Start: 0, End: 5,
 		}}},
 		"security_signal",
@@ -295,28 +276,32 @@ func TestSubmissionAssessmentWorkerPlansAndCommitsTypedValue(t *testing.T) {
 
 	entity := request.SubmittedEntities[0]
 	value := *request.SubmittedRelationships[0].ObjectValue
+	groundingRef := entity.Groundings[0].GroundingRef
+	predicateRange := submissionAssessmentTestRange(request.Evidence[0], 8, 10)
+	valueRange := submissionAssessmentTestRange(request.Evidence[0], 11, 16)
+	supportRange := submissionAssessmentTestRange(request.Evidence[0], 0, 16)
 	response := verifier.SemanticAssessmentResponse{
 		RequestID:       request.RequestID,
-		SecuritySignals: []verifier.SemanticSecuritySignal{},
+		SecuritySignals: []verifier.SemanticAssessmentSecuritySignal{},
 		EntityResults: []verifier.SemanticAssessmentEntityResult{{
-			Ref: entity.Ref, Surface: entity.Surface, Kind: entity.Kind, EvidenceID: entity.EvidenceID,
-			Start: entity.Start, End: entity.End, Action: string(domain.EntityResolutionCreate), Confidence: 0.99,
+			Ref: entity.Ref, GroundingRef: &groundingRef, Action: string(domain.EntityResolutionCreate), Confidence: 0.99,
 			Rationale: "No candidate is present in the complete catalog.",
 		}},
 		RelationshipResults: []verifier.SemanticAssessmentRelationshipResult{{
-			Ref:               request.SubmittedRelationships[0].Ref,
-			SubjectRef:        request.SubmittedRelationships[0].SubjectRef,
-			OriginalPredicate: request.SubmittedRelationships[0].OriginalPredicate,
-			PredicateStatus:   "registration_required",
-			ObjectValue:       &value,
-			Polarity:          "+",
-			Modality:          "statement",
-			Evidence:          request.SubmittedRelationships[0].Evidence,
-			ScopeStatus:       "absent",
-			EvidenceVerdict:   string(domain.VerificationEntailed),
-			TemporalVerdict:   "absent",
-			Confidence:        0.99,
-			Rationale:         "The evidence explicitly states the typed value.",
+			Ref:             request.SubmittedRelationships[0].Ref,
+			SubjectRef:      request.SubmittedRelationships[0].SubjectRef,
+			PredicateRange:  predicateRange,
+			PredicateStatus: "registration_required",
+			ObjectValue:     &value,
+			ValueRange:      &valueRange,
+			Polarity:        "+",
+			Modality:        "statement",
+			SupportRanges:   []verifier.SemanticAssessmentGroundedRange{supportRange},
+			ScopeStatus:     "absent",
+			EvidenceVerdict: string(domain.VerificationEntailed),
+			TemporalVerdict: "absent",
+			Confidence:      0.99,
+			Rationale:       "The evidence explicitly states the typed value.",
 		}},
 	}
 	prepared, validationErrors := verifier.PrepareSemanticAssessmentResponse(request, response, service.limits)
@@ -430,6 +415,10 @@ func TestSubmissionAssessmentEntityCandidateGroupsFailClosed(t *testing.T) {
 			Ref: entity.Target.Ref, Candidates: []repository.SemanticReviewEntityCandidate{}, Complete: true,
 		})
 	}
+	evidence := make([]verifier.SemanticReviewEvidence, 0, len(plan.Items))
+	for _, item := range plan.Items {
+		evidence = append(evidence, verifier.PrepareSemanticAssessmentEvidence(semanticReviewEvidence(item.Fragment, item.EvidenceID)))
+	}
 
 	tests := []struct {
 		name   string
@@ -451,7 +440,7 @@ func TestSubmissionAssessmentEntityCandidateGroupsFailClosed(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := submissionAssessmentEntityCandidateGroups(plan, repository.SubmissionAssessmentEntityCatalogResult{Groups: test.groups, Complete: true})
+			_, _, err := submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{Groups: test.groups, Complete: true}, evidence)
 			require.Error(t, err)
 		})
 	}
@@ -551,7 +540,7 @@ func TestDecodeStoredSubmissionAssessmentRejectsTamperingAndContractDrift(t *tes
 		{name: "contract drift", mutate: func(assessment *repository.SubmissionAssessment) {
 			var response verifier.SemanticAssessmentResponse
 			require.NoError(t, json.Unmarshal(assessment.NormalizedResponse, &response))
-			response.RelationshipResults[0].OriginalPredicate = "changed"
+			response.RelationshipResults[0].Polarity = "-"
 			raw, err := json.Marshal(response)
 			require.NoError(t, err)
 			canonical, err := verifier.CanonicalJSON(raw)
@@ -705,14 +694,15 @@ func submissionAssessmentFixturePlacement(t *testing.T, run *repository.Placemen
 	firstFragment := repository.EvidenceFragment{FragmentID: uuid.NewString(), EvidenceIndex: 0, Content: first}
 	secondFragment := repository.EvidenceFragment{FragmentID: uuid.NewString(), EvidenceIndex: 1, Content: second}
 	return &repository.CreateIngestResult{
-		TeamID:         run.TeamID,
-		OwnerProfileID: run.OwnerProfileID,
-		IngestID:       run.IngestID,
-		PlacementRunID: run.PlacementRunID,
+		TeamID:          run.TeamID,
+		OwnerProfileID:  run.OwnerProfileID,
+		IngestID:        run.IngestID,
+		PlacementRunID:  run.PlacementRunID,
+		ContractVersion: domain.ContractVersion,
 		Proposal: map[string]any{"relationship_hints": []any{
-			submissionAssessmentRelationship("r:uses", 0, "Alpha", 0, 5, "uses", 6, 10, "Beta", 11, 15, "uses", 0, 16),
-			submissionAssessmentRelationship("r:depends", 0, "Alpha", 17, 22, "depends", 23, 30, "Gamma", 34, 39, "depends_on", 17, 40),
-			submissionAssessmentRelationship("r:supports", 1, "Gamma", 0, 5, "supports", 6, 14, "Delta", 15, 20, "supports", 0, 21),
+			submissionAssessmentRelationship("r:uses", 0, "Alpha", "Beta", "uses"),
+			submissionAssessmentRelationship("r:depends", 0, "Alpha", "Gamma", "depends_on"),
+			submissionAssessmentRelationship("r:supports", 1, "Gamma", "Delta", "supports"),
 		}},
 		Evidence: []repository.EvidenceFragment{firstFragment, secondFragment},
 		Items: []repository.PlacementItem{
@@ -728,28 +718,26 @@ func submissionAssessmentValueFixturePlacement(t *testing.T, run *repository.Pla
 	fragment := repository.EvidenceFragment{
 		FragmentID: uuid.NewString(), EvidenceIndex: 0, Content: content, Authority: "primary",
 	}
-	span := func(start, end int) map[string]any {
-		return map[string]any{"evidence_index": 0, "start": start, "end": end}
-	}
 	return &repository.CreateIngestResult{
-		TeamID:         run.TeamID,
-		OwnerProfileID: run.OwnerProfileID,
-		IngestID:       run.IngestID,
-		PlacementRunID: run.PlacementRunID,
+		TeamID:          run.TeamID,
+		OwnerProfileID:  run.OwnerProfileID,
+		IngestID:        run.IngestID,
+		PlacementRunID:  run.PlacementRunID,
+		ContractVersion: domain.ContractVersion,
 		Proposal: map[string]any{"relationship_hints": []any{map[string]any{
 			"ref": "r:latency",
 			"subject": map[string]any{
-				"name": "Latency", "entity_kind": "concept", "span": span(0, 7),
+				"name": "Latency", "entity_kind": "concept",
 			},
 			"predicate": map[string]any{
-				"proposed_key": "has_latency", "surface": "is", "span": span(8, 10),
+				"proposed_key": "has_latency",
 			},
 			"object": map[string]any{"value": map[string]any{
-				"surface": "42 ms", "type": "number", "value": 42, "display": " 42 ms ", "unit": " ms ", "span": span(11, 16),
+				"type": "number", "value": 42, "display": " 42 ms ", "unit": " ms ",
 			}},
-			"polarity": "+",
-			"modality": "statement",
-			"supports": []any{span(0, 16)},
+			"polarity":         "+",
+			"modality":         "statement",
+			"evidence_indices": []any{0},
 		}}},
 		Evidence: []repository.EvidenceFragment{fragment},
 		Items: []repository.PlacementItem{{
@@ -758,35 +746,51 @@ func submissionAssessmentValueFixturePlacement(t *testing.T, run *repository.Pla
 	}
 }
 
-func submissionAssessmentRelationship(ref string, evidenceIndex int, subject string, subjectStart, subjectEnd int, predicate string, predicateStart, predicateEnd int, object string, objectStart, objectEnd int, proposedKey string, supportStart, supportEnd int) map[string]any {
-	span := func(start, end int) map[string]any {
-		return map[string]any{"evidence_index": evidenceIndex, "start": start, "end": end}
-	}
+func submissionAssessmentRelationship(ref string, evidenceIndex int, subject, object, proposedKey string) map[string]any {
 	return map[string]any{
-		"ref":       ref,
-		"subject":   map[string]any{"name": subject, "entity_kind": "concept", "span": span(subjectStart, subjectEnd)},
-		"predicate": map[string]any{"proposed_key": proposedKey, "surface": predicate, "span": span(predicateStart, predicateEnd)},
-		"object":    map[string]any{"entity": map[string]any{"name": object, "entity_kind": "concept", "span": span(objectStart, objectEnd)}},
-		"polarity":  "+",
-		"modality":  "statement",
-		"supports":  []any{span(supportStart, supportEnd)},
+		"ref":              ref,
+		"subject":          map[string]any{"name": subject, "entity_kind": "concept"},
+		"predicate":        map[string]any{"proposed_key": proposedKey},
+		"object":           map[string]any{"entity": map[string]any{"name": object, "entity_kind": "concept"}},
+		"polarity":         "+",
+		"modality":         "statement",
+		"evidence_indices": []any{evidenceIndex},
 	}
 }
 
 func submissionAssessmentValidResponse(req verifier.SemanticAssessmentRequest, registerSupports bool) verifier.SemanticAssessmentResponse {
 	entities := make([]verifier.SemanticAssessmentEntityResult, 0, len(req.SubmittedEntities))
+	usedGroundings := map[string]struct{}{}
 	for _, entity := range req.SubmittedEntities {
+		grounding := entity.Groundings[0]
+		for _, candidate := range entity.Groundings {
+			key := candidate.EvidenceID + ":" + candidate.StartRef + ":" + candidate.EndRef
+			if _, exists := usedGroundings[key]; exists {
+				continue
+			}
+			grounding = candidate
+			break
+		}
+		usedGroundings[grounding.EvidenceID+":"+grounding.StartRef+":"+grounding.EndRef] = struct{}{}
+		groundingRef := grounding.GroundingRef
 		entities = append(entities, verifier.SemanticAssessmentEntityResult{
-			Ref: entity.Ref, Surface: entity.Surface, Kind: entity.Kind, EvidenceID: entity.EvidenceID,
-			Start: entity.Start, End: entity.End, Action: "create", Confidence: 0.99, Rationale: "No matching entity is in the complete candidate catalog.",
+			Ref: entity.Ref, GroundingRef: &groundingRef, Action: "create", Confidence: 0.99, Rationale: "No matching entity is in the complete candidate catalog.",
 		})
+	}
+	ranges := map[string][4]int{
+		"r:uses":     {6, 10, 0, 16},
+		"r:depends":  {23, 30, 17, 40},
+		"r:supports": {6, 14, 0, 21},
 	}
 	relationships := make([]verifier.SemanticAssessmentRelationshipResult, 0, len(req.SubmittedRelationships))
 	for _, relationship := range req.SubmittedRelationships {
+		positions := ranges[relationship.Ref]
+		evidence := submissionAssessmentTestEvidence(req, relationship.EvidenceIDs[0])
 		result := verifier.SemanticAssessmentRelationshipResult{
-			Ref: relationship.Ref, SubjectRef: relationship.SubjectRef, OriginalPredicate: relationship.OriginalPredicate,
-			ObjectRef: relationship.ObjectRef, ObjectValue: relationship.ObjectValue, Polarity: relationship.Polarity, Modality: relationship.Modality,
-			Evidence: append([]verifier.SemanticAssessmentEvidenceSpan(nil), relationship.Evidence...), ScopeStatus: "absent", EvidenceVerdict: "entailed", TemporalVerdict: "absent", Confidence: 0.95,
+			Ref: relationship.Ref, SubjectRef: relationship.SubjectRef,
+			PredicateRange: submissionAssessmentTestRange(evidence, positions[0], positions[1]),
+			ObjectRef:      relationship.ObjectRef, ObjectValue: relationship.ObjectValue, Polarity: relationship.Polarity, Modality: relationship.Modality,
+			SupportRanges: []verifier.SemanticAssessmentGroundedRange{submissionAssessmentTestRange(evidence, positions[2], positions[3])}, ScopeStatus: "absent", EvidenceVerdict: "entailed", TemporalVerdict: "absent", Confidence: 0.95,
 			Rationale: "The exact submitted evidence supports the relationship.",
 		}
 		if registerSupports && relationship.Ref == "r:supports" {
@@ -802,9 +806,32 @@ func submissionAssessmentValidResponse(req verifier.SemanticAssessmentRequest, r
 	}
 	return verifier.SemanticAssessmentResponse{
 		RequestID:           req.RequestID,
-		SecuritySignals:     []verifier.SemanticSecuritySignal{},
+		SecuritySignals:     []verifier.SemanticAssessmentSecuritySignal{},
 		EntityResults:       entities,
 		RelationshipResults: relationships,
+	}
+}
+
+func submissionAssessmentTestEvidence(req verifier.SemanticAssessmentRequest, evidenceID string) verifier.SemanticReviewEvidence {
+	for _, evidence := range req.Evidence {
+		if evidence.EvidenceID == evidenceID {
+			return evidence
+		}
+	}
+	panic("submission assessment test evidence is missing")
+}
+
+func submissionAssessmentTestRange(evidence verifier.SemanticReviewEvidence, start, end int) verifier.SemanticAssessmentGroundedRange {
+	startRef, startOK := verifier.SemanticAssessmentBoundaryRef(evidence, start)
+	endRef, endOK := verifier.SemanticAssessmentBoundaryRef(evidence, end)
+	if !startOK || !endOK {
+		panic("submission assessment test boundary is missing")
+	}
+	return verifier.SemanticAssessmentGroundedRange{
+		EvidenceID: evidence.EvidenceID,
+		StartRef:   startRef,
+		EndRef:     endRef,
+		Confidence: 0.99,
 	}
 }
 

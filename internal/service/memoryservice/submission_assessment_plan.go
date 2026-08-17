@@ -20,10 +20,8 @@ type submissionAssessmentItem struct {
 }
 
 type submissionAssessmentEntityTarget struct {
-	Target          verifier.SemanticAssessmentRequiredEntityRef
-	PlacementItemID string
-	FragmentID      string
-	KnownEntityID   string
+	Target        verifier.SemanticAssessmentRequiredEntityRef
+	KnownEntityID string
 }
 
 type submissionAssessmentRelationshipTarget struct {
@@ -61,6 +59,7 @@ func buildSubmissionAssessmentPlan(placement *repository.CreateIngestResult) (su
 	if len(fragmentsByIndex) == 0 {
 		return submissionAssessmentPlan{}, errors.New("submission assessment evidence is required")
 	}
+
 	items := make([]submissionAssessmentItem, 0, len(placement.Items))
 	itemsByEvidenceID := make(map[string]submissionAssessmentItem, len(placement.Items))
 	for _, item := range placement.Items {
@@ -92,10 +91,6 @@ func buildSubmissionAssessmentPlan(placement *repository.CreateIngestResult) (su
 		entityTargetsByRef: map[string]submissionAssessmentEntityTarget{},
 		relationshipsByRef: map[string]submissionAssessmentRelationshipTarget{},
 	}
-	for _, item := range items {
-		plan.itemsByEvidenceID[item.EvidenceID] = item
-	}
-
 	rawRelationships, err := submissionAssessmentObjectArray(placement.Proposal, "relationship_hints", "relationships")
 	if err != nil {
 		return submissionAssessmentPlan{}, err
@@ -103,7 +98,7 @@ func buildSubmissionAssessmentPlan(placement *repository.CreateIngestResult) (su
 	if len(rawRelationships) == 0 || len(rawRelationships) > verifier.SemanticAssessmentMaxRelationshipResults {
 		return submissionAssessmentPlan{}, errors.New("submission assessment relationships must be present and bounded")
 	}
-	entitiesBySpan := map[string]submissionAssessmentEntityTarget{}
+	coveredEvidence := make(map[string]struct{}, len(items))
 	for index, raw := range rawRelationships {
 		target, entities, err := submissionAssessmentRelationshipTargetFromProposal(raw, index, plan.itemsByEvidenceID)
 		if err != nil {
@@ -112,40 +107,27 @@ func buildSubmissionAssessmentPlan(placement *repository.CreateIngestResult) (su
 		if _, exists := plan.relationshipsByRef[target.Target.ProposalID]; exists {
 			return submissionAssessmentPlan{}, errors.New("submission assessment relationship ref is duplicated")
 		}
+		for _, evidenceID := range target.Target.EvidenceIDs {
+			coveredEvidence[evidenceID] = struct{}{}
+		}
 		for _, entity := range entities {
-			spanKey := submissionAssessmentEntitySpanKey(entity.Target)
-			if prior, exists := entitiesBySpan[spanKey]; exists {
-				if prior.Target.Kind != entity.Target.Kind || prior.Target.Surface != entity.Target.Surface ||
-					(prior.KnownEntityID != "" && entity.KnownEntityID != "" && prior.KnownEntityID != entity.KnownEntityID) {
-					return submissionAssessmentPlan{}, errors.New("submission assessment entity target is inconsistent")
-				}
-				if prior.KnownEntityID == "" && entity.KnownEntityID != "" {
-					entitiesBySpan[spanKey] = entity
-					plan.entityTargetsByRef[entity.Target.Ref] = entity
-				}
-				continue
+			if _, exists := plan.entityTargetsByRef[entity.Target.Ref]; exists {
+				return submissionAssessmentPlan{}, errors.New("submission assessment entity ref is duplicated")
 			}
-			entitiesBySpan[spanKey] = entity
+			plan.EntityTargets = append(plan.EntityTargets, entity)
 			plan.entityTargetsByRef[entity.Target.Ref] = entity
 		}
 		plan.RelationshipTargets = append(plan.RelationshipTargets, target)
 		plan.relationshipsByRef[target.Target.ProposalID] = target
 	}
-	for _, entity := range entitiesBySpan {
-		plan.EntityTargets = append(plan.EntityTargets, entity)
-	}
 	if len(plan.EntityTargets) == 0 || len(plan.EntityTargets) > verifier.SemanticAssessmentMaxEntityResults {
 		return submissionAssessmentPlan{}, errors.New("submission assessment entity targets must be present and bounded")
 	}
+	if len(coveredEvidence) != len(items) {
+		return submissionAssessmentPlan{}, errors.New("submission assessment relationships must cover every staged evidence item")
+	}
 	sort.Slice(plan.EntityTargets, func(i, j int) bool {
-		left, right := plan.EntityTargets[i].Target, plan.EntityTargets[j].Target
-		if left.EvidenceID != right.EvidenceID {
-			return left.EvidenceID < right.EvidenceID
-		}
-		if left.Start != right.Start {
-			return left.Start < right.Start
-		}
-		return left.End < right.End
+		return plan.EntityTargets[i].Target.Ref < plan.EntityTargets[j].Target.Ref
 	})
 	sort.Slice(plan.RelationshipTargets, func(i, j int) bool {
 		return plan.RelationshipTargets[i].Target.ProposalID < plan.RelationshipTargets[j].Target.ProposalID
@@ -155,10 +137,6 @@ func buildSubmissionAssessmentPlan(placement *repository.CreateIngestResult) (su
 
 func submissionAssessmentEvidenceID(index int) string {
 	return fmt.Sprintf("evidence:%d", index)
-}
-
-func submissionAssessmentEntitySpanKey(target verifier.SemanticAssessmentRequiredEntityRef) string {
-	return fmt.Sprintf("%s:%d:%d", target.EvidenceID, target.Start, target.End)
 }
 
 func submissionAssessmentObjectArray(raw map[string]any, keys ...string) ([]map[string]any, error) {
@@ -196,20 +174,18 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	if ref == "" || len([]rune(ref)) > 128 {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship ref is required and bounded")
 	}
-	supports, err := submissionAssessmentSupportsFromProposal(raw, itemsByEvidenceID)
+	evidenceIDs, err := submissionAssessmentEvidenceIDsFromProposal(raw, itemsByEvidenceID)
 	if err != nil {
 		return submissionAssessmentRelationshipTarget{}, nil, err
 	}
+
 	subjectRaw, ok := reviewMap(raw["subject"])
 	if !ok {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship subject is required")
 	}
-	subject, err := submissionAssessmentEntityTargetFromProposal(subjectRaw, itemsByEvidenceID)
+	subject, err := submissionAssessmentEntityTargetFromProposal(subjectRaw, fmt.Sprintf("entity:%d:subject", index), evidenceIDs)
 	if err != nil {
 		return submissionAssessmentRelationshipTarget{}, nil, err
-	}
-	if !submissionAssessmentSpanCoveredBySupports(subject.Target.EvidenceID, subject.Target.Start, subject.Target.End, supports) {
-		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment subject span is outside support")
 	}
 
 	predicateRaw, ok := reviewMap(raw["predicate"])
@@ -219,13 +195,6 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	proposedPredicate := strings.TrimSpace(submissionAssessmentRawString(predicateRaw, "proposed_key"))
 	if proposedPredicate == "" || len([]rune(proposedPredicate)) > 128 {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment proposed predicate is required and bounded")
-	}
-	predicateSurface, predicateEvidenceID, predicateStart, predicateEnd, err := submissionAssessmentSurfaceSpanFromProposal(predicateRaw, "surface", itemsByEvidenceID)
-	if err != nil {
-		return submissionAssessmentRelationshipTarget{}, nil, err
-	}
-	if len([]rune(predicateSurface)) > 256 || !submissionAssessmentSpanCoveredBySupports(predicateEvidenceID, predicateStart, predicateEnd, supports) {
-		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment predicate span is outside support")
 	}
 
 	objectRaw, ok := reviewMap(raw["object"])
@@ -242,24 +211,18 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	var objectRef *string
 	var objectValue *verifier.SemanticAssessmentValue
 	if hasEntity {
-		objectEntity, err := submissionAssessmentEntityTargetFromProposal(objectEntityRaw, itemsByEvidenceID)
+		objectEntity, err := submissionAssessmentEntityTargetFromProposal(objectEntityRaw, fmt.Sprintf("entity:%d:object", index), evidenceIDs)
 		if err != nil {
 			return submissionAssessmentRelationshipTarget{}, nil, err
-		}
-		if !submissionAssessmentSpanCoveredBySupports(objectEntity.Target.EvidenceID, objectEntity.Target.Start, objectEntity.Target.End, supports) {
-			return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment object span is outside support")
 		}
 		entities = append(entities, objectEntity)
 		objectKind = objectEntity.Target.Kind
 		refCopy := objectEntity.Target.Ref
 		objectRef = &refCopy
 	} else {
-		value, evidenceID, start, end, err := submissionAssessmentValueFromProposal(objectValueRaw, itemsByEvidenceID)
+		value, err := submissionAssessmentValueFromProposal(objectValueRaw)
 		if err != nil {
 			return submissionAssessmentRelationshipTarget{}, nil, err
-		}
-		if !submissionAssessmentSpanCoveredBySupports(evidenceID, start, end, supports) {
-			return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment value span is outside support")
 		}
 		objectKind = value.ValueType
 		objectValue = value
@@ -274,14 +237,14 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship modality is unsupported")
 	}
 	target := verifier.SemanticAssessmentRequiredRelationshipRef{
-		ProposalID:        ref,
-		Evidence:          supports,
-		SubjectRef:        subject.Target.Ref,
-		OriginalPredicate: predicateSurface,
-		ObjectRef:         objectRef,
-		ObjectValue:       objectValue,
-		Polarity:          polarity,
-		Modality:          modality,
+		ProposalID:    ref,
+		PredicateHint: proposedPredicate,
+		EvidenceIDs:   append([]string(nil), evidenceIDs...),
+		SubjectRef:    subject.Target.Ref,
+		ObjectRef:     objectRef,
+		ObjectValue:   objectValue,
+		Polarity:      polarity,
+		Modality:      modality,
 	}
 	entry := submissionAssessmentRelationshipTarget{
 		Target:            target,
@@ -309,20 +272,46 @@ func submissionAssessmentRelationshipTargetFromProposal(
 			ExpectedVersion: conflict.ExpectedVersion,
 		}
 	}
-	_ = index
 	return entry, entities, nil
+}
+
+func submissionAssessmentEvidenceIDsFromProposal(
+	raw map[string]any,
+	itemsByEvidenceID map[string]submissionAssessmentItem,
+) ([]string, error) {
+	values := rememberArrayValues(raw["evidence_indices"])
+	if len(values) == 0 || len(values) > verifier.SemanticAssessmentMaxEvidenceSpans {
+		return nil, errors.New("submission assessment relationship evidence_indices are required and bounded")
+	}
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		index, ok := rememberEvidenceIndex(value)
+		if !ok {
+			return nil, errors.New("submission assessment relationship evidence index is invalid")
+		}
+		evidenceID := submissionAssessmentEvidenceID(index)
+		if _, exists := itemsByEvidenceID[evidenceID]; !exists {
+			return nil, errors.New("submission assessment relationship evidence is outside the run")
+		}
+		if _, exists := seen[evidenceID]; exists {
+			return nil, errors.New("submission assessment relationship evidence index is duplicated")
+		}
+		seen[evidenceID] = struct{}{}
+		result = append(result, evidenceID)
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 func submissionAssessmentEntityTargetFromProposal(
 	raw map[string]any,
-	itemsByEvidenceID map[string]submissionAssessmentItem,
+	ref string,
+	evidenceIDs []string,
 ) (submissionAssessmentEntityTarget, error) {
-	surface, evidenceID, start, end, err := submissionAssessmentSurfaceSpanFromProposal(raw, "name", itemsByEvidenceID)
-	if err != nil {
-		return submissionAssessmentEntityTarget{}, err
-	}
-	if len([]rune(surface)) > 256 {
-		return submissionAssessmentEntityTarget{}, errors.New("submission assessment entity surface is too long")
+	name := strings.TrimSpace(submissionAssessmentRawString(raw, "name"))
+	if name == "" || len([]rune(name)) > 256 {
+		return submissionAssessmentEntityTarget{}, errors.New("submission assessment entity name is required and bounded")
 	}
 	kind := strings.TrimSpace(submissionAssessmentRawString(raw, "entity_kind"))
 	if !submissionAssessmentContains(domain.EntityKinds(), kind) {
@@ -334,131 +323,40 @@ func submissionAssessmentEntityTargetFromProposal(
 			return submissionAssessmentEntityTarget{}, errors.New("submission assessment known entity id is invalid")
 		}
 	}
-	ref := fmt.Sprintf("entity:%s:%d:%d:%s", evidenceID, start, end, kind)
-	item := itemsByEvidenceID[evidenceID]
 	return submissionAssessmentEntityTarget{
 		Target: verifier.SemanticAssessmentRequiredEntityRef{
-			Ref:        ref,
-			Surface:    surface,
-			Kind:       kind,
-			EvidenceID: evidenceID,
-			Start:      start,
-			End:        end,
+			Ref:         ref,
+			Name:        name,
+			Kind:        kind,
+			EvidenceIDs: append([]string(nil), evidenceIDs...),
 		},
-		PlacementItemID: item.PlacementItem.PlacementItemID,
-		FragmentID:      item.Fragment.FragmentID,
-		KnownEntityID:   knownEntityID,
+		KnownEntityID: knownEntityID,
 	}, nil
 }
 
-func submissionAssessmentValueFromProposal(
-	raw map[string]any,
-	itemsByEvidenceID map[string]submissionAssessmentItem,
-) (*verifier.SemanticAssessmentValue, string, int, int, error) {
-	_, evidenceID, start, end, err := submissionAssessmentSurfaceSpanFromProposal(raw, "surface", itemsByEvidenceID)
-	if err != nil {
-		return nil, "", 0, 0, err
-	}
+func submissionAssessmentValueFromProposal(raw map[string]any) (*verifier.SemanticAssessmentValue, error) {
 	valueType := strings.TrimSpace(submissionAssessmentRawString(raw, "type"))
 	if !submissionAssessmentContains(domain.ValueTypes(), valueType) {
-		return nil, "", 0, 0, errors.New("submission assessment value type is unsupported")
+		return nil, errors.New("submission assessment value type is unsupported")
 	}
 	canonicalValue := submissionAssessmentRawValueString(raw["value"])
 	if canonicalValue == "" || len([]rune(canonicalValue)) > 4096 {
-		return nil, "", 0, 0, errors.New("submission assessment canonical value is required and bounded")
+		return nil, errors.New("submission assessment canonical value is required and bounded")
 	}
 	value := &verifier.SemanticAssessmentValue{ValueType: valueType, CanonicalValue: canonicalValue}
 	if display, exists := submissionAssessmentOptionalString(raw, "display"); exists {
 		if len([]rune(display)) > 4096 {
-			return nil, "", 0, 0, errors.New("submission assessment value display is too long")
+			return nil, errors.New("submission assessment value display is too long")
 		}
 		value.Display = &display
 	}
 	if unit, exists := submissionAssessmentOptionalString(raw, "unit"); exists {
 		if len([]rune(unit)) > 128 {
-			return nil, "", 0, 0, errors.New("submission assessment value unit is too long")
+			return nil, errors.New("submission assessment value unit is too long")
 		}
 		value.Unit = &unit
 	}
-	return value, evidenceID, start, end, nil
-}
-
-func submissionAssessmentSurfaceSpanFromProposal(
-	raw map[string]any,
-	surfaceField string,
-	itemsByEvidenceID map[string]submissionAssessmentItem,
-) (string, string, int, int, error) {
-	surface, ok := raw[surfaceField].(string)
-	if !ok || strings.TrimSpace(surface) == "" {
-		return "", "", 0, 0, errors.New("submission assessment surface is required")
-	}
-	spanRaw, ok := reviewMap(raw["span"])
-	if !ok {
-		return "", "", 0, 0, errors.New("submission assessment span is required")
-	}
-	evidenceIndex, hasIndex := reviewInt(spanRaw, "evidence_index")
-	start, hasStart := reviewInt(spanRaw, "start")
-	end, hasEnd := reviewInt(spanRaw, "end")
-	if !hasIndex || !hasStart || !hasEnd {
-		return "", "", 0, 0, errors.New("submission assessment span is invalid")
-	}
-	evidenceID := submissionAssessmentEvidenceID(evidenceIndex)
-	item, exists := itemsByEvidenceID[evidenceID]
-	if !exists {
-		return "", "", 0, 0, errors.New("submission assessment span evidence is outside the run")
-	}
-	exact, err := verifier.SemanticEvidenceSpan(item.Fragment.Content, start, end)
-	if err != nil || exact != surface {
-		return "", "", 0, 0, errors.New("submission assessment surface does not match its evidence span")
-	}
-	return exact, evidenceID, start, end, nil
-}
-
-func submissionAssessmentSupportsFromProposal(
-	raw map[string]any,
-	itemsByEvidenceID map[string]submissionAssessmentItem,
-) ([]verifier.SemanticAssessmentEvidenceSpan, error) {
-	items, err := submissionAssessmentObjectArray(raw, "supports")
-	if err != nil {
-		return nil, err
-	}
-	if len(items) == 0 || len(items) > verifier.SemanticAssessmentMaxEvidenceSpans {
-		return nil, errors.New("submission assessment relationship supports are required and bounded")
-	}
-	spans := make([]verifier.SemanticAssessmentEvidenceSpan, 0, len(items))
-	seen := make(map[string]struct{}, len(items))
-	for _, rawSpan := range items {
-		evidenceIndex, hasIndex := reviewInt(rawSpan, "evidence_index")
-		start, hasStart := reviewInt(rawSpan, "start")
-		end, hasEnd := reviewInt(rawSpan, "end")
-		if !hasIndex || !hasStart || !hasEnd {
-			return nil, errors.New("submission assessment support span is invalid")
-		}
-		evidenceID := submissionAssessmentEvidenceID(evidenceIndex)
-		item, exists := itemsByEvidenceID[evidenceID]
-		if !exists {
-			return nil, errors.New("submission assessment support evidence is outside the run")
-		}
-		if _, err := verifier.SemanticEvidenceSpan(item.Fragment.Content, start, end); err != nil {
-			return nil, errors.New("submission assessment support span is invalid")
-		}
-		key := fmt.Sprintf("%s:%d:%d", evidenceID, start, end)
-		if _, exists := seen[key]; exists {
-			return nil, errors.New("submission assessment support span is duplicated")
-		}
-		seen[key] = struct{}{}
-		spans = append(spans, verifier.SemanticAssessmentEvidenceSpan{EvidenceID: evidenceID, Start: start, End: end})
-	}
-	return spans, nil
-}
-
-func submissionAssessmentSpanCoveredBySupports(evidenceID string, start, end int, supports []verifier.SemanticAssessmentEvidenceSpan) bool {
-	for _, support := range supports {
-		if support.EvidenceID == evidenceID && support.Start <= start && support.End >= end {
-			return true
-		}
-	}
-	return false
+	return value, nil
 }
 
 func submissionAssessmentRawString(raw map[string]any, key string) string {

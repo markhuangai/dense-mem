@@ -147,16 +147,16 @@ function rememberInput() {
     ],
     relationships: [{
       ref: `${runID}:relationship:first`,
-      subject: { name: firstSubject, entity_kind: "concept", span: { evidence_index: 0, start: 0, end: firstSubject.length } },
-      predicate: { proposed_key: firstPredicate, surface: firstPredicate, span: { evidence_index: 0, start: first.indexOf(firstPredicate), end: first.indexOf(firstPredicate) + firstPredicate.length } },
-      object: { entity: { name: firstObject, entity_kind: "concept", span: { evidence_index: 0, start: first.indexOf(firstObject), end: first.indexOf(firstObject) + firstObject.length } } },
-      polarity: "+", modality: "statement", supports: [{ evidence_index: 0, start: 0, end: Array.from(first).length }],
+      subject: { name: firstSubject, entity_kind: "concept" },
+      predicate: { proposed_key: firstPredicate },
+      object: { entity: { name: firstObject, entity_kind: "concept" } },
+      polarity: "+", modality: "statement", evidence_indices: [0],
     }, {
       ref: `${runID}:relationship:second`,
-      subject: { name: "provider quota", entity_kind: "concept", span: { evidence_index: 1, start: second.indexOf("provider quota"), end: second.indexOf("provider quota") + "provider quota".length } },
-      predicate: { proposed_key: "uses", surface: "uses", span: { evidence_index: 1, start: second.indexOf("uses"), end: second.indexOf("uses") + "uses".length } },
-      object: { entity: { name: "active contract", entity_kind: "concept", span: { evidence_index: 1, start: second.indexOf("active contract"), end: second.indexOf("active contract") + "active contract".length } } },
-      polarity: "+", modality: "statement", supports: [{ evidence_index: 1, start: 0, end: Array.from(second).length }],
+      subject: { name: "provider quota", entity_kind: "concept" },
+      predicate: { proposed_key: "uses" },
+      object: { entity: { name: "active contract", entity_kind: "concept" } },
+      polarity: "+", modality: "statement", evidence_indices: [1],
     }],
   };
 }

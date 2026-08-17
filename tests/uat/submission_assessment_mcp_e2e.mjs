@@ -135,32 +135,24 @@ function simpleRelationship(content, ref, evidenceIndex, subject, predicateSurfa
 }
 
 function relationshipForContent(content, ref, evidenceIndex, subject, predicateSurface, object, proposedKey, subjectKind, objectKind, supportText) {
-  const subjectSpan = span(content, subject, supportText === content ? 0 : content.indexOf(supportText));
-  const predicateSpan = span(content, predicateSurface, supportText === content ? 0 : content.indexOf(supportText));
-  const objectSpan = span(content, object, supportText === content ? 0 : content.indexOf(supportText));
-  const supportSpan = span(content, supportText);
   return {
     ref,
     subject: {
       name: subject,
       entity_kind: subjectKind,
-      span: { evidence_index: evidenceIndex, start: subjectSpan.start, end: subjectSpan.end },
     },
     predicate: {
       proposed_key: proposedKey,
-      surface: predicateSurface,
-      span: { evidence_index: evidenceIndex, start: predicateSpan.start, end: predicateSpan.end },
     },
     object: {
       entity: {
         name: object,
         entity_kind: objectKind,
-        span: { evidence_index: evidenceIndex, start: objectSpan.start, end: objectSpan.end },
       },
     },
     polarity: "+",
     modality: "statement",
-    supports: [{ evidence_index: evidenceIndex, start: supportSpan.start, end: supportSpan.end }],
+    evidence_indices: [evidenceIndex],
   };
 }
 
@@ -225,17 +217,6 @@ function overflowFixture() {
   return { evidence: overflowEvidence, relationships };
 }
 
-function span(content, text, from = 0) {
-  const byteIndex = content.indexOf(text, from);
-  if (byteIndex < 0) {
-    throw new Error("e2e fixture span text is absent");
-  }
-  return {
-    start: Array.from(content.slice(0, byteIndex)).length,
-    end: Array.from(content.slice(0, byteIndex + text.length)).length,
-  };
-}
-
 async function waitForCompletedPlacement(submissionID) {
   const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2_000);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -243,6 +224,11 @@ async function waitForCompletedPlacement(submissionID) {
     const state = stringValue(placement.processing_state);
     if (state === "completed") {
       return;
+    }
+    if (state === "awaiting_review") {
+      const issues = Array.isArray(placement.semantic_hold?.issues) ? placement.semantic_hold.issues : [];
+      const issueCodes = issues.map((issue) => stringValue(issue?.code)).filter(Boolean);
+      throw new Error(`submission reached unexpected terminal state awaiting_review (${issueCodes.join(", ") || "no issue codes"})`);
     }
     if (["rejected", "failed", "quarantined"].includes(state)) {
       throw new Error(`submission reached unexpected terminal state ${state}`);

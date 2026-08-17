@@ -186,6 +186,14 @@ calls and processing happen after acknowledgement. Poll `get_submission_status`
 with that ID for the owner-scoped processing and search state. The status
 projection omits placement questions, provider output, and internal run IDs.
 
+Callers submit logical Entity, predicate, and Value proposals rather than text
+offsets. `remember` does not accept `span`, `surface`, or relationship `supports`
+fields. Each Relationship instead lists the zero-based `evidence_indices` that
+support it, and those lists must collectively cover every evidence item in the
+submission. The assessor locates the exact evidence ranges; closed-schema
+validation and deterministic server policy decide whether those ranges are safe
+to commit.
+
 To replace a specific current evidence item you own, put its UUID in the new
 item's `supersedes_evidence_ids`. Direct targeting is separate from advancing a
 source revision with `previous_source_revision`; do not combine them.
@@ -194,18 +202,48 @@ source revision with `previous_source_revision`; do not combine them.
 {
   "evidence": [
     {
-      "content": "The deployment target is now PostgreSQL only.",
+      "content": "Dense-Mem now uses PostgreSQL as its only deployment target.",
       "source_type": "manual",
       "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"],
       "idempotency_key": "deployment-target-correction-20260729"
     }
-  ]
+  ],
+  "relationships": [
+    {
+      "ref": "deployment-target",
+      "subject": {
+        "name": "Dense-Mem",
+        "entity_kind": "project"
+      },
+      "predicate": {
+        "proposed_key": "uses_as_only_deployment_target"
+      },
+      "object": {
+        "entity": {
+          "name": "PostgreSQL",
+          "entity_kind": "product"
+        }
+      },
+      "polarity": "+",
+      "modality": "statement",
+      "evidence_indices": [0]
+    }
+  ],
+  "idempotency_key": "deployment-target-correction-batch-20260729"
 }
 ```
 
 The target is retired atomically when the replacement is accepted for intake,
 even if later placement is rejected or quarantined. This preserves the exact
 correction decision instead of silently leaving stale evidence effective.
+
+If the assessor cannot ground a proposal with enough confidence, or another
+semantic policy requires review, the whole submission moves to
+`awaiting_review` with zero partial semantic commit. `get_submission_status`
+returns bounded `semantic_hold.issues` and a `semantic_hold.replacement`
+instruction. Resubmit one complete corrected evidence-and-Relationships batch
+with `replaces_submission_id` set to the held `submission_id`; partial
+replacement is not supported.
 
 To retract evidence without a replacement, call `retract_evidence` with owned
 current IDs, a bounded reason, and an idempotency key:

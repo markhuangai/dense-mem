@@ -6,7 +6,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 

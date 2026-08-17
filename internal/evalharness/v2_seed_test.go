@@ -44,16 +44,20 @@ func TestDeriveV2SeedRetainsV1EvidenceAndProducesFlatRelationships(t *testing.T)
 		t.Fatalf("relationship = %#v", relationship)
 	}
 	subject := relationship["subject"].(map[string]any)
-	if subject["name"] != "Māori" || spanEnd(t, subject["span"]) != 5 {
+	if subject["name"] != "Māori" {
 		t.Fatalf("subject = %#v", subject)
 	}
 	predicate := relationship["predicate"].(map[string]any)
-	if predicate["proposed_key"] != "uses" || predicate["surface"] != "uses" || spanStart(t, predicate["span"]) != 6 {
+	if predicate["proposed_key"] != "uses" {
 		t.Fatalf("predicate = %#v", predicate)
 	}
 	object := relationship["object"].(map[string]any)["entity"].(map[string]any)
-	if object["name"] != "PostgreSQL" || spanStart(t, object["span"]) != 11 {
+	if object["name"] != "PostgreSQL" {
 		t.Fatalf("object = %#v", object)
+	}
+	indices, ok := relationship["evidence_indices"].([]any)
+	if !ok || len(indices) != 1 || indices[0] != float64(0) {
+		t.Fatalf("evidence_indices = %#v", relationship["evidence_indices"])
 	}
 	if equal, err := sameFileBytes(filepath.Join(filepath.Dir(sourceManifestPath), "cases.jsonl"), filepath.Join(outputDir, "cases.jsonl")); err != nil || !equal {
 		t.Fatalf("copied cases byte equality = %v, %v", equal, err)
@@ -357,16 +361,4 @@ func writeV2DerivationFixture(t *testing.T, content string) (string, string, str
 		t.Fatalf("write relationship ledger: %v", err)
 	}
 	return manifestPath, suitePath, ledgerPath, filepath.Join(root, "v2")
-}
-
-func spanStart(t *testing.T, raw any) int {
-	t.Helper()
-	span := raw.(map[string]any)
-	return int(span["start"].(float64))
-}
-
-func spanEnd(t *testing.T, raw any) int {
-	t.Helper()
-	span := raw.(map[string]any)
-	return int(span["end"].(float64))
 }

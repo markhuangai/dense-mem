@@ -165,6 +165,12 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 后继续执行。使用 `get_submission_status` 查询按所有者隔离的处理与搜索状态。
 该状态投影不会暴露 placement 问题、provider 输出或内部 run ID。
 
+调用方提交逻辑层的 Entity、predicate 和 Value 提议，不提交文本 offset。
+`remember` 不接受 `span`、`surface` 或 Relationship 的 `supports` 字段。每条
+Relationship 改为列出支持它的从零开始的 `evidence_indices`，且这些列表合起来必须
+覆盖本次提交的全部证据。assessor 负责定位精确证据范围；闭合 Schema 校验和确定性
+服务端策略决定这些范围能否安全提交。
+
 若要替换自己拥有的一条当前证据，把其 UUID 放入新证据的
 `supersedes_evidence_ids`。直接指定目标与通过 `previous_source_revision` 推进
 来源修订是两条独立流程，不能混用。
@@ -173,17 +179,45 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 {
   "evidence": [
     {
-      "content": "部署目标现在仅使用 PostgreSQL。",
+      "content": "Dense-Mem 现在仅使用 PostgreSQL 作为部署目标。",
       "source_type": "manual",
       "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"],
       "idempotency_key": "deployment-target-correction-20260729"
     }
-  ]
+  ],
+  "relationships": [
+    {
+      "ref": "deployment-target",
+      "subject": {
+        "name": "Dense-Mem",
+        "entity_kind": "project"
+      },
+      "predicate": {
+        "proposed_key": "uses_as_only_deployment_target"
+      },
+      "object": {
+        "entity": {
+          "name": "PostgreSQL",
+          "entity_kind": "product"
+        }
+      },
+      "polarity": "+",
+      "modality": "statement",
+      "evidence_indices": [0]
+    }
+  ],
+  "idempotency_key": "deployment-target-correction-batch-20260729"
 }
 ```
 
 替换证据被接收入库时，目标会在同一原子动作中退役；即使后续 placement 被拒绝或
 隔离，这个更正决定仍会保留。这样不会让过期证据继续保持有效。
+
+如果 assessor 无法以足够置信度定位提议，或其他语义策略要求审核，整个提交会进入
+`awaiting_review`，不会发生任何部分语义提交。`get_submission_status` 会返回有界的
+`semantic_hold.issues` 和 `semantic_hold.replacement` 指引。请把 held
+`submission_id` 设为 `replaces_submission_id`，重新提交一份完整、更正后的证据与
+Relationships batch；不支持部分替换。
 
 若无需替代证据，请使用 `retract_evidence`，提供自己拥有的当前 ID、有界原因和
 幂等键：

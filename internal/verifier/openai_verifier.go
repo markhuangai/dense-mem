@@ -102,35 +102,9 @@ type openAIVerifierAPIResponse struct {
 	} `json:"error"`
 }
 
-type semanticAssessmentCorrectionSpan struct {
-	Start                 int     `json:"start"`
-	End                   int     `json:"end"`
-	Action                string  `json:"action"`
-	CandidateEntityID     *string `json:"candidate_entity_id"`
-	OccupiedByOtherResult bool    `json:"occupied_by_other_result"`
-}
-
-type semanticAssessmentCorrectionSpanHint struct {
-	Field           string                             `json:"field"`
-	EvidenceID      string                             `json:"evidence_id"`
-	Surface         string                             `json:"surface,omitempty"`
-	RecommendedSpan *semanticAssessmentCorrectionSpan  `json:"recommended_span,omitempty"`
-	ValidSpans      []semanticAssessmentCorrectionSpan `json:"valid_spans"`
-	RemoveResult    bool                               `json:"remove_result"`
-	Truncated       bool                               `json:"truncated"`
-}
-
-type semanticAssessmentCorrectionEntitySelectionHint struct {
-	Index             int     `json:"index"`
-	Action            string  `json:"action"`
-	CandidateEntityID *string `json:"candidate_entity_id"`
-}
-
 type semanticAssessmentCorrection struct {
-	ValidationErrors     []SemanticValidationError                         `json:"validation_errors"`
-	SpanHints            []semanticAssessmentCorrectionSpanHint            `json:"span_hints,omitempty"`
-	EntitySelectionHints []semanticAssessmentCorrectionEntitySelectionHint `json:"entity_selection_hints,omitempty"`
-	Instruction          string                                            `json:"instruction"`
+	ValidationErrors []SemanticValidationError `json:"validation_errors"`
+	Instruction      string                    `json:"instruction"`
 }
 
 func decodeOpenAIVerifierAPIResponse(body io.Reader) (openAIVerifierAPIResponse, error) {
@@ -207,7 +181,7 @@ func NewOpenAIVerifierWithAssessmentLimits(
 	}
 }
 
-// SemanticAssessmentLimitsForConfig maps the configured V2.4 budget into the
+// SemanticAssessmentLimitsForConfig maps the configured assessor budget into the
 // single limits value shared by the provider and placement worker.
 func SemanticAssessmentLimitsForConfig(cfg config.ConfigProvider) SemanticAssessmentLimits {
 	budget := config.AIVerifierAssessmentBudgetFor(cfg)
@@ -292,7 +266,7 @@ func (v *OpenAIVerifier) ReviewSemantic(ctx context.Context, req SemanticReviewR
 	return response, nil
 }
 
-// AssessSemantic runs one V2.4 structure/support conversation. Malformed
+// AssessSemantic runs one V2.5 structure/support conversation. Malformed
 // assistant content is corrected in the same bounded message history.
 func (v *OpenAIVerifier) AssessSemantic(ctx context.Context, req SemanticAssessmentRequest) (SemanticAssessmentResponse, error) {
 	prepared, validationErrors := PrepareSemanticAssessmentRequest(req, v.assessmentLimits)
@@ -387,13 +361,7 @@ func (v *OpenAIVerifier) AssessSemantic(ctx context.Context, req SemanticAssessm
 		correctionErrors := boundedSemanticAssessmentCorrectionErrors(responseErrors)
 		correctionJSON, err := json.Marshal(semanticAssessmentCorrection{
 			ValidationErrors: correctionErrors,
-			SpanHints:        semanticAssessmentCorrectionSpanHints(prepared, response, correctionErrors),
-			EntitySelectionHints: semanticAssessmentCorrectionEntitySelectionHints(
-				prepared,
-				response,
-				correctionErrors,
-			),
-			Instruction: semanticAssessmentCorrectionInstruction,
+			Instruction:      semanticAssessmentCorrectionInstruction,
 		})
 		if err != nil {
 			return SemanticAssessmentResponse{}, &ProviderError{

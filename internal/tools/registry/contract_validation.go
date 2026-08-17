@@ -199,12 +199,6 @@ func validateDreamFeedback(args map[string]any) error {
 	}
 }
 
-type submittedRelationshipSpan struct {
-	evidenceIndex int
-	start         int
-	end           int
-}
-
 func validateSubmittedRelationships(raw any, evidence []any, path string) error {
 	relationships, ok := raw.([]any)
 	if !ok {
@@ -243,16 +237,12 @@ func validateSubmittedEvidenceCoverage(raw any, evidence []any, path string) err
 		if !ok {
 			continue
 		}
-		supports, ok := relationship["supports"].([]any)
+		indices, ok := relationship["evidence_indices"].([]any)
 		if !ok {
 			continue
 		}
-		for _, support := range supports {
-			fields, ok := objectFields(support)
-			if !ok {
-				continue
-			}
-			index, ok := schemaNumber(fields["evidence_index"])
+		for _, rawIndex := range indices {
+			index, ok := schemaNumber(rawIndex)
 			if ok && int(index) >= 0 && int(index) < len(covered) {
 				covered[int(index)] = true
 			}
@@ -271,33 +261,17 @@ func validateSubmittedEvidenceCoverage(raw any, evidence []any, path string) err
 }
 
 func validateSubmittedRelationship(relationship map[string]any, evidence []any, path string) error {
-	supports, err := submittedRelationshipSupports(relationship["supports"], evidence, path+".supports")
+	_, err := submittedRelationshipEvidenceIndices(relationship["evidence_indices"], len(evidence), path+".evidence_indices")
 	if err != nil {
 		return err
 	}
 
-	subject, ok := objectFields(relationship["subject"])
-	if !ok {
+	if _, ok := objectFields(relationship["subject"]); !ok {
 		return fmt.Errorf("%s.subject must be an object", path)
 	}
-	subjectSpan, err := validateSubmittedEntity(subject, evidence, path+".subject")
-	if err != nil {
-		return err
-	}
-	if !submittedSpanCoveredBySupport(subjectSpan, supports) {
-		return fmt.Errorf("%s.subject.span is not covered by a support span", path)
-	}
 
-	predicate, ok := objectFields(relationship["predicate"])
-	if !ok {
+	if _, ok := objectFields(relationship["predicate"]); !ok {
 		return fmt.Errorf("%s.predicate must be an object", path)
-	}
-	predicateSpan, err := validateSubmittedSurfaceSpan(predicate, "surface", evidence, path+".predicate")
-	if err != nil {
-		return err
-	}
-	if !submittedSpanCoveredBySupport(predicateSpan, supports) {
-		return fmt.Errorf("%s.predicate.span is not covered by a support span", path)
 	}
 
 	object, ok := objectFields(relationship["object"])
@@ -310,16 +284,8 @@ func validateSubmittedRelationship(relationship map[string]any, evidence []any, 
 		return fmt.Errorf("%s.object requires exactly one entity or value", path)
 	}
 	if hasEntity {
-		entity, ok := objectFields(object["entity"])
-		if !ok {
+		if _, ok := objectFields(object["entity"]); !ok {
 			return fmt.Errorf("%s.object.entity must be an object", path)
-		}
-		objectSpan, err := validateSubmittedEntity(entity, evidence, path+".object.entity")
-		if err != nil {
-			return err
-		}
-		if !submittedSpanCoveredBySupport(objectSpan, supports) {
-			return fmt.Errorf("%s.object.entity.span is not covered by a support span", path)
 		}
 	} else {
 		value, ok := objectFields(object["value"])
@@ -328,18 +294,6 @@ func validateSubmittedRelationship(relationship map[string]any, evidence []any, 
 		}
 		if err := validateTypedValue(value, path+".object.value"); err != nil {
 			return err
-		}
-		valueSpan, err := validateSubmittedSurfaceSpan(value, "surface", evidence, path+".object.value")
-		if err != nil {
-			return err
-		}
-		if !submittedSpanCoveredBySupport(valueSpan, supports) {
-			return fmt.Errorf("%s.object.value.span is not covered by a support span", path)
-		}
-		for _, field := range []string{"display", "unit"} {
-			if valueText, ok := value[field].(string); ok && valueText != "" && !submittedSupportContains(valueText, supports, evidence) {
-				return fmt.Errorf("%s.object.value.%s must occur within a support span", path, field)
-			}
 		}
 	}
 
@@ -356,107 +310,30 @@ func validateSubmittedRelationship(relationship map[string]any, evidence []any, 
 	return validateRelationshipValidityWindow(relationship, path)
 }
 
-func validateSubmittedEntity(entity map[string]any, evidence []any, path string) (submittedRelationshipSpan, error) {
-	span, err := validateSubmittedSurfaceSpan(entity, "name", evidence, path)
-	if err != nil {
-		return submittedRelationshipSpan{}, err
-	}
-	return span, nil
-}
-
-func validateSubmittedSurfaceSpan(fields map[string]any, surfaceField string, evidence []any, path string) (submittedRelationshipSpan, error) {
-	spanFields, ok := objectFields(fields["span"])
-	if !ok {
-		return submittedRelationshipSpan{}, fmt.Errorf("%s.span must be an object", path)
-	}
-	span, text, err := submittedRelationshipSpanFromFields(spanFields, evidence, path+".span")
-	if err != nil {
-		return submittedRelationshipSpan{}, err
-	}
-	surface, _ := fields[surfaceField].(string)
-	if surface != text {
-		return submittedRelationshipSpan{}, fmt.Errorf("%s.%s must equal its exact evidence span", path, surfaceField)
-	}
-	return span, nil
-}
-
-func submittedRelationshipSupports(raw any, evidence []any, path string) ([]submittedRelationshipSpan, error) {
+func submittedRelationshipEvidenceIndices(raw any, evidenceCount int, path string) ([]int, error) {
 	items, ok := raw.([]any)
 	if !ok {
 		return nil, nil
 	}
-	spans := make([]submittedRelationshipSpan, 0, len(items))
+	indices := make([]int, 0, len(items))
 	seen := make(map[string]struct{}, len(items))
-	for index, item := range items {
-		fields, ok := objectFields(item)
-		if !ok {
-			continue
+	for position, item := range items {
+		number, ok := schemaNumber(item)
+		if !ok || number != float64(int(number)) {
+			return nil, fmt.Errorf("%s[%d] must be an integer", path, position)
 		}
-		span, _, err := submittedRelationshipSpanFromFields(fields, evidence, fmt.Sprintf("%s[%d]", path, index))
-		if err != nil {
-			return nil, err
+		index := int(number)
+		if index < 0 || index >= evidenceCount {
+			return nil, fmt.Errorf("%s[%d] is outside submitted evidence", path, position)
 		}
-		key := fmt.Sprintf("%d:%d:%d", span.evidenceIndex, span.start, span.end)
+		key := fmt.Sprintf("%d", index)
 		if _, exists := seen[key]; exists {
-			return nil, fmt.Errorf("%s[%d] duplicates a support span", path, index)
+			return nil, fmt.Errorf("%s[%d] duplicates evidence index %d", path, position, index)
 		}
 		seen[key] = struct{}{}
-		spans = append(spans, span)
+		indices = append(indices, index)
 	}
-	return spans, nil
-}
-
-func submittedRelationshipSpanFromFields(fields map[string]any, evidence []any, path string) (submittedRelationshipSpan, string, error) {
-	indexNumber, indexOK := schemaNumber(fields["evidence_index"])
-	startNumber, startOK := schemaNumber(fields["start"])
-	endNumber, endOK := schemaNumber(fields["end"])
-	if !indexOK || !startOK || !endOK {
-		return submittedRelationshipSpan{}, "", fmt.Errorf("%s must contain integer evidence_index, start, and end", path)
-	}
-	index, start, end := int(indexNumber), int(startNumber), int(endNumber)
-	if index < 0 || index >= len(evidence) {
-		return submittedRelationshipSpan{}, "", fmt.Errorf("%s.evidence_index is outside submitted evidence", path)
-	}
-	evidenceItem, ok := objectFields(evidence[index])
-	if !ok {
-		return submittedRelationshipSpan{}, "", fmt.Errorf("%s.evidence_index is outside submitted evidence", path)
-	}
-	content, _ := evidenceItem["content"].(string)
-	runes := []rune(content)
-	if start < 0 || end <= start || end > len(runes) {
-		return submittedRelationshipSpan{}, "", fmt.Errorf("%s has invalid code-point span", path)
-	}
-	return submittedRelationshipSpan{evidenceIndex: index, start: start, end: end}, string(runes[start:end]), nil
-}
-
-func submittedSpanCoveredBySupport(component submittedRelationshipSpan, supports []submittedRelationshipSpan) bool {
-	for _, support := range supports {
-		if support.evidenceIndex == component.evidenceIndex && support.start <= component.start && support.end >= component.end {
-			return true
-		}
-	}
-	return false
-}
-
-func submittedSupportContains(value string, supports []submittedRelationshipSpan, evidence []any) bool {
-	for _, support := range supports {
-		if support.evidenceIndex < 0 || support.evidenceIndex >= len(evidence) {
-			continue
-		}
-		evidenceItem, ok := objectFields(evidence[support.evidenceIndex])
-		if !ok {
-			continue
-		}
-		content, _ := evidenceItem["content"].(string)
-		runes := []rune(content)
-		if support.start < 0 || support.end > len(runes) || support.end <= support.start {
-			continue
-		}
-		if strings.Contains(string(runes[support.start:support.end]), value) {
-			return true
-		}
-	}
-	return false
+	return indices, nil
 }
 
 func validateRelationshipValidityWindow(relationship map[string]any, path string) error {
