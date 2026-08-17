@@ -196,7 +196,7 @@ func (r *RecallFeedbackEventRepositoryImpl) List(ctx context.Context, filter dom
 		}
 		defer rows.Close()
 
-		items := make([]domain.RecallFeedbackEvent, 0, normalized.Limit)
+		items := make([]domain.RecallFeedbackEvent, 0)
 		for rows.Next() {
 			entry, err := scanRecallFeedbackEvent(rows)
 			if err != nil {

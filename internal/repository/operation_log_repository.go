@@ -103,7 +103,7 @@ func (r *OperationLogRepositoryImpl) List(ctx context.Context, filter domain.Ope
 		}
 		defer rows.Close()
 
-		items := make([]domain.OperationLog, 0, normalized.Limit)
+		items := make([]domain.OperationLog, 0)
 		for rows.Next() {
 			entry, err := scanOperationLog(rows)
 			if err != nil {

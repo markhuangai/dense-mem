@@ -137,7 +137,7 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 			return err
 		}
 		defer rows.Close()
-		matched := make([]CommunityRecallRecord, 0, input.Limit)
+		matched := make([]CommunityRecallRecord, 0)
 		for rows.Next() {
 			record := CommunityRecallRecord{}
 			var topPredicates pq.StringArray

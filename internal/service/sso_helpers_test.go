@@ -31,6 +31,7 @@ func TestSSOTokenAndRedirectHelpers(t *testing.T) {
 	assert.Equal(t, "/ui", safeRedirectPath(""))
 	assert.Equal(t, "/ui", safeRedirectPath("https://evil.example"))
 	assert.Equal(t, "/ui", safeRedirectPath("//evil.example/path"))
+	assert.Equal(t, "/ui", safeRedirectPath("/\\evil.example/path"))
 	assert.Equal(t, "/ui/team", safeRedirectPath("/ui/team"))
 }
 

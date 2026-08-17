@@ -97,7 +97,7 @@ func (r *SearchRepositoryImpl) RecallEvidence(ctx context.Context, input RecallE
 	if err != nil {
 		return nil, fmt.Errorf("recall: hydrate evidence: %w", err)
 	}
-	results := make([]RecallEvidenceHit, 0, input.Limit)
+	results := make([]RecallEvidenceHit, 0)
 	for _, candidate := range candidates {
 		hit, ok := hydrated[candidate.EvidenceID]
 		if !ok {

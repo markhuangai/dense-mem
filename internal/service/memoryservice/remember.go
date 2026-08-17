@@ -730,7 +730,7 @@ func evidenceSourceType(value string) string {
 }
 
 func ledgerAuthorityAndMetadata(authority string, metadata map[string]any) (string, map[string]any) {
-	out := make(map[string]any, len(metadata)+1)
+	out := make(map[string]any)
 	for key, value := range metadata {
 		out[key] = value
 	}
