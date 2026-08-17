@@ -110,6 +110,13 @@ func (h *CredentialHandler) Create(c echo.Context) error {
 	if body.MemoryBinding != nil {
 		req.MemoryBinding = *body.MemoryBinding
 	}
+	if principal != nil && principal.AuthMethod == "sso_session" && principal.IdentityID != uuid.Nil {
+		binding := strings.TrimSpace(req.MemoryBinding)
+		if binding == "" || binding == service.CredentialBindingProfilePrivate {
+			identityID := principal.IdentityID
+			req.OwnerIdentityID = &identityID
+		}
+	}
 
 	// Get actor metadata from principal
 	actorCredentialID := principalCredentialID(principal)

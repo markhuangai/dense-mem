@@ -203,6 +203,7 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 	if len(fused.Degradations) > 0 {
 		fused.Degradation = &fused.Degradations[0]
 	}
+	fused.SearchState = fused.SearchStates.Evidence
 	return fused
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
@@ -349,6 +350,34 @@ func TestCredentialHandlerCreateListGetRotateDelete(t *testing.T) {
 			t.Fatalf("delete scoped get/delete = (%s,%s)/(%s,%s); want team %s member %s", deleteSvc.getProfileID, deleteSvc.getKeyID, deleteSvc.deleteProfileID, deleteSvc.deletedKeyID, teamID, memberID)
 		}
 	})
+}
+
+func TestCredentialHandlerCreateDerivesSSOOwnerForProfilePrivateBinding(t *testing.T) {
+	teamID, identityID := uuid.New(), uuid.New()
+	svc := &apiKeyHandlerService{
+		key: &domain.Credential{ID: uuid.New(), TeamID: teamID},
+		raw: "dm_sso_manager_plaintext",
+	}
+	h := NewCredentialHandler(svc)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/ui/api/team/credentials", strings.NewReader(`{"memory_binding":"profile_private"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req = req.WithContext(middleware.SetPrincipalForTest(req.Context(), &middleware.Principal{
+		TeamID:     teamID,
+		IdentityID: identityID,
+		AuthMethod: "sso_session",
+		Role:       service.CredentialRoleManager,
+	}))
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/ui/api/team/credentials")
+	c.SetParamNames("teamId")
+	c.SetParamValues(teamID.String())
+
+	wrapped := middleware.BindAndValidate[dto.CreateCredentialRequest](middleware.CreateCredentialBodyKey)(h.Create)
+	require.NoError(t, wrapped(c))
+	require.NotNil(t, svc.createReq.OwnerIdentityID)
+	require.Equal(t, identityID, *svc.createReq.OwnerIdentityID)
 }
 
 func TestCredentialHandlerValidationErrors(t *testing.T) {

@@ -64,6 +64,7 @@ func TestFuseRecallResultsSumsRRFAndHonorsGlobalLimits(t *testing.T) {
 	require.Equal(t, "rel-1", fused.RelatedRelationships[0].RelationshipID)
 	require.Equal(t, string(domain.SearchProjectionFailed), fused.SearchStates.Evidence)
 	require.Equal(t, string(domain.SearchProjectionPending), fused.SearchStates.Relationships)
+	require.Equal(t, string(domain.SearchProjectionFailed), fused.SearchState)
 }
 
 func TestFuseRecallResultsSkipsNilAndClampsLimits(t *testing.T) {

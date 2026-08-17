@@ -351,6 +351,9 @@ DROP POLICY IF EXISTS memory_spaces_update ON memory_spaces;
 CREATE POLICY memory_spaces_update ON memory_spaces FOR UPDATE
 USING (current_setting('app.tx_mode', true) IN ('system', 'migration'))
 WITH CHECK (current_setting('app.tx_mode', true) IN ('system', 'migration'));
+DROP POLICY IF EXISTS memory_spaces_delete ON memory_spaces;
+CREATE POLICY memory_spaces_delete ON memory_spaces FOR DELETE
+USING (current_setting('app.tx_mode', true) IN ('system', 'migration'));
 
 SELECT set_config('app.allowed_space_ids', '', true);
 SELECT set_config('app.current_team_id', '', true);

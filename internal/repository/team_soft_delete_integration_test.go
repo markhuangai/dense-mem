@@ -167,6 +167,27 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	require.ErrorIs(t, err, ErrTeamInactive)
 }
 
+func TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "team-hard-delete-empty"))
+
+	require.NoError(t, NewTeamRepository(appDB, rls).HardDelete(ctx, teamID))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var teamCount, spaceCount int64
+		if err := tx.Raw(`SELECT COUNT(*) FROM teams WHERE id = ?`, teamID).Scan(&teamCount).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT COUNT(*) FROM memory_spaces WHERE team_id = ?`, teamID).Scan(&spaceCount).Error; err != nil {
+			return err
+		}
+		require.Zero(t, teamCount)
+		require.Zero(t, spaceCount)
+		return nil
+	}))
+}
+
 func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
