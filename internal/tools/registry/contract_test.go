@@ -392,6 +392,28 @@ func TestDefaultRecallDoesNotPermitCandidatesOrHypotheses(t *testing.T) {
 	}
 }
 
+func TestRecallRelatedRelationshipSchemaIncludesSpaceKind(t *testing.T) {
+	recall, err := requireTool(toolMap(t), ToolRecallMemory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputProperties := schemaProperties(recall.OutputSchema)
+	relatedRelationships := outputProperties["related_relationships"]
+	item, ok := relatedRelationships["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("related_relationships item schema = %#v", relatedRelationships["items"])
+	}
+	itemProperties := schemaProperties(item)
+	spaceKind := itemProperties["space_kind"]
+	enum, ok := spaceKind["enum"].([]string)
+	if !ok || !slices.Contains(enum, string(domain.MemorySpaceCredentialPrivate)) {
+		t.Fatalf("space_kind enum = %#v", spaceKind["enum"])
+	}
+	if !slices.Contains(schemaRequiredFields(item), "space_kind") {
+		t.Fatalf("related relationship required fields = %#v", schemaRequiredFields(item))
+	}
+}
+
 func TestCanonicalInputFieldNames(t *testing.T) {
 	tools := toolMap(t)
 	cases := []struct {

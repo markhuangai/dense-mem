@@ -111,6 +111,10 @@ type RecallRequest struct {
 	KnownEvidenceIDs           []string   `json:"known_evidence_ids,omitempty"`
 	KnownRelationshipIDs       []string   `json:"known_relationship_ids,omitempty"`
 	ExpandFromEntityIDs        []string   `json:"expand_from_entity_ids,omitempty"`
+	recallContract             *repository.ActiveSearchContract
+	recallEmbedding            []float32
+	recallEmbeddingDegradation *RecallDegradationResult
+	recallEmbeddingReady       bool
 }
 
 type RecallResult struct {
@@ -145,6 +149,7 @@ type RecallResultItem struct {
 	Source          string     `json:"source,omitempty"`
 	SourceType      string     `json:"source_type,omitempty"`
 	CreatedAt       *time.Time `json:"created_at,omitempty"`
+	SpaceKind       string     `json:"space_kind,omitempty"`
 }
 
 type RecallDiscoveryPath struct {
@@ -230,6 +235,7 @@ type RelatedRelationshipSummary struct {
 	Polarity                  string         `json:"polarity"`
 	EvidenceIDs               []string       `json:"evidence_ids"`
 	SearchState               string         `json:"search_state,omitempty"`
+	SpaceKind                 string         `json:"space_kind,omitempty"`
 }
 
 type EntityHandle struct {
@@ -282,26 +288,42 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrRecallAuthContext
 	}
-	started := time.Now()
-	defer func() {
-		outcome := "ok"
-		resultCount := 0
-		if err != nil {
-			outcome = "error"
-		}
-		if result != nil {
-			resultCount = len(result.Results)
-		}
-		observability.RecordRecall(ctx, s.metrics, float64(time.Since(started).Microseconds())/1000, resultCount, outcome)
-	}()
+	if _, branchSelected := recallBranchFromContext(ctx); !branchSelected && len(actor.AllowedSpaces) > 1 {
+		return s.recallAcrossSpaces(ctx, req, actor)
+	}
+	branch, _ := recallBranchFromContext(ctx)
+	spaceKind := branchKind(branch)
+	// Private ingestion is not supported here, so graph and hypothesis expansion stays on shared data.
+	teamSharedBranch := spaceKind == string(domain.MemorySpaceTeamShared)
+	if !recallBranchMetricsSuppressed(ctx) {
+		started := time.Now()
+		defer func() {
+			outcome := "ok"
+			resultCount := 0
+			if err != nil {
+				outcome = "error"
+			}
+			if result != nil {
+				resultCount = len(result.Results)
+			}
+			observability.RecordRecall(ctx, s.metrics, float64(time.Since(started).Microseconds())/1000, resultCount, outcome)
+		}()
+	}
 	req = normalizeRecallRequest(req)
-	contract, err := s.search.GetActiveSearchContract(ctx)
-	if err != nil {
-		return nil, err
+	contract := req.recallContract
+	if contract == nil {
+		contract, err = s.search.GetActiveSearchContract(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	degradations := []RecallDegradationResult{}
-	queryEmbedding := []float32(nil)
-	if req.Query != "" {
+	queryEmbedding := append([]float32(nil), req.recallEmbedding...)
+	if req.recallEmbeddingReady {
+		if req.recallEmbeddingDegradation != nil {
+			degradations = append(degradations, *req.recallEmbeddingDegradation)
+		}
+	} else if req.Query != "" {
 		embedCtx := observability.WithAIOperation(ctx, observability.AIOperationRecallEmbedding, 1)
 		vector, vectorDegradation := s.queryEmbedding(embedCtx, contract, req.Query)
 		queryEmbedding = vector
@@ -319,6 +341,8 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 		KnownEvidenceIDs:     req.KnownEvidenceIDs,
 		KnownRelationshipIDs: req.KnownRelationshipIDs,
 		ExpandFromEntityIDs:  req.ExpandFromEntityIDs,
+		SpaceID:              branchID(branch),
+		SpaceKind:            spaceKind,
 	})
 	if err != nil {
 		return nil, err
@@ -329,7 +353,12 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 	result = recallResultFromRepository(recalled, degradations)
 	appendEvidenceVectorFailureDegradation(result, recalled.SearchState)
 	returnedEvidenceIDs := recallResultEvidenceIDs(result.Results)
-	coveredGroups, coverageAvailable, coverageDegradation := s.resolveCommunityCoverage(ctx, actor.TeamID.String(), req.KnownEvidenceIDs, returnedEvidenceIDs, req.KnownRelationshipIDs)
+	coveredGroups := map[string]struct{}{}
+	coverageAvailable := true
+	var coverageDegradation *RecallDegradationResult
+	if teamSharedBranch {
+		coveredGroups, coverageAvailable, coverageDegradation = s.resolveCommunityCoverage(ctx, actor.TeamID.String(), req.KnownEvidenceIDs, returnedEvidenceIDs, req.KnownRelationshipIDs)
+	}
 	if coverageDegradation != nil {
 		result.Degradations = append(result.Degradations, *coverageDegradation)
 	}
@@ -340,15 +369,17 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 		result.Degradations = append(result.Degradations, *relationshipDegradation)
 	}
 	communities, paths, communityDegradation := []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, (*RecallDegradationResult)(nil)
-	if _, snapshotRepo := s.communities.(RecallCommunitySnapshotRepository); snapshotRepo || len(result.Results) < req.Limit {
-		evidenceIDs := make([]string, 0, len(result.Results))
-		evidenceIDs = append(evidenceIDs, returnedEvidenceIDs...)
-		communityGroups := cloneGroupSet(coveredGroups)
-		for group := range directGroups {
-			communityGroups[group] = struct{}{}
+	if teamSharedBranch {
+		if _, snapshotRepo := s.communities.(RecallCommunitySnapshotRepository); snapshotRepo || len(result.Results) < req.Limit {
+			evidenceIDs := make([]string, 0, len(result.Results))
+			evidenceIDs = append(evidenceIDs, returnedEvidenceIDs...)
+			communityGroups := cloneGroupSet(coveredGroups)
+			for group := range directGroups {
+				communityGroups[group] = struct{}{}
+			}
+			seedRelationshipIDs := relationshipSummaryIDs(relationships)
+			communities, paths, communityDegradation = s.recallCommunities(ctx, actor.TeamID.String(), req, communityGroups, evidenceIDs, seedRelationshipIDs, coverageAvailable)
 		}
-		seedRelationshipIDs := relationshipSummaryIDs(relationships)
-		communities, paths, communityDegradation = s.recallCommunities(ctx, actor.TeamID.String(), req, communityGroups, evidenceIDs, seedRelationshipIDs, coverageAvailable)
 	}
 	result.RelatedCommunities = communities
 	result.DiscoveryPaths = paths
@@ -373,17 +404,11 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 		}
 		result.RelatedRelationships = filterRelatedRelationshipsByGroups(result.RelatedRelationships, communityGroups)
 	}
-	communityOutcome := "ok"
-	if communityDegradation != nil {
-		communityOutcome = "degraded"
+	if !recallBranchMetricsSuppressed(ctx) {
+		recordRecallCommunityMetric(ctx, s.metrics, result)
 	}
-	communityRelationships := 0
-	for _, community := range result.RelatedCommunities {
-		communityRelationships += len(community.CommunityRelationships)
-	}
-	observability.RecordCommunityRecall(ctx, s.metrics, communityOutcome, len(result.RelatedCommunities), communityRelationships)
 	result.RelatedHypotheses = []RelatedHypothesisSummary{}
-	if req.IncludeHypotheses {
+	if teamSharedBranch && req.IncludeHypotheses {
 		related, relatedDegradation := s.recallRelatedHypotheses(ctx, actor.TeamID.String(), actor.OwnerID.String(), req.Query)
 		result.RelatedHypotheses = related
 		if relatedDegradation != nil {
@@ -393,7 +418,26 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 	if len(result.Degradations) > 0 {
 		result.Degradation = &result.Degradations[0]
 	}
+	applyRecallSpaceKind(result, spaceKind)
 	return result, nil
+}
+
+func recordRecallCommunityMetric(ctx context.Context, metrics observability.DiscoverabilityMetrics, result *RecallResult) {
+	if result == nil {
+		return
+	}
+	outcome := "ok"
+	for _, degradation := range result.Degradations {
+		if degradation.Frontier == "communities" {
+			outcome = "degraded"
+			break
+		}
+	}
+	communityRelationships := 0
+	for _, community := range result.RelatedCommunities {
+		communityRelationships += len(community.CommunityRelationships)
+	}
+	observability.RecordCommunityRecall(ctx, metrics, outcome, len(result.RelatedCommunities), communityRelationships)
 }
 
 func (s *recallService) resolveCommunityCoverage(
@@ -560,58 +604,6 @@ func communityDiscoveryDegradation() *RecallDegradationResult {
 	}
 }
 
-func (s *recallService) recallRelatedRelationships(
-	ctx context.Context,
-	teamID string,
-	req RecallRequest,
-	queryEmbedding []float32,
-	excludedGroups map[string]struct{},
-) ([]RelatedRelationshipSummary, string, *RecallDegradationResult, map[string]struct{}) {
-	relationshipLimit := recallOptionalLimitValue(req.RelationshipLimit)
-	if relationshipLimit <= 0 {
-		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionNotRequired), nil, map[string]struct{}{}
-	}
-	recalled, err := s.search.RecallRelationships(ctx, repository.RecallRelationshipsInput{
-		TeamID:               teamID,
-		Query:                req.Query,
-		QueryEmbedding:       queryEmbedding,
-		Limit:                relationshipLimit,
-		ValidAt:              req.ValidAt,
-		KnownAt:              req.KnownAt,
-		KnownEvidenceIDs:     req.KnownEvidenceIDs,
-		KnownRelationshipIDs: req.KnownRelationshipIDs,
-		ExpandFromEntityIDs:  req.ExpandFromEntityIDs,
-		ExcludedGroupKeys:    sortedGroupKeys(excludedGroups),
-	})
-	if err != nil {
-		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionFailed), &RecallDegradationResult{
-			Frontier: "relationships",
-			Optional: true,
-			Code:     "relationship_discovery_unavailable",
-			Message:  "relationship discovery was unavailable; primary evidence recall was used",
-		}, map[string]struct{}{}
-	}
-	state := string(domain.SearchProjectionCurrent)
-	if recalled != nil && recalled.SearchState != "" {
-		state = recalled.SearchState
-	}
-	var degradation *RecallDegradationResult
-	if strings.TrimSpace(req.Query) != "" && len(queryEmbedding) == 0 {
-		degradation = relationshipVectorDegradation(state)
-	} else if recalled != nil && recalled.VectorOmitted {
-		degradation = relationshipVectorDegradation(state)
-	}
-	groups := map[string]struct{}{}
-	if recalled != nil {
-		for _, hit := range recalled.Results {
-			if hit.SemanticGroupKey != "" {
-				groups[hit.SemanticGroupKey] = struct{}{}
-			}
-		}
-	}
-	return relatedRelationshipSummaries(recalled), state, degradation, groups
-}
-
 func relationshipVectorDegradation(state string) *RecallDegradationResult {
 	code := "relationship_vector_warming"
 	message := "Relationship vector projection is warming; lexical discovery was used."
@@ -730,6 +722,7 @@ func relatedRelationshipSummaries(recalled *repository.RecallRelationshipsResult
 			Polarity:    record.Polarity,
 			EvidenceIDs: append([]string(nil), record.EvidenceIDs...),
 			SearchState: record.SearchState,
+			SpaceKind:   record.SpaceKind,
 		})
 	}
 	return out

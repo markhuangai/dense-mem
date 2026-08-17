@@ -29,14 +29,20 @@ type CreateCredentialRequest struct {
 	Scopes          []string   `json:"scopes"`
 	Role            string     `json:"role"`
 	OwnerIdentityID *uuid.UUID `json:"-"`
+	// MemoryBinding is immutable credential placement. Empty uses the
+	// compatibility default derived from SSO ownership and write access.
+	MemoryBinding string `json:"memory_binding,omitempty"`
 }
 
 const (
-	CredentialScopeRead         = "read"
-	CredentialScopeWrite        = "write"
-	CredentialScopeFeedbackRead = "feedback:read"
-	CredentialRoleManager       = "manager"
-	CredentialRoleMember        = "member"
+	CredentialScopeRead                = "read"
+	CredentialScopeWrite               = "write"
+	CredentialScopeFeedbackRead        = "feedback:read"
+	CredentialRoleManager              = "manager"
+	CredentialRoleMember               = "member"
+	CredentialBindingSharedOnly        = string(domain.CredentialBindingSharedOnly)
+	CredentialBindingProfilePrivate    = string(domain.CredentialBindingProfilePrivate)
+	CredentialBindingCredentialPrivate = string(domain.CredentialBindingCredentialPrivate)
 )
 
 var standardCredentialScopes = []string{CredentialScopeRead, CredentialScopeWrite}
@@ -106,6 +112,26 @@ func hasCredentialScope(scopes []string, target string) bool {
 	return false
 }
 
+func normalizeCredentialMemoryBinding(raw string, ownerIdentityID *uuid.UUID, scopes []string) (domain.CredentialMemoryBinding, error) {
+	if strings.TrimSpace(raw) == "" {
+		if ownerIdentityID != nil && *ownerIdentityID != uuid.Nil {
+			return domain.CredentialBindingProfilePrivate, nil
+		}
+		if hasCredentialScope(scopes, CredentialScopeWrite) {
+			return domain.CredentialBindingCredentialPrivate, nil
+		}
+		return domain.CredentialBindingSharedOnly, nil
+	}
+	binding, err := domain.NormalizeCredentialMemoryBinding(strings.ToLower(strings.TrimSpace(raw)))
+	if err != nil {
+		return "", httperr.New(httperr.VALIDATION_ERROR, "memory_binding must be shared_only, profile_private, or credential_private")
+	}
+	if binding == domain.CredentialBindingProfilePrivate && (ownerIdentityID == nil || *ownerIdentityID == uuid.Nil) {
+		return "", httperr.New(httperr.VALIDATION_ERROR, "profile_private memory binding requires an SSO identity")
+	}
+	return binding, nil
+}
+
 func NormalizeCredentialRole(role string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(role)) {
 	case "":
@@ -144,8 +170,11 @@ func credentialNameConflict(err error, name string) error {
 }
 
 func credentialCreateConflict(err error, name string) error {
+	// The memory-space migration removes this legacy singleton index. If an
+	// older database is still serving traffic, fail closed instead of reporting
+	// a successful create without a durable credential row.
 	if uniqueViolationName(err) == "idx_credentials_owner_team_active_unique" {
-		return httperr.New(httperr.CONFLICT, "sso-owned api credential already exists for this team")
+		return httperr.New(httperr.CONFLICT, "api credential already exists for this owner and team")
 	}
 	return credentialNameConflict(err, name)
 }
@@ -177,6 +206,10 @@ type CredentialService interface {
 	CountByTeam(ctx context.Context, teamID uuid.UUID) (int64, error)
 	// GetByIDForTeam returns the credential only when it belongs to teamID; NOT_FOUND otherwise (no existence oracle).
 	GetByIDForTeam(ctx context.Context, teamID, id uuid.UUID) (*domain.Credential, error)
+	// ListSSOOwnedCredentials returns active credentials owned by one SSO identity in one team.
+	ListSSOOwnedCredentials(ctx context.Context, teamID, identityID uuid.UUID) ([]*domain.Credential, error)
+	// GetSSOOwnedCredentialByID returns one active credential only when its team, owner, and ID match.
+	GetSSOOwnedCredentialByID(ctx context.Context, teamID, identityID, credentialID uuid.UUID) (*domain.Credential, error)
 	GetSSOOwnedCredential(ctx context.Context, teamID, identityID uuid.UUID) (*domain.Credential, error)
 	// RevokeForTeam revokes the credential only when it belongs to teamID; NOT_FOUND otherwise.
 	RevokeForTeam(ctx context.Context, teamID, id uuid.UUID, actorCredentialID *string, actorRole, clientIP, correlationID string) error
@@ -191,6 +224,14 @@ type CredentialService interface {
 	UpdateScopesForTeam(ctx context.Context, teamID, id uuid.UUID, scopes []string, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, error)
 	// RotateForTeam rotates credential material in place for a named credential.
 	RotateForTeam(ctx context.Context, teamID, id uuid.UUID, req CreateCredentialRequest, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, string, error)
+}
+
+// SSOOwnedCredentialService provides owner-scoped lifecycle operations for
+// credentials created from an SSO session. Team-manager APIs continue to use
+// the broader team-scoped methods above.
+type SSOOwnedCredentialService interface {
+	RotateSSOOwnedCredential(ctx context.Context, teamID, identityID, credentialID uuid.UUID, req CreateCredentialRequest, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, string, error)
+	RevokeSSOOwnedCredential(ctx context.Context, teamID, identityID, credentialID uuid.UUID, actorCredentialID *string, actorRole, clientIP, correlationID string) error
 }
 
 // CredentialServiceImpl implements the CredentialService interface.
@@ -283,6 +324,10 @@ func (s *CredentialServiceImpl) CreateCredential(ctx context.Context, teamID uui
 	if role == CredentialRoleManager {
 		scopes = managerCredentialScopes(scopes)
 	}
+	binding, err := normalizeCredentialMemoryBinding(req.MemoryBinding, req.OwnerIdentityID, scopes)
+	if err != nil {
+		return nil, "", err
+	}
 
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -313,6 +358,7 @@ func (s *CredentialServiceImpl) CreateCredential(ctx context.Context, teamID uui
 		RateLimit:       req.RateLimit,
 		ExpiresAt:       req.ExpiresAt,
 		OwnerIdentityID: req.OwnerIdentityID,
+		MemoryBinding:   binding,
 	}
 
 	if err := s.repo.CreateCredential(ctx, credential); err != nil {
@@ -333,6 +379,7 @@ func (s *CredentialServiceImpl) CreateCredential(ctx context.Context, teamID uui
 		"scopes":          credential.Scopes,
 		"rate_limit":      credential.RateLimit,
 		"role":            credential.GetRole(),
+		"memory_binding":  string(credential.MemoryBinding),
 	}
 	if credential.ExpiresAt != nil {
 		afterPayload["expires_at"] = credential.ExpiresAt.Format(time.RFC3339)
@@ -563,6 +610,9 @@ func (s *CredentialServiceImpl) RotateForTeam(ctx context.Context, teamID, id uu
 	if credential == nil {
 		return nil, "", httperr.New(httperr.NOT_FOUND, fmt.Sprintf("credential with id '%s' not found", id.String()))
 	}
+	if credential.RevokedAt != nil {
+		return nil, "", httperr.New(httperr.CONFLICT, "api credential is revoked and cannot rotate")
+	}
 
 	name := credential.Name
 	rawKey, err := crypto.GenerateRawKeyForCredential(name)
@@ -640,12 +690,49 @@ func (s *CredentialServiceImpl) GetByIDForTeam(ctx context.Context, teamID, id u
 	return credential, nil
 }
 
+func (s *CredentialServiceImpl) ListSSOOwnedCredentials(ctx context.Context, teamID, identityID uuid.UUID) ([]*domain.Credential, error) {
+	credentials, err := s.repo.ListSSOOwnedCredentials(ctx, teamID, identityID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sso-owned api credentials for team: %w", err)
+	}
+	return credentials, nil
+}
+
+func (s *CredentialServiceImpl) GetSSOOwnedCredentialByID(ctx context.Context, teamID, identityID, credentialID uuid.UUID) (*domain.Credential, error) {
+	credential, err := s.repo.GetSSOOwnedCredentialByID(ctx, teamID, identityID, credentialID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sso-owned api credential for team: %w", err)
+	}
+	if credential == nil {
+		return nil, httperr.New(httperr.NOT_FOUND, fmt.Sprintf("api credential with id '%s' not found", credentialID.String()))
+	}
+	return credential, nil
+}
+
+// RotateSSOOwnedCredential verifies the SSO owner and credential ID in the
+// service layer before rotating the stable credential record in place.
+func (s *CredentialServiceImpl) RotateSSOOwnedCredential(ctx context.Context, teamID, identityID, credentialID uuid.UUID, req CreateCredentialRequest, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, string, error) {
+	if _, err := s.GetSSOOwnedCredentialByID(ctx, teamID, identityID, credentialID); err != nil {
+		return nil, "", err
+	}
+	return s.RotateForTeam(ctx, teamID, credentialID, req, actorCredentialID, actorRole, clientIP, correlationID)
+}
+
 func (s *CredentialServiceImpl) GetSSOOwnedCredential(ctx context.Context, teamID, identityID uuid.UUID) (*domain.Credential, error) {
 	credential, err := s.repo.GetSSOOwnedCredential(ctx, teamID, identityID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sso-owned api credential for team: %w", err)
 	}
 	return credential, nil
+}
+
+// RevokeSSOOwnedCredential verifies the SSO owner and credential ID in the
+// service layer before revoking only the selected credential.
+func (s *CredentialServiceImpl) RevokeSSOOwnedCredential(ctx context.Context, teamID, identityID, credentialID uuid.UUID, actorCredentialID *string, actorRole, clientIP, correlationID string) error {
+	if _, err := s.GetSSOOwnedCredentialByID(ctx, teamID, identityID, credentialID); err != nil {
+		return err
+	}
+	return s.RevokeForTeam(ctx, teamID, credentialID, actorCredentialID, actorRole, clientIP, correlationID)
 }
 
 // RevokeForTeam revokes an API credential scoped to the caller's team.

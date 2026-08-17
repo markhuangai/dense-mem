@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string, limit int) error {
+func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID, spaceID string, limit int) error {
 	return tx.WithContext(ctx).Exec(`
 		WITH document_candidates AS MATERIALIZED (
 			SELECT job.team_id, job.embedding_job_id
@@ -24,6 +24,7 @@ func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID
 			  AND job.status = 'processing'
 			  AND job.lease_until <= clock_timestamp()
 			  AND job.attempts >= job.max_attempts
+			  AND job.space_id = COALESCE(NULLIF(?, '')::uuid, job.space_id)
 			ORDER BY job.lease_until ASC, job.embedding_job_id ASC
 			LIMIT ?
 			FOR UPDATE OF document SKIP LOCKED
@@ -64,5 +65,5 @@ func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID
 		  AND document.document_version = failed.document_version
 		  AND document.embedding_contract_id = failed.embedding_contract_id
 		  AND document.embedding_dimensions = failed.embedding_dimensions
-	`, teamID, limit, embeddingJobAttemptsExhaustedMessage, embeddingJobAttemptsExhaustedMessage).Error
+	`, teamID, spaceID, limit, embeddingJobAttemptsExhaustedMessage, embeddingJobAttemptsExhaustedMessage).Error
 }

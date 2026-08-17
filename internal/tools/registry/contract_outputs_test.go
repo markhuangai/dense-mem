@@ -1,12 +1,42 @@
 package registry
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
+
+func TestRecallContractOutputValidatesSpaceBranchDegradation(t *testing.T) {
+	recall, err := requireTool(toolMap(t), ToolRecallMemory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := recallContractOutput(&memoryservice.RecallResult{
+		RecallID: "rec-branch-degraded",
+		SearchStates: memoryservice.RecallSearchStates{
+			Evidence: string(domain.SearchProjectionCurrent), Relationships: string(domain.SearchProjectionNotRequired),
+		},
+		Degradations: []memoryservice.RecallDegradationResult{{
+			Frontier: "evidence", Optional: true, Code: "space_branch_unavailable", Message: "authorized memory-space branch was unavailable",
+		}},
+	})
+	encoded, err := json.Marshal(output)
+	if err != nil {
+		t.Fatalf("marshal output: %v", err)
+	}
+	var wireOutput map[string]any
+	if err := json.Unmarshal(encoded, &wireOutput); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	if err := ValidateInput(Tool{InputSchema: recall.OutputSchema}, wireOutput); err != nil {
+		t.Fatalf("validate output: %v", err)
+	}
+}
 
 func TestFirstNonEmptyReturnsTrimmedNonNilValue(t *testing.T) {
 	if got := firstNonEmpty("  ", " "+uuid.Nil.String()+" ", " canonical "); got != "canonical" {

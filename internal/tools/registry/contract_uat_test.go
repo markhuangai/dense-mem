@@ -158,7 +158,7 @@ func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {
 			t.Fatalf("recall_memory exposed %s in public output: %#v", forbidden, result)
 		}
 	}
-	if result["evidence_id"] != "evidence-canonical" || result["context"] != "Dense-Mem uses PostgreSQL." {
+	if result["evidence_id"] != "evidence-canonical" || result["context"] != "Dense-Mem uses PostgreSQL." || result["space_kind"] != string(domain.MemorySpaceTeamShared) {
 		t.Fatalf("result = %#v, want public evidence context", result)
 	}
 	if _, ok := out["related_hypotheses"].([]memoryservice.RelatedHypothesisSummary); !ok {

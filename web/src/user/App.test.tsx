@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
-import { recallPayloadForHits } from "./App.test-helpers";
+import { authorizationHeader, isRecallSequence, jsonResponse, optionValue, recallPayloadForHits } from "./App.test-helpers";
 import { GraphNode, GraphSnapshot, RecallHit, UserCredential, UserSession } from "./api";
 
 vi.mock("react-force-graph-2d", async () => {
@@ -56,9 +56,11 @@ const baseSession: UserSession = {
     last_used_at: null,
     expires_at: null,
     created_at: "2026-05-01T12:00:00Z",
+    memory_binding: "shared_only",
+    memory_space_kind: "team_shared",
   },
   teams: [],
-  personal_credential: null,
+  personal_credentials: [],
 };
 
 const memberCredential: UserCredential = {
@@ -72,6 +74,8 @@ const memberCredential: UserCredential = {
   last_used_at: null,
   expires_at: null,
   created_at: "2026-05-01T12:00:00Z",
+  memory_binding: "shared_only",
+  memory_space_kind: "team_shared",
 };
 
 const recallHits: RecallHit[] = [
@@ -718,7 +722,7 @@ describe("UserPortalApp", () => {
     expect(await screen.findByDisplayValue("dm_sso_personal_plaintext")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/sso/credential",
+        "/ui/api/sso/credentials",
         expect.objectContaining({
           method: "POST",
           credentials: "include",
@@ -727,14 +731,31 @@ describe("UserPortalApp", () => {
       );
     });
 
+    const secondName = screen.getByLabelText("Credential name", { selector: "#sso-personal-credential-name" });
+    await userEvent.type(secondName, "Second key");
+    await userEvent.selectOptions(screen.getByLabelText("Memory binding", { selector: "#sso-personal-credential-binding" }), "credential_private");
+    await userEvent.click(screen.getByRole("button", { name: /create api key/i }));
+    expect((await screen.findAllByText("Second key")).length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText("Credential name")).toHaveLength(1);
+    const secondCredential = screen.getByRole("button", { name: /Second key/ });
+    await userEvent.click(secondCredential);
+
     await userEvent.click(screen.getByRole("button", { name: /regenerate key/i }));
     expect(await screen.findByDisplayValue("dm_sso_personal_rotated")).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/sso/credential/rotate",
+        "/ui/api/sso/credentials/88888888-8888-4888-8888-888888888888/rotate",
         expect.objectContaining({ method: "POST", credentials: "include" }),
       );
     });
+    await userEvent.click(screen.getByRole("button", { name: /revoke key/i }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/ui/api/sso/credentials/88888888-8888-4888-8888-888888888888",
+        expect.objectContaining({ method: "DELETE", credentials: "include" }),
+      );
+    });
+    expect(screen.queryByText("Second key")).not.toBeInTheDocument();
   });
 
   it("keeps SSO read-only owned API key rotation disabled", async () => {
@@ -751,7 +772,6 @@ describe("UserPortalApp", () => {
     expect(screen.getByRole("button", { name: /regenerate key/i })).toBeDisabled();
   });
 });
-
 async function expectCurrentWorkspace(teamName: string) {
   const workspace = await screen.findByLabelText("Current workspace");
   expect(workspace).toHaveTextContent(teamName);
@@ -860,14 +880,6 @@ function mockUserFetch(session: UserSession, credentials: UserCredential[] = [],
   return fetchMock;
 }
 
-function optionValue<T>(value: T | T[], index: number): T {
-  return Array.isArray(value) ? value[Math.min(index, value.length - 1)] : value;
-}
-
-function isRecallSequence(value: RecallHit[] | RecallHit[][]): value is RecallHit[][] {
-  return Array.isArray(value[0]);
-}
-
 function telemetryForSession(session: UserSession) {
   const teamScope = session.membership.role === "manager";
   return {
@@ -905,7 +917,7 @@ function ssoSessions() {
     ...baseSession,
     credential: null,
     membership: firstMembership,
-    personal_credential: null,
+    personal_credentials: [],
     teams: [
       { team: baseSession.team, membership: firstMembership },
       { team: secondTeam, membership: secondMembership },
@@ -938,27 +950,38 @@ function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: 
     if (url.startsWith("/ui/api/telemetry") && method === "GET") {
       return jsonResponse({ data: telemetryForSession(current) });
     }
-    if (url === "/ui/api/sso/credential" && method === "POST") {
+    if (url === "/ui/api/sso/credentials" && method === "POST") {
       const body = JSON.parse(String(init?.body));
+      const createdID = current.personal_credentials.length === 0
+        ? "77777777-7777-4777-8777-777777777777"
+        : "88888888-8888-4888-8888-888888888888";
       const created: UserCredential = {
         ...memberCredential,
         team_id: current.team.id,
-        id: "77777777-7777-4777-8777-777777777777",
+        id: createdID,
         name: body.name,
         key_suffix: "own123",
         scopes: body.scopes,
         role: "member",
+        memory_binding: body.memory_binding ?? "profile_private",
+        memory_space_kind: body.memory_binding === "credential_private" ? "credential_private" : body.memory_binding === "shared_only" ? "team_shared" : "profile_private",
       };
       current = {
         ...current,
-        personal_credential: created,
+        personal_credentials: [...current.personal_credentials, created],
       };
       return jsonResponse({ data: { api_key: "dm_sso_personal_plaintext", credential: created } }, 201);
     }
-    if (url === "/ui/api/sso/credential/rotate" && method === "POST") {
-      const rotated = { ...(current.personal_credential ?? memberCredential), team_id: current.team.id, key_suffix: "rot321" };
-      current = { ...current, personal_credential: rotated };
+    if (url.includes("/ui/api/sso/credentials/") && url.endsWith("/rotate") && method === "POST") {
+      const credentialID = url.split("/").at(-2);
+      const rotated = { ...(current.personal_credentials.find((credential) => credential.id === credentialID) ?? memberCredential), team_id: current.team.id, key_suffix: "rot321" };
+      current = { ...current, personal_credentials: current.personal_credentials.map((credential) => credential.id === rotated.id ? rotated : credential) };
       return jsonResponse({ data: { api_key: "dm_sso_personal_rotated", credential: rotated } });
+    }
+    if (url.includes("/ui/api/sso/credentials/") && method === "DELETE") {
+      const credentialID = url.split("/").at(-1);
+      current = { ...current, personal_credentials: current.personal_credentials.filter((credential) => credential.id !== credentialID) };
+      return jsonResponse({ data: { status: "revoked" } });
     }
     if (url === "/ui/api/sso/logout" && method === "POST") {
       if (options.logoutStatus) {
@@ -973,25 +996,4 @@ function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: 
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
-}
-
-function authorizationHeader(init?: RequestInit): string {
-  const headers = init?.headers;
-  if (!headers) {
-    return "";
-  }
-  if (headers instanceof Headers) {
-    return headers.get("Authorization") ?? "";
-  }
-  if (Array.isArray(headers)) {
-    return headers.find(([name]) => name.toLowerCase() === "authorization")?.[1] ?? "";
-  }
-  return (headers as Record<string, string>).Authorization ?? (headers as Record<string, string>).authorization ?? "";
-}
-
-function jsonResponse(payload: unknown, status = 200) {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
 }

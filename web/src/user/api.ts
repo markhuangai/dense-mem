@@ -23,6 +23,8 @@ export type UserCredential = {
   last_used_at: string | null;
   expires_at: string | null;
   created_at: string;
+  memory_binding: "shared_only" | "profile_private" | "credential_private" | string;
+  memory_space_kind: "team_shared" | "profile_private" | "credential_private" | string;
 };
 
 export type UserSession = {
@@ -30,7 +32,7 @@ export type UserSession = {
   membership: UserMembership;
   credential: UserCredential | null;
   teams: UserTeamOption[];
-  personal_credential: UserCredential | null;
+  personal_credentials: UserCredential[];
 };
 
 export type UserTeamOption = {
@@ -78,6 +80,7 @@ export type CreateCredentialInput = {
   scopes?: string[];
   rate_limit: number;
   expires_at?: string;
+  memory_binding?: "shared_only" | "profile_private" | "credential_private";
 };
 
 export type UpdateCredentialInput =
@@ -360,12 +363,27 @@ export class UserApi {
   }
 
   async createSSOCredential(input: CreateCredentialInput): Promise<CreatedCredential> {
-    const payload = await this.request<Envelope<CreatedCredential>>("/ui/api/sso/credential", { method: "POST", body: input });
+    const payload = await this.request<Envelope<CreatedCredential>>("/ui/api/sso/credentials", { method: "POST", body: input });
     return payload.data;
   }
 
-  async rotateSSOCredential(): Promise<RotateResponse> {
-    const payload = await this.request<Envelope<RotateResponse>>("/ui/api/sso/credential/rotate", { method: "POST", body: {} });
+  async listSSOCredentials(): Promise<UserCredential[]> {
+    const payload = await this.request<Envelope<UserCredential[]>>("/ui/api/sso/credentials");
+    return payload.data;
+  }
+
+  async getSSOCredential(credentialId: string): Promise<UserCredential> {
+    const payload = await this.request<Envelope<UserCredential>>(`/ui/api/sso/credentials/${credentialId}`);
+    return payload.data;
+  }
+
+  async rotateSSOCredential(credentialId: string): Promise<RotateResponse> {
+    const payload = await this.request<Envelope<RotateResponse>>(`/ui/api/sso/credentials/${credentialId}/rotate`, { method: "POST", body: {} });
+    return payload.data;
+  }
+
+  async revokeSSOCredential(credentialId: string): Promise<{ status: string }> {
+    const payload = await this.request<Envelope<{ status: string }>>(`/ui/api/sso/credentials/${credentialId}`, { method: "DELETE" });
     return payload.data;
   }
 

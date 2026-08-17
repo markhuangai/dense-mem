@@ -33,6 +33,7 @@ type Principal struct {
 	AuthMethod    string
 	SSOProviderID *uuid.UUID
 	SSOSubject    string
+	AllowedSpaces []domain.MemorySpaceAccess
 }
 
 // PrincipalInterface is the companion interface for Principal.
@@ -395,20 +396,53 @@ func principalAndActorContext(actor *domain.AuthenticatedActor, authMethod, keyP
 		AuthMethod:    authMethod,
 		SSOProviderID: ssoProviderID,
 		SSOSubject:    ssoSubject,
+		AllowedSpaces: append([]domain.MemorySpaceAccess(nil), actorAllowedSpaces(actor)...),
 	}
 	actorContext := requestctx.Actor{
-		TeamID:       actor.Team.ID,
-		TeamName:     actor.Team.Name,
-		IdentityID:   actor.Identity.ID,
-		MembershipID: actor.Membership.ID,
-		OwnerID:      actor.OwnerID,
-		OwnerName:    actor.Membership.Name,
-		CredentialID: credentialID,
-		AuthMethod:   authMethod,
-		Role:         actor.Membership.Role,
-		Grants:       append([]string(nil), actor.Membership.Grants...),
+		TeamID:        actor.Team.ID,
+		TeamName:      actor.Team.Name,
+		IdentityID:    actor.Identity.ID,
+		MembershipID:  actor.Membership.ID,
+		OwnerID:       actor.OwnerID,
+		OwnerName:     actor.Membership.Name,
+		CredentialID:  credentialID,
+		AuthMethod:    authMethod,
+		Role:          actor.Membership.Role,
+		Grants:        append([]string(nil), actor.Membership.Grants...),
+		AllowedSpaces: append([]domain.MemorySpaceAccess(nil), actorAllowedSpaces(actor)...),
 	}
 	return principal, actorContext, nil
+}
+
+func actorAllowedSpaces(actor *domain.AuthenticatedActor) []domain.MemorySpaceAccess {
+	if actor == nil {
+		return nil
+	}
+	sharedID := uuid.Nil
+	if actor.Credential != nil {
+		sharedID = actor.Credential.TeamSharedSpaceID
+	}
+	spaces := []domain.MemorySpaceAccess{{ID: sharedID, Kind: domain.MemorySpaceTeamShared}}
+	if actor.Credential != nil {
+		switch actor.Credential.MemoryBinding {
+		case domain.CredentialBindingProfilePrivate:
+			spaceID := actor.Credential.MemorySpaceID
+			if spaceID != uuid.Nil {
+				spaces = append(spaces, domain.MemorySpaceAccess{ID: spaceID, Kind: domain.MemorySpaceProfilePrivate})
+			}
+		case domain.CredentialBindingCredentialPrivate:
+			spaceID := actor.Credential.MemorySpaceID
+			if spaceID != uuid.Nil {
+				spaces = append(spaces, domain.MemorySpaceAccess{ID: spaceID, Kind: domain.MemorySpaceCredentialPrivate})
+			}
+		}
+		return spaces
+	}
+	// An authenticated SSO session is owned by the selected team membership.
+	if actor.Membership.MemorySpaceID != uuid.Nil {
+		spaces = append(spaces, domain.MemorySpaceAccess{ID: actor.Membership.MemorySpaceID, Kind: domain.MemorySpaceProfilePrivate})
+	}
+	return spaces
 }
 
 func requestRequiresCSRF(method string) bool {

@@ -544,7 +544,7 @@ func recallSuggestedActionSchema() map[string]any {
 
 func relatedRelationshipSchema() map[string]any {
 	return closedObject(
-		[]string{"relationship_id", "equivalent_relationship_ids", "subject", "predicate", "object", "polarity", "evidence_ids"},
+		[]string{"relationship_id", "equivalent_relationship_ids", "subject", "predicate", "object", "polarity", "evidence_ids", "space_kind"},
 		map[string]any{
 			"relationship_id":             schemaString("Representative Relationship ID.", 128),
 			"equivalent_relationship_ids": stringArraySchema("Same semantic group Relationship ID.", 20, 128),
@@ -554,6 +554,7 @@ func relatedRelationshipSchema() map[string]any {
 			"polarity":                    schemaEnum([]string{"+", "-"}),
 			"evidence_ids":                stringArraySchema("Evidence ID supporting this Relationship.", 50, 128),
 			"search_state":                schemaEnum(domain.SearchProjectionStates()),
+			"space_kind":                  schemaEnum([]string{"team_shared", "profile_private", "credential_private"}),
 		},
 	)
 }
@@ -583,10 +584,11 @@ func recallDegradationSchema() map[string]any {
 
 func recallResultSchema() map[string]any {
 	return closedObject(
-		[]string{"evidence_id", "context"},
+		[]string{"evidence_id", "context", "space_kind"},
 		map[string]any{
 			"evidence_id": schemaString("Evidence ID.", 128),
 			"context":     schemaString("Bounded evidence context.", 2000),
+			"space_kind":  schemaEnum([]string{"team_shared", "profile_private", "credential_private"}),
 		},
 	)
 }

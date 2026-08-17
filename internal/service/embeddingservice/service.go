@@ -258,6 +258,7 @@ func (s *embeddingWorkerService) processEmbeddingBatch(
 				WorkerID:         s.workerID,
 				ExpectedAttempts: job.Attempts,
 				Embedding:        item.embedding,
+				SpaceID:          job.SpaceID,
 			})
 		}
 		err := complete()
@@ -549,7 +550,7 @@ func renewEmbeddingLeases(
 					renewCtx, renewCancel := context.WithTimeout(groupCtx, failureTimeout)
 					err := renewer.RenewEmbeddingJobLease(renewCtx, repository.RenewEmbeddingJobLeaseInput{
 						TeamID: job.TeamID, EmbeddingJobID: job.EmbeddingJobID, WorkerID: workerID,
-						ExpectedAttempts: job.Attempts, Lease: lease,
+						ExpectedAttempts: job.Attempts, Lease: lease, SpaceID: job.SpaceID,
 					})
 					renewCancel()
 					if err != nil {
@@ -651,6 +652,7 @@ func (s *embeddingWorkerService) failJob(
 		FailureCode:      code,
 		RetryAfter:       retryAfter,
 		Terminal:         terminal,
+		SpaceID:          job.SpaceID,
 	})
 	switch {
 	case failErr == nil && failed != nil && failed.Stale:

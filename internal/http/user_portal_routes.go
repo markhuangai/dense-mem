@@ -88,8 +88,12 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	api.GET("/dreams/:dreamId", portal.dreams.Get, dreamSvcMW, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
 	if deps.SSOService != nil {
 		api.POST("/sso/team", portal.switchSSOTeam, httpmw.RequireScopes("read"))
-		api.POST("/sso/credential", portal.createSSOCredential, httpmw.RequireScopes("read"))
-		api.POST("/sso/credential/rotate", portal.rotateSSOCredential, httpmw.RequireScopes("read"))
+		api.GET("/sso/credentials", portal.listSSOCredentials, httpmw.RequireScopes("read"))
+		api.POST("/sso/credentials", portal.createSSOCredential, httpmw.RequireScopes("read"))
+		api.GET("/sso/credentials/:credentialId", portal.getSSOCredential, httpmw.RequireScopes("read"))
+		api.POST("/sso/credentials/:credentialId/rotate", portal.rotateSSOCredential, httpmw.RequireScopes("read"))
+		// Self-service revocation invalidates one owned bearer credential and does not grant memory access.
+		api.DELETE("/sso/credentials/:credentialId", portal.revokeSSOCredential, httpmw.RequireScopes("read"))
 	}
 
 	staticDir := strings.TrimSpace(deps.UserStaticDir)

@@ -21,6 +21,11 @@ type TestKey = {
   created_at: string;
 };
 
+type SSOTestCredential = TestKey & {
+  memory_binding: "shared_only" | "profile_private" | "credential_private";
+  memory_space_kind: "team_shared" | "profile_private" | "credential_private";
+};
+
 const readKey: TestKey = {
   id: "22222222-2222-4222-8222-222222222222",
   team_id: team.id,
@@ -382,6 +387,48 @@ test("write key regenerates only through the self-rotate endpoint", async ({ pag
   expect(calls.disallowedCredentialCalls).toEqual([]);
 });
 
+test("SSO member can create and operate on a selected second credential", async ({ page }) => {
+  const firstCredential: SSOTestCredential = {
+    ...writeKey,
+    id: "55555555-5555-4555-8555-555555555555",
+    name: "Profile key",
+    key_suffix: "profile1",
+    memory_binding: "profile_private",
+    memory_space_kind: "profile_private",
+  };
+  const calls = await mockSSOUserApi(page, [firstCredential]);
+  await page.goto("/ui/");
+
+  await expect(page.getByLabel("Active team")).toHaveValue(team.id);
+  await page.getByRole("button", { name: /My credential/i }).click();
+  await expect(page.getByRole("heading", { name: "My credentials" })).toBeVisible();
+
+  await page.getByLabel("Credential name", { selector: "#sso-personal-credential-name" }).fill("Second key");
+  await page.getByLabel("Memory binding", { selector: "#sso-personal-credential-binding" }).selectOption("credential_private");
+  await page.getByRole("button", { name: "Create API key" }).click();
+
+  await expect(page.getByLabel("Generated API key")).toHaveValue("dm_sso_second_plaintext");
+  await expect(page.getByRole("button", { name: /Second key/ })).toBeVisible();
+  expect(calls.createBodies).toEqual([expect.objectContaining({
+    name: "Second key",
+    scopes: ["read", "write"],
+    memory_binding: "credential_private",
+  })]);
+
+  const secondCredentialID = "66666666-6666-4666-8666-666666666666";
+  await page.getByRole("button", { name: /Second key/ }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: /Regenerate key/i }).click();
+  await expect(page.getByLabel("Generated API key")).toHaveValue("dm_sso_second_rotated");
+  expect(calls.rotatePaths).toEqual([`/ui/api/sso/credentials/${secondCredentialID}/rotate`]);
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: /Revoke key/i }).click();
+  await expect(page.getByRole("button", { name: /Profile key/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Second key/ })).toBeHidden();
+  expect(calls.revokePaths).toEqual([`/ui/api/sso/credentials/${secondCredentialID}`]);
+});
+
 test("write member key shows own usage telemetry", async ({ page }) => {
   const calls = await mockUserApi(page, { key: writeKey });
   await openUserPortal(page, "dm_write");
@@ -638,7 +685,7 @@ async function mockUserApi(
               membership: { team_id: currentTeam.id, name: currentKey.name, grants: currentKey.scopes, role: currentKey.role },
               credential: currentKey,
               teams: [],
-              personal_credential: null,
+              personal_credentials: [],
             },
           }),
         });
@@ -661,7 +708,7 @@ async function mockUserApi(
           membership: { team_id: currentTeam.id, name: currentKey.name, grants: currentKey.scopes, role: currentKey.role },
           credential: currentKey,
           teams: [],
-          personal_credential: null,
+          personal_credentials: [],
         },
       }),
     });
@@ -734,6 +781,112 @@ async function mockUserApi(
       graphSnapshotIndex = Math.max(0, (state.graphSnapshots?.length ?? 1) - 1);
     },
   };
+}
+
+async function mockSSOUserApi(page: Page, credentials: SSOTestCredential[]) {
+  const calls = {
+    createBodies: [] as Array<Record<string, unknown>>,
+    rotatePaths: [] as string[],
+    revokePaths: [] as string[],
+  };
+  let currentCredentials = credentials.map((credential) => ({ ...credential }));
+
+  await page.route("**/ui/api/sso/providers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: [] }),
+    });
+  });
+
+  await page.route("**/ui/api/session", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          team,
+          membership: { team_id: team.id, name: "SSO member", grants: ["read", "write"], role: "member" },
+          credential: null,
+          teams: [{ team, membership: { team_id: team.id, name: "SSO member", grants: ["read", "write"], role: "member" } }],
+          personal_credentials: currentCredentials,
+        },
+      }),
+    });
+  });
+
+  await page.route("**/ui/api/sso/credentials", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ data: currentCredentials }),
+      });
+      return;
+    }
+    const body = JSON.parse(request.postData() ?? "{}") as Record<string, unknown>;
+    calls.createBodies.push(body);
+    const created: SSOTestCredential = {
+      ...currentCredentials[0],
+      id: "66666666-6666-4666-8666-666666666666",
+      name: String(body.name ?? "Second key"),
+      key_suffix: "second1",
+      scopes: Array.isArray(body.scopes) ? body.scopes.map(String) : ["read"],
+      rate_limit: Number(body.rate_limit ?? 120),
+      expires_at: typeof body.expires_at === "string" ? body.expires_at : null,
+      memory_binding: body.memory_binding === "shared_only" || body.memory_binding === "credential_private"
+        ? body.memory_binding
+        : "profile_private",
+      memory_space_kind: body.memory_binding === "shared_only"
+        ? "team_shared"
+        : body.memory_binding === "credential_private" ? "credential_private" : "profile_private",
+    };
+    currentCredentials = [...currentCredentials, created];
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({ data: { api_key: "dm_sso_second_plaintext", credential: created } }),
+    });
+  });
+
+  await page.route("**/ui/api/sso/credentials/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const segments = url.pathname.split("/").filter(Boolean);
+    const credentialID = segments.at(-1) ?? "";
+    if (request.method() === "POST" && segments.at(-1) === "rotate") {
+      const selectedID = segments.at(-2) ?? "";
+      calls.rotatePaths.push(url.pathname);
+      currentCredentials = currentCredentials.map((credential) => credential.id === selectedID
+        ? { ...credential, key_suffix: "second2" }
+        : credential);
+      const rotated = currentCredentials.find((credential) => credential.id === selectedID);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ data: { api_key: "dm_sso_second_rotated", credential: rotated } }),
+      });
+      return;
+    }
+    if (request.method() === "DELETE") {
+      calls.revokePaths.push(url.pathname);
+      currentCredentials = currentCredentials.filter((credential) => credential.id !== credentialID);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ data: { status: "revoked" } }),
+      });
+      return;
+    }
+    await route.fallback();
+  });
+
+  return calls;
 }
 
 async function graphCanvasLabels(page: Page): Promise<string[]> {

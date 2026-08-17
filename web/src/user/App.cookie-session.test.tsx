@@ -29,9 +29,11 @@ const baseSession: UserSession = {
     last_used_at: null,
     expires_at: null,
     created_at: "2026-05-01T12:00:00Z",
+    memory_binding: "shared_only",
+    memory_space_kind: "team_shared",
   },
   teams: [],
-  personal_credential: null,
+  personal_credentials: [],
 };
 
 beforeEach(() => {

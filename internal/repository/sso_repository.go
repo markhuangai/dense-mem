@@ -654,7 +654,7 @@ func (r *SSORepositoryImpl) ListTeamMembershipsForIdentity(ctx context.Context, 
 		rows, err := tx.Raw(`
 			SELECT
 				t.id, t.name, t.description, t.created_at, t.updated_at,
-				membership.id, membership.actor_identity_id, membership.team_id,
+				membership.id, COALESCE((SELECT id FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'profile_private' AND owner_profile_id = membership.actor_identity_id LIMIT 1), '00000000-0000-0000-0000-000000000000'::uuid), membership.actor_identity_id, membership.team_id,
 				alias.legacy_owner_id, COALESCE(NULLIF(membership.sso_profile_name, ''), actor.display_name, ''),
 				membership.maximum_grants, CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END,
 				membership.status, membership.created_at, membership.sso_provider_id,
@@ -706,7 +706,7 @@ func (r *SSORepositoryImpl) GetTeamMembershipByOwnerID(ctx context.Context, id u
 		rows, err := tx.Raw(`
 			SELECT
 				t.id, t.name, t.description, t.created_at, t.updated_at,
-				membership.id, membership.actor_identity_id, membership.team_id,
+				membership.id, COALESCE((SELECT id FROM memory_spaces WHERE team_id = membership.team_id AND kind = 'profile_private' AND owner_profile_id = membership.actor_identity_id LIMIT 1), '00000000-0000-0000-0000-000000000000'::uuid), membership.actor_identity_id, membership.team_id,
 				alias.legacy_owner_id, COALESCE(NULLIF(membership.sso_profile_name, ''), actor.display_name, ''),
 				membership.maximum_grants, CASE WHEN membership.team_admin THEN 'manager' ELSE 'member' END,
 				membership.status, membership.created_at, membership.sso_provider_id,

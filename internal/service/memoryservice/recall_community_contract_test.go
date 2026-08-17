@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,6 +27,7 @@ func TestRecallCommunityMarshalUsesExactPublicShape(t *testing.T) {
 				Object:         SemanticObject{EntityID: "entity-2", Name: "PostgreSQL"},
 				Polarity:       "+",
 				EvidenceIDs:    []string{"evidence-1"},
+				SpaceKind:      string(domain.MemorySpaceTeamShared),
 			}},
 			RelationshipsTruncated: false,
 		}},
@@ -37,5 +40,7 @@ func TestRecallCommunityMarshalUsesExactPublicShape(t *testing.T) {
 	require.Equal(t, "logical-community-1", community["logical_community_id"])
 	require.NotContains(t, community, "evidence_ids")
 	require.NotContains(t, community, "related_relationships")
-	require.Equal(t, "relationship-1", community["relationships"].([]any)[0].(map[string]any)["relationship_id"])
+	relationship := community["relationships"].([]any)[0].(map[string]any)
+	require.Equal(t, "relationship-1", relationship["relationship_id"])
+	require.Equal(t, string(domain.MemorySpaceTeamShared), relationship["space_kind"])
 }

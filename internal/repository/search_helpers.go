@@ -28,6 +28,8 @@ func normalizeUpsertSearchDocumentInput(input UpsertSearchDocumentInput) UpsertS
 	input.DocumentText = strings.TrimSpace(input.DocumentText)
 	input.DocumentHash = strings.TrimSpace(input.DocumentHash)
 	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
+	input.SpaceID = strings.TrimSpace(input.SpaceID)
+	input.SpaceKind = strings.TrimSpace(input.SpaceKind)
 	if input.DocumentHash == "" && input.DocumentText != "" {
 		sum := sha256.Sum256([]byte(input.DocumentText))
 		input.DocumentHash = hex.EncodeToString(sum[:])
@@ -38,6 +40,11 @@ func normalizeUpsertSearchDocumentInput(input UpsertSearchDocumentInput) UpsertS
 func validateUpsertSearchDocumentInput(input UpsertSearchDocumentInput) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if input.SpaceID != "" {
+		if _, err := uuid.Parse(input.SpaceID); err != nil {
+			return fmt.Errorf("space_id is invalid: %w", err)
+		}
 	}
 	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
 		return fmt.Errorf("owner_profile_id is required: %w", err)
@@ -79,6 +86,7 @@ func validateUpsertSearchDocumentInput(input UpsertSearchDocumentInput) error {
 func normalizeClaimEmbeddingJobsInput(input ClaimEmbeddingJobsInput) ClaimEmbeddingJobsInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
+	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	if input.Limit <= 0 {
 		input.Limit = 10
 	}
@@ -95,6 +103,9 @@ func validateClaimEmbeddingJobsInput(input ClaimEmbeddingJobsInput) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
 	}
+	if err := validateOptionalSpaceID(input.SpaceID); err != nil {
+		return err
+	}
 	if input.WorkerID == "" {
 		return errors.New("worker_id is required")
 	}
@@ -108,12 +119,16 @@ func normalizeCompleteEmbeddingJobInput(input CompleteEmbeddingJobInput) Complet
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.EmbeddingJobID = strings.TrimSpace(input.EmbeddingJobID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
+	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	return input
 }
 
 func validateCompleteEmbeddingJobInput(input CompleteEmbeddingJobInput) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if err := validateOptionalSpaceID(input.SpaceID); err != nil {
+		return err
 	}
 	if _, err := uuid.Parse(input.EmbeddingJobID); err != nil {
 		return fmt.Errorf("embedding_job_id is required: %w", err)
@@ -134,6 +149,7 @@ func normalizeRenewEmbeddingJobLeaseInput(input RenewEmbeddingJobLeaseInput) Ren
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.EmbeddingJobID = strings.TrimSpace(input.EmbeddingJobID)
 	input.WorkerID = strings.TrimSpace(input.WorkerID)
+	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	if input.Lease <= 0 {
 		input.Lease = time.Minute
 	}
@@ -143,6 +159,9 @@ func normalizeRenewEmbeddingJobLeaseInput(input RenewEmbeddingJobLeaseInput) Ren
 func validateRenewEmbeddingJobLeaseInput(input RenewEmbeddingJobLeaseInput) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if err := validateOptionalSpaceID(input.SpaceID); err != nil {
+		return err
 	}
 	if _, err := uuid.Parse(input.EmbeddingJobID); err != nil {
 		return fmt.Errorf("embedding_job_id is required: %w", err)
@@ -155,6 +174,16 @@ func validateRenewEmbeddingJobLeaseInput(input RenewEmbeddingJobLeaseInput) erro
 	}
 	if input.Lease < time.Second {
 		return errors.New("lease must be at least one second")
+	}
+	return nil
+}
+
+func validateOptionalSpaceID(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	if _, err := uuid.Parse(raw); err != nil {
+		return fmt.Errorf("space_id is invalid: %w", err)
 	}
 	return nil
 }

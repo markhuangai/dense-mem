@@ -85,6 +85,9 @@ func TestRecallInputNormalizationAndValidation(t *testing.T) {
 	if input.TeamID != teamID || input.Query != "durable memory" || input.Limit != maxRecallLimit {
 		t.Fatalf("normalized input = %#v", input)
 	}
+	if input.SpaceKind != string(domain.MemorySpaceTeamShared) {
+		t.Fatalf("normalized omitted space = %q, want team_shared", input.SpaceKind)
+	}
 	if len(input.KnownEvidenceIDs) != 1 || input.KnownEvidenceIDs[0] != evidenceID {
 		t.Fatalf("known evidence = %#v", input.KnownEvidenceIDs)
 	}
@@ -109,6 +112,17 @@ func TestRecallInputNormalizationAndValidation(t *testing.T) {
 	}
 }
 
+func TestRecallSpacePredicateFailsClosedForOmittedOrUnknownSpace(t *testing.T) {
+	teamID := uuid.NewString()
+	teamShared := recallSpacePredicate("fragment.space_id", teamID, "", "")
+	if !strings.Contains(teamShared, "dense_mem_team_shared_space") {
+		t.Fatalf("omitted space predicate = %q, want team_shared predicate", teamShared)
+	}
+	if got := recallSpacePredicate("fragment.space_id", teamID, "", "not-a-space-kind"); !strings.Contains(got, "FALSE") {
+		t.Fatalf("unknown space predicate = %q, want fail-closed FALSE", got)
+	}
+}
+
 func TestRecallRelationshipEvidenceOverlapFiltersKnownSupport(t *testing.T) {
 	evidenceID := uuid.NewString()
 	otherEvidenceID := uuid.NewString()
@@ -127,14 +141,17 @@ func TestRecallBoundsAndContextHelpers(t *testing.T) {
 	if got := recallOverfetchLimit(100); got != recallOverfetchCap {
 		t.Fatalf("overfetch cap = %d, want %d", got, recallOverfetchCap)
 	}
-	if got := recallCombinedSearchState("", string(domain.SearchProjectionCurrent)); got != string(domain.SearchProjectionCurrent) {
+	if got := domain.CombineSearchProjectionStates("", string(domain.SearchProjectionCurrent)); got != string(domain.SearchProjectionCurrent) {
 		t.Fatalf("combined state = %q", got)
 	}
-	if got := recallCombinedSearchState(string(domain.SearchProjectionCurrent), string(domain.SearchProjectionPending)); got != string(domain.SearchProjectionPending) {
+	if got := domain.CombineSearchProjectionStates(string(domain.SearchProjectionCurrent), string(domain.SearchProjectionPending)); got != string(domain.SearchProjectionPending) {
 		t.Fatalf("combined pending state = %q", got)
 	}
-	if got := recallCombinedSearchState(string(domain.SearchProjectionFailed), string(domain.SearchProjectionPending)); got != string(domain.SearchProjectionFailed) {
+	if got := domain.CombineSearchProjectionStates(string(domain.SearchProjectionFailed), string(domain.SearchProjectionPending)); got != string(domain.SearchProjectionFailed) {
 		t.Fatalf("failed state was downgraded = %q", got)
+	}
+	if got := domain.CombineSearchProjectionStates(string(domain.SearchProjectionNotRequired), string(domain.SearchProjectionCurrent)); got != string(domain.SearchProjectionCurrent) {
+		t.Fatalf("current state was downgraded = %q", got)
 	}
 	long := strings.Repeat("a", 2100)
 	if got := truncateRecallContext(long); len(got) != 2000 {
