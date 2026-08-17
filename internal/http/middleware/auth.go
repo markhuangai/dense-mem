@@ -426,7 +426,10 @@ func actorAllowedSpaces(actor *domain.AuthenticatedActor) []domain.MemorySpaceAc
 	if actor.Credential != nil {
 		switch actor.Credential.MemoryBinding {
 		case domain.CredentialBindingProfilePrivate:
-			spaces = append(spaces, domain.MemorySpaceAccess{ID: actor.Credential.MemorySpaceID, Kind: domain.MemorySpaceProfilePrivate})
+			spaceID := actor.Credential.MemorySpaceID
+			if spaceID != uuid.Nil {
+				spaces = append(spaces, domain.MemorySpaceAccess{ID: spaceID, Kind: domain.MemorySpaceProfilePrivate})
+			}
 		case domain.CredentialBindingCredentialPrivate:
 			spaceID := actor.Credential.MemorySpaceID
 			if spaceID != uuid.Nil {
