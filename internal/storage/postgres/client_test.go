@@ -142,8 +142,8 @@ func TestMigratorRunUp(t *testing.T) {
 	assert.NoError(t, err, "RunUp should succeed")
 	err = m.RunUp(ctx)
 	assert.NoError(t, err, "repeat RunUp should be idempotent")
-	for _, indexName := range []string{"community_records_current_logical_unique", "community_sources_group_idx", "community_sources_community_idx"} {
-		assert.True(t, indexExists(t, ctx, sqlDB, indexName), "community migration index %s should exist", indexName)
+	for _, indexName := range []string{"community_records_current_logical_unique", "community_sources_group_idx", "community_sources_community_idx", "idx_credentials_owner_team_active_unique"} {
+		assert.True(t, indexExists(t, ctx, sqlDB, indexName), "migration index %s should exist", indexName)
 	}
 	var logicalCommunityIDNotNull int
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'community_records' AND column_name = 'logical_community_id' AND is_nullable = 'NO'`).Scan(&logicalCommunityIDNotNull))

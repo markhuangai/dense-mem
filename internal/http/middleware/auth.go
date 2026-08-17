@@ -232,19 +232,6 @@ func AuthMiddlewareWithOptions(repo repository.CredentialRepository, auditSvc se
 				}
 				key = validated
 			}
-			if bindingRepo, ok := repo.(repository.CredentialMemoryBindingRepository); ok {
-				binding, spaceID, err := bindingRepo.GetMemoryBinding(ctx, key.ID)
-				if err != nil {
-					return httperr.New(httperr.INTERNAL_ERROR, "failed to resolve credential memory binding")
-				}
-				key.MemoryBinding = binding
-				key.MemorySpaceID = spaceID
-				sharedID, sharedErr := bindingRepo.GetTeamSharedSpaceID(ctx, key.TeamID)
-				if sharedErr != nil {
-					return httperr.New(httperr.INTERNAL_ERROR, "failed to resolve team memory space")
-				}
-				key.TeamSharedSpaceID = sharedID
-			}
 			teamID = key.GetTeamID()
 			if teamID == uuid.Nil {
 				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "api credential is not team bound")

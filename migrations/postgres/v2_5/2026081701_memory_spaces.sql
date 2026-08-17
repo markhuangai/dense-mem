@@ -167,10 +167,10 @@ ALTER TABLE credentials ADD COLUMN IF NOT EXISTS memory_space_id UUID NULL;
 ALTER TABLE credentials DROP CONSTRAINT IF EXISTS credentials_memory_binding_check;
 ALTER TABLE credentials ADD CONSTRAINT credentials_memory_binding_check
     CHECK (memory_binding IN ('shared_only', 'profile_private', 'credential_private'));
--- Multiple independently scoped credentials may belong to one SSO identity.
--- Credential names remain team-unique, so this does not create an enumeration
--- path or duplicate the same named credential.
-DROP INDEX IF EXISTS idx_credentials_owner_team_active_unique;
+-- Keep the established one-active-personal-key invariant for SSO identities.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_credentials_owner_team_active_unique
+    ON credentials(owner_identity_id, team_id)
+    WHERE owner_identity_id IS NOT NULL AND kind = 'api_key' AND status = 'active';
 
 UPDATE credentials AS credential
 SET memory_space_id = shared.id
@@ -347,6 +347,10 @@ CREATE POLICY memory_spaces_write ON memory_spaces FOR INSERT WITH CHECK (
     current_setting('app.tx_mode', true) IN ('system', 'migration')
     OR team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
 );
+DROP POLICY IF EXISTS memory_spaces_update ON memory_spaces;
+CREATE POLICY memory_spaces_update ON memory_spaces FOR UPDATE
+USING (current_setting('app.tx_mode', true) IN ('system', 'migration'))
+WITH CHECK (current_setting('app.tx_mode', true) IN ('system', 'migration'));
 
 SELECT set_config('app.allowed_space_ids', '', true);
 SELECT set_config('app.current_team_id', '', true);

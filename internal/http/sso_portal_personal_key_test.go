@@ -146,6 +146,10 @@ func TestUserPortalSSOPersonalKeyDeniedBranches(t *testing.T) {
 		c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential", `{"rate_limit":30}`, fixture.sessionToken)
 		setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
 		require.ErrorContains(t, fixture.handler.createSSOCredential(c), "sso-owned credential already exists for this team")
+
+		c, _ = userSSOContext(nethttp.MethodPost, "/ui/api/sso/credential", `{"rate_limit":30,"memory_binding":"credential_private"}`, fixture.sessionToken)
+		setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
+		require.ErrorContains(t, fixture.handler.createSSOCredential(c), "sso-owned credential already exists for this team")
 	})
 
 	t.Run("rotate requires owned writable key and writable entitlement", func(t *testing.T) {

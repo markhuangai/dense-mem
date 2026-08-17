@@ -539,6 +539,13 @@ func (h *userPortalHandler) createSSOCredential(c echo.Context) error {
 	if h.credentials == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "credential service unavailable")
 	}
+	existing, err := h.credentials.GetSSOOwnedCredential(c.Request().Context(), info.Selected.Team.ID, info.Identity.ID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return httperr.New(httperr.CONFLICT, "sso-owned credential already exists for this team")
+	}
 	var body userPortalCreateSSOCredentialRequest
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
@@ -548,17 +555,6 @@ func (h *userPortalHandler) createSSOCredential(c echo.Context) error {
 		return err
 	}
 	req.OwnerIdentityID = &info.Identity.ID
-	// Preserve the one-key compatibility response for callers that omit a
-	// binding, while explicit bindings allow multiple SSO credentials.
-	if strings.TrimSpace(body.MemoryBinding) == "" {
-		existing, lookupErr := h.credentials.GetSSOOwnedCredential(c.Request().Context(), info.Selected.Team.ID, info.Identity.ID)
-		if lookupErr != nil {
-			return lookupErr
-		}
-		if existing != nil {
-			return httperr.New(httperr.CONFLICT, "sso-owned credential already exists for this team")
-		}
-	}
 
 	credential, rawKey, err := h.credentials.CreateCredential(
 		c.Request().Context(),

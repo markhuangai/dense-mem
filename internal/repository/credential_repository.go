@@ -208,6 +208,10 @@ func (r *CredentialRepositoryImpl) ListByTeam(ctx context.Context, teamID uuid.U
 
 	credentials := make([]*domain.Credential, 0)
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
+		sharedID, err := r.GetTeamSharedSpaceID(ctx, teamID)
+		if err != nil {
+			return err
+		}
 		rows, rerr := tx.Raw(`
 				SELECT
 					c.id, c.actor_identity_id, membership.id, alias.legacy_owner_id,
@@ -254,7 +258,7 @@ func (r *CredentialRepositoryImpl) ListByTeam(ctx context.Context, teamID uuid.U
 				return serr
 			}
 			credential := state.result()
-			if err := r.populateMemoryBinding(ctx, credential); err != nil {
+			if err := r.populateMemoryBinding(ctx, credential, sharedID); err != nil {
 				return err
 			}
 			credentials = append(credentials, credential)
@@ -761,7 +765,7 @@ func (r *CredentialRepositoryImpl) GetSSOOwnedCredential(ctx context.Context, te
 	return credential, nil
 }
 
-func (r *CredentialRepositoryImpl) populateMemoryBinding(ctx context.Context, credential *domain.Credential) error {
+func (r *CredentialRepositoryImpl) populateMemoryBinding(ctx context.Context, credential *domain.Credential, sharedSpaceIDs ...uuid.UUID) error {
 	if credential == nil {
 		return nil
 	}
@@ -771,6 +775,10 @@ func (r *CredentialRepositoryImpl) populateMemoryBinding(ctx context.Context, cr
 	}
 	credential.MemoryBinding = binding
 	credential.MemorySpaceID = spaceID
+	if len(sharedSpaceIDs) > 0 {
+		credential.TeamSharedSpaceID = sharedSpaceIDs[0]
+		return nil
+	}
 	sharedID, err := r.GetTeamSharedSpaceID(ctx, credential.TeamID)
 	if err != nil {
 		return err
