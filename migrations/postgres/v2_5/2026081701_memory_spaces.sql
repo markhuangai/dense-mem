@@ -279,6 +279,10 @@ DECLARE
     has_team BOOLEAN;
     has_space BOOLEAN;
     is_required BOOLEAN;
+    append_only_trigger RECORD;
+    append_only_trigger_name TEXT;
+    disabled_append_only_triggers TEXT[];
+    always_append_only_triggers TEXT[];
 BEGIN
     FOREACH target_table IN ARRAY target_tables LOOP
         SELECT EXISTS (
@@ -295,7 +299,35 @@ BEGIN
         IF NOT has_space THEN
             EXECUTE format('ALTER TABLE %I ADD COLUMN space_id UUID NULL', target_table);
         END IF;
+
+        -- This backfill changes only the new placement column. Preserve the
+        -- append-only guards for every other write while allowing this
+        -- migration-only column update to proceed on populated installations.
+        disabled_append_only_triggers := ARRAY[]::TEXT[];
+        always_append_only_triggers := ARRAY[]::TEXT[];
+        FOR append_only_trigger IN
+            SELECT trigger_row.tgname, trigger_row.tgenabled
+            FROM pg_trigger AS trigger_row
+            JOIN pg_proc AS function_row ON function_row.oid = trigger_row.tgfoid
+            WHERE trigger_row.tgrelid = to_regclass(format('public.%I', target_table))
+              AND NOT trigger_row.tgisinternal
+              AND function_row.proname IN ('prevent_append_only_mutation', 'prevent_v2_append_only_mutation')
+        LOOP
+            IF append_only_trigger.tgenabled = 'A' THEN
+                always_append_only_triggers := array_append(always_append_only_triggers, append_only_trigger.tgname);
+                EXECUTE format('ALTER TABLE %I DISABLE TRIGGER %I', target_table, append_only_trigger.tgname);
+            ELSIF append_only_trigger.tgenabled = 'O' THEN
+                disabled_append_only_triggers := array_append(disabled_append_only_triggers, append_only_trigger.tgname);
+                EXECUTE format('ALTER TABLE %I DISABLE TRIGGER %I', target_table, append_only_trigger.tgname);
+            END IF;
+        END LOOP;
         EXECUTE format('UPDATE %I AS row SET space_id = dense_mem_team_shared_space(row.team_id) WHERE row.team_id IS NOT NULL AND row.space_id IS NULL', target_table);
+        FOREACH append_only_trigger_name IN ARRAY disabled_append_only_triggers LOOP
+            EXECUTE format('ALTER TABLE %I ENABLE TRIGGER %I', target_table, append_only_trigger_name);
+        END LOOP;
+        FOREACH append_only_trigger_name IN ARRAY always_append_only_triggers LOOP
+            EXECUTE format('ALTER TABLE %I ENABLE ALWAYS TRIGGER %I', target_table, append_only_trigger_name);
+        END LOOP;
         EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I(team_id, space_id)', target_table || '_team_space_idx', target_table);
         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = target_table || '_memory_space_defaults') THEN
             EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF team_id, space_id ON %I FOR EACH ROW EXECUTE FUNCTION dense_mem_memory_space_defaults()', target_table || '_memory_space_defaults', target_table);

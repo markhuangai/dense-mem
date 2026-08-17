@@ -58,6 +58,33 @@ func TestRecallAcrossSpacesEmbedsQueryOnceAndReusesVector(t *testing.T) {
 	require.Equal(t, search.inputs[0].QueryEmbedding, search.inputs[1].QueryEmbedding)
 }
 
+func TestRecallAcrossSpacesReportsEmbeddingDegradationOnce(t *testing.T) {
+	teamID, ownerID := uuid.New(), uuid.New()
+	sharedID, privateID := uuid.New(), uuid.New()
+	search := &spaceRecallStub{contract: &repository.ActiveSearchContract{EmbeddingDimensions: 3}}
+	svc := NewRecallService(RecallDependencies{
+		Search:   search,
+		Provider: &recallProviderStub{available: false},
+	})
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
+		AllowedSpaces: []domain.MemorySpaceAccess{
+			{ID: sharedID, Kind: domain.MemorySpaceTeamShared},
+			{ID: privateID, Kind: domain.MemorySpaceCredentialPrivate},
+		},
+	})
+
+	result, err := svc.Recall(ctx, RecallRequest{Query: "degraded vector", RelationshipLimit: intPtr(0)})
+	require.NoError(t, err)
+	var degradationCount int
+	for _, degradation := range result.Degradations {
+		if degradation.Code == string(domain.ErrorProviderUnavailable) {
+			degradationCount++
+		}
+	}
+	require.Equal(t, 1, degradationCount)
+}
+
 func TestFuseRecallResultsSumsRRFAndHonorsGlobalLimits(t *testing.T) {
 	shared := &RecallResult{
 		SearchStates: RecallSearchStates{Evidence: string(domain.SearchProjectionPending), Relationships: string(domain.SearchProjectionCurrent)},

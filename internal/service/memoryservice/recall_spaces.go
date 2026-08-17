@@ -52,6 +52,8 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req RecallReques
 		embedCtx := observability.WithAIOperation(ctx, observability.AIOperationRecallEmbedding, 1)
 		req.recallEmbedding, req.recallEmbeddingDegradation = s.queryEmbedding(embedCtx, contract, req.Query)
 	}
+	embeddingDegradation := req.recallEmbeddingDegradation
+	req.recallEmbeddingDegradation = nil
 	branches := append([]domain.MemorySpaceAccess(nil), actor.AllowedSpaces...)
 	if len(branches) == 0 {
 		branches = []domain.MemorySpaceAccess{{Kind: domain.MemorySpaceTeamShared}}
@@ -83,7 +85,12 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req RecallReques
 	if teamErr != nil {
 		return nil, teamErr
 	}
-	return fuseRecallResults(results, req.Limit, recallOptionalLimitValue(req.RelationshipLimit)), nil
+	fused := fuseRecallResults(results, req.Limit, recallOptionalLimitValue(req.RelationshipLimit))
+	if embeddingDegradation != nil {
+		fused.Degradations = append([]RecallDegradationResult{*embeddingDegradation}, fused.Degradations...)
+		fused.Degradation = &fused.Degradations[0]
+	}
+	return fused, nil
 }
 
 func applyRecallSpaceKind(result *RecallResult, kind string) {
