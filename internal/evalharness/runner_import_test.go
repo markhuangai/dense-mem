@@ -38,6 +38,16 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 			if !ok || len(relationships) != 1 {
 				t.Fatalf("remember relationships = %#v", input["relationships"])
 			}
+			relationship := relationships[0].(map[string]any)
+			evidenceIndices, ok := relationship["evidence_indices"].([]any)
+			if !ok || len(evidenceIndices) != 1 || evidenceIndices[0] != float64(0) {
+				t.Fatalf("remember relationship evidence_indices = %#v", relationship["evidence_indices"])
+			}
+			for _, legacyField := range []string{"span", "supports"} {
+				if _, exists := relationship[legacyField]; exists {
+					t.Fatalf("remember relationship contains legacy field %q: %#v", legacyField, relationship)
+				}
+			}
 			rememberCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"submission_id":    strings.TrimPrefix(idempotencyKey, "eval:"),

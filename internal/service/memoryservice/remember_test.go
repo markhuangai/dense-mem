@@ -345,6 +345,28 @@ func TestSubmissionSemanticHoldProjectionBoundsLedgerPayload(t *testing.T) {
 	require.NotEqual(t, "mutated", SubmissionHoldIssueCodes()[0])
 }
 
+func TestSubmissionSemanticHoldProjectionFiltersAndBoundsIssues(t *testing.T) {
+	longMessage := strings.Repeat("界", submissionHoldIssueMessageMaxLength+1)
+	hold := submissionSemanticHoldFromLedger(&repository.CreateIngestResult{
+		IngestID:          "submission-1",
+		SemanticHoldState: "active",
+		Items: []repository.PlacementItem{{Result: map[string]any{
+			"hold_issues": []any{
+				map[string]any{"code": "unknown", "component": "support", "message": "unsafe"},
+				map[string]any{"code": "grounding_low_confidence", "component": "unknown", "message": "unsafe"},
+				map[string]any{"code": "grounding_low_confidence", "component": "support", "message": longMessage},
+			},
+		}}},
+	})
+
+	require.NotNil(t, hold)
+	require.Len(t, hold.Issues, 1)
+	require.Equal(t, "grounding_low_confidence", hold.Issues[0].Code)
+	require.Equal(t, "support", hold.Issues[0].Component)
+	require.Len(t, []rune(hold.Issues[0].Message), submissionHoldIssueMessageMaxLength)
+	require.True(t, hold.IssuesTruncated)
+}
+
 func TestTerminalSubmissionErrorsAreClosedAndDeduplicated(t *testing.T) {
 	failed := submissionStatusResultFromLedger(&repository.CreateIngestResult{
 		IngestID: "submission-1", Status: string(domain.PlacementRunFailed),

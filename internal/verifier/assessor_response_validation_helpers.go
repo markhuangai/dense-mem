@@ -3,6 +3,7 @@ package verifier
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 	"time"
 
@@ -177,6 +178,30 @@ func assessmentCandidateGroupsBySpan(groups []SemanticAssessmentEntityCandidateG
 		out[assessmentSpanKey(group.EvidenceID, group.Start, group.End)] = group
 	}
 	return out
+}
+
+func assessmentCandidateGroupsEquivalent(left, right SemanticAssessmentEntityCandidateGroup) bool {
+	if left.EvidenceID != right.EvidenceID || left.Start != right.Start || left.End != right.End ||
+		left.Surface != right.Surface || left.CandidateContextTruncated != right.CandidateContextTruncated ||
+		len(left.Candidates) != len(right.Candidates) {
+		return false
+	}
+	rightByID := make(map[string]SemanticAssessmentEntityCandidate, len(right.Candidates))
+	for _, candidate := range right.Candidates {
+		rightByID[candidate.EntityID] = candidate
+	}
+	for _, candidate := range left.Candidates {
+		other, ok := rightByID[candidate.EntityID]
+		if !ok || candidate.CanonicalName != other.CanonicalName || candidate.Kind != other.Kind ||
+			!reflect.DeepEqual(candidate.IdentityContext, other.IdentityContext) {
+			return false
+		}
+	}
+	return true
+}
+
+func semanticAssessmentEntityLogicalKey(name, kind string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(name)), " ")) + "\x00" + strings.TrimSpace(kind)
 }
 
 func assessmentMatchingEntityCandidates(group SemanticAssessmentEntityCandidateGroup, kind string) []SemanticAssessmentEntityCandidate {

@@ -126,6 +126,10 @@ func normalizeSemanticAssessmentSubmissionContract(
 				errs = append(errs, semanticErr(field+".evidence_ids", "contains unknown evidence"))
 			}
 		}
+		if len(target.Groundings) > SemanticAssessmentMaxEntityGroundings {
+			errs = append(errs, semanticErr(field+".groundings", fmt.Sprintf("must contain at most %d entries", SemanticAssessmentMaxEntityGroundings)))
+			continue
+		}
 		for j := range target.Groundings {
 			grounding := &target.Groundings[j]
 			grounding.GroundingRef = strings.TrimSpace(grounding.GroundingRef)
@@ -436,10 +440,14 @@ func validateSemanticAssessmentSubmissionResponse(
 			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].object", i), "does not preserve its submitted object"))
 		}
 		allowedEvidence := stringSet(target.EvidenceIDs)
-		for field, rangeValue := range map[string]*SemanticAssessmentGroundedRange{
-			"predicate_range": &result.PredicateRange,
-			"value_range":     result.ValueRange,
+		for _, entry := range []struct {
+			field      string
+			rangeValue *SemanticAssessmentGroundedRange
+		}{
+			{field: "predicate_range", rangeValue: &result.PredicateRange},
+			{field: "value_range", rangeValue: result.ValueRange},
 		} {
+			field, rangeValue := entry.field, entry.rangeValue
 			if rangeValue != nil && !containsString(allowedEvidence, rangeValue.EvidenceID) {
 				errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].%s.evidence_id", i, field), "is outside the submitted evidence allowlist"))
 			}

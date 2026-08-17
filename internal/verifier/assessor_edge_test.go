@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -37,6 +38,17 @@ func TestSemanticAssessmentRequestRejectsInvalidCandidateContext(t *testing.T) {
 				}
 			},
 			want: "must contain at most",
+		},
+		{
+			name: "duplicate candidate span with different context",
+			mutate: func(req *SemanticAssessmentRequest, _ SemanticAssessmentLimits) {
+				duplicate := req.EntityCandidateGroups[0]
+				duplicate.GroundingRef = "grounding-duplicate"
+				duplicate.Candidates = append([]SemanticAssessmentEntityCandidate(nil), duplicate.Candidates...)
+				duplicate.Candidates[0].EntityID = "entity-different"
+				req.EntityCandidateGroups = append(req.EntityCandidateGroups, duplicate)
+			},
+			want: "duplicates an entity evidence span with different candidate context",
 		},
 		{
 			name: "invalid candidate kind",
@@ -186,6 +198,63 @@ func TestSemanticAssessmentSubmissionContractRequiresExactCompleteResponse(t *te
 				t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want %q", errs, testCase.want)
 			}
 		})
+	}
+}
+
+func TestSemanticAssessmentLegacyEvidenceIsBounded(t *testing.T) {
+	request, limits := semanticAssessmentTestRequest(t)
+	legacyEvidence := make([]SemanticAssessmentEvidenceSpan, SemanticAssessmentMaxEvidenceSpans+1)
+	for index := range legacyEvidence {
+		legacyEvidence[index] = SemanticAssessmentEvidenceSpan{EvidenceID: "ev-1", Start: 0, End: 1}
+	}
+	request.RequiredRelationshipRefs = []SemanticAssessmentRequiredRelationshipRef{{
+		ProposalID: "relationship-1",
+		Evidence:   legacyEvidence,
+	}}
+	_, errs := PrepareSemanticAssessmentRequest(request, limits)
+	if len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "must contain at most") {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v, want legacy evidence bound", errs)
+	}
+}
+
+func TestSemanticAssessmentEntityGroundingsAreBounded(t *testing.T) {
+	request, limits := semanticAssessmentSubmissionContractTestRequest(t)
+	groundings := request.SubmissionContract.Entities[0].Groundings
+	for index := 1; index < SemanticAssessmentMaxEntityGroundings+1; index++ {
+		grounding := groundings[0]
+		grounding.GroundingRef = "grounding-mark-" + fmt.Sprint(index)
+		groundings = append(groundings, grounding)
+	}
+	request.SubmissionContract.Entities[0].Groundings = groundings
+	_, errs := PrepareSemanticAssessmentRequest(request, limits)
+	if len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "groundings: must contain at most") {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v, want grounding bound", errs)
+	}
+}
+
+func TestSemanticAssessmentSubmissionRangeValidationIsDeterministic(t *testing.T) {
+	request, limits := semanticAssessmentSubmissionContractTestRequest(t)
+	prepared, errs := PrepareSemanticAssessmentRequest(request, limits)
+	if len(errs) != 0 {
+		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
+	}
+	response := semanticAssessmentTestResponse()
+	response.RelationshipResults[0].PredicateRange.EvidenceID = "ev-other"
+	valueRange := response.RelationshipResults[0].PredicateRange
+	response.RelationshipResults[0].ValueRange = &valueRange
+
+	validationErrors := validateSemanticAssessmentSubmissionResponse(prepared.SubmissionContract, response)
+	fields := make([]string, 0, 2)
+	for _, validationError := range validationErrors {
+		if strings.Contains(validationError.Message, "outside the submitted evidence allowlist") {
+			fields = append(fields, validationError.Field)
+		}
+	}
+	if want := []string{
+		"relationship_results[0].predicate_range.evidence_id",
+		"relationship_results[0].value_range.evidence_id",
+	}; len(fields) != len(want) || fields[0] != want[0] || fields[1] != want[1] {
+		t.Fatalf("range validation fields = %#v, want %#v", fields, want)
 	}
 }
 

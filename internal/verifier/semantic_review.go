@@ -38,6 +38,7 @@ type SemanticReviewEvidence struct {
 	Content                 string         `json:"content"`
 	BoundaryText            string         `json:"boundary_text,omitempty"`
 	BoundaryRefs            map[string]int `json:"-"`
+	BoundaryPrefix          string         `json:"-"`
 	Authority               string         `json:"-"`
 	SourceID                string         `json:"-"`
 	SourceRevisionID        string         `json:"-"`

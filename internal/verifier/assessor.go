@@ -24,6 +24,7 @@ const (
 	SemanticAssessmentMaxCorrectionErrors = 100
 
 	SemanticAssessmentMaxEntityCandidatesPerSurface = 20
+	SemanticAssessmentMaxEntityGroundings           = 20
 	SemanticAssessmentMaxPredicateOptions           = 100
 	SemanticAssessmentMaxEntityResults              = 400
 	SemanticAssessmentMaxRelationshipResults        = 200
@@ -460,6 +461,10 @@ func normalizeAssessmentRequiredRelationshipRefs(
 		}
 		seenRefs[required.ProposalID] = struct{}{}
 		if len(required.EvidenceIDs) == 0 && len(required.Evidence) > 0 {
+			if len(required.Evidence) > SemanticAssessmentMaxEvidenceSpans {
+				errs = append(errs, semanticErr(field+".evidence", fmt.Sprintf("must contain at most %d entries", SemanticAssessmentMaxEvidenceSpans)))
+				continue
+			}
 			seenSpans := map[string]struct{}{}
 			for j := range required.Evidence {
 				span := &required.Evidence[j]
@@ -500,6 +505,7 @@ func normalizeAssessmentCandidateGroups(
 ) []SemanticValidationError {
 	var errs []SemanticValidationError
 	seenGroups := map[string]struct{}{}
+	seenSpans := map[string]SemanticAssessmentEntityCandidateGroup{}
 	for i := range req.EntityCandidateGroups {
 		group := &req.EntityCandidateGroups[i]
 		group.Surface = strings.TrimSpace(group.Surface)
@@ -556,6 +562,12 @@ func normalizeAssessmentCandidateGroups(
 		sort.Slice(group.Candidates, func(left, right int) bool {
 			return group.Candidates[left].EntityID < group.Candidates[right].EntityID
 		})
+		spanKey := assessmentSpanKey(group.EvidenceID, group.Start, group.End)
+		if previous, exists := seenSpans[spanKey]; exists && !assessmentCandidateGroupsEquivalent(previous, *group) {
+			errs = append(errs, semanticErr(fmt.Sprintf("entity_candidate_groups[%d]", i), "duplicates an entity evidence span with different candidate context"))
+		} else if !exists {
+			seenSpans[spanKey] = *group
+		}
 		if group.CandidateContextTruncated {
 			req.CandidateContextTruncated = true
 		}
@@ -798,6 +810,13 @@ func validateSemanticAssessmentEntityResults(
 	groups := assessmentCandidateGroupsBySpan(req.EntityCandidateGroups)
 	seen := map[string]struct{}{}
 	seenSpans := map[string]struct{}{}
+	seenLogicalSpans := map[string]string{}
+	entityTargets := map[string]SemanticAssessmentRequiredEntityRef{}
+	if req.SubmissionContract != nil {
+		for _, target := range req.SubmissionContract.Entities {
+			entityTargets[target.Ref] = target
+		}
+	}
 	var errs []SemanticValidationError
 	for i := range results {
 		result := &results[i]
@@ -827,7 +846,15 @@ func validateSemanticAssessmentEntityResults(
 		}
 		spanKey := assessmentSpanKey(result.EvidenceID, result.Start, result.End)
 		if _, exists := seenSpans[spanKey]; exists {
-			errs = append(errs, semanticErr(fmt.Sprintf("entity_results[%d]", i), "duplicates an entity evidence span"))
+			logicalKey := ""
+			if target, ok := entityTargets[result.Ref]; ok {
+				logicalKey = semanticAssessmentEntityLogicalKey(target.Name, target.Kind)
+			}
+			if previous, sameLogicalEntity := seenLogicalSpans[spanKey]; !sameLogicalEntity || previous != logicalKey {
+				errs = append(errs, semanticErr(fmt.Sprintf("entity_results[%d]", i), "duplicates an entity evidence span"))
+			}
+		} else if target, ok := entityTargets[result.Ref]; ok {
+			seenLogicalSpans[spanKey] = semanticAssessmentEntityLogicalKey(target.Name, target.Kind)
 		}
 		seenSpans[spanKey] = struct{}{}
 		exact, err := semanticExactSpanQuote(evidence.Content, result.Start, result.End, result.Surface)

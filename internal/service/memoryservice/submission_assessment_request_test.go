@@ -45,6 +45,7 @@ func TestSubmissionAssessmentRejectsPronounAndPartialWordGrounding(t *testing.T)
 	}{
 		{name: "pronoun", content: "It uses Redis.", entity: "It"},
 		{name: "partial word", content: "Alphabet uses Redis.", entity: "Alpha"},
+		{name: "identifier continuation", content: "C++20 uses Redis.", entity: "C++"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			evidence := verifier.PrepareSemanticAssessmentEvidence(verifier.SemanticReviewEvidence{

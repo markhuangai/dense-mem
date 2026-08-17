@@ -132,6 +132,8 @@ type SubmissionHoldIssue struct {
 	Message         string `json:"message"`
 }
 
+const submissionHoldIssueMessageMaxLength = 512
+
 type SubmissionReplacementGuidance struct {
 	Tool                 string     `json:"tool"`
 	ReplacesSubmissionID string     `json:"replaces_submission_id"`
@@ -152,8 +154,21 @@ var submissionHoldIssueCodes = []string{
 	"conflict_context_stale",
 }
 
+var submissionHoldIssueComponents = []string{
+	"subject",
+	"predicate",
+	"object",
+	"support",
+	"relationship",
+	"conflict",
+}
+
 func SubmissionHoldIssueCodes() []string {
 	return append([]string(nil), submissionHoldIssueCodes...)
+}
+
+func SubmissionHoldIssueComponents() []string {
+	return append([]string(nil), submissionHoldIssueComponents...)
 }
 
 type SubmissionAwaitingConfirmation struct {
@@ -645,8 +660,16 @@ func submissionSemanticHoldFromLedger(placement *repository.CreateIngestResult) 
 			if issue.Code == "" || issue.Component == "" || issue.Message == "" {
 				continue
 			}
+			if !submissionHoldIssueAllowed(issue.Code, submissionHoldIssueCodes) ||
+				!submissionHoldIssueAllowed(issue.Component, submissionHoldIssueComponents) {
+				truncated = true
+				continue
+			}
+			if len([]rune(issue.Message)) > submissionHoldIssueMessageMaxLength {
+				issue.Message = string([]rune(issue.Message)[:submissionHoldIssueMessageMaxLength])
+			}
 			issues = append(issues, issue)
-			if len(issues) == 50 {
+			if len(issues) == submissionAssessmentMaxHoldIssues {
 				truncated = true
 				break
 			}
@@ -678,6 +701,15 @@ func submissionSemanticHoldFromLedger(placement *repository.CreateIngestResult) 
 func submissionHoldIssueString(fields map[string]any, key string) string {
 	value, _ := fields[key].(string)
 	return strings.TrimSpace(value)
+}
+
+func submissionHoldIssueAllowed(value string, allowed []string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func sourceRevisionContentHashes(evidence []RememberEvidenceInput) map[string]string {

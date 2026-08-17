@@ -13,6 +13,7 @@ import (
 func PrepareSemanticAssessmentEvidence(evidence SemanticReviewEvidence) SemanticReviewEvidence {
 	runes := []rune(evidence.Content)
 	prefix := semanticAssessmentBoundaryPrefix(evidence.Content)
+	evidence.BoundaryPrefix = prefix
 	refs := make(map[string]int, len(runes)+1)
 	var annotated strings.Builder
 	annotated.Grow(len(evidence.Content) + (len(runes)+1)*16)
@@ -49,6 +50,16 @@ func semanticAssessmentBoundaryOffset(evidence SemanticReviewEvidence, ref strin
 // SemanticAssessmentBoundaryRef returns the request-local reference for one
 // already validated Unicode code-point boundary.
 func SemanticAssessmentBoundaryRef(evidence SemanticReviewEvidence, offset int) (string, bool) {
+	if offset < 0 {
+		return "", false
+	}
+	if evidence.BoundaryPrefix != "" {
+		ref := evidence.BoundaryPrefix + strconv.FormatInt(int64(offset), 36)
+		if candidate, ok := evidence.BoundaryRefs[ref]; ok && candidate == offset {
+			return ref, true
+		}
+		return "", false
+	}
 	for ref, candidate := range evidence.BoundaryRefs {
 		if candidate == offset {
 			return ref, true

@@ -425,7 +425,7 @@ func submissionSemanticHoldSchema() map[string]any {
 				map[string]any{
 					"code":             schemaEnum(memoryservice.SubmissionHoldIssueCodes()),
 					"relationship_ref": schemaString("Client Relationship proposal ref.", 128),
-					"component":        schemaEnum([]string{"subject", "predicate", "object", "support", "relationship", "conflict"}),
+					"component":        schemaEnum(memoryservice.SubmissionHoldIssueComponents()),
 					"message":          schemaString("Bounded semantic hold guidance.", 512),
 				},
 			), 1, 50),

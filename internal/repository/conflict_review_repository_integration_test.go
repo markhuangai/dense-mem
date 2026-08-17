@@ -496,7 +496,7 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 	require.NotEmpty(t, derived.IngestID)
 	require.NotEmpty(t, derived.ReplacementFragment)
 
-	var conflictStatus, resolutionReason, loserStatus, searchState, systemProfileID, authSource, replacementAuthority string
+	var conflictStatus, resolutionReason, loserStatus, searchState, systemProfileID, authSource, replacementAuthority, derivedContractVersion string
 	var loserSupportCount, derivationCount, replacementSearchDocuments, relationshipCountBeforeDerived, derivedTaskAttempts int64
 	var derivedTaskStatus string
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
@@ -552,13 +552,22 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 			FROM relationship_records
 			WHERE team_id = ?::uuid
 		`, teamID).Scan(&relationshipCountBeforeDerived).Error)
-		return tx.Raw(`
+		err := tx.Raw(`
 			SELECT count(*)
 			FROM search_documents
 			WHERE team_id = ?::uuid
 			  AND source_kind = 'evidence'
 			  AND source_id = ?::uuid
 		`, teamID, derived.ReplacementFragment).Scan(&replacementSearchDocuments).Error
+		if err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT metadata ->> 'contract_version'
+			FROM knowledge_ingests
+			WHERE team_id = ?::uuid
+			  AND ingest_id = ?::uuid
+		`, teamID, derived.IngestID).Row().Scan(&derivedContractVersion)
 	}))
 	assert.Equal(t, "resolved", conflictStatus)
 	assert.Equal(t, domain.ConflictResolutionReasonAI, resolutionReason)
@@ -568,6 +577,7 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 	assert.NotEmpty(t, systemProfileID)
 	assert.Equal(t, "system", authSource)
 	assert.Equal(t, "inferred", replacementAuthority)
+	assert.Equal(t, domain.ContractVersion, derivedContractVersion)
 	assert.Equal(t, int64(1), derivationCount)
 	assert.Equal(t, "completed", derivedTaskStatus)
 	assert.Equal(t, int64(2), derivedTaskAttempts)

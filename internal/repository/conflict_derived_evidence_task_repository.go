@@ -36,6 +36,7 @@ func (r *LedgerRepositoryImpl) StageConflictDerivedEvidence(
 		RequestHash:    requestHash,
 		SourceSummary:  conflictResolutionDeletionOnlySourceSummary,
 		Metadata: map[string]any{
+			"contract_version":                   domain.ContractVersion,
 			"conflict_id":                        target.ConflictID,
 			"target_fragment_id":                 target.TargetFragmentID,
 			"target_owner_profile_id":            target.TargetOwnerProfileID,

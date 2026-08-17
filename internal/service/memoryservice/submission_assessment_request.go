@@ -280,6 +280,9 @@ func submissionAssessmentGroundedEntities(
 					Start:        occurrence.Start,
 					End:          occurrence.End,
 				})
+				if len(target.Groundings) > verifier.SemanticAssessmentMaxEntityGroundings {
+					return nil, nil, errors.New("submission assessment entity grounding bound is exceeded")
+				}
 				candidateIDs := make([]string, 0, len(occurrence.Candidates))
 				for candidateID := range occurrence.Candidates {
 					candidateIDs = append(candidateIDs, candidateID)
@@ -389,10 +392,10 @@ func submissionAssessmentEntityNameMatchAt(content, name []rune, start int) (int
 }
 
 func submissionAssessmentEntityBoundaries(content []rune, start, end int) bool {
-	if start > 0 && submissionAssessmentEntityWordRune(content[start-1]) && submissionAssessmentEntityWordRune(content[start]) {
+	if start > 0 && submissionAssessmentEntityWordRune(content[start-1]) {
 		return false
 	}
-	if end < len(content) && submissionAssessmentEntityWordRune(content[end-1]) && submissionAssessmentEntityWordRune(content[end]) {
+	if end < len(content) && submissionAssessmentEntityWordRune(content[end]) {
 		return false
 	}
 	return true

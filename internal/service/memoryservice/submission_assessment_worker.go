@@ -773,6 +773,11 @@ func submissionAssessmentCommitInput(
 	entityGroups := assessmentGroupsBySpan(request.EntityCandidateGroups)
 	entityResolutions := make([]repository.SubmissionAssessmentEntityResolutionInput, 0, len(response.EntityResults))
 	entityKinds := make(map[string]string, len(response.EntityResults))
+	entityResolutionsByGrounding := make(map[string]struct {
+		action        string
+		candidateID   string
+		knownEntityID string
+	}, len(response.EntityResults))
 	for _, result := range response.EntityResults {
 		target, ok := plan.entityTargetsByRef[result.Ref]
 		if !ok {
@@ -822,13 +827,27 @@ func submissionAssessmentCommitInput(
 		default:
 			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
 		}
+		entityKinds[result.Ref] = result.Kind
+		groundingKey := fmt.Sprintf("%s:%d:%d:%s", result.EvidenceID, result.Start, result.End, result.Kind)
+		candidateID := resolution.EntityID
+		if previous, exists := entityResolutionsByGrounding[groundingKey]; exists {
+			if previous.action != resolution.Action || previous.candidateID != candidateID ||
+				(previous.knownEntityID != "" && target.KnownEntityID != "" && previous.knownEntityID != target.KnownEntityID) {
+				return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
+			}
+			continue
+		}
+		entityResolutionsByGrounding[groundingKey] = struct {
+			action        string
+			candidateID   string
+			knownEntityID string
+		}{action: resolution.Action, candidateID: candidateID, knownEntityID: target.KnownEntityID}
 		entityResolutions = append(entityResolutions, repository.SubmissionAssessmentEntityResolutionInput{
 			PlacementItemID: item.PlacementItem.PlacementItemID,
 			Resolution:      resolution,
 		})
-		entityKinds[result.Ref] = result.Kind
 	}
-	if len(entityResolutions) != len(plan.EntityTargets) {
+	if len(entityKinds) != len(plan.EntityTargets) {
 		return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor omitted an entity result")
 	}
 

@@ -66,7 +66,7 @@ func TestSubmissionAssessmentReviewIssuesReportEveryHoldReason(t *testing.T) {
 	response := verifier.SemanticAssessmentResponse{
 		EntityResults: []verifier.SemanticAssessmentEntityResult{
 			{Ref: "subject"},
-			{Ref: "object", GroundingRef: &groundingRef, Action: string(domain.EntityResolutionAmbiguous)},
+			{Ref: "object", GroundingRef: &groundingRef, Action: string(domain.EntityResolutionAmbiguous), Confidence: 0.9},
 		},
 		RelationshipResults: []verifier.SemanticAssessmentRelationshipResult{{
 			Ref:             "relationship-1",
@@ -108,6 +108,29 @@ func TestSubmissionAssessmentReviewIssuesReportEveryHoldReason(t *testing.T) {
 	} {
 		assert.Contains(t, issueKinds, expected)
 	}
+}
+
+func TestSubmissionAssessmentReviewIssuesHoldsLowConfidenceEntityGrounding(t *testing.T) {
+	groundingRef := "grounding-1"
+	objectRef := "object"
+	plan := submissionAssessmentPlan{RelationshipTargets: []submissionAssessmentRelationshipTarget{{
+		Target: verifier.SemanticAssessmentRequiredRelationshipRef{
+			ProposalID: "relationship-1",
+			SubjectRef: "subject",
+			ObjectRef:  &objectRef,
+		},
+	}}}
+	issues, truncated := submissionAssessmentReviewIssues(plan, verifier.SemanticAssessmentResponse{
+		EntityResults: []verifier.SemanticAssessmentEntityResult{{
+			Ref: "subject", GroundingRef: &groundingRef, Action: string(domain.EntityResolutionCreate), Confidence: 0.4,
+		}},
+	}, 0.8)
+
+	require.False(t, truncated)
+	require.Len(t, issues, 1)
+	assert.Equal(t, "grounding_low_confidence", issues[0].Code)
+	assert.Equal(t, "relationship-1", issues[0].RelationshipRef)
+	assert.Equal(t, "subject", issues[0].Component)
 }
 
 func TestSubmissionAssessmentReviewIssuesAndCompletionAreBounded(t *testing.T) {

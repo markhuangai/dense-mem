@@ -106,6 +106,12 @@ func submissionAssessmentReviewIssues(
 				Message: "grounded Entity could not be resolved to one safe identity action",
 			})
 		}
+		if result.Confidence < threshold {
+			appendIssue(SubmissionHoldIssue{
+				Code: "grounding_low_confidence", RelationshipRef: relationshipRef, Component: component,
+				Message: "Entity grounding confidence is below the effective write threshold",
+			})
+		}
 	}
 	for _, result := range response.RelationshipResults {
 		if result.Modality != "statement" {
