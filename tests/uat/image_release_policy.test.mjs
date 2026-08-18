@@ -72,6 +72,7 @@ test("prerelease publication waits for the staging migration rehearsal", async (
     "the production copy must finish restoring before migrations run",
   );
   assert.match(prepare, /^    needs: staging-migration-rehearsal$/m);
+  assert.match(prepare, /needs\.staging-migration-rehearsal\.result == 'success'/);
 
   for (const jobName of [
     "resolve-production-source",

@@ -88,7 +88,8 @@ jobs:
     if: >-
       ${{
         github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push'
+        github.event.workflow_run.event == 'push' &&
+        needs.staging-migration-rehearsal.result == 'success'
       }}
     permissions:
       contents: write
