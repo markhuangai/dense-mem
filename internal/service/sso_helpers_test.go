@@ -107,7 +107,7 @@ func TestNormalizeSSOProviderAndMapping(t *testing.T) {
 	require.NoError(t, normalizeSSOProvider(&provider))
 	require.NoError(t, normalizeSSOProviderForWrite(&provider))
 	assert.Equal(t, "Enterprise", provider.Name)
-	assert.Equal(t, "https://login.example.com", provider.IssuerURL)
+	assert.Equal(t, "https://login.example.com/", provider.IssuerURL)
 	assert.Equal(t, "client-id", provider.ClientID)
 	assert.Equal(t, []string{"email", "openid"}, provider.Scopes)
 	assert.Equal(t, []string{"groups"}, provider.GroupClaims)

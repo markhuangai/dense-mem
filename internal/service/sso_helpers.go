@@ -621,7 +621,7 @@ func normalizeSSOProvider(provider *domain.SSOProvider) error {
 	default:
 		return fmt.Errorf("sso provider kind must be azure_ad, pingone, or generic_oidc")
 	}
-	provider.IssuerURL = strings.TrimRight(strings.TrimSpace(provider.IssuerURL), "/")
+	provider.IssuerURL = strings.TrimSpace(provider.IssuerURL)
 	if provider.IssuerURL == "" {
 		return fmt.Errorf("sso issuer_url is required")
 	}

@@ -127,7 +127,7 @@ func (s *SSOService) discoverOAuthJWKSURI(ctx context.Context, provider domain.S
 	if err := json.Unmarshal(body, &document); err != nil {
 		return "", ErrOAuthProviderUnavailable
 	}
-	if strings.TrimRight(strings.TrimSpace(document.Issuer), "/") != provider.IssuerURL {
+	if document.Issuer != provider.IssuerURL {
 		return "", ErrOAuthProviderUnavailable
 	}
 	document.JWKSURI = strings.TrimSpace(document.JWKSURI)

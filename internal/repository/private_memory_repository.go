@@ -577,9 +577,6 @@ func queuePrivateMemorySpaceTx(ctx context.Context, tx *gorm.DB, space *domain.M
 	if err := ensureNoPrivateMemoryLegalHoldTx(ctx, tx, space.ID); err != nil {
 		return nil, err
 	}
-	if space.LifecycleState != domain.MemorySpaceActive {
-		return nil, ErrPrivateMemoryOperationConflict
-	}
 	var activeOperationID uuid.UUID
 	err := tx.WithContext(ctx).Raw(`
 		SELECT id
@@ -595,34 +592,54 @@ func queuePrivateMemorySpaceTx(ctx context.Context, tx *gorm.DB, space *domain.M
 	}
 
 	now := time.Now().UTC()
-	result := tx.WithContext(ctx).Exec(`
-		UPDATE memory_spaces
-		SET generation = generation + 1,
-		    lifecycle_state = 'sealed',
-		    sealed_at = $1,
-		    retired_at = NULL,
-		    updated_at = $1
-		WHERE id = $2 AND team_id = $3 AND generation = $4 AND lifecycle_state = 'active'
-	`, now, space.ID, space.TeamID, space.Generation)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	if result.RowsAffected != 1 {
+	action := input.Action
+	targetCredentialID := cloneUUIDPtr(input.TargetCredentialID)
+	targetGeneration := space.Generation
+	retireSpace := input.RetireSpace
+	switch space.LifecycleState {
+	case domain.MemorySpaceActive:
+		result := tx.WithContext(ctx).Exec(`
+			UPDATE memory_spaces
+			SET generation = generation + 1,
+			    lifecycle_state = 'sealed',
+			    sealed_at = $1,
+			    retired_at = NULL,
+			    updated_at = $1
+			WHERE id = $2 AND team_id = $3 AND generation = $4 AND lifecycle_state = 'active'
+		`, now, space.ID, space.TeamID, space.Generation)
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected != 1 {
+			return nil, ErrPrivateMemoryOperationConflict
+		}
+	case domain.MemorySpaceSealed:
+		failed, err := failedPrivateMemoryOperationForRecoveryTx(ctx, tx, space)
+		if err != nil {
+			return nil, err
+		}
+		if input.RetireSpace && !failed.RetireSpace {
+			return nil, ErrPrivateMemoryOperationConflict
+		}
+		action = failed.Action
+		targetCredentialID = cloneUUIDPtr(failed.TargetCredentialID)
+		targetGeneration = *failed.TargetGeneration
+		retireSpace = failed.RetireSpace
+	default:
 		return nil, ErrPrivateMemoryOperationConflict
 	}
-	targetGeneration := space.Generation
 	spaceKind := space.Kind
 	operation := &domain.PrivateMemoryErasureOperation{
 		ID:                 uuid.New(),
 		TeamID:             space.TeamID,
 		SpaceID:            &space.ID,
 		SpaceKind:          &spaceKind,
-		TargetCredentialID: cloneUUIDPtr(input.TargetCredentialID),
-		Action:             input.Action,
+		TargetCredentialID: targetCredentialID,
+		Action:             action,
 		ActorClass:         input.ActorClass,
 		ReasonCode:         input.ReasonCode,
 		TargetGeneration:   &targetGeneration,
-		RetireSpace:        input.RetireSpace,
+		RetireSpace:        retireSpace,
 		Status:             domain.PrivateMemoryErasureQueued,
 		DeletedCounts:      map[string]int64{},
 		RequestedAt:        now,
@@ -630,6 +647,32 @@ func queuePrivateMemorySpaceTx(ctx context.Context, tx *gorm.DB, space *domain.M
 	}
 	if err := insertPrivateMemoryOperationTx(ctx, tx, operation, input.IdempotencyScopeHash, input.RequestHash); err != nil {
 		return nil, err
+	}
+	return operation, nil
+}
+
+func failedPrivateMemoryOperationForRecoveryTx(ctx context.Context, tx *gorm.DB, space *domain.MemorySpace) (*domain.PrivateMemoryErasureOperation, error) {
+	if space == nil || space.Generation <= 1 {
+		return nil, ErrPrivateMemoryOperationConflict
+	}
+	operation, err := scanPrivateMemoryOperation(tx.WithContext(ctx).Raw(privateMemoryOperationSelect+`
+		WHERE team_id = $1
+		  AND space_id = $2
+		  AND space_kind = $3
+		  AND target_generation = $4
+		  AND status = 'failed'
+		ORDER BY completed_at DESC NULLS LAST, requested_at DESC, id DESC
+		LIMIT 1
+		FOR UPDATE
+	`, space.TeamID, space.ID, space.Kind, space.Generation-1).Row())
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrPrivateMemoryOperationConflict
+	}
+	if err != nil {
+		return nil, err
+	}
+	if operation.TargetGeneration == nil {
+		return nil, ErrPrivateMemoryOperationConflict
 	}
 	return operation, nil
 }

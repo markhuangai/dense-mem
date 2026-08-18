@@ -120,7 +120,7 @@ assert(metadata.payload.resource === `${userURL}/mcp`, "unscoped metadata resour
 assert(metadata.payload.resource_name === "Dense-Mem MCP", "metadata resource name changed");
 assert(JSON.stringify(metadata.payload.bearer_methods_supported) === JSON.stringify(["header"]), "metadata bearer method changed");
 for (const name of ["entra", "pingone", "generic"]) {
-  assert(metadata.payload.authorization_servers?.includes(`${oauthInternalURL}/${name}`), `${name} issuer was missing from metadata`);
+  assert(metadata.payload.authorization_servers?.includes(providerInputs[name].issuer_url), `${name} issuer was missing from metadata`);
 }
 for (const scope of ["memory.read", "memory.write", "ping.read", "ping.write", "generic.read", "generic.write"]) {
   assert(metadata.payload.scopes_supported?.includes(scope), `metadata omitted external scope ${scope}`);
@@ -235,7 +235,7 @@ writeFileSync(resultFile, JSON.stringify({
   scenario,
   tested_commit: requiredEnv("DENSE_MEM_E2E_COMMIT_SHA"),
   second_team_id: secondTeam.id,
-  provider_profiles: ["entra-rs256-discovery", "pingone-ps256-static", "generic-es256-discovery"],
+  provider_profiles: ["entra-rs256-discovery", "pingone-ps256-static", "generic-es256-discovery-trailing-slash"],
   metadata_and_challenges: true,
   team_selection_and_scope_intersection: true,
   key_rotation_and_outage: true,
@@ -257,7 +257,7 @@ function providerInput({ name, kind, tenantID = "", identityClaim, audience, alg
   return {
     name,
     kind,
-    issuer_url: `${oauthInternalURL}/${profile}`,
+    issuer_url: oauthProfileIssuer(profile),
     tenant_id: tenantID,
     identity_claim: identityClaim,
     client_id: `${runID}-${profile}-browser-client`,
@@ -278,6 +278,11 @@ function providerInput({ name, kind, tenantID = "", identityClaim, audience, alg
     },
     enabled: true,
   };
+}
+
+function oauthProfileIssuer(profile) {
+  const issuer = `${oauthInternalURL}/${profile}`;
+  return profile === "generic" ? `${issuer}/` : issuer;
 }
 
 function identityFixture(providerID, subject, active) {

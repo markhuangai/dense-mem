@@ -42,13 +42,14 @@ async function runScenario() {
   const ownerB = await createControlCredential(teamAID, `${runID} owner B`, "credential_private");
   const ownerC = await createControlCredential(teamC.id, `${runID} owner C`, "credential_private");
   const controlTarget = await createControlCredential(teamAID, `${runID} control`, "credential_private");
+  const recoveryTarget = await createControlCredential(teamAID, `${runID} recovery`, "credential_private");
   const retentionEligible = await createControlCredential(teamAID, `${runID} retention eligible`, "credential_private");
   const retentionHeld = await createControlCredential(teamAID, `${runID} retention held`, "credential_private");
   const ssoCredentialTarget = await createSSOCredential(sso.a, `${runID} SSO isolated`, "credential_private");
   const ssoProfileCredential = await createSSOCredential(sso.a, `${runID} SSO profile`, "profile_private");
   const ssoSharedCredential = await createSSOCredential(sso.a, `${runID} SSO shared`, "shared_only");
 
-  for (const credential of [ownerA, ownerB, ownerC, controlTarget, retentionEligible, retentionHeld, ssoCredentialTarget, ssoProfileCredential, ssoSharedCredential]) {
+  for (const credential of [ownerA, ownerB, ownerC, controlTarget, recoveryTarget, retentionEligible, retentionHeld, ssoCredentialTarget, ssoProfileCredential, ssoSharedCredential]) {
     sensitiveValues.add(credential.apiKey);
   }
   for (const actor of Object.values(sso)) {
@@ -62,6 +63,7 @@ async function runScenario() {
   const ownerBSpace = credentialSpace(spaces, ownerB.credential.id);
   const ownerCSpace = credentialSpace(spaces, ownerC.credential.id);
   const controlSpace = credentialSpace(spaces, controlTarget.credential.id);
+  const recoverySpace = credentialSpace(spaces, recoveryTarget.credential.id);
   const retentionEligibleSpace = credentialSpace(spaces, retentionEligible.credential.id);
   const retentionHeldSpace = credentialSpace(spaces, retentionHeld.credential.id);
   const ssoCredentialSpace = credentialSpace(spaces, ssoCredentialTarget.credential.id);
@@ -72,6 +74,7 @@ async function runScenario() {
   const ownerBFixture = seedSpaceContent({ teamID: teamAID, ownerID: ownerB.credential.id, keyID: ownerB.credential.id, spaceID: ownerBSpace.id, label: "owner-b" });
   const ownerCFixture = seedSpaceContent({ teamID: teamC.id, ownerID: ownerC.credential.id, keyID: ownerC.credential.id, spaceID: ownerCSpace.id, label: "owner-c" });
   const controlFixture = seedSpaceContent({ teamID: teamAID, ownerID: controlTarget.credential.id, keyID: controlTarget.credential.id, spaceID: controlSpace.id, label: "control" });
+  const recoveryFixture = seedSpaceContent({ teamID: teamAID, ownerID: recoveryTarget.credential.id, keyID: recoveryTarget.credential.id, spaceID: recoverySpace.id, label: "recovery" });
   const profileFixture = seedSpaceContent({ teamID: teamAID, ownerID: ssoProfileCredential.credential.id, keyID: ssoProfileCredential.credential.id, spaceID: ssoProfileSpace.id, label: "sso-profile" });
   const ssoCredentialFixture = seedSpaceContent({ teamID: teamAID, ownerID: ssoCredentialTarget.credential.id, keyID: ssoCredentialTarget.credential.id, spaceID: ssoCredentialSpace.id, label: "sso-credential", rich: true });
   const retentionEligibleFixture = seedSpaceContent({ teamID: teamAID, ownerID: retentionEligible.credential.id, keyID: retentionEligible.credential.id, spaceID: retentionEligibleSpace.id, label: "retention-eligible" });
@@ -137,6 +140,45 @@ async function runScenario() {
   assertErasedSpace(controlSpace.id, controlCompleted, controlFixture, "active");
   assertCredentialStatus(controlTarget.credential.id, "active");
   assertPreserved(ownerBSpace.id, ownerBFixture);
+
+  await acquireKnowledgeIngestLock();
+  const recoveryInitial = await ownerRequest(recoveryTarget.apiKey, "owner-recovery-initial");
+  assert(recoveryInitial.status === 202, "recovery fixture erasure did not return 202");
+  const recoveryInitialID = recoveryInitial.payload.data?.operation_id;
+  await waitControlOperation(recoveryInitialID, "processing");
+  stopServer();
+  await releaseKnowledgeIngestLock();
+  postgresExec(`
+    UPDATE private_memory_erasure_operations
+    SET status = 'failed', attempt_count = 5, worker_id = '', lease_until = NULL,
+        next_attempt_at = NULL, last_error_code = 'database_error', completed_at = now(), updated_at = now()
+    WHERE id = ${sqlLiteral(recoveryInitialID)}::uuid AND status = 'processing'
+  `);
+  startServer();
+  await waitForServerReady();
+  const terminalFailure = await waitControlOperation(recoveryInitialID, "failed");
+  assert(terminalFailure.attempt_count === 5 && terminalFailure.last_error_code === "database_error", "terminal recovery fixture was not inspectable");
+  assertSpaceState(recoverySpace.id, "sealed", Number(terminalFailure.target_generation) + 1);
+
+  const recoveryQueued = await ownerRequest(recoveryTarget.apiKey, "owner-recovery-reviewed");
+  assert(recoveryQueued.status === 202, "reviewed recovery intent did not return 202");
+  const recoveryOperationID = recoveryQueued.payload.data?.operation_id;
+  assert(recoveryOperationID !== recoveryInitialID, "reviewed recovery intent reused the failed operation");
+  const recoveryContract = postgresRow(`
+    SELECT current.action, current.target_generation, current.retire_space,
+           failed.action, failed.target_generation, failed.retire_space
+    FROM private_memory_erasure_operations AS current
+    JOIN private_memory_erasure_operations AS failed ON failed.id = ${sqlLiteral(recoveryInitialID)}::uuid
+    WHERE current.id = ${sqlLiteral(recoveryOperationID)}::uuid
+  `);
+  assert(recoveryContract[0] === recoveryContract[3]
+    && recoveryContract[1] === recoveryContract[4]
+    && recoveryContract[2] === recoveryContract[5], "reviewed recovery changed the sealed erasure target contract");
+  const recoveryCompleted = await waitControlOperation(recoveryOperationID, "completed");
+  const originalFailure = await waitControlOperation(recoveryInitialID, "failed");
+  assert(originalFailure.operation_id === recoveryInitialID, "recovery rewrote the failed operation history");
+  assertErasedSpace(recoverySpace.id, recoveryCompleted, recoveryFixture, "active");
+  assertCredentialStatus(recoveryTarget.credential.id, "active");
 
   await assertForeignSSOCredentialDeletionHidden(sso.b, sso.c, ssoCredentialTarget.credential.id);
   await placeHold(ssoCredentialSpace.id, "credential_delete_hold");
@@ -214,6 +256,7 @@ async function runScenario() {
     audit_tombstones_redacted: true,
     generation_and_worker_fencing: true,
     expired_lease_reclaimed: true,
+    terminal_failure_reauthorized: true,
     team_shared_preserved: true,
   }, null, 2));
 }

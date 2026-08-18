@@ -55,7 +55,7 @@ func (s *SSOService) AuthenticateOAuthBearer(ctx context.Context, raw string, pa
 	if err := json.Unmarshal(payloadJSON, &unverified); err != nil {
 		return nil, ErrOAuthTokenInvalid
 	}
-	issuer, err := requiredStringClaim(unverified, "iss")
+	issuer, err := requiredExactStringClaim(unverified, "iss")
 	if err != nil {
 		return nil, ErrOAuthTokenInvalid
 	}
@@ -194,7 +194,7 @@ func (s *SSOService) oauthProviderForIssuer(ctx context.Context, issuer string) 
 		if provider == nil || provider.RetiredAt != nil || !provider.ProtectedResource.Enabled {
 			continue
 		}
-		if strings.TrimRight(strings.TrimSpace(provider.IssuerURL), "/") != issuer {
+		if provider.IssuerURL != issuer {
 			continue
 		}
 		copyProvider := *provider
@@ -238,6 +238,18 @@ func requiredStringClaim(raw map[string]json.RawMessage, name string) (string, e
 		return "", ErrOAuthTokenInvalid
 	}
 	return strings.TrimSpace(decoded), nil
+}
+
+func requiredExactStringClaim(raw map[string]json.RawMessage, name string) (string, error) {
+	value, ok := raw[name]
+	if !ok {
+		return "", ErrOAuthTokenInvalid
+	}
+	var decoded string
+	if err := json.Unmarshal(value, &decoded); err != nil || decoded == "" || decoded != strings.TrimSpace(decoded) {
+		return "", ErrOAuthTokenInvalid
+	}
+	return decoded, nil
 }
 
 func oauthScopeClaim(raw map[string]json.RawMessage, name string) ([]string, error) {

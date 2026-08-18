@@ -50,6 +50,34 @@ func TestAuthenticateOAuthBearerValidatesAndFixesMembershipContext(t *testing.T)
 	require.ErrorIs(t, err, ErrOAuthAccessDenied)
 }
 
+func TestAuthenticateOAuthBearerPreservesExactIssuerIdentifier(t *testing.T) {
+	fixture := newOAuthProtectedResourceFixture(t)
+	fixture.issuer += "/"
+	fixture.providerConfig.IssuerURL = fixture.issuer
+	fixture.provider.issuer = fixture.issuer
+
+	actor, err := fixture.service.AuthenticateOAuthBearer(
+		t.Context(),
+		fixture.token(fixture.key, fixture.keyID, fixture.claims()),
+		nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, fixture.teamID, actor.Team.ID)
+
+	metadata, err := fixture.service.OAuthProtectedResourceMetadata(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, []string{fixture.issuer}, metadata.AuthorizationServers)
+
+	claims := fixture.claims()
+	claims["iss"] = strings.TrimSuffix(fixture.issuer, "/")
+	_, err = fixture.service.AuthenticateOAuthBearer(
+		t.Context(),
+		fixture.token(fixture.key, fixture.keyID, claims),
+		nil,
+	)
+	require.ErrorIs(t, err, ErrOAuthTokenInvalid)
+}
+
 func TestAuthenticateOAuthBearerRejectsRevokedMembershipEntitlement(t *testing.T) {
 	fixture := newOAuthProtectedResourceFixture(t)
 	fixture.repo.mappings = nil
@@ -641,6 +669,7 @@ type oauthTestProvider struct {
 	mu          sync.RWMutex
 	key         *rsa.PrivateKey
 	keyID       string
+	issuer      string
 	unavailable bool
 	jwksHits    int
 }
@@ -662,7 +691,11 @@ func (p *oauthTestProvider) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.URL.Path {
 	case "/.well-known/openid-configuration":
-		_ = json.NewEncoder(w).Encode(map[string]any{"issuer": p.server.URL, "jwks_uri": p.server.URL + "/jwks"})
+		issuer := p.issuer
+		if issuer == "" {
+			issuer = p.server.URL
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"issuer": issuer, "jwks_uri": p.server.URL + "/jwks"})
 	case "/jwks":
 		p.jwksHits++
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{rsaJWK(&p.key.PublicKey, p.keyID)}})

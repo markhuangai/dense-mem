@@ -252,6 +252,108 @@ func TestPrivateMemoryFailureRetriesAreBackedOffAndBounded(t *testing.T) {
 	claim, err := repo.ClaimNext(ctx, "late-worker", time.Minute)
 	require.NoError(t, err)
 	require.Nil(t, claim)
+
+	_, _, err = repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
+		IdempotencyScopeHash: privateMemoryHash("retry-incompatible-retire", target.ID.String()),
+		RequestHash:          privateMemoryHash("retry-incompatible-retire-request", target.ID.String()),
+		ReasonCode:           "owner_request",
+	})
+	require.ErrorIs(t, err, ErrPrivateMemoryOperationConflict)
+	var credentialStatus string
+	require.NoError(t, adminDB.Raw(`SELECT status FROM credentials WHERE id = ?`, target.ID).Row().Scan(&credentialStatus))
+	require.Equal(t, "active", credentialStatus)
+
+	recovery, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: target.ID, CredentialID: target.ID,
+		IdempotencyScopeHash: privateMemoryHash("retry-recovery", target.ID.String()),
+		RequestHash:          privateMemoryHash("retry-recovery-request", target.ID.String()),
+		ReasonCode:           "owner_request",
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NotEqual(t, operation.ID, recovery.ID)
+	require.Equal(t, domain.PrivateMemoryErasureQueued, recovery.Status)
+	require.Equal(t, operation.Action, recovery.Action)
+	require.Equal(t, operation.TargetGeneration, recovery.TargetGeneration)
+	require.Equal(t, operation.RetireSpace, recovery.RetireSpace)
+
+	original, err := repo.GetOperation(ctx, operation.ID)
+	require.NoError(t, err)
+	require.Equal(t, domain.PrivateMemoryErasureFailed, original.Status)
+
+	claim, err = repo.ClaimNext(ctx, "recovery-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	require.Equal(t, recovery.ID, claim.ID)
+	completed, err := repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	require.NoError(t, err)
+	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
+
+	var lifecycle domain.MemorySpaceLifecycleState
+	var generation int64
+	require.NoError(t, adminDB.Raw(`
+		SELECT lifecycle_state, generation
+		FROM memory_spaces
+		WHERE id = ?
+	`, target.MemorySpaceID).Row().Scan(&lifecycle, &generation))
+	require.Equal(t, domain.MemorySpaceActive, lifecycle)
+	require.Equal(t, *operation.TargetGeneration+1, generation)
+
+	retireOwnerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	retireTarget := createOwnedCredential(t, credentialRepo, teamID, retireOwnerID, "retry-retire-target", domain.CredentialBindingCredentialPrivate)
+	seedPrivateMemoryIngest(t, adminDB, rls, teamID, retireTarget.ID, retireTarget.MemorySpaceID, "retry retire private content")
+	retirement, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: retireOwnerID, CredentialID: retireTarget.ID,
+		IdempotencyScopeHash: privateMemoryHash("retry-retire", retireTarget.ID.String()),
+		RequestHash:          privateMemoryHash("retry-retire-request", retireTarget.ID.String()),
+		ReasonCode:           "owner_request",
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+	require.True(t, retirement.RetireSpace)
+
+	for attempt := 1; attempt <= privateMemoryMaximumAttempts; attempt++ {
+		claim, err = repo.ClaimNext(ctx, "retirement-worker", time.Minute)
+		require.NoError(t, err)
+		require.NotNil(t, claim)
+		require.Equal(t, retirement.ID, claim.ID)
+		require.NoError(t, repo.ReleaseClaim(ctx, claim.ID, claim.WorkerID, claim.Fence, "database_error"))
+		if attempt < privateMemoryMaximumAttempts {
+			stored, getErr := repo.GetOperation(ctx, retirement.ID)
+			require.NoError(t, getErr)
+			require.NotNil(t, stored.NextAttemptAt)
+			repo.now = func() time.Time { return *stored.NextAttemptAt }
+		}
+	}
+
+	retirementRecovery, created, err := repo.RequestControlErasure(
+		ctx,
+		retireTarget.MemorySpaceID,
+		privateMemoryHash("retry-retire-control", retireTarget.ID.String()),
+		privateMemoryHash("retry-retire-control-request", retireTarget.ID.String()),
+		"operator_retry",
+	)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.Equal(t, domain.PrivateMemoryRetireCredential, retirementRecovery.Action)
+	require.Equal(t, retirement.TargetCredentialID, retirementRecovery.TargetCredentialID)
+	require.Equal(t, retirement.TargetGeneration, retirementRecovery.TargetGeneration)
+	require.True(t, retirementRecovery.RetireSpace)
+
+	claim, err = repo.ClaimNext(ctx, "retirement-recovery-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	retired, err := repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	require.NoError(t, err)
+	require.Equal(t, domain.PrivateMemoryErasureCompleted, retired.Status)
+	require.NoError(t, adminDB.Raw(`
+		SELECT lifecycle_state, generation
+		FROM memory_spaces
+		WHERE id = ?
+	`, retireTarget.MemorySpaceID).Row().Scan(&lifecycle, &generation))
+	require.Equal(t, domain.MemorySpaceRetired, lifecycle)
+	require.Equal(t, *retirement.TargetGeneration+1, generation)
 }
 
 func TestPrivateMemoryMissingRetiredCredentialLosesClaim(t *testing.T) {

@@ -25,7 +25,7 @@ const server = createServer({ cert: certificate, key: privateKey }, async (reque
       const profile = profiles[name];
       if (profile.discoveryOutage) return sendJSON(response, 503, { error: "temporarily_unavailable" });
       return sendJSON(response, 200, {
-        issuer: `${issuerBase}/${name}`,
+        issuer: profileIssuer(name),
         jwks_uri: `${issuerBase}/${name}/jwks`,
         authorization_endpoint: `${issuerBase}/${name}/authorize`,
         token_endpoint: `${issuerBase}/${name}/token`,
@@ -111,7 +111,7 @@ function issueToken(name, profile, input) {
     ...(input.header ?? {}),
   };
   const claims = {
-    iss: `${issuerBase}/${name}`,
+    iss: profileIssuer(name),
     aud: profile.audience,
     sub: `${name}-user`,
     iat: now,
@@ -133,6 +133,11 @@ function issueToken(name, profile, input) {
   const signingInput = `${base64URL(encodedHeader)}.${base64URL(encodedClaims)}`;
   const signature = signJWT(signingInput, selectedKey.privateKey, input.sign_alg ?? profile.algorithm);
   return `${signingInput}.${signature.toString("base64url")}`;
+}
+
+function profileIssuer(name) {
+  const issuer = `${issuerBase}/${name}`;
+  return name === "generic" ? `${issuer}/` : issuer;
 }
 
 function signJWT(value, key, algorithm) {
