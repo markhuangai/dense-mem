@@ -32,10 +32,14 @@ var (
 
 const (
 	defaultPrivateMemoryLease      = 5 * time.Minute
+	privateMemoryMaximumAttempts   = 5
+	privateMemoryRetryBaseDelay    = time.Second
+	privateMemoryRetryMaximumDelay = time.Minute
 	defaultPrivateMemoryListLimit  = 100
 	maximumPrivateMemoryListLimit  = 500
 	defaultPrivateRetentionBatch   = 100
 	maximumPrivateRetentionBatch   = 500
+	privateContentAgeBackfillBatch = 500
 	privateMemoryAuditMetadataJSON = `{"private_content_erased": true}`
 )
 
@@ -580,7 +584,7 @@ func queuePrivateMemorySpaceTx(ctx context.Context, tx *gorm.DB, space *domain.M
 	err := tx.WithContext(ctx).Raw(`
 		SELECT id
 		FROM private_memory_erasure_operations
-		WHERE space_id = $1 AND status <> 'completed'
+		WHERE space_id = $1 AND status IN ('queued', 'processing')
 		LIMIT 1
 	`, space.ID).Row().Scan(&activeOperationID)
 	if err == nil {
@@ -721,17 +725,17 @@ func insertPrivateMemoryOperationTx(ctx context.Context, tx *gorm.DB, operation 
 			id, team_id, space_id, space_kind, target_credential_id, action, actor_class,
 			reason_code, target_generation, retire_space, idempotency_scope_hash, request_hash,
 			status, manifest_position, deleted_counts, attempt_count, fence, worker_id,
-			lease_until, last_error_code, requested_at, started_at, completed_at, updated_at
+			lease_until, next_attempt_at, last_error_code, requested_at, started_at, completed_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8, $9, $10, $11, $12,
 			$13, $14, $15::jsonb, $16, $17, $18,
-			$19, $20, $21, $22, $23, $24
+			$19, $20, $21, $22, $23, $24, $25
 		)
 	`, operation.ID, operation.TeamID, operation.SpaceID, operation.SpaceKind, operation.TargetCredentialID,
 		operation.Action, operation.ActorClass, operation.ReasonCode, operation.TargetGeneration, operation.RetireSpace,
 		scopeHash, requestHash, operation.Status, operation.ManifestPosition, string(deletedCounts), operation.AttemptCount,
-		operation.Fence, operation.WorkerID, operation.LeaseUntil, operation.LastErrorCode, operation.RequestedAt,
+		operation.Fence, operation.WorkerID, operation.LeaseUntil, operation.NextAttemptAt, operation.LastErrorCode, operation.RequestedAt,
 		operation.StartedAt, operation.CompletedAt, operation.UpdatedAt).Error
 }
 
@@ -739,7 +743,7 @@ const privateMemoryOperationSelect = `
 	SELECT id, team_id, space_id::text, space_kind, target_credential_id::text,
 	       action, actor_class, reason_code, target_generation, retire_space,
 	       status, manifest_position, deleted_counts, attempt_count, fence,
-	       worker_id, lease_until, last_error_code, requested_at, started_at,
+	       worker_id, lease_until, next_attempt_at, last_error_code, requested_at, started_at,
 	       completed_at, updated_at
 	FROM private_memory_erasure_operations AS operation
 `
@@ -748,13 +752,13 @@ func scanPrivateMemoryOperation(row rowScanner) (*domain.PrivateMemoryErasureOpe
 	operation := &domain.PrivateMemoryErasureOperation{}
 	var spaceID, spaceKind, credentialID sql.NullString
 	var targetGeneration sql.NullInt64
-	var leaseUntil, startedAt, completedAt sql.NullTime
+	var leaseUntil, nextAttemptAt, startedAt, completedAt sql.NullTime
 	var deletedCounts []byte
 	err := row.Scan(
 		&operation.ID, &operation.TeamID, &spaceID, &spaceKind, &credentialID,
 		&operation.Action, &operation.ActorClass, &operation.ReasonCode, &targetGeneration, &operation.RetireSpace,
 		&operation.Status, &operation.ManifestPosition, &deletedCounts, &operation.AttemptCount, &operation.Fence,
-		&operation.WorkerID, &leaseUntil, &operation.LastErrorCode, &operation.RequestedAt, &startedAt,
+		&operation.WorkerID, &leaseUntil, &nextAttemptAt, &operation.LastErrorCode, &operation.RequestedAt, &startedAt,
 		&completedAt, &operation.UpdatedAt,
 	)
 	if err != nil {
@@ -785,6 +789,10 @@ func scanPrivateMemoryOperation(row rowScanner) (*domain.PrivateMemoryErasureOpe
 	if leaseUntil.Valid {
 		value := leaseUntil.Time.UTC()
 		operation.LeaseUntil = &value
+	}
+	if nextAttemptAt.Valid {
+		value := nextAttemptAt.Time.UTC()
+		operation.NextAttemptAt = &value
 	}
 	if startedAt.Valid {
 		value := startedAt.Time.UTC()

@@ -55,6 +55,7 @@ const (
 
 	ssoEntitlementSourceClaims   = "claims"
 	ssoEntitlementSourceEndpoint = "endpoint"
+	oauthMaximumScopeMappings    = 16
 )
 
 type SSOSetupError struct {
@@ -736,6 +737,9 @@ func normalizeOAuthProtectedResourceConfig(cfg *domain.OAuthProtectedResourceCon
 	cfg.TeamClaim = strings.TrimSpace(cfg.TeamClaim)
 	if cfg.TeamClaim != "" && !ssoClaimNamePattern.MatchString(cfg.TeamClaim) {
 		return fmt.Errorf("sso protected_resource.team_claim is invalid")
+	}
+	if len(cfg.ScopeMappings) > oauthMaximumScopeMappings {
+		return fmt.Errorf("sso protected_resource.scope_mappings must contain at most %d values", oauthMaximumScopeMappings)
 	}
 	seenExternal := make(map[string]struct{}, len(cfg.ScopeMappings))
 	for index := range cfg.ScopeMappings {

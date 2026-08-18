@@ -54,6 +54,7 @@ type privateMemoryOperationResponse struct {
 	Status             domain.PrivateMemoryErasureStatus `json:"status"`
 	DeletedCounts      map[string]int64                  `json:"deleted_counts"`
 	AttemptCount       int                               `json:"attempt_count,omitempty"`
+	NextAttemptAt      *string                           `json:"next_attempt_at,omitempty"`
 	LastErrorCode      string                            `json:"last_error_code,omitempty"`
 	RequestedAt        string                            `json:"requested_at"`
 	StartedAt          *string                           `json:"started_at,omitempty"`
@@ -444,6 +445,7 @@ func toPrivateMemoryOperation(operation *domain.PrivateMemoryErasureOperation, c
 			response.TargetCredentialID = operation.TargetCredentialID.String()
 		}
 		response.AttemptCount = operation.AttemptCount
+		response.NextAttemptAt = privateMemoryTime(operation.NextAttemptAt)
 		response.LastErrorCode = operation.LastErrorCode
 	}
 	return response

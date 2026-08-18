@@ -35,6 +35,9 @@ describe("ConfigPanel private-memory retention", () => {
 
     expect(await screen.findByText("Automatic erasure is disabled. Owner requests and legal holds still apply.")).toBeInTheDocument();
     const field = screen.getByLabelText("Private-memory retention days");
+    expect(field).toHaveAttribute("type", "number");
+    expect(field).toHaveAttribute("min", "0");
+    expect(field).toHaveAttribute("max", "36500");
     await userEvent.clear(field);
     await userEvent.type(field, "30");
     await userEvent.click(screen.getByRole("button", { name: "Save config" }));

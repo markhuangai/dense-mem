@@ -57,9 +57,10 @@ export type PrivateMemoryOperation = {
   reason_code: string;
   target_generation?: number;
   retire_space: boolean;
-  status: "queued" | "processing" | "completed" | string;
+  status: "queued" | "processing" | "completed" | "failed" | string;
   deleted_counts: Record<string, number>;
   attempt_count?: number;
+  next_attempt_at?: string;
   last_error_code?: string;
   requested_at: string;
   started_at?: string;

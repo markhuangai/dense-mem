@@ -392,7 +392,7 @@ function ConfigField({
   value,
   onChange,
 }: {
-  item: GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem | TelemetryPricingConfigItem;
+  item: GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | PrivateMemoryConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem | TelemetryPricingConfigItem;
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -453,9 +453,10 @@ function ConfigField({
   }
 
   const pricing = item.key.startsWith("TELEMETRY_COST_");
-  const numeric = pricing || item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
+  const privateMemoryRetention = item.key === "PRIVATE_MEMORY_RETENTION_DAYS";
+  const numeric = pricing || privateMemoryRetention || item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
   const time = item.key === "DREAMING_START_TIME_LOCAL" || item.key === "COMMUNITY_DETECTION_START_TIME_LOCAL" || item.key === "EMBEDDING_RECONCILIATION_START_TIME_LOCAL";
-  const min = item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric && !pricing ? 1 : undefined;
+  const min = privateMemoryRetention || item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric && !pricing ? 1 : undefined;
   return (
     <>
       <label htmlFor={item.key}>{label}</label>
@@ -464,7 +465,7 @@ function ConfigField({
         type={time ? "time" : pricing ? "text" : numeric ? "number" : "text"}
         inputMode={pricing ? "decimal" : undefined}
         min={min}
-        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : undefined}
+        max={privateMemoryRetention ? 36500 : item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : undefined}
         placeholder={CONFIG_PLACEHOLDERS[item.key] ?? ""}
         value={value}
         onChange={(event) => onChange(event.target.value)}

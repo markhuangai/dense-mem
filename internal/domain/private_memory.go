@@ -12,6 +12,7 @@ const (
 	PrivateMemoryErasureQueued     PrivateMemoryErasureStatus = "queued"
 	PrivateMemoryErasureProcessing PrivateMemoryErasureStatus = "processing"
 	PrivateMemoryErasureCompleted  PrivateMemoryErasureStatus = "completed"
+	PrivateMemoryErasureFailed     PrivateMemoryErasureStatus = "failed"
 )
 
 type PrivateMemoryErasureAction string
@@ -50,6 +51,7 @@ type PrivateMemoryErasureOperation struct {
 	Fence              int64
 	WorkerID           string
 	LeaseUntil         *time.Time
+	NextAttemptAt      *time.Time
 	LastErrorCode      string
 	RequestedAt        time.Time
 	StartedAt          *time.Time

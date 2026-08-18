@@ -157,3 +157,24 @@ func TestAuthMiddleware_OptionalMissingCredentialsHasNoFailureSideEffects(t *tes
 	assert.False(t, mockAudit.authFailureCalled)
 	assert.False(t, mockSecurity.recordAuthFailureCalled)
 }
+
+func TestAuthMiddleware_MalformedScopedTeamRecordsAuthFailure(t *testing.T) {
+	e := newTestEcho()
+	mockAudit := &mockAuditService{}
+	mockSecurity := &mockSecurityService{}
+	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, mockAudit, mockSecurity, AuthOptions{}))
+	e.GET("/teams/:teamId/mcp", func(c echo.Context) error {
+		return c.NoContent(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/teams/not-a-uuid/mcp", nil)
+	req.Header.Set("Authorization", "Bearer header.payload.signature")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "INVALID_UUID")
+	assert.True(t, mockAudit.authFailureCalled)
+	assert.True(t, mockSecurity.recordAuthFailureCalled)
+	assert.Equal(t, "TEAM_PATH_INVALID", mockSecurity.recordAuthFailureReason)
+}

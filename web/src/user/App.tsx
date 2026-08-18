@@ -622,6 +622,8 @@ function CredentialPanel({
   const [error, setError] = useState("");
   const [erasureMessage, setErasureMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const erasureIdempotencyKeys = useRef(new Map<string, string>());
+  const erasurePollAbort = useRef<AbortController | null>(null);
   const isSSO = session.credential === null;
   const personalCredentials = isSSO ? (session.personal_credentials ?? []) : [];
   const selectedPersonalCredential = personalCredentials.find((credential) => credential.id === selectedCredentialID) ?? personalCredentials[0] ?? null;
@@ -647,6 +649,23 @@ function CredentialPanel({
       setPermission("read");
     }
   }, [canCreateWrite]);
+
+  useEffect(() => () => {
+    erasurePollAbort.current?.abort();
+  }, []);
+
+  async function awaitErasure(operation: PrivateMemoryOperation, label: string) {
+    erasurePollAbort.current?.abort();
+    const controller = new AbortController();
+    erasurePollAbort.current = controller;
+    try {
+      await pollPrivateMemoryErasure(api, operation, setErasureMessage, label, controller.signal);
+    } finally {
+      if (erasurePollAbort.current === controller) {
+        erasurePollAbort.current = null;
+      }
+    }
+  }
 
   async function createSSOCredential(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -710,12 +729,14 @@ function CredentialPanel({
     setError("");
     setErasureMessage("");
     try {
-      const operation = await api.deleteSSOCredential(personalCredential.id, privateMemoryIdempotencyKey("delete-credential", personalCredential.id));
+      const intent = privateMemoryIntent("delete-credential", personalCredential.id);
+      const operation = await api.deleteSSOCredential(personalCredential.id, privateMemoryIdempotencyKey(erasureIdempotencyKeys.current, intent));
+      erasureIdempotencyKeys.current.delete(intent);
       const nextCredentials = personalCredentials.filter((credential) => credential.id !== personalCredential.id);
       setSelectedCredentialID(nextCredentials[0]?.id ?? null);
       onSSOCredentialsChanged(nextCredentials);
       setCreatedAPIKey("");
-      void pollPrivateMemoryErasure(api, operation, setErasureMessage, "Credential deletion");
+      await awaitErasure(operation, "Credential deletion");
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -733,10 +754,15 @@ function CredentialPanel({
     setError("");
     setErasureMessage("");
     try {
+      const action = profilePrivate ? "erase-profile-private" : "erase-credential-private";
+      const targetID = profilePrivate ? session.team.id : personalCredential?.id ?? session.team.id;
+      const intent = privateMemoryIntent(action, targetID);
+      const idempotencyKey = privateMemoryIdempotencyKey(erasureIdempotencyKeys.current, intent);
       const operation = profilePrivate
-        ? await api.eraseSSOPrivateMemory(privateMemoryIdempotencyKey("erase-profile-private", session.team.id))
-        : await api.eraseCredentialPrivateMemory(privateMemoryIdempotencyKey("erase-credential-private", personalCredential?.id ?? session.team.id));
-      void pollPrivateMemoryErasure(api, operation, setErasureMessage, `${profilePrivate ? "Profile-private" : "Credential-private"} erasure`);
+        ? await api.eraseSSOPrivateMemory(idempotencyKey)
+        : await api.eraseCredentialPrivateMemory(idempotencyKey);
+      erasureIdempotencyKeys.current.delete(intent);
+      await awaitErasure(operation, `${profilePrivate ? "Profile-private" : "Credential-private"} erasure`);
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -849,30 +875,79 @@ async function pollPrivateMemoryErasure(
   initial: PrivateMemoryOperation,
   onMessage: (message: string) => void,
   label: string,
+  signal: AbortSignal,
 ) {
+  if (signal.aborted) {
+    return;
+  }
   let operation = initial;
   onMessage(privateMemoryOperationMessage(label, operation));
-  for (let attempt = 0; operation.status !== "completed" && attempt < 40; attempt += 1) {
-    await new Promise((resolve) => window.setTimeout(resolve, 500));
+  for (let attempt = 0; !privateMemoryErasureTerminal(operation) && attempt < 40; attempt += 1) {
     try {
-      operation = await api.getPrivateMemoryErasure(operation.operation_id);
+      await waitForPrivateMemoryPoll(signal);
+      operation = await api.getPrivateMemoryErasure(operation.operation_id, signal);
+      if (signal.aborted) {
+        return;
+      }
       onMessage(privateMemoryOperationMessage(label, operation));
     } catch (error) {
+      if (isAbortError(error)) {
+        return;
+      }
       onMessage(`${label} was accepted, but status polling failed: ${readError(error)}`);
       return;
     }
   }
+  if (!privateMemoryErasureTerminal(operation)) {
+    onMessage(`${label} was accepted, but status polling timed out after 40 attempts. Operation ${operation.operation_id.slice(0, 8)}.`);
+  }
+}
+
+function waitForPrivateMemoryPoll(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const onAbort = () => {
+      window.clearTimeout(timeout);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timeout = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, 500);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function privateMemoryErasureTerminal(operation: PrivateMemoryOperation): boolean {
+  return operation.status === "completed" || operation.status === "failed";
 }
 
 function privateMemoryOperationMessage(label: string, operation: PrivateMemoryOperation): string {
   if (operation.status === "completed") {
     return `${label} completed.`;
   }
+  if (operation.status === "failed") {
+    const reason = operation.last_error_code ? ` (${operation.last_error_code})` : "";
+    return `${label} failed${reason}. Operation ${operation.operation_id.slice(0, 8)}.`;
+  }
   return `${label} ${operation.status}. Operation ${operation.operation_id.slice(0, 8)}.`;
 }
 
-function privateMemoryIdempotencyKey(action: string, target: string): string {
-  return `${action}:${target}:${crypto.randomUUID()}`;
+function privateMemoryIntent(action: string, target: string): string {
+  return `${action}:${target}`;
+}
+
+function privateMemoryIdempotencyKey(keys: Map<string, string>, intent: string): string {
+  const existing = keys.get(intent);
+  if (existing) {
+    return existing;
+  }
+  const key = `${intent}:${crypto.randomUUID()}`;
+  keys.set(intent, key);
+  return key;
 }
 
 function CreatedCredentialNotice({ apiKey, onDismiss }: { apiKey: string; onDismiss: () => void }) {

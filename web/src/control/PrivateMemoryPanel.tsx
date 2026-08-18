@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Lock, Play, RefreshCw, Trash2, Unlock } from "lucide-react";
 import {
   ControlApi,
@@ -18,6 +18,7 @@ export function PrivateMemoryPanel({ api }: { api: ControlApi }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const idempotencyKeys = useRef(new Map<string, string>());
 
   async function load() {
     setBusy(true);
@@ -70,7 +71,9 @@ export function PrivateMemoryPanel({ api }: { api: ControlApi }) {
       return;
     }
     await mutate(async () => {
-      const operation = await api.requestPrivateMemoryErasure(space.id, privateMemoryIdempotencyKey("control-erasure", space.id));
+      const intent = privateMemoryIntent("control-erasure", space.id);
+      const operation = await api.requestPrivateMemoryErasure(space.id, privateMemoryIdempotencyKey(idempotencyKeys.current, intent));
+      idempotencyKeys.current.delete(intent);
       setMessage(`Erasure ${shortId(operation.operation_id)} queued.`);
     });
   }
@@ -81,7 +84,9 @@ export function PrivateMemoryPanel({ api }: { api: ControlApi }) {
       return;
     }
     await mutate(async () => {
-      const run = await api.runPrivateMemoryRetention(privateMemoryIdempotencyKey("retention", String(days)));
+      const intent = privateMemoryIntent("retention", String(days));
+      const run = await api.runPrivateMemoryRetention(privateMemoryIdempotencyKey(idempotencyKeys.current, intent));
+      idempotencyKeys.current.delete(intent);
       setMessage(`Retention run ${shortId(run.id)} queued ${run.queued_count} space${run.queued_count === 1 ? "" : "s"}.`);
     });
   }
@@ -101,7 +106,7 @@ export function PrivateMemoryPanel({ api }: { api: ControlApi }) {
 
   const retentionDays = config?.effective.retention_days ?? 0;
   const heldSpaces = spaces.filter((space) => space.active_hold).length;
-  const activeOperations = operations.filter((operation) => operation.status !== "completed").length;
+  const activeOperations = operations.filter((operation) => operation.status === "queued" || operation.status === "processing").length;
 
   return (
     <section className="surface private-memory-panel">
@@ -254,6 +259,16 @@ function PrivateMemoryRetentionList({ runs }: { runs: PrivateMemoryRetentionRun[
   );
 }
 
-function privateMemoryIdempotencyKey(action: string, target: string): string {
-  return `${action}:${target}:${crypto.randomUUID()}`;
+function privateMemoryIntent(action: string, target: string): string {
+  return `${action}:${target}`;
+}
+
+function privateMemoryIdempotencyKey(keys: Map<string, string>, intent: string): string {
+  const existing = keys.get(intent);
+  if (existing) {
+    return existing;
+  }
+  const key = `${intent}:${crypto.randomUUID()}`;
+  keys.set(intent, key);
+  return key;
 }

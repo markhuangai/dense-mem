@@ -775,7 +775,7 @@ describe("UserPortalApp", () => {
     );
     expect(fetchMock).toHaveBeenCalledWith(
       "/ui/api/private-memory/erasures/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      expect.objectContaining({ method: "GET" }),
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
   });
 

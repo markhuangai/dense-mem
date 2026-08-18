@@ -66,8 +66,11 @@ export type PrivateMemoryOperation = {
   actor_class: string;
   reason_code: string;
   retire_space: boolean;
-  status: "queued" | "processing" | "completed" | string;
+  status: "queued" | "processing" | "completed" | "failed" | string;
   deleted_counts: Record<string, number>;
+  attempt_count?: number;
+  next_attempt_at?: string;
+  last_error_code?: string;
   requested_at: string;
   started_at?: string;
   completed_at?: string;
@@ -426,8 +429,8 @@ export class UserApi {
     return payload.data;
   }
 
-  async getPrivateMemoryErasure(operationId: string): Promise<PrivateMemoryOperation> {
-    const payload = await this.request<Envelope<PrivateMemoryOperation>>(`/ui/api/private-memory/erasures/${encodeURIComponent(operationId)}`);
+  async getPrivateMemoryErasure(operationId: string, signal?: AbortSignal): Promise<PrivateMemoryOperation> {
+    const payload = await this.request<Envelope<PrivateMemoryOperation>>(`/ui/api/private-memory/erasures/${encodeURIComponent(operationId)}`, { signal });
     return payload.data;
   }
 

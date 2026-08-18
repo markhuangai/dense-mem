@@ -1,15 +1,16 @@
 -- +goose Up
 -- +goose StatementBegin
 
--- Lock/rewrite impact: memory_spaces receives additive metadata columns. Every
--- cataloged space-owned table receives an additive nullable generation column,
--- a bounded backfill, and one row-level write-fence trigger. The migration may
--- briefly lock each table while its constraint and trigger are installed.
+-- Lock/rewrite impact: memory_spaces and every cataloged space-owned table
+-- receive additive metadata columns without rewriting historical rows. New
+-- constraints are installed NOT VALID, and DDL locks are held only while each
+-- column, constraint, policy, and trigger is installed.
 -- RLS impact: erasure control tables are FORCE RLS and system-only. Canonical
 -- and derived rows keep their existing policies; deletion runs as system mode
 -- with an exact transaction-local private-space fence.
--- Backfill: deployed rows inherit generation 1. Private-content age is derived
--- only from accepted ingest creation, never reads or derived maintenance.
+-- Backfill: historical generation and private-content age remain null. New or
+-- updated rows receive the active generation from the write fence; retention
+-- derives legacy private-content age later in bounded, resumable batches.
 -- Backward compatibility: old writers omit space_generation; the database
 -- trigger supplies the current active generation and rejects sealed spaces.
 -- Rollback: physical erasure is irreversible. The down migration is blocked;
@@ -29,25 +30,13 @@ ALTER TABLE memory_spaces
     ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ NULL;
 
 ALTER TABLE memory_spaces DROP CONSTRAINT IF EXISTS memory_spaces_generation_positive;
-ALTER TABLE memory_spaces ADD CONSTRAINT memory_spaces_generation_positive CHECK (generation > 0);
+ALTER TABLE memory_spaces ADD CONSTRAINT memory_spaces_generation_positive CHECK (generation > 0) NOT VALID;
 ALTER TABLE memory_spaces DROP CONSTRAINT IF EXISTS memory_spaces_lifecycle_state_check;
 ALTER TABLE memory_spaces ADD CONSTRAINT memory_spaces_lifecycle_state_check
-    CHECK (lifecycle_state IN ('active', 'sealed', 'retired'));
+    CHECK (lifecycle_state IN ('active', 'sealed', 'retired')) NOT VALID;
 ALTER TABLE memory_spaces DROP CONSTRAINT IF EXISTS memory_spaces_team_shared_active;
 ALTER TABLE memory_spaces ADD CONSTRAINT memory_spaces_team_shared_active
-    CHECK (kind <> 'team_shared' OR (lifecycle_state = 'active' AND sealed_at IS NULL AND retired_at IS NULL));
-
-UPDATE memory_spaces AS space
-SET private_content_at = source.latest_content_at
-FROM (
-    SELECT space_id, MAX(created_at) AS latest_content_at
-    FROM knowledge_ingests
-    WHERE space_id IS NOT NULL
-    GROUP BY space_id
-) AS source
-WHERE space.id = source.space_id
-  AND space.kind IN ('profile_private', 'credential_private')
-  AND space.private_content_at IS NULL;
+    CHECK (kind <> 'team_shared' OR (lifecycle_state = 'active' AND sealed_at IS NULL AND retired_at IS NULL)) NOT VALID;
 
 CREATE TABLE private_memory_legal_holds (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -77,13 +66,14 @@ CREATE TABLE private_memory_erasure_operations (
     retire_space BOOLEAN NOT NULL DEFAULT false,
     idempotency_scope_hash TEXT NOT NULL CHECK (length(idempotency_scope_hash) = 64),
     request_hash TEXT NOT NULL CHECK (length(request_hash) = 64),
-    status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'completed')),
+    status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'completed', 'failed')),
     manifest_position INTEGER NOT NULL DEFAULT 0 CHECK (manifest_position >= 0),
     deleted_counts JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(deleted_counts) = 'object'),
     attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
     fence BIGINT NOT NULL DEFAULT 0 CHECK (fence >= 0),
     worker_id TEXT NOT NULL DEFAULT '',
     lease_until TIMESTAMPTZ NULL,
+    next_attempt_at TIMESTAMPTZ NULL,
     last_error_code TEXT NOT NULL DEFAULT '',
     requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ NULL,
@@ -98,11 +88,11 @@ CREATE TABLE private_memory_erasure_operations (
 CREATE UNIQUE INDEX private_memory_erasure_idempotency_unique
     ON private_memory_erasure_operations(idempotency_scope_hash);
 CREATE INDEX private_memory_erasure_claim_idx
-    ON private_memory_erasure_operations(status, lease_until, requested_at, id)
-    WHERE status <> 'completed';
+    ON private_memory_erasure_operations(status, next_attempt_at, lease_until, requested_at, id)
+    WHERE status IN ('queued', 'processing');
 CREATE UNIQUE INDEX private_memory_erasure_space_active_unique
     ON private_memory_erasure_operations(space_id)
-    WHERE space_id IS NOT NULL AND status <> 'completed';
+    WHERE space_id IS NOT NULL AND status IN ('queued', 'processing');
 
 CREATE TABLE private_memory_retention_runs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -142,7 +132,10 @@ BEGIN
 END;
 $dense_mem_private_tables_rls$;
 
-ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS memory_space_id UUID NULL REFERENCES memory_spaces(id) ON DELETE RESTRICT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS memory_space_id UUID NULL;
+ALTER TABLE audit_log DROP CONSTRAINT IF EXISTS audit_log_memory_space_id_fkey;
+ALTER TABLE audit_log ADD CONSTRAINT audit_log_memory_space_id_fkey
+    FOREIGN KEY (memory_space_id) REFERENCES memory_spaces(id) ON DELETE RESTRICT NOT VALID;
 CREATE INDEX IF NOT EXISTS idx_audit_log_memory_space_timestamp
     ON audit_log(memory_space_id, timestamp DESC) WHERE memory_space_id IS NOT NULL;
 DROP POLICY IF EXISTS audit_log_private_erasure_update ON audit_log;
@@ -175,19 +168,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION prevent_append_only_mutation()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF TG_OP = 'DELETE'
-       AND current_setting('app.tx_mode', true) = 'system'
-       AND NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid
-           = NULLIF(to_jsonb(OLD)->>'space_id', '')::uuid THEN
-        RETURN OLD;
-    END IF;
-    RAISE EXCEPTION '% is append-only: % operations are not allowed', TG_TABLE_NAME, TG_OP;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION prevent_v2_append_only_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
     IF TG_OP = 'DELETE'
@@ -289,10 +269,9 @@ BEGIN
             CONTINUE;
         END IF;
         EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS space_generation BIGINT NULL', target_table);
-        EXECUTE format('UPDATE %I AS row SET space_generation = space.generation FROM memory_spaces AS space WHERE row.space_id = space.id AND row.space_generation IS NULL', target_table);
         EXECUTE format('ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I', target_table, target_table || '_space_gen_ck');
         EXECUTE format(
-            'ALTER TABLE %I ADD CONSTRAINT %I CHECK ((space_id IS NULL AND space_generation IS NULL) OR (space_id IS NOT NULL AND space_generation > 0))',
+            'ALTER TABLE %I ADD CONSTRAINT %I CHECK ((space_id IS NULL AND space_generation IS NULL) OR (space_id IS NOT NULL AND (space_generation IS NULL OR space_generation > 0))) NOT VALID',
             target_table,
             target_table || '_space_gen_ck'
         );

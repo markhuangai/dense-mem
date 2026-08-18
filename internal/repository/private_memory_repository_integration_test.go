@@ -97,24 +97,16 @@ func TestPrivateMemoryRetentionSelectsExpiredSpacesAndExcludesLegalHolds(t *test
 	eligible := createOwnedCredential(t, credentialRepo, teamID, ownerID, "eligible", domain.CredentialBindingCredentialPrivate)
 	held := createOwnedCredential(t, credentialRepo, teamID, ownerID, "held", domain.CredentialBindingCredentialPrivate)
 	fresh := createOwnedCredential(t, credentialRepo, teamID, ownerID, "fresh", domain.CredentialBindingCredentialPrivate)
-	seedPrivateMemoryIngest(t, adminDB, rls, teamID, eligible.ID, eligible.MemorySpaceID, "expired private content")
-	seedPrivateMemoryIngest(t, adminDB, rls, teamID, held.ID, held.MemorySpaceID, "held private content")
-	seedPrivateMemoryIngest(t, adminDB, rls, teamID, fresh.ID, fresh.MemorySpaceID, "fresh private content")
-
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	seedPrivateMemoryIngestAt(t, adminDB, rls, teamID, eligible.ID, eligible.MemorySpaceID, "expired private content", now.AddDate(0, 0, -60))
+	seedPrivateMemoryIngestAt(t, adminDB, rls, teamID, held.ID, held.MemorySpaceID, "held private content", now.AddDate(0, 0, -60))
+	seedPrivateMemoryIngestAt(t, adminDB, rls, teamID, fresh.ID, fresh.MemorySpaceID, "fresh private content", now.AddDate(0, 0, -1))
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			UPDATE memory_spaces
-			SET private_content_at = CASE id
-				WHEN ? THEN ?::timestamptz
-				WHEN ? THEN ?::timestamptz
-				WHEN ? THEN ?::timestamptz
-			END
-			WHERE id = ANY(?)
-		`, eligible.MemorySpaceID, now.AddDate(0, 0, -60),
-			held.MemorySpaceID, now.AddDate(0, 0, -60),
-			fresh.MemorySpaceID, now.AddDate(0, 0, -1),
-			pq.Array([]uuid.UUID{eligible.MemorySpaceID, held.MemorySpaceID, fresh.MemorySpaceID})).Error
+			SET private_content_at = NULL
+			WHERE id = ?
+		`, eligible.MemorySpaceID).Error
 	}))
 
 	repo := NewPrivateMemoryRepository(appDB, rls)
@@ -208,6 +200,95 @@ func TestPrivateMemoryExpiredLeaseIsReclaimedWithNewFence(t *testing.T) {
 	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
 }
 
+func TestPrivateMemoryFailureRetriesAreBackedOffAndBounded(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure-retries"))
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "retry-target", domain.CredentialBindingCredentialPrivate)
+	seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "retry private content")
+
+	repo := NewPrivateMemoryRepository(appDB, rls)
+	operation, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: target.ID, CredentialID: target.ID,
+		IdempotencyScopeHash: privateMemoryHash("retry", target.ID.String()),
+		RequestHash:          privateMemoryHash("retry-request", target.ID.String()),
+		ReasonCode:           "owner_request",
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	for attempt := 1; attempt <= privateMemoryMaximumAttempts; attempt++ {
+		repo.now = func() time.Time { return now }
+		claim, err := repo.ClaimNext(ctx, "retry-worker", time.Minute)
+		require.NoError(t, err)
+		require.NotNil(t, claim)
+		require.Equal(t, operation.ID, claim.ID)
+		require.Equal(t, attempt, claim.AttemptCount)
+		require.NoError(t, repo.ReleaseClaim(ctx, claim.ID, claim.WorkerID, claim.Fence, "manifest_mismatch"))
+
+		stored, err := repo.GetOperation(ctx, operation.ID)
+		require.NoError(t, err)
+		if attempt == privateMemoryMaximumAttempts {
+			require.Equal(t, domain.PrivateMemoryErasureFailed, stored.Status)
+			require.Nil(t, stored.NextAttemptAt)
+			require.NotNil(t, stored.CompletedAt)
+			break
+		}
+		require.Equal(t, domain.PrivateMemoryErasureQueued, stored.Status)
+		require.NotNil(t, stored.NextAttemptAt)
+		require.Equal(t, now.Add(privateMemoryRetryDelay(attempt)), *stored.NextAttemptAt)
+		immediate, err := repo.ClaimNext(ctx, "early-worker", time.Minute)
+		require.NoError(t, err)
+		require.Nil(t, immediate)
+		now = *stored.NextAttemptAt
+	}
+
+	repo.now = func() time.Time { return now.Add(24 * time.Hour) }
+	claim, err := repo.ClaimNext(ctx, "late-worker", time.Minute)
+	require.NoError(t, err)
+	require.Nil(t, claim)
+}
+
+func TestPrivateMemoryMissingRetiredCredentialLosesClaim(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure-missing-credential"))
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "missing-target", domain.CredentialBindingCredentialPrivate)
+	seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "missing target content")
+
+	repo := NewPrivateMemoryRepository(appDB, rls)
+	require.NoError(t, repo.Prepare(ctx))
+	operation, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
+		IdempotencyScopeHash: privateMemoryHash("missing-credential", target.ID.String()),
+		RequestHash:          privateMemoryHash("missing-credential-request", target.ID.String()),
+		ReasonCode:           "credential_deleted",
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+	claim, err := repo.ClaimNext(ctx, "missing-credential-worker", time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, operation.ID, claim.ID)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE private_memory_erasure_operations
+			SET target_credential_id = ?
+			WHERE id = ?
+		`, uuid.New(), operation.ID).Error
+	}))
+	_, err = repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	require.ErrorIs(t, err, ErrPrivateMemoryClaimLost)
+}
+
 func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -258,6 +339,25 @@ func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 	require.True(t, created)
 	require.Equal(t, domain.PrivateMemoryErasureQueued, operation.Status)
 	require.NotNil(t, operation.TargetGeneration)
+	ownerIdentityOperation, err := repo.GetOwnerOperation(ctx, teamID, operation.ID, &ownerID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, ownerIdentityOperation)
+	require.Equal(t, operation.ID, ownerIdentityOperation.ID)
+	ownerCredentialOperation, err := repo.GetOwnerOperation(ctx, teamID, operation.ID, nil, &target.ID)
+	require.NoError(t, err)
+	require.NotNil(t, ownerCredentialOperation)
+	require.Equal(t, operation.ID, ownerCredentialOperation.ID)
+	nonOwnerIdentityID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	nonOwnerIdentityOperation, err := repo.GetOwnerOperation(ctx, teamID, operation.ID, &nonOwnerIdentityID, nil)
+	require.NoError(t, err)
+	require.Nil(t, nonOwnerIdentityOperation)
+	nonOwnerCredentialOperation, err := repo.GetOwnerOperation(ctx, teamID, operation.ID, nil, &other.ID)
+	require.NoError(t, err)
+	require.Nil(t, nonOwnerCredentialOperation)
+	foreignTeamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure-foreign"))
+	foreignOperation, err := repo.GetOwnerOperation(ctx, foreignTeamID, operation.ID, &ownerID, nil)
+	require.NoError(t, err)
+	require.Nil(t, foreignOperation)
 
 	replay, created, err := repo.RequestCredentialErasure(ctx, request)
 	require.NoError(t, err)
@@ -270,6 +370,7 @@ func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 
 	claim, err := repo.ClaimNext(ctx, "private-test-worker", time.Minute)
 	require.NoError(t, err)
+	require.NotNil(t, claim)
 	require.Equal(t, operation.ID, claim.ID)
 	_, _, err = repo.PlaceLegalHold(ctx, target.MemorySpaceID, "late_hold")
 	require.NoError(t, err)
@@ -280,8 +381,14 @@ func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, released)
 
+	retrying, err := repo.GetOperation(ctx, operation.ID)
+	require.NoError(t, err)
+	require.NotNil(t, retrying)
+	require.NotNil(t, retrying.NextAttemptAt)
+	repo.now = func() time.Time { return *retrying.NextAttemptAt }
 	claim, err = repo.ClaimNext(ctx, "private-test-worker", time.Minute)
 	require.NoError(t, err)
+	require.NotNil(t, claim)
 	completed, err := repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
 	require.NoError(t, err)
 	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
@@ -455,6 +562,7 @@ func TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace(t *te
 		if err := tx.Raw(`SELECT status FROM credentials WHERE id = ANY(?) ORDER BY id`, pq.Array([]uuid.UUID{target.ID, profile.ID, shared.ID})).Scan(&statuses).Error; err != nil {
 			return err
 		}
+		require.Len(t, statuses, 3)
 		for _, status := range statuses {
 			require.Equal(t, "disabled", status)
 		}
@@ -466,14 +574,21 @@ func seedPrivateMemoryIngest(t *testing.T, db *gorm.DB, rls interface {
 	WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
 }, teamID, ownerID, spaceID uuid.UUID, content string) uuid.UUID {
 	t.Helper()
+	return seedPrivateMemoryIngestAt(t, db, rls, teamID, ownerID, spaceID, content, time.Now().UTC())
+}
+
+func seedPrivateMemoryIngestAt(t *testing.T, db *gorm.DB, rls interface {
+	WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
+}, teamID, ownerID, spaceID uuid.UUID, content string, createdAt time.Time) uuid.UUID {
+	t.Helper()
 	ingestID := uuid.New()
 	err := rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO knowledge_ingests (
 				team_id, ingest_id, owner_profile_id, request_hash, source_summary,
-				status, proposal, metadata, space_id
-			) VALUES (?, ?, ?, ?, ?, 'queued', '{}'::jsonb, '{}'::jsonb, ?)
-		`, teamID, ingestID, ownerID, "hash-"+ingestID.String(), content, spaceID).Error
+				status, proposal, metadata, space_id, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, 'queued', '{}'::jsonb, '{}'::jsonb, ?, ?, ?)
+		`, teamID, ingestID, ownerID, "hash-"+ingestID.String(), content, spaceID, createdAt, createdAt).Error
 	})
 	require.NoError(t, err)
 	return ingestID

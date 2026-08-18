@@ -183,12 +183,12 @@ func (s *SSOService) oauthProviderForIssuer(ctx context.Context, issuer string) 
 		if provider == nil || provider.RetiredAt != nil || !provider.ProtectedResource.Enabled {
 			continue
 		}
+		if strings.TrimRight(strings.TrimSpace(provider.IssuerURL), "/") != issuer {
+			continue
+		}
 		copyProvider := *provider
 		if err := normalizeSSOProviderForWrite(&copyProvider); err != nil {
 			return nil, fmt.Errorf("%w: invalid protected-resource provider", ErrOAuthProviderUnavailable)
-		}
-		if copyProvider.IssuerURL != issuer {
-			continue
 		}
 		if matched != nil {
 			return nil, ErrOAuthTokenInvalid

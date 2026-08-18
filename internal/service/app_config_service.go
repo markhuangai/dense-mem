@@ -674,6 +674,10 @@ func normalizeSSOConfigValues(values map[string]string) (map[string]string, erro
 				if (key == domain.AppConfigSCIMPublicBaseURL || key == domain.AppConfigControlPublicBaseURL) && parsed.Scheme != "https" {
 					return nil, fmt.Errorf("%w: %s must use https", ErrInvalidAppConfig, key)
 				}
+				if key == domain.AppConfigMCPPublicBaseURL && parsed.Scheme != "https" &&
+					!(parsed.Scheme == "http" && (parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1")) {
+					return nil, fmt.Errorf("%w: %s must use https except on loopback", ErrInvalidAppConfig, key)
+				}
 				if parsed.User != nil {
 					return nil, fmt.Errorf("%w: %s must not include credentials", ErrInvalidAppConfig, key)
 				}

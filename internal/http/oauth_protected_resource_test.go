@@ -94,7 +94,7 @@ func TestOAuthProtectedResourceChallengeUsesMatchingMetadataDocument(t *testing.
 	}
 }
 
-func TestOAuthProtectedResourceMetadataFailuresAndOriginFallback(t *testing.T) {
+func TestOAuthProtectedResourceMetadataRequiresConfiguredOrigin(t *testing.T) {
 	provider := &oauthMetadataStub{
 		metadata: service.OAuthProtectedResourceMetadata{
 			AuthorizationServers: []string{"https://idp.example.test"},
@@ -118,17 +118,11 @@ func TestOAuthProtectedResourceMetadataFailuresAndOriginFallback(t *testing.T) {
 	provider.baseErr = errors.New("config unavailable")
 	recorder = httptest.NewRecorder()
 	e.ServeHTTP(recorder, httptest.NewRequest(nethttp.MethodGet, "https://fallback.example.test/.well-known/oauth-protected-resource/mcp", nil))
-	require.Equal(t, nethttp.StatusOK, recorder.Code, recorder.Body.String())
-	require.Contains(t, recorder.Body.String(), `"resource":"https://fallback.example.test/mcp"`)
-	require.Equal(t, "no-store", recorder.Header().Get(echo.HeaderCacheControl))
+	require.Equal(t, nethttp.StatusServiceUnavailable, recorder.Code, recorder.Body.String())
+	require.Empty(t, recorder.Header().Get(echo.HeaderCacheControl))
 
 	request := httptest.NewRequest(nethttp.MethodGet, "https://fallback.example.test/.well-known/oauth-protected-resource/mcp", nil)
-	request.Host = ""
-	recorder = httptest.NewRecorder()
-	e.ServeHTTP(recorder, request)
-	require.Equal(t, nethttp.StatusServiceUnavailable, recorder.Code)
-	request = httptest.NewRequest(nethttp.MethodGet, "https://fallback.example.test/.well-known/oauth-protected-resource/mcp", nil)
-	request.Host = "user@example.test"
+	request.Host = "attacker.example.test"
 	recorder = httptest.NewRecorder()
 	e.ServeHTTP(recorder, request)
 	require.Equal(t, nethttp.StatusServiceUnavailable, recorder.Code)

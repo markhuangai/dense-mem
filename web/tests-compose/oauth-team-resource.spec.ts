@@ -26,7 +26,7 @@ test("SSO workspace shows and copies the canonical team-scoped MCP URL after a t
   await expect(workspace).toBeVisible();
   await expect(workspace.getByText(firstTeamId, { exact: true })).toBeVisible();
   await expect(workspace.getByText(firstMCPURL, { exact: true })).toBeVisible();
-  await expect(workspace.getByText("Using this browser origin because MCP_PUBLIC_BASE_URL is not configured.")).toBeVisible();
+  await expect(workspace.getByText("Using this browser origin because MCP_PUBLIC_BASE_URL is not configured.")).toHaveCount(0);
 
   await workspace.getByRole("button", { name: "Copy MCP URL" }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(firstMCPURL);

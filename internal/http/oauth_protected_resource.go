@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	nethttp "net/http"
-	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
@@ -146,17 +145,9 @@ func oauthResourceMetadataURL(c echo.Context, provider OAuthProtectedResourcePro
 }
 
 func oauthPublicBaseURL(c echo.Context, provider OAuthProtectedResourceProvider) string {
-	if configured, err := provider.MCPPublicBaseURL(c.Request().Context()); err == nil && configured != "" {
-		return strings.TrimRight(configured, "/")
-	}
-	scheme := c.Scheme()
-	host := strings.TrimSpace(c.Request().Host)
-	if scheme == "" || host == "" {
+	configured, err := provider.MCPPublicBaseURL(c.Request().Context())
+	if err != nil || strings.TrimSpace(configured) == "" {
 		return ""
 	}
-	parsed, err := url.Parse(scheme + "://" + host)
-	if err != nil || parsed.Host == "" || parsed.User != nil {
-		return ""
-	}
-	return strings.TrimRight(parsed.String(), "/")
+	return strings.TrimRight(strings.TrimSpace(configured), "/")
 }

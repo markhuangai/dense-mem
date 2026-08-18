@@ -562,6 +562,13 @@ func TestAppConfigServiceValidation(t *testing.T) {
 	_, err = svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigSSOPublicBaseURL: "://bad"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
+	_, err = svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigMCPPublicBaseURL: "http://memory.example.com"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	localMCP, err := svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigMCPPublicBaseURL: "http://127.0.0.1:8080"}, "control", "", "")
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:8080", appConfigItem(t, localMCP, domain.AppConfigMCPPublicBaseURL).EffectiveValue)
+
 	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 

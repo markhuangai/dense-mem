@@ -79,6 +79,24 @@ describe("PrivateMemoryPanel", () => {
     await waitFor(() => expect(api.releasePrivateMemoryLegalHold).toHaveBeenCalledWith(space.id));
     expect(api.requestPrivateMemoryErasure).not.toHaveBeenCalled();
   });
+
+  it("reuses the erasure idempotency key until the API accepts the intent", async () => {
+    const api = privateMemoryApi();
+    vi.mocked(api.requestPrivateMemoryErasure)
+      .mockRejectedValueOnce(new Error("connection lost"))
+      .mockResolvedValueOnce(operation);
+    render(<PrivateMemoryPanel api={api} />);
+
+    const erase = await screen.findByRole("button", { name: `Erase private memory for ${space.id}` });
+    await userEvent.click(erase);
+    expect(await screen.findByRole("alert")).toHaveTextContent("connection lost");
+    await userEvent.click(erase);
+
+    await waitFor(() => expect(api.requestPrivateMemoryErasure).toHaveBeenCalledTimes(2));
+    const firstKey = vi.mocked(api.requestPrivateMemoryErasure).mock.calls[0][1];
+    const secondKey = vi.mocked(api.requestPrivateMemoryErasure).mock.calls[1][1];
+    expect(firstKey).toBe(secondKey);
+  });
 });
 
 function privateMemoryApi(spaces: PrivateMemorySpace[] = [space]) {

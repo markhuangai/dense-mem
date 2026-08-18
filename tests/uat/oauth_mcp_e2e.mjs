@@ -30,6 +30,10 @@ if (!new Set(["oauth_provider_compatibility", "mcp_oauth"]).has(scenario)) {
 
 const secondTeam = await createTeam(`${runID} Team B`);
 const thirdTeam = await createTeam(`${runID} Team C`);
+await controlJSON("/config/sso", {
+  method: "PATCH",
+  body: { items: [{ key: "MCP_PUBLIC_BASE_URL", value: userURL }] },
+});
 
 const providerInputs = {
   entra: providerInput({
@@ -110,7 +114,7 @@ seedOAuthPrincipals(Object.values(identities), memberships, memberships[0]);
 
 const metadata = await publicJSON("/.well-known/oauth-protected-resource/mcp");
 assert(metadata.status === 200, "unscoped RFC 9728 metadata was unavailable");
-assert(metadata.payload.resource === `${userURL}/mcp`, "unscoped metadata resource did not use the request origin fallback");
+assert(metadata.payload.resource === `${userURL}/mcp`, "unscoped metadata resource did not use the configured public base URL");
 assert(metadata.payload.resource_name === "Dense-Mem MCP", "metadata resource name changed");
 assert(JSON.stringify(metadata.payload.bearer_methods_supported) === JSON.stringify(["header"]), "metadata bearer method changed");
 for (const name of ["entra", "pingone", "generic"]) {

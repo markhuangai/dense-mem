@@ -24,11 +24,12 @@ const (
 )
 
 type oauthJWKSProviderCache struct {
-	mu          sync.Mutex
-	set         jose.JSONWebKeySet
-	uri         string
-	expiresAt   time.Time
-	refreshedAt time.Time
+	mu                sync.Mutex
+	set               jose.JSONWebKeySet
+	uri               string
+	sourceFingerprint string
+	expiresAt         time.Time
+	refreshedAt       time.Time
 }
 
 type oauthDiscoveryDocument struct {
@@ -71,10 +72,12 @@ func (s *SSOService) loadOAuthJWKS(ctx context.Context, provider domain.SSOProvi
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	now := s.now().UTC()
-	if !force && len(cache.set.Keys) > 0 && now.Before(cache.expiresAt) {
+	sourceFingerprint := oauthJWKSSourceFingerprint(provider)
+	sourceMatches := cache.sourceFingerprint == sourceFingerprint
+	if !force && sourceMatches && len(cache.set.Keys) > 0 && now.Before(cache.expiresAt) {
 		return cache.set, true, nil
 	}
-	if force && len(cache.set.Keys) > 0 && now.Sub(cache.refreshedAt) < oauthJWKSRefreshFloor {
+	if force && sourceMatches && len(cache.set.Keys) > 0 && now.Sub(cache.refreshedAt) < oauthJWKSRefreshFloor {
 		return cache.set, true, nil
 	}
 
@@ -97,9 +100,18 @@ func (s *SSOService) loadOAuthJWKS(ctx context.Context, provider domain.SSOProvi
 	}
 	cache.set = set
 	cache.uri = uri
+	cache.sourceFingerprint = sourceFingerprint
 	cache.refreshedAt = now
 	cache.expiresAt = now.Add(oauthJWKSCacheTTL)
 	return cache.set, false, nil
+}
+
+func oauthJWKSSourceFingerprint(provider domain.SSOProvider) string {
+	staticURI := ""
+	if provider.ProtectedResource.JWKSSource == "static" {
+		staticURI = provider.ProtectedResource.JWKSURI
+	}
+	return strings.Join([]string{provider.ProtectedResource.JWKSSource, provider.IssuerURL, staticURI}, "\x00")
 }
 
 func (s *SSOService) discoverOAuthJWKSURI(ctx context.Context, provider domain.SSOProvider) (string, error) {

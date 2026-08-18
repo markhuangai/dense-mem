@@ -1,9 +1,9 @@
 -- +goose Up
 -- +goose StatementBegin
 
--- Lock/rewrite impact: both additions are metadata-only on supported
--- PostgreSQL versions. Existing providers remain browser-only because the
--- protected-resource contract defaults to disabled.
+-- Lock/rewrite impact: the additive JSONB column is metadata-only on supported
+-- PostgreSQL versions. CHECK validation and the partial index scan the small
+-- control-plane provider table while their DDL locks are held.
 -- RLS impact: no policy changes; sso_providers and app_config retain their
 -- existing system-only control-plane policies.
 -- Backfill: existing providers receive a disabled protected-resource object;
@@ -52,7 +52,7 @@ ON CONFLICT (key) DO NOTHING;
 -- +goose Down
 -- +goose StatementBegin
 
-DELETE FROM app_config WHERE key = 'MCP_PUBLIC_BASE_URL';
+DELETE FROM app_config WHERE key = 'MCP_PUBLIC_BASE_URL' AND value = '';
 DROP INDEX IF EXISTS idx_sso_providers_protected_resource_enabled;
 ALTER TABLE sso_providers DROP CONSTRAINT IF EXISTS sso_providers_protected_resource_object;
 ALTER TABLE sso_providers DROP COLUMN IF EXISTS protected_resource_config;

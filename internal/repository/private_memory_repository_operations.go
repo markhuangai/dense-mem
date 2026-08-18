@@ -321,6 +321,9 @@ func (r *PrivateMemoryRepositoryImpl) RunRetention(ctx context.Context, input Pr
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		if err := backfillPrivateContentAgeTx(ctx, tx, privateContentAgeBackfillBatch); err != nil {
+			return err
+		}
 
 		rows, err := tx.WithContext(ctx).Raw(`
 			SELECT space.id, space.team_id, space.kind, space.owner_profile_id, space.owner_credential_id,
@@ -337,7 +340,7 @@ func (r *PrivateMemoryRepositoryImpl) RunRetention(ctx context.Context, input Pr
 			  )
 			  AND NOT EXISTS (
 				SELECT 1 FROM private_memory_erasure_operations AS operation
-				WHERE operation.space_id = space.id AND operation.status <> 'completed'
+				WHERE operation.space_id = space.id AND operation.status IN ('queued', 'processing')
 			  )
 			ORDER BY space.private_content_at, space.id
 			LIMIT $2
@@ -395,6 +398,35 @@ func (r *PrivateMemoryRepositoryImpl) RunRetention(ctx context.Context, input Pr
 	return run, created, wrapPrivateMemoryError("run retention", err)
 }
 
+func backfillPrivateContentAgeTx(ctx context.Context, tx *gorm.DB, batchSize int) error {
+	return tx.WithContext(ctx).Exec(`
+		WITH candidate AS (
+			SELECT space.id, space.team_id
+			FROM memory_spaces AS space
+			WHERE space.kind IN ('profile_private', 'credential_private')
+			  AND space.private_content_at IS NULL
+			  AND EXISTS (
+				SELECT 1
+				FROM knowledge_ingests AS ingest
+				WHERE ingest.team_id = space.team_id AND ingest.space_id = space.id
+			  )
+			ORDER BY space.id
+			LIMIT $1
+			FOR UPDATE OF space SKIP LOCKED
+		), latest AS (
+			SELECT candidate.id, MAX(ingest.created_at) AS private_content_at
+			FROM candidate
+			JOIN knowledge_ingests AS ingest
+			  ON ingest.team_id = candidate.team_id AND ingest.space_id = candidate.id
+			GROUP BY candidate.id
+		)
+		UPDATE memory_spaces AS space
+		SET private_content_at = latest.private_content_at
+		FROM latest
+		WHERE space.id = latest.id AND space.private_content_at IS NULL
+	`, batchSize).Error
+}
+
 func (r *PrivateMemoryRepositoryImpl) ListRetentionRuns(ctx context.Context, limit, offset int) ([]domain.PrivateMemoryRetentionRun, error) {
 	limit, offset = privateMemoryPage(limit, offset)
 	runs := make([]domain.PrivateMemoryRetentionRun, 0)
@@ -435,11 +467,19 @@ func (r *PrivateMemoryRepositoryImpl) ClaimNext(ctx context.Context, workerID st
 	var operation *domain.PrivateMemoryErasureOperation
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		row := tx.WithContext(ctx).Raw(`
-			WITH candidate AS (
+			WITH exhausted AS (
+				UPDATE private_memory_erasure_operations
+				SET status = 'failed', worker_id = '', lease_until = NULL,
+				    next_attempt_at = NULL, last_error_code = 'worker_lease_expired',
+				    completed_at = COALESCE(completed_at, $1), updated_at = $1
+				WHERE status = 'processing' AND lease_until < $1 AND attempt_count >= $4
+				RETURNING id
+			), candidate AS (
 				SELECT id
 				FROM private_memory_erasure_operations
-				WHERE (status = 'queued'
+				WHERE ((status = 'queued' AND (next_attempt_at IS NULL OR next_attempt_at <= $1))
 				   OR (status = 'processing' AND lease_until < $1))
+				  AND attempt_count < $4
 				  AND NOT EXISTS (
 					SELECT 1 FROM private_memory_legal_holds AS hold
 					WHERE hold.space_id = private_memory_erasure_operations.space_id
@@ -455,6 +495,7 @@ func (r *PrivateMemoryRepositoryImpl) ClaimNext(ctx context.Context, workerID st
 				    fence = operation.fence + 1,
 				    worker_id = $2,
 				    lease_until = $3,
+				    next_attempt_at = NULL,
 				    last_error_code = '',
 				    started_at = COALESCE(operation.started_at, $1),
 				    updated_at = $1
@@ -465,10 +506,10 @@ func (r *PrivateMemoryRepositoryImpl) ClaimNext(ctx context.Context, workerID st
 			SELECT id, team_id, space_id::text, space_kind, target_credential_id::text,
 			       action, actor_class, reason_code, target_generation, retire_space,
 			       status, manifest_position, deleted_counts, attempt_count, fence,
-			       worker_id, lease_until, last_error_code, requested_at, started_at,
+			       worker_id, lease_until, next_attempt_at, last_error_code, requested_at, started_at,
 			       completed_at, updated_at
 			FROM claimed
-		`, now, workerID, leaseUntil).Row()
+		`, now, workerID, leaseUntil, privateMemoryMaximumAttempts).Row()
 		var err error
 		operation, err = scanPrivateMemoryOperation(row)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -520,14 +561,17 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 				return ErrPrivateMemoryManifest
 			}
 			var disabled bool
-			if err := tx.WithContext(ctx).Raw(`
+			err := tx.WithContext(ctx).Raw(`
 				SELECT status = 'disabled'
 				FROM credentials
 				WHERE id = $1 AND team_id = $2
-			`, *operation.TargetCredentialID, operation.TeamID).Row().Scan(&disabled); err != nil || !disabled {
-				if err != nil {
-					return err
-				}
+			`, *operation.TargetCredentialID, operation.TeamID).Row().Scan(&disabled)
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				return ErrPrivateMemoryClaimLost
+			case err != nil:
+				return err
+			case !disabled:
 				return ErrPrivateMemoryClaimLost
 			}
 		}
@@ -614,6 +658,7 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 			    deleted_counts = $2::jsonb,
 			    worker_id = '',
 			    lease_until = NULL,
+			    next_attempt_at = NULL,
 			    last_error_code = '',
 			    completed_at = $3,
 			    updated_at = $3
@@ -687,12 +732,38 @@ func (r *PrivateMemoryRepositoryImpl) ReleaseClaim(ctx context.Context, operatio
 	errorCode = boundedPrivateMemoryErrorCode(errorCode)
 	now := r.now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		result := tx.WithContext(ctx).Exec(`
-			UPDATE private_memory_erasure_operations
-			SET status = 'queued', worker_id = '', lease_until = NULL,
-			    last_error_code = $1, updated_at = $2
-			WHERE id = $3 AND status = 'processing' AND worker_id = $4 AND fence = $5
-		`, errorCode, now, operationID, workerID, fence)
+		var attemptCount int
+		err := tx.WithContext(ctx).Raw(`
+			SELECT attempt_count
+			FROM private_memory_erasure_operations
+			WHERE id = $1 AND status = 'processing' AND worker_id = $2 AND fence = $3
+			FOR UPDATE
+		`, operationID, workerID, fence).Row().Scan(&attemptCount)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrPrivateMemoryClaimLost
+		}
+		if err != nil {
+			return err
+		}
+
+		var result *gorm.DB
+		if attemptCount >= privateMemoryMaximumAttempts {
+			result = tx.WithContext(ctx).Exec(`
+				UPDATE private_memory_erasure_operations
+				SET status = 'failed', worker_id = '', lease_until = NULL,
+				    next_attempt_at = NULL, last_error_code = $1,
+				    completed_at = COALESCE(completed_at, $2), updated_at = $2
+				WHERE id = $3 AND status = 'processing' AND worker_id = $4 AND fence = $5
+			`, errorCode, now, operationID, workerID, fence)
+		} else {
+			retryAt := now.Add(privateMemoryRetryDelay(attemptCount))
+			result = tx.WithContext(ctx).Exec(`
+				UPDATE private_memory_erasure_operations
+				SET status = 'queued', worker_id = '', lease_until = NULL,
+				    next_attempt_at = $1, last_error_code = $2, updated_at = $3
+				WHERE id = $4 AND status = 'processing' AND worker_id = $5 AND fence = $6
+			`, retryAt, errorCode, now, operationID, workerID, fence)
+		}
 		if result.Error != nil {
 			return result.Error
 		}
@@ -702,6 +773,17 @@ func (r *PrivateMemoryRepositoryImpl) ReleaseClaim(ctx context.Context, operatio
 		return nil
 	})
 	return wrapPrivateMemoryError("release erasure claim", err)
+}
+
+func privateMemoryRetryDelay(attemptCount int) time.Duration {
+	delay := privateMemoryRetryBaseDelay
+	for attempt := 1; attempt < attemptCount; attempt++ {
+		if delay >= privateMemoryRetryMaximumDelay/2 {
+			return privateMemoryRetryMaximumDelay
+		}
+		delay *= 2
+	}
+	return delay
 }
 
 func (r *PrivateMemoryRepositoryImpl) preparedManifest(ctx context.Context) ([]string, error) {

@@ -163,6 +163,7 @@ func AuthMiddlewareWithOptions(repo repository.CredentialRepository, auditSvc se
 
 			pathTeamID, err := authenticatedPathTeamID(c)
 			if err != nil {
+				logAuthFailure(c, auditSvc, securitySvc, nil, "TEAM_PATH_INVALID", "malformed scoped mcp team ID")
 				return err
 			}
 			if service.IsJWTBearer(rawKey) {

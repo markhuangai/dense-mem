@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -156,6 +157,25 @@ func TestAuthenticateOAuthBearerRefreshesUnknownKeyAndIsolatesOutage(t *testing.
 	unknown := fixture.token(unknownKey, "unknown", fixture.claims())
 	_, err = fixture.service.AuthenticateOAuthBearer(t.Context(), unknown, nil)
 	require.ErrorIs(t, err, ErrOAuthProviderUnavailable)
+}
+
+func TestOAuthJWKSCacheInvalidatesWhenProviderSourceChanges(t *testing.T) {
+	fixture := newOAuthProtectedResourceFixture(t)
+	provider := *fixture.providerConfig
+	provider.ProtectedResource.JWKSSource = "static"
+	provider.ProtectedResource.JWKSURI = fixture.provider.server.URL + "/jwks"
+	cache := &oauthJWKSProviderCache{}
+
+	_, fromCache, err := fixture.service.loadOAuthJWKS(t.Context(), provider, cache, false)
+	require.NoError(t, err)
+	require.False(t, fromCache)
+	firstRequests := fixture.provider.jwksRequests()
+
+	provider.ProtectedResource.JWKSURI = fixture.provider.server.URL + "/jwks?source=updated"
+	_, fromCache, err = fixture.service.loadOAuthJWKS(t.Context(), provider, cache, false)
+	require.NoError(t, err)
+	require.False(t, fromCache)
+	require.Equal(t, firstRequests+1, fixture.provider.jwksRequests())
 }
 
 func TestOAuthProtectedResourceMetadataIsSortedAndExcludesDisabledProviders(t *testing.T) {
@@ -334,6 +354,14 @@ func TestOAuthMetadataAndJWKSDocumentsFailClosed(t *testing.T) {
 	fixture := newOAuthProtectedResourceFixture(t)
 	_, err = fixture.service.oauthProviderForIssuer(t.Context(), "https://unknown.example")
 	require.ErrorIs(t, err, ErrOAuthTokenInvalid)
+	invalidUnrelatedProvider := *fixture.providerConfig
+	invalidUnrelatedProvider.ID = uuid.New()
+	invalidUnrelatedProvider.IssuerURL = "https://unrelated.example"
+	invalidUnrelatedProvider.ProtectedResource.Algorithms = []string{"none"}
+	fixture.repo.providerList = []*domain.SSOProvider{&invalidUnrelatedProvider, fixture.providerConfig}
+	providerForIssuer, err := fixture.service.oauthProviderForIssuer(t.Context(), fixture.issuer)
+	require.NoError(t, err)
+	require.Equal(t, fixture.providerConfig.ID, providerForIssuer.ID)
 	invalidIssuerProvider := *fixture.providerConfig
 	invalidIssuerProvider.ProtectedResource.Algorithms = []string{"none"}
 	fixture.repo.providerList = []*domain.SSOProvider{&invalidIssuerProvider}
@@ -467,6 +495,20 @@ func TestOAuthMetadataAndJWKSDocumentsFailClosed(t *testing.T) {
 	)
 	require.Len(t, oauthCandidateKeys(set, fixture.keyID, "RS256"), 1)
 	require.Len(t, oauthCandidateKeys(set, "", "RS256"), 1)
+}
+
+func TestOAuthProtectedResourceRejectsExcessiveScopeMappings(t *testing.T) {
+	fixture := newOAuthProtectedResourceFixture(t)
+	provider := *fixture.providerConfig
+	provider.ProtectedResource.ScopeMappings = make([]domain.OAuthScopeMapping, oauthMaximumScopeMappings+1)
+	for index := range provider.ProtectedResource.ScopeMappings {
+		provider.ProtectedResource.ScopeMappings[index] = domain.OAuthScopeMapping{
+			ExternalScope:  fmt.Sprintf("scope.%d", index),
+			InternalScopes: []string{CredentialScopeRead},
+		}
+	}
+
+	require.ErrorContains(t, normalizeSSOProviderForWrite(&provider), "at most 16")
 }
 
 type oauthRoundTripperFunc func(*http.Request) (*http.Response, error)

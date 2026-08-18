@@ -148,8 +148,13 @@ export function ssoSessions() {
   return { initial, switched, secondTeam, secondMembership };
 }
 
-export function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: { logoutStatus?: number } = {}) {
+export function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: {
+  logoutStatus?: number;
+  profileErasureFailures?: number;
+  profileErasurePollStatus?: "processing" | "completed" | "failed";
+} = {}) {
   let current = initial;
+  let profileErasureSubmissions = 0;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -213,6 +218,10 @@ export function mockSSOUserFetch(initial: UserSession, switched: UserSession, op
       } }, 202);
     }
     if (url === "/ui/api/sso/private-memory" && method === "DELETE") {
+      profileErasureSubmissions += 1;
+      if (profileErasureSubmissions <= (options.profileErasureFailures ?? 0)) {
+        return jsonResponse({ message: "profile erasure unavailable" }, 503);
+      }
       const now = "2026-08-18T00:00:00Z";
       return jsonResponse({ data: {
         operation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -228,16 +237,18 @@ export function mockSSOUserFetch(initial: UserSession, switched: UserSession, op
     }
     if (url === "/ui/api/private-memory/erasures/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" && method === "GET") {
       const now = "2026-08-18T00:00:01Z";
+      const status = options.profileErasurePollStatus ?? "completed";
       return jsonResponse({ data: {
         operation_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         action: "erase_profile_private",
         actor_class: "owner_sso",
         reason_code: "owner_request",
         retire_space: false,
-        status: "completed",
-        deleted_counts: { knowledge_ingests: 1 },
+        status,
+        deleted_counts: status === "completed" ? { knowledge_ingests: 1 } : {},
+        last_error_code: status === "failed" ? "manifest_mismatch" : "",
         requested_at: "2026-08-18T00:00:00Z",
-        completed_at: now,
+        completed_at: status === "completed" || status === "failed" ? now : undefined,
         updated_at: now,
       } });
     }
