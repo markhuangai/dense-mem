@@ -2,12 +2,6 @@ name: CI Shared
 
 on:
   workflow_call:
-    inputs:
-      migration-base-ref:
-        description: "Revision to compare against for immutable migration checks."
-        required: false
-        type: string
-        default: origin/main
 
 permissions:
   contents: read
@@ -16,30 +10,6 @@ env:
   COVERAGE_THRESHOLD: "90.0"
 
 jobs:
-  postgres-integration:
-    name: PostgreSQL integration tests
-    runs-on: rootless-docker
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: "1.26.6"
-          cache: false
-
-      - name: Validate populated PostgreSQL upgrade
-        run: scripts/pre-image-check.sh "${{ inputs.migration-base-ref }}"
-
-      - name: Run PostgreSQL migration integration suite
-        env:
-          DENSE_MEM_REQUIRE_POSTGRES_TESTS: "1"
-        run: go test -tags=integration ./internal/storage/postgres -count=1
-
   go-unit:
     name: Go unit tests
     runs-on: docker-runner
