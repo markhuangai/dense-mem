@@ -133,7 +133,11 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 	}
 	if registry.IsContractTool(tool) {
 		if err := registry.ValidateContractInput(tool, args, s.validationScopes(tool)); err != nil {
-			s.logToolInputRejected(ctx, tool.Name, "contract_validation_failed")
+			reasonCode := "contract_validation_failed"
+			if registry.HasTenantOverrideArgs(args) {
+				reasonCode = "tenant_override_rejected"
+			}
+			s.logToolInputRejected(ctx, tool.Name, reasonCode)
 			return nil, &rpcError{Code: errCodeInvalidParams, Message: boundedRPCText(err.Error())}
 		}
 	} else {

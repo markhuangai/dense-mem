@@ -278,8 +278,13 @@ function logSummary(log: OperationLog): LogSummary {
     ...DETAIL_KEYS.map((key) => detailForKey(key, attrs)),
     log.error && log.error !== title ? `error=${log.error}` : "",
   ].filter(Boolean) as string[];
-  const compactDetails = uniqueStrings(details).slice(0, 8);
-  const remaining = uniqueStrings(details).length - compactDetails.length;
+  const uniqueDetails = uniqueStrings(details);
+  const compactDetails = uniqueDetails.slice(0, 8);
+  const nextAttempt = detailForKey("next_attempt_at", attrs);
+  if (nextAttempt && !compactDetails.includes(nextAttempt)) {
+    compactDetails[compactDetails.length - 1] = nextAttempt;
+  }
+  const remaining = uniqueDetails.length - compactDetails.length;
   if (remaining > 0) {
     compactDetails.push(`+${remaining} more`);
   }

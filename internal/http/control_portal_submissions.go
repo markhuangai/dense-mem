@@ -2,14 +2,13 @@ package http
 
 import (
 	"errors"
-	nethttp "net/http"
 	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/markhuangai/dense-mem/internal/http/handler"
+	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
@@ -29,9 +28,8 @@ func (h *controlPortalHandler) listSubmissionDiagnostics(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(nethttp.StatusOK, handler.PaginationEnvelope{
-		Data:       page.Items,
-		Pagination: handler.Pagination{Limit: filter.Limit, Offset: filter.Offset, Total: page.Total},
+	return response.PaginatedOK(c, page.Items, response.Pagination{
+		Limit: filter.Limit, Offset: filter.Offset, Total: page.Total,
 	})
 }
 
@@ -57,7 +55,7 @@ func (h *controlPortalHandler) getSubmissionDiagnostic(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": detail})
+	return response.SuccessOK(c, detail)
 }
 
 func controlSubmissionDiagnosticFilter(c echo.Context) (service.SubmissionDiagnosticFilter, error) {

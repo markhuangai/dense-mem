@@ -11,11 +11,13 @@ import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
 
 const PROCESSING_STATES = ["", "queued", "processing", "awaiting_review", "completed", "rejected", "quarantined", "failed"];
+const PAGE_SIZE = 50;
 
 export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team }) {
   const [items, setItems] = useState<SubmissionDiagnosticSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [state, setState] = useState("");
+  const [offset, setOffset] = useState(0);
   const [selectedID, setSelectedID] = useState("");
   const [detail, setDetail] = useState<SubmissionDiagnosticDetail | null>(null);
   const [timeline, setTimeline] = useState<OperationLog[]>([]);
@@ -26,7 +28,7 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
   const listRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
 
-  async function loadSubmissions(nextState = state) {
+  async function loadSubmissions(nextState = state, nextOffset = offset) {
     const requestID = ++listRequestRef.current;
     setLoading(true);
     setError("");
@@ -34,14 +36,15 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
       const page = await api.listSubmissionDiagnostics({
         team_id: team.id,
         processing_state: nextState,
-        limit: 50,
-        offset: 0,
+        limit: PAGE_SIZE,
+        offset: nextOffset,
       });
       if (requestID !== listRequestRef.current) {
         return;
       }
       setItems(page.data);
       setTotal(page.pagination.total);
+      setOffset(page.pagination.offset);
       const nextSelected = page.data.some((item) => item.submission_id === selectedID)
         ? selectedID
         : page.data[0]?.submission_id ?? "";
@@ -104,16 +107,20 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
 
   useEffect(() => {
     setState("");
+    setOffset(0);
     setSelectedID("");
     setDetail(null);
     setTimeline([]);
     setTimelineUnavailable(false);
-    void loadSubmissions("");
+    void loadSubmissions("", 0);
     return () => {
       listRequestRef.current += 1;
       detailRequestRef.current += 1;
     };
   }, [api, team.id]);
+
+  const rangeStart = total === 0 ? 0 : offset + 1;
+  const rangeEnd = Math.min(offset + items.length, total);
 
   return (
     <div className="team-embedded-panel submission-diagnostics">
@@ -138,7 +145,8 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
               onChange={(event) => {
                 const next = event.target.value;
                 setState(next);
-                void loadSubmissions(next);
+                setOffset(0);
+                void loadSubmissions(next, 0);
               }}
             >
               {PROCESSING_STATES.map((value) => (
@@ -197,6 +205,25 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
             </table>
           </div>
         )}
+        <div className="table-actions">
+          <span className="form-meta">{rangeStart}-{rangeEnd} of {total}</span>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={loading || offset === 0}
+            onClick={() => void loadSubmissions(state, Math.max(0, offset - PAGE_SIZE))}
+          >
+            Previous
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={loading || offset + PAGE_SIZE >= total}
+            onClick={() => void loadSubmissions(state, offset + PAGE_SIZE)}
+          >
+            Next
+          </button>
+        </div>
       </section>
 
       {detailLoading && !detail ? <LoadingState label="Loading submission details" /> : detail && (
@@ -254,6 +281,9 @@ function SubmissionDetail({
               <span>{issue.message}</span>
             </div>
           ))}
+          {detail.semantic_hold.issues_truncated && (
+            <p className="submission-hold-truncated">Additional hold issues were omitted from this bounded diagnostic response.</p>
+          )}
         </div>
       )}
 
@@ -261,14 +291,23 @@ function SubmissionDetail({
         <section>
           <h3>Evidence placement</h3>
           <div className="mini-table">
-            <div className="mini-table-row heading" style={{ "--mini-cols": 3 } as CSSProperties}>
-              <span>Index</span><span>Search</span><span>Evidence ID</span>
+            <div className="mini-table-row heading" style={{ "--mini-cols": 4 } as CSSProperties}>
+              <span>Index</span><span>Search</span><span>Evidence ID</span><span>Error guidance</span>
             </div>
             {detail.evidence.map((evidence) => (
-              <div className="mini-table-row" style={{ "--mini-cols": 3 } as CSSProperties} key={evidence.evidence_id}>
+              <div className="mini-table-row" style={{ "--mini-cols": 4 } as CSSProperties} key={evidence.evidence_id}>
                 <span>{evidence.evidence_index}</span>
                 <span>{stateLabel(evidence.search_state)}</span>
                 <code>{shortId(evidence.evidence_id)}</code>
+                <span className="submission-evidence-error">
+                  {evidence.error ? (
+                    <>
+                      <code>{evidence.error.code}</code>
+                      <small>{evidence.error.message}</small>
+                      <strong>{evidence.error.remediation}</strong>
+                    </>
+                  ) : "—"}
+                </span>
               </div>
             ))}
           </div>

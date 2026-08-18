@@ -148,6 +148,30 @@ func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T)
 	require.Equal(t, "corr-canonical", actor["correlation_id"])
 }
 
+func TestRememberUsesPersistedCorrelationForIdempotentReplay(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	ledger := &rememberLedgerStub{result: &repository.CreateIngestResult{
+		TeamID:         teamID.String(),
+		IngestID:       uuid.NewString(),
+		PlacementRunID: uuid.NewString(),
+		Status:         string(domain.PlacementRunQueued),
+		CorrelationID:  "corr-original-submission",
+		Existing:       true,
+	}}
+	svc := NewRememberService(RememberDependencies{Ledger: ledger})
+
+	result, err := svc.Remember(authenticatedRememberContext(teamID, profileID, keyID), RememberRequest{
+		IdempotencyKey:    "remember-replay",
+		Evidence:          []RememberEvidenceInput{{Content: "Replay the original durable submission."}},
+		RelationshipHints: completeRememberRelationshipHints(1),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "corr-original-submission", result.CorrelationID)
+}
+
 func TestCanonicalRequestHashRetainsLegacyContractMarker(t *testing.T) {
 	hash, err := canonicalRequestHash(RememberRequest{
 		Evidence:       []RememberEvidenceInput{{Content: "compat"}},

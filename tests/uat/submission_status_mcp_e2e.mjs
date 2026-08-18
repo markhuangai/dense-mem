@@ -477,11 +477,20 @@ function assertSubmissionTimeline({ page, completed }, submissionID, correlation
   if (!Array.isArray(page.data) || page.data.length < 2 || !Array.isArray(completed.data) || completed.data.length < 1) {
     throw new Error("submission timeline is incomplete");
   }
+  let previousTimestamp = Number.NEGATIVE_INFINITY;
   for (const item of page.data) {
     if (item.team_id !== teamID || item.correlation_id !== correlationID || item.attrs?.reference_type !== "submission" ||
         item.attrs?.reference_id !== submissionID) {
       throw new Error("submission timeline ignored an exact team or reference filter");
     }
+    const timestamp = Date.parse(item.timestamp);
+    if (!Number.isFinite(timestamp)) {
+      throw new Error("submission timeline returned an invalid timestamp");
+    }
+    if (timestamp < previousTimestamp) {
+      throw new Error("submission timeline ignored ascending timestamp order");
+    }
+    previousTimestamp = timestamp;
   }
   if (!completed.data.every((item) => item.message === "submission_completed" && item.attrs?.reference_id === submissionID)) {
     throw new Error("operation-log event filtering was not exact");

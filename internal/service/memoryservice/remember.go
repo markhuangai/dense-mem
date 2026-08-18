@@ -654,6 +654,9 @@ func canonicalRequestHash(req RememberRequest) (string, error) {
 }
 
 func rememberResultFromLedger(created *repository.CreateIngestResult, correlationID string) *RememberResult {
+	if created.Existing && strings.TrimSpace(created.CorrelationID) != "" {
+		correlationID = created.CorrelationID
+	}
 	return &RememberResult{
 		IngestID:          created.IngestID,
 		SubmissionID:      created.IngestID,

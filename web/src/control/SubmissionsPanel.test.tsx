@@ -75,6 +75,87 @@ describe("SubmissionsPanel", () => {
     expect(screen.queryByText(/database detail/i)).not.toBeInTheDocument();
   });
 
+  it("navigates every submission page", async () => {
+    const summaries = ["submission-1", "submission-51"].map((submissionID) => ({
+      team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1",
+      submission_id: submissionID, processing_state: "completed", correlation_id: `corr-${submissionID}`,
+      attempts: 1, max_attempts: 5, evidence_count: 0, submitted_at: "2026-08-18T02:00:00Z",
+    }));
+    const listSubmissionDiagnostics = vi.fn().mockImplementation(({ offset }: { offset: number }) => Promise.resolve({
+      data: [offset === 0 ? summaries[0] : summaries[1]],
+      pagination: { limit: 50, offset, total: 51 },
+    }));
+    const api = {
+      listSubmissionDiagnostics,
+      getSubmissionDiagnostic: vi.fn().mockImplementation((_teamID: string, submissionID: string) => Promise.resolve({
+        ...summaries.find((item) => item.submission_id === submissionID),
+        submission_kind: "remember", search_state: "current", check_after_seconds: 60,
+        evidence: [], errors: [],
+      })),
+      listOperationLogs: vi.fn().mockResolvedValue({
+        data: [], pagination: { limit: 100, offset: 0, total: 0 },
+      }),
+    } as unknown as ControlApi;
+
+    const { rerender } = render(<SubmissionsPanel api={api} team={team()} />);
+
+    expect(await screen.findByText("1-1 of 51")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(listSubmissionDiagnostics).toHaveBeenLastCalledWith({
+      team_id: "team-1", processing_state: "", limit: 50, offset: 50,
+    }));
+    expect(await screen.findByText("51-51 of 51")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Submission details" })).toHaveTextContent("submission-51");
+
+    rerender(<SubmissionsPanel api={api} team={{ ...team(), id: "team-2" }} />);
+    await waitFor(() => expect(listSubmissionDiagnostics).toHaveBeenLastCalledWith({
+      team_id: "team-2", processing_state: "", limit: 50, offset: 0,
+    }));
+  });
+
+  it("shows bounded hold truncation and evidence-specific remediation", async () => {
+    const summary = {
+      team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1",
+      submission_id: "submission-held", processing_state: "awaiting_review", correlation_id: "corr-held",
+      attempts: 1, max_attempts: 5, evidence_count: 1, submitted_at: "2026-08-18T02:00:00Z",
+    };
+    const api = {
+      listSubmissionDiagnostics: vi.fn().mockResolvedValue({
+        data: [summary], pagination: { limit: 50, offset: 0, total: 1 },
+      }),
+      getSubmissionDiagnostic: vi.fn().mockResolvedValue({
+        ...summary,
+        submission_kind: "remember", search_state: "failed", check_after_seconds: 60,
+        evidence: [{
+          evidence_id: "evidence-held", evidence_index: 0, superseded_evidence_ids: [], search_state: "failed",
+          error: {
+            code: "search_projection_failed", message: "search projection failed", retryable: true,
+            next_action: "contact_operator", remediation: "Inspect the embedding worker and retry the submission.",
+          },
+        }],
+        errors: [],
+        semantic_hold: {
+          state: "active",
+          issues: [{ code: "grounding_low_confidence", component: "subject", message: "Subject grounding needs review." }],
+          issues_truncated: true,
+          replacement: {
+            tool: "remember", replaces_submission_id: "submission-held",
+            instruction: "Submit a complete corrected replacement batch.",
+          },
+        },
+      }),
+      listOperationLogs: vi.fn().mockResolvedValue({
+        data: [], pagination: { limit: 100, offset: 0, total: 0 },
+      }),
+    } as unknown as ControlApi;
+
+    render(<SubmissionsPanel api={api} team={team()} />);
+
+    expect(await screen.findByText("search_projection_failed")).toBeInTheDocument();
+    expect(screen.getByText("Inspect the embedding worker and retry the submission.")).toBeInTheDocument();
+    expect(screen.getByText("Additional hold issues were omitted from this bounded diagnostic response.")).toBeInTheDocument();
+  });
+
   it("does not leave a previous submission detail visible after a new detail request fails", async () => {
     const summaries = ["submission-1", "submission-2"].map((submissionID) => ({
       team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1",

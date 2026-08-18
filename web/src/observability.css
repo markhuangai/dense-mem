@@ -138,6 +138,12 @@
   margin: 5px 0 10px;
 }
 
+.submission-hold .submission-hold-truncated {
+  color: var(--warning);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .submission-hold-issue {
   display: flex;
   gap: 10px;
@@ -157,6 +163,19 @@
 .submission-detail-grid h3 {
   margin: 0 0 9px;
   font-size: 13px;
+}
+
+.mini-table-row .submission-evidence-error {
+  display: grid;
+  gap: 4px;
+  overflow: visible;
+  text-overflow: initial;
+  white-space: normal;
+}
+
+.submission-evidence-error small,
+.submission-evidence-error strong {
+  line-height: 1.35;
 }
 
 .submission-timeline {

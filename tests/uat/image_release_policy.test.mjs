@@ -101,6 +101,23 @@ test("published images require the populated migration gate before building", as
   }
 });
 
+test("pull-request PostgreSQL checks run on a Docker-capable runner", async () => {
+  const workflow = await readFile(
+    new URL("../../.github/workflows/ci-shared.yml", import.meta.url),
+    "utf8",
+  );
+  const postgresJobStart = workflow.indexOf("  postgres-integration:");
+  const goUnitJobStart = workflow.indexOf("  go-unit:");
+  assert.ok(postgresJobStart >= 0, "CI is missing the PostgreSQL integration job");
+  assert.ok(goUnitJobStart > postgresJobStart, "PostgreSQL integration job boundary is invalid");
+
+  const postgresJob = workflow.slice(postgresJobStart, goUnitJobStart);
+  assert.match(postgresJob, /runs-on: rootless-docker/);
+  assert.match(postgresJob, /run: scripts\/pre-image-check\.sh/);
+  assert.match(postgresJob, /go test -tags=integration \.\/internal\/storage\/postgres -count=1/);
+  assert.match(postgresJob, /DENSE_MEM_REQUIRE_POSTGRES_TESTS: "1"/);
+});
+
 test("same-repository pushes rebuild while the preview label remains", () => {
   assert.deepEqual(decidePreviewEvent(baseEvent), {
     mode: "attempt",

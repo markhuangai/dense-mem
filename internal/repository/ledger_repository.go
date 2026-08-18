@@ -888,7 +888,8 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 	result := CreateIngestResult{TeamID: teamID, IngestID: ingestID, Existing: existing}
 	row := tx.WithContext(ctx).Raw(`
 		SELECT run.placement_run_id::text, run.owner_profile_id::text, run.status,
-		       run.attempts, run.max_attempts, COALESCE(ingest.proposal, '{}'::jsonb)
+		       run.attempts, run.max_attempts, COALESCE(ingest.proposal, '{}'::jsonb),
+		       COALESCE(ingest.metadata #>> '{actor,correlation_id}', '')
 		FROM placement_runs AS run
 		JOIN knowledge_ingests AS ingest
 		  ON ingest.team_id = run.team_id
@@ -897,7 +898,15 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 		  AND run.ingest_id = ?::uuid
 	`, teamID, ingestID).Row()
 	var proposalRaw []byte
-	if err := row.Scan(&result.PlacementRunID, &result.OwnerProfileID, &result.Status, &result.Attempts, &result.MaxAttempts, &proposalRaw); err != nil {
+	if err := row.Scan(
+		&result.PlacementRunID,
+		&result.OwnerProfileID,
+		&result.Status,
+		&result.Attempts,
+		&result.MaxAttempts,
+		&proposalRaw,
+		&result.CorrelationID,
+	); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal(proposalRaw, &result.Proposal); err != nil {

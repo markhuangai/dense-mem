@@ -259,6 +259,9 @@ func TestLedgerCreateIngestIsIdempotentAndOwnerScoped(t *testing.T) {
 				"predicate":   "uses",
 			}},
 		},
+		Metadata: map[string]any{
+			"actor": map[string]any{"correlation_id": "corr-original-submission"},
+		},
 		Evidence: []EvidenceInput{{
 			Content:   "Dense-Mem stores exact evidence durably before acknowledgement.",
 			Authority: string(domain.AuthorityAuthoritative),
@@ -345,6 +348,7 @@ func TestLedgerCreateIngestIsIdempotentAndOwnerScoped(t *testing.T) {
 	require.True(t, second.Existing)
 	assert.Equal(t, first.IngestID, second.IngestID)
 	assert.Equal(t, first.PlacementRunID, second.PlacementRunID)
+	assert.Equal(t, "corr-original-submission", second.CorrelationID)
 	assert.Equal(t, string(domain.AuthorityAuthoritative), second.Evidence[0].Authority)
 
 	_, err = repo.CreateIngest(ctx, CreateIngestInput{
