@@ -15,22 +15,42 @@ const (
 )
 
 type SSOProvider struct {
-	ID              uuid.UUID
-	Name            string
-	Kind            SSOProviderKind
-	IssuerURL       string
-	TenantID        string
-	IdentityClaim   string
-	ClientID        string
-	ClientSecretEnv string
-	Scopes          []string
-	GroupClaims     []string
-	GroupsEndpoint  string
-	GroupsScopes    []string
-	Enabled         bool
-	RetiredAt       *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                uuid.UUID
+	Name              string
+	Kind              SSOProviderKind
+	IssuerURL         string
+	TenantID          string
+	IdentityClaim     string
+	ClientID          string
+	ClientSecretEnv   string
+	Scopes            []string
+	GroupClaims       []string
+	GroupsEndpoint    string
+	GroupsScopes      []string
+	ProtectedResource OAuthProtectedResourceConfig
+	Enabled           bool
+	RetiredAt         *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+// OAuthProtectedResourceConfig extends one browser SSO provider for MCP
+// access-token validation. Dense-Mem remains a protected resource; it never
+// issues, refreshes, or persists OAuth tokens.
+type OAuthProtectedResourceConfig struct {
+	Enabled       bool                `json:"enabled"`
+	Audiences     []string            `json:"audiences"`
+	JWKSSource    string              `json:"jwks_source"`
+	JWKSURI       string              `json:"jwks_uri"`
+	Algorithms    []string            `json:"algorithms"`
+	ScopeClaim    string              `json:"scope_claim"`
+	ScopeMappings []OAuthScopeMapping `json:"scope_mappings"`
+	TeamClaim     string              `json:"team_claim"`
+}
+
+type OAuthScopeMapping struct {
+	ExternalScope  string   `json:"external_scope"`
+	InternalScopes []string `json:"internal_scopes"`
 }
 
 type SSOGroupMapping struct {

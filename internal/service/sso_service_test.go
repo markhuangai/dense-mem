@@ -504,7 +504,15 @@ func (r *ssoRepositoryStub) GetIdentity(ctx context.Context, id uuid.UUID) (*dom
 }
 
 func (r *ssoRepositoryStub) GetIdentityByProviderSubject(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOIdentity, error) {
-	r.unexpected("GetIdentityByProviderSubject")
+	if r.getIdentityErr != nil {
+		return nil, r.getIdentityErr
+	}
+	for _, identity := range r.identities {
+		if identity != nil && identity.ProviderID == providerID && identity.Subject == subject {
+			copy := *identity
+			return &copy, nil
+		}
+	}
 	return nil, nil
 }
 

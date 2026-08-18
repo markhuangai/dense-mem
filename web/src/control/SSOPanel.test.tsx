@@ -22,6 +22,39 @@ beforeEach(() => {
 });
 
 describe("SSOPanel", () => {
+	it("renders the protected-resource validation contract", async () => {
+		const oauthProvider: SSOProvider = {
+			...providerA,
+			protected_resource: {
+				enabled: true,
+				audiences: ["api://dense-mem"],
+				jwks_source: "static",
+				jwks_uri: "https://provider-a.example.com/jwks.json",
+				algorithms: ["RS256", "ES256"],
+				scope_claim: "scp",
+				scope_mappings: [{ external_scope: "densemem.read", internal_scopes: ["read"] }],
+				team_claim: "dense_mem_team_id",
+			},
+		};
+		const api = {
+			listSSOProviders: vi.fn(async () => [oauthProvider]),
+			listSSOGroupMappings: vi.fn(async () => []),
+			getDirectoryConnector: vi.fn(async () => { throw new ApiError(404, "not found"); }),
+			listControlAdminGroups: vi.fn(async () => []),
+		} as unknown as ControlApi;
+
+		render(<SSOPanel api={api} teams={[team]} />);
+
+		await waitFor(() => expect(screen.getByLabelText("Accept OAuth JWTs on MCP")).toBeChecked());
+		expect(screen.getByLabelText("Allowed audiences")).toHaveValue("api://dense-mem");
+		expect(screen.getByLabelText("JWKS source")).toHaveValue("static");
+		expect(screen.getByLabelText("JWKS URL")).toHaveValue("https://provider-a.example.com/jwks.json");
+		expect(screen.getByLabelText("Signature algorithms")).toHaveValue("RS256, ES256");
+		expect(screen.getByLabelText("Scope claim")).toHaveValue("scp");
+		expect(screen.getByLabelText("Team claim")).toHaveValue("dense_mem_team_id");
+		expect(screen.getByLabelText("External scope")).toHaveValue("densemem.read");
+	});
+
   it("ignores stale mapping responses after switching providers", async () => {
     const providerAMappings = deferred<SSOGroupMapping[]>();
     const api = {
@@ -69,6 +102,16 @@ function ssoProvider(id: string, name: string): SSOProvider {
     group_claims: ["groups"],
     groups_endpoint: "",
     groups_scopes: [],
+	protected_resource: {
+	  enabled: false,
+	  audiences: [],
+	  jwks_source: "discovery",
+	  jwks_uri: "",
+	  algorithms: ["RS256"],
+	  scope_claim: "scope",
+	  scope_mappings: [],
+	  team_claim: "",
+	},
     enabled: true,
     created_at: "2026-05-01T12:00:00Z",
     updated_at: "2026-05-01T12:00:00Z",

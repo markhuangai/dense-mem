@@ -125,6 +125,41 @@ describe("ControlApi", () => {
     }));
   });
 
+  it("sends irreversible private-memory requests with idempotency keys", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+      data: {
+        operation_id: "operation-1",
+        action: "erase_credential_private",
+        actor_class: "control",
+        reason_code: "control_request",
+        retire_space: false,
+        status: "queued",
+        deleted_counts: {},
+        requested_at: "2026-08-18T12:00:00Z",
+        updated_at: "2026-08-18T12:00:00Z",
+      },
+    }), { status: 202 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new ControlApi("secret", "/control/api");
+    await api.requestPrivateMemoryErasure("space/1", "erase-key");
+    await api.runPrivateMemoryRetention("retention-key");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/control/api/private-memory/spaces/space%2F1/erasures", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ acknowledge_irreversible: true }),
+      headers: expect.objectContaining({
+        Authorization: "Bearer secret",
+        "Idempotency-Key": "erase-key",
+      }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/control/api/private-memory/retention-runs", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ acknowledge_irreversible: true }),
+      headers: expect.objectContaining({ "Idempotency-Key": "retention-key" }),
+    }));
+  });
+
   it("reads existing models and updates telemetry pricing only", async () => {
 	const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
 	  data: {

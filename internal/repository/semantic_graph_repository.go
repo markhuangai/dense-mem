@@ -29,6 +29,7 @@ func loadTraceGraphContext(
 		Depth:        input.MaxDepth,
 		Limit:        input.MaxEdges,
 		MinRelevance: optionalRelevanceValue(input.MinRelevance),
+		spaceID:      relationship.SpaceID,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -47,9 +48,15 @@ func loadSemanticOverviewGraphRows(
 	tx *gorm.DB,
 	input SemanticGraphQuery,
 ) ([]semanticGraphEdgeRow, error) {
+	extraWhere := ""
+	var extraArgs []any
+	if input.spaceID != "" {
+		extraWhere = " AND edge_record.space_id = ?::uuid"
+		extraArgs = append(extraArgs, input.spaceID)
+	}
 	rows, err := tx.WithContext(ctx).Raw(
-		semanticGraphEdgesSQL(""),
-		semanticGraphQueryArgs(input, input.Limit)...,
+		semanticGraphEdgesSQL(extraWhere),
+		semanticGraphQueryArgs(input, input.Limit, extraArgs...)...,
 	).Rows()
 	if err != nil {
 		return nil, err
@@ -72,7 +79,7 @@ func loadSemanticLocalGraphRows(
 	seenEdges := map[string]struct{}{}
 	out := []semanticGraphEdgeRow{}
 	for depth := 0; depth < input.Depth && len(frontier) > 0 && len(out) < input.Limit; depth++ {
-		rows, err := tx.WithContext(ctx).Raw(semanticGraphEdgesSQL(`
+		extraWhere := `
 		  AND (
 		    ('entity:' || e.subject_entity_id::text) = ANY(?::text[])
 		    OR (CASE
@@ -80,7 +87,16 @@ func loadSemanticLocalGraphRows(
 		      ELSE 'value:' || e.object_value_id::text
 		    END) = ANY(?::text[])
 		  )
-		`), semanticGraphQueryArgs(input, input.Limit-len(out), pq.Array(frontier), pq.Array(frontier))...).Rows()
+		`
+		extraArgs := []any{pq.Array(frontier), pq.Array(frontier)}
+		if input.spaceID != "" {
+			extraWhere += " AND edge_record.space_id = ?::uuid"
+			extraArgs = append(extraArgs, input.spaceID)
+		}
+		rows, err := tx.WithContext(ctx).Raw(
+			semanticGraphEdgesSQL(extraWhere),
+			semanticGraphQueryArgs(input, input.Limit-len(out), extraArgs...)...,
+		).Rows()
 		if err != nil {
 			return nil, err
 		}
@@ -141,33 +157,48 @@ func semanticGraphEdgesSQL(extraWhere string) string {
 		       e.owner_profile_id::text AS target_owner_profile_id,
 		       COALESCE(object.updated_at, value.created_at, subject.updated_at) AS target_recorded_at
 		FROM semantic_edges e
+		JOIN relationship_records edge_record
+		  ON edge_record.team_id = e.team_id
+		 AND edge_record.relationship_id = e.relationship_id
 		JOIN entity_records subject
-		  ON subject.team_id = e.team_id AND subject.entity_id = e.subject_entity_id
+		  ON subject.team_id = e.team_id
+		 AND subject.entity_id = e.subject_entity_id
+		 AND subject.space_id = edge_record.space_id
 		LEFT JOIN LATERAL (
 		  SELECT display_name
 		  FROM entity_names
 		  WHERE team_id = e.team_id
 		    AND entity_id = e.subject_entity_id
+		    AND space_id = edge_record.space_id
 		    AND name_kind = 'canonical'
 		    AND valid_to IS NULL
 		  ORDER BY created_at DESC, entity_name_id DESC
 		  LIMIT 1
 		) subject_name ON true
 		LEFT JOIN entity_records object
-		  ON object.team_id = e.team_id AND object.entity_id = e.object_entity_id
+		  ON object.team_id = e.team_id
+		 AND object.entity_id = e.object_entity_id
+		 AND object.space_id = edge_record.space_id
 		LEFT JOIN LATERAL (
 		  SELECT display_name
 		  FROM entity_names
 		  WHERE team_id = e.team_id
 		    AND entity_id = e.object_entity_id
+		    AND space_id = edge_record.space_id
 		    AND name_kind = 'canonical'
 		    AND valid_to IS NULL
 		  ORDER BY created_at DESC, entity_name_id DESC
 		  LIMIT 1
 		) object_name ON true
 		LEFT JOIN value_records value
-		  ON value.team_id = e.team_id AND value.value_id = e.object_value_id
+		  ON value.team_id = e.team_id
+		 AND value.value_id = e.object_value_id
+		 AND value.space_id = edge_record.space_id
 		WHERE e.team_id = ?::uuid
+		  AND (
+		    edge_record.space_id = dense_mem_team_shared_space(edge_record.team_id)
+		    OR dense_mem_space_allowed(edge_record.space_id)
+		  )
 		  AND subject.status = 'active'
 		  AND (
 		    e.object_entity_id IS NULL
@@ -298,6 +329,7 @@ func loadSemanticEntityGraphNode(ctx context.Context, tx *gorm.DB, teamID, entit
 		  FROM entity_names
 		  WHERE team_id = e.team_id
 		    AND entity_id = e.entity_id
+		    AND space_id = e.space_id
 		    AND name_kind = 'canonical'
 		    AND valid_to IS NULL
 		  ORDER BY created_at DESC, entity_name_id DESC
@@ -306,6 +338,10 @@ func loadSemanticEntityGraphNode(ctx context.Context, tx *gorm.DB, teamID, entit
 		WHERE e.team_id = ?::uuid
 		  AND e.entity_id = ?::uuid
 		  AND e.status = 'active'
+		  AND (
+		    e.space_id = dense_mem_team_shared_space(e.team_id)
+		    OR dense_mem_space_allowed(e.space_id)
+		  )
 		LIMIT 1
 	`, teamID, entityID).Rows()
 	if err != nil {
@@ -331,9 +367,13 @@ func loadSemanticValueGraphNode(ctx context.Context, tx *gorm.DB, teamID, valueI
 		SELECT ('value:' || value_id::text), value_id::text,
 		       COALESCE(NULLIF(display, ''), canonical_value), value_type,
 		       'active', ''::text, created_at
-		FROM value_records
-		WHERE team_id = ?::uuid
-		  AND value_id = ?::uuid
+		FROM value_records AS value
+		WHERE value.team_id = ?::uuid
+		  AND value.value_id = ?::uuid
+		  AND (
+		    value.space_id = dense_mem_team_shared_space(value.team_id)
+		    OR dense_mem_space_allowed(value.space_id)
+		  )
 		LIMIT 1
 	`, teamID, valueID).Rows()
 	if err != nil {

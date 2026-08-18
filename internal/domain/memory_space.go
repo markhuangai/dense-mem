@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -39,6 +40,30 @@ type MemorySpace struct {
 	Kind              MemorySpaceKind
 	OwnerProfileID    *uuid.UUID
 	OwnerCredentialID *uuid.UUID
+	Generation        int64
+	LifecycleState    MemorySpaceLifecycleState
+	PrivateContentAt  *time.Time
+	SealedAt          *time.Time
+	RetiredAt         *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type MemorySpaceLifecycleState string
+
+const (
+	MemorySpaceActive  MemorySpaceLifecycleState = "active"
+	MemorySpaceSealed  MemorySpaceLifecycleState = "sealed"
+	MemorySpaceRetired MemorySpaceLifecycleState = "retired"
+)
+
+func (s MemorySpaceLifecycleState) Valid() bool {
+	switch s {
+	case MemorySpaceActive, MemorySpaceSealed, MemorySpaceRetired:
+		return true
+	default:
+		return false
+	}
 }
 
 func (k MemorySpaceKind) Valid() bool {

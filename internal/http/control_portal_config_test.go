@@ -19,28 +19,31 @@ import (
 )
 
 type controlAppConfigSvc struct {
-	generalSettings      *domain.GeneralConfigSettings
-	settings             *domain.SSOConfigSettings
-	dreamingSettings     *domain.DreamingConfigSettings
-	communitySettings    *domain.CommunityDetectionConfigSettings
-	operationLogSettings *domain.OperationLogConfigSettings
-	recallSettings       *domain.RecallFeedbackConfigSettings
-	telemetrySettings    *domain.TelemetryPricingConfigSettings
-	generalValues        map[string]string
-	values               map[string]string
-	dreamingValues       map[string]string
-	communityValues      map[string]string
-	operationLogValues   map[string]string
-	recallValues         map[string]string
-	telemetryValues      map[string]string
-	getErr               error
-	updateErr            error
-	dreamingRuntime      domain.DreamingRuntimeConfig
-	dreamingRuntimeErr   error
-	recallRuntime        domain.RecallFeedbackRuntimeConfig
-	recallRuntimeErr     error
-	telemetryRuntime     domain.TelemetryPricingRuntimeConfig
-	telemetryRuntimeErr  error
+	generalSettings       *domain.GeneralConfigSettings
+	settings              *domain.SSOConfigSettings
+	dreamingSettings      *domain.DreamingConfigSettings
+	communitySettings     *domain.CommunityDetectionConfigSettings
+	operationLogSettings  *domain.OperationLogConfigSettings
+	privateMemorySettings *domain.PrivateMemoryConfigSettings
+	recallSettings        *domain.RecallFeedbackConfigSettings
+	telemetrySettings     *domain.TelemetryPricingConfigSettings
+	generalValues         map[string]string
+	values                map[string]string
+	dreamingValues        map[string]string
+	communityValues       map[string]string
+	operationLogValues    map[string]string
+	privateMemoryValues   map[string]string
+	recallValues          map[string]string
+	telemetryValues       map[string]string
+	getErr                error
+	updateErr             error
+	dreamingRuntime       domain.DreamingRuntimeConfig
+	dreamingRuntimeErr    error
+	recallRuntime         domain.RecallFeedbackRuntimeConfig
+	recallRuntimeErr      error
+	telemetryRuntime      domain.TelemetryPricingRuntimeConfig
+	telemetryRuntimeErr   error
+	privateMemoryRuntime  domain.PrivateMemoryRuntimeConfig
 }
 
 func (s *controlAppConfigSvc) GetGeneralSettings(context.Context) (*domain.GeneralConfigSettings, error) {
@@ -161,6 +164,30 @@ func (s *controlAppConfigSvc) UpdateOperationLogSettings(_ context.Context, valu
 
 func (s *controlAppConfigSvc) OperationLogRuntimeConfig(context.Context) (domain.OperationLogRuntimeConfig, error) {
 	return domain.OperationLogRuntimeConfig{}, nil
+}
+
+func (s *controlAppConfigSvc) GetPrivateMemorySettings(context.Context) (*domain.PrivateMemoryConfigSettings, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.privateMemorySettings, nil
+}
+
+func (s *controlAppConfigSvc) UpdatePrivateMemorySettings(_ context.Context, values map[string]string, _, _, _ string) (*domain.PrivateMemoryConfigSettings, error) {
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
+	if s.privateMemoryValues == nil {
+		s.privateMemoryValues = make(map[string]string)
+	}
+	for key, value := range values {
+		s.privateMemoryValues[key] = value
+	}
+	return s.privateMemorySettings, nil
+}
+
+func (s *controlAppConfigSvc) PrivateMemoryRuntimeConfig(context.Context) (domain.PrivateMemoryRuntimeConfig, error) {
+	return s.privateMemoryRuntime, nil
 }
 
 func (s *controlAppConfigSvc) GetRecallFeedbackSettings(context.Context) (*domain.RecallFeedbackConfigSettings, error) {
@@ -344,6 +371,54 @@ func TestControlPortalSSOConfigFlows(t *testing.T) {
 	appConfig.updateErr = errors.New("db failed")
 	rec = do(http.MethodPatch, "/control/api/config/sso", `{"items":[{"key":"SSO_SESSION_TTL_SECONDS","value":"3600"}]}`)
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+func TestControlPortalPrivateMemoryConfigFlows(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	appConfig := &controlAppConfigSvc{
+		privateMemorySettings: &domain.PrivateMemoryConfigSettings{
+			UpdateTime: now.Format(time.RFC3339Nano),
+			Items: []domain.PrivateMemoryConfigItem{{
+				Key:            domain.AppConfigPrivateMemoryRetentionDays,
+				Value:          "0",
+				EffectiveValue: "0",
+				UpdatedAt:      now,
+			}},
+			Effective: domain.PrivateMemoryRuntimeConfig{RetentionDays: 0},
+		},
+	}
+	e, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{
+		ControlHTTPAddr:    "127.0.0.1:8090",
+		ControlPortalToken: "secret",
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+		Config: appConfig,
+	}, HealthConfig{}, nil)
+	require.NoError(t, err)
+
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret")
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := do(http.MethodGet, "/control/api/config/private-memory", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"update_time":"2026-08-18T12:00:00Z"`)
+	require.Contains(t, rec.Body.String(), `"retention_days":0`)
+
+	rec = do(http.MethodPatch, "/control/api/config/private-memory", `{"items":[{"key":"PRIVATE_MEMORY_RETENTION_DAYS","value":"30"}]}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "30", appConfig.privateMemoryValues[domain.AppConfigPrivateMemoryRetentionDays])
+
+	rec = do(http.MethodPatch, "/control/api/config/private-memory", "{")
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	appConfig.updateErr = service.ErrInvalidAppConfig
+	rec = do(http.MethodPatch, "/control/api/config/private-memory", `{"items":[{"key":"PRIVATE_MEMORY_RETENTION_DAYS","value":"-1"}]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
 func TestControlPortalDreamingConfigFlows(t *testing.T) {
@@ -653,6 +728,7 @@ func TestControlConfigNilResponses(t *testing.T) {
 	require.Empty(t, toControlDreamingConfig(nil).Items)
 	require.Empty(t, toControlCommunityDetectionConfig(nil).Items)
 	require.Empty(t, toControlOperationLogConfig(nil).Items)
+	require.Empty(t, toControlPrivateMemoryConfig(nil).Items)
 	require.Empty(t, toControlRecallFeedbackConfig(nil).Items)
 	require.Empty(t, toControlTelemetryPricingConfig(nil, "", "").Items)
 }
@@ -672,6 +748,8 @@ func TestControlPortalConfigUnavailableHandlers(t *testing.T) {
 		{name: "update community", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateCommunityDetectionConfig(c) }},
 		{name: "get operation logs", call: func(h *controlPortalHandler, c echo.Context) error { return h.getOperationLogConfig(c) }},
 		{name: "update operation logs", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateOperationLogConfig(c) }},
+		{name: "get private memory", call: func(h *controlPortalHandler, c echo.Context) error { return h.getPrivateMemoryConfig(c) }},
+		{name: "update private memory", call: func(h *controlPortalHandler, c echo.Context) error { return h.updatePrivateMemoryConfig(c) }},
 		{name: "get recall feedback", call: func(h *controlPortalHandler, c echo.Context) error { return h.getRecallFeedbackConfig(c) }},
 		{name: "update recall feedback", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateRecallFeedbackConfig(c) }},
 		{name: "get telemetry pricing", call: func(h *controlPortalHandler, c echo.Context) error { return h.getTelemetryPricingConfig(c) }},
@@ -696,6 +774,7 @@ func TestControlPortalConfigGetErrors(t *testing.T) {
 		{name: "dreaming", call: h.getDreamingConfig},
 		{name: "community detection", call: h.getCommunityDetectionConfig},
 		{name: "operation logs", call: h.getOperationLogConfig},
+		{name: "private memory", call: h.getPrivateMemoryConfig},
 		{name: "recall feedback", call: h.getRecallFeedbackConfig},
 		{name: "telemetry pricing", call: h.getTelemetryPricingConfig},
 	}
@@ -733,6 +812,11 @@ func TestControlPortalConfigUpdateBackendErrors(t *testing.T) {
 			name: "operation logs",
 			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateOperationLogConfig(c) },
 			body: `{"items":[{"key":"OPERATION_LOG_RETENTION_DAYS","value":"45"}]}`,
+		},
+		{
+			name: "private memory",
+			call: func(h *controlPortalHandler, c echo.Context) error { return h.updatePrivateMemoryConfig(c) },
+			body: `{"items":[{"key":"PRIVATE_MEMORY_RETENTION_DAYS","value":"30"}]}`,
 		},
 		{
 			name: "recall feedback",

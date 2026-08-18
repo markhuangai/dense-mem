@@ -74,6 +74,46 @@ describe("UserApi", () => {
     }));
   });
 
+  it("sends strict irreversible erasure requests with idempotency keys", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+      data: {
+        operation_id: "operation-1",
+        action: "erase_profile_private",
+        actor_class: "owner_sso",
+        reason_code: "owner_request",
+        retire_space: false,
+        status: "queued",
+        deleted_counts: {},
+        requested_at: "2026-08-18T12:00:00Z",
+        updated_at: "2026-08-18T12:00:00Z",
+      },
+    }), { status: 202 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new UserApi("dm_key");
+    await api.eraseCredentialPrivateMemory("credential-erasure-key");
+    await api.deleteSSOCredential("credential/1", "credential-delete-key");
+    await api.eraseSSOPrivateMemory("profile-erasure-key");
+
+    for (const call of fetchMock.mock.calls) {
+      expect(call[1]).toEqual(expect.objectContaining({
+        body: JSON.stringify({ acknowledge_irreversible: true }),
+      }));
+    }
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/ui/api/credential/private-memory", expect.objectContaining({
+      method: "DELETE",
+      headers: expect.objectContaining({ "Idempotency-Key": "credential-erasure-key" }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/ui/api/sso/credentials/credential/1", expect.objectContaining({
+      method: "DELETE",
+      headers: expect.objectContaining({ "Idempotency-Key": "credential-delete-key" }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "/ui/api/sso/private-memory", expect.objectContaining({
+      method: "DELETE",
+      headers: expect.objectContaining({ "Idempotency-Key": "profile-erasure-key" }),
+    }));
+  });
+
   it("requests role-derived telemetry", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: {

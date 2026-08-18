@@ -92,11 +92,16 @@ type UserPortalSessionAuthenticator interface {
 	AuthenticateSession(ctx context.Context, sessionToken, csrfToken string, requireCSRF bool) (*domain.AuthenticatedActor, error)
 }
 
+type OAuthBearerAuthenticator interface {
+	AuthenticateOAuthBearer(ctx context.Context, rawToken string, pathTeamID *uuid.UUID) (*domain.AuthenticatedActor, error)
+}
+
 type AuthOptions struct {
 	CredentialVerifier             crypto.CredentialVerifier
 	SSOEntitlementValidator        SSOEntitlementValidator
 	SSOSessionAuthenticator        SSOSessionAuthenticator
 	UserPortalSessionAuthenticator UserPortalSessionAuthenticator
+	OAuthBearerAuthenticator       OAuthBearerAuthenticator
 	AllowMissingCredentials        bool
 }
 
@@ -154,6 +159,32 @@ func AuthMiddlewareWithOptions(repo repository.CredentialRepository, auditSvc se
 			if rawKey == "" {
 				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "empty bearer token")
 				return httperr.New(httperr.AUTH_INVALID, "empty bearer token")
+			}
+
+			pathTeamID, err := authenticatedPathTeamID(c)
+			if err != nil {
+				return err
+			}
+			if service.IsJWTBearer(rawKey) {
+				if opts.OAuthBearerAuthenticator == nil {
+					logAuthFailure(c, auditSvc, securitySvc, nil, "OAUTH_INVALID", "oauth bearer authentication is unavailable")
+					return httperr.New(httperr.AUTH_INVALID, "invalid bearer token")
+				}
+				actor, err := opts.OAuthBearerAuthenticator.AuthenticateOAuthBearer(c.Request().Context(), rawKey, pathTeamID)
+				if err != nil {
+					logAuthFailure(c, auditSvc, securitySvc, nil, "OAUTH_DENIED", "oauth bearer authentication failed")
+					return oauthAuthError(err)
+				}
+				principal, actorContext, err := principalAndActorContext(actor, "oauth", "")
+				if err != nil {
+					return err
+				}
+				ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
+				ctx = requestctx.WithActor(ctx, actorContext)
+				req := c.Request().Clone(ctx)
+				req.Header.Del("Authorization")
+				c.SetRequest(req)
+				return next(c)
 			}
 
 			prefixes := crypto.GetLookupPrefixes(rawKey)
@@ -237,6 +268,11 @@ func AuthMiddlewareWithOptions(repo repository.CredentialRepository, auditSvc se
 				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "api credential is not team bound")
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
+			if pathTeamID != nil && teamID != *pathTeamID {
+				teamIDStr := teamID.String()
+				logAuthFailure(c, auditSvc, securitySvc, &teamIDStr, "TEAM_PATH_MISMATCH", "scoped mcp team does not match credential")
+				return httperr.New(httperr.FORBIDDEN, "access denied to this team")
+			}
 
 			actor := authenticatedActorFromCredential(key)
 			principal, actorContext, err := principalAndActorContext(actor, "api_key", prefix)
@@ -253,6 +289,35 @@ func AuthMiddlewareWithOptions(repo repository.CredentialRepository, auditSvc se
 
 			return next(c)
 		}
+	}
+}
+
+func authenticatedPathTeamID(c echo.Context) (*uuid.UUID, error) {
+	raw := strings.TrimSpace(c.Param("teamId"))
+	if raw == "" {
+		return nil, nil
+	}
+	teamID, err := uuid.Parse(raw)
+	if err != nil || teamID == uuid.Nil {
+		return nil, httperr.New(httperr.INVALID_UUID, "invalid team ID format")
+	}
+	return &teamID, nil
+}
+
+func oauthAuthError(err error) error {
+	switch {
+	case errors.Is(err, service.ErrOAuthTokenExpired):
+		return httperr.New(httperr.AUTH_EXPIRED, "oauth access token expired")
+	case errors.Is(err, service.ErrOAuthTokenInvalid):
+		return httperr.New(httperr.AUTH_INVALID, "invalid oauth access token")
+	case errors.Is(err, service.ErrOAuthTeamRequired):
+		return httperr.New(httperr.TEAM_REQUIRED, "use /teams/{team_id}/mcp or supply the configured team claim")
+	case errors.Is(err, service.ErrOAuthAccessDenied):
+		return httperr.New(httperr.FORBIDDEN, "oauth membership access denied")
+	case errors.Is(err, service.ErrOAuthProviderUnavailable):
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "oauth provider unavailable")
+	default:
+		return httperr.New(httperr.INTERNAL_ERROR, "oauth authentication failed")
 	}
 }
 
@@ -535,7 +600,7 @@ func authFailureSurface(c echo.Context) string {
 	if path == "" {
 		path = c.Request().URL.Path
 	}
-	if strings.HasPrefix(path, "/mcp") {
+	if strings.HasPrefix(path, "/mcp") || (strings.HasPrefix(path, "/teams/") && strings.HasSuffix(path, "/mcp")) {
 		return "mcp"
 	}
 	return "api"

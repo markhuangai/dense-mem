@@ -34,6 +34,9 @@ type ResolvedTeamContext struct {
 }
 
 func isTeamResolvedRoute(path string) bool {
+	if isScopedMCPRoute(path) {
+		return true
+	}
 	headerScopedPrefixes := []string{
 		"/mcp",
 		"/ui/api/recall",
@@ -48,6 +51,11 @@ func isTeamResolvedRoute(path string) bool {
 	}
 
 	return false
+}
+
+func isScopedMCPRoute(path string) bool {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	return len(parts) == 3 && parts[0] == "teams" && parts[1] != "" && parts[2] == "mcp"
 }
 
 // TeamResolutionMiddleware resolves the authenticated team for MCP and

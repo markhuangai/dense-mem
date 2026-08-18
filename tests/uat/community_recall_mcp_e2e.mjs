@@ -201,6 +201,8 @@ function seedCommunityGraph(ownerProfileID) {
        ${sqlLiteral(ownerProfileID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 'grant', 'compose community support', '{}'::jsonb)`
   ).join(",\n");
   postgresQuery(`
+    BEGIN;
+    SELECT set_config('app.tx_mode', 'system', true);
     INSERT INTO team_predicate_definitions (
       team_id, predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,
       relationship_kind, current_cardinality, lifecycle_state, origin, metadata, created_at
@@ -236,6 +238,7 @@ function seedCommunityGraph(ownerProfileID) {
     INSERT INTO relationship_support_decision_events (
       team_id, support_id, relationship_id, owner_profile_id, actor_profile_id, decision, reason, metadata
     ) VALUES ${decisionSQL};
+    COMMIT;
   `);
   return { relationships, groups, entities, fragments };
 }

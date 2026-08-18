@@ -16,6 +16,7 @@ const (
 	AppConfigSSOStateTTLSeconds            = "SSO_STATE_TTL_SECONDS"
 	AppConfigSSOHTTPTimeoutSeconds         = "SSO_HTTP_TIMEOUT_SECONDS"
 	AppConfigSSOCookieSecure               = "SSO_COOKIE_SECURE"
+	AppConfigMCPPublicBaseURL              = "MCP_PUBLIC_BASE_URL"
 
 	AppConfigDreamingEnabled        = "DREAMING_ENABLED"
 	AppConfigDreamingForceEnabled   = "DREAMING_FORCE_ENABLED"
@@ -27,7 +28,8 @@ const (
 	AppConfigCommunityDetectionMaxConcurrency = "COMMUNITY_DETECTION_MAX_CONCURRENCY"
 	AppConfigCommunityDetectionJitterSeconds  = "COMMUNITY_DETECTION_JITTER_SECONDS"
 
-	AppConfigOperationLogRetentionDays = "OPERATION_LOG_RETENTION_DAYS"
+	AppConfigOperationLogRetentionDays  = "OPERATION_LOG_RETENTION_DAYS"
+	AppConfigPrivateMemoryRetentionDays = "PRIVATE_MEMORY_RETENTION_DAYS"
 
 	AppConfigRecallFeedbackEnabled       = "RECALL_FEEDBACK_ENABLED"
 	AppConfigRecallFeedbackRetentionDays = "RECALL_FEEDBACK_RETENTION_DAYS"
@@ -95,6 +97,23 @@ type OperationLogConfigItem struct {
 
 // OperationLogRuntimeConfig is the effective operation log runtime config.
 type OperationLogRuntimeConfig struct {
+	RetentionDays int `json:"retention_days"`
+}
+
+type PrivateMemoryConfigSettings struct {
+	UpdateTime string                     `json:"update_time"`
+	Items      []PrivateMemoryConfigItem  `json:"items"`
+	Effective  PrivateMemoryRuntimeConfig `json:"effective"`
+}
+
+type PrivateMemoryConfigItem struct {
+	Key            string    `json:"key"`
+	Value          string    `json:"value"`
+	EffectiveValue string    `json:"effective_value"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type PrivateMemoryRuntimeConfig struct {
 	RetentionDays int `json:"retention_days"`
 }
 

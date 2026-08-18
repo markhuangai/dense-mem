@@ -599,6 +599,17 @@ func loadRelationshipConflictRecords(
 	relationshipIDs []string,
 	knownAt *time.Time,
 ) ([]RelationshipConflictCaseRecord, error) {
+	return loadRelationshipConflictRecordsInSpace(ctx, tx, teamID, relationshipIDs, knownAt, "")
+}
+
+func loadRelationshipConflictRecordsInSpace(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	relationshipIDs []string,
+	knownAt *time.Time,
+	spaceID string,
+) ([]RelationshipConflictCaseRecord, error) {
 	relationshipIDs = normalizeRecallUUIDList(relationshipIDs)
 	if len(relationshipIDs) == 0 {
 		return []RelationshipConflictCaseRecord{}, nil
@@ -611,6 +622,13 @@ func loadRelationshipConflictRecords(
 		 AND member.conflict_id = conflict.conflict_id
 		WHERE conflict.team_id = ?::uuid
 		  AND member.relationship_id = ANY(?::uuid[])
+		  AND (
+		      ? = ''
+		      OR (
+		          conflict.space_id = NULLIF(?, '')::uuid
+		          AND member.space_id = NULLIF(?, '')::uuid
+		      )
+		  )
 		  AND (?::timestamptz IS NULL OR conflict.created_at <= ?::timestamptz)
 		  AND (
 		      (?::timestamptz IS NULL AND member.active)
@@ -625,7 +643,7 @@ func loadRelationshipConflictRecords(
 		      OR (?::timestamptz IS NOT NULL AND conflict.status IN ('open', 'overdue', 'resolved', 'dismissed'))
 		  )
 		ORDER BY conflict.conflict_id::text
-	`, teamID, pq.Array(relationshipIDs),
+	`, teamID, pq.Array(relationshipIDs), spaceID, spaceID, spaceID,
 		knownAt, knownAt, knownAt, knownAt, knownAt, knownAt, knownAt, knownAt).Rows()
 	if err != nil {
 		return nil, err

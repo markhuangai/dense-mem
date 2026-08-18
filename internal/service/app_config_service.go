@@ -16,7 +16,6 @@ import (
 
 const DefaultAppConfigCacheCheckInterval = 5 * time.Second
 const DefaultAppTimezone = "Local"
-const DefaultOperationLogRetentionDays = 30
 const DefaultRecallFeedbackRetentionDays = 30
 const DefaultCommunityDetectionStartTimeLocal = "03:30"
 const DefaultCommunityDetectionMaxConcurrency = 1
@@ -41,6 +40,9 @@ type AppConfigService interface {
 	GetOperationLogSettings(ctx context.Context) (*domain.OperationLogConfigSettings, error)
 	UpdateOperationLogSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.OperationLogConfigSettings, error)
 	OperationLogRuntimeConfig(ctx context.Context) (domain.OperationLogRuntimeConfig, error)
+	GetPrivateMemorySettings(ctx context.Context) (*domain.PrivateMemoryConfigSettings, error)
+	UpdatePrivateMemorySettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.PrivateMemoryConfigSettings, error)
+	PrivateMemoryRuntimeConfig(ctx context.Context) (domain.PrivateMemoryRuntimeConfig, error)
 	GetRecallFeedbackSettings(ctx context.Context) (*domain.RecallFeedbackConfigSettings, error)
 	UpdateRecallFeedbackSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.RecallFeedbackConfigSettings, error)
 	RecallFeedbackRuntimeConfig(ctx context.Context) (domain.RecallFeedbackRuntimeConfig, error)
@@ -68,6 +70,7 @@ type appConfigCache struct {
 	dreaming   domain.DreamingConfigSettings
 	community  domain.CommunityDetectionConfigSettings
 	opLogs     domain.OperationLogConfigSettings
+	private    domain.PrivateMemoryConfigSettings
 	recall     domain.RecallFeedbackConfigSettings
 	telemetry  domain.TelemetryPricingConfigSettings
 	checkedAt  time.Time
@@ -244,46 +247,6 @@ func (s *AppConfigServiceImpl) CommunityDetectionRuntimeConfig(ctx context.Conte
 	return cache.community.Effective, nil
 }
 
-func (s *AppConfigServiceImpl) GetOperationLogSettings(ctx context.Context) (*domain.OperationLogConfigSettings, error) {
-	cache, err := s.currentCache(ctx)
-	if err != nil {
-		return nil, err
-	}
-	settings := cache.opLogs
-	settings.Items = append([]domain.OperationLogConfigItem(nil), cache.opLogs.Items...)
-	return &settings, nil
-}
-
-func (s *AppConfigServiceImpl) UpdateOperationLogSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.OperationLogConfigSettings, error) {
-	normalized, err := normalizeOperationLogConfigValues(values)
-	if err != nil {
-		return nil, err
-	}
-	before, _ := s.GetOperationLogSettings(ctx)
-	now := s.now().UTC()
-	changed, err := s.repo.UpdateValues(ctx, normalized, now.Format(time.RFC3339Nano), now)
-	if err != nil {
-		return nil, err
-	}
-	s.invalidate()
-	updated, err := s.GetOperationLogSettings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if changed {
-		s.appendAudit("APP_CONFIG_UPDATE", "app_config", "operation_logs", actorRole, clientIP, correlationID, operationLogSettingsPayload(before), operationLogSettingsPayload(updated), map[string]any{"section": "operation_logs"})
-	}
-	return updated, nil
-}
-
-func (s *AppConfigServiceImpl) OperationLogRuntimeConfig(ctx context.Context) (domain.OperationLogRuntimeConfig, error) {
-	cache, err := s.currentCache(ctx)
-	if err != nil {
-		return domain.OperationLogRuntimeConfig{}, err
-	}
-	return cache.opLogs.Effective, nil
-}
-
 func (s *AppConfigServiceImpl) currentCache(ctx context.Context) (*appConfigCache, error) {
 	if s == nil || s.repo == nil {
 		return nil, fmt.Errorf("app config service is unavailable")
@@ -374,6 +337,10 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 	if err != nil {
 		return nil, err
 	}
+	privateMemory, err := privateMemoryRuntimeConfigFromEntries(entries)
+	if err != nil {
+		return nil, err
+	}
 	recall, err := recallFeedbackRuntimeConfigFromEntries(entries)
 	if err != nil {
 		return nil, err
@@ -391,6 +358,7 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 		dreaming:   dreaming,
 		community:  community,
 		opLogs:     opLogs,
+		private:    privateMemory,
 		recall:     recall,
 		telemetry:  telemetry,
 		checkedAt:  checkedAt,
@@ -441,6 +409,7 @@ func ssoRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (SSOR
 
 	runtime := SSORuntimeConfig{
 		PublicBaseURL:        normalized[domain.AppConfigSSOPublicBaseURL],
+		MCPPublicBaseURL:     normalized[domain.AppConfigMCPPublicBaseURL],
 		SCIMPublicBaseURL:    normalized[domain.AppConfigSCIMPublicBaseURL],
 		ControlPublicBaseURL: normalized[domain.AppConfigControlPublicBaseURL],
 		EntitlementCacheTTL:  entitlementTTL,
@@ -453,6 +422,7 @@ func ssoRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (SSOR
 	updateTime := entries[domain.AppConfigUpdateTimeKey].Value
 	items := []domain.SSOConfigItem{
 		ssoConfigItem(entries, domain.AppConfigSSOPublicBaseURL, normalized[domain.AppConfigSSOPublicBaseURL]),
+		ssoConfigItem(entries, domain.AppConfigMCPPublicBaseURL, normalized[domain.AppConfigMCPPublicBaseURL]),
 		ssoConfigItem(entries, domain.AppConfigSCIMPublicBaseURL, normalized[domain.AppConfigSCIMPublicBaseURL]),
 		ssoConfigItem(entries, domain.AppConfigControlPublicBaseURL, normalized[domain.AppConfigControlPublicBaseURL]),
 		ssoConfigItem(entries, domain.AppConfigSSOEntitlementCacheTTLSeconds, entitlementEffective),
@@ -632,54 +602,6 @@ func normalizeCommunityDetectionConfigValues(values map[string]string) (map[stri
 	return normalized, nil
 }
 
-func operationLogRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (domain.OperationLogConfigSettings, error) {
-	values := make(map[string]string, len(editableOperationLogConfigKeys()))
-	for _, key := range editableOperationLogConfigKeys() {
-		values[key] = strings.TrimSpace(entries[key].Value)
-	}
-	normalized, err := normalizeOperationLogConfigValues(values)
-	if err != nil {
-		return domain.OperationLogConfigSettings{}, err
-	}
-	retentionDays, retentionEffective := operationLogConfigInt(normalized[domain.AppConfigOperationLogRetentionDays], DefaultOperationLogRetentionDays)
-	runtime := domain.OperationLogRuntimeConfig{RetentionDays: retentionDays}
-	updateTime := entries[domain.AppConfigUpdateTimeKey].Value
-	items := []domain.OperationLogConfigItem{
-		operationLogConfigItem(entries, domain.AppConfigOperationLogRetentionDays, retentionEffective),
-	}
-	return domain.OperationLogConfigSettings{UpdateTime: updateTime, Items: items, Effective: runtime}, nil
-}
-
-func normalizeOperationLogConfigValues(values map[string]string) (map[string]string, error) {
-	allowed := make(map[string]struct{}, len(editableOperationLogConfigKeys()))
-	for _, key := range editableOperationLogConfigKeys() {
-		allowed[key] = struct{}{}
-	}
-	normalized := make(map[string]string, len(values))
-	for key, value := range values {
-		if key == domain.AppConfigUpdateTimeKey {
-			return nil, fmt.Errorf("%w: update_time is read-only", ErrInvalidAppConfig)
-		}
-		if _, ok := allowed[key]; !ok {
-			return nil, fmt.Errorf("%w: unknown key %s", ErrInvalidAppConfig, key)
-		}
-		trimmed := strings.TrimSpace(value)
-		switch key {
-		case domain.AppConfigOperationLogRetentionDays:
-			if trimmed == "" {
-				trimmed = strconv.Itoa(DefaultOperationLogRetentionDays)
-			}
-			parsed, err := strconv.Atoi(trimmed)
-			if err != nil || parsed < 1 || parsed > 365 {
-				return nil, fmt.Errorf("%w: OPERATION_LOG_RETENTION_DAYS must be between 1 and 365", ErrInvalidAppConfig)
-			}
-			trimmed = strconv.Itoa(parsed)
-		}
-		normalized[key] = trimmed
-	}
-	return normalized, nil
-}
-
 func normalizeGeneralConfigValues(values map[string]string) (map[string]string, error) {
 	allowed := make(map[string]struct{}, len(editableGeneralConfigKeys()))
 	for _, key := range editableGeneralConfigKeys() {
@@ -742,7 +664,7 @@ func normalizeSSOConfigValues(values map[string]string) (map[string]string, erro
 		}
 		trimmed := strings.TrimSpace(value)
 		switch key {
-		case domain.AppConfigSSOPublicBaseURL, domain.AppConfigSCIMPublicBaseURL, domain.AppConfigControlPublicBaseURL:
+		case domain.AppConfigSSOPublicBaseURL, domain.AppConfigMCPPublicBaseURL, domain.AppConfigSCIMPublicBaseURL, domain.AppConfigControlPublicBaseURL:
 			normalized[key] = strings.TrimRight(trimmed, "/")
 			if normalized[key] != "" {
 				parsed, err := url.Parse(normalized[key])
@@ -792,6 +714,7 @@ func editableGeneralConfigKeys() []string {
 func editableSSOConfigKeys() []string {
 	return []string{
 		domain.AppConfigSSOPublicBaseURL,
+		domain.AppConfigMCPPublicBaseURL,
 		domain.AppConfigSCIMPublicBaseURL,
 		domain.AppConfigControlPublicBaseURL,
 		domain.AppConfigSSOEntitlementCacheTTLSeconds,
@@ -817,12 +740,6 @@ func editableCommunityDetectionConfigKeys() []string {
 		domain.AppConfigCommunityDetectionStartTimeLocal,
 		domain.AppConfigCommunityDetectionMaxConcurrency,
 		domain.AppConfigCommunityDetectionJitterSeconds,
-	}
-}
-
-func editableOperationLogConfigKeys() []string {
-	return []string{
-		domain.AppConfigOperationLogRetentionDays,
 	}
 }
 
@@ -867,14 +784,6 @@ func communityDetectionConfigBool(value string, fallback bool) (bool, string) {
 }
 
 func communityDetectionConfigInt(value string, fallback int) (int, string) {
-	if strings.TrimSpace(value) == "" {
-		return fallback, strconv.Itoa(fallback)
-	}
-	parsed, _ := strconv.Atoi(value)
-	return parsed, strconv.Itoa(parsed)
-}
-
-func operationLogConfigInt(value string, fallback int) (int, string) {
 	if strings.TrimSpace(value) == "" {
 		return fallback, strconv.Itoa(fallback)
 	}
@@ -927,16 +836,6 @@ func communityDetectionConfigItem(entries map[string]domain.AppConfigEntry, key,
 	}
 }
 
-func operationLogConfigItem(entries map[string]domain.AppConfigEntry, key, effective string) domain.OperationLogConfigItem {
-	entry := entries[key]
-	return domain.OperationLogConfigItem{
-		Key:            key,
-		Value:          strings.TrimSpace(entry.Value),
-		EffectiveValue: effective,
-		UpdatedAt:      entry.UpdatedAt,
-	}
-}
-
 func ssoConfigItem(entries map[string]domain.AppConfigEntry, key, effective string) domain.SSOConfigItem {
 	entry := entries[key]
 	return domain.SSOConfigItem{
@@ -958,6 +857,7 @@ func cloneAppConfigCache(cache *appConfigCache) *appConfigCache {
 	copy.dreaming.Items = append([]domain.DreamingConfigItem(nil), cache.dreaming.Items...)
 	copy.community.Items = append([]domain.CommunityDetectionConfigItem(nil), cache.community.Items...)
 	copy.opLogs.Items = append([]domain.OperationLogConfigItem(nil), cache.opLogs.Items...)
+	copy.private.Items = append([]domain.PrivateMemoryConfigItem(nil), cache.private.Items...)
 	copy.recall.Items = append([]domain.RecallFeedbackConfigItem(nil), cache.recall.Items...)
 	copy.telemetry.Items = append([]domain.TelemetryPricingConfigItem(nil), cache.telemetry.Items...)
 	copy.telemetry.Effective = cloneTelemetryPricingRuntimeConfig(cache.telemetry.Effective)

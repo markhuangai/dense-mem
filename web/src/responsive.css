@@ -62,6 +62,11 @@
     max-width: none;
   }
 
+  .session-context.compact.mcp-context {
+    width: 100%;
+    max-width: none;
+  }
+
   .primary-rail,
   .resource-rail,
   .top-nav-bar,
@@ -102,11 +107,14 @@
 
   .edit-grid,
   .key-form,
-  .security-grid {
+  .security-grid,
+  .oauth-provider-config,
+  .oauth-scope-mapping {
     grid-template-columns: 1fr;
   }
 
   .security-summary,
+  .private-memory-summary,
   .metrics-summary,
   .dreaming-effective-grid,
   .dependency-grid,
@@ -121,8 +129,27 @@
 
   .search-form:not(.stacked),
   .knowledge-explorer,
-  .key-detail-grid {
+  .key-detail-grid,
+  .private-memory-history-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .session-context.compact.mcp-context {
+    grid-template-columns: 1fr;
+  }
+
+  .mcp-context-team,
+  .mcp-context-value,
+  .mcp-context-endpoint {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .mcp-context-endpoint,
+  .mcp-origin-fallback {
+    grid-column: 1;
   }
 }
 
@@ -152,7 +179,8 @@
   }
 
   .rail-tabs,
-  .security-summary,
+    .security-summary,
+  .private-memory-summary,
   .metrics-summary,
   .dreaming-effective-grid,
   .dependency-grid,
@@ -160,6 +188,24 @@
   .telemetry-card-grid,
   .conflict-summary {
     grid-template-columns: 1fr;
+  }
+
+  .private-memory-runbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .private-memory-danger-zone {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .private-memory-runbar .danger-button {
+    justify-content: center;
+  }
+
+  .private-memory-danger-zone .danger-button {
+    justify-content: center;
   }
 
   .rail-tab-button {

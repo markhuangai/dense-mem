@@ -1,25 +1,34 @@
 package http
 
 import (
+	"context"
+	"encoding/json"
+	"io"
 	nethttp "net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/http/dto"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type ssoPersonalKeyFixture struct {
-	handler      *userPortalHandler
-	keySvc       *userPortalKeySvc
-	identityID   uuid.UUID
-	teamID       uuid.UUID
-	profileID    uuid.UUID
-	sessionToken string
+	handler       *userPortalHandler
+	keySvc        *userPortalKeySvc
+	privateMemory *privateMemoryServiceStub
+	identityID    uuid.UUID
+	teamID        uuid.UUID
+	profileID     uuid.UUID
+	sessionToken  string
 }
 
 func TestUserPortalSSOPersonalKeyLifecycle(t *testing.T) {
@@ -85,10 +94,18 @@ func TestUserPortalSSOPersonalKeyLifecycle(t *testing.T) {
 
 	c, rec = userSSOContext(nethttp.MethodDelete, "/ui/api/sso/credentials/"+fixture.keySvc.keys[0].ID.String(), "", fixture.sessionToken)
 	setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
-	require.NoError(t, fixture.handler.revokeSSOCredential(c))
-	require.Equal(t, nethttp.StatusOK, rec.Code)
+	require.NoError(t, callDeleteSSOCredential(fixture.handler, c))
+	require.Equal(t, nethttp.StatusAccepted, rec.Code)
+	require.Equal(t, fixture.keySvc.keys[0].ID, fixture.privateMemory.deletedCredentialID)
+	require.Contains(t, rec.Body.String(), `"action":"retire_credential"`)
+	firstOperationID := privateMemoryOperationID(t, rec.Body.Bytes())
 	require.NotNil(t, fixture.keySvc.keys[0].RevokedAt)
-	require.Nil(t, fixture.keySvc.keys[1].RevokedAt)
+
+	c, rec = userSSOContext(nethttp.MethodDelete, "/ui/api/sso/credentials/"+fixture.keySvc.keys[0].ID.String(), "", fixture.sessionToken)
+	setUserSSOPrincipal(c, fixture.profileID, fixture.teamID)
+	require.NoError(t, callDeleteSSOCredential(fixture.handler, c))
+	require.Equal(t, nethttp.StatusAccepted, rec.Code)
+	require.Equal(t, firstOperationID, privateMemoryOperationID(t, rec.Body.Bytes()))
 }
 
 func TestUserPortalSSOCreateKeyRequestValidation(t *testing.T) {
@@ -217,9 +234,9 @@ func TestUserPortalSSOPersonalKeyDeniedBranches(t *testing.T) {
 
 		c, rec := userSSOContext(nethttp.MethodDelete, "/ui/api/sso/credentials/"+readOnlyCredential.ID.String(), "", readOnlyFixture.sessionToken)
 		setUserSSOPrincipal(c, readOnlyFixture.profileID, readOnlyFixture.teamID)
-		require.NoError(t, readOnlyFixture.handler.revokeSSOCredential(c))
-		require.Equal(t, nethttp.StatusOK, rec.Code)
-		require.NotNil(t, readOnlyCredential.RevokedAt)
+		require.NoError(t, callDeleteSSOCredential(readOnlyFixture.handler, c))
+		require.Equal(t, nethttp.StatusAccepted, rec.Code)
+		require.Equal(t, readOnlyCredential.ID, readOnlyFixture.privateMemory.deletedCredentialID)
 	})
 }
 
@@ -267,7 +284,7 @@ func TestUserPortalSSOOwnedCollectionGuards(t *testing.T) {
 
 	c, _ = userSSOContext(nethttp.MethodDelete, "/ui/api/sso/credentials/"+owned.ID.String(), "", fixture.sessionToken)
 	setUserCredentialPrincipal(c, owned.ID, fixture.teamID)
-	require.ErrorContains(t, fixture.handler.revokeSSOCredential(c), "sso session required")
+	require.ErrorContains(t, callDeleteSSOCredential(fixture.handler, c), "sso session required")
 
 	manager := newSSOPersonalKeyFixture(service.CredentialRoleManager, service.StandardCredentialScopes())
 	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/sso/credentials", "", manager.sessionToken)
@@ -280,7 +297,7 @@ func TestUserPortalSSOOwnedCollectionGuards(t *testing.T) {
 
 	c, _ = userSSOContext(nethttp.MethodDelete, "/ui/api/sso/credentials/"+uuid.NewString(), "", manager.sessionToken)
 	setUserSSOPrincipal(c, manager.profileID, manager.teamID)
-	require.ErrorContains(t, manager.handler.revokeSSOCredential(c), "sso managers should use the team credentials section")
+	require.ErrorContains(t, callDeleteSSOCredential(manager.handler, c), "sso managers should use the team credentials section")
 }
 
 func TestUserPortalSSOOwnedOperationsHideForeignCredentials(t *testing.T) {
@@ -313,7 +330,7 @@ func TestUserPortalSSOOwnedOperationsHideForeignCredentials(t *testing.T) {
 
 			c, _ = userSSOContext(nethttp.MethodDelete, "/ui/api/sso/credentials/"+credential.ID.String(), "", fixture.sessionToken)
 			setUserSSOPrincipal(c, fixture.identityID, fixture.teamID)
-			err = fixture.handler.revokeSSOCredential(c)
+			err = callDeleteSSOCredential(fixture.handler, c)
 			assertNotFoundWithoutCredentialDetails(t, err, credential.ID)
 			require.Nil(t, credential.RevokedAt)
 		})
@@ -341,7 +358,7 @@ func TestUserPortalSSOTokenDerivedSessionCannotMintOwnedCredential(t *testing.T)
 
 	c, _ = userSSOContext(nethttp.MethodDelete, "/ui/api/sso/credentials/"+owned.ID.String(), "", fixture.sessionToken)
 	setUserCredentialPrincipal(c, owned.ID, fixture.teamID)
-	err = fixture.handler.revokeSSOCredential(c)
+	err = callDeleteSSOCredential(fixture.handler, c)
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, httperr.FORBIDDEN, apiErr.Code)
 	require.Nil(t, owned.RevokedAt)
@@ -405,20 +422,94 @@ func newSSOPersonalKeyFixture(role string, scopes []string) ssoPersonalKeyFixtur
 		now:          now,
 	}
 	keySvc := &userPortalKeySvc{}
+	privateMemory := &privateMemoryServiceStub{
+		now:         now,
+		credentials: keySvc,
+		operations:  make(map[string]*domain.PrivateMemoryErasureOperation),
+	}
 	return ssoPersonalKeyFixture{
 		handler: &userPortalHandler{
-			credentials: keySvc,
+			credentials:   keySvc,
+			privateMemory: privateMemory,
 			sso: service.NewSSOService(repo, service.SSOConfig{
 				PublicBaseURL: "https://portal.example.com",
 				Now:           func() time.Time { return now },
 			}),
 		},
-		keySvc:       keySvc,
-		identityID:   identityID,
-		teamID:       teamID,
-		profileID:    profileID,
-		sessionToken: sessionToken,
+		keySvc:        keySvc,
+		privateMemory: privateMemory,
+		identityID:    identityID,
+		teamID:        teamID,
+		profileID:     profileID,
+		sessionToken:  sessionToken,
 	}
+}
+
+type privateMemoryServiceStub struct {
+	PrivateMemoryServiceInterface
+	now                 time.Time
+	deletedCredentialID uuid.UUID
+	credentials         *userPortalKeySvc
+	operations          map[string]*domain.PrivateMemoryErasureOperation
+}
+
+func (s *privateMemoryServiceStub) DeleteSSOCredential(_ context.Context, teamID, identityID, credentialID uuid.UUID, command service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error) {
+	scope := teamID.String() + ":" + identityID.String() + ":" + command.IdempotencyKey
+	if existing := s.operations[scope]; existing != nil {
+		if existing.TargetCredentialID == nil || *existing.TargetCredentialID != credentialID {
+			return nil, repository.ErrPrivateMemoryIdempotency
+		}
+		return existing, nil
+	}
+	var credential *domain.Credential
+	for _, candidate := range s.credentials.keys {
+		if candidate.ID == credentialID && candidate.TeamID == teamID && candidate.OwnerIdentityID != nil &&
+			*candidate.OwnerIdentityID == identityID && candidate.RevokedAt == nil {
+			credential = candidate
+			break
+		}
+	}
+	if credential == nil {
+		return nil, repository.ErrPrivateMemoryNotFound
+	}
+	s.deletedCredentialID = credentialID
+	now := s.now
+	credential.RevokedAt = &now
+	operation := &domain.PrivateMemoryErasureOperation{
+		ID:                 uuid.New(),
+		TeamID:             teamID,
+		TargetCredentialID: &credentialID,
+		Action:             domain.PrivateMemoryRetireCredential,
+		ActorClass:         domain.PrivateMemoryActorOwnerSSO,
+		ReasonCode:         "credential_deleted",
+		Status:             domain.PrivateMemoryErasureQueued,
+		DeletedCounts:      map[string]int64{},
+		RequestedAt:        now,
+		UpdatedAt:          now,
+	}
+	s.operations[scope] = operation
+	return operation, nil
+}
+
+func privateMemoryOperationID(t *testing.T, body []byte) string {
+	t.Helper()
+	var response struct {
+		Data struct {
+			OperationID string `json:"operation_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(body, &response))
+	require.NotEmpty(t, response.Data.OperationID)
+	return response.Data.OperationID
+}
+
+func callDeleteSSOCredential(handler *userPortalHandler, c echo.Context) error {
+	body := `{"acknowledge_irreversible":true}`
+	c.Request().Body = io.NopCloser(strings.NewReader(body))
+	c.Request().ContentLength = int64(len(body))
+	c.Request().Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	c.Request().Header.Set("Idempotency-Key", "delete-owned-credential")
+	return httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey)(handler.deleteSSOCredential)(c)
 }
 
 func ssoOwnedCredential(teamID, identityID uuid.UUID, scopes []string) *domain.Credential {

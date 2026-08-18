@@ -125,7 +125,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), httpmw.TelemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{teams: teamSvc, credentials: credentialSvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, convergence: telemetry.Convergence, submissions: telemetry.Submissions, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
+	control := &controlPortalHandler{teams: teamSvc, credentials: credentialSvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, convergence: telemetry.Convergence, submissions: telemetry.Submissions, privateMemory: telemetry.PrivateMemory, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
 	if telemetry.ControlIdentity != nil {
 		registerControlIdentityRoutes(e, control)
 	}
@@ -190,6 +190,18 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		api.PATCH("/config/recall-feedback", control.updateRecallFeedbackConfig)
 		api.GET("/config/telemetry-pricing", control.getTelemetryPricingConfig)
 		api.PATCH("/config/telemetry-pricing", control.updateTelemetryPricingConfig)
+		api.GET("/config/private-memory", control.getPrivateMemoryConfig)
+		api.PATCH("/config/private-memory", control.updatePrivateMemoryConfig)
+	}
+	if telemetry.PrivateMemory != nil {
+		api.GET("/private-memory/spaces", control.listPrivateMemorySpaces)
+		api.POST("/private-memory/spaces/:spaceId/legal-hold", control.placePrivateMemoryLegalHold, httpmw.BindAndValidateStrict[dto.PrivateMemoryLegalHoldRequest](privateMemoryLegalHoldBodyKey))
+		api.DELETE("/private-memory/spaces/:spaceId/legal-hold", control.releasePrivateMemoryLegalHold)
+		api.POST("/private-memory/spaces/:spaceId/erasures", control.requestControlPrivateMemoryErasure, httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
+		api.GET("/private-memory/erasures", control.listPrivateMemoryErasures)
+		api.GET("/private-memory/erasures/:operationId", control.getPrivateMemoryErasure)
+		api.POST("/private-memory/retention-runs", control.runPrivateMemoryRetention, httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
+		api.GET("/private-memory/retention-runs", control.listPrivateMemoryRetentionRuns)
 	}
 	if telemetry.SSO != nil {
 		api.GET("/sso/providers", control.listSSOProviders)

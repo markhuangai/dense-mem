@@ -679,6 +679,145 @@ func normalizeSSOProviderForWrite(provider *domain.SSOProvider) error {
 	if provider.Kind == domain.SSOProviderKindAzureAD && provider.TenantID == "" {
 		return fmt.Errorf("sso tenant_id is required for azure_ad providers")
 	}
+	return normalizeOAuthProtectedResourceConfig(&provider.ProtectedResource)
+}
+
+var protectedResourceAlgorithms = map[string]struct{}{
+	"RS256": {}, "RS384": {}, "RS512": {},
+	"PS256": {}, "PS384": {}, "PS512": {},
+	"ES256": {}, "ES384": {}, "ES512": {},
+	"EdDSA": {},
+}
+
+func normalizeOAuthProtectedResourceConfig(cfg *domain.OAuthProtectedResourceConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("sso protected_resource is required")
+	}
+	var err error
+	cfg.Audiences, err = normalizeUniqueProtectedResourceValues("audiences", cfg.Audiences, 16, 512)
+	if err != nil {
+		return err
+	}
+	cfg.JWKSSource = strings.ToLower(strings.TrimSpace(cfg.JWKSSource))
+	if cfg.JWKSSource == "" {
+		cfg.JWKSSource = "discovery"
+	}
+	if cfg.JWKSSource != "discovery" && cfg.JWKSSource != "static" {
+		return fmt.Errorf("sso protected_resource.jwks_source must be discovery or static")
+	}
+	cfg.JWKSURI = strings.TrimSpace(cfg.JWKSURI)
+	if cfg.JWKSSource == "discovery" && cfg.JWKSURI != "" {
+		return fmt.Errorf("sso protected_resource.jwks_uri must be empty when jwks_source is discovery")
+	}
+	if cfg.JWKSSource == "static" {
+		if err := validateProtectedResourceURL("jwks_uri", cfg.JWKSURI); err != nil {
+			return err
+		}
+	}
+	cfg.Algorithms, err = normalizeUniqueProtectedResourceValues("algorithms", cfg.Algorithms, 8, 16)
+	if err != nil {
+		return err
+	}
+	if len(cfg.Algorithms) == 0 {
+		cfg.Algorithms = []string{"RS256"}
+	}
+	for _, algorithm := range cfg.Algorithms {
+		if _, ok := protectedResourceAlgorithms[algorithm]; !ok {
+			return fmt.Errorf("sso protected_resource.algorithms contains unsupported asymmetric algorithm %q", algorithm)
+		}
+	}
+	cfg.ScopeClaim = strings.TrimSpace(cfg.ScopeClaim)
+	if cfg.ScopeClaim == "" {
+		cfg.ScopeClaim = "scope"
+	}
+	if !ssoClaimNamePattern.MatchString(cfg.ScopeClaim) {
+		return fmt.Errorf("sso protected_resource.scope_claim is invalid")
+	}
+	cfg.TeamClaim = strings.TrimSpace(cfg.TeamClaim)
+	if cfg.TeamClaim != "" && !ssoClaimNamePattern.MatchString(cfg.TeamClaim) {
+		return fmt.Errorf("sso protected_resource.team_claim is invalid")
+	}
+	seenExternal := make(map[string]struct{}, len(cfg.ScopeMappings))
+	for index := range cfg.ScopeMappings {
+		mapping := &cfg.ScopeMappings[index]
+		mapping.ExternalScope = strings.TrimSpace(mapping.ExternalScope)
+		if mapping.ExternalScope == "" || len(mapping.ExternalScope) > 256 || strings.ContainsAny(mapping.ExternalScope, " \t\r\n") {
+			return fmt.Errorf("sso protected_resource.scope_mappings[%d].external_scope is invalid", index)
+		}
+		if _, exists := seenExternal[mapping.ExternalScope]; exists {
+			return fmt.Errorf("sso protected_resource.scope_mappings[%d].external_scope is duplicated", index)
+		}
+		seenExternal[mapping.ExternalScope] = struct{}{}
+		mapping.InternalScopes, err = normalizeOAuthInternalScopes(mapping.InternalScopes)
+		if err != nil {
+			return fmt.Errorf("sso protected_resource.scope_mappings[%d]: %w", index, err)
+		}
+	}
+	if cfg.Enabled {
+		if len(cfg.Audiences) == 0 {
+			return fmt.Errorf("sso protected_resource.audiences is required when enabled")
+		}
+		if len(cfg.ScopeMappings) == 0 {
+			return fmt.Errorf("sso protected_resource.scope_mappings is required when enabled")
+		}
+	}
+	return nil
+}
+
+func normalizeUniqueProtectedResourceValues(field string, values []string, maxItems, maxLength int) ([]string, error) {
+	if len(values) > maxItems {
+		return nil, fmt.Errorf("sso protected_resource.%s must contain at most %d values", field, maxItems)
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for index, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || len(trimmed) > maxLength {
+			return nil, fmt.Errorf("sso protected_resource.%s[%d] is invalid", field, index)
+		}
+		if _, exists := seen[trimmed]; exists {
+			return nil, fmt.Errorf("sso protected_resource.%s[%d] is duplicated", field, index)
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result, nil
+}
+
+func normalizeOAuthInternalScopes(values []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		scope := strings.ToLower(strings.TrimSpace(raw))
+		switch scope {
+		case CredentialScopeRead, CredentialScopeWrite, CredentialScopeFeedbackRead:
+		default:
+			return nil, fmt.Errorf("internal_scopes may contain only read, write, or feedback:read")
+		}
+		if _, exists := seen[scope]; exists {
+			return nil, fmt.Errorf("internal_scopes contains duplicate %q", scope)
+		}
+		seen[scope] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return nil, fmt.Errorf("internal_scopes is required")
+	}
+	result := make([]string, 0, len(seen))
+	for _, scope := range []string{CredentialScopeRead, CredentialScopeWrite, CredentialScopeFeedbackRead} {
+		if _, ok := seen[scope]; ok {
+			result = append(result, scope)
+		}
+	}
+	return result, nil
+}
+
+func validateProtectedResourceURL(field, raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1"))) {
+		return fmt.Errorf("sso protected_resource.%s must be an absolute https URL", field)
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("sso protected_resource.%s must not include credentials, query, or fragment", field)
+	}
 	return nil
 }
 

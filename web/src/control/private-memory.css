@@ -1,0 +1,123 @@
+.private-memory-danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 18px;
+  padding: 14px;
+  background: var(--danger-soft);
+  border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--border));
+  border-radius: 8px;
+}
+
+.private-memory-danger-zone > div {
+  display: grid;
+  gap: 4px;
+}
+
+.private-memory-danger-zone span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.private-memory-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.private-memory-runbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 4px 0 18px;
+  padding: 14px;
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning) 32%, var(--border));
+  border-radius: 8px;
+}
+
+.private-memory-runbar > div {
+  display: grid;
+  gap: 4px;
+}
+
+.private-memory-runbar span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.private-memory-ledger {
+  border-top: 3px solid var(--accent);
+}
+
+.private-memory-table {
+  min-width: 1040px;
+}
+
+.private-memory-table td:first-child {
+  display: grid;
+  gap: 5px;
+}
+
+.private-memory-table td:first-child strong {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
+}
+
+.private-memory-table tr.private-memory-held td:first-child {
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+
+.private-memory-actions {
+  white-space: nowrap;
+}
+
+.private-memory-history-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.private-memory-history {
+  min-width: 0;
+  padding: 14px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.private-memory-history h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.private-memory-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.private-memory-history-row > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.private-memory-history-row strong {
+  color: var(--text);
+  font-size: 12px;
+  text-transform: capitalize;
+}

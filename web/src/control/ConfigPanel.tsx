@@ -1,15 +1,16 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useState } from "react";
-import { Check, Clock, ListFilter, MessageSquare, Moon, Network, RefreshCw, Settings, X } from "lucide-react";
-import { CommunityDetectionConfig, CommunityDetectionConfigItem, ControlApi, DreamingConfig, DreamingConfigItem, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem, TelemetryPricingConfig, TelemetryPricingConfigItem } from "../api";
+import { Check, Clock, ListFilter, MessageSquare, Moon, Network, RefreshCw, Settings, ShieldCheck, X } from "lucide-react";
+import { CommunityDetectionConfig, CommunityDetectionConfigItem, ControlApi, DreamingConfig, DreamingConfigItem, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, PrivateMemoryConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem, TelemetryPricingConfig, TelemetryPricingConfigItem } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
-type ConfigTab = "general" | "sso" | "dreaming" | "community" | "operation-logs" | "recall-feedback" | "telemetry-pricing";
+type ConfigTab = "general" | "sso" | "dreaming" | "community" | "private-memory" | "operation-logs" | "recall-feedback" | "telemetry-pricing";
 
 const CONFIG_LABELS: Record<string, string> = {
   APP_TIMEZONE: "Timezone",
   EMBEDDING_RECONCILIATION_START_TIME_LOCAL: "Embedding recovery start time",
   SSO_PUBLIC_BASE_URL: "Public base URL",
+  MCP_PUBLIC_BASE_URL: "MCP public base URL",
   SCIM_PUBLIC_BASE_URL: "SCIM ingress URL",
   CONTROL_PUBLIC_BASE_URL: "Control portal ingress URL",
   SSO_ENTITLEMENT_CACHE_TTL_SECONDS: "Entitlement cache TTL",
@@ -26,6 +27,7 @@ const CONFIG_LABELS: Record<string, string> = {
   COMMUNITY_DETECTION_MAX_CONCURRENCY: "Max concurrency",
   COMMUNITY_DETECTION_JITTER_SECONDS: "Jitter seconds",
   OPERATION_LOG_RETENTION_DAYS: "Retention days",
+  PRIVATE_MEMORY_RETENTION_DAYS: "Private-memory retention days",
   RECALL_FEEDBACK_ENABLED: "Enable recall feedback",
   RECALL_FEEDBACK_RETENTION_DAYS: "Investigation retention days",
   TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS: "Verifier input USD / million tokens",
@@ -48,6 +50,7 @@ const CONFIG_PLACEHOLDERS: Record<string, string> = {
   COMMUNITY_DETECTION_MAX_CONCURRENCY: "1",
   COMMUNITY_DETECTION_JITTER_SECONDS: "600",
   OPERATION_LOG_RETENTION_DAYS: "30",
+  PRIVATE_MEMORY_RETENTION_DAYS: "0 disables automatic erasure",
   RECALL_FEEDBACK_RETENTION_DAYS: "30",
   TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS: "Leave blank to mark as unpriced",
   TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS: "Leave blank to mark as unpriced",
@@ -82,6 +85,16 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
   return (
     <>
       <div className="config-tabs" role="tablist" aria-label="Config sections">
+        <button
+          className={activeTab === "private-memory" ? "tab-button active" : "tab-button"}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "private-memory"}
+          onClick={() => setActiveTab("private-memory")}
+        >
+          <ShieldCheck size={16} aria-hidden="true" />
+          <span>Privacy</span>
+        </button>
         <button
           className={activeTab === "general" ? "tab-button active" : "tab-button"}
           type="button"
@@ -157,6 +170,7 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
       {activeTab === "sso" && <SSOConfigPanel api={api} />}
       {activeTab === "dreaming" && <DreamingConfigPanel api={api} />}
       {activeTab === "community" && <CommunityDetectionConfigPanel api={api} />}
+      {activeTab === "private-memory" && <PrivateMemoryConfigPanel api={api} />}
       {activeTab === "recall-feedback" && <RecallFeedbackConfigPanel api={api} />}
       {activeTab === "telemetry-pricing" && <TelemetryPricingConfigPanel api={api} />}
       {activeTab === "operation-logs" && <OperationLogConfigPanel api={api} />}
@@ -164,7 +178,7 @@ export function ConfigPanel({ api }: { api: ControlApi }) {
   );
 }
 
-type ConfigItem = GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem | TelemetryPricingConfigItem;
+type ConfigItem = GeneralConfigItem | SSOConfigItem | DreamingConfigItem | CommunityDetectionConfigItem | PrivateMemoryConfigItem | OperationLogConfigItem | RecallFeedbackConfigItem | TelemetryPricingConfigItem;
 type RuntimeConfig = {
   update_time: string;
   items: ConfigItem[];
@@ -227,6 +241,24 @@ function OperationLogConfigPanel({ api }: { api: ControlApi }) {
       refreshLabel="Refresh operation log config"
       load={() => api.getOperationLogConfig()}
       save={(input) => api.updateOperationLogConfig(input)}
+    />
+  );
+}
+
+function PrivateMemoryConfigPanel({ api }: { api: ControlApi }) {
+  return (
+    <RuntimeConfigPanel
+      title="Private memory"
+      refreshLabel="Refresh private-memory config"
+      load={() => api.getPrivateMemoryConfig()}
+      save={(input) => api.updatePrivateMemoryConfig(input)}
+      detail={(config) => (
+        <p className="form-meta">
+          {config.items.find((item) => item.key === "PRIVATE_MEMORY_RETENTION_DAYS")?.effective_value === "0"
+            ? "Automatic erasure is disabled. Owner requests and legal holds still apply."
+            : "Eligible private spaces are queued after the configured retention period."}
+        </p>
+      )}
     />
   );
 }

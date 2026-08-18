@@ -1,0 +1,804 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/lib/pq"
+	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres"
+)
+
+var (
+	ErrPrivateMemoryNotFound          = errors.New("private memory target not found")
+	ErrPrivateMemoryLegalHold         = errors.New("private memory is under legal hold")
+	ErrPrivateMemoryIdempotency       = errors.New("private memory idempotency conflict")
+	ErrPrivateMemoryOperationConflict = errors.New("private memory erasure is already in progress")
+	ErrPrivateMemoryManifest          = errors.New("private memory erasure manifest mismatch")
+	ErrPrivateMemoryClaimLost         = errors.New("private memory erasure claim lost")
+	ErrPrivateMemoryRetentionDisabled = errors.New("private memory retention is disabled")
+	ErrPrivateMemoryHoldConflict      = errors.New("private memory legal hold conflict")
+)
+
+const (
+	defaultPrivateMemoryLease      = 5 * time.Minute
+	defaultPrivateMemoryListLimit  = 100
+	maximumPrivateMemoryListLimit  = 500
+	defaultPrivateRetentionBatch   = 100
+	maximumPrivateRetentionBatch   = 500
+	privateMemoryAuditMetadataJSON = `{"private_content_erased": true}`
+)
+
+// privateMemoryErasureManifest is the closed set of final-schema semantic
+// tables owned by a memory space. Prepare compares this list to the live
+// catalog before any erasure worker starts.
+var privateMemoryErasureManifest = []string{
+	"knowledge_ingests", "evidence_sources", "evidence_source_revisions",
+	"evidence_fragments", "evidence_security_events", "evidence_security_signals",
+	"evidence_quarantines", "evidence_lifecycle_operations", "evidence_lifecycle_events",
+	"placement_runs", "placement_items", "placement_outcomes", "placement_assessments", "predicate_registration_events",
+	"entity_records", "entity_names", "entity_resolution_events",
+	"entity_correction_plans", "entity_correction_events", "value_records",
+	"relationship_records", "relationship_observations", "relationship_evidence_supports",
+	"relationship_support_decision_events", "relationship_transition_events",
+	"relationship_cross_references", "relationship_correction_submissions",
+	"relationship_correction_events", "verification_events", "review_tasks",
+	"hypotheses", "hypothesis_derivation_sources", "hypothesis_feedback_events",
+	"submission_holds", "submission_quarantine_payloads", "submission_quarantine_tombstones", "relationship_conflict_cases",
+	"relationship_conflict_positions", "relationship_conflict_position_members",
+	"relationship_conflict_events", "relationship_conflict_review_runs",
+	"relationship_conflict_derived_evidence_tasks", "relationship_conflict_evidence_derivations",
+	"relationship_conflict_resolution_plans", "relationship_conflict_ai_assessment_attempts",
+	"relationship_conflict_ai_assessment_events", "search_documents", "embedding_jobs",
+	"community_snapshot_runs", "community_records", "community_memberships",
+	"community_sources", "community_summary_attempts", "dream_cycle_runs",
+	"dream_path_evaluations", "recall_feedback_events",
+}
+
+var privateMemoryCatalogExclusions = []string{
+	"private_memory_erasure_operations",
+	"private_memory_legal_holds",
+}
+
+var privateMemoryExternalDependencies = map[string]struct {
+	child  string
+	parent string
+}{
+	"v2_migration_corpus_items_team_id_ingest_id_fkey": {
+		child: "v2_migration_corpus_items", parent: "knowledge_ingests",
+	},
+	"v2_migration_corpus_items_team_id_placement_item_id_fkey": {
+		child: "v2_migration_corpus_items", parent: "placement_items",
+	},
+}
+
+type PrivateMemoryErasureRequest struct {
+	TeamID               uuid.UUID
+	OwnerID              uuid.UUID
+	CredentialID         uuid.UUID
+	IdempotencyScopeHash string
+	RequestHash          string
+	ReasonCode           string
+}
+
+type PrivateMemoryRetentionRequest struct {
+	ActorClass           domain.PrivateMemoryActorClass
+	IdempotencyScopeHash string
+	RequestHash          string
+	RetentionDays        int
+	BatchSize            int
+	Now                  time.Time
+}
+
+type PrivateMemoryRepository interface {
+	Prepare(ctx context.Context) error
+	RequestProfileErasure(ctx context.Context, input PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error)
+	RequestCredentialErasure(ctx context.Context, input PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error)
+	RequestControlErasure(ctx context.Context, spaceID uuid.UUID, idempotencyScopeHash, requestHash, reasonCode string) (*domain.PrivateMemoryErasureOperation, bool, error)
+	DisableSSOCredential(ctx context.Context, input PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error)
+	GetOwnerOperation(ctx context.Context, teamID, operationID uuid.UUID, identityID, credentialID *uuid.UUID) (*domain.PrivateMemoryErasureOperation, error)
+	GetOperation(ctx context.Context, operationID uuid.UUID) (*domain.PrivateMemoryErasureOperation, error)
+	ListOperations(ctx context.Context, limit, offset int) ([]domain.PrivateMemoryErasureOperation, error)
+	ListSpaces(ctx context.Context, limit, offset int) ([]domain.PrivateMemorySpaceMetadata, error)
+	PlaceLegalHold(ctx context.Context, spaceID uuid.UUID, reasonCode string) (*domain.PrivateMemoryLegalHold, bool, error)
+	ReleaseLegalHold(ctx context.Context, spaceID uuid.UUID) (*domain.PrivateMemoryLegalHold, bool, error)
+	RunRetention(ctx context.Context, input PrivateMemoryRetentionRequest) (*domain.PrivateMemoryRetentionRun, bool, error)
+	ListRetentionRuns(ctx context.Context, limit, offset int) ([]domain.PrivateMemoryRetentionRun, error)
+	ClaimNext(ctx context.Context, workerID string, lease time.Duration) (*domain.PrivateMemoryErasureOperation, error)
+	ExecuteClaim(ctx context.Context, operationID uuid.UUID, workerID string, fence int64) (*domain.PrivateMemoryErasureOperation, error)
+	ReleaseClaim(ctx context.Context, operationID uuid.UUID, workerID string, fence int64, errorCode string) error
+}
+
+type PrivateMemoryRepositoryImpl struct {
+	db  *gorm.DB
+	rls postgres.RLSHelper
+	now func() time.Time
+
+	manifestMu sync.RWMutex
+	ordered    []string
+}
+
+var _ PrivateMemoryRepository = (*PrivateMemoryRepositoryImpl)(nil)
+
+func NewPrivateMemoryRepository(db *gorm.DB, rls postgres.RLSHelper) *PrivateMemoryRepositoryImpl {
+	return &PrivateMemoryRepositoryImpl{
+		db:  db,
+		rls: rls,
+		now: func() time.Time { return time.Now().UTC() },
+	}
+}
+
+func PrivateMemoryErasureManifest() []string {
+	manifest := append([]string(nil), privateMemoryErasureManifest...)
+	sort.Strings(manifest)
+	return manifest
+}
+
+func (r *PrivateMemoryRepositoryImpl) Prepare(ctx context.Context) error {
+	if r == nil || r.db == nil || r.rls == nil {
+		return fmt.Errorf("%w: repository is unavailable", ErrPrivateMemoryManifest)
+	}
+	var ordered []string
+	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		var err error
+		ordered, err = validatePrivateMemoryManifestTx(ctx, tx)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	r.manifestMu.Lock()
+	r.ordered = append([]string(nil), ordered...)
+	r.manifestMu.Unlock()
+	return nil
+}
+
+func validatePrivateMemoryManifestTx(ctx context.Context, tx *gorm.DB) ([]string, error) {
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT DISTINCT columns.table_name
+		FROM information_schema.columns AS columns
+		JOIN information_schema.tables AS tables
+		  ON tables.table_schema = columns.table_schema
+		 AND tables.table_name = columns.table_name
+		WHERE columns.table_schema = 'public'
+		  AND columns.column_name = 'space_id'
+		  AND tables.table_type = 'BASE TABLE'
+		  AND NOT (columns.table_name = ANY($1::text[]))
+		ORDER BY columns.table_name
+	`, pq.Array(privateMemoryCatalogExclusions)).Rows()
+	if err != nil {
+		return nil, fmt.Errorf("%w: read catalog: %v", ErrPrivateMemoryManifest, err)
+	}
+	defer rows.Close()
+	catalog := make([]string, 0, len(privateMemoryErasureManifest))
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return nil, fmt.Errorf("%w: scan catalog: %v", ErrPrivateMemoryManifest, err)
+		}
+		catalog = append(catalog, table)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: read catalog rows: %v", ErrPrivateMemoryManifest, err)
+	}
+	expected := PrivateMemoryErasureManifest()
+	if missing, unknown := stringSetDifference(expected, catalog), stringSetDifference(catalog, expected); len(missing) > 0 || len(unknown) > 0 {
+		return nil, fmt.Errorf("%w: missing=%v unknown=%v", ErrPrivateMemoryManifest, missing, unknown)
+	}
+
+	type foreignKey struct {
+		child      string
+		parent     string
+		name       string
+		deleteType string
+		deferrable bool
+	}
+	fkRows, err := tx.WithContext(ctx).Raw(`
+		SELECT child.relname, parent.relname, constraint_row.conname,
+		       constraint_row.confdeltype::text, constraint_row.condeferrable
+		FROM pg_constraint AS constraint_row
+		JOIN pg_class AS child ON child.oid = constraint_row.conrelid
+		JOIN pg_namespace AS child_namespace ON child_namespace.oid = child.relnamespace
+		JOIN pg_class AS parent ON parent.oid = constraint_row.confrelid
+		JOIN pg_namespace AS parent_namespace ON parent_namespace.oid = parent.relnamespace
+		WHERE constraint_row.contype = 'f'
+		  AND child_namespace.nspname = 'public'
+		  AND parent_namespace.nspname = 'public'
+		ORDER BY child.relname, parent.relname, constraint_row.conname
+	`).Rows()
+	if err != nil {
+		return nil, fmt.Errorf("%w: read foreign keys: %v", ErrPrivateMemoryManifest, err)
+	}
+	defer fkRows.Close()
+	fks := make([]foreignKey, 0)
+	for fkRows.Next() {
+		var item foreignKey
+		if err := fkRows.Scan(&item.child, &item.parent, &item.name, &item.deleteType, &item.deferrable); err != nil {
+			return nil, fmt.Errorf("%w: scan foreign keys: %v", ErrPrivateMemoryManifest, err)
+		}
+		fks = append(fks, item)
+	}
+	if err := fkRows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: read foreign key rows: %v", ErrPrivateMemoryManifest, err)
+	}
+
+	manifestSet := make(map[string]struct{}, len(expected))
+	for _, table := range expected {
+		manifestSet[table] = struct{}{}
+	}
+	edges := make(map[string]map[string]struct{}, len(expected))
+	indegree := make(map[string]int, len(expected))
+	externalDependencies := make([]string, 0)
+	seenExternalDependencies := make(map[string]struct{}, len(privateMemoryExternalDependencies))
+	for _, table := range expected {
+		edges[table] = make(map[string]struct{})
+		indegree[table] = 0
+	}
+	for _, fk := range fks {
+		_, parentOwned := manifestSet[fk.parent]
+		if !parentOwned {
+			continue
+		}
+		_, childOwned := manifestSet[fk.child]
+		if !childOwned {
+			if fk.deleteType != "c" {
+				known, ok := privateMemoryExternalDependencies[fk.name]
+				if !ok || known.child != fk.child || known.parent != fk.parent {
+					externalDependencies = append(externalDependencies, fmt.Sprintf("%s->%s(%s)", fk.child, fk.parent, fk.name))
+				} else {
+					seenExternalDependencies[fk.name] = struct{}{}
+				}
+			}
+			continue
+		}
+		if fk.child == fk.parent {
+			continue
+		}
+		if fk.deferrable {
+			continue
+		}
+		if _, exists := edges[fk.child][fk.parent]; exists {
+			continue
+		}
+		edges[fk.child][fk.parent] = struct{}{}
+		indegree[fk.parent]++
+	}
+	if len(externalDependencies) > 0 {
+		return nil, fmt.Errorf("%w: external dependencies=%v", ErrPrivateMemoryManifest, externalDependencies)
+	}
+	missingExternalDependencies := make([]string, 0)
+	for name := range privateMemoryExternalDependencies {
+		if _, ok := seenExternalDependencies[name]; !ok {
+			missingExternalDependencies = append(missingExternalDependencies, name)
+		}
+	}
+	if len(missingExternalDependencies) > 0 {
+		sort.Strings(missingExternalDependencies)
+		return nil, fmt.Errorf("%w: missing external dependencies=%v", ErrPrivateMemoryManifest, missingExternalDependencies)
+	}
+
+	ready := make([]string, 0, len(expected))
+	for table, count := range indegree {
+		if count == 0 {
+			ready = append(ready, table)
+		}
+	}
+	sort.Strings(ready)
+	ordered := make([]string, 0, len(expected))
+	for len(ready) > 0 {
+		table := ready[0]
+		ready = ready[1:]
+		ordered = append(ordered, table)
+		parents := make([]string, 0, len(edges[table]))
+		for parent := range edges[table] {
+			parents = append(parents, parent)
+		}
+		sort.Strings(parents)
+		for _, parent := range parents {
+			indegree[parent]--
+			if indegree[parent] == 0 {
+				ready = append(ready, parent)
+				sort.Strings(ready)
+			}
+		}
+	}
+	if len(ordered) != len(expected) {
+		cycleEdges := make([]string, 0)
+		for child, parents := range edges {
+			if indegree[child] == 0 {
+				continue
+			}
+			for parent := range parents {
+				if indegree[parent] > 0 {
+					cycleEdges = append(cycleEdges, child+"->"+parent)
+				}
+			}
+		}
+		sort.Strings(cycleEdges)
+		return nil, fmt.Errorf("%w: restrictive foreign-key cycle=%v", ErrPrivateMemoryManifest, cycleEdges)
+	}
+	return ordered, nil
+}
+
+func stringSetDifference(left, right []string) []string {
+	rightSet := make(map[string]struct{}, len(right))
+	for _, item := range right {
+		rightSet[item] = struct{}{}
+	}
+	difference := make([]string, 0)
+	for _, item := range left {
+		if _, exists := rightSet[item]; !exists {
+			difference = append(difference, item)
+		}
+	}
+	sort.Strings(difference)
+	return difference
+}
+
+func (r *PrivateMemoryRepositoryImpl) RequestProfileErasure(ctx context.Context, input PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error) {
+	if err := validatePrivateMemoryErasureInput(input); err != nil {
+		return nil, false, err
+	}
+	var operation *domain.PrivateMemoryErasureOperation
+	created := false
+	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		existing, err := existingPrivateMemoryOperationTx(ctx, tx, input.IdempotencyScopeHash, input.RequestHash)
+		if err != nil || existing != nil {
+			operation = existing
+			return err
+		}
+		space, err := privateMemorySpaceForProfileTx(ctx, tx, input.TeamID, input.OwnerID)
+		if err != nil {
+			return err
+		}
+		operation, err = queuePrivateMemorySpaceTx(ctx, tx, space, queuePrivateMemoryInput{
+			Action:               domain.PrivateMemoryEraseProfilePrivate,
+			ActorClass:           domain.PrivateMemoryActorOwnerSSO,
+			ReasonCode:           input.ReasonCode,
+			IdempotencyScopeHash: input.IdempotencyScopeHash,
+			RequestHash:          input.RequestHash,
+		})
+		created = err == nil
+		return err
+	})
+	return operation, created, wrapPrivateMemoryError("request profile erasure", err)
+}
+
+func (r *PrivateMemoryRepositoryImpl) RequestCredentialErasure(ctx context.Context, input PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error) {
+	if err := validatePrivateMemoryErasureInput(input); err != nil {
+		return nil, false, err
+	}
+	if input.CredentialID == uuid.Nil {
+		return nil, false, fmt.Errorf("%w: credential ID is required", ErrPrivateMemoryNotFound)
+	}
+	var operation *domain.PrivateMemoryErasureOperation
+	created := false
+	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		existing, err := existingPrivateMemoryOperationTx(ctx, tx, input.IdempotencyScopeHash, input.RequestHash)
+		if err != nil || existing != nil {
+			operation = existing
+			return err
+		}
+		space, err := privateMemorySpaceForCredentialTx(ctx, tx, input.TeamID, input.CredentialID, true)
+		if err != nil {
+			return err
+		}
+		credentialID := input.CredentialID
+		operation, err = queuePrivateMemorySpaceTx(ctx, tx, space, queuePrivateMemoryInput{
+			Action:               domain.PrivateMemoryEraseCredentialPrivate,
+			ActorClass:           domain.PrivateMemoryActorOwnerCredential,
+			ReasonCode:           input.ReasonCode,
+			TargetCredentialID:   &credentialID,
+			IdempotencyScopeHash: input.IdempotencyScopeHash,
+			RequestHash:          input.RequestHash,
+		})
+		created = err == nil
+		return err
+	})
+	return operation, created, wrapPrivateMemoryError("request credential erasure", err)
+}
+
+func (r *PrivateMemoryRepositoryImpl) RequestControlErasure(ctx context.Context, spaceID uuid.UUID, idempotencyScopeHash, requestHash, reasonCode string) (*domain.PrivateMemoryErasureOperation, bool, error) {
+	if spaceID == uuid.Nil || len(idempotencyScopeHash) != 64 || len(requestHash) != 64 || strings.TrimSpace(reasonCode) == "" {
+		return nil, false, ErrPrivateMemoryNotFound
+	}
+	var operation *domain.PrivateMemoryErasureOperation
+	created := false
+	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		existing, err := existingPrivateMemoryOperationTx(ctx, tx, idempotencyScopeHash, requestHash)
+		if err != nil || existing != nil {
+			operation = existing
+			return err
+		}
+		space, err := privateMemorySpaceByIDTx(ctx, tx, spaceID)
+		if err != nil {
+			return err
+		}
+		action := domain.PrivateMemoryEraseProfilePrivate
+		var targetCredentialID *uuid.UUID
+		if space.Kind == domain.MemorySpaceCredentialPrivate {
+			action = domain.PrivateMemoryEraseCredentialPrivate
+			targetCredentialID = cloneUUIDPtr(space.OwnerCredentialID)
+		}
+		operation, err = queuePrivateMemorySpaceTx(ctx, tx, space, queuePrivateMemoryInput{
+			Action: action, ActorClass: domain.PrivateMemoryActorControl, ReasonCode: strings.TrimSpace(reasonCode),
+			TargetCredentialID: targetCredentialID, IdempotencyScopeHash: idempotencyScopeHash, RequestHash: requestHash,
+		})
+		created = err == nil
+		return err
+	})
+	return operation, created, wrapPrivateMemoryError("request control erasure", err)
+}
+
+func (r *PrivateMemoryRepositoryImpl) DisableSSOCredential(ctx context.Context, input PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error) {
+	if err := validatePrivateMemoryErasureInput(input); err != nil {
+		return nil, false, err
+	}
+	if input.OwnerID == uuid.Nil || input.CredentialID == uuid.Nil {
+		return nil, false, fmt.Errorf("%w: owner and credential IDs are required", ErrPrivateMemoryNotFound)
+	}
+	var operation *domain.PrivateMemoryErasureOperation
+	created := false
+	now := r.now().UTC()
+	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		existing, err := existingPrivateMemoryOperationTx(ctx, tx, input.IdempotencyScopeHash, input.RequestHash)
+		if err != nil || existing != nil {
+			operation = existing
+			return err
+		}
+
+		var binding string
+		var memorySpaceID sql.NullString
+		var actorIdentityID uuid.UUID
+		err = tx.WithContext(ctx).Raw(`
+			SELECT memory_binding, memory_space_id::text, actor_identity_id
+			FROM credentials
+			WHERE id = $1
+			  AND team_id = $2
+			  AND owner_identity_id = $3
+			  AND kind = 'api_key'
+			  AND status <> 'disabled'
+			FOR UPDATE
+		`, input.CredentialID, input.TeamID, input.OwnerID).Row().Scan(&binding, &memorySpaceID, &actorIdentityID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrPrivateMemoryNotFound
+		}
+		if err != nil {
+			return err
+		}
+
+		var space *domain.MemorySpace
+		if binding == string(domain.CredentialBindingCredentialPrivate) {
+			space, err = privateMemorySpaceForCredentialTx(ctx, tx, input.TeamID, input.CredentialID, false)
+			if err != nil {
+				return err
+			}
+			if !memorySpaceID.Valid || memorySpaceID.String != space.ID.String() {
+				return ErrPrivateMemoryNotFound
+			}
+			if err := ensureNoPrivateMemoryLegalHoldTx(ctx, tx, space.ID); err != nil {
+				return err
+			}
+		}
+
+		if err := tx.WithContext(ctx).Exec(`
+			UPDATE credentials
+			SET status = 'disabled', revoked_at = COALESCE(revoked_at, $1), updated_at = $1
+			WHERE id = $2 AND team_id = $3 AND owner_identity_id = $4 AND status <> 'disabled'
+		`, now, input.CredentialID, input.TeamID, input.OwnerID).Error; err != nil {
+			return err
+		}
+		if err := tx.WithContext(ctx).Exec(`
+			UPDATE team_memberships
+			SET status = 'revoked', updated_at = $1
+			WHERE team_id = $2 AND actor_identity_id = $3
+		`, now, input.TeamID, actorIdentityID).Error; err != nil {
+			return err
+		}
+		if err := tx.WithContext(ctx).Exec(`
+			UPDATE actor_identities AS actor
+			SET active = false, updated_at = $1
+			WHERE actor.id = $2
+			  AND NOT EXISTS (
+				SELECT 1 FROM team_memberships AS membership
+				WHERE membership.actor_identity_id = actor.id AND membership.status = 'active'
+			  )
+		`, now, actorIdentityID).Error; err != nil {
+			return err
+		}
+
+		credentialID := input.CredentialID
+		if space != nil {
+			operation, err = queuePrivateMemorySpaceTx(ctx, tx, space, queuePrivateMemoryInput{
+				Action:               domain.PrivateMemoryRetireCredential,
+				ActorClass:           domain.PrivateMemoryActorOwnerSSO,
+				ReasonCode:           input.ReasonCode,
+				TargetCredentialID:   &credentialID,
+				RetireSpace:          true,
+				IdempotencyScopeHash: input.IdempotencyScopeHash,
+				RequestHash:          input.RequestHash,
+			})
+			created = err == nil
+			return err
+		}
+
+		operation = &domain.PrivateMemoryErasureOperation{
+			ID:                 uuid.New(),
+			TeamID:             input.TeamID,
+			TargetCredentialID: &credentialID,
+			Action:             domain.PrivateMemoryRetireCredential,
+			ActorClass:         domain.PrivateMemoryActorOwnerSSO,
+			ReasonCode:         input.ReasonCode,
+			RetireSpace:        false,
+			Status:             domain.PrivateMemoryErasureCompleted,
+			DeletedCounts:      map[string]int64{},
+			RequestedAt:        now,
+			StartedAt:          &now,
+			CompletedAt:        &now,
+			UpdatedAt:          now,
+		}
+		if err := insertPrivateMemoryOperationTx(ctx, tx, operation, input.IdempotencyScopeHash, input.RequestHash); err != nil {
+			return err
+		}
+		created = true
+		return nil
+	})
+	return operation, created, wrapPrivateMemoryError("disable sso credential", err)
+}
+
+type queuePrivateMemoryInput struct {
+	Action               domain.PrivateMemoryErasureAction
+	ActorClass           domain.PrivateMemoryActorClass
+	ReasonCode           string
+	TargetCredentialID   *uuid.UUID
+	RetireSpace          bool
+	IdempotencyScopeHash string
+	RequestHash          string
+}
+
+func queuePrivateMemorySpaceTx(ctx context.Context, tx *gorm.DB, space *domain.MemorySpace, input queuePrivateMemoryInput) (*domain.PrivateMemoryErasureOperation, error) {
+	if space == nil || space.ID == uuid.Nil || space.TeamID == uuid.Nil || !isPrivateMemorySpaceKind(space.Kind) {
+		return nil, ErrPrivateMemoryNotFound
+	}
+	if err := ensureNoPrivateMemoryLegalHoldTx(ctx, tx, space.ID); err != nil {
+		return nil, err
+	}
+	if space.LifecycleState != domain.MemorySpaceActive {
+		return nil, ErrPrivateMemoryOperationConflict
+	}
+	var activeOperationID uuid.UUID
+	err := tx.WithContext(ctx).Raw(`
+		SELECT id
+		FROM private_memory_erasure_operations
+		WHERE space_id = $1 AND status <> 'completed'
+		LIMIT 1
+	`, space.ID).Row().Scan(&activeOperationID)
+	if err == nil {
+		return nil, ErrPrivateMemoryOperationConflict
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	result := tx.WithContext(ctx).Exec(`
+		UPDATE memory_spaces
+		SET generation = generation + 1,
+		    lifecycle_state = 'sealed',
+		    sealed_at = $1,
+		    retired_at = NULL,
+		    updated_at = $1
+		WHERE id = $2 AND team_id = $3 AND generation = $4 AND lifecycle_state = 'active'
+	`, now, space.ID, space.TeamID, space.Generation)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return nil, ErrPrivateMemoryOperationConflict
+	}
+	targetGeneration := space.Generation
+	spaceKind := space.Kind
+	operation := &domain.PrivateMemoryErasureOperation{
+		ID:                 uuid.New(),
+		TeamID:             space.TeamID,
+		SpaceID:            &space.ID,
+		SpaceKind:          &spaceKind,
+		TargetCredentialID: cloneUUIDPtr(input.TargetCredentialID),
+		Action:             input.Action,
+		ActorClass:         input.ActorClass,
+		ReasonCode:         input.ReasonCode,
+		TargetGeneration:   &targetGeneration,
+		RetireSpace:        input.RetireSpace,
+		Status:             domain.PrivateMemoryErasureQueued,
+		DeletedCounts:      map[string]int64{},
+		RequestedAt:        now,
+		UpdatedAt:          now,
+	}
+	if err := insertPrivateMemoryOperationTx(ctx, tx, operation, input.IdempotencyScopeHash, input.RequestHash); err != nil {
+		return nil, err
+	}
+	return operation, nil
+}
+
+func privateMemorySpaceForProfileTx(ctx context.Context, tx *gorm.DB, teamID, ownerID uuid.UUID) (*domain.MemorySpace, error) {
+	row := tx.WithContext(ctx).Raw(`
+		SELECT id, team_id, kind, owner_profile_id, owner_credential_id,
+		       generation, lifecycle_state, private_content_at, sealed_at, retired_at, created_at, updated_at
+		FROM memory_spaces
+		WHERE team_id = $1 AND kind = 'profile_private' AND owner_profile_id = $2
+		FOR UPDATE
+	`, teamID, ownerID).Row()
+	space, err := scanPrivateMemorySpace(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrPrivateMemoryNotFound
+	}
+	return space, err
+}
+
+func privateMemorySpaceForCredentialTx(ctx context.Context, tx *gorm.DB, teamID, credentialID uuid.UUID, requireActiveCredential bool) (*domain.MemorySpace, error) {
+	statusPredicate := ""
+	if requireActiveCredential {
+		statusPredicate = "AND credential.status = 'active'"
+	}
+	row := tx.WithContext(ctx).Raw(fmt.Sprintf(`
+		SELECT space.id, space.team_id, space.kind, space.owner_profile_id, space.owner_credential_id,
+		       space.generation, space.lifecycle_state, space.private_content_at, space.sealed_at, space.retired_at,
+		       space.created_at, space.updated_at
+		FROM credentials AS credential
+		JOIN memory_spaces AS space
+		  ON space.id = credential.memory_space_id
+		 AND space.team_id = credential.team_id
+		WHERE credential.id = $1
+		  AND credential.team_id = $2
+		  AND credential.kind = 'api_key'
+		  AND credential.memory_binding = 'credential_private'
+		  AND space.kind = 'credential_private'
+		  AND space.owner_credential_id = credential.id
+		  %s
+		FOR UPDATE OF space
+	`, statusPredicate), credentialID, teamID).Row()
+	space, err := scanPrivateMemorySpace(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrPrivateMemoryNotFound
+	}
+	return space, err
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanPrivateMemorySpace(row rowScanner) (*domain.MemorySpace, error) {
+	space := &domain.MemorySpace{}
+	err := row.Scan(
+		&space.ID, &space.TeamID, &space.Kind, &space.OwnerProfileID, &space.OwnerCredentialID,
+		&space.Generation, &space.LifecycleState, &space.PrivateContentAt, &space.SealedAt, &space.RetiredAt,
+		&space.CreatedAt, &space.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return space, nil
+}
+
+func existingPrivateMemoryOperationTx(ctx context.Context, tx *gorm.DB, scopeHash, requestHash string) (*domain.PrivateMemoryErasureOperation, error) {
+	operation, err := scanPrivateMemoryOperation(tx.WithContext(ctx).Raw(privateMemoryOperationSelect+`
+			WHERE idempotency_scope_hash = $1
+		`, scopeHash).Row())
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var storedRequestHash string
+	if err := tx.WithContext(ctx).Raw(`SELECT request_hash FROM private_memory_erasure_operations WHERE id = $1`, operation.ID).Row().Scan(&storedRequestHash); err != nil {
+		return nil, err
+	}
+	if storedRequestHash != requestHash {
+		return nil, ErrPrivateMemoryIdempotency
+	}
+	return operation, nil
+}
+
+func insertPrivateMemoryOperationTx(ctx context.Context, tx *gorm.DB, operation *domain.PrivateMemoryErasureOperation, scopeHash, requestHash string) error {
+	deletedCounts, err := json.Marshal(operation.DeletedCounts)
+	if err != nil {
+		return err
+	}
+	return tx.WithContext(ctx).Exec(`
+		INSERT INTO private_memory_erasure_operations (
+			id, team_id, space_id, space_kind, target_credential_id, action, actor_class,
+			reason_code, target_generation, retire_space, idempotency_scope_hash, request_hash,
+			status, manifest_position, deleted_counts, attempt_count, fence, worker_id,
+			lease_until, last_error_code, requested_at, started_at, completed_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7,
+			$8, $9, $10, $11, $12,
+			$13, $14, $15::jsonb, $16, $17, $18,
+			$19, $20, $21, $22, $23, $24
+		)
+	`, operation.ID, operation.TeamID, operation.SpaceID, operation.SpaceKind, operation.TargetCredentialID,
+		operation.Action, operation.ActorClass, operation.ReasonCode, operation.TargetGeneration, operation.RetireSpace,
+		scopeHash, requestHash, operation.Status, operation.ManifestPosition, string(deletedCounts), operation.AttemptCount,
+		operation.Fence, operation.WorkerID, operation.LeaseUntil, operation.LastErrorCode, operation.RequestedAt,
+		operation.StartedAt, operation.CompletedAt, operation.UpdatedAt).Error
+}
+
+const privateMemoryOperationSelect = `
+	SELECT id, team_id, space_id::text, space_kind, target_credential_id::text,
+	       action, actor_class, reason_code, target_generation, retire_space,
+	       status, manifest_position, deleted_counts, attempt_count, fence,
+	       worker_id, lease_until, last_error_code, requested_at, started_at,
+	       completed_at, updated_at
+	FROM private_memory_erasure_operations AS operation
+`
+
+func scanPrivateMemoryOperation(row rowScanner) (*domain.PrivateMemoryErasureOperation, error) {
+	operation := &domain.PrivateMemoryErasureOperation{}
+	var spaceID, spaceKind, credentialID sql.NullString
+	var targetGeneration sql.NullInt64
+	var leaseUntil, startedAt, completedAt sql.NullTime
+	var deletedCounts []byte
+	err := row.Scan(
+		&operation.ID, &operation.TeamID, &spaceID, &spaceKind, &credentialID,
+		&operation.Action, &operation.ActorClass, &operation.ReasonCode, &targetGeneration, &operation.RetireSpace,
+		&operation.Status, &operation.ManifestPosition, &deletedCounts, &operation.AttemptCount, &operation.Fence,
+		&operation.WorkerID, &leaseUntil, &operation.LastErrorCode, &operation.RequestedAt, &startedAt,
+		&completedAt, &operation.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if spaceID.Valid {
+		id, err := uuid.Parse(spaceID.String)
+		if err != nil {
+			return nil, err
+		}
+		operation.SpaceID = &id
+	}
+	if spaceKind.Valid {
+		kind := domain.MemorySpaceKind(spaceKind.String)
+		operation.SpaceKind = &kind
+	}
+	if credentialID.Valid {
+		id, err := uuid.Parse(credentialID.String)
+		if err != nil {
+			return nil, err
+		}
+		operation.TargetCredentialID = &id
+	}
+	if targetGeneration.Valid {
+		value := targetGeneration.Int64
+		operation.TargetGeneration = &value
+	}
+	if leaseUntil.Valid {
+		value := leaseUntil.Time.UTC()
+		operation.LeaseUntil = &value
+	}
+	if startedAt.Valid {
+		value := startedAt.Time.UTC()
+		operation.StartedAt = &value
+	}
+	if completedAt.Valid {
+		value := completedAt.Time.UTC()
+		operation.CompletedAt = &value
+	}
+	operation.DeletedCounts = make(map[string]int64)
+	if len(deletedCounts) > 0 {
+		if err := json.Unmarshal(deletedCounts, &operation.DeletedCounts); err != nil {
+			return nil, err
+		}
+	}
+	return operation, nil
+}

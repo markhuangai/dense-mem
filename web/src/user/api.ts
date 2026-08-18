@@ -33,6 +33,7 @@ export type UserSession = {
   credential: UserCredential | null;
   teams: UserTeamOption[];
   personal_credentials: UserCredential[];
+  mcp_public_base_url: string;
 };
 
 export type UserTeamOption = {
@@ -56,6 +57,21 @@ export type SSOProvider = {
 export type RotateResponse = {
   api_key: string;
   credential: UserCredential;
+};
+
+export type PrivateMemoryOperation = {
+  operation_id: string;
+  space_kind?: "profile_private" | "credential_private" | string;
+  action: "erase_profile_private" | "erase_credential_private" | "retire_credential" | "retention_purge" | string;
+  actor_class: string;
+  reason_code: string;
+  retire_space: boolean;
+  status: "queued" | "processing" | "completed" | string;
+  deleted_counts: Record<string, number>;
+  requested_at: string;
+  started_at?: string;
+  completed_at?: string;
+  updated_at: string;
 };
 
 export type CreatedCredential = RotateResponse;
@@ -308,6 +324,7 @@ type RequestOptions = {
   body?: unknown;
   signal?: AbortSignal;
   cache?: RequestCache;
+  idempotencyKey?: string;
 };
 
 export type UserAuthMode = "anonymous" | "api_key" | "api_key_session" | "sso";
@@ -382,8 +399,35 @@ export class UserApi {
     return payload.data;
   }
 
-  async revokeSSOCredential(credentialId: string): Promise<{ status: string }> {
-    const payload = await this.request<Envelope<{ status: string }>>(`/ui/api/sso/credentials/${credentialId}`, { method: "DELETE" });
+  async deleteSSOCredential(credentialId: string, idempotencyKey: string): Promise<PrivateMemoryOperation> {
+    const payload = await this.request<Envelope<PrivateMemoryOperation>>(`/ui/api/sso/credentials/${credentialId}`, {
+      method: "DELETE",
+      body: { acknowledge_irreversible: true },
+      idempotencyKey,
+    });
+    return payload.data;
+  }
+
+  async eraseSSOPrivateMemory(idempotencyKey: string): Promise<PrivateMemoryOperation> {
+    const payload = await this.request<Envelope<PrivateMemoryOperation>>("/ui/api/sso/private-memory", {
+      method: "DELETE",
+      body: { acknowledge_irreversible: true },
+      idempotencyKey,
+    });
+    return payload.data;
+  }
+
+  async eraseCredentialPrivateMemory(idempotencyKey: string): Promise<PrivateMemoryOperation> {
+    const payload = await this.request<Envelope<PrivateMemoryOperation>>("/ui/api/credential/private-memory", {
+      method: "DELETE",
+      body: { acknowledge_irreversible: true },
+      idempotencyKey,
+    });
+    return payload.data;
+  }
+
+  async getPrivateMemoryErasure(operationId: string): Promise<PrivateMemoryOperation> {
+    const payload = await this.request<Envelope<PrivateMemoryOperation>>(`/ui/api/private-memory/erasures/${encodeURIComponent(operationId)}`);
     return payload.data;
   }
 
@@ -540,6 +584,7 @@ export class UserApi {
       body: options.body,
       cache: options.cache,
       signal: options.signal,
+      idempotencyKey: options.idempotencyKey,
       csrf: this.token ? undefined : {
         cookieName: this.authMode === "api_key_session" ? "dense_mem_ui_csrf" : "dense_mem_sso_csrf",
         headerName: "X-Dense-Mem-CSRF",

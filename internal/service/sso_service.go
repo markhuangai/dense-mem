@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -50,6 +51,7 @@ type SSORuntimeConfigProvider interface {
 
 type SSORuntimeConfig struct {
 	PublicBaseURL        string
+	MCPPublicBaseURL     string
 	SCIMPublicBaseURL    string
 	ControlPublicBaseURL string
 	EntitlementCacheTTL  time.Duration
@@ -81,6 +83,8 @@ type SSOService struct {
 	groupResolver       SSOGroupResolver
 	logger              observability.LogProvider
 	now                 func() time.Time
+	oauthCacheMu        sync.Mutex
+	oauthCaches         map[uuid.UUID]*oauthJWKSProviderCache
 }
 
 type SSOLoginStart struct {
@@ -124,6 +128,7 @@ func NewSSOService(repo repository.SSORepository, cfg SSOConfig) *SSOService {
 		groupResolver:       cfg.GroupResolver,
 		logger:              cfg.Logger,
 		now:                 now,
+		oauthCaches:         make(map[uuid.UUID]*oauthJWKSProviderCache),
 	}
 }
 
@@ -146,6 +151,15 @@ func (s *SSOService) PublicBaseURL(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/"), nil
+}
+
+func (s *SSOService) MCPPublicBaseURL(ctx context.Context) (string, error) {
+	cfg, err := s.runtimeConfig(ctx)
+	if err != nil {
+		s.debugSSOFailure("mcp public base url runtime config failed", err)
+		return "", err
+	}
+	return strings.TrimRight(strings.TrimSpace(cfg.MCPPublicBaseURL), "/"), nil
 }
 
 func (s *SSOService) ListEnabledProviders(ctx context.Context) ([]*domain.SSOProvider, error) {
@@ -957,6 +971,7 @@ func (s *SSOService) runtimeConfig(ctx context.Context) (SSORuntimeConfig, error
 
 func normalizeSSORuntimeConfig(cfg SSORuntimeConfig) SSORuntimeConfig {
 	cfg.PublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
+	cfg.MCPPublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.MCPPublicBaseURL), "/")
 	cfg.SCIMPublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.SCIMPublicBaseURL), "/")
 	cfg.ControlPublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.ControlPublicBaseURL), "/")
 	if cfg.EntitlementCacheTTL <= 0 {

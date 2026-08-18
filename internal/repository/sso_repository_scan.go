@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/json"
 
 	"github.com/lib/pq"
 
@@ -11,6 +12,7 @@ import (
 func scanSSOProvider(rows *sql.Rows) (*domain.SSOProvider, error) {
 	var provider domain.SSOProvider
 	var kind string
+	var protectedResource []byte
 	if err := rows.Scan(
 		&provider.ID,
 		&provider.Name,
@@ -24,6 +26,7 @@ func scanSSOProvider(rows *sql.Rows) (*domain.SSOProvider, error) {
 		pq.Array(&provider.GroupClaims),
 		&provider.GroupsEndpoint,
 		pq.Array(&provider.GroupsScopes),
+		&protectedResource,
 		&provider.Enabled,
 		&provider.RetiredAt,
 		&provider.CreatedAt,
@@ -32,6 +35,9 @@ func scanSSOProvider(rows *sql.Rows) (*domain.SSOProvider, error) {
 		return nil, err
 	}
 	provider.Kind = domain.SSOProviderKind(kind)
+	if err := json.Unmarshal(protectedResource, &provider.ProtectedResource); err != nil {
+		return nil, err
+	}
 	return &provider, nil
 }
 

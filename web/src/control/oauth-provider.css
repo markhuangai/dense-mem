@@ -1,0 +1,38 @@
+.oauth-provider-config {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-muted);
+}
+
+.oauth-provider-config legend {
+  padding: 0 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.oauth-mapping-heading,
+.oauth-scope-mapping {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.oauth-mapping-heading {
+  justify-content: space-between;
+  padding-top: 4px;
+}
+
+.oauth-scope-mapping {
+  display: grid;
+  grid-template-columns: 110px minmax(160px, 1fr) minmax(220px, auto) 36px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+}

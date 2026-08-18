@@ -248,6 +248,35 @@ func TestAppConfigServiceOperationLogSettingsDefaultsAndUpdate(t *testing.T) {
 	assert.Equal(t, 45, runtime.RetentionDays)
 }
 
+func TestAppConfigServicePrivateMemorySettingsDefaultsAndUpdate(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	repo := newAppConfigRepoStub(now, map[string]string{
+		domain.AppConfigUpdateTimeKey: now.Format(time.RFC3339Nano),
+	})
+	svc := NewAppConfigService(repo, nil)
+	svc.now = func() time.Time { return now }
+
+	settings, err := svc.GetPrivateMemorySettings(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "0", privateMemoryConfigItemForTest(settings, domain.AppConfigPrivateMemoryRetentionDays).EffectiveValue)
+
+	runtime, err := svc.PrivateMemoryRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, DefaultPrivateMemoryRetentionDays, runtime.RetentionDays)
+
+	now = now.Add(time.Minute)
+	updated, err := svc.UpdatePrivateMemorySettings(ctx, map[string]string{
+		domain.AppConfigPrivateMemoryRetentionDays: "90",
+	}, "control", "127.0.0.1", "corr")
+	require.NoError(t, err)
+	assert.Equal(t, "90", privateMemoryConfigItemForTest(updated, domain.AppConfigPrivateMemoryRetentionDays).EffectiveValue)
+
+	runtime, err = svc.PrivateMemoryRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 90, runtime.RetentionDays)
+}
+
 func TestAppConfigServiceRecallFeedbackSettingsDefaultsAndUpdate(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
@@ -578,6 +607,15 @@ func TestAppConfigServiceValidation(t *testing.T) {
 	_, err = svc.UpdateOperationLogSettings(ctx, map[string]string{domain.AppConfigOperationLogRetentionDays: "0"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
+	_, err = svc.UpdatePrivateMemorySettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdatePrivateMemorySettings(ctx, map[string]string{domain.AppConfigPrivateMemoryRetentionDays: "-1"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	_, err = svc.UpdatePrivateMemorySettings(ctx, map[string]string{domain.AppConfigPrivateMemoryRetentionDays: "36501"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
 	_, err = svc.UpdateRecallFeedbackSettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
@@ -639,6 +677,7 @@ func TestAppConfigServiceAuditNoopAndUnavailableBranches(t *testing.T) {
 	assert.Nil(t, dreamingSettingsPayload(nil))
 	assert.Nil(t, communityDetectionSettingsPayload(nil))
 	assert.Nil(t, operationLogSettingsPayload(nil))
+	assert.Nil(t, privateMemorySettingsPayload(nil))
 	assert.Nil(t, recallFeedbackSettingsPayload(nil))
 	assert.Nil(t, telemetryPricingSettingsPayload(nil))
 }
@@ -662,6 +701,10 @@ func TestAppConfigServiceUnavailableMethods(t *testing.T) {
 	_, err = svc.GetOperationLogSettings(ctx)
 	require.ErrorContains(t, err, "app config service is unavailable")
 	_, err = svc.OperationLogRuntimeConfig(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.GetPrivateMemorySettings(ctx)
+	require.ErrorContains(t, err, "app config service is unavailable")
+	_, err = svc.PrivateMemoryRuntimeConfig(ctx)
 	require.ErrorContains(t, err, "app config service is unavailable")
 	_, err = svc.GetRecallFeedbackSettings(ctx)
 	require.ErrorContains(t, err, "app config service is unavailable")
@@ -747,6 +790,9 @@ func newAppConfigRepoStub(now time.Time, values map[string]string) *appConfigRep
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
 	for _, key := range editableOperationLogConfigKeys() {
+		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
+	}
+	for _, key := range editablePrivateMemoryConfigKeys() {
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
 	for _, key := range editableRecallFeedbackConfigKeys() {
@@ -850,6 +896,15 @@ func operationLogConfigItemForTest(settings *domain.OperationLogConfigSettings, 
 		}
 	}
 	return domain.OperationLogConfigItem{}
+}
+
+func privateMemoryConfigItemForTest(settings *domain.PrivateMemoryConfigSettings, key string) domain.PrivateMemoryConfigItem {
+	for _, item := range settings.Items {
+		if item.Key == key {
+			return item
+		}
+	}
+	return domain.PrivateMemoryConfigItem{}
 }
 
 func recallFeedbackConfigItemForTest(settings *domain.RecallFeedbackConfigSettings, key string) domain.RecallFeedbackConfigItem {

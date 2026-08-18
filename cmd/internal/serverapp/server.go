@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"log"
 	"log/slog"
 	nethttp "net/http"
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -117,6 +115,7 @@ func RunActiveServer(
 	usageMetricsRepo := repository.NewUsageMetricsRepository(pgDB.GetDB(), rlsHelper)
 	operationLogRepo := repository.NewOperationLogRepository(pgDB.GetDB(), rlsHelper)
 	recallFeedbackEventRepo := repository.NewRecallFeedbackEventRepository(pgDB.GetDB(), rlsHelper)
+	privateMemoryRepo := repository.NewPrivateMemoryRepository(pgDB.GetDB(), rlsHelper)
 	semanticRepo := repository.NewSemanticRepository(pgDB.GetDB(), rlsHelper)
 	ledgerRepo := repository.NewLedgerRepositoryWithRuntimeConfig(
 		pgDB.GetDB(),
@@ -174,6 +173,15 @@ func RunActiveServer(
 	portalSessionService := service.NewUserPortalSessionService(portalSessionRepo, credentialRepo, nil)
 	directoryIdentityService := service.NewDirectoryIdentityService(directoryIdentityRepo, service.DirectoryIdentityConfig{CredentialVerifier: credentialVerifier})
 	controlIdentityService := service.NewControlIdentityService(controlIdentityRepo, ssoRepo, service.ControlIdentityConfig{RuntimeConfig: appConfigService})
+	privateMemoryService := service.NewPrivateMemoryService(service.PrivateMemoryServiceConfig{
+		Repository:         privateMemoryRepo,
+		RuntimeConfig:      appConfigService,
+		SessionInvalidator: backend.cleanupRepo,
+		Logger:             logger,
+	})
+	if err := privateMemoryService.Prepare(startupCtx); err != nil {
+		log.Fatalf("private-memory erasure boot blocked: %v", err)
+	}
 	rateLimitService := backend.rateLimitService
 	runtimeCtx := RuntimeContext{
 		Config:            &cfg,
@@ -358,6 +366,7 @@ func RunActiveServer(
 	e.Use(middleware.CorrelationIDMiddleware())
 	e.Use(middleware.ClientIPMiddleware())
 	e.Use(middleware.SecurityBanMiddleware(securityService))
+	http.RegisterOAuthProtectedResourceRoutes(e, ssoService)
 	if err := http.RegisterDirectorySCIM(e, directoryIdentityService, http.DirectorySCIMConfig{
 		RuntimeConfig: appConfigService,
 		Security:      securityService,
@@ -380,6 +389,8 @@ func RunActiveServer(
 		AuditService:       auditService,
 		SecurityService:    securityService,
 		SSOAuthenticator:   ssoService,
+		OAuthAuthenticator: ssoService,
+		OAuthMetadata:      ssoService,
 		Config:             &cfg,
 		Logger:             logger,
 		CredentialVerifier: credentialVerifier,
@@ -408,6 +419,7 @@ func RunActiveServer(
 		SSOService:         ssoService,
 		PortalSession:      portalSessionService,
 		AppConfig:          appConfigService,
+		PrivateMemory:      privateMemoryService,
 		Config:             &cfg,
 		CredentialVerifier: credentialVerifier,
 		LastUsedRecorder:   activityWriter,
@@ -442,6 +454,7 @@ func RunActiveServer(
 				ConflictQueue:   conflictQueueService,
 				Convergence:     service.NewSearchConvergenceService(searchRepo),
 				Submissions:     service.NewSubmissionDiagnosticsService(ledgerRepo),
+				PrivateMemory:   privateMemoryService,
 			},
 			healthConfig,
 			logger,
@@ -482,6 +495,7 @@ func RunActiveServer(
 
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
+	privateMemoryService.Start(workerCtx)
 	reconciliationSvc := newEmbeddingReconciliationService(
 		searchRepo, openaiProvider, appConfigService, logger, discoverabilityMetrics,
 		time.Duration(cfg.GetAIEmbeddingTimeoutSeconds())*time.Second,
@@ -839,44 +853,6 @@ type conflictReviewLedger interface {
 	ReviewRelationshipConflictCase(context.Context, repository.ReviewRelationshipConflictCaseInput) (*repository.ReviewRelationshipConflictCaseResult, error)
 	ProcessPendingConflictDerivedEvidence(context.Context, repository.ClaimConflictDerivedEvidenceTasksInput) (int, error)
 	CompleteRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunCompleteInput) error
-}
-
-func conflictReviewDueForTeam(now time.Time, cfg *config.Config, teamID string) bool {
-	location := conflictReviewLocation(cfg.GetAppTimezone())
-	localNow := now.In(location)
-	start, err := time.Parse("15:04", cfg.GetConflictReviewStartTimeLocal())
-	if err != nil {
-		return false
-	}
-	year, month, day := localNow.Date()
-	scheduled := time.Date(year, month, day, start.Hour(), start.Minute(), 0, 0, location)
-	jitterSeconds := cfg.GetConflictReviewJitterSeconds()
-	if jitterSeconds > 3600 {
-		jitterSeconds = 3600
-	}
-	if jitterSeconds > 0 {
-		delay := int(crc32.ChecksumIEEE([]byte(teamID))) % (jitterSeconds + 1)
-		scheduled = scheduled.Add(time.Duration(delay) * time.Second)
-	}
-	return !localNow.Before(scheduled)
-}
-
-var conflictReviewLocationCache sync.Map
-
-func conflictReviewLocation(name string) *time.Location {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return time.Local
-	}
-	if cached, ok := conflictReviewLocationCache.Load(name); ok {
-		return cached.(*time.Location)
-	}
-	location, err := time.LoadLocation(name)
-	if err != nil {
-		return time.Local
-	}
-	actual, _ := conflictReviewLocationCache.LoadOrStore(name, location)
-	return actual.(*time.Location)
 }
 
 func checkActiveAuthority(authority authorityBootstrap) error {

@@ -15,6 +15,7 @@ export type JsonRequestOptions = {
   token?: string;
   credentials?: RequestCredentials;
   cache?: RequestCache;
+  idempotencyKey?: string;
   csrf?: {
     cookieName: string;
     headerName: string;
@@ -34,6 +35,9 @@ export async function requestJson<T>(url: string, options: JsonRequestOptions = 
     if (csrf) {
       headers[options.csrf.headerName] = csrf;
     }
+  }
+  if (options.idempotencyKey) {
+    headers["Idempotency-Key"] = options.idempotencyKey;
   }
 
   const response = await fetch(url, {

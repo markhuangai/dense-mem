@@ -2,6 +2,8 @@ import { Component, FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useSt
 import type { ReactNode } from "react";
 import {
   BarChart3,
+  Check,
+  Copy,
   KeyRound,
   LogOut,
   Moon,
@@ -17,12 +19,13 @@ import { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
 import { useVisiblePolling } from "../telemetry/useVisiblePolling";
 import {
   RotateResponse,
+  PrivateMemoryOperation,
   SSOProvider,
   UserApi,
   UserCredential,
   UserSession,
 } from "./api";
-import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading } from "../ui/components";
+import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading, writeClipboardText } from "../ui/components";
 import { SearchPanel } from "./SearchPanel";
 
 const TelemetryDashboard = lazy(() => import("../telemetry/TelemetryDashboard").then((module) => ({ default: module.TelemetryDashboard })));
@@ -462,22 +465,53 @@ function UserContextBar({
   ssoTeamOptions: UserSession["teams"];
   onSwitchTeam: (teamId: string) => Promise<void>;
 }) {
+  const [copied, setCopied] = useState(false);
+  const configuredBase = session.mcp_public_base_url.trim().replace(/\/+$/, "");
+  const browserBase = window.location.origin.replace(/\/+$/, "");
+  const mcpURL = `${configuredBase || browserBase}/teams/${session.team.id}/mcp`;
+
+  useEffect(() => {
+    setCopied(false);
+  }, [mcpURL]);
+
+  async function copyMCPURL() {
+    if (await writeClipboardText(mcpURL, null)) {
+      setCopied(true);
+    }
+  }
+
   return (
-    <div className="session-context compact" aria-label="Current workspace">
-      <span className="context-label">Team</span>
-      {authMode === "sso" ? (
-        <select
-          aria-label="Active team"
-          value={session.team.id}
-          disabled={switchingTeam || (ssoTeamOptions?.length ?? 0) <= 1}
-          onChange={(event) => void onSwitchTeam(event.target.value)}
-        >
-          {(ssoTeamOptions ?? []).map((item) => (
-            <option value={item.team.id} key={item.team.id}>{item.team.name}</option>
-          ))}
-        </select>
-      ) : (
-        <strong className="team-select-chip">{session.team.name}</strong>
+    <div className="session-context compact mcp-context" aria-label="Current workspace">
+      <div className="mcp-context-team">
+        <span className="context-label">Team</span>
+        {authMode === "sso" ? (
+          <select
+            aria-label="Active team"
+            value={session.team.id}
+            disabled={switchingTeam || (ssoTeamOptions?.length ?? 0) <= 1}
+            onChange={(event) => void onSwitchTeam(event.target.value)}
+          >
+            {(ssoTeamOptions ?? []).map((item) => (
+              <option value={item.team.id} key={item.team.id}>{item.team.name}</option>
+            ))}
+          </select>
+        ) : (
+          <strong className="team-select-chip">{session.team.name}</strong>
+        )}
+      </div>
+      <div className="mcp-context-value">
+        <span className="context-label">Team ID</span>
+        <code>{session.team.id}</code>
+      </div>
+      <div className="mcp-context-value mcp-context-endpoint">
+        <span className="context-label">MCP URL</span>
+        <code>{mcpURL}</code>
+        <button className="icon-button compact" type="button" aria-label="Copy MCP URL" onClick={() => void copyMCPURL()}>
+          {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+        </button>
+      </div>
+      {!configuredBase && (
+        <small className="mcp-origin-fallback">Using this browser origin because MCP_PUBLIC_BASE_URL is not configured.</small>
       )}
     </div>
   );
@@ -586,6 +620,7 @@ function CredentialPanel({
   const [memoryBinding, setMemoryBinding] = useState<"shared_only" | "profile_private" | "credential_private">("profile_private");
   const [selectedCredentialID, setSelectedCredentialID] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [erasureMessage, setErasureMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const isSSO = session.credential === null;
   const personalCredentials = isSSO ? (session.personal_credentials ?? []) : [];
@@ -667,18 +702,41 @@ function CredentialPanel({
     }
   }
 
-  async function revoke() {
-    if (!personalCredential || !window.confirm(`Revoke ${personalCredential.name}? This key will stop working.`)) {
+  async function deleteCredential() {
+    if (!personalCredential || !window.confirm(`Permanently delete ${personalCredential.name}? The key will stop working immediately. Credential-private memory is physically erased; profile-private and team-shared memory are preserved.`)) {
       return;
     }
     setBusy(true);
     setError("");
+    setErasureMessage("");
     try {
-      await api.revokeSSOCredential(personalCredential.id);
+      const operation = await api.deleteSSOCredential(personalCredential.id, privateMemoryIdempotencyKey("delete-credential", personalCredential.id));
       const nextCredentials = personalCredentials.filter((credential) => credential.id !== personalCredential.id);
       setSelectedCredentialID(nextCredentials[0]?.id ?? null);
       onSSOCredentialsChanged(nextCredentials);
       setCreatedAPIKey("");
+      void pollPrivateMemoryErasure(api, operation, setErasureMessage, "Credential deletion");
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function erasePrivateMemory() {
+    const profilePrivate = isSSO;
+    const target = profilePrivate ? "profile-private" : "credential-private";
+    if (!window.confirm(`Permanently erase your ${target} memory for this team? The credential remains active, but erased content cannot be recovered without an authorized backup restore.`)) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setErasureMessage("");
+    try {
+      const operation = profilePrivate
+        ? await api.eraseSSOPrivateMemory(privateMemoryIdempotencyKey("erase-profile-private", session.team.id))
+        : await api.eraseCredentialPrivateMemory(privateMemoryIdempotencyKey("erase-credential-private", personalCredential?.id ?? session.team.id));
+      void pollPrivateMemoryErasure(api, operation, setErasureMessage, `${profilePrivate ? "Profile-private" : "Credential-private"} erasure`);
     } catch (err) {
       setError(readError(err));
     } finally {
@@ -691,6 +749,7 @@ function CredentialPanel({
       <SectionHeading title="My credentials" meta={personalCredential?.scopes.includes("write") || permission === "read_write" ? "write" : "read"} />
       {createdAPIKey && <CreatedCredentialNotice apiKey={createdAPIKey} onDismiss={() => setCreatedAPIKey("")} />}
       {error && <div className="banner error" role="alert">{error}</div>}
+      {erasureMessage && <div className="banner neutral" role="status">{erasureMessage}</div>}
       {isSSO && personalCredentials.length > 0 && (
         <div className="credential-list" aria-label="Owned API credentials">
           <h3>Owned API keys</h3>
@@ -730,9 +789,9 @@ function CredentialPanel({
               Regenerate key
             </button>
             {isSSO && (
-              <button className="ghost-button" type="button" disabled={!canRevoke || busy} onClick={() => void revoke()}>
+              <button className="danger-button" type="button" disabled={!canRevoke || busy} onClick={() => void deleteCredential()}>
                 <Trash2 size={16} aria-hidden="true" />
-                Revoke key
+                Permanently delete key
               </button>
             )}
           </div>
@@ -769,8 +828,51 @@ function CredentialPanel({
           </button>
         </form>
       )}
+      {(isSSO || personalCredential?.memory_space_kind === "credential_private") && (
+        <div className="private-memory-danger-zone">
+          <div>
+            <strong>{isSSO ? "Profile-private memory" : "Credential-private memory"}</strong>
+            <span>{isSSO ? "Erases private memory shared by your SSO identity in this team. Keys and team-shared memory remain." : "Erases private memory isolated to this credential. The credential remains active."}</span>
+          </div>
+          <button className="danger-button" type="button" disabled={busy} onClick={() => void erasePrivateMemory()}>
+            <Trash2 size={16} aria-hidden="true" />
+            Erase private memory
+          </button>
+        </div>
+      )}
     </section>
   );
+}
+
+async function pollPrivateMemoryErasure(
+  api: UserApi,
+  initial: PrivateMemoryOperation,
+  onMessage: (message: string) => void,
+  label: string,
+) {
+  let operation = initial;
+  onMessage(privateMemoryOperationMessage(label, operation));
+  for (let attempt = 0; operation.status !== "completed" && attempt < 40; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    try {
+      operation = await api.getPrivateMemoryErasure(operation.operation_id);
+      onMessage(privateMemoryOperationMessage(label, operation));
+    } catch (error) {
+      onMessage(`${label} was accepted, but status polling failed: ${readError(error)}`);
+      return;
+    }
+  }
+}
+
+function privateMemoryOperationMessage(label: string, operation: PrivateMemoryOperation): string {
+  if (operation.status === "completed") {
+    return `${label} completed.`;
+  }
+  return `${label} ${operation.status}. Operation ${operation.operation_id.slice(0, 8)}.`;
+}
+
+function privateMemoryIdempotencyKey(action: string, target: string): string {
+  return `${action}:${target}:${crypto.randomUUID()}`;
 }
 
 function CreatedCredentialNotice({ apiKey, onDismiss }: { apiKey: string; onDismiss: () => void }) {

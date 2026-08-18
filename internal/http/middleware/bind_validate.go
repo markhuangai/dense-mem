@@ -2,13 +2,12 @@ package middleware
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 )
 
 // BindAndValidate creates a middleware that binds JSON request body into type T,
@@ -50,14 +49,8 @@ func BindAndValidateStrict[T any](ctxKey string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			var body T
-			decoder := json.NewDecoder(c.Request().Body)
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(&body); err != nil {
+			if err := jsonstrict.Decode(c.Request().Body, &body); err != nil {
 				return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
-			}
-			var trailing any
-			if err := decoder.Decode(&trailing); err != io.EOF {
-				return httperr.New(httperr.VALIDATION_ERROR, "request body must contain one JSON object")
 			}
 
 			if err := validation.ValidateStruct(&body); err != nil {

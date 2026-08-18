@@ -1,0 +1,45 @@
+.session-context.compact.mcp-context {
+  display: grid;
+  grid-template-columns: auto minmax(270px, 1fr);
+  gap: 6px 14px;
+  width: min(820px, 62vw);
+  max-width: min(820px, 62vw);
+  padding: 7px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.mcp-context-team,
+.mcp-context-value,
+.mcp-context-endpoint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mcp-context-value code {
+  min-width: 0;
+  white-space: normal;
+}
+
+.mcp-context-endpoint {
+  grid-column: 1 / -1;
+}
+
+.mcp-context-endpoint code {
+  flex: 1 1 auto;
+}
+
+.mcp-context .icon-button.compact {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+}
+
+.mcp-origin-fallback {
+  grid-column: 1 / -1;
+  color: var(--subtle);
+  font-size: 11px;
+}

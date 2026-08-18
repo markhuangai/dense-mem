@@ -1,6 +1,28 @@
 import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types";
 import type { CommunityStatus } from "./community-api-types";
 import type { SearchConvergence } from "./search-convergence-types";
+import type {
+  ControlAdminGroup,
+  ControlAdminGroupInput,
+  DirectoryConnector,
+  DirectoryConnectorCreateResult,
+  DirectoryConnectorInput,
+  DirectoryCredential,
+  DirectoryPreview,
+  SSOGroupMapping,
+  SSOGroupMappingInput,
+  SSOProvider,
+  SSOProviderInput,
+} from "./sso-api-types";
+import type {
+  PrivateMemoryConfig,
+  PrivateMemoryConfigInput,
+  PrivateMemoryLegalHold,
+  PrivateMemoryOperation,
+  PrivateMemoryPage,
+  PrivateMemoryRetentionRun,
+  PrivateMemorySpace,
+} from "./private-memory-api-types";
 import { requestJson } from "./http";
 import {
   buildOperationLogsPath,
@@ -36,6 +58,34 @@ export type {
 } from "./conflict-queue-api-types";
 import type { ConflictQueuePage, ConflictQueueQuery } from "./conflict-queue-api-types";
 export type { SearchConvergence } from "./search-convergence-types";
+export type {
+  ControlAdminGroup,
+  ControlAdminGroupInput,
+  DirectoryConnector,
+  DirectoryConnectorCreateResult,
+  DirectoryConnectorInput,
+  DirectoryCredential,
+  DirectoryPreview,
+  DirectoryRoleEntitlement,
+  MembershipRole,
+  OAuthProtectedResourceConfig,
+  OAuthScopeMapping,
+  SSOGroupMapping,
+  SSOGroupMappingInput,
+  SSOProvider,
+  SSOProviderInput,
+} from "./sso-api-types";
+export type {
+  PrivateMemoryConfig,
+  PrivateMemoryConfigInput,
+  PrivateMemoryConfigItem,
+  PrivateMemoryLegalHold,
+  PrivateMemoryOperation,
+  PrivateMemoryPage,
+  PrivateMemoryRetentionRun,
+  PrivateMemoryRuntimeConfig,
+  PrivateMemorySpace,
+} from "./private-memory-api-types";
 export type Team = {
   id: string;
   name: string;
@@ -61,7 +111,6 @@ export type Credential = {
 };
 
 export type CredentialRole = "manager" | "member";
-export type MembershipRole = "manager" | "member";
 
 export type Pagination = {
   limit: number;
@@ -178,136 +227,6 @@ export type ControlMetrics = {
 export type MetricsQuery = {
   window_minutes?: number;
   team_id?: string;
-};
-
-export type SSOProvider = {
-  id: string;
-  name: string;
-  kind: "azure_ad" | "pingone" | "generic_oidc";
-  issuer_url: string;
-  tenant_id: string;
-  identity_claim: string;
-  client_id: string;
-  client_secret_env: string;
-  scopes: string[];
-  group_claims: string[];
-  groups_endpoint: string;
-  groups_scopes: string[];
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-};
-
-export type SSOGroupMapping = {
-  id: string;
-  provider_id: string;
-  team_id: string;
-  team_name: string;
-  group_id: string;
-  group_name: string;
-  scopes: string[];
-  role: MembershipRole;
-  enabled: boolean;
-  origin: string;
-  retired_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type SSOProviderInput = {
-  name: string;
-  kind: SSOProvider["kind"];
-  issuer_url: string;
-  tenant_id: string;
-  identity_claim: string;
-  client_id: string;
-  client_secret_env: string;
-  scopes: string[];
-  group_claims: string[];
-  groups_endpoint: string;
-  groups_scopes: string[];
-  enabled: boolean;
-};
-
-export type SSOGroupMappingInput = {
-  team_id: string;
-  group_id: string;
-  scopes: string[];
-  role: MembershipRole;
-  enabled: boolean;
-};
-
-export type DirectoryRoleEntitlement = {
-  role: MembershipRole;
-  scopes: string[];
-};
-
-export type DirectoryConnector = {
-  id: string;
-  provider_id: string;
-  status: "disabled" | "observe" | "active";
-  group_pattern: string;
-  role_entitlements: Record<string, DirectoryRoleEntitlement>;
-  max_auto_teams: number;
-  credential_version: number;
-  scim_path: string;
-  last_activation_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type DirectoryConnectorInput = {
-  group_pattern: string;
-  role_entitlements: Record<string, DirectoryRoleEntitlement>;
-  max_auto_teams: number;
-};
-
-export type DirectoryCredential = {
-  connector_id: string;
-  credential_version: number;
-  bearer_token: string;
-  oauth_client_id: string;
-  oauth_client_secret: string;
-};
-
-export type DirectoryConnectorCreateResult = {
-  connector: DirectoryConnector;
-  credential: DirectoryCredential;
-};
-
-export type DirectoryPreview = {
-  version: string;
-  candidates: Array<{
-    group_id: string;
-    external_id: string;
-    display_name: string;
-    team_id: string;
-    team_name: string;
-    entitlement: DirectoryRoleEntitlement;
-    binding_origin: string;
-  }>;
-  issues: Array<{
-    kind: string;
-    detail: string;
-    active: boolean;
-  }>;
-};
-
-export type ControlAdminGroup = {
-  id: string;
-  provider_id: string;
-  group_id: string;
-  group_name: string;
-  enabled: boolean;
-  retired_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type ControlAdminGroupInput = {
-  group_id: string;
-  group_name: string;
-  enabled: boolean;
 };
 
 export type ControlSession = {
@@ -622,6 +541,7 @@ type RequestOptions = {
   method?: string;
   body?: unknown;
   signal?: AbortSignal;
+  idempotencyKey?: string;
 };
 
 export class ControlApi {
@@ -867,6 +787,57 @@ export class ControlApi {
     return this.requestEnvelope<OperationLogConfig>("/config/operation-logs", { method: "PATCH", body: input });
   }
 
+  getPrivateMemoryConfig(): Promise<PrivateMemoryConfig> {
+    return this.requestEnvelope<PrivateMemoryConfig>("/config/private-memory");
+  }
+
+  updatePrivateMemoryConfig(input: PrivateMemoryConfigInput): Promise<PrivateMemoryConfig> {
+    return this.requestEnvelope<PrivateMemoryConfig>("/config/private-memory", { method: "PATCH", body: input });
+  }
+
+  listPrivateMemorySpaces(): Promise<PrivateMemoryPage<PrivateMemorySpace>> {
+    return this.request<PrivateMemoryPage<PrivateMemorySpace>>("/private-memory/spaces");
+  }
+
+  placePrivateMemoryLegalHold(spaceId: string, reasonCode: string): Promise<PrivateMemoryLegalHold> {
+    return this.requestEnvelope<PrivateMemoryLegalHold>(`/private-memory/spaces/${encodeURIComponent(spaceId)}/legal-hold`, {
+      method: "POST",
+      body: { reason_code: reasonCode },
+    });
+  }
+
+  releasePrivateMemoryLegalHold(spaceId: string): Promise<{ released: boolean; hold: PrivateMemoryLegalHold | null }> {
+    return this.requestEnvelope<{ released: boolean; hold: PrivateMemoryLegalHold | null }>(`/private-memory/spaces/${encodeURIComponent(spaceId)}/legal-hold`, { method: "DELETE" });
+  }
+
+  requestPrivateMemoryErasure(spaceId: string, idempotencyKey: string): Promise<PrivateMemoryOperation> {
+    return this.requestEnvelope<PrivateMemoryOperation>(`/private-memory/spaces/${encodeURIComponent(spaceId)}/erasures`, {
+      method: "POST",
+      body: { acknowledge_irreversible: true },
+      idempotencyKey,
+    });
+  }
+
+  listPrivateMemoryErasures(): Promise<PrivateMemoryPage<PrivateMemoryOperation>> {
+    return this.request<PrivateMemoryPage<PrivateMemoryOperation>>("/private-memory/erasures");
+  }
+
+  getPrivateMemoryErasure(operationId: string): Promise<PrivateMemoryOperation> {
+    return this.requestEnvelope<PrivateMemoryOperation>(`/private-memory/erasures/${encodeURIComponent(operationId)}`);
+  }
+
+  runPrivateMemoryRetention(idempotencyKey: string): Promise<PrivateMemoryRetentionRun> {
+    return this.requestEnvelope<PrivateMemoryRetentionRun>("/private-memory/retention-runs", {
+      method: "POST",
+      body: { acknowledge_irreversible: true },
+      idempotencyKey,
+    });
+  }
+
+  listPrivateMemoryRetentionRuns(): Promise<PrivateMemoryPage<PrivateMemoryRetentionRun>> {
+    return this.request<PrivateMemoryPage<PrivateMemoryRetentionRun>>("/private-memory/retention-runs");
+  }
+
   getRecallFeedbackConfig(): Promise<RecallFeedbackConfig> {
     return this.requestEnvelope<RecallFeedbackConfig>("/config/recall-feedback");
   }
@@ -979,6 +950,7 @@ export class ControlApi {
       token: this.token || undefined,
       body: options.body,
       signal: options.signal,
+      idempotencyKey: options.idempotencyKey,
       credentials: this.token ? undefined : "include",
       csrf: this.token ? undefined : { cookieName: "dense_mem_control_csrf", headerName: "X-Dense-Mem-Control-CSRF" },
     });

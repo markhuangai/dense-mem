@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
-import { authorizationHeader, isRecallSequence, jsonResponse, optionValue, recallPayloadForHits } from "./App.test-helpers";
+import { authorizationHeader, baseSession, isRecallSequence, jsonResponse, memberCredential, mockSSOUserFetch, optionValue, recallPayloadForHits, ssoSessions, telemetryForSession } from "./App.test-helpers";
 import { GraphNode, GraphSnapshot, RecallHit, UserCredential, UserSession } from "./api";
 
 vi.mock("react-force-graph-2d", async () => {
@@ -30,53 +30,6 @@ vi.mock("react-force-graph-2d", async () => {
     }),
   };
 });
-
-const baseSession: UserSession = {
-  team: {
-    id: "11111111-1111-4111-8111-111111111111",
-    name: "Research Team",
-    description: "",
-    created_at: "2026-05-01T12:00:00Z",
-    updated_at: "2026-05-01T12:00:00Z",
-  },
-  membership: {
-    team_id: "11111111-1111-4111-8111-111111111111",
-    name: "Mine",
-    grants: ["read"],
-    role: "member",
-  },
-  credential: {
-    id: "22222222-2222-4222-8222-222222222222",
-    team_id: "11111111-1111-4111-8111-111111111111",
-    name: "Mine",
-    key_suffix: "abc123",
-    scopes: ["read"],
-    role: "member",
-    rate_limit: 120,
-    last_used_at: null,
-    expires_at: null,
-    created_at: "2026-05-01T12:00:00Z",
-    memory_binding: "shared_only",
-    memory_space_kind: "team_shared",
-  },
-  teams: [],
-  personal_credentials: [],
-};
-
-const memberCredential: UserCredential = {
-  id: "33333333-3333-4333-8333-333333333333",
-  team_id: baseSession.team.id,
-  name: "Reader credential",
-  key_suffix: "def456",
-  scopes: ["read"],
-  role: "member",
-  rate_limit: 120,
-  last_used_at: null,
-  expires_at: null,
-  created_at: "2026-05-01T12:00:00Z",
-  memory_binding: "shared_only",
-  memory_space_kind: "team_shared",
-};
 
 const recallHits: RecallHit[] = [
   {
@@ -191,6 +144,32 @@ beforeEach(() => {
 });
 
 describe("UserPortalApp", () => {
+	it("shows and copies the configured team-scoped MCP URL", async () => {
+		mockUserFetch(baseSession);
+		sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+		render(<UserPortalApp />);
+
+		await expectCurrentWorkspace("Research Team");
+		expect(screen.getByText(baseSession.team.id)).toBeInTheDocument();
+		const expectedURL = `https://memory.example.test/teams/${baseSession.team.id}/mcp`;
+		expect(screen.getByText(expectedURL)).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Copy MCP URL" }));
+		expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expectedURL);
+		expect(screen.queryByText(/browser origin/i)).not.toBeInTheDocument();
+	});
+
+	it("labels the browser-origin fallback for MCP URLs", async () => {
+		mockUserFetch({ ...baseSession, mcp_public_base_url: "" });
+		sessionStorage.setItem("denseMem.userApiKey", "dm_read");
+
+		render(<UserPortalApp />);
+
+		await expectCurrentWorkspace("Research Team");
+		expect(screen.getByText(`${window.location.origin}/teams/${baseSession.team.id}/mcp`)).toBeInTheDocument();
+		expect(screen.getByText("Using this browser origin because MCP_PUBLIC_BASE_URL is not configured.")).toBeInTheDocument();
+	});
+
   it("logs in with an API key and does not call team credential list APIs", async () => {
     const fetchMock = mockUserFetch(baseSession);
     render(<UserPortalApp />);
@@ -622,7 +601,7 @@ describe("UserPortalApp", () => {
     });
   });
 
-  it("derives SSO cookie auth from the credential-free session and switches teams", async () => {
+	it("derives SSO cookie auth from the credential-free session and switches teams", async () => {
     const { initial, switched, secondTeam } = ssoSessions();
     const fetchMock = mockSSOUserFetch(initial, switched);
 
@@ -632,11 +611,13 @@ describe("UserPortalApp", () => {
     expect(screen.getByRole("button", { name: /my credential/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^team$/i })).not.toBeInTheDocument();
     const teamSelect = await screen.findByLabelText("Active team");
-    expect(teamSelect).toHaveValue(initial.team.id);
+		expect(teamSelect).toHaveValue(initial.team.id);
+		expect(screen.getByText(`https://memory.example.test/teams/${initial.team.id}/mcp`)).toBeInTheDocument();
 
     await userEvent.selectOptions(teamSelect, secondTeam.id);
 
-    await expectCurrentWorkspace("Analytics Team");
+		await expectCurrentWorkspace("Analytics Team");
+		expect(screen.getByText(`https://memory.example.test/teams/${secondTeam.id}/mcp`)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /my credential/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^team$/i })).toBeInTheDocument();
     await waitFor(() => {
@@ -748,14 +729,54 @@ describe("UserPortalApp", () => {
         expect.objectContaining({ method: "POST", credentials: "include" }),
       );
     });
-    await userEvent.click(screen.getByRole("button", { name: /revoke key/i }));
+    await userEvent.click(screen.getByRole("button", { name: /permanently delete key/i }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/ui/api/sso/credentials/88888888-8888-4888-8888-888888888888",
-        expect.objectContaining({ method: "DELETE", credentials: "include" }),
+		expect.objectContaining({
+		  method: "DELETE",
+		  credentials: "include",
+		  body: JSON.stringify({ acknowledge_irreversible: true }),
+		  headers: expect.objectContaining({ "Idempotency-Key": expect.stringContaining("delete-credential:") }),
+		}),
       );
     });
     expect(screen.queryByText("Second key")).not.toBeInTheDocument();
+  });
+
+  it("queues and polls profile-private erasure without changing the active team", async () => {
+    const { initial, switched } = ssoSessions();
+    const fetchMock = mockSSOUserFetch(initial, switched);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<UserPortalApp />);
+    await expectCurrentWorkspace("Research Team");
+    await userEvent.click(screen.getByRole("button", { name: /my credential/i }));
+
+    const originalSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      if (timeout === 500 && typeof handler === "function") {
+        queueMicrotask(() => handler(...args));
+        return 1;
+      }
+      return originalSetTimeout(handler, timeout, ...args);
+    }) as typeof window.setTimeout);
+    await userEvent.click(screen.getByRole("button", { name: "Erase private memory" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Profile-private erasure completed.");
+    expect(screen.getByLabelText("Current workspace")).toHaveTextContent(initial.team.id);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/ui/api/sso/private-memory",
+      expect.objectContaining({
+        method: "DELETE",
+        body: JSON.stringify({ acknowledge_irreversible: true }),
+        headers: expect.objectContaining({ "Idempotency-Key": expect.stringContaining("erase-profile-private:") }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/ui/api/private-memory/erasures/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      expect.objectContaining({ method: "GET" }),
+    );
   });
 
   it("keeps SSO read-only owned API key rotation disabled", async () => {
@@ -873,124 +894,6 @@ function mockUserFetch(session: UserSession, credentials: UserCredential[] = [],
         : configuredHits;
       recallCallCount += 1;
       return jsonResponse({ data: recallPayloadForHits(hits) });
-    }
-    return jsonResponse({ message: "not found" }, 404);
-  });
-  vi.stubGlobal("fetch", fetchMock);
-  return fetchMock;
-}
-
-function telemetryForSession(session: UserSession) {
-  const teamScope = session.membership.role === "manager";
-  return {
-    available: true,
-    window: {
-      key: "1h",
-      from: "2026-05-02T12:00:00Z",
-      to: "2026-05-02T13:00:00Z",
-      step_seconds: 60,
-      retention_days: 30,
-    },
-    scope: teamScope
-      ? { type: "team", team_id: session.team.id }
-      : { type: "self", team_id: session.team.id, profile_id: session.credential?.id ?? "sso-owner" },
-    cards: [{ id: "http_requests", label: "HTTP requests", unit: "requests", value: teamScope ? 9 : 4 }],
-    series: [],
-  };
-}
-
-function ssoSessions() {
-  const secondTeam = {
-    ...baseSession.team,
-    id: "55555555-5555-4555-8555-555555555555",
-    name: "Analytics Team",
-  };
-  const firstMembership = { ...baseSession.membership };
-  const secondMembership = {
-    ...baseSession.membership,
-    team_id: secondTeam.id,
-    name: "Analytics SSO",
-    grants: ["read", "write"],
-    role: "manager" as const,
-  };
-  const initial: UserSession = {
-    ...baseSession,
-    credential: null,
-    membership: firstMembership,
-    personal_credentials: [],
-    teams: [
-      { team: baseSession.team, membership: firstMembership },
-      { team: secondTeam, membership: secondMembership },
-    ],
-  };
-  const switched: UserSession = {
-    ...initial,
-    team: secondTeam,
-    membership: secondMembership,
-  };
-  return { initial, switched, secondTeam, secondMembership };
-}
-
-function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: { logoutStatus?: number } = {}) {
-  let current = initial;
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    const method = init?.method ?? "GET";
-
-    if (url === "/ui/api/sso/providers" && method === "GET") {
-      return jsonResponse({ data: [] });
-    }
-    if (url === "/ui/api/session" && method === "GET") {
-      return jsonResponse({ data: current });
-    }
-    if (url === "/ui/api/sso/team" && method === "POST") {
-      current = switched;
-      return jsonResponse({ data: current });
-    }
-    if (url.startsWith("/ui/api/telemetry") && method === "GET") {
-      return jsonResponse({ data: telemetryForSession(current) });
-    }
-    if (url === "/ui/api/sso/credentials" && method === "POST") {
-      const body = JSON.parse(String(init?.body));
-      const createdID = current.personal_credentials.length === 0
-        ? "77777777-7777-4777-8777-777777777777"
-        : "88888888-8888-4888-8888-888888888888";
-      const created: UserCredential = {
-        ...memberCredential,
-        team_id: current.team.id,
-        id: createdID,
-        name: body.name,
-        key_suffix: "own123",
-        scopes: body.scopes,
-        role: "member",
-        memory_binding: body.memory_binding ?? "profile_private",
-        memory_space_kind: body.memory_binding === "credential_private" ? "credential_private" : body.memory_binding === "shared_only" ? "team_shared" : "profile_private",
-      };
-      current = {
-        ...current,
-        personal_credentials: [...current.personal_credentials, created],
-      };
-      return jsonResponse({ data: { api_key: "dm_sso_personal_plaintext", credential: created } }, 201);
-    }
-    if (url.includes("/ui/api/sso/credentials/") && url.endsWith("/rotate") && method === "POST") {
-      const credentialID = url.split("/").at(-2);
-      const rotated = { ...(current.personal_credentials.find((credential) => credential.id === credentialID) ?? memberCredential), team_id: current.team.id, key_suffix: "rot321" };
-      current = { ...current, personal_credentials: current.personal_credentials.map((credential) => credential.id === rotated.id ? rotated : credential) };
-      return jsonResponse({ data: { api_key: "dm_sso_personal_rotated", credential: rotated } });
-    }
-    if (url.includes("/ui/api/sso/credentials/") && method === "DELETE") {
-      const credentialID = url.split("/").at(-1);
-      current = { ...current, personal_credentials: current.personal_credentials.filter((credential) => credential.id !== credentialID) };
-      return jsonResponse({ data: { status: "revoked" } });
-    }
-    if (url === "/ui/api/sso/logout" && method === "POST") {
-      if (options.logoutStatus) {
-        return jsonResponse({ message: "logout failed" }, options.logoutStatus);
-      }
-      return jsonResponse({ data: { status: "signed_out" } });
-    }
-    if (url.startsWith("/ui/api/recall")) {
-      return jsonResponse({ data: [] });
     }
     return jsonResponse({ message: "not found" }, 404);
   });
