@@ -97,6 +97,23 @@ describe("PrivateMemoryPanel", () => {
     const secondKey = vi.mocked(api.requestPrivateMemoryErasure).mock.calls[1][1];
     expect(firstKey).toBe(secondKey);
   });
+
+  it("clears a success message when the refresh after a mutation fails", async () => {
+    const api = privateMemoryApi();
+    let spaceLoads = 0;
+    vi.mocked(api.listPrivateMemorySpaces).mockImplementation(async () => {
+      spaceLoads += 1;
+      if (spaceLoads > 1) {
+        throw new Error("reload failed");
+      }
+      return { data: [space], pagination: { limit: 100, offset: 0 } };
+    });
+    render(<PrivateMemoryPanel api={api} />);
+
+    await userEvent.click(await screen.findByRole("button", { name: `Place legal hold for ${space.id}` }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("reload failed");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
 });
 
 function privateMemoryApi(spaces: PrivateMemorySpace[] = [space]) {

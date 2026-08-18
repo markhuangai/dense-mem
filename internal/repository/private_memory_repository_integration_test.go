@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -540,6 +541,65 @@ func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 	}))
 }
 
+func TestPrivateMemoryIdempotencyConcurrentReplay(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure-concurrent-idempotency"))
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "concurrent", domain.CredentialBindingCredentialPrivate)
+	repo := NewPrivateMemoryRepository(appDB, rls)
+	require.NoError(t, repo.Prepare(ctx))
+	request := PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
+		IdempotencyScopeHash: privateMemoryHash("concurrent", teamID.String(), target.ID.String()),
+		RequestHash:          privateMemoryHash("erase", target.ID.String()),
+		ReasonCode:           "owner_request",
+	}
+
+	start := make(chan struct{})
+	results := make(chan struct {
+		operation *domain.PrivateMemoryErasureOperation
+		created   bool
+		err       error
+	}, 2)
+	var group sync.WaitGroup
+	for range 2 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			operation, created, err := repo.RequestCredentialErasure(ctx, request)
+			results <- struct {
+				operation *domain.PrivateMemoryErasureOperation
+				created   bool
+				err       error
+			}{operation: operation, created: created, err: err}
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(results)
+
+	var operationID uuid.UUID
+	createdCount := 0
+	for result := range results {
+		require.NoError(t, result.err)
+		require.NotNil(t, result.operation)
+		if result.created {
+			createdCount++
+		}
+		if operationID == uuid.Nil {
+			operationID = result.operation.ID
+		}
+		require.Equal(t, operationID, result.operation.ID)
+	}
+	require.Equal(t, 1, createdCount)
+}
+
 func TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -560,6 +620,9 @@ func TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace(t *te
 
 	repo := NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, repo.Prepare(ctx))
+	_, createdHold, err := repo.PlaceLegalHold(ctx, target.MemorySpaceID, "credential_delete_hold")
+	require.NoError(t, err)
+	require.True(t, createdHold)
 	request := PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
 		IdempotencyScopeHash: privateMemoryHash("sso-delete", ownerID.String(), "isolated-key"),
@@ -570,6 +633,17 @@ func TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace(t *te
 	require.NoError(t, err)
 	require.True(t, created)
 	require.Equal(t, domain.PrivateMemoryErasureQueued, operation.Status)
+	var disabledStatus string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT status FROM credentials WHERE id = ?`, target.ID).Row().Scan(&disabledStatus)
+	}))
+	require.Equal(t, "disabled", disabledStatus)
+	claimWhileHeld, err := repo.ClaimNext(ctx, "sso-delete-held-worker", time.Minute)
+	require.NoError(t, err)
+	require.Nil(t, claimWhileHeld)
+	_, releasedHold, err := repo.ReleaseLegalHold(ctx, target.MemorySpaceID)
+	require.NoError(t, err)
+	require.True(t, releasedHold)
 
 	lockAcquired := make(chan error, 1)
 	releaseLock := make(chan struct{})

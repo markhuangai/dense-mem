@@ -356,6 +356,9 @@ func (r *PrivateMemoryRepositoryImpl) RequestProfileErasure(ctx context.Context,
 	var operation *domain.PrivateMemoryErasureOperation
 	created := false
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := lockPrivateMemoryIdempotencyScopeTx(ctx, tx, input.IdempotencyScopeHash); err != nil {
+			return err
+		}
 		existing, err := existingPrivateMemoryOperationTx(ctx, tx, input.IdempotencyScopeHash, input.RequestHash)
 		if err != nil || existing != nil {
 			operation = existing
@@ -388,6 +391,9 @@ func (r *PrivateMemoryRepositoryImpl) RequestCredentialErasure(ctx context.Conte
 	var operation *domain.PrivateMemoryErasureOperation
 	created := false
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := lockPrivateMemoryIdempotencyScopeTx(ctx, tx, input.IdempotencyScopeHash); err != nil {
+			return err
+		}
 		existing, err := existingPrivateMemoryOperationTx(ctx, tx, input.IdempotencyScopeHash, input.RequestHash)
 		if err != nil || existing != nil {
 			operation = existing
@@ -419,6 +425,9 @@ func (r *PrivateMemoryRepositoryImpl) RequestControlErasure(ctx context.Context,
 	var operation *domain.PrivateMemoryErasureOperation
 	created := false
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := lockPrivateMemoryIdempotencyScopeTx(ctx, tx, idempotencyScopeHash); err != nil {
+			return err
+		}
 		existing, err := existingPrivateMemoryOperationTx(ctx, tx, idempotencyScopeHash, requestHash)
 		if err != nil || existing != nil {
 			operation = existing
@@ -455,6 +464,9 @@ func (r *PrivateMemoryRepositoryImpl) DisableSSOCredential(ctx context.Context, 
 	created := false
 	now := r.now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := lockPrivateMemoryIdempotencyScopeTx(ctx, tx, input.IdempotencyScopeHash); err != nil {
+			return err
+		}
 		existing, err := existingPrivateMemoryOperationTx(ctx, tx, input.IdempotencyScopeHash, input.RequestHash)
 		if err != nil || existing != nil {
 			operation = existing
@@ -489,9 +501,6 @@ func (r *PrivateMemoryRepositoryImpl) DisableSSOCredential(ctx context.Context, 
 			}
 			if !memorySpaceID.Valid || memorySpaceID.String != space.ID.String() {
 				return ErrPrivateMemoryNotFound
-			}
-			if err := ensureNoPrivateMemoryLegalHoldTx(ctx, tx, space.ID); err != nil {
-				return err
 			}
 		}
 
@@ -529,6 +538,7 @@ func (r *PrivateMemoryRepositoryImpl) DisableSSOCredential(ctx context.Context, 
 				ReasonCode:           input.ReasonCode,
 				TargetCredentialID:   &credentialID,
 				RetireSpace:          true,
+				QueueWhileHeld:       true,
 				IdempotencyScopeHash: input.IdempotencyScopeHash,
 				RequestHash:          input.RequestHash,
 			})
@@ -566,6 +576,7 @@ type queuePrivateMemoryInput struct {
 	ReasonCode           string
 	TargetCredentialID   *uuid.UUID
 	RetireSpace          bool
+	QueueWhileHeld       bool
 	IdempotencyScopeHash string
 	RequestHash          string
 }
@@ -574,8 +585,10 @@ func queuePrivateMemorySpaceTx(ctx context.Context, tx *gorm.DB, space *domain.M
 	if space == nil || space.ID == uuid.Nil || space.TeamID == uuid.Nil || !isPrivateMemorySpaceKind(space.Kind) {
 		return nil, ErrPrivateMemoryNotFound
 	}
-	if err := ensureNoPrivateMemoryLegalHoldTx(ctx, tx, space.ID); err != nil {
-		return nil, err
+	if !input.QueueWhileHeld {
+		if err := ensureNoPrivateMemoryLegalHoldTx(ctx, tx, space.ID); err != nil {
+			return nil, err
+		}
 	}
 	var activeOperationID uuid.UUID
 	err := tx.WithContext(ctx).Raw(`
@@ -756,6 +769,15 @@ func existingPrivateMemoryOperationTx(ctx context.Context, tx *gorm.DB, scopeHas
 		return nil, ErrPrivateMemoryIdempotency
 	}
 	return operation, nil
+}
+
+func lockPrivateMemoryIdempotencyScopeTx(ctx context.Context, tx *gorm.DB, scopeHash string) error {
+	if strings.TrimSpace(scopeHash) == "" {
+		return ErrPrivateMemoryIdempotency
+	}
+	return tx.WithContext(ctx).Exec(`
+		SELECT pg_advisory_xact_lock(hashtextextended($1, 0))
+	`, scopeHash).Error
 }
 
 func insertPrivateMemoryOperationTx(ctx context.Context, tx *gorm.DB, operation *domain.PrivateMemoryErasureOperation, scopeHash, requestHash string) error {

@@ -8,9 +8,10 @@
 -- RLS impact: erasure control tables are FORCE RLS and system-only. Canonical
 -- and derived rows keep their existing policies; deletion runs as system mode
 -- with an exact transaction-local private-space fence.
--- Backfill: historical generation and private-content age remain null. New or
--- updated rows receive the active generation from the write fence; retention
--- derives legacy private-content age later in bounded, resumable batches.
+-- Backfill: historical generation and private-content age remain null. Audit
+-- rows are associated only when a surviving credential and team prove the
+-- private space; retention derives legacy private-content age later in bounded,
+-- resumable batches.
 -- Backward compatibility: old writers omit space_generation; the database
 -- trigger supplies the current active generation and rejects sealed spaces.
 -- Rollback: physical erasure is irreversible. The down migration is blocked;
@@ -153,6 +154,14 @@ CREATE POLICY audit_log_private_erasure_update ON audit_log
 CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
+	IF TG_OP = 'UPDATE'
+	   AND current_setting('app.tx_mode', true) = 'migration'
+	   AND OLD.memory_space_id IS NULL
+	   AND NEW.memory_space_id IS NOT NULL
+	   AND (to_jsonb(NEW) - ARRAY['memory_space_id'])
+	       = (to_jsonb(OLD) - ARRAY['memory_space_id']) THEN
+		RETURN NEW;
+	END IF;
     IF TG_OP = 'UPDATE'
        AND current_setting('app.tx_mode', true) = 'system'
        AND NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid = OLD.memory_space_id
@@ -166,6 +175,25 @@ BEGIN
     RAISE EXCEPTION 'audit_log is append-only: % operations are not allowed', TG_OP;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Historical audit rows can be associated only when the surviving credential
+-- record and team match exactly. Rows without that bounded proof remain
+-- unassociated and cannot be scrubbed by a private-space erasure.
+DROP POLICY IF EXISTS audit_log_memory_space_backfill ON audit_log;
+CREATE POLICY audit_log_memory_space_backfill ON audit_log
+    FOR UPDATE
+    USING (current_setting('app.tx_mode', true) = 'migration')
+    WITH CHECK (current_setting('app.tx_mode', true) = 'migration');
+UPDATE audit_log AS audit
+SET memory_space_id = credential.memory_space_id
+FROM credentials AS credential
+WHERE audit.memory_space_id IS NULL
+  AND audit.entity_type = 'api_key'
+  AND audit.entity_id ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+  AND credential.id = audit.entity_id::uuid
+  AND credential.team_id = audit.team_id
+  AND credential.memory_space_id IS NOT NULL;
+DROP POLICY audit_log_memory_space_backfill ON audit_log;
 
 CREATE OR REPLACE FUNCTION prevent_append_only_mutation()
 RETURNS TRIGGER AS $$

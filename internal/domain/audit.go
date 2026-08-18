@@ -13,6 +13,7 @@ import (
 type AuditEntryModel interface {
 	GetID() uuid.UUID
 	GetProfileID() *uuid.UUID
+	GetMemorySpaceID() *uuid.UUID
 	GetTimestamp() time.Time
 	GetOperation() string
 	GetEntityType() string
@@ -32,6 +33,7 @@ type AuditEntryModel interface {
 type AuditLogEntry struct {
 	ID            uuid.UUID
 	ProfileID     *uuid.UUID
+	MemorySpaceID *uuid.UUID
 	Timestamp     time.Time
 	Operation     string
 	EntityType    string
@@ -50,6 +52,7 @@ var _ AuditEntryModel = (*AuditLogEntry)(nil)
 
 func (a *AuditLogEntry) GetID() uuid.UUID                 { return a.ID }
 func (a *AuditLogEntry) GetProfileID() *uuid.UUID         { return a.ProfileID }
+func (a *AuditLogEntry) GetMemorySpaceID() *uuid.UUID     { return a.MemorySpaceID }
 func (a *AuditLogEntry) GetTimestamp() time.Time          { return a.Timestamp }
 func (a *AuditLogEntry) GetOperation() string             { return a.Operation }
 func (a *AuditLogEntry) GetEntityType() string            { return a.EntityType }

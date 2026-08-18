@@ -182,18 +182,16 @@ async function runScenario() {
 
   await assertForeignSSOCredentialDeletionHidden(sso.b, sso.c, ssoCredentialTarget.credential.id);
   await placeHold(ssoCredentialSpace.id, "credential_delete_hold");
-  await expectStatus(deleteSSOCredential(sso.a, ssoCredentialTarget.credential.id, "sso-delete-held"), 409, "SSO credential deletion bypassed legal hold");
-  assertCredentialStatus(ssoCredentialTarget.credential.id, "active");
-  await assertCredentialUsable(ssoCredentialTarget.apiKey);
-  await releaseHold(ssoCredentialSpace.id);
-
   await acquireKnowledgeIngestLock();
-  const ssoDeleteQueued = await deleteSSOCredential(sso.a, ssoCredentialTarget.credential.id, "sso-delete");
+  const ssoDeleteQueued = await deleteSSOCredential(sso.a, ssoCredentialTarget.credential.id, "sso-delete-held");
   assert(ssoDeleteQueued.status === 202, "SSO credential deletion did not return 202");
   const ssoDeleteOperationID = ssoDeleteQueued.payload.data?.operation_id;
   assertCredentialStatus(ssoCredentialTarget.credential.id, "disabled");
   await assertCredentialDenied(ssoCredentialTarget.apiKey);
-  const ssoDeleteReplay = await deleteSSOCredential(sso.a, ssoCredentialTarget.credential.id, "sso-delete");
+  const heldOperation = postgresRow(`SELECT status FROM private_memory_erasure_operations WHERE id = ${sqlLiteral(ssoDeleteOperationID)}::uuid`);
+  assert(heldOperation[0] === "queued", "held SSO credential deletion was claimed before the hold was released");
+  await releaseHold(ssoCredentialSpace.id);
+  const ssoDeleteReplay = await deleteSSOCredential(sso.a, ssoCredentialTarget.credential.id, "sso-delete-held");
   assert(ssoDeleteReplay.status === 202 && ssoDeleteReplay.payload.data?.operation_id === ssoDeleteOperationID, "disabled SSO credential did not replay its erasure operation");
   await waitControlOperation(ssoDeleteOperationID, "processing");
   const firstClaim = postgresRow(`SELECT fence, attempt_count FROM private_memory_erasure_operations WHERE id = ${sqlLiteral(ssoDeleteOperationID)}::uuid`);

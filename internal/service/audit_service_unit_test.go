@@ -96,7 +96,7 @@ func newMockAuditService(t *testing.T) (*AuditServiceImpl, sqlmock.Sqlmock, func
 }
 
 func expectAnyAuditInsert(mock sqlmock.Sqlmock) {
-	args := make([]driver.Value, 13)
+	args := make([]driver.Value, 14)
 	for i := range args {
 		args[i] = sqlmock.AnyArg()
 	}
@@ -167,6 +167,7 @@ func TestAuditAppendRedactsPayloadsAndWritesInsert(t *testing.T) {
 			present: map[string]interface{}{"source": "unit"},
 			absent:  []string{"password", "apiKey", "refresh_token", "clientSecret", "refreshToken"},
 		},
+		sqlmock.AnyArg(),
 	).WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := svc.Append(context.Background(), AuditLogEntry{
@@ -242,6 +243,7 @@ func TestAuditListScansRowsAndCountsTotal(t *testing.T) {
 		"id", "team_id", "timestamp", "operation", "entity_type", "entity_id",
 		"before_payload", "after_payload", "actor_profile_id", "actor_role",
 		"client_ip", "correlation_id", "metadata",
+		"memory_space_id",
 	}).AddRow(
 		"audit-1",
 		profileID,
@@ -256,6 +258,7 @@ func TestAuditListScansRowsAndCountsTotal(t *testing.T) {
 		"203.0.113.10",
 		"corr-1",
 		[]byte(`{"source":"unit"}`),
+		"space-1",
 	)
 	mock.ExpectQuery("SELECT id, team_id, timestamp, operation, entity_type, entity_id").
 		WithArgs(profileID, 2, 1).
@@ -275,6 +278,7 @@ func TestAuditListScansRowsAndCountsTotal(t *testing.T) {
 	require.Equal(t, "before", entries[0].BeforePayload["name"])
 	require.Equal(t, "after", entries[0].AfterPayload["name"])
 	require.Equal(t, "unit", entries[0].Metadata["source"])
+	require.Equal(t, "space-1", *entries[0].MemorySpaceID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -297,6 +301,7 @@ func TestAuditListHandlesQueryAndCountErrors(t *testing.T) {
 			"id", "team_id", "timestamp", "operation", "entity_type", "entity_id",
 			"before_payload", "after_payload", "actor_profile_id", "actor_role",
 			"client_ip", "correlation_id", "metadata",
+			"memory_space_id",
 		}))
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM audit_log WHERE team_id = \\$1").
 		WithArgs("profile-1").

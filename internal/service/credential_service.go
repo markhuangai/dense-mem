@@ -820,8 +820,14 @@ func (s *CredentialServiceImpl) DeleteForTeam(ctx context.Context, teamID, id uu
 	}
 
 	teamIDStr := teamID.String()
+	var memorySpaceID *string
+	if credential.MemorySpaceID != uuid.Nil {
+		value := credential.MemorySpaceID.String()
+		memorySpaceID = &value
+	}
 	if err := s.auditService.Append(ctx, AuditLogEntry{
 		ProfileID:     &teamIDStr,
+		MemorySpaceID: memorySpaceID,
 		Operation:     "DELETE",
 		EntityType:    "api_key",
 		EntityID:      credential.ID.String(),

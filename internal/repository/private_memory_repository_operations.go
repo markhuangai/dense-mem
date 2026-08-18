@@ -300,6 +300,9 @@ func (r *PrivateMemoryRepositoryImpl) RunRetention(ctx context.Context, input Pr
 	var run *domain.PrivateMemoryRetentionRun
 	created := false
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := lockPrivateMemoryIdempotencyScopeTx(ctx, tx, input.IdempotencyScopeHash); err != nil {
+			return err
+		}
 		var storedRequestHash string
 		existing := &domain.PrivateMemoryRetentionRun{}
 		err := tx.WithContext(ctx).Raw(`

@@ -36,6 +36,7 @@ export function PrivateMemoryPanel({ api }: { api: ControlApi }) {
       setRuns(runPage.data);
     } catch (err) {
       setError(readError(err));
+      setMessage("");
     } finally {
       setBusy(false);
     }
@@ -100,6 +101,7 @@ export function PrivateMemoryPanel({ api }: { api: ControlApi }) {
       await load();
     } catch (err) {
       setError(readError(err));
+      setMessage("");
       setBusy(false);
     }
   }
