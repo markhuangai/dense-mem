@@ -106,6 +106,22 @@ test("published images require the populated migration gate before building", as
   }
 });
 
+test("normal CI validates migration history without PostgreSQL integration", async () => {
+  const [sharedWorkflow, pushWorkflow] = await Promise.all([
+    readFile(new URL("../../.github/workflows/ci-shared.yml", import.meta.url), "utf8"),
+    readFile(new URL("../../.github/workflows/ci-push.yml", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(sharedWorkflow, /migration-base-ref:/);
+  assert.match(
+    sharedWorkflow,
+    /run: scripts\/check-postgres-migrations\.sh "\$\{\{ inputs\.migration-base-ref \}\}"/,
+  );
+  assert.doesNotMatch(sharedWorkflow, /scripts\/pre-image-check\.sh/);
+  assert.doesNotMatch(sharedWorkflow, /go test -tags=integration \.\/internal\/storage\/postgres/);
+  assert.match(pushWorkflow, /migration-base-ref: \$\{\{ github\.event\.before \}\}/);
+});
+
 test("same-repository pushes rebuild while the preview label remains", () => {
   assert.deepEqual(decidePreviewEvent(baseEvent), {
     mode: "attempt",

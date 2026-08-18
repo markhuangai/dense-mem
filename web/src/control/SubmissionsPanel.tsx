@@ -106,6 +106,8 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
   }
 
   useEffect(() => {
+    setItems([]);
+    setTotal(0);
     setState("");
     setOffset(0);
     setSelectedID("");

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ControlApi, Team } from "../api";
@@ -111,6 +111,52 @@ describe("SubmissionsPanel", () => {
     await waitFor(() => expect(listSubmissionDiagnostics).toHaveBeenLastCalledWith({
       team_id: "team-2", processing_state: "", limit: 50, offset: 0,
     }));
+  });
+
+  it("clears previous-team submissions while the next team loads or fails", async () => {
+    const summary = {
+      team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1",
+      submission_id: "submission-team-1", processing_state: "completed", correlation_id: "corr-team-1",
+      attempts: 1, max_attempts: 5, evidence_count: 0, submitted_at: "2026-08-18T02:00:00Z",
+    };
+    let rejectTeamTwo!: (reason?: unknown) => void;
+    const teamTwoPage = new Promise<never>((_resolve, reject) => {
+      rejectTeamTwo = reject;
+    });
+    const listSubmissionDiagnostics = vi.fn().mockImplementation(({ team_id }: { team_id: string }) => {
+      if (team_id === "team-2") {
+        return teamTwoPage;
+      }
+      return Promise.resolve({
+        data: [summary], pagination: { limit: 50, offset: 0, total: 1 },
+      });
+    });
+    const api = {
+      listSubmissionDiagnostics,
+      getSubmissionDiagnostic: vi.fn().mockResolvedValue({
+        ...summary, submission_kind: "remember", search_state: "current", check_after_seconds: 60,
+        evidence: [], errors: [],
+      }),
+      listOperationLogs: vi.fn().mockResolvedValue({
+        data: [], pagination: { limit: 100, offset: 0, total: 0 },
+      }),
+    } as unknown as ControlApi;
+
+    const { rerender } = render(<SubmissionsPanel api={api} team={team()} />);
+
+    expect(await screen.findByRole("button", { name: "Inspect submission submission-team-1" })).toBeInTheDocument();
+    rerender(<SubmissionsPanel api={api} team={{ ...team(), id: "team-2" }} />);
+    await waitFor(() => expect(listSubmissionDiagnostics).toHaveBeenLastCalledWith({
+      team_id: "team-2", processing_state: "", limit: 50, offset: 0,
+    }));
+    expect(screen.queryByRole("button", { name: "Inspect submission submission-team-1" })).not.toBeInTheDocument();
+    expect(screen.getByText("0-0 of 0")).toBeInTheDocument();
+
+    await act(async () => rejectTeamTwo(new Error("new team unavailable")));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("new team unavailable");
+    expect(screen.queryByRole("button", { name: "Inspect submission submission-team-1" })).not.toBeInTheDocument();
+    expect(screen.getByText("0-0 of 0")).toBeInTheDocument();
   });
 
   it("shows bounded hold truncation and evidence-specific remediation", async () => {
