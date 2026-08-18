@@ -46,12 +46,14 @@ type RememberDependencies struct {
 	Ledger  repository.LedgerRepository
 	Auditor SecurityRejectionAuditor
 	Metrics observability.DiscoverabilityMetrics
+	Logger  observability.LogProvider
 }
 
 type rememberService struct {
 	ledger  repository.LedgerRepository
 	auditor SecurityRejectionAuditor
 	metrics observability.DiscoverabilityMetrics
+	logger  observability.LogProvider
 }
 
 func NewRememberService(deps RememberDependencies) *rememberService {
@@ -59,7 +61,7 @@ func NewRememberService(deps RememberDependencies) *rememberService {
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
-	return &rememberService{ledger: deps.Ledger, auditor: deps.Auditor, metrics: metrics}
+	return &rememberService{ledger: deps.Ledger, auditor: deps.Auditor, metrics: metrics, logger: deps.Logger}
 }
 
 type RememberRequest struct {
@@ -109,6 +111,14 @@ type SubmissionStatusResult struct {
 	ProcessingState            string                                   `json:"processing_state"`
 	SearchState                string                                   `json:"search_state"`
 	CheckAfterSeconds          int                                      `json:"check_after_seconds"`
+	CorrelationID              string                                   `json:"correlation_id,omitempty"`
+	Attempts                   *int                                     `json:"attempts,omitempty"`
+	MaxAttempts                *int                                     `json:"max_attempts,omitempty"`
+	SubmittedAt                *time.Time                               `json:"submitted_at,omitempty"`
+	NextAttemptAt              *time.Time                               `json:"next_attempt_at,omitempty"`
+	StartedAt                  *time.Time                               `json:"started_at,omitempty"`
+	UpdatedAt                  *time.Time                               `json:"updated_at,omitempty"`
+	CompletedAt                *time.Time                               `json:"completed_at,omitempty"`
 	Evidence                   []SubmissionEvidenceStatus               `json:"evidence"`
 	Errors                     []SubmissionStatusError                  `json:"errors"`
 	QuarantineExpiresAt        *time.Time                               `json:"quarantine_expires_at,omitempty"`
@@ -150,6 +160,8 @@ var submissionHoldIssueCodes = []string{
 	"temporal_uncertain",
 	"evidence_not_entailed",
 	"unsupported_modality",
+	"semantic_commit_non_promotable",
+	"predicate_registration_conflict",
 	"commit_review_required",
 	"conflict_context_stale",
 }
@@ -183,164 +195,6 @@ type SubmissionEvidenceStatus struct {
 	SupersededEvidenceIDs []string               `json:"superseded_evidence_ids"`
 	SearchState           string                 `json:"search_state"`
 	Error                 *SubmissionStatusError `json:"error,omitempty"`
-}
-
-// SubmissionErrorCode is the closed public vocabulary for terminal submission
-// failures. Internal/provider/database reasons must be translated into this
-// set before they cross the status projection boundary.
-type SubmissionErrorCode string
-
-const (
-	SubmissionErrorSemanticHold          SubmissionErrorCode = "submission_semantic_hold"
-	SubmissionErrorPolicyRejected        SubmissionErrorCode = "submission_policy_rejected"
-	SubmissionErrorAssessorInvalid       SubmissionErrorCode = "assessor_response_invalid"
-	SubmissionErrorAssessorUnavailable   SubmissionErrorCode = "assessor_unavailable"
-	SubmissionErrorReplacementConflict   SubmissionErrorCode = "submission_replacement_conflict"
-	SubmissionErrorProcessingFailed      SubmissionErrorCode = "submission_processing_failed"
-	SubmissionErrorContractSuperseded    SubmissionErrorCode = "contract_superseded"
-	SubmissionErrorSearchIndexingDelayed SubmissionErrorCode = "search_indexing_delayed"
-
-	SubmissionErrorRelationshipVersionStale      SubmissionErrorCode = "relationship_version_stale"
-	SubmissionErrorRelationshipNotActive         SubmissionErrorCode = "relationship_not_active"
-	SubmissionErrorObjectKindChangeForbidden     SubmissionErrorCode = "object_kind_change_forbidden"
-	SubmissionErrorSupportSetMismatch            SubmissionErrorCode = "support_set_mismatch"
-	SubmissionErrorEntityNotFound                SubmissionErrorCode = "entity_not_found"
-	SubmissionErrorTooManyEntityCandidates       SubmissionErrorCode = "too_many_entity_candidates"
-	SubmissionErrorPredicateNotFound             SubmissionErrorCode = "predicate_not_found"
-	SubmissionErrorPredicateSubjectKindMismatch  SubmissionErrorCode = "predicate_subject_kind_mismatch"
-	SubmissionErrorPredicateObjectKindMismatch   SubmissionErrorCode = "predicate_object_kind_mismatch"
-	SubmissionErrorNoChange                      SubmissionErrorCode = "no_change"
-	SubmissionErrorConfirmationExpired           SubmissionErrorCode = "confirmation_expired"
-	SubmissionErrorRelationshipChanged           SubmissionErrorCode = "relationship_changed"
-	SubmissionErrorSupportSetChanged             SubmissionErrorCode = "support_set_changed"
-	SubmissionErrorPersistentAmbiguity           SubmissionErrorCode = "persistent_ambiguity"
-	SubmissionErrorInactiveRelationshipCollision SubmissionErrorCode = "inactive_relationship_collision"
-)
-
-var submissionErrorCodes = []SubmissionErrorCode{
-	SubmissionErrorSemanticHold,
-	SubmissionErrorPolicyRejected,
-	SubmissionErrorAssessorInvalid,
-	SubmissionErrorAssessorUnavailable,
-	SubmissionErrorReplacementConflict,
-	SubmissionErrorProcessingFailed,
-	SubmissionErrorContractSuperseded,
-	SubmissionErrorSearchIndexingDelayed,
-	SubmissionErrorRelationshipVersionStale,
-	SubmissionErrorRelationshipNotActive,
-	SubmissionErrorObjectKindChangeForbidden,
-	SubmissionErrorSupportSetMismatch,
-	SubmissionErrorEntityNotFound,
-	SubmissionErrorTooManyEntityCandidates,
-	SubmissionErrorPredicateNotFound,
-	SubmissionErrorPredicateSubjectKindMismatch,
-	SubmissionErrorPredicateObjectKindMismatch,
-	SubmissionErrorNoChange,
-	SubmissionErrorConfirmationExpired,
-	SubmissionErrorRelationshipChanged,
-	SubmissionErrorSupportSetChanged,
-	SubmissionErrorPersistentAmbiguity,
-	SubmissionErrorInactiveRelationshipCollision,
-}
-
-// SubmissionErrorCodes returns the public enum in deterministic schema order.
-func SubmissionErrorCodes() []string {
-	result := make([]string, 0, len(submissionErrorCodes))
-	for _, code := range submissionErrorCodes {
-		result = append(result, string(code))
-	}
-	return result
-}
-
-type SubmissionStatusError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
-var submissionErrorMessages = map[SubmissionErrorCode]string{
-	SubmissionErrorSemanticHold:          "submission was rejected by semantic hold policy",
-	SubmissionErrorPolicyRejected:        "submission was rejected by semantic placement policy",
-	SubmissionErrorAssessorInvalid:       "submission assessment returned an invalid response",
-	SubmissionErrorAssessorUnavailable:   "submission assessment was unavailable after bounded retries",
-	SubmissionErrorReplacementConflict:   "submission replacement conflicted with current state",
-	SubmissionErrorProcessingFailed:      "submission processing failed",
-	SubmissionErrorContractSuperseded:    "submission uses a superseded remember contract; resubmit the complete batch using the current contract",
-	SubmissionErrorSearchIndexingDelayed: "search indexing is delayed",
-
-	SubmissionErrorRelationshipVersionStale:      "relationship version is stale",
-	SubmissionErrorRelationshipNotActive:         "relationship must be active, supported, and canonical",
-	SubmissionErrorObjectKindChangeForbidden:     "a Value object cannot be replaced with an Entity",
-	SubmissionErrorSupportSetMismatch:            "supports must exactly match the relationship's effective evidence spans",
-	SubmissionErrorEntityNotFound:                "corrected Entity is not active and available to the team",
-	SubmissionErrorTooManyEntityCandidates:       "corrected Entity name has too many exact candidates",
-	SubmissionErrorPredicateNotFound:             "predicate is not registered and active for the team",
-	SubmissionErrorPredicateSubjectKindMismatch:  "predicate does not allow the corrected subject kind",
-	SubmissionErrorPredicateObjectKindMismatch:   "predicate does not allow the corrected object kind",
-	SubmissionErrorNoChange:                      "correction does not change the Relationship",
-	SubmissionErrorConfirmationExpired:           "relationship correction confirmation expired",
-	SubmissionErrorRelationshipChanged:           "relationship changed while confirmation was pending",
-	SubmissionErrorSupportSetChanged:             "relationship supports changed while confirmation was pending",
-	SubmissionErrorPersistentAmbiguity:           "selected Entity candidate is no longer available",
-	SubmissionErrorInactiveRelationshipCollision: "corrected Relationship collides with inactive or unsupported history",
-}
-
-func submissionStatusError(code SubmissionErrorCode) SubmissionStatusError {
-	message := submissionErrorMessages[code]
-	if message == "" {
-		code = SubmissionErrorProcessingFailed
-		message = submissionErrorMessages[code]
-	}
-	return SubmissionStatusError{Code: string(code), Message: message}
-}
-
-func submissionStatusErrorForCode(rawCode string, fallbackState string) SubmissionStatusError {
-	code := SubmissionErrorCode(strings.TrimSpace(rawCode))
-	for _, known := range submissionErrorCodes {
-		if code == known {
-			return submissionStatusError(code)
-		}
-	}
-	if fallbackState == "rejected" {
-		return submissionStatusError(SubmissionErrorPolicyRejected)
-	}
-	return submissionStatusError(SubmissionErrorProcessingFailed)
-}
-
-func submissionFailureCode(stage, class string) SubmissionErrorCode {
-	stage = strings.TrimSpace(stage)
-	class = strings.TrimSpace(class)
-	switch {
-	case stage == "contract_superseded":
-		return SubmissionErrorContractSuperseded
-	case stage == "replacement_conflict":
-		return SubmissionErrorReplacementConflict
-	case class == "malformed_response", class == "validation_failed", class == "provider_protocol":
-		return SubmissionErrorAssessorInvalid
-	case class == "timeout", class == "rate_limited", class == "http_4xx", class == "http_5xx",
-		class == "http_unexpected", class == "transport", class == "provider_unavailable":
-		return SubmissionErrorAssessorUnavailable
-	case stage == "policy_review", stage == "confidence_policy", stage == "security_signal",
-		stage == "commit_review", stage == "conflict_context_stale":
-		return SubmissionErrorPolicyRejected
-	default:
-		return SubmissionErrorProcessingFailed
-	}
-}
-
-func submissionItemFailureError(item repository.PlacementItem, processing string) *SubmissionStatusError {
-	if processing == "awaiting_review" {
-		return nil
-	}
-	if item.Status != string(domain.PlacementRunFailed) && item.Status != "failed" && item.Status != "rejected" && item.Status != "awaiting_review" {
-		return nil
-	}
-	stage, _ := item.Result["failure_stage"].(string)
-	class, _ := item.Result["failure_class"].(string)
-	if (item.Status == "rejected" || item.Status == "awaiting_review") && strings.TrimSpace(stage) == "" && strings.TrimSpace(class) == "" {
-		return nil
-	}
-	errorValue := submissionStatusError(submissionFailureCode(stage, class))
-	return &errorValue
 }
 
 func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*RememberResult, error) {
@@ -420,6 +274,21 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 		return nil, translateRememberLedgerError(err)
 	}
 	observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "ok")
+	if !created.Existing {
+		logSubmissionLifecycle(s.logger, submissionLifecycleEvent{
+			Event:         "submission_accepted",
+			TeamID:        actor.TeamID.String(),
+			ProfileID:     actor.OwnerID.String(),
+			CorrelationID: correlationID,
+			SubmissionID:  created.IngestID,
+			From:          "none",
+			To:            publicSubmissionProcessingState(created.Status, created.SemanticHoldState),
+			Stage:         "intake",
+			ReasonCode:    "durably_staged",
+			Attempts:      created.Attempts,
+			MaxAttempts:   created.MaxAttempts,
+		})
+	}
 	if disposition := created.FirstDisposition; disposition != nil && disposition.IsRemember {
 		observability.RecordRememberFirstDisposition(ctx, s.metrics, disposition.CompletedAt.Sub(disposition.CreatedAt), disposition.Status)
 	}
@@ -571,7 +440,7 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 			itemError = semanticError
 			appendStatusError(*semanticError)
 		} else if itemSearchState == string(domain.SearchProjectionFailed) {
-			searchError := SubmissionStatusError{Code: string(SubmissionErrorSearchIndexingDelayed), Message: "Semantic search indexing is delayed."}
+			searchError := submissionStatusErrorWithMessage(SubmissionErrorSearchIndexingDelayed, "Semantic search indexing is delayed.")
 			itemError = &searchError
 			searchErrorAdded = true
 		}
@@ -589,22 +458,42 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 		appendStatusError(submissionStatusError(SubmissionErrorPolicyRejected))
 	} else if processing == "failed" && len(statusErrors) == 0 {
 		appendStatusError(submissionStatusError(SubmissionErrorProcessingFailed))
+	} else if processing == "quarantined" && len(statusErrors) == 0 {
+		appendStatusError(submissionStatusError(SubmissionErrorQuarantined))
 	}
 	if searchErrorAdded {
-		appendStatusError(SubmissionStatusError{Code: string(SubmissionErrorSearchIndexingDelayed), Message: "Semantic search indexing is delayed; check the control portal for recovery guidance."})
+		appendStatusError(submissionStatusErrorWithMessage(SubmissionErrorSearchIndexingDelayed, "Semantic search indexing is delayed; check the control portal for recovery guidance."))
 	}
-	return &SubmissionStatusResult{
+	result := &SubmissionStatusResult{
 		SubmissionID:               placement.IngestID,
 		SubmissionKind:             "remember",
 		ProcessingState:            processing,
 		SearchState:                searchState,
 		CheckAfterSeconds:          rememberCheckAfterSeconds,
+		CorrelationID:              placement.CorrelationID,
+		SubmittedAt:                placement.SubmittedAt,
+		NextAttemptAt:              placement.NextAttemptAt,
+		StartedAt:                  placement.StartedAt,
+		UpdatedAt:                  placement.UpdatedAt,
+		CompletedAt:                placement.CompletedAt,
 		Evidence:                   items,
 		Errors:                     statusErrors,
 		QuarantineExpiresAt:        placement.QuarantineExpiresAt,
 		ReplacementWindowExpiresAt: placement.ReplacementWindowExpiresAt,
 		SemanticHold:               submissionSemanticHoldFromLedger(placement),
 	}
+	if placement.MaxAttempts > 0 {
+		attempts, maxAttempts := placement.Attempts, placement.MaxAttempts
+		result.Attempts = &attempts
+		result.MaxAttempts = &maxAttempts
+	}
+	return result
+}
+
+// ProjectSubmissionStatus exposes the same bounded projection to trusted
+// first-party interfaces without exposing placement payloads.
+func ProjectSubmissionStatus(placement *repository.CreateIngestResult) *SubmissionStatusResult {
+	return submissionStatusResultFromLedger(placement)
 }
 
 func publicSubmissionProcessingState(status, holdState string) string {

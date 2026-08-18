@@ -13,7 +13,9 @@ const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 
 let rpcID = 0;
 const runID = `semantic-holds-e2e-${Date.now()}`;
+const groundedRelationshipEvidence = "The Project Nova project uses the Store product.";
 
+await setAutoWriteThreshold(teamID, 0);
 const sameTeamOtherProfile = await createCredential(teamID, `Semantic Holds Other ${runID}`);
 const otherTeam = await createTeam(`Semantic Holds Other Team ${runID}`);
 const otherTeamProfile = await createCredential(otherTeam.id, `Semantic Holds Cross Team ${runID}`);
@@ -22,7 +24,7 @@ const verifierBeforeTarget = await prometheusValue("densemem_verifier_requests_t
 const target = await mcpSuccess(apiKey, "remember", rememberInput(
   "proposal",
   `${runID}:target`,
-  "Project Nova uses Store.",
+  groundedRelationshipEvidence,
 ));
 const targetID = requiredString(target.submission_id, "target submission_id");
 const targetStatus = await waitForState(apiKey, targetID, "awaiting_review");
@@ -40,14 +42,14 @@ const verifierBeforeUnauthorized = await prometheusValue("densemem_verifier_requ
 const sameTeamUnauthorized = await mcpRaw(
   sameTeamOtherProfile.apiKey,
   "remember",
-  rememberInput("statement", `${runID}:cross-profile`, "Project Nova uses Store.", targetID),
+  rememberInput("statement", `${runID}:cross-profile`, groundedRelationshipEvidence, targetID),
   `${runID}:cross-profile`,
 );
 assertMCPError(sameTeamUnauthorized, "cross-profile replacement");
 const crossTeamUnauthorized = await mcpRaw(
   otherTeamProfile.apiKey,
   "remember",
-  rememberInput("statement", `${runID}:cross-team`, "Project Nova uses Store.", targetID),
+  rememberInput("statement", `${runID}:cross-team`, groundedRelationshipEvidence, targetID),
   `${runID}:cross-team`,
 );
 assertMCPError(crossTeamUnauthorized, "cross-team replacement");
@@ -61,7 +63,7 @@ if (postgresCountByCorrelation(`${runID}:cross-profile`) !== 0 || postgresCountB
 const heldSuccessor = await mcpSuccess(apiKey, "remember", rememberInput(
   "proposal",
   `${runID}:held-successor`,
-  "Project Nova uses Store.",
+  groundedRelationshipEvidence,
   targetID,
 ));
 const heldSuccessorID = requiredString(heldSuccessor.submission_id, "held successor submission_id");
@@ -81,7 +83,7 @@ if (afterHeldSuccessor.releaseEvents !== 1) {
 const successfulSuccessor = await mcpSuccess(apiKey, "remember", rememberInput(
   "statement",
   `${runID}:successful-successor`,
-  "Project Nova uses Store.",
+  groundedRelationshipEvidence,
   targetID,
 ));
 const successfulSuccessorID = requiredString(successfulSuccessor.submission_id, "successful successor submission_id");
@@ -101,7 +103,7 @@ const verifierBeforeSupersededRetry = await prometheusValue("densemem_verifier_r
 const supersededRetry = await mcpRaw(
   apiKey,
   "remember",
-  rememberInput("statement", `${runID}:superseded-retry`, "Project Nova uses Store.", targetID),
+  rememberInput("statement", `${runID}:superseded-retry`, groundedRelationshipEvidence, targetID),
   `${runID}:superseded-retry`,
 );
 assertMCPError(supersededRetry, "superseded replacement");
@@ -168,7 +170,8 @@ async function waitForState(key, submissionID, expected) {
       return status;
     }
     if (terminalStates.has(state)) {
-      throw new Error(`submission ${submissionID} reached ${state} while waiting for ${expected}`);
+      const holdIssues = Array.isArray(status.semantic_hold?.issues) ? status.semantic_hold.issues : [];
+      throw new Error(`submission ${submissionID} reached ${state} while waiting for ${expected}: ${JSON.stringify({ hold_issues: holdIssues })}`);
     }
     await delay(2_000);
   }
@@ -300,6 +303,17 @@ async function createCredential(targetTeamID, name) {
     throw new Error("control API did not return a credential key");
   }
   return { apiKey: newCredential };
+}
+
+async function setAutoWriteThreshold(targetTeamID, threshold) {
+  const response = await controlJSON(`/control/api/teams/${targetTeamID}`, {
+    method: "PATCH",
+    body: JSON.stringify({ config: { memory_write: { auto_write_confidence_threshold: threshold } } }),
+  });
+  const configured = response.data?.config?.memory_write?.auto_write_confidence_threshold;
+  if (configured !== threshold) {
+    throw new Error("control API did not apply the semantic-hold test threshold");
+  }
 }
 
 async function controlJSON(path, options) {

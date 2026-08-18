@@ -43,8 +43,10 @@ type SubmissionAssessmentRunScope struct {
 	OwnerProfileID   string
 	IngestID         string
 	PlacementRunID   string
+	CorrelationID    string
 	WorkerID         string
 	ExpectedAttempts int
+	MaxAttempts      int
 }
 
 type LoadSubmissionAssessmentInput struct {
@@ -165,8 +167,9 @@ type RequeueSubmissionAssessmentInput struct {
 }
 
 type RequeueSubmissionAssessmentResult struct {
-	Status     string
-	OutcomeIDs []string
+	Status        string
+	OutcomeIDs    []string
+	NextAttemptAt *time.Time
 }
 
 var _ SubmissionAssessmentRepository = (*LedgerRepositoryImpl)(nil)
@@ -293,6 +296,7 @@ func normalizeSubmissionAssessmentRunScope(scope SubmissionAssessmentRunScope) S
 	scope.OwnerProfileID = strings.TrimSpace(scope.OwnerProfileID)
 	scope.IngestID = strings.TrimSpace(scope.IngestID)
 	scope.PlacementRunID = strings.TrimSpace(scope.PlacementRunID)
+	scope.CorrelationID = strings.TrimSpace(scope.CorrelationID)
 	scope.WorkerID = strings.TrimSpace(scope.WorkerID)
 	return scope
 }
@@ -743,7 +747,8 @@ func (r *LedgerRepositoryImpl) RequeueSubmissionAssessment(
 			result.OutcomeIDs = append(result.OutcomeIDs, outcomeID)
 		}
 		retryDelay := placementEffectiveRetryDelay(input.ExpectedAttempts, input.PlacementRunID, input.RetryAfter)
-		resultUpdate := tx.WithContext(ctx).Exec(`
+		var nextAttemptAt time.Time
+		resultUpdate := tx.WithContext(ctx).Raw(`
 			UPDATE placement_runs
 			SET status = `+placementRunGuardedStatusCase+`,
 			    worker_id = '',
@@ -760,15 +765,18 @@ func (r *LedgerRepositoryImpl) RequeueSubmissionAssessment(
 			  AND worker_id = ?
 			  AND attempts = ?
 			  AND lease_until > clock_timestamp()
+			RETURNING available_at
 		`, input.ReleaseAssessorAttempt, input.ReleaseAssessorAttempt, int(retryDelay/time.Second),
 			input.TeamID, input.OwnerProfileID, input.IngestID, input.PlacementRunID,
-			input.WorkerID, input.ExpectedAttempts)
-		if resultUpdate.Error != nil {
-			return resultUpdate.Error
-		}
-		if resultUpdate.RowsAffected != 1 {
+			input.WorkerID, input.ExpectedAttempts).Row().Scan(&nextAttemptAt)
+		if errors.Is(resultUpdate, sql.ErrNoRows) {
 			return ErrPlacementLeaseLost
 		}
+		if resultUpdate != nil {
+			return resultUpdate
+		}
+		nextAttemptAt = nextAttemptAt.UTC()
+		result.NextAttemptAt = &nextAttemptAt
 		return nil
 	})
 	if err != nil {

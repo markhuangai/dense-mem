@@ -11,11 +11,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
@@ -152,6 +155,37 @@ func TestSanitizeToolError(t *testing.T) {
 	if !strings.Contains(resp.Error.Message, "upstream call failed") {
 		t.Errorf("non-secret context stripped from error message: %q", resp.Error.Message)
 	}
+}
+
+func TestServerLogsContractInputRejectionWithoutArgumentsOrValidationText(t *testing.T) {
+	logger, logs := testLogger(t)
+	reg := registry.New()
+	tool := registry.ContractTools()[0]
+	tool.Visibility = "active"
+	tool.Invoke = func(context.Context, string, map[string]any) (map[string]any, error) {
+		t.Fatal("invalid contract input invoked remember")
+		return nil, nil
+	}
+	require.NoError(t, reg.Register(tool))
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	ctx := correlation.WithID(context.Background(), "corr-input-rejected")
+	ctx = requestctx.WithActor(ctx, requestctx.Actor{TeamID: teamID, OwnerID: ownerID})
+	server := NewServer(reg, teamID.String(), logger)
+
+	_, rpcErr := server.invokeTool(ctx, registry.ToolRemember, map[string]any{
+		"evidence": []any{map[string]any{"content": "must-never-appear-in-logs"}},
+	})
+	require.NotNil(t, rpcErr)
+	require.Equal(t, errCodeInvalidParams, rpcErr.Code)
+
+	logged := logs.String()
+	require.Contains(t, logged, `"msg":"mcp_tool_input_rejected"`)
+	require.Contains(t, logged, `"reason_code":"contract_validation_failed"`)
+	require.Contains(t, logged, `"reference_id":"remember"`)
+	require.Contains(t, logged, `"correlation_id":"corr-input-rejected"`)
+	require.NotContains(t, logged, "must-never-appear-in-logs")
+	require.NotContains(t, logged, "relationships is required")
 }
 
 // testLogger returns a LogProvider that writes to a bytes.Buffer.

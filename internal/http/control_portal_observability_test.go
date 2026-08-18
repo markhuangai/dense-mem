@@ -197,15 +197,24 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 		return rec
 	}
 
-	rec := do("/control/api/logs?limit=5&offset=2&severity=warn&sort=severity&direction=asc")
+	logFrom := "2026-06-01T00:00:00Z"
+	logTo := "2026-06-23T00:00:00Z"
+	rec := do("/control/api/logs?limit=5&offset=2&severity=warn&sort=severity&direction=asc&event=submission_failed&team_id=" + teamID.String() + "&reference_type=submission&reference_id=submission-1&from=" + logFrom + "&to=" + logTo)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "dream cycle completed")
+	expectedLogFrom, expectedLogTo := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC)
 	assert.Equal(t, domain.OperationLogFilter{
-		Limit:     5,
-		Offset:    2,
-		Severity:  "WARN",
-		Sort:      "severity",
-		Direction: "asc",
+		Limit:         5,
+		Offset:        2,
+		Severity:      "WARN",
+		Sort:          "severity",
+		Direction:     "asc",
+		Event:         "submission_failed",
+		TeamID:        &teamID,
+		ReferenceType: "submission",
+		ReferenceID:   "submission-1",
+		From:          &expectedLogFrom,
+		To:            &expectedLogTo,
 	}, logs.filter)
 
 	rec = do("/control/api/recall-feedback-events?limit=5&offset=2&quality=low&include_pending=true&missing_context=true&irrelevant=false&from=2026-06-01T00:00:00Z&to=2026-06-23T00:00:00Z")
@@ -282,6 +291,21 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	c = e.NewContext(req, rec)
 	_, err = controlOperationLogsFilter(c)
 	require.ErrorContains(t, err, "direction must be asc or desc")
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/logs?team_id=bad", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlOperationLogsFilter(c)
+	require.ErrorContains(t, err, "team ID must be a valid UUID")
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/logs?from=bad", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlOperationLogsFilter(c)
+	require.ErrorContains(t, err, "from must be RFC3339")
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/logs?from=2026-06-24T00:00:00Z&to=2026-06-23T00:00:00Z", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlOperationLogsFilter(c)
+	require.ErrorContains(t, err, "from must be before or equal to to")
 
 	req = httptest.NewRequest(http.MethodGet, "/control/api/recall-feedback-events?limit=501", nil)
 	c = e.NewContext(req, rec)

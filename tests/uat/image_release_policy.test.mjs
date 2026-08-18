@@ -88,6 +88,19 @@ test("prerelease publication waits for the staging migration rehearsal", async (
   }
 });
 
+test("published images require the populated migration gate before building", async () => {
+  for (const filename of ["publish-image.yml", "publish-demo-image.yml"]) {
+    const workflow = await readFile(
+      new URL(`../../.github/workflows/${filename}`, import.meta.url),
+      "utf8",
+    );
+    const gate = workflow.indexOf("run: scripts/pre-image-check.sh HEAD^");
+    const build = workflow.indexOf("uses: docker/build-push-action@v7");
+    assert.ok(gate >= 0, `${filename} is missing the populated migration gate`);
+    assert.ok(build > gate, `${filename} builds before the populated migration gate`);
+  }
+});
+
 test("same-repository pushes rebuild while the preview label remains", () => {
   assert.deepEqual(decidePreviewEvent(baseEvent), {
     mode: "attempt",

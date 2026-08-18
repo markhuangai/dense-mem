@@ -24,7 +24,7 @@ E2E_FILE_ID=""
 E2E_SERVER_IMAGE=""
 E2E_PLAYWRIGHT_CONTAINER=""
 
-source "${ROOT_DIR}/scripts/e2e-compose-json.sh"; source "${ROOT_DIR}/scripts/e2e-compose-conflict.sh"; source "${ROOT_DIR}/scripts/e2e-compose-embedding-reconciliation.sh"; source "${ROOT_DIR}/scripts/e2e-compose-submission-status.sh"; source "${ROOT_DIR}/scripts/e2e-compose-security.sh"
+source "${ROOT_DIR}/scripts/e2e-compose-json.sh"; source "${ROOT_DIR}/scripts/e2e-compose-conflict.sh"; source "${ROOT_DIR}/scripts/e2e-compose-embedding-reconciliation.sh"; source "${ROOT_DIR}/scripts/e2e-compose-submission-status.sh"; source "${ROOT_DIR}/scripts/e2e-compose-security.sh"; source "${ROOT_DIR}/scripts/e2e-compose-prometheus.sh"
 source "${ROOT_DIR}/scripts/e2e-compose-identity-cleanup.sh"; source "${ROOT_DIR}/scripts/e2e-compose-memory-spaces.sh"
 sanitize_project_name() {
   local raw="$1"
@@ -209,34 +209,6 @@ is_generated_marker_file() {
   [[ "$first_line" == "$E2E_MARKER" ]]
 }
 
-prepare_e2e_prometheus_files() {
-  if [[ -e "$E2E_PROMETHEUS_DIR" ]]; then
-    echo "Refusing to replace existing E2E Prometheus directory ${E2E_PROMETHEUS_DIR}." >&2
-    return 1
-  fi
-  mkdir "$E2E_PROMETHEUS_DIR"
-  chmod 755 "$E2E_PROMETHEUS_DIR"
-  E2E_FILES_PREPARED=1
-
-  cat > "${E2E_PROMETHEUS_DIR}/prometheus.yml" <<EOF
-${E2E_MARKER}
-global:
-  scrape_interval: 5s
-  evaluation_interval: 5s
-scrape_configs:
-  - job_name: dense-mem
-    metrics_path: /metrics
-    authorization:
-      credentials_file: /run/secrets/telemetry-scrape-token
-    static_configs:
-      - targets:
-          - server:8090
-EOF
-
-  printf '%s\n' "$TELEMETRY_SCRAPE_TOKEN" > "${E2E_PROMETHEUS_DIR}/telemetry-scrape-token"
-  chmod 644 "${E2E_PROMETHEUS_DIR}/prometheus.yml" "${E2E_PROMETHEUS_DIR}/telemetry-scrape-token"
-}
-
 prepare_e2e_environment() {
   E2E_ENV_FILE="${ROOT_DIR}/.env.e2e-${E2E_FILE_ID}"
   printf '%s\n' "$E2E_MARKER" > "$E2E_ENV_FILE"
@@ -307,7 +279,8 @@ replaceRequired(/^(\s*context:\s*)\.\s*$/gm, (_, prefix) => `${prefix}${worktree
 replaceRequired(/^(\s*image:\s*)ghcr\.io\/z-m-huang\/dense-mem:latest\s*$/gm, (_, prefix) => `${prefix}${serverImage}`, "server image", 1);
 replaceRequired(
   /^(\s*)-\s+\.\/?prometheus\.yml:\/etc\/prometheus\/prometheus\.yml:ro\s*$/m,
-  (_, indent) => `${indent}- ${prometheusDir}/prometheus.yml:/etc/prometheus/prometheus.yml:ro`,
+  // Docker Desktop cannot reliably bind /tmp files; stage them through a Compose volume.
+  (_, indent) => `${indent}- e2e-prometheus-config:/etc/prometheus`,
   "Prometheus config mount",
 );
 replaceRequired(
@@ -317,13 +290,14 @@ replaceRequired(
 );
 replaceRequired(
   /(^  prometheus:\r?\n[\s\S]*?)^    secrets:\r?\n      - telemetry-scrape-token\r?\n/m,
-  (_, prometheusBlock) => `${prometheusBlock}    secrets:\n      - telemetry-scrape-token\n`,
+  (_, prometheusBlock) => prometheusBlock,
   "Prometheus secret block",
 );
+replaceRequired(/^volumes:\r?\n/m, "volumes:\n  e2e-prometheus-config:\n", "volume declarations", 1);
 
 fs.writeFileSync(destinationPath, `${marker}\n${compose}`);
 NODE
-  if ! grep -F -- "$E2E_ENV_FILE" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "${E2E_PROMETHEUS_DIR}/prometheus.yml:/etc/prometheus/prometheus.yml:ro" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "${E2E_PROMETHEUS_DIR}/telemetry-scrape-token" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "context: ${ROOT_DIR}" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "$E2E_SERVER_IMAGE" "$E2E_COMPOSE_FILE" >/dev/null; then
+  if ! grep -F -- "$E2E_ENV_FILE" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "e2e-prometheus-config:/etc/prometheus" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "${E2E_PROMETHEUS_DIR}/telemetry-scrape-token" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "context: ${ROOT_DIR}" "$E2E_COMPOSE_FILE" >/dev/null || ! grep -F -- "$E2E_SERVER_IMAGE" "$E2E_COMPOSE_FILE" >/dev/null; then
     echo "Generated compose file did not contain the expected E2E substitutions." >&2
     return 1
   fi
@@ -843,6 +817,9 @@ if docker ps -a --format '{{.Names}}' | grep -Fxq "$PROMETHEUS_CONTAINER_NAME"; 
   echo "Container ${PROMETHEUS_CONTAINER_NAME} already exists; choose another DENSE_MEM_E2E_PROJECT_NAME." >&2
   exit 1
 fi
+prepare_e2e_prometheus_volume
+prepare_conflict_provider_volume
+prepare_embedding_proxy_volume
 
 echo "Starting e2e compose stack on ${USER_URL}, ${CONTROL_URL}, and ${PROMETHEUS_URL}."
 compose up -d postgres

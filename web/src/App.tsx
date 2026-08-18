@@ -4,6 +4,7 @@ import {
   Ban,
   BarChart3,
   KeyRound,
+  Inbox,
   ListFilter,
   LogOut,
   MessageSquare,
@@ -40,6 +41,7 @@ const LogsPanel = lazy(() => import("./control/LogsPanel").then((module) => ({ d
 const RecallFeedbackPanel = lazy(() => import("./control/RecallFeedbackPanel").then((module) => ({ default: module.RecallFeedbackPanel })));
 const ConflictQueuePanel = lazy(() => import("./control/ConflictQueuePanel").then((module) => ({ default: module.ConflictQueuePanel })));
 const SearchConvergencePanel = lazy(() => import("./control/SearchConvergencePanel").then((module) => ({ default: module.SearchConvergencePanel })));
+const SubmissionsPanel = lazy(() => import("./control/SubmissionsPanel").then((module) => ({ default: module.SubmissionsPanel })));
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
 const THEME_STORAGE_KEY = "denseMem.controlTheme";
@@ -273,6 +275,14 @@ function Portal({
           icon: <Users size={17} aria-hidden="true" />,
           active: activeTab === "teams" && (teamWorkspaceTab === "overview" || teamWorkspaceTab === "settings"),
           onClick: () => openTeamWorkspace("overview"),
+        },
+        {
+          id: "submissions",
+          label: "Submissions",
+          icon: <Inbox size={17} aria-hidden="true" />,
+          active: activeTab === "teams" && teamWorkspaceTab === "submissions",
+          disabled: !selectedTeam,
+          onClick: () => openTeamWorkspace("submissions"),
         },
         {
           id: "metrics",
@@ -569,6 +579,11 @@ function TeamWorkspace({
     <TeamWorkspaceShell team={team} activeTab={activeTab} onSelectTab={onSelectTab}>
       {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} onOpenMetrics={onOpenMetrics} />}
       {activeTab === "credentials" && <TeamCredentialsPanel api={api} team={team} embedded />}
+      {activeTab === "submissions" && (
+        <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading submissions" /></div>}>
+          <SubmissionsPanel api={api} team={team} />
+        </Suspense>
+      )}
       {activeTab === "conflicts" && (
         <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading conflict queue" /></div>}>
           <ConflictQueuePanel api={api} team={team} />

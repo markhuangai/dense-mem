@@ -15,8 +15,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
+	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/tools"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
@@ -124,10 +128,12 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 		args = map[string]any{}
 	}
 	if registry.IsEvaluationTool(tool.Name) && registry.HasTenantOverrideArgs(args) {
+		s.logToolInputRejected(ctx, tool.Name, "tenant_override_rejected")
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: "evaluation tools do not accept team_id or profile_id"}
 	}
 	if registry.IsContractTool(tool) {
 		if err := registry.ValidateContractInput(tool, args, s.validationScopes(tool)); err != nil {
+			s.logToolInputRejected(ctx, tool.Name, "contract_validation_failed")
 			return nil, &rpcError{Code: errCodeInvalidParams, Message: boundedRPCText(err.Error())}
 		}
 	} else {
@@ -136,6 +142,7 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 		// may still receive a construction-time team for tests.
 		registry.StripTenantOverrideArgs(args)
 		if err := registry.ValidateInput(tool, args); err != nil {
+			s.logToolInputRejected(ctx, tool.Name, "input_validation_failed")
 			return nil, &rpcError{Code: errCodeInvalidParams, Message: boundedRPCText(err.Error())}
 		}
 	}
@@ -162,6 +169,26 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 			{"type": "text", "text": string(payload)},
 		},
 	}, nil
+}
+
+func (s *Server) logToolInputRejected(ctx context.Context, toolName, reasonCode string) {
+	if s.logger == nil {
+		return
+	}
+	attrs := []observability.LogAttr{
+		observability.String("tool", toolName),
+		observability.String("team_id", s.teamID),
+		observability.String("reference_type", "mcp_tool"),
+		observability.String("reference_id", toolName),
+		observability.String("reason_code", reasonCode),
+	}
+	if correlationID := correlation.FromContext(ctx); correlationID != "" {
+		attrs = append(attrs, observability.CorrelationID(correlationID))
+	}
+	if actor, ok := requestctx.ActorFromContext(ctx); ok && actor.OwnerID != uuid.Nil {
+		attrs = append(attrs, observability.ProfileID(actor.OwnerID.String()))
+	}
+	s.logger.Warn("mcp_tool_input_rejected", attrs...)
 }
 
 func (s *Server) canUseTool(tool registry.Tool) bool {

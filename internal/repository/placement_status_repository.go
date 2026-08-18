@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -63,10 +64,20 @@ func loadPlacementRunStatus(
 	result := &CreateIngestResult{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID}
 	var proposalRaw []byte
 	var semanticHoldState sql.NullString
+	var submittedAt, nextAttemptAt, startedAt, updatedAt, completedAt sql.NullTime
 	var quarantineExpiresAt, replacementWindowExpiresAt sql.NullTime
 	err := tx.WithContext(ctx).Raw(`
 		SELECT run.placement_run_id::text, run.status, COALESCE(ingest.proposal, '{}'::jsonb),
 		       COALESCE(ingest.metadata ->> 'contract_version', ''),
+		       COALESCE(ingest.metadata #>> '{actor,correlation_id}', ''),
+		       run.attempts, run.max_attempts, ingest.created_at,
+		       CASE
+		           WHEN run.status IN ('queued', 'guarded')
+		            AND run.attempts > 0
+		            AND run.available_at > now()
+		           THEN run.available_at
+		       END,
+		       run.started_at, run.updated_at, run.completed_at,
 		       run.semantic_hold_state, run.quarantine_expires_at, hold.expires_at
 		FROM placement_runs AS run
 		JOIN knowledge_ingests AS ingest
@@ -83,6 +94,14 @@ func loadPlacementRunStatus(
 		&result.Status,
 		&proposalRaw,
 		&result.ContractVersion,
+		&result.CorrelationID,
+		&result.Attempts,
+		&result.MaxAttempts,
+		&submittedAt,
+		&nextAttemptAt,
+		&startedAt,
+		&updatedAt,
+		&completedAt,
 		&semanticHoldState,
 		&quarantineExpiresAt,
 		&replacementWindowExpiresAt,
@@ -99,6 +118,11 @@ func loadPlacementRunStatus(
 	if semanticHoldState.Valid {
 		result.SemanticHoldState = strings.TrimSpace(semanticHoldState.String)
 	}
+	result.SubmittedAt = nullableStatusTime(submittedAt)
+	result.NextAttemptAt = nullableStatusTime(nextAttemptAt)
+	result.StartedAt = nullableStatusTime(startedAt)
+	result.UpdatedAt = nullableStatusTime(updatedAt)
+	result.CompletedAt = nullableStatusTime(completedAt)
 	if quarantineExpiresAt.Valid {
 		value := quarantineExpiresAt.Time.UTC()
 		result.QuarantineExpiresAt = &value
@@ -187,4 +211,12 @@ func loadPlacementRunStatus(
 		return nil, err
 	}
 	return result, nil
+}
+
+func nullableStatusTime(value sql.NullTime) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Time.UTC()
+	return &result
 }

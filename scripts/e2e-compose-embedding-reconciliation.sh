@@ -1,4 +1,4 @@
-E2E_EMBEDDING_PROXY_PORT=""; E2E_EMBEDDING_PROXY_OVERLAY_FILE=""; E2E_EMBEDDING_PROXY_SCRIPT=""
+E2E_EMBEDDING_PROXY_PORT=""; E2E_EMBEDDING_PROXY_OVERLAY_FILE=""
 
 append_embedding_reconciliation_environment() {
   if [[ "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" ]]; then
@@ -17,35 +17,17 @@ append_embedding_reconciliation_environment() {
     "EMBEDDING_PROXY_UPSTREAM_KEY=${live_api_key}" >> "$E2E_ENV_FILE"
 }
 
-is_generated_proxy_file() {
-  local path="$1"
-  local first_line=""
-  if [[ ! -f "$path" ]]; then
-    return 1
-  fi
-  IFS= read -r first_line < "$path" || true
-  [[ "$first_line" == "// ${E2E_MARKER}" ]]
-}
-
 prepare_embedding_proxy_files() {
   if [[ "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" ]]; then
     return
   fi
   E2E_EMBEDDING_PROXY_PORT="${DENSE_MEM_E2E_EMBEDDING_PROXY_PORT:-$(pick_ports 1)}"
   E2E_EMBEDDING_PROXY_OVERLAY_FILE="${ROOT_DIR}/docker-compose.embedding-reconciliation-e2e-${E2E_FILE_ID}.yml"
-  E2E_EMBEDDING_PROXY_SCRIPT="${E2E_BIND_DIR}/densemem-embedding-fault-proxy-${E2E_FILE_ID}.mjs"
-  node - "$E2E_EMBEDDING_PROXY_SCRIPT" "$ROOT_DIR/tests/uat/embedding_fault_proxy.mjs" "$E2E_MARKER" <<'NODE'
-const fs = require("node:fs");
-const [destination, source, marker] = process.argv.slice(2);
-const sourceText = fs.readFileSync(source, "utf8").replace(/^#![^\n]*\n/, "");
-fs.writeFileSync(destination, `// ${marker}\n${sourceText}`);
-NODE
-  node - "$E2E_EMBEDDING_PROXY_OVERLAY_FILE" "$E2E_EMBEDDING_PROXY_SCRIPT" "$E2E_EMBEDDING_PROXY_PORT" "$E2E_ENV_FILE" "$E2E_MARKER" "$E2E_SCENARIO" <<'NODE'
+  node - "$E2E_EMBEDDING_PROXY_OVERLAY_FILE" "$E2E_EMBEDDING_PROXY_PORT" "$E2E_ENV_FILE" "$E2E_MARKER" "$E2E_SCENARIO" <<'NODE'
 const fs = require("node:fs");
 
-const [destination, proxyScript, proxyPort, envFile, marker, scenario] = process.argv.slice(2);
+const [destination, proxyPort, envFile, marker, scenario] = process.argv.slice(2);
 const quote = (value) => JSON.stringify(value);
-const mount = quote(`${proxyScript}:/e2e/embedding_fault_proxy.mjs:ro`);
 const proxyMode = scenario === "embedding_resilience" ? "input_rejected" : "quota";
 const contents = `${marker}
 services:
@@ -62,7 +44,7 @@ services:
     environment:
       EMBEDDING_PROXY_MODE: ${proxyMode}
     volumes:
-      - ${mount}
+      - e2e-embedding-fault-proxy:/e2e
     ports:
       - "127.0.0.1:${proxyPort}:8081"
     healthcheck:
@@ -70,9 +52,25 @@ services:
       interval: 1s
       timeout: 2s
       retries: 30
+volumes:
+  e2e-embedding-fault-proxy:
 `;
 fs.writeFileSync(destination, contents);
 NODE
+}
+
+prepare_embedding_proxy_volume() {
+  local container_id
+  if [[ "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" ]]; then
+    return
+  fi
+  compose create embedding-fault-proxy >/dev/null
+  container_id="$(compose ps -aq embedding-fault-proxy)"
+  if [[ -z "$container_id" ]]; then
+    echo "Failed to create the E2E embedding fault proxy volume." >&2
+    return 1
+  fi
+  docker cp "${ROOT_DIR}/tests/uat/embedding_fault_proxy.mjs" "${container_id}:/e2e/embedding_fault_proxy.mjs"
 }
 
 append_embedding_proxy_compose_args() {
@@ -82,7 +80,6 @@ append_embedding_proxy_compose_args() {
 
 cleanup_embedding_proxy_files() {
   if [[ -n "$E2E_EMBEDDING_PROXY_OVERLAY_FILE" && -f "$E2E_EMBEDDING_PROXY_OVERLAY_FILE" ]] && is_generated_marker_file "$E2E_EMBEDDING_PROXY_OVERLAY_FILE"; then rm -- "$E2E_EMBEDDING_PROXY_OVERLAY_FILE"; fi
-  if [[ -n "$E2E_EMBEDDING_PROXY_SCRIPT" && -f "$E2E_EMBEDDING_PROXY_SCRIPT" ]] && is_generated_proxy_file "$E2E_EMBEDDING_PROXY_SCRIPT"; then rm -- "$E2E_EMBEDDING_PROXY_SCRIPT"; fi
 }
 
 run_embedding_reconciliation_e2e() {

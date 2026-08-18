@@ -68,6 +68,9 @@ func (s *submissionAssessmentPlacementWorkerService) completeReview(
 	if err == nil && completed == nil {
 		return errors.New("submission assessment worker: nil review result")
 	}
+	if err == nil {
+		s.logLifecycle(scope, "submission_held", "awaiting_review", stage, strings.TrimSpace(stage), nil)
+	}
 	return err
 }
 

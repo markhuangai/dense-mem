@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -206,12 +207,49 @@ func controlOperationLogsFilter(c echo.Context) (domain.OperationLogFilter, erro
 	default:
 		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "direction must be asc or desc")
 	}
+	var teamID *uuid.UUID
+	if raw := strings.TrimSpace(c.QueryParam("team_id")); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "team ID must be a valid UUID")
+		}
+		teamID = &parsed
+	}
+	event := strings.TrimSpace(c.QueryParam("event"))
+	if len(event) > 128 {
+		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "event must be at most 128 characters")
+	}
+	referenceType := strings.TrimSpace(c.QueryParam("reference_type"))
+	if len(referenceType) > 64 {
+		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "reference_type must be at most 64 characters")
+	}
+	referenceID := strings.TrimSpace(c.QueryParam("reference_id"))
+	if len(referenceID) > 128 {
+		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "reference_id must be at most 128 characters")
+	}
+	from, err := optionalControlTime(c.QueryParam("from"), "from")
+	if err != nil {
+		return domain.OperationLogFilter{}, err
+	}
+	to, err := optionalControlTime(c.QueryParam("to"), "to")
+	if err != nil {
+		return domain.OperationLogFilter{}, err
+	}
+	if from != nil && to != nil && from.After(*to) {
+		return domain.OperationLogFilter{}, httperr.New(httperr.VALIDATION_ERROR, "from must be before or equal to to")
+	}
 	return domain.OperationLogFilter{
-		Limit:     limit,
-		Offset:    offset,
-		Severity:  severity,
-		Sort:      sort,
-		Direction: direction,
+		Limit:         limit,
+		Offset:        offset,
+		Severity:      severity,
+		Sort:          sort,
+		Direction:     direction,
+		Event:         event,
+		TeamID:        teamID,
+		ReferenceType: referenceType,
+		ReferenceID:   referenceID,
+		From:          from,
+		To:            to,
 	}, nil
 }
 

@@ -46,12 +46,13 @@ async function waitForTerminal(id) {
 }
 
 function assertTerminalErrors(status) {
-  if (!["rejected", "failed"].includes(status.processing_state) || !Array.isArray(status.errors) || status.errors.length === 0) {
+  if (!["rejected", "failed", "quarantined"].includes(status.processing_state) || !Array.isArray(status.errors) || status.errors.length === 0) {
     throw new Error("terminal failure returned an empty errors array");
   }
   const allowedCodes = new Set([
     "submission_semantic_hold", "submission_policy_rejected", "assessor_response_invalid", "assessor_unavailable",
     "submission_replacement_conflict", "submission_processing_failed", "contract_superseded", "search_indexing_delayed",
+    "submission_quarantined",
     "relationship_version_stale", "relationship_not_active", "object_kind_change_forbidden",
     "support_set_mismatch", "entity_not_found", "too_many_entity_candidates",
     "predicate_not_found", "predicate_subject_kind_mismatch", "predicate_object_kind_mismatch",
@@ -67,6 +68,7 @@ function assertTerminalErrors(status) {
     "submission processing failed",
     "submission uses a superseded remember contract; resubmit the complete batch using the current contract",
     "search indexing is delayed",
+    "submission was quarantined by security policy",
     "relationship version is stale",
     "relationship must be active, supported, and canonical",
     "a Value object cannot be replaced with an Entity",
@@ -85,16 +87,23 @@ function assertTerminalErrors(status) {
     "Semantic search indexing is delayed.",
     "Semantic search indexing is delayed; check the control portal for recovery guidance.",
   ]);
+  const allowedActions = new Set([
+    "poll_status", "resubmit_submission", "submit_replacement", "retry_correction", "contact_operator", "none",
+  ]);
   const seen = new Set();
   for (const item of status.errors) {
-    if (item === null || typeof item !== "object" || Array.isArray(item) || typeof item.code !== "string" || typeof item.message !== "string") {
-      throw new Error("terminal error fields were not strings");
+    if (item === null || typeof item !== "object" || Array.isArray(item) ||
+        typeof item.code !== "string" || typeof item.message !== "string" ||
+        typeof item.retryable !== "boolean" || typeof item.next_action !== "string" ||
+        typeof item.remediation !== "string") {
+      throw new Error("terminal error fields were incomplete");
     }
-    const { code, message } = item;
-    if (!allowedCodes.has(code) || !allowedMessages.has(message) || message.length === 0 || message.length > 512) {
+    const { code, message, next_action: nextAction, remediation } = item;
+    if (!allowedCodes.has(code) || !allowedMessages.has(message) || !allowedActions.has(nextAction) ||
+        message.length === 0 || message.length > 512 || remediation.length === 0 || remediation.length > 512) {
       throw new Error("terminal error was not bounded and typed");
     }
-    if (/[\r\n]|api[_-]?key|password|token|stack|provider|cookie|prompt|embedding|database|cross[- ]?team/i.test(message)) {
+    if (/[\r\n]|api[_-]?key|password|token|stack|provider|cookie|prompt|embedding|database|cross[- ]?team/i.test(`${message} ${remediation}`)) {
       throw new Error("terminal error leaked prohibited data");
     }
     if (seen.has(`${code}\0${message}`)) throw new Error("terminal errors were not deduplicated");

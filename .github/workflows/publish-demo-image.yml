@@ -54,6 +54,15 @@ jobs:
           ref: refs/tags/${{ steps.version.outputs.tag }}
           fetch-depth: 0
 
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.6"
+          cache: false
+
+      - name: Validate populated PostgreSQL upgrade
+        run: scripts/pre-image-check.sh HEAD^
+
       - name: Resolve image source metadata
         id: source
         shell: bash

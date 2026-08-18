@@ -6,6 +6,7 @@ const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 const scenario = process.env.DENSE_MEM_E2E_MEMORY_SCENARIO || "credential_memory_binding";
+const placementTimeoutSeconds = positiveIntEnv("DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS", 720, 60, 1800);
 let rpcID = 0;
 
 const created = [];
@@ -44,7 +45,8 @@ if (scenario === "credential_memory_binding") {
   assert(denied.status >= 401 && denied.status < 500, "revoked credential remained usable");
 } else if (scenario === "space_aware_recall") {
   const sharedNeedle = "memory space e2e mentions team shared evidence sentinel";
-  await mcpSuccess("remember", rememberInput(sharedNeedle, "memory space e2e", "mentions", "sentinel"), apiKey);
+  const submission = await mcpSuccess("remember", rememberInput(sharedNeedle, "memory space e2e", "mentions", "sentinel"), apiKey);
+  await waitForCompletedSubmission(submission);
   const recall = await waitForRecall(sharedNeedle, sharedNeedle, apiKey);
   assert((recall.results ?? []).some((item) => item.context?.includes(sharedNeedle)), "team-shared recall positive control did not return the seeded evidence");
   for (const item of recall.results ?? []) assert(item.space_kind === "team_shared", `team-shared result lacked its space label: ${JSON.stringify(item)}`);
@@ -58,7 +60,8 @@ if (scenario === "credential_memory_binding") {
   const other = await createCredential(otherTeam.id, "isolated key", { scopes: ["read", "write"], memory_binding: "credential_private" });
   created.push(other);
   const isolatedNeedle = "isolated team mentions sentinel";
-  await mcpSuccess("remember", rememberInput(isolatedNeedle, "isolated team", "mentions", "sentinel"), other.apiKey);
+  const submission = await mcpSuccess("remember", rememberInput(isolatedNeedle, "isolated team", "mentions", "sentinel"), other.apiKey);
+  await waitForCompletedSubmission(submission, other.apiKey);
   await waitForRecall("isolated team sentinel", isolatedNeedle, other.apiKey);
   const recall = await mcpSuccess("recall_memory", { query: "isolated team sentinel", limit: 20 }, apiKey);
   assert(!(recall.results ?? []).some((item) => item.context?.includes(isolatedNeedle)), "cross-team evidence leaked into recall");
@@ -139,7 +142,35 @@ async function waitForRecall(query, needle, key, attempts = 30, delayMs = 1000) 
   throw new Error(`recall never returned seeded evidence: ${needle}`);
 }
 
+async function waitForCompletedSubmission(receipt, key = apiKey) {
+  const submissionID = receipt?.submission_id;
+  assert(typeof submissionID === "string" && submissionID, `remember omitted submission_id: ${JSON.stringify(receipt)}`);
+  const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2000);
+  let lastState = receipt.processing_state ?? "unknown";
+  let lastSearchState = "unknown";
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const status = await mcpSuccess("get_submission_status", { submission_id: submissionID }, key);
+    lastState = status.processing_state ?? "unknown";
+    lastSearchState = status.search_state ?? "unknown";
+    if (lastState === "completed" && ["current", "not_required"].includes(lastSearchState)) return status;
+    if (["awaiting_review", "rejected", "failed", "quarantined"].includes(lastState) || lastSearchState === "failed") {
+      throw new Error(`memory-space submission reached ${lastState}/${lastSearchState}: ${JSON.stringify(status.errors ?? [])}`);
+    }
+    if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  throw new Error(`timed out waiting for memory-space submission ${submissionID} (last ${lastState}/${lastSearchState})`);
+}
+
 function requiredEnv(name) { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }
+function positiveIntEnv(name, fallback, minimum, maximum) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return parsed;
+}
 function assert(condition, message) { if (!condition) throw new Error(message); }
 
 function rememberInput(content, subject, predicate, object) {

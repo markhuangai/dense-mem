@@ -15,7 +15,8 @@ let rpcID = 0;
 const runID = `submission-status-e2e-${Date.now()}`;
 
 const listed = await toolsList();
-const listedNames = new Set((listed.tools ?? []).map((tool) => tool.name));
+const listedTools = listed.tools ?? [];
+const listedNames = new Set(listedTools.map((tool) => tool.name));
 for (const required of ["remember", "get_submission_status", "correct_relationship", "trace_memory", "export_memory_pack"]) {
   if (!listedNames.has(required)) {
     throw new Error(`tools/list is missing ${required}`);
@@ -26,6 +27,7 @@ for (const removed of ["correct_entity_resolution", "get_memory_placement", "res
     throw new Error(`tools/list still exposes removed ${removed}`);
   }
 }
+assertConverterReadableToolSchemas(listedTools);
 
 const remember = await mcpSuccess("remember", rememberInput());
 const submissionID = stringValue(remember.submission_id);
@@ -39,15 +41,24 @@ if (remember.submission_kind !== "remember") {
 if (remember.status_tool !== "get_submission_status") {
   throw new Error("remember did not advertise get_submission_status");
 }
+if (!stringValue(remember.correlation_id)) {
+  throw new Error("remember did not return a correlation_id");
+}
 
 const initial = await mcpSuccess("get_submission_status", { submission_id: submissionID });
 assertStatusShape(initial, submissionID);
+assertRememberStatusMetadata(initial, remember);
 const terminal = await waitForTerminal(submissionID);
+assertRememberStatusMetadata(terminal, remember, true);
 const repeated = await mcpSuccess("get_submission_status", { submission_id: submissionID });
 assertStatusShape(repeated, submissionID);
 if (stableJSON(terminal) !== stableJSON(repeated)) {
   throw new Error("repeated submission status changed unexpectedly");
 }
+const diagnostics = await waitForControlSubmission(submissionID);
+assertSubmissionDiagnostics(diagnostics, terminal, rememberInput().evidence[0].content);
+const timeline = await waitForSubmissionTimeline(submissionID);
+assertSubmissionTimeline(timeline, submissionID, remember.correlation_id);
 
 const missing = await mcpRaw(apiKey, "get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
 if (!missing.error || missing.result !== undefined || typeof missing.error.message !== "string") {
@@ -257,6 +268,10 @@ console.log(JSON.stringify({
   relationship_correction_owner_only: true,
   relationship_correction_successor: true,
   import_ledger_tables_absent: true,
+  converter_readable_schemas: true,
+  actionable_status_metadata: true,
+  control_submission_diagnostics: true,
+  exact_submission_timeline: true,
 }, null, 2));
 
 async function toolsList() {
@@ -342,6 +357,135 @@ function assertStatusShape(status, id) {
       throw new Error("submission status exposed raw or placement evidence details");
     }
   }
+  for (const item of status.errors) {
+    if (!isRecord(item) || typeof item.code !== "string" || typeof item.message !== "string" ||
+        typeof item.retryable !== "boolean" || typeof item.next_action !== "string" ||
+        typeof item.remediation !== "string") {
+      throw new Error("submission status returned incomplete error guidance");
+    }
+    if (!["poll_status", "resubmit_submission", "submit_replacement", "retry_correction", "contact_operator", "none"].includes(item.next_action)) {
+      throw new Error(`submission status returned unknown next_action ${item.next_action}`);
+    }
+  }
+}
+
+function assertRememberStatusMetadata(status, receipt, terminal = false) {
+  if (status.submission_kind !== "remember" || status.correlation_id !== receipt.correlation_id) {
+    throw new Error("remember status lost its submission kind or correlation_id");
+  }
+  if (!Number.isInteger(status.attempts) || !Number.isInteger(status.max_attempts) ||
+      status.attempts < 0 || status.max_attempts < 1 || status.attempts > status.max_attempts) {
+    throw new Error("remember status returned invalid attempt metadata");
+  }
+  const submittedAt = requiredTimestamp(status.submitted_at, "submitted_at");
+  const updatedAt = requiredTimestamp(status.updated_at, "updated_at");
+  if (updatedAt < submittedAt) {
+    throw new Error("remember status updated_at precedes submitted_at");
+  }
+  for (const field of ["next_attempt_at", "started_at", "completed_at"]) {
+    if (status[field] !== undefined) requiredTimestamp(status[field], field);
+  }
+  if (terminal && status.processing_state === "completed" && status.completed_at === undefined) {
+    throw new Error("completed remember status omitted completed_at");
+  }
+}
+
+function assertConverterReadableToolSchemas(tools) {
+  const rememberTool = tools.find((tool) => tool?.name === "remember");
+  const description = stringValue(rememberTool?.description);
+  if (!description.includes('{"object":{"entity"') || !description.includes('"entity_kind"') ||
+      !description.includes('{"object":{"value"') || !description.includes('"type"') || !description.includes('"value"')) {
+    throw new Error("remember description omitted exact Entity or Value object examples");
+  }
+  for (const tool of tools) {
+    if (!isRecord(tool) || !isRecord(tool.inputSchema)) {
+      throw new Error("tools/list returned a tool without an inputSchema object");
+    }
+    rejectCompositionKeywords(tool.inputSchema, `tool ${tool.name}.inputSchema`);
+  }
+}
+
+function rejectCompositionKeywords(value, path) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => rejectCompositionKeywords(item, `${path}[${index}]`));
+    return;
+  }
+  if (!isRecord(value)) return;
+  for (const [key, item] of Object.entries(value)) {
+    if (["oneOf", "anyOf", "allOf", "not", "if", "then", "else"].includes(key)) {
+      throw new Error(`${path} contains converter-hostile ${key}`);
+    }
+    rejectCompositionKeywords(item, `${path}.${key}`);
+  }
+}
+
+async function waitForControlSubmission(submissionID) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const list = await controlJSON(`/control/api/submissions?team_id=${encodeURIComponent(teamID)}&limit=100&offset=0`);
+    const summary = (list.data ?? []).find((item) => item?.submission_id === submissionID);
+    if (summary) {
+      const detail = await controlJSON(`/control/api/teams/${encodeURIComponent(teamID)}/submissions/${encodeURIComponent(submissionID)}`);
+      return { list, summary, detail: detail.data };
+    }
+    await delay(1000);
+  }
+  throw new Error("control submission diagnostics did not expose the durable submission");
+}
+
+function assertSubmissionDiagnostics({ list, summary, detail }, terminal, evidenceContent) {
+  if (!Array.isArray(list.data) || !list.data.every((item) => item?.team_id === teamID)) {
+    throw new Error("control submission list ignored the exact team filter");
+  }
+  if (summary.processing_state !== terminal.processing_state || summary.correlation_id !== terminal.correlation_id ||
+      summary.attempts !== terminal.attempts || summary.max_attempts !== terminal.max_attempts || summary.evidence_count !== terminal.evidence.length) {
+    throw new Error("control submission summary diverged from authoritative status");
+  }
+  assertStatusShape(detail, terminal.submission_id);
+  assertRememberStatusMetadata(detail, terminal, true);
+  if (detail.team_id !== teamID || detail.processing_state !== terminal.processing_state || detail.evidence_count !== terminal.evidence.length) {
+    throw new Error("control submission detail diverged from authoritative status");
+  }
+  const serialized = JSON.stringify({ list, detail });
+  if (serialized.includes(evidenceContent) || /provider_response|normalized_response|\"proposal\"/i.test(serialized)) {
+    throw new Error("control submission diagnostics exposed evidence or provider payloads");
+  }
+}
+
+async function waitForSubmissionTimeline(submissionID) {
+  const query = new URLSearchParams({
+    team_id: teamID,
+    reference_type: "submission",
+    reference_id: submissionID,
+    sort: "timestamp",
+    direction: "asc",
+    limit: "100",
+    offset: "0",
+  });
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const page = await controlJSON(`/control/api/logs?${query.toString()}`);
+    const messages = new Set((page.data ?? []).map((item) => item?.message));
+    if (messages.has("submission_accepted") && messages.has("submission_completed")) {
+      const completed = await controlJSON(`/control/api/logs?${query.toString()}&event=submission_completed`);
+      return { page, completed };
+    }
+    await delay(1000);
+  }
+  throw new Error("submission lifecycle events did not reach the operation log");
+}
+
+function assertSubmissionTimeline({ page, completed }, submissionID, correlationID) {
+  if (!Array.isArray(page.data) || page.data.length < 2 || !Array.isArray(completed.data) || completed.data.length < 1) {
+    throw new Error("submission timeline is incomplete");
+  }
+  for (const item of page.data) {
+    if (item.team_id !== teamID || item.correlation_id !== correlationID || item.attrs?.reference_type !== "submission" ||
+        item.attrs?.reference_id !== submissionID) {
+      throw new Error("submission timeline ignored an exact team or reference filter");
+    }
+  }
+  if (!completed.data.every((item) => item.message === "submission_completed" && item.attrs?.reference_id === submissionID)) {
+    throw new Error("operation-log event filtering was not exact");
+  }
 }
 
 function assertNoLegacySubmissionFields(value) {
@@ -382,6 +526,17 @@ async function createCredential(targetTeamID, name) {
     throw new Error("control API did not return a second credential key");
   }
   return { apiKey: key };
+}
+
+async function controlJSON(path, options = {}) {
+  return httpJSON(`${controlURL}${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${controlToken}`,
+      Accept: "application/json",
+      ...(options.headers ?? {}),
+    },
+  });
 }
 
 async function userGraph(params = {}) {
@@ -465,6 +620,21 @@ async function httpJSON(url, options) {
 
 function stringValue(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function requiredTimestamp(value, field) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`remember status omitted ${field}`);
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`remember status returned invalid ${field}`);
+  }
+  return parsed;
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function requiredEnv(name) {

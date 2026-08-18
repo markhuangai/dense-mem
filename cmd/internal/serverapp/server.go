@@ -245,6 +245,7 @@ func RunActiveServer(
 		Ledger:  ledgerRepo,
 		Auditor: securityRejectionAuditor,
 		Metrics: discoverabilityMetrics,
+		Logger:  logger,
 	})
 	recallSvc := memoryservice.NewRecallService(memoryservice.RecallDependencies{
 		Search:          searchRepo,
@@ -440,6 +441,7 @@ func RunActiveServer(
 				Communities:     communitySvc,
 				ConflictQueue:   conflictQueueService,
 				Convergence:     service.NewSearchConvergenceService(searchRepo),
+				Submissions:     service.NewSubmissionDiagnosticsService(ledgerRepo),
 			},
 			healthConfig,
 			logger,
@@ -955,6 +957,7 @@ func startActiveWorkers(
 				Limits:                    assessmentLimits,
 				GlobalConfidenceThreshold: globalConfidenceThreshold,
 				Metrics:                   metrics,
+				Logger:                    logger,
 				TeamID:                    teamID,
 				WorkerID:                  workerID,
 				Lease:                     placementLease,

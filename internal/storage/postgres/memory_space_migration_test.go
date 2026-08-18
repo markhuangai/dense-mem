@@ -48,6 +48,7 @@ func TestMemorySpaceBackfillPreservesAppendOnlyGuards(t *testing.T) {
 
 	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026081602))
 	teamID, profileID, identityID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	sourceID, sourceRevisionID := uuid.NewString(), uuid.NewString()
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO teams (id, name, description, metadata, config)
@@ -107,15 +108,37 @@ func TestMemorySpaceBackfillPreservesAppendOnlyGuards(t *testing.T) {
 		`, teamID, placementRunID, assessmentID, profileID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_sources (
+				team_id, source_id, owner_profile_id, source_key, source_kind, authority
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'migration-source', 'document', 'primary')
+		`, teamID, sourceID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_source_revisions (
+				team_id, source_revision_id, source_id, owner_profile_id,
+				revision_token, content_hash
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'revision-1', $5)
+		`, teamID, sourceRevisionID, sourceID, profileID, "sha256:"+sourceRevisionID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE evidence_sources
+			SET current_revision_id = $1::uuid, current_revision_token = 'revision-1'
+			WHERE team_id = $2::uuid AND source_id = $3::uuid
+		`, sourceRevisionID, teamID, sourceID); err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO evidence_fragments (
-				team_id, fragment_id, ingest_id, owner_profile_id, evidence_index,
-				content, content_hash, source_type, authority
+				team_id, fragment_id, ingest_id, owner_profile_id, source_id,
+				source_revision_id, evidence_index, content, content_hash, source_type, authority
 			) VALUES (
-				$1::uuid, $2::uuid, $3::uuid, $4::uuid, 0,
-				'append-only migration fixture', $5, 'conversation', 'primary'
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+				$6::uuid, 0, 'append-only migration fixture', $7, 'document', 'primary'
 			)
-		`, teamID, fragmentID, ingestID, profileID, "sha256:"+fragmentID)
+		`, teamID, fragmentID, ingestID, profileID, sourceID, sourceRevisionID, "sha256:"+fragmentID)
 		if err != nil {
 			return err
 		}
@@ -140,6 +163,17 @@ func TestMemorySpaceBackfillPreservesAppendOnlyGuards(t *testing.T) {
 	`, teamID).Scan(&spaceID, &spaceKind))
 	assert.NotEqual(t, uuid.Nil, spaceID, "existing append-only evidence must receive the shared space")
 	assert.Equal(t, "team_shared", spaceKind)
+	var sourceSpaceID, sourceRevisionSpaceID uuid.UUID
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT source.space_id, revision.space_id
+		FROM evidence_sources AS source
+		JOIN evidence_source_revisions AS revision
+		  ON revision.team_id = source.team_id
+		 AND revision.source_id = source.source_id
+		WHERE source.team_id = $1::uuid AND source.source_id = $2::uuid
+	`, teamID, sourceID).Scan(&sourceSpaceID, &sourceRevisionSpaceID))
+	assert.Equal(t, spaceID, sourceSpaceID, "existing source must receive the shared space")
+	assert.Equal(t, spaceID, sourceRevisionSpaceID, "existing source revision must receive the shared space")
 	var tombstoneSpaceID, predicateEventSpaceID uuid.UUID
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
 		SELECT tombstone.space_id
@@ -160,4 +194,11 @@ func TestMemorySpaceBackfillPreservesAppendOnlyGuards(t *testing.T) {
 		WHERE tgname = 'evidence_fragments_append_only'
 	`).Scan(&triggerEnabled))
 	assert.True(t, triggerEnabled, "append-only guard must be restored after backfill")
+	var revisionTriggerEnabled bool
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT tgenabled = 'O'
+		FROM pg_trigger
+		WHERE tgname = 'evidence_source_revisions_append_only'
+	`).Scan(&revisionTriggerEnabled))
+	assert.True(t, revisionTriggerEnabled, "source revision append-only guard must be restored after backfill")
 }
