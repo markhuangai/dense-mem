@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -386,7 +386,7 @@ func recallEmbeddingContractLiteral(contractID string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: invalid embedding contract id: %w", ErrSearchContractMismatch, err)
 	}
-	return postgrescompat.QuoteLiteral(parsed.String()), nil
+	return pq.QuoteLiteral(parsed.String()), nil
 }
 
 func recallANNCandidateLimit(contract *ActiveSearchContract, limit int) int {
@@ -539,10 +539,10 @@ func searchRecallEntityExpansion(
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
 		eventAt,
-		postgrescompat.Array(input.ExpandFromEntityIDs), postgrescompat.Array(input.ExpandFromEntityIDs),
+		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
-		postgrescompat.Array(input.KnownRelationshipIDs), postgrescompat.Array(input.KnownRelationshipIDs),
+		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
 		limit).Rows()
 	if err != nil {
 		return nil, err
@@ -691,7 +691,7 @@ func hydrateRecallEvidence(
 		       END AS search_state
 		FROM eligible
 		GROUP BY evidence_id
-		`, postgrescompat.Array(evidenceIDs), input.TeamID, eventAt, eventAt,
+		`, pq.Array(evidenceIDs), input.TeamID, eventAt, eventAt,
 		input.TeamID, contract.EmbeddingContractID, eventAt,
 		eventAt, eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
@@ -699,7 +699,7 @@ func hydrateRecallEvidence(
 		eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
-		postgrescompat.Array(input.KnownRelationshipIDs), postgrescompat.Array(input.KnownRelationshipIDs),
+		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
 		input.KnownAt, input.KnownAt,
 		input.KnownAt, input.KnownAt).Rows()
 	if err != nil {
@@ -710,7 +710,7 @@ func hydrateRecallEvidence(
 	for rows.Next() {
 		var evidenceID, context, source, sourceType, searchState string
 		var createdAt time.Time
-		var relationshipIDs postgrescompat.StringArray
+		var relationshipIDs pq.StringArray
 		if err := rows.Scan(&evidenceID, &context, &source, &sourceType, &createdAt, &relationshipIDs, &searchState); err != nil {
 			return nil, err
 		}
@@ -806,14 +806,14 @@ func recallSpacePredicate(column, teamID, spaceID, spaceKind string) string {
 	if strings.TrimSpace(spaceID) != "" {
 		parsed, err := uuid.Parse(strings.TrimSpace(spaceID))
 		if err == nil {
-			return fmt.Sprintf(" AND %s = %s::uuid", column, postgrescompat.QuoteLiteral(parsed.String()))
+			return fmt.Sprintf(" AND %s = %s::uuid", column, pq.QuoteLiteral(parsed.String()))
 		}
 		return " AND FALSE"
 	}
 	if strings.TrimSpace(spaceKind) == "" || strings.TrimSpace(spaceKind) == string(domain.MemorySpaceTeamShared) {
 		parsed, err := uuid.Parse(strings.TrimSpace(teamID))
 		if err == nil {
-			return fmt.Sprintf(" AND %s = dense_mem_team_shared_space(%s::uuid)", column, postgrescompat.QuoteLiteral(parsed.String()))
+			return fmt.Sprintf(" AND %s = dense_mem_team_shared_space(%s::uuid)", column, pq.QuoteLiteral(parsed.String()))
 		}
 		return " AND FALSE"
 	}

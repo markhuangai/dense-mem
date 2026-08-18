@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"unicode/utf8"
 
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
 
@@ -195,7 +195,7 @@ func listActiveDreamEvidenceBatch(
 		FROM ranked
 		WHERE evidence_rank <= 2
 		ORDER BY relationship_id, evidence_rank
-	`, teamID, postgrescompat.Array(relationshipIDs), teamID, postgrescompat.Array(relationshipIDs)).Rows()
+	`, teamID, pq.Array(relationshipIDs), teamID, pq.Array(relationshipIDs)).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -373,7 +373,7 @@ func listPendingDreamEvidenceBatch(
 		FROM ranked
 		WHERE evidence_rank <= 2
 		ORDER BY relationship_id, evidence_rank
-	`, teamID, postgrescompat.Array(relationshipIDs), teamID).Rows()
+	`, teamID, pq.Array(relationshipIDs), teamID).Rows()
 	if err != nil {
 		return nil, err
 	}

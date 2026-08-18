@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -348,7 +348,7 @@ func reconcileRelationshipConflictSnapshot(
 			RETURNING 1
 		)
 		SELECT (SELECT count(*) FROM retired_members) + (SELECT count(*) FROM retired_positions)
-	`, postgrescompat.Array(positionKeys), postgrescompat.Array(relationshipIDs), postgrescompat.Array(sourceGroupKeys),
+	`, pq.Array(positionKeys), pq.Array(relationshipIDs), pq.Array(sourceGroupKeys),
 		teamID, conflictID, teamID, conflictID).Scan(&retiredCount).Error
 	if err != nil {
 		return false, err

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
 
@@ -130,9 +130,9 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 			ORDER BY seed_lane ASC, member_count DESC, community_id ASC
 			LIMIT ?
 		`, input.TeamID, input.Query,
-			postgrescompat.Array(input.ReturnedEvidenceIDs), postgrescompat.Array(input.KnownEvidenceIDs),
-			postgrescompat.Array(input.KnownRelationshipIDs), postgrescompat.Array(input.SeedRelationshipIDs),
-			postgrescompat.Array(input.ExpandFromEntityIDs), postgrescompat.Array(input.CoveredGroupKeys), input.Limit).Rows()
+			pq.Array(input.ReturnedEvidenceIDs), pq.Array(input.KnownEvidenceIDs),
+			pq.Array(input.KnownRelationshipIDs), pq.Array(input.SeedRelationshipIDs),
+			pq.Array(input.ExpandFromEntityIDs), pq.Array(input.CoveredGroupKeys), input.Limit).Rows()
 		if err != nil {
 			return err
 		}
@@ -140,7 +140,7 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 		matched := make([]CommunityRecallRecord, 0)
 		for rows.Next() {
 			record := CommunityRecallRecord{}
-			var topPredicates postgrescompat.StringArray
+			var topPredicates pq.StringArray
 			if err := rows.Scan(&record.CommunityID, &record.LogicalCommunityID, &record.Rank, &record.Summary, &record.EntityCount, &record.RelationshipCount, &topPredicates); err != nil {
 				return err
 			}
@@ -200,7 +200,7 @@ func loadCommunityTopEntitiesBatch(ctx context.Context, tx *gorm.DB, teamID stri
 		FROM ranked_memberships
 		WHERE membership_rank <= 5
 		ORDER BY community_id, membership_rank, entity_id
-	`, teamID, postgrescompat.Array(communityIDs)).Rows()
+	`, teamID, pq.Array(communityIDs)).Rows()
 	if err != nil {
 		return err
 	}
@@ -293,10 +293,10 @@ func loadCommunityRecallRelationshipsBatch(ctx context.Context, tx *gorm.DB, inp
 		WHERE community_rank <= ?
 		ORDER BY community_id, community_rank, relationship_id
 	`, input.TeamID, input.KnownAt, input.KnownAt, input.TeamID,
-		input.TeamID, postgrescompat.Array(communityIDs), input.ValidAt, input.ValidAt, input.ValidAt,
+		input.TeamID, pq.Array(communityIDs), input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
-		postgrescompat.Array(input.KnownRelationshipIDs), postgrescompat.Array(input.KnownRelationshipIDs),
-		postgrescompat.Array(input.CoveredGroupKeys), postgrescompat.Array(input.CoveredGroupKeys), input.RelationshipLimit+1).Rows()
+		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
+		pq.Array(input.CoveredGroupKeys), pq.Array(input.CoveredGroupKeys), input.RelationshipLimit+1).Rows()
 	if err != nil {
 		return err
 	}
@@ -304,7 +304,7 @@ func loadCommunityRecallRelationshipsBatch(ctx context.Context, tx *gorm.DB, inp
 	for rows.Next() {
 		var communityID string
 		var hit RecallRelationshipHit
-		var evidenceIDs postgrescompat.StringArray
+		var evidenceIDs pq.StringArray
 		var sourceRank int
 		if err := rows.Scan(&communityID, &hit.RelationshipID, &hit.SemanticGroupKey, &hit.SubjectEntityID, &hit.SubjectName, &hit.PredicateKey,
 			&hit.ObjectEntityID, &hit.ObjectValueID, &hit.ObjectName, &hit.ObjectValueType, &hit.ObjectValue,

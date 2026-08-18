@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -625,7 +625,7 @@ func loadRelationshipConflictRecords(
 		      OR (?::timestamptz IS NOT NULL AND conflict.status IN ('open', 'overdue', 'resolved', 'dismissed'))
 		  )
 		ORDER BY conflict.conflict_id::text
-	`, teamID, postgrescompat.Array(relationshipIDs),
+	`, teamID, pq.Array(relationshipIDs),
 		knownAt, knownAt, knownAt, knownAt, knownAt, knownAt, knownAt, knownAt).Rows()
 	if err != nil {
 		return nil, err
@@ -717,7 +717,7 @@ func loadRelationshipConflictCaseRows(
 		  AND conflict_id = ANY(?::uuid[])
 		  AND (?::timestamptz IS NULL OR created_at <= ?::timestamptz)
 		ORDER BY created_at, conflict_id
-	`, teamID, postgrescompat.Array(conflictIDs), knownAt, knownAt).Rows()
+	`, teamID, pq.Array(conflictIDs), knownAt, knownAt).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -840,7 +840,7 @@ func loadRelationshipConflictPositionRowsWithLimit(
 		ORDER BY conflict_id, position_key, position_id
 		`, dispositionSelect, dispositionGroup),
 		knownAt, knownAt, knownAt, knownAt,
-		teamID, postgrescompat.Array(conflictIDs),
+		teamID, pq.Array(conflictIDs),
 		knownAt, knownAt, knownAt, knownAt,
 		positionLimit, positionLimit).Rows()
 	if err != nil {
@@ -849,7 +849,7 @@ func loadRelationshipConflictPositionRowsWithLimit(
 	defer rows.Close()
 	out := []RelationshipConflictPositionRecord{}
 	for rows.Next() {
-		var relationshipIDs, ownerProfileIDs, evidenceIDs postgrescompat.StringArray
+		var relationshipIDs, ownerProfileIDs, evidenceIDs pq.StringArray
 		var record RelationshipConflictPositionRecord
 		if err := rows.Scan(
 			&record.ConflictID,

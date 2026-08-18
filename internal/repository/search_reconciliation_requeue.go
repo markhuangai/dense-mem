@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
 
@@ -175,7 +175,7 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 			  AND document.search_state = 'failed'
 			ORDER BY candidate.position
 			FOR UPDATE OF job SKIP LOCKED
-		`, postgrescompat.Array(candidateTeamIDs), postgrescompat.Array(candidateJobIDs),
+		`, pq.Array(candidateTeamIDs), pq.Array(candidateJobIDs),
 			input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff).Rows()
 		if err != nil {
 			return err
@@ -256,7 +256,7 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 				)
 				SELECT (SELECT count(*) FROM requeued),
 				       (SELECT count(*) FROM documents)
-			`, postgrescompat.Array(jobTeamIDs), postgrescompat.Array(jobIDs),
+			`, pq.Array(jobTeamIDs), pq.Array(jobIDs),
 			input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff,
 			input.RunID, input.WorkerID, input.LeaseToken).Row().Scan(&batch.requeued, &documentCount); err != nil {
 			return err

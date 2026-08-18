@@ -2,7 +2,7 @@ package repository
 
 import (
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -113,7 +113,7 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		&key.KeyPrefix,
 		&key.KeySuffix,
 		&key.Name,
-		postgrescompat.Array(&key.Scopes),
+		pq.Array(&key.Scopes),
 		&key.RateLimit,
 		&key.Role,
 		&key.LastUsedAt,

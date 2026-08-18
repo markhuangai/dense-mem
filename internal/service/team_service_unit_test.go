@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
@@ -132,7 +132,7 @@ func TestTeamServiceCreateUpdateErrorBranches(t *testing.T) {
 	ctx := context.Background()
 	id := uuid.New()
 
-	repo := &unitProfileRepo{createErr: &pgconn.PgError{Code: "23505"}}
+	repo := &unitProfileRepo{createErr: &pq.Error{Code: "23505"}}
 	svc := NewTeamService(repo, new(MockAuditService), nil)
 	_, err := svc.Create(ctx, CreateTeamRequest{Name: "Team"}, nil, "system", "127.0.0.1", "corr")
 	var apiErr *httperr.APIError
@@ -157,7 +157,7 @@ func TestTeamServiceCreateUpdateErrorBranches(t *testing.T) {
 	_, err = svc.Update(ctx, id, UpdateTeamRequest{Name: &newName}, nil, "system", "127.0.0.1", "corr")
 	require.ErrorContains(t, err, "failed to check name existence")
 
-	repo = &unitProfileRepo{profile: existing, updateErr: &pgconn.PgError{Code: "23505"}}
+	repo = &unitProfileRepo{profile: existing, updateErr: &pq.Error{Code: "23505"}}
 	svc = NewTeamService(repo, new(MockAuditService), nil)
 	_, err = svc.Update(ctx, id, UpdateTeamRequest{Name: &newName}, nil, "system", "127.0.0.1", "corr")
 	require.ErrorAs(t, err, &apiErr)

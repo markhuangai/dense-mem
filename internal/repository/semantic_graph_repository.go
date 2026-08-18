@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
 
@@ -80,7 +80,7 @@ func loadSemanticLocalGraphRows(
 		      ELSE 'value:' || e.object_value_id::text
 		    END) = ANY(?::text[])
 		  )
-		`), semanticGraphQueryArgs(input, input.Limit-len(out), postgrescompat.Array(frontier), postgrescompat.Array(frontier))...).Rows()
+		`), semanticGraphQueryArgs(input, input.Limit-len(out), pq.Array(frontier), pq.Array(frontier))...).Rows()
 		if err != nil {
 			return nil, err
 		}

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -83,7 +83,7 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 			for rows.Next() {
 				candidate := SemanticReviewEntityCandidate{}
 				var identityRaw []byte
-				var activeNames postgrescompat.StringArray
+				var activeNames pq.StringArray
 				if err := rows.Scan(
 					&candidate.TeamID,
 					&candidate.EntityID,

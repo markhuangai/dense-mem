@@ -22,7 +22,7 @@ func hydrateEvidenceLifecycleLineage(ctx context.Context, tx *gorm.DB, teamID st
 		WHERE team_id = ?::uuid
 		  AND replacement_fragment_id = ANY(?::uuid[])
 		ORDER BY replacement_fragment_id ASC, target_fragment_id ASC
-	`, teamID, postgresStringArray(ids)).Rows()
+	`, teamID, pqStringArray(ids)).Rows()
 	if err != nil {
 		return err
 	}

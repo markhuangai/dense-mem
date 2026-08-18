@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -81,7 +81,7 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 			) VALUES (
 			    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?::text[], ?, true
 			)
-		`, mapping.ID, mapping.ProviderID, mapping.TeamID, mapping.GroupID, mapping.GroupName, postgrescompat.Array(mapping.Scopes), mapping.Role).Error
+		`, mapping.ID, mapping.ProviderID, mapping.TeamID, mapping.GroupID, mapping.GroupName, pq.Array(mapping.Scopes), mapping.Role).Error
 	}))
 
 	profileRepo := NewTeamRepository(appDB, rls)
@@ -108,7 +108,7 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 			  AND id = ANY(?::uuid[])
 			  AND status = 'revoked'
 			  AND revoked_at IS NOT NULL
-		`, teamID, postgrescompat.Array([]string{ownerID, secondaryProfileID})).Scan(&revokedCount).Error; err != nil {
+		`, teamID, pq.Array([]string{ownerID, secondaryProfileID})).Scan(&revokedCount).Error; err != nil {
 			return err
 		}
 		assert.Equal(t, int64(2), revokedCount)

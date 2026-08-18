@@ -12,7 +12,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -189,16 +189,16 @@ func (r *SemanticRepositoryImpl) ResolveSemanticReviewPredicateCandidates(
 			FROM latest
 			WHERE match_rank <= ?
 			ORDER BY requested_order, match_rank
-		`, postgrescompat.Array(input.Predicates), postgrescompat.Array(normalizedPredicates), input.TeamID, input.Limit).Rows()
+		`, pq.Array(input.Predicates), pq.Array(normalizedPredicates), input.TeamID, input.Limit).Rows()
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var resolution SemanticReviewPredicateResolution
-			var aliases postgrescompat.StringArray
-			var subjectKinds postgrescompat.StringArray
-			var objectKinds postgrescompat.StringArray
+			var aliases pq.StringArray
+			var subjectKinds pq.StringArray
+			var objectKinds pq.StringArray
 			if err := rows.Scan(
 				&resolution.RequestedPredicate,
 				&resolution.MatchKind,
@@ -277,7 +277,7 @@ func (r *SemanticRepositoryImpl) ListSemanticReviewPredicateOptions(
 		seen := map[string]struct{}{}
 		for rows.Next() {
 			var key string
-			var aliases postgrescompat.StringArray
+			var aliases pq.StringArray
 			if err := rows.Scan(&key, &aliases); err != nil {
 				return err
 			}
@@ -700,8 +700,8 @@ func ensureTeamPredicateCandidateKinds(
 		)
 		RETURNING predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
 		          relationship_kind, current_cardinality, lifecycle_state
-	`, input.TeamID, candidate.PredicateKey, candidate.Version+1, postgresStringArray(subjectKinds),
-		postgresStringArray(objectKinds), candidate.RelationshipKind, candidate.CurrentCardinality,
+	`, input.TeamID, candidate.PredicateKey, candidate.Version+1, pqStringArray(subjectKinds),
+		pqStringArray(objectKinds), candidate.RelationshipKind, candidate.CurrentCardinality,
 		input.Origin, string(data)).Rows()
 	if err != nil {
 		return nil, err
@@ -746,8 +746,8 @@ func insertTeamPredicateCandidate(
 		ON CONFLICT (team_id, predicate_key, version) DO NOTHING
 		RETURNING predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
 		          relationship_kind, current_cardinality, lifecycle_state
-	`, input.TeamID, key, postgresStringArray(aliases), postgresStringArray([]string{input.SubjectKind}),
-		postgresStringArray([]string{input.ObjectKind}), input.RelationshipKind, input.Origin,
+	`, input.TeamID, key, pqStringArray(aliases), pqStringArray([]string{input.SubjectKind}),
+		pqStringArray([]string{input.ObjectKind}), input.RelationshipKind, input.Origin,
 		string(data)).Rows()
 	if err != nil {
 		return nil, err
@@ -956,8 +956,8 @@ func scanSemanticReviewPredicateCandidates(rows *sql.Rows) ([]SemanticReviewPred
 	out := []SemanticReviewPredicateCandidate{}
 	for rows.Next() {
 		var candidate SemanticReviewPredicateCandidate
-		var subjectKinds postgrescompat.StringArray
-		var objectKinds postgrescompat.StringArray
+		var subjectKinds pq.StringArray
+		var objectKinds pq.StringArray
 		if err := rows.Scan(
 			&candidate.PredicateKey,
 			&candidate.Version,

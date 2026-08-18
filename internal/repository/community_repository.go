@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -562,7 +562,7 @@ func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input 
 		defer rows.Close()
 		for rows.Next() {
 			item := CommunityInput{}
-			var evidenceIDs postgrescompat.StringArray
+			var evidenceIDs pq.StringArray
 			var evidenceQuotesJSON []byte
 			if err := rows.Scan(&item.RelationshipID, &item.OwnerProfileID, &item.Version,
 				&item.SubjectEntityID, &item.SubjectName, &item.PredicateKey,
@@ -905,7 +905,7 @@ func (r *SemanticRepositoryImpl) ListCurrentCommunityLineage(ctx context.Context
 		defer rows.Close()
 		for rows.Next() {
 			var record CommunityLineageRecord
-			var groups postgrescompat.StringArray
+			var groups pq.StringArray
 			if err := rows.Scan(&record.CommunityID, &record.LogicalCommunityID, &groups,
 				&record.SummaryInputHash, &record.Summary, &record.SummaryVersion,
 				&record.SummaryProviderModel, &record.SummaryPromptHash, &record.SummaryResponseHash); err != nil {
@@ -933,8 +933,8 @@ func insertCommunityRecord(ctx context.Context, tx *gorm.DB, input CommunitySnap
 		)
 	`, input.TeamID, community.CommunityID, input.RunID, community.Ordinal,
 		community.Summary, community.SummaryVersion, normalizeCommunityLogicalID(community), community.MemberCount,
-		community.SourceCount, postgrescompat.Array(community.TopEntities),
-		postgrescompat.Array(community.TopPredicates), community.SourceFingerprint, community.SummaryInputHash,
+		community.SourceCount, pq.Array(community.TopEntities),
+		pq.Array(community.TopPredicates), community.SourceFingerprint, community.SummaryInputHash,
 		community.SummaryProviderModel, community.SummaryPromptHash, community.SummaryResponseHash).Error; err != nil {
 		return err
 	}

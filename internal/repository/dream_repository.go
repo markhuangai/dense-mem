@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
 
@@ -439,8 +439,8 @@ func (r *SemanticRepositoryImpl) ListDreamTargetPredicates(ctx context.Context, 
 		defer rows.Close()
 		for rows.Next() {
 			var predicate DreamTargetPredicate
-			var subjectKinds postgrescompat.StringArray
-			var objectKinds postgrescompat.StringArray
+			var subjectKinds pq.StringArray
+			var objectKinds pq.StringArray
 			if err := rows.Scan(
 				&predicate.PredicateKey,
 				&predicate.Version,

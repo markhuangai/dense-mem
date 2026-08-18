@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
 
@@ -517,7 +517,7 @@ func loadTraceEvidenceFragments(
 		  AND f.fragment_id = ANY(?::uuid[])
 		ORDER BY f.evidence_index ASC, f.fragment_id ASC
 	`, includeContent, input.MaxFragmentContentRunes, includeContent, input.MaxFragmentContentRunes,
-		input.TeamID, postgrescompat.Array(fragmentIDs)).Rows()
+		input.TeamID, pq.Array(fragmentIDs)).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -532,7 +532,7 @@ func loadTraceEvidenceFragments(
 			&row.SourceKind, &row.RevisionToken, &row.CurrentRevisionID,
 			&row.EvidenceIndex, &row.Content, &row.ContentHash,
 			&row.ContentTruncated, &row.SourceType, &row.Authority,
-			&row.SourceRef, postgrescompat.Array(&row.Labels), &metadataJSON, &row.CreatedAt,
+			&row.SourceRef, pq.Array(&row.Labels), &metadataJSON, &row.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -680,7 +680,7 @@ func loadTraceIdentityCorrections(
 		  AND selected_observation_ids && ?::uuid[]
 		ORDER BY created_at ASC, correction_event_id ASC
 		LIMIT ?
-	`, teamID, postgrescompat.Array(observationIDs), limit).Rows()
+	`, teamID, pq.Array(observationIDs), limit).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -692,7 +692,7 @@ func loadTraceIdentityCorrections(
 		if err := rows.Scan(
 			&row.CorrectionEventID, &row.OwnerProfileID, &row.Action,
 			&row.SurvivorEntityID, &row.NewEntityID,
-			postgrescompat.Array(&row.SelectedObservationIDs), &row.Reason,
+			pq.Array(&row.SelectedObservationIDs), &row.Reason,
 			&metadataJSON, &row.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -785,7 +785,7 @@ func loadTraceSearchDocuments(
 			ORDER BY source_kind ASC, updated_at DESC, search_document_id ASC
 			LIMIT ?
 		`
-		args = []any{teamID, relationshipID, postgrescompat.Array(fragmentIDs), limit}
+		args = []any{teamID, relationshipID, pq.Array(fragmentIDs), limit}
 	}
 	rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
 	if err != nil {
@@ -828,7 +828,7 @@ func loadTraceEmbeddingJobs(
 		  AND search_document_id = ANY(?::uuid[])
 		ORDER BY created_at ASC, embedding_job_id ASC
 		LIMIT ?
-	`, teamID, postgrescompat.Array(searchDocumentIDs), limit).Rows()
+	`, teamID, pq.Array(searchDocumentIDs), limit).Rows()
 	if err != nil {
 		return nil, err
 	}

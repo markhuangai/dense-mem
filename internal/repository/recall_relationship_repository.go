@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -552,10 +552,10 @@ func searchRecallRelationshipEntityExpansion(
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
 		eventAt,
-		postgrescompat.Array(input.ExpandFromEntityIDs), postgrescompat.Array(input.ExpandFromEntityIDs),
+		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
-		postgrescompat.Array(input.KnownRelationshipIDs), postgrescompat.Array(input.KnownRelationshipIDs),
+		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
 		limit).Rows()
 	if err != nil {
 		return nil, err
@@ -678,14 +678,14 @@ func hydrateRecallRelationships(
 		LEFT JOIN value_records AS value_record
 		  ON value_record.team_id = relationship.team_id
 		 AND value_record.value_id = relationship.object_value_id
-			`, postgrescompat.Array(relationshipIDs), input.TeamID, input.TeamID,
-		postgrescompat.Array(input.KnownRelationshipIDs), postgrescompat.Array(input.KnownRelationshipIDs),
+			`, pq.Array(relationshipIDs), input.TeamID, input.TeamID,
+		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
 		input.TeamID, contract.EmbeddingContractID, eventAt,
 		eventAt, eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
 		eventAt,
-		postgrescompat.Array(input.ExcludedGroupKeys), postgrescompat.Array(input.ExcludedGroupKeys),
+		pq.Array(input.ExcludedGroupKeys), pq.Array(input.ExcludedGroupKeys),
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt).Rows()
 	if err != nil {
@@ -804,7 +804,7 @@ func hydrateRecallRelationshipEvidenceIDs(ctx context.Context, tx *gorm.DB, inpu
 		       array_agg(fragment_id ORDER BY created_at ASC, fragment_id ASC)::text[] AS evidence_ids
 		FROM effective_support
 		GROUP BY relationship_id
-	`, postgrescompat.Array(relationshipIDs), input.TeamID, eventAt, eventAt, input.TeamID, eventAt, eventAt).Rows()
+	`, pq.Array(relationshipIDs), input.TeamID, eventAt, eventAt, input.TeamID, eventAt, eventAt).Rows()
 	if err != nil {
 		return err
 	}
@@ -812,7 +812,7 @@ func hydrateRecallRelationshipEvidenceIDs(ctx context.Context, tx *gorm.DB, inpu
 	for rows.Next() {
 		var relationshipID string
 		var evidenceIDs []string
-		if err := rows.Scan(&relationshipID, postgrescompat.Array(&evidenceIDs)); err != nil {
+		if err := rows.Scan(&relationshipID, pq.Array(&evidenceIDs)); err != nil {
 			return err
 		}
 		hit := hits[relationshipID]
@@ -927,7 +927,7 @@ func hydrateRecallRelationshipEquivalents(ctx context.Context, tx *gorm.DB, inpu
 		       array_agg(equivalent_id ORDER BY equivalent_id ASC)::text[] AS equivalent_ids
 		FROM equivalents
 		GROUP BY representative_id
-		`, postgrescompat.Array(relationshipIDs), input.TeamID, input.TeamID,
+		`, pq.Array(relationshipIDs), input.TeamID, input.TeamID,
 		eventAt, eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
@@ -941,7 +941,7 @@ func hydrateRecallRelationshipEquivalents(ctx context.Context, tx *gorm.DB, inpu
 	for rows.Next() {
 		var relationshipID string
 		var equivalentIDs []string
-		if err := rows.Scan(&relationshipID, postgrescompat.Array(&equivalentIDs)); err != nil {
+		if err := rows.Scan(&relationshipID, pq.Array(&equivalentIDs)); err != nil {
 			return err
 		}
 		hit := hits[relationshipID]

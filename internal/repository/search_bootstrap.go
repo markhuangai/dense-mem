@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -599,7 +599,7 @@ func (r *SearchRepositoryImpl) createSearchPhysicalIndex(
 		      AND embedding_dimensions = %d
 		      AND search_state = 'current'
 		      AND embedding IS NOT NULL
-	`, postgrescompat.QuoteIdentifier(indexName), expression, generation.OperatorClass,
+	`, pq.QuoteIdentifier(indexName), expression, generation.OperatorClass,
 		searchDefaultHNSWM, searchDefaultHNSWEFConstruction,
 		generation.EmbeddingContractID, generation.EmbeddingDimensions)
 	if _, err := conn.ExecContext(ctx, ddl); err != nil {

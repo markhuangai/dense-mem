@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -154,7 +154,7 @@ func (r *SSORepositoryImpl) CreateProvider(ctx context.Context, provider *domain
 		return tx.Exec(`
 			INSERT INTO sso_providers (id, name, kind, issuer_url, tenant_id, identity_claim, client_id, client_secret_env, scopes, group_claims, groups_endpoint, groups_scopes, enabled, retired_at, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULL, $14, $14)
-		`, provider.ID, provider.Name, string(provider.Kind), provider.IssuerURL, provider.TenantID, provider.IdentityClaim, provider.ClientID, provider.ClientSecretEnv, postgrescompat.Array(provider.Scopes), postgrescompat.Array(provider.GroupClaims), provider.GroupsEndpoint, postgrescompat.Array(provider.GroupsScopes), provider.Enabled, now).Error
+		`, provider.ID, provider.Name, string(provider.Kind), provider.IssuerURL, provider.TenantID, provider.IdentityClaim, provider.ClientID, provider.ClientSecretEnv, pq.Array(provider.Scopes), pq.Array(provider.GroupClaims), provider.GroupsEndpoint, pq.Array(provider.GroupsScopes), provider.Enabled, now).Error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create sso provider: %w", err)
@@ -183,7 +183,7 @@ func (r *SSORepositoryImpl) UpdateProvider(ctx context.Context, provider *domain
 			    retired_at = CASE WHEN $12 THEN NULL ELSE retired_at END,
 			    updated_at = $13
 			WHERE id = $14
-		`, provider.Name, string(provider.Kind), provider.IssuerURL, provider.TenantID, provider.IdentityClaim, provider.ClientID, provider.ClientSecretEnv, postgrescompat.Array(provider.Scopes), postgrescompat.Array(provider.GroupClaims), provider.GroupsEndpoint, postgrescompat.Array(provider.GroupsScopes), provider.Enabled, now, provider.ID)
+		`, provider.Name, string(provider.Kind), provider.IssuerURL, provider.TenantID, provider.IdentityClaim, provider.ClientID, provider.ClientSecretEnv, pq.Array(provider.Scopes), pq.Array(provider.GroupClaims), provider.GroupsEndpoint, pq.Array(provider.GroupsScopes), provider.Enabled, now, provider.ID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -361,7 +361,7 @@ func (r *SSORepositoryImpl) CreateMapping(ctx context.Context, mapping *domain.S
 			    updated_at = EXCLUDED.updated_at
 			WHERE sso_group_mappings.origin = 'manual'
 			RETURNING id, created_at, updated_at, retired_at
-		`, mapping.ID, mapping.ProviderID, mapping.TeamID, mapping.GroupID, mapping.GroupName, postgrescompat.Array(mapping.Scopes), mapping.Role, mapping.Enabled, now).Rows()
+		`, mapping.ID, mapping.ProviderID, mapping.TeamID, mapping.GroupID, mapping.GroupName, pq.Array(mapping.Scopes), mapping.Role, mapping.Enabled, now).Rows()
 		if err != nil {
 			return err
 		}
@@ -448,7 +448,7 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 			    retired_at = CASE WHEN $6 THEN NULL ELSE COALESCE(retired_at, $7) END,
 			    updated_at = $7
 			WHERE id = $8 AND provider_id = $9
-		`, mapping.TeamID, mapping.GroupID, mapping.GroupName, postgrescompat.Array(mapping.Scopes), mapping.Role, mapping.Enabled, now, mapping.ID, mapping.ProviderID)
+		`, mapping.TeamID, mapping.GroupID, mapping.GroupName, pq.Array(mapping.Scopes), mapping.Role, mapping.Enabled, now, mapping.ID, mapping.ProviderID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -524,7 +524,7 @@ func (r *SSORepositoryImpl) ListMappingsForGroups(ctx context.Context, providerI
 				AND t.deleted_at IS NULL
 				AND m.group_id = ANY($2)
 			ORDER BY t.name ASC, m.group_name ASC, m.group_id ASC
-		`, providerID, postgrescompat.Array(groups)).Rows()
+		`, providerID, pq.Array(groups)).Rows()
 		if err != nil {
 			return err
 		}
@@ -610,7 +610,7 @@ func upsertCanonicalSSOMembershipTx(tx *gorm.DB, input canonicalSSOMembershipInp
 			sso_last_login_at = COALESCE(EXCLUDED.sso_last_login_at, team_memberships.sso_last_login_at),
 			updated_at = EXCLUDED.updated_at
 		RETURNING id, created_at
-	`, input.IdentityID, input.TeamID, input.Role == "manager", postgrescompat.Array(input.Scopes),
+	`, input.IdentityID, input.TeamID, input.Role == "manager", pq.Array(input.Scopes),
 		input.ProviderID, input.GroupID, input.MembershipName, input.LastEntitlementCheckedAt, input.LastLoginAt, input.Now).Row().Scan(&membershipID, &createdAt); err != nil {
 		return uuid.Nil, uuid.Nil, time.Time{}, err
 	}
@@ -786,7 +786,7 @@ func (r *SSORepositoryImpl) SetEntitlementCache(ctx context.Context, cache domai
 			    checked_at = EXCLUDED.checked_at,
 			    expires_at = EXCLUDED.expires_at,
 			    error = EXCLUDED.error
-		`, cache.ProviderID, cache.Subject, postgrescompat.Array(cache.Groups), cache.Status, cache.CheckedAt, cache.ExpiresAt, cache.Error).Error
+		`, cache.ProviderID, cache.Subject, pq.Array(cache.Groups), cache.Status, cache.CheckedAt, cache.ExpiresAt, cache.Error).Error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to set sso entitlement cache: %w", err)

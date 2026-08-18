@@ -3,7 +3,7 @@ package repository
 import (
 	"database/sql"
 
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -20,10 +20,10 @@ func scanSSOProvider(rows *sql.Rows) (*domain.SSOProvider, error) {
 		&provider.IdentityClaim,
 		&provider.ClientID,
 		&provider.ClientSecretEnv,
-		postgrescompat.Array(&provider.Scopes),
-		postgrescompat.Array(&provider.GroupClaims),
+		pq.Array(&provider.Scopes),
+		pq.Array(&provider.GroupClaims),
 		&provider.GroupsEndpoint,
-		postgrescompat.Array(&provider.GroupsScopes),
+		pq.Array(&provider.GroupsScopes),
 		&provider.Enabled,
 		&provider.RetiredAt,
 		&provider.CreatedAt,
@@ -44,7 +44,7 @@ func scanSSOGroupMapping(rows *sql.Rows) (*domain.SSOGroupMapping, error) {
 		&mapping.TeamName,
 		&mapping.GroupID,
 		&mapping.GroupName,
-		postgrescompat.Array(&mapping.Scopes),
+		pq.Array(&mapping.Scopes),
 		&mapping.Role,
 		&mapping.Enabled,
 		&mapping.Origin,
@@ -82,7 +82,7 @@ func scanSSOEntitlementCache(rows *sql.Rows) (*domain.SSOEntitlementCache, error
 	if err := rows.Scan(
 		&cache.ProviderID,
 		&cache.Subject,
-		postgrescompat.Array(&cache.Groups),
+		pq.Array(&cache.Groups),
 		&cache.Status,
 		&cache.CheckedAt,
 		&cache.ExpiresAt,
@@ -142,7 +142,7 @@ func scanSSOTeamMembership(rows *sql.Rows) (*domain.SSOTeamMembership, error) {
 		&item.Membership.TeamID,
 		&item.Membership.OwnerID,
 		&item.Membership.Name,
-		postgrescompat.Array(&item.Membership.Grants),
+		pq.Array(&item.Membership.Grants),
 		&item.Membership.Role,
 		&item.Membership.Status,
 		&item.Membership.CreatedAt,

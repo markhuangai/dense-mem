@@ -798,7 +798,7 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 	RETURNING fragment_id::text, authority
 	`, input.TeamID, ingestID, input.OwnerProfileID, index, item.Content, item.ContentHash,
 		item.SourceType, item.Authority, item.SourceRef, sourceID, sourceRevisionID,
-		postgresStringArray(item.Labels), string(metadata)).Rows()
+		pqStringArray(item.Labels), string(metadata)).Rows()
 	if err != nil {
 		return EvidenceFragment{}, err
 	}

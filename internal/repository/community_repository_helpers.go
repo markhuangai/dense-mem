@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -34,7 +34,7 @@ func scanCommunityRecords(rows *sql.Rows) ([]CommunityRecord, error) {
 	out := []CommunityRecord{}
 	for rows.Next() {
 		record := CommunityRecord{}
-		var topEntities, topPredicates postgrescompat.StringArray
+		var topEntities, topPredicates pq.StringArray
 		var supersededAt sql.NullTime
 		if err := rows.Scan(&record.TeamID, &record.CommunityID, &record.LogicalCommunityID,
 			&record.RunID,

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -87,7 +87,7 @@ func (r *DirectoryIdentityRepositoryImpl) applyDirectoryReconcilePlan(ctx contex
 				WHERE id = ANY($2::uuid[])
 				  AND directory_managed = true
 				  AND directory_connector_id = $3
-			`, now, postgrescompat.Array(directoryUUIDStrings(plan.RestoreDirectoryTeamIDs)), plan.ConnectorID).Error; err != nil {
+			`, now, pq.Array(directoryUUIDStrings(plan.RestoreDirectoryTeamIDs)), plan.ConnectorID).Error; err != nil {
 				return err
 			}
 		}
@@ -116,7 +116,7 @@ func (r *DirectoryIdentityRepositoryImpl) applyDirectoryReconcilePlan(ctx contex
 				    role = EXCLUDED.role,
 				    updated_at = EXCLUDED.updated_at
 			`, plan.ConnectorID, action.GroupID, action.TeamID, action.Origin,
-				postgrescompat.Array(action.Entitlement.Scopes), action.Entitlement.Role, now).Error; err != nil {
+				pq.Array(action.Entitlement.Scopes), action.Entitlement.Role, now).Error; err != nil {
 				return err
 			}
 			if err := tx.Exec(`
@@ -132,7 +132,7 @@ func (r *DirectoryIdentityRepositoryImpl) applyDirectoryReconcilePlan(ctx contex
 				    updated_at = EXCLUDED.updated_at
 				WHERE sso_group_mappings.origin = 'directory'
 			`, plan.ProviderID, action.TeamID, action.GroupExternalID,
-				postgrescompat.Array(action.Entitlement.Scopes), action.Entitlement.Role, now).Error; err != nil {
+				pq.Array(action.Entitlement.Scopes), action.Entitlement.Role, now).Error; err != nil {
 				return err
 			}
 		}
@@ -145,7 +145,7 @@ func (r *DirectoryIdentityRepositoryImpl) applyDirectoryReconcilePlan(ctx contex
 				WHERE provider_id = $2
 				  AND origin = 'directory'
 				  AND group_id = ANY($3::text[])
-			`, now, plan.ProviderID, postgrescompat.Array(uniqueDirectoryStrings(plan.DisableDirectoryGroupIDs))).Error; err != nil {
+			`, now, plan.ProviderID, pq.Array(uniqueDirectoryStrings(plan.DisableDirectoryGroupIDs))).Error; err != nil {
 				return err
 			}
 		}
@@ -167,7 +167,7 @@ func (r *DirectoryIdentityRepositoryImpl) applyDirectoryReconcilePlan(ctx contex
 				WHERE id = ANY($2::uuid[])
 				  AND directory_managed = true
 				  AND directory_connector_id = $3
-			`, now, postgrescompat.Array(directoryUUIDStrings(plan.ArchiveDirectoryTeamIDs)), plan.ConnectorID).Error; err != nil {
+			`, now, pq.Array(directoryUUIDStrings(plan.ArchiveDirectoryTeamIDs)), plan.ConnectorID).Error; err != nil {
 				return err
 			}
 		}
@@ -329,7 +329,7 @@ func populateDirectoryGroupMembersTx(tx *gorm.DB, connectorID uuid.UUID, groups 
 		WHERE m.connector_id = $1
 		  AND m.group_id = ANY($2::uuid[])
 		ORDER BY m.group_id, lower(u.user_name), u.id
-	`, connectorID, postgrescompat.Array(groupIDs)).Rows()
+	`, connectorID, pq.Array(groupIDs)).Rows()
 	if err != nil {
 		return err
 	}
@@ -383,7 +383,7 @@ func listDirectoryBindingsTx(tx *gorm.DB, connectorID uuid.UUID) ([]domain.Direc
 			&item.GroupID,
 			&item.TeamID,
 			&origin,
-			postgrescompat.Array(&item.Scopes),
+			pq.Array(&item.Scopes),
 			&item.Role,
 			&item.CreatedAt,
 			&item.UpdatedAt,
@@ -424,7 +424,7 @@ func listManualDirectoryMappingsTx(tx *gorm.DB, providerID uuid.UUID) ([]domain.
 			&item.TeamName,
 			&item.GroupID,
 			&item.GroupName,
-			postgrescompat.Array(&item.Scopes),
+			pq.Array(&item.Scopes),
 			&item.Role,
 			&item.Enabled,
 			&item.Origin,
@@ -536,7 +536,7 @@ func revokeMissingDirectoryProfilesTx(ctx context.Context, tx *gorm.DB, provider
 		WHERE sso_provider_id = $1
 		  AND actor_identity_id = ANY($2::uuid[])
 		  AND status = 'active'
-	`, providerID, postgrescompat.Array(directoryUUIDStrings(identityIDs))).Rows()
+	`, providerID, pq.Array(directoryUUIDStrings(identityIDs))).Rows()
 	if err != nil {
 		return err
 	}

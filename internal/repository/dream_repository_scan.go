@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 )
 
 var dreamCycleRunSelectColumns = dreamCycleRunColumns("")
@@ -124,7 +124,7 @@ func scanHypothesisRecord(rows *sql.Rows) (*HypothesisRecord, error) {
 	var confidence sql.NullFloat64
 	var sourceRefsRaw []byte
 	var sourceVersionsRaw []byte
-	var ownerIDs postgrescompat.StringArray
+	var ownerIDs pq.StringArray
 	var submittedAt sql.NullTime
 	var payloadRaw []byte
 	if err := rows.Scan(

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
 
@@ -120,7 +120,7 @@ func (r *SemanticRepositoryImpl) ListSemanticAssessmentKnownEntities(
 			  AND rec.entity_id = ANY(?::uuid[])
 			  AND rec.status = 'active'
 			ORDER BY rec.entity_id
-		`, input.TeamID, postgrescompat.Array(input.EntityIDs)).Rows()
+		`, input.TeamID, pq.Array(input.EntityIDs)).Rows()
 		if err != nil {
 			return err
 		}
@@ -250,14 +250,14 @@ func (r *SemanticRepositoryImpl) ListSemanticAssessmentPredicateOptions(
 			         created_at DESC,
 			         predicate_key ASC
 			LIMIT ?
-		`, input.TeamID, postgrescompat.Array(input.ProposedKeys), input.QueryText, input.QueryText, input.QueryText, input.Limit).Rows()
+		`, input.TeamID, pq.Array(input.ProposedKeys), input.QueryText, input.QueryText, input.QueryText, input.Limit).Rows()
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var candidate SemanticReviewPredicateCandidate
-			var aliases, subjectKinds, objectKinds postgrescompat.StringArray
+			var aliases, subjectKinds, objectKinds pq.StringArray
 			if err := rows.Scan(
 				&candidate.PredicateKey,
 				&candidate.Version,

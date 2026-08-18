@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -802,7 +802,7 @@ func replaceDirectoryGroupMembersTx(tx *gorm.DB, connectorID, groupID uuid.UUID,
 			SELECT count(*)
 			FROM sso_directory_users
 			WHERE connector_id = $1 AND id = ANY($2::uuid[])
-		`, connectorID, postgrescompat.Array(memberIDs)).Row().Scan(&count); err != nil {
+		`, connectorID, pq.Array(memberIDs)).Row().Scan(&count); err != nil {
 			return err
 		}
 		if count != len(memberIDs) {

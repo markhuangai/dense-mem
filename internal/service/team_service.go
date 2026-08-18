@@ -9,7 +9,7 @@ import (
 	"math"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -113,8 +113,8 @@ func (s *TeamServiceImpl) Create(ctx context.Context, req CreateTeamRequest, act
 
 	if err := s.repo.Create(ctx, team); err != nil {
 		// Check for unique constraint violation (23505 is PostgreSQL unique constraint error code)
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
 			return nil, httperr.New(httperr.CONFLICT, fmt.Sprintf("team with name '%s' already exists", req.Name))
 		}
 		return nil, fmt.Errorf("failed to create team: %w", err)
@@ -218,8 +218,8 @@ func (s *TeamServiceImpl) Update(ctx context.Context, id uuid.UUID, req UpdateTe
 	// Save the changes
 	if err := s.repo.Update(ctx, existing); err != nil {
 		// Check for unique constraint violation (23505 is PostgreSQL unique constraint error code)
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
 			name := existing.Name
 			if req.Name != nil {
 				name = *req.Name

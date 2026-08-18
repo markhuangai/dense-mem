@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/postgrescompat"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -39,7 +39,7 @@ func TestEnsureActiveSearchContractPromotesHighDimensionExactGeneration(t *testi
 	assert.True(t, result.CreatedGeneration)
 	assert.True(t, result.CreatedPhysicalIndex)
 	defer func() {
-		err := adminDB.Exec("DROP INDEX IF EXISTS " + postgrescompat.QuoteIdentifier(result.Contract.PhysicalIndexName)).Error
+		err := adminDB.Exec("DROP INDEX IF EXISTS " + pq.QuoteIdentifier(result.Contract.PhysicalIndexName)).Error
 		assert.NoError(t, err)
 	}()
 
@@ -223,7 +223,7 @@ func TestEnsureActiveSearchContractSerializesHighDimensionPromotion(t *testing.T
 	assert.Equal(t, "active", generations[1].ActivationState)
 	require.NotEmpty(t, generations[1].PhysicalName)
 	defer func() {
-		err := adminDB.Exec("DROP INDEX IF EXISTS " + postgrescompat.QuoteIdentifier(generations[1].PhysicalName)).Error
+		err := adminDB.Exec("DROP INDEX IF EXISTS " + pq.QuoteIdentifier(generations[1].PhysicalName)).Error
 		assert.NoError(t, err)
 	}()
 }
