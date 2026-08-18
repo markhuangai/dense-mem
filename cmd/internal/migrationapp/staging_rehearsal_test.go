@@ -4,6 +4,7 @@ package migrationapp
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -37,6 +38,9 @@ func TestStagingMigrationRehearsal(t *testing.T) {
 	}
 	if connectionConfig.Database != stagingDatabaseName {
 		t.Fatalf("staging migration rehearsal refused a DSN for a database other than %q", stagingDatabaseName)
+	}
+	if err := validateStagingDSN(connectionConfig); err != nil {
+		t.Fatal(err)
 	}
 
 	db, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{
@@ -92,4 +96,50 @@ func TestStagingMigrationRehearsal(t *testing.T) {
 	}
 
 	t.Log("staging migrations and startup migration state validation completed")
+}
+
+func validateStagingDSN(connectionConfig *pgconn.Config) error {
+	if connectionConfig == nil {
+		return errors.New("staging migration rehearsal could not validate the PostgreSQL DSN")
+	}
+	for _, fallback := range connectionConfig.Fallbacks {
+		if fallback == nil || fallback.Host != connectionConfig.Host || fallback.Port != connectionConfig.Port {
+			return errors.New("staging migration rehearsal refused a PostgreSQL DSN with a fallback endpoint")
+		}
+	}
+	return nil
+}
+
+func TestValidateStagingDSN(t *testing.T) {
+	tests := []struct {
+		name    string
+		dsn     string
+		wantErr bool
+	}{
+		{
+			name: "single endpoint",
+			dsn:  "postgres://user:password@localhost:15433/dense-mem",
+		},
+		{
+			name:    "fallback endpoint",
+			dsn:     "postgres://user:password@localhost:15433,prod-db:5432/dense-mem?sslmode=disable",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			connectionConfig, err := pgconn.ParseConfig(tt.dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateStagingDSN(connectionConfig); (err != nil) != tt.wantErr {
+				t.Fatalf("validateStagingDSN() error = %v, want error: %t", err, tt.wantErr)
+			}
+		})
+	}
+
+	if err := validateStagingDSN(nil); err == nil {
+		t.Fatal("validateStagingDSN(nil) should fail")
+	}
 }
