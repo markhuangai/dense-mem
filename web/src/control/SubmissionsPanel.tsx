@@ -114,6 +114,7 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
     setDetail(null);
     setTimeline([]);
     setTimelineUnavailable(false);
+    setDetailLoading(false);
     void loadSubmissions("", 0);
     return () => {
       listRequestRef.current += 1;
@@ -148,6 +149,14 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
                 const next = event.target.value;
                 setState(next);
                 setOffset(0);
+                setItems([]);
+                setTotal(0);
+                setSelectedID("");
+                detailRequestRef.current += 1;
+                setDetail(null);
+                setTimeline([]);
+                setTimelineUnavailable(false);
+                setDetailLoading(false);
                 void loadSubmissions(next, 0);
               }}
             >

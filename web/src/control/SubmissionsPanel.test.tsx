@@ -159,6 +159,56 @@ describe("SubmissionsPanel", () => {
     expect(screen.getByText("0-0 of 0")).toBeInTheDocument();
   });
 
+  it("clears submissions and detail while a new processing-state filter loads or fails", async () => {
+    const summary = {
+      team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1",
+      submission_id: "submission-completed", processing_state: "completed", correlation_id: "corr-completed",
+      attempts: 1, max_attempts: 5, evidence_count: 0, submitted_at: "2026-08-18T02:00:00Z",
+    };
+    let rejectFilteredPage!: (reason?: unknown) => void;
+    const filteredPage = new Promise<never>((_resolve, reject) => {
+      rejectFilteredPage = reject;
+    });
+    const listSubmissionDiagnostics = vi.fn().mockImplementation(({ processing_state }: { processing_state: string }) => {
+      if (processing_state === "failed") {
+        return filteredPage;
+      }
+      return Promise.resolve({
+        data: [summary], pagination: { limit: 50, offset: 0, total: 1 },
+      });
+    });
+    const api = {
+      listSubmissionDiagnostics,
+      getSubmissionDiagnostic: vi.fn().mockResolvedValue({
+        ...summary, submission_kind: "remember", search_state: "current", check_after_seconds: 60,
+        evidence: [], errors: [],
+      }),
+      listOperationLogs: vi.fn().mockResolvedValue({
+        data: [], pagination: { limit: 100, offset: 0, total: 0 },
+      }),
+    } as unknown as ControlApi;
+
+    render(<SubmissionsPanel api={api} team={team()} />);
+
+    expect(await screen.findByRole("button", { name: "Inspect submission submission-completed" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Submission details" })).toHaveTextContent("submission-completed");
+
+    await userEvent.selectOptions(screen.getByLabelText("Processing state"), "failed");
+    await waitFor(() => expect(listSubmissionDiagnostics).toHaveBeenLastCalledWith({
+      team_id: "team-1", processing_state: "failed", limit: 50, offset: 0,
+    }));
+    expect(screen.queryByRole("button", { name: "Inspect submission submission-completed" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Submission details" })).not.toBeInTheDocument();
+    expect(screen.getByText("0-0 of 0")).toBeInTheDocument();
+
+    await act(async () => rejectFilteredPage(new Error("filtered submissions unavailable")));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("filtered submissions unavailable");
+    expect(screen.queryByRole("button", { name: "Inspect submission submission-completed" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Submission details" })).not.toBeInTheDocument();
+    expect(screen.getByText("0-0 of 0")).toBeInTheDocument();
+  });
+
   it("shows bounded hold truncation and evidence-specific remediation", async () => {
     const summary = {
       team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1",
