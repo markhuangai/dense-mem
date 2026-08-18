@@ -4,8 +4,8 @@
 -- Lock/rewrite impact: catalog creation is small; memory-owned tables receive an
 -- additive nullable UUID and an index. The bounded backfill only updates rows
 -- whose space is null and can be resumed safely by rerunning this migration.
--- RLS impact: space visibility is an additional transaction-local predicate;
--- migration/system modes remain explicit and are never request selectable.
+-- RLS impact: narrow migration-only SELECT and UPDATE policies permit the
+-- backfill through FORCE RLS and are dropped before the transaction commits.
 -- Backfill: existing rows and old-writer inserts map to the team's shared row.
 -- Backward compatibility: old binaries may omit space_id while this migration
 -- is rolling out; the default/trigger fills team_shared until the writer barrier.
@@ -292,6 +292,8 @@ DECLARE
     append_only_trigger_name TEXT;
     disabled_append_only_triggers TEXT[];
     always_append_only_triggers TEXT[];
+    migration_select_policy CONSTANT TEXT := 'dense_mem_2026081701_backfill_select';
+    migration_update_policy CONSTANT TEXT := 'dense_mem_2026081701_backfill_update';
 BEGIN
     FOREACH target_table IN ARRAY target_tables LOOP
         SELECT EXISTS (
@@ -309,9 +311,23 @@ BEGIN
             EXECUTE format('ALTER TABLE %I ADD COLUMN space_id UUID NULL', target_table);
         END IF;
 
-        -- This backfill changes only the new placement column. Preserve the
-        -- append-only guards for every other write while allowing this
-        -- migration-only column update to proceed on populated installations.
+        -- UPDATE under FORCE RLS also needs a matching SELECT path. These
+        -- policies are transaction-local and permit only this migration mode.
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I', migration_select_policy, target_table);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I', migration_update_policy, target_table);
+        EXECUTE format(
+            'CREATE POLICY %I ON %I FOR SELECT USING (current_setting(''app.tx_mode'', true) = ''migration'')',
+            migration_select_policy,
+            target_table
+        );
+        EXECUTE format(
+            'CREATE POLICY %I ON %I FOR UPDATE USING (current_setting(''app.tx_mode'', true) = ''migration'') WITH CHECK (current_setting(''app.tx_mode'', true) = ''migration'')',
+            migration_update_policy,
+            target_table
+        );
+
+        -- Preserve append-only guards for every other write while allowing
+        -- this migration-only placement-column update.
         disabled_append_only_triggers := ARRAY[]::TEXT[];
         always_append_only_triggers := ARRAY[]::TEXT[];
         FOR append_only_trigger IN
@@ -337,6 +353,8 @@ BEGIN
         FOREACH append_only_trigger_name IN ARRAY always_append_only_triggers LOOP
             EXECUTE format('ALTER TABLE %I ENABLE ALWAYS TRIGGER %I', target_table, append_only_trigger_name);
         END LOOP;
+        EXECUTE format('DROP POLICY %I ON %I', migration_update_policy, target_table);
+        EXECUTE format('DROP POLICY %I ON %I', migration_select_policy, target_table);
         EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I(team_id, space_id)', target_table || '_team_space_idx', target_table);
         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = target_table || '_memory_space_defaults') THEN
             EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF team_id, space_id ON %I FOR EACH ROW EXECUTE FUNCTION dense_mem_memory_space_defaults()', target_table || '_memory_space_defaults', target_table);

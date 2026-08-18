@@ -5,6 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIGRATIONS_ROOT="${ROOT_DIR}/migrations/postgres"
 CURRENT_RELEASE="v2_5"
 BASE_REF="${1:-origin/main}"
+RC_REPAIR_VERSION="2026081701"
+RC_REPAIR_BASE_SHA="c2647b9169d4bbc820caa4333ebbbef6f309942fe74cffdd647e37d5b8fc5757"
+RC_REPAIR_CURRENT_SHA="4aef7058a8ec18f0af140eb6da3dcfa2bffd39f93fb9c587aa11eb449ff98af8"
 
 cd "${ROOT_DIR}"
 git rev-parse --verify "${BASE_REF}^{commit}" >/dev/null 2>&1 || {
@@ -35,6 +38,15 @@ has_goose_directive() {
   local directive="$1"
   local filename="$2"
   grep -Eiq -- "^--[[:space:]]+\\+goose[[:space:]]+${directive}[[:space:]]*$" "${filename}"
+}
+
+is_approved_rc_repair() {
+  local version="$1"
+  local base_sha="$2"
+  local current_sha="$3"
+  [[ "${version}" == "${RC_REPAIR_VERSION}" &&
+     "${base_sha}" == "${RC_REPAIR_BASE_SHA}" &&
+     "${current_sha}" == "${RC_REPAIR_CURRENT_SHA}" ]]
 }
 
 mapfile -t base_paths < <(
@@ -98,8 +110,13 @@ for version in "${!base_sha_by_version[@]}"; do
     exit 1
   fi
   if [[ "${base_sha_by_version[${version}]}" != "${current_sha_by_version[${version}]}" ]]; then
-    echo "deployed migration version ${version} was modified" >&2
-    exit 1
+    # v2.5.1-rc.5 failed before applying on its only persistent deployment.
+    # Exact hashes make this authorized repair one-use without weakening later checks.
+    if ! is_approved_rc_repair "${version}" "${base_sha_by_version[${version}]}" "${current_sha_by_version[${version}]}"; then
+      echo "deployed migration version ${version} was modified" >&2
+      exit 1
+    fi
+    echo "approved release-candidate migration repair accepted for version ${version}"
   fi
   if [[ "${base_filename_by_version[${version}]}" != "${current_filename_by_version[${version}]}" ]]; then
     echo "deployed migration version ${version} was renamed" >&2

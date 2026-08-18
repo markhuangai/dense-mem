@@ -178,8 +178,34 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 		}
 		return insertLegacyEmbeddingFailureFixture(ctx, tx, teamID, profileID, contractID, legacyFailure)
 	}))
+	insertMigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "primary")
 
 	require.NoError(t, NewMigratorWithDB(sqlDB).RunUp(ctx))
+	var revisionCount, sharedRevisionCount int
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT
+				count(*),
+				count(*) FILTER (WHERE space.kind = 'team_shared')
+			FROM evidence_source_revisions AS revision
+			LEFT JOIN memory_spaces AS space
+			  ON space.team_id = revision.team_id
+			 AND space.id = revision.space_id
+			WHERE revision.team_id = $1::uuid
+		`, teamID).Scan(&revisionCount, &sharedRevisionCount)
+	}))
+	require.Equal(t, 1, revisionCount)
+	require.Equal(t, revisionCount, sharedRevisionCount)
+	var temporaryBackfillPolicyCount int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM pg_policy
+		WHERE polname IN (
+			'dense_mem_2026081701_backfill_select',
+			'dense_mem_2026081701_backfill_update'
+		)
+	`).Scan(&temporaryBackfillPolicyCount))
+	require.Zero(t, temporaryBackfillPolicyCount)
 	assertMigratedEmbeddingJob(t, ctx, sqlDB, legacyFailure.jobID, migratedEmbeddingJobExpectation{
 		status: "failed", totalAttempts: 20,
 		failureClass: "provider_action_required", failureCode: "provider_quota_exhausted", failedTimestamps: true,
