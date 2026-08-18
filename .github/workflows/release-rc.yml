@@ -18,8 +18,66 @@ concurrency:
   queue: max
 
 jobs:
+  staging-migration-rehearsal:
+    name: Rehearse migrations on staging data
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push'
+      }}
+    permissions:
+      contents: read
+    runs-on: [home-server, bash, non-root]
+    timeout-minutes: 60
+    environment: staging-migration
+
+    steps:
+      - name: Checkout candidate revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Restore production copy and rehearse migrations
+        shell: bash
+        env:
+          DENSE_MEM_STAGE_POSTGRES_DSN: ${{ secrets.PGVECTOR_STAGE_DSN }}
+        run: |
+          set -euo pipefail
+
+          sync_script="${HOME}/dense-mem-stage/sync.sh"
+          if [[ -z "${DENSE_MEM_STAGE_POSTGRES_DSN}" ]]; then
+            echo "::error::The staging-migration environment is missing PGVECTOR_STAGE_DSN"
+            exit 1
+          fi
+          stage_postgres_dsn="${DENSE_MEM_STAGE_POSTGRES_DSN}"
+          unset DENSE_MEM_STAGE_POSTGRES_DSN
+          if [[ ! -f "${sync_script}" || ! -x "${sync_script}" ]]; then
+            echo "::error::${sync_script} is missing or not executable"
+            exit 1
+          fi
+
+          exec 9>"${HOME}/dense-mem-stage/migration-rehearsal.lock"
+          if ! flock --wait 600 9; then
+            echo "::error::Timed out waiting for the staging migration lock"
+            exit 1
+          fi
+
+          timeout --signal=TERM --kill-after=30s 10m "${sync_script}"
+          DENSE_MEM_STAGE_POSTGRES_DSN="${stage_postgres_dsn}" \
+            go test -tags=staging_rehearsal ./cmd/internal/migrationapp \
+            -run '^TestStagingMigrationRehearsal$' \
+            -count=1 \
+            -timeout=35m
+
   prepare-prerelease:
     name: Prepare prerelease
+    needs: staging-migration-rehearsal
     if: >-
       ${{
         github.event.workflow_run.conclusion == 'success' &&
