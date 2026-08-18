@@ -49,18 +49,22 @@ test("prerelease publication waits for the staging migration rehearsal", async (
   const prepare = workflowJob(workflow, "prepare-prerelease");
 
   assert.match(rehearsal, /^    runs-on: \[home-server, bash, non-root\]$/m);
+  assert.match(rehearsal, /^    timeout-minutes: 75$/m);
   assert.match(rehearsal, /^    environment: staging-migration$/m);
+  assert.match(rehearsal, /persist-credentials: false/);
   assert.match(
     rehearsal,
     /^          DENSE_MEM_STAGE_POSTGRES_DSN: \$\{\{ secrets\.PGVECTOR_STAGE_DSN \}\}$/m,
   );
+  assert.match(rehearsal, /^          DENSE_MEM_STAGE_POSTGRES_HOST: localhost$/m);
+  assert.match(rehearsal, /^          DENSE_MEM_STAGE_POSTGRES_PORT: "15433"$/m);
   assert.match(rehearsal, /"\$\{HOME\}\/dense-mem-stage\/sync\.sh"/);
   assert.match(rehearsal, /flock --wait 600 9/);
   assert.match(rehearsal, /timeout --signal=TERM --kill-after=30s 10m/);
   assert.doesNotMatch(rehearsal, /\b(?:docker|testcontainers)\b/i);
   assert.match(
     rehearsal,
-    /go test -tags=staging_rehearsal \.\/cmd\/internal\/migrationapp/,
+    /go test -tags=staging_rehearsal \.\/cmd\/internal\/migrationapp[\s\S]*-timeout=40m/,
   );
   assert.ok(
     rehearsal.indexOf("timeout --signal=TERM") <

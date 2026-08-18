@@ -28,7 +28,7 @@ jobs:
     permissions:
       contents: read
     runs-on: [home-server, bash, non-root]
-    timeout-minutes: 60
+    timeout-minutes: 75
     environment: staging-migration
 
     steps:
@@ -36,6 +36,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -47,6 +48,8 @@ jobs:
         shell: bash
         env:
           DENSE_MEM_STAGE_POSTGRES_DSN: ${{ secrets.PGVECTOR_STAGE_DSN }}
+          DENSE_MEM_STAGE_POSTGRES_HOST: localhost
+          DENSE_MEM_STAGE_POSTGRES_PORT: "15433"
         run: |
           set -euo pipefail
 
@@ -56,7 +59,9 @@ jobs:
             exit 1
           fi
           stage_postgres_dsn="${DENSE_MEM_STAGE_POSTGRES_DSN}"
-          unset DENSE_MEM_STAGE_POSTGRES_DSN
+          stage_postgres_host="${DENSE_MEM_STAGE_POSTGRES_HOST}"
+          stage_postgres_port="${DENSE_MEM_STAGE_POSTGRES_PORT}"
+          unset DENSE_MEM_STAGE_POSTGRES_DSN DENSE_MEM_STAGE_POSTGRES_HOST DENSE_MEM_STAGE_POSTGRES_PORT
           if [[ ! -f "${sync_script}" || ! -x "${sync_script}" ]]; then
             echo "::error::${sync_script} is missing or not executable"
             exit 1
@@ -70,10 +75,12 @@ jobs:
 
           timeout --signal=TERM --kill-after=30s 10m "${sync_script}"
           DENSE_MEM_STAGE_POSTGRES_DSN="${stage_postgres_dsn}" \
+            DENSE_MEM_STAGE_POSTGRES_HOST="${stage_postgres_host}" \
+            DENSE_MEM_STAGE_POSTGRES_PORT="${stage_postgres_port}" \
             go test -tags=staging_rehearsal ./cmd/internal/migrationapp \
             -run '^TestStagingMigrationRehearsal$' \
             -count=1 \
-            -timeout=35m
+            -timeout=40m
 
   prepare-prerelease:
     name: Prepare prerelease
