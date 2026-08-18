@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 )
 
@@ -134,11 +134,11 @@ func (r *SemanticRepositoryImpl) RecallCommunityDiscovery(ctx context.Context, i
 			ORDER BY community.community_rank ASC, community_source.source_rank ASC, relationship.relationship_id ASC
 			LIMIT ?
 		`, input.TeamID, input.Query, input.Query,
-			pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
+			postgrescompat.Array(input.ExpandFromEntityIDs), postgrescompat.Array(input.ExpandFromEntityIDs),
 			input.Limit, input.TeamID, input.TeamID, input.TeamID,
 			input.ValidAt, input.ValidAt, input.ValidAt,
 			input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
-			pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
+			postgrescompat.Array(input.KnownRelationshipIDs), postgrescompat.Array(input.KnownRelationshipIDs),
 			input.Limit).Rows()
 		if err != nil {
 			return err
@@ -146,7 +146,7 @@ func (r *SemanticRepositoryImpl) RecallCommunityDiscovery(ctx context.Context, i
 		defer rows.Close()
 		for rows.Next() {
 			path := CommunityDiscoveryPath{}
-			var evidenceIDs pq.StringArray
+			var evidenceIDs postgrescompat.StringArray
 			if err := rows.Scan(
 				&path.CommunityID,
 				&path.CommunityRank,

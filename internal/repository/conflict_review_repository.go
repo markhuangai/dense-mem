@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -136,7 +136,7 @@ func (r *LedgerRepositoryImpl) ClaimRelationshipConflictCases(
 				)
 				SELECT conflict_id FROM updated
 			`, input.TeamID, input.Now, input.MaxAttempts, input.WorkerID,
-			pq.Array(input.ExcludedConflictIDs), pq.Array(input.ExcludedConflictIDs),
+			postgrescompat.Array(input.ExcludedConflictIDs), postgrescompat.Array(input.ExcludedConflictIDs),
 			input.Limit, input.WorkerID, int(input.Lease.Seconds()),
 			input.ReviewRunID, input.TeamID).Rows()
 		if err != nil {

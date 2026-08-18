@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,7 +60,7 @@ func TestEnsureActiveSearchContractAcceptsLegacyPhysicalIndexName(t *testing.T) 
 	spec.ActivationState = "active"
 	defer func() {
 		err := adminDB.Exec(
-			"DROP INDEX IF EXISTS " + pq.QuoteIdentifier(spec.PhysicalIndexName),
+			"DROP INDEX IF EXISTS " + postgrescompat.QuoteIdentifier(spec.PhysicalIndexName),
 		).Error
 		assert.NoError(t, err)
 	}()

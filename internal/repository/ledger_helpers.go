@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 )
 
@@ -115,7 +115,7 @@ func hydratePlacementItemSearchStates(ctx context.Context, tx *gorm.DB, teamID s
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
 		  AND search_document_id = ANY(?::uuid[])
-	`, teamID, ownerProfileID, pq.Array(ids)).Rows()
+	`, teamID, ownerProfileID, postgrescompat.Array(ids)).Rows()
 	if err != nil {
 		return err
 	}
@@ -292,7 +292,7 @@ func marshalJSON(value map[string]any) ([]byte, error) {
 	return data, nil
 }
 
-func pqStringArray(values []string) any {
+func postgresStringArray(values []string) any {
 	normalized := make([]string, 0, len(values))
 	for _, value := range values {
 		value = strings.TrimSpace(value)
@@ -300,7 +300,7 @@ func pqStringArray(values []string) any {
 			normalized = append(normalized, value)
 		}
 	}
-	return pq.Array(normalized)
+	return postgrescompat.Array(normalized)
 }
 
 func sha256Hex(content string) string {

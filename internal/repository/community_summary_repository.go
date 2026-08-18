@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -48,8 +48,8 @@ func (r *SemanticRepositoryImpl) RecordCommunitySummaryAttempt(ctx context.Conte
 				?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?, ?::uuid[], ?::uuid[], ?::jsonb, ?, ?, ?
 			)
 		`, input.TeamID, input.RunID, input.CommunityID, input.Attempt, input.ProviderModel,
-			input.PromptHash, input.ResponseHash, input.InputHash, pq.Array(input.AdmittedRelationshipIDs),
-			pq.Array(input.AdmittedEvidenceIDs), string(quotes), truncateCommunityError(input.ResponseSummary), input.Valid,
+			input.PromptHash, input.ResponseHash, input.InputHash, postgrescompat.Array(input.AdmittedRelationshipIDs),
+			postgrescompat.Array(input.AdmittedEvidenceIDs), string(quotes), truncateCommunityError(input.ResponseSummary), input.Valid,
 			truncateCommunityError(input.ErrorCode)).Error
 	})
 	if err != nil {

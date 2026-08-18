@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -465,8 +465,8 @@ func loadPredicateDefinition(ctx context.Context, tx *gorm.DB, teamID string, pr
 		return nil, gorm.ErrRecordNotFound
 	}
 	var loaded predicateDefinition
-	var subjectKinds pq.StringArray
-	var objectKinds pq.StringArray
+	var subjectKinds postgrescompat.StringArray
+	var objectKinds postgrescompat.StringArray
 	if err := rows.Scan(&loaded.Key, &loaded.Version, &subjectKinds, &objectKinds,
 		&loaded.RelationshipKind, &loaded.CurrentCardinality); err != nil {
 		return nil, err

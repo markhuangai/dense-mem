@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -199,7 +199,7 @@ func (r *ControlIdentityRepositoryImpl) CreateControlSession(ctx context.Context
 		return tx.Exec(`
 			INSERT INTO sso_control_sessions (session_hash, identity_id, provider_id, group_ids, csrf_hash, expires_at, created_at, last_seen_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		`, session.SessionHash, session.IdentityID, session.ProviderID, pq.Array(session.GroupIDs), session.CSRFHash, session.ExpiresAt, session.CreatedAt, session.LastSeenAt).Error
+		`, session.SessionHash, session.IdentityID, session.ProviderID, postgrescompat.Array(session.GroupIDs), session.CSRFHash, session.ExpiresAt, session.CreatedAt, session.LastSeenAt).Error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create control session: %w", err)
@@ -273,7 +273,7 @@ func scanControlOAuthState(rows *sql.Rows) (*domain.ControlOAuthState, error) {
 
 func scanControlSession(rows *sql.Rows) (*domain.ControlSession, error) {
 	var session domain.ControlSession
-	if err := rows.Scan(&session.SessionHash, &session.IdentityID, &session.ProviderID, pq.Array(&session.GroupIDs), &session.CSRFHash, &session.ExpiresAt, &session.CreatedAt, &session.LastSeenAt); err != nil {
+	if err := rows.Scan(&session.SessionHash, &session.IdentityID, &session.ProviderID, postgrescompat.Array(&session.GroupIDs), &session.CSRFHash, &session.ExpiresAt, &session.CreatedAt, &session.LastSeenAt); err != nil {
 		return nil, err
 	}
 	return &session, nil

@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/lib/pq"
 
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -161,11 +160,6 @@ func credentialNameConflict(err error, name string) error {
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return httperr.New(httperr.CONFLICT, fmt.Sprintf("credential with name '%s' already exists for this team", name))
 	}
-
-	var pqErr *pq.Error
-	if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-		return httperr.New(httperr.CONFLICT, fmt.Sprintf("credential with name '%s' already exists for this team", name))
-	}
 	return nil
 }
 
@@ -183,11 +177,6 @@ func uniqueViolationName(err error) string {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return pgErr.ConstraintName
-	}
-
-	var pqErr *pq.Error
-	if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-		return pqErr.Constraint
 	}
 	return ""
 }

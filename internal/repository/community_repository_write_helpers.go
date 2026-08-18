@@ -4,7 +4,7 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 )
 
@@ -61,7 +61,7 @@ func ensureCommunitySourcesCurrent(ctx context.Context, tx *gorm.DB, teamID stri
 				  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
 			)
 		LIMIT 1
-	`, pq.Array(relationshipIDs), pq.Array(versions), teamID, teamID, teamID).Rows()
+	`, postgrescompat.Array(relationshipIDs), postgrescompat.Array(versions), teamID, teamID, teamID).Rows()
 	if err != nil {
 		return err
 	}

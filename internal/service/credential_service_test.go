@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -522,7 +521,6 @@ func TestCredentialServiceUpdateNameForTeamDuplicate(t *testing.T) {
 		err  error
 	}{
 		{name: "pgx", err: &pgconn.PgError{Code: "23505"}},
-		{name: "pq", err: &pq.Error{Code: "23505"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -703,11 +701,7 @@ func TestCredentialServiceScopeNameAndConstructorHelpers(t *testing.T) {
 		Code:           "23505",
 		ConstraintName: "idx_credentials_owner_team_active_unique",
 	}))
-	assert.Equal(t, "idx_credentials_owner_team_active_unique", uniqueViolationName(&pq.Error{
-		Code:       "23505",
-		Constraint: "idx_credentials_owner_team_active_unique",
-	}))
-	assert.Empty(t, uniqueViolationName(&pq.Error{Code: "23503"}))
+	assert.Empty(t, uniqueViolationName(&pgconn.PgError{Code: "23503"}))
 	require.ErrorContains(t, credentialCreateConflict(&pgconn.PgError{
 		Code:           "23505",
 		ConstraintName: "idx_credentials_owner_team_active_unique",

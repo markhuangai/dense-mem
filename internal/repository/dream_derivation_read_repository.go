@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 )
 
@@ -39,7 +39,7 @@ func hydrateDreamHypothesisDerivations(
 		WHERE team_id = ?::uuid
 		  AND hypothesis_id = ANY(?::uuid[])
 		ORDER BY hypothesis_id, premise_position, derivation_source_id
-	`, teamID, pq.Array(ids)).Rows()
+	`, teamID, postgrescompat.Array(ids)).Rows()
 	if err != nil {
 		return err
 	}

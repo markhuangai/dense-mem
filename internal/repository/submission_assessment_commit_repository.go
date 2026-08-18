@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -619,8 +619,8 @@ func resolveSubmissionPredicateRegistration(
 		          allowed_object_kinds, relationship_kind, current_cardinality,
 		          lifecycle_state
 	`, input.TeamID, canonicalKey,
-		pq.Array([]string{registration.SubjectKind}),
-		pq.Array([]string{registration.ObjectKind}),
+		postgrescompat.Array([]string{registration.SubjectKind}),
+		postgrescompat.Array([]string{registration.ObjectKind}),
 		string(metadata)).Rows()
 	if err != nil {
 		return SemanticReviewPredicateCandidate{}, "", err
@@ -695,7 +695,7 @@ func loadLatestSubmissionPredicate(
 
 func scanSubmissionPredicateCandidate(rows *sql.Rows) (SemanticReviewPredicateCandidate, error) {
 	candidate := SemanticReviewPredicateCandidate{}
-	var aliases, subjectKinds, objectKinds pq.StringArray
+	var aliases, subjectKinds, objectKinds postgrescompat.StringArray
 	if err := rows.Scan(
 		&candidate.PredicateKey,
 		&candidate.Version,

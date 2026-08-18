@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 )
 
@@ -364,7 +364,7 @@ func relationshipConflictSupporterRowsArgsWithLimit(teamID string, conflictIDs, 
 	}
 	return []any{
 		teamID,
-		pq.Array(conflictIDs),
+		postgrescompat.Array(conflictIDs),
 		knownAt, knownAt, knownAt, knownAt,
 		knownAt, knownAt, knownAt, knownAt,
 		teamID,
@@ -375,8 +375,8 @@ func relationshipConflictSupporterRowsArgsWithLimit(teamID string, conflictIDs, 
 		knownAt, knownAt,
 		knownAt,
 		teamID,
-		pq.Array(positionIDs),
-		pq.Array(positionIDs),
+		postgrescompat.Array(positionIDs),
+		postgrescompat.Array(positionIDs),
 		supporterLimit,
 	}
 }

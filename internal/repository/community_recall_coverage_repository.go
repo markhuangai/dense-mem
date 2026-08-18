@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 )
 
@@ -75,7 +75,7 @@ func (r *SemanticRepositoryImpl) ListCommunitySemanticGroups(ctx context.Context
 			  AND relationship.identity_alias_of_relationship_id IS NULL
 			  AND source.semantic_group_key <> ''
 			ORDER BY source.semantic_group_key
-		`, input.TeamID, input.TeamID, pq.Array(input.RelationshipIDs), pq.Array(input.EvidenceIDs), input.TeamID).Rows()
+		`, input.TeamID, input.TeamID, postgrescompat.Array(input.RelationshipIDs), postgrescompat.Array(input.EvidenceIDs), input.TeamID).Rows()
 		if err != nil {
 			return err
 		}

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -124,13 +124,13 @@ func (r *CredentialRepositoryImpl) CreateCredential(ctx context.Context, credent
 				actor_identity_id, team_id, status, team_admin, maximum_grants, created_at, updated_at
 			) VALUES ($1, $2, 'active', $3, $4, $5, $5)
 			RETURNING id
-		`, credential.ID, teamID, credential.GetRole() == "manager", pq.Array(credential.Scopes), now).Row().Scan(&membershipID); err != nil {
+		`, credential.ID, teamID, credential.GetRole() == "manager", postgrescompat.Array(credential.Scopes), now).Row().Scan(&membershipID); err != nil {
 			return err
 		}
 		if err := tx.Exec(`
 			INSERT INTO membership_grants (membership_id, grant_name, source)
 			SELECT $1, scope, 'legacy_scope' FROM unnest($2::text[]) AS scope
-		`, membershipID, pq.Array(credential.Scopes)).Error; err != nil {
+		`, membershipID, postgrescompat.Array(credential.Scopes)).Error; err != nil {
 			return err
 		}
 
@@ -165,7 +165,7 @@ func (r *CredentialRepositoryImpl) CreateCredential(ctx context.Context, credent
 				'active', $10, $11, $12, $13, $13
 			)
 		`, credential.ID, credential.OwnerIdentityID, teamID, credential.KeyHash, keyPrefix, keySuffix, name,
-			pq.Array(credential.Scopes), credential.RateLimit, credential.ExpiresAt, string(binding), memorySpaceID, now).Error; err != nil {
+			postgrescompat.Array(credential.Scopes), credential.RateLimit, credential.ExpiresAt, string(binding), memorySpaceID, now).Error; err != nil {
 			return err
 		}
 		credential.MemoryBinding = binding
@@ -200,7 +200,7 @@ func GetKeyPrefixFromHash(hash string) string {
 // ListByTeam retrieves API credentials for a team with pagination.
 // Excludes the key_hash field from results.
 //
-// Uses *sql.Rows + pq.Array() — see GetActiveByPrefix for the rationale.
+// Uses *sql.Rows + postgrescompat.Array() — see GetActiveByPrefix for the rationale.
 func (r *CredentialRepositoryImpl) ListByTeam(ctx context.Context, teamID uuid.UUID, limit, offset int) ([]*domain.Credential, error) {
 	if limit <= 0 {
 		limit = 20
@@ -286,10 +286,9 @@ func (r *CredentialRepositoryImpl) ListByTeam(ctx context.Context, teamID uuid.U
 // This is used during authentication to look up the credential hash for verification.
 // Includes the key_hash field for verification purposes.
 //
-// Uses *sql.Rows + pq.Array() rather than GORM .Scan() because the pgx driver
-// (via gorm.io/driver/postgres) does not route text[] values through lib/pq's
-// StringArray scanner when GORM copies columns by reflection; scopes come back
-// empty and authorization fails closed.
+// Uses *sql.Rows + postgrescompat.Array() rather than GORM .Scan() because the pgx driver
+// returns text[] values as database/sql strings; the explicit scanner keeps scope
+// hydration deterministic when GORM copies columns by reflection.
 func (r *CredentialRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix string) (*domain.Credential, error) {
 	var canonicalKey *domain.Credential
 
@@ -507,7 +506,7 @@ func (r *CredentialRepositoryImpl) UpdateRoleForTeam(ctx context.Context, teamID
 			UPDATE credentials
 			SET scopes = $1, updated_at = $2
 			WHERE id = $3 AND team_id = $4 AND kind = 'api_key' AND status <> 'disabled'
-		`, pq.Array(scopes), now, id, teamID)
+		`, postgrescompat.Array(scopes), now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -522,7 +521,7 @@ func (r *CredentialRepositoryImpl) UpdateRoleForTeam(ctx context.Context, teamID
 			WHERE team_id = $4
 			  AND actor_identity_id = (SELECT actor_identity_id FROM credentials WHERE id = $5)
 			RETURNING id
-		`, role == "manager", pq.Array(scopes), now, teamID, id).Row().Scan(&membershipID); err != nil {
+		`, role == "manager", postgrescompat.Array(scopes), now, teamID, id).Row().Scan(&membershipID); err != nil {
 			return err
 		}
 		return replaceLegacyMembershipGrants(tx, membershipID, scopes)
@@ -545,7 +544,7 @@ func (r *CredentialRepositoryImpl) UpdateScopesForTeam(ctx context.Context, team
 			UPDATE credentials
 			SET scopes = $1, updated_at = $2
 			WHERE id = $3 AND team_id = $4 AND kind = 'api_key' AND status <> 'disabled'
-		`, pq.Array(scopes), now, id, teamID)
+		`, postgrescompat.Array(scopes), now, id, teamID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -560,7 +559,7 @@ func (r *CredentialRepositoryImpl) UpdateScopesForTeam(ctx context.Context, team
 			WHERE team_id = $3
 			  AND actor_identity_id = (SELECT actor_identity_id FROM credentials WHERE id = $4)
 			RETURNING id
-		`, pq.Array(scopes), now, teamID, id).Row().Scan(&membershipID); err != nil {
+		`, postgrescompat.Array(scopes), now, teamID, id).Row().Scan(&membershipID); err != nil {
 			return err
 		}
 		return replaceLegacyMembershipGrants(tx, membershipID, scopes)
@@ -611,14 +610,14 @@ func replaceLegacyMembershipGrants(tx *gorm.DB, membershipID uuid.UUID, scopes [
 		WHERE membership_id = $1
 		  AND source = 'legacy_scope'
 		  AND NOT (grant_name = ANY($2::text[]))
-	`, membershipID, pq.Array(scopes)).Error; err != nil {
+	`, membershipID, postgrescompat.Array(scopes)).Error; err != nil {
 		return err
 	}
 	return tx.Exec(`
 		INSERT INTO membership_grants (membership_id, grant_name, source)
 		SELECT $1, scope, 'legacy_scope' FROM unnest($2::text[]) AS scope
 		ON CONFLICT (membership_id, grant_name) DO NOTHING
-	`, membershipID, pq.Array(scopes)).Error
+	`, membershipID, postgrescompat.Array(scopes)).Error
 }
 
 const credentialHydrationSelect = `
@@ -660,7 +659,7 @@ func (s *credentialHydrationState) scan(rows *sql.Rows) error {
 		&s.credential.TeamName,
 		&s.credential.KeySuffix,
 		&s.credential.Name,
-		pq.Array(&s.credential.Scopes),
+		postgrescompat.Array(&s.credential.Scopes),
 		&s.credential.Role,
 		&s.credential.RateLimit,
 		&s.credential.LastUsedAt,

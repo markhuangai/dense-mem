@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 )
 
@@ -37,7 +37,7 @@ func loadTraceEvidenceLifecycleEvents(
 		  )
 		ORDER BY lifecycle.created_at ASC, lifecycle.lifecycle_event_id ASC
 		LIMIT ?
-	`, teamID, pq.Array(fragmentIDs), pq.Array(fragmentIDs), limit).Rows()
+	`, teamID, postgrescompat.Array(fragmentIDs), postgrescompat.Array(fragmentIDs), limit).Rows()
 	if err != nil {
 		return nil, err
 	}

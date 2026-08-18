@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 )
 
@@ -149,7 +149,7 @@ func insertHypothesisTx(
 	`, input.TeamID, input.CreatedByProfileID, input.Statement, input.Rationale,
 		input.Likelihood, input.Confidence, input.SubjectEntityID, input.PredicateKey,
 		input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
-		string(sourceRefs), string(sourceVersions), pq.Array(input.SourceOwnerProfileIDs),
+		string(sourceRefs), string(sourceVersions), postgrescompat.Array(input.SourceOwnerProfileIDs),
 		input.ContentHash, input.TargetIdentity, input.RunID, input.GeneratorKind, input.GeneratorVersion,
 		string(payload)).Rows()
 	if err != nil {

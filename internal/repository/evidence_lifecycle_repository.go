@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/postgrescompat"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -441,7 +441,7 @@ func validateEvidenceLifecycleTargets(
 		WHERE fragment.team_id = ?::uuid
 		  AND fragment.fragment_id = ANY(?::uuid[])
 		ORDER BY fragment.fragment_id ASC
-	`, teamID, pq.Array(evidenceIDs)).Rows()
+	`, teamID, postgrescompat.Array(evidenceIDs)).Rows()
 	if err != nil {
 		return err
 	}
@@ -513,7 +513,7 @@ func loadEffectiveEvidenceLifecycleSupports(
 		  AND quarantine.quarantine_id IS NULL
 		  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
 		ORDER BY support.relationship_id ASC, support.support_id ASC
-	`, teamID, teamID, pq.Array(evidenceIDs)).Rows()
+	`, teamID, teamID, postgrescompat.Array(evidenceIDs)).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -729,7 +729,7 @@ func retireEvidenceLifecycleSearchDocuments(
 		WHERE team_id = ?::uuid
 		  AND source_kind = ?
 		  AND source_id = ANY(?::uuid[])
-	`, teamID, sourceKind, pq.Array(sourceIDs)).Error; err != nil {
+	`, teamID, sourceKind, postgrescompat.Array(sourceIDs)).Error; err != nil {
 		return err
 	}
 	return tx.WithContext(ctx).Exec(`
@@ -744,5 +744,5 @@ func retireEvidenceLifecycleSearchDocuments(
 		  AND source_kind = ?
 		  AND source_id = ANY(?::uuid[])
 		  AND status IN ('queued', 'processing')
-	`, teamID, sourceKind, pq.Array(sourceIDs)).Error
+	`, teamID, sourceKind, postgrescompat.Array(sourceIDs)).Error
 }
