@@ -15,6 +15,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
@@ -416,6 +417,14 @@ func TestControlPortalPrivateMemoryConfigFlows(t *testing.T) {
 	rec = do(http.MethodPatch, "/control/api/config/private-memory", "{")
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
+	rec = do(http.MethodPatch, "/control/api/config/private-memory", `{"items":[{"key":"PRIVATE_MEMORY_RETENTION_DAYS","value":"14","unknown":true}]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	require.Equal(t, "30", appConfig.privateMemoryValues[domain.AppConfigPrivateMemoryRetentionDays])
+
+	rec = do(http.MethodPatch, "/control/api/config/private-memory", `{"items":[{"key":"PRIVATE_MEMORY_RETENTION_DAYS","value":"14"},{"key":"PRIVATE_MEMORY_RETENTION_DAYS","value":"7"}]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	require.Equal(t, "30", appConfig.privateMemoryValues[domain.AppConfigPrivateMemoryRetentionDays])
+
 	appConfig.updateErr = service.ErrInvalidAppConfig
 	rec = do(http.MethodPatch, "/control/api/config/private-memory", `{"items":[{"key":"PRIVATE_MEMORY_RETENTION_DAYS","value":"-1"}]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
@@ -815,7 +824,9 @@ func TestControlPortalConfigUpdateBackendErrors(t *testing.T) {
 		},
 		{
 			name: "private memory",
-			call: func(h *controlPortalHandler, c echo.Context) error { return h.updatePrivateMemoryConfig(c) },
+			call: func(h *controlPortalHandler, c echo.Context) error {
+				return httpmw.BindAndValidateStrict[controlPrivateMemoryConfigRequest](privateMemoryConfigBodyKey)(h.updatePrivateMemoryConfig)(c)
+			},
 			body: `{"items":[{"key":"PRIVATE_MEMORY_RETENTION_DAYS","value":"30"}]}`,
 		},
 		{

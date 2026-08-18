@@ -70,6 +70,15 @@ type RuntimeOptions struct {
 	UserPortalMiddleware []echo.MiddlewareFunc
 }
 
+var errPrivateMemoryPrepareFailed = errors.New("private-memory erasure preparation failed")
+
+func privateMemoryPrepareBootError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errPrivateMemoryPrepareFailed
+}
+
 func RunActiveServer(
 	startupCtx context.Context,
 	cfg config.Config,
@@ -179,7 +188,7 @@ func RunActiveServer(
 		SessionInvalidator: backend.cleanupRepo,
 		Logger:             logger,
 	})
-	if err := privateMemoryService.Prepare(startupCtx); err != nil {
+	if err := privateMemoryPrepareBootError(privateMemoryService.Prepare(startupCtx)); err != nil {
 		log.Fatalf("private-memory erasure boot blocked: %v", err)
 	}
 	rateLimitService := backend.rateLimitService

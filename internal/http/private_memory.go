@@ -19,6 +19,7 @@ import (
 )
 
 const (
+	privateMemoryConfigBodyKey    = "private_memory_config_body"
 	privateMemoryErasureBodyKey   = "private_memory_erasure_body"
 	privateMemoryLegalHoldBodyKey = "private_memory_legal_hold_body"
 )
@@ -242,12 +243,12 @@ func (h *controlPortalHandler) updatePrivateMemoryConfig(c echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}
-	var body controlPrivateMemoryConfigRequest
-	if err := c.Bind(&body); err != nil {
-		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
-	}
+	body := httpmw.MustGetValidatedBody[controlPrivateMemoryConfigRequest](c.Request().Context(), privateMemoryConfigBodyKey)
 	values := make(map[string]string, len(body.Items))
 	for _, item := range body.Items {
+		if _, exists := values[item.Key]; exists {
+			return httperr.New(httperr.VALIDATION_ERROR, "duplicate private-memory config key")
+		}
 		values[item.Key] = item.Value
 	}
 	settings, err := h.appConfig.UpdatePrivateMemorySettings(c.Request().Context(), values, "control", c.RealIP(), "")

@@ -191,7 +191,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		api.GET("/config/telemetry-pricing", control.getTelemetryPricingConfig)
 		api.PATCH("/config/telemetry-pricing", control.updateTelemetryPricingConfig)
 		api.GET("/config/private-memory", control.getPrivateMemoryConfig)
-		api.PATCH("/config/private-memory", control.updatePrivateMemoryConfig)
+		api.PATCH("/config/private-memory", control.updatePrivateMemoryConfig, httpmw.BindAndValidateStrict[controlPrivateMemoryConfigRequest](privateMemoryConfigBodyKey))
 	}
 	if telemetry.PrivateMemory != nil {
 		api.GET("/private-memory/spaces", control.listPrivateMemorySpaces)
