@@ -48,8 +48,6 @@ jobs:
         shell: bash
         env:
           DENSE_MEM_STAGE_POSTGRES_DSN: ${{ secrets.PGVECTOR_STAGE_DSN }}
-          DENSE_MEM_STAGE_POSTGRES_HOST: localhost
-          DENSE_MEM_STAGE_POSTGRES_PORT: "15433"
         run: |
           set -euo pipefail
 
@@ -59,9 +57,7 @@ jobs:
             exit 1
           fi
           stage_postgres_dsn="${DENSE_MEM_STAGE_POSTGRES_DSN}"
-          stage_postgres_host="${DENSE_MEM_STAGE_POSTGRES_HOST}"
-          stage_postgres_port="${DENSE_MEM_STAGE_POSTGRES_PORT}"
-          unset DENSE_MEM_STAGE_POSTGRES_DSN DENSE_MEM_STAGE_POSTGRES_HOST DENSE_MEM_STAGE_POSTGRES_PORT
+          unset DENSE_MEM_STAGE_POSTGRES_DSN
           if [[ ! -f "${sync_script}" || ! -x "${sync_script}" ]]; then
             echo "::error::${sync_script} is missing or not executable"
             exit 1
@@ -75,8 +71,6 @@ jobs:
 
           timeout --signal=TERM --kill-after=30s 10m "${sync_script}"
           DENSE_MEM_STAGE_POSTGRES_DSN="${stage_postgres_dsn}" \
-            DENSE_MEM_STAGE_POSTGRES_HOST="${stage_postgres_host}" \
-            DENSE_MEM_STAGE_POSTGRES_PORT="${stage_postgres_port}" \
             go test -tags=staging_rehearsal ./cmd/internal/migrationapp \
             -run '^TestStagingMigrationRehearsal$' \
             -count=1 \

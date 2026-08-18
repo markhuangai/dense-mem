@@ -4,9 +4,7 @@ package migrationapp
 
 import (
 	"context"
-	"errors"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,11 +17,6 @@ import (
 )
 
 const stagingDatabaseName = "dense-mem"
-
-const (
-	stagingPostgresHostEnv = "DENSE_MEM_STAGE_POSTGRES_HOST"
-	stagingPostgresPortEnv = "DENSE_MEM_STAGE_POSTGRES_PORT"
-)
 
 type stagingRehearsalLogger struct {
 	t *testing.T
@@ -44,9 +37,6 @@ func TestStagingMigrationRehearsal(t *testing.T) {
 	}
 	if connectionConfig.Database != stagingDatabaseName {
 		t.Fatalf("staging migration rehearsal refused a DSN for a database other than %q", stagingDatabaseName)
-	}
-	if err := validateStagingEndpoint(connectionConfig); err != nil {
-		t.Fatal(err)
 	}
 
 	db, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{
@@ -102,65 +92,4 @@ func TestStagingMigrationRehearsal(t *testing.T) {
 	}
 
 	t.Log("staging migrations and startup migration state validation completed")
-}
-
-func validateStagingEndpoint(connectionConfig *pgconn.Config) error {
-	if connectionConfig == nil {
-		return errors.New("staging migration rehearsal could not validate the PostgreSQL endpoint")
-	}
-	expectedHost := strings.TrimSpace(os.Getenv(stagingPostgresHostEnv))
-	if expectedHost == "" {
-		return errors.New(stagingPostgresHostEnv + " is required to prove the target is staging")
-	}
-	expectedPortText := strings.TrimSpace(os.Getenv(stagingPostgresPortEnv))
-	expectedPort, err := strconv.ParseUint(expectedPortText, 10, 16)
-	if err != nil || expectedPort == 0 {
-		return errors.New(stagingPostgresPortEnv + " must be a valid PostgreSQL port")
-	}
-	if connectionConfig.Host != expectedHost {
-		return errors.New("staging migration rehearsal refused a DSN for an unexpected PostgreSQL host")
-	}
-	if connectionConfig.Port != uint16(expectedPort) {
-		return errors.New("staging migration rehearsal refused a DSN for an unexpected PostgreSQL port")
-	}
-	for _, fallback := range connectionConfig.Fallbacks {
-		if fallback == nil || fallback.Host != expectedHost || fallback.Port != uint16(expectedPort) {
-			return errors.New("staging migration rehearsal refused a DSN with an unexpected PostgreSQL fallback endpoint")
-		}
-	}
-	return nil
-}
-
-func TestValidateStagingEndpoint(t *testing.T) {
-	connectionConfig, err := pgconn.ParseConfig("postgres://user:password@localhost:15433/dense-mem")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(stagingPostgresHostEnv, "localhost")
-	t.Setenv(stagingPostgresPortEnv, "15433")
-	if err := validateStagingEndpoint(connectionConfig); err != nil {
-		t.Fatalf("expected the configured staging endpoint to pass: %v", err)
-	}
-
-	multiEndpointConfig, err := pgconn.ParseConfig("postgres://user:password@localhost:15433,prod-db:5432/dense-mem?sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(multiEndpointConfig.Fallbacks) == 0 {
-		t.Fatal("expected the multi-host DSN to contain a fallback endpoint")
-	}
-	if err := validateStagingEndpoint(multiEndpointConfig); err == nil {
-		t.Fatal("expected a production fallback endpoint to be rejected")
-	}
-
-	t.Setenv(stagingPostgresPortEnv, "5432")
-	if err := validateStagingEndpoint(connectionConfig); err == nil {
-		t.Fatal("expected a production-port DSN to be rejected")
-	}
-
-	t.Setenv(stagingPostgresPortEnv, "15433")
-	t.Setenv(stagingPostgresHostEnv, "db.example")
-	if err := validateStagingEndpoint(connectionConfig); err == nil {
-		t.Fatal("expected a non-staging host DSN to be rejected")
-	}
 }

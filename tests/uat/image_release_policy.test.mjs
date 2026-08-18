@@ -56,8 +56,8 @@ test("prerelease publication waits for the staging migration rehearsal", async (
     rehearsal,
     /^          DENSE_MEM_STAGE_POSTGRES_DSN: \$\{\{ secrets\.PGVECTOR_STAGE_DSN \}\}$/m,
   );
-  assert.match(rehearsal, /^          DENSE_MEM_STAGE_POSTGRES_HOST: localhost$/m);
-  assert.match(rehearsal, /^          DENSE_MEM_STAGE_POSTGRES_PORT: "15433"$/m);
+  assert.doesNotMatch(rehearsal, /DENSE_MEM_STAGE_POSTGRES_HOST/);
+  assert.doesNotMatch(rehearsal, /DENSE_MEM_STAGE_POSTGRES_PORT/);
   assert.match(rehearsal, /"\$\{HOME\}\/dense-mem-stage\/sync\.sh"/);
   assert.match(rehearsal, /flock --wait 600 9/);
   assert.match(rehearsal, /timeout --signal=TERM --kill-after=30s 10m/);
