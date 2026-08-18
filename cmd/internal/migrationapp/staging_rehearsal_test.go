@@ -17,7 +17,11 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
-const stagingDatabaseName = "dense-mem"
+const (
+	stagingDatabaseName = "dense-mem"
+	stagingPostgresHost = "localhost"
+	stagingPostgresPort = uint16(15433)
+)
 
 type stagingRehearsalLogger struct {
 	t *testing.T
@@ -102,8 +106,11 @@ func validateStagingDSN(connectionConfig *pgconn.Config) error {
 	if connectionConfig == nil {
 		return errors.New("staging migration rehearsal could not validate the PostgreSQL DSN")
 	}
+	if connectionConfig.Host != stagingPostgresHost || connectionConfig.Port != stagingPostgresPort {
+		return errors.New("staging migration rehearsal refused a DSN for an unexpected PostgreSQL endpoint")
+	}
 	for _, fallback := range connectionConfig.Fallbacks {
-		if fallback == nil || fallback.Host != connectionConfig.Host || fallback.Port != connectionConfig.Port {
+		if fallback == nil || fallback.Host != stagingPostgresHost || fallback.Port != stagingPostgresPort {
 			return errors.New("staging migration rehearsal refused a PostgreSQL DSN with a fallback endpoint")
 		}
 	}
@@ -123,6 +130,16 @@ func TestValidateStagingDSN(t *testing.T) {
 		{
 			name:    "fallback endpoint",
 			dsn:     "postgres://user:password@localhost:15433,prod-db:5432/dense-mem?sslmode=disable",
+			wantErr: true,
+		},
+		{
+			name:    "production host",
+			dsn:     "postgres://user:password@prod-db:15433/dense-mem",
+			wantErr: true,
+		},
+		{
+			name:    "production port",
+			dsn:     "postgres://user:password@localhost:5432/dense-mem",
 			wantErr: true,
 		},
 	}
