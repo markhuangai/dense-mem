@@ -33,7 +33,7 @@ func TestAuthenticateOAuthBearerValidatesAndFixesMembershipContext(t *testing.T)
 		"exp":               fixture.now.Add(time.Hour).Unix(),
 		"nbf":               fixture.now.Add(-time.Minute).Unix(),
 		"iat":               fixture.now.Add(-time.Minute).Unix(),
-		"scp":               "densemem.read ignored.scope",
+		"scp":               "densemem.read densemem.write ignored.scope",
 		"dense_mem_team_id": fixture.teamID.String(),
 	})
 
@@ -47,6 +47,18 @@ func TestAuthenticateOAuthBearerValidatesAndFixesMembershipContext(t *testing.T)
 
 	otherTeamID := uuid.New()
 	_, err = fixture.service.AuthenticateOAuthBearer(t.Context(), token, &otherTeamID)
+	require.ErrorIs(t, err, ErrOAuthAccessDenied)
+}
+
+func TestAuthenticateOAuthBearerRejectsRevokedMembershipEntitlement(t *testing.T) {
+	fixture := newOAuthProtectedResourceFixture(t)
+	fixture.repo.mappings = nil
+
+	_, err := fixture.service.AuthenticateOAuthBearer(
+		t.Context(),
+		fixture.token(fixture.key, fixture.keyID, fixture.claims()),
+		nil,
+	)
 	require.ErrorIs(t, err, ErrOAuthAccessDenied)
 }
 
@@ -557,6 +569,9 @@ func newOAuthProtectedResourceFixture(t *testing.T) *oauthProtectedResourceFixtu
 			Grants:          []string{CredentialScopeRead, CredentialScopeWrite},
 			Role:            CredentialRoleMember,
 			Status:          "active",
+			SSOProviderID:   &providerID,
+			SSOSubject:      identity.Subject,
+			SSOGroupID:      "group-a",
 		},
 	}
 	providerConfig := &domain.SSOProvider{
@@ -585,6 +600,22 @@ func newOAuthProtectedResourceFixture(t *testing.T) *oauthProtectedResourceFixtu
 		providers:    map[uuid.UUID]*domain.SSOProvider{providerID: providerConfig},
 		identities:   map[uuid.UUID]*domain.SSOIdentity{identity.ID: identity},
 		teamProfiles: []*domain.SSOTeamMembership{membership},
+		cache: &domain.SSOEntitlementCache{
+			ProviderID: providerID,
+			Subject:    identity.Subject,
+			Groups:     []string{"group-a"},
+			Status:     "active",
+			CheckedAt:  now,
+			ExpiresAt:  now.Add(time.Hour),
+		},
+		mappings: []*domain.SSOGroupMapping{{
+			ProviderID: providerID,
+			TeamID:     teamID,
+			GroupID:    "group-a",
+			Scopes:     []string{CredentialScopeRead},
+			Role:       CredentialRoleMember,
+			Enabled:    true,
+		}},
 	}
 	fixture := &oauthProtectedResourceFixture{
 		repo: repo, provider: provider, providerConfig: providerConfig, identity: identity,

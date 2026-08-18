@@ -128,8 +128,19 @@ func (s *SSOService) AuthenticateOAuthBearer(ctx context.Context, raw string, pa
 	if err != nil {
 		return nil, err
 	}
+	validated, err := s.ValidateMembership(ctx, &selected.Membership)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrSSOAccessDenied), errors.Is(err, ErrSSOProviderDisabled):
+			return nil, ErrOAuthAccessDenied
+		case errors.Is(err, ErrSSOEntitlementRefreshStale):
+			return nil, ErrOAuthProviderUnavailable
+		default:
+			return nil, err
+		}
+	}
 	mappedScopes := mapOAuthScopes(externalScopes, provider.ProtectedResource.ScopeMappings)
-	selected.Membership.Grants = intersectOAuthGrants(mappedScopes, selected.Membership.Grants)
+	validated.Grants = intersectOAuthGrants(mappedScopes, validated.Grants)
 
 	return &domain.AuthenticatedActor{
 		Team: selected.Team,
@@ -138,8 +149,8 @@ func (s *SSOService) AuthenticateOAuthBearer(ctx context.Context, raw string, pa
 			Kind:        "human",
 			DisplayName: identity.DisplayName,
 		},
-		Membership: selected.Membership,
-		OwnerID:    selected.Membership.OwnerID,
+		Membership: *validated,
+		OwnerID:    validated.OwnerID,
 	}, nil
 }
 

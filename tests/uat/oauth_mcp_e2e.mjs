@@ -90,8 +90,10 @@ for (const name of ["entra", "pingone", "generic"]) {
   assertUUID(providers[name]?.id, `${name} provider ID`);
 }
 
-await createMapping(providers.entra.id, seedTeamID, "oauth-team-a", ["read", "write"]);
+const entraTeamAMapping = await createMapping(providers.entra.id, seedTeamID, "oauth-team-a", ["read", "write"]);
 await createMapping(providers.entra.id, secondTeam.id, "oauth-team-b", ["read", "write"]);
+await createMapping(providers.pingone.id, seedTeamID, "ping-team", ["read", "write"]);
+await createMapping(providers.generic.id, seedTeamID, "generic-team", ["read", "write"]);
 
 const identities = {
   entra: identityFixture(providers.entra.id, "entra-user", true),
@@ -198,6 +200,21 @@ const disabledIdentity = await issueToken("entra", { claims: { oid: identities.d
 await expectMCPError(disabledIdentity, "/mcp", 403, "FORBIDDEN", "disabled identity");
 const suspendedMembership = await issueToken("entra", { claims: { oid: identities.suspended.subject, dense_mem_team_id: seedTeamID } });
 await expectMCPError(suspendedMembership, "/mcp", 403, "FORBIDDEN", "suspended membership");
+
+await controlJSON(`/sso/providers/${providers.entra.id}/mappings/${entraTeamAMapping.id}`, { method: "DELETE" });
+await expectMCPError(entraTeamA, "/mcp", 403, "FORBIDDEN", "revoked membership mapping");
+await controlJSON(`/sso/providers/${providers.entra.id}/mappings/${entraTeamAMapping.id}`, {
+  method: "PATCH",
+  body: {
+    team_id: seedTeamID,
+    group_id: "oauth-team-a",
+    group_name: "oauth-team-a",
+    scopes: ["read", "write"],
+    role: "member",
+    enabled: true,
+  },
+});
+assert((await mcpTools(entraTeamA, "/mcp")).status === 200, "restored membership mapping did not restore access");
 
 await setMockState("generic", { active_key: "secondary" });
 await delay(1_100);
@@ -309,13 +326,23 @@ function seedOAuthPrincipals(identityFixtures, membershipFixtures, initialMember
       FROM unnest(ARRAY[${membership.grants.map(sqlLiteral).join(",")}]::text[]) AS grant_name;
     `);
   }
+  const entitlementGroups = new Map();
+  for (const membership of membershipFixtures) {
+    const key = `${membership.identity.providerID}:${membership.identity.subject}`;
+    const existing = entitlementGroups.get(key) ?? { identity: membership.identity, groups: new Set() };
+    existing.groups.add(membership.groupID);
+    entitlementGroups.set(key, existing);
+  }
+  for (const { identity, groups } of entitlementGroups.values()) {
+    statements.push(`
+      INSERT INTO sso_entitlement_cache (provider_id, subject, groups, status, checked_at, expires_at, error)
+      VALUES (
+        ${sqlLiteral(identity.providerID)}::uuid, ${sqlLiteral(identity.subject)},
+        ARRAY[${[...groups].map(sqlLiteral).join(",")}]::text[], 'active', now(), now() + interval '8 hours', ''
+      );
+    `);
+  }
   statements.push(`
-    INSERT INTO sso_entitlement_cache (provider_id, subject, groups, status, checked_at, expires_at, error)
-    VALUES (
-      ${sqlLiteral(initialMembership.identity.providerID)}::uuid,
-      ${sqlLiteral(initialMembership.identity.subject)}, ARRAY['oauth-team-a','oauth-team-b']::text[],
-      'active', now(), now() + interval '8 hours', ''
-    );
     INSERT INTO sso_sessions (
       session_hash, identity_id, provider_id, membership_id, team_id, csrf_hash,
       expires_at, created_at, last_seen_at
@@ -346,6 +373,7 @@ async function createMapping(providerID, teamID, groupID, scopes) {
     body: { team_id: teamID, group_id: groupID, group_name: groupID, scopes, role: "member", enabled: true },
   });
   assertUUID(response.data?.id, "mapping ID");
+  return response.data;
 }
 
 async function issueToken(profile, options = {}) {
