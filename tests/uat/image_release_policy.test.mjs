@@ -94,9 +94,14 @@ test("published images require the populated migration gate before building", as
       new URL(`../../.github/workflows/${filename}`, import.meta.url),
       "utf8",
     );
-    const gate = workflow.indexOf("run: scripts/pre-image-check.sh HEAD^");
+    const baseline = workflow.indexOf(
+      'migration_base="$(.github/scripts/prerelease-version.sh previous "${RELEASE_TAG}")"',
+    );
+    const gate = workflow.indexOf('scripts/pre-image-check.sh "${migration_base}"');
     const build = workflow.indexOf("uses: docker/build-push-action@v7");
+    assert.ok(baseline >= 0, `${filename} does not resolve the prior release baseline`);
     assert.ok(gate >= 0, `${filename} is missing the populated migration gate`);
+    assert.ok(gate > baseline, `${filename} runs the gate before resolving its baseline`);
     assert.ok(build > gate, `${filename} builds before the populated migration gate`);
   }
 });

@@ -61,7 +61,13 @@ jobs:
           cache: false
 
       - name: Validate populated PostgreSQL upgrade
-        run: scripts/pre-image-check.sh HEAD^
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          migration_base="$(.github/scripts/prerelease-version.sh previous "${RELEASE_TAG}")"
+          scripts/pre-image-check.sh "${migration_base}"
 
       - name: Resolve image source metadata
         id: source
