@@ -8,6 +8,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/elimity-com/scim v0.0.0-20260728105928-2641426a1539
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
@@ -51,7 +52,6 @@ require (
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect

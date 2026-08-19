@@ -124,13 +124,32 @@
 - #95 requires a compatible cutover marker and removes Neo4j/runtime-v1 paths
   without changing supported V2 behavior.
 - PRs that may affect retrieval quality, ranking, placement accuracy,
-  verifier/reviewer behavior, embeddings, search documents, migration
+  semantic verifier/reviewer behavior, embeddings, search documents, migration
   placement, or performance must include the deterministic 1k
   evaluation/comparison result.
 - Generated evaluation seeds, suites, downloaded datasets, imports, runtime
   databases, run outputs, and comparison artifacts stay in ignored local paths.
   Commit generator, source-lock, provenance, validation, scoring, and compact
   baseline evidence instead.
+
+## Code Review Rules
+
+### Cross-boundary behavior
+
+- When a change adds or alters a field, state transition, identifier,
+  configuration value, or contract, trace all affected supported paths from
+  input or writer through validation, persistence or serialization,
+  asynchronous work, and each reader or consumer. Flag a path that drops,
+  defaults, overwrites, mis-scopes, or retains stale state; the safe path
+  preserves one authoritative value end to end.
+
+### Falsification
+
+- Before declaring changed behavior safe or a review clean, construct a
+  concrete supported counterexample and verify it against actual callers and
+  state transitions. Report only defects introduced by the change that remain
+  reachable after checking current code, tests, linked scope, and project
+  memory; reject hypothetical, pre-existing, or contradicted claims.
 
 ## Change And Test Workflow
 
