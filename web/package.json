@@ -20,7 +20,7 @@
     "playwright:mock:user": "playwright test --config playwright.user.config.ts"
   },
   "dependencies": {
-    "lucide-react": "^1.30.0",
+    "lucide-react": "^1.31.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-force-graph-2d": "^1.29.1",
@@ -28,9 +28,9 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
-    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^14.6.3",
+    "@testing-library/user-event": "^14.6.4",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
