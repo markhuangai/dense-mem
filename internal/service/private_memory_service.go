@@ -43,10 +43,18 @@ type PrivateMemoryCommand struct {
 	ReasonCode              string
 }
 
+type PrivateMemoryAuditContext struct {
+	ActorCredentialID *string
+	ActorRole         string
+	ClientIP          string
+	CorrelationID     string
+}
+
 type PrivateMemoryServiceConfig struct {
 	Repository         repository.PrivateMemoryRepository
 	RuntimeConfig      PrivateMemoryRuntimeConfigProvider
 	SessionInvalidator CredentialSessionInvalidator
+	AuditService       AuditService
 	Logger             observability.LogProvider
 	WorkerID           string
 	WorkerPoll         time.Duration
@@ -58,6 +66,7 @@ type PrivateMemoryService struct {
 	repository         repository.PrivateMemoryRepository
 	runtimeConfig      PrivateMemoryRuntimeConfigProvider
 	sessionInvalidator CredentialSessionInvalidator
+	auditService       AuditService
 	logger             observability.LogProvider
 	workerID           string
 	workerPoll         time.Duration
@@ -86,7 +95,7 @@ func NewPrivateMemoryService(config PrivateMemoryServiceConfig) *PrivateMemorySe
 	}
 	return &PrivateMemoryService{
 		repository: config.Repository, runtimeConfig: config.RuntimeConfig,
-		sessionInvalidator: config.SessionInvalidator, logger: config.Logger,
+		sessionInvalidator: config.SessionInvalidator, auditService: config.AuditService, logger: config.Logger,
 		workerID: workerID, workerPoll: workerPoll, workerLease: workerLease,
 		retentionPoll: retentionPoll, now: func() time.Time { return time.Now().UTC() },
 	}
@@ -127,12 +136,12 @@ func (s *PrivateMemoryService) RequestCredentialErasure(ctx context.Context, tea
 	return operation, err
 }
 
-func (s *PrivateMemoryService) DeleteSSOCredential(ctx context.Context, teamID, identityID, credentialID uuid.UUID, command PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error) {
+func (s *PrivateMemoryService) DeleteSSOCredential(ctx context.Context, teamID, identityID, credentialID uuid.UUID, command PrivateMemoryCommand, auditContext PrivateMemoryAuditContext) (*domain.PrivateMemoryErasureOperation, error) {
 	key, reason, err := validatePrivateMemoryCommand(command, "credential_deleted")
 	if err != nil {
 		return nil, err
 	}
-	operation, _, err := s.repository.DisableSSOCredential(ctx, repository.PrivateMemoryErasureRequest{
+	operation, created, err := s.repository.DisableSSOCredential(ctx, repository.PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: identityID, CredentialID: credentialID,
 		IdempotencyScopeHash: privateMemoryServiceHash("owner_sso_credential_delete", teamID.String(), identityID.String(), key),
 		RequestHash:          privateMemoryServiceHash(string(domain.PrivateMemoryRetireCredential), teamID.String(), identityID.String(), credentialID.String(), "acknowledged"),
@@ -145,6 +154,32 @@ func (s *PrivateMemoryService) DeleteSSOCredential(ctx context.Context, teamID, 
 		if err := s.sessionInvalidator.InvalidateCredentialSessions(ctx, teamID.String(), credentialID.String()); err != nil && s.logger != nil {
 			s.logger.Warn("private memory credential session invalidation failed",
 				observability.String("error_code", "coordination_cleanup_failed"),
+				observability.String("team_id", teamID.String()),
+				observability.String("key_id", credentialID.String()),
+			)
+		}
+	}
+	if created && s.auditService != nil {
+		teamIDString := teamID.String()
+		beforePayload := map[string]interface{}{
+			"id":                credentialID.String(),
+			"team_id":           teamID.String(),
+			"owner_identity_id": identityID.String(),
+			"status":            "active",
+			"revoked_at":        nil,
+		}
+		if err := s.auditService.CredentialRevoked(
+			ctx,
+			&teamIDString,
+			credentialID.String(),
+			beforePayload,
+			auditContext.ActorCredentialID,
+			auditContext.ActorRole,
+			auditContext.ClientIP,
+			auditContext.CorrelationID,
+		); err != nil && s.logger != nil {
+			s.logger.Warn("private memory credential audit failed",
+				observability.String("error_code", "audit_append_failed"),
 				observability.String("team_id", teamID.String()),
 				observability.String("key_id", credentialID.String()),
 			)

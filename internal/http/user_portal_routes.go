@@ -99,7 +99,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		api.POST("/sso/credentials/:credentialId/rotate", portal.rotateSSOCredential, httpmw.RequireScopes("read"))
 		if deps.PrivateMemory != nil {
 			api.DELETE("/sso/private-memory", portal.eraseSSOPrivateMemory, httpmw.RequireScopes("write"), httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
-			api.DELETE("/sso/credentials/:credentialId", portal.deleteSSOCredential, httpmw.RequireScopes("write"), httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
+			api.DELETE("/sso/credentials/:credentialId", portal.deleteSSOCredential, httpmw.RequireScopes("read"), httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
 		}
 	}
 

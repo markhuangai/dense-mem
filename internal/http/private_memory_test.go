@@ -45,6 +45,13 @@ type privateMemoryHTTPServiceStub struct {
 	requestErr          error
 }
 
+func (s *privateMemoryHTTPServiceStub) DeleteSSOCredential(_ context.Context, teamID, identityID, credentialID uuid.UUID, _ service.PrivateMemoryCommand, _ service.PrivateMemoryAuditContext) (*domain.PrivateMemoryErasureOperation, error) {
+	s.credentialTeamID = teamID
+	s.credentialID = credentialID
+	s.profileIdentityID = identityID
+	return s.operation, s.requestErr
+}
+
 func (s *privateMemoryHTTPServiceStub) RequestSSOProfileErasure(_ context.Context, teamID, identityID uuid.UUID, command service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error) {
 	s.profileCommand = command
 	s.profileTeamID = teamID
@@ -194,7 +201,7 @@ func TestCredentialPrivateMemoryHTTPRequiresWriteScope(t *testing.T) {
 	require.Equal(t, uuid.Nil, stub.credentialID)
 }
 
-func TestSSOPrivateMemoryDeleteRoutesRequireWriteScope(t *testing.T) {
+func TestSSOPrivateMemoryDeleteRoutesUseSeparateScopes(t *testing.T) {
 	teamID := uuid.New()
 	identityID := uuid.New()
 	credentialID := uuid.New()
@@ -216,20 +223,23 @@ func TestSSOPrivateMemoryDeleteRoutesRequireWriteScope(t *testing.T) {
 		httpmw.RequireScopes("write"),
 		httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
 	e.DELETE("/ui/api/sso/credentials/:credentialId", handler.deleteSSOCredential,
-		httpmw.RequireScopes("write"),
+		httpmw.RequireScopes("read"),
 		httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
 
-	for _, path := range []string{
-		"/ui/api/sso/private-memory",
-		"/ui/api/sso/credentials/" + credentialID.String(),
+	for _, test := range []struct {
+		path       string
+		wantStatus int
+	}{
+		{path: "/ui/api/sso/private-memory", wantStatus: http.StatusForbidden},
+		{path: "/ui/api/sso/credentials/" + credentialID.String(), wantStatus: http.StatusNotFound},
 	} {
-		req := httptest.NewRequest(http.MethodDelete, path, strings.NewReader(`{"acknowledge_irreversible":true}`))
+		req := httptest.NewRequest(http.MethodDelete, test.path, strings.NewReader(`{"acknowledge_irreversible":true}`))
 		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 		req.Header.Set("Idempotency-Key", "read-only-erasure")
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
 
-		require.Equal(t, http.StatusForbidden, rec.Code, path)
+		require.Equal(t, test.wantStatus, rec.Code, test.path)
 	}
 	require.Equal(t, uuid.Nil, stub.profileIdentityID)
 	require.Equal(t, uuid.Nil, stub.credentialID)

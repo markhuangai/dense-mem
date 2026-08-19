@@ -161,6 +161,32 @@ func (s *privateMemorySessionInvalidatorStub) InvalidateCredentialSessions(_ con
 	return s.err
 }
 
+type privateMemoryAuditStub struct {
+	AuditService
+	calls           int
+	teamID          string
+	credentialID    string
+	beforePayload   map[string]interface{}
+	actorCredential *string
+	actorRole       string
+	clientIP        string
+	correlationID   string
+}
+
+func (s *privateMemoryAuditStub) CredentialRevoked(_ context.Context, teamID *string, credentialID string, beforePayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error {
+	s.calls++
+	if teamID != nil {
+		s.teamID = *teamID
+	}
+	s.credentialID = credentialID
+	s.beforePayload = beforePayload
+	s.actorCredential = actorCredentialID
+	s.actorRole = actorRole
+	s.clientIP = clientIP
+	s.correlationID = correlationID
+	return nil
+}
+
 func TestPrivateMemoryServiceValidatesAndScopesOwnerCommands(t *testing.T) {
 	ctx := context.Background()
 	teamID := uuid.New()
@@ -170,9 +196,10 @@ func TestPrivateMemoryServiceValidatesAndScopesOwnerCommands(t *testing.T) {
 	operation := &domain.PrivateMemoryErasureOperation{ID: uuid.New()}
 	repo := &privateMemoryRepositoryStub{operation: operation}
 	invalidator := &privateMemorySessionInvalidatorStub{err: errors.New("redis unavailable")}
+	audit := &privateMemoryAuditStub{}
 	logger := &activityLogger{}
 	svc := NewPrivateMemoryService(PrivateMemoryServiceConfig{
-		Repository: repo, SessionInvalidator: invalidator, Logger: logger,
+		Repository: repo, SessionInvalidator: invalidator, AuditService: audit, Logger: logger,
 		WorkerID: " worker-a ", WorkerPoll: -1, WorkerLease: -1, RetentionPoll: -1,
 	})
 
@@ -220,7 +247,9 @@ func TestPrivateMemoryServiceValidatesAndScopesOwnerCommands(t *testing.T) {
 	_, err = svc.RequestCredentialErasure(ctx, teamID, credentialID, PrivateMemoryCommand{})
 	require.ErrorIs(t, err, ErrPrivateMemoryAcknowledgementRequired)
 
-	result, err = svc.DeleteSSOCredential(ctx, teamID, identityID, credentialID, command)
+	result, err = svc.DeleteSSOCredential(ctx, teamID, identityID, credentialID, command, PrivateMemoryAuditContext{
+		ActorRole: "member", ClientIP: "198.51.100.10", CorrelationID: "corr-delete",
+	})
 	require.NoError(t, err)
 	require.Same(t, operation, result)
 	require.Equal(t, identityID, repo.disableRequest.OwnerID)
@@ -229,7 +258,16 @@ func TestPrivateMemoryServiceValidatesAndScopesOwnerCommands(t *testing.T) {
 	require.Equal(t, teamID.String(), invalidator.teamID)
 	require.Equal(t, credentialID.String(), invalidator.credentialID)
 	require.NotEmpty(t, logger.warnings)
-	_, err = svc.DeleteSSOCredential(ctx, teamID, identityID, credentialID, PrivateMemoryCommand{})
+	require.Equal(t, 1, audit.calls)
+	require.Equal(t, teamID.String(), audit.teamID)
+	require.Equal(t, credentialID.String(), audit.credentialID)
+	require.Equal(t, identityID.String(), audit.beforePayload["owner_identity_id"])
+	require.Equal(t, "active", audit.beforePayload["status"])
+	require.Nil(t, audit.beforePayload["revoked_at"])
+	require.Equal(t, "member", audit.actorRole)
+	require.Equal(t, "198.51.100.10", audit.clientIP)
+	require.Equal(t, "corr-delete", audit.correlationID)
+	_, err = svc.DeleteSSOCredential(ctx, teamID, identityID, credentialID, PrivateMemoryCommand{}, PrivateMemoryAuditContext{})
 	require.ErrorIs(t, err, ErrPrivateMemoryAcknowledgementRequired)
 
 	controlCommand := command

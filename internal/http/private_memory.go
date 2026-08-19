@@ -27,7 +27,7 @@ const (
 type PrivateMemoryServiceInterface interface {
 	RequestSSOProfileErasure(context.Context, uuid.UUID, uuid.UUID, service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error)
 	RequestCredentialErasure(context.Context, uuid.UUID, uuid.UUID, service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error)
-	DeleteSSOCredential(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error)
+	DeleteSSOCredential(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, service.PrivateMemoryCommand, service.PrivateMemoryAuditContext) (*domain.PrivateMemoryErasureOperation, error)
 	GetOwnerOperation(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID, *uuid.UUID) (*domain.PrivateMemoryErasureOperation, error)
 	RequestControlErasure(context.Context, uuid.UUID, service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error)
 	GetOperation(context.Context, uuid.UUID) (*domain.PrivateMemoryErasureOperation, error)
@@ -166,7 +166,7 @@ func (h *userPortalHandler) deleteSSOCredential(c echo.Context) error {
 	if h.privateMemory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory service unavailable")
 	}
-	info, _, err := h.ssoRequestSession(c)
+	info, principal, err := h.ssoRequestSession(c)
 	if err != nil {
 		return err
 	}
@@ -183,6 +183,12 @@ func (h *userPortalHandler) deleteSSOCredential(c echo.Context) error {
 		info.Identity.ID,
 		credentialID,
 		privateMemoryCommand(c),
+		service.PrivateMemoryAuditContext{
+			ActorCredentialID: userPortalPrincipalCredentialID(principal),
+			ActorRole:         principal.Role,
+			ClientIP:          c.RealIP(),
+			CorrelationID:     httpmw.GetCorrelationID(c.Request().Context()),
+		},
 	)
 	if err != nil {
 		return privateMemoryHTTPError(err)

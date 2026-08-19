@@ -186,6 +186,7 @@ func RunActiveServer(
 		Repository:         privateMemoryRepo,
 		RuntimeConfig:      appConfigService,
 		SessionInvalidator: backend.cleanupRepo,
+		AuditService:       auditService,
 		Logger:             logger,
 	})
 	if err := privateMemoryPrepareBootError(privateMemoryService.Prepare(startupCtx)); err != nil {

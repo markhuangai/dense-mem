@@ -16,6 +16,7 @@ func TestPlacementConflictDoesNotCombinePrivateSpacesAndPersistsPlacementSpace(t
 	teamID := createLedgerTeam(t, adminDB, rls, "placement-private-space-conflict-team")
 	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "placement-private-space-conflict-owner-a")
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "placement-private-space-conflict-owner-b")
+	ownerC := createLedgerProfile(t, adminDB, rls, teamID, "placement-private-space-conflict-owner-c")
 	ledgerRepo := NewLedgerRepositoryWithRuntimeConfig(appDB, rls, 20, ConflictRuntimeConfig{
 		ReviewTTLDays: 2,
 		Timezone:      "UTC",
@@ -101,34 +102,115 @@ func TestPlacementConflictDoesNotCombinePrivateSpacesAndPersistsPlacementSpace(t
 
 	sharedPostgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL shared")
 	sharedGraphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB shared")
-	commitPlacementRelationshipForConflictTest(
+	sharedFirst := commitPlacementRelationshipForConflictTest(
 		t, ctx, ledgerRepo, teamID, ownerA, "worker-shared-conflict-a",
 		"shared-conflict-a", "Dense-Mem shared uses PostgreSQL.", subject.EntityID, sharedPostgres.EntityID, "shared-source-group-a",
 	)
-	commitPlacementRelationshipForConflictTest(
+	sharedSecond := commitPlacementRelationshipForConflictTest(
 		t, ctx, ledgerRepo, teamID, ownerB, "worker-shared-conflict-b",
 		"shared-conflict-b", "Dense-Mem shared uses GraphDB.", subject.EntityID, sharedGraphdb.EntityID, "shared-source-group-b",
 	)
-	var sharedSpaceID, sharedCaseSpace, sharedPositionSpace, sharedMemberSpace, sharedEventSpace string
+	sharedThird := commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerC, "worker-shared-conflict-c",
+		"shared-conflict-c", "Dense-Mem shared also uses PostgreSQL.", subject.EntityID, sharedPostgres.EntityID, "shared-source-group-c",
+	)
+	sharedRelationshipIDs := []string{
+		sharedFirst.RelationshipResults[0].Relationship.RelationshipID,
+		sharedSecond.RelationshipResults[0].Relationship.RelationshipID,
+		sharedThird.RelationshipResults[0].Relationship.RelationshipID,
+	}
+	var sharedSpaceID, sharedConflictID string
+	var sharedConflictIDs []string
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Raw(`SELECT id::text FROM memory_spaces WHERE team_id = ? AND kind = 'team_shared'`, teamID).Row().Scan(&sharedSpaceID); err != nil {
 			return err
 		}
-		if err := tx.Raw(`SELECT space_id::text FROM relationship_conflict_cases WHERE team_id = ? AND space_id = ?::uuid`, teamID, sharedSpaceID).Row().Scan(&sharedCaseSpace); err != nil {
+		if err := tx.Raw(`
+			SELECT DISTINCT conflict_id::text
+			FROM relationship_conflict_position_members
+			WHERE team_id = ?::uuid
+			  AND relationship_id IN (?::uuid, ?::uuid, ?::uuid)
+			ORDER BY conflict_id::text
+		`, teamID, sharedRelationshipIDs[0], sharedRelationshipIDs[1], sharedRelationshipIDs[2]).Scan(&sharedConflictIDs).Error; err != nil {
 			return err
 		}
-		if err := tx.Raw(`SELECT space_id::text FROM relationship_conflict_positions WHERE team_id = ? AND space_id = ?::uuid LIMIT 1`, teamID, sharedSpaceID).Row().Scan(&sharedPositionSpace); err != nil {
-			return err
-		}
-		if err := tx.Raw(`SELECT space_id::text FROM relationship_conflict_position_members WHERE team_id = ? AND space_id = ?::uuid LIMIT 1`, teamID, sharedSpaceID).Row().Scan(&sharedMemberSpace); err != nil {
-			return err
-		}
-		return tx.Raw(`SELECT space_id::text FROM relationship_conflict_events WHERE team_id = ? AND space_id = ?::uuid LIMIT 1`, teamID, sharedSpaceID).Row().Scan(&sharedEventSpace)
+		return nil
 	}))
-	require.Equal(t, sharedSpaceID, sharedCaseSpace)
-	require.Equal(t, sharedSpaceID, sharedPositionSpace)
-	require.Equal(t, sharedSpaceID, sharedMemberSpace)
-	require.Equal(t, sharedSpaceID, sharedEventSpace)
+	require.Len(t, sharedConflictIDs, 1)
+	sharedConflictID = sharedConflictIDs[0]
+
+	var relationshipCount, relationshipSpaceCount int64
+	var relationshipMinSpace, relationshipMaxSpace string
+	var caseCount, positionCount, positionSpaceCount, memberCount, memberOwnerCount, memberSpaceCount, eventCount int64
+	var caseMinSpace, caseMaxSpace, positionMinSpace, positionMaxSpace, memberMinSpace, memberMaxSpace, eventMinSpace, eventMaxSpace string
+	var ownerCConflictIDs []string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT COUNT(*), COUNT(DISTINCT space_id), COALESCE(MIN(space_id::text), ''), COALESCE(MAX(space_id::text), '')
+			FROM relationship_records
+			WHERE team_id = ?::uuid
+			  AND relationship_id IN (?::uuid, ?::uuid, ?::uuid)
+		`, teamID, sharedRelationshipIDs[0], sharedRelationshipIDs[1], sharedRelationshipIDs[2]).Row().Scan(&relationshipCount, &relationshipSpaceCount, &relationshipMinSpace, &relationshipMaxSpace); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT COUNT(*), COALESCE(MIN(space_id::text), ''), COALESCE(MAX(space_id::text), '')
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, teamID, sharedConflictID).Row().Scan(&caseCount, &caseMinSpace, &caseMaxSpace); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT COUNT(*), COUNT(DISTINCT space_id), COALESCE(MIN(space_id::text), ''), COALESCE(MAX(space_id::text), '')
+			FROM relationship_conflict_positions
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, teamID, sharedConflictID).Row().Scan(&positionCount, &positionSpaceCount, &positionMinSpace, &positionMaxSpace); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT COUNT(*), COUNT(DISTINCT owner_profile_id), COUNT(DISTINCT space_id),
+			       COALESCE(MIN(space_id::text), ''), COALESCE(MAX(space_id::text), '')
+			FROM relationship_conflict_position_members
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, teamID, sharedConflictID).Row().Scan(&memberCount, &memberOwnerCount, &memberSpaceCount, &memberMinSpace, &memberMaxSpace); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT COUNT(*), COALESCE(MIN(space_id::text), ''), COALESCE(MAX(space_id::text), '')
+			FROM relationship_conflict_events
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, teamID, sharedConflictID).Row().Scan(&eventCount, &eventMinSpace, &eventMaxSpace); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT DISTINCT conflict_id::text
+			FROM relationship_conflict_position_members
+			WHERE team_id = ?::uuid AND relationship_id = ?::uuid
+			ORDER BY conflict_id::text
+		`, teamID, sharedRelationshipIDs[2]).Scan(&ownerCConflictIDs).Error
+	}))
+
+	require.Equal(t, int64(3), relationshipCount)
+	require.Equal(t, int64(1), relationshipSpaceCount)
+	require.Equal(t, sharedSpaceID, relationshipMinSpace)
+	require.Equal(t, sharedSpaceID, relationshipMaxSpace)
+	require.Equal(t, []string{sharedConflictID}, sharedConflictIDs)
+	require.Equal(t, []string{sharedConflictID}, ownerCConflictIDs)
+	require.Equal(t, int64(1), caseCount)
+	require.Equal(t, sharedSpaceID, caseMinSpace)
+	require.Equal(t, sharedSpaceID, caseMaxSpace)
+	require.Equal(t, int64(2), positionCount)
+	require.Equal(t, int64(1), positionSpaceCount)
+	require.Equal(t, sharedSpaceID, positionMinSpace)
+	require.Equal(t, sharedSpaceID, positionMaxSpace)
+	require.Equal(t, int64(3), memberCount)
+	require.Equal(t, int64(3), memberOwnerCount)
+	require.Equal(t, int64(1), memberSpaceCount)
+	require.Equal(t, sharedSpaceID, memberMinSpace)
+	require.Equal(t, sharedSpaceID, memberMaxSpace)
+	require.Equal(t, int64(6), eventCount)
+	require.Equal(t, sharedSpaceID, eventMinSpace)
+	require.Equal(t, sharedSpaceID, eventMaxSpace)
 }
 
 func applyPrivateSpaceConflictPlacementForTest(t *testing.T, ctx context.Context, adminDB *gorm.DB, rls interface {

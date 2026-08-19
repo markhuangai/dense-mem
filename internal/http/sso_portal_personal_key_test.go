@@ -97,6 +97,7 @@ func TestUserPortalSSOPersonalKeyLifecycle(t *testing.T) {
 	require.NoError(t, callDeleteSSOCredential(fixture.handler, c))
 	require.Equal(t, nethttp.StatusAccepted, rec.Code)
 	require.Equal(t, fixture.keySvc.keys[0].ID, fixture.privateMemory.deletedCredentialID)
+	require.Equal(t, service.CredentialRoleMember, fixture.privateMemory.auditContext.ActorRole)
 	require.Contains(t, rec.Body.String(), `"action":"retire_credential"`)
 	firstOperationID := privateMemoryOperationID(t, rec.Body.Bytes())
 	require.NotNil(t, fixture.keySvc.keys[0].RevokedAt)
@@ -449,11 +450,13 @@ type privateMemoryServiceStub struct {
 	PrivateMemoryServiceInterface
 	now                 time.Time
 	deletedCredentialID uuid.UUID
+	auditContext        service.PrivateMemoryAuditContext
 	credentials         *userPortalKeySvc
 	operations          map[string]*domain.PrivateMemoryErasureOperation
 }
 
-func (s *privateMemoryServiceStub) DeleteSSOCredential(_ context.Context, teamID, identityID, credentialID uuid.UUID, command service.PrivateMemoryCommand) (*domain.PrivateMemoryErasureOperation, error) {
+func (s *privateMemoryServiceStub) DeleteSSOCredential(_ context.Context, teamID, identityID, credentialID uuid.UUID, command service.PrivateMemoryCommand, auditContext service.PrivateMemoryAuditContext) (*domain.PrivateMemoryErasureOperation, error) {
+	s.auditContext = auditContext
 	scope := teamID.String() + ":" + identityID.String() + ":" + command.IdempotencyKey
 	if existing := s.operations[scope]; existing != nil {
 		if existing.TargetCredentialID == nil || *existing.TargetCredentialID != credentialID {

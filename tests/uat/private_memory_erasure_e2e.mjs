@@ -184,10 +184,25 @@ async function runScenario() {
   await placeHold(ssoCredentialSpace.id, "credential_delete_hold");
   await acquireKnowledgeIngestLock();
   const ssoDeleteQueued = await deleteSSOCredential(sso.a, ssoCredentialTarget.credential.id, "sso-delete-held");
-  assert(ssoDeleteQueued.status === 202, "SSO credential deletion did not return 202");
-  const ssoDeleteOperationID = ssoDeleteQueued.payload.data?.operation_id;
-  assertCredentialStatus(ssoCredentialTarget.credential.id, "disabled");
-  await assertCredentialDenied(ssoCredentialTarget.apiKey);
+	assert(ssoDeleteQueued.status === 202, "SSO credential deletion did not return 202");
+	const ssoDeleteOperationID = ssoDeleteQueued.payload.data?.operation_id;
+	assertCredentialStatus(ssoCredentialTarget.credential.id, "disabled");
+	const credentialDisableAudit = postgresRow(`
+	  SELECT operation, entity_type, before_payload->>'owner_identity_id', before_payload->>'status', actor_role
+	  FROM audit_log
+	  WHERE team_id = ${sqlLiteral(teamAID)}::uuid
+	    AND entity_type = 'api_key'
+	    AND entity_id = ${sqlLiteral(ssoCredentialTarget.credential.id)}
+	    AND operation = 'REVOKE'
+	  ORDER BY timestamp DESC
+	  LIMIT 1
+	`);
+	assert(credentialDisableAudit[0] === "REVOKE"
+	  && credentialDisableAudit[1] === "api_key"
+	  && credentialDisableAudit[2] === sso.a.identityID
+	  && credentialDisableAudit[3] === "active"
+	  && credentialDisableAudit[4] === "member", "SSO credential disable did not append its owner audit event");
+	await assertCredentialDenied(ssoCredentialTarget.apiKey);
   const heldOperation = postgresRow(`SELECT status FROM private_memory_erasure_operations WHERE id = ${sqlLiteral(ssoDeleteOperationID)}::uuid`);
   assert(heldOperation[0] === "queued", "held SSO credential deletion was claimed before the hold was released");
   await releaseHold(ssoCredentialSpace.id);
