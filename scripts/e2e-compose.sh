@@ -72,6 +72,21 @@ function listen() {
 NODE
 }
 
+validate_port_override() {
+  local field="$1"
+  local value="$2"
+  if [[ -z "$value" ]] || node -e '
+    const value = process.argv[1];
+    const port = Number(value);
+    if (/^[0-9]+$/.test(value) && Number.isSafeInteger(port) && port >= 1 && port <= 65535) process.exit(0);
+    process.exit(1);
+  ' "$value"; then
+    return 0
+  fi
+  echo "${field} must be a numeric TCP port between 1 and 65535." >&2
+  return 1
+}
+
 env_file_value() {
   local field="$1"
   node - "$ROOT_ENV_FILE" "$field" <<'NODE'
@@ -676,6 +691,7 @@ NEO4J_BOLT_HOST_PORT="${DENSE_MEM_E2E_NEO4J_BOLT_PORT:-$generated_neo4j_bolt_por
 REDIS_PORT="${DENSE_MEM_E2E_REDIS_PORT:-$generated_redis_port}"
 E2E_ENTRA_PORT="${DENSE_MEM_E2E_ENTRA_PORT:-$generated_entra_port}"
 E2E_CONFLICT_PROVIDER_PORT="${DENSE_MEM_E2E_CONFLICT_PROVIDER_PORT:-$generated_conflict_provider_port}"
+validate_port_override DENSE_MEM_E2E_OAUTH_PORT "${DENSE_MEM_E2E_OAUTH_PORT:-}"
 E2E_OAUTH_PORT="${DENSE_MEM_E2E_OAUTH_PORT:-$generated_oauth_port}"
 PROMETHEUS_CONTAINER_NAME="${DENSE_MEM_E2E_PROMETHEUS_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME}-prometheus}"
 CONTROL_URL="${DENSE_MEM_CONTROL_URL:-http://127.0.0.1:${CONTROL_PORTAL_PORT}}"

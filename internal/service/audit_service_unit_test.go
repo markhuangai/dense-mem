@@ -236,9 +236,9 @@ func TestAuditAppendInfersCredentialMemorySpaceWithinTeam(t *testing.T) {
 			mock.ExpectQuery("SELECT memory_space_id::text\\s+FROM credentials\\s+WHERE id = \\$1 AND team_id = \\$2").
 				WithArgs(credentialID, teamID).
 				WillReturnRows(test.rows)
-			args := make([]driver.Value, 13)
-			for index := range args {
-				args[index] = sqlmock.AnyArg()
+			args := make([]driver.Value, 0, 14)
+			for range 13 {
+				args = append(args, sqlmock.AnyArg())
 			}
 			args = append(args, test.memorySpaceArg)
 			mock.ExpectExec("INSERT INTO audit_log").WithArgs(args...).WillReturnResult(sqlmock.NewResult(0, 1))

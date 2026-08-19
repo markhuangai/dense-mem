@@ -667,7 +667,10 @@ func loadTraceCrossReferences(
 		  ON target_relationship.team_id = cross_reference.team_id
 		 AND target_relationship.relationship_id = cross_reference.target_relationship_id
 		WHERE cross_reference.team_id = ?::uuid
-		  AND cross_reference.space_id = ?::uuid
+		  AND (
+		    source_relationship.space_id = dense_mem_team_shared_space(cross_reference.team_id)
+		    OR dense_mem_space_allowed(source_relationship.space_id)
+		  )
 		  AND (
 		    target_relationship.space_id = dense_mem_team_shared_space(cross_reference.team_id)
 		    OR dense_mem_space_allowed(target_relationship.space_id)
@@ -678,7 +681,7 @@ func loadTraceCrossReferences(
 		  )
 		ORDER BY cross_reference.created_at ASC, cross_reference.cross_reference_id ASC
 		LIMIT ?
-	`, input.TeamID, input.spaceID, input.RelationshipID, input.RelationshipID, input.MaxEvents).Rows()
+	`, input.TeamID, input.RelationshipID, input.RelationshipID, input.MaxEvents).Rows()
 	if err != nil {
 		return nil, err
 	}

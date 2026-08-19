@@ -41,7 +41,7 @@ ALTER TABLE memory_spaces DROP CONSTRAINT IF EXISTS memory_spaces_team_shared_ac
 ALTER TABLE memory_spaces ADD CONSTRAINT memory_spaces_team_shared_active
     CHECK (kind <> 'team_shared' OR (lifecycle_state = 'active' AND sealed_at IS NULL AND retired_at IS NULL)) NOT VALID;
 
-CREATE TABLE private_memory_legal_holds (
+CREATE TABLE IF NOT EXISTS private_memory_legal_holds (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id UUID NOT NULL,
     space_id UUID NOT NULL,
@@ -51,12 +51,12 @@ CREATE TABLE private_memory_legal_holds (
     released_at TIMESTAMPTZ NULL,
     FOREIGN KEY (team_id, space_id) REFERENCES memory_spaces(team_id, id) ON DELETE RESTRICT
 );
-CREATE UNIQUE INDEX private_memory_legal_holds_active_unique
+CREATE UNIQUE INDEX IF NOT EXISTS private_memory_legal_holds_active_unique
     ON private_memory_legal_holds(space_id) WHERE released_at IS NULL;
-CREATE INDEX private_memory_legal_holds_team_space_idx
+CREATE INDEX IF NOT EXISTS private_memory_legal_holds_team_space_idx
     ON private_memory_legal_holds(team_id, space_id, placed_at DESC);
 
-CREATE TABLE private_memory_erasure_operations (
+CREATE TABLE IF NOT EXISTS private_memory_erasure_operations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id UUID NOT NULL REFERENCES teams(id) ON DELETE RESTRICT,
     space_id UUID NULL,
@@ -88,16 +88,16 @@ CREATE TABLE private_memory_erasure_operations (
     ),
     FOREIGN KEY (team_id, space_id) REFERENCES memory_spaces(team_id, id) ON DELETE RESTRICT
 );
-CREATE UNIQUE INDEX private_memory_erasure_idempotency_unique
+CREATE UNIQUE INDEX IF NOT EXISTS private_memory_erasure_idempotency_unique
     ON private_memory_erasure_operations(idempotency_scope_hash);
-CREATE INDEX private_memory_erasure_claim_idx
+CREATE INDEX IF NOT EXISTS private_memory_erasure_claim_idx
     ON private_memory_erasure_operations(status, next_attempt_at, lease_until, requested_at, id)
     WHERE status IN ('queued', 'processing');
-CREATE UNIQUE INDEX private_memory_erasure_space_active_unique
+CREATE UNIQUE INDEX IF NOT EXISTS private_memory_erasure_space_active_unique
     ON private_memory_erasure_operations(space_id)
     WHERE space_id IS NOT NULL AND status IN ('queued', 'processing');
 
-CREATE TABLE private_memory_retention_runs (
+CREATE TABLE IF NOT EXISTS private_memory_retention_runs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_class TEXT NOT NULL CHECK (actor_class IN ('control', 'retention')),
     idempotency_scope_hash TEXT NOT NULL CHECK (length(idempotency_scope_hash) = 64),
@@ -109,9 +109,9 @@ CREATE TABLE private_memory_retention_runs (
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX private_memory_retention_runs_idempotency_unique
+CREATE UNIQUE INDEX IF NOT EXISTS private_memory_retention_runs_idempotency_unique
     ON private_memory_retention_runs(idempotency_scope_hash);
-CREATE INDEX private_memory_retention_runs_started_idx
+CREATE INDEX IF NOT EXISTS private_memory_retention_runs_started_idx
     ON private_memory_retention_runs(started_at DESC, id DESC);
 
 DO $dense_mem_private_tables_rls$
@@ -139,8 +139,6 @@ ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS memory_space_id UUID NULL;
 ALTER TABLE audit_log DROP CONSTRAINT IF EXISTS audit_log_memory_space_id_fkey;
 ALTER TABLE audit_log ADD CONSTRAINT audit_log_memory_space_id_fkey
     FOREIGN KEY (memory_space_id) REFERENCES memory_spaces(id) ON DELETE RESTRICT NOT VALID;
-CREATE INDEX IF NOT EXISTS idx_audit_log_memory_space_timestamp
-    ON audit_log(memory_space_id, timestamp DESC) WHERE memory_space_id IS NOT NULL;
 DROP POLICY IF EXISTS audit_log_private_erasure_update ON audit_log;
 CREATE POLICY audit_log_private_erasure_update ON audit_log
     FOR UPDATE
@@ -396,6 +394,9 @@ SELECT set_config('app.tx_mode', 'system', true);
 
 -- +goose StatementEnd
 
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_audit_log_memory_space_timestamp
+    ON audit_log(memory_space_id, timestamp DESC) WHERE memory_space_id IS NOT NULL;
+
 -- The audit association is a bounded, resumable backfill so large audit
 -- tables do not hold one migration transaction or row-lock set for the
 -- entire upgrade. Rows without a surviving credential and exact team match
@@ -464,7 +465,7 @@ $procedure$;
 -- +goose StatementEnd
 
 CALL dense_mem_backfill_private_memory_audit_2026081802();
-DROP PROCEDURE dense_mem_backfill_private_memory_audit_2026081802();
+DROP PROCEDURE IF EXISTS dense_mem_backfill_private_memory_audit_2026081802();
 
 -- +goose StatementBegin
 SELECT set_config('app.tx_mode', 'migration', true);
@@ -472,8 +473,8 @@ SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 SELECT set_config('app.allowed_space_ids', '', true);
 SELECT set_config('app.private_erasure_space_id', '', true);
-DROP POLICY audit_log_memory_space_backfill_update ON audit_log;
-DROP POLICY audit_log_memory_space_backfill_select ON audit_log;
+DROP POLICY IF EXISTS audit_log_memory_space_backfill_update ON audit_log;
+DROP POLICY IF EXISTS audit_log_memory_space_backfill_select ON audit_log;
 -- +goose StatementEnd
 
 -- Main already uses migration version 2026081801 for submission diagnostics,
@@ -501,14 +502,17 @@ ALTER TABLE sso_providers
     DROP CONSTRAINT IF EXISTS sso_providers_protected_resource_object;
 ALTER TABLE sso_providers
     ADD CONSTRAINT sso_providers_protected_resource_object
-    CHECK (jsonb_typeof(protected_resource_config) = 'object');
+    CHECK (jsonb_typeof(protected_resource_config) = 'object') NOT VALID;
 
-CREATE INDEX IF NOT EXISTS idx_sso_providers_protected_resource_enabled
+-- +goose StatementEnd
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sso_providers_protected_resource_enabled
     ON sso_providers (id)
     WHERE enabled = true
       AND retired_at IS NULL
       AND protected_resource_config @> '{"enabled": true}'::jsonb;
 
+-- +goose StatementBegin
 SELECT set_config('app.tx_mode', 'system', true);
 INSERT INTO app_config (key, value)
 VALUES ('MCP_PUBLIC_BASE_URL', '')

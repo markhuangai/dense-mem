@@ -273,8 +273,9 @@ async function waitForFailedSubmission(submissionID) {
 async function waitForStableVerifierRequests(minimum) {
   let previous = -1;
   let stableIntervals = 0;
+  let observed = -1;
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    const observed = await prometheusValue("densemem_verifier_requests_total");
+    observed = await prometheusValue("densemem_verifier_requests_total");
     if (observed >= minimum && observed === previous) {
       stableIntervals += 1;
     } else {
@@ -286,7 +287,7 @@ async function waitForStableVerifierRequests(minimum) {
     previous = observed;
     await delay(2_000);
   }
-  throw new Error("verifier request metric did not become stable");
+  throw new Error(`verifier request metric did not become stable (minimum ${minimum}, last observed ${observed})`);
 }
 
 function submissionSummary(submissionID) {

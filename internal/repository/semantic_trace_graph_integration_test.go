@@ -219,6 +219,19 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 	require.Len(t, trace.CrossProfileReferences, 1)
 	assert.Equal(t, crossReferenceID, trace.CrossProfileReferences[0].CrossReferenceID)
 
+	trace, err = semanticRepo.TraceRelationship(ctxB, TraceRelationshipInput{
+		TeamID: teamA, RelationshipID: sharedTargetRelationshipID.String(), MaxEvents: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, trace.CrossProfileReferences, 1)
+	assert.Equal(t, crossReferenceID, trace.CrossProfileReferences[0].CrossReferenceID)
+
+	trace, err = semanticRepo.TraceRelationship(ctxA, TraceRelationshipInput{
+		TeamID: teamA, RelationshipID: sharedTargetRelationshipID.String(), MaxEvents: 10,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, trace.CrossProfileReferences, "target visibility must not bypass source-space isolation")
+
 	trace, err = semanticRepo.TraceRelationship(ctxA, TraceRelationshipInput{
 		TeamID: teamA, RelationshipID: rootRelationshipID.String(), MaxDepth: 1, MaxEdges: 10,
 	})

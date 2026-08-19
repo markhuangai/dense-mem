@@ -115,4 +115,19 @@ func TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows(t *testing.T
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT value FROM app_config WHERE key = 'MCP_PUBLIC_BASE_URL'`).Scan(&publicBaseURL))
 	require.True(t, publicBaseURL.Valid)
 	require.Empty(t, publicBaseURL.String)
+
+	_, err := sqlDB.ExecContext(ctx, `
+		DELETE FROM goose_db_version
+		WHERE version_id = 2026081802 AND is_applied
+	`)
+	require.NoError(t, err)
+	runGooseUpTo(t, ctx, sqlDB, 2026081802)
+	require.False(t, procedureExistsInDatabase(t, ctx, sqlDB, "dense_mem_backfill_private_memory_audit_2026081802()"))
+}
+
+func procedureExistsInDatabase(t *testing.T, ctx context.Context, db *sql.DB, signature string) bool {
+	t.Helper()
+	var exists bool
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_regprocedure($1) IS NOT NULL`, signature).Scan(&exists))
+	return exists
 }
